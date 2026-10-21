@@ -205,12 +205,16 @@ def test_a_name_ending_in_a_province_s_letters_is_still_a_name(tmp_path):
     assert _not_a_name("Tusket, NS")
 
 
-def test_the_letterhead_printed_largest_is_the_name_not_the_tagline_under_it(tmp_path):
-    path = _pdf(tmp_path, [
-        (70, 90, "McWilliam Piping", 30), (70, 130, "International Piping Company", 20),
-        (70, 155, "14368 Pipeline Ave Chino, CA 91710"), (420, 40, "Invoice: 10001"), *_AMOUNTS,
-    ])  # fmt: skip
-    assert _read(path)["vendor_name"].value == "McWilliam Piping"
+def test_a_large_line_over_the_supplier_is_not_taken_for_its_letterhead(tmp_path):
+    # A customer's or a project's name printed large over the supplier's letterhead: the size says nothing about whose
+    # name it is (the review's probes). Two names at the top: never verified, and the supplier's is not lost to it.
+    for i, big in enumerate(["Kestrel Foods", "Riverside Condominium Project", "Fall Promotion"]):
+        path = _pdf(tmp_path, [
+            (50, 25, big, 20), (50, 60, "Northwind Supply Ltd.", 12), (50, 72, "123 King Street West"),
+            (50, 84, "Toronto, ON M5H 1A1"), (50, 96, "HST Reg. No. 123456782 RT0001"), (420, 40, "INVOICE", 18),
+            (380, 90, "Invoice #:"), (470, 90, "INV-1001"), *_AMOUNTS,
+        ], name=f"big{i}.pdf")  # fmt: skip
+        assert _read(path)["vendor_name"].value == "Northwind Supply Ltd.", big
 
 
 def test_a_line_item_with_dashes_is_not_an_envelope_s_sender_line(tmp_path):
@@ -385,7 +389,7 @@ def test_a_page_whose_text_runs_up_the_page_is_read_turned(tmp_path):
              (420, "GST/HST (13.000%)  70,278.00"), (440, "Total Amount  610,878.00")]  # fmt: skip
     for x, text in lines:
         # Text running up the page: read upright once the page is turned a quarter turn clockwise.
-        page.insert_text((60 + x * 0.6, 700), text, fontsize=9, rotate=90)
+        page.insert_text((60 + x * 1.1, 700), text, fontsize=9, rotate=90)
     path = tmp_path / "turned.pdf"
     doc.save(path)
     layout = build_layout(path, ocr=False)
@@ -433,3 +437,159 @@ def test_a_whole_business_number_misread_is_not_read_as_its_nine_digits(tmp_path
         tmp_path, [(40, 40, "GC Strategies Inc.", 14), (40, 80, "GST/HST Reg. No. 232672980-RT-O001"), *_AMOUNTS]
     )
     assert _bare_business_numbers(build_layout(path, ocr=False)) == []
+
+
+# ---------------------------------------------------------------- review of this sweep: ordinary invoices stay right
+
+_NORTHWIND = [(50, 60, "Northwind Supply Ltd.", 16), (50, 80, "123 King Street West"), (50, 93, "Toronto, ON M5H 1A1"),
+              (50, 106, "HST Reg. No. 123456782 RT0001"), (430, 60, "INVOICE", 22), (380, 95, "Invoice #:"),
+              (470, 95, "INV-3001"), (380, 109, "Invoice Date:"), (470, 109, "2026-10-01"), (50, 160, "Bill To:"),
+              (50, 173, "Acme Corp"), (50, 186, "45 Queen Street"), (50, 199, "Ottawa, ON K1P 1J9"),
+              (50, 240, "Description"), (500, 240, "Amount"), (50, 258, "Consulting services"),
+              (500, 258, "550.00")]  # fmt: skip
+
+
+def _totals(tmp_path, rows: list, name: str = "inv.pdf", head: list | None = None, extra: list | None = None):
+    items = list(head if head is not None else _NORTHWIND)
+    for i, row in enumerate(rows):
+        items += (
+            [(330, 300 + 15 * i, row[0]), (500, 300 + 15 * i, row[1])]
+            if isinstance(row, tuple)
+            else [(330, 300 + 15 * i, row)]
+        )
+    return _read(_pdf(tmp_path, items + list(extra or []), name=name))
+
+
+_PLAIN = [("Subtotal", "550.00"), ("HST 13%", "71.50"), ("Total Due", "621.50")]
+
+
+def test_a_sentence_about_credit_memos_does_not_make_an_invoice_a_credit(tmp_path):
+    for i, note in enumerate([
+        "If this document is a credit memo, the amount will be applied to your account.",
+        "Where this is a credit note, no payment is required.",
+        "Unless this is a credit memo, payment is due within 30 days.",
+        "If this is a credit memo, do not pay.",
+        "Note: this is a credit memo only if marked CREDIT above.",
+    ]):  # fmt: skip
+        f = _totals(tmp_path, _PLAIN, name=f"n{i}.pdf", extra=[(50, 700, note, 8)])
+        assert f["grand_total"].value == 621.5, note
+    # The statement on a line of its own is a credit, but only likely: the title does not say it.
+    f = _totals(tmp_path, _PLAIN, name="stated.pdf", extra=[(50, 700, "THIS IS A CREDIT MEMO", 8)])
+    assert f["grand_total"].value == -621.5 and f["grand_total"].status != VERIFIED
+
+
+def test_an_unlabelled_customer_block_lower_down_is_not_the_supplier(tmp_path):
+    # The supplier's second line is "Suite 200, 123 King Street West"; the customer's block (a window envelope's,
+    # no "Bill To") is over its own street address lower down: the supplier stays the one at the top.
+    for i, second in enumerate(["Suite 200, 123 King Street West", "Unit 4 - 88 Industrial Rd"]):
+        for j, street in enumerate(["45 Queen Street", "PO Box 455"]):
+            path = _pdf(tmp_path, [
+                (50, 50, "Northwind Supply Ltd.", 12), (50, 65, second, 9), (50, 76, "Toronto, ON M5H 1A1", 9),
+                (50, 87, "HST Reg. No. 123456782 RT0001", 9), (50, 110, "Acme Industries Inc."), (50, 123, street),
+                (50, 136, "Ottawa, ON K1P 1J9"), (380, 110, "Invoice #:"), (470, 110, "INV-1001"),
+                (50, 220, "Description"), (500, 220, "Amount"), (50, 238, "Consulting"), (500, 238, "550.00"),
+                (380, 280, "Subtotal"), (500, 280, "550.00"), (380, 295, "HST 13%"), (500, 295, "71.50"),
+                (380, 310, "Total"), (500, 310, "621.50"),
+            ], name=f"w{i}{j}.pdf")  # fmt: skip
+            assert _read(path)["vendor_name"].value == "Northwind Supply Ltd.", (second, street)
+
+
+def test_sideways_text_in_the_margin_does_not_turn_an_upright_page(tmp_path):
+    import pymupdf
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=612, height=792)
+    for x, y, text, *size in _NORTHWIND + [
+        (330, 300, "Subtotal"),
+        (500, 300, "550.00"),
+        (330, 315, "HST 13%"),
+        (500, 315, "71.50"),
+        (330, 330, "Total Due"),
+        (500, 330, "621.50"),
+    ]:
+        page.insert_text((x, y), text, fontsize=size[0] if size else 10)
+    for i in range(4):  # the terms in small print up the right margin
+        page.insert_text((580 + 7 * i, 760), "Terms and conditions: goods remain the property of Northwind Supply " * 2,
+                         fontsize=5.5, rotate=90)  # fmt: skip
+    path = tmp_path / "margin.pdf"
+    doc.save(path)
+    layout = build_layout(path, ocr=False)
+    assert layout.pages[0].turn == 0
+    f = analyze(path, ocr=False, today=TODAY, layout=layout).fields
+    assert f["vendor_name"].value == "Northwind Supply Ltd." and f["grand_total"].value == 621.5
+
+
+def test_total_sale_under_the_tax_is_the_total_and_the_hst_is_kept(tmp_path):
+    for i, rows in enumerate([
+        [("HST 13%", "71.50"), ("Total Sale", "621.50"), ("Balance Due", "621.50")],
+        [("Net Amount", "550.00"), ("HST 13%", "71.50"), ("Amount Due", "621.50")],
+    ]):  # fmt: skip
+        f = _totals(tmp_path, rows, name=f"k{i}.pdf")
+        assert f["hst_amount"].value == 71.5, rows
+        assert not (f["subtotal"].value == 621.5 and f["subtotal"].status == VERIFIED), rows
+    f = _totals(tmp_path, [("Total Sales (incl. HST)", "621.50"), ("HST 13% included", "71.50")], name="incl.pdf")
+    assert f["subtotal"].value != 621.5
+
+
+def test_arithmetic_on_a_totals_line_is_not_an_exchange_rate(tmp_path):
+    f = _totals(tmp_path, ["Subtotal 550.00", "HST 13% of 550.00 = 71.50", "Total 621.50"], name="a.pdf")
+    assert f["hst_amount"].value == 71.5
+    f = _totals(tmp_path, [("Subtotal", "550.00"), ("HST 13%", "71.50"), "Total: 10 x 62.15 = 621.50"], name="b.pdf")
+    assert f["grand_total"].value in (621.5, None)
+    assert f["grand_total"].value != 10.0
+
+
+def test_total_hst_incl_is_the_invoice_total(tmp_path):
+    f = _totals(tmp_path, [("Subtotal", "550.00"), ("HST 13%", "71.50"), ("TOTAL HST INCL.", "621.50")])
+    assert (f["grand_total"].value, f["hst_amount"].value) == (621.5, 71.5)
+
+
+def test_the_supplier_s_name_with_an_amount_due_label_across_its_row_is_still_read(tmp_path):
+    head = [x for x in _NORTHWIND if x[2] != "INVOICE"] + [(380, 60, "Amount Due:", 11), (500, 60, "$621.50", 11)]
+    f = _totals(tmp_path, _PLAIN, head=head)
+    assert f["vendor_name"].value == "Northwind Supply Ltd."
+
+
+def test_a_canadian_supplier_banking_in_the_us_is_not_billing_in_us_dollars(tmp_path):
+    head = [(50, 60, "Northwind Supply Ltd.", 16), (50, 80, "123 King Street West"), (50, 93, "Toronto"),
+            (380, 95, "Invoice #:"), (470, 95, "INV-3001"), (50, 240, "Description"), (500, 240, "Amount")]  # fmt: skip
+    f = _totals(tmp_path, [("Subtotal", "$550.00"), ("Total Due", "$550.00")], head=head,
+                extra=[(50, 700, "Remit to: Lockbox 774, Chicago, IL 60693", 8)])  # fmt: skip
+    assert f["currency"].value != "USD"
+    us = [(50, 60, "Pacific Supply LLC", 16), (50, 80, "14368 Pipeline Ave"), (50, 93, "Chino, CA 91710"),
+          (380, 95, "Invoice #:"), (470, 95, "INV-3001")]  # fmt: skip
+    f = _totals(tmp_path, [("Subtotal", "CA$550.00"), ("Total Due", "CA$550.00")], head=us, name="ca.pdf")
+    assert f["currency"].value != "USD"
+
+
+def test_an_excise_tax_in_a_fuel_price_is_no_sales_tax(tmp_path):
+    f = _totals(tmp_path, [("Fuel", "510.00"), ("Excise Tax", "40.00"), ("GST 5%", "27.50"), ("Total", "577.50")])
+    assert f["tax_total"].value in (None, 27.5)
+
+
+def test_another_party_s_business_number_is_not_the_supplier_s(tmp_path):
+    head = [x for x in _NORTHWIND if not x[2].startswith("HST Reg")]
+    for i, who in enumerate(["Purchaser's", "Exempt purchaser", "Carrier", "Subcontractor"]):
+        f = _totals(tmp_path, _PLAIN, head=head, extra=[(50, 700, f"{who} HST # 876543216", 8)], name=f"b{i}.pdf")
+        assert f["gst_hst_registration_number"].status == MISSING, who
+    f = _totals(tmp_path, _PLAIN, head=head, extra=[(50, 700, "HST # 123456782", 8)], name="ours.pdf")
+    assert f["gst_hst_registration_number"].value == "123456782"
+    assert f["gst_hst_registration_number"].status == "check"  # the check digit alone confirms nothing (D-47)
+
+
+def test_a_deposit_on_a_taxed_invoice_leaves_the_total_for_a_person_to_check(tmp_path):
+    f = _totals(tmp_path, [("Subtotal", "550.00"), ("HST 13%", "71.50"), ("Deposit received", "(200.00)"),
+                           ("Balance Due", "421.50")])  # fmt: skip
+    assert f["grand_total"].status not in (VERIFIED, "likely")
+    assert f["other_charges"].status not in (VERIFIED, "likely")
+
+
+def test_an_invoice_number_ending_in_a_word_after_a_slash_is_kept_whole(tmp_path):
+    head = [x for x in _NORTHWIND if x[2] != "INV-3001"] + [(470, 95, "1234/Revised")]
+    assert _totals(tmp_path, _PLAIN, head=head)["invoice_number"].value == "1234/Revised"
+
+
+def test_the_net_after_an_agency_commission_is_checked(tmp_path):
+    f = _totals(tmp_path, [("Gross Total", "$1,400.00"), ("Agency Commission", "($210.00)"),
+                           ("Net Amount Due", "$1,190.00")])  # fmt: skip
+    assert f["grand_total"].value == 1190.0 and f["grand_total"].status == "check"

@@ -225,6 +225,7 @@ def _text_turn(page: Any) -> int:
     if page.rotation:
         return 0
     chars: dict[tuple[int, int], int] = {}
+    spread: dict[tuple[int, int], list[float]] = {}
     try:
         blocks = page.get_text("dict").get("blocks", [])
     except Exception:  # an odd page: read as it is
@@ -234,12 +235,28 @@ def _text_turn(page: Any) -> int:
             d = tuple(round(v) for v in line.get("dir", (1, 0)))
             n = sum(len(span.get("text", "").strip()) for span in line.get("spans", []))
             chars[d] = chars.get(d, 0) + n
+            x0, y0, x1, y1 = line.get("bbox", (0, 0, 0, 0))
+            # Across the lines' run: rows of a sideways page are spread across the page's width (or height).
+            spread.setdefault(d, []).extend((x0, x1) if d[0] == 0 else (y0, y1))
     total = sum(chars.values())
     if not total:
         return 0
     turn = {(0, -1): 90, (0, 1): 270, (-1, 0): 180}
     best = max(chars, key=chars.get)
-    return turn.get(best, 0) if chars[best] >= 0.6 * total else 0
+    if best not in turn or chars[best] < 0.8 * total:
+        return 0  # most of the text upright, or a sideways strip in the margin (form IDs, terms): read as it is
+    across = page.rect.width if best[0] == 0 else page.rect.height
+    covered, end = 0.0, None
+    for a, b in sorted(zip(spread[best][::2], spread[best][1::2], strict=True)):
+        if end is not None and a <= end[1]:
+            end[1] = max(end[1], b)
+            continue
+        covered += (end[1] - end[0]) if end else 0.0
+        end = [a, b]
+    covered += (end[1] - end[0]) if end else 0.0
+    if best != (-1, 0) and covered < 0.12 * across:
+        return 0  # the sideways lines sit in a strip or two (a margin's terms or form number), not over the page
+    return turn[best]
 
 
 def _turn_box(x0: float, y0: float, x1: float, y1: float, turn: int, width: float, height: float) -> tuple[float, ...]:

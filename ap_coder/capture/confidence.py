@@ -41,6 +41,7 @@ from .types import (
     MISSING,
     PART_OF_TERMS,
     RIVAL_NAME,
+    TAKEN_OFF,
     TWO_SUBTOTALS,
     UNMEASURED,
     VERIFIED,
@@ -59,7 +60,9 @@ SAME_MISREAD = 0.2  # chance that two independent wrong readings coincide
 # reader could not separate): they lower confidence but do not force a field to "check".
 SOFT_CHECKS = {"LINES_ADD_UP", "TAX_RATE", "DUE_AFTER_INVOICE", "DUE_MATCHES_TERMS"}
 # Checks that only show a value is reasonable, not that it is the printed one: passing them confirms nothing.
-WEAK_CHECKS = {"DATE_PLAUSIBLE", "DUE_AFTER_INVOICE"}
+# "BN_CHECK_DIGIT": a business number printed without its RT program account passes its check digit; nine digits
+# pass one time in ten by chance, so it confirms nothing (D-47) though a failure marks it down.
+WEAK_CHECKS = {"DATE_PLAUSIBLE", "DUE_AFTER_INVOICE", "BN_CHECK_DIGIT"}
 LIKELY_AT = 0.85
 UNMEASURED_CAP = 0.8  # a value read only by wording the benchmark never prints (``UNMEASURED``), no check confirming
 REGISTRATION_FIELDS = ("gst_hst_registration_number", "qst_registration_number", "pst_registration_number")
@@ -210,8 +213,8 @@ def run_checks(values: dict[str, Any], line_items: list[LineReading], vendor: di
         else:
             ok = gst_valid(number)
             detail = "check digit and format" + ("" if ok else " fail")
-        checks.append({"code": "GST_NUMBER_VALID", "ok": ok, "fields": ["gst_hst_registration_number"],
-                       "detail": detail})  # fmt: skip
+        code = "BN_CHECK_DIGIT" if re.fullmatch(r"\d{9}", str(number)) else "GST_NUMBER_VALID"
+        checks.append({"code": code, "ok": ok, "fields": ["gst_hst_registration_number"], "detail": detail})
     if values.get("qst_registration_number"):
         ok = qst_valid(values["qst_registration_number"])
         checks.append({"code": "QST_NUMBER_VALID", "ok": ok, "fields": ["qst_registration_number"],
@@ -564,6 +567,11 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
             # agree on what is printed after one, which number it is the page does not say: a person checks it.
             conf = min(conf, UNLABELLED_CAP)
             reasons.append("read after a word that also names other numbers or dates (a receipt's, a customer's)")
+        if any(TAKEN_OFF in r.method for _, r in g.readings):
+            conf = min(conf, max(0.0, min(raw, UNMEASURED_CAP)))
+            reasons.append(
+                "something is taken off before the amount to pay (a deposit, a commission): a person checks it"
+            )
         if any(TWO_SUBTOTALS in r.method for _, r in g.readings):
             conf = min(conf, SINGLE_READER_CAP)
             reasons.append("the totals add up with another subtotal printed too (before or after the charges)")

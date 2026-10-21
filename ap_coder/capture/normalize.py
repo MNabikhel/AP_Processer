@@ -556,7 +556,7 @@ def currency_evidence(text: str) -> tuple[str, float] | None:
         return codes[0], 0.5
     if re.search(r"\bUS\$|\bUS\s?DOLLARS?\b|\$\s?US\b", s):
         return "USD", 0.8
-    if re.search(r"\bC\$|\bCDN\b|CANADIAN", s):
+    if re.search(r"\bCA?\$|\bCDN\b|CANADIAN", s):  # "C$", "CA$ 1,234.00"
         return "CAD", 0.8
     # A euro or pound sign is that currency (a plain "$" is not: Canadian or US dollars), unless dollar signs
     # outnumber it: one "£66" among a scan's dollar amounts is OCR's reading of a "$".

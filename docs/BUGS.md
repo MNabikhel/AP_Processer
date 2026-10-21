@@ -3798,11 +3798,12 @@ invoices to agencies, and a few templates. Each fix has a small generated fixtur
 - **Fix:** never a name: a subject or "Re:" line, a salutation or an addressee ("Dear", "Mr."), a box's or column's
   label printed alone, a month, opening hours, a sentence of four words and more ending with a period, a label with
   its amount on its row ("Previous Balance 111.54"), the town under a street address. A name over its street address
-  counts a little more; the line printed far larger than any other near the top (two words or more, no digits: not a
-  store's brand with its number) is the letterhead's name. A sender's line needs an address after the name. A top-of-page name scoring below `WEAK_NAME`
+  counts a little more (B-414: only the first name on the page). A sender's line needs an address after the name.
+  (A rule taking the line printed far larger than the rest for the letterhead was taken out again, B-416: the
+  larger line is as often a customer's or a project's name; McWilliam's tagline is read as before, likely.) A top-of-page name scoring below `WEAK_NAME`
   (no company form, not larger, low on the page) is marked `UNMEASURED`: a person checks it.
 - **Test:** `tests/test_en_pdf_sweep4.py::test_lines_that_name_no_supplier_are_not_read_as_its_name`,
-  `tests/test_en_pdf_sweep4.py::test_the_letterhead_printed_largest_is_the_name_not_the_tagline_under_it`,
+  `tests/test_en_pdf_sweep4.py::test_a_large_line_over_the_supplier_is_not_taken_for_its_letterhead`,
   `tests/test_en_pdf_sweep4.py::test_a_line_item_with_dashes_is_not_an_envelope_s_sender_line`
 - **Lesson:** Don't let one word make a name: "Services" is in a subject line and a line item as often as in a
   supplier's name.
@@ -3996,6 +3997,113 @@ invoices to agencies, and a few templates. Each fix has a small generated fixtur
 - **Test:** `tests/test_en_pdf_sweep4.py::test_a_deposit_under_a_printed_total_leaves_the_total_as_printed`,
   `tests/test_en_pdf_sweep4.py::test_a_whole_business_number_misread_is_not_read_as_its_nine_digits`
 - **Lesson:** Don't let a new way for the totals to add up outrank the plain one the page prints.
+
+#### B-413 · A sentence about credit memos made an ordinary invoice a credit, its amounts verified negative · high
+- **Where:** `ap_coder/capture/reader.py` (`_CREDIT_STATED`, `credit_titled`, new `credit_stated`, `_credit_titled`,
+  `_read_fields`)
+- **Symptom:** found by the review of this sweep (generated invoices): "If this document is a credit memo, the amount
+  will be applied to your account.", "Where this is a credit note, no payment is required.", "Unless this is a credit
+  memo, payment is due ...", "If this is a credit memo, do not pay." in a footer: the whole invoice read negative,
+  verified (main read it right).
+- **Cause:** B-395 took "this is a credit memo" anywhere in a line, a condition included.
+- **Reproduce:** a plain invoice with one of the footers above; `analyze()["grand_total"]`.
+- **Reproduced:** yes (`-621.5 verified`)
+- **Fix:** the statement fills its line ("THIS IS A CREDIT MEMO", "DO NOT PAY – THIS IS A CREDIT MEMO", with "no
+  payment required" after it at most); a document that is a credit only by such a line has its amounts marked
+  `UNMEASURED` (likely at best: the title does not say it).
+- **Test:** `tests/test_en_pdf_sweep4.py::test_a_sentence_about_credit_memos_does_not_make_an_invoice_a_credit`
+- **Lesson:** Don't read a statement out of a sentence: "if this is X" says the opposite of "this is X" as often.
+
+#### B-414 · A customer's block lower down outranked the supplier because the supplier's address starts with "Suite" · high
+- **Where:** `ap_coder/capture/reader.py` (`_STREET_START`, `_vendor_names`)
+- **Symptom:** the review's invoices with the supplier's "Suite 200, 123 King Street West" (or "Unit 4 - 88 Industrial
+  Rd") under its name and an unlabelled customer block below ("Acme Industries Inc." over "45 Queen Street" or "PO Box
+  455", where a window envelope shows it): the customer was the supplier, likely (main: the supplier).
+- **Cause:** B-399's "name over its street address" bonus knew only addresses starting with a number or a PO box, and
+  gave it to any line.
+- **Reproduce:** the PDFs of the test below.
+- **Reproduced:** yes (`'Acme Industries Inc.'`)
+- **Fix:** an address may start with "Suite", "Unit", "Ste", "Apt", "Bureau", "Floor" or "Room" and a number; the bonus
+  goes only to the first name on the page (no other candidate above it).
+- **Test:** `tests/test_en_pdf_sweep4.py::test_an_unlabelled_customer_block_lower_down_is_not_the_supplier`
+- **Lesson:** Don't reward a pattern the customer's block has as well: the address under a name is everyone's.
+
+#### B-415 · Sideways text in a margin turned an upright page · high
+- **Where:** `ap_coder/capture/layout.py` (`_text_turn`)
+- **Symptom:** the review's invoices with four lines of 5.5 pt terms (or two form-number strips) printed up the right
+  margin: the page was read turned (B-406), the supplier became "No. ON Northwind", the invoice date the due date
+  (likely), and most fields were lost.
+- **Cause:** a page turned when 60% of its characters ran sideways; the small print had more characters than the
+  invoice.
+- **Reproduce:** the PDF of the test below; `build_layout().pages[0].turn`.
+- **Reproduced:** yes (`90`)
+- **Fix:** 80% of the characters sideways, and the sideways lines covering at least an eighth of the page across their
+  run (Microsoft's pages: 16 to 54%; a margin's strips: 2 to 8%).
+- **Test:** `tests/test_en_pdf_sweep4.py::test_sideways_text_in_the_margin_does_not_turn_an_upright_page`
+- **Lesson:** Don't decide a page's orientation by counting characters alone: small print has many of them.
+
+#### B-416 · Totals: "Total Sale" under the tax read as the subtotal, verified; arithmetic blanked as a rate; "TOTAL HST INCL." lost · high
+- **Where:** `ap_coder/capture/reader.py` (`_solve_totals`, `_read_fields`, `_TOTAL_SALE`, `_FX_RATE`, `DISTRACTORS`,
+  `_vendor_names`)
+- **Symptom:** the review's invoices: "HST 13% 71.50 | Total Sale 621.50 | Balance Due 621.50" gave the subtotal 621.50,
+  verified, and no HST (main does the same with "Net Amount ... Amount Due"); "HST 13% of 550.00 = 71.50" lost the HST
+  and "Total: 10 x 62.15 = 621.50" read 10.00 (B-409's rate blanked any "a = b"); "TOTAL HST INCL. 621.50" lost the
+  total (B-401's exclusion); a large customer, project or promotion line over the supplier won as its letterhead
+  (B-399); the supplier's name was lost when "Amount Due: $621.50" sat across its row.
+- **Cause:** the solver let a subtotal equal to the total add up with no tax while a tax was printed; "Total Sale" was a
+  subtotal's label wherever it stood; the other causes as said.
+- **Reproduce:** the PDFs of the tests below.
+- **Reproduced:** yes (`subtotal 621.5 verified`, `hst_amount` missing; `grand_total 10.0`; vendor missing)
+- **Fix:** a subtotal equal to the total with no tax adds up only when no tax is read at all; "Total Sale(s)" is a
+  subtotal only over a tax (not "incl."); only a rate for one unit ("1 USD = 1.235 CAD", "USD 1 = CAD 1.35") is blanked;
+  "Total HST incl." is a total, not the HST; the letterhead rule is taken out; a label's amount across the page is
+  not the name's row's amount (only the next cell, and not after another label).
+- **Test:** `tests/test_en_pdf_sweep4.py::test_total_sale_under_the_tax_is_the_total_and_the_hst_is_kept`,
+  `tests/test_en_pdf_sweep4.py::test_arithmetic_on_a_totals_line_is_not_an_exchange_rate`,
+  `tests/test_en_pdf_sweep4.py::test_total_hst_incl_is_the_invoice_total`,
+  `tests/test_en_pdf_sweep4.py::test_a_large_line_over_the_supplier_is_not_taken_for_its_letterhead`,
+  `tests/test_en_pdf_sweep4.py::test_the_supplier_s_name_with_an_amount_due_label_across_its_row_is_still_read`
+- **Lesson:** Don't let one printed figure prove itself: a subtotal equal to the total is no evidence beside a tax.
+
+#### B-417 · Currency, tax and number rules of this sweep that read other parties: lockbox USD, excise tax, a purchaser's HST number, invoice numbers cut · medium
+- **Where:** `ap_coder/capture/reader.py` (`_us_supplier`, `_CA_CITY`, `_LOCKBOX`, `LABELS["tax_total"]`, `_OTHER_PARTY`,
+  `_bare_business_numbers`, `_value_reading`); `ap_coder/capture/normalize.py` (`currency_evidence`);
+  `ap_coder/capture/confidence.py` (`run_checks`, `WEAK_CHECKS`)
+- **Symptom:** the review's invoices: a Canadian supplier with a US lockbox, or one printing "CA$", read USD (*check*);
+  "Excise Tax 40.00" on a GST-only fuel invoice read as a tax total; "Purchaser's HST #", "Exempt purchaser HST #",
+  "Carrier HST #", "Subcontractor HST # 876543216" read as the supplier's number, likely (the check digit lifted it
+  past `UNMEASURED`); "1234/Revised" and "INV-55/Final" cut to "1234" and "INV-55".
+- **Cause:** B-405 counted any US address and knew no "CA$"; B-397 made "excise tax" a tax label; B-404 knew only
+  customers as other parties, and its check digit counted as a confirmation; B-410 cut every ID.
+- **Reproduce:** the PDFs of the tests below.
+- **Reproduced:** yes
+- **Fix:** "CA$", "C$", "CAD", "CDN" anywhere, a Canadian city outside the customer's block, or the US address only on a
+  remit-to or lockbox line: no USD ("CA$" is Canadian dollars in `currency_evidence`); only Hawaii's "General Excise
+  Tax" is a tax label; a purchaser's, buyer's, carrier's, subcontractor's, recipient's, agent's or broker's number is
+  not read, and the nine digits' check digit is a weak check (`BN_CHECK_DIGIT`: a failure marks it down, a pass does not
+  lift it, so it stays *check*); only a PO is cut at "/Word".
+- **Test:** `tests/test_en_pdf_sweep4.py::test_a_canadian_supplier_banking_in_the_us_is_not_billing_in_us_dollars`,
+  `tests/test_en_pdf_sweep4.py::test_an_excise_tax_in_a_fuel_price_is_no_sales_tax`,
+  `tests/test_en_pdf_sweep4.py::test_another_party_s_business_number_is_not_the_supplier_s`,
+  `tests/test_en_pdf_sweep4.py::test_an_invoice_number_ending_in_a_word_after_a_slash_is_kept_whole`
+- **Lesson:** Don't read a number or an address as the supplier's because of its shape: ask whose the page says it is.
+
+#### B-418 · Totals with a deposit or an agency's commission came out likely or verified, where D-47 says a person checks them · medium
+- **Where:** `ap_coder/capture/types.py` (new `TAKEN_OFF`); `ap_coder/capture/reader.py` (`PREPAID`, `_solve_totals`,
+  `_net_of_commission`, `_read_fields`); `ap_coder/capture/confidence.py` (`fuse`)
+- **Symptom:** the review's taxed invoices with "Deposit received (200.00) | Balance Due 421.50": the total likely and
+  the deposit verified (the totals check adds them up); the net after a commission ("Net Amount Due") likely.
+- **Cause:** `UNMEASURED` is lifted to likely by a check on other fields, and the deposit read as a charge was not marked
+  at all when the solver did not use it.
+- **Reproduce:** the PDFs of the tests below.
+- **Reproduced:** yes (`grand_total likely`, `other_charges verified`)
+- **Fix:** a deposit or prepayment read, and every total on a document that prints one, and a total on a document that
+  takes a commission off the gross (or the net under the commission), are marked `TAKEN_OFF`: at most 0.8 (*check*),
+  "something is taken off before the amount to pay: a person checks it". Whether the gross or the net is posted is
+  AP's call.
+- **Test:** `tests/test_en_pdf_sweep4.py::test_a_deposit_on_a_taxed_invoice_leaves_the_total_for_a_person_to_check`,
+  `tests/test_en_pdf_sweep4.py::test_the_net_after_an_agency_commission_is_checked`
+- **Lesson:** Don't let a check on other fields lift a reading whose question is not arithmetic: which amount to post.
 
 #### Left as they are (English vendor PDFs)
 
