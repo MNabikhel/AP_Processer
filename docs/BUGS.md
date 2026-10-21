@@ -3694,12 +3694,16 @@ them, and without one. Learning helped (fields right 291 → 297) but replaced a
 one 9 times and marked 12 right values down (verified to likely, likely to check), all where the vendor's layout had
 changed. Each fix has a small generated fixture in `tests/test_learning_sweep4.py` (the corpus is not in the repo).
 
-Measured after B-387 to B-393: fields right with learning 297 → 304 of 370 (291 without); wrong and shown likely or
-verified 5 → 6 (6 without: the same values the rule reader alone shows so); fields worse with learning than without
-21 → 2 (N-127, N-128). Learning benchmark (12 suppliers × 30, seed 5): accuracy 100% as before, none wrong among the
-invoices that would go touchless, which rose from 29/57/61/58% to 69/82/78/86% (invoices 2-5, 6-10, 11-20, 21-30).
-Benchmark (60, seed 3, 50% scans) and the hard corpus (150) unchanged: no template there, and the same values and
-confidences (99.8% fields, verified precision 100%; hard corpus 96.9% fields, no silent error 100%).
+Measured after B-387 to B-396 (B-394 to B-396 came from a review with generated English supplier streams): fields
+right with learning 297 → 303 of 370 (291 without); on the English invoices among them 72 → 73 of 100 (71 without),
+none wrong and shown likely or verified; wrong and shown likely or verified 5 → 6 of 370 (6 without: the value the
+rule reader alone shows so); fields worse with learning than without 21 → 4 (N-127, N-128, N-129).
+The review's streams (a label renamed, an order date printed where the invoice date was, two divisions, a value printed
+twice): no value wrong and verified on any (the old layout's label pointing at an order date: 7 before, also on the
+main branch). Learning benchmark (12 suppliers × 30, seed 5): accuracy 100% as before, none wrong among the invoices
+that would go touchless (29/57/61/58% before, 27/48/55/59% after: a spot learned from a value printed twice waits for
+two approvals). Benchmark (60, seed 3, 50% scans) and the hard corpus (150) unchanged: no template there (99.8% fields,
+verified precision 100%; hard corpus 96.9% fields, no silent error 100%).
 
 #### B-387 · A template reading taken without its label replaced a value the page's own label gave · high
 - **Where:** `ap_coder/capture/supplier.py` (`_apply_variant`, `apply_template`); `ap_coder/capture/types.py` (new
@@ -3740,13 +3744,18 @@ confidences (99.8% fields, verified precision 100%; hard corpus 96.9% fields, no
 - **Reproduce:** two invoices with "Delivery Date:" and "Invoice Date:" both 05.06.2018 learned; a third with another
   delivery date.
 - **Reproduced:** yes (`2018-06-03`)
-- **Fix:** the template does not guess which place is the field's. Each variant counts its *settled* approvals: those
-  where the value was printed at its spot and nowhere else on the page, on words no other confirmed field's value is
-  printed on (a reviewer's click settles it too). Until one, what it reads there is `UNSETTLED` (B-387): it agrees or
-  contests, never decides. Templates stored before start unsettled. (The first version of this fix learned where the
-  rule reader reads the value; it copied the reader's mistakes, B-395, and was taken out.)
+- **Fix:** the template does not guess which place is the field's. A value printed in several places is learned at
+  its two likeliest ones. A spot is vouched for after one approval where the value was printed there and nowhere else
+  (on words no other confirmed field's value is printed on; a reviewer's click counts too) or two approvals in a row
+  with the value there (the invoice number on the header and the stub, alike every time). A spot that holds another
+  value than the one approved starts over (a *miss*), and offers nothing until vouched for again; when the template's
+  own vouched spots read different values on a page, it vouches for none. Until then what it reads is `UNSETTLED`
+  (B-387): it agrees or contests, never decides. Templates stored before start unvouched. A label holding a number of
+  three digits or more ("TAX INVOICE #1677326") is no anchor. (The first version of this fix learned where the rule
+  reader reads the value; it copied the reader's mistakes, B-395, and was taken out.)
 - **Test:** `tests/test_learning_sweep4.py::test_a_date_printed_twice_does_not_settle_where_it_was_learned`,
-  `tests/test_learning_sweep4.py::test_one_printed_date_for_two_fields_settles_neither`
+  `tests/test_learning_sweep4.py::test_one_printed_date_for_two_fields_settles_neither`,
+  `tests/test_learning_sweep4.py::test_a_value_printed_twice_alike_is_vouched_for_after_two_approvals`
 - **Lesson:** Don't trust a spot learned from a value printed twice: only an approval where the two differ shows
   which one is the field's.
 
@@ -3828,10 +3837,12 @@ confidences (99.8% fields, verified precision 100%; hard corpus 96.9% fields, no
 - **Reproduced:** yes (Y verified, 0.998; X not mentioned)
 - **Fix:** such a reading has its own evidence family (`template-unsettled`, not measured), is never counted among the
   independent readers verified needs nor in the evidence pattern, and is not dropped: the template's first choice
-  stays a rival and contests the value chosen. The B-393 floor stays below verified.
+  stays a rival and contests the value chosen. The B-393 floor stays below verified. A total tax only the template read
+  there gives way to the sum of the taxes read on the page.
 - **Test:** `tests/test_learning_sweep4.py::test_a_reading_the_template_cannot_vouch_for_is_never_an_independent_reader`,
   `tests/test_learning_sweep4.py::test_the_template_agreeing_is_never_enough_for_verified`,
-  `tests/test_learning_sweep4.py::test_a_renamed_label_does_not_make_the_order_date_a_verified_invoice_date`
+  `tests/test_learning_sweep4.py::test_a_renamed_label_does_not_make_the_order_date_a_verified_invoice_date`,
+  `tests/test_learning_sweep4.py::test_a_total_tax_only_the_template_read_gives_way_to_the_taxes_on_the_page`
 - **Lesson:** Don't let a reading that only agrees count as a reader: agreement from a reader that cannot vouch for
   its spot is no second opinion.
 
@@ -3859,7 +3870,8 @@ confidences (99.8% fields, verified precision 100%; hard corpus 96.9% fields, no
   confirmations of the old label.
 - **Reproduce:** the stream in the test (4 invoices, then the new layout).
 - **Reproduced:** yes (the order date verified)
-- **Fix:** a variant whose label changes starts unsettled again.
+- **Fix:** a variant whose label changes, the old label gone from the page, starts unsettled again (two labels near
+  one value, "Billing Date" beside and "Invoice #" over it, are not a change).
 - **Test:** `tests/test_learning_sweep4.py::test_a_new_label_at_the_old_spot_starts_unsettled`
 - **Lesson:** Don't carry a spot's record across a change of its label.
 
@@ -3871,8 +3883,11 @@ confidences (99.8% fields, verified precision 100%; hard corpus 96.9% fields, no
 - **N-128** · A German terms sentence ("Skontovereinbarung: 2% bei Zahlung innerhalb 10 Tagen nach Rechnungsdatum"):
   the template reads the part it learned ("10 Tagen nach Rechnungsdatum", at check) where the rule reader writes the
   short form ("2% 10 days", also check). Left with B-372's terms work.
-- **N-129** · `zf1_extended_warenrechnung`: since B-388 the total is learned where the rule reader read it on the
-  vendor's earlier invoice, and on this layout that spot holds another amount; the template no longer offers 518.99
-  against the reader's 382.47 (check either way). Learning where the reader reads repeats the reader's choice of
-  label; learning only dates so kept this one (305 right) but brought back a verified total marked down by a rival
-  (B-388's "Zahlbetrag"): left as one rule for every field.
+- **N-129** · Since B-394 a template reading at a spot it does not vouch for no longer decides, so it no longer corrects
+  the rule reader there either: in the review's stream where the order date is the invoice date 4 times in 10, the
+  order date is shown (at *check*) on 4 of 30 invoices where the template's title spot held the right date. On the real
+  invoices the same rule leaves 2 right values at likely where they were verified (a due date and a total contested by
+  the template's unvouched rival). Left: a person corrects a value at check; a wrong value verified is not corrected.
+- **N-130** · The review's `freight` stream (merchandise, freight, then "Subtotal" of both): the reader takes the printed
+  "Subtotal" (merchandise + freight), AP codes the merchandise as the subtotal and the freight apart; every invoice is
+  "wrong and verified" on the main branch and here alike. A coding convention, not a reading or learning question.
