@@ -4475,3 +4475,34 @@ Excel, CSV and custom CSV): each suspicion was reproduced before it was called a
   bulk approval) and shown on the review screen until the reviewer puts in another date.
 - **Test:** `tests/test_pilot_path_backend.py::test_an_invoice_with_no_date_found_says_the_date_was_assumed`
 - **Lesson:** Don't fill a missing value with a default without saying so where the person decides.
+
+#### Looked at and left (pilot path, backend)
+
+Run as well, and found to work: approving twice (a double click: the second is "changed meanwhile"), the second
+approval and its send-back with a corrected field (learning withdrawn and learned once again, the export holds the
+correction), a credit note through the checks, the approval limit and every export, splits of negative and tiny
+amounts (exact to the cent), the JD Edwards files of all 47 approved English PDFs in every mode (pay items add up to
+the invoice; a 150-line invoice included), an invoice whose file was deleted after import (review, approval,
+approved PDF and exports all work and say the file is gone), a missing GL list (the review screen says to import it),
+formula-looking vendor names in the Excel export (stored as text), and the import job reading 48 PDFs while invoices
+were approved, parked and exported and a backup was made every 2 seconds (no lock, no lost write).
+
+- **N-165** · A PDF renamed in the invoices folder after it was imported is not found again (`paths.find_moved_file`
+  looks for the same name, then checks the SHA-256): its review screen says the file is no longer where it was and
+  shows no page; approval and the exports still work. Finding it by content would read every file in the folder.
+- **N-166** · `python -m ap_coder process <folder>` sets upright, in place, a PDF whose text is drawn sideways (D-47)
+  and keeps the file as it came in an `originals/` folder beside it, also in a folder outside the data folder (it
+  changed 3 files of the test corpus here, put back since). The dashboard copies what it reads into its own invoices
+  folder first; the command line is for developers.
+- **N-167** · Two approvals of the same supplier at the same moment (two computers on the office network) each read,
+  update and save the supplier's template: one of the two lessons can be lost. Not reproduced (one pilot tester).
+- **N-168** · A GL account the coder left blank and AP filled in counts as a correction for the lessons, so the
+  "why" question comes after 3 invoices of a vendor imported together before any was approved (GCstrategies on the
+  English PDFs), where D-39 counts filling a blank as no change. The lesson is also what tells the AI the account,
+  so whether a filled blank asks "why" is a design question: left.
+- **N-169** · The approval limit typed with a thousands separator ("5,000") is refused ("must be numbers"): said, not
+  saved wrong.
+- **N-170** · The review queue's "Amount: high to low" compares totals in different currencies as they are.
+- **N-171** · Capture's findings (B-458, B-459) are added after the confidence is worked out: a warning about the page
+  keeps an invoice from bulk approval, but does not by itself flag it in the queue
+  (Ready means Approve is open, which a warning does not close).
