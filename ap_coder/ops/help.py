@@ -656,7 +656,8 @@ ROUTINE: list[tuple[str, list[tuple[str, str]]]] = [
     ("Every month", [
         ("Accruals for the close", "month_end"),
         ("Sales tax to claim", "sales_tax"),
-        ("Duplicate audit, controls", "activity"),
+        ("Duplicate payment audit", "exports"),
+        ("Controls report", "activity"),
         ("Vendors that make work", "vendors"),
     ]),
 ]  # fmt: skip

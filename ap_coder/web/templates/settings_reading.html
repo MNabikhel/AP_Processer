@@ -46,7 +46,7 @@
 <section class="card" id="page-reader">
   <h4>OvisOCR2's self-test</h4>
   <div class="card-head">
-    <div class="row">{{ ui.pill(*reader.self_test) }}{% if reader.self_test_detail %}<span class="muted">{{ reader.self_test_detail }}</span>{% endif %}</div>
+    <div class="row">{{ ui.pill(*reader.self_test) }}{% if reader.self_test_detail and reader.running %}<span class="muted">{{ reader.self_test_detail }}</span>{% endif %}</div>
     <form method="post" action="/settings/reading/self-test" data-busy="Starting…">
       <button class="btn" type="submit"{% if not reader.can_test %} disabled{% endif %}
               title="It reads an invoice whose answers are known; OvisOCR2 is trusted only when it reads it right. It also runs by itself whenever OvisOCR2 is found or changes.">
