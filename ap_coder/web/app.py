@@ -132,6 +132,8 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     def home() -> RedirectResponse:
         return RedirectResponse(PAGES[0].path, status_code=307)
 
+    build = paths.build_stamp(CODE_FOLDER)["commit"]  # the code this server runs (the launcher compares it)
+
     @app.get("/healthz")
     def healthz(request: Request) -> dict[str, Any]:
         server = request.scope.get("server") or (None, None)
@@ -139,6 +141,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
             "ok": True,
             "app": "ap-coder",
             "version": __version__,
+            "build": build,
             "folder": str(CODE_FOLDER),
             "pid": os.getpid(),
             "port": request.app.state.port or server[1],

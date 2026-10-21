@@ -19,9 +19,12 @@ rapidocr-onnxruntime (the PP-OCRv4 engine) carries its models inside its package
 from __future__ import annotations
 
 import argparse
+import functools
 import os
 import shutil
 import sys
+import time
+import urllib.error
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -34,6 +37,10 @@ from ap_coder.ops import offline  # noqa: E402
 
 BUNDLE_MODELS = ROOT / "models"  # the offline bundle's copy (scripts/build_offline_bundle.py)
 TIMEOUT = 60
+# A download that fails on the way (2 of 4 first setups from GitHub's ZIP: "Connection reset by peer") is tried again
+# after these waits (seconds): 3 tries in all. A refusal by the server (404, 403) is not tried again.
+RETRY_WAITS = (3.0, 10.0)
+sleep = time.sleep  # (tests wait for nothing)
 
 
 @dataclass
@@ -42,10 +49,45 @@ class Result:
     copied: list[str] = field(default_factory=list)
     downloaded: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
+    reasons: list[str] = field(default_factory=list)  # why each download failed, in plain words (plain_reason)
 
     @property
     def ok(self) -> bool:
         return not self.failed
+
+    def add(self, other: Result) -> Result:
+        for name in ("kept", "copied", "downloaded", "failed", "reasons"):
+            getattr(self, name).extend(getattr(other, name))
+        return self
+
+
+def plain_reason(exc: BaseException) -> str:
+    """Why a download failed, in a few plain words ("the connection dropped"): urllib's own message
+    ("URLError: <urlopen error [Errno 104] Connection reset by peer>") means nothing to the pilot tester."""
+    text = f"{exc} {getattr(exc, 'reason', '')}".lower()
+    if isinstance(exc, urllib.error.HTTPError):
+        return f"the download site answered {exc.code}"
+    if isinstance(exc, ConnectionResetError) or "reset by peer" in text or "10054" in text or "errno 104" in text:
+        return "the connection dropped"
+    if isinstance(exc, TimeoutError) or "timed out" in text:
+        return "the connection timed out"
+    if any(s in text for s in ("getaddrinfo", "name or service", "nodename nor servname", "no address", "errno -3",
+                               "temporary failure in name resolution", "11001")):  # fmt: skip
+        return "this computer couldn't find the download site (no internet?)"
+    if "refused" in text or "unreachable" in text or "10061" in text:
+        return "this computer couldn't reach the download site"
+    if "checksum" in text:
+        return "the file that came was damaged"
+    if "certificate" in text or "ssl" in text:
+        return "the download site's certificate couldn't be checked (a company proxy?)"
+    return "the download didn't finish"
+
+
+def _retry(exc: BaseException) -> bool:
+    """Worth trying again: the connection, not the server's answer (a 5xx is tried again, a 404 is not)."""
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code >= 500 or exc.code == 429
+    return isinstance(exc, (OSError, ValueError, TimeoutError)) and not isinstance(exc, PermissionError)
 
 
 def intact(path: Path, model: offline.ModelFile) -> bool:
@@ -54,21 +96,34 @@ def intact(path: Path, model: offline.ModelFile) -> bool:
     return not model.sha256 or offline.sha256(path) == model.sha256
 
 
-def download(url: str, dest: Path) -> None:
-    """Fetch ``url`` into ``dest`` (through HTTPS_PROXY when set, as urllib does). Only with the opt-in."""
+def download(url: str, dest: Path, waits: tuple[float, ...] | None = None, timeout: float | None = None) -> None:
+    """Fetch ``url`` into ``dest`` (through HTTPS_PROXY when set, as urllib does), tried again after each of
+    ``waits`` (default RETRY_WAITS) when the connection fails. Only with the opt-in."""
     if not offline.internet_allowed():
         raise PermissionError(f"offline build: no download without {offline.INTERNET_ENV}=1")
-    with urllib.request.urlopen(url, timeout=TIMEOUT) as response, open(dest, "wb") as out:  # noqa: S310
-        shutil.copyfileobj(response, out, 1 << 20)
+    waits = RETRY_WAITS if waits is None else waits
+    for attempt in range(len(waits) + 1):
+        try:
+            with urllib.request.urlopen(url, timeout=timeout or TIMEOUT) as response, open(dest, "wb") as out:  # noqa: S310
+                shutil.copyfileobj(response, out, 1 << 20)
+            return
+        except Exception as exc:  # noqa: BLE001 - tried again, then raised as it came
+            if attempt >= len(waits) or not _retry(exc):
+                raise
+            sleep(waits[attempt])
 
 
 def fetch(target: Path, source: Path | None = None, *, online: bool | None = None,
-          get: Callable[[str, Path], None] = download, say: Callable[[str], None] = print,
-          models: tuple[offline.ModelFile, ...] | None = None) -> Result:  # fmt: skip
+          get: Callable[[str, Path], None] | None = None, say: Callable[[str], None] = print,
+          models: tuple[offline.ModelFile, ...] | None = None, log: Callable[[str], None] | None = None,
+          waits: tuple[float, ...] | None = None, timeout: float | None = None) -> Result:  # fmt: skip
     """Make ``target`` hold every model file of ``models`` (default: the PP-OCRv5 ones), intact: keep what is there,
     copy from ``source`` (a folder of model files) what it has, and download the rest only when ``online`` (default:
-    only with the ``AP_ALLOW_INTERNET=1`` opt-in)."""
+    only with the ``AP_ALLOW_INTERNET=1`` opt-in). ``log``: where the error itself goes (the launcher's log), the
+    window getting only the plain reason. ``waits`` and ``timeout``: the download's (:func:`download`)."""
     online = offline.internet_allowed() if online is None else online
+    tries = len(RETRY_WAITS if waits is None else waits) + 1 if get is None else 1
+    get = get or functools.partial(download, waits=waits, timeout=timeout)
     result = Result()
     target.mkdir(parents=True, exist_ok=True)
     for model in offline.ppocrv5_files() if models is None else models:
@@ -93,11 +148,47 @@ def fetch(target: Path, source: Path | None = None, *, online: bool | None = Non
             os.replace(part, dest)
             how.append(model.name)
         except Exception as exc:  # noqa: BLE001 - report each file and carry on
-            say(f"  could not get {model.name}: {type(exc).__name__}: {exc}")
+            reason = plain_reason(exc)
+            tried = f", tried {tries} times" if online and tries > 1 and _retry(exc) else ""
+            if log is None:  # (run on its own: a developer, who reads the error too)
+                say(f"  Couldn't get {model.name}: {reason}{tried} ({type(exc).__name__}: {exc}).")
+            else:
+                say(f"  Couldn't get {model.name}: {reason}{tried}.")
+                log(f"  ({model.name}: {type(exc).__name__}: {exc})")
             result.failed.append(model.name)
+            result.reasons.append(reason)
         finally:
             part.unlink(missing_ok=True)
     return result
+
+
+def setup(*, online: bool, table_finder: bool, first: bool, say: Callable[[str], None],
+          log: Callable[[str], None] | None = None) -> Result:  # fmt: skip
+    """The launcher's step (scripts/launch.py, ensure_models): the PP-OCRv5 models into RapidOCR's folder, copied from
+    the offline bundle's models/ folder, or downloaded when ``online``; with ``table_finder``, the table finder's
+    model too (online only, into the data folder's models/ folder). A first setup tries each download 3 times with a
+    minute's patience; a later start (trying again after a failed one) twice, more briefly."""
+    waits, timeout = (RETRY_WAITS, TIMEOUT) if first else (RETRY_WAITS[:1], 20.0)
+    result = Result()
+    target = offline.model_dir()
+    if target is not None:
+        source = BUNDLE_MODELS if BUNDLE_MODELS.is_dir() else None
+        result.add(fetch(target, source, online=online, say=say, log=log, waits=waits, timeout=timeout))
+    if table_finder and online and offline.table_finder_path() is None:
+        folder = offline.table_finder_dirs()[-1]  # the data folder's (a models/ folder in the code is a bundle's)
+        result.add(fetch(folder, None, online=True, say=say, log=log, waits=waits, timeout=timeout,
+                         models=(offline.table_finder_file(),)))  # fmt: skip
+    return result
+
+
+def came_with_package(name: str) -> bool:
+    """The model file ``name`` is part of RapidOCR's own package (its angle classifier is): nothing to download."""
+    import importlib.metadata
+
+    try:
+        return any(Path(str(f)).name == name for f in importlib.metadata.files("rapidocr") or [])
+    except importlib.metadata.PackageNotFoundError:
+        return False
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -135,7 +226,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     print(f"OCR models: {len(result.failed)} missing ({', '.join(result.failed)}).")
     if online:
-        print("Scans are still read, by one OCR engine. Run this again when the download works.")
+        print("Scans are still read, by one OCR engine. Run python scripts/fetch_models.py again when the download "
+              "works.")  # fmt: skip
     else:
         where = f"{source} does not have them intact" if source else f"there is no {BUNDLE_MODELS} folder"
         print(f"This is an offline build: the OCR models come only from the offline bundle, and {where}.")

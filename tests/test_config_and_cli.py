@@ -166,13 +166,13 @@ def test_cli_labels_with_nothing_processed_writes_nothing(tmp_path, capsys):
 
 
 def test_doctor_python_range_matches_the_launcher():
-    from ap_coder.ops.doctor import FAIL, PASS, WARN, _python_check
+    from ap_coder.ops.doctor import FAIL, PASS, _python_check
 
     assert _python_check((3, 12, 1))[1] == PASS and _python_check((3, 11, 0))[1] == PASS
     assert _python_check((3, 13, 2))[1] == PASS
     # No upper bound, like the launchers: a Mac with only Python 3.14 (or newer) is fine.
     assert _python_check((3, 14, 5))[1] == PASS and _python_check((3, 15, 0))[1] == PASS
-    assert _python_check((3, 10, 4))[1] == WARN  # still tested in CI: a warning, not a failure
+    assert _python_check((3, 10, 4))[1] == FAIL  # requires-python is 3.11 (CI tests 3.11 to 3.14)
     assert _python_check((3, 9, 7))[1] == FAIL
 
 

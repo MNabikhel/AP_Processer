@@ -95,15 +95,105 @@ def bundle_manifest(folder: Path = PROJECT_DIR) -> dict:
     return found if isinstance(found, dict) else {}
 
 
-def install_identity(folder: Path = PROJECT_DIR) -> dict:
-    """What AP Coder ``folder`` holds: its version (pyproject), its build (the offline bundle's build time, "" for a
-    checkout) and a fingerprint of its pyproject (changes whenever its packages do)."""
+# The build stamp: ``ap_coder/BUILD`` holds ``$Format:%h %cI$``, which ``git archive`` fills in with the commit and its
+# time (``export-subst`` in .gitattributes; GitHub's Download ZIP is a git archive). Every version used to be 0.2.0
+# and a ZIP carried nothing else, so a newer ZIP unzipped over an older one looked like the same AP Coder (B-542).
+BUILD_FILE = Path("ap_coder") / "BUILD"
+_STAMP = re.compile(r"^\s*([0-9a-f]{7,40})\s+(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:Z|[+-]\d\d:?\d\d)?)\s*$")
+# What the code fingerprint reads when there is neither a stamp nor git (a folder copied by hand).
+_CODE_FOLDERS = ("ap_coder", "scripts")
+
+
+def _utc(stamp: str) -> str:
+    """``2026-10-21T16:14:00-04:00`` -> ``2026-10-21T20:14:00`` (UTC, no offset: builds compare as text)."""
+    import datetime as dt
+
     try:
-        fingerprint = hashlib.sha256((folder / "pyproject.toml").read_bytes()).hexdigest()[:16]
+        moment = dt.datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    if moment.tzinfo is not None:
+        moment = moment.astimezone(dt.UTC).replace(tzinfo=None)
+    return moment.isoformat(timespec="seconds")
+
+
+def _git_build(folder: Path) -> tuple[str, str]:
+    """(short commit, its time in UTC) of a git checkout's HEAD, ("", "") when git can't tell."""
+    import subprocess
+
+    try:
+        out = subprocess.run(["git", "-C", str(folder), "log", "-1", "--format=%h %cI"], capture_output=True,  # noqa: S607
+                             text=True, timeout=10, check=False)  # fmt: skip
+    except (OSError, subprocess.SubprocessError):
+        return "", ""
+    found = _STAMP.match(out.stdout) if out.returncode == 0 else None
+    return (found.group(1), _utc(found.group(2))) if found else ("", "")
+
+
+def _code_hash(folder: Path) -> str:
+    """A short hash of the code itself (pyproject.toml and every file under ap_coder/ and scripts/, caches left out):
+    a folder with neither a build stamp nor git still changes identity whenever its code does."""
+    digest = hashlib.sha256()
+    files = [folder / "pyproject.toml"]
+    for top in _CODE_FOLDERS:
+        base = folder / top
+        if base.is_dir():
+            files += [p for p in base.rglob("*") if "__pycache__" not in p.parts and p.suffix not in (".pyc", ".pyo")]
+    found = False
+    for path in sorted(files):
+        try:
+            if path.is_file() and path.relative_to(folder) != BUILD_FILE:
+                digest.update(path.relative_to(folder).as_posix().encode() + b"\0" + path.read_bytes())
+                found = True
+        except OSError:
+            continue
+    return digest.hexdigest()[:7] if found else ""
+
+
+def build_stamp(folder: Path = PROJECT_DIR) -> dict:
+    """Which build of AP Coder ``folder`` holds: {"commit", "time" (UTC, "" when unknown), "source"}. The source is
+    ``stamp`` (ap_coder/BUILD, filled in by GitHub's Download ZIP or git archive, or by the offline bundle builder),
+    ``git`` (a checkout: its HEAD), ``code`` (neither: a hash of the code files, no time) or "" (no code at all)."""
+    try:
+        text = (folder / BUILD_FILE).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        text = ""
+    found = _STAMP.match(text)
+    if found:
+        return {"commit": found.group(1), "time": _utc(found.group(2)), "source": "stamp"}
+    if (folder / ".git").exists():
+        commit, when = _git_build(folder)
+        if commit:
+            return {"commit": commit, "time": when, "source": "git"}
+    code = _code_hash(folder)
+    return {"commit": code, "time": "", "source": "code" if code else ""}
+
+
+def install_identity(folder: Path = PROJECT_DIR) -> dict:
+    """What AP Coder ``folder`` holds: its version (pyproject), its build (when it was built: the offline bundle's build
+    time, else the time of the commit GitHub's ZIP was made from; "" for a checkout, which is never older), its commit
+    (said to people: from the build stamp or git only), ``code`` (:func:`build_stamp`'s commit, or the hash of the code
+    when there is no commit: what a running dashboard is compared with) and a fingerprint of its pyproject and code
+    (changes whenever its code or packages do)."""
+    stamp = build_stamp(folder)
+    try:
+        fingerprint = hashlib.sha256((folder / "pyproject.toml").read_bytes() + stamp["commit"].encode()).hexdigest()
     except OSError:
         fingerprint = ""
-    built = str(bundle_manifest(folder).get("built") or "")
-    return {"folder": str(folder), "version": project_version(folder), "build": built, "fingerprint": fingerprint}
+    built = str(bundle_manifest(folder).get("built") or "") or (stamp["time"] if stamp["source"] == "stamp" else "")
+    commit = stamp["commit"] if stamp["source"] in ("stamp", "git") else ""
+    return {"folder": str(folder), "version": project_version(folder), "build": built, "commit": commit,
+            "commit_time": stamp["time"], "code": stamp["commit"], "fingerprint": fingerprint[:16]}  # fmt: skip
+
+
+def build_label(identity: dict) -> str:
+    """``build 3dacb6f, 2026-10-21 20:14``: the build as Settings → About, the doctor and the launcher say it ("" when
+    nothing is known). A checkout's time is its last commit's."""
+    commit = str(identity.get("commit") or "")
+    built = str(identity.get("build") or identity.get("commit_time") or "")[:16].replace("T", " ")
+    if commit:
+        return f"build {commit}, {built}" if built else f"build {commit}"
+    return f"built {built}" if built else ""
 
 
 def version_key(version: str) -> tuple[int, ...]:
@@ -122,10 +212,13 @@ def is_older(this: dict, other: dict) -> bool:
 
 
 def describe(identity: dict, exact: bool = False) -> str:
-    """``0.2.0 (2026-10-11)``: the version and the day it was built (when known); ``exact``: and the time."""
+    """``0.3.0 (build 3dacb6f, 2026-10-21)``: the version, its build and the day it was built (each when known);
+    ``exact``: and the time."""
     version = identity.get("version") or "an earlier version"
     built = str(identity.get("build") or "")[: 16 if exact else 10].replace("T", " ")
-    return f"{version} ({built})" if built else version
+    commit = str(identity.get("commit") or "")
+    inside = ", ".join(part for part in (f"build {commit}" if commit else "", built) if part)
+    return f"{version} ({inside})" if inside else version
 
 
 def installs() -> list[dict]:
@@ -145,7 +238,7 @@ def record_install(identity: dict, current: bool = True) -> dict | None:
     """Record ``identity``'s folder as an install (started now), and as the current one. Returns the install that was
     current before, when it was another folder (None otherwise)."""
     before = current_install()
-    entry = {key: identity.get(key, "") for key in ("folder", "version", "build")}
+    entry = {key: identity.get(key, "") for key in ("folder", "version", "build", "commit")}
     entry["last_run"] = time.strftime("%Y-%m-%d %H:%M")
     entries = [e for e in installs() if not same_folder(e["folder"], entry["folder"])] + [entry]
     values: dict = {"installs": entries}
