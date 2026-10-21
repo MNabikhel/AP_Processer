@@ -8,7 +8,8 @@ Three sources, none counted twice:
   waiting for a second approval, or approved but not exported, by GL account (net of recoverable tax); a copy
   flagged as a duplicate of a bill already exported or counted, or as already in the ERP, is left out. One no
   person has approved yet is "proposed", on the accounts it was given (a guessed account counts as none, B-466);
-  one dated more than a year before the period end is not accrued but listed to check (``old_dated``)
+  one dated more than a year before the period end is accrued and flagged to check (a date read wrong, or a bill
+  long overdue: AP decides), one with no date is not accrued but listed (``undated``)
 * Expected recurring invoices: regular vendors whose next invoice was due by the period end and has not
   arrived, at their usual amount, on the GL account most used for them (an estimate)
 """
@@ -31,7 +32,8 @@ from .exports import distribution
 
 RECEIVED, NOT_IN_ERP, RECURRING = "Received, not invoiced", "Invoice not in the ERP yet", "Expected recurring invoice"
 SOURCES = (RECEIVED, NOT_IN_ERP, RECURRING)
-OLD_DAYS = 365  # an invoice dated more than this before the period end is not accrued: a misread date, or long overdue
+OLD_DAYS = 365  # an invoice dated more than this before the period end is flagged: a misread date, or long overdue
+OLD_NOTE = "dated over a year ago: check"
 # Not approved by anyone yet: its coding is what AP Coder proposed, not what a person confirmed.
 PROPOSED = "proposed: not approved yet"
 
@@ -47,6 +49,7 @@ class Accrual:
     amount: float
     currency: str = "CAD"
     note: str = ""
+    old: bool = False  # dated more than OLD_DAYS before the period end: accrued, flagged for AP to check
 
 
 def _received_not_invoiced(store: Store, period_end: dt.date) -> list[Accrual]:
@@ -99,29 +102,32 @@ def _flags(validation: object) -> set[str]:
     return {str(i.get("code")) for i in issues or [] if isinstance(i, dict)}
 
 
-def _unguessed(doc: dict) -> dict:
-    """``doc`` with every guessed account (``offline_coder.guessed``: no approval behind it) taken out: an invoice no
-    person has approved accrues only on accounts it was really given, never on a guess (B-466)."""
+def _unguessed(doc: dict, ai: dict) -> dict:
+    """``doc`` with every guessed account taken out: an account the AI only guessed (``offline_coder.guessed``, the
+    line as read in ``ai``) and still the one in ``doc``. An invoice no person has approved accrues only on accounts
+    it was really given, never on a guess (B-466); an account the reviewer picked over a guess is theirs."""
     from ..ai.offline_coder import guessed
+    from ..core.memory import pair_lines
     from ..core.reference_data import UNASSIGNED
 
     lines = doc.get("line_items") or []
-    if not any(guessed(li.get("reasoning_justification")) for li in lines):
+    guesses = {id(after) for before, after in pair_lines((ai or {}).get("line_items") or [], lines)
+               if before and after and guessed(before.get("reasoning_justification"))
+               and after.get("predicted_gl_code") == before.get("predicted_gl_code")}  # fmt: skip
+    if not guesses:
         return doc
-    lines = [{**li, "predicted_gl_code": UNASSIGNED} if guessed(li.get("reasoning_justification")) else li
-             for li in lines]  # fmt: skip
+    lines = [{**li, "predicted_gl_code": UNASSIGNED} if id(li) in guesses else li for li in lines]
     return {k: v for k, v in doc.items() if k != "gl_distribution"} | {"line_items": lines}
 
 
-def old_dated(store: Store, period_end: dt.date) -> list[Accrual]:
-    """Invoices not in the ERP yet dated more than ``OLD_DAYS`` before the period end: not accrued (a date read wrong,
-    or a bill long overdue), listed for a person to check (B-466)."""
-    old: list[Accrual] = []
-    _not_in_erp(store, period_end, old)
-    return old
+def undated(store: Store, period_end: dt.date) -> list[Accrual]:
+    """Invoices not in the ERP yet with no invoice date: not accrued until they have one, listed (B-474)."""
+    out: list[Accrual] = []
+    _not_in_erp(store, period_end, out)
+    return out
 
 
-def _not_in_erp(store: Store, period_end: dt.date, old: list[Accrual] | None = None) -> list[Accrual]:
+def _not_in_erp(store: Store, period_end: dt.date, no_date: list[Accrual] | None = None) -> list[Accrual]:
     end = period_end.isoformat()
     oldest = (period_end - dt.timedelta(days=OLD_DAYS)).isoformat()
     rows = store.invoice_columns(("id", "status", "ai_output", "final_output", "validation"))
@@ -135,7 +141,15 @@ def _not_in_erp(store: Store, period_end: dt.date, old: list[Accrual] | None = N
         if r["status"] not in (REVIEW, PARKED, PENDING, APPROVED) or r["id"] in exported:
             continue
         doc = r["final_output"] or r["ai_output"] or {}
-        if not doc or str(doc.get("invoice_date") or "") > end:
+        date = str(doc.get("invoice_date") or "").strip() if doc else ""
+        if doc and not date:  # no date: when it was incurred is not known (B-474)
+            if no_date is not None:
+                no_date.append(Accrual(NOT_IN_ERP, doc.get("vendor_name") or "",
+                                       f"Invoice {doc.get('invoice_number') or ''} (#{r['id']})", "no invoice date",
+                                       "", "", round(float(doc.get("grand_total") or 0), 2), doc.get("currency") or "",
+                                       "no invoice date: can't be accrued until it has one"))  # fmt: skip
+            continue
+        if not doc or date > end:
             continue
         flags, bill = _flags(r["validation"]), _bill(doc)
         if "DUPLICATE_IN_ERP" in flags or ("DUPLICATE_INVOICE" in flags and bill in counted):
@@ -143,15 +157,8 @@ def _not_in_erp(store: Store, period_end: dt.date, old: list[Accrual] | None = N
         counted.add(bill)
         proposed = r["status"] in (REVIEW, PARKED)  # no person has approved it: its coding is a proposal
         if proposed:
-            doc = _unguessed(doc)
-        if str(doc.get("invoice_date") or "") < oldest:
-            if old is not None:
-                old.append(Accrual(NOT_IN_ERP, doc.get("vendor_name") or "",
-                                   f"Invoice {doc.get('invoice_number') or ''} (#{r['id']})",
-                                   f"invoice dated {doc.get('invoice_date')}", "", "",
-                                   round(float(doc.get("grand_total") or 0), 2), doc.get("currency") or "",
-                                   "dated more than a year before the period end: not accrued"))  # fmt: skip
-            continue
+            doc = _unguessed(doc, r["ai_output"] or {})
+        old = date < oldest  # accrued, flagged: AP decides (B-474)
         by_gl: dict[tuple[str, str], float] = defaultdict(float)
         for e in distribution(doc, treatments):  # an invoice coded by an older version: built again
             if e.get("kind") == "expense" or e.get("non_recoverable_tax"):  # a cost; recoverable tax is not
@@ -169,7 +176,8 @@ def _not_in_erp(store: Store, period_end: dt.date, old: list[Accrual] | None = N
                     cc,
                     round(amount, 2),
                     doc.get("currency") or "",
-                    state[r["status"]],
+                    state[r["status"]] + (f"; {OLD_NOTE}" if old else ""),
+                    old,
                 )  # fmt: skip
             )
     return out

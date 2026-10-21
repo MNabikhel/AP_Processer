@@ -76,8 +76,8 @@
       {{ live_ui.head("Line items", "Change a GL account or cost center in its cell; add or delete lines below the grid.") }}
       <div class="table-wrap">
         <table class="apc-table inv-grid-table inv-lines-grid" id="lines">
-          <thead><tr><th>#</th><th>Description</th><th class="r">Amount</th><th>GL account</th>{% if grid.has_cc %}<th>Cost center</th>{% endif %}
-            <th>Taxes</th><th class="r">Qty</th><th class="r">Unit price</th><th><span class="rvw-sr">Delete</span></th></tr></thead>
+          <thead><tr><th>#</th><th>Description</th><th><span class="rvw-sr">Delete</span></th><th>GL account</th>{% if grid.has_cc %}<th>Cost center</th>{% endif %}
+            <th class="r">Amount</th><th>Taxes</th><th class="r">Qty</th><th class="r">Unit price</th></tr></thead>
           <tbody data-grid="lines">{{ grids.line_rows(grid) }}</tbody>
         </table>
       </div>

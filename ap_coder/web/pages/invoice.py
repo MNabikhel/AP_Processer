@@ -36,7 +36,7 @@ from ap_coder.capture.confidence import LABELS
 from ap_coder.capture.workflow import learn_from_approval, on_reopen, taught_message
 from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCE_NAMES
 from ap_coder.core import ui
-from ap_coder.core.memory import ACCEPTED, vendor_key
+from ap_coder.core.memory import ACCEPTED, CODED, CORRECTED, vendor_key
 from ap_coder.core.reference_data import ReferenceData
 from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store
 from ap_coder.erp import stamp
@@ -369,9 +369,9 @@ def _render_live(live: dict[str, Any], invoice_id: int) -> dict[str, str]:
     return {name: str(getattr(mod, name)(live, invoice_id)) for name in names}
 
 
-def _render_lines(reference: ReferenceData, draft: view.Draft) -> str:
+def _render_lines(reference: ReferenceData, draft: view.Draft, ai: dict[str, Any] | None = None) -> str:
     mod = templates.env.get_template("_invoice_lines.html").module
-    return str(mod.line_rows(view.grid(reference, draft)))
+    return str(mod.line_rows(view.grid(reference, draft, ai)))
 
 
 async def _posted(request: Request, inv: dict[str, Any]) -> tuple[Any, view.Draft]:
@@ -429,7 +429,8 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         context["lm_off"], context["banner"] = LM_STUDIO_OFF, ""
     return render(
         request, "invoice.html", "review", mode="review", **context,
-        draft=draft, kept=kept, live=analysis.live, grid=view.grid(reference, draft), sure=sure,
+        draft=draft, kept=kept, live=analysis.live, sure=sure,
+        grid=view.grid(reference, draft, inv.get("ai_output") or {}),
         labels=view.FIELD_LABELS, provinces=view.province_options(),
         due_placeholder=f"{computed.isoformat()} (from terms)" if computed else "YYYY-MM-DD",
         sent_back=_sent_back(store, invoice_id), poll_seconds=PAGE_READER_POLL_SECONDS,
@@ -634,11 +635,30 @@ async def approve(request: Request, invoice_id: int) -> JSONResponse:
                                       "approver.", "info", icon="how_to_reg"))  # fmt: skip
     total = sum(counts.values())
     taught = taught_message(store, learned)
-    lines = f"{counts[ACCEPTED]} of {ui.plural(total, 'line')} coded as suggested."
+    # A line whose account the AI only guessed is the reviewer's coding: not "as suggested", not corrected (B-475)
+    coded = counts.get(CODED, 0)
+    measured = counts[ACCEPTED] + counts[CORRECTED]
+    yours = f"{coded} you coded" if coded else ""
+    lines = (
+        (f"{counts[ACCEPTED]} of {ui.plural(measured, 'line')} coded as suggested" + (f", {yours}." if yours else "."))
+        if measured
+        else f"{ui.plural(coded, 'line')} you coded."
+    )
+    learned_from = (
+        f"Learned from {ui.plural(total, 'line')}: "
+        + ", ".join(
+            p
+            for p in (
+                f"{counts[ACCEPTED]} confirmed" if measured else "",
+                f"{counts[CORRECTED]} corrected" if measured else "",
+                yours,
+            )
+            if p
+        )
+        + "."
+    )
     messages.append(flash_message(
-        ("" if waits else f"Approved {vendor}. ")
-        + (f"{taught} {lines}" if taught else f"Learned from {ui.plural(total, 'line')}: "
-           f"{counts[ACCEPTED]} confirmed, {total - counts[ACCEPTED]} corrected."),
+        ("" if waits else f"Approved {vendor}. ") + (f"{taught} {lines}" if taught else learned_from),
         "ok", icon="school"))  # fmt: skip
     if explained:
         messages.append(flash_message(f"Thanks: {ui.plural(explained, 'reason')} kept. The AI reads "
@@ -752,7 +772,8 @@ def _new_lines(request: Request, invoice_id: int, reference: ReferenceData, draf
     """The grid with its new rows, kept as the draft; the page draws them and checks again."""
     draft.lines = lines
     _keep_draft(request, invoice_id, draft, True)
-    return message(text, "ok", lines=_render_lines(reference, draft), icon=icon)
+    ai = (get_store(request).get_invoice(invoice_id) or {}).get("ai_output") or {}
+    return message(text, "ok", lines=_render_lines(reference, draft, ai), icon=icon)
 
 
 @router.post("/review/{invoice_id:int}/split")

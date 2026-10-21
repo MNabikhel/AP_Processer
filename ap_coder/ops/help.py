@@ -197,10 +197,11 @@ CHECKS: dict[str, CheckHelp] = {
         "Prioritise it, and tell whoever runs payments if late fees or a supplier hold are a risk.",
     ),
     "OLD_INVOICE_DATE": CheckHelp(
-        PAYMENT, "Dated more than a year ago",
-        "The invoice date is more than a year before today: the date may have been read wrong, or the bill is very "
-        "late. Month-end does not accrue it.",
-        "Check the date against the document; if it is right, ask why the bill comes so late before approving it.",
+        PAYMENT, "Dated more than a year before it came in",
+        "Information only: the invoice date is more than a year before the day AP Coder read it, so the date may have "
+        "been read wrong, or the bill is very late. It does not hold the invoice back; Month-end accrues it, flagged "
+        "“Check date”. Not raised for a credit note.",
+        "Check the date against the document; if it is right, ask why the bill comes so late.",
     ),
     "DUE_BEFORE_INVOICE": CheckHelp(
         PAYMENT, "Due before it was issued",

@@ -322,6 +322,14 @@ export class InvoiceViewer {
     }).observe(this.root);
     new ResizeObserver(() => this.layoutTags()).observe(this.sheet);
     window.addEventListener("resize", () => this.applyHeight());
+    if (this.root.closest(".inv-doc")) {  // the review screen: the card rises to its sticky place as the page scrolls
+      let queued = false;
+      window.addEventListener("scroll", () => {
+        if (queued) return;
+        queued = true;
+        requestAnimationFrame(() => { queued = false; this.applyHeight(); });
+      }, { passive: true });
+    }
   }
 
   /* ----- New arguments from Python ----- */
@@ -389,7 +397,18 @@ export class InvoiceViewer {
       return;
     }
     const vh = window.innerHeight;
-    const height = vh ? Math.min(this.maxHeight, Math.max(MIN_FIT_HEIGHT, vh - VIEWPORT_MARGIN)) : this.maxHeight;
+    // On the review screen the Document card sticks 8 px from the top over a bar fixed at the window's foot: the
+    // viewer ends above that bar wherever the card is (it grows as the card rises to its sticky place, B-478), so
+    // the whole page view shows. Elsewhere a fixed margin.
+    const bar = document.querySelector(".inv-actionbar");
+    const card = this.root.closest(".inv-doc");
+    let margin = VIEWPORT_MARGIN;
+    if (bar && card) {
+      const top = this.root.getBoundingClientRect().top;
+      const stuck = 8 + (top - card.getBoundingClientRect().top);
+      margin = bar.offsetHeight + Math.max(top, stuck) + 10;
+    }
+    const height = vh ? Math.min(this.maxHeight, Math.max(MIN_FIT_HEIGHT, vh - margin)) : this.maxHeight;
     this.root.style.height = `${height}px`;
   }
 

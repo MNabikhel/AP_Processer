@@ -74,7 +74,12 @@ FEED = 4  # recent lessons beside the chart
 VENDORS_SHOWN = 12
 MEMORY_READ = 2000  # lessons the memory list works on (newest first)
 MEMORY_SHOWN = 300
-OUTCOMES = {"accepted": "✓ confirmed", "corrected": "✎ corrected", "history": "⟲ ERP history"}
+OUTCOMES = {
+    "accepted": "✓ confirmed",
+    "corrected": "✎ corrected",
+    "coded": "✎ coded by AP (the AI only guessed)",
+    "history": "⟲ ERP history",
+}
 
 
 # --- Small helpers --------------------------------------------------------------------------------------------------

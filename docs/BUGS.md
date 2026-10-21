@@ -4942,7 +4942,7 @@ PDFs imported into a scratch data folder with the sample GL accounts and screens
 - **Fix:** an invoice in review or parked is accrued as "proposed: not approved yet" (a "Proposed" tag on screen,
   the note in the CSV), on the accounts it was really given (a guessed account counts as none: "Needs an account");
   the by-account table has one row per account and a column per currency; an invoice dated more than a year before
-  the period end is not accrued but listed ("Not accrued: dated more than a year before …", `accruals.old_dated`);
+  the period end was left out and listed (since B-474: accrued, flagged "Check date");
   the empty state says what is true (nothing imported yet, or everything dated by then exported).
 - **Test:** `tests/test_trust_review.py::test_month_end_accrues_an_unapproved_invoice_as_proposed_and_never_on_a_guess`,
   `::test_month_end_lists_an_invoice_dated_over_a_year_back_instead_of_accruing_it`,
@@ -5026,7 +5026,7 @@ PDFs imported into a scratch data folder with the sample GL accounts and screens
 - **Reproduced:** yes
 - **Fix:** past 60 days, "Overdue since Dec 2012" (queue, review screen, the overdue note); a new warning,
   OLD_INVOICE_DATE ("dated 2017-10-05, more than a year ago: check the date on the page"), in "Check before
-  approving", with its Help entry; Month-end lists such invoices instead of accruing them (B-466).
+  approving", with its Help entry; Month-end flags such invoices (B-466, B-474). Since B-476 it is information only.
 - **Test:** `tests/test_trust_review.py::test_a_long_overdue_bill_says_since_when_and_an_old_invoice_date_is_flagged`
 - **Lesson:** A number nobody can picture ("5042 days") is a sign the value itself needs a check.
 
@@ -5081,6 +5081,90 @@ PDFs imported into a scratch data folder with the sample GL accounts and screens
 - **Test:** `tests/test_trust_review.py::test_the_approve_bar_says_lines_to_code_coded_by_you_or_kept_as_suggested`;
   `tests/test_dashboard_sweep_fixes.py`, `tests/test_web_invoice.py` (the bar's words)
 - **Lesson:** A default phrase ("all as suggested") must be earned by the data, not reached by falling through.
+
+#### B-474 · Month-end listed an invoice with no date as "invoice dated None", and left old ones out silently · medium
+- **Where:** `ap_coder/erp/accruals.py` (`_not_in_erp`, `undated`), `ap_coder/web/pages/month_end.py`,
+  `ap_coder/web/templates/month_end.html`
+- **Symptom:** found by the review of this branch. An invoice with no date went to B-466's "dated more than a year
+  before" list as "invoice dated None"; and an invoice dated more than a year back was left out of the accruals and
+  the CSV, though AP may well need to accrue it.
+- **Cause:** a missing date compared as "" (before every date); B-466 chose to exclude old invoices.
+- **Reproduce:** the review's `check2.py` (dates "", None, this month, last year).
+- **Reproduced:** yes
+- **Fix:** an invoice with no date is listed apart, "No invoice date: can't be accrued until it has one"; one dated
+  more than a year before the period end is accrued, flagged "Check date" on screen and "dated over a year ago:
+  check" in the CSV, with how many and how much at the top of the page: AP decides.
+- **Test:** `tests/test_trust_review.py::test_month_end_flags_an_invoice_dated_over_a_year_back_and_lists_one_with_no_date`
+- **Lesson:** Test a date check with no date at all.
+
+#### B-475 · A coding rule over a guess, or the reviewer's own account, still read as the model's guess · high
+- **Where:** `ap_coder/coding/rules.py` (`apply`), `ap_coder/core/store.py` (`approve_invoice`, `line_guessed`,
+  `metrics`), `ap_coder/web/invoice_view.py` (`grid`, `learn_text`), `ap_coder/ai/lessons.py` (`outcomes`),
+  `ap_coder/core/audit.py`, `ap_coder/web/pages/invoice.py` (the approval message), `ap_coder/web/templates/learning.html`
+- **Symptom:** found by the review of this branch. A fixed coding rule applied after the chat model kept the model's
+  reasoning: the line was marked a guess, the bar said "1 guessed account to check", and the approval recorded the
+  model's guess as the AI's proposal, corrected (6010 → 6000). The same after "Use PO coding". An account the
+  reviewer picked was marked a guess again whenever the server drew the grid (the hidden reasoning is the model's;
+  only the page's script took the mark away). A kept guess counted as corrected (D-51 at first), a changed guess was a
+  lesson "read as 6010", and the audit trail said "all as the AI suggested".
+- **Cause:** "a guess" was read from the line's reasoning text, which the rule and the screen do not change.
+- **Reproduce:** the review's `rule.py`; pick another account on a guessed line, then add a line.
+- **Reproduced:** yes
+- **Fix:** a rule that codes a line says so in its reasoning ("Coded by the coding rule …") and records whether it
+  replaced a guess (`from_guess`); a row is marked only while its account is still the one the AI guessed for its line
+  (compared with the invoice as read, not by the text). What the reviewer approves on a guessed line is their own
+  coding: a new outcome, "coded", learned from but out of coding accuracy, the top corrections, the vendor accuracy and
+  the lessons; the approval says "1 you coded", the audit trail "coded by the reviewer (the AI only guessed)", the bar
+  "1 by a coding rule" for a rule's line (D-51 updated).
+- **Test:** `tests/test_trust_review.py::test_a_coding_rule_over_a_guess_is_the_rules_coding_not_a_guess_and_not_a_correction`,
+  `::test_an_account_the_reviewer_picked_over_a_guess_is_never_marked_again`,
+  `::test_the_approval_message_says_you_coded_for_a_kept_guess`,
+  `::test_a_kept_guess_is_the_reviewers_coding_not_coded_as_suggested`
+- **Lesson:** Decide a state from the values (the account the AI guessed, the account now), not from a label that
+  other steps don't update.
+
+#### B-476 · OLD_INVOICE_DATE held invoices back as a warning, and fired on credit notes · medium
+- **Where:** `ap_coder/coding/terms.py` (`payment_findings`), `ap_coder/ai/pipeline.py` (`finalise_coding`),
+  `ap_coder/web/invoice_view.py`, `ap_coder/coding/bulk.py`, `ap_coder/ops/help.py`
+- **Symptom:** found by the review of this branch. B-469's check was a warning (it lowered the confidence, kept
+  invoices from bulk approval and touchless) measured against today, so an invoice in the queue for a while became
+  "old", and a credit note (often old on purpose) was flagged.
+- **Cause:** a new check given a warning's weight.
+- **Reproduce:** an invoice dated 13 months back; a credit note of the same date.
+- **Reproduced:** yes
+- **Fix:** information only ("Good to know"), measured from the day AP Coder read the invoice (`received`, its import
+  day on the review screen and in bulk approval), not raised for a credit note; Help says so.
+- **Test:** `tests/test_trust_review.py::test_an_old_invoice_date_is_a_note_measured_from_the_day_it_came_in_and_not_for_a_credit_note`,
+  `::test_a_long_overdue_bill_says_since_when_and_an_old_invoice_date_is_flagged`
+- **Lesson:** Give a new check the weight of what it costs the person, not of what it found.
+
+#### B-477 · Bulk approval said why an invoice was left with the check's code ("VENDOR_ON_HOLD: …") · low
+- **Where:** `ap_coder/coding/bulk.py`
+- **Symptom:** found by the review of this branch: the "not approved" details read "VENDOR_BANK_CHANGED: the bank
+  account to pay into changed".
+- **Cause:** `f"{code}: {message}"`.
+- **Reproduce:** bulk-approve an invoice with a stored warning that needs a person.
+- **Reproduced:** yes
+- **Fix:** the message alone, capitalised (the check's Help title when it has none); the code stays in the problem
+  report.
+- **Test:** `tests/test_trust_review.py::test_bulk_approval_says_why_an_invoice_was_left_without_the_check_code`
+- **Lesson:** B-464 again: search for every place that prints a code.
+
+#### B-478 · The line grid's Tab order crossed its rows, the page view sat under the approve bar, amounts were cut · medium
+- **Where:** `ap_coder/web/templates/_invoice_lines.html`, `ap_coder/web/templates/invoice.html`,
+  `ap_coder/web/static/invoice.css`, `ap_coder/web/static/js/invoice_viewer.js`
+- **Symptom:** found by the review of this branch. In B-467's two-row lines Tab went description → amount → GL →
+  taxes → qty → unit price, up and down across the rows; in Fit mode at 1366 × 768 the bottom 80–170 px of the page
+  view was under the approve bar; "-199.98" was cut in its box and the GL account's name had little room.
+- **Cause:** the cells kept the old table order; the viewer's height was the window less a fixed 190 px.
+- **Reproduce:** the review's `keys.py` and `shots.py` at 1366 × 768.
+- **Reproduced:** yes
+- **Fix:** three rows a line, the cells in the order they show and Tab follows: # · description · delete; GL account
+  (wide: no cost centers in the pilot) · amount; taxes · qty · unit price. The viewer ends above the approve bar
+  wherever the Document card is (it grows as the card rises to its sticky place). On a screen 1700 px wide or more
+  the document gets three fifths of the width.
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_in_a_browser_tab_follows_the_line_grid_as_it_shows_and_the_page_view_ends_above_the_bar`
+- **Lesson:** A visual reorder in CSS needs the DOM order to match, or the keyboard tells a different story.
 
 #### Looked at and left (review screen and coding)
 

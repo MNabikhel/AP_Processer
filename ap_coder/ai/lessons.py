@@ -85,11 +85,15 @@ def outcomes(proposed: dict[str, Any], final: dict[str, Any]) -> list[dict[str, 
         out.append({"key": situation(vendor, kind, row["field"]), "vendor": vendor, "kind": kind,
                     "field": row["field"], "pattern": "", "proposed": _shown(row["ai_value"]),
                     "value": _shown(row["final_value"]), "corrected": not row["correct"]})  # fmt: skip
+    from .offline_coder import guessed
+
     seen: set[str] = set()
     for before, after in pair_lines((proposed or {}).get("line_items") or [], final.get("line_items") or []):
         pattern = line_pattern(after.get("description") or "")
         if not pattern or pattern in seen:
             continue
+        if before and guessed(before.get("reasoning_justification")):
+            continue  # the AI only guessed: keeping it confirms nothing, changing it corrects nothing (B-475)
         seen.add(pattern)
         was = str((before or {}).get("predicted_gl_code") or "")
         now = str(after.get("predicted_gl_code") or "")

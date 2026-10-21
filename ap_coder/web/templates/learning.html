@@ -83,6 +83,8 @@
           {% if r.outcome == "corrected" %}
           <b>{{ r.reviewer }}</b> corrected <b>{{ r.short }}</b>
           {% if r.suggested_gl == unassigned %}<i>no account</i>{% elif r.suggested_gl %}<span class="apc-strike apc-mono">{{ r.suggested_gl }}</span>{% else %}<i>new line</i>{% endif %}<span class="apc-arrow">→</span><b class="apc-mono">{{ r.final_gl }}</b>
+          {% elif r.outcome == "coded" %}
+          <b>{{ r.reviewer }}</b> coded <b>{{ r.short }}</b> <span class="apc-arrow">→</span><b class="apc-mono">{{ r.final_gl }}</b> <span class="apc-muted">(the AI only guessed)</span>
           {% else %}
           <b>{{ r.reviewer }}</b> confirmed <b>{{ r.short }}</b> <span class="apc-arrow">→</span><b class="apc-mono">{{ r.final_gl }}</b>
           {% endif %}

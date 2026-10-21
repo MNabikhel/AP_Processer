@@ -516,6 +516,44 @@ def test_in_a_browser_at_1366_the_page_and_the_line_grid_show_together(browser, 
     assert errors == []
 
 
+def test_in_a_browser_tab_follows_the_line_grid_as_it_shows_and_the_page_view_ends_above_the_bar(browser, store):
+    """B-478: Tab went description → amount → GL → taxes → qty → unit price, across the two rows on screen; in Fit
+    mode the bottom 80-170 px of the page view sat under the approve bar; an amount of "-199.98" was cut off."""
+    page, errors = _review(browser, store)
+    page.click("textarea[name=line_description] >> nth=0")
+    seen = []
+    for _ in range(12):
+        box = page.evaluate(
+            "(() => { const e = document.activeElement; const r = e.closest('td').getBoundingClientRect();"
+            " return [e.name || e.getAttribute('aria-label') || e.tagName, r.top, r.left,"
+            " e.closest('tr') === document.querySelector('[data-grid=lines] tr')]; })()"
+        )
+        if not box[3]:
+            break
+        seen.append(box)
+        page.keyboard.press("Tab")
+    names = [b[0] for b in seen if b[0] != "line_cc"]  # the demo uses cost centers: beside the GL account
+    assert names[:4] == ["line_description", "Delete this line", "line_gl", "line_amount"], names
+    assert names[-2:] == ["line_quantity", "line_unit_price"], names
+    rows = [round(b[1] / 20) for b in seen]  # rows on screen, then left to right in each
+    assert all(
+        a < b or (a == b and seen[i][2] <= seen[i + 1][2]) for i, (a, b) in enumerate(zip(rows, rows[1:], strict=False))
+    )
+    for scroll in (0, 400, 1200):  # at the top, rising, stuck: the page view always ends above the bar
+        page.evaluate(f"window.scrollTo(0, {scroll})")
+        page.wait_for_timeout(250)
+        viewer = page.locator("#iv").bounding_box()
+        bar = page.locator(".inv-actionbar").bounding_box()["y"]
+        assert viewer["y"] + viewer["height"] <= bar + 1, (scroll, viewer, bar)
+    assert viewer["height"] >= 520, viewer  # stuck: taller
+    amount = page.locator("[name=line_amount] >> nth=0")
+    amount.fill("-199998.98")
+    assert page.evaluate("(e) => e.scrollWidth <= e.clientWidth", amount.element_handle())
+    gl = page.locator("[name=line_gl] >> nth=0").bounding_box()
+    assert gl["width"] >= 220, gl  # room for the account's name (the demo has cost centers beside it)
+    assert errors == []
+
+
 # --- Third round: the review's findings -------------------------------------------------------------------------
 
 TEXT_INVOICE = (

@@ -37,7 +37,7 @@ from ..coding.tax import DEFAULT_TREATMENTS, TAX_TYPES, TREATMENTS, TaxRateTable
 from ..coding.terms import DEFAULT_TERMS_DAYS, payment
 from ..coding.vendors import norm_invoice_number
 from .audit import diff_coding
-from .memory import ACCEPTED, CORRECTED, VENDOR_KEY_RULES, pair_lines, refresh_vendor_key, vendor_key
+from .memory import ACCEPTED, CODED, CORRECTED, VENDOR_KEY_RULES, pair_lines, refresh_vendor_key, vendor_key
 from .paths import PROJECT_DIR, default_db_path, find_moved_file, private_dir  # noqa: F401  (re-exported)
 from .reference_data import UNASSIGNED, ReferenceData, ReferenceTable, parse_policy_notes
 
@@ -282,6 +282,17 @@ def suggestion_kept(s_gl: str | None, s_cc: str | None, f_gl: str, f_cc: str | N
     if s_gl is None or (gl_blank and cc_blank):
         return False
     return (gl_blank or s_gl == f_gl) and (cc_blank or s_cc == (f_cc or ""))
+
+
+def line_guessed(suggestion: dict[str, Any] | None, rule: dict[str, Any] | None = None) -> bool:
+    """Whether the AI only guessed this line's account (``offline_coder.guessed``: the chat model's own pick, an
+    older version's weak match), also under a fixed coding rule that replaced the guess (``rule``: its entry in the
+    invoice's ``rules_applied``, which says ``from_guess``)."""
+    from ..ai.offline_coder import guessed
+
+    if rule is not None and "from_guess" in rule:
+        return bool(rule["from_guess"])
+    return bool(suggestion) and guessed((suggestion or {}).get("reasoning_justification"))
 
 
 def proposed_coding(suggestion: dict[str, Any] | None) -> tuple[str | None, str | None]:
@@ -1477,7 +1488,7 @@ class Store:
         vendor_name = final_output.get("vendor_name", "")
         key = vendor_key(vendor_name)
         now = _now()
-        counts = {ACCEPTED: 0, CORRECTED: 0}
+        counts = {ACCEPTED: 0, CORRECTED: 0, CODED: 0}
         reviewer_changed = 0
         # Lines a fixed coding rule set: the AI's own answer is what its accuracy is measured on.
         by_rule = {c["line_number"]: c for c in (inv.get("meta") or {}).get("rules_applied") or []}
@@ -1486,18 +1497,21 @@ class Store:
         kept = suggestion_kept
 
         for suggestion, li in pair_lines(ai.get("line_items", []), final_output.get("line_items", [])):
-            s_gl, s_cc = proposed_coding(suggestion)  # a guess (no approval behind it) counts as blank
+            s_gl = suggestion.get("predicted_gl_code") if suggestion else None
+            s_cc = suggestion.get("predicted_cost_center", "") if suggestion else None
             f_gl, f_cc = li["predicted_gl_code"], li.get("predicted_cost_center", "")
             if f_gl == UNASSIGNED:
                 continue  # not a coding decision: nothing to learn from it
             rule = by_rule.get(suggestion.get("line_number")) if suggestion else None
+            guess = line_guessed(suggestion, rule)
             kept_rule = rule is not None and rule.get("gl_to") == f_gl and (rule.get("cc_to") or "") == (f_cc or "")
-            if not kept_rule and not kept(s_gl, s_cc, f_gl, f_cc):
-                reviewer_changed += 1
+            if not guess and not kept_rule and not kept(s_gl, s_cc, f_gl, f_cc):
+                reviewer_changed += 1  # a guess was no proposal: picking another account changes nothing proposed
             if rule is not None:  # the AI's own answer, as first recorded (not a rule's)
                 s_gl, s_cc = rule.get("gl_from"), rule.get("cc_from", "")
-            # Accuracy measures what the AI proposed: the blanks it left are not counted against it.
-            outcome = ACCEPTED if kept(s_gl, s_cc, f_gl, f_cc) else CORRECTED
+            # Accuracy measures what the AI proposed: the blanks it left are not counted against it. A line whose
+            # account it only guessed is the reviewer's own coding: neither confirmed nor corrected (B-475).
+            outcome = CODED if guess else ACCEPTED if kept(s_gl, s_cc, f_gl, f_cc) else CORRECTED
             counts[outcome] += 1
             feedback_rows.append(
                 (
@@ -1555,6 +1569,7 @@ class Store:
                 feedback_rows = []  # nobody checked it: nothing to learn from, nothing to measure accuracy on
             self._log(conn, "approved", invoice_id, reviewer, {
                 "lines": len(final_output.get("line_items", [])), "corrected": counts[CORRECTED],
+                **({"coded": counts[CODED]} if counts[CODED] else {}),
                 "total": final_output.get("grand_total"), "changes": diff_coding(ai, final_output),
                 **({"bulk": True} if bulk else {}),
                 **({"needs_second": True, "second_reason": second_reason} if needs_second else {}),
@@ -3336,7 +3351,7 @@ class Store:
             lessons = {
                 r["vendor_key"]: dict(r)
                 for r in conn.execute(
-                    """SELECT vendor_key, COUNT(*) lessons, SUM(outcome != 'history') lines,
+                    """SELECT vendor_key, COUNT(*) lessons, SUM(outcome NOT IN ('history', 'coded')) lines,
                               SUM(outcome = 'accepted') accepted FROM feedback GROUP BY vendor_key"""
                 )
             }
@@ -3729,17 +3744,17 @@ class Store:
         with self._conn() as conn:
             # Imported ERP history is memory, not a reviewer decision: it never counts towards accuracy.
             lines = conn.execute(
-                "SELECT outcome, COUNT(*) n FROM feedback WHERE outcome != 'history' GROUP BY outcome"
+                "SELECT outcome, COUNT(*) n FROM feedback WHERE outcome NOT IN ('history', 'coded') GROUP BY outcome"
             ).fetchall()
             daily = conn.execute(
                 """SELECT substr(created_at, 1, 10) day,
                           SUM(outcome = 'accepted') accepted, SUM(outcome = 'corrected') corrected
-                   FROM feedback WHERE outcome != 'history' GROUP BY day"""
+                   FROM feedback WHERE outcome NOT IN ('history', 'coded') GROUP BY day"""
             ).fetchall()
             by_vendor = conn.execute(
                 """SELECT vendor_name, COUNT(*) lines, SUM(outcome = 'accepted') accepted,
                           SUM(outcome = 'corrected') corrected, MAX(created_at) last_seen
-                   FROM feedback WHERE outcome != 'history' GROUP BY vendor_key ORDER BY lines DESC"""
+                   FROM feedback WHERE outcome NOT IN ('history', 'coded') GROUP BY vendor_key ORDER BY lines DESC"""
             ).fetchall()
             corrections = conn.execute(
                 """SELECT COALESCE(suggested_gl, '(new line)') suggested_gl, final_gl, COUNT(*) n

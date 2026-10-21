@@ -426,17 +426,31 @@ def tax_province_options() -> list[tuple[str, str]]:
     return [(p, province_label(p) if p == OUTSIDE_CANADA else (p or NO_PROVINCE)) for p in PROVINCE_VALUES]
 
 
-def grid(reference: ReferenceData, draft: Draft) -> dict[str, Any]:
-    """What the line and tax grids need: the rows, with a stable key each, and the choices of every cell."""
-    from ap_coder.ai.offline_coder import guessed
+def received_on(inv: dict[str, Any]) -> dt.date | None:
+    """The day the invoice came in (its ``created_at``), None when it can't be read."""
+    try:
+        return dt.date.fromisoformat(str(inv.get("created_at") or "")[:10])
+    except ValueError:
+        return None
 
+
+def grid(reference: ReferenceData, draft: Draft, ai: dict[str, Any] | None = None) -> dict[str, Any]:
+    """What the line and tax grids need: the rows, with a stable key each, and the choices of every cell. ``ai``: the
+    invoice as read: a row whose account is still the one the AI only guessed for its line is marked (B-463), not one
+    whose account the reviewer, a coding rule or the PO coding put there (B-475)."""
+    from ap_coder.core.store import line_guessed
+
+    guesses = {
+        id(row)
+        for before, row in pair_lines((ai or {}).get("line_items") or [], draft.lines)
+        if before and row and line_guessed(before) and row.get("predicted_gl_code") == before.get("predicted_gl_code")
+    }
     return {  # "guessed": an account no approval backs, marked for the reviewer to check (B-463)
         "lines": [
             {
                 **row,
                 "key": f"r{i}",
-                "guessed": guessed(row.get("reasoning_justification"))
-                and row.get("predicted_gl_code") not in (None, "", UNASSIGNED),
+                "guessed": id(row) in guesses and row.get("predicted_gl_code") not in (None, "", UNASSIGNED),
             }
             for i, row in enumerate(draft.lines)
         ],
@@ -777,33 +791,42 @@ def ai_changes(coding: InvoiceCoding, ai: dict[str, Any]) -> int:
     return changed
 
 
-def learn_text(coding: InvoiceCoding, ai: dict[str, Any], cost_centers: bool = False) -> str:
-    """What approving teaches, line by line, as the approval counts it (B-473): "1 line to code" (no GL account yet,
-    or no cost center where they are used: nothing taught from it), then "Teaches from 3 lines: 1 you coded (the AI
-    proposed nothing, or only a guess, and you picked it), 1 you changed, 1 as suggested (an account proposed and
-    kept), 1 guessed account to check (the chat model's guess, still on screen: B-463)"."""
-    from ap_coder.ai.offline_coder import guessed
-    from ap_coder.core.store import proposed_coding
+def learn_text(coding: InvoiceCoding, ai: dict[str, Any], cost_centers: bool = False,
+               rules_applied: list[dict[str, Any]] | None = None) -> str:  # fmt: skip
+    """What approving teaches, line by line, as the approval counts it (B-473, B-475): "1 line to code" (no GL account
+    yet, or no cost center where they are used: nothing taught from it), then "Teaches from 3 lines: 1 you coded (the
+    AI proposed nothing, or only a guess, and you picked it), 1 you changed, 1 as suggested (an account proposed and
+    kept), 1 by a coding rule, 1 guessed account to check (the chat model's guess, still on screen: B-463)".
+    ``rules_applied``: the invoice's (its ``meta``), the lines a fixed coding rule coded when it was read."""
+    from ap_coder.core.store import line_guessed
 
-    todo = coded = changed = kept = guesses = 0
+    by_rule = {c.get("line_number"): c for c in rules_applied or []}
+    todo = coded = changed = kept = guesses = ruled = 0
     for before, li in pair_lines(ai.get("line_items", []), list(coding.line_items)):
         gl, cc = li.predicted_gl_code, li.predicted_cost_center or ""
         if gl in (UNASSIGNED, "") or (cost_centers and cc in (UNASSIGNED, "")):
             todo += 1
             continue
-        s_gl, s_cc = proposed_coding(before)
-        if before and guessed(before.get("reasoning_justification")) and gl == before.get("predicted_gl_code"):
-            guesses += 1
-        elif s_gl in (None, "", UNASSIGNED):  # nothing proposed (or only a guess, changed): the reviewer's coding
+        rule = by_rule.get(before.get("line_number")) if before else None
+        s_gl = before.get("predicted_gl_code") if before else None
+        s_cc = before.get("predicted_cost_center", "") if before else None
+        if rule is not None and rule.get("gl_to") == gl and (rule.get("cc_to") or "") == cc:
+            ruled += 1
+        elif line_guessed(before, rule):
+            if gl == s_gl:
+                guesses += 1
+            else:
+                coded += 1
+        elif s_gl in (None, "", UNASSIGNED) and (s_cc or "") in ("", UNASSIGNED):  # nothing proposed: theirs
             coded += 1
         elif suggestion_kept(s_gl, s_cc, gl, cc):
             kept += 1
         else:
             changed += 1
     parts = [f"{coded} you coded" if coded else "", f"{changed} you changed" if changed else "",
-             f"{kept} as suggested" if kept else "",
+             f"{kept} as suggested" if kept else "", f"{ruled} by a coding rule" if ruled else "",
              f"{plural(guesses, 'guessed account')} to check" if guesses else ""]  # fmt: skip
-    taught = coded + changed + kept + guesses
+    taught = coded + changed + kept + guesses + ruled
     said = [f"{plural(todo, 'line')} to code" if todo else "",
             f"Teaches from {plural(taught, 'line')}: {', '.join(p for p in parts if p)}" if taught else ""]  # fmt: skip
     return " · ".join(s for s in said if s)
@@ -1100,7 +1123,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
         invoice_fields=(meta.get("extraction") or {}).get("invoice_fields") or {},
     )
     output, report = finalise_coding(coding, reference, settings, extraction, store=store,
-                                     exclude_invoice_id=inv["id"])  # fmt: skip
+                                     exclude_invoice_id=inv["id"], received=received_on(inv))  # fmt: skip
     # The AI reviewer's findings, on what is on screen now: a field it disputed that the reviewer changed is settled.
     from ap_coder.ai import verifier
     from ap_coder.coding.validation import Issue
@@ -1169,7 +1192,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
         "posting": distribution(output, reference),
         "bar": {
             "amount": money(coding.grand_total), "currency": coding.currency, "lines": lines_n, "changed": changed,
-            "learn": learn_text(coding, ai, uses_cost_centers(reference)),
+            "learn": learn_text(coding, ai, uses_cost_centers(reference), meta.get("rules_applied")),
             "pick": pick, "errors": len(errors), "override_key": key, "override": bool(key) and draft.override == key,
             "allow": allow,
         },

@@ -4,6 +4,7 @@ the review screen and the reports say plainly what is known and what still needs
 from __future__ import annotations
 
 import datetime as dt
+import html
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -12,7 +13,7 @@ from ap_coder.ai.inference import MODEL_SUGGESTED
 from ap_coder.ai.offline_coder import WEAK_MATCH, guessed
 from ap_coder.ai.pipeline import InvoicePipeline
 from ap_coder.core.config import Settings
-from ap_coder.core.memory import ACCEPTED, CORRECTED
+from ap_coder.core.memory import ACCEPTED, CODED, CORRECTED
 from ap_coder.core.reference_data import UNASSIGNED
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import Store, load_sample_setup
@@ -90,8 +91,20 @@ def test_a_kept_guess_is_the_reviewers_coding_not_coded_as_suggested(tmp_path):
                     "reasoning_justification": "Approved 3 times for this vendor"}])  # fmt: skip
     iid = store.add_invoice(tmp_path / "a.pdf", ai, {"requires_review": True})
     counts = store.approve_invoice(iid, ai, "Pat")
-    assert counts == {ACCEPTED: 1, CORRECTED: 2}  # only the learned code was "as suggested"
-    assert store.metrics()["line_accuracy"] == round(1 / 3, 4)
+    # B-475: a kept guess is the reviewer's own coding: neither confirmed nor corrected, out of the accuracy
+    assert counts == {ACCEPTED: 1, CORRECTED: 0, CODED: 2}
+    m = store.metrics()
+    assert m["line_accuracy"] == 1.0 and m["lines_reviewed"] == 1 and m["top_corrections"] == []
+    from ap_coder.core.audit import _approved_text
+
+    (event,) = [e for e in store.events() if e["action"] == "approved"]
+    assert _approved_text(event["detail"]) == (
+        "3 line(s): 2 coded by the reviewer (the AI only guessed), the others as the AI suggested"
+    )
+    from ap_coder.ai.lessons import outcomes
+
+    changed = {**ai, "line_items": [dict(li, predicted_gl_code="6400") for li in ai["line_items"]]}
+    assert [r["proposed"] for r in outcomes(ai, changed) if r["field"] == "line_gl"] == ["6000"]  # the learned one only
 
 
 def test_the_review_screen_marks_a_guess_and_does_not_call_it_as_suggested(tmp_path):
@@ -124,17 +137,23 @@ def test_month_end_accrues_an_unapproved_invoice_as_proposed_and_never_on_a_gues
     assert "Proposed" in page and "Needs an account" in page
 
 
-def test_month_end_lists_an_invoice_dated_over_a_year_back_instead_of_accruing_it(tmp_path):
+def test_month_end_flags_an_invoice_dated_over_a_year_back_and_lists_one_with_no_date(tmp_path):
+    """B-466 left out an invoice dated more than a year back (AP decides: it is accrued, flagged), and B-474: an invoice
+    with no date was listed as "invoice dated None"."""
     store = Store(tmp_path / "ap.db")
     load_sample_setup(store)
     line = {"description": "Audit", "amount": 500.0, "predicted_gl_code": "6100", "reasoning_justification": "x"}
     store.add_invoice(tmp_path / "a.pdf", _invoice([line], invoice_date="2012-12-01"), {"requires_review": True})
+    store.add_invoice(tmp_path / "b.pdf", _invoice([line], invoice_date="", invoice_number="B-2"), {})
     end = dt.date(2026, 9, 30)
-    assert not accruals.build(store, end)
-    (old,) = accruals.old_dated(store, end)
-    assert old.amount == 500.0 and "2012-12-01" in old.description
-    page = client_for(store).get("/month-end?end=2026-09-30").text
-    assert "Not accrued: dated more than a year before" in page and "already in the ERP" not in page
+    (old,) = accruals.build(store, end)
+    assert old.old and old.amount == 500.0 and accruals.OLD_NOTE in old.note
+    assert accruals.OLD_NOTE in accruals.to_csv([old], end).decode("utf-8-sig")
+    (undated,) = accruals.undated(store, end)
+    assert "B-2" in undated.reference and "None" not in undated.description
+    page = html.unescape(client_for(store).get("/month-end?end=2026-09-30").text)
+    assert "1 invoice dated more than a year before 2026-09-30: 500.00 CAD included" in page and "Check date" in page
+    assert "No invoice date: can't be accrued until it has one" in page and "dated None" not in page
 
 
 def test_month_end_groups_an_account_in_two_currencies_on_one_row(tmp_path):
@@ -235,7 +254,7 @@ def test_a_long_overdue_bill_says_since_when_and_an_old_invoice_date_is_flagged(
     assert describe(payment(old), today) == "Overdue since Dec 2012"
     found = {code: (severity, message) for severity, code, message in payment_findings(old, today=today)}
     assert found["PAYMENT_OVERDUE"][1] == "due 2012-12-01 (overdue since Dec 2012): late fees may apply"
-    assert found["OLD_INVOICE_DATE"][0] == "warning"
+    assert found["OLD_INVOICE_DATE"][0] == "info"  # B-476: information only, it holds nothing back
     from ap_coder.web.pages.review import due_note
 
     assert due_note(old, 30) == ("Overdue since Dec 2012", "err")  # the queue's row too
@@ -314,3 +333,94 @@ def test_the_approve_bar_says_lines_to_code_coded_by_you_or_kept_as_suggested(tm
         "1 line to code · Teaches from 3 lines: 2 as suggested, 1 guessed account to check"
     )
     assert bar("6100", "6000", "6400", "6010") == "Teaches from 4 lines: 2 you coded, 1 you changed, 1 as suggested"
+
+
+# --- B-475: a rule's or the reviewer's account is no guess; a guess is out of the accuracy ----------------------------
+
+
+def test_a_coding_rule_over_a_guess_is_the_rules_coding_not_a_guess_and_not_a_correction(tmp_path):
+    """The review: a fixed coding rule that replaced the chat model's guess kept the model's reasoning: the line was
+    marked a guess, the bar said "1 guessed account to check", and the approval recorded the model's guess as the
+    AI's proposal, corrected ("6010" -> "6000")."""
+    from ap_coder.coding import rules
+    from ap_coder.web.invoice_view import learn_text
+
+    store = Store(tmp_path / "ap.db")
+    load_sample_setup(store)
+    ai = _invoice([{"description": "Copy paper", "amount": 20.0, "predicted_gl_code": "6010",
+                    "reasoning_justification": f"{MODEL_SUGGESTED}: office"}])  # fmt: skip
+    rule = rules.Rule(vendor="Acme Supply", contains="paper", gl_code="6000")
+    coded, changes = rules.apply(InvoiceCoding.model_validate(ai), [rule])
+    (line,) = coded.line_items
+    assert line.predicted_gl_code == "6000" and not guessed(line.reasoning_justification)
+    assert changes[0]["from_guess"] is True
+    out = coded.to_output()
+    iid = store.add_invoice(tmp_path / "a.pdf", out, {"requires_review": True}, meta={"rules_applied": changes})
+    assert learn_text(coded, out, rules_applied=changes) == "Teaches from 1 line: 1 by a coding rule"
+    assert store.approve_invoice(iid, out, "Pat") == {ACCEPTED: 0, CORRECTED: 0, CODED: 1}
+    assert store.metrics()["top_corrections"] == []
+
+
+def test_an_account_the_reviewer_picked_over_a_guess_is_never_marked_again(tmp_path):
+    """The review: the hidden reasoning kept the model's text, so the mark came back on the reviewer's own account
+    after the server drew the grid again (an added line, a split, a page reload)."""
+    from ap_coder.web import invoice_view
+
+    store = Store(tmp_path / "ap.db")
+    load_sample_setup(store)
+    ai = _invoice([{"description": "Copy paper", "amount": 20.0, "predicted_gl_code": "6000",
+                    "predicted_cost_center": "CC200",
+                    "reasoning_justification": f"{MODEL_SUGGESTED}: office"}])  # fmt: skip
+    draft = SimpleNamespace(lines=[dict(ai["line_items"][0])], taxes=[])
+    reference = store.reference_data()
+    assert invoice_view.grid(reference, draft, ai)["lines"][0]["guessed"]
+    draft.lines[0]["predicted_gl_code"] = "6010"  # picked by the reviewer; the hidden reasoning is still the model's
+    assert not invoice_view.grid(reference, draft, ai)["lines"][0]["guessed"]
+
+
+def test_the_approval_message_says_you_coded_for_a_kept_guess(tmp_path):
+    store = Store(tmp_path / "ap.db")
+    load_sample_setup(store)
+    ai = _invoice([{"description": "Copy paper", "amount": 20.0, "predicted_gl_code": "6000",
+                    "predicted_cost_center": "CC200",
+                    "reasoning_justification": f"{MODEL_SUGGESTED}: office"}])  # fmt: skip
+    iid = store.add_invoice(tmp_path / "a.pdf", ai, {"requires_review": True})
+    client = client_for(store)
+    from .test_web_invoice import form_of
+    from .webclient import follow, post
+
+    page = html.unescape(follow(client, post(client, f"/review/{iid}/approve", form_of(store, iid, lambda rows: rows))))
+    assert "1 line you coded." in page or "Learned from 1 line: 1 you coded." in page
+    assert "coded as suggested" not in page.replace("1 line you coded.", "")
+
+
+# --- B-476: an old invoice date is a note, not a hold -----------------------------------------------------------------
+
+
+def test_an_old_invoice_date_is_a_note_measured_from_the_day_it_came_in_and_not_for_a_credit_note():
+    from ap_coder.coding.terms import payment_findings
+
+    doc = {"invoice_date": "2025-06-01", "due_date": "2025-07-01", "grand_total": 100.0}
+    today = dt.date(2026, 10, 21)
+    codes = {c: s for s, c, _ in payment_findings(doc, today=today)}
+    assert codes["OLD_INVOICE_DATE"] == "info"
+    assert "OLD_INVOICE_DATE" not in {c for _, c, _ in payment_findings(doc, today=today, received=dt.date(2026, 1, 5))}
+    credit = {**doc, "grand_total": -100.0}
+    assert "OLD_INVOICE_DATE" not in {c for _, c, _ in payment_findings(credit, today=today)}
+
+
+# --- B-477: bulk approval's reasons in plain words --------------------------------------------------------------------
+
+
+def test_bulk_approval_says_why_an_invoice_was_left_without_the_check_code(tmp_path):
+    from ap_coder.coding.bulk import bulk_approve
+
+    store = Store(tmp_path / "ap.db")
+    load_sample_setup(store)
+    line = {"description": "Audit", "amount": 50.0, "predicted_gl_code": "6100", "reasoning_justification": "x"}
+    iid = store.add_invoice(tmp_path / "a.pdf", _invoice([line]), {"requires_review": False, "issues": [
+        {"severity": "warning", "code": "VENDOR_BANK_CHANGED",
+         "message": "the bank account to pay into changed"}]})  # fmt: skip
+    result = bulk_approve(store, store.reference_data(), Settings(), [iid], "Pat")
+    ((_, why),) = result["skipped"]
+    assert why == "The bank account to pay into changed" and "VENDOR_BANK_CHANGED" not in why

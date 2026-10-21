@@ -19,16 +19,20 @@
   today, not by the period end.</p>
 {% endif %}
 
-{% if old %}
+{% if old_invoices %}
+<div class="flash warn" role="status"><span class="ms" aria-hidden="true">event_busy</span>
+  <div><b>{{ old_invoices | plural("invoice") }} dated more than a year before {{ end }}: {{ flagged }} included, flagged
+    “Check date”.</b> The date may have been read wrong, or the bill is long overdue: check it on the invoice, and leave
+    it out of the entry if it should not be accrued.</div></div>
+{% endif %}
+{% if no_date %}
 <section class="card">
-  {{ ui.subhead("Not accrued: dated more than a year before " ~ end, old | length | plural("invoice"), first=True) }}
-  <p class="muted small">Their date may have been read wrong, or the bill is long overdue: check the date on the invoice
-    before accruing it.</p>
+  {{ ui.subhead("No invoice date: can't be accrued until it has one", no_date | length | plural("invoice"), first=True) }}
   <div class="table-wrap">
     <table class="apc-table">
-      <thead><tr><th>Vendor</th><th>Date</th><th class="r">Total</th></tr></thead>
-      <tbody>{% for a in old %}<tr><td class="w"><b>{{ a.vendor }}</b><div class="muted">{{ a.reference }}</div></td>
-        <td class="w">{{ a.description }}</td><td class="r">{{ a.amount | money }} <span class="muted">{{ a.currency }}</span></td></tr>{% endfor %}</tbody>
+      <thead><tr><th>Vendor</th><th class="r">Total</th></tr></thead>
+      <tbody>{% for a in no_date %}<tr><td class="w"><b>{{ a.vendor }}</b><div class="muted">{{ a.reference }}</div></td>
+        <td class="r">{{ a.amount | money }} <span class="muted">{{ a.currency }}</span></td></tr>{% endfor %}</tbody>
     </table>
   </div>
 </section>
@@ -65,7 +69,7 @@
       <tbody>
         {% for a in g.rows %}
         <tr>
-          <td class="w"><b>{{ a.vendor }}</b>{% if a.proposed %} <span class="apc-pill warn" title="No one has approved this invoice yet: its accounts are what AP Coder proposed">Proposed</span>{% endif %}<div class="muted">{{ a.reference }}</div></td>
+          <td class="w"><b>{{ a.vendor }}</b>{% if a.proposed %} <span class="apc-pill warn" title="No one has approved this invoice yet: its accounts are what AP Coder proposed">Proposed</span>{% endif %}{% if a.old %} <span class="apc-pill err" title="Dated more than a year before the period end: check the date">Check date</span>{% endif %}<div class="muted">{{ a.reference }}</div></td>
           <td class="w">{{ a.description }}</td>
           <td class="w">{{ gl(a.gl) }}{% if a.cost_center %}<small class="muted">{{ a.cost_center }}</small>{% endif %}</td>
           <td class="r">{{ a.amount | money }} <span class="muted">{{ a.currency }}</span></td>

@@ -297,7 +297,11 @@ def _approved_text(d: dict[str, Any]) -> str:
     changes = d.get("changes") or []
     if not changes:
         bulk = " (bulk approval)" if d.get("bulk") else ""
-        return f"{d.get('lines', 0)} line(s), all as the AI suggested{bulk}"
+        coded, lines = int(d.get("coded") or 0), int(d.get("lines") or 0)
+        if coded:  # accounts the AI only guessed, kept: the reviewer's coding, not the AI's suggestion (B-475)
+            rest = ", the others as the AI suggested" if coded < lines else ""
+            return f"{lines} line(s): {coded} coded by the reviewer (the AI only guessed){rest}{bulk}"
+        return f"{lines} line(s), all as the AI suggested{bulk}"
 
     def plain(value: Any) -> Any:  # the code's word for a blank account is not the reviewer's (B-464)
         return "blank" if value in ("UNASSIGNED", "", None) else value

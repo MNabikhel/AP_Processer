@@ -66,8 +66,13 @@ def month_end_page(request: Request, end: str = "") -> HTMLResponse:
     for source, (n, by_currency) in accruals.summary(items).items():
         value, hint = tile_text(n, by_currency, rates)
         tiles.append((TITLES[source], value, hint))
-    old = accruals.old_dated(store, period_end)
-    reference = reference_or_none(store) if items or old else None
+    no_date = accruals.undated(store, period_end)
+    reference = reference_or_none(store) if items or no_date else None
+    flagged: dict[str, float] = {}  # dated over a year before the period end: accrued, flagged (B-474)
+    for a in items:
+        if a.old:
+            flagged[a.currency or "CAD"] = round(flagged.get(a.currency or "CAD", 0.0) + a.amount, 2)
+    old_invoices = len({a.reference for a in items if a.old})
     currencies, by_account = accruals.by_gl_columns(items)
     by_gl = [{"gl": gl_cell(reference, gl), "totals": totals} for gl, totals in by_account]
     half = (len(by_gl) + 1) // 2
@@ -83,6 +88,7 @@ def month_end_page(request: Request, end: str = "") -> HTMLResponse:
                 "amount": a.amount,
                 "currency": a.currency,
                 "proposed": accruals.PROPOSED in a.note,
+                "old": a.old,
             }
             for a in items
             if a.source == source
@@ -108,16 +114,17 @@ def month_end_page(request: Request, end: str = "") -> HTMLResponse:
         items=bool(items),
         empty=empty,
         currencies=currencies,
-        old=[
+        no_date=[
             {
                 "vendor": a.vendor,
                 "reference": _ROW_ID.sub("", a.reference),
-                "description": a.description,
                 "amount": a.amount,
                 "currency": a.currency,
             }
-            for a in old
-        ],  # fmt: skip
+            for a in no_date
+        ],
+        flagged=" · ".join(f"{money(t)} {c}" for c, t in sorted(flagged.items())),
+        old_invoices=old_invoices,
         gl_columns=[by_gl[:half], by_gl[half:]] if len(by_gl) > 4 else [by_gl],
         groups=groups,
         inbox_art=ui.EMPTY_INBOX_SVG,

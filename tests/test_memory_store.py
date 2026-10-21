@@ -7,6 +7,7 @@ from ap_coder.ai.inference import InvoiceCoder
 from ap_coder.ai.pipeline import InvoicePipeline, finalise_coding
 from ap_coder.core.memory import (
     ACCEPTED,
+    CODED,
     CORRECTED,
     compare_with_history,
     format_examples,
@@ -201,7 +202,7 @@ def test_approve_records_accepted_and_corrected_lines(tmp_path, ground_truth):
     final["line_items"].append({**final["line_items"][0], "line_number": 6, "description": "Eco fee"})
 
     counts = store.approve_invoice(inv_id, final, reviewer="ap.clerk")
-    assert counts == {ACCEPTED: 4, CORRECTED: 2}  # corrected line + added line
+    assert counts == {ACCEPTED: 4, CORRECTED: 2, CODED: 0}  # corrected line + added line
     inv = store.get_invoice(inv_id)
     assert inv["status"] == APPROVED and "line_coding" in inv["edits"] and "line_count" in inv["edits"]
     rows = store.feedback_rows()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import datetime as dt
 import json
 import logging
 import re
@@ -137,10 +138,12 @@ def finalise_coding(
     store: Store | None = None,
     exclude_invoice_id: int | None = None,
     feedback: list[dict[str, Any]] | None = None,
+    received: dt.date | None = None,
 ) -> tuple[dict[str, Any], ValidationReport]:
     """Validate a coding and build the output (target schema + GL distribution).
 
-    Used after inference and again by the dashboard whenever a reviewer edits an invoice.
+    Used after inference and again by the dashboard whenever a reviewer edits an invoice. ``received``: the day the
+    invoice was read (an invoice in the queue: its import day), default today.
     """
     if feedback is None and store is not None:
         feedback = store.feedback_rows(vendor_name=coding.vendor_name)  # history check needs this vendor only
@@ -164,6 +167,7 @@ def finalise_coding(
             coding.to_output(),
             store.default_terms_days() if store is not None else 30,
             vendor_terms=store.vendor_terms(vendor_key(coding.vendor_name)) if store is not None else "",
+            received=received,
         ),
         po_findings=po_findings(coding, store, exclude_invoice_id) if store is not None else None,
     )
