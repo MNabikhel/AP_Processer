@@ -3888,3 +3888,90 @@ invoices to agencies, and a few templates. Each fix has a small generated fixtur
   marked `UNMEASURED`: *check* (a Canadian supplier's "$" is Canadian dollars, and the page does not say it).
 - **Test:** `tests/test_en_pdf_sweep4.py::test_dollars_from_a_us_supplier_are_us_dollars_never_more_than_checked`
 - **Lesson:** Don't default a currency the page implies: say what it implies and let a person confirm it.
+
+#### B-406 · Text drawn sideways on a portrait page was read word by word down the page · high
+- **Where:** `ap_coder/capture/layout.py` (new `_text_turn`, `_turn_box`, `_text_layer_page`)
+- **Symptom:** Microsoft's three landscape invoices are set on portrait pages with their text drawn running up the
+  page (the page itself not rotated): the reader got columns of single words ("date", "invoice", "from", "days") and
+  read the supplier as "days", the invoice number as "30", the PO as "1950" (from the street address, likely), the
+  tax total as the subtotal 540,600.00 (likely), and missed the dates, the HST and the total.
+- **Cause:** the text layer's words were placed as drawn; rows of a sideways page are columns of words.
+- **Reproduce:** a PDF page with its lines inserted with `rotate=90`; `build_layout()` and `analyze()`.
+- **Reproduced:** yes (`turn 0`, invoice number missing)
+- **Fix:** when most of a page's characters are drawn in one other direction (up, down, upside down), the words are
+  read on the page turned that quarter turn and the page's `turn` says so: the pipeline shows the PDF turned the same
+  way (as for scans read turned), so each value is highlighted where it is read.
+- **Test:** `tests/test_en_pdf_sweep4.py::test_a_page_whose_text_runs_up_the_page_is_read_turned`
+- **Lesson:** Don't assume a PDF's text runs the way its page is set: check the direction the text is drawn in.
+
+#### B-407 · Labels on Microsoft's and others' invoices not read: "Document Date", "Bill to PO Number", "Total Sale", "REMIT TO BANK" · medium
+- **Where:** `ap_coder/capture/reader.py` (`LABELS`, `_REMIT_WHERE`, `_ACCOUNT_NAME`, `_under_remit_label`, `_vendor_names`)
+- **Symptom:** once read the right way up (B-406): the invoice date ("Document Date:"), the PO ("Bill to PO Number:")
+  and the subtotal ("Total Sale") were missing, the PO was the line number "000010" under a "PO No" column heading,
+  and the supplier was "BANK" ("REMIT TO BANK") or "A/C Name: MICROSOFT CANADA INC".
+- **Cause:** none of these labels was known; "Remit to" took the next word whatever it was.
+- **Reproduce:** the PDFs of the tests below.
+- **Reproduced:** yes (`vendor_name 'BANK'`)
+- **Fix:** "Document Date" is an invoice date's label (beside "Document No", read as the number before), "Bill to PO
+  Number" a PO's, "Total Sale(s)" a subtotal's; "remit to bank / address / account / the following" names nobody,
+  and an account's name ("A/C Name:", "Account Name:") under it, or at the top, is read without its label.
+- **Test:** `tests/test_en_pdf_sweep4.py::test_a_page_whose_text_runs_up_the_page_is_read_turned`,
+  `tests/test_en_pdf_sweep4.py::test_remit_to_bank_is_no_name_the_account_s_name_under_it_is`
+- **Lesson:** Don't take the word after "Remit to" for a payee: it may say where, not to whom.
+
+#### B-408 · A GST/HST amount with no subtotal read could be verified as the GST; "QST/PST 0.00" verified as the QST · high
+- **Where:** `ap_coder/capture/reader.py` (`_solve_totals`, `_QST_OR_PST`, `_read_fields`); `ap_coder/capture/confidence.py` (`fuse`)
+- **Symptom:** Microsoft's support invoice (read turned, B-406, before "Total Sale" was a label) gave "GST/HST
+  16,874.00" as the GST, verified (it is the HST, 13%), and "QST/PST 0.00" as a verified QST.
+- **Cause:** a "GST/HST" label proposes both taxes and the solver picks by the rate on the subtotal; with no
+  subtotal nothing tells them apart, and the first one won. "QST/PST" (QST first) was not known as a label for
+  either of two taxes, as "PST/QST" is (B-321).
+- **Reproduce:** a PDF with "GST/HST 16,874.00", "QST/PST 0.00" and "Total Amount 146,674.00" and no subtotal.
+- **Reproduced:** no on main (found on this branch's turned pages, before "Total Sale" was read); the test guards it.
+- **Fix:** a GST or HST read with no subtotal, from an amount proposed for both, is marked `EITHER_TAX` (likely at
+  best: "printed under a label naming two taxes"); "QST/PST" is marked so as "PST/QST" is.
+- **Test:** `tests/test_en_pdf_sweep4.py::test_a_gst_hst_amount_with_no_subtotal_to_tell_its_rate_is_not_verified_as_either_tax`
+- **Lesson:** Don't settle which of two taxes a figure is when the figure that tells them apart was not read.
+
+#### B-409 · Totals' rows: the hours read as the subtotal, an exchange rate or a date's year as the total · high
+- **Where:** `ap_coder/capture/reader.py` (`_RIGHTMOST`, `_value_reading`, new `_FX_RATE`)
+- **Symptom:** TEKsystems' "SUBTOTAL: | 23.00 | 23,115.00" (the hours' column, then the amount's) gave the subtotal
+  23.00; AWS's request for funds "Total Amount in CAD (1 USD = 1.235 CAD) | CAD 4,000,000" gave the total 1,235.00,
+  and with the rate left out "AMOUNT DUE ON | April 1, 2022 | CAD 4,000,000" gave 2,022.00 (likely).
+- **Cause:** a subtotal took the first figure to the right of its label (taxes and totals take the rightmost); an
+  amount's reader read every number on the label's line, a rate's and a date's included.
+- **Reproduce:** the PDFs of the tests below.
+- **Reproduced:** yes (`subtotal 23.0`, `grand_total 1235.0`)
+- **Fix:** a subtotal's row of figures is read like a total's (the rightmost figure printed as money, the first one
+  kept as a weaker reading); a rate written "1 USD = 1.235 CAD" and a date written with its month's name are blanked
+  before the amounts are read.
+- **Test:** `tests/test_en_pdf_sweep4.py::test_a_subtotal_row_with_the_hours_first_is_read_from_its_amount_column`,
+  `tests/test_en_pdf_sweep4.py::test_an_exchange_rate_or_a_date_s_year_on_the_total_s_row_is_no_amount`
+- **Lesson:** Don't read every number on a total's line as money: a rate and a year are numbers too.
+
+#### B-410 · A PO run into the next word after a slash: "474192803B/Contract", likely · medium
+- **Where:** `ap_coder/capture/reader.py` (`_value_reading`, new `_GLUED_WORD`)
+- **Symptom:** SADA's "PO#474192803B/Contract" was read as the PO "474192803B/Contract", likely.
+- **Cause:** a slash is part of an ID ("2021/0042"), so the next label's word after it was kept.
+- **Reproduce:** a PDF with "Customer PO #" over "PO#474192803B/Contract".
+- **Reproduced:** yes (`'474192803B/Contract'`)
+- **Fix:** a capitalised word of four letters and more after a slash, ending an ID with digits, is cut off.
+- **Test:** `tests/test_en_pdf_sweep4.py::test_a_po_run_into_the_next_word_after_a_slash_is_cut_there`
+- **Lesson:** Don't keep a word in an ID because a separator joins it: IDs end in digits and codes, not in words.
+
+#### B-411 · Dates: a letter's date alone was not read; a date in another sentence over "DUE DATE" was the due date · medium
+- **Where:** `ap_coder/capture/reader.py` (new `_letter_dates`, `_in_a_sentence`, `_labelled`, `_value_over_label`);
+  `ap_coder/capture/confidence.py` (`UNLABELLED_METHODS`)
+- **Symptom:** BDO's letter-style invoice prints "June 30, 2021" alone under its letterhead: no invoice date. A utility
+  bill prints "Mailed 11/14/22 for Account #" over its "AMOUNT DUE | DUE DATE" box: the due date was 2022-11-14 (it
+  is 12/12/22 in the box).
+- **Cause:** a date was read only after a label or beside a title; a label printed under its value took the date
+  from the line over it whatever that line said.
+- **Reproduce:** the PDFs of the tests below.
+- **Reproduced:** yes (invoice date missing; due date 2022-11-14)
+- **Fix:** with no date labelled, the one line of the first page's top that is a date written out and nothing else is
+  the invoice date ("letter-dated": *check*, as other dates without a label). A date over its label is not taken from
+  a line that starts with words before it.
+- **Test:** `tests/test_en_pdf_sweep4.py::test_a_letter_s_date_alone_under_the_letterhead_is_the_invoice_date_checked`,
+  `tests/test_en_pdf_sweep4.py::test_a_date_in_another_sentence_over_a_due_date_label_is_not_the_due_date`
+- **Lesson:** Don't take any date over a label as its value: the line over it may be a sentence about another date.

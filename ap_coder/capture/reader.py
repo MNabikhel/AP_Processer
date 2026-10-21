@@ -98,14 +98,14 @@ LABELS: dict[str, list[tuple[str, float]]] = {
         (r"p\.?\s?o\.?(?![-\d])\s*(?!box\b|b\.?\s?p)(?:no\b\.?|#|number|n\s?°)?", 0.9), (r"purchase\s*order(?:\s*" + _NO + ")?", 1.0),
         (r"(?:your|customer|cust\.?|client)\s*(?:order|p\.?\s?o\.?)(?:\s*" + _NO + ")?", 0.95),
         (r"(?:votre\s*)?bon\s*de\s*commande(?:\s*" + _NO + ")?", 1.0), (r"(?:no|n\s?°|nº|n)\.?\s*(?:de\s*)?(?:bon\s*de\s*)?commande", 0.95),
-        (r"commande\s*(?:client|no|n\s?°)", 0.8), (r"order\s*ref(?:erence)?\b\.?", 0.7), (r"votre\s*(?:commande|bon)", 0.95), (r"b\.\s?c\.(?!\s*(?:pst|v\d))\s*(?:#|no\b\.?|n\s?°)?", 0.8),
+        (r"commande\s*(?:client|no|n\s?°)", 0.8), (r"bill\s*to\s*p\.?\s?o\.?\s*(?:no\b\.?|number|#)", 0.9), (r"order\s*ref(?:erence)?\b\.?", 0.7), (r"votre\s*(?:commande|bon)", 0.95), (r"b\.\s?c\.(?!\s*(?:pst|v\d))\s*(?:#|no\b\.?|n\s?°)?", 0.8),
     ],
     "invoice_date": [
         (r"invoice\s*date", 1.0), (r"date\s*(?:of\s*)?(?:issue|invoice)", 1.0), (r"issue\s*date", 0.95),
         (r"billing\s*date", 0.95), (r"bill\s*date", 0.9), (r"date\s*de\s*(?:la\s*)?factur(?:e|ation)", 1.0),
         (r"date\s*d'?\s*emission", 0.95), (r"statement\s*date", 0.8), (r"date\s*de\s*la\s*note", 0.8),
         (r"inv\.?\s*date", 0.95), (r"date\s*(?:issued|of\s*issue)", 0.95), (r"issued(?:\s*on)?\b", 0.85), (r"issue\s*date", 0.95),
-        (r"credit\s*(?:note|memo)\s*date", 0.95), (r"credit\s*date", 0.95), (r"date\s*du\s*credit", 0.9), (r"dated?\b(?!\s*(?:due|d'?echeance|de\s*commande|d'?expedition|de\s*livraison|du\s*service))", 0.55),
+        (r"credit\s*(?:note|memo)\s*date", 0.95), (r"document\s*date", 0.85), (r"credit\s*date", 0.95), (r"date\s*du\s*credit", 0.9), (r"dated?\b(?!\s*(?:due|d'?echeance|de\s*commande|d'?expedition|de\s*livraison|du\s*service))", 0.55),
     ],
     "due_date": [
         (r"due\s*date", 1.0), (r"date\s*due", 0.95), (r"payment\s*due(?:\s*date)?", 0.9), (r"pay(?:able)?\s*by", 0.8),
@@ -117,7 +117,7 @@ LABELS: dict[str, list[tuple[str, float]]] = {
         (r"sub\s*-?\s*total", 1.0), (r"sous\s*-?\s*total", 1.0), (r"net\s*amount", 0.9), (r"montant\s*net", 0.9),
         (r"total\s*(?:before|excl\.?|excluding|hors)\s*(?:tax(?:es)?|taxes)", 0.95), (r"amount\s*before\s*tax", 0.95),
         (r"net\s*total", 0.85), (r"total\s*ht\b", 0.9), (r"total\s*(?:avant|sans)\s*taxes?", 0.95),
-        (r"total\s*partiel", 0.9), (r"merchandise\s*total", 0.8), (r"total\s*services", 0.5),
+        (r"total\s*partiel", 0.9), (r"merchandise\s*total", 0.8), (r"total\s*services", 0.5), (r"total\s*sales?\b(?!\s*tax)", 0.8),
         (r"total\s*(?:of\s*)?(?:fees|charges|services|goods|merchandise|labou?r|materials)\b", 0.65),
     ],
     "hst_amount": [(rf"(?:total\s*)?(?:[a-z]{{2}}\s*)?(?:{_A('gst')}\s*/\s*)?{_A('hst')}", 1.0), (rf"(?:{_A('tps')}\s*/\s*)?{_A('tvh')}", 1.0), (r"harmoni[sz]ed\s*sales\s*tax", 1.0)],
@@ -374,6 +374,7 @@ def _label_hits(line: Line) -> list[_LabelHit]:
 _NEXT_WORD = re.compile(r"\s+(?=[a-z])")
 _GLUED_NUMBER = re.compile(r"[A-Z]{1,4}[-/]?\d")
 _PAGE_NUMBER = re.compile(r"(?:page|seite|pagina)\s*[\dl]{1,3}\s*(?:/|of|de|sur|von)\s*\d{1,3}\s+(?=[a-z])")
+_QST_OR_PST = re.compile(r"\s*(?:q\.?s\.?t|t\.?v\.?q)\.?\s*/\s*(?:p\.?s\.?t|t\.?v\.?p)(?![a-z])")  # "QST/PST"
 _PST_OR_QST = re.compile(rf"\s*/\s*(?:{_A('qst')}|{_A('tvq')})")
 # The supplier's QST or PST registration number, as printed beside its label: the province's tax it charges.
 _QST_REG = re.compile(
@@ -604,6 +605,12 @@ _RATE_CLAUSE = re.compile(
 )  # "..., 2% Skonto innerhalb 10 Tagen": a clause of its own
 
 
+_FX_RATE = re.compile(
+    r"\(?\s*(?:[A-Z]{3}\s*)?\d+(?:[.,]\d+)?\s*(?:[A-Z]{3})?\s*=\s*(?:[A-Z]{3}\s*)?\d+(?:[.,]\d+)?\s*(?:[A-Z]{3})?\s*\)?"
+)
+_GLUED_WORD = re.compile(r"/[A-Z][a-z]{3,}$")  # a capitalised word after a slash ending an ID: "/Contract"
+
+
 def _value_reading(field: str, line: Line, start: int, base: float, method: str) -> Reading | None:
     """Read ``field`` from ``line.text[start:]``."""
     text = line.text
@@ -613,6 +620,10 @@ def _value_reading(field: str, line: Line, start: int, base: float, method: str)
         if not got:
             return None
         value, a, b = got
+        glued = _GLUED_WORD.search(value)
+        if glued and any(c.isdigit() for c in value[: glued.start()]):
+            # "PO#474192803B/Contract": the next label's word run onto the number after a slash, in the PDF's text.
+            value, b = value[: glued.start()], b - (len(value) - glued.start())
         if _looks_like_phone_or_postal(value) or parse_dates(value) or _MONTH_DAY.match(plain(value)):
             return None
         if any(da <= a - start < db for _d, da, db, _amb in parse_dates(rest)):
@@ -662,6 +673,12 @@ def _value_reading(field: str, line: Line, start: int, base: float, method: str)
                        method + ("-ambiguous" if ambiguous else ""))  # fmt: skip
     if field in AMOUNT_FIELDS:
         cleaned = _PERCENT.sub(lambda m: " " * len(m.group(0)), rest)
+        cleaned = _FX_RATE.sub(lambda m: " " * len(m.group(0)), cleaned)  # "(1 USD = 1.235 CAD)": a rate, no amount
+        for _d, da, db, _amb in parse_dates(cleaned):
+            if re.search(
+                r"[a-z]{3}", plain(cleaned[da:db])
+            ):  # "AMOUNT DUE ON April 1, 2022": the date's year is no amount
+                cleaned = cleaned[:da] + " " * (db - da) + cleaned[db:]
         if field.endswith("_amount") or field == "tax_total":
             # "GST/HST Reg. No. 123456789RT0001" is a registration number, not an amount.
             if (
@@ -1018,6 +1035,13 @@ def _labelish(line: Line) -> bool:
     return _a_label(line) or "#" in p or p.endswith(":") or any(rx.match(p) for rxs in _DISTRACT.values() for rx in rxs)
 
 
+def _in_a_sentence(up: Line, got: Reading) -> bool:
+    """A date read over its label from a line that starts with words ("Mailed 11/14/22 for Account #" over "DUE
+    DATE"): another date's sentence, not the label's value."""
+    text = up.text.strip()
+    return got.field in ("invoice_date", "due_date") and text[:1].isalpha() and not text.startswith(str(got.raw))
+
+
 def _value_over_label(lines: list[Line], line: Line, hit: _LabelHit) -> Reading | None:
     """One label printed under its value on a page not found to print them all so (a scan's tilt runs a row of
     labels into one line): the line just over the label reads as its value, and the one under it is another label's,
@@ -1028,7 +1052,7 @@ def _value_over_label(lines: list[Line], line: Line, hit: _LabelHit) -> Reading 
     if up is None or _a_label(up):
         return None
     above = _value_reading(hit.field, up, 0, 0.85 * hit.strength, "label-above")
-    if above is None:
+    if above is None or _in_a_sentence(up, above):
         return None
     down = next(iter(_below(lines, line, lb)[:1]), None)
     if down is None or not _value_reading(hit.field, down, 0, 1.0, "x"):
@@ -1210,6 +1234,7 @@ def _column_foot(field: str, hit: _LabelHit, lines: list[Line]) -> list[Reading]
 _TAX_OR_TOTAL = ("gst_amount", "hst_amount", "pst_amount", "qst_amount", "tax_total")
 _RIGHTMOST = (
     *_TAX_OR_TOTAL,
+    "subtotal",  # "SUBTOTAL: | 23.00 | 23,115.00": the hours' column, then the amount's
     "grand_total",
     "other_charges",
 )  # a row of figures after the label: the last one is the field's
@@ -1329,6 +1354,8 @@ def _labelled(field_hits: list[_LabelHit], lines: list[Line], under: bool = Fals
             up = _over(lines, line, _label_box(hit))
             if up is not None and not _a_label(up):
                 got = _value_reading(field, up, 0, 0.85 * hit.strength, "label-above")
+                if got and _in_a_sentence(up, got):
+                    got = None
         elif got is None and field not in AMOUNT_FIELDS:
             got = _value_over_label(lines, line, hit)
         if got is None and field in AMOUNT_FIELDS:
@@ -1526,6 +1553,8 @@ _REMIT = re.compile(r"(?:make\s*(?:all\s*)?cheques?\s*payable\s*to|payable\s*(?:
                     r"mail\s*(?:all\s*)?(?:payments?\s*|remittances?\s*)?to(?![a-z]))\s*:?\s*",
                     re.I)  # fmt: skip
 # A column's label OCR or the PDF's text ran onto the end of a name: "REMIT TO Sinclair Broadcast G Advertiser".
+_REMIT_WHERE = re.compile(r"(?:the\s*)?(?:bank|address|account|following|below)\s*:?")
+_ACCOUNT_NAME = re.compile(r"^(?:a/c|account|beneficiary)\s*name\s*:\s*", re.I)  # "A/C Name: MICROSOFT CANADA INC"
 _TRAILING_LABEL = re.compile(
     r"\s+(?:advertiser|agency|buyer|product|customer|client|salesperson|station|brand)\s*:?$", re.I
 )
@@ -1827,7 +1856,7 @@ def _under_remit_label(page: PageLayout, label: Line) -> tuple[str, Box, float] 
                     and -0.01 < ln.box.x0 - label.box.x0 < 0.04), key=lambda ln: ln.box.y0)  # fmt: skip
     # "Mail to:  Comcast Spotlight" in a cell beside the label, close to it; else the line under it.
     for nxt in [b for b in beside if b.box.x0 - label.box.x1 < 0.1] + below[:1]:
-        name = _TRAILING_LABEL.sub("", nxt.text.strip()).strip(" :.,")
+        name = _TRAILING_LABEL.sub("", _ACCOUNT_NAME.sub("", nxt.text.strip())).strip(" :.,")
         if _name_like(name):
             return name, nxt.box, _min_conf(nxt.words)
     return None
@@ -1861,7 +1890,7 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
     for line in page.lines:
         text = line.text.strip()
         p = plain(text)
-        title = _TITLE_PREFIX.match(p)
+        title = _TITLE_PREFIX.match(p) or _ACCOUNT_NAME.match(text)  # "A/C Name: MICROSOFT CANADA INC": the name
         if title and title.end() < len(text):  # "SALES INVOICE #26/41538 Fraser Valley Fasteners Co."
             line = Line(_span_words(line, title.end(), len(text)), line.box, text[title.end() :].strip())
             line = Line(line.words, union_all([w.box for w in line.words]) or line.box, line.text)
@@ -1869,8 +1898,8 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
         m = _REMIT.search(p)
         if m:
             name = _TRAILING_LABEL.sub("", text[m.end() :].strip(" :.,")).strip(" :.,")
-            if name[:1] in "/(":
-                name = ""  # "Please Remit To/S'il vous plaît remettre à:": the label's translation, not a name
+            if name[:1] in "/(" or _REMIT_WHERE.fullmatch(plain(name)):
+                name = ""  # "Please Remit To/S'il vous plaît remettre à:", "REMIT TO BANK": no name
             if 2 < len(name) < 70 and not _NOT_NAME.match(plain(name)) and _name_like(name):
                 words = _span_words(line, m.end(), m.end() + len(name))
                 out.append(Reading("vendor_name", name, name, _boxes(words), 0.9 * _min_conf(words), "remit-to"))
@@ -2072,6 +2101,12 @@ def _solve_totals(cands: dict[str, list[Reading]], line_sum: float | None) -> di
         return cands
     _, sub, total, taxes, bonus = best
     chosen = {"subtotal": sub, "grand_total": total, **taxes}
+    if sub is None:
+        for f, other in (("gst_amount", "hst_amount"), ("hst_amount", "gst_amount")):
+            r = taxes.get(f)
+            if r is not None and any(_where(x) == _where(r) for x in cands.get(other, [])):
+                # "GST/HST 16,874.00" with no subtotal read: no rate says which of the two it is.
+                r.method += EITHER_TAX
     if total is not None and taxes.get("other_charges") is not None and PREPAID in taxes["other_charges"].method:
         total.method += UNMEASURED  # the amount due net of a deposit: the benchmark prints none, a person checks it
     out = dict(cands)
@@ -3221,6 +3256,34 @@ def _title_dates(layout: DocLayout) -> list[Reading]:
     return []
 
 
+def _letter_dates(layout: DocLayout) -> list[Reading]:
+    """A letter-style invoice's date: a line that is a date written out and nothing else ("June 30, 2021"), in the top
+    part of the first page, the only such line there. Read only when no date has a label; its own method
+    ("letter-dated"): a person checks it."""
+    if not layout.pages:
+        return []
+    found = []
+    for line in layout.pages[0].lines:
+        text = line.text.strip()
+        dates = parse_dates(text, prefer_day_first=_DAY_FIRST.get()) if line.box.cy < 0.45 else []
+        if (
+            len(dates) == 1
+            and dates[0][1] == 0
+            and dates[0][2] >= len(text.rstrip("."))
+            and re.search(r"[A-Za-z]{3}", text)
+            # alone on its row: not a label's value ("Invoice Due Date | Nov 1, 2026")
+            and not any(o is not line and abs(o.box.cy - line.box.cy) < 0.006 for o in layout.pages[0].lines)
+        ):
+            found.append((line, dates[0]))
+    if len(found) != 1:
+        return []
+    line, (d, a, b, _amb) = found[0]
+    words = _span_words(line, a, b)
+    return [
+        Reading("invoice_date", d.isoformat(), line.text[a:b], _boxes(words), 0.45 * _min_conf(words), "letter-dated")
+    ]
+
+
 _CUSTOMER_HEADING = re.compile(
     r"^(?:client|customer|cust\.?|compte|account|acheteur|buyer|bill(?:ed)?\s*to|sold\s*to|ship\s*to|"
     r"facturee?\s*a|vendu\s*a)(?![a-z])"
@@ -3371,7 +3434,9 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
                     discounts.append(r)
                     if _PREPAYMENT.match(plain(hit.label_text)):
                         r.method += PREPAID
-            if field in ("pst_amount", "qst_amount") and _PST_OR_QST.search(hit.label_text):
+            if field in ("pst_amount", "qst_amount") and (
+                _PST_OR_QST.search(hit.label_text) or _QST_OR_PST.match(plain(hit.line.text)[hit.start :])
+            ):
                 for r in got:
                     r.method += EITHER_TAX
             if field == "invoice_number" and any(r.method.endswith("label-inline") for r in got):
@@ -3381,6 +3446,8 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
             readings += got
         cands[field] = readings or fallback  # "Receipt Date" only when no other date label reads a value
     unlabelled = number_dates + _stamped_dates(layout) + _title_dates(layout)
+    if not cands.get("invoice_date") and not unlabelled:
+        unlabelled = _letter_dates(layout)
     labelled = cands.get("invoice_date") or []
     if labelled and unlabelled:
         # A date read with no label of its own ranks below every labelled one: "Invoice # 20417 dated 2026-08-15" in

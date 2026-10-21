@@ -65,7 +65,7 @@ UNMEASURED_CAP = 0.8  # a value read only by wording the benchmark never prints 
 REGISTRATION_FIELDS = ("gst_hst_registration_number", "qst_registration_number", "pst_registration_number")
 SINGLE_READER_CAP = 0.97  # highest confidence for a value only one reader found and no check confirms
 # Values read with no label of their own (``reader``: a receipt's date and time, a date beside the title): checked.
-UNLABELLED_METHODS = ("date-time", "title-dated")
+UNLABELLED_METHODS = ("date-time", "title-dated", "letter-dated")
 UNLABELLED_CAP = 0.8
 WEAK_LABEL_METHOD = "weak-"  # a value after a weak label (``reader.WEAK_LABELS``): checked as well
 
@@ -544,7 +544,9 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
             # Printed under "PST/QST" with nothing on the page to say which the supplier charges: the amount adds up,
             # which tax it is does not follow from that. A person says.
             conf = min(conf, SINGLE_READER_CAP)
-            reasons.append("printed under a PST/QST label: which of the two it is, the page does not say")
+            reasons.append(
+                "printed under a label naming two taxes (PST/QST, GST/HST): which of the two it is, the page does not say"
+            )
         if any(RIVAL_NAME in r.method for _, r in g.readings) and "template" not in sources and not n_conf:
             conf = min(conf, SINGLE_READER_CAP)
             reasons.append(

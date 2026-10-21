@@ -320,3 +320,91 @@ def test_dollars_from_a_us_supplier_are_us_dollars_never_more_than_checked(tmp_p
                               (40, 150, "Ship To:"), (40, 163, "Bayside Media LLC"), (40, 176, "Atlanta, GA 30348"),
                               *us[3:]], name="ca.pdf"))  # fmt: skip
     assert f["currency"].value != "USD"
+
+
+# ---------------------------------------------------------------- PO numbers, totals' rows, dates
+
+
+def test_a_po_run_into_the_next_word_after_a_slash_is_cut_there(tmp_path):
+    path = _pdf(tmp_path, [*_SUPPLIER, (440, 120, "Customer PO #"), (440, 133, "PO#474192803B/Contract"), *_AMOUNTS])
+    assert _read(path)["po_number"].value == "474192803B"
+
+
+def test_a_subtotal_row_with_the_hours_first_is_read_from_its_amount_column(tmp_path):
+    path = _pdf(tmp_path, [
+        *_SUPPLIER, (40, 300, "Contractor"), (400, 300, "Qty"), (500, 300, "Total"), (40, 315, "Consultant"),
+        (400, 315, "23.00"), (500, 315, "23,115.00"), (310, 400, "SUBTOTAL:"), (390, 400, "23.00"),
+        (490, 400, "23,115.00"), (310, 415, "HST 13%"), (495, 415, "3,004.95"), (310, 430, "TOTAL"),
+        (490, 430, "26,119.95"),
+    ])  # fmt: skip
+    assert _read(path)["subtotal"].value == 23115.0
+
+
+def test_an_exchange_rate_or_a_date_s_year_on_the_total_s_row_is_no_amount(tmp_path):
+    path = _pdf(tmp_path, [
+        (40, 40, "Amazon Web Services Canada, Inc.", 12), (240, 130, "AMOUNT DUE ON"), (355, 130, "April 1, 2022"),
+        (540, 130, "CAD 4,000,000"), (30, 300, "Total Amount in CAD (1 USD = 1.235 CAD)"), (540, 300, "CAD 4,000,000"),
+    ])  # fmt: skip
+    assert _read(path)["grand_total"].value == 4000000.0
+
+
+def test_a_letter_s_date_alone_under_the_letterhead_is_the_invoice_date_checked(tmp_path):
+    path = _pdf(tmp_path, [
+        (40, 40, "BDO Canada LLP", 14), (40, 56, "180 Kent Street"), (40, 68, "Ottawa, ON K1P 0B6"),
+        (40, 100, "June 30, 2021"), (40, 130, "Canada Border Services Agency"), (40, 160, "Invoice CINV1271478"),
+        *_AMOUNTS,
+    ])  # fmt: skip
+    f = _read(path)
+    assert f["invoice_date"].value == "2021-06-30" and f["invoice_date"].status not in (VERIFIED, "likely")
+
+
+def test_a_date_in_another_sentence_over_a_due_date_label_is_not_the_due_date(tmp_path):
+    # A utility bill: "Mailed 11/14/22 for Account # 0000" over the box "AMOUNT DUE | DUE DATE", "$117.89 | 12/12/22".
+    path = _pdf(tmp_path, [
+        (160, 40, "Mailed 11/14/22 for Account # 0000-0000-0000", 6), (160, 48, "AMOUNT DUE", 6),
+        (220, 48, "DUE DATE", 6),
+        (160, 56, "$117.89", 9), (220, 56, "12/12/22", 9), (330, 40, "Old Dominion Power", 14), *_AMOUNTS,
+    ])  # fmt: skip
+    assert _read(path)["due_date"].value != "2022-11-14"
+
+
+def test_a_page_whose_text_runs_up_the_page_is_read_turned(tmp_path):
+    # Microsoft's landscape invoices are set on portrait pages with their text drawn sideways: almost nothing was read.
+    import pymupdf
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=612, height=792)
+    lines = [(40, "Microsoft Canada Inc., 1950 Meadowvale Blvd., Mississauga, ON, L5N8L9"),
+             (80, "Document No: 9988434410"), (100, "Document Date: 06-AUG-2021"),
+             (120, "Bill to PO Number: 2B3035175"), (400, "Total Sale  540,600.00"),
+             (420, "GST/HST (13.000%)  70,278.00"), (440, "Total Amount  610,878.00")]  # fmt: skip
+    for x, text in lines:
+        # Text running up the page: read upright once the page is turned a quarter turn clockwise.
+        page.insert_text((60 + x * 0.6, 700), text, fontsize=9, rotate=90)
+    path = tmp_path / "turned.pdf"
+    doc.save(path)
+    layout = build_layout(path, ocr=False)
+    assert layout.pages[0].turn == 90
+    f = analyze(path, ocr=False, today=TODAY, layout=layout).fields
+    assert f["invoice_number"].value == "9988434410"
+    assert f["invoice_date"].value == "2021-08-06"
+    assert f["po_number"].value == "2B3035175"
+    assert (f["subtotal"].value, f["hst_amount"].value, f["grand_total"].value) == (540600.0, 70278.0, 610878.0)
+
+
+def test_a_gst_hst_amount_with_no_subtotal_to_tell_its_rate_is_not_verified_as_either_tax(tmp_path):
+    path = _pdf(tmp_path, [
+        *_SUPPLIER, (380, 515, "GST/HST"), (480, 515, "16,874.00"), (380, 530, "QST/PST"), (480, 530, "0.00"),
+        (380, 545, "Total Amount"), (480, 545, "146,674.00"),
+    ])  # fmt: skip
+    f = _read(path)
+    for field in ("gst_amount", "hst_amount", "qst_amount", "pst_amount"):
+        assert f[field].status != VERIFIED, field
+
+
+def test_remit_to_bank_is_no_name_the_account_s_name_under_it_is(tmp_path):
+    path = _pdf(tmp_path, [
+        (20, 85, "REMIT TO BANK"), (20, 97, "A/C Name: MICROSOFT CANADA INC"), (20, 109, "Bank Name: CITIBANK NA"),
+        (420, 40, "Invoice", 18), (400, 85, "Document No:"), (480, 85, "9988434410"), *_AMOUNTS,
+    ])  # fmt: skip
+    assert _read(path)["vendor_name"].value == "MICROSOFT CANADA INC"

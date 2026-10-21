@@ -218,10 +218,49 @@ def _line(words: list[Word], page: int) -> Line:
 # ---------------------------------------------------------------- PDF text layer
 
 
+def _text_turn(page: Any) -> int:
+    """The clockwise quarter turn that shows a page's text upright, when the PDF draws most of it sideways or upside
+    down on a page that is not turned itself (a landscape invoice set on a portrait page, its text running up the
+    page): 90, 180 or 270; 0 for text that runs across the page."""
+    if page.rotation:
+        return 0
+    chars: dict[tuple[int, int], int] = {}
+    try:
+        blocks = page.get_text("dict").get("blocks", [])
+    except Exception:  # an odd page: read as it is
+        return 0
+    for block in blocks:
+        for line in block.get("lines", []):
+            d = tuple(round(v) for v in line.get("dir", (1, 0)))
+            n = sum(len(span.get("text", "").strip()) for span in line.get("spans", []))
+            chars[d] = chars.get(d, 0) + n
+    total = sum(chars.values())
+    if not total:
+        return 0
+    turn = {(0, -1): 90, (0, 1): 270, (-1, 0): 180}
+    best = max(chars, key=chars.get)
+    return turn.get(best, 0) if chars[best] >= 0.6 * total else 0
+
+
+def _turn_box(x0: float, y0: float, x1: float, y1: float, turn: int, width: float, height: float) -> tuple[float, ...]:
+    """A box on the page as drawn, moved to the page turned clockwise by ``turn`` degrees."""
+    if turn == 90:
+        return (height - y1, x0, height - y0, x1)
+    if turn == 270:
+        return (y0, width - x1, y1, width - x0)
+    if turn == 180:
+        return (width - x1, height - y1, width - x0, height - y0)
+    return (x0, y0, x1, y1)
+
+
 def _text_layer_page(page: Any, number: int) -> PageLayout:
     rect = page.rect  # as displayed (rotation applied)
     width, height = rect.width or 1.0, rect.height or 1.0
     matrix = page.rotation_matrix
+    # Text drawn sideways (sweep 4: Microsoft's landscape invoices on portrait pages) is read on the page turned so
+    # that it runs across; the page's ``turn`` says so, and the pipeline shows the PDF turned the same way.
+    turn = _text_turn(page)
+    shown_w, shown_h = (height, width) if turn in (90, 270) else (width, height)
     words: list[Word] = []
     for x0, y0, x1, y1, text, *_ in page.get_text("words", sort=True):
         # Composed accents: some producers store "é" as "e" + a combining mark, which the readers' character
@@ -229,13 +268,15 @@ def _text_layer_page(page: Any, number: int) -> PageLayout:
         text = unicodedata.normalize("NFC", text).strip()
         if not text:
             continue
-        r = _rotated(page, matrix, x0, y0, x1, y1)
-        box = Box(number, r[0] / width, r[1] / height, r[2] / width, r[3] / height)
+        r = _turn_box(*_rotated(page, matrix, x0, y0, x1, y1), turn, width, height)
+        box = Box(number, r[0] / shown_w, r[1] / shown_h, r[2] / shown_w, r[3] / shown_h)
         # Some PDF writers make bold by drawing the text twice a hair apart: the page shows the word once.
         if any(w.text == text and _overlap(w.box, box) for w in words[-4:]):
             continue
         words.append(Word(text, box, 1.0, "text"))
-    return PageLayout(number, width, height, words, group_lines(words, number), page.rotation)
+    if turn:
+        words.sort(key=lambda w: (round(w.box.cy, 3), w.box.x0))
+    return PageLayout(number, shown_w, shown_h, words, group_lines(words, number), page.rotation, turn=turn)
 
 
 def _overlap(a: Box, b: Box) -> bool:
