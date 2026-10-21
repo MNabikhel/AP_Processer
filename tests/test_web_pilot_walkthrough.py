@@ -81,10 +81,12 @@ def test_getting_started_asks_for_your_province_without_counting_it(tmp_path, mo
     started = page.split("Getting started", 1)[1]
     assert "Your province" in started and "recommended" in started
     assert 'href="/settings/review">Your province' in started
-    assert "aria-label='1/6'" in page  # counted as before
+    ring = re.search(r"aria-label='(\d+)/(\d+)'", page).groups()
+    assert ring[1] == "6"  # counted as before (whatever else is done on this computer)
     fresh.set_setting("our_province", "ON")
     page = client.get("/review").text
-    assert "Ontario" in page.split("Getting started", 1)[1] and "aria-label='1/6'" in page  # still not counted
+    assert "Ontario" in page.split("Getting started", 1)[1]
+    assert re.search(r"aria-label='(\d+)/(\d+)'", page).groups() == ring  # still not counted
     assert "Your province" in client.get("/process").text
 
 
