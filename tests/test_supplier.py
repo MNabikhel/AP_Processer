@@ -605,7 +605,7 @@ def _text(page: str) -> str:
 
 def test_learning_page_supplier_tab_empty(client):
     page = client.get("/learning?tab=suppliers").text
-    for tab in ("Coding accuracy", "Supplier learning", "Readers"):
+    for tab in ("Coding accuracy", "Supplier learning", "Lessons"):  # (Readers: a developer tool, B-511)
         assert tab in page
     assert "No supplier learned yet" in page
 
@@ -625,9 +625,12 @@ def test_learning_page_is_a_training_view_with_keep_supervised(client, tmp_path,
     page = client.get("/learning?tab=suppliers").text
     text = _text(page)
     assert "Northwind" in text and "Ready" in text and "Chinook" in text and "Learning" in text
-    assert "12 of 20 invoices; 6 more in a row without a correction needed" in text
     assert "12 invoices reviewed · 1 correction in the last 12" in text
-    assert "about 32 more invoices approved without a correction before this vendor can skip review" in text
+    # One number, said once (B-508): not the bar's parts again under it.
+    assert "About 32 more invoices approved without a correction before this vendor can skip review" in text
+    assert "accuracy at least" not in text
+    chinook = text.split("Chinook", 1)[1].split("Keep supervised", 1)[0]
+    assert "more in a row without a correction needed" not in chinook
     assert "touchless processing is on (Settings → Automation)" in text  # Northwind waits for the switch
     assert "/learning/suppliers/on" not in page and "/learning/suppliers/off" not in page  # no per-vendor switch
     assert "Touchless processing is off" in text

@@ -1,4 +1,5 @@
-"""Settings → Reading: how AP Coder reads every invoice, the same way each time, and how each reader is doing.
+"""Settings → Reading: whether LM Studio runs (with Check again), OvisOCR2's self-test, the AI reviewer, and folded
+under "For IT" how AP Coder reads every invoice, the same way each time, and how each reader is doing (B-506).
 
 Nothing to choose here. Every invoice goes through the same readers (``ap_coder.ai.reading``); the tab shows each one's
 state, the page reader's (OvisOCR2 in LM Studio) self-test (run again from here, its progress polled from
@@ -249,6 +250,7 @@ def page_reader_context(settings: Settings, store: Store, status: Any) -> dict[s
     from ap_coder.ai.local_llm import LM_STUDIO_STEPS
 
     running = lm_studio_running(settings)
+    chat = chat_model(settings)
     model = status.page_reader_model
     testing = testing_snapshot(store)
     test = page_worker.saved_test(store, model) if model else None
@@ -287,7 +289,8 @@ def page_reader_context(settings: Settings, store: Store, status: Any) -> dict[s
             if vlm and vlm.get("fields")
             else ""
         ),
-        "steps": setup_steps(status, running, chat_model(settings)),
+        "steps": setup_steps(status, running, chat),
+        "chat": chat[1].split(" · ")[-1] if chat[0] else "",
     }
 
 

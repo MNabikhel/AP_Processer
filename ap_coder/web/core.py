@@ -330,6 +330,31 @@ def refuse(text: str, status: int = 400, **extra: Any) -> JSONResponse:
 # --- Drawing a page ----------------------------------------------------------------------------------------------
 
 
+# --- What this pilot shows (Settings → About, D-52) -----------------------------------------------------------------
+SHOW_JDE = "show_jde_settings"  # "1": Settings → JD Edwards E1 is a tab, and JD Edwards E1 an export format
+DEVELOPER_TOOLS = "show_developer_tools"  # "1": Learning → Readers, the training data, What's new for developers
+DEVELOPER_ENV = "AP_DEVELOPER_TOOLS"  # =1: the same, for a developer's computer
+
+
+def _switch(store: Store, key: str) -> bool:
+    try:
+        return store.get_setting(key) == "1"
+    except Exception:  # noqa: BLE001 - a setting that can't be read is off: the page still opens
+        return False
+
+
+def jde_shown(store: Store) -> bool:
+    """Whether the JD Edwards E1 settings and export are shown: off for the pilot (Excel and CSV exports only); a
+    switch on Settings → About shows them, nothing is removed."""
+    return _switch(store, SHOW_JDE)
+
+
+def developer_tools(store: Store) -> bool:
+    """Whether the developer tools show (Learning → Readers, the training data export, the developer changelog):
+    the switch on Settings → About, or AP_DEVELOPER_TOOLS=1."""
+    return os.environ.get(DEVELOPER_ENV, "").strip().lower() in ("1", "true", "yes") or _switch(store, DEVELOPER_TOOLS)
+
+
 def nav_counts(store: Store) -> dict[str, int]:
     """The count badges of the rail: invoices waiting for review (the one queue to work through) and approved
     invoices not exported yet."""

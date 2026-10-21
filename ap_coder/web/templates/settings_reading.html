@@ -1,22 +1,103 @@
-{# Settings → Reading (pages/settings_reading.py). Every text from LM Studio or a reader is escaped (autoescape). #}
+{# Settings → Reading (pages/settings_reading.py): what the tester acts on first, LM Studio running or not, with Check
+   again (B-506); each reader, the models and the limits are folded under "For IT". Every text from LM Studio or a
+   reader is escaped (autoescape). #}
 <section class="card" id="reading">
   <div class="card-head">
     <div>
-      <h4>How AP Coder reads every invoice</h4>
-      <p class="muted">The same steps for a digital PDF, a scan or a phone photo. Nothing to set up or choose, and nothing
-        leaves this computer.</p>
+      <h4>LM Studio</h4>
+      <p class="muted">LM Studio runs OvisOCR2, which reads every page, and the chat model, which checks each invoice
+        and suggests GL accounts for new lines. Nothing leaves this computer.</p>
     </div>
     <form method="post" action="/settings/reading/check" data-busy="Checking…">
       <button class="btn" type="submit"><span class="ms" aria-hidden="true">refresh</span>Check again</button>
     </form>
   </div>
-  <ol class="st-steps">
-    {% for bold, rest in how_it_reads %}<li><b>{{ bold }}</b>{{ rest }}</li>{% endfor %}
-  </ol>
   {% if status is none %}
   <div class="flash warn" role="status"><span class="ms" aria-hidden="true">sync_problem</span>
     <div>AP Coder couldn't check the readers just now. Press <b>Check again</b> in a moment.</div></div>
-  {% elif readers %}
+  {% elif reader %}
+  <div class="st-lm">
+    {% if reader.running %}{{ ui.pill("LM Studio: running", "ok", "check_circle") }}
+    {% else %}{{ ui.pill("LM Studio: not running", "warn", "hourglass_empty") }}{% endif %}
+    {% if reader.model %}{{ ui.pill("OvisOCR2: Found in LM Studio", "ok", "check_circle") }} <span class="muted">{{ reader.model }}</span>
+    {% elif reader.running %}{{ ui.pill("Not in LM Studio", "warn", "warning") }}{% endif %}
+    {% if reader.running %}{{ ui.pill(("Chat model: " ~ reader.chat) if reader.chat else "No chat model loaded", "ok" if reader.chat else "gray") }}{% endif %}
+  </div>
+  {% if not reader.running %}
+  <div class="st-note">
+    <b>To start LM Studio on this computer</b>
+    <ol>{% for step in reader.lm_studio_steps %}<li>{{ step }}</li>{% endfor %}</ol>
+    Then press <b>Check again</b>. Without it AP Coder still works, but every invoice waits for you: nothing is checked
+    by OvisOCR2 or the AI reviewer, and GL accounts come only from what AP approved before.
+  </div>
+  {% elif not reader.model %}
+  <div class="flash info"><span class="ms" aria-hidden="true">usb</span>
+    <div><b>Add OvisOCR2 without the internet.</b> Copy its two files, from your IT team's model share or a USB stick,
+      into this folder (make it if it isn't there):
+      <pre>{{ reader.copy_folder }}</pre>
+      <ul>{% for name, size in reader.model_files %}<li><code>{{ name }}</code> ({{ size }})</li>{% endfor %}</ul>
+      Then press <b>Check again</b>. LM Studio finds models in that folder on its own, AP Coder finds OvisOCR2 in LM
+      Studio and its self-test starts by itself; nothing is downloaded.</div></div>
+  {% endif %}
+  {% endif %}
+</section>
+
+{% if reader %}
+<section class="card" id="page-reader">
+  <h4>OvisOCR2's self-test</h4>
+  <div class="card-head">
+    <div class="row">{{ ui.pill(*reader.self_test) }}{% if reader.self_test_detail %}<span class="muted">{{ reader.self_test_detail }}</span>{% endif %}</div>
+    <form method="post" action="/settings/reading/self-test" data-busy="Starting…">
+      <button class="btn" type="submit"{% if not reader.can_test %} disabled{% endif %}
+              title="It reads an invoice whose answers are known; OvisOCR2 is trusted only when it reads it right. It also runs by itself whenever OvisOCR2 is found or changes.">
+        <span class="ms" aria-hidden="true">fact_check</span>{{ "Run the self-test again" if reader.tested else "Run the self-test now" }}</button>
+    </form>
+  </div>
+  <div class="st-progress{% if reader.testing.state != 'running' %} hidden{% endif %}" id="self-test"
+       data-status-url="/settings/reading/self-test" data-every="{{ poll_seconds }}" data-state="{{ reader.testing.state }}"
+       aria-live="polite">
+    <span class="ms spin" aria-hidden="true">hourglass_top</span>
+    <span>Self-test of <b id="self-test-model">{{ reader.testing.model }}</b>… started <span id="self-test-started">{{ reader.testing.started }}</span><span id="self-test-pages">{% if reader.testing.pages %} · {{ reader.testing.done }} of {{ reader.testing.pages }} pages read{% endif %}</span>
+      ({{ reader.wait }}). It runs in the background: you can leave this page or close the browser, and its result is kept.</span>
+  </div>
+  <p>{% if reader.queue[0] %}<b>{{ reader.queue[0] }}</b>{% endif %}{{ reader.queue[1] }} It reads in the background while
+    AP Coder is open; invoices wait in the review queue meanwhile.</p>
+</section>
+{% endif %}
+
+<section class="card" id="reviewer">
+  <h4>AI reviewer</h4>
+  <p class="muted">The chat model in LM Studio checks every invoice against its pages, as an AP clerk would before
+    posting it: the header, each line and its GL account, the taxes and the math. What it reads differently is marked
+    Check; when it is not sure, a person looks. With it on, no invoice is approved without a person until it agrees.</p>
+  <form method="post" action="/settings/reading/reviewer" class="stack" data-busy="Saving…">
+    <label class="check"><input type="checkbox" name="on" value="1"{% if ai_reviewer.on %} checked{% endif %}> On (recommended)</label>
+    <details class="st-details">
+      <summary>For IT: how long it may take</summary>
+      <div class="row">
+        <label class="field">Rounds at most
+          <input type="number" name="rounds" min="1" max="{{ reviewer_limits.rounds }}" step="1" value="{{ ai_reviewer.rounds }}"
+                 title="How many times it is asked about the invoice: the first look, then what it disputed."></label>
+        <label class="field">Minutes an invoice at most
+          <input type="number" name="minutes" min="0.5" max="{{ reviewer_limits.minutes }}" step="0.5" value="{{ '%g' | format(ai_reviewer.minutes) }}"
+                 title="On a laptop without a graphics card a round takes one to three minutes."></label>
+      </div>
+      <p class="muted">It thinks first, and is asked again about anything it disputed until it is sure. It runs in the
+        background, between OvisOCR2's invoices.</p>
+    </details>
+    <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save</button>
+  </form>
+</section>
+
+<details class="card st-forit" id="for-it">
+  <summary><span class="ms" aria-hidden="true">engineering</span>For IT: how every invoice is read, each reader, the models in LM Studio</summary>
+  <div class="stack">
+  <h4>How AP Coder reads every invoice</h4>
+  <p class="muted">The same steps for a digital PDF, a scan or a phone photo. Nothing to set up or choose.</p>
+  <ol class="st-steps">
+    {% for bold, rest in how_it_reads %}<li><b>{{ bold }}</b>{{ rest }}</li>{% endfor %}
+  </ol>
+  {% if readers %}
   <div class="table-wrap">
     <table class="apc-table">
       <thead><tr><th>Reader</th><th>State</th><th>What it does</th></tr></thead>
@@ -28,97 +109,41 @@
     </table>
   </div>
   {% endif %}
-</section>
 
-{% if reader %}
-<div class="grid-3-2">
-  <div class="col">
-    <section class="card" id="page-reader">
-      <h4>Page reader (OvisOCR2)</h4>
-      <div class="row">
-        {% if reader.model %}{{ ui.pill("Found in LM Studio", "ok", "check_circle") }} <span class="muted">{{ reader.model }}</span>
-        {% elif reader.running %}{{ ui.pill("Not in LM Studio", "warn", "warning") }}
-        {% else %}{{ ui.pill("LM Studio isn't running", "warn", "warning") }}{% endif %}
-      </div>
-      <div class="card-head">
-        <div class="row">{{ ui.pill(*reader.self_test) }}{% if reader.self_test_detail %}<span class="muted">{{ reader.self_test_detail }}</span>{% endif %}</div>
-        <form method="post" action="/settings/reading/self-test" data-busy="Starting…">
-          <button class="btn" type="submit"{% if not reader.can_test %} disabled{% endif %}
-                  title="It reads an invoice whose answers are known; OvisOCR2 is trusted only when it reads it right. It also runs by itself whenever OvisOCR2 is found or changes.">
-            <span class="ms" aria-hidden="true">fact_check</span>{{ "Run the self-test again" if reader.tested else "Run the self-test now" }}</button>
-        </form>
-      </div>
-      <div class="st-progress{% if reader.testing.state != 'running' %} hidden{% endif %}" id="self-test"
-           data-status-url="/settings/reading/self-test" data-every="{{ poll_seconds }}" data-state="{{ reader.testing.state }}"
-           aria-live="polite">
-        <span class="ms spin" aria-hidden="true">hourglass_top</span>
-        <span>Self-test of <b id="self-test-model">{{ reader.testing.model }}</b>… started <span id="self-test-started">{{ reader.testing.started }}</span><span id="self-test-pages">{% if reader.testing.pages %} · {{ reader.testing.done }} of {{ reader.testing.pages }} pages read{% endif %}</span>
-          ({{ reader.wait }}). It runs in the background: you can leave this page or close the browser, and its result is kept.</span>
-      </div>
-      {% if reader.test %}
-      <details class="st-details"{% if not reader.test.ok %} open{% endif %}>
-        <summary>What it read on the test invoice ({{ reader.test_detail }})</summary>
-        {% if reader.test_rows %}
-        <div class="table-wrap">
-          <table class="apc-table">
-            <thead><tr><th>Field</th><th>On the invoice</th><th>OvisOCR2 read</th><th>Match</th></tr></thead>
-            <tbody>
-              {% for r in reader.test_rows %}
-              <tr><td>{{ r.field }}</td><td class="w">{{ r.expected }}</td><td class="w">{{ r.read }}</td>
-                <td>{% if r.match %}<span class="ok">✓ right</span>{% else %}<span class="bad">✗ different</span>{% endif %}</td></tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-        {% endif %}
-        {% if reader.test.problem %}<p class="muted">{{ reader.test.problem }}</p>{% endif %}
-      </details>
-      {% endif %}
-      {% if not reader.model and reader.running %}
-      <div class="flash info"><span class="ms" aria-hidden="true">usb</span>
-        <div><b>Add OvisOCR2 without the internet.</b> Copy its two files, from your IT team's model share or a USB stick,
-          into this folder (make it if it isn't there):
-          <pre>{{ reader.copy_folder }}</pre>
-          <ul>{% for name, size in reader.model_files %}<li><code>{{ name }}</code> ({{ size }})</li>{% endfor %}</ul>
-          Then press <b>Check again</b>. LM Studio finds models in that folder on its own, AP Coder finds OvisOCR2 in LM
-          Studio and its self-test starts by itself; nothing is downloaded.</div></div>
-      {% elif not reader.running %}
-      <div class="st-note">
-        <b>To start LM Studio on this computer</b>
-        <ol>{% for step in reader.lm_studio_steps %}<li>{{ step }}</li>{% endfor %}</ol>
-        Then press <b>Check again</b>.
-      </div>
-      {% endif %}
-      <p>{% if reader.queue[0] %}<b>{{ reader.queue[0] }}</b>{% endif %}{{ reader.queue[1] }}</p>
-      <p class="muted">It reads in the background while AP Coder is open; invoices wait in the review queue meanwhile.{% if developer %} To
-        read the queue overnight instead (Task Scheduler): <code>python -m ap_coder read-pages --minutes 240</code>.{% endif %}</p>
-      {% if reader.figures %}<p>{{ reader.figures }}</p>{% endif %}
-      {% if reader.scans %}<p>{{ reader.scans }}</p>{% endif %}
-      {% if reader.scorecard %}<p>{{ reader.scorecard }}</p>{% endif %}
-    </section>
-  </div>
-  <div class="col">
-    <section class="card">
-      <h4>On a new computer</h4>
-      <p class="muted">What AP Coder needs on this computer. Everything after the first two steps happens by itself.</p>
-      <div>{% for state, label, detail in reader.steps %}{{ ui.step(state, label, detail) }}{% endfor %}</div>
-    </section>
-  </div>
-</div>
-{% endif %}
-
-<section class="card" id="models">
-  <div class="card-head">
-    <div>
-      <h4>Models in LM Studio</h4>
-      <p class="muted">What LM Studio has downloaded, which are loaded now, and what AP Coder uses each one for.</p>
+  {% if reader %}
+  <h4>On a new computer</h4>
+  <p class="muted">What AP Coder needs on this computer. Everything after the first two steps happens by itself.</p>
+  <div>{% for state, label, detail in reader.steps %}{{ ui.step(state, label, detail) }}{% endfor %}</div>
+  {% if reader.test %}
+  <details class="st-details"{% if not reader.test.ok %} open{% endif %}>
+    <summary>What it read on the test invoice ({{ reader.test_detail }})</summary>
+    {% if reader.test_rows %}
+    <div class="table-wrap">
+      <table class="apc-table">
+        <thead><tr><th>Field</th><th>On the invoice</th><th>OvisOCR2 read</th><th>Match</th></tr></thead>
+        <tbody>
+          {% for r in reader.test_rows %}
+          <tr><td>{{ r.field }}</td><td class="w">{{ r.expected }}</td><td class="w">{{ r.read }}</td>
+            <td>{% if r.match %}<span class="ok">✓ right</span>{% else %}<span class="bad">✗ different</span>{% endif %}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
     </div>
-    <form method="post" action="/settings/reading/check" data-busy="Checking…">
-      <button class="btn" type="submit"><span class="ms" aria-hidden="true">refresh</span>Check again</button>
-    </form>
-  </div>
+    {% endif %}
+    {% if reader.test.problem %}<p class="muted">{{ reader.test.problem }}</p>{% endif %}
+  </details>
+  {% endif %}
+  {% if developer %}<p class="muted">To read the queue overnight instead (Task Scheduler):
+    <code>python -m ap_coder read-pages --minutes 240</code>.</p>{% endif %}
+  {% if reader.figures %}<p>{{ reader.figures }}</p>{% endif %}
+  {% if reader.scans %}<p>{{ reader.scans }}</p>{% endif %}
+  {% if reader.scorecard %}<p>{{ reader.scorecard }}</p>{% endif %}
+  {% endif %}
+
+  <h4 id="models">Models in LM Studio</h4>
+  <p class="muted">What LM Studio has downloaded, which are loaded now, and what AP Coder uses each one for.</p>
   {% if models is none %}
-  {{ ui.empty_note("LM Studio isn't answering", " Start it, then its server (Developer tab, Start server). Without it, invoices are still read by the PDF's text and OCR, and coded from what AP approved.", "error") }}
+  {{ ui.empty_note("LM Studio isn't answering", " Start it, then its server (Developer tab, Start server), and press Check again. Without it, invoices are still read by the PDF's text and OCR, and coded from what AP approved.", "hourglass_empty") }}
   {% elif not models %}
   {{ ui.empty_note("No models yet", " LM Studio has no chat or vision model downloaded yet.", "deployed_code") }}
   {% else %}
@@ -146,28 +171,8 @@
   <p class="muted">A model that isn't loaded is loaded by LM Studio when AP Coder first asks it (OvisOCR2 with the context a
     page needs).</p>
   {% endif %}
-</section>
-
-<section class="card" id="reviewer">
-  <h4>AI reviewer</h4>
-  <p class="muted">The chat model in LM Studio (Gemma 4 12B) checks every invoice against its pages, as an AP clerk would
-    before posting it: the header, each line and its GL account, the taxes and the math. It thinks first, and is asked
-    again about anything it disputed until it is sure. It runs in the background, between OvisOCR2's invoices. What it
-    reads differently is marked Check; when it is not sure, a person looks. With it on, no invoice is approved without a
-    person until it agrees.</p>
-  <form method="post" action="/settings/reading/reviewer" class="stack" data-busy="Saving…">
-    <label class="check"><input type="checkbox" name="on" value="1"{% if ai_reviewer.on %} checked{% endif %}> On (recommended)</label>
-    <div class="row">
-      <label class="field">Rounds at most
-        <input type="number" name="rounds" min="1" max="{{ reviewer_limits.rounds }}" step="1" value="{{ ai_reviewer.rounds }}"
-               title="How many times it is asked about the invoice: the first look, then what it disputed."></label>
-      <label class="field">Minutes an invoice at most
-        <input type="number" name="minutes" min="0.5" max="{{ reviewer_limits.minutes }}" step="0.5" value="{{ '%g' | format(ai_reviewer.minutes) }}"
-               title="On a laptop without a graphics card a round takes one to three minutes."></label>
-    </div>
-    <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save</button>
-  </form>
-</section>
+  </div>
+</details>
 
 {# ==== Slot: the "Azure Document Intelligence check" card. Built by pages/azure.py and its own template; nothing
    shows here until that partial exists, nor in the offline build unless it was switched on before. ==== #}

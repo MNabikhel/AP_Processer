@@ -1,69 +1,70 @@
-{# Settings → Review (pages/settings.py): the reviewer's name, the AI's threshold, approval and payment. #}
-<div class="st-2">
-  <section class="card">
-    <h4>Review and AI behaviour</h4>
-    <form method="post" action="/settings/review" class="stack" data-busy="Saving…">
+{# Settings → Review (pages/settings.py): one form, one Save (B-507): your name, approval and payment, where invoices
+   are delivered to you, and the AI's behaviour under Advanced. #}
+<form method="post" action="/settings/review" class="st-review" data-busy="Saving…">
+  <div class="st-2">
+    <section class="card">
+      <h4>You</h4>
       {% if colleague %}
       <p class="field">Your name: <b>{{ reviewer_name }}</b> (<a href="/who">change it</a>; this browser gave it to AP Coder)</p>
       {% else %}
       <label class="field">Your name
         <input type="text" name="reviewer_name" value="{{ reviewer_name }}" placeholder="shown on the invoices you approve"
                title="Saved for your Windows account: two people sharing one AP Coder each keep their own name."></label>
+      <p class="muted">Each approval is recorded under it. A colleague who opens AP Coder from their own computer gives
+        their own name on the <a href="/who">Who are you?</a> page.</p>
       {% endif %}
-      <label class="field st-wide"><span>Send to <i>Needs attention</i> when the AI's confidence is below</span>
-        <span class="st-range"><input type="range" name="threshold" min="50" max="99" step="1" value="{{ threshold }}"
-          data-output="threshold-out"><output id="threshold-out">{{ threshold }}%</output></span></label>
-      <p class="muted">Invoices with any error always need attention. Higher = more invoices get a closer look. Applies to
-        invoices processed from now on; invoices already in the queue keep their flag.</p>
-      <label class="check"><input type="checkbox" name="constrain" value="1"{% if constrain %} checked{% endif %}>
-        Only allow codes from my GL account list (recommended)</label>
-      <p class="muted">Off only for very large charts of accounts; codes are still checked after the AI answers.</p>
-      <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save review settings</button>
-    </form>
-  </section>
-
-  <section class="card">
-    <h4>Approval and payment</h4>
-    <form method="post" action="/settings/review/approval" class="stack" data-busy="Saving…">
-      <label class="field">Second approval for invoices over, in CAD (0 = never)
-        <input type="number" name="approval_limit" min="0" step="0.01" value="{{ '%.2f' | format(approval_limit) }}"
-               title="Above this amount, an approved invoice waits for a second, different approver before export."></label>
-      <p class="muted">Above this amount, an approved invoice waits for a second, different approver before export. A
-        foreign-currency invoice is converted to CAD at the exchange rates below (as it is, without a rate).</p>
-      <p class="muted">The second approver needs their own name and their own computer login, so on one laptop with
-        one Windows login it can't be given. To test it, sign in to this laptop with a second Windows account and open
-        AP Coder there (each account sets its own name above), or have a colleague open it from their computer over the
-        office network (IT sets that up: the pilot guide's "What is sent over the network"). An invoice waiting for it can always be sent
-        back to the review queue with Send back.</p>
-      <label class="field">Days to pay when an invoice prints no due date and no terms
-        <input type="number" name="terms_days" min="0" max="180" step="1" value="{{ terms_days }}"
-               title="Used to show when an invoice is due, to sort the queue by due date and in exports."></label>
-      <label class="field">Exchange rates to CAD (optional)
-        <input type="text" name="fx_rates" value="{{ fx_rates }}" placeholder="e.g. USD=1.37, EUR=1.50"></label>
-      <p class="muted">CAD per unit of each foreign currency you are billed in. Used for estimates in CAD (Spend, Sales tax);
-        invoices and exports keep their own currency.</p>
-      <label class="field">Ask why after the same correction (times)
-        <input type="number" name="why_after" min="1" max="20" step="1" value="{{ why_after }}"
-               title="When AP corrects the same thing for a vendor this many times, AP Coder asks why before saving, once; the AI reads the reason."></label>
-      <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save approval settings</button>
-    </form>
-  </section>
-
-  <section class="card">
-    <h4>Where invoices are delivered to you (sales tax)</h4>
-    <form method="post" action="/settings/review/supply" class="stack" data-busy="Saving…">
       <label class="field">Your province (where goods are delivered to you)
         <select name="our_province">
           <option value=""{% if not our_province %} selected{% endif %}>— not set</option>
           {% for code, label in provinces.items() %}<option value="{{ code }}"{% if code == our_province %} selected{% endif %}>{{ label }}</option>{% endfor %}
         </select></label>
+      <p class="muted">Sales tax follows where the goods are delivered to you, not where the vendor is. When an invoice
+        prints no ship-to, the sales tax check uses this province. A ship-to printed on the invoice always wins.</p>
+      {% if uses_cost_centers or site_provinces %}
       <label class="field">Sites in other provinces, by cost center (optional)
         <textarea name="site_provinces" rows="3" placeholder="CC400=BC&#10;CC500=ON">{{ site_provinces }}</textarea></label>
-      <p class="muted">Sales tax follows where the goods are delivered to you (services: generally where you are), not where
-        the vendor is or ships from. A vendor in Ontario shipping from BC to your site in BC charges GST and BC PST. When an
-        invoice prints no ship-to, AP Coder uses the province of the cost center its lines are coded to, else your
-        province. A ship-to printed on the invoice always wins.</p>
-      <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save</button>
-    </form>
-  </section>
-</div>
+      <p class="muted">An invoice with no ship-to coded to one of these cost centers uses that site's province.</p>
+      {% endif %}
+    </section>
+
+    <section class="card">
+      <h4>Approval and payment</h4>
+      <label class="field">Second approval for invoices over, in CAD (0 = never)
+        <input type="number" name="approval_limit" min="0" step="0.01" value="{{ '%.2f' | format(approval_limit) }}"
+               title="Above this amount, an approved invoice waits for a second, different approver before export."></label>
+      <p class="muted">Above this amount, an approved invoice waits for a second, different approver (another name and
+        another computer login) before export. A foreign-currency invoice is converted to CAD at the exchange rates below.
+        On one laptop with one Windows login it can't be given: sign in with a second Windows account, or have a
+        colleague open AP Coder from their computer over the office network (IT sets that up). An invoice waiting for it can always be sent back
+        to the review queue with Send back.</p>
+      <label class="field">Days to pay when an invoice prints no due date and no terms
+        <input type="number" name="terms_days" min="0" max="180" step="1" value="{{ terms_days }}"
+               title="Used to show when an invoice is due, to sort the queue by due date and in exports."></label>
+      <label class="field">Exchange rates to CAD (optional)
+        <input type="text" name="fx_rates" value="{{ fx_rates }}" placeholder="e.g. USD=1.37, EUR=1.50"></label>
+      <p class="muted">CAD per unit of each foreign currency you are billed in, for estimates in CAD (Spend, Sales tax);
+        invoices and exports keep their own currency.</p>
+    </section>
+  </div>
+
+  <details class="card st-advanced" id="advanced">
+    <summary><span class="ms" aria-hidden="true">tune</span>Advanced: how the AI decides (change only if you know why)</summary>
+    <label class="field st-wide"><span>Send to <i>Needs attention</i> when the AI's confidence is below</span>
+      <span class="st-range"><input type="range" name="threshold" min="50" max="99" step="1" value="{{ threshold }}"
+        data-output="threshold-out"><output id="threshold-out">{{ threshold }}%</output></span></label>
+    <p class="muted">Invoices with any error always need attention. Higher = more invoices get a closer look. Applies to
+      invoices read from now on; invoices already in the queue keep their flag.</p>
+    <label class="check"><input type="checkbox" name="constrain" value="1"{% if constrain %} checked{% endif %}>
+      Only allow codes from my GL account list (recommended)</label>
+    <p class="muted">Turn off only for a very large list of GL accounts; codes are still checked after the AI answers.</p>
+    <label class="field">Ask AP for the reason once the same correction has been made this many times
+      <input type="number" name="why_after" min="1" max="20" step="1" value="{{ why_after }}"
+             title="When AP corrects the same thing for a vendor this many times, AP Coder asks why before saving, once; the AI reads the reason."></label>
+    <p class="muted">When you correct the same thing for a vendor this many times, AP Coder asks you once why, and keeps
+      your reason with that lesson (Learning &amp; accuracy → Lessons).</p>
+  </details>
+
+  <div class="row st-save">
+    <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save</button>
+  </div>
+</form>

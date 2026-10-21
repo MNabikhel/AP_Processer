@@ -93,9 +93,11 @@ def test_each_page_renders_on_an_empty_database(client, path):
     assert "Traceback" not in response.text
 
 
-def test_the_empty_pages_say_what_comes_there(client):
+def test_the_empty_pages_say_what_comes_there(client, monkeypatch):
     assert "Nothing learned yet" in client.get("/learning").text
     assert "No supplier learned yet" in client.get("/learning?tab=suppliers").text
+    assert "A tool for developers" in client.get("/learning?tab=readers").text
+    monkeypatch.setenv("AP_DEVELOPER_TOOLS", "1")
     readers = client.get("/learning?tab=readers").text
     assert "No reader compared with AP yet" in readers and "Nothing approved yet." in readers
     assert "No spend yet" in client.get("/spend").text
@@ -319,7 +321,8 @@ def test_read_sheets_reads_csv_and_excel():
         read_sheets("a.xlsx", b"not a workbook")
 
 
-def test_readers_tab_and_training_export_download_a_zip(client, busy):
+def test_readers_tab_and_training_export_download_a_zip(client, busy, monkeypatch):
+    monkeypatch.setenv("AP_DEVELOPER_TOOLS", "1")  # a developer tool (B-511)
     page = client.get("/learning?tab=readers").text
     assert "Scorecard" in page and "Field by field" in page and "Download training data (ZIP)" in page
     assert "Demo invoices and invoices approved without a person are never included." in page

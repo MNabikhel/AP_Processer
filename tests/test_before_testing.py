@@ -16,6 +16,7 @@ from ap_coder.core.store import Store
 from ap_coder.ops.demo import load_demo
 from ap_coder.web.app import create_app
 from ap_coder.web.pages import PAGES
+from ap_coder.web.pages import exports as exports_page
 
 from .conftest import chromium_path
 
@@ -226,3 +227,96 @@ def test_the_reading_queue_counts_only_invoices_still_to_approve(store, tmp_path
         conn.execute("UPDATE invoices SET status = ? WHERE id = ?", (APPROVED, ids[1]))
     assert store.page_reads_waiting() == 2  # the reader still reads both (its record against approved values)
     assert store.page_reads_waiting(still_open=True) == 1  # what the tester waits for
+
+
+# --- Settings (B-506, B-507, B-508, B-511, B-521, B-522, D-52) --------------------------------------------------------
+
+
+def _tabs(html: str) -> list[str]:
+    bar = html.split('<nav class="tabs" aria-label="Settings">', 1)[1].split("</nav>", 1)[0]
+    return re.findall(r'href="/settings/(\w+)"', bar)
+
+
+def test_settings_opens_on_review_and_hides_jd_edwards_until_asked(client, store):
+    page = client.get("/settings").text
+    assert _tabs(page) == ["review", "reading", "automation", "data", "about"]
+    assert 'href="/settings/review" class="on" aria-current="page"' in page
+    hidden = client.get("/settings/jde")  # still there (nothing removed), and says how to show it
+    assert hidden.status_code == 200 and "Show JD Edwards settings" in hidden.text
+    assert "jde" not in exports_page.shown_formats(store)  # nor offered on Exports
+    answer = client.post("/settings/about/show", data={"show_jde": "1"}, headers=PAGE).json()
+    assert answer["ok"] and "jde" in _tabs(client.get("/settings").text)
+    assert "jde" in exports_page.shown_formats(store)
+    assert "Show JD Edwards settings" not in client.get("/settings/jde").text.split("<form", 1)[0]
+
+
+def test_the_review_tab_is_one_form_with_one_save_and_the_risky_settings_folded(client):
+    page = client.get("/settings/review").text
+    tab = page.split('class="st-tab"', 1)[1]
+    assert tab.count('method="post"') == 1 and tab.count('type="submit"') == 1
+    advanced = tab.split('id="advanced"', 1)[1].split("</details>", 1)[0]
+    for name in ('name="threshold"', 'name="constrain"', 'name="why_after"'):
+        assert name in advanced, name
+    assert "Ask why after the same correction (times)" not in page
+    assert 'href="/who"' in tab  # the Who are you? page is linked from here
+
+
+def test_saving_your_name_says_your_name_was_saved(client):
+    form = {"reviewer_name": "Dana Clerk", "threshold": "85", "constrain": "1", "approval_limit": "0",
+            "terms_days": "30", "fx_rates": "", "why_after": "3", "our_province": ""}  # fmt: skip
+    answer = client.post("/settings/review", data=form, headers=PAGE).json()
+    text = client.get(answer["redirect"]).text
+    assert "Saved your name." in text and "Invoices read from now on" not in text
+    answer = client.post("/settings/review", data={**form, "our_province": "ON"}, headers=PAGE).json()
+    assert "Saved your province: invoices read from now on use it." in client.get(answer["redirect"]).text
+    answer = client.post("/settings/review", data={**form, "our_province": "ON"}, headers=PAGE).json()
+    assert "Nothing changed." in client.get(answer["redirect"]).text
+
+
+def test_reading_says_whether_lm_studio_runs_and_folds_the_rest_for_it(client):
+    page = client.get("/settings/reading").text
+    head = page.split('id="for-it"', 1)[0]
+    assert "LM Studio: not running" in head and "Check again" in head and "Start server" in head
+    assert "<th>Reader</th>" not in head and 'name="rounds"' not in head.split('id="reviewer"', 1)[0]
+    folded = page.split('id="for-it"', 1)[1]
+    assert "<th>Reader</th>" in folded and "Models in LM Studio" in folded
+
+
+def test_touchless_is_not_the_pages_main_button_and_says_to_leave_it_off(client):
+    page = client.get("/settings/automation").text
+    assert '<summary class="btn"><span class="ms" aria-hidden="true">bolt</span>Turn on' in page
+    assert "Leave it off during the pilot." in page and "30 to 40" in page
+
+
+def test_supplier_learning_says_how_many_more_invoices_once(client, demo_store):
+    demo = TestClient(create_app(_settings(), demo_store, start_reader=False), base_url="http://localhost")
+    page = demo.get("/learning?tab=suppliers").text
+    assert "accuracy at least" not in page
+    rows = page.split("an-supplier")[1:]
+    assert rows and all(row.count("more invoice") <= 1 for row in rows)
+
+
+def test_the_readers_tab_and_the_training_data_are_developer_tools(client, store, monkeypatch):
+    page = client.get("/learning").text
+    assert "tab=readers" not in page
+    assert "A tool for developers" in client.get("/learning?tab=readers").text
+    assert client.get("/learning/training.zip").status_code == 404
+    monkeypatch.setenv("AP_DEVELOPER_TOOLS", "1")
+    assert "tab=readers" in client.get("/learning").text
+    assert client.get("/learning/training.zip").status_code == 200
+
+
+def test_about_folds_the_full_paths_for_it(client, store):
+    page = client.get("/settings/about").text
+    tab = page.split('class="st-tab"', 1)[1]
+    head, folded = tab.split('id="for-it"', 1)
+    assert str(store.path.parent) not in head and "Data folder" in folded
+    assert "close AP Coder" not in tab  # an update may be started with it open
+
+
+def test_who_is_a_proper_page_linking_to_settings(client, monkeypatch):
+    from ap_coder.web import identity
+
+    monkeypatch.setattr(identity, "from_this_computer", lambda scope: True)  # (the test client is no browser here)
+    page = client.get("/who").text
+    assert "Who are you?" in page and 'href="/settings/review"' in page and "Activity log" in page

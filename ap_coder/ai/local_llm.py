@@ -50,7 +50,7 @@ LM_STUDIO_STEPS = (
     "Open LM Studio. Your IT team installs it with the models already in it: the chat model (Gemma 4 12B or "
     "Qwen 3.5 9B, 4-bit) and OvisOCR2. If it isn't on this computer, ask IT.",
     "In LM Studio: Developer tab → Start server.",
-    "If no model is loaded: Models in LM Studio (below) → pick the chat model → Load.",
+    "If no model is loaded: Settings → Reading → For IT → Models in LM Studio → pick the chat model → Load.",
 )
 
 

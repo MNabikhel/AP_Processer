@@ -152,7 +152,10 @@
 <p class="muted">
   {% if touchless_on %}Touchless processing is <b>on</b>: a vendor that meets the bar skips review by itself, and one correction sends it back to review.
   {% else %}Touchless processing is <b>off</b> (Settings → Automation): every invoice is reviewed by a person, and each approval keeps training its vendor.{% endif %}
-  The bar, the same for every vendor: {{ policy }}.</p>
+  The bar, the same for every vendor (<a href="/settings/automation">Settings → Automation</a>): at least
+  {{ policy.min_invoices }} invoices reviewed, the last {{ policy.clean_streak }} without a correction, and its fields
+  read right {{ "{:.0%}".format(policy.min_lower_bound) }} of the time. In practice a new vendor needs about
+  {{ typical }} invoices approved without a correction; each vendor below says how many more it needs.</p>
 {% for s in suppliers %}
 <section class="card an-supplier" aria-label="{{ s.name }}">
   {{ s.row }}
@@ -227,6 +230,8 @@
 </section>
 {% endif %}
 
+{% elif not developer %}
+<section class="card">{{ ui.empty_state("A tool for developers", "How each reader of the page scores against what AP approved, and the training data export, are developer tools. They show once Show developer tools is on in Settings → About.") }}</section>
 {% else %}
 <p class="muted">Each approval compares what every reader found on the page with what AP approved. The combined value is
   what the review screen showed; a reader that keeps agreeing with AP earns its trust.</p>

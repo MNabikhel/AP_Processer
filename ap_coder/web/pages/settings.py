@@ -1,9 +1,11 @@
 """Settings: how invoices are read, touchless processing, review behaviour, JD Edwards E1, the data folder and its
 backups, and about this installation.
 
-Each tab is a page of its own (``/settings/reading``, ``/settings/automation``...), so a tab can be linked to and
-Back works; ``/settings`` is the Reading tab. The Reading, Automation and JD Edwards tabs are in their own modules
-(``settings_reading.py``, ``settings_automation.py``, ``settings_jde.py``), included here.
+Each tab is a page of its own (``/settings/review``, ``/settings/reading``...), so a tab can be linked to and
+Back works; ``/settings`` is the Review tab, what a pilot tester changes (B-506). The JD Edwards E1 tab shows only
+once Settings → About's "Show JD Edwards settings" is on (``/settings/jde`` still opens, and says so). The Reading,
+Automation and JD Edwards tabs are in their own modules (``settings_reading.py``, ``settings_automation.py``,
+``settings_jde.py``), included here.
 
 Values that belong to the computer (review threshold, Azure endpoints...) are written to the ``.env`` with the same
 functions as before (``ap_coder.core.envfile``) and applied to the running dashboard at once; values that belong to the
@@ -33,13 +35,19 @@ from ap_coder.core.envfile import one_line, read_env, write_env
 from ap_coder.core.store import Store, unread_fx_text
 from ap_coder.web import identity
 from ap_coder.web.core import (
+    DEVELOPER_ENV,
+    DEVELOPER_TOOLS,
+    SHOW_JDE,
     data_dir,
+    developer_tools,
     done,
     get_settings,
     get_store,
     invoice_dir,
+    jde_shown,
     message,
     open_folder,
+    posted_form,
     refuse,
     render,
     reviewer,
@@ -49,9 +57,9 @@ router = APIRouter()
 
 # (key, label) in the order of the tab bar; /settings/<key> is each tab.
 TABS: list[tuple[str, str]] = [
+    ("review", "Review"),
     ("reading", "Reading"),
     ("automation", "Automation"),
-    ("review", "Review"),
     ("jde", "JD Edwards E1"),
     ("data", "Data & backups"),
     ("about", "About"),
@@ -64,9 +72,14 @@ def tab_url(tab: str) -> str:
     return f"/settings/{tab}"
 
 
+def shown_tabs(store: Store) -> list[tuple[str, str]]:
+    """The tab bar: every tab but JD Edwards E1 while it is hidden (the pilot exports to Excel and CSV only)."""
+    return [(key, label) for key, label in TABS if key != "jde" or jde_shown(store)]
+
+
 def render_tab(request: Request, tab: str, **context: Any) -> HTMLResponse:
     """The Settings page showing ``tab`` (its template is ``settings_<tab>.html``)."""
-    return render(request, "settings.html", "settings", tab=tab, tabs=TABS, **context)
+    return render(request, "settings.html", "settings", tab=tab, tabs=shown_tabs(get_store(request)), **context)
 
 
 # --- The .env ------------------------------------------------------------------------------------------------------
@@ -102,9 +115,7 @@ def saved_line(changed: list[str]) -> str:
 
 @router.get("/settings", response_class=HTMLResponse)
 def settings_page(request: Request) -> HTMLResponse:
-    from ap_coder.web.pages.settings_reading import reading_context
-
-    return render_tab(request, "reading", **reading_context(request))
+    return render_tab(request, "review", **review_context(request))
 
 
 @router.get("/settings/{tab}", response_class=HTMLResponse)
@@ -122,7 +133,7 @@ def settings_tab(request: Request, tab: str) -> HTMLResponse:
     if tab == "jde":
         from ap_coder.web.pages.settings_jde import jde_context
 
-        return render_tab(request, tab, **jde_context(get_store(request)))
+        return render_tab(request, tab, jde_hidden=not jde_shown(get_store(request)), **jde_context(get_store(request)))
     if tab == "review":
         return render_tab(request, tab, **review_context(request))
     if tab == "data":
@@ -149,50 +160,197 @@ def review_context(request: Request) -> dict[str, Any]:
         "our_province": store.our_province(),
         "why_after": lessons.why_after(store),
         "site_provinces": store.get_setting("site_provinces"),
+        "uses_cost_centers": bool(store.list_accounts("cost_centers")),
         "provinces": PROVINCE_NAMES,
     }
 
 
 @router.post("/settings/review")
-def save_review(
-    request: Request, reviewer_name: str = Form(""), threshold: str = Form("80"), constrain: str = Form("")
-) -> JSONResponse:
+async def save_review(request: Request) -> JSONResponse:
+    """The Review tab's one form, one Save (B-507): your name, approval and payment, where invoices are delivered to
+    you, and (under Advanced) the AI's threshold, the GL list rule and when to ask why. A field the form didn't post
+    is left as it is (read from the raw form: a field posted blank, a name cleared, is not one left out); the message
+    says what was saved."""
+    form = await posted_form(request)
+
+    def field(name: str) -> str | None:
+        value = form.get(name)
+        return None if value is None else str(value)
+
+    reviewer_name, threshold, constrain = field("reviewer_name"), field("threshold"), field("constrain") or ""
+    approval_limit, terms_days, fx_rates = field("approval_limit"), field("terms_days"), field("fx_rates")
+    why_after, our_province, site_provinces = field("why_after"), field("our_province"), field("site_provinces")
+    name_part = _review_part(request, reviewer_name, threshold, constrain)
+    if isinstance(name_part, JSONResponse):
+        return name_part
+    approval_part = _approval_part(request, approval_limit, terms_days, fx_rates, why_after)
+    if isinstance(approval_part, JSONResponse):
+        return approval_part
+    supply_part = _supply_part(request, our_province, site_provinces)
+    if isinstance(supply_part, JSONResponse):
+        return supply_part
+    saved = name_part() + approval_part() + supply_part()
+    return done(request, tab_url("review"), saved_text(saved))
+
+
+# What each saved setting is called in the message after Save, and whether it applies to invoices read from now on.
+SAVED_WORDS = {
+    "reviewer": ("your name", False),
+    "AP_REVIEW_THRESHOLD": ("the confidence threshold", True),
+    "AP_CONSTRAIN_CODES": ("the GL account list rule", True),
+    "approval_limit": ("the second-approval limit", False),
+    "default_terms_days": ("the days to pay", False),
+    "fx_rates": ("the exchange rates", False),
+    lessons.SETTING: ("when to ask why", False),
+    "our_province": ("your province", True),
+    "site_provinces": ("the sites in other provinces", True),
+}
+
+
+def saved_text(changed: list[str]) -> str:
+    """What was saved, in words (B-507): "Saved your name." / "Saved your province: invoices read from now on use
+    it." / "Saved your name and your province; your province applies to invoices read from now on." / "Nothing
+    changed." """
+    if not changed:
+        return "Nothing changed."
+    words = [SAVED_WORDS.get(key, (key, False)) for key in changed]
+
+    def listed(names: list[str]) -> str:
+        return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+
+    later = [w for w, applies in words if applies]
+    if not later:
+        return f"Saved {listed([w for w, _ in words])}."
+    if len(later) == len(words):
+        return f"Saved {listed(later)}: invoices read from now on use {'it' if len(later) == 1 else 'them'}."
+    apply = "applies" if len(later) == 1 else "apply"
+    return f"Saved {listed([w for w, _ in words])}; {listed(later)} {apply} to invoices read from now on."
+
+
+def _review_part(request: Request, reviewer_name: str | None, threshold: str | None, constrain: str) -> Any:
+    """Your name, and the AI's threshold and GL list rule: a refusal, or what saves them (it returns the keys saved)."""
     settings, store = get_settings(request), get_store(request)
-    try:
-        percent = int(float(threshold))
-    except (ValueError, OverflowError):  # int(float("1e309")) overflows
-        return refuse("The confidence threshold must be a number from 50 to 99.")
-    if not 50 <= percent <= 99:
-        return refuse("The confidence threshold must be from 50% to 99%.")
-    name = reviewer_name.strip()
-    if identity.person() is not None:  # a colleague's name is never the owner's saved one
+    percent = None
+    if threshold is not None:
+        try:
+            percent = int(float(threshold))
+        except (ValueError, OverflowError):  # int(float("1e309")) overflows
+            return refuse("The confidence threshold must be a number from 50 to 99.")
+        if not 50 <= percent <= 99:
+            return refuse("The confidence threshold must be from 50% to 99%.")
+    name = None if reviewer_name is None else reviewer_name.strip()
+    if name is not None and identity.person() is not None:  # a colleague's name is never the owner's saved one
         if name and name != reviewer():
             return refuse("Your name is the one this browser gave AP Coder: change it on the Who are you? page (/who).")
         name = reviewer()
-    changed: list[str] = []
-    if name and name != reviewer():  # logged under the old name, with both names
-        rename = {"from": reviewer(), "to": name}
-        store.log_event("settings_changed", actor=reviewer(), detail={"keys": ["reviewer"], "reviewer": rename})
-        paths.write_user_settings(reviewer=name)
-        changed.append("reviewer")
-    elif not name and paths.read_user_settings().get("reviewer"):  # cleared: back to AP_REVIEWER or the login
-        saved = reviewer()
-        paths.write_user_settings(reviewer="")
-        rename = {"from": saved, "to": reviewer()}
-        store.log_event("settings_changed", actor=saved, detail={"keys": ["reviewer"], "reviewer": rename})
-        changed.append("reviewer")
-    # Only what differs from the values in effect: a default is not written to the .env as a "change".
-    updates = {}
-    new_threshold = percent / 100
-    if round(new_threshold, 2) != round(float(settings.engine.review_threshold), 2):
-        updates["AP_REVIEW_THRESHOLD"] = f"{new_threshold:.2f}"
-    on = constrain in ("1", "on", "true")
-    if on != settings.engine.constrain_codes:
-        updates["AP_CONSTRAIN_CODES"] = "true" if on else "false"
-    changed = save_env(store, updates) + changed
-    return done(request, tab_url("review"), saved_line(changed))
+
+    def save() -> list[str]:
+        changed: list[str] = []
+        if name and name != reviewer():  # logged under the old name, with both names
+            rename = {"from": reviewer(), "to": name}
+            store.log_event("settings_changed", actor=reviewer(), detail={"keys": ["reviewer"], "reviewer": rename})
+            paths.write_user_settings(reviewer=name)
+            changed.append("reviewer")
+        elif name == "" and paths.read_user_settings().get("reviewer"):  # cleared: back to AP_REVIEWER or the login
+            saved = reviewer()
+            paths.write_user_settings(reviewer="")
+            rename = {"from": saved, "to": reviewer()}
+            store.log_event("settings_changed", actor=saved, detail={"keys": ["reviewer"], "reviewer": rename})
+            changed.append("reviewer")
+        # Only what differs from the values in effect: a default is not written to the .env as a "change". The
+        # GL list rule is a checkbox: with the threshold posted (the form), unticked means off.
+        updates = {}
+        if percent is not None:
+            new_threshold = percent / 100
+            if round(new_threshold, 2) != round(float(settings.engine.review_threshold), 2):
+                updates["AP_REVIEW_THRESHOLD"] = f"{new_threshold:.2f}"
+            on = constrain in ("1", "on", "true")
+            if on != settings.engine.constrain_codes:
+                updates["AP_CONSTRAIN_CODES"] = "true" if on else "false"
+        return changed + save_env(store, updates)
+
+    return save
 
 
+def _approval_part(
+    request: Request, approval_limit: str | None, terms_days: str | None, fx_rates: str | None, why_after: str | None
+) -> Any:
+    """Approval and payment: a refusal, or what saves them (it returns the keys saved)."""
+    store = get_store(request)
+    try:
+        limit = None if approval_limit is None else round(float(approval_limit or 0), 2)
+        days = None if terms_days is None else int(float(terms_days or 0))
+        why = int(float(why_after)) if why_after and why_after.strip() else None
+        if limit is not None and not math.isfinite(limit):  # "1e309" or "nan" posted directly
+            raise ValueError(approval_limit)
+    except (ValueError, OverflowError):  # int(float("1e309")) overflows
+        return refuse("The approval limit and the days to pay must be numbers.")
+    if limit is not None and limit < 0:
+        return refuse("The approval limit can't be below 0 (0 = never a second approval).")
+    if days is not None and not 0 <= days <= 180:
+        return refuse("The days to pay must be from 0 to 180.")
+    if why is not None and not 1 <= why <= 20:
+        return refuse("Ask why after 1 to 20 corrections of the same thing.")
+    unread = unread_fx_text(fx_rates or "")
+    if unread:  # saved as it was, a rate typed the wrong way round would be ignored without a word
+        return refuse(f"Exchange rates not saved: “{unread}” can't be read. Write each one as a currency code, then "
+                      "the CAD for one unit, e.g. USD=1.37, EUR=1.50.")  # fmt: skip
+
+    def save() -> list[str]:
+        changed = []
+        if fx_rates is not None and fx_rates.strip() != store.get_setting("fx_rates"):
+            store.set_setting("fx_rates", fx_rates.strip(), actor=reviewer())
+            changed.append("fx_rates")
+        if days is not None and days != store.default_terms_days():
+            store.set_setting("default_terms_days", str(days), actor=reviewer())
+            changed.append("default_terms_days")
+        if why is not None and why != lessons.why_after(store):
+            store.set_setting(lessons.SETTING, str(why), actor=reviewer())
+            changed.append(lessons.SETTING)
+        if limit is not None and limit != store.approval_limit():
+            store.set_setting("approval_limit", f"{limit:.2f}", actor=reviewer())
+            changed.append("approval_limit")
+        if changed:
+            store.log_event("settings_changed", actor=reviewer(), detail={"keys": changed})
+        return changed
+
+    return save
+
+
+def _supply_part(request: Request, our_province: str | None, site_provinces: str | None) -> Any:
+    """Where invoices are delivered to us (the place of supply of an invoice that prints no ship-to): a refusal, or
+    what saves it (it returns the keys saved)."""
+    store = get_store(request)
+    province = None if our_province is None else our_province.strip().upper()
+    if province and province not in PROVINCE_NAMES:
+        return refuse("Choose a province from the list.")
+    sites = None
+    if site_provinces is not None:
+        lines = [line.strip() for line in re.split(r"[\n,;]+", site_provinces) if line.strip()]
+        bad = [line for line in lines if line.partition("=")[2].strip().upper() not in PROVINCE_NAMES
+               or not line.partition("=")[0].strip()]  # fmt: skip
+        if bad:
+            return refuse(f"Not saved: “{bad[0]}” can't be read. Write one cost center per line, then = and its "
+                          "province code, e.g. CC400=BC.")  # fmt: skip
+        pairs = [(line.partition("=")[0].strip(), line.partition("=")[2].strip().upper()) for line in lines]
+        sites = "\n".join(f"{code}={where}" for code, where in pairs)
+
+    def save() -> list[str]:
+        changed = []
+        if province is not None and province != store.our_province():
+            store.set_setting("our_province", province, actor=reviewer())
+            changed.append("our_province")
+        if sites is not None and sites != store.get_setting("site_provinces"):
+            store.set_setting("site_provinces", sites, actor=reviewer())
+            changed.append("site_provinces")
+        if changed:
+            store.log_event("settings_changed", actor=reviewer(), detail={"keys": changed})
+        return changed
+
+    return save
+
+
+# The Review tab's three forms before B-507, kept for links and scripts that post to them.
 @router.post("/settings/review/approval")
 def save_approval(
     request: Request,
@@ -201,68 +359,14 @@ def save_approval(
     fx_rates: str = Form(""),
     why_after: str = Form(""),
 ) -> JSONResponse:
-    store = get_store(request)
-    try:
-        limit = round(float(approval_limit or 0), 2)
-        days = int(float(terms_days or 0))
-        why = int(float(why_after)) if why_after.strip() else None
-        if not math.isfinite(limit):  # "1e309" or "nan" posted directly
-            raise ValueError(approval_limit)
-    except (ValueError, OverflowError):  # int(float("1e309")) overflows
-        return refuse("The approval limit and the days to pay must be numbers.")
-    if limit < 0:
-        return refuse("The approval limit can't be below 0 (0 = never a second approval).")
-    if not 0 <= days <= 180:
-        return refuse("The days to pay must be from 0 to 180.")
-    if why is not None and not 1 <= why <= 20:
-        return refuse("Ask why after 1 to 20 corrections of the same thing.")
-    unread = unread_fx_text(fx_rates)
-    if unread:  # saved as it was, a rate typed the wrong way round would be ignored without a word
-        return refuse(f"Exchange rates not saved: “{unread}” can't be read. Write each one as a currency code, then "
-                      "the CAD for one unit, e.g. USD=1.37, EUR=1.50.")  # fmt: skip
-    changed = []
-    if fx_rates.strip() != store.get_setting("fx_rates"):
-        store.set_setting("fx_rates", fx_rates.strip(), actor=reviewer())
-        changed.append("fx_rates")
-    if days != store.default_terms_days():
-        store.set_setting("default_terms_days", str(days), actor=reviewer())
-        changed.append("default_terms_days")
-    if why is not None and why != lessons.why_after(store):
-        store.set_setting(lessons.SETTING, str(why), actor=reviewer())
-        changed.append(lessons.SETTING)
-    if limit != store.approval_limit():
-        store.set_setting("approval_limit", f"{limit:.2f}", actor=reviewer())
-        changed.append("approval_limit")
-    if changed:
-        store.log_event("settings_changed", actor=reviewer(), detail={"keys": changed})
-    return done(request, tab_url("review"), "Saved." if changed else "Nothing changed.")
+    part = _approval_part(request, approval_limit, terms_days, fx_rates, why_after)
+    return part if isinstance(part, JSONResponse) else done(request, tab_url("review"), saved_text(part()))
 
 
 @router.post("/settings/review/supply")
 def save_supply(request: Request, our_province: str = Form(""), site_provinces: str = Form("")) -> JSONResponse:
-    """Where invoices are delivered to us: the place of supply of an invoice that prints no ship-to."""
-    store = get_store(request)
-    our_province = our_province.strip().upper()
-    if our_province and our_province not in PROVINCE_NAMES:
-        return refuse("Choose a province from the list.")
-    lines = [line.strip() for line in re.split(r"[\n,;]+", site_provinces) if line.strip()]
-    bad = [line for line in lines if line.partition("=")[2].strip().upper() not in PROVINCE_NAMES
-           or not line.partition("=")[0].strip()]  # fmt: skip
-    if bad:
-        return refuse(f"Not saved: “{bad[0]}” can't be read. Write one cost center per line, then = and its province "
-                      "code, e.g. CC400=BC.")  # fmt: skip
-    sites = "\n".join(f"{line.partition('=')[0].strip()}={line.partition('=')[2].strip().upper()}" for line in lines)
-    changed = []
-    if our_province != store.our_province():
-        store.set_setting("our_province", our_province, actor=reviewer())
-        changed.append("our_province")
-    if sites != store.get_setting("site_provinces"):
-        store.set_setting("site_provinces", sites, actor=reviewer())
-        changed.append("site_provinces")
-    if changed:
-        store.log_event("settings_changed", actor=reviewer(), detail={"keys": changed})
-    saved = "Saved. Invoices read from now on use it." if changed else "Nothing changed."
-    return done(request, tab_url("review"), saved)
+    part = _supply_part(request, our_province, site_provinces)
+    return part if isinstance(part, JSONResponse) else done(request, tab_url("review"), saved_text(part()))
 
 
 # --- Data & backups ------------------------------------------------------------------------------------------------
@@ -403,18 +507,39 @@ def git_version() -> str:
 
 
 def about_context(store: Store) -> dict[str, Any]:
-    git = git_version()
+    version = git_version()
     return {
         "about": [
-            ("Version", __version__ + (f" · {git}" if git else ""), False),
-            ("Code folder", str(paths.PROJECT_DIR), True),
-            ("Data folder", str(data_dir(store)), True),
-            ("Settings file", str(env_path()), True),
-            ("Python", platform.python_version(), False),
-            ("FastAPI", fastapi.__version__, False),
-            ("Computer", f"{platform.system()} {platform.release()}", False),
-        ]
+            ("Version", __version__ + (f" · {version}" if version else "")),
+            ("Computer", f"{platform.system()} {platform.release()}"),
+        ],
+        "for_it": [  # full paths and versions, folded under "For IT" (B-521)
+            ("Code folder", str(paths.PROJECT_DIR)),
+            ("Data folder", str(data_dir(store))),
+            ("Settings file", str(env_path())),
+            ("Python", platform.python_version()),
+            ("FastAPI", fastapi.__version__),
+        ],
+        "show_jde": jde_shown(store),
+        "developer_tools": developer_tools(store),
+        "developer_env": os.environ.get(DEVELOPER_ENV, "") not in ("", "0"),
     }
+
+
+@router.post("/settings/about/show")
+def save_shown(request: Request, show_jde: str = Form(""), developer: str = Form("")) -> JSONResponse:
+    """What this pilot shows (D-52): the JD Edwards E1 settings and export, and the developer tools. Logged."""
+    store = get_store(request)
+    changed = []
+    switches = ((SHOW_JDE, show_jde, "JD Edwards settings"), (DEVELOPER_TOOLS, developer, "developer tools"))
+    for key, value, words in switches:
+        on = "1" if value in ("1", "on", "true") else ""
+        if on != (store.get_setting(key) or ""):
+            store.set_setting(key, on, actor=reviewer())
+            changed.append(f"{words} {'shown' if on else 'hidden'}")
+    if changed:
+        store.log_event("settings_changed", actor=reviewer(), detail={"keys": [SHOW_JDE, DEVELOPER_TOOLS]})
+    return done(request, tab_url("about"), ("Saved: " + ", ".join(changed) + ".") if changed else "Nothing changed.")
 
 
 # The other tabs' routes (their modules import nothing from this one at import time but the helpers above).

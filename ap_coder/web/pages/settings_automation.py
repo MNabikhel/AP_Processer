@@ -40,6 +40,22 @@ def supplier_counts(store: Store) -> dict[str, int]:
     return counts
 
 
+def typical_to_go(store: Store) -> str:
+    """About how many invoices approved without a correction a new vendor needs: "30 to 40" with the standard bar
+    (from 13 header fields an invoice down to 10); the same count each vendor's row shows on Supplier learning."""
+    from ap_coder.capture.supplier import SupplierStats, clean_invoices_to_go
+
+    policy = store.autonomy_policy()
+    counts = []
+    for fields in (13, 10):
+        stats = SupplierStats(window_invoices=1, n=fields, correct=fields, invoices=1, clean_streak=1)
+        to_go = clean_invoices_to_go(stats, policy)
+        counts.append((to_go or 0) + 1)
+    low, high = min(counts), max(counts)
+    rounded = sorted({int(round(c, -1)) or c for c in (low, high)})
+    return f"{rounded[0]} to {rounded[-1]}" if len(rounded) > 1 else f"{rounded[0]}"
+
+
 def automation_context(store: Store) -> dict[str, Any]:
     from ap_coder.capture.supplier import ALWAYS_A_PERSON_RULES
 
@@ -62,6 +78,7 @@ def automation_context(store: Store) -> dict[str, Any]:
              + (f", {s['reopened']} reopened" if s["reopened"] else "")),
         ],
         "bar": store.autonomy_policy().plain_rules(),
+        "typical": typical_to_go(store),
         "gates": [(a, b.replace("the largest amount approved without a person", limit_text))
                   for a, b in ALWAYS_A_PERSON_RULES],
     }  # fmt: skip

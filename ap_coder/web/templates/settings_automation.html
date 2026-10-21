@@ -5,9 +5,11 @@
       <h4>Touchless processing</h4>
       <div>{% if touchless_on %}{{ ui.status("On: a vendor that meets the bar below is approved without a person", "ok") }}
         {% else %}{{ ui.status("Off: every invoice is reviewed by a person", "gray") }}{% endif %}</div>
+      <p class="muted"><b>Leave it off during the pilot.</b> Every invoice is then reviewed by you, and each approval
+        still trains its vendor.</p>
     </div>
     <details class="pop">
-      <summary class="btn{% if not touchless_on %} primary{% endif %}"><span class="ms" aria-hidden="true">{{ "pan_tool" if touchless_on else "bolt" }}</span>{{ "Turn off touchless processing…" if touchless_on else "Turn on touchless processing…" }}</summary>
+      <summary class="btn"><span class="ms" aria-hidden="true">{{ "pan_tool" if touchless_on else "bolt" }}</span>{{ "Turn off touchless processing…" if touchless_on else "Turn on touchless processing…" }}</summary>
       <form class="pop-body stack" method="post" action="/settings/automation/touchless" data-busy="{{ 'Turning off…' if touchless_on else 'Turning on…' }}">
         {% if touchless_on %}
         <p>Every invoice will be reviewed by a person again. Vendors keep their record.</p>
@@ -54,7 +56,10 @@
       <thead><tr><th>Rule</th><th>Standard</th></tr></thead>
       <tbody>{% for a, b in bar %}<tr><td class="w">{{ a }}</td><td class="w">{{ b }}</td></tr>{% endfor %}</tbody>
     </table></div>
-    <p class="muted">Fixed standard values, the same for every vendor: they cannot be changed here.</p>
+    <p class="muted">Fixed standard values, the same for every vendor: they cannot be changed here. In practice a new
+      vendor needs about {{ typical }} invoices approved without a correction (fewer when its invoices print more
+      fields, more after a correction). Each vendor's own number is on
+      <a href="/learning?tab=suppliers">Learning &amp; accuracy → Supplier learning</a>.</p>
   </section>
   <section class="card">
     <h4>Always a person</h4>

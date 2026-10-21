@@ -108,3 +108,17 @@ details.st-danger > summary {color: var(--lg-danger);}
 .hp-faq p {margin: 8px 0 4px; color: var(--lg-muted); font-size: 13.5px; line-height: 1.5;}
 .hp-report {width: 100%; box-sizing: border-box; margin-top: 8px; font-family: ui-monospace, Consolas, monospace;
   font-size: 12px; line-height: 1.45; white-space: pre; resize: vertical;}
+
+/* Settings → Review: one form, one Save (B-507); the risky settings folded under Advanced. "For IT" folds (Reading,
+   About, Help) hold what only IT needs: tables, addresses, full paths. */
+.st-review {display: flex; flex-direction: column; gap: 16px;}
+.st-review .card {display: flex; flex-direction: column; gap: 10px;}
+.st-review .card > * + * {margin-top: 0;}
+.st-review .card .muted {margin: 0;}
+.st-advanced > summary, .st-forit > summary {cursor: pointer; font-weight: 600; display: flex; align-items: center; gap: 8px;}
+.st-advanced:not([open]), .st-forit:not([open]) {padding-top: 14px; padding-bottom: 14px;}
+.st-advanced[open] {display: flex; flex-direction: column; gap: 10px;}
+.st-advanced[open] > summary {margin-bottom: 4px;}
+.st-save {position: sticky; bottom: 0; padding: 12px 0; background: var(--lg-bg);}
+.st-forit[open] > summary {margin-bottom: 12px;}
+.st-lm {display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px;}
