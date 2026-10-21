@@ -269,6 +269,9 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
         return result
 
     result.findings.extend(_header_findings(coding, po))
+    # A PO's cost centers mean nothing without a cost center list (the pilot's, D-53): never compared, never said,
+    # never copied to a line (B-534).
+    cost_centers = bool(store.list_accounts("cost_centers"))
     po_lines = po["lines"]
     by_line = {pl["line_number"]: pl for pl in po_lines}
     others = store.po_invoices(key, exclude_id=exclude_invoice_id)
@@ -297,7 +300,7 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
         m.billed_before = billed_before.get(pl["line_number"], 0.0)
         m.billed_before_amount = billed_before_amount.get(pl["line_number"], 0.0)
         m.po_amount, m.amount_only = pl["amount"], bool(pl.get("amount_only"))
-        m.po_gl, m.po_cc = pl.get("gl_code") or "", pl.get("cost_center") or ""
+        m.po_gl, m.po_cc = pl.get("gl_code") or "", (pl.get("cost_center") or "") if cost_centers else ""
         if m.amount_only:
             _amount_findings(m, li, result, billed_now_amount)
         else:

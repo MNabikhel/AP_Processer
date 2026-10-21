@@ -174,3 +174,34 @@ def test_the_coding_memory_is_one_number_with_erp_history_apart(demo_store):
     tile = data.split("Coding memory", 1)[1][:400]
     assert f">{reviewed:,}<" in tile and "plus 1 line from ERP history" in tile
     assert "Coding memory" in queue and "lines AP confirmed or corrected" not in queue  # (short: fits at 1366)
+
+
+# --- B-534: a purchase order's cost center, with no cost center list -----------------------------------------------
+
+
+def test_without_a_cost_center_list_a_po_compares_no_cost_center(demo_store):
+    from ap_coder.coding.po import match_invoice
+    from ap_coder.core.schema import InvoiceCoding
+
+    notes = []
+    for row in demo_store.list_invoices():
+        inv = demo_store.get_invoice(row["id"])
+        output = inv["final_output"] or inv["ai_output"]
+        notes += [i.get("message", "") for i in (inv["validation"] or {}).get("issues", [])
+                  if i.get("code") == "PO_CODING_DIFFERS"]  # fmt: skip
+        coding = InvoiceCoding.model_validate({k: v for k, v in output.items() if k != "gl_distribution"})
+        match = match_invoice(coding, demo_store, inv["id"])
+        if match is not None:
+            assert all(not m.po_cc for m in match.lines), inv["vendor_name"]
+            for m in match.coding_differs:  # only a GL account can differ (the demo's own GL mistakes)
+                line = next(li for li in output["line_items"] if li["line_number"] == m.invoice_line)
+                assert m.po_gl and m.po_gl != line["predicted_gl_code"], inv["vendor_name"]
+    assert notes == [n for n in notes if "CC" not in n], notes
+
+
+def test_without_a_cost_center_list_no_empty_cost_center_column(demo_store):
+    client = _demo_client(demo_store)
+    assert "<th>Cost center</th>" not in client.get("/learning").text  # the coding memory table
+    inv = demo_store.list_invoices(REVIEW)[0]
+    page = client.get(f"/review/{inv['id']}").text
+    assert "<th>Cost center</th>" not in page  # the line grid and the GL posting preview

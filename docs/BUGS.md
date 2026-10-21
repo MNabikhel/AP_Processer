@@ -5155,3 +5155,17 @@ An independent review of the branch walked the pilot path end to end and found w
 - A failed self-test shows what OvisOCR2 read on Settings → Reading itself, not folded under For IT.
 - Report a problem's setup report is made again after Check again or a saved setting.
 - **Test:** `tests/test_before_testing.py` (Insights, Help), `tests/test_reading_pages.py`
+
+#### B-534 · A purchase order's cost center was still compared with no cost center list · medium
+- **Where:** `ap_coder/coding/po.py` (`match_invoice`), `templates/_invoice_live.html`, `templates/learning.html`
+- **Symptom:** the sample POs carry cost centers (CC400, CC700); with no cost center list, demo invoices 1, 5, 9 and 10
+  got "PO-88213 line 1 is coded to GL 6010 · CC400" and a "coding" problem on the PO match, and *Use the PO's
+  coding* would have put a cost center the tester cannot see on the line. The GL posting preview and the coding
+  memory table showed an empty Cost center column.
+- **Cause:** the PO check compared the PO line's cost center with the line's (empty) one whatever the setup.
+- **Fix:** without a cost center list a PO's cost centers are not read: not compared, not said, not copied to a line;
+  the two tables show the Cost center column only when a row has one. The CSV export keeps its Cost center column
+  (empty): it is the ERP import's fixed layout, and a column that comes and goes would break an import mapping (the
+  custom layout can leave it out).
+- **Test:** `tests/test_before_testing_review.py::test_without_a_cost_center_list_a_po_compares_no_cost_center`,
+  `test_without_a_cost_center_list_no_empty_cost_center_column`

@@ -130,11 +130,12 @@
   {% else %}
   <form method="post" action="/learning/memory/forget" data-confirm="Forget the ticked lines? The AI no longer sees them.">
     <div class="table-wrap an-scroll"><table class="apc-table">
-      <thead><tr><th>Forget?</th><th>Date</th><th>Vendor</th><th>Line</th><th>AI suggested</th><th>Final GL</th><th>Cost center</th><th>Outcome</th><th>Reviewer</th></tr></thead>
+      {% set show_cc = memory | selectattr("final_cc") | list %}{# none (no cost center list: D-53): no empty column #}
+      <thead><tr><th>Forget?</th><th>Date</th><th>Vendor</th><th>Line</th><th>AI suggested</th><th>Final GL</th>{% if show_cc %}<th>Cost center</th>{% endif %}<th>Outcome</th><th>Reviewer</th></tr></thead>
       <tbody>{% for r in memory %}
         <tr><td><input type="checkbox" name="ids" value="{{ r.id }}" aria-label="Forget the line {{ r.description }}"></td>
           <td>{{ r.date }}</td><td>{{ r.vendor_name }}</td><td class="w">{{ r.description }}</td><td>{{ "no account" if r.suggested_gl == unassigned else (r.suggested_gl or "") }}</td>
-          <td>{{ r.final_gl }}</td><td>{{ r.final_cc or "" }}</td><td>{{ r.outcome_text }}</td><td>{{ r.reviewer or "" }}</td></tr>
+          <td>{{ r.final_gl }}</td>{% if show_cc %}<td>{{ r.final_cc or "" }}</td>{% endif %}<td>{{ r.outcome_text }}</td><td>{{ r.reviewer or "" }}</td></tr>
       {% endfor %}</tbody>
     </table></div>
     <div class="row">
