@@ -24,7 +24,7 @@ bold are pages and buttons in AP Coder.
    the sales tax check uses it when an invoice prints no ship-to.
 2. Your GL accounts: **GL accounts & tax** → **Import GL accounts from CSV or Excel**. To try AP Coder first,
    click **Use the sample GL accounts** instead. Then on the **Sales tax** tab, pick a GL account for each tax.
-3. Your first invoices: **Import invoices** → **Choose files** (PDFs, scans, photos or saved emails) →
+3. Your first invoices: **Import invoices** → **Choose files** (PDFs, scans, photos, saved emails or invoices saved as text) →
    **Process N uploaded invoices**.
 4. Review: **Review queue** → open an invoice. Compare it with the page and fix what the checks point to: a
    line without a GL account or cost center, an amount marked in amber. Beside each value: Verified, Likely,

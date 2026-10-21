@@ -13,7 +13,7 @@
     <div class="l">{{ k.label }}</div>
     <div class="v">{{ k.value }}</div>
     {% if k.bar is defined %}<span class="rq-kpi-bar" aria-hidden="true"><i style="width: {{ (k.bar * 100) | round | int }}%"></i></span>{% endif %}
-    <div class="s">{% if k.delta %}<span class="d {{ 'up' if k.good else 'down' }}">{{ k.delta }}</span> {% endif %}{{ k.sub }}</div>
+    <div class="s{{ ' wrap' if k.wrap }}">{% if k.delta %}<span class="d {{ 'up' if k.good else 'down' }}">{{ k.delta }}</span> {% endif %}{{ k.sub }}</div>
   </div>
   {% endfor %}
 </div>

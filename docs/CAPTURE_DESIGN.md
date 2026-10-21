@@ -439,7 +439,7 @@ Automation):
   invoices, not 20.
 - **Training, visible**: every approval records, field by field, what the clerk corrected; the review screen says what
   was learned ("Learned from your 2 corrections (invoice number, due date). Acme Ltd: 14 invoices reviewed, about 6
-  more clean invoices to go touchless."), and the Learning page shows each vendor's progress. A bulk approval (nobody
+  more invoices approved without a correction before this vendor can skip review."), and the Learning page shows each vendor's progress. A bulk approval (nobody
   opened the invoice) teaches the template, but only its corrections count towards the bar.
 - **Upgrading**: vendors an AP lead turned touchless by hand before keep their state but are not touchless while the
   switch is off. When it is turned on, those that meet the standard bar stay touchless; any that do not go back to

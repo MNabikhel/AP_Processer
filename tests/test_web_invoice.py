@@ -442,11 +442,12 @@ def test_a_suggested_gl_account_codes_the_line(client, store):
 def test_an_invoice_not_read_by_ovisocr2_can_be_put_in_its_queue(client, store):
     inv_id = store.list_invoices(REVIEW)[0]["id"]
     page = client.get(f"/review/{inv_id}").text
-    assert "OvisOCR2 hasn" in page and "Add it to OvisOCR2" in page
+    # LM Studio isn't running here: the banner says OvisOCR2 reads it once it runs (B-444), the button stays
+    assert "OvisOCR2 and the AI reviewer check it once LM Studio runs" in page and "Add it to OvisOCR2" in page
     client.post(f"/review/{inv_id}/read-pages", headers=PAGE)
     assert (store.page_read(inv_id) or {}).get("status") == "waiting"
     progress = client.get(f"/review/{inv_id}/reader").json()
-    assert progress["state"] == "waiting" and progress["poll"] and "OvisOCR2" in progress["html"]
+    assert progress["state"] == "waiting" and progress["poll"]
     assert 'data-poll="' in client.get(f"/review/{inv_id}").text
 
 
@@ -663,7 +664,8 @@ def test_the_ai_reviewer_on_the_review_screen(client, store):
 
     inv = store.list_invoices(REVIEW)[0]
     page = client.get(f"/review/{inv['id']}").text
-    assert "The AI reviewer checks this invoice against its pages" in page  # every demo invoice waits for it
+    # every demo invoice waits for it; with LM Studio off here, the banner says so (B-444)
+    assert "OvisOCR2 and the AI reviewer check it once LM Studio runs" in page
     output = store.get_invoice(inv["id"])["ai_output"]
     disputed = {"grand_total": {"value": output["grand_total"], "on_page": "9,999.00", "reason": "the total box"}}
     store.next_verification(after_page_reader=False)

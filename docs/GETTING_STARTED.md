@@ -255,7 +255,7 @@ For each invoice:
 4. Click **Approve & teach** (Ctrl+Enter). Each field you corrected is recorded for that vendor and
    updates its template; the confirmation says what was learned and how far the vendor is from touchless
    (e.g. *Learned from your 2 corrections (invoice number, due date). Acme Ltd: 14 invoices reviewed, about
-   6 more clean invoices to go touchless.*). Invoices nobody needs to look at can be approved together with
+   6 more invoices approved without a correction before this vendor can skip review.*). Invoices nobody needs to look at can be approved together with
    *Approve N clean…* above the queue; those approvals don't count toward touchless.
 5. Approved invoices wait in **Exports**: export them as a batch for the ERP (Excel, CSV or your
    custom layout), with the **Approved PDFs** to attach if your ERP keeps invoice images.

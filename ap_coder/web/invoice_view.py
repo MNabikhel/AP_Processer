@@ -653,21 +653,31 @@ def readable(message: str, cap: bool = True) -> str:
     return message[:1].upper() + message[1:] if cap else message
 
 
-def grouped(issues: list[Any]) -> list[tuple[bool, str]]:
-    """(is error, text) per distinct message: the same finding on several lines is one item ("Lines 1, 3, 4: …")."""
+def grouped_issues(issues: list[Any]) -> list[tuple[bool, str, str, list[int]]]:
+    """(is error, text, code, line numbers) per distinct message: the same finding on several lines is one item
+    ("Lines 1, 3, 4: …")."""
     order: dict[tuple[str, str, str], list[int]] = {}
     for issue in issues:
         order.setdefault((issue.severity, issue.code, issue.message), []).append(issue.line_number or 0)
     out = []
-    for (severity, _, message), lines in order.items():
+    for (severity, code, message), lines in order.items():
         numbers = sorted({n for n in lines if n})
         where = (
             (f"Line {numbers[0]}: " if len(numbers) == 1 else f"Lines {', '.join(map(str, numbers))}: ")
             if numbers
             else ""
         )
-        out.append((severity == "error", where + readable(message, cap=not where)))
+        out.append((severity == "error", where + readable(message, cap=not where), code, numbers))
     return out
+
+
+def grouped(issues: list[Any]) -> list[tuple[bool, str]]:
+    """(is error, text) per distinct message (``grouped_issues``)."""
+    return [(bad, text) for bad, text, _code, _lines in grouped_issues(issues)]
+
+
+# A finding about a line's account or cost center: its item in the checks is a button to that box (B-443).
+GOTO_BOX = {"GL_UNASSIGNED": "line_gl", "CC_UNASSIGNED": "line_cc"}
 
 
 def confidence_pct(value: float, threshold: float) -> str:
@@ -680,7 +690,9 @@ def checks_summary(report: Any, errors: list[Any], warnings: list[Any]) -> dict[
     """All the checks as one status: passed, or what needs attention (one line each; details below)."""
     low = report.requires_review and not errors
     look = sum(1 for bad, _ in grouped(warnings) if not bad) + (1 if low else 0)
-    items = [{"bad": bad, "text": text} for bad, text in grouped(errors + warnings)]
+    items = [{"bad": bad, "text": text,
+              "goto": {"box": GOTO_BOX[code], "line": lines[0]} if code in GOTO_BOX and lines else None}
+             for bad, text, code, lines in grouped_issues(errors + warnings)]  # fmt: skip
     if low:
         items.append({"bad": False, "text": f"Confidence {confidence_pct(report.adjusted_confidence, report.review_threshold)} "  # noqa: E501
                       f"is below the {report.review_threshold:.0%} threshold."})  # fmt: skip
@@ -778,6 +790,8 @@ def summary(coding: InvoiceCoding, report: Any, errors: list[Any], warnings: lis
             vendor_terms: str, setup: Any = None) -> dict[str, Any]:  # fmt: skip
     """The invoice at a glance: supplier, number, dates, status, confidence and the amount."""
     supply = place_of_supply(coding, setup)
+    if not supply and coding.ship_to_province == OUTSIDE_CANADA:  # as Place of supply says it (supply_line, B-441)
+        supply = OUTSIDE_CANADA
     meta = [
         (f"Invoice {coding.invoice_number}", "Invoice number"),
         (f"Issued {coding.invoice_date}" if coding.invoice_date else "", "Invoice date"),

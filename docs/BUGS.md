@@ -4370,8 +4370,9 @@ sales tax mapping, 15 real English vendor PDFs (a credit memo, US invoices, a tw
 invoices), corrections, a field taught by clicking, approvals with Ctrl+Enter, JD Edwards and Excel exports,
 Learning, Help, Settings, the keyboard alone, a 1280 px window, and bad, empty and repeated files. Screenshots at
 1366 x 768 and 1920 x 1080, the browser's console watched (no errors). Pages answered in 0.05 to 0.3 s (Help → Report
-a problem: 3 s the first time, N-140); 15 PDFs were read and coded in 6 s. 14 fixed (B-424 to B-437), each with a
-failing test first, all in `tests/test_web_pilot_walkthrough.py`; 6 left (N-136 to N-141).
+a problem: 3 s the first time, B-440); 15 PDFs were read and coded in 6 s. 21 fixed (B-424 to B-444), each with a
+failing test first, all in `tests/test_web_pilot_walkthrough.py`. B-438 to B-444 were first logged as left (N-136 to
+N-141), then fixed in a second round; none is left.
 
 #### B-424 · Settings → Review: the threshold's label broke onto three lines · low
 - **Where:** `ap_coder/web/templates/settings_review.html` (the *Needs attention* threshold)
@@ -4541,23 +4542,94 @@ failing test first, all in `tests/test_web_pilot_walkthrough.py`; 6 left (N-136 
 - **Test:** `tests/test_web_pilot_walkthrough.py::test_getting_started_asks_for_your_province_without_counting_it`
 - **Lesson:** Don't leave a setting the checks depend on out of the first steps.
 
-#### Left as they are (pilot walkthrough)
+#### B-438 · "about 34 more clean invoices to go touchless": jargon after every approval · low-medium
+- **Where:** `ap_coder/capture/supplier.py` (`to_go_text`), `ap_coder/capture/workflow.py` (`supplier_progress`):
+  wording only; `tests/test_touchless.py`, `tests/test_touchless_pages.py`, `tests/test_supplier.py` kept in step
+- **Symptom:** (was N-137) the message after each approval ended "about 34 more clean invoices to go touchless";
+  *touchless* is explained only in Settings → Automation, which the pilot tester has no reason to open.
+- **Fix:** "about 34 more invoices approved without a correction before this vendor can skip review"; "too many
+  corrections in its recent invoices to skip review yet"; "approved often enough without a correction to skip
+  review"; a vendor that meets the bar while the switch is off: "…, once touchless processing is turned on
+  (Settings → Automation)", where the name of the setting is needed to find it. The rule behind the figures is
+  unchanged. The same words on Learning → Supplier learning and in the guides.
+- **Reproduced:** yes (every approval of the walk)
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_the_way_to_skipping_review_is_said_in_plain_words`
+- **Lesson:** Don't name a feature in a message to someone who has not met it: say what it does.
 
-- **N-136** · Without a chat model every line starts with no GL account, and picking one counts against the coding:
-  Learning and the review queue show "Coding accuracy 28.6%, -61.4 pts vs 90% target" in red after the first
-  approvals, though nothing wrong was suggested. That is D-39 (a line the coder left blank is not right: it gave no
-  answer); the pilot tester should know the figure means little until the chat model runs. Left as decided.
-- **N-137** · The approval message says "about 34 more clean invoices to go touchless": *touchless* is not explained
-  on the review screen. The text is made in `capture/supplier.py` (outside this sweep's area); suggested wording:
-  "about 34 more clean invoices before AP Coder may approve this vendor's invoices on its own".
-- **N-138** · With LM Studio off, every review screen shows the banner and two more notes above the page ("OvisOCR2
-  isn't running…", "The AI reviewer checks this invoice…"): on a 1366 x 768 laptop the invoice's picture starts
-  near the bottom of the screen. Folding the three into one line when LM Studio is off is a layout change for the
-  page's owner to decide.
-- **N-139** · The upload takes `.txt` files (text invoices, on purpose) but its hint lists only PDFs, scans, photos and
-  saved emails; a notes file uploaded by mistake became an invoice from "hello". Left: the hint is long already.
-- **N-140** · Help → *Report a problem* takes about 3 s the first time (it runs the setup check), with no sign that
-  it is loading; later opens take 0.05 s.
-- **N-141** · A US vendor's invoice says "Province unknown" in its header while *Place of supply* says "Outside
-  Canada": the header shows the supplier's province, the form the place of supply. Left: both are right, but the
-  header could say "Outside Canada" for a foreign vendor.
+#### B-439 · A notes file uploaded by mistake became an invoice from "hello" · low
+- **Where:** `ap_coder/web/pages/process.py` (`looks_like_an_invoice_text`, `_save_and_start`),
+  `ap_coder/web/templates/process.html`, `ap_coder/web/static/js/process.js`
+- **Symptom:** (was N-139) the upload takes `.txt` (invoices saved as text, on purpose) but its hint named only PDFs,
+  scans, photos and saved emails; a `notes.txt` reading "hello" went to the review queue as an invoice from
+  "hello", 0.00 CAD.
+- **Fix:** the hint and the messages name text files; a text file with no amount in it (nothing like 125.00) is not
+  read: "notes.txt was not read: a text file is read as an invoice only when it has amounts in it (like 125.00), and
+  this one has none." (The simpler of the two safe choices: one pattern, no guess at what an invoice says.)
+- **Reproduced:** yes
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_a_text_file_without_amounts_is_not_read_as_an_invoice`
+- **Lesson:** Don't accept a file type quietly: say it is taken, and turn away what cannot be one.
+
+#### B-440 · Report a problem took 3 s the first time with nothing on the screen · low
+- **Where:** `ap_coder/web/static/js/app.js` (`a[data-busy]`), `ap_coder/web/templates/help.html`, `error.html`,
+  `settings_about.html`
+- **Symptom:** (was N-140) the first open of Help → Report a problem took about 3 s (loading the OCR package to
+  report on it is about 1 s of it, once per run; 0.05 s afterwards), and the page just sat there.
+- **Fix:** a link to a slow page can say so: each *Report a problem* link reads "Gathering the reports…" (dimmed,
+  `aria-busy`) until the page comes, and reads as before when the browser's Back returns to it. The 3 s were left:
+  the report loads the OCR package to say whether it works, which is its job.
+- **Reproduced:** yes (3.0 s measured)
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_in_a_browser_report_a_problem_shows_it_is_working`
+- **Lesson:** Don't leave a click without an answer for more than a second.
+
+#### B-441 · A US invoice's header said "Province unknown", its Place of supply "Outside Canada" · low
+- **Where:** `ap_coder/web/invoice_view.py` (`summary`)
+- **Symptom:** (was N-141) `us_arizona_example.pdf` and the demo's Cascade Cloudworks invoice.
+- **Cause:** the place of supply is worked out without the ship-to "Outside Canada" (no Canadian tax to place); the
+  form said it from the ship-to (`supply_line`), the header did not.
+- **Fix:** the header says "Outside Canada" when the ship-to is outside Canada, as the form does.
+- **Reproduced:** yes
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_a_foreign_invoice_says_outside_canada_in_its_header`
+- **Lesson:** Don't work the same fact out twice for one screen.
+
+#### B-442 · On the first day the coding accuracy read "28.6%, −61.4 pts vs 90% target" in red · medium
+- **Where:** `ap_coder/web/core.py` (`accuracy_note`, `EARLY_LINES`), `ap_coder/web/pages/review.py` (`kpis`),
+  `ap_coder/web/pages/learning.py` (`coding_context`), `ap_coder/web/templates/review.html`,
+  `ap_coder/web/static/app.css`
+- **Symptom:** (was N-136) without a chat model every line starts with no account and counts as not right (D-39), so
+  the first approvals put a red "−61.4 pts" on the review queue and Learning, though nothing wrong was suggested.
+- **Fix:** D-39's figure is kept; while it says little (no chat model, or fewer than 50 lines reviewed) the note under
+  it is plain and not red: "GL suggestions improve as you approve; with the AI model on they start sooner" (the
+  second half only without the model). From 50 lines with the model on, the comparison with the 90% target is shown
+  as before.
+- **Reproduced:** yes
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_early_coding_accuracy_is_a_plain_note_not_a_red_figure`
+- **Lesson:** Don't score a measure against its target before it can be fair: say what moves it.
+
+#### B-443 · "Line 2: no GL account yet: pick one" in the checks didn't take you to line 2 · medium
+- **Where:** `ap_coder/web/invoice_view.py` (`grouped_issues`, `GOTO_BOX`, `checks_summary`),
+  `ap_coder/web/templates/_invoice_live.html` (`status_block`), `ap_coder/web/static/js/invoice.js` (`goToLine`)
+- **Symptom:** the findings about a line's GL account or cost center were text, the line two screens down (B-434 made
+  the approve bar's hint a button; the same findings in the checks were not).
+- **Fix:** each is a button (underlined) to that line's GL account or cost center box, by its line number; "Lines 1,
+  3: …" goes to the first. Other findings stay text.
+- **Reproduced:** yes
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_each_line_without_an_account_in_the_checks_goes_to_its_line`,
+  `tests/test_web_pilot_walkthrough.py::test_in_a_browser_a_line_in_the_checks_takes_you_to_it`
+- **Lesson:** Same as B-434.
+
+#### B-444 · With LM Studio off the review screen said so three times, the invoice below the fold · medium
+- **Where:** `ap_coder/web/pages/invoice.py` (`LM_STUDIO_OFF`, `lm_studio_off`, `folded_reader`, `folded_reviewer`,
+  `invoice_page`, `reader_progress`); `tests/test_web_invoice.py` (two tests kept in step)
+- **Symptom:** (was N-138) the banner ("LM Studio isn't running…"), then under the document title "OvisOCR2 isn't
+  running: see Settings → Reading. It can't be approved without a person until OvisOCR2 has read it." and "The AI
+  reviewer checks this invoice against its pages when the chat model is free (after OvisOCR2)…": at 1366 x 768 the
+  invoice's picture started 583 px down, behind the approve bar.
+- **Fix:** on an invoice being reviewed, while LM Studio itself isn't running, the banner says it once: "LM Studio
+  isn't running: a person approves it; OvisOCR2 and the AI reviewer check it once LM Studio runs." (with its *Open
+  Settings → Reading* link), and the two notes are left out (also when the OvisOCR2 line is drawn again while it
+  waits). Other states (OvisOCR2 missing, testing itself, failed; a read cut off) keep their notes. The picture now
+  starts at 508 px, its top in view.
+- **Reproduced:** yes
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_with_lm_studio_off_the_review_screen_says_it_once`,
+  `tests/test_web_pilot_walkthrough.py::test_in_a_browser_with_lm_studio_off_the_invoice_shows_above_the_fold`
+- **Lesson:** Don't say one fact in three places on one screen: each copy pushes the work down.

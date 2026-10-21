@@ -1381,12 +1381,14 @@ def clean_invoices_to_go(stats: SupplierStats, policy: AutonomyPolicy = DEFAULT_
 
 
 def to_go_text(to_go: int | None) -> str:
-    """ "about 6 more clean invoices to go touchless" (plain English for ``clean_invoices_to_go``)."""
+    """ "about 6 more invoices approved without a correction before this vendor can skip review" (plain English for
+    ``clean_invoices_to_go``: the tester sees it after each approval, where "touchless" was explained nowhere)."""
     if to_go is None:
-        return "too many corrections in its recent invoices to go touchless yet"
+        return "too many corrections in its recent invoices to skip review yet"
     if to_go == 0:
-        return "meets the bar to go touchless"
-    return f"about {_plural(to_go, 'more clean invoice')} to go touchless"
+        return "approved often enough without a correction to skip review"
+    more = "more invoice" if to_go == 1 else "more invoices"
+    return f"about {to_go:,} {more} approved without a correction before this vendor can skip review"
 
 
 def autonomy_status(

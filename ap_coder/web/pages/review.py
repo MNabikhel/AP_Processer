@@ -29,6 +29,7 @@ from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REV
 from ap_coder.erp import recurring
 from ap_coder.web.core import (
     TARGET_ACCURACY,
+    accuracy_note,
     approved_today,
     by_currency,
     done,
@@ -244,7 +245,8 @@ def today_pills(store: Store, invoices: list[dict[str, Any]]) -> list[tuple[str,
 
 
 def kpis(store: Store, pending: list[dict[str, Any]], flagged: list[dict[str, Any]],
-         approved: list[dict[str, Any]], awaiting: list[dict[str, Any]] = ()) -> list[dict[str, Any]]:  # fmt: skip
+         approved: list[dict[str, Any]], awaiting: list[dict[str, Any]] = (),
+         settings: Any = None) -> list[dict[str, Any]]:  # fmt: skip
     """The four figures at the top: waiting, approved today, coding accuracy, lessons learned. Approved today counts
     this reviewer's approvals, a first approval waiting for its second (``awaiting``) included, and says so."""
     metrics = store.metrics()
@@ -252,6 +254,7 @@ def kpis(store: Store, pending: list[dict[str, Any]], flagged: list[dict[str, An
     total_today = done_today + len(pending)
     accuracy = metrics["line_accuracy"]
     corrections = metrics["lines_corrected"]
+    note = accuracy_note(settings, metrics["lines_reviewed"]) if settings is not None and accuracy is not None else ""
     return [
         {"label": "Waiting", "value": f"{len(pending):,}", "sub": f"{len(flagged)} need attention"},
         {"label": "Approved today", "value": f"{done_today:,}",
@@ -260,9 +263,10 @@ def kpis(store: Store, pending: list[dict[str, Any]], flagged: list[dict[str, An
                 + f"{len(approved):,} fully approved in all",
          "bar": done_today / total_today if total_today else 0.0},
         {"label": "Coding accuracy", "value": "—" if accuracy is None else f"{accuracy:.1%}",  # as on Learning
-         "sub": "after the first approvals" if accuracy is None else "vs 90% target",
-         "delta": "" if accuracy is None else f"{(accuracy - TARGET_ACCURACY) * 100:+.1f} pts".replace("-", "−"),
-         "good": accuracy is not None and accuracy >= TARGET_ACCURACY},
+         "sub": "after the first approvals" if accuracy is None else note or "vs 90% target",
+         "delta": "" if accuracy is None or note else f"{(accuracy - TARGET_ACCURACY) * 100:+.1f} pts".replace(
+             "-", "−"),
+         "good": accuracy is not None and accuracy >= TARGET_ACCURACY, "wrap": bool(note)},
         {"label": "Lessons learned", "value": f"{metrics['lines_reviewed']:,}",
          "sub": f"{corrections} correction{'s' if corrections != 1 else ''} taught"},
     ]  # fmt: skip
@@ -317,7 +321,7 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
     unnamed = reviewer() if name_step()[0] != "ok" else ""  # approvals carry the computer login until a name is given
     context: dict[str, Any] = {"tab": tab, "tabs": tabs, "lead": lead, "show": show, "q": q, "sort": sort,
                                "unnamed": unnamed,
-                               "kpis": kpis(store, pending, flagged, approved, awaiting),
+                               "kpis": kpis(store, pending, flagged, approved, awaiting, settings),
                                "today": today_pills(store, invoices),
                                "shows": SHOWS, "sorts": SORTS, "view_url": view_url}  # fmt: skip
     if tab == "review":

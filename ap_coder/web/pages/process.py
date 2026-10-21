@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import time
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
@@ -18,7 +19,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from ap_coder.ai import page_reader
-from ap_coder.ai.extraction import SUPPORTED_EXTENSIONS
+from ap_coder.ai.extraction import SUPPORTED_EXTENSIONS, TEXT_EXTENSIONS
 from ap_coder.ai.local_llm import provider_status
 from ap_coder.ai.pipeline import InvoicePipeline, PipelineResult, invoice_files, other_files
 from ap_coder.capture.layout import ocr_available
@@ -67,6 +68,15 @@ def safe_file_name(name: str) -> str:
     enough for Windows paths (80 characters, the extension kept)."""
     base = PureWindowsPath(PurePosixPath(name or "").name).name.strip().lstrip(".")
     return safe_name(base) if base else "invoice"
+
+
+_AMOUNT = re.compile(rb"\d[\d,]*[.,]\d{2}\b")
+
+
+def looks_like_an_invoice_text(content: bytes) -> bool:
+    """A text file uploaded is read as an invoice only when it prints an amount (12.50, 1,204.00): a notes file
+    uploaded by mistake ("hello") became an invoice from "hello" (B-439)."""
+    return bool(_AMOUNT.search(content))
 
 
 def save_upload(folder: Path, name: str, content: bytes) -> Path:
@@ -441,8 +451,12 @@ def _save_and_start(request: Request, received: list[tuple[str, bytes]]) -> JSON
     for name, content in received:
         if Path(name).suffix.lower() not in ACCEPT:
             notes.append(flash_message(f"{name} was not read: AP Coder reads PDFs, pictures (JPEG, PNG, HEIC, TIFF, "
-                                       "BMP, WEBP, GIF) and saved emails (.eml, .msg). Save it as PDF or JPEG to have "
-                                       "it read.", "warn"))  # fmt: skip
+                                       "BMP, WEBP, GIF), saved emails (.eml, .msg) and invoices saved as text (.txt). "
+                                       "Save it as PDF or JPEG to have it read.", "warn"))  # fmt: skip
+            continue
+        if Path(name).suffix.lower() in TEXT_EXTENSIONS and not looks_like_an_invoice_text(content):
+            notes.append(flash_message(f"{name} was not read: a text file is read as an invoice only when it has "
+                                       "amounts in it (like 125.00), and this one has none.", "warn"))  # fmt: skip
             continue
         try:  # one file that cannot be saved (a name Windows refuses, disk full) is said and skipped
             target = save_upload(folder, name, content)

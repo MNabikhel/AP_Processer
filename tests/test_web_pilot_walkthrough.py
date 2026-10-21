@@ -4,6 +4,7 @@ action."""
 
 from __future__ import annotations
 
+import html
 import re
 import shutil
 import sqlite3
@@ -350,4 +351,135 @@ def test_in_a_browser_the_queue_gives_the_reason_room_on_a_wide_screen(browser, 
     page, errors = _open(browser, "/review", {"width": 1920, "height": 1080})
     status = page.locator(".rq-row:not(.rq-cols) .c-status").first.bounding_box()
     assert status["width"] >= 220, status
+    assert errors == []
+
+
+# --- Second round: what the walk left (N-136 to N-141) and the attention list -------------------------------------
+
+
+def test_the_way_to_skipping_review_is_said_in_plain_words():
+    """ "about 34 more clean invoices to go touchless": *touchless* is explained nowhere the tester sees it."""
+    from ap_coder.capture.supplier import to_go_text
+
+    assert to_go_text(34) == "about 34 more invoices approved without a correction before this vendor can skip review"
+    assert to_go_text(1) == "about 1 more invoice approved without a correction before this vendor can skip review"
+    for n in (None, 0, 1, 34):
+        assert "touchless" not in to_go_text(n)
+
+
+def test_a_text_file_without_amounts_is_not_read_as_an_invoice(tmp_path):
+    """A notes file uploaded by mistake ("hello") became an invoice from "hello" in the review queue."""
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(store)
+    app = _app(store)
+    client = TestClient(app, base_url="http://localhost")
+    assert ".txt" in client.get("/process").text.split('id="dropzone"', 1)[1].split("</small>", 1)[0]
+    files = [("files", ("notes.txt", b"hello", "text/plain"))]
+    answer = client.post("/process/upload", files=files, headers=PAGE).json()
+    if answer.get("job"):
+        assert app.state.jobs.get("process").wait(60)
+        texts = [m["text"] for m in client.get("/process/status").json()["result"]["messages"]]
+    else:
+        texts = [answer.get("error", "")]
+    assert any("notes.txt was not read" in t and "amount" in t for t in texts), texts
+    assert store.list_invoices(REVIEW) == []
+
+
+def test_a_foreign_invoice_says_outside_canada_in_its_header(client, store):
+    """A US invoice's header said "Province unknown" while its Place of supply said "Outside Canada"."""
+    from .test_web_invoice import form_of
+
+    inv = store.list_invoices(REVIEW)[0]
+    data = form_of(store, inv["id"], ship_to_province="OUTSIDE_CANADA", supplier_province="OUTSIDE_CANADA")
+    head = client.post(f"/review/{inv['id']}/check", data=data, headers=PAGE).json()["sections"]["summary"]
+    assert "Outside Canada" in head and "Province unknown" not in head, head
+
+
+def test_early_coding_accuracy_is_a_plain_note_not_a_red_figure(client, store):
+    """With no chat model every line starts without an account, so the first approvals read "Coding accuracy 28.6%,
+    -61.4 pts vs 90% target" in red: true by D-39, alarming on the first day."""
+    from .test_web_invoice import form_of
+
+    inv = store.list_invoices(REVIEW)[0]
+
+    def recode(rows):
+        for r in rows:
+            r["predicted_gl_code"] = "6900" if r.get("predicted_gl_code") != "6900" else "6000"
+        return rows
+
+    data = {**form_of(store, inv["id"], recode), "why_done": "1"}
+    answer = client.post(f"/review/{inv['id']}/approve", data=data, headers=PAGE).json()
+    if not answer.get("ok"):  # a check to tick first: "Approve anyway"
+        client.post(f"/review/{inv['id']}/check", data=data, headers=PAGE)
+        key = re.search(r'name="override" value="([^"]+)"', client.get(f"/review/{inv['id']}").text).group(1)
+        answer = client.post(f"/review/{inv['id']}/approve", data={**data, "override": key}, headers=PAGE).json()
+    assert answer["ok"], answer
+    assert (store.metrics()["line_accuracy"] or 0) < 0.9
+    note = "GL suggestions improve as you approve; with the AI model on they start sooner"
+    for url in ("/review", "/learning"):
+        page = client.get(url).text
+        assert note in page and "pts vs 90% target" not in page and " pts" not in page, url
+
+
+def test_each_line_without_an_account_in_the_checks_goes_to_its_line(client, store):
+    """ "Line 2: no GL account yet: pick one" in the checks was text: the line is two screens down."""
+    from .test_web_invoice import form_of
+
+    inv = next(
+        i for i in store.list_invoices(REVIEW)
+        if len(invoice_view.Draft.stored(store.get_invoice(i["id"])["ai_output"]).lines) >= 2
+    )  # fmt: skip
+
+    def unassign(rows):
+        rows[1]["predicted_gl_code"] = UNASSIGNED
+        return rows
+
+    data = form_of(store, inv["id"], unassign)
+    checks = client.post(f"/review/{inv['id']}/check", data=data, headers=PAGE).json()["sections"]["checks"]
+    found = re.search(r'<button type="button" class="rvw-goto" data-goto-line="line_gl" data-line="2"', checks)
+    assert found, checks
+
+
+def test_with_lm_studio_off_the_review_screen_says_it_once(client, store):
+    """The banner said LM Studio isn't running, then two notes under the document title said it again in other
+    words (OvisOCR2 isn't running…; The AI reviewer checks this invoice when the chat model is free…): on a 1366 x 768
+    laptop the invoice's picture started at the bottom of the screen."""
+    inv = store.list_invoices(REVIEW)[0]
+    page = client.get(f"/review/{inv['id']}").text
+    banner = html.unescape(page.split('<div class="banner', 1)[1].split("</div>", 1)[0])
+    assert "LM Studio isn't running" in banner and "a person approves it" in banner
+    assert "OvisOCR2 isn't running: see Settings" not in page
+    assert "checks this invoice against its pages when the chat model is free" not in page
+    assert "OvisOCR2 isn't running" not in client.get(f"/review/{inv['id']}/reader").json()["html"]
+    assert "LM Studio isn't running: invoices are read by OCR only" in html.unescape(client.get("/review").text)
+
+
+def test_in_a_browser_report_a_problem_shows_it_is_working(browser, store):
+    """Help → Report a problem took about 3 s the first time (it gathers the setup report) with nothing on the screen
+    saying so: the link now says it is gathering the reports while the page comes."""
+    page, errors = _open(browser, "/help")
+    # the click as the browser handles it, the page left where it is (so what the link turned into can be read)
+    link = page.evaluate(
+        "() => { window.addEventListener('click', (e) => e.preventDefault(), {once: true});"
+        " const a = document.querySelector('a[href=\"/help/report\"]'); a.click();"
+        " return [a.getAttribute('aria-busy'), a.textContent]; }"
+    )
+    assert link == ["true", "Gathering the reports…"], link
+    assert errors == []
+
+
+def test_in_a_browser_a_line_in_the_checks_takes_you_to_it(browser, store):
+    page, errors = _review(browser, store)
+    page.select_option("select[name=line_gl] >> nth=0", UNASSIGNED)
+    page.wait_for_selector("[data-goto-line]")
+    page.click("[data-goto-line] >> nth=0")
+    assert page.evaluate("document.activeElement.name") == "line_gl"
+    assert errors == []
+
+
+def test_in_a_browser_with_lm_studio_off_the_invoice_shows_above_the_fold(browser, store):
+    page, errors = _review(browser, store)
+    top = page.locator(".iv-sheet").first.bounding_box()["y"]
+    bar = page.locator(".inv-actionbar").bounding_box()["y"]
+    assert bar - top >= 150, (top, bar)  # a good part of the page shows above the approve bar
     assert errors == []

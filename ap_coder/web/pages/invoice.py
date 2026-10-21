@@ -282,6 +282,35 @@ def viewer_data(inv: dict[str, Any], capture: Any, sizes: list[tuple[float, floa
     return {"pages": pages, "fields": fields, "line_items": lines, "height": VIEWER_HEIGHT}
 
 
+# With LM Studio off, the banner over an invoice being reviewed says what the two notes under the document title said
+# again (OvisOCR2 isn't running…; the AI reviewer checks it when the chat model is free…): one line, so the invoice's
+# picture shows on a 1366 x 768 laptop (B-444).
+LM_STUDIO_OFF = ("LM Studio isn't running: a person approves it; OvisOCR2 and the AI reviewer check it once LM Studio "
+                 "runs.")  # fmt: skip
+
+
+def lm_studio_off(status: Any) -> bool:
+    """LM Studio itself isn't running (not: OvisOCR2 missing, testing itself or failed, which keep their notes)."""
+    return (status is not None and not getattr(status, "page_reader_ready", True)
+            and not getattr(status, "lm_studio", True) and bool(getattr(status, "banner", "")))  # fmt: skip
+
+
+def folded_reader(state: dict[str, Any]) -> dict[str, Any]:
+    """OvisOCR2's line for an invoice waiting for it, or not queued, without "OvisOCR2 isn't running" (the banner
+    says it): its other lines (a try cut off last time) and its button stay."""
+    if state.get("state") not in ("waiting", "none"):
+        return state
+    return {
+        **state,
+        "lines": [(i, t) for i, t in state.get("lines") or [] if i not in ("pause_circle", "visibility_off")],
+    }
+
+
+def folded_reviewer(state: dict[str, Any]) -> dict[str, Any]:
+    """The AI reviewer's "checks this invoice when the chat model is free" line, left out (the banner says it)."""
+    return {**state, "lines": []} if state.get("state") == "waiting" else state
+
+
 def _document(store: Store, settings: Any, inv: dict[str, Any], status: Any, editable: bool) -> dict[str, Any]:
     """The document card: the pages (or the extracted text), what OvisOCR2 made of it, how the lines were read."""
     from ap_coder.capture.line_items import sources_line
@@ -306,14 +335,19 @@ def _document(store: Store, settings: Any, inv: dict[str, Any], status: Any, edi
         "teach_fields": [(f, LABELS.get(f, f)) for f in view.TEACHABLE],
         "problem": problem,
         "text": Markup(ui.document_text(inv.get("extraction_md") or "")),  # noqa: S704 - document_text escapes
-        "reader": view.reader_state(store, settings, inv, status),
-        "reviewer": view.reviewer_state(store, inv),
+        "reader": (folded_reader if editable and lm_studio_off(status) else _same)(
+            view.reader_state(store, settings, inv, status)),
+        "reviewer": (folded_reviewer if editable and lm_studio_off(status) else _same)(view.reviewer_state(store, inv)),
         "lessons": _lesson_hints(store, inv),
         "lines_note": sources_line(capture.line_items, capture.checks) if capture is not None else "",
         "original": {"file": str(original["file"]),
                      "folder": Path(str(original.get("kept") or "")).parent.name or "originals"}
         if original.get("file") else None,
     }  # fmt: skip
+
+
+def _same(state: dict[str, Any]) -> dict[str, Any]:
+    return state
 
 
 def _sent_back(store: Store, invoice_id: int) -> dict[str, str] | None:
@@ -390,6 +424,8 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
                                store.vendor_terms(vendor_key(draft.header.get("vendor_name") or ""))).due  # fmt: skip
     except (TypeError, ValueError):
         computed = None
+    if lm_studio_off(status):
+        context["banner"] = LM_STUDIO_OFF
     return render(
         request, "invoice.html", "review", mode="review", **context,
         draft=draft, kept=kept, live=analysis.live, grid=view.grid(reference, draft), sure=sure,
@@ -504,7 +540,10 @@ def reader_progress(request: Request, invoice_id: int) -> JSONResponse:
     """OvisOCR2's progress on this invoice, for the page to follow while it waits or reads."""
     store, settings = get_store(request), get_settings(request)
     inv = _invoice(store, invoice_id)
-    state = view.reader_state(store, settings, inv, reading_status_or_none(settings, store))
+    status = reading_status_or_none(settings, store)
+    state = view.reader_state(store, settings, inv, status)
+    if inv["status"] == REVIEW and lm_studio_off(status):
+        state = folded_reader(state)  # as the screen drew it (B-444)
     html = templates.env.get_template("_invoice_live.html").module.reader(state, invoice_id)
     return JSONResponse({"state": state["state"], "poll": state["poll"], "html": str(html)},
                         headers={"Cache-Control": "no-store"})  # fmt: skip

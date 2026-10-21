@@ -542,7 +542,7 @@ def test_taught_message_says_what_was_learned(tmp_path, ground_truth):
     name = ground_truth["vendor_name"].rstrip(".")
     assert message == (
         f"Learned from your 2 corrections (invoice number, due date). {name}: 1 invoice reviewed, "
-        "about 60 more clean invoices to go touchless."
+        "about 60 more invoices approved without a correction before this vendor can skip review."
     )
     key = store.supplier_key_for(ground_truth["vendor_name"], ground_truth["gst_hst_registration_number"])
     for i in range(14):
@@ -550,7 +550,7 @@ def test_taught_message_says_what_was_learned(tmp_path, ground_truth):
     second = store.add_invoice(tmp_path / "b.pdf", ground_truth, {"requires_review": False})
     message = taught_message(store, learn_from_approval(store, second, ground_truth, actor="Ann"))
     assert message.startswith(f"Every header field was read right. {name}: 16 invoices reviewed, about ")
-    assert message.endswith("more clean invoices to go touchless.")
+    assert message.endswith("more invoices approved without a correction before this vendor can skip review.")
     assert taught_message(store, {"supplier": ""}) == ""
 
 

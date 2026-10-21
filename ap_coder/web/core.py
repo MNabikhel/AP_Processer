@@ -53,6 +53,22 @@ FONTS_DIR = WEB_DIR.parent / "static"  # Inter and the Material Symbols icons
 ASSETS_DIR = WEB_DIR.parent / "assets"  # logo and icon
 
 TARGET_ACCURACY = 0.90
+EARLY_LINES = 50  # reviewed lines before the coding accuracy is held against the target
+
+
+def accuracy_note(settings: Settings, lines_reviewed: int) -> str:
+    """A plain note in place of the red "-61.4 pts vs 90% target" while the figure says little (B-442): without the
+    chat model every line starts with no account, which counts as not right (D-39), and over the first lines one
+    correction moves it by points. "" once it is fair to compare."""
+    from ap_coder.ai.local_llm import provider_status
+
+    try:
+        ready = provider_status(settings).ready
+    except Exception:  # noqa: BLE001 - a status never stops a page
+        ready = False
+    if ready and lines_reviewed >= EARLY_LINES:
+        return ""
+    return "GL suggestions improve as you approve" + ("" if ready else "; with the AI model on they start sooner")
 
 
 # --- Templates ---------------------------------------------------------------------------------------------------

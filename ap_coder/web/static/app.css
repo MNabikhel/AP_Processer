@@ -137,6 +137,7 @@ kbd.apc-kbd {font-family: inherit; font-size: 11.5px; font-weight: 500; color: v
 .apc-tile .value.text {font-size: 16px; font-weight: 600; letter-spacing: 0; font-variant-numeric: normal;}
 .apc-tile .foot {display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 18px;}
 .apc-tile .hint {font-size: 12px; color: var(--lg-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
+.apc-tile .hint.note {white-space: normal; line-height: 1.35;}
 .apc-tile .hint.up {color: var(--lg-success); font-weight: 500;} .apc-tile .hint.down {color: var(--lg-danger); font-weight: 500;}
 .apc-tile .foot img {flex: none; opacity: .9;}
 /* ---- Pills / chips ------------------------------------------------------------------------------------ */
@@ -353,6 +354,7 @@ kbd.apc-kbd {font-family: inherit; font-size: 11.5px; font-weight: 500; color: v
   color: var(--rv-text); font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1, "cv11" 1;}
 .rq-kpi .s {margin-top: 2px; font-size: 12px; color: var(--rv-subtle); white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis;}
+.rq-kpi .s.wrap {white-space: normal; line-height: 1.35;}
 .rq-kpi .d {font-weight: 500;} .rq-kpi .d.up {color: var(--rv-success);} .rq-kpi .d.down {color: var(--rv-danger);}
 .rq-kpi-bar {display: block; width: min(100%, 140px); height: 4px; margin: 6px 0 4px; border-radius: 2px;
   background: var(--rv-hairline); overflow: hidden;}
@@ -531,7 +533,7 @@ pre {white-space: pre-wrap; overflow-wrap: anywhere; background: var(--lg-head);
 .btn.sm {min-height: 30px; padding: 0 12px; font-size: 13px;}
 .btn:disabled, .btn[aria-disabled="true"] {background: var(--lg-hover); border-color: var(--lg-hairline); color: var(--lg-subtle);
   cursor: not-allowed;}
-.btn.busy {opacity: .7; cursor: progress;}
+.btn.busy, a.busy {opacity: .7; cursor: progress;}
 input[type="text"], input[type="search"], input[type="number"], input[type="date"], select, textarea {
   height: 34px; border: 1px solid var(--lg-border); border-radius: var(--lg-r); background: var(--lg-surface);
   color: var(--lg-text); font: 14px Inter, system-ui, sans-serif; padding: 0 10px;}

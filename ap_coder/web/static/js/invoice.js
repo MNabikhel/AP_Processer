@@ -843,8 +843,21 @@ function goToPick() {
   return true;
 }
 
+/** The box of one line (a finding in the checks: "Line 2: no GL account yet"), by its line number (B-443). */
+function goToLine(name, number) {
+  const rows = [...document.querySelectorAll('input[form="inv"][name="line_number"]')];
+  const row = rows.find((r) => r.value === number)?.closest("tr");
+  const box = row?.querySelector(`[form="inv"][name="${CSS.escape(name)}"]`);
+  if (!box) return goToPick();
+  box.scrollIntoView({ block: "center", behavior: "smooth" });
+  box.focus({ preventScroll: true });
+  return true;
+}
+
 document.addEventListener("click", (e) => {
   if (e.target.closest?.("[data-goto-pick]")) goToPick();
+  const line = e.target.closest?.("[data-goto-line]");
+  if (line) goToLine(line.dataset.gotoLine, line.dataset.line);
 });
 
 document.addEventListener("keydown", (e) => {
