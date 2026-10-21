@@ -5166,6 +5166,25 @@ PDFs imported into a scratch data folder with the sample GL accounts and screens
 - **Test:** `tests/test_web_pilot_walkthrough.py::test_in_a_browser_tab_follows_the_line_grid_as_it_shows_and_the_page_view_ends_above_the_bar`
 - **Lesson:** A visual reorder in CSS needs the DOM order to match, or the keyboard tells a different story.
 
+#### B-479 · A replaced guess was "no changes", and the lines AP coded were missing from "Lines reviewed" · medium
+- **Where:** `ap_coder/core/store.py` (`approve_invoice`, `metrics`), `ap_coder/web/pages/learning.py`,
+  `ap_coder/web/templates/invoice.html`, `ap_coder/web/static/invoice.css`
+- **Symptom:** found by the re-review of this branch. A reviewer who put another account in place of the model's
+  guess was recorded as no edit: the approved screen said there were no changes to the suggested coding and it counted
+  as approved without edits, while the audit showed "line 1 GL: 6000 → 1500". "Lessons learned" (queue) and "Lines
+  reviewed" (Learning) left out the lines AP coded over a guess (B-475), though AP Coder learns from them. A 25-line
+  invoice's grid was about 4,600 px tall at 1366 × 768.
+- **Cause:** B-475 skipped guessed lines when counting the reviewer's changes, and took the "coded" lines out of the
+  reviewed total along with the accuracy.
+- **Reproduce:** approve an invoice after picking another account on a guessed line; the re-review's `add25.py`.
+- **Reproduced:** yes
+- **Fix:** a guess kept is no edit, another account in its place is; `lines_reviewed` counts every line AP reviewed
+  (the coded ones too, `lines_coded`), the accuracy only what the AI proposed (`lines_measured`). An invoice of more
+  than 10 lines gets a tighter grid (captions on the first line only, one-line description boxes, the taxes on one
+  line): the same rows and Tab order, about 3,200 px for 25 lines.
+- **Test:** `tests/test_trust_review.py::test_replacing_a_guessed_account_is_an_edit_and_coded_lines_count_as_reviewed`
+- **Lesson:** Leaving a line out of one figure (accuracy) is not leaving it out of all of them.
+
 #### Looked at and left (review screen and coding)
 
 - **N-172** · After Approve, the address bar was said to stay on the approved invoice's address. Not reproduced:

@@ -1505,8 +1505,10 @@ class Store:
             rule = by_rule.get(suggestion.get("line_number")) if suggestion else None
             guess = line_guessed(suggestion, rule)
             kept_rule = rule is not None and rule.get("gl_to") == f_gl and (rule.get("cc_to") or "") == (f_cc or "")
-            if not guess and not kept_rule and not kept(s_gl, s_cc, f_gl, f_cc):
-                reviewer_changed += 1  # a guess was no proposal: picking another account changes nothing proposed
+            # A kept guess is no edit; another account in its place is (B-479), as any change to what was proposed.
+            replaced = (f_gl != s_gl or (f_cc or "") != (s_cc or "")) if guess else not kept(s_gl, s_cc, f_gl, f_cc)
+            if not kept_rule and replaced:
+                reviewer_changed += 1
             if rule is not None:  # the AI's own answer, as first recorded (not a rule's)
                 s_gl, s_cc = rule.get("gl_from"), rule.get("cc_from", "")
             # Accuracy measures what the AI proposed: the blanks it left are not counted against it. A line whose
@@ -3744,7 +3746,7 @@ class Store:
         with self._conn() as conn:
             # Imported ERP history is memory, not a reviewer decision: it never counts towards accuracy.
             lines = conn.execute(
-                "SELECT outcome, COUNT(*) n FROM feedback WHERE outcome NOT IN ('history', 'coded') GROUP BY outcome"
+                "SELECT outcome, COUNT(*) n FROM feedback WHERE outcome != 'history' GROUP BY outcome"
             ).fetchall()
             daily = conn.execute(
                 """SELECT substr(created_at, 1, 10) day,
@@ -3772,12 +3774,16 @@ class Store:
             week["accepted"] += r["accepted"] or 0
             week["corrected"] += r["corrected"] or 0
         outcome = {r["outcome"]: r["n"] for r in lines}
-        total = sum(outcome.values())
+        # Every line AP reviewed (and AP Coder learns from), the ones it coded over a guess too (B-479); the accuracy
+        # measures only what the AI proposed: confirmed or corrected (B-475).
+        measured = outcome.get(ACCEPTED, 0) + outcome.get(CORRECTED, 0)
         return {
-            "lines_reviewed": total,
+            "lines_reviewed": sum(outcome.values()),
+            "lines_measured": measured,
+            "lines_coded": outcome.get(CODED, 0),
             "lines_accepted": outcome.get(ACCEPTED, 0),
             "lines_corrected": outcome.get(CORRECTED, 0),
-            "line_accuracy": round(outcome.get(ACCEPTED, 0) / total, 4) if total else None,
+            "line_accuracy": round(outcome.get(ACCEPTED, 0) / measured, 4) if measured else None,
             "invoices_by_status": {r["status"]: r["n"] for r in statuses},
             "invoices_approved_without_edits": untouched,
             "weekly": [weeks[w] for w in sorted(weeks)],

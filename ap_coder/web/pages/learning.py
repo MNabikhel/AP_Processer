@@ -233,7 +233,7 @@ def coding_context(store: Store, mem_q: str, settings: Any = None) -> dict[str, 
         lines = w["accepted"] + w["corrected"]
         weekly.append({**w, "lines": lines, "accuracy": w["accepted"] / lines if lines else None})
     good = accuracy >= TARGET_ACCURACY
-    note, compared = accuracy_note(settings, m["lines_reviewed"]) if settings is not None else ("", True)
+    note, compared = accuracy_note(settings, m["lines_measured"]) if settings is not None else ("", True)
     distance = f"{(accuracy - TARGET_ACCURACY) * 100:+.1f} pts vs 90% target"  # early on: a plain note (B-442)
     tiles = [
         ui.tile("Coding accuracy", f"{accuracy:.1%}", "", "green" if good else "violet",

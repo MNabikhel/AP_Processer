@@ -94,7 +94,7 @@ def test_a_kept_guess_is_the_reviewers_coding_not_coded_as_suggested(tmp_path):
     # B-475: a kept guess is the reviewer's own coding: neither confirmed nor corrected, out of the accuracy
     assert counts == {ACCEPTED: 1, CORRECTED: 0, CODED: 2}
     m = store.metrics()
-    assert m["line_accuracy"] == 1.0 and m["lines_reviewed"] == 1 and m["top_corrections"] == []
+    assert m["line_accuracy"] == 1.0 and m["lines_measured"] == 1 and m["top_corrections"] == []
     from ap_coder.core.audit import _approved_text
 
     (event,) = [e for e in store.events() if e["action"] == "approved"]
@@ -424,3 +424,30 @@ def test_bulk_approval_says_why_an_invoice_was_left_without_the_check_code(tmp_p
     result = bulk_approve(store, store.reference_data(), Settings(), [iid], "Pat")
     ((_, why),) = result["skipped"]
     assert why == "The bank account to pay into changed" and "VENDOR_BANK_CHANGED" not in why
+
+
+# --- B-479: a changed guess is an edit; the lines AP reviewed include the ones it coded ------------------------------
+
+
+def test_replacing_a_guessed_account_is_an_edit_and_coded_lines_count_as_reviewed(tmp_path):
+    """The re-review: a reviewer who replaced the model's guess was recorded as no edit ("no changes to the suggested
+    coding", counted as approved without edits) while the audit showed "line 1 GL: 6000 → 1500"; and "Lessons
+    learned" / "Lines reviewed" left out the lines AP coded over a guess, though AP Coder learns from them."""
+    store = Store(tmp_path / "ap.db")
+    load_sample_setup(store)
+    guess = {"description": "Copy paper", "amount": 20.0, "predicted_gl_code": "6000",
+             "reasoning_justification": f"{MODEL_SUGGESTED}: office"}  # fmt: skip
+    learned = {"description": "Toner", "amount": 30.0, "predicted_gl_code": "6000",
+               "reasoning_justification": "Approved 3 times for this vendor"}  # fmt: skip
+    kept = store.add_invoice(tmp_path / "a.pdf", _invoice([guess, learned]), {"requires_review": True})
+    store.approve_invoice(kept, _invoice([guess, learned]), "Pat")
+    assert store.get_invoice(kept)["edits"] == []  # a kept guess is no edit
+    ai = _invoice([guess, learned], invoice_number="B-2")
+    changed = store.add_invoice(tmp_path / "b.pdf", ai, {"requires_review": True})
+    final = _invoice([dict(guess, predicted_gl_code="1500"), learned], invoice_number="B-2")
+    store.approve_invoice(changed, final, "Pat")
+    assert "line_coding" in store.get_invoice(changed)["edits"]
+    m = store.metrics()
+    assert m["invoices_approved_without_edits"] == 1
+    assert m["lines_reviewed"] == 4 and m["lines_coded"] == 2  # every line AP reviewed, the coded ones too
+    assert m["line_accuracy"] == 1.0  # the accuracy still leaves the guesses out

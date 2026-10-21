@@ -197,10 +197,10 @@
 /* Three rows a line, in the order Tab follows (B-478): # · description · delete; GL account (the most room:
    no cost centers in the pilot) · amount; taxes · qty · unit price. */
 .inv-lines-grid tr[data-row] {display: grid; grid-template-columns: 44px minmax(0, 1fr) 64px 108px 92px 28px;
-  grid-template-areas: "no desc desc desc desc del" "gl gl gl gl amt amt" "tax tax qty price . .";
+  grid-template-areas: "no desc desc desc desc del" "gl gl gl gl amt amt" "tax tax tax qty price .";
   gap: 4px 6px; padding: 8px 0; border-bottom: 1px solid var(--lg-hairline);}
 .inv-lines-grid:has(.c-cc) tr[data-row] {grid-template-areas: "no desc desc desc desc del" "gl gl gl cc amt amt"
-  "tax tax qty price . .";}
+  "tax tax tax qty price .";}
 .inv-lines-grid td {display: block; padding: 0; min-width: 0 !important; width: auto !important; border: 0;}
 .inv-lines-grid .c-no {grid-area: no;} .inv-lines-grid .c-desc {grid-area: desc;} .inv-lines-grid .c-tax {grid-area: tax;}
 .inv-lines-grid .c-del {grid-area: del;} .inv-lines-grid .c-gl {grid-area: gl;} .inv-lines-grid .c-cc {grid-area: cc;}
@@ -209,13 +209,21 @@
 .inv-lines-grid td[data-label]::before {content: attr(data-label); display: block; font-size: 10.5px; line-height: 14px;
   color: var(--lg-subtle); font-weight: 500;}
 .inv-lines-grid .c-tax::before {display: none !important;}
-.inv-lines-grid .c-tax {align-self: end;}
+.inv-lines-grid td.c-tax {display: flex; align-items: flex-end;}  /* the cell fills its row (Tab and rows agree), the chips at its foot */
 .inv-lines-grid .c-tax .inv-taxes {flex-wrap: wrap; gap: 3px;}
-.inv-lines-grid .c-del {align-self: start;}
+.inv-lines-grid td.c-del {display: flex; align-items: flex-start;}
 .inv-lines-grid textarea {width: 100%; min-height: 30px; height: auto; resize: vertical; font: inherit; font-size: 13px;
   line-height: 18px; padding: 5px 8px; border: 1px solid var(--lg-border); border-radius: var(--lg-r-sm, 6px);
   background: var(--lg-surface); color: var(--lg-text); field-sizing: content; max-height: 80px;}
 .inv-lines-grid textarea:focus {outline: none; border-color: var(--lg-accent); box-shadow: var(--lg-focus);}
+/* A long invoice (more than 10 lines): the same rows and Tab order, tighter: the captions on the first line only, a
+   one-line description box that grows as needed, the taxes on one line (B-479). */
+.inv-lines-grid.compact tr[data-row] {padding: 4px 0; gap: 3px 6px;}
+.inv-lines-grid.compact tr[data-row]:not(:first-child) td[data-label]::before {display: none;}
+.inv-lines-grid.compact textarea {min-height: 28px; padding: 4px 8px;}
+.inv-lines-grid.compact .c-tax .inv-taxes {flex-wrap: nowrap;}
+.inv-lines-grid.compact .inv-taxes span {padding: 0 4px; line-height: 20px;}
+.inv-lines-grid.compact input, .inv-lines-grid.compact select {height: 28px;}
 .inv-lines-grid tr.inv-row-hot {background: color-mix(in srgb, var(--lg-accent) 10%, transparent);}
 .inv-lines-grid tr.inv-row-hot td {background: none;}
 /* An account no approval backs (the chat model's own pick): marked until the reviewer picks it (B-463). */
