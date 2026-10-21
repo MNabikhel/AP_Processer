@@ -3702,8 +3702,9 @@ Benchmark (60, seed 3, 50% scans) and the hard corpus (150) unchanged: no templa
 confidences (99.8% fields, verified precision 100%; hard corpus 96.9% fields, no silent error 100%).
 
 #### B-387 · A template reading taken without its label replaced a value the page's own label gave · high
-- **Where:** `ap_coder/capture/supplier.py` (`_apply_variant`); `ap_coder/capture/types.py` (new `UNANCHORED`);
-  `ap_coder/capture/confidence.py` (`fuse`, new `_unanchored_fill_only`, `_totals_that_add_up`)
+- **Where:** `ap_coder/capture/supplier.py` (`_apply_variant`, `apply_template`); `ap_coder/capture/types.py` (new
+  `UNSETTLED`); `ap_coder/capture/confidence.py` (`fuse`, `_Group.strength`, new `_vouched_first`,
+  `_totals_that_add_up`)
 - **Symptom:** When the label a field was learned by is not on the page, the template reads whatever is printed where
   the value used to be. That reading counted as a full template reading (the template is trusted above the rule
   reader) and beat the rule reader's value: a receipt's "Receipt" as the supplier, 299.97 against a receipt's verified
@@ -3714,17 +3715,19 @@ confidences (99.8% fields, verified precision 100%; hard corpus 96.9% fields, no
 - **Reproduce:** a template learned with "Invoice No:"; the next invoice prints "Ref" instead; fuse with a rule reading
   of another number.
 - **Reproduced:** yes (the template's number won)
-- **Fix:** a reading at the learned spot without its label is marked `template+unanchored` (the calibration reads it
-  by its family, "template"). It only fills a field no other reader read, at *check*, or agrees with another reader's
-  first choice (or a candidate that reader scored as high: a tie it settles); otherwise it is dropped. It never makes
-  the totals add up by changing another field.
+- **Fix:** a reading the template cannot vouch for, taken at the learned spot without the label it was learned by
+  (or, since B-388, at a spot never settled), is marked `template-unsettled` (`UNSETTLED`, an evidence family of its
+  own). It never decides: the value chosen is the one the other readers make strongest, and it only adds its
+  agreement to it (not as a reader of its own: B-394) or stays a rival that contests it; read by nothing else, it
+  fills the field at *check*. It never makes the totals add up by changing another field. A value learned with no
+  label at all (a name at the top of the page) is read by its position, as before.
 - **Test:** `tests/test_learning_sweep4.py::test_a_reading_at_the_learned_spot_without_its_label_does_not_beat_a_labelled_reading`,
   `tests/test_learning_sweep4.py::test_a_template_reading_without_its_label_does_not_re_decide_the_other_totals`
 - **Lesson:** Don't weigh a reader by its name alone: how it read (by its label, or where the value used to be) is
   the evidence.
 
 #### B-388 · A value printed twice was learned at the wrong label · high
-- **Where:** `ap_coder/capture/supplier.py` (`learn`, `_best_span`, new `_read_where`)
+- **Where:** `ap_coder/capture/supplier.py` (`learn`, `_best_span`, `_update_variants`, `Variant.settled`)
 - **Symptom:** On a vendor's first invoices the delivery date was the invoice date: the template learned the invoice
   date at "Liefer- und Leistungsdatum:" and read the delivery date as the invoice date once they differed (2018-06-03
   for 2018-06-05). A credit note dated and due the same day printed the date once: the due date was learned at "Date
@@ -3737,12 +3740,15 @@ confidences (99.8% fields, verified precision 100%; hard corpus 96.9% fields, no
 - **Reproduce:** two invoices with "Delivery Date:" and "Invoice Date:" both 05.06.2018 learned; a third with another
   delivery date.
 - **Reproduced:** yes (`2018-06-03`)
-- **Fix:** of several places, the template learns the value where the rule reader reads that field, when it reads
-  that value; words learned for a field so (or clicked by the reviewer) are not learned for another field in the same
-  approval. A value printed once for two fields teaches the one the reader reads there.
-- **Test:** `tests/test_learning_sweep4.py::test_a_date_printed_twice_is_learned_where_the_reader_reads_it`,
-  `tests/test_learning_sweep4.py::test_one_printed_date_does_not_teach_two_fields`
-- **Lesson:** Don't learn from where a value happens to be printed: learn from where the page says it is.
+- **Fix:** the template does not guess which place is the field's. Each variant counts its *settled* approvals: those
+  where the value was printed at its spot and nowhere else on the page, on words no other confirmed field's value is
+  printed on (a reviewer's click settles it too). Until one, what it reads there is `UNSETTLED` (B-387): it agrees or
+  contests, never decides. Templates stored before start unsettled. (The first version of this fix learned where the
+  rule reader reads the value; it copied the reader's mistakes, B-395, and was taken out.)
+- **Test:** `tests/test_learning_sweep4.py::test_a_date_printed_twice_does_not_settle_where_it_was_learned`,
+  `tests/test_learning_sweep4.py::test_one_printed_date_for_two_fields_settles_neither`
+- **Lesson:** Don't trust a spot learned from a value printed twice: only an approval where the two differ shows
+  which one is the field's.
 
 #### B-389 · The supplier's name printed again was learned as the name's label · medium
 - **Where:** `ap_coder/capture/supplier.py` (`learn`, new `_name_again`)
@@ -3807,6 +3813,55 @@ confidences (99.8% fields, verified precision 100%; hard corpus 96.9% fields, no
 - **Test:** `tests/test_learning_sweep4.py::test_the_template_agreeing_never_makes_a_value_less_certain`,
   `tests/test_learning_sweep4.py::test_a_template_rival_does_not_mark_down_an_amount_the_totals_confirm`
 - **Lesson:** Don't let one more agreeing reader cost confidence.
+
+#### B-394 · A template reading it could not vouch for counted as a second reader: a wrong date verified · high
+- **Where:** `ap_coder/capture/confidence.py` (`fuse`, `_Group.strength`, `_vouched_first`); `ap_coder/capture/types.py`
+  (`UNSETTLED`)
+- **Symptom:** Found by a review of B-387 with a generated supplier stream (English invoices): the supplier renames
+  "Invoice Date:" to "Billed on:" and adds an order "Date:" row under it. The template, its label gone, read the true
+  date first and the order date next; the rule reader read the order date. The invoice date was the order date,
+  *verified*, and invoices 22 to 29 went touchless (before B-387: check, corrected by AP, and learned again).
+- **Cause:** B-387 dropped the template's first choice (it disagreed) and kept its runner-up, which agreed with the
+  rule reader's first choice: two readers agreeing, and the evidence pattern read "+unanchored" by its family
+  ("template") and took the labelled template's measured record (0.998).
+- **Reproduce:** fuse rules [Y 0.6] with the template's [X 0.62, Y 0.55], both without their label.
+- **Reproduced:** yes (Y verified, 0.998; X not mentioned)
+- **Fix:** such a reading has its own evidence family (`template-unsettled`, not measured), is never counted among the
+  independent readers verified needs nor in the evidence pattern, and is not dropped: the template's first choice
+  stays a rival and contests the value chosen. The B-393 floor stays below verified.
+- **Test:** `tests/test_learning_sweep4.py::test_a_reading_the_template_cannot_vouch_for_is_never_an_independent_reader`,
+  `tests/test_learning_sweep4.py::test_the_template_agreeing_is_never_enough_for_verified`,
+  `tests/test_learning_sweep4.py::test_a_renamed_label_does_not_make_the_order_date_a_verified_invoice_date`
+- **Lesson:** Don't let a reading that only agrees count as a reader: agreement from a reader that cannot vouch for
+  its spot is no second opinion.
+
+#### B-395 · Learning where the rule reader reads copied the reader's mistake · high
+- **Where:** `ap_coder/capture/supplier.py` (`learn`: `_read_where` taken out)
+- **Symptom:** Found by the same review: the invoice date printed only beside the title, an order "Date:" row the same
+  day on the first invoice. The rule reader read the order date as the invoice date; B-388 learned the invoice date
+  there; on the next invoices the rule reader and the template agreed on the order date: verified, touchless (before:
+  the template learned the title's date and contested).
+- **Cause:** a template that learns where the rule reader reads is not independent of it: it repeats its choice of
+  label, mistakes included.
+- **Reproduce:** the stream in the test (4 invoices).
+- **Reproduced:** yes (2026-01-09 verified, printed 2026-01-12)
+- **Fix:** learning no longer follows the rule reader; a spot learned from a value printed twice is unsettled until an
+  approval shows it (B-388).
+- **Test:** `tests/test_learning_sweep4.py::test_a_date_learned_where_the_reader_read_another_date_is_not_a_second_reader`
+- **Lesson:** Don't teach one reader from another and then count them as two.
+
+#### B-396 · A new label printed at an old spot kept the old spot's record · high
+- **Where:** `ap_coder/capture/supplier.py` (`_update_variants`)
+- **Symptom:** The supplier's new layout prints an order "Date:" where "Invoice Date:" was, and the invoice date beside
+  the title; on its first invoice the two were the same day. From the next invoice the order date was the invoice
+  date, verified and touchless (before this branch as well).
+- **Cause:** the approval matched the old variant by its position and replaced its label; the variant kept the
+  confirmations of the old label.
+- **Reproduce:** the stream in the test (4 invoices, then the new layout).
+- **Reproduced:** yes (the order date verified)
+- **Fix:** a variant whose label changes starts unsettled again.
+- **Test:** `tests/test_learning_sweep4.py::test_a_new_label_at_the_old_spot_starts_unsettled`
+- **Lesson:** Don't carry a spot's record across a change of its label.
 
 #### Left as they are (learning from approvals)
 
