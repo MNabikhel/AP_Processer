@@ -4370,9 +4370,10 @@ sales tax mapping, 15 real English vendor PDFs (a credit memo, US invoices, a tw
 invoices), corrections, a field taught by clicking, approvals with Ctrl+Enter, JD Edwards and Excel exports,
 Learning, Help, Settings, the keyboard alone, a 1280 px window, and bad, empty and repeated files. Screenshots at
 1366 x 768 and 1920 x 1080, the browser's console watched (no errors). Pages answered in 0.05 to 0.3 s (Help → Report
-a problem: 3 s the first time, B-440); 15 PDFs were read and coded in 6 s. 21 fixed (B-424 to B-444), each with a
+a problem: 3 s the first time, B-440); 15 PDFs were read and coded in 6 s. 26 fixed (B-424 to B-449), each with a
 failing test first, all in `tests/test_web_pilot_walkthrough.py`. B-438 to B-444 were first logged as left (N-136 to
-N-141), then fixed in a second round; none is left.
+N-141), then fixed in a second round; B-445 to B-449 are what an independent review of the first two rounds found.
+None is left.
 
 #### B-424 · Settings → Review: the threshold's label broke onto three lines · low
 - **Where:** `ap_coder/web/templates/settings_review.html` (the *Needs attention* threshold)
@@ -4634,3 +4635,69 @@ N-141), then fixed in a second round; none is left.
 - **Test:** `tests/test_web_pilot_walkthrough.py::test_with_lm_studio_off_the_review_screen_says_it_once`,
   `tests/test_web_pilot_walkthrough.py::test_in_a_browser_with_lm_studio_off_the_invoice_shows_above_the_fold`
 - **Lesson:** Don't say one fact in three places on one screen: each copy pushes the work down.
+
+#### B-445 · B-439 turned away real text invoices: Notepad's Unicode files and whole-dollar amounts · high
+- **Where:** `ap_coder/web/pages/process.py` (`text_of`, `_AMOUNT`, `looks_like_an_invoice_text`)
+- **Symptom:** found by an independent review of this sweep: a text invoice saved by Notepad as "Unicode" (UTF-16,
+  read on purpose by `extraction.result_from_text`) and one printing whole dollars ("Subtotal: $100 / GST: $5 /
+  Total: $105", "Total 1,250") were refused at upload as having no amounts.
+- **Cause:** the check ran a pattern for "digits, a point, two digits" on the raw bytes: UTF-16 puts a zero byte
+  between every character, and whole dollars have no cents.
+- **Reproduce:** the review's `repro_txt.py` (both refused, 0 queued).
+- **Reproduced:** yes
+- **Fix:** the bytes are decoded as `result_from_text` decodes them (UTF-16 by its mark, UTF-8, else cp1252), and an
+  amount is a number with cents, a number after a currency sign, or a number after a word that names an amount
+  (total, subtotal, amount, balance, due, tax, GST, HST, PST, QST, TPS, TVQ, TVH, montant). The message says "a
+  text file (.txt, .md)". The check is the upload's only: a text file a person copies into the invoices folder is
+  read as before (it was put there as an invoice; the folder pick-up lists what it cannot read).
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_a_real_text_invoice_is_still_read` (UTF-16, whole dollars,
+  thousands, ANSI), `tests/test_web_pilot_walkthrough.py::test_a_markdown_file_without_amounts_is_refused_as_a_text_file`
+- **Lesson:** Don't test a file's content as bytes when the reader decodes it: check what the reader will see.
+
+#### B-446 · The walkthrough tests left "Pat Tester" as the reviewer for the rest of the run · medium (tests only)
+- **Where:** `tests/test_web_pilot_walkthrough.py` (the `me` fixture, the imports)
+- **Symptom:** `pytest tests/test_web_pilot_walkthrough.py tests/test_web_robustness.py::test_approving_in_a_second_tab_says_plainly_it_was_approved_meanwhile`
+  failed: the second test's approval was recorded under "Pat Tester".
+- **Cause:** the fixture patched `web.core.reviewer` before the page modules were first imported; they then copied
+  the patched function, and monkeypatch, restoring what it had found there, kept it as theirs.
+- **Fix:** the page modules are imported at the top of the file, before any patch.
+- **Reproduced:** yes
+- **Test:** the pair above, run in that order; the web tests run in two orders (walkthrough first and last).
+- **Lesson:** Don't patch a name in a module whose importers haven't imported it yet: they copy the patch.
+
+#### B-447 · Without a chat model B-442's note replaced the coding accuracy's comparison for good · low
+- **Where:** `ap_coder/web/core.py` (`accuracy_note`), `ap_coder/web/pages/review.py`, `ap_coder/web/pages/learning.py`
+- **Symptom:** found by the review: with no chat model the distance to the 90% target never showed again, however
+  many lines were reviewed.
+- **Fix:** the first 50 reviewed lines (`EARLY_LINES`) get the plain note in every case; after them the distance
+  shows, followed by "GL suggestions improve as you approve" while there is no chat model (D-49).
+- **Reproduced:** yes
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_the_accuracy_note_gives_way_to_the_figure_after_the_first_lines`
+- **Lesson:** Don't make "early on" depend on a setting alone: give it an end.
+
+#### B-448 · Supplier learning and Automation still said "go touchless" and "clean in a row" · low
+- **Where:** `ap_coder/capture/supplier.py` (`describe`, `plain_rules`, `policy_gaps`, `autonomy_status`,
+  `automatic_transition`: wording only), `ap_coder/web/templates/learning.html`,
+  `ap_coder/web/templates/settings_automation.html`, `ap_coder/web/pages/settings_automation.py`,
+  `ap_coder/web/pages/learning.py`; `tests/test_supplier.py`, `tests/test_touchless_pages.py`,
+  `tests/test_web_settings.py` kept in step
+- **Symptom:** found by the review: after B-438 the approval message said "…before this vendor can skip review",
+  while Learning → Supplier learning said "6 more clean in a row needed", "about 32 more clean invoices for a 99%
+  accuracy bound", "Goes touchless on its next invoice", "a person found an error in a touchless invoice", and a
+  suspended vendor's line could end "…to skip review yet again.".
+- **Fix:** the same words throughout: "N more in a row without a correction needed", "about N more invoices without
+  a correction to show 99% accuracy", "Skips review from its next invoice", "Skips review since …", "an invoice that
+  skipped review"; "again" only after a number. *Touchless processing* stays the name of the setting (Settings →
+  Automation), and the tiles there read "Vendors skipping review", "Skipped review, last 30 days", "Errors found
+  after skipping review". The rules are unchanged.
+- **Reproduced:** yes
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_supplier_learning_and_automation_use_the_same_plain_words`
+- **Lesson:** Don't change a term in one message: change it everywhere the same person reads it.
+
+#### B-449 · "Gathering the reports…" stayed for good when the page never came · low
+- **Where:** `ap_coder/web/static/js/app.js` (`a[data-busy]`, `resetSlowLink`)
+- **Symptom:** found by the review: with AP Coder stopped, the link kept saying it was gathering the reports.
+- **Fix:** after 15 s without the page the link reads as before (and on Back, as before).
+- **Reproduced:** yes
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_in_a_browser_a_slow_link_reads_as_before_when_the_page_does_not_come`
+- **Lesson:** Don't show "working…" without an end: a request can fail silently.

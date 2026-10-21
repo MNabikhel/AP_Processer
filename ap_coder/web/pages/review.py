@@ -254,7 +254,9 @@ def kpis(store: Store, pending: list[dict[str, Any]], flagged: list[dict[str, An
     total_today = done_today + len(pending)
     accuracy = metrics["line_accuracy"]
     corrections = metrics["lines_corrected"]
-    note = accuracy_note(settings, metrics["lines_reviewed"]) if settings is not None and accuracy is not None else ""
+    note, compared = ("", True)
+    if settings is not None and accuracy is not None:
+        note, compared = accuracy_note(settings, metrics["lines_reviewed"])
     return [
         {"label": "Waiting", "value": f"{len(pending):,}", "sub": f"{len(flagged)} need attention"},
         {"label": "Approved today", "value": f"{done_today:,}",
@@ -263,8 +265,9 @@ def kpis(store: Store, pending: list[dict[str, Any]], flagged: list[dict[str, An
                 + f"{len(approved):,} fully approved in all",
          "bar": done_today / total_today if total_today else 0.0},
         {"label": "Coding accuracy", "value": "—" if accuracy is None else f"{accuracy:.1%}",  # as on Learning
-         "sub": "after the first approvals" if accuracy is None else note or "vs 90% target",
-         "delta": "" if accuracy is None or note else f"{(accuracy - TARGET_ACCURACY) * 100:+.1f} pts".replace(
+         "sub": "after the first approvals" if accuracy is None
+                else ("vs 90% target" + (f" · {note}" if note else "")) if compared else note,
+         "delta": "" if accuracy is None or not compared else f"{(accuracy - TARGET_ACCURACY) * 100:+.1f} pts".replace(
              "-", "−"),
          "good": accuracy is not None and accuracy >= TARGET_ACCURACY, "wrap": bool(note)},
         {"label": "Lessons learned", "value": f"{metrics['lines_reviewed']:,}",

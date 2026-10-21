@@ -187,6 +187,9 @@ document.addEventListener("click", (event) => {
     slow.classList.add("busy");
     if (!slow.dataset.label) slow.dataset.label = slow.innerHTML;
     slow.textContent = slow.dataset.busy;
+    // The page never came (AP Coder stopped, the network dropped): after a while the link reads as before.
+    clearTimeout(slow._busyTimer);
+    slow._busyTimer = setTimeout(() => resetSlowLink(slow), window.AP_SLOW_LINK_MS || 15000);
   }
   const close = event.target.closest("[data-dismiss]");
   if (close) close.closest(".flash")?.remove();
@@ -196,14 +199,14 @@ document.addEventListener("click", (event) => {
   });
 });
 
+function resetSlowLink(a) {
+  a.removeAttribute("aria-busy");
+  a.classList.remove("busy");
+  if (a.dataset.label) a.innerHTML = a.dataset.label;
+}
+
 // Back to a page whose slow link was clicked (the browser keeps it): the link reads as it did.
-window.addEventListener("pageshow", () => {
-  document.querySelectorAll("a[data-busy][aria-busy]").forEach((a) => {
-    a.removeAttribute("aria-busy");
-    a.classList.remove("busy");
-    if (a.dataset.label) a.innerHTML = a.dataset.label;
-  });
-});
+window.addEventListener("pageshow", () => document.querySelectorAll("a[data-busy][aria-busy]").forEach(resetSlowLink));
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") document.querySelectorAll("details.pop[open]").forEach((d) => d.removeAttribute("open"));

@@ -249,7 +249,7 @@ def test_automation_tab_shows_the_switch_the_bar_and_the_numbers(client):
     assert "Off: every invoice is reviewed by a person" in text
     assert "Turn on touchless processing…" in text and "I understand" in text
     assert "The bar every vendor must meet" in text and "Always a person" in text
-    assert "Vendors touchless" in text and "Touchless, last 30 days" in text
+    assert "Vendors skipping review" in text and "Skipped review, last 30 days" in text
     assert "Largest invoice approved without a person" in text
 
 

@@ -19,6 +19,8 @@ from ap_coder.core.store import REVIEW, Store, load_sample_setup
 from ap_coder.ops.demo import load_demo
 from ap_coder.web import invoice_view
 from ap_coder.web.app import create_app
+from ap_coder.web.pages import invoice as _invoice_page  # noqa: F401 - imported before `me` patches web.core (below)
+from ap_coder.web.pages import review as _review_page  # noqa: F401
 
 from .conftest import SAMPLES, chromium_path
 
@@ -53,6 +55,8 @@ def client(store):
 
 @pytest.fixture(autouse=True)
 def me(monkeypatch):
+    """A fixed reviewer. The page modules are imported at the top: patched before them, ``web.core.reviewer`` would be
+    copied into them patched, and monkeypatch would keep the patched one as theirs for the rest of the run."""
     for module in ("ap_coder.web.core", "ap_coder.web.pages.invoice", "ap_coder.web.pages.review"):
         monkeypatch.setattr(f"{module}.reviewer", lambda: "Pat Tester", raising=False)
         monkeypatch.setattr(f"{module}.login", lambda: "ptester", raising=False)
@@ -482,4 +486,112 @@ def test_in_a_browser_with_lm_studio_off_the_invoice_shows_above_the_fold(browse
     top = page.locator(".iv-sheet").first.bounding_box()["y"]
     bar = page.locator(".inv-actionbar").bounding_box()["y"]
     assert bar - top >= 150, (top, bar)  # a good part of the page shows above the approve bar
+    assert errors == []
+
+
+# --- Third round: the review's findings -------------------------------------------------------------------------
+
+TEXT_INVOICE = (
+    "INVOICE\nAcme Supply Ltd\nInvoice No: A-1001\nDate: 2026-10-01\nSubtotal: 100.00\nGST 5%: 5.00\nTotal: 105.00\n"
+)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        TEXT_INVOICE.encode("utf-16"),  # Notepad's "Unicode": read on purpose by extraction.result_from_text
+        TEXT_INVOICE.replace("100.00", "$100").replace("5.00", "$5").replace("105.00", "$105").encode(),
+        b"INVOICE\nAcme Supply Ltd\nInvoice No: A-1003\nTotal 1,250\n",
+        TEXT_INVOICE.encode("cp1252"),
+    ],
+    ids=["utf-16", "whole-dollars", "thousands", "ansi"],
+)
+def test_a_real_text_invoice_is_still_read(tmp_path, content):
+    """B-439 turned away text invoices it should read: Notepad's UTF-16 (the raw bytes have a zero between every
+    digit) and amounts in whole dollars ("Total: $105", "Total 1,250")."""
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(store)
+    app = _app(store)
+    client = TestClient(app, base_url="http://localhost")
+    files = [("files", ("invoice.txt", content, "text/plain"))]
+    answer = client.post("/process/upload", files=files, headers=PAGE).json()
+    assert answer.get("job"), answer
+    assert app.state.jobs.get("process").wait(60)
+    texts = [m["text"] for m in client.get("/process/status").json()["result"]["messages"]]
+    assert not any("was not read" in t for t in texts), texts
+    assert len(store.list_invoices(REVIEW)) == 1
+
+
+def test_a_markdown_file_without_amounts_is_refused_as_a_text_file(tmp_path):
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(store)
+    app = _app(store)
+    client = TestClient(app, base_url="http://localhost")
+    files = [("files", ("README.md", b"# Notes\nCall the vendor on Monday.\n", "text/markdown"))]
+    answer = client.post("/process/upload", files=files, headers=PAGE).json()
+    if answer.get("job"):
+        assert app.state.jobs.get("process").wait(60)
+        texts = [m["text"] for m in client.get("/process/status").json()["result"]["messages"]]
+    else:
+        texts = [answer.get("error", "")]
+    assert any("README.md was not read" in t and "(.txt, .md)" in t for t in texts), texts
+    assert store.list_invoices(REVIEW) == []
+
+
+@pytest.mark.parametrize(
+    ("ready", "lines", "note", "compared"),
+    [
+        (False, 7, "GL suggestions improve as you approve; with the AI model on they start sooner", False),
+        (True, 7, "GL suggestions improve as you approve", False),
+        (False, 60, "GL suggestions improve as you approve", True),  # past the first days: the figure, plainly
+        (True, 60, "", True),
+    ],
+)
+def test_the_accuracy_note_gives_way_to_the_figure_after_the_first_lines(monkeypatch, ready, lines, note, compared):
+    """B-442 showed the note for good without a chat model: the figure was never compared with the target."""
+    from types import SimpleNamespace
+
+    from ap_coder.ai import local_llm
+    from ap_coder.web import core
+
+    monkeypatch.setattr(local_llm, "provider_status", lambda settings: SimpleNamespace(ready=ready))
+    assert core.accuracy_note(Settings(), lines) == (note, compared)
+
+
+def test_supplier_learning_and_automation_use_the_same_plain_words(tmp_path, ground_truth, monkeypatch):
+    """B-438 changed the message after an approval; Learning → Supplier learning and Settings → Automation still said
+    "6 more clean in a row needed", "about 32 more clean invoices for a 99% accuracy bound", "Goes touchless on its
+    next invoice", "to skip review yet again"."""
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    client = TestClient(_app(store), base_url="http://localhost")
+    ids = [store.add_invoice(tmp_path / f"inv{i}.pdf", ground_truth, {"requires_review": False}) for i in range(42)]
+
+    def outcomes(bad=False):
+        return [{"field": f"f{f}", "ai_value": "a", "final_value": "b" if bad and f == 0 else "a",
+                 "correct": not (bad and f == 0)} for f in range(13)]  # fmt: skip
+
+    for i, invoice_id in enumerate(ids[:30]):
+        store.record_outcomes("id:V1", invoice_id, outcomes(), display_name="Northwind", at=f"2026-01-01T00:00:{i:02d}")
+    for i, invoice_id in enumerate(ids[30:]):
+        store.record_outcomes("id:V2", invoice_id, outcomes(bad=i == 7), display_name="Chinook",
+                              at=f"2026-01-02T00:00:{i:02d}")  # fmt: skip
+    text = re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", client.get("/learning?tab=suppliers").text)))
+    text += re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", client.get("/settings/automation").text)))
+    for old in ("go touchless", "goes touchless", "Goes touchless", "gone touchless", "touchless invoice",
+                "clean in a row", "clean invoice", "yet again"):  # fmt: skip
+        assert old not in text, old
+    assert "more in a row without a correction needed" in text
+
+
+def test_in_a_browser_a_slow_link_reads_as_before_when_the_page_does_not_come(browser, store):
+    """B-440's link stayed on "Gathering the reports…" for good when the page never came (AP Coder stopped)."""
+    page, errors = _open(browser, "/help")
+    page.evaluate("window.AP_SLOW_LINK_MS = 300")
+    state = page.evaluate(
+        "async () => { window.addEventListener('click', (e) => e.preventDefault(), {once: true});"
+        " const a = document.querySelector('a[href=\"/help/report\"]'); a.click();"
+        " await new Promise((r) => setTimeout(r, 600));"
+        " return [a.getAttribute('aria-busy'), a.textContent.trim()]; }"
+    )
+    assert state == [None, "bug_reportReport a problem"], state
     assert errors == []

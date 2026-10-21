@@ -376,13 +376,13 @@ def test_stats_from_rows():
 
 def test_state_machine_learning_supervised_ready_autonomous_suspended():
     state, progress, why = autonomy_status(SupplierStats.from_rows(_rows(12, bad={5})))
-    assert state == LEARNING and why.startswith("12 of 20 invoices; 4 more clean in a row needed")
+    assert state == LEARNING and why.startswith("12 of 20 invoices; 4 more in a row without a correction needed")
     assert 0 < progress < 1
     state, _, why = autonomy_status(SupplierStats.from_rows(_rows(25, bad={20})))
-    assert state == SUPERVISED and "6 more clean in a row needed" in why
+    assert state == SUPERVISED and "6 more in a row without a correction needed" in why
     clean = SupplierStats.from_rows(_rows(30))
     state, progress, why = autonomy_status(clean)
-    assert state == READY and progress == 1.0 and "Goes touchless on its next invoice" in why
+    assert state == READY and progress == 1.0 and "Skips review from its next invoice" in why
     assert meets_policy(clean)
     # with touchless processing off, ready says so (and nothing is approved without a person)
     assert "once touchless processing is on" in autonomy_status(clean, touchless_on=False)[2]
@@ -402,7 +402,7 @@ def test_policy_is_configurable():
     assert AutonomyPolicy.from_dict(lenient.to_dict()) == lenient
     stats = SupplierStats.from_rows(_rows(22))  # 286 clean fields: the 99% bound is the last thing missing
     state, _, why = autonomy_status(stats)
-    assert state == SUPERVISED and "more clean invoices for a 99% accuracy bound" in why
+    assert state == SUPERVISED and "more invoices without a correction to show 99% accuracy" in why
 
 
 def _capture(**statuses):
@@ -625,7 +625,7 @@ def test_learning_page_is_a_training_view_with_keep_supervised(client, tmp_path,
     page = client.get("/learning?tab=suppliers").text
     text = _text(page)
     assert "Northwind" in text and "Ready" in text and "Chinook" in text and "Learning" in text
-    assert "12 of 20 invoices; 6 more clean in a row needed" in text
+    assert "12 of 20 invoices; 6 more in a row without a correction needed" in text
     assert "12 invoices reviewed · 1 correction in the last 12" in text
     assert "about 32 more invoices approved without a correction before this vendor can skip review" in text
     assert "touchless processing is on (Settings → Automation)" in text  # Northwind waits for the switch

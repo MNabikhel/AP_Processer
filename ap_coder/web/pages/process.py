@@ -70,13 +70,32 @@ def safe_file_name(name: str) -> str:
     return safe_name(base) if base else "invoice"
 
 
-_AMOUNT = re.compile(rb"\d[\d,]*[.,]\d{2}\b")
+# An amount, as a text invoice prints one: with cents (12.50, 1 204,00), after a currency sign ($105), or after a word
+# that names one (Total 1,250; GST: 5).
+_AMOUNT = re.compile(
+    r"\d[\d,. \u00a0]*[.,]\d{2}\b"
+    r"|[$€£]\s*\d"
+    r"|\b(?:total|sub-?total|amount|balance|due|tax|gst|hst|pst|qst|tps|tvq|tvh|montant)\b[^\n\d]{0,20}\d",
+    re.IGNORECASE,
+)
+
+
+def text_of(content: bytes) -> str:
+    """The text of an uploaded text file, decoded as ``extraction.result_from_text`` reads it: Notepad's "Unicode"
+    (UTF-16, by its byte-order mark), UTF-8 (with or without a mark), else Windows' "ANSI" (cp1252)."""
+    if content.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return content.decode("utf-16", errors="replace")
+    try:
+        return content.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return content.decode("cp1252", errors="replace")
 
 
 def looks_like_an_invoice_text(content: bytes) -> bool:
-    """A text file uploaded is read as an invoice only when it prints an amount (12.50, 1,204.00): a notes file
-    uploaded by mistake ("hello") became an invoice from "hello" (B-439)."""
-    return bool(_AMOUNT.search(content))
+    """An uploaded text file (.txt, .md) is read as an invoice only when it prints an amount: a notes file uploaded
+    by mistake ("hello") became an invoice from "hello" (B-439). Upload only: a text file copied into the invoices
+    folder is read as before (a person put it there as an invoice)."""
+    return bool(_AMOUNT.search(text_of(content)))
 
 
 def save_upload(folder: Path, name: str, content: bytes) -> Path:
@@ -455,8 +474,9 @@ def _save_and_start(request: Request, received: list[tuple[str, bytes]]) -> JSON
                                        "Save it as PDF or JPEG to have it read.", "warn"))  # fmt: skip
             continue
         if Path(name).suffix.lower() in TEXT_EXTENSIONS and not looks_like_an_invoice_text(content):
-            notes.append(flash_message(f"{name} was not read: a text file is read as an invoice only when it has "
-                                       "amounts in it (like 125.00), and this one has none.", "warn"))  # fmt: skip
+            notes.append(flash_message(f"{name} was not read: a text file (.txt, .md) is read as an invoice only "
+                                       "when it has amounts in it (like 125.00 or Total $105), and this one has none.",
+                                       "warn"))  # fmt: skip
             continue
         try:  # one file that cannot be saved (a name Windows refuses, disk full) is said and skipped
             target = save_upload(folder, name, content)

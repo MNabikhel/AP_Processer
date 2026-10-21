@@ -147,10 +147,10 @@
 
 {% elif tab == "suppliers" %}
 {% if not suppliers %}
-<section class="card">{{ ui.empty_state("No supplier learned yet", "Each approved invoice teaches AP Coder where that supplier prints its invoice number, dates and totals, and records each field the reviewer had to correct. Once a supplier has enough clean invoices in a row, it goes touchless by itself when touchless processing is on (Settings → Automation), and every invoice still goes through all the checks.") }}</section>
+<section class="card">{{ ui.empty_state("No supplier learned yet", "Each approved invoice teaches AP Coder where that supplier prints its invoice number, dates and totals, and records each field the reviewer had to correct. Once a supplier has enough invoices in a row without a correction, its invoices skip review by themselves when touchless processing is on (Settings → Automation), and every invoice still goes through all the checks.") }}</section>
 {% else %}
 <p class="muted">
-  {% if touchless_on %}Touchless processing is <b>on</b>: a vendor that meets the bar goes touchless by itself, and one correction sends it back to review.
+  {% if touchless_on %}Touchless processing is <b>on</b>: a vendor that meets the bar skips review by itself, and one correction sends it back to review.
   {% else %}Touchless processing is <b>off</b> (Settings → Automation): every invoice is reviewed by a person, and each approval keeps training its vendor.{% endif %}
   The bar, the same for every vendor: {{ policy }}.</p>
 {% for s in suppliers %}

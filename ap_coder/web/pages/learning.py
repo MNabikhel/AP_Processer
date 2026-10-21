@@ -227,11 +227,12 @@ def coding_context(store: Store, mem_q: str, settings: Any = None) -> dict[str, 
         lines = w["accepted"] + w["corrected"]
         weekly.append({**w, "lines": lines, "accuracy": w["accepted"] / lines if lines else None})
     good = accuracy >= TARGET_ACCURACY
-    note = accuracy_note(settings, m["lines_reviewed"]) if settings is not None else ""  # early on: no red (B-442)
+    note, compared = accuracy_note(settings, m["lines_reviewed"]) if settings is not None else ("", True)
+    distance = f"{(accuracy - TARGET_ACCURACY) * 100:+.1f} pts vs 90% target"  # early on: a plain note (B-442)
     tiles = [
         ui.tile("Coding accuracy", f"{accuracy:.1%}", "", "green" if good else "violet",
-                note or f"{(accuracy - TARGET_ACCURACY) * 100:+.1f} pts vs 90% target",
-                "note" if note else "up" if good else "down",
+                (distance + (f" · {note}" if note else "")) if compared else note,
+                ("up" if good else "down") if compared else "note",
                 [w["accuracy"] or 0 for w in weekly] if len(weekly) > 1 else None),
         ui.tile("Lines reviewed", f"{m['lines_reviewed']:,}", "", "blue", f"{m['lines_accepted']:,} confirmed"),
         ui.tile("Corrections taught", f"{m['lines_corrected']:,}", "", "amber", "used on the next invoice"),
@@ -522,7 +523,7 @@ def supplier_allow(request: Request, key: str = Form(...)) -> JSONResponse:
         return refuse("That vendor is no longer in AP Coder's supplier learning.", 404)
     name = profile["display_name"] or key
     store.set_supplier_state(key, SUPERVISED, reviewer(), reason="allowed again on the Learning page")
-    return done(request, "/learning?tab=suppliers", f"{name} can go touchless again once it meets the bar.")
+    return done(request, "/learning?tab=suppliers", f"{name} can skip review again once it meets the bar.")
 
 
 @router.post("/learning/memory/forget")
