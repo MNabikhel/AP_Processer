@@ -73,10 +73,10 @@ def test_the_needs_attention_threshold_label_is_one_sentence(client):
     assert re.fullmatch(r"\s*<span>Send to <i>Needs attention</i> when the AI's confidence is below</span>\s*", label)
 
 
-def test_getting_started_asks_for_your_province_without_counting_it(tmp_path, monkeypatch):
+def test_getting_started_asks_for_your_province_and_counts_it(tmp_path, monkeypatch):
     """No step said where invoices are delivered to you: with no ship-to read, every invoice said "Province of supply
     unknown; tax regime cannot be verified" and the sales tax went unchecked, and nothing pointed at Settings →
-    Review, where the province is set. The step is recommended, not counted (the ring stays as it was)."""
+    Review, where the province is set. The step counts like the others (B-503: the ring counts every row shown)."""
     from ap_coder.web.pages import process
 
     monkeypatch.setattr(process, "ocr_available", lambda: True)
@@ -84,14 +84,14 @@ def test_getting_started_asks_for_your_province_without_counting_it(tmp_path, mo
     client = TestClient(_app(fresh), base_url="http://localhost")
     page = client.get("/review").text
     started = page.split("Getting started", 1)[1]
-    assert "Your province" in started and "recommended" in started
+    assert "Your province" in started and "Settings → Review" in started
     assert 'href="/settings/review">Your province' in started
     ring = re.search(r"aria-label='(\d+)/(\d+)'", page).groups()
-    assert ring[1] == "6"  # counted as before (whatever else is done on this computer)
+    assert ring[1] == "7"
     fresh.set_setting("our_province", "ON")
     page = client.get("/review").text
     assert "Ontario" in page.split("Getting started", 1)[1]
-    assert re.search(r"aria-label='(\d+)/(\d+)'", page).groups() == ring  # still not counted
+    assert re.search(r"aria-label='(\d+)/(\d+)'", page).groups() == (str(int(ring[0]) + 1), "7")
     assert "Your province" in client.get("/process").text
 
 

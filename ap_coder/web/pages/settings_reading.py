@@ -29,6 +29,7 @@ from ap_coder.web.core import (
     get_settings,
     get_store,
     jobs,
+    local_url,
     message,
     reading_status_or_none,
     reference_or_none,
@@ -57,6 +58,7 @@ READER_PILL = {
     "ok": ("Working", "ok", "check_circle"),
     "warn": ("Needs a look", "warn", "warning"),
     "testing": ("Testing itself", "info", "hourglass_top"),
+    "waiting": ("Waiting for LM Studio", "info", "hourglass_empty"),  # not started yet: nothing is broken
     "off": ("Not working", "err", "error"),
     "optional": ("Not set up (optional)", "gray", "do_not_disturb_on"),  # nothing wrong: an optional part left out
 }
@@ -375,14 +377,19 @@ def save_reviewer(
 
 
 @router.post("/settings/reading/check")
-def check_again(request: Request) -> JSONResponse:
-    """Ask LM Studio and the readers afresh (the page normally uses a short-lived cache)."""
+def check_again(request: Request, back: str = Form(URL)) -> JSONResponse:
+    """Ask LM Studio and the readers afresh (the page normally uses a short-lived cache); back to ``back`` (the
+    welcome page's and Import invoices' checklist), a page of this dashboard, else Settings → Reading."""
     from ap_coder.ai.local_llm import forget_status
 
     page_reader.forget_status()
     forget_status()
-    reading_status_or_none(get_settings(request), get_store(request), use_cache=False)
-    return done(request, URL, "Checked again just now.", tone="info")
+    status = reading_status_or_none(get_settings(request), get_store(request), use_cache=False)
+    if status is not None and not status.lm_studio:
+        said, tone = "Checked again just now: LM Studio still isn't running.", "warn"
+    else:
+        said, tone = "Checked again just now.", "info"
+    return done(request, local_url(back, URL), said, tone=tone)
 
 
 @router.post("/settings/reading/self-test")

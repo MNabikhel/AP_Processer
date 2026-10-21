@@ -168,7 +168,7 @@ def test_check_again_asks_lm_studio_afresh(client, monkeypatch):
     forgot = []
     monkeypatch.setattr(page_reader, "forget_status", lambda: forgot.append(True))
     text = follow(client, post(client, "/settings/reading/check"))
-    assert forgot and "Checked again just now." in text
+    assert forgot and "Checked again just now" in text
 
 
 # --- The self-test and Load ---------------------------------------------------------------------------------------

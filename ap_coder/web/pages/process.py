@@ -155,45 +155,67 @@ def tax_types_mapped(store: Store) -> int:
     return sum(1 for t in store.tax_treatments().values() if not t.needs_gl or t.gl_code in codes)
 
 
+LM_STUDIO = "LM Studio running"
+START_LM_STUDIO = "not running: open LM Studio, Developer tab → Start server, then Check again"
+LM_STUDIO_STEPS = (  # the checklist's "how to start it" (docs/QUICK_START.md, step 0)
+    "Open LM Studio (IT installs it with OvisOCR2 and the chat model already in it).",
+    "In LM Studio: Developer tab → Start server.",
+    "Press Check again below. Leave LM Studio open while you work.",
+)
+
+
+def lm_studio_step(store: Store, settings: Settings) -> tuple[str, str, str]:
+    """The first step (the Quick start's step 0): LM Studio runs, with OvisOCR2 (it reads every page) and the chat
+    model (the AI reviewer and GL suggestions for new lines) in it. Without it AP Coder still works, but every
+    invoice waits for a person."""
+    status = reading_status_or_none(settings, store)
+    if status is None:
+        return "todo", LM_STUDIO, "couldn't be checked just now: press Check again"
+    if not status.lm_studio:
+        return "todo", LM_STUDIO, START_LM_STUDIO
+    ai = provider_status(settings)
+    chat = f"chat model: {ai.label.split(' · ')[-1]}" if ai.ready else "no chat model loaded"
+    if status.page_reader_ready:
+        return "ok", LM_STUDIO, f"OvisOCR2 ready · {chat}"
+    if status.self_test in ("pending", "running"):
+        return "wait", LM_STUDIO, "OvisOCR2 is testing itself (10 to 20 min the first time); use AP Coder meanwhile"
+    if status.self_test == "failed":
+        return "bad", LM_STUDIO, "running, but OvisOCR2 failed its self-test (Settings → Reading)"
+    return "todo", LM_STUDIO, "running, but OvisOCR2 isn't in it: ask IT for its two files (Settings → Reading)"
+
+
 def setup_steps(store: Store, settings: Settings) -> list[tuple[str, str, str]]:
-    """(state, label, detail) of what AP Coder needs before it reads invoices; state ok, todo, bad or opt."""
+    """(state, label, detail) of what AP Coder needs before it reads invoices; state ok, todo, wait or bad. Every row
+    counts: the checklist's counter is the rows done out of the rows shown (B-503)."""
     mapped = tax_types_mapped(store)
     gl_count = len(store.list_accounts("gl_accounts"))
-    ai = provider_status(settings)  # the chat model in LM Studio that suggests GL accounts (optional)
     if ocr_available():
         reader = ("ok", "Reading invoices", "PDF text + OCR")
     else:
         reader = ("todo", "Reading invoices", "text PDFs only: scans need OCR (double-click APProcessor again)")
-    status = reading_status_or_none(settings, store)
-    if status is None:
-        second = ("todo", "OvisOCR2", "see Settings → Reading")
-    elif status.page_reader_ready:
-        second = ("ok", "OvisOCR2", "reads every invoice in the background")
-    elif status.self_test in ("pending", "running"):
-        second = ("wait", "OvisOCR2", "testing itself (10 to 20 min the first time); use AP Coder meanwhile")
-    elif status.self_test == "failed":
-        second = ("bad", "OvisOCR2", "failed its self-test (Settings → Reading)")
-    else:
-        second = ("todo", "OvisOCR2", "not running in LM Studio: invoices wait for it (Settings → Reading)")
-    return [  # the review queue's getting-started card reads the chat model at index 1; process.html 2 to 5
+    return [
+        lm_studio_step(store, settings),
         reader,
-        ("ok" if ai.ready else "opt", "Chat model for GL suggestions", ai.label if ai.ready else "optional"),
-        ("ok" if gl_count else "todo", "GL accounts", f"{gl_count} imported" if gl_count else "import them"),
+        ("ok" if gl_count else "todo", "GL accounts", f"{gl_count} imported" if gl_count else "none yet: import them"),
         ("ok" if mapped == len(TAX_TYPES) else "todo", "Sales tax GL mapping", f"{mapped} of {len(TAX_TYPES)} set"),
-        second,
         name_step(),
         province_step(store),
     ]
 
 
+def step_state(steps: list[tuple[str, str, str]], label: str) -> str:
+    """The state of the step called ``label`` ("" when there is none)."""
+    return next((s for s, name, _ in steps if name == label), "")
+
+
 def province_step(store: Store) -> tuple[str, str, str]:
     """Where invoices are delivered to you (Settings → Review): the sales tax check's province when an invoice prints
-    no ship-to. Recommended, not counted ("opt" until given): without it such an invoice says "Province of supply
+    no ship-to. A step like the others (counted since B-503): without it such an invoice says "Province of supply
     unknown" and its tax goes unchecked."""
     code = store.our_province()
     if code:
         return "ok", "Your province", PROVINCE_NAMES.get(code, code)
-    return "opt", "Your province", "recommended: the sales tax check uses it when an invoice prints no ship-to"
+    return "todo", "Your province", "Settings → Review: the sales tax check uses it when an invoice prints no ship-to"
 
 
 def name_step() -> tuple[str, str, str]:
@@ -210,21 +232,18 @@ def name_step() -> tuple[str, str, str]:
 
 def first_steps(store: Store, settings: Settings, has_invoices: bool) -> tuple[list[tuple[str, str, str]], int, int]:
     """(steps, done, needed) of getting started, the same on Import invoices' Setup card and the review queue's
-    welcome page: ``setup_steps``, then processing the first invoices; the optional chat model and the recommended
-    province are not counted."""
+    welcome page: ``setup_steps``, then processing the first invoices. Every row shown is counted (B-503)."""
     steps = setup_steps(store, settings)
     steps.append(("ok" if has_invoices else "todo", "Process your first invoices", "done" if has_invoices else "to do"))
-    needed = [s for s, label, _ in steps if s != "opt" and label != "Your province"]  # (recommended, never counted)
-    return steps, sum(1 for s in needed if s == "ok"), len(needed)
+    return steps, sum(1 for s, _, _ in steps if s == "ok"), len(steps)
 
 
 # Where each getting-started step is done: its row on the welcome page and Import invoices links there until it is.
 STEP_LINKS = {
+    LM_STUDIO: "/settings/reading",
     "Reading invoices": "/settings/reading",
-    "Chat model for GL suggestions": "/settings/reading",
     "GL accounts": "/accounts",
     "Sales tax GL mapping": "/accounts?tab=tax",
-    "OvisOCR2": "/settings/reading",
     "Your name": "/settings/review",
     "Your province": "/settings/review",
     "Process your first invoices": "/process",
@@ -234,7 +253,8 @@ STEP_LINKS = {
 def next_step(steps: list[tuple[str, str, str]]) -> dict[str, Any] | None:
     """The one thing to do next on a new laptop, as the welcome page and Import invoices show it: the name (each
     approval is recorded under it), the GL accounts (or the sample ones, to look around first), the sales tax
-    accounts, then the first invoices. None once all four are done (LM Studio has its own banner)."""
+    accounts, then the first invoices. None once all four are done (LM Studio is the checklist's first row, with
+    Check again, and has its own banner)."""
     state = {label: (s, detail) for s, label, detail in steps}
     if state["Your name"][0] != "ok":
         return {"title": "Add your name", "icon": "badge", "href": STEP_LINKS["Your name"], "button": "Add your name",
@@ -260,7 +280,7 @@ def next_step(steps: list[tuple[str, str, str]]) -> dict[str, Any] | None:
 
 def ready_to_read(steps: list[tuple[str, str, str]]) -> bool:
     """PDF text / OCR and GL accounts are enough: OvisOCR2 reads invoices once it runs, the chat model is optional."""
-    return steps[0][0] != "bad" and steps[2][0] == "ok"
+    return step_state(steps, "GL accounts") == "ok"
 
 
 def queued_note(settings: Settings, store: Store, queued: int) -> str:
@@ -426,6 +446,7 @@ def process_page(request: Request) -> HTMLResponse:
         request, "process.html", "process",
         steps=steps,
         step_links=STEP_LINKS,
+        lm_studio_steps=LM_STUDIO_STEPS,
         steps_done=steps_done,
         steps_needed=steps_needed,
         next=coming if coming and coming["href"] != "/process" else None,  # (this page's own step: choose files)

@@ -390,15 +390,16 @@ def _second(inv: dict[str, Any], first: dict[str, Any] | None, me: str, my_login
 
 def _getting_started(request: Request, store: Store, invoices: list[dict[str, Any]]) -> HTMLResponse:
     from ap_coder.ops.demo import demo_available
-    from ap_coder.web.pages.process import STEP_LINKS, first_steps, next_step
+    from ap_coder.web.pages.process import LM_STUDIO_STEPS, STEP_LINKS, first_steps, next_step, step_state
 
     steps, done_steps, needed = first_steps(store, get_settings(request), bool(invoices))  # as Import invoices counts
-    named = steps[5][0] == "ok"  # (before a name is given, first_name() is the computer login: "Good morning, root")
+    named = step_state(steps, "Your name") == "ok"  # (before it, first_name() is the login: "Good morning, root")
     return render(
         request, "review_welcome.html", "review",
         greeting=f"{ui.greeting()}, {first_name()}" if named else ui.greeting(),
         next=next_step(steps),
         step_links=STEP_LINKS,
+        lm_studio_steps=LM_STUDIO_STEPS,
         steps=steps,
         ring_value=done_steps / needed,
         ring_label=f"{done_steps}/{needed}",

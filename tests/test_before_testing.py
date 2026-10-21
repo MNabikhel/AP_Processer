@@ -155,3 +155,74 @@ def test_in_a_browser_the_more_fold_is_remembered(browser):
     page.goto(base + "/review")
     assert not page.evaluate("document.getElementById('nav-more').open")
     page.close()
+
+
+# --- Getting started: LM Studio first, a counter that counts what it shows (B-504, B-505) ----------------------------
+
+
+def _step_rows(html: str) -> list[str]:
+    return re.findall(r"<div class='apc-step'><span class='dot (\w+)'", html)
+
+
+def _step_labels(html: str) -> list[str]:
+    row = r"<div class='apc-step'><span class='dot \w+' aria-hidden='true'>[^<]*</span>(?:<a [^>]*>)?([^<]+)"
+    return re.findall(row, html)
+
+
+def test_the_welcome_checklist_counts_exactly_the_rows_it_shows_with_lm_studio_first(client):
+    page = client.get("/review").text
+    card = page.split("Getting started", 1)[1]
+    rows = _step_rows(card)
+    done = rows.count("ok")
+    assert f"aria-label='{done}/{len(rows)}'" in card, rows
+    labels = _step_labels(card)
+    assert labels[0] == "LM Studio running" and "OvisOCR2" not in labels and "Your province" in labels
+    assert "Developer" in card and "Start server" in card  # how to start it
+    assert 'action="/settings/reading/check"' in card and "Check again" in card
+
+
+def test_import_invoices_counts_the_same_rows(client):
+    page = client.get("/process").text
+    card = page.split("<h4>Setup</h4>", 1)[1].split("</section>", 1)[0]
+    rows = _step_rows(card)
+    assert f"{rows.count('ok')} of {len(rows)} done" in card
+    assert _step_labels(card)[0] == "LM Studio running"
+
+
+def test_the_province_counts_once_given(client, store):
+    count = lambda html: int(re.search(r"aria-label='(\d+)/\d+'", html).group(1))  # noqa: E731
+    before = count(client.get("/review").text)
+    store.set_setting("our_province", "ON")
+    assert count(client.get("/review").text) == before + 1
+
+
+def test_check_again_from_the_welcome_page_comes_back_to_it(client):
+    answer = client.post("/settings/reading/check", data={"back": "/review"}, headers=PAGE).json()
+    assert answer["redirect"].startswith("/review")
+    answer = client.post("/settings/reading/check", data={"back": "https://elsewhere.example/"}, headers=PAGE).json()
+    assert answer["redirect"].startswith("/settings/reading")
+
+
+def test_without_lm_studio_the_ai_reviewer_says_to_start_it_and_check_again(client):
+    from ap_coder.ai import reading
+
+    status = reading.reading_status(_settings(), None)
+    line = status.reader(reading.REVIEWER)
+    assert line.state == reading.WAITING and "Start server" in line.detail and "Check again" in line.detail
+    assert "Waiting for LM Studio" in client.get("/settings/reading").text
+
+
+def test_the_reading_queue_counts_only_invoices_still_to_approve(store, tmp_path):
+    from ap_coder.core.store import APPROVED
+
+    ids = []
+    for name in ("a", "b"):
+        pdf = tmp_path / f"{name}.pdf"
+        pdf.write_bytes(b"%PDF-1.4 " + name.encode())
+        coding = {"vendor_name": name, "invoice_number": "1", "grand_total": 1}
+        ids.append(store.add_invoice(pdf, coding, {"issues": []}))
+        store.queue_page_read(ids[-1], "new")
+    with store._conn() as conn:
+        conn.execute("UPDATE invoices SET status = ? WHERE id = ?", (APPROVED, ids[1]))
+    assert store.page_reads_waiting() == 2  # the reader still reads both (its record against approved values)
+    assert store.page_reads_waiting(still_open=True) == 1  # what the tester waits for

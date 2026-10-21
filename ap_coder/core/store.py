@@ -2593,10 +2593,17 @@ class Store:
             read["status"] = PAGE_WAITING
         return read
 
-    def page_reads_waiting(self) -> int:
-        """How many invoices wait for the page reader (interrupted reads included)."""
+    def page_reads_waiting(self, still_open: bool = False) -> int:
+        """How many invoices wait for the page reader (interrupted reads included). ``still_open``: only those not
+        approved, rejected or exported yet, the ones a person waits for (the reader still reads the others, to score
+        itself against what AP approved)."""
+        sql = f"SELECT COUNT(*) FROM page_reads WHERE {_IN_LINE}"
+        args: list[Any] = [_stale_before()]
+        if still_open:
+            sql += " AND invoice_id IN (SELECT id FROM invoices WHERE status IN (?, ?, ?))"
+            args += [REVIEW, PARKED, PENDING]
         with self._conn() as conn:
-            row = conn.execute(f"SELECT COUNT(*) FROM page_reads WHERE {_IN_LINE}", (_stale_before(),)).fetchone()
+            row = conn.execute(sql, args).fetchone()
         return int(row[0])
 
     def page_read_pages_average(self, recent: int = 50) -> float | None:
