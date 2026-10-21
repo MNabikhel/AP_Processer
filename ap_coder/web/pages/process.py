@@ -193,13 +193,13 @@ def setup_steps(store: Store, settings: Settings) -> list[tuple[str, str, str]]:
         reader = ("ok", "Reading invoices", "PDF text + OCR")
     else:
         reader = ("todo", "Reading invoices", "text PDFs only: scans need OCR (double-click APProcessor again)")
-    return [
+    return [  # in the order of docs/QUICK_START.md and Help's Getting started (B-514)
         lm_studio_step(store, settings),
         reader,
-        ("ok" if gl_count else "todo", "GL accounts", f"{gl_count} imported" if gl_count else "none yet: import them"),
-        ("ok" if mapped == len(TAX_TYPES) else "todo", "Sales tax GL mapping", f"{mapped} of {len(TAX_TYPES)} set"),
         name_step(),
         province_step(store),
+        ("ok" if gl_count else "todo", "GL accounts", f"{gl_count} imported" if gl_count else "none yet: import them"),
+        ("ok" if mapped == len(TAX_TYPES) else "todo", "Sales tax GL mapping", f"{mapped} of {len(TAX_TYPES)} set"),
     ]
 
 

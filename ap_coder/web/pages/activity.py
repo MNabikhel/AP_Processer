@@ -1,5 +1,5 @@
 """Activity: the audit trail of everything that changed data, with a search and filters, the controls report for
-internal audit and the duplicate payment audit.
+internal audit, and a link to the duplicate payment audit (on Exports: one place for it, B-513).
 
 Everything here only reads: the filters (``?group=Backups&person=Ann&q=northwind&view=table``), the controls
 report's period (``?start=…&end=…``) and the duplicate audit (``?audit=1``) are in the address, and the downloads
@@ -42,7 +42,7 @@ GROUPS = {
 EVENTS_READ = 5000  # the newest events the page works on
 TIMELINE_SHOWN = 200
 TABLE_SHOWN = 1000
-AUDIT_SHOWN = 100
+
 VIEWS = ("timeline", "table")
 DELETIONS = ("deleted", "accounts_deleted", "lessons_forgotten")
 
@@ -171,7 +171,6 @@ def activity_page(request: Request) -> HTMLResponse:
 
     shown = filter_events(events, group, person, query)
     report = controls.build(store, start, end) if start <= end else None
-    pairs = dupaudit.find(store) if request.query_params.get("audit") else None
     return render(
         request,
         "activity.html",
@@ -195,19 +194,6 @@ def activity_page(request: Request) -> HTMLResponse:
         end=end,
         today=today,
         report=report,
-        pairs=pairs,
-        pair_rows=[
-            {
-                "why": dupaudit.REASONS[p.reason],
-                "tone": "err" if p.reason == dupaudit.EXACT else "warn",
-                "first": p.first,
-                "second": p.second,
-                "amount": f"{p.amount:,.2f}",
-                "currency": p.first.currency or p.second.currency,
-            }
-            for p in (pairs or [])[:AUDIT_SHOWN]
-        ],
-        audit_at=dt.datetime.now(),
     )
 
 

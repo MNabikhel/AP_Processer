@@ -31,7 +31,7 @@ TABLES = {"gl_accounts": ("gl", "GL account"), "cost_centers": ("cc", "cost cent
 TABS = {
     "gl": "GL accounts",
     "cc": "Cost centers",
-    "tax": "Sales tax",
+    "tax": "Sales tax accounts",  # (not the Sales tax page under More: M2)
     "policy": "Coding policy",
     "rules": "Fixed rules",
 }
@@ -175,15 +175,20 @@ def accounts_page(request: Request, tab: str = "gl", file: str = "", sheet: str 
 
 @router.post("/accounts/sample")
 def use_sample(request: Request) -> JSONResponse:
-    """The sample GL accounts, cost centers, tax mapping and policy (to try AP Coder before importing yours)."""
+    """The sample GL accounts, tax mapping and policy (to try AP Coder before importing yours), without cost
+    centers: each line needs only a GL account (D-53)."""
     store = get_store(request)
     if store.list_accounts("gl_accounts"):
         return refuse("You already have GL accounts: the sample setup is only for an empty list.")
-    load_sample_setup(store)
+    load_sample_setup(store, cost_centers=False)
     return done(
         request,
         "/accounts",
-        flash_message("Sample setup loaded: GL accounts, cost centers and tax mapping.", "ok", icon="science"),
+        flash_message(
+            "Sample setup loaded: GL accounts and tax mapping (no cost centers: each line needs only a GL account).",
+            "ok",
+            icon="science",
+        ),  # fmt: skip
     )
 
 

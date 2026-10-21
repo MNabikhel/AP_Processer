@@ -53,7 +53,7 @@ def test_invoices_waiting_for_gl_accounts_offer_the_sample_accounts(client, stor
 def test_the_queue_lists_kpis_today_and_rows(client, demo):
     pending = demo.list_invoices(REVIEW)
     text = client.get("/review").text
-    for label in ("Waiting", "Approved today", "Coding accuracy", "Lessons learned"):
+    for label in ("Waiting", "Approved today", "Coding accuracy", "Coding memory"):
         assert label in text
     assert f"To review · {len(pending)}" in text and "Approved · " in text and "Failed / rejected · 0" in text
     for inv in pending:

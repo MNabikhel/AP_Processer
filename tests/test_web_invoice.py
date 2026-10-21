@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 from ap_coder.coding.rules import Rule
 from ap_coder.core.config import Settings
 from ap_coder.core.reference_data import UNASSIGNED
-from ap_coder.core.store import APPROVED, PARKED, PENDING, REJECTED, REVIEW, Store
+from ap_coder.core.store import APPROVED, PARKED, PENDING, REJECTED, REVIEW, Store, load_sample_cost_centers
 from ap_coder.ops.demo import load_demo
 from ap_coder.web import invoice_view
 from ap_coder.web.app import create_app
@@ -32,6 +32,7 @@ def demo_db(tmp_path_factory):
     """The demo invoices, loaded once (copied for each test: loading reads ten PDFs)."""
     path = tmp_path_factory.mktemp("demo") / "private" / "ap_coder.db"
     load_demo(Store(path), Settings())
+    load_sample_cost_centers(Store(path))  # the demo has none (D-53): the line grid's cost centers are tested here
     return path
 
 

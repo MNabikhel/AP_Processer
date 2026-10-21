@@ -1,10 +1,10 @@
 {% extends "base.html" %}
 {% block head %}<link rel="stylesheet" href="/static/analytics.css?v={{ static_version }}">{% endblock %}
-{% block aside %}{% if s.processed %}<a class="btn" href="/insights/business-case" download title="Totals only: no vendor names, amounts of individual invoices or file names.">
+{% block aside %}{% if not early %}<a class="btn" href="/insights/business-case" download title="Totals only: no vendor names, amounts of individual invoices or file names.">
   <span class="ms" aria-hidden="true">download</span>Business case (one page)</a>{% endif %}{% endblock %}
 {% block content %}
-{% if not s.processed %}
-<section class="card">{{ ui.empty_state("Nothing to measure yet", "Process and approve a few invoices (or load the demo).") }}</section>
+{% if early %}
+<section class="card">{{ ui.empty_state("Insights come after " ~ min_approvals ~ " approvals", "How much goes straight through, the time it saves and how the queue moves, once " ~ min_approvals ~ " invoices are approved: fewer would be guesswork. " ~ (s.approved | plural("invoice")) ~ " approved so far.") }}</section>
 {% else %}
 <div class="apc-tiles apc-anim" aria-label="The business case at a glance">
   {% for label, value, tone, hint in kpis %}{{ ui.tile(label, value, "", tone, hint) }}{% endfor %}
@@ -36,7 +36,7 @@
       <tbody>
         <tr><td>AP time saved</td><td class="r"><b>{{ "{:,.0f}".format(projection.hours_saved) }} h</b> / month</td></tr>
         <tr><td>Value of that time (${{ "{:,.0f}".format(a.hourly_cost) }}/h)</td><td class="r"><b>${{ "{:,.0f}".format(projection.value_saved) }}</b> / month</td></tr>
-        <tr><td>Cloud cost</td><td class="r">${{ "{:,.0f}".format(projection.azure_cost) }} / month</td></tr>
+        {% if cloud %}<tr><td>Cloud cost</td><td class="r">${{ "{:,.0f}".format(projection.azure_cost) }} / month</td></tr>{% endif %}
       </tbody>
       <tfoot><tr><td>Net benefit</td><td class="r">${{ "{:,.0f}".format(net) }} / month</td></tr></tfoot>
     </table></div>
@@ -80,13 +80,14 @@
   <form method="post" action="/insights/assumptions" data-busy="Saving…">
     <div class="an-form-grid">
       {% for f in fields %}
-      <label class="field">{{ f.label }}
-        <input type="number" name="{{ f.name }}" value="{{ f.value }}" min="0" step="{{ f.step }}" required></label>
+      {% if f.hidden %}<input type="hidden" name="{{ f.name }}" value="{{ f.value }}">
+      {% else %}<label class="field">{{ f.label }}
+        <input type="number" name="{{ f.name }}" value="{{ f.value }}" min="0" step="{{ f.step }}" required></label>{% endif %}
       {% endfor %}
     </div>
     <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save assumptions</button>
   </form>
-  <p class="muted">Azure prices change by region and agreement; check your Azure invoice. Defaults are list prices for prebuilt-layout and gpt-4o.</p>
+  {% if cloud %}<p class="muted">Azure prices change by region and agreement; check your Azure invoice. Defaults are list prices for prebuilt-layout and gpt-4o.</p>{% endif %}
 </details>
 {% endif %}
 {% endblock %}

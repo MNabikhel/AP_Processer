@@ -214,8 +214,8 @@ def test_insights_charge_no_cloud_cost_for_invoices_read_and_coded_on_this_compu
     load_demo(store)
     assert compute(store)["cost_per_invoice_cad"] is None
     assert compute(store)["projection"]["azure_cost"] == 0
-    page = client.get("/insights").text
-    assert "read and coded on this computer" in page and "Azure, measured" not in page
+    page = client.get("/insights").text  # (no cloud cost shown at all offline: B-515)
+    assert "Cloud cost" not in page and "Azure, measured" not in page
     monkeypatch.setenv("AP_ALLOW_INTERNET", "1")  # a developer build that may use Azure: its cost is measured
     assert compute(store)["cost_per_invoice_cad"] > 0
 

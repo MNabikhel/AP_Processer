@@ -101,7 +101,7 @@ def test_the_empty_pages_say_what_comes_there(client, monkeypatch):
     readers = client.get("/learning?tab=readers").text
     assert "No reader compared with AP yet" in readers and "Nothing approved yet." in readers
     assert "No spend yet" in client.get("/spend").text
-    assert "Nothing to measure yet" in client.get("/insights").text
+    assert "Insights come after 20 approvals" in client.get("/insights").text  # (B-515)
     assert "No activity yet" in client.get("/activity").text
 
 
@@ -115,21 +115,25 @@ def test_each_page_renders_on_a_busy_database(client, busy, path):
 def test_learning_shows_accuracy_lessons_vendors_and_memory(client, busy):
     text = client.get("/learning").text
     for label in ("Coding accuracy", "Lines reviewed", "Corrections taught", "Approved as coded",
-                  "Accuracy by week", "Recent lessons", "Accuracy by vendor", "Most common corrections",
-                  "Memory: every lesson", "Teach from past coding"):  # fmt: skip
+                  "Accuracy by week", "Latest in the coding memory", "Accuracy by vendor", "Most common corrections",
+                  "Coding memory: every line", "Teach from past coding"):  # fmt: skip
         assert label in text, label
     assert "corrected" in text and "90% target" in text
     (chart,) = _svgs(text)
     assert chart.get("role") == "img" and chart.find(f"{SVG}title").text == "Coding accuracy by week"
 
 
-def test_insights_shows_the_business_case_and_the_straight_through_rate(client, busy):
+def test_insights_shows_the_business_case_and_the_straight_through_rate(client, busy, monkeypatch):
+    from ap_coder.web.pages import insights
+
+    monkeypatch.setattr(insights, "MIN_APPROVALS", 1)  # (its figures show from 20 approvals: B-515)
     text = client.get("/insights").text
+    assert "Cloud cost" not in text  # the offline build has none (B-515)
     for label in (
         "Invoices processed",
         "Approved as coded",
         "Hours saved",
-        "Cloud cost / invoice",
+        "Needs attention",
         "AP operations",
         "Waiting by age",
         "What the checks catch",
@@ -146,7 +150,10 @@ def test_insights_shows_the_business_case_and_the_straight_through_rate(client, 
     assert "<html" in report.text.lower()
 
 
-def test_insights_assumptions_are_saved_and_checked(client, busy):
+def test_insights_assumptions_are_saved_and_checked(client, busy, monkeypatch):
+    from ap_coder.web.pages import insights
+
+    monkeypatch.setattr(insights, "MIN_APPROVALS", 1)
     form = {f: "1" for f in Assumptions.__dataclass_fields__} | {"monthly_volume": "1200", "hourly_cost": "52"}
     response = client.post("/insights/assumptions", data=form, headers=PAGE)
     assert response.status_code == 200 and response.json()["ok"]
@@ -227,8 +234,9 @@ def test_activity_controls_report_and_duplicate_audit(client, busy):
     assert "Pick the first and last day" in client.get("/activity?start=2026-05-02&end=2026-05-01").text
     report = client.get("/activity/controls-report?start=2000-01-01&end=2100-01-01")
     assert report.status_code == 200 and "attachment" in report.headers["content-disposition"]
-    audit = client.get("/activity?audit=1").text
+    audit = client.get("/exports?audit=1").text  # the audit is on Exports, Activity links there (B-513)
     assert "Results of" in audit and ("No likely duplicates found" in audit or "Possible duplicate" in audit)
+    assert 'href="/exports?audit=1#audit"' in client.get("/activity").text
     dup_csv = client.get("/activity/duplicates.csv")
     assert dup_csv.status_code == 200 and dup_csv.text.lstrip("﻿").startswith("Why,Amount")
 
@@ -275,7 +283,7 @@ def test_keep_supervised_and_allow_again_persist_and_are_logged(client, busy):
 
 def test_memory_search_and_forget(client, busy):
     rows = busy.feedback_rows()
-    assert "No lessons match" in client.get("/learning", params={"mem_q": "zzz-nothing"}).text
+    assert "No lines match" in client.get("/learning", params={"mem_q": "zzz-nothing"}).text
     found = client.get("/learning", params={"mem_q": rows[0]["vendor_name"]}).text
     assert f'value="{rows[0]["id"]}"' in found
     assert client.post("/learning/memory/forget", headers=PAGE).status_code == 400

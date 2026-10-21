@@ -21,6 +21,21 @@ FRAUD, TOTALS, CODING, TAX, PO, PAYMENT, READING = (
     "Duplicates & fraud", "Totals", "GL coding", "Sales tax", "Purchase orders", "Payment", "Reading the document",
 )  # fmt: skip
 AREAS = (FRAUD, PO, PAYMENT, TOTALS, CODING, TAX, READING)
+# The Help page groups the checks by what the tester does about them (B-514), in this order.
+TO_DO = {
+    READING: "Compare a value with the page",
+    CODING: "Fix the coding",
+    TOTALS: "Check the amounts",
+    TAX: "Check the sales tax",
+    FRAUD: "Before you pay: duplicates and fraud",
+    PO: "Check against the purchase order",
+    PAYMENT: "Check the payment details",
+}
+# Checks only the optional Azure check (or a cloud build) raises: left out of Help in the offline build unless the
+# Azure check is on.
+CLOUD_CHECKS = frozenset(
+    {"DI_INVOICE_ID_DIFFERS", "DI_DATE_DIFFERS", "DI_AMOUNT_DIFFERS", "AZURE_DI_DISAGREES", "AZURE_DI_NOT_COMPARED"}
+)
 
 CHECKS: dict[str, CheckHelp] = {
     # --- Duplicates & fraud ---------------------------------------------------------------------------
@@ -499,8 +514,9 @@ FAQ: list[tuple[str, str]] = [
         "How does the AI learn?",
         "Each approval records, per line, whether you kept or changed the AI's GL account and cost center. Next "
         "time an invoice from the same vendor comes in, the closest past decisions are shown to the AI as "
-        "examples, and a line coded differently from before is flagged. The Learning & accuracy page shows the "
-        "trend; a wrong lesson can be forgotten there.",
+        "examples, and a line coded differently from before is flagged. These lines are the coding memory: "
+        "Learning & accuracy shows the trend, and a wrong line can be forgotten there. A correction AP keeps "
+        "making becomes a lesson, with AP's reason (Learning & accuracy → Lessons).",
     ),
     (
         "A vendor is on the phone about an invoice. Where is it?",
@@ -542,22 +558,22 @@ FAQ: list[tuple[str, str]] = [
     ),
     (
         "How do I know the readers can be trusted before going touchless?",
-        "It is measured, three ways. Every approval scores each reader (OCR, OvisOCR2, the supplier's "
-        "template, the AI) against what you approved: Learning & accuracy → Readers. On every digital PDF, "
-        "OvisOCR2 is checked figure by figure against the PDF's own text, which is exact (Settings → "
-        "Reading). And the confidence labels are tuned with your own approvals, not only the benchmark. Export "
-        "training data packs the approved invoices to train a model on them later.",
+        "It is measured. Every approval scores each reader (OCR, OvisOCR2, the supplier's template, the AI) against "
+        "what you approved, and on every digital PDF OvisOCR2 is checked figure by figure against the PDF's own "
+        "text, which is exact (Settings → Reading, For IT). The confidence labels are tuned with your own approvals, "
+        "not only the benchmark.",
     ),
     (
         "When is an invoice approved without a person?",
         "Only once touchless processing is turned on (Settings → Automation; it is off until an AP lead turns it on). "
         "Each invoice a clerk reviews trains its vendor, field by field. A vendor goes touchless by itself once it "
         "meets the same bar as every vendor: 20 invoices reviewed, 99% of fields right with confidence, and the "
-        "last 10 without a correction. Its invoices still go to a person when a field is not verified, a check "
-        "fails, the bank account or GST/HST number changed, it may be a duplicate, the amount is unusual or over "
-        "the touchless limit, it is a credit note, or it needs a second approver; 5% are audited anyway. One "
-        "correction sends the vendor back to review. An AP lead can keep any vendor supervised on Learning & "
-        "accuracy.",
+        "last 10 without a correction; in practice about 30 to 40 invoices approved without a correction, and "
+        "Learning & accuracy → Supplier learning shows each vendor's own number. Its invoices still go to a person "
+        "when a field is not verified, a check fails, the bank account or GST/HST number changed, it may be a "
+        "duplicate, the amount is unusual or over the touchless limit, it is a credit note, or it needs a second "
+        "approver; 5% are audited anyway. One correction sends the vendor back to review. An AP lead can keep any "
+        "vendor supervised on Learning & accuracy.",
     ),
     (
         "What is the difference between errors, warnings and 'good to know'?",
@@ -605,7 +621,8 @@ FAQ: list[tuple[str, str]] = [
     ),
     (
         "I made a mistake. Can I undo it?",
-        "Approvals record what was learned; you can forget lessons on the Learning page. Export batches can be "
+        "Approvals record what was learned; you can forget lines from the coding memory on Learning & accuracy. "
+        "Export batches can be "
         "undone on the Exports page. For anything else, Settings → Data & backups restores the database to a "
         "backup (one is made automatically once a day when AP Coder starts, the newest 14 are kept, and one before "
         "any restore).",
@@ -644,10 +661,26 @@ ROUTINE: list[tuple[str, list[tuple[str, str]]]] = [
     ]),
 ]  # fmt: skip
 
-QUICK_START: list[tuple[str, str]] = [
-    ("Set up your accounts", "Import your GL accounts (and cost centers) and say how each sales tax is posted."),
-    ("Add purchase orders (optional)", "Import open POs to check invoices against what was ordered and received."),
-    ("Import invoices", "Drop PDFs or photos on the Import invoices page. Each is read, coded and checked."),
-    ("Review", "Work through the queue: fix what the checks point to, then Approve & teach (Ctrl+Enter)."),
-    ("Export", "Send approved invoices to the ERP in batches from the Exports page."),
+# Getting started, in the order of docs/QUICK_START.md and the welcome page's checklist (B-514): (title, what to do,
+# where it is done).
+QUICK_START: list[tuple[str, str, str]] = [
+    ("Start LM Studio", "Open LM Studio, Developer tab → Start server, then Check again. Without it every invoice "
+     "waits for you.", "/settings/reading"),
+    ("Your name and province", "Settings → Review: each approval is recorded under your name; the province is where "
+     "goods are delivered to you.", "/settings/review"),
+    ("Your GL accounts and sales tax", "Import your GL accounts (or use the sample ones to try AP Coder), then pick "
+     "a GL account for GST, HST and QST.", "/accounts"),
+    ("Import invoices", "Upload PDFs, scans, photos or saved emails. Each is read, coded and checked.", "/process"),
+    ("Review and approve", "Fix what the checks point to, then Approve & teach (Ctrl+Enter).", "/review"),
+    ("Export", "Export approved invoices as an Excel workbook or a CSV file, and import it into the ERP.",
+     "/exports"),
+]  # fmt: skip
+
+# What's new, for the pilot tester (the developer changelog, docs/WHATS_NEW.md, is a developer tool).
+WHATS_NEW: list[str] = [
+    "LM Studio is the first step: the welcome page and Settings → Reading say whether it runs, with Check again.",
+    "The menu shows the pages you use every day; the others are under More.",
+    "Settings opens on Review: your name, approvals and your province, with one Save.",
+    "Exports are Excel or CSV for the pilot, and the page remembers the last one you used.",
+    "The sample GL accounts come without cost centers: each line needs only a GL account.",
 ]

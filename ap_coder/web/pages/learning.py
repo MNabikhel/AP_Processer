@@ -541,9 +541,9 @@ async def memory_forget(request: Request) -> JSONResponse:
     except ValueError:
         ids = []
     if not ids:
-        return refuse("Tick the lessons to forget first.")
+        return refuse("Tick the lines to forget first.")
     n = get_store(request).delete_feedback([int(i) for i in ids], actor=reviewer())
-    return done(request, "/learning#memory", f"Forgot {ui.plural(n or len(ids), 'lesson')}.")
+    return done(request, "/learning#memory", f"Forgot {ui.plural(n or len(ids), 'line')} from the coding memory.")
 
 
 @router.post("/learning/history/upload")

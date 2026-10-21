@@ -122,3 +122,13 @@ details.st-danger > summary {color: var(--lg-danger);}
 .st-save {position: sticky; bottom: 0; padding: 12px 0; background: var(--lg-bg);}
 .st-forit[open] > summary {margin-bottom: 12px;}
 .st-lm {display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px;}
+
+/* Help: the checks in folded groups, by what the tester does (B-514) */
+.hp-group {border-top: 1px solid var(--lg-hairline);}
+.hp-group > summary {cursor: pointer; list-style: none; display: flex; align-items: center; gap: 8px; padding: 10px 0;}
+.hp-group > summary::-webkit-details-marker {display: none;}
+.hp-group > summary .chev {color: var(--lg-subtle); transition: transform .15s;}
+.hp-group[open] > summary .chev {transform: rotate(90deg);}
+.hp-group .table-wrap {margin-bottom: 10px;}
+.hp-news {margin: 0; padding-left: 18px;}
+.hp-news li {margin: 4px 0;}

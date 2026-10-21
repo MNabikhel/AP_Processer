@@ -74,7 +74,7 @@
     {{ ui.avatar(v.vendor_name or "") }}
     <div>
       <div class="vendor-name">{{ v.vendor_name }} {{ ui.pill("On hold", "warn", "front_hand") if v.status == on_hold else ui.pill("Active", "ok") }}</div>
-      <div class="muted">First invoice {{ v.first_invoice or "—" }} · last {{ v.last_invoice or "—" }} · {{ v.lessons | plural("lesson") }} learned</div>
+      <div class="muted">First invoice {{ v.first_invoice or "—" }} · last {{ v.last_invoice or "—" }} · {{ v.lessons | plural("line") }} in the coding memory</div>
       {% if v.in_master %}
       <div class="muted">{{ ui.pill("In the vendor master", "ok", "verified") }} ERP ID <b>{{ v.erp_id or "—" }}</b>{% if v.terms %} · terms {{ v.terms }}{% endif %}{% if v.default_gl %} · default GL {{ v.default_gl }}{% endif %}</div>
       {% elif v.added_here %}
@@ -219,8 +219,8 @@
 <section class="card" id="workload">
   <h4>Vendors that make work</h4>
   <p class="muted">How often a vendor's invoice arrived with something only the vendor can fix, and how often AP corrected
-    the coding. Ask the worst ones for better invoices (<i>Ask the vendor</i> above drafts the email); a fixed coding rule
-    can settle what AP keeps correcting.</p>
+    the coding. Ask the worst ones for better invoices: open a vendor in the list above, and its <i>Ask the vendor</i>
+    section drafts the email. A fixed coding rule can settle what AP keeps correcting.</p>
   <div class="table-wrap">
     <table class="apc-table">
       <thead><tr><th>Vendor</th><th class="r">Invoices</th><th class="r">With a problem</th><th>Usual problems</th><th class="r">Coding corrected</th></tr></thead>

@@ -162,7 +162,7 @@ def load_demo(store: Store, settings: Settings | None = None) -> dict[str, int]:
     settings = settings or Settings()
     if not store.list_accounts("gl_accounts"):
         before = _setup(store)
-        load_sample_setup(store)
+        load_sample_setup(store, cost_centers=False)  # as "Use the sample GL accounts": GL accounts only (D-53)
         store.set_setting(DEMO_SETUP_SETTING, json.dumps({"before": before, "after": _setup(store)}))
     real_invoices = len(store.list_invoices()) - store.demo_count()
     if not store.has_vendor_master() and not real_invoices:

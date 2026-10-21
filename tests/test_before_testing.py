@@ -320,3 +320,159 @@ def test_who_is_a_proper_page_linking_to_settings(client, monkeypatch):
     monkeypatch.setattr(identity, "from_this_computer", lambda scope: True)  # (the test client is no browser here)
     page = client.get("/who").text
     assert "Who are you?" in page and 'href="/settings/review"' in page and "Activity log" in page
+
+
+# --- Plain words, one place for each thing (B-512, B-513, B-515, B-517, B-519, M4) ---------------------------------
+
+
+def _demo_client(demo_store) -> TestClient:
+    return TestClient(create_app(_settings(), demo_store, start_reader=False), base_url="http://localhost")
+
+
+def test_the_queue_figures_are_plain_and_the_coding_memory_has_one_name(demo_store):
+    client = _demo_client(demo_store)
+    queue = client.get("/review").text
+    assert "fully approved in all" not in queue and "Lessons learned" not in queue
+    assert "still to review" in queue and "approved in total" in queue and "Coding memory" in queue
+    learning = client.get("/learning").text
+    assert "Recent lessons" not in learning and "Memory: every lesson" not in learning
+    assert "Coding memory: every line AP confirmed or corrected" in learning
+    assert "Coding memory" in client.get("/settings/data").text
+    assert "Lesson" in client.get("/learning?tab=lessons").text  # lessons: the repeated corrections, their own tab
+
+
+def test_the_duplicate_payment_audit_is_in_one_place(demo_store):
+    client = _demo_client(demo_store)
+    assert 'href="/exports?audit=1#audit"' in client.get("/activity").text
+    assert "Run the audit" not in client.get("/activity?audit=1").text
+    assert "Duplicate payment audit" in client.get("/exports").text
+
+
+def test_insights_has_no_cloud_cost_offline_and_waits_for_twenty_approvals(demo_store, monkeypatch):
+    from ap_coder.web.pages import insights
+
+    client = _demo_client(demo_store)
+    early = client.get("/insights").text
+    assert "Insights come after 20 approvals" in early and "Cloud cost" not in early
+    monkeypatch.setattr(insights, "MIN_APPROVALS", 1)
+    page = client.get("/insights").text
+    assert "Hours saved" in page and "Cloud cost" not in page and "Azure" not in page
+    answer = client.post("/insights/assumptions", headers=PAGE, data={  # the hidden prices are posted as they are
+        f["name"]: f["value"] for f in insights.assumption_fields(insights.Assumptions())}).json()  # fmt: skip
+    assert answer["ok"]
+
+
+def test_vendors_say_where_ask_the_vendor_is(demo_store):
+    page = _demo_client(demo_store).get("/vendors").text
+    assert "Ask the vendor</i> above drafts" not in page and "open a vendor in the list above" in page
+
+
+def test_exports_open_on_the_last_format_used(demo_store):
+    client = _demo_client(demo_store)
+    page = client.get("/exports").text
+    assert 'href="/exports?fmt=xlsx#ready" class="on"' in page  # Excel at first
+    ids = [str(r["id"]) for r in demo_store.unexported_approved()]
+    answer = client.post("/exports/create", data={"fmt": "csv", "ids": ids}, headers=PAGE).json()
+    assert answer["ok"] and exports_page.last_format(demo_store) == "csv"
+    assert "CSV" in client.get("/exports").text
+
+
+# --- Help, the setup report and the offline build (B-514, B-516, B-520) ---------------------------------------------
+
+
+def test_help_groups_the_checks_by_what_to_do_folded_without_codes(client):
+    from ap_coder.ops.help import CLOUD_CHECKS, QUICK_START
+
+    page = client.get("/help").text
+    checks = page.split('id="checks"', 1)[1].split("</section>", 1)[0]
+    assert checks.count('<details class="hp-group"') >= 5 and '<details class="hp-group" open' not in checks
+    assert "Fix the coding" in checks and "Before you pay: duplicates and fraud" in checks
+    assert "hp-code" not in checks  # the codes are not shown (still searchable, and anchors)
+    assert "DUPLICATE_INVOICE</div>" not in checks and 'id="check-DUPLICATE_INVOICE"' in checks
+    for code in CLOUD_CHECKS:  # Azure's checks: not in the offline build
+        assert f'id="check-{code}"' not in checks, code
+    assert "open" in client.get("/help?q=duplicate").text.split('class="hp-group"', 1)[1][:10]
+    # Getting started in the Quick start's order, LM Studio first; the developer changelog only for developers
+    started = page.split("Getting started", 1)[1].split("</section>", 1)[0]
+    assert [t for t, _, _ in QUICK_START][0] == "Start LM Studio" and "Start LM Studio" in started
+    assert started.index("Your name and province") < started.index("Your GL accounts and sales tax")
+    assert "What's new for testers" in page and "developer changelog" not in page
+    assert "PR #" not in page and "schema v" not in page
+
+
+def test_report_a_problem_opens_at_once_and_fetches_the_setup_report(client, monkeypatch):
+    from ap_coder.web.pages import help as help_page
+
+    made = []
+    monkeypatch.setattr(help_page, "_make_setup_report", lambda store: made.append(1) or "## report")
+    help_page._setup_cache.clear()
+    page = client.get("/help/report").text
+    assert made == [] and 'data-url="/help/report/setup"' in page  # not made while the page is drawn
+    assert client.get("/help/report/setup").text == "## report"
+    assert client.get("/help/report/setup").text == "## report" and made == [1]  # kept
+    assert "## report" in client.get("/help/report").text  # once made, the page has it at once
+
+
+def test_the_offline_doctor_report_has_no_cloud_lines(monkeypatch):
+    from ap_coder.ops.doctor import FAIL, PASS, SKIP, Check, format_checks
+
+    checks = [Check("package openai", PASS, "3.0"), Check("DI endpoint", SKIP, "not set"),
+              Check("AOAI connectivity", SKIP, "run with --online"), Check("prompt size", PASS, "~2,450 tokens"),
+              Check("GL accounts", PASS, "26 active rows; enforced as schema enum"), Check("x", FAIL, "y")]  # fmt: skip
+    text = format_checks(checks)
+    for gone in ("DI endpoint", "AOAI", "prompt size", "schema enum"):
+        assert gone not in text, gone
+    assert "LM Studio's client" in text and "1 failure(s)" in text
+    monkeypatch.setenv("AP_ALLOW_INTERNET", "1")
+    assert "AOAI connectivity" in format_checks(checks)
+
+
+def test_the_azure_check_page_says_it_is_not_part_of_the_offline_build(client, monkeypatch):
+    page = client.get("/settings/azure-check").text
+    assert "Not part of this build" in page and 'id="azure-check"' not in page
+    monkeypatch.setenv("AP_DEVELOPER_TOOLS", "1")
+    assert 'id="azure-check"' in client.get("/settings/azure-check").text
+
+
+# --- No cost centers for the pilot (D-53) ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("url", ["/review/sample-gl", "/accounts/sample"])
+def test_the_sample_gl_accounts_come_without_cost_centers(client, store, url):
+    assert client.post(url, headers=PAGE).json()["ok"]
+    assert store.list_accounts("gl_accounts") and store.list_accounts("cost_centers") == []
+    assert store.reference_data().cost_centers is None  # a line needs only its GL account
+
+
+def test_the_demo_needs_no_cost_centers(demo_store):
+    from ap_coder.core.store import REVIEW
+
+    assert demo_store.list_accounts("cost_centers") == []
+    reports = [demo_store.get_invoice(i["id"])["validation"] or {} for i in demo_store.list_invoices(REVIEW)]
+    codes = {i.get("code") for r in reports for i in r.get("issues", [])}
+    assert reports and not codes & {"CC_UNASSIGNED", "CC_UNKNOWN"}
+    page = _demo_client(demo_store).get(f"/review/{demo_store.list_invoices(REVIEW)[0]['id']}")
+    assert page.status_code == 200
+
+
+def test_the_accounts_page_names_its_tax_tab_apart_from_the_sales_tax_page(client):
+    page = client.get("/accounts").text
+    assert ">Sales tax accounts</a>" in page and "sample GL accounts, cost centers" not in page
+
+
+# --- The guides say what the app does (B-505, B-518, B-525) ---------------------------------------------------------
+
+
+def test_the_guides_match_the_app():
+    from pathlib import Path
+
+    docs = Path(__file__).resolve().parent.parent
+    quick = (docs / "docs" / "QUICK_START.md").read_text(encoding="utf-8")
+    assert "0. Start LM Studio" in quick and "Check again" in quick
+    assert "there are no GL suggestions" not in quick and "Excel workbook" in quick
+    for name in ("README.md", "docs/PILOT.md"):
+        text = (docs / name).read_text(encoding="utf-8")
+        sample = text.split("AP Coder readiness:", 1)[1].split("```", 1)[0]
+        assert "[OK]" not in sample and "✓" in sample, name  # as the window shows it
+        assert "then\nstart AP Coder again" not in text and "then start AP Coder again*" not in text, name
+    assert "`schema`" not in (docs / "docs" / "GETTING_STARTED.md").read_text(encoding="utf-8")

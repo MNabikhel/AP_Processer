@@ -460,15 +460,12 @@ def test_with_lm_studio_off_the_review_screen_says_it_once(client, store):
 
 def test_in_a_browser_report_a_problem_shows_it_is_working(browser, store):
     """Help → Report a problem took about 3 s the first time (it gathers the setup report) with nothing on the screen
-    saying so: the link now says it is gathering the reports while the page comes."""
-    page, errors = _open(browser, "/help")
-    # the click as the browser handles it, the page left where it is (so what the link turned into can be read)
-    link = page.evaluate(
-        "() => { window.addEventListener('click', (e) => e.preventDefault(), {once: true});"
-        " const a = document.querySelector('a[href=\"/help/report\"]'); a.click();"
-        " return [a.getAttribute('aria-busy'), a.textContent]; }"
-    )
-    assert link == ["true", "Gathering the reports…"], link
+    saying so. The page now opens at once and fetches the setup report after (B-520): its box says it is gathering
+    it, then holds it."""
+    page, errors = _open(browser, "/help/report")
+    box = page.locator("#setup-report")
+    assert box.get_attribute("placeholder") and "Gathering" in box.get_attribute("placeholder")
+    page.wait_for_function("() => document.getElementById('setup-report').value.includes('doctor report')")
     assert errors == []
 
 

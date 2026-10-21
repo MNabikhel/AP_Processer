@@ -161,7 +161,7 @@ def test_every_settings_tab_the_app_names_exists():
         for name, tab in named
         if not any(tab.startswith(t) or t.startswith(tab) for t in TAB_NAMES)
         and not tab.startswith(("JD", "Data &amp;"))
-    ]  # fmt: skip  (JD Edwards E1: hidden, D-52)
+    ]  # (JD Edwards E1: hidden, D-52)
     assert not wrong, wrong
 
 

@@ -37,10 +37,11 @@ plan that turns the pilot into a decision, see [PILOT_PLAN.md](PILOT_PLAN.md).
     loaded, set *Max Concurrent Predictions* to 1 for OvisOCR2 in LM Studio.
   - *Overnight instead.* `python -m ap_coder read-pages --minutes 240` reads the queue and stops; schedule
     it with Task Scheduler for a laptop that is busy during the day.
-- **Optional: a chat model in LM Studio**, for GL suggestions. Without it every invoice is still read and
-  checked the same way, and each line is coded from what AP approved before for that vendor, the vendor
-  master's default account and your fixed coding rules. A line with nothing to learn from is left for you to
-  code. With a model running, it also proposes accounts for vendors and lines it has not seen yet.
+- **A chat model in LM Studio** (the pilot runs with it): the AI reviewer, and GL suggestions for new lines.
+  Without it every invoice is still read and checked the same way, waits for a person, and each line is
+  suggested an account only from what AP approved before for that vendor, the vendor master's default account
+  and your fixed coding rules; a line with nothing to learn from is left for you to code. With the model
+  running, it also proposes accounts for vendors and lines it has not seen yet.
 
   **Which model, and what to expect** (measured on the ten samples with nothing approved yet, through the
   same OpenAI-compatible server API LM Studio uses): the invoice is always read by AP Coder's own reader,
@@ -89,8 +90,9 @@ plan that turns the pilot into a decision, see [PILOT_PLAN.md](PILOT_PLAN.md).
 every time after. There is one such file per computer, and nothing else to choose from. (IT can add
 `--installer` to it for the installer's questions: `APProcessor.bat --installer`, typed in `scripts\terminal.bat`.)
 
-AP Coder is an offline enterprise build: the laptop never connects to the internet, not even to set up.
-Everything comes in the **offline bundle** IT builds (step B). Unzip it to a folder that is **not** synced
+AP Coder is an offline enterprise build: set up from the offline bundle, the laptop never connects to the internet,
+not even to set up. Everything comes in the **offline bundle** IT builds (step B). (Set up from a ZIP downloaded from
+GitHub instead, the first start downloads its packages and OCR models once; AP Coder itself never connects after.) Unzip it to a folder that is **not** synced
 by OneDrive (e.g. `C:\APCoder\app`), and double-click **`APProcessor.bat`** (Mac: `APProcessor.command`;
 the first time, right-click → *Open*). The first run takes a few minutes and sets up only what is
 missing.
@@ -121,31 +123,34 @@ Then it checks itself and prints a short summary before the browser opens:
 
 ```
 AP Coder readiness:
-  [OK] Python 3.12.4
-  [OK] Packages: all 15 in place
-  [OK] OCR for scanned invoices
-  [OK] Data folder: C:\Users\you\APCoder
-  [OK] Chat model: lmstudio-community/gemma-4-12B-it-QAT-GGUF loaded in LM Studio (can see pages)
-  [OK] Chat model test passed: accounts from the chart in 4s: line 1 -> 6100, line 2 -> 6400
-  [--] Page reader: ath-maas_ovisocr2 found; its self-test runs on its own before it reads invoices
-  [OK] Setup checks: all 9 passed (GL accounts, tax mapping, coding rules, settings)
-  [OK] Self-check OK: 10 of 10 sample invoices read right, and a scan with local OCR (9 s)
+  ✓ Python 3.12.4
+  ✓ Packages: all 15 in place
+  ✓ OCR for scanned invoices
+  ✓ Data folder: C:\Users\you\APCoder
+  ✓ Chat model: lmstudio-community/gemma-4-12B-it-QAT-GGUF loaded in LM Studio (can see pages)
+  ✓ Chat model test passed: accounts from the chart in 4s: line 1 -> 6100, line 2 -> 6400
+  · Page reader: ath-maas_ovisocr2 found; its self-test runs on its own before it reads invoices
+  ✓ Setup checks: all 9 passed (GL accounts, tax mapping, coding rules, settings)
+  ✓ Self-check OK: 10 of 10 sample invoices read right, and a scan with local OCR (9 s)
 ```
+
+(✓ done, ! needs a look, · for information, ✗ failed; the classic Windows console, whose fonts lack them, shows
+[OK], [!!], [--] and [FAIL] instead.)
 
 The self-check (the ten sample invoices, read on the laptop with no AI model and no Azure) runs on the
 first start and after an update; later starts show its last result and take a few seconds. If it fails,
 the summary says so plainly and AP Coder still starts. LM Studio is never installed by AP Coder: the
 summary only says whether it is running, which chat model is loaded, and whether OvisOCR2 was found and
-passed its self-test. Once it has: *[OK] Page reader: ath-maas_ovisocr2 found, self-test passed (reads every
-page of every invoice)*. Without LM Studio, one line says so and what to do: *[!!] LM Studio isn't running:
-invoices are read by OCR only and wait for a person. To use it: open LM Studio, Developer tab → Start server, then
-start AP Coder again*.
+passed its self-test. Once it has: *✓ Page reader: ath-maas_ovisocr2 found, self-test passed (reads every
+page of every invoice)*. Without LM Studio, one line says so and what to do: *! LM Studio isn't running:
+invoices are read by OCR only and wait for a person*. Start LM Studio (Developer tab → Start server), then press
+**Check again** on the welcome page or in *Settings → Reading*: there is no need to start AP Coder again.
 
 ### Set up LM Studio: start the server, nothing to choose
 
-1. **IT installs LM Studio** with OvisOCR2 (and, optionally, the chat model) already in it (see *What you
-   need*).
-2. **Start the server**: open LM Studio, **Developer** tab → **Start server**. Then start AP Coder.
+1. **IT installs LM Studio** with OvisOCR2 and the chat model already in it (see *What you need*).
+2. **Start the server**: open LM Studio, **Developer** tab → **Start server**. This is step 0 of the
+   [Quick start](QUICK_START.md): the welcome page's first row says whether it runs, with **Check again**.
 3. **AP Coder does the rest on its own.** It finds OvisOCR2 in LM Studio and runs its self-test by itself:
    OvisOCR2 reads a scan of a sample invoice whose answers are known, field by field. This takes 10 to 20
    minutes on a laptop the first time (once per model). *Settings → Reading* shows its progress and, after,
@@ -206,9 +211,11 @@ bundle with the internet cut off, on Windows and on a Mac that has only Python 3
    reject). Each corrected field is recorded for that vendor and updates its template; the confirmation
    says what was learned and how far the vendor is from touchless. *Learning & accuracy → Supplier
    learning* shows each vendor's training. Bulk approvals nobody opened don't count toward touchless.
-4. **Export to JD Edwards E1:** *Exports* → pick the approved invoices → *JD Edwards E1* → download the
-   ZIP (F0411Z1 / F0911Z1 CSVs and a README with the loading steps). Load it with R04110ZA, proof mode
-   first. Details and the one-time JDE settings: [JDE_E1.md](JDE_E1.md).
+4. **Export:** the pilot exports to Excel or CSV: *Exports* → pick the approved invoices → *Excel workbook*
+   (the first time) or *CSV, one row per GL line* → download the batch and import it into the ERP. Exports opens
+   on the format used last. **JD Edwards E1** (a ZIP of F0411Z1 / F0911Z1 CSVs to load with R04110ZA) is hidden
+   for the pilot: *Settings → About → Show JD Edwards settings* shows its settings tab and export format again
+   ([JDE_E1.md](JDE_E1.md)).
 
 ## Touchless processing: when to turn it on
 
