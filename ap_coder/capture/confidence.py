@@ -438,6 +438,10 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
         if len(groups) > 1:
             contest[field] = groups[1].strength() / max(groups[0].strength(), 1e-9)
 
+    if _unsettled(chosen.get("tax_total")) and any(chosen.get(f) is not None for f in TAX_FIELDS):
+        # Only the template read a total tax, where it cannot vouch for it; the taxes read on the page give it.
+        chosen["tax_total"] = None
+        contest.pop("tax_total", None)
     _totals_that_add_up(chosen, all_groups, contest)
     values = {f: (normalize_value(f, g.value) if f in AMOUNT_FIELDS else g.value) for f, g in chosen.items() if g}
     checks = run_checks(values, line_items, vendor, today)

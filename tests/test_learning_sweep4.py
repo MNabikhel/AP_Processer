@@ -328,3 +328,37 @@ def test_a_new_label_at_the_old_spot_starts_unsettled(tmp_path):
     for date, result in _stream(tmp_path, old + new)[4:]:
         got = result.fields["invoice_date"]
         assert got.value == date or got.status != VERIFIED
+
+
+def test_a_value_printed_twice_alike_is_vouched_for_after_two_approvals(tmp_path):
+    """The invoice number printed in the header and on the remittance stub: two places, the same field. Two approvals in
+    a row with it at both spots settle them (the template agrees with itself); a spot that then holds another value
+    than the one approved starts over."""
+
+    def invoice(name: str, top: str, stub: str) -> Path:
+        return _pdf(tmp_path / name, [(40, 50, "Acme Supply Ltd."), (330, 90, "Invoice No:"), (430, 90, top),
+                                      (330, 700, "Remit with invoice"), (460, 700, stub)])  # fmt: skip
+
+    template = None
+    for n in range(2):
+        number = f"INV-{100 + n}"
+        template = learn(template, _layout(invoice(f"a{n}.pdf", number, number)), {"invoice_number": (number, None)})
+        found = apply_template(template, _layout(invoice("x.pdf", "INV-9", "INV-9")))["invoice_number"]
+        vouched = [UNSETTLED not in r.method for r in found]
+        assert any(vouched) == (n == 1)
+    differ = apply_template(template, _layout(invoice("b.pdf", "INV-200", "SO-555")))["invoice_number"]
+    assert all(UNSETTLED in r.method for r in differ)  # its own spots disagree: it vouches for neither
+    template = learn(template, _layout(invoice("b.pdf", "INV-200", "SO-555")), {"invoice_number": ("INV-200", None)})
+    stub = [v for v in template.fields["invoice_number"] if v.missed]
+    assert stub and not stub[0].vouched
+
+
+def test_a_total_tax_only_the_template_read_gives_way_to_the_taxes_on_the_page():
+    """GST printed alone, the total tax learned on the same words (unsettled): the template's total tax was the only
+    reading, so it was shown at *check* instead of being worked out from the taxes (the learning benchmark)."""
+    rules = {"subtotal": [_rule("subtotal", 100.0, 0.9)], "gst_amount": [_rule("gst_amount", 5.0, 0.9)],
+             "grand_total": [_rule("grand_total", 105.0, 0.9, "label-right+adds-up")]}  # fmt: skip
+    template = {"tax_total": [_rule("tax_total", 5.0, 0.8, "template" + UNSETTLED)]}
+    fields, _ = fuse({"rules": rules, "template": template}, [])
+    plain, _ = fuse({"rules": rules}, [])
+    assert fields["tax_total"].value == 5.0 and fields["tax_total"].status == plain["tax_total"].status
