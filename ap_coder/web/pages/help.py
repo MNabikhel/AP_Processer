@@ -82,6 +82,12 @@ def quick_start_page(request: Request) -> HTMLResponse:
     return render(request, "help_quick_start.html", "help", doc=quick_start_doc())
 
 
+def forget_setup_report() -> None:
+    """The setup report is made again on its next use (after Check again or a setting saved)."""
+    with _setup_lock:
+        _setup_cache.clear()
+
+
 def setup_report(store: Any) -> str:
     """The doctor's report (``python -m ap_coder doctor``, offline, without asking LM Studio): safe to paste. Kept
     ``SETUP_KEEP_SECONDS`` once made: it takes a few seconds (it looks at the OCR engines)."""

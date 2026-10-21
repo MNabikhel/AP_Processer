@@ -21,9 +21,13 @@
   <form method="post" action="/settings/about/show" class="stack" data-busy="Saving…">
     <label class="check"><input type="checkbox" name="show_jde" value="1"{% if show_jde %} checked{% endif %}>
       Show JD Edwards settings (a Settings tab, and JD Edwards E1 as an export format)</label>
-    <label class="check"><input type="checkbox" name="developer" value="1"{% if developer_tools %} checked{% endif %}{% if developer_env %} disabled{% endif %}>
-      Show developer tools (Learning &amp; accuracy → Readers, the training data export, the developer changelog){% if developer_env %} — on: AP_DEVELOPER_TOOLS is set on this computer{% endif %}</label>
-    {% if developer_env %}<input type="hidden" name="developer" value="{{ '1' if developer_tools else '' }}">{% endif %}
+    {% if developer_env %}
+    <p class="check"><span class="ms" aria-hidden="true">check_box</span> Show developer tools:
+      on (set by AP_DEVELOPER_TOOLS), on this computer only</p>
+    {% else %}
+    <label class="check"><input type="checkbox" name="developer" value="1"{% if developer_tools %} checked{% endif %}>
+      Show developer tools (Learning &amp; accuracy → Readers, the training data export, the developer changelog)</label>
+    {% endif %}
     <button class="btn" type="submit"><span class="ms" aria-hidden="true">save</span>Save</button>
   </form>
 </section>

@@ -445,13 +445,17 @@ def test_the_welcome_page_leads_through_name_gl_accounts_and_first_invoices_one_
     monkeypatch.delenv("AP_REVIEWER", raising=False)
     monkeypatch.setattr(core, "login", lambda: "jsmith")
     client = _client(fresh)
+    assert "Start LM Studio" in _next_step(client.get("/review").text)  # step 0 first (B-529), then:
+    from ap_coder.web.pages import process
+
+    monkeypatch.setattr(process, "lm_studio_step", lambda store, settings: ("ok", process.LM_STUDIO, "ready"))
 
     page = client.get("/review").text
     card = _next_step(page)
     assert "Add your name" in card and 'class="btn primary" href="/settings/review"' in card
     assert "jsmith" not in _title(page)  # no "Good morning, jsmith" before a name is given
     assert "Optional: start LM Studio" not in page
-    for href in ("/accounts", "/accounts?tab=tax", "/settings/review", "/settings/reading", "/process"):
+    for href in ("/accounts", "/accounts?tab=tax", "/settings/review", "/process"):  # (LM Studio: done, above)
         assert f'href="{href}"' in page.split("Getting started", 1)[1], href  # each step to do opens its page
 
     paths.write_user_settings(reviewer="Pat Tester")
@@ -474,6 +478,9 @@ def test_import_invoices_shows_the_next_step_until_it_is_its_own(fresh, monkeypa
 
     monkeypatch.delenv("AP_REVIEWER", raising=False)
     client = _client(fresh)
+    from ap_coder.web.pages import process
+
+    monkeypatch.setattr(process, "lm_studio_step", lambda store, settings: ("ok", process.LM_STUDIO, "ready"))
     assert "Add your name" in _next_step(client.get("/process").text)
 
     paths.write_user_settings(reviewer="Pat Tester")

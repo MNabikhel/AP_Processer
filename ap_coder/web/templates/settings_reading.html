@@ -53,6 +53,19 @@
         <span class="ms" aria-hidden="true">fact_check</span>{{ "Run the self-test again" if reader.tested else "Run the self-test now" }}</button>
     </form>
   </div>
+  {% if reader.test and not reader.test.ok %}{# a failed self-test: what it read, here, not under For IT #}
+  <details class="st-details" open>
+    <summary>What it read on the test invoice ({{ reader.test_detail }})</summary>
+    {% if reader.test_rows %}
+    <div class="table-wrap"><table class="apc-table">
+      <thead><tr><th>Field</th><th>On the invoice</th><th>OvisOCR2 read</th><th>Match</th></tr></thead>
+      <tbody>{% for r in reader.test_rows %}<tr><td>{{ r.field }}</td><td class="w">{{ r.expected }}</td><td class="w">{{ r.read }}</td>
+        <td>{% if r.match %}<span class="ok">✓ right</span>{% else %}<span class="bad">✗ different</span>{% endif %}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    {% endif %}
+    {% if reader.test.problem %}<p class="muted">{{ reader.test.problem }}</p>{% endif %}
+  </details>
+  {% endif %}
   <div class="st-progress{% if reader.testing.state != 'running' %} hidden{% endif %}" id="self-test"
        data-status-url="/settings/reading/self-test" data-every="{{ poll_seconds }}" data-state="{{ reader.testing.state }}"
        aria-live="polite">
@@ -114,8 +127,8 @@
   <h4>On a new computer</h4>
   <p class="muted">What AP Coder needs on this computer. Everything after the first two steps happens by itself.</p>
   <div>{% for state, label, detail in reader.steps %}{{ ui.step(state, label, detail) }}{% endfor %}</div>
-  {% if reader.test %}
-  <details class="st-details"{% if not reader.test.ok %} open{% endif %}>
+  {% if reader.test and reader.test.ok %}
+  <details class="st-details">
     <summary>What it read on the test invoice ({{ reader.test_detail }})</summary>
     {% if reader.test_rows %}
     <div class="table-wrap">

@@ -156,12 +156,28 @@ def tax_types_mapped(store: Store) -> int:
 
 
 LM_STUDIO = "LM Studio running"
+TAX_STEP = "Sales tax accounts"  # the GL page's tab of the same name (B-530)
 START_LM_STUDIO = "not running: open LM Studio, Developer tab → Start server, then Check again"
-LM_STUDIO_STEPS = (  # the checklist's "how to start it" (docs/QUICK_START.md, step 0)
+LM_STUDIO_STEPS = (  # what to do while LM Studio isn't running (docs/QUICK_START.md, step 0)
     "Open LM Studio (IT installs it with OvisOCR2 and the chat model already in it).",
     "In LM Studio: Developer tab → Start server.",
-    "Press Check again below. Leave LM Studio open while you work.",
+    "Press Check again. Leave LM Studio open while you work.",
 )
+NO_OVISOCR2 = "running, but OvisOCR2 isn't in it: ask IT for its two files (Settings → Reading)"
+NO_CHAT_MODEL = "running, OvisOCR2 ready, but no chat model loaded: ask IT to load it (Settings → Reading)"
+# What the welcome page's first card says to do, for each way LM Studio isn't ready yet (B-529).
+LM_STUDIO_HELP = {
+    START_LM_STUDIO: ("Start LM Studio", "It runs OvisOCR2, which reads every page, and the chat model, which checks "
+                      "each invoice and suggests GL accounts for new lines. Without it every invoice waits for you.",
+                      LM_STUDIO_STEPS),
+    NO_OVISOCR2: ("Add OvisOCR2 to LM Studio", "LM Studio runs, but OvisOCR2, which reads every page, isn't in it.",
+                  ("Ask IT for OvisOCR2's two files and where they go (Settings → Reading shows the folder).",
+                   "Press Check again: AP Coder finds it, and its self-test starts by itself.")),
+    NO_CHAT_MODEL: ("Load the chat model in LM Studio", "LM Studio and OvisOCR2 run, but no chat model is loaded: it "
+                    "checks each invoice and suggests GL accounts for new lines.",
+                    ("In LM Studio, load the chat model IT put there (Gemma 4 12B or Qwen 3.5 9B), or ask IT.",
+                     "Press Check again.")),
+}  # fmt: skip
 
 
 def lm_studio_step(store: Store, settings: Settings) -> tuple[str, str, str]:
@@ -173,15 +189,35 @@ def lm_studio_step(store: Store, settings: Settings) -> tuple[str, str, str]:
         return "todo", LM_STUDIO, "couldn't be checked just now: press Check again"
     if not status.lm_studio:
         return "todo", LM_STUDIO, START_LM_STUDIO
-    ai = provider_status(settings)
-    chat = f"chat model: {ai.label.split(' · ')[-1]}" if ai.ready else "no chat model loaded"
-    if status.page_reader_ready:
-        return "ok", LM_STUDIO, f"OvisOCR2 ready · {chat}"
     if status.self_test in ("pending", "running"):
         return "wait", LM_STUDIO, "OvisOCR2 is testing itself (10 to 20 min the first time); use AP Coder meanwhile"
     if status.self_test == "failed":
         return "bad", LM_STUDIO, "running, but OvisOCR2 failed its self-test (Settings → Reading)"
-    return "todo", LM_STUDIO, "running, but OvisOCR2 isn't in it: ask IT for its two files (Settings → Reading)"
+    if not status.page_reader_ready:
+        return "todo", LM_STUDIO, NO_OVISOCR2
+    ai = provider_status(settings)
+    if not ai.ready:  # the pilot runs with the chat model (the AI reviewer): not done without it (B-529)
+        return "todo", LM_STUDIO, NO_CHAT_MODEL
+    return "ok", LM_STUDIO, f"OvisOCR2 ready · chat model: {ai.label.split(' · ')[-1]}"
+
+
+def lm_studio_help(step: tuple[str, str, str]) -> dict[str, Any] | None:
+    """What to do about the LM Studio step as it is (None when it is done or only waiting for the self-test)."""
+    state, _, detail = step
+    if state not in ("todo", "bad"):
+        return None
+    title, text, steps = LM_STUDIO_HELP.get(detail, ("Check LM Studio", detail[:1].upper() + detail[1:] + ".",
+                                                     ("Open Settings → Reading: it says what is missing.",
+                                                      "Press Check again.")))  # fmt: skip
+    return {
+        "title": title,
+        "icon": "memory",
+        "href": STEP_LINKS[LM_STUDIO],
+        "button": "Settings → Reading",
+        "text": text,
+        "steps": steps,
+        "check": True,
+    }
 
 
 def setup_steps(store: Store, settings: Settings) -> list[tuple[str, str, str]]:
@@ -199,7 +235,7 @@ def setup_steps(store: Store, settings: Settings) -> list[tuple[str, str, str]]:
         name_step(),
         province_step(store),
         ("ok" if gl_count else "todo", "GL accounts", f"{gl_count} imported" if gl_count else "none yet: import them"),
-        ("ok" if mapped == len(TAX_TYPES) else "todo", "Sales tax GL mapping", f"{mapped} of {len(TAX_TYPES)} set"),
+        ("ok" if mapped == len(TAX_TYPES) else "todo", TAX_STEP, f"{mapped} of {len(TAX_TYPES)} set"),
     ]
 
 
@@ -227,7 +263,7 @@ def name_step() -> tuple[str, str, str]:
     name = name or str(paths.read_user_settings().get("reviewer") or "") or os.environ.get("AP_REVIEWER", "")
     if name.strip():
         return "ok", "Your name", name.strip()
-    return "todo", "Your name", "Settings → Review: each approval is recorded in it"
+    return "todo", "Your name", "Settings → Review: each approval is recorded under it"
 
 
 def first_steps(store: Store, settings: Settings, has_invoices: bool) -> tuple[list[tuple[str, str, str]], int, int]:
@@ -243,7 +279,7 @@ STEP_LINKS = {
     LM_STUDIO: "/settings/reading",
     "Reading invoices": "/settings/reading",
     "GL accounts": "/accounts",
-    "Sales tax GL mapping": "/accounts?tab=tax",
+    TAX_STEP: "/accounts?tab=tax",
     "Your name": "/settings/review",
     "Your province": "/settings/review",
     "Process your first invoices": "/process",
@@ -256,6 +292,9 @@ def next_step(steps: list[tuple[str, str, str]]) -> dict[str, Any] | None:
     accounts, then the first invoices. None once all four are done (LM Studio is the checklist's first row, with
     Check again, and has its own banner)."""
     state = {label: (s, detail) for s, label, detail in steps}
+    lm = next((s for s in steps if s[1] == LM_STUDIO), None)
+    if lm is not None and (help_ := lm_studio_help(lm)):  # step 0: LM Studio, with Check again (B-529)
+        return help_
     if state["Your name"][0] != "ok":
         return {"title": "Add your name", "icon": "badge", "href": STEP_LINKS["Your name"], "button": "Add your name",
                 "text": "Each approval is recorded under it. Until you add it, approvals carry this computer's "
@@ -265,11 +304,11 @@ def next_step(steps: list[tuple[str, str, str]]) -> dict[str, Any] | None:
                 "button": "Import GL accounts", "sample": True,
                 "text": "AP Coder codes each invoice line to one of your GL accounts. To look around first, use the "
                         "sample accounts and switch to yours later."}  # fmt: skip
-    if state["Sales tax GL mapping"][0] != "ok":
-        return {"title": "Pick a GL account for each sales tax", "icon": "percent", "button": "Set up sales tax",
-                "href": STEP_LINKS["Sales tax GL mapping"],
-                "text": f"{state['Sales tax GL mapping'][1]}: GST, HST, PST and QST each need a GL account (or PST "
-                        "added to the expense line), so approved invoices can be posted."}  # fmt: skip
+    if state[TAX_STEP][0] != "ok":
+        return {"title": "Set up the sales tax accounts", "icon": "percent", "button": "Sales tax accounts",
+                "href": STEP_LINKS[TAX_STEP],
+                "text": "GST, HST and QST each need a GL account (PST is added to each expense line, so it needs "
+                        "none), so approved invoices can be posted. Then Save tax setup."}  # fmt: skip
     if state["Process your first invoices"][0] != "ok":
         return {"title": "Import your first invoices", "icon": "upload_file", "button": "Import invoices",
                 "href": STEP_LINKS["Process your first invoices"],

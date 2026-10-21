@@ -18,7 +18,8 @@
       </li>
       {% endfor %}
     </ol>
-    <p class="muted">The same steps as the <a href="/help/quick-start">Quick start</a> and the welcome page.</p>
+    <p class="muted">The same steps as the <a href="/help/quick-start">Quick start</a>; the welcome page's checklist
+      ticks steps 0 to 3 off.</p>
   </section>
 
   <div class="col">
@@ -60,6 +61,7 @@
       <input type="search" name="q" value="{{ q }}" placeholder="Search, e.g. duplicate, QST, PO" aria-label="Search the checks" id="check-search"></span>
     {% if area %}<input type="hidden" name="area" value="{{ area }}">{% endif %}
   </form>
+  {% if area or q %}<p class="muted">{% if area %}Showing {{ area }} only. {% endif %}<a href="/help#checks">All the checks</a></p>{% endif %}
   <div id="check-groups">
     {% for g in groups %}
     <details class="hp-group"{% if open_groups %} open{% endif %} data-group>

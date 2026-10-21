@@ -4,7 +4,7 @@
   <span class="ms" aria-hidden="true">download</span>Business case (one page)</a>{% endif %}{% endblock %}
 {% block content %}
 {% if early %}
-<section class="card">{{ ui.empty_state("Insights come after " ~ min_approvals ~ " approvals", "How much goes straight through, the time it saves and how the queue moves, once " ~ min_approvals ~ " invoices are approved: fewer would be guesswork. " ~ (s.approved | plural("invoice")) ~ " approved so far.") }}</section>
+<section class="card">{{ ui.empty_state("Insights come after " ~ min_approvals ~ " approvals", "How much goes straight through, the time it saves and how the queue moves, once " ~ min_approvals ~ " invoices are approved: fewer would be guesswork. " ~ (fully | plural("invoice")) ~ " approved so far.") }}</section>
 {% else %}
 <div class="apc-tiles apc-anim" aria-label="The business case at a glance">
   {% for label, value, tone, hint in kpis %}{{ ui.tile(label, value, "", tone, hint) }}{% endfor %}

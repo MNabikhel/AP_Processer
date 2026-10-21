@@ -31,8 +31,8 @@ for _module in [*MORE_MODULES, *(p.module for p in PAGES if p.module)]:
 def demo_db(tmp_path_factory):
     """The demo invoices, loaded once (copied for each test: loading reads ten PDFs)."""
     path = tmp_path_factory.mktemp("demo") / "private" / "ap_coder.db"
-    load_demo(Store(path), Settings())
     load_sample_cost_centers(Store(path))  # the demo has none (D-53): these tests are about cost centers
+    load_demo(Store(path), Settings())
     return path
 
 

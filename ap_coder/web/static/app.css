@@ -254,9 +254,7 @@ kbd.apc-kbd {font-family: inherit; font-size: 11.5px; font-weight: 500; color: v
 /* Setup steps */
 .apc-step {display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--lg-hairline); font-size: 13.5px;}
 .apc-step:last-child {border-bottom: none;}
-.setup-lm {margin-top: 12px; background: var(--lg-head); border: 1px solid var(--lg-hairline); border-radius: var(--lg-r);
-  padding: 12px 14px; font-size: 13.5px;}
-.setup-lm ol {margin: 6px 0 10px; padding-left: 20px;}
+.next-steps {margin: 0 0 4px; padding-left: 20px; font-size: 13.5px;}
 .apc-step .dot {width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 11px;
   font-weight: 700; flex: none;}
 .apc-step .dot.ok {background: var(--lg-success-weak); color: var(--lg-success);}

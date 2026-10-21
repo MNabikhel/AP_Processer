@@ -18,6 +18,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from ap_coder.core import ui
+from ap_coder.core.store import APPROVED
 from ap_coder.erp.insights import AS_CODED, Assumptions, compute, operations, report_html
 from ap_coder.ops.offline import internet_allowed
 from ap_coder.web.charts import OK_GREEN, SERIES, WARN_AMBER, Series, bar_chart
@@ -132,9 +133,10 @@ def insights_page(request: Request) -> HTMLResponse:
     store = get_store(request)
     s = compute(store)
     a: Assumptions = s["assumptions"]
-    if s["approved"] < MIN_APPROVALS:
+    fully = len(store.list_invoices(APPROVED))  # fully approved (a second approval waiting doesn't count yet)
+    if fully < MIN_APPROVALS:
         return render(request, "insights.html", "insights", s=s, fields=assumption_fields(a), early=True,
-                      min_approvals=MIN_APPROVALS)  # fmt: skip
+                      min_approvals=MIN_APPROVALS, fully=fully)  # fmt: skip
     cloud = internet_allowed()
     ops = operations(store)
     biggest_age = max(ops["ageing"].values()) or 1

@@ -211,6 +211,7 @@ def test_the_setup_step_names_the_self_tests_state(store, monkeypatch):
     def step(self_test, ready=False):
         status = SimpleNamespace(page_reader_ready=ready, self_test=self_test, lm_studio=self_test != "off")
         monkeypatch.setattr(process, "reading_status_or_none", lambda settings, store, **k: status)
+        monkeypatch.setattr(process, "provider_status", lambda s: SimpleNamespace(ready=True, label="LM Studio · q"))
         return process.setup_steps(store, Settings())[0]  # LM Studio, the first step (B-504)
 
     assert step("passed", ready=True)[:2] == ("ok", "LM Studio running")

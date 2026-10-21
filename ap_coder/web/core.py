@@ -345,14 +345,33 @@ def _switch(store: Store, key: str) -> bool:
 
 def jde_shown(store: Store) -> bool:
     """Whether the JD Edwards E1 settings and export are shown: off for the pilot (Excel and CSV exports only); a
-    switch on Settings → About shows them, nothing is removed."""
-    return _switch(store, SHOW_JDE)
+    switch on Settings → About shows them, nothing is removed. A database already set up for JD Edwards (its settings
+    saved, or a JD Edwards batch made) has it turned on, once and stored, so an update takes nothing away (B-526)."""
+    try:
+        value = store.get_setting(SHOW_JDE, "unset")
+        if value != "unset":
+            return value == "1"
+        from ap_coder.erp import jde
+
+        used = bool(store.get_setting(jde.SETTING_KEY)) or any(
+            b["format"] == jde.FORMAT for b in store.export_batches()
+        )
+        if used:
+            store.set_setting(SHOW_JDE, "1")
+        return used
+    except Exception:  # noqa: BLE001 - a setting that can't be read is off: the page still opens
+        return False
+
+
+def developer_env_on() -> bool:
+    """AP_DEVELOPER_TOOLS read one way everywhere: 1, true or yes is on; 0, false, no or nothing is off (B-527)."""
+    return os.environ.get(DEVELOPER_ENV, "").strip().lower() in ("1", "true", "yes")
 
 
 def developer_tools(store: Store) -> bool:
     """Whether the developer tools show (Learning → Readers, the training data export, the developer changelog):
     the switch on Settings → About, or AP_DEVELOPER_TOOLS=1."""
-    return os.environ.get(DEVELOPER_ENV, "").strip().lower() in ("1", "true", "yes") or _switch(store, DEVELOPER_TOOLS)
+    return developer_env_on() or _switch(store, DEVELOPER_TOOLS)
 
 
 def nav_counts(store: Store) -> dict[str, int]:

@@ -5081,3 +5081,77 @@ codes no cost centers (D-52, D-53). Tests: `tests/test_before_testing.py` unless
   is opt-in and sends nothing unless switched on. (Python 3.11 or newer, 3.12 recommended, everywhere: the launcher's
   change, which also aligns `pyproject.toml`.)
 - **Test:** `test_about_folds_the_full_paths_for_it`, `test_the_guides_match_the_app`
+
+An independent review of the branch walked the pilot path end to end and found what follows. Tests:
+`tests/test_before_testing_review.py`.
+
+#### B-526 · An update hid JD Edwards from a company already using it · high
+- **Where:** `ap_coder/web/core.py` (`jde_shown`), `ap_coder/web/pages/exports.py` (`last_format`)
+- **Symptom:** after the update the JD Edwards E1 tab and export format were gone, with no word, for a database with
+  JD Edwards settings and batches: *Show JD Edwards settings* starts off.
+- **Fix:** a database with JD Edwards settings saved or a JD Edwards batch made has the switch turned on, once and
+  stored (switched off by hand it stays off); Exports keeps a JD Edwards format used last. docs/JDE_E1.md and
+  PILOT_PLAN.md name the switch.
+- **Test:** `test_a_jd_edwards_user_keeps_the_tab_and_the_format_after_the_update`,
+  `test_a_new_install_has_jd_edwards_hidden_and_nothing_stored`
+- **Lesson:** Hiding a feature for new users must not take it from those already using it.
+
+#### B-527 · Saving Settings → About stored the developer variable as if it were ticked · medium
+- **Where:** `ap_coder/web/pages/settings.py` (`save_shown`), `templates/settings_about.html`, `ap_coder/web/core.py`
+- **Symptom:** with `AP_DEVELOPER_TOOLS` set, the page posted developer=1 and saved it in the data folder, so the tools
+  stayed on after the variable went; the page and `developer_tools()` read the variable two ways (`0` was "on" for
+  one of them); every save logged both switches.
+- **Fix:** the variable is read one way (1, true, yes on; 0, false, no, nothing off); when it is set the switch shows
+  "on (set by AP_DEVELOPER_TOOLS)" and nothing is stored; only a switch that changed is saved and logged.
+- **Test:** `test_the_developer_env_var_is_read_one_way`, `test_the_env_var_is_shown_as_on_and_never_stored`,
+  `test_save_shown_logs_only_what_changed`
+
+#### B-528 · The demo kept cost centers the tester could not see · medium
+- **Where:** `ap_coder/ops/demo.py` (`_without_cost_centers`, Harbourview's mistake), `templates/_invoice_lines.html`
+- **Symptom:** with no cost center list, the demo invoices still carried CC200, CC400 from their ground truth: an
+  approved one kept them, the CSV export wrote them, the coding memory learned them, and a hidden `line_cc` posted them
+  back; Harbourview's "mistake to correct" was a cost center, invisible.
+- **Fix:** without a cost center list the demo loads its invoices without cost centers; Harbourview's mistake is a GL
+  account (6110 for a legal review); no hidden cost center is posted when there is no list.
+- **Test:** `test_the_demo_has_no_cost_center_anywhere`, `test_harbourviews_demo_mistake_is_a_gl_account`,
+  `test_no_hidden_cost_center_is_posted_without_a_list`
+- **Lesson:** A field hidden from the screen must be gone from the data too, or it travels unseen.
+
+#### B-529 · The welcome page said "Add your name" before LM Studio, and "Start server" whatever was missing · medium
+- **Where:** `ap_coder/web/pages/process.py` (`lm_studio_step`, `lm_studio_help`, `next_step`), `templates/_next_step.html`
+- **Symptom:** the Next step card asked for the name while step 0 was LM Studio, and Check again was below the fold
+  at 1366 x 650; with LM Studio running but without OvisOCR2 or a chat model the box still said "Developer tab → Start
+  server"; LM Studio with no chat model was ticked done, though the pilot runs with it.
+- **Fix:** while LM Studio isn't ready, it is the Next step, at the top, with what to do for its state (start it, add
+  OvisOCR2, load the chat model) and Check again; the row is done only with OvisOCR2 ready and the chat model loaded.
+- **Test:** `test_the_lm_studio_step_needs_ovisocr2_and_the_chat_model`, `test_the_next_step_is_lm_studio_with_check_again_on_a_laptop`,
+  `test_the_running_but_empty_lm_studio_box_says_what_is_missing`
+
+#### B-530 · "Sales tax" had three names, and the name step said "recorded in it" · low
+- **Fix:** "Sales tax accounts" for the checklist row, the next step and the tab; "GST, HST and QST each need a GL
+  account (PST needs none)" everywhere; "each approval is recorded under it".
+- **Test:** `test_one_name_for_the_sales_tax_accounts_and_recorded_under_it`
+
+#### B-531 · The Quick start and the screens disagreed · low
+- **Where:** `docs/QUICK_START.md`, `ap_coder/ops/help.py` (`QUICK_START`), `templates/help.html`
+- **Symptom:** "Start (every day)" didn't say to start LM Studio; step 2 stopped at Upload, though a preview and a
+  second **Import GL accounts** follow; Help's Getting started had six steps numbered differently and claimed to be
+  the welcome page's.
+- **Fix:** start LM Studio first every day; step 2 as the page goes; Help lists the Quick start's seven steps, 0 to 6,
+  by the same names, and says the welcome checklist ticks steps 0 to 3.
+- **Test:** `test_help_and_the_quick_start_number_the_same_steps`
+
+#### B-532 · "Coding memory" was two different numbers · low
+- **Where:** `ap_coder/web/pages/settings.py` (`data_context`), `templates/settings_data.html`, `ap_coder/web/pages/review.py` (`kpis`)
+- **Symptom:** the queue counted AP's reviewed lines, Settings → Data every row of the memory (the ERP history
+  included, cut at 50,000); the queue tile's note was cut off at 1366.
+- **Fix:** one number, AP's reviewed lines, with the ERP history counted apart ("plus N lines from ERP history"); a
+  short note.
+- **Test:** `test_the_coding_memory_is_one_number_with_erp_history_apart`
+
+#### B-533 · Smaller points from the review · low
+- Insights counts fully approved invoices towards its 20 (a second approval waiting does not count yet).
+- Help, filtered by area or a search, links back to all the checks.
+- A failed self-test shows what OvisOCR2 read on Settings → Reading itself, not folded under For IT.
+- Report a problem's setup report is made again after Check again or a saved setting.
+- **Test:** `tests/test_before_testing.py` (Insights, Help), `tests/test_reading_pages.py`

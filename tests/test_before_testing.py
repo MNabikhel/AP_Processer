@@ -178,8 +178,9 @@ def test_the_welcome_checklist_counts_exactly_the_rows_it_shows_with_lm_studio_f
     assert f"aria-label='{done}/{len(rows)}'" in card, rows
     labels = _step_labels(card)
     assert labels[0] == "LM Studio running" and "OvisOCR2" not in labels and "Your province" in labels
-    assert "Developer" in card and "Start server" in card  # how to start it
-    assert 'action="/settings/reading/check"' in card and "Check again" in card
+    nxt = page.split('class="card next-step"', 1)[1]  # how to start it: the Next step card above (B-529)
+    assert "Developer" in nxt and "Start server" in nxt
+    assert 'action="/settings/reading/check"' in nxt and "Check again" in nxt
 
 
 def test_import_invoices_counts_the_same_rows(client):

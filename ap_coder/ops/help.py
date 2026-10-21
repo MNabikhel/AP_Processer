@@ -664,16 +664,18 @@ ROUTINE: list[tuple[str, list[tuple[str, str]]]] = [
 
 # Getting started, in the order of docs/QUICK_START.md and the welcome page's checklist (B-514): (title, what to do,
 # where it is done).
-QUICK_START: list[tuple[str, str, str]] = [
+QUICK_START: list[tuple[str, str, str]] = [  # numbered 0 to 6, as docs/QUICK_START.md (B-531)
     ("Start LM Studio", "Open LM Studio, Developer tab → Start server, then Check again. Without it every invoice "
      "waits for you.", "/settings/reading"),
     ("Your name and province", "Settings → Review: each approval is recorded under your name; the province is where "
      "goods are delivered to you.", "/settings/review"),
     ("Your GL accounts and sales tax", "Import your GL accounts (or use the sample ones to try AP Coder), then pick "
-     "a GL account for GST, HST and QST.", "/accounts"),
-    ("Import invoices", "Upload PDFs, scans, photos or saved emails. Each is read, coded and checked.", "/process"),
-    ("Review and approve", "Fix what the checks point to, then Approve & teach (Ctrl+Enter).", "/review"),
-    ("Export", "Export approved invoices as an Excel workbook or a CSV file, and import it into the ERP.",
+     "a GL account for GST, HST and QST on the Sales tax accounts tab.", "/accounts"),
+    ("Your first invoices", "Upload PDFs, scans, photos or saved emails. Each is read, coded and checked.",
+     "/process"),
+    ("Review", "Open an invoice and fix what the checks point to.", "/review"),
+    ("Your first approval", "Approve & teach (Ctrl+Enter): AP Coder learns from each correction.", "/review"),
+    ("Your first export", "Export approved invoices as an Excel workbook or a CSV file, and import it into the ERP.",
      "/exports"),
 ]  # fmt: skip
 

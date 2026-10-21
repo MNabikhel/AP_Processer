@@ -17,7 +17,6 @@
 <tr data-row="{{ key }}">
   <td class="c-no"><input type="hidden" name="line_key" value="{{ key }}" form="inv">
     <input type="hidden" name="line_reason" value="{{ row.reasoning_justification or '' }}" form="inv">
-    {% if not g.has_cc %}<input type="hidden" name="line_cc" value="{{ row.predicted_cost_center or '' }}" form="inv">{% endif %}
     <input type="number" name="line_number" value="{{ num(row.line_number) }}" step="1" min="0" form="inv" aria-label="Line number"></td>
   <td class="c-desc"><input type="text" name="line_description" value="{{ row.description or '' }}" form="inv" aria-label="Description"></td>
   <td class="c-amt"><input type="number" name="line_amount" value="{{ cents(row.amount) }}" step="0.01" form="inv" aria-label="Amount"></td>

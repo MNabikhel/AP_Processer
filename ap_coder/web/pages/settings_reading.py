@@ -384,9 +384,11 @@ def check_again(request: Request, back: str = Form(URL)) -> JSONResponse:
     """Ask LM Studio and the readers afresh (the page normally uses a short-lived cache); back to ``back`` (the
     welcome page's and Import invoices' checklist), a page of this dashboard, else Settings → Reading."""
     from ap_coder.ai.local_llm import forget_status
+    from ap_coder.web.pages.help import forget_setup_report
 
     page_reader.forget_status()
     forget_status()
+    forget_setup_report()  # Report a problem's setup report says what is true now
     status = reading_status_or_none(get_settings(request), get_store(request), use_cache=False)
     if status is not None and not status.lm_studio:
         said, tone = "Checked again just now: LM Studio still isn't running.", "warn"

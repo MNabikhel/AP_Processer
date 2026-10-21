@@ -13,29 +13,28 @@ bold are pages and buttons in AP Coder.
 
 ## Start (every day)
 
+- Start LM Studio first: open it and click *Developer* → *Start server*.
 - Double-click *AP Coder* on the desktop. A black window opens, then the dashboard in your browser.
 - Keep the black window open while you work. Close it to stop AP Coder.
 
 ## The first steps
 
-The welcome page lists the same steps, with a tick for each one done.
+The welcome page's checklist ticks steps 0 to 3 off as you do them, and its *Next step* says what comes next.
 
 0. Start LM Studio: open LM Studio, click *Developer* → *Start server*, then in AP Coder press **Check again** (on
-   the welcome page, or **Settings** → **Reading**). Leave LM Studio open. Without it every invoice waits for you,
-   nothing is checked by OvisOCR2 or the AI reviewer, and GL accounts are suggested only from what AP approved
-   before.
+   the welcome page, or **Settings** → **Reading**). Without it every invoice waits for you, and GL accounts are
+   suggested only from what AP approved before.
 1. Your name and province: **Settings** → **Review** → type your name, choose your province (where invoices are
    delivered to you) → **Save**. Each approval is recorded under your name; the sales tax check uses the province
    when an invoice prints no ship-to.
 2. Your GL accounts and sales tax: **GL accounts & tax** → open **Import GL accounts from CSV or Excel** → choose
-   your file → **Upload a CSV or Excel file**. To try AP Coder first, click **Use the sample GL accounts** instead
-   (no cost centers: each line needs only a GL account). Then on the **Sales tax accounts** tab, pick a GL account
-   for GST, HST and QST (PST is added to each expense line) → **Save tax setup**.
+   your file → **Upload a CSV or Excel file** → check the preview and the columns → **Import GL accounts**. To try AP Coder first, click **Use the sample GL accounts** instead
+   (no cost centers). Then on the **Sales tax accounts** tab, pick a GL account for GST, HST and QST (PST needs
+   none) → **Save tax setup**.
 3. Your first invoices: **Import invoices** → **Choose files** (PDFs, scans, photos, saved emails or invoices saved
    as text) → **Process N uploaded invoices**.
 4. Review: **Review queue** → open an invoice. Compare it with the page and fix what the checks point to: a line
-   without a GL account, an amount marked in amber. Beside each value: Verified, Likely, Check or Failed check (how
-   sure AP Coder is of what it read).
+   without a GL account, an amount marked in amber. Beside each value: Verified, Likely, Check or Failed check.
 5. Your first approval: **Approve & teach** (or Ctrl+Enter). AP Coder learns from each correction.
 6. Your first export: **Exports** → **Export N invoices** → **Download batch N**, then import that file into the
    ERP. The first export is an **Excel workbook**; for a CSV file, click **CSV, one row per GL line** above the list

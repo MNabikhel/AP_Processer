@@ -35,10 +35,10 @@ from ap_coder.core.envfile import one_line, read_env, write_env
 from ap_coder.core.store import Store, unread_fx_text
 from ap_coder.web import identity
 from ap_coder.web.core import (
-    DEVELOPER_ENV,
     DEVELOPER_TOOLS,
     SHOW_JDE,
     data_dir,
+    developer_env_on,
     developer_tools,
     done,
     get_settings,
@@ -190,6 +190,10 @@ async def save_review(request: Request) -> JSONResponse:
     if isinstance(supply_part, JSONResponse):
         return supply_part
     saved = name_part() + approval_part() + supply_part()
+    if saved:
+        from ap_coder.web.pages.help import forget_setup_report
+
+        forget_setup_report()
     return done(request, tab_url("review"), saved_text(saved))
 
 
@@ -395,7 +399,8 @@ def data_context(store: Store) -> dict[str, Any]:
         "db_size": size_text(store.path),
         "invoice_count": len(store.list_invoices()),
         "file_count": len(list(folder.glob("*"))) if folder.exists() else 0,
-        "lesson_count": len(store.feedback_rows()),
+        "lesson_count": f"{store.metrics()['lines_reviewed']:,}",  # one definition: AP's own reviewed lines (B-532)
+        "history_count": store.history_count(),  # past coding imported from the ERP, counted apart
         "backups": [
             {
                 "name": b.name,
@@ -520,7 +525,7 @@ def about_context(store: Store) -> dict[str, Any]:
         ],
         "show_jde": jde_shown(store),
         "developer_tools": developer_tools(store),
-        "developer_env": os.environ.get(DEVELOPER_ENV, "") not in ("", "0"),
+        "developer_env": developer_env_on(),
     }
 
 
@@ -528,15 +533,18 @@ def about_context(store: Store) -> dict[str, Any]:
 def save_shown(request: Request, show_jde: str = Form(""), developer: str = Form("")) -> JSONResponse:
     """What this pilot shows (D-52): the JD Edwards E1 settings and export, and the developer tools. Logged."""
     store = get_store(request)
-    changed = []
-    switches = ((SHOW_JDE, show_jde, "JD Edwards settings"), (DEVELOPER_TOOLS, developer, "developer tools"))
-    for key, value, words in switches:
-        on = "1" if value in ("1", "on", "true") else ""
-        if on != (store.get_setting(key) or ""):
-            store.set_setting(key, on, actor=reviewer())
+    changed, keys = [], []
+    switches = [(SHOW_JDE, show_jde, "JD Edwards settings", jde_shown(store))]
+    if not developer_env_on():  # set by AP_DEVELOPER_TOOLS: shown as on, never stored (B-527)
+        switches.append((DEVELOPER_TOOLS, developer, "developer tools", developer_tools(store)))
+    for key, value, words, was in switches:
+        on = value in ("1", "on", "true")
+        if on != was:
+            store.set_setting(key, "1" if on else "0", actor=reviewer())
             changed.append(f"{words} {'shown' if on else 'hidden'}")
-    if changed:
-        store.log_event("settings_changed", actor=reviewer(), detail={"keys": [SHOW_JDE, DEVELOPER_TOOLS]})
+            keys.append(key)
+    if keys:  # only the switches that changed
+        store.log_event("settings_changed", actor=reviewer(), detail={"keys": keys})
     return done(request, tab_url("about"), ("Saved: " + ", ".join(changed) + ".") if changed else "Nothing changed.")
 
 

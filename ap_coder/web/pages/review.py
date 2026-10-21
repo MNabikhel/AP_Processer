@@ -285,7 +285,7 @@ def kpis(store: Store, pending: list[dict[str, Any]], flagged: list[dict[str, An
              "-", "−"),
          "good": accuracy is not None and accuracy >= TARGET_ACCURACY, "wrap": bool(note)},
         {"label": "Coding memory", "value": f"{metrics['lines_reviewed']:,}",
-         "sub": f"lines AP confirmed or corrected · {corrections:,} corrected"},
+         "sub": f"lines reviewed · {corrections:,} corrected"},  # (short: one line at 1366, B-532)
     ]  # fmt: skip
 
 
