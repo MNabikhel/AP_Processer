@@ -99,5 +99,7 @@ def currency_read(field: FieldResult) -> bool:
     answer that the page does not show."""
     if field.status == MISSING or field.value in (None, ""):
         return False
+    if "|us-supplier|" in (getattr(field, "evidence", "") or ""):
+        return False  # US dollars implied by the supplier's US address (reader ``_us_supplier``): not printed
     readers = {s for s in field.sources if not s.startswith("other:")} - {"ai"}
     return bool(readers) or bool(field.boxes)

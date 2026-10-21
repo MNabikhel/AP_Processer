@@ -309,8 +309,13 @@ def test_dollars_from_a_us_supplier_are_us_dollars_never_more_than_checked(tmp_p
     us = [(40, 40, "Bayside Media LLC", 14), (40, 56, "PO Box 105353"), (40, 70, "Atlanta, GA 30348"),
           (400, 40, "Invoice # 1001"), (380, 500, "Subtotal"), (480, 500, "$1,000.00"), (380, 530, "Total"),
           (480, 530, "$1,000.00")]  # fmt: skip
-    f = _read(_pdf(tmp_path, us))
+    capture = analyze(_pdf(tmp_path, us), ocr=False, today=TODAY)
+    f = capture.fields
     assert f["currency"].value == "USD" and f["currency"].status not in (VERIFIED, "likely")
+    from ap_coder.capture.bridge import review_issues
+
+    # Not printed: the review still says the currency was assumed.
+    assert "CURRENCY_NOT_FOUND" in [code for _, code, _ in review_issues(capture)]
     # A US supplier billing a Canadian customer named under "Bill To": still US dollars.
     customer = [(40, 150, "Bill To:"), (40, 163, "Northshore Ltd."), (40, 176, "Halifax, NS B3H 1A1")]
     f = _read(_pdf(tmp_path, [*us, *customer], name="ca_customer.pdf"))

@@ -3876,7 +3876,8 @@ invoices to agencies, and a few templates. Each fix has a small generated fixtur
 - **Lesson:** Don't wait for a number's full form when its label says what it is.
 
 #### B-405 · A US supplier's dollars were left with no currency (coded CAD) · medium
-- **Where:** `ap_coder/capture/reader.py` (new `_us_supplier`, `_PROVINCE_NAME`, `_read_fields`, `_US_ADDRESS`)
+- **Where:** `ap_coder/capture/reader.py` (new `_us_supplier`, `_PROVINCE_NAME`, `_read_fields`, `_US_ADDRESS`);
+  `ap_coder/capture/bridge.py` (`currency_read`)
 - **Symptom:** 16 US invoices that print only "$" (TV stations, utilities, templates) had no currency read; the
   pipeline codes a missing currency as CAD.
 - **Cause:** only a printed code, sign or statement ("USD", "US$", "All amounts in US dollars") gave a currency. "DC"
@@ -3885,8 +3886,12 @@ invoices to agencies, and a few templates. Each fix has a small generated fixtur
 - **Reproduced:** yes (missing)
 - **Fix:** amounts in "$" on a document whose first page prints a US address outside the customer's block and
   nothing Canadian outside it (no GST/HST/PST/QST word or number anywhere, no postal code or province) are US dollars,
-  marked `UNMEASURED`: *check* (a Canadian supplier's "$" is Canadian dollars, and the page does not say it).
-- **Test:** `tests/test_en_pdf_sweep4.py::test_dollars_from_a_us_supplier_are_us_dollars_never_more_than_checked`
+  marked `UNMEASURED`: *check* (a Canadian supplier's "$" is Canadian dollars, and the page does not say it). The
+  offline coder already assumed US dollars for such a supplier; the review keeps its "Currency not printed" warning
+  (`capture.bridge.currency_read` does not count this reading as printed).
+- **Test:** `tests/test_en_pdf_sweep4.py::test_dollars_from_a_us_supplier_are_us_dollars_never_more_than_checked`,
+  `tests/test_transcript.py::test_offline_coding_assumes_a_currency_by_the_suppliers_address` (now expects the
+  reading at *check*)
 - **Lesson:** Don't default a currency the page implies: say what it implies and let a person confirm it.
 
 #### B-406 · Text drawn sideways on a portrait page was read word by word down the page · high
