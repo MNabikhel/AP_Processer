@@ -151,3 +151,134 @@ def test_month_end_groups_an_account_in_two_currencies_on_one_row(tmp_path):
 def test_month_end_with_nothing_imported_says_so(tmp_path):
     page = client_for(Store(tmp_path / "ap.db")).get("/month-end").text
     assert "already in the ERP" not in page and "No invoices or purchase orders yet" in page
+
+
+# --- B-464: plain English where the reviewer reads ------------------------------------------------------------------
+
+
+def test_the_checks_say_what_is_missing_in_plain_words_and_keep_their_codes_for_a_hover(tmp_path):
+    from ap_coder.coding.validation import validate_coding
+    from ap_coder.core import ui
+
+    store = Store(tmp_path / "ap.db")
+    load_sample_setup(store)
+    doc = _invoice([{"description": "Audit", "amount": 50.0, "predicted_gl_code": "9999",
+                     "reasoning_justification": "x"}], vendor_name="", invoice_number="")  # fmt: skip
+    doc["subtotal"] = 60.0
+    messages = {i.code: i.message for i in validate_coding(InvoiceCoding.model_validate(doc), store.reference_data())
+                .issues}  # fmt: skip
+    assert messages["MISSING_VENDOR"] == "No vendor name: type it from the page"
+    assert messages["MISSING_INVOICE_NUMBER"] == "No invoice number: type it from the page"
+    assert messages["GL_UNKNOWN"] == "GL account 9999 is not in your GL accounts: pick one from the list"
+    assert messages["SUBTOTAL_MISMATCH"] == "the lines add up to 50.00 but the subtotal is 60.00"
+    assert not [m for m in messages.values() if "_" in m or "'" in m]  # no code names, no quoted codes
+    shown = ui.check("info", "Good to know", "First invoice from this vendor", "VENDOR_NEW")
+    assert "title='Check VENDOR_NEW'" in shown and ">VENDOR_NEW<" not in shown
+
+
+def test_a_lesson_on_a_blank_account_reads_left_blank_not_unassigned(tmp_path):
+    from ap_coder.ai.lessons import sentence
+    from ap_coder.core.audit import _approved_text
+
+    text = sentence({"vendor_name": "Acme", "field": "invoice_number", "value": "A-1", "proposed": UNASSIGNED})
+    assert UNASSIGNED not in text
+    change = _approved_text({"changes": [{"what": "line 1 GL", "before": UNASSIGNED, "after": "6110"}]})
+    assert change == "1 change(s): line 1 GL: blank → 6110"
+
+
+# --- B-465: what keeps Approve closed is grouped first ----------------------------------------------------------------
+
+
+def test_what_keeps_approve_closed_is_its_own_group_before_the_errors_and_warnings():
+    from ap_coder.coding.validation import ERROR, WARNING, Issue
+    from ap_coder.web.invoice_view import checks_details, checks_summary
+
+    errors = [Issue(ERROR, "TOTAL_MISMATCH", "subtotal + tax = 10.00 but the total is 12.00")]
+    warnings = [Issue(WARNING, "GL_UNASSIGNED", "no GL account yet: pick one", 1),
+                Issue(WARNING, "INVOICE_DATE_NOT_FOUND", "no invoice date found: check it")]  # fmt: skip
+    report = SimpleNamespace(requires_review=True, adjusted_confidence=0.5, review_threshold=0.85,
+                             issues=errors + warnings, checks={})  # fmt: skip
+    c = checks_summary(report, errors, warnings)
+    assert [g["title"] for g in c["groups"]] == ["Before you can approve (1)", "Must be fixed (1)",
+                                                 "Check before approving (1)"]  # fmt: skip
+    assert c["groups"][0]["items"][0]["goto"] == {"box": "line_gl", "line": 1} and "G" in c["sub"]
+    titles = {d["code"]: d["title"] for d in checks_details(report)}
+    assert titles["GL_UNASSIGNED"] == "Before you can approve" and titles["INVOICE_DATE_NOT_FOUND"] == (
+        "Check before approving"
+    )
+
+
+# --- B-468: the demo before the first real import ---------------------------------------------------------------------
+
+
+def test_the_import_page_asks_to_remove_the_demo_before_the_first_real_invoice(tmp_path):
+    from ap_coder.ops.demo import load_demo
+
+    store = Store(tmp_path / "private" / "ap.db")
+    load_demo(store, Settings())
+    client = client_for(store)
+    assert "Remove the demo invoices before you import your own" in client.get("/process").text
+    line = {"description": "Audit", "amount": 50.0, "predicted_gl_code": "6100", "reasoning_justification": "x"}
+    store.add_invoice(tmp_path / "real.pdf", _invoice([line]), {"requires_review": True})
+    assert "Remove the demo invoices before you import your own" not in client.get("/process").text
+
+
+# --- B-469: long overdue, and an invoice dated more than a year back --------------------------------------------------
+
+
+def test_a_long_overdue_bill_says_since_when_and_an_old_invoice_date_is_flagged():
+    from ap_coder.coding.terms import describe, payment, payment_findings
+
+    old = {"invoice_date": "2012-11-01", "due_date": "2012-12-01", "grand_total": 100.0}
+    today = dt.date(2026, 10, 21)
+    assert describe(payment(old), today) == "Overdue since Dec 2012"
+    found = {code: (severity, message) for severity, code, message in payment_findings(old, today=today)}
+    assert found["PAYMENT_OVERDUE"][1] == "due 2012-12-01 (overdue since Dec 2012): late fees may apply"
+    assert found["OLD_INVOICE_DATE"][0] == "warning"
+    from ap_coder.web.pages.review import due_note
+
+    assert due_note(old, 30) == ("Overdue since Dec 2012", "err")  # the queue's row too
+    recent = {"invoice_date": "2026-10-01", "due_date": "2026-10-11", "grand_total": 100.0}
+    assert describe(payment(recent), today) == "Overdue by 10 days (Oct 11)"
+    assert "OLD_INVOICE_DATE" not in {c for _, c, _ in payment_findings(recent, today=today)}
+
+
+# --- B-470: the Excel export's dates are dates ------------------------------------------------------------------------
+
+
+def test_the_excel_export_writes_real_dates():
+    import io
+
+    from openpyxl import load_workbook
+
+    from ap_coder.erp.exports import build_xlsx
+
+    final = {**_invoice([{"description": "Audit", "amount": 50.0, "predicted_gl_code": "6100",
+                          "reasoning_justification": "x"}]), "due_date": "2026-10-10"}  # fmt: skip
+    inv = {"id": 1, "final_output": final, "reviewer": "Pat", "reviewed_at": "2026-10-02T14:05:09",
+           "file_name": "a.pdf"}  # fmt: skip
+    wb = load_workbook(io.BytesIO(build_xlsx([inv])))
+    head = [c.value for c in wb["Invoices"][1]]
+    row = {h: c for h, c in zip(head, wb["Invoices"][2], strict=True)}
+    assert row["Invoice date"].value == dt.datetime(2026, 9, 10) and row["Invoice date"].number_format == "yyyy-mm-dd"
+    assert row["Due date"].value == dt.datetime(2026, 10, 10)
+    assert row["Approved at"].value == dt.datetime(2026, 10, 2, 14, 5, 9)
+    lines = wb["GL lines"]
+    head = [c.value for c in lines[1]]
+    assert lines[2][head.index("Invoice date")].value == dt.datetime(2026, 9, 10)
+
+
+# --- B-471: the queue never shows the file's name as the vendor -------------------------------------------------------
+
+
+def test_the_queue_says_no_vendor_name_and_marks_a_name_to_check(tmp_path):
+    store = Store(tmp_path / "ap.db")
+    load_sample_setup(store)
+    line = {"description": "Audit", "amount": 50.0, "predicted_gl_code": "6100", "reasoning_justification": "x"}
+    store.add_invoice(tmp_path / "scan_0042.pdf", _invoice([line], vendor_name=""), {"requires_review": True})
+    unsure = store.add_invoice(tmp_path / "b.pdf", _invoice([line], vendor_name="Inc."), {"requires_review": True})
+    store.save_capture(unsure, {"fields": {"vendor_name": {"field": "vendor_name", "value": "Inc.", "status": "check",
+                                                            "confidence": 0.3}}})  # fmt: skip
+    page = client_for(store).get("/review").text
+    assert "No vendor name" in page and '<div class="name" title="scan_0042.pdf' not in page
+    assert '<span class="rq-unsure">Inc.?</span>' in page and "Vendor name: check it" in page

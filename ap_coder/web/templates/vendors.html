@@ -54,7 +54,8 @@
       <tbody>
         {% for v in shown %}
         <tr>
-          <td class="w"><a class="vendor-link" href="/vendors?{{ list_query }}&open={{ v.vendor_key | urlencode }}#vendor">{{ ui.avatar(v.vendor_name or "", "sm") }}<b>{{ v.vendor_name }}</b></a></td>
+          <td class="w"><a class="vendor-link" href="/vendors?{{ list_query }}&open={{ v.vendor_key | urlencode }}#vendor">{{ ui.avatar(v.vendor_name or "", "sm") }}<b>{{ v.vendor_name }}</b></a>
+            {%- if not v.approved and not v.has_record %} {{ ui.pill("Not approved yet", "gray") }}{% endif %}</td>
           <td class="r">{{ v.approved }} / {{ v.invoices }}</td>
           <td class="r">{{ spend(v) }}</td>
           <td>{{ v.last_invoice or "—" }}</td>

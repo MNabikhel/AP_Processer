@@ -298,6 +298,10 @@ def _approved_text(d: dict[str, Any]) -> str:
     if not changes:
         bulk = " (bulk approval)" if d.get("bulk") else ""
         return f"{d.get('lines', 0)} line(s), all as the AI suggested{bulk}"
-    shown = "; ".join(f"{c['what']}: {c['before']} → {c['after']}" for c in changes[:4])
+
+    def plain(value: Any) -> Any:  # the code's word for a blank account is not the reviewer's (B-464)
+        return "blank" if value in ("UNASSIGNED", "", None) else value
+
+    shown = "; ".join(f"{c['what']}: {plain(c['before'])} → {plain(c['after'])}" for c in changes[:4])
     more = f" (+{len(changes) - 4} more)" if len(changes) > 4 else ""
     return f"{len(changes)} change(s): {shown}{more}"

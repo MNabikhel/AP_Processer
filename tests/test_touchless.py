@@ -545,7 +545,7 @@ def test_taught_message_says_what_was_learned(tmp_path, ground_truth):
         store.record_outcomes(key, 100 + i, _outcomes(), at=_at(i, "2099-01-02"))
     second = store.add_invoice(tmp_path / "b.pdf", ground_truth, {"requires_review": False})
     message = taught_message(store, learn_from_approval(store, second, ground_truth, actor="Ann"))
-    assert message.startswith(f"Every header field was read right. {name}: 16 invoices reviewed, about ")
+    assert message.startswith(f"You changed no header field. {name}: 16 invoices reviewed, about ")
     assert message.endswith("more invoices approved without a correction before this vendor can skip review.")
     assert taught_message(store, {"supplier": ""}) == ""
 

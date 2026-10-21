@@ -196,6 +196,12 @@ CHECKS: dict[str, CheckHelp] = {
         "The due date has passed. Information only: the invoice still needs the usual checks.",
         "Prioritise it, and tell whoever runs payments if late fees or a supplier hold are a risk.",
     ),
+    "OLD_INVOICE_DATE": CheckHelp(
+        PAYMENT, "Dated more than a year ago",
+        "The invoice date is more than a year before today: the date may have been read wrong, or the bill is very "
+        "late. Month-end does not accrue it.",
+        "Check the date against the document; if it is right, ask why the bill comes so late before approving it.",
+    ),
     "DUE_BEFORE_INVOICE": CheckHelp(
         PAYMENT, "Due before it was issued",
         "The due date is earlier than the invoice date, so one of the two dates was probably misread.",

@@ -696,24 +696,34 @@ def confidence_pct(value: float, threshold: float) -> str:
     return pct(value, threshold)
 
 
+# The groups of the checks, in order: what keeps Approve closed (a GL account or cost center to pick: G goes to the
+# first), the errors (to fix, or to approve anyway), and the warnings to check (B-465).
+BLOCK, FIX, LOOK = "block", "err", "warn"
+GROUP_TITLES = {BLOCK: "Before you can approve", FIX: "Must be fixed", LOOK: "Check before approving"}
+
+
 def checks_summary(report: Any, errors: list[Any], warnings: list[Any]) -> dict[str, Any]:
-    """All the checks as one status: passed, or what needs attention (one line each; details below)."""
+    """All the checks as one status: passed, or what needs attention (one line each; details below), grouped:
+    before you can approve (what keeps Approve closed), must be fixed, check before approving."""
     low = report.requires_review and not errors
-    look = sum(1 for bad, _ in grouped(warnings) if not bad) + (1 if low else 0)
-    items = [{"bad": bad, "text": text,
-              "goto": {"box": GOTO_BOX[code], "line": lines[0]} if code in GOTO_BOX and lines else None}
-             for bad, text, code, lines in grouped_issues(errors + warnings)]  # fmt: skip
+    items: list[dict[str, Any]] = []
+    for bad, text, code, lines in grouped_issues(errors + warnings):
+        kind = BLOCK if code in GOTO_BOX else FIX if bad else LOOK
+        goto = {"box": GOTO_BOX[code], "line": lines[0]} if code in GOTO_BOX and lines else None
+        items.append({"bad": kind != LOOK, "kind": kind, "text": text, "goto": goto})
     if low:
-        items.append({"bad": False, "text": f"Confidence {confidence_pct(report.adjusted_confidence, report.review_threshold)} "  # noqa: E501
+        items.append({"bad": False, "kind": LOOK, "text": f"Confidence {confidence_pct(report.adjusted_confidence, report.review_threshold)} "  # noqa: E501
                       f"is below the {report.review_threshold:.0%} threshold."})  # fmt: skip
-    if errors:
-        title = f"{len(grouped(errors))} must be fixed" + (f" · {look} to look at" if look else "")
-        return {"tone": "err", "icon": "error", "title": title, "items": items, "sub": ""}
-    if look:
-        return {"tone": "warn", "icon": "visibility", "title": f"{look} {'needs' if look == 1 else 'need'} attention",
-                "items": items, "sub": ""}  # fmt: skip
-    return {"tone": "ok", "icon": "check_circle", "title": "All checks passed", "items": [],
-            "sub": "Totals reconcile, taxes verified, all codes valid."}  # fmt: skip
+    if not items:
+        return {"tone": "ok", "icon": "check_circle", "title": "All checks passed", "items": [], "groups": [],
+                "sub": "Totals reconcile, taxes verified, all codes valid."}  # fmt: skip
+    counts = {k: sum(1 for i in items if i["kind"] == k) for k in GROUP_TITLES}
+    groups = [{"kind": k, "title": f"{GROUP_TITLES[k]} ({counts[k]})",
+               "items": [i for i in items if i["kind"] == k]} for k in GROUP_TITLES if counts[k]]  # fmt: skip
+    title = " · ".join(g["title"] for g in groups)
+    tone, icon = ("err", "error") if counts[BLOCK] or counts[FIX] else ("warn", "visibility")
+    return {"tone": tone, "icon": icon, "title": title, "items": [i for g in groups for i in g["items"]],
+            "groups": groups, "sub": "Press G to go to the first one." if counts[BLOCK] else ""}  # fmt: skip
 
 
 def checks_details(report: Any) -> list[dict[str, str]]:
@@ -723,8 +733,8 @@ def checks_details(report: Any) -> list[dict[str, str]]:
         where = f"Line {issue.line_number}: " if issue.line_number else ""
         about = help_for(issue.code)
         hint = about.action if about and issue.severity != "info" else ""
-        kind, title = {"error": ("error", "Must fix"), "info": ("info", "Good to know")}.get(
-            issue.severity, ("warning", "Worth a look")
+        kind, title = {"error": ("error", "Must be fixed"), "info": ("info", "Good to know")}.get(
+            issue.severity, ("warning", GROUP_TITLES[BLOCK] if issue.code in GOTO_BOX else GROUP_TITLES[LOOK])
         )
         items.append({"kind": kind, "title": title, "message": where + readable(issue.message, cap=not where),
                       "code": issue.code,

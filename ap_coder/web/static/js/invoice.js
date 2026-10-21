@@ -110,6 +110,16 @@ async function flush() {
   else if (running) await running;
 }
 
+/* A line's description wraps in its box (a textarea) but is one line: Enter adds no line break (B-467). */
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.ctrlKey && !e.metaKey && e.target.matches?.("textarea[data-one-line]")) e.preventDefault();
+});
+document.addEventListener("input", (e) => {
+  if (e.target.matches?.("textarea[data-one-line]") && /[\r\n]/.test(e.target.value)) {
+    e.target.value = e.target.value.replace(/\s*[\r\n]+\s*/g, " ");
+  }
+});
+
 if (form) {
   document.addEventListener("input", (e) => {
     if (e.target.form === form && e.target.type !== "checkbox" && e.target.type !== "radio") soon();

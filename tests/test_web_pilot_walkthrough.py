@@ -450,8 +450,10 @@ def test_with_lm_studio_off_the_review_screen_says_it_once(client, store):
     laptop the invoice's picture started at the bottom of the screen."""
     inv = store.list_invoices(REVIEW)[0]
     page = client.get(f"/review/{inv['id']}").text
-    banner = html.unescape(page.split('<div class="banner', 1)[1].split("</div>", 1)[0])
-    assert "LM Studio isn't running" in banner and "a person approves it" in banner
+    # B-467: no banner on the review screen (the queue has it), one short note in its top row
+    assert '<div class="banner' not in page
+    note = html.unescape(page.split('class="apc-pill warn rvw-lm"', 1)[1].split("</span>", 2)[1])
+    assert "LM Studio isn't running" in note and "a person approves it" in note
     assert "OvisOCR2 isn't running: see Settings" not in page
     assert "checks this invoice against its pages when the chat model is free" not in page
     assert "OvisOCR2 isn't running" not in client.get(f"/review/{inv['id']}/reader").json()["html"]
@@ -486,6 +488,31 @@ def test_in_a_browser_with_lm_studio_off_the_invoice_shows_above_the_fold(browse
     top = page.locator(".iv-sheet").first.bounding_box()["y"]
     bar = page.locator(".inv-actionbar").bounding_box()["y"]
     assert bar - top >= 150, (top, bar)  # a good part of the page shows above the approve bar
+    assert errors == []
+
+
+def test_in_a_browser_at_1366_the_page_and_the_line_grid_show_together(browser, store):
+    """B-467: at 1366 x 768 only 150-200 px of the invoice's page showed, the line grid started about 1,200 px down
+    and its Qty and Unit price scrolled sideways."""
+    page, errors = _review(browser, store)
+    sheet = page.locator(".iv-sheet").first.bounding_box()
+    bar = page.locator(".inv-actionbar").bounding_box()["y"]
+    assert bar - sheet["y"] >= 300, (sheet, bar)
+    grid = page.locator("#lines").bounding_box()
+    assert grid["y"] < 768, grid  # beside the page, under the checks
+    wrap = page.evaluate(
+        "(() => { const w = document.querySelector('#lines').closest('.table-wrap');"
+        " return [w.scrollWidth, w.clientWidth, document.documentElement.scrollWidth]; })()"
+    )
+    assert wrap[0] <= wrap[1] and wrap[2] <= 1366, wrap  # nothing scrolls sideways
+    for name in ("line_quantity", "line_unit_price", "line_amount"):
+        box = page.locator(f"[name={name}] >> nth=0").bounding_box()
+        assert box["x"] + box["width"] <= grid["x"] + grid["width"] + 1, (name, box, grid)
+    page.mouse.move(900, 400)
+    page.mouse.wheel(0, 1200)
+    page.wait_for_timeout(300)
+    assert page.locator(".inv-doc").bounding_box()["y"] >= 0  # the page stays in view (sticky)
+    assert not page.locator(".banner").count()  # LM Studio's banner is on the queue, not here
     assert errors == []
 
 

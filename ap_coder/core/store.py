@@ -3367,7 +3367,21 @@ class Store:
                 r[field] = master.get(field) or ""
             r["in_master"] = master.get("in_master") == 1
             r["added_here"] = master.get("in_master") == 2
+            r["has_record"] = bool(master)  # in the vendor list, added here or set up by AP (on hold, notes)
         return sorted(rows, key=lambda r: -r["spend_in_cad"])
+
+    def vendor_name_checks(self, ids: list[int]) -> dict[int, str]:
+        """{invoice id: how sure the capture is of its vendor name} ("verified", "likely", "check", "missing"), in
+        one query; an invoice with no capture is left out (the review queue's "check" mark, B-471)."""
+        if not ids:
+            return {}
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT invoice_id, json_extract(capture_json, '$.fields.vendor_name.status') FROM invoice_capture "
+                f"WHERE {_in_list('invoice_id')}",
+                (json.dumps([int(i) for i in ids]),),
+            ).fetchall()
+        return {int(r[0]): str(r[1] or "") for r in rows}
 
     def vendor_gl_usage(self, key: str) -> list[dict[str, Any]]:
         """GL accounts reviewers used for this vendor's lines, most used first."""

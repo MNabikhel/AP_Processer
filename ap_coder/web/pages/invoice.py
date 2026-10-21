@@ -425,8 +425,8 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
                                store.vendor_terms(vendor_key(draft.header.get("vendor_name") or ""))).due  # fmt: skip
     except (TypeError, ValueError):
         computed = None
-    if lm_studio_off(status):
-        context["banner"] = LM_STUDIO_OFF
+    if lm_studio_off(status):  # one short note in the top row: the queue's banner says the rest (B-467)
+        context["lm_off"], context["banner"] = LM_STUDIO_OFF, ""
     return render(
         request, "invoice.html", "review", mode="review", **context,
         draft=draft, kept=kept, live=analysis.live, grid=view.grid(reference, draft), sure=sure,

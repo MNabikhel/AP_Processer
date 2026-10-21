@@ -212,7 +212,7 @@
     <thead><tr><th>Vendor</th><th>What</th><th>AP's value</th><th class="r">Corrected</th><th class="r">Since the reason</th><th class="r">Right since</th><th>AP's reason</th><th></th></tr></thead>
     <tbody>{% for l in lessons %}
       <tr{% if l.retired %} class="muted"{% endif %}><td>{{ l.vendor_name }} <span class="muted small">{{ l.kind }}</span></td>
-        <td>{{ l.what }}</td><td>{{ l.value }}{% if l.proposed %}<div class="muted small">read as {{ l.proposed }}</div>{% endif %}</td>
+        <td>{{ l.what }}</td><td>{{ l.value }}{% if l.proposed == "UNASSIGNED" %}<div class="muted small">left blank</div>{% elif l.proposed %}<div class="muted small">read as {{ l.proposed }}</div>{% endif %}</td>
         <td class="r">{{ l.corrected }}</td><td class="r">{{ l.since_why }}</td><td class="r">{{ l.confirmed }}</td>
         <td class="w"><form method="post" action="/learning/lessons/explain" class="row" data-busy="Saving…">
           <input type="hidden" name="situation" value="{{ l.situation }}">

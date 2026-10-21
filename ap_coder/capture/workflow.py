@@ -378,7 +378,7 @@ def taught_message(store: Any, learned: dict[str, Any]) -> str:
     if corrected:
         head = f"Learned from your {plural(len(corrected), 'correction')} ({', '.join(corrected)})."
     elif learned.get("fields"):
-        head = "Every header field was read right."
+        head = "You changed no header field."  # what is known: not that each was read right (B-472)
     else:
         head = "Learned this vendor's layout." if learned.get("template") else ""
     try:

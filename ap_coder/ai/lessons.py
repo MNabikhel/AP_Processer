@@ -21,6 +21,7 @@ import re
 from typing import Any
 
 from ..core.memory import pair_lines, vendor_key
+from ..core.reference_data import UNASSIGNED
 
 SETTING = "why_after"  # corrections of one situation since its last reason before the "why" question
 DEFAULT_WHY_AFTER = 3
@@ -145,7 +146,7 @@ def sentence(lesson: dict[str, Any], gl_names: dict[str, str] | None = None) -> 
     else:
         word = FIELD_WORDS.get(lesson.get("field") or "", lesson.get("field") or "")
         text = f"{vendor} {kind}s: AP corrects the {word}"
-        if lesson.get("proposed"):
+        if lesson.get("proposed") and lesson["proposed"] != UNASSIGNED:
             text += f" (read as “{lesson['proposed']}”, AP chose “{value}”)"
         elif value:
             text += f" (AP chose “{value}”)"

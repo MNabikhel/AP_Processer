@@ -307,12 +307,23 @@ def payment(coding: dict[str, Any], default_days: int = DEFAULT_TERMS_DAYS, vend
     return Payment(due, source, terms, discount_by, amount)
 
 
+LONG_OVERDUE_DAYS = 60  # past this, "Overdue since Dec 2012", not "Overdue by 5042 days" (B-469)
+OLD_INVOICE_DAYS = 365  # an invoice dated more than this before today is flagged: a misread date, or a very late bill
+
+
+def overdue_since(due: dt.date) -> str:
+    """'Dec 2012': the month a long-overdue bill fell due."""
+    return f"{due:%b %Y}"
+
+
 def describe(p: Payment, today: dt.date | None = None) -> str:
-    """'Due in 5 days (Oct 14)', 'Overdue by 3 days', 'Due today'..."""
+    """'Due in 5 days (Oct 14)', 'Overdue by 3 days (Oct 10)', 'Overdue since Dec 2012', 'Due today'..."""
     left = p.days_left(today)
     if left is None:
         return "No due date"
     when = f"{p.due:%b} {p.due.day}"
+    if left < -LONG_OVERDUE_DAYS:
+        return f"Overdue since {overdue_since(p.due)}"
     if left < 0:
         return f"Overdue by {-left} day{'s' if left != -1 else ''} ({when})"
     if left == 0:
@@ -339,5 +350,9 @@ def payment_findings(
         )  # fmt: skip
     left = p.days_left(today)
     if left is not None and left < 0 and float(coding.get("grand_total") or 0) > 0:
-        findings.append((INFO, "PAYMENT_OVERDUE", f"due {p.due} ({-left} days ago): late fees may apply"))
+        ago = f"overdue since {overdue_since(p.due)}" if left < -LONG_OVERDUE_DAYS else f"{-left} days ago"
+        findings.append((INFO, "PAYMENT_OVERDUE", f"due {p.due} ({ago}): late fees may apply"))
+    if invoice_date and (today - invoice_date).days > OLD_INVOICE_DAYS:
+        findings.append((WARNING, "OLD_INVOICE_DATE",
+                         f"dated {invoice_date}, more than a year ago: check the date on the page"))  # fmt: skip
     return findings

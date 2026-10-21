@@ -92,5 +92,5 @@ def test_approving_says_what_the_vendor_learned(client, store):
     found = re.search(r"Approved [^<]*coded as suggested\.", html.unescape(page))
     assert found, page
     text = found.group(0)
-    assert "Every header field was read right." in text and ": 1 invoice reviewed, about " in text
+    assert "You changed no header field." in text and ": 1 invoice reviewed, about " in text
     assert "more invoices approved without a correction before this vendor can skip review." in text

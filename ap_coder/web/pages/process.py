@@ -422,8 +422,12 @@ def process_page(request: Request) -> HTMLResponse:
     reasons = attention(store, reference_or_none(store), waiting) if waiting else {}
     recent = [{**i, "needs_attention": i["id"] in reasons} for i in recent]  # its pill says what the queue says
     coming = next_step(steps)
+    demo_count = store.demo_count()
     return render(
         request, "process.html", "process",
+        # The demo still loaded and none of your own invoices yet: asked to remove it first, so its reviewer, lessons
+        # and vendors don't mix into your numbers (B-468).
+        demo_first=bool(demo_count) and demo_count >= len(invoices),
         steps=steps,
         step_links=STEP_LINKS,
         steps_done=steps_done,
@@ -441,7 +445,7 @@ def process_page(request: Request) -> HTMLResponse:
         accept_text=", ".join(e.lstrip(".").upper() for e in ACCEPT),
         job=jobs(request).get(JOB).snapshot(),
         demo_available=demo_available(),
-        demo_count=store.demo_count(),
+        demo_count=demo_count,
         where="/process",
     )  # fmt: skip
 

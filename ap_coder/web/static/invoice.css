@@ -3,6 +3,11 @@
 /* ---- Top: breadcrumb, then Queue · Reviewing 3 of 9 · Shortcuts · Previous · Next ---------------------------- */
 /* Above the page below it: the Shortcuts list opens over the Document card (sticky, z-index 2; B-425) */
 .inv-top {display: flex; flex-direction: column; gap: 8px; position: relative; z-index: 25;}
+/* B-467: on a 1366 x 768 laptop the page of the invoice shows: one row at the top, less room around it. */
+.main:has(> .inv-top) {padding-top: 14px;}
+.main:has(> .inv-top) > * + * {margin-top: 12px;}
+.rvw-lm {font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; max-width: 340px;}
+.rvw-lm .ms {font-size: 14px;}
 .rvw-nav {display: flex; align-items: center; gap: 8px; flex-wrap: wrap;}
 .rvw-nav .spacer {flex: 1;}
 .rvw-pos {display: block; font-size: 13px; color: var(--rv-muted); white-space: nowrap;
@@ -25,7 +30,7 @@
 .rvw-ok .ms {font-size: 15px;}
 
 /* ---- The invoice at a glance ----------------------------------------------------------------------------- */
-.inv-summary {padding: 14px 20px;}
+.inv-summary {padding: 10px 18px;}
 .rvw-head {display: flex; align-items: center; gap: 24px; min-width: 0;}
 .rvw-head-main {flex: 1; min-width: 0;}
 .rvw-head-title {display: flex; align-items: center; gap: 10px; flex-wrap: wrap;}
@@ -74,8 +79,12 @@
 .inv-more-body .apc-check {padding: 8px 10px; font-size: 12.5px;}
 
 /* ---- Two columns: the document (sticky) and the checks / details / notes ------------------------------------ */
-.inv-split {display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 16px; align-items: start;}
-.inv-split > .inv-doc {position: sticky; top: 12px; z-index: 2;}
+.inv-split {display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: start;}
+/* The page stays in view while the checks, lines and details beside it scroll (B-467). */
+.inv-split > .inv-doc {position: sticky; top: 8px; z-index: 2;}
+.inv-split > .col > * + * {margin-top: 12px;}
+.inv-split .card {padding: 14px 16px;}
+.inv-split .card.flush {padding: 0;}
 @media (max-width: 1100px) {.inv-split {grid-template-columns: minmax(0, 1fr);} .inv-split > .inv-doc {position: static;}}
 
 .inv-doc > * + * {margin-top: 0;}
@@ -108,6 +117,12 @@
   place-items: center; font-size: 9px; font-weight: 700; color: #fff;}
 .rvw-status li.err .m {background: var(--rv-danger);}
 .rvw-status li.warn .m {background: var(--rv-warning);}
+.rvw-status li.block .m {background: var(--rv-danger);}
+/* B-465: the checks in groups, each under its heading; a group's colour is its own, whatever the block's tone. */
+.rvw-status-group + .rvw-status-group {margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--lg-hairline);}
+.rvw-status-group.block .rvw-status-title, .rvw-status-group.err .rvw-status-title {color: var(--rv-danger);}
+.rvw-status-group.warn .rvw-status-title {color: var(--rv-warning);}
+.rvw-status-key {margin-left: auto; font-weight: 400; font-size: 12px; color: var(--rv-muted);}
 .rvw-status li .t {display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;}
 /* a line's missing account or cost center: a link-like button to its box (B-443) */
 .rvw-goto {border: 0; padding: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer;
@@ -172,6 +187,31 @@
 .inv-taxes input:checked + span {color: var(--lg-text); border: 1px solid var(--lg-accent-line); background: var(--lg-accent-weak);}
 .inv-taxes input:focus-visible + span {outline: 2px solid var(--lg-accent); outline-offset: 1px;}
 .inv-lines > .row {margin-top: 10px;}
+/* ---- The line grid beside the document: each line two rows, nothing scrolls sideways (B-467) ----
+   Row 1: # · description (it wraps) · taxes · delete; row 2: GL account · cost center · qty · unit price · amount. */
+.inv-lines-grid {width: 100%;}
+.inv-lines-grid thead {position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0);}
+.inv-lines-grid tbody {display: block;}
+.inv-lines-grid tr[data-row] {display: grid; grid-template-columns: 44px minmax(0, 1fr) 56px 90px 96px 28px;
+  grid-template-areas: "no desc desc tax tax del" "gl gl qty price amt amt"; gap: 4px 6px; padding: 8px 0;
+  border-bottom: 1px solid var(--lg-hairline);}
+.inv-lines-grid:has(.c-cc) tr[data-row] {grid-template-areas: "no desc desc desc tax tax del" "gl gl cc qty price amt amt";
+  grid-template-columns: 44px minmax(0, 1fr) minmax(0, .8fr) 52px 84px 92px 28px;}
+.inv-lines-grid td {display: block; padding: 0; min-width: 0 !important; width: auto !important; border: 0;}
+.inv-lines-grid .c-no {grid-area: no;} .inv-lines-grid .c-desc {grid-area: desc;} .inv-lines-grid .c-tax {grid-area: tax; align-self: start;}
+.inv-lines-grid .c-del {grid-area: del;} .inv-lines-grid .c-gl {grid-area: gl;} .inv-lines-grid .c-cc {grid-area: cc;}
+.inv-lines-grid .c-qty {grid-area: qty;} .inv-lines-grid .c-price {grid-area: price;} .inv-lines-grid .c-amt {grid-area: amt;}
+.inv-lines-grid td input, .inv-lines-grid td select {min-width: 0 !important;}
+.inv-lines-grid td[data-label]::before {content: attr(data-label); display: block; font-size: 10.5px; line-height: 14px;
+  color: var(--lg-subtle); font-weight: 500;}
+.inv-lines-grid .c-tax::before {display: none !important;}
+.inv-lines-grid .c-tax .inv-taxes {justify-content: flex-end; flex-wrap: wrap;}
+.inv-lines-grid textarea {width: 100%; min-height: 30px; height: auto; resize: vertical; font: inherit; font-size: 13px;
+  line-height: 18px; padding: 5px 8px; border: 1px solid var(--lg-border); border-radius: var(--lg-r-sm, 6px);
+  background: var(--lg-surface); color: var(--lg-text); field-sizing: content; max-height: 80px;}
+.inv-lines-grid textarea:focus {outline: none; border-color: var(--lg-accent); box-shadow: var(--lg-focus);}
+.inv-lines-grid tr.inv-row-hot {background: color-mix(in srgb, var(--lg-accent) 10%, transparent);}
+.inv-lines-grid tr.inv-row-hot td {background: none;}
 /* An account no approval backs (the chat model's own pick): marked until the reviewer picks it (B-463). */
 .inv-grid-table .is-guess select {border-color: var(--lg-warning); background: var(--lg-warning-weak);}
 .inv-guess {display: flex; align-items: center; gap: 3px; margin-top: 2px; font-size: 11px; line-height: 14px; color: var(--lg-warning);}

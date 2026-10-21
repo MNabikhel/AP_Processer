@@ -22,7 +22,7 @@ from starlette.concurrency import run_in_threadpool
 from ap_coder.coding.bulk import bulk_approve, sort_for_bulk
 from ap_coder.coding.review import codes_to_pick, uses_cost_centers
 from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCE_NAMES, province_label, stored_supply
-from ap_coder.coding.terms import DUE_SOON_DAYS, payment
+from ap_coder.coding.terms import DUE_SOON_DAYS, LONG_OVERDUE_DAYS, overdue_since, payment
 from ap_coder.core import ui
 from ap_coder.core.memory import vendor_key
 from ap_coder.core.reference_data import ReferenceData
@@ -122,6 +122,8 @@ def due_note(ai: dict[str, Any], default_days: int, vendor_terms: str = "") -> t
     left = p.days_left()
     if left is None:
         return "", ""
+    if left < -LONG_OVERDUE_DAYS:  # "Overdue since Dec 2012", not "Overdue 5042 days" (B-469)
+        return f"Overdue since {overdue_since(p.due)}", "err"
     if left < 0:
         return f"Overdue {-left} day{'s' if left != -1 else ''}", "err"
     if left <= DUE_SOON_DAYS:
@@ -192,6 +194,9 @@ def left_out(pending: list[dict[str, Any]], reasons: dict[int, str], left: dict[
     return f"{text} left for a person" if text else ""
 
 
+NO_VENDOR = "No vendor name"
+
+
 def queue_rows(store: Store, shown: list[dict[str, Any]], threshold: float,
                reasons: dict[int, str] | None = None) -> list[dict[str, Any]]:  # fmt: skip
     """What each row of the queue shows (plain values; the template escapes them). ``reasons``: ``attention()``."""
@@ -202,6 +207,7 @@ def queue_rows(store: Store, shown: list[dict[str, Any]], threshold: float,
         for r in store.invoice_columns(("id", "ai_output", "final_output"), ids=ids)
     }
     sources = store.layout_sources(ids)
+    vendor_checks = store.vendor_name_checks(ids)
     default_days = store.default_terms_days()
     terms = store.all_vendor_terms()  # read once, not once per row
     rows = []
@@ -212,7 +218,10 @@ def queue_rows(store: Store, shown: list[dict[str, Any]], threshold: float,
         confidence = max(0.0, min(1.0, inv.get("adjusted_confidence") or 0.0))
         rows.append({
             "id": inv["id"],
-            "name": inv.get("vendor_name") or inv.get("file_name") or "",
+            # never the file's name as the vendor; a name the readers are not sure of says so (B-471)
+            "name": inv.get("vendor_name") or NO_VENDOR,
+            "file": inv.get("file_name") or "",
+            "name_check": not inv.get("vendor_name") or vendor_checks.get(inv["id"]) in ("check", "missing"),
             "number": inv.get("invoice_number") or "—",
             "date": inv.get("invoice_date") or "—",
             "province": prov if prov in PROVINCE_NAMES else ("Int’l" if prov == OUTSIDE_CANADA else "—"),

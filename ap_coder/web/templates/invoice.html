@@ -12,12 +12,12 @@
 
 {% block header %}
 <header class="inv-top apc-anim">
-  {{ ui.breadcrumbs(["AP Coder", "Work", "Review queue"]) }}
   <nav class="rvw-nav" aria-label="Invoices">
     <a class="btn sm ghost" href="{{ queue_url }}" data-nav="queue" aria-keyshortcuts="Alt+ArrowUp" title="Back to the queue (Alt+↑)"><span class="ms" aria-hidden="true">arrow_back</span>Queue</a>
     {% if nav.position is not none %}
     <span class="rvw-pos">Reviewing <b class="n">{{ nav.position + 1 }}</b> of {{ nav.count }}<span class="rvw-pos-bar" aria-hidden="true"><i style="width: {{ nav.done_pct }}%"></i></span></span>
     {% endif %}
+    {% if lm_off %}<span class="apc-pill warn rvw-lm" title="{{ lm_off }}" role="note"><span class="ms" aria-hidden="true">visibility_off</span>LM Studio isn't running: a person approves it</span>{% endif %}
     <span class="spacer"></span>
     {% if mode == "review" %}
     <details class="pop">
@@ -71,6 +71,61 @@
 
   <div class="col">
     <section class="card inv-checks" data-live="checks" aria-live="polite">{{ live_ui.checks(live, inv.id) }}</section>
+
+    <section class="card inv-lines">
+      {{ live_ui.head("Line items", "Change a GL account or cost center in its cell; add or delete lines below the grid.") }}
+      <div class="table-wrap">
+        <table class="apc-table inv-grid-table inv-lines-grid" id="lines">
+          <thead><tr><th>#</th><th>Description</th><th class="r">Amount</th><th>GL account</th>{% if grid.has_cc %}<th>Cost center</th>{% endif %}
+            <th>Taxes</th><th class="r">Qty</th><th class="r">Unit price</th><th><span class="rvw-sr">Delete</span></th></tr></thead>
+          <tbody data-grid="lines">{{ grids.line_rows(grid) }}</tbody>
+        </table>
+      </div>
+      {{ grids.line_template(grid) }}
+      <div class="row">
+        <button type="button" class="btn sm" data-add-row="lines"><span class="ms" aria-hidden="true">add</span>Add a line</button>
+        <details class="pop" data-split>
+          <summary class="btn sm"><span class="ms" aria-hidden="true">call_split</span>Split a line…</summary>
+          <div class="pop-body inv-split-pop">
+            <p class="muted">Split one line across several GL accounts{% if grid.has_cc %} or cost centers{% endif %} by percentage (shared costs).</p>
+            <label class="field">Line<select name="split_line" data-split-line></select></label>
+            <table class="apc-table inv-parts"><thead><tr><th>GL account</th>{% if grid.has_cc %}<th>Cost center</th>{% endif %}<th class="r">%</th><th></th></tr></thead>
+              <tbody data-parts></tbody></table>
+            <template id="part-template"><tr>
+              <td><select name="part_gl" aria-label="GL account">{% for code, label in grid.gl_options %}<option value="{{ code }}">{{ label }}</option>{% endfor %}</select></td>
+              {% if grid.has_cc %}<td><select name="part_cc" aria-label="Cost center">{% for code, label in grid.cc_options %}<option value="{{ code }}">{{ label }}</option>{% endfor %}</select></td>{% endif %}
+              <td class="r"><input type="number" name="part_pct" value="50" min="0" max="100" step="any" aria-label="Percent"></td>
+              <td><button type="button" class="icon-btn" data-del-part aria-label="Remove this part"><span class="ms" aria-hidden="true">close</span></button></td>
+            </tr></template>
+            <div class="row"><button type="button" class="btn sm ghost" data-add-part><span class="ms" aria-hidden="true">add</span>Add a part</button>
+              <span class="muted" data-split-total></span></div>
+            <p class="muted">Each part keeps the description and taxes of the line.</p>
+            <button type="button" class="btn primary sm" data-split-go disabled><span class="ms" aria-hidden="true">call_split</span>Split the line</button>
+          </div>
+        </details>
+        <details class="pop" data-fill>
+          <summary class="btn sm"><span class="ms" aria-hidden="true">playlist_add_check</span>Apply to all lines…</summary>
+          <div class="pop-body inv-split-pop">
+            <p class="muted">Code every line that has no GL account{% if grid.has_cc %} or no cost center{% endif %} yet in one go. Lines already coded keep theirs.</p>
+            <label class="field">GL account<select data-fill-gl aria-label="GL account for the lines without one">
+              <option value="">Leave as they are</option>
+              {% for code, label in grid.gl_options if code != "UNASSIGNED" %}<option value="{{ code }}">{{ label }}</option>{% endfor %}</select></label>
+            {% if grid.has_cc %}
+            <label class="field">Cost center<select data-fill-cc aria-label="Cost center for the lines without one">
+              <option value="">Leave as they are</option>
+              {% for code, label in grid.cc_options if code != "UNASSIGNED" %}<option value="{{ code }}"{% if code == usual_cc %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+            {% if usual_cc %}<p class="muted small">Suggested: every past approval of this vendor used cost center {{ usual_cc }}.</p>{% endif %}
+            {% endif %}
+            <button type="button" class="btn primary sm" data-fill-go><span class="ms" aria-hidden="true">playlist_add_check</span>Apply to all lines without one</button>
+          </div>
+        </details>
+      </div>
+      <div data-live="reasons">{{ live_ui.reasons(live, inv.id) }}</div>
+    </section>
+
+    <div data-live="po" class="inv-live">{{ live_ui.po(live, inv.id) }}</div>
+    <div data-live="suggest" class="inv-live">{{ live_ui.suggest(live, inv.id) }}</div>
+
 
     <section class="card inv-details">
       {{ live_ui.head("Invoice details") }}
@@ -149,60 +204,6 @@
     {% include "_invoice_notes.html" %}
   </div>
 </div>
-
-<section class="card inv-lines">
-  {{ live_ui.head("Line items", "Change a GL account or cost center in its cell; add or delete lines below the grid.") }}
-  <div class="table-wrap">
-    <table class="apc-table inv-grid-table" id="lines">
-      <thead><tr><th>#</th><th>Description</th><th class="r">Amount</th><th>GL account</th>{% if grid.has_cc %}<th>Cost center</th>{% endif %}
-        <th>Taxes</th><th class="r">Qty</th><th class="r">Unit price</th><th><span class="rvw-sr">Delete</span></th></tr></thead>
-      <tbody data-grid="lines">{{ grids.line_rows(grid) }}</tbody>
-    </table>
-  </div>
-  {{ grids.line_template(grid) }}
-  <div class="row">
-    <button type="button" class="btn sm" data-add-row="lines"><span class="ms" aria-hidden="true">add</span>Add a line</button>
-    <details class="pop" data-split>
-      <summary class="btn sm"><span class="ms" aria-hidden="true">call_split</span>Split a line…</summary>
-      <div class="pop-body inv-split-pop">
-        <p class="muted">Split one line across several GL accounts{% if grid.has_cc %} or cost centers{% endif %} by percentage (shared costs).</p>
-        <label class="field">Line<select name="split_line" data-split-line></select></label>
-        <table class="apc-table inv-parts"><thead><tr><th>GL account</th>{% if grid.has_cc %}<th>Cost center</th>{% endif %}<th class="r">%</th><th></th></tr></thead>
-          <tbody data-parts></tbody></table>
-        <template id="part-template"><tr>
-          <td><select name="part_gl" aria-label="GL account">{% for code, label in grid.gl_options %}<option value="{{ code }}">{{ label }}</option>{% endfor %}</select></td>
-          {% if grid.has_cc %}<td><select name="part_cc" aria-label="Cost center">{% for code, label in grid.cc_options %}<option value="{{ code }}">{{ label }}</option>{% endfor %}</select></td>{% endif %}
-          <td class="r"><input type="number" name="part_pct" value="50" min="0" max="100" step="any" aria-label="Percent"></td>
-          <td><button type="button" class="icon-btn" data-del-part aria-label="Remove this part"><span class="ms" aria-hidden="true">close</span></button></td>
-        </tr></template>
-        <div class="row"><button type="button" class="btn sm ghost" data-add-part><span class="ms" aria-hidden="true">add</span>Add a part</button>
-          <span class="muted" data-split-total></span></div>
-        <p class="muted">Each part keeps the description and taxes of the line.</p>
-        <button type="button" class="btn primary sm" data-split-go disabled><span class="ms" aria-hidden="true">call_split</span>Split the line</button>
-      </div>
-    </details>
-    <details class="pop" data-fill>
-      <summary class="btn sm"><span class="ms" aria-hidden="true">playlist_add_check</span>Apply to all lines…</summary>
-      <div class="pop-body inv-split-pop">
-        <p class="muted">Code every line that has no GL account{% if grid.has_cc %} or no cost center{% endif %} yet in one go. Lines already coded keep theirs.</p>
-        <label class="field">GL account<select data-fill-gl aria-label="GL account for the lines without one">
-          <option value="">Leave as they are</option>
-          {% for code, label in grid.gl_options if code != "UNASSIGNED" %}<option value="{{ code }}">{{ label }}</option>{% endfor %}</select></label>
-        {% if grid.has_cc %}
-        <label class="field">Cost center<select data-fill-cc aria-label="Cost center for the lines without one">
-          <option value="">Leave as they are</option>
-          {% for code, label in grid.cc_options if code != "UNASSIGNED" %}<option value="{{ code }}"{% if code == usual_cc %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
-        {% if usual_cc %}<p class="muted small">Suggested: every past approval of this vendor used cost center {{ usual_cc }}.</p>{% endif %}
-        {% endif %}
-        <button type="button" class="btn primary sm" data-fill-go><span class="ms" aria-hidden="true">playlist_add_check</span>Apply to all lines without one</button>
-      </div>
-    </details>
-  </div>
-  <div data-live="reasons">{{ live_ui.reasons(live, inv.id) }}</div>
-</section>
-
-<div data-live="po" class="inv-live">{{ live_ui.po(live, inv.id) }}</div>
-<div data-live="suggest" class="inv-live">{{ live_ui.suggest(live, inv.id) }}</div>
 
 <section class="card inv-tax">
   {{ live_ui.head("Sales tax") }}

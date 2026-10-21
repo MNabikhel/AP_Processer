@@ -4948,3 +4948,138 @@ PDFs imported into a scratch data folder with the sample GL accounts and screens
   `::test_month_end_lists_an_invoice_dated_over_a_year_back_instead_of_accruing_it`,
   `::test_month_end_groups_an_account_in_two_currencies_on_one_row`, `::test_month_end_with_nothing_imported_says_so`
 - **Lesson:** An empty state is a claim too: check it against an empty database.
+
+#### B-464 · The checks spoke the code's language: "invoice_number is empty", VENDOR_NEW, UNASSIGNED · medium
+- **Where:** `ap_coder/coding/validation.py`, `ap_coder/coding/tax.py`, `ap_coder/core/ui.py` (`check`),
+  `ap_coder/ai/lessons.py`, `ap_coder/web/templates/learning.html`, `ap_coder/core/audit.py`,
+  `ap_coder/capture/line_items.py` (`sources_line`)
+- **Symptom:** the review screen said "Invoice_number is empty", "Vendor_name is empty", "GL code '9999' is not in
+  the GL accounts", "line items sum to … but subtotal = …", "prebuilt-invoice InvoiceTotal = …, model grand_total =
+  …"; "Details and what to do" showed VENDOR_NEW, CC_UNASSIGNED beside each title; Learning → Lessons said "read as
+  UNASSIGNED" and Activity "UNASSIGNED → 6110"; the document card said "Line items read by one reader only (1 from
+  the PDF's table): not yet compared with a second reader."
+- **Cause:** the messages were written for developers; `readable()` only replaced a few field names.
+- **Reproduce:** the 15 PDFs; an invoice with no number; Details and what to do.
+- **Reproduced:** yes
+- **Fix:** plain sentences that say what to do ("No invoice number: type it from the page", "GL account 9999 is not
+  in your GL accounts: pick one from the list", "the lines add up to … but the subtotal is …", "Azure read the total
+  as …, AP Coder as …", "the scan is hard to read (62% sure of its words): check the values against the page"); a
+  check's code is its hover (`title`) and stays in the problem report; a blank account reads "left blank" / "blank";
+  the one-reader note is gone (nothing to act on; the queue says when OvisOCR2 has not read an invoice).
+- **Test:** `tests/test_trust_review.py::test_the_checks_say_what_is_missing_in_plain_words_and_keep_their_codes_for_a_hover`,
+  `::test_a_lesson_on_a_blank_account_reads_left_blank_not_unassigned`; `tests/test_table_reading.py` (the note)
+- **Lesson:** Read every message as the pilot tester would: a field name with an underscore is a bug.
+
+#### B-465 · What kept Approve closed was "Worth a look", not counted in "N must be fixed" · medium
+- **Where:** `ap_coder/web/invoice_view.py` (`checks_summary`, `checks_details`), `ap_coder/web/templates/_invoice_live.html`
+- **Symptom:** "2 must be fixed · 3 to look at", with "Line 1: no GL account yet: pick one" among the three to look
+  at, though it is what disabled Approve; Details called it "Worth a look".
+- **Cause:** the summary grouped by severity, and a line without an account is a warning (it lowers the confidence
+  less than an error), while the approve bar blocks on it.
+- **Reproduce:** BDO's invoice in the 15 PDFs.
+- **Reproduced:** yes
+- **Fix:** three groups, each under its heading: "Before you can approve (N)" (an account or cost center to pick:
+  each a link to its box, "Press G to go to the first one"), "Must be fixed (N)", "Check before approving (N)"
+  (the warnings: an assumed invoice date, INVOICE_DATE_NOT_FOUND, sits there plainly). Details uses the same words.
+- **Test:** `tests/test_trust_review.py::test_what_keeps_approve_closed_is_its_own_group_before_the_errors_and_warnings`
+- **Lesson:** Group by what the person can do next, not by the code's severity.
+
+#### B-467 · At 1366 × 768 the review screen showed 150–200 px of the invoice and the lines 1,200 px down · high
+- **Where:** `ap_coder/web/templates/invoice.html`, `_invoice_lines.html`, `ap_coder/web/static/invoice.css`,
+  `invoice_viewer.css`, `js/invoice_viewer.js`, `js/invoice.js`, `ap_coder/web/pages/invoice.py`
+- **Symptom:** breadcrumb, a navigation row, the LM Studio banner and the summary pushed the document card down;
+  in it the field list, a toolbar on two rows and the legend left 150–200 px of the page on screen; the line grid
+  came after the invoice details, about 1,200 px down, and Qty / Unit price scrolled sideways.
+- **Cause:** a layout made for a wide screen; the banner (B-444) stood in for two notes but cost a row.
+- **Reproduce:** any invoice of the 15 PDFs at 1366 × 768 (`shots/before/review_*_vp.png`).
+- **Reproduced:** yes
+- **Fix:** one row at the top (Queue · Reviewing 3 of 15 · a short "LM Studio isn't running" note · Shortcuts ·
+  Previous · Next), no banner on this page (the queue has it); the document and the column beside it half and half,
+  the document sticky and taller (the viewer is the window less 190 px); the viewer's legend is in its toolbar, as
+  swatches with counts; the line grid sits right under the checks, each line on two rows (description, which wraps,
+  and taxes; then GL account, cost center, qty, unit price, amount), nothing scrolls sideways; the invoice details
+  follow. Ctrl+Enter, G, N, Alt+arrows work as before; Enter in a description adds no line break.
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_in_a_browser_at_1366_the_page_and_the_line_grid_show_together`,
+  `::test_with_lm_studio_off_the_review_screen_says_it_once`
+- **Lesson:** Check the screen at the pilot tester's resolution, not the developer's.
+
+#### B-468 · Demo invoices mixed into the real numbers · medium
+- **Where:** `ap_coder/web/pages/process.py`, `ap_coder/web/templates/process.html`
+- **Symptom:** after trying the demo and importing real invoices, "Demo reviewer" was among Activity's people, the
+  demo's lessons counted in coding accuracy and the demo's vendors were listed with the real ones.
+- **Cause:** nothing asked to remove the demo before the first real import (the demo card sits lower on the page).
+- **Reproduce:** load the demo, import a PDF: no word about the demo.
+- **Reproduced:** yes
+- **Fix:** the simpler safe one: while the demo is loaded and no invoice of your own is, Import invoices says
+  "Remove the demo invoices before you import your own" with the button that removes them (as the demo card does).
+  Nothing is removed without the click.
+- **Test:** `tests/test_trust_review.py::test_the_import_page_asks_to_remove_the_demo_before_the_first_real_invoice`
+- **Lesson:** Practice data needs a clear way out at the moment real data comes in.
+
+#### B-469 · "Overdue 5042 days", and an invoice dated years back said nothing · medium
+- **Where:** `ap_coder/coding/terms.py` (`describe`, `payment_findings`), `ap_coder/web/pages/review.py` (`due_note`),
+  `ap_coder/ops/help.py`
+- **Symptom:** the queue and the review screen counted days for a bill due in 2012; an invoice dated 2017 (a misread
+  date, or a very late bill) raised no warning.
+- **Cause:** days were the only unit; no check on the invoice date's age.
+- **Reproduce:** `ca_uoft_ex3_gst.pdf` (dated 2017) among the 15 PDFs.
+- **Reproduced:** yes
+- **Fix:** past 60 days, "Overdue since Dec 2012" (queue, review screen, the overdue note); a new warning,
+  OLD_INVOICE_DATE ("dated 2017-10-05, more than a year ago: check the date on the page"), in "Check before
+  approving", with its Help entry; Month-end lists such invoices instead of accruing them (B-466).
+- **Test:** `tests/test_trust_review.py::test_a_long_overdue_bill_says_since_when_and_an_old_invoice_date_is_flagged`
+- **Lesson:** A number nobody can picture ("5042 days") is a sign the value itself needs a check.
+
+#### B-470 · The Excel export's dates were text · low
+- **Where:** `ap_coder/erp/exports.py` (`_sheet`)
+- **Symptom:** Invoice date, Due date and Approved at were text cells: Excel would not sort or filter them as dates.
+- **Cause:** the ISO strings were written as they are.
+- **Reproduce:** export the approved invoices as Excel, open the Invoices sheet.
+- **Reproduced:** yes
+- **Fix:** in the workbook they are dates (yyyy-mm-dd; Approved at with the time); the CSV keeps YYYY-MM-DD text.
+- **Test:** `tests/test_trust_review.py::test_the_excel_export_writes_real_dates`
+- **Lesson:** A spreadsheet is for people: give it typed values.
+
+#### B-471 · The queue showed the file's name as the vendor, and a doubtful name as read · medium
+- **Where:** `ap_coder/web/pages/review.py` (`queue_rows`), `ap_coder/web/templates/review.html`,
+  `ap_coder/core/store.py` (`vendor_name_checks`), `ap_coder/web/templates/vendors.html`
+- **Symptom:** an invoice with no vendor name read was listed under its file name ("scan_0042.pdf") as the vendor;
+  "SOMETHING JOHN" (read with 32%) looked like any vendor; Vendors listed it with the real ones.
+- **Cause:** `vendor_name or file_name`; the capture's confidence was not looked at.
+- **Reproduce:** `ca_owensound_water.pdf` among the 15 PDFs.
+- **Reproduced:** yes
+- **Fix:** "No vendor name" in place of a missing one, a name the readers marked to check in italics with "?" and
+  "Vendor name: check it" under it (the file's name on hover); on Vendors, a vendor with no approved invoice and no
+  record is tagged "Not approved yet". No vendor record is created at import (only on approval, an import of the
+  vendor list, or "Add new vendor"): checked, nothing to change there.
+- **Test:** `tests/test_trust_review.py::test_the_queue_says_no_vendor_name_and_marks_a_name_to_check`
+- **Lesson:** A fallback value must not look like the real one.
+
+#### B-472 · "Every header field was read right" after approving an invoice nobody corrected · low
+- **Where:** `ap_coder/capture/workflow.py` (`taught_message`)
+- **Symptom:** approving an invoice whose vendor was wrong but not edited said every header field was read right.
+- **Cause:** "no correction" was worded as "all correct".
+- **Reproduce:** approve an untouched invoice.
+- **Reproduced:** yes
+- **Fix:** "You changed no header field."
+- **Test:** `tests/test_touchless.py`, `tests/test_touchless_pages.py` (the message)
+- **Lesson:** Say what is known (nothing changed), not what is hoped (all right).
+
+#### Looked at and left (review screen and coding)
+
+- **N-172** · After Approve, the address bar was said to stay on the approved invoice's address. Not reproduced:
+  the answer's address is opened (`location.assign`) and `location.href` is the next invoice's (`/review/8` after
+  approving `/review/14`, five runs); Playwright's `page.url` read straight after the click can still show the old
+  one, which is likely what was seen. Nothing changed.
+- **N-173** · Vendors still lists a name read off an invoice not approved yet ("Inc."), tagged "Not approved yet":
+  hiding it would hide its bank-account and GST/HST history (a fraud signal) and "Ask the vendor" for its invoices
+  in the queue.
+- **N-174** · The approve bar says "all as suggested" when the only lines were blank and the reviewer picked their
+  accounts: filling a blank is no change (D-39); a better word for "nothing proposed to keep" is a wording choice.
+- **N-175** · B-468 asks before the first real import; a demo kept after real invoices are imported still counts in
+  the figures until removed (excluding it everywhere is a larger change across Activity, Learning, Insights and
+  Vendors).
+- **N-176** · With the chat model answering, its account for a line with a weak match is kept even when the name
+  match pointed elsewhere (marked as a guess either way); on the samples the name match was right more often than a
+  small model (21 vs 11 of 41), so which one to show first, when they disagree, is worth measuring on the pilot's
+  invoices.

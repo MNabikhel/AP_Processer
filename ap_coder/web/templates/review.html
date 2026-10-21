@@ -83,7 +83,8 @@
       {% for r in rows %}
       <li><a class="rq-row {{ 'attn' if r.flagged else 'ready' }}" href="/review/{{ r.id }}" aria-label="Review invoice from {{ r.name }}">
         <div class="c-vendor"><span class="rq-av" aria-hidden="true">{{ r.name | initials }}</span>
-          <div class="who"><div class="name" title="{{ r.name }}">{{ r.name }}</div>
+          <div class="who"><div class="name" title="{{ r.name }}{% if r.name_check %} (not sure: check it){% endif %} · {{ r.file }}">{% if r.name_check %}<span class="rq-unsure">{{ r.name }}{% if r.name != "No vendor name" %}?{% endif %}</span>{% else %}{{ r.name }}{% endif %}</div>
+            {% if r.name_check %}<div class="due warn rq-check">Vendor name: check it</div>{% endif %}
             {% if r.due %}<div class="due {{ r.due_tone }}">{{ r.due }}</div>{% endif %}
             {% if r.kind and r.kind.key != "text" %}<div class="kind" title="{{ r.kind.title }}"><span class="ms" aria-hidden="true">{{ r.kind.icon }}</span>{{ r.kind.label }}</div>{% endif %}</div></div>
         <div class="c-num" title="{{ r.number }}">{{ r.number }}</div>
