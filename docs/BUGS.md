@@ -5816,6 +5816,293 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
   change count and the "Teaches from" line compare the GL account only.
 - **Test:** `tests/test_trust_review.py::test_without_a_cost_center_list_a_cost_center_from_memory_is_no_change`
 - **Lesson:** When a field is hidden from the screen, every comparison against what the screen posts must hide it too.
+#### B-563 · The account lists only jumped by first letters, and printed the chart of accounts for every line · medium
+- **Where:** `ap_coder/web/templates/_invoice_lines.html`, `invoice.html`, `accounts.html`, `statements.html`
+- **Symptom:** the pilot tester said the dropdowns are lacking: typing in one only jumps to a label starting with
+  those letters, and every label starts with its code (*audit* never found *6120 · Professional Fees - Audit*), with
+  no sign of the accounts this vendor's lines usually go to; each line printed all the accounts, so 300 accounts ×
+  20 lines made about 6,000 options in the page.
+- **Cause:** plain native `<select>`s, each with the whole list.
+- **Reproduce:** open an invoice of 20 lines; count `<option` in the page; type a word from inside an account name.
+- **Reproduced:** yes
+- **Fix:** the picker (D-56): words matched anywhere, marked; *Used for this vendor* and *Suggested* first; the list
+  printed once as JSON, each line's select holding only its choice. The vendor and currency fields use it as free text.
+- **Test:** `tests/test_web_picker.py` (`::test_the_review_screen_prints_the_chart_of_accounts_once_not_once_a_line`,
+  `::test_in_a_browser_typing_a_word_from_inside_an_account_name_finds_it_and_enter_picks_it`,
+  `::test_vendor_accounts_are_the_ones_its_approved_lines_went_to_most_used_first` and the others)
+- **Lesson:** A choice among hundreds needs a search, and a page that repeats a list per row should print it once.
+
+#### B-564 · Esc left the focus nowhere after closing Split a line, and a failed grid action could leave its button off · low
+- **Where:** `ap_coder/web/static/js/app.js` (Esc on popovers), `ap_coder/web/static/js/invoice.js` (`gridAction`)
+- **Symptom:** Esc closed *Split a line…* or *Apply to all lines…* and the keyboard focus was lost (on the page's
+  body); a grid action whose answer could not be drawn left its button disabled until the page was reloaded; nothing
+  said a check of the edits was still under way.
+- **Cause:** the Esc handler only closed the popovers; `gridAction` enabled its button again only on the happy path.
+- **Reproduce:** open Split a line, Tab into it, press Esc; `document.activeElement` is the body.
+- **Reproduced:** by reading the code (no test failed before the fix: none pressed Esc in a popover)
+- **Fix:** Esc gives the focus back to the popover's button (an open picker list closes first, and teaching a field is
+  not cancelled with it); the button is busy (`aria-busy`) during the action and usable again in a `finally`;
+  *Checking…* shows beside the approve bar while a check runs.
+- **Test:** `tests/test_web_picker.py::test_in_a_browser_the_split_popover_closes_on_escape_and_gives_back_the_focus`,
+  `::test_in_a_browser_new_lines_and_split_lines_get_the_picker`
+- **Lesson:** Whatever closes a popover must say where the focus goes; whatever disables a button must enable it in a
+  `finally`.
+#### B-580 · The review screen's page could not be zoomed like a document: blurry close up, Ctrl + wheel zoomed the dashboard · medium
+- **Where:** `ap_coder/web/static/js/invoice_viewer.js` (zoom, `sizeSheet`, `pointAt`), `ap_coder/web/document.py`
+  (`page_png`), `ap_coder/web/pages/invoice.py` (`page_picture`)
+- **Symptom:** the pilot tester said zoom on the document viewer is lacking: only Fit, 100% and 150%; at 150% the page
+  was soft (a 120 dpi picture stretched); Ctrl + wheel or a pinch zoomed the whole dashboard; no way to drag the page
+  about or to turn a page scanned sideways to read it.
+- **Cause:** the viewer had three fixed zooms and one picture per page at 120 dpi; the wheel and the keys were left to
+  the browser.
+- **Reproduce:** open an invoice on the review screen at 1366 x 768, choose 150%, hold Ctrl and turn the wheel.
+- **Reproduced:** yes
+- **Fix:** zoom from 50% to 400% (- / % / +, Fit width, Fit page, Ctrl + wheel and pinch around the pointer, the keys
+  + - 0 9), the Hand (its button, H, Space held, the middle button) to drag the page, Rotate (on screen only), Page Up
+  / Page Down; the page is asked for at `?scale=2` or `3` (240 or 360 dpi, capped at 4,800 and 6,000 px, a scan never
+  drawn sharper than it was scanned: a picture, or a scanned PDF's page since B-594) when zoomed in, loaded aside and
+  swapped in (D-57).
+- **Test:** `tests/test_web_viewer.py`, `tests/test_web_document.py::test_a_pdf_page_is_drawn_two_and_three_times_as_sharp`
+  and the tests after it
+- **Lesson:** A document viewer is judged against the PDF reader on the same laptop: zoom where the pointer is, a sharp
+  page at any zoom, and the keys and wheel people already use.
+
+#### B-581 · A test of saving your name failed after the review screen's tests, depending on the order · low
+- **Where:** `tests/conftest.py`; `ap_coder/web/app.py` (`create_app` imports the page modules), the `me` fixtures of
+  `tests/test_web_invoice.py` and `tests/test_web_pilot_walkthrough.py`
+- **Symptom:** `test_before_testing.py::test_saving_your_name_says_your_name_was_saved` failed in some runs: saving
+  the province said *Saved your name and your province…*; alone, and in 20 runs after test_web_viewer, it passed.
+- **Cause:** not timing. `create_app` imports the page modules the first time it runs; when that was inside a test
+  whose `me` fixture had patched `web.core.reviewer`, `from ap_coder.web.core import reviewer` copied the patched
+  function into `pages/settings.py` (and `pages/insights.py`) for the rest of the run, so the saved name never matched
+  `reviewer()` and was "saved" again. Only the dashboard's tests were affected, never the app.
+- **Reproduce:** `pytest tests/test_web_invoice.py::test_every_demo_invoice_opens_whatever_its_state
+  tests/test_before_testing.py::test_saving_your_name_says_your_name_was_saved` (fails every time).
+- **Reproduced:** yes
+- **Fix:** conftest.py imports every page module before any test, so they hold the real functions.
+- **Test:** `tests/test_before_testing.py::test_the_page_modules_hold_the_real_reviewer_whichever_test_ran_first`
+- **Lesson:** A test that passes alone and fails in a run is usually order, not timing: rerun it after the files that
+  ran before it, and look for a patch copied by a `from x import y` done late.
+
+#### B-590 · Ctrl+Enter with an account list open approved the old account · medium
+- **Where:** `ap_coder/web/static/js/picker.js` (`key`), `ap_coder/web/static/js/invoice.js` (Ctrl+Enter)
+- **Symptom:** "freight" typed in line 1's GL account, 5100 highlighted in the list, then Ctrl+Enter: the approval
+  sent line 1's old account (6300) and the list stayed open over the screen.
+- **Cause:** the picker left every Ctrl/⌘ key alone, so nothing picked the highlighted account; the review screen's
+  Ctrl+Enter then read the form with the select's old value. A regression of the picker (D-56): a native select
+  had no typed text to lose.
+- **Reproduce:** on the review screen, type an account's name in a line's GL account, press Ctrl+Enter before Enter.
+- **Reproduced:** yes
+- **Fix:** Ctrl/⌘+Enter with the list open picks the choice as Tab does (the one highlighted, once something was
+  typed), closes the list and lets the key go on: the select holds the new account before the form is read and checked.
+- **Test:** `tests/test_web_picker.py::test_in_a_browser_ctrl_enter_with_the_list_open_approves_the_account_typed`
+- **Lesson:** A box that holds typed text apart from the value it posts must settle it before every way the form can
+  be sent, the keyboard shortcuts too.
+
+#### B-591 · Space did nothing on the form's boxes and buttons while the mouse rested on the page · medium
+- **Where:** `ap_coder/web/static/js/invoice_viewer.js` (`viewKey`, the `keyup` listener)
+- **Symptom:** the keyboard on a line's tax box or on *Add a line*, the mouse resting over the invoice's page: Space
+  neither ticked the box nor pressed the button.
+- **Cause:** Space held the Hand whenever the pointer was over the page, wherever the focus was; the `keyup` that
+  ended the Hand cancelled the button's press as well.
+- **Reproduce:** at 1366 x 768, focus line 1's GST box, rest the mouse on the page, press Space: the box stays as it was.
+- **Reproduced:** yes
+- **Fix:** Space holds the Hand only with the focus on the page itself, or with the focus nowhere (the page's body) and
+  the pointer over the page; a box, button or link anywhere else keeps it. The `keyup` is taken only after a `keydown`
+  the viewer took.
+- **Test:** `tests/test_web_viewer.py::test_in_a_browser_space_on_a_box_or_button_of_the_form_is_theirs_with_the_mouse_over_the_page`,
+  `::test_in_a_browser_space_elsewhere_on_the_review_screen_scrolls_as_usual`
+- **Lesson:** A page-wide key belongs to where the focus is first; where the mouse rests only decides when the focus
+  is nowhere.
+
+#### B-592 · Page Up / Page Down turned the invoice's page from anywhere on the review screen · medium-low
+- **Where:** `ap_coder/web/static/js/invoice_viewer.js` (`viewKey`)
+- **Symptom:** on a two-page invoice, Page Down with the mouse over the line items (or the focus on a button of the
+  form) showed the invoice's page 2 instead of scrolling the screen.
+- **Cause:** the viewer took Page Up / Page Down from the whole window, outside the text boxes.
+- **Reproduce:** open a two-page invoice, rest the mouse on the line items, press Page Down.
+- **Reproduced:** yes
+- **Fix:** they turn the invoice's pages with the pointer over the Document card or the focus in it; anywhere else
+  the browser scrolls the screen as usual.
+- **Test:** `tests/test_web_viewer.py::test_in_a_browser_page_down_turns_the_invoice_page_only_from_the_document_card`
+- **Lesson:** Keys the browser already uses for the whole page are taken only where the person is clearly working on
+  the part that takes them.
+
+#### B-593 · An open account list stayed put while the page scrolled, its box gone off the screen · low-medium
+- **Where:** `ap_coder/web/static/js/picker.js` (`place`, the scroll and resize listeners)
+- **Symptom:** a GL account's list open, the page scrolled with the wheel: the list stayed on the screen while its box
+  went off it (or under the approve bar), and a click on the list changed a line no one could see.
+- **Cause:** on scroll the list was placed again from its box, but never closed, and was not held above the approve bar.
+- **Reproduce:** open a line's GL account list, scroll the page down 2,000 px; the list is still there.
+- **Reproduced:** yes
+- **Fix:** on scroll and resize the list follows its box, and closes once the box can't be seen (off the screen, or
+  under the approve bar or a header that stays put: what is drawn at the box's middle is not the box); it is kept on
+  the screen above the approve bar.
+- **Test:** `tests/test_web_picker.py::test_in_a_browser_an_open_list_follows_its_box_and_closes_once_the_box_scrolls_away`,
+  `::test_in_a_browser_a_resize_keeps_the_open_list_on_the_screen_above_the_approve_bar`
+- **Lesson:** A layer drawn apart from what it belongs to must follow it, and go when it goes.
+
+#### B-594 · A scanned PDF's page was drawn beyond the scan at 360 dpi, and the pictures kept could reach 380 MB · low-medium
+- **Where:** `ap_coder/web/document.py` (`_png_cached`, now `_draw_png` and `_PictureCache`)
+- **Symptom:** zoomed in, a 300 dpi scanned PDF was drawn at 360 dpi (3,060 x 3,960 px, 12 MB of PNG) for no more
+  detail than the scan has; the pictures kept were 32 whatever their size, about 380 MB of a pilot laptop's memory
+  after a morning of scans zoomed in. B-580 and D-57 said a scan is never enlarged: only true of pictures (PNG, JPEG,
+  TIFF), not of a PDF holding one.
+- **Cause:** a PDF page was always drawn at `DPI x scale`; the cache was `lru_cache(maxsize=32)`, counted in pictures.
+- **Reproduce:** a PDF of one 2,550 x 3,300 px picture on a letter page: `page_png(path, 1, 3)` is 3,060 x 3,960 px.
+- **Reproduced:** yes
+- **Fix:** a PDF page that is one picture covering it (a scanner's PDF, text layer or not) is drawn at most at that
+  picture's own resolution (its pixels over the inches it covers), never below 120 dpi; the pictures are kept up to
+  96 MB in all (`PICTURE_CACHE_BYTES`), the least recently used going first.
+- **Test:** `tests/test_web_document.py::test_a_scanned_pdf_page_is_never_drawn_sharper_than_it_was_scanned`,
+  `::test_the_pictures_kept_are_bounded_by_their_size_in_bytes`
+- **Lesson:** A cache of things whose size varies by a hundred times is bounded in bytes, not in count; and a rule
+  said of "a scan" must hold for every way a scan comes in.
+
+#### B-595 · The vendor typed was replaced by the vendor under the mouse when Tab was pressed · low
+- **Where:** `ap_coder/web/static/js/picker.js` (the list's `mousemove`, `key` for Tab)
+- **Symptom:** a new vendor's name typed in the vendor field, the mouse resting on a vendor of the list, then Tab:
+  the field held the vendor under the mouse, not the name typed.
+- **Cause:** the mouse moved the list's highlight, and Tab picked whatever was highlighted.
+- **Reproduce:** type "age" in the vendor field, rest the mouse on the first vendor of the list, press Tab.
+- **Reproduced:** yes
+- **Fix:** the mouse only marks its row (Enter or a click picks it); Tab picks the choice highlighted from the keyboard
+  (in a free box such as the vendor, one reached with the arrows).
+- **Test:** `tests/test_web_picker.py::test_in_a_browser_a_vendor_pointed_at_then_tab_keeps_the_name_typed`
+- **Lesson:** Where the mouse happens to rest is not a choice: only a click, or a key the person pressed, is.
+
+#### B-596 · "Used for this vendor" kept the vendor of the page as it opened · low
+- **Where:** `ap_coder/web/static/js/invoice.js` (`#gl-vendor`, `applySections`), `ap_coder/web/pages/invoice.py`
+  (`check`)
+- **Symptom:** the vendor field changed to another vendor of the list; the account lists still offered the first
+  vendor's accounts under *Used for this vendor*.
+- **Cause:** the accounts were printed once in the page (`#gl-vendor`) and never asked for again.
+- **Reproduce:** approve an invoice of vendor A with account X, open an invoice of vendor B, type A in the vendor
+  field, open a line's GL account list: X is not in the group.
+- **Reproduced:** yes
+- **Fix:** each check of the edits (`POST /review/<id>/check`, run after every change of the vendor field) answers
+  `vendor_accounts` for the vendor in the field, and the group shows those.
+- **Test:** `tests/test_web_picker.py::test_in_a_browser_the_accounts_used_for_this_vendor_follow_the_vendor_field`
+- **Lesson:** What a page prints once about a field must be asked again when the field can change.
+
+#### B-597 · The vendor list covered "Not in the vendor list: add it as a new vendor" while typing · low
+- **Where:** `ap_coder/web/static/js/picker.js` (`setAction`), `ap_coder/web/static/js/invoice.js` (the vendor field)
+- **Symptom:** while a vendor name was typed, its list lay over the line under the field that says the name is not in
+  the vendor list and offers to add it.
+- **Cause:** the list is drawn under the box, where that line is.
+- **Reproduce:** with a vendor list imported, type "age" in the vendor field.
+- **Reproduced:** yes
+- **Fix:** the vendor list ends with a row *Not in the vendor list: add as a new vendor…* while the name typed is not a
+  vendor of the list; choosing it opens *Add new vendor…* with the name typed (Tab never picks it).
+- **Test:** `tests/test_web_picker.py::test_in_a_browser_the_vendor_list_ends_with_add_as_a_new_vendor`
+- **Lesson:** A list that covers a message must carry the message, or the way out it offered.
+
+#### B-610 · Ticking a line's GST box left the GST line's taxable amount as it was · low-medium
+- **Where:** `ap_coder/web/static/js/invoice.js` (the review screen's tax lines)
+- **Symptom:** ticking or unticking a line's GST, HST, PST or QST box changed nothing in the Sales tax grid: the clerk
+  typed the tax line's taxable amount (and its amount) again by hand (two of 20 real invoices in a test run).
+- **Cause:** the tax lines were only ever what was read or typed; nothing tied them to the lines ticked with them.
+- **Reproduce:** on an invoice with GST, untick GST on line 1: the GST line still shows the old taxable amount.
+- **Reproduced:** yes
+- **Fix:** every edit of the screen (a box ticked, an amount changed, a line deleted, added or put back) updates a tax
+  line's taxable amount to the sum of the lines ticked with its tax, and its amount at its rate, while the taxable
+  amount is still the sum it was; one the clerk typed is left alone, and the tax line's right-click menu offers
+  *Taxable from the lines ticked GST: …*.
+- **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_a_tax_lines_taxable_follows_the_lines_ticked_with_it_b610`
+- **Lesson:** Two parts of a screen that say the same thing must move together, but never over what a person typed.
+
+#### B-620 · A duplicated line posted the original's key, so the copy's taxes were read from the original's boxes · high
+- **Where:** `ap_coder/web/static/js/invoice.js` (`makeRow`, Duplicate line in a line's right-click menu)
+- **Symptom:** after *Duplicate line*, unticking a tax on the copy changed nothing the server saw; deleting the original
+  took the copy's taxes with it.
+- **Cause:** the copy was made from the original's values, its hidden `line_key` too, while its tax boxes were named
+  after its new key (`line_tax_<key>`); the server reads a row's taxes from `line_tax_<its line_key>`.
+- **Reproduce:** /review/3, duplicate line 1, untick PST on the copy; or duplicate line 1 and delete the original.
+- **Reproduced:** yes
+- **Fix:** a row made from a state never takes its `line_key` from it: it keeps the key its template was made with
+  (the original's on Undo, a new one for a copy). Undo, Insert below and Copy from above go through the same code.
+- **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_a_duplicated_line_posts_its_own_key_and_its_own_taxes_b620`
+- **Lesson:** A copy of a row copies its values, never its identity.
+
+#### B-621 · A double-click on the GST/HST number's box on the page put it in Invoice # · high
+- **Where:** `ap_coder/web/static/js/invoice.js` (`fillFromWord`), `ap_coder/web/static/js/invoice_viewer.js` (dblclick)
+- **Symptom:** after clicking in Invoice #, a double-click on the GST/HST number's box on the page made the invoice
+  number 609274188; approving would have taught the supplier template that the invoice number is printed there.
+- **Cause:** any double-click on the page filled the invoice detail focused last, however long ago and whatever was
+  clicked since, on a field's box or a line item too, over a verified value without asking.
+- **Reproduce:** /review/9, click in Invoice #, double-click the GST/HST number's box on the page.
+- **Reproduced:** yes
+- **Fix:** a double-click on a field's box fills nothing (its click shows that field). A plain word fills the detail
+  being typed in, or the one just left for the page (5 seconds, nothing outside the page clicked since); otherwise
+  a message says to click in a detail first. A verified value is replaced only after asking, and a word inside a line
+  item is used for a detail only after asking.
+- **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_a_double_click_fills_only_the_detail_chosen_and_never_from_a_fields_box_b621`
+- **Lesson:** A shortcut that writes a value (and teaches it) must be sure which value the person meant.
+
+#### B-622 · A tax line added blank took the ticked lines' sum, so the tax counted twice · medium
+- **Where:** `ap_coder/web/static/js/invoice.js` (`followTicks`, B-610)
+- **Symptom:** *Add a tax line* (GST, blank), then tick or untick a line's GST: the new line's taxable amount became
+  the same sum as the GST line already there, and the checks counted the GST twice.
+- **Cause:** B-610 let a tax line follow the ticked lines when its taxable amount was blank as well as when it was the
+  old sum.
+- **Reproduce:** on an invoice with GST, add a tax line, untick GST on line 1.
+- **Reproduced:** yes
+- **Fix:** only a tax line whose taxable amount was the old sum follows; a blank one stays blank (its right-click menu
+  can still set it from the ticked lines).
+- **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_a_new_blank_tax_line_does_not_take_the_ticked_sum_b622`
+- **Lesson:** "Follows the lines" must mean "was the lines' sum": a blank is a person's work still to do.
+
+#### B-623 · Enter in Currency went nowhere · medium-low
+- **Where:** `ap_coder/web/static/js/invoice.js` (Enter between the invoice details)
+- **Symptom:** Enter moved from detail to detail down to Currency, then stayed there.
+- **Cause:** the next box, Place of supply, is folded away in a closed `<details>` (it still has a layout box, so it
+  passed the "shown" test); focusing it did nothing, and Enter had already been stopped.
+- **Reproduce:** on an invoice whose place of supply is the ship-to, click in Currency and press Enter.
+- **Reproduced:** yes
+- **Fix:** boxes in a closed `<details>`, hidden or disabled are skipped, and when a box still does not take the
+  focus, Enter goes on to the one after (Shift+Enter: before).
+- **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_enter_goes_past_a_detail_folded_away_b623`
+- **Lesson:** Moving the focus is only done once the focus has moved: check where it landed.
+
+#### B-624 · A right-click inside a text box showed the field's menu, without Paste · low-medium
+- **Where:** `ap_coder/web/static/js/ctxmenu.js` (`nativeWanted`)
+- **Symptom:** a right-click inside an empty invoice detail, a line's description or an amount opened AP Coder's menu:
+  no Paste, no spelling suggestions.
+- **Cause:** the browser's own menu was left only for a right-click on text selected in the box.
+- **Reproduce:** right-click inside the empty QST # box.
+- **Reproduced:** yes
+- **Fix:** a right-click inside a text box (or text area) is always the browser's. A field's menu opens on a
+  right-click of its name, its row in the Fields list or its box on the page, and with Shift+F10 (or the ContextMenu
+  key) in its box; a line's on the rest of its row (its delete button, its tax chips). The Help page and the Quick
+  start say so.
+- **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_a_right_click_inside_a_text_box_is_the_browsers_paste_menu_b624`
+- **Lesson:** Where people type, the browser's menu is part of typing: add to it from around the box, not over it.
+
+#### B-625 · A note was posted twice while an edit waited to be checked · low
+- **Where:** `ap_coder/web/static/js/invoice.js` (the submit that waits for the check; the note sent in place)
+- **Symptom:** with an edit not checked yet, Enter twice in the note box, or a double click on *Add note*, added the
+  note twice.
+- **Cause:** a form sent while an edit waits is held until the check is done, then sent; each Enter or click was held
+  and sent, and the note sent in place had no guard of its own.
+- **Reproduce:** type in PO #, then at once type a note and press Enter twice.
+- **Reproduced:** yes
+- **Fix:** a form already held is not sent again meanwhile (Park and Reject too), and a note being sent is sent once.
+- **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_a_note_is_posted_once_however_often_it_is_sent_b625`
+- **Lesson:** A send that waits must remember it is waiting.
+
+#### B-626 · The queue put back a filter from long before, and replaced an address with its own message · low
+- **Where:** `ap_coder/web/static/js/queue.js`
+- **Symptom:** search the queue for "zzzz", go to the Invoice directory, open an invoice from there, press *Queue*: the
+  queue opened searching "zzzz". A queue address with a message (`?flash=`) was sent to the old filter, the message
+  lost.
+- **Cause:** the queue's view was kept each time the queue was left, and put back whenever the queue opened from any
+  invoice without a query; the message token was not counted as a query (app.js takes it out of the address first).
+- **Reproduce:** as in the symptom (`/review?q=zzzz`, `/search`, `/review/5`, Queue).
+- **Reproduced:** yes
+- **Fix:** only a click from the queue to an invoice leaves a mark, used up the next time the queue opens; the view is
+  put back only for an address without a query of its own, read as the page was opened (before app.js tidies it).
+- **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_the_queue_restores_only_the_view_an_invoice_was_opened_from_b626`
+- **Lesson:** Remember a place only when the person leaves from it, and forget it once used.
 
 #### B-600 · The local chat model was shown no examples of the vendor's coding when the vendor's name was not on the page as stored · medium
 - **Where:** `ap_coder/ai/pipeline.py` (`_process`)

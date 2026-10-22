@@ -194,12 +194,12 @@
 <tr{% if not r %} class="new"{% endif %}>
   <td><input type="text" name="vendor" value="{{ r.vendor if r else '' }}" aria-label="Vendor" title="Part of the name is enough"></td>
   <td><input type="text" name="contains" value="{{ r.contains if r else '' }}" aria-label="Line contains" title="Not case-sensitive"></td>
-  <td><select name="gl_code" aria-label="GL account">
+  <td><select name="gl_code" aria-label="GL account" data-picker data-picker-noun="account">
     <option value="">(choose)</option>
     {% if r and r.gl_code and r.gl_code not in gl_names %}<option value="{{ r.gl_code }}" selected>{{ r.gl_code }} (not in the GL list)</option>{% endif %}
     {% for code, label in gl_names.items() %}<option value="{{ code }}"{% if r and code == r.gl_code %} selected{% endif %}>{{ label }}</option>{% endfor %}
   </select></td>
-  <td>{% if cc_codes %}<select name="cost_center" aria-label="Cost center">
+  <td>{% if cc_codes %}<select name="cost_center" aria-label="Cost center" data-picker data-picker-noun="cost center">
     <option value=""></option>
     {% for code in cc_codes %}<option value="{{ code }}"{% if r and code == r.cost_center %} selected{% endif %}>{{ code }}</option>{% endfor %}
   </select>{% else %}<input type="hidden" name="cost_center" value="{{ r.cost_center if r else '' }}"><span class="muted">—</span>{% endif %}</td>

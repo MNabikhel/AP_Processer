@@ -1,0 +1,49 @@
+/* The picker (static/js/picker.js, D-56): a text box over the hidden select, and its list in a fixed layer on the
+   page's body. Tokens of app.css. */
+
+.pk {position: relative; display: flex; min-width: 0; max-width: 100%;}
+/* The select is still there (it is what is posted): under the box, the same size, never seen nor clicked. */
+.pk > .pk-native {position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; pointer-events: none;}
+.pk > .pk-input {position: relative; flex: 1 1 auto; width: 100%; min-width: 0; padding-right: 28px; text-align: left;
+  text-overflow: ellipsis; cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5' fill='none' stroke='%235b6474' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 9px center; background-size: 12px;}
+.pk > .pk-input:focus {cursor: text;}
+.pk > .pk-input[aria-expanded="true"] {border-color: var(--lg-accent); box-shadow: var(--lg-focus);}
+/* Where a select took the whole width, its box does. */
+td > .pk, .field > .pk, .inv-parts .pk {width: 100%;}
+.field.inline > .pk {width: auto; min-width: 16em;}
+.apc-table.edit .pk {min-width: 14em;}
+
+/* A guessed account (B-463): marked as its select was, until the reviewer picks one. */
+.inv-grid-table .is-guess .pk-input {border-color: var(--lg-warning); background-color: var(--lg-warning-weak);}
+
+.pk-layer {position: fixed; z-index: 1000; top: 0; left: 0; background: var(--lg-surface); color: var(--lg-text);
+  border: 1px solid var(--lg-border); border-radius: var(--lg-r); box-shadow: 0 12px 32px rgba(15, 23, 42, .16);
+  overflow: hidden; font: 13px/1.4 Inter, system-ui, sans-serif;}
+.pk-layer[hidden] {display: none;}
+.pk-list {position: relative; overflow-y: auto; overscroll-behavior: contain; padding: 4px 0;}
+.pk-group {position: relative; padding: 8px 12px 3px; font-size: 11px; font-weight: 600; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--lg-muted);}
+.pk-list > [role="group"] + [role="group"] {border-top: 1px solid var(--lg-hairline); margin-top: 4px;}
+.pk-option {display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 4px 12px; cursor: pointer;
+  border-left: 3px solid transparent; white-space: nowrap;}
+.pk-option.is-active {background: var(--lg-accent-weak); border-left-color: var(--lg-accent);}
+.pk-code {flex: none; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; font-weight: 600;
+  font-variant-numeric: tabular-nums; min-width: 4.5ch;}
+.pk-name {flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;}
+.pk-extra {flex: 0 1 auto; max-width: 50%; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; color: var(--lg-muted);}
+.pk-tick {flex: none; font-size: 16px; color: var(--lg-accent);}
+/* A row that does something (Add as a new vendor): the last one, always in view under the choices (B-597). */
+.pk-action {position: sticky; bottom: -4px; margin-bottom: -4px; padding-bottom: 8px; background: var(--lg-surface);
+  border-top: 1px solid var(--lg-hairline); color: var(--lg-accent); font-weight: 500;}
+.pk-action.is-active {background: var(--lg-accent-weak);}
+.pk-option mark {background: #fde68a; color: inherit; border-radius: 2px; padding: 0 1px; margin: 0 -1px;}
+.pk-note {padding: 8px 12px; font-size: 12.5px; color: var(--lg-muted); border-top: 1px solid var(--lg-hairline);}
+.pk-list:empty {display: none;}
+.pk-list:empty + .pk-note {border-top: 0;}
+
+@media (forced-colors: active) {
+  .pk-option.is-active {outline: 2px solid Highlight; outline-offset: -2px;}
+  .pk-option mark {background: Mark; color: MarkText;}
+}

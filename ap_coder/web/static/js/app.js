@@ -36,13 +36,27 @@ export function messageElement(msg) {
     `<span class="ms" aria-hidden="true">${escapeHtml(msg.icon || ICONS[tone] || "info")}</span>` +
     `<div><div>${escapeHtml(msg.text)}</div>${details ? `<ul>${details}</ul>` : ""}</div>` +
     `<button type="button" class="flash-close" data-dismiss aria-label="Dismiss"><span class="ms" aria-hidden="true">close</span></button>`;
+  if (msg.action) {
+    // An action beside the text (the review screen's Undo): pressed once, then the message goes.
+    const act = document.createElement("button");
+    act.type = "button";
+    act.className = "flash-act";
+    act.innerHTML = msg.action.icon ? `<span class="ms" aria-hidden="true">${escapeHtml(msg.action.icon)}</span>` : "";
+    act.append(msg.action.label);
+    if (msg.action.title) act.title = msg.action.title;
+    act.addEventListener("click", () => {
+      el.remove();
+      msg.action.run();
+    });
+    el.querySelector(".flash-close").before(act);
+  }
   return el;
 }
 
-/** Show a short message in the corner. */
+/** Show a short message in the corner; returns its element (gone after ``ms``). */
 export function toast(msg, ms = 6000) {
   const box = document.getElementById("toasts");
-  if (!box) return;
+  if (!box) return null;
   const el = messageElement(typeof msg === "string" ? { text: msg, tone: "info" } : msg);
   // Above a bar fixed at the window's foot (the review screen's approve bar), never over its buttons.
   const bar = document.querySelector(".inv-actionbar");
@@ -50,6 +64,7 @@ export function toast(msg, ms = 6000) {
   box.style.bottom = `${Math.max(20, window.innerHeight - top + 12)}px`;
   box.appendChild(el);
   setTimeout(() => el.remove(), ms);
+  return el;
 }
 
 /** POST to the dashboard with the page header; returns the JSON answer (an {error} on failure). */
@@ -193,7 +208,8 @@ document.addEventListener("click", (event) => {
   }
   const close = event.target.closest("[data-dismiss]");
   if (close) close.closest(".flash")?.remove();
-  // A popover closes when you click elsewhere.
+  // A popover closes when you click elsewhere (a choice in a picker's list, drawn on the body, is in it).
+  if (event.target.closest("[data-picker-layer]")) return;
   document.querySelectorAll("details.pop[open]").forEach((d) => {
     if (!d.contains(event.target)) d.removeAttribute("open");
   });
@@ -208,8 +224,18 @@ function resetSlowLink(a) {
 // Back to a page whose slow link was clicked (the browser keeps it): the link reads as it did.
 window.addEventListener("pageshow", () => document.querySelectorAll("a[data-busy][aria-busy]").forEach(resetSlowLink));
 
+// Esc closes the open popovers; the keyboard focus inside one goes back to its button (Split a line…, Apply to all).
+// (A picker's list open in it closes first: picker.js stops that Esc.)
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") document.querySelectorAll("details.pop[open]").forEach((d) => d.removeAttribute("open"));
+  if (event.key !== "Escape" || event.defaultPrevented) return;
+  document.querySelectorAll("details.pop[open]").forEach((d) => {
+    const inside = d.contains(document.activeElement);
+    d.removeAttribute("open");
+    if (inside) {
+      d.querySelector(":scope > summary")?.focus();
+      event.preventDefault(); // used: teaching a field (invoice_viewer.js) goes on
+    }
+  });
 });
 
 // A popover opens inside the screen: on a narrow one (a phone), a popover lined up with the right of its button would

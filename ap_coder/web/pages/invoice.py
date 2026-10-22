@@ -152,7 +152,8 @@ def current_draft(request: Request, inv: dict[str, Any]) -> tuple[view.Draft, bo
     if saved is None:
         return view.Draft.stored(_start(inv), _reader_at(inv)), False
     draft = view.Draft(header=dict(saved["header"]), lines=list(saved["lines"]), taxes=list(saved["taxes"]),
-                       taught=dict(saved.get("taught") or {}), reader_at=saved.get("reader_at", ""))  # fmt: skip
+                       taught=dict(saved.get("taught") or {}), reader_at=saved.get("reader_at", ""),
+                       absent=list(saved.get("absent") or []))  # fmt: skip
     return draft, draft.reader_at != _reader_at(inv)
 
 
@@ -430,11 +431,13 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
     return render(
         request, "invoice.html", "review", mode="review", **context,
         draft=draft, kept=kept, live=analysis.live, sure=sure,
-        grid=view.grid(reference, draft, inv.get("ai_output") or {}),
+        grid=view.grid(reference, draft, inv.get("ai_output") or {},
+                       view.vendor_accounts(store, draft.header.get("vendor_name") or "")),
         labels=view.FIELD_LABELS, provinces=view.province_options(),
         due_placeholder=f"{computed.isoformat()} (from terms)" if computed else "YYYY-MM-DD",
         sent_back=_sent_back(store, invoice_id), poll_seconds=PAGE_READER_POLL_SECONDS,
         today=dt.date.today().isoformat(), taught_json=draft.taught, vendors=vendor_options(store),
+        absent_ok=list(view.ABSENT_FIELDS),
         supply=view.supply_line(draft.header, draft.lines, reference.tax),
         usual_cc=view.usual_cost_center(store, reference, draft.header.get("vendor_name") or ""),
     )  # fmt: skip
@@ -512,12 +515,14 @@ def _closed(store: Store, reference: ReferenceData | None, inv: dict[str, Any]) 
 
 
 @router.get("/review/{invoice_id:int}/page/{number:int}.png")
-def page_picture(request: Request, invoice_id: int, number: int) -> Response:
+def page_picture(request: Request, invoice_id: int, number: int, scale: str = "1") -> Response:
+    """The page as a picture; ``?scale=2`` or ``3`` draws it at 2 or 3 times the dpi for a page zoomed in (anything else
+    is 1). The scale is in the address, so the browser keeps each one apart."""
     inv = _invoice(get_store(request), invoice_id)
     if not Path(inv.get("source_path") or "").is_file():
         raise HTTPException(status_code=404, detail=f"This invoice's file is no longer at {inv.get('source_path')}.")
     try:
-        png = document.page_png(inv["source_path"], number)
+        png = document.page_png(inv["source_path"], number, document.clean_scale(scale))
     except (IndexError, OSError) as exc:
         raise HTTPException(status_code=404, detail="That page is not in the invoice's file.") from exc
     except Exception as exc:  # noqa: BLE001 - a damaged file: said plainly
@@ -583,8 +588,11 @@ async def check(request: Request, invoice_id: int) -> JSONResponse:
     if analysis.report is not None:
         store.refresh_confidence(invoice_id, analysis.report.adjusted_confidence, analysis.report.requires_review)
     _keep_draft(request, invoice_id, draft, analysis.coding is None or analysis.changed or bool(draft.taught))
+    # the account lists' "Used for this vendor", for the vendor now in the vendor field (B-596)
+    listed = {code for code, _ in view.gl_options(reference, draft.lines)}
+    used = [c for c in view.vendor_accounts(store, draft.header.get("vendor_name") or "") if c in listed]
     return JSONResponse({"ok": True, "valid": analysis.coding is not None, "allow": analysis.allow,
-                         "problems": analysis.problems,
+                         "problems": analysis.problems, "vendor_accounts": used,
                          "sections": _render_live(analysis.live, invoice_id)})  # fmt: skip
 
 
@@ -715,12 +723,17 @@ def reject(request: Request, invoice_id: int, reason: str = Form(""), show: str 
 
 
 @router.post("/review/{invoice_id:int}/note")
-def note(request: Request, invoice_id: int, text: str = Form(""), back: str = Form("")) -> JSONResponse:
+def note(request: Request, invoice_id: int, text: str = Form(""), back: str = Form(""),
+         inline: str = Form("")) -> JSONResponse:  # fmt: skip
     store = get_store(request)
     _invoice(store, invoice_id)
     if not text.strip():
         return refuse("Write the note first.")
     store.add_note(invoice_id, reviewer(), text)
+    if inline:  # added from the review screen without leaving it: the notes as they are now (D-60)
+        notes = history([e for e in store.events(invoice_id) if e["action"] in NOTE_ACTIONS])
+        return JSONResponse({"ok": True, "html": ui.timeline(notes), "count": len(notes),
+                             "toast": {"text": "Note added.", "tone": "ok", "icon": "add_comment"}})  # fmt: skip
     return done(request, back or f"/review/{invoice_id}", flash_message("Note added.", "ok", icon="add_comment"))
 
 

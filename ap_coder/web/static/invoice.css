@@ -216,8 +216,8 @@
   line-height: 18px; padding: 5px 8px; border: 1px solid var(--lg-border); border-radius: var(--lg-r-sm, 6px);
   background: var(--lg-surface); color: var(--lg-text); field-sizing: content; max-height: 80px;}
 .inv-lines-grid textarea:focus {outline: none; border-color: var(--lg-accent); box-shadow: var(--lg-focus);}
-/* A long invoice (more than 10 lines): the same rows and Tab order, tighter: the captions on the first line only, a
-   one-line description box that grows as needed, the taxes on one line (B-479). */
+/* An invoice of more than 3 lines (B-479: 10, D-59): the same rows and Tab order, tighter: the captions on the first
+   line only, a one-line description box that grows as needed, the taxes on one line; about 105 px a line, not 150. */
 .inv-lines-grid.compact tr[data-row] {padding: 4px 0; gap: 3px 6px;}
 .inv-lines-grid.compact tr[data-row]:not(:first-child) td[data-label]::before {display: none;}
 .inv-lines-grid.compact textarea {min-height: 28px; padding: 4px 8px;}
@@ -272,6 +272,11 @@ button.inv-pick {border: 0; font-family: inherit; text-align: left; cursor: poin
 button.inv-pick:hover {text-decoration: underline;}
 button.inv-pick .ms {font-size: 14px;}
 @media (max-width: 600px) {.rvw-split .legend span {white-space: normal;}}
+/* "Checking…" while the edits are checked (invoice.js check): a small tag above the bar's left end (the toasts are at
+   the right), never in the bar, which would wrap and move its buttons; nothing when idle. */
+.inv-checking {position: absolute; left: 16px; bottom: calc(100% + 6px); padding: 2px 10px; white-space: nowrap;
+  background: var(--lg-surface); border: 1px solid var(--lg-border); border-radius: 999px; box-shadow: var(--lg-shadow-pop);}
+.inv-checking:empty {display: none;}
 /* margin-left: auto: at the right also when the bar wraps under a long hint (B-428) */
 .inv-actionbar-right {display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end;
   margin-left: auto;}
@@ -333,3 +338,14 @@ button.inv-pick .ms {font-size: 14px;}
 .inv-lessons > summary {display: flex; gap: 6px; align-items: center; cursor: pointer; list-style: none;}
 .inv-lessons ul {margin: 6px 0 0 24px; padding: 0;}
 .inv-lessons li {margin: 2px 0;}
+
+/* D-60: the invoice number's copy button, a detail marked not on the invoice, the link to a possible duplicate. */
+.rvw-copy {display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; margin: -3px 0 -3px 3px;
+  padding: 0; border: 0; border-radius: var(--lg-r-sm); background: transparent; color: var(--lg-subtle); cursor: pointer; vertical-align: middle;}
+.rvw-copy .ms {font-size: 15px;}
+.rvw-copy:hover, .rvw-copy:focus-visible {background: var(--lg-neutral); color: var(--lg-accent);}
+.inv-absent {display: inline-flex; align-items: center; gap: 4px; margin-top: 3px; font-size: 12px; color: var(--lg-muted);}
+.inv-absent[hidden] {display: none;}
+.inv-absent .ms {font-size: 14px;}
+.rvw-dup-link {display: inline-flex; align-items: center; gap: 2px; margin-left: 6px; font-weight: 600; white-space: nowrap;}
+.rvw-dup-link .ms {font-size: 14px;}

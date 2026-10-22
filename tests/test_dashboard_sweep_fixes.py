@@ -1,6 +1,7 @@
 """Bugs found driving the dashboard in a browser as a clerk and an AP lead would (third sweep), each reproduced here
 through the page (ap_coder/web) or the helper it came from, so they are not made again."""
 
+import json
 import re
 from html.parser import HTMLParser
 from types import SimpleNamespace
@@ -70,8 +71,10 @@ def test_the_split_menu_names_cost_centers_as_the_line_grid_does(client, store):
     doc["line_items"][0]["predicted_cost_center"] = "UNASSIGNED"
     invoice_id = _flagged(store, doc)
     page = client.get(f"/review/{invoice_id}").text
+    # the split's cost centers are picked from the page's list (#cc-options, D-56), as a line's are
     parts = page.split('<template id="part-template">', 1)[1].split("</template>", 1)[0]
-    options = dict(re.findall(r'<option value="([^"]*)">([^<]*)</option>', parts.split('name="part_cc"', 1)[1]))
+    assert 'name="part_cc"' in parts and 'data-options="cc-options"' in parts
+    options = dict(json.loads(re.search(r'id="cc-options">(.*?)</script>', page, re.S).group(1)))
     assert options["UNASSIGNED"] == "Needs a cost center"
     assert options["CC400"].startswith("CC400 · ")
 

@@ -329,11 +329,11 @@ def test_in_a_browser_approve_stays_at_the_right_while_a_line_needs_an_account(b
     assert approve["x"] + approve["width"] > bar["x"] + bar["width"] - 60, (approve, bar)
     # the hint takes you to the line, and so does G
     page.click(".inv-pick")
-    assert page.evaluate("document.activeElement.name") == "line_gl"
+    assert page.evaluate("document.activeElement.dataset.pickerName") == "line_gl"
     page.locator("body").focus()
     page.evaluate("document.activeElement.blur()")
     page.keyboard.press("g")
-    assert page.evaluate("document.activeElement.name") == "line_gl"
+    assert page.evaluate("document.activeElement.dataset.pickerName") == "line_gl"
     assert errors == []
 
 
@@ -476,7 +476,7 @@ def test_in_a_browser_a_line_in_the_checks_takes_you_to_it(browser, store):
     page.select_option("select[name=line_gl] >> nth=0", UNASSIGNED)
     page.wait_for_selector("[data-goto-line]")
     page.click("[data-goto-line] >> nth=0")
-    assert page.evaluate("document.activeElement.name") == "line_gl"
+    assert page.evaluate("document.activeElement.dataset.pickerName") == "line_gl"
     assert errors == []
 
 
@@ -522,7 +522,7 @@ def test_in_a_browser_tab_follows_the_line_grid_as_it_shows_and_the_page_view_en
     for _ in range(12):
         box = page.evaluate(
             "(() => { const e = document.activeElement; const r = e.closest('td').getBoundingClientRect();"
-            " return [e.name || e.getAttribute('aria-label') || e.tagName, r.top, r.left,"
+            " return [e.dataset.pickerName || e.name || e.getAttribute('aria-label') || e.tagName, r.top, r.left,"
             " e.closest('tr') === document.querySelector('[data-grid=lines] tr')]; })()"
         )
         if not box[3]:

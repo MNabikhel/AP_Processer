@@ -78,3 +78,29 @@ def test_minimd_escapes_and_formats():
     assert "<h4>Title</h4>" in out and "<b>bold</b>" in out and "<code>code</code>" in out
     assert "&lt;b&gt;x&lt;/b&gt;" in out and "a link" in out and "DOC.md" not in out
     assert "<ul><li>one goes on</li><li>two</li></ul>" in out
+
+
+def test_the_shortcuts_list_has_the_page_viewers_keys_worded_as_on_the_review_screen(client, tmp_path):
+    from ap_coder.core.config import Settings as _Settings
+    from ap_coder.ops.demo import load_demo
+    from ap_coder.web.pages.help import SHORTCUT_ROWS, shortcut_keys
+
+    assert shortcut_keys("[Ctrl] + wheel") == [{"key": True, "text": "Ctrl"}, {"key": False, "text": "+ wheel"}]
+    assert shortcut_keys("[H] or hold [Space]") == [{"key": True, "text": "H"}, {"key": False, "text": "or hold"},
+                                                    {"key": True, "text": "Space"}]  # fmt: skip
+    help_rows = html.unescape(page(client).split("<h4>Shortcuts</h4>", 1)[1].split("</table>", 1)[0])
+    store = Store(tmp_path / "demo" / "ap_coder.db")
+    load_demo(store, _Settings())
+    review = TestClient(create_app(_Settings(), store, start_reader=False), base_url="http://localhost")
+    inv = store.list_invoices("review")[0]
+    review_rows = html.unescape(
+        review.get(f"/review/{inv['id']}").text.split("Shortcuts", 1)[1].split("</table>", 1)[0]
+    )
+    viewer = SHORTCUT_ROWS[4:]  # after the four invoice keys: the viewer's, then the menus, Undo, Park, Reject
+    assert len(viewer) == 9
+    for spec, what in viewer:
+        for rows in (help_rows, review_rows):
+            assert what in rows, (what, rows)
+            for part in shortcut_keys(spec):
+                assert part["text"] in rows, (part, rows)
+    assert help_rows.count("apc-kbd") >= 4 * 2 + 9  # the four invoice keys, and the viewer's nine

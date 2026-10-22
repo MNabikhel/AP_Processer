@@ -7,6 +7,7 @@
   <title>{% block title %}{{ title }} · AP Coder{% endblock %}</title>
   <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/app.css?v={{ static_version }}">
+  <link rel="stylesheet" href="/static/picker.css?v={{ static_version }}">
   {% block head %}{% endblock %}
 </head>
 <body data-page="{{ page }}">
@@ -96,8 +97,10 @@
     </main>
   </div>
   <div id="toasts" class="toasts" aria-live="polite"></div>
-  {# No ?v= here: page scripts import "./app.js", which must be the very same URL to be the same module. #}
+  {# No ?v= here: page scripts import "./app.js" and "./picker.js", which must be the very same URL to be the same
+     module. picker.js: the searchable lists of select[data-picker] and input[data-picker="free"] (D-56). #}
   <script type="module" src="/static/js/app.js"></script>
+  <script type="module" src="/static/js/picker.js"></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

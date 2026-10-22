@@ -32,12 +32,38 @@ router = APIRouter()
 SETUP_KEEP_SECONDS = 300  # the setup report is kept this long once made
 _setup_cache: dict[str, tuple[float, str]] = {}
 _setup_lock = threading.Lock()
-SHORTCUTS = [
-    (("Ctrl", "Enter"), "Approve & teach the open invoice"),
-    (("Alt", "→"), "Next invoice"),
-    (("Alt", "←"), "Previous invoice"),
-    (("Alt", "↑"), "Back to the queue"),
+# Each row's keys: [Key] is a key, anything else words between them ("[Ctrl] + wheel", "[H] or hold [Space]").
+SHORTCUT_ROWS = [
+    ("[Ctrl] + [Enter]", "Approve & teach the open invoice"),
+    ("[Alt] + [→]", "Next invoice"),
+    ("[Alt] + [←]", "Previous invoice"),
+    ("[Alt] + [↑]", "Back to the queue"),
+    # The page viewer on the review screen, worded as its own Shortcuts list (templates/invoice.html)
+    ("[+] [−] [0] [9]", "Zoom the page in, out, to its width, all of it"),
+    ("[Ctrl] + wheel", "Zoom where the pointer is (or pinch)"),
+    ("[H] or hold [Space]", "Drag to move the page"),
+    ("[R]", "Turn the page (on screen only)"),
+    ("[PgUp] [PgDn]", "Previous or next page"),
+    # The review screen's menus and its last change (D-60), also in its own Shortcuts list
+    ("[Shift] + [F10]", "More options for a field, a line or the page (or right-click)"),
+    ("[Ctrl] + [Z]", "Undo the last change (a line deleted, a value cleared)"),
+    ("[P]", "Park: opens Park, to say what it waits for"),
+    ("[X]", "Reject: opens Reject, to say why (nothing is rejected until you press it)"),
 ]
+
+
+def shortcut_keys(spec: str) -> list[dict[str, Any]]:
+    """``"[Ctrl] + wheel"`` -> [{"key": True, "text": "Ctrl"}, {"key": False, "text": "+ wheel"}]."""
+    parts = []
+    for piece in re.split(r"(\[[^\]]+\])", spec):
+        if piece.startswith("[") and piece.endswith("]"):
+            parts.append({"key": True, "text": piece[1:-1]})
+        elif piece.strip():
+            parts.append({"key": False, "text": piece.strip()})
+    return parts
+
+
+SHORTCUTS = [(shortcut_keys(spec), what) for spec, what in SHORTCUT_ROWS]
 
 
 def matching_checks(query: str = "", area: str | None = None, cloud: bool = True) -> list[tuple[str, CheckHelp]]:

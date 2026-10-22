@@ -5,12 +5,24 @@
 {% for code, label in options %}<option value="{{ code }}"{% if code == current %} selected{% endif %}>{{ label }}</option>{% endfor %}
 {%- endmacro %}
 
+{# A line's GL account or cost center: only its own choice and "Needs an account" are printed; the account picker
+   (static/js/picker.js) offers the whole list, printed once in the page (#gl-options, #cc-options), so a long invoice
+   doesn't carry the chart of accounts once for every line (D-56). #}
+{% macro few(labels, current) -%}
+<option value="UNASSIGNED"{% if current == "UNASSIGNED" %} selected{% endif %}>{{ labels["UNASSIGNED"] }}</option>
+{%- if current != "UNASSIGNED" %}<option value="{{ current }}" selected>{{ labels.get(current, current) }}</option>{% endif %}
+{%- endmacro %}
+
 {# A number as the input shows it: amounts with cents, a quantity without a useless ".0". #}
 {% macro num(value) -%}
 {%- if value is none or value == "" %}{% elif value is number and value == value | int %}{{ value | int }}{% else %}{{ value }}{% endif -%}
 {%- endmacro %}
 {% macro cents(value) -%}
 {%- if value is none or value == "" %}{% elif value is number %}{{ "%.2f" | format(value) }}{% else %}{{ value }}{% endif -%}
+{%- endmacro %}
+
+{% macro line_label(row, what) -%}
+{%- set n = num(row.line_number) %}{% if n %}Line {{ n }} {{ what }}{% else %}{{ what }}{% endif -%}
 {%- endmacro %}
 
 {# The cells in the order they show (B-478): #, description, delete; GL account (cost center), amount; taxes, qty,
@@ -22,9 +34,9 @@
     <input type="number" name="line_number" value="{{ num(row.line_number) }}" step="1" min="0" form="inv" aria-label="Line number"></td>
   <td class="c-desc"><textarea name="line_description" rows="1" form="inv" aria-label="Description" data-one-line>{{ (row.description or '') | replace('\r', ' ') | replace('\n', ' ') }}</textarea></td>
   <td class="c-del"><button type="button" class="icon-btn" data-del-row title="Delete this line" aria-label="Delete this line"><span class="ms" aria-hidden="true">delete</span></button></td>
-  <td data-label="GL account" class="c-gl{% if row.guessed %} is-guess{% endif %}"><select name="line_gl" form="inv" aria-label="GL account" data-gl>{{ opts(g.gl_options, row.predicted_gl_code or "UNASSIGNED") }}</select>
+  <td data-label="GL account" class="c-gl{% if row.guessed %} is-guess{% endif %}"><select name="line_gl" form="inv" aria-label="{{ line_label(row, 'GL account') }}" data-gl data-picker data-picker-noun="account" data-picker-line data-options="gl-options" data-groups="gl">{{ few(g.gl_labels, row.predicted_gl_code or "UNASSIGNED") }}</select>
     {%- if row.guessed %}<span class="inv-guess" title="{{ row.reasoning_justification }}"><span class="ms" aria-hidden="true">help</span>A guess, not learned yet: check it</span>{% endif %}</td>
-  {% if g.has_cc %}<td class="c-cc" data-label="Cost center"><select name="line_cc" form="inv" aria-label="Cost center">{{ opts(g.cc_options, row.predicted_cost_center or "UNASSIGNED") }}</select></td>{% endif %}
+  {% if g.has_cc %}<td class="c-cc" data-label="Cost center"><select name="line_cc" form="inv" aria-label="{{ line_label(row, 'Cost center') }}" data-picker data-picker-noun="cost center" data-picker-line data-options="cc-options">{{ few(g.cc_labels, row.predicted_cost_center or "UNASSIGNED") }}</select></td>{% endif %}
   <td class="c-amt" data-label="Amount"><input type="number" name="line_amount" value="{{ cents(row.amount) }}" step="0.01" form="inv" aria-label="Amount"></td>
   <td class="c-tax" data-label="Taxes"><div class="inv-taxes" role="group" aria-label="Taxes on this line">
     {% for t in g.tax_types %}<label title="{{ g.tax_labels[t] }}"><input type="checkbox" name="line_tax_{{ key }}" value="{{ t }}" form="inv"{% if t in (row.taxes_applied or []) %} checked{% endif %}><span>{{ g.tax_labels[t] }}</span></label>{% endfor %}

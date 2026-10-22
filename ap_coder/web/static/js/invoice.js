@@ -9,13 +9,19 @@
      field" lets the reviewer click the words that hold it (sent with the approval, the supplier's template learns).
    * OvisOCR2: while it has this invoice in its queue, its progress is looked up again every few seconds.
    * Keys: Ctrl+Enter approves (typed in another form or a dialog, it is theirs), Alt+←/→ previous / next invoice
-     and Alt+↑ the queue (not in a text box, where they move the caret). Enter in a text box approves nothing.
+     and Alt+↑ the queue (not in a text box, where they move the caret). Enter in a text box approves nothing: in an
+     invoice detail it goes to the next one (Shift+Enter the one before). P opens Park, X opens Reject (only opens).
+   * Right-click a field's name (or Shift+F10 in its box), a line, a tax line or the page: a menu of what to do with it
+     (ctxmenu.js, D-60; inside a text box a right-click is the browser's own, with Paste). Deleting, clearing, splitting and the like can be undone: the message says Undo, and Ctrl+Z (not in a
+     text box of another form) does the same. Only the last change is kept to undo, until something else is edited.
 
    Everything from the server is either HTML it escaped (the sections, the rows) or set as text here.
 */
 
 import { HEADERS, follow, post, toast } from "./app.js";
+import { register } from "./ctxmenu.js";
 import { InvoiceViewer } from "./invoice_viewer.js";
+import { enhance, fold, registerGroups, setAction, setSource, setValue } from "./picker.js";
 
 const form = document.getElementById("inv");
 const invoiceId = document.body.querySelector("[data-invoice]")?.dataset.invoice || location.pathname.split("/")[2];
@@ -42,6 +48,7 @@ if (viewerRoot && viewerData) {
 let timer = 0;
 let running = null; // the check under way (a promise), with any rounds asked for meanwhile
 let queued = false; // edits made while a check runs: check again after it
+const checking = document.querySelector("[data-checking]"); // "Checking…" beside the approve bar meanwhile
 
 function input(name) {
   return form ? document.querySelector(`[form="inv"][name="${CSS.escape(name)}"]`) : null;
@@ -73,6 +80,8 @@ function applySections(answer) {
     }
   }
   if (approveButton) approveButton.disabled = !answer.allow;
+  // the accounts of the vendor now in the vendor field: the account lists' "Used for this vendor" (B-596)
+  if (Array.isArray(answer.vendor_accounts)) vendorAccounts = answer.vendor_accounts;
   showMailLanguage();
 }
 
@@ -92,14 +101,17 @@ async function check() {
       else if (answer.error) toast({ text: answer.error, tone: "err" }, 9000);
     } while (queued);
   })();
+  if (checking) checking.textContent = "Checking…";
   try {
     await running;
   } finally {
     running = null;
+    if (checking) checking.textContent = "";
   }
 }
 
 function soon(ms = 450) {
+  followTicks(); // every edit comes here: a tax line's taxable follows its ticked lines (B-610)
   clearTimeout(timer);
   timer = setTimeout(check, ms);
 }
@@ -122,10 +134,15 @@ document.addEventListener("input", (e) => {
 
 if (form) {
   document.addEventListener("input", (e) => {
-    if (e.target.form === form && e.target.type !== "checkbox" && e.target.type !== "radio") soon();
+    if (e.target.form !== form) return;
+    dropUndo(); // an edit since: Undo would put that back too
+    headerEdited(e.target);
+    if (e.target.type !== "checkbox" && e.target.type !== "radio") soon();
   });
   document.addEventListener("change", (e) => {
     if (e.target.form !== form) return;
+    if (e.target.name !== "mail_lang") dropUndo();
+    headerEdited(e.target);
     if (e.target.name === "mail_lang") return showMailLanguage();
     if (e.target.name === "line_gl") {  // a guessed account the reviewer picked again is no longer a guess
       const cell = e.target.closest(".is-guess");
@@ -135,12 +152,19 @@ if (form) {
   });
 }
 
-/* Another form or a link while edits wait to be checked: check (and keep) them first. */
+/* Another form or a link while edits wait to be checked: check (and keep) them first. A form already waiting is not
+   sent again by a second Enter or click meanwhile (B-625). */
 let passing = null;
+const waiting = new WeakSet();
 document.addEventListener(
   "submit",
   (e) => {
     const f = e.target;
+    if (waiting.has(f)) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return;
+    }
     if (f === form) {
       // Approving sends every field as it is now: a check still waiting (the field just left fired "change") would
       // only reach the server after the approval, and be told the invoice is no longer in the queue.
@@ -151,7 +175,9 @@ document.addEventListener(
     if (!form || passing === f || !(timer || running)) return;
     e.preventDefault();
     e.stopImmediatePropagation();
+    waiting.add(f);
     flush().then(() => {
+      waiting.delete(f);
       passing = f;
       f.requestSubmit(e.submitter || undefined);
       passing = null;
@@ -169,7 +195,6 @@ document.addEventListener("click", (e) => {
 
 /* ---------- The grids ---------- */
 
-let newRows = 0;
 
 document.addEventListener("click", (e) => {
   const add = e.target.closest("[data-add-row]");
@@ -178,8 +203,9 @@ document.addEventListener("click", (e) => {
     const tpl = document.getElementById(which === "lines" ? "line-template" : "tax-template");
     const body = document.querySelector(`[data-grid="${which}"]`);
     if (!tpl || !body) return;
-    const html = tpl.innerHTML.replaceAll("__KEY__", `n${Date.now().toString(36)}${newRows++}`);
+    const html = tpl.innerHTML.replaceAll("__KEY__", newKey());
     body.insertAdjacentHTML("beforeend", html);
+    enhance(body.lastElementChild);
     body.lastElementChild?.querySelector("input:not([type=hidden]), select")?.focus();
     if (which === "lines") fillSplitLines();
     soon(0);
@@ -187,42 +213,91 @@ document.addEventListener("click", (e) => {
   }
   const del = e.target.closest("[data-del-row]");
   if (del) {
-    del.closest("tr")?.remove();
-    fillSplitLines();
-    soon(0);
+    const tr = del.closest("tr");
+    if (tr) deleteRow(tr);
     return;
   }
   const action = e.target.closest("[data-grid-action]");
   if (action) gridAction(action.dataset.gridAction, { position: action.dataset.position, gl: action.dataset.gl, cc: action.dataset.cc }, action);
   const copy = e.target.closest("[data-copy]");
-  if (copy) {
-    const text = copy.parentElement.querySelector("pre")?.textContent || "";
-    navigator.clipboard?.writeText(text).then(
-      () => toast({ text: "Copied.", tone: "ok" }, 2500),
-      () => toast({ text: "Select the text and copy it.", tone: "info" }),
-    );
-  }
+  if (copy) copyText(copy.parentElement.querySelector("pre")?.textContent || "");
+  const copyNumber = e.target.closest("[data-copy-text]");
+  if (copyNumber) copyText(copyNumber.dataset.copyText, "Invoice number copied.");
 });
+
+function copyText(text, done = "Copied.") {
+  if (!navigator.clipboard) {
+    toast({ text: "Select the text and copy it.", tone: "info" });
+    return;
+  }
+  navigator.clipboard.writeText(text).then(
+    () => toast({ text: done, tone: "ok", icon: "content_copy" }, 2500),
+    () => toast({ text: "Select the text and copy it.", tone: "info" }),
+  );
+}
+
+let keys = 0;
+function newKey() {
+  return `n${Date.now().toString(36)}${keys++}`;
+}
 
 function setLines(html) {
   const body = document.querySelector('[data-grid="lines"]');
-  if (body) body.innerHTML = html; // rows drawn by the server, every text escaped
+  if (body) {
+    body.innerHTML = html; // rows drawn by the server, every text escaped
+    enhance(body); // their account pickers
+  }
   fillSplitLines();
+  lastSums = tickedSums(); // the lines drawn again (a split): what the tax lines follow from now on
 }
 
-async function gridAction(url, extra, button) {
+async function gridAction(url, extra, button, undoText = "") {
   await flush();
+  const snap = snapshot(); // the lines as they were: the answer's message offers Undo
   const data = {};
   for (const [k, v] of Object.entries(extra || {})) if (v !== undefined) data[k] = v;
-  if (button) button.disabled = true;
-  const answer = await post(url, formData(data));
-  if (button) button.disabled = false;
-  if (answer.ok && typeof answer.lines === "string") {
-    setLines(answer.lines);
-    if (answer.toast) toast(answer.toast);
-    await check();
-  } else follow(answer);
+  if (button) {
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    button.classList.add("busy");
+  }
+  try {
+    const answer = await post(url, formData(data));
+    if (answer.ok && typeof answer.lines === "string") {
+      setLines(answer.lines);
+      offerUndo(answer.toast || { text: undoText || "Lines changed.", tone: "ok" }, snap);
+      await check();
+    } else follow(answer);
+  } finally {
+    if (button) {  // always usable again, whatever went wrong
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+      button.classList.remove("busy");
+    }
+  }
 }
+
+/* ---------- The account pickers' groups: the accounts this vendor's lines went to, and the ones suggested ----------
+   "Used for this vendor" starts as the page's #gl-vendor; each check of the edits answers it again for the vendor in
+   the vendor field (B-596). */
+
+let vendorAccounts = [];
+try {
+  vendorAccounts = JSON.parse(document.getElementById("gl-vendor")?.textContent || "[]") || [];
+} catch {
+  vendorAccounts = [];
+}
+
+registerGroups("gl", (select) => {
+  const groups = [{ label: "Used for this vendor", values: vendorAccounts }];
+  // the line's suggestions (the Suggested GL accounts card): a line's own, or the line being split
+  const number = select.closest("tr")?.querySelector('[name="line_number"]')?.value || (select.closest("[data-split]") ? splitLine?.value : "");
+  if (number) {
+    const card = document.querySelector(`[data-live="suggest"] .inv-sugg[data-line="${CSS.escape(number)}"]`);
+    groups.push({ label: "Suggested", values: [...(card?.querySelectorAll("[data-gl]") || [])].map((b) => b.dataset.gl) });
+  }
+  return groups;
+});
 
 /* ---------- Apply to all lines: one GL account / cost center for the lines without one ---------- */
 
@@ -274,8 +349,9 @@ function addPart(gl, cc, pct) {
   const tr = parts.lastElementChild;
   const glSelect = tr.querySelector('[name="part_gl"]');
   const ccSelect = tr.querySelector('[name="part_cc"]');
-  if (gl && [...glSelect.options].some((o) => o.value === gl)) glSelect.value = gl;
-  if (ccSelect && cc && [...ccSelect.options].some((o) => o.value === cc)) ccSelect.value = cc;
+  enhance(tr); // the account pickers (their choices: the page's #gl-options and #cc-options)
+  if (gl) setValue(glSelect, gl); // the line's accounts
+  if (ccSelect && cc) setValue(ccSelect, cc);
   tr.querySelector('[name="part_pct"]').value = pct;
 }
 
@@ -344,19 +420,10 @@ try {
    "the" and the legal forms at the end aside: "The Northwind IT Solutions Inc." -> "northwind it solutions"). The
    vendor list comes with each vendor's key from the server; this keys the name being typed. Keep it in step with
    memory.py: tests/test_web_invoice.py compares the two on many spellings. */
-const LIGATURES = { "œ": "oe", "Œ": "OE", "æ": "ae", "Æ": "AE", "ß": "ss", "ø": "o", "Ø": "O", "ł": "l" };
 const LEGAL_SUFFIXES = new Set(
   ("inc incorporated incorporee ltd ltee limited limitee corp corporation co company cie llc llp lp plc ulc pc pllc " +
     "enr senc sencrl sec srl gmbh ag kg sa sas sarl bv nv pty spa ltda and").split(" "),
 );
-
-function fold(text) {
-  return (text || "")
-    .replace(/[œŒæÆßøØł]/g, (c) => LIGATURES[c])
-    .normalize("NFKD")
-    .replace(/\p{Mn}/gu, "")
-    .toLowerCase();
-}
 
 export function vendorKey(name) {
   const text = fold(name)
@@ -429,7 +496,30 @@ function setVendor(name) {
 }
 
 vendorInput?.addEventListener("input", showVendorMatch);
+// The vendor field's list (picker.js): the vendors of the vendor list, with their ERP ID and GST/HST number.
+if (vendorInput) {
+  setSource(vendorInput, () =>
+    vendors.list.map((v) => ({
+      value: v.name,
+      extra: [v.id, v.gst ? `GST/HST ${v.gst}` : "", v.added ? "added here" : ""].filter(Boolean).join(" · "),
+    })),
+  );
+}
 input("gst_hst_registration_number")?.addEventListener("input", showVendorMatch);
+// The vendor list's last row, while it covers the line under the field (B-597): a name not in the list is added.
+if (vendorInput && vendorAdd) {
+  setAction(vendorInput, (typed) => {
+    const key = vendorKey(typed);
+    if (!vendors.enforced || !key || vendors.list.some((v) => (v.key ?? vendorKey(v.name)) === key)) return null;
+    return {
+      label: "Not in the vendor list: add as a new vendor…",
+      run: () => {
+        showVendorMatch();
+        vendorAdd.open = true; // its "toggle" fills the name typed and focuses it
+      },
+    };
+  });
+}
 
 vendorAdd?.addEventListener("toggle", () => {
   if (!vendorAdd.open) return;
@@ -455,11 +545,7 @@ vendorAdd?.querySelector("[data-new-go]")?.addEventListener("click", async (e) =
     return;
   }
   const added = { name: answer.vendor, key: answer.key ?? vendorKey(answer.vendor), id: "", gst: body.get("gst"), qst: body.get("qst"), pst: body.get("pst"), added: true };
-  vendors.list = vendors.list.filter((v) => v.key !== added.key).concat([added]);
-  const option = document.createElement("option");
-  option.value = added.name;
-  option.textContent = "added here";
-  document.getElementById("vendor-list")?.append(option);
+  vendors.list = vendors.list.filter((v) => v.key !== added.key).concat([added]); // the vendor field offers it now
   vendorAdd.removeAttribute("open");
   if (answer.toast) toast(answer.toast);
   setVendor(added.name);
@@ -520,7 +606,9 @@ async function onViewerEvent(event) {
   if (event.type === "select") return showField(event.field);
   if (event.type === "line_hover") return markRow(event.index, event.on);
   if (event.type === "selection") return chooseFor(event);
+  if (event.type === "dblclick") return fillFromWord(event);
   if (event.type !== "assign") return;
+  const snap = snapshot();
   const body = new FormData();
   body.append("field", event.field);
   body.append("text", event.text || "");
@@ -532,17 +620,27 @@ async function onViewerEvent(event) {
   const el = input(answer.field);
   if (el) el.value = answer.value;
   if (answer.field === "vendor_name") showVendorMatch();
-  const taught = document.querySelector("[data-taught]");
-  let boxes = {};
-  try {
-    boxes = JSON.parse(taught.value || "{}") || {};
-  } catch {
-    boxes = {};
-  }
+  const boxes = taughtBoxes();
   boxes[answer.field] = event.boxes || [];
-  taught.value = JSON.stringify(boxes);
-  if (answer.toast) toast(answer.toast);
+  setTaught(boxes);
+  setAbsent(answer.field, false);
+  viewer?.setEdited(answer.field, answer.value);
+  offerUndo(answer.toast || { text: "Set.", tone: "ok" }, snap);
   soon(0);
+}
+
+/** The words shown on the page for each field ({field: boxes}), from the form's hidden ``taught``. */
+function taughtBoxes() {
+  try {
+    return JSON.parse(document.querySelector("[data-taught]")?.value || "{}") || {};
+  } catch {
+    return {};
+  }
+}
+
+function setTaught(boxes) {
+  const taught = document.querySelector("[data-taught]");
+  if (taught) taught.value = JSON.stringify(boxes);
 }
 
 /* ---------- Line items: a row of the grid and its outline on the page ---------- */
@@ -706,6 +804,7 @@ async function chooseFor(event) {
       closeChooser();
       return onViewerEvent({ type: "assign", field, text, boxes });
     }
+    const snap = snapshot();
     const body = new FormData();
     body.append("field", field);
     body.append("text", text);
@@ -722,7 +821,7 @@ async function chooseFor(event) {
       const cell = tr?.querySelector(`[name="${field}"]`);
       if (cell) cell.value = answer.value;
     }
-    if (answer.toast) toast(answer.toast);
+    offerUndo(answer.toast || { text: "Set.", tone: "ok" }, snap);
     soon(0);
   });
 }
@@ -731,8 +830,9 @@ function addLineFrom(value) {
   const tpl = document.getElementById("line-template");
   const body = document.querySelector('[data-grid="lines"]');
   if (!tpl || !body || !value) return;
-  body.insertAdjacentHTML("beforeend", tpl.innerHTML.replaceAll("__KEY__", `n${Date.now().toString(36)}${newRows++}`));
+  body.insertAdjacentHTML("beforeend", tpl.innerHTML.replaceAll("__KEY__", newKey()));
   const tr = body.lastElementChild;
+  enhance(tr);
   tr.querySelector('[name="line_description"]').value = value.description || "";
   tr.querySelector('[name="line_amount"]').value = Number(value.amount).toFixed(2);
   fillSplitLines();
@@ -907,10 +1007,646 @@ window.addEventListener("pagehide", () => {
   fetch(`${base}/check`, { method: "POST", body: formData(), headers: HEADERS, credentials: "same-origin", keepalive: true }).catch(() => {});
 });
 
+/* ---------- Undo: the last change, put back (D-60) ----------
+   Before a change made from a menu (or Delete, a grid action, words used from the page), the screen's state is kept:
+   every invoice detail, the words taught, the fields marked not on the invoice, both grids row by row. Undo (the
+   message's button, or Ctrl+Z outside a text box) puts it back and checks again. One change is kept, until the next
+   one or until something is edited by hand. */
+
+let undoState = null; // {snap, note}: the screen before the last change, and the message offering to undo it
+
+function headerElements() {
+  return [...document.querySelectorAll('#inv [name], [form="inv"][name]')].filter(
+    (el) => !el.closest("[data-grid]") && !["checkbox", "radio", "submit"].includes(el.type) &&
+      (el.type !== "hidden" || el.name === "taught" || el.name === "absent"),
+  );
+}
+
+function rowState(tr) {
+  const values = {};
+  tr.querySelectorAll("[name]").forEach((el) => {
+    if (el.type !== "checkbox") values[el.name] = el.value;
+  });
+  const gl = tr.querySelector(".c-gl.is-guess");
+  return {
+    key: tr.dataset.row || "",
+    values,
+    taxes: [...tr.querySelectorAll("input[type=checkbox]:checked")].map((c) => c.value),
+    guess: gl ? gl.querySelector(".inv-guess")?.outerHTML || "" : null,
+  };
+}
+
+function snapshot() {
+  const grid = (which) => [...document.querySelectorAll(`[data-grid="${which}"] > tr`)].map(rowState);
+  return {
+    header: headerElements().map((el) => [el.name, el.value]),
+    lines: grid("lines"),
+    taxes: grid("taxes"),
+    edits: viewer?.editsNow(),
+  };
+}
+
+/** A row of a grid from its template, with the values of ``state`` (rowState), put after ``after`` or at the end. */
+function makeRow(which, state, after = null) {
+  const tpl = document.getElementById(which === "lines" ? "line-template" : "tax-template");
+  const body = document.querySelector(`[data-grid="${which}"]`);
+  if (!tpl || !body) return null;
+  const holder = document.createElement("tbody");
+  holder.innerHTML = tpl.innerHTML.replaceAll("__KEY__", state.key || newKey()); // the page's own template
+  const tr = holder.firstElementChild;
+  if (after) after.after(tr);
+  else body.append(tr);
+  enhance(tr);
+  for (const [name, value] of Object.entries(state.values || {})) {
+    // The row's key is the one its template was made with (state.key, or a new one for a copy): its tax boxes are
+    // named line_tax_<key>, which the server reads for the row whose line_key it is (B-620).
+    if (name === "line_key") continue;
+    const el = tr.querySelector(`[name="${CSS.escape(name)}"]`);
+    if (!el) continue;
+    if (el.matches("select[data-picker]")) setValue(el, value) || setValue(el, "UNASSIGNED");
+    else el.value = value;
+  }
+  tr.querySelectorAll("input[type=checkbox]").forEach((c) => (c.checked = (state.taxes || []).includes(c.value)));
+  const cell = tr.querySelector(".c-gl");
+  if (cell && state.guess !== null && state.guess !== undefined) {
+    cell.classList.add("is-guess");
+    if (state.guess) cell.insertAdjacentHTML("beforeend", state.guess); // drawn by the server, every text escaped
+  }
+  return tr;
+}
+
+function restore(snap) {
+  for (const which of ["lines", "taxes"]) {
+    const body = document.querySelector(`[data-grid="${which}"]`);
+    if (!body) continue;
+    body.replaceChildren();
+    for (const state of snap[which]) makeRow(which, state);
+  }
+  const els = headerElements();
+  for (const [name, value] of snap.header) {
+    const el = els.find((x) => x.name === name);
+    if (el) el.value = value;
+  }
+  if (snap.edits && viewer) viewer.restoreEdits(snap.edits);
+  showAbsent();
+  showVendorMatch();
+  fillSplitLines();
+  lastSums = tickedSums();
+}
+
+function dropUndo() {
+  if (!undoState) return;
+  undoState.note?.remove();
+  undoState = null;
+}
+
+/** Say what was done, with Undo: ``msg`` a message ({text, tone}) or its text. */
+function offerUndo(msg, snap) {
+  dropUndo();
+  const message = typeof msg === "string" ? { text: msg, tone: "info", icon: "undo" } : { ...msg };
+  undoState = { snap };
+  message.action = { label: "Undo", icon: "undo", title: "Put it back as it was (Ctrl+Z)", run: undo };
+  undoState.note = toast(message, 10000);
+}
+
+function undo() {
+  if (!undoState) return false;
+  const { snap } = undoState;
+  dropUndo();
+  restore(snap);
+  toast({ text: "Put back as it was.", tone: "ok", icon: "undo" }, 2500);
+  check();
+  return true;
+}
+
+/** Make a change that can be undone: ``change()`` (false when it changed nothing), then the message with Undo. */
+async function undoable(text, change) {
+  const snap = snapshot();
+  if ((await change()) === false) return;
+  offerUndo(text, snap);
+}
+
+/* ---------- The invoice details: clear one, not on this invoice, Enter to the next ---------- */
+
+const TEACHABLE = new Set([...document.querySelectorAll("[data-teach-field] option")].map((o) => o.value));
+// The invoice detail a word double-clicked on the page fills (B-621): the one being typed in, or the one just left for
+// the page (within ARMED_MS, nothing outside the page clicked since).
+const ARMED_MS = 5000;
+let lastField = "";
+let lastFieldAt = 0;
+
+function detail(name) {
+  return document.querySelector(`.inv-details [data-field="${CSS.escape(name)}"]`);
+}
+
+function fieldName(name) {
+  const lbl = detail(name)?.querySelector(".lbl");
+  const own = lbl ? [...lbl.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE).map((n) => n.textContent).join("").trim() : "";
+  return own || name.replace(/_/g, " ");
+}
+
+function absentList() {
+  try {
+    const list = JSON.parse(document.querySelector("[data-absent]")?.value || "[]");
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+function setAbsent(name, on) {
+  const box = document.querySelector("input[data-absent]");
+  if (!box) return;
+  const list = absentList().filter((n) => n !== name);
+  if (on) list.push(name);
+  box.value = JSON.stringify(list);
+  showAbsent();
+}
+
+/** Each detail marked not on this invoice says so under its box. */
+function showAbsent() {
+  const list = absentList();
+  document.querySelectorAll(".inv-details [data-absent-ok]").forEach((label) => {
+    const on = list.includes(label.dataset.field);
+    label.toggleAttribute("data-absent", on);
+    const note = label.querySelector(".inv-absent");
+    if (note) note.hidden = !on;
+  });
+}
+
+/** An invoice detail typed in: the Fields list beside the page shows it as edited; a value typed in a field marked
+    not on this invoice says it is on it after all. */
+function headerEdited(el) {
+  const label = el.closest?.(".inv-details [data-field]");
+  if (!label || el.name !== label.dataset.field) return;
+  if (el.value.trim() && absentList().includes(el.name)) setAbsent(el.name, false);
+  viewer?.setEdited(el.name, el.value.trim(), absentList().includes(el.name));
+}
+
+function clearField(name, absent = false) {
+  const el = input(name);
+  if (!el) return false;
+  el.value = "";
+  const boxes = taughtBoxes();
+  if (name in boxes) {
+    delete boxes[name];
+    setTaught(boxes);
+  }
+  setAbsent(name, absent);
+  if (name === "vendor_name" || name === "gst_hst_registration_number") showVendorMatch();
+  viewer?.setEdited(name, "", absent);
+  soon(0);
+  return true;
+}
+
+async function teachHere(name) {
+  try {
+    viewer?.setWords(await loadWords());
+    viewer?.teachField(name);
+  } catch (err) {
+    toast({ text: err.message || String(err), tone: "err" }, 9000);
+  }
+}
+
+function showOnPage(name) {
+  if (!viewer) return;
+  viewer.root.scrollIntoView({ block: "nearest", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  viewer.select(name, { from: "menu" });
+}
+
+function fieldMenu(name, where) {
+  const el = input(name);
+  if (!el) return null;
+  const value = el.value.trim();
+  const label = fieldName(name);
+  const absentOk = detail(name)?.hasAttribute("data-absent-ok");
+  const absent = absentList().includes(name);
+  return [
+    { icon: "backspace", label: "Clear this value", id: "clear", disabled: value || absent ? false : "It is blank already",
+      run: () => undoable(`${label} cleared.`, () => clearField(name)) },
+    { icon: "do_not_disturb_on", label: "Not on this invoice", id: "absent",
+      disabled: !absentOk ? "AP Coder needs this one: it can't be left out" : absent ? "Marked already: type a value to unmark it" : false,
+      run: () => undoable(`${label}: marked as not on this invoice.`, () => clearField(name, true)) },
+    "-",
+    TEACHABLE.has(name) && viewer ? { icon: "ads_click", label: "Teach where it is", id: "teach", run: () => teachHere(name) } : null,
+    viewer ? { icon: "center_focus_strong", label: "Show on page", id: "show", disabled: viewer.hasBox(name) ? false : "Not found on the page", run: () => showOnPage(name) } : null,
+    { icon: "content_copy", label: "Copy value", id: "copy", disabled: value ? false : "Nothing to copy", run: () => copyText(el.value) },
+    where !== "form" ? { icon: "edit", label: "Change it on the form", id: "edit", run: () => { showField(name); el.focus(); } } : null,
+    name === "vendor_name" && vendorAdd ? "-" : null,
+    name === "vendor_name" && vendorAdd ? { icon: "person_add", label: "Add as a new vendor…", id: "vendor", run: () => {
+      showVendorMatch();
+      vendorAdd.open = true;
+      vendorAdd.scrollIntoView({ block: "nearest" });
+    } } : null,
+  ];
+}
+
+function headerBox(el) {
+  const label = el?.closest?.(".inv-details [data-field]");
+  return label && TEACHABLE.has(label.dataset.field) && el.name === label.dataset.field ? label.dataset.field : "";
+}
+
+document.addEventListener("focusin", (e) => {
+  const name = headerBox(e.target);
+  if (name) lastField = name;
+});
+document.addEventListener("focusout", (e) => {
+  if (headerBox(e.target) === lastField) lastFieldAt = Date.now();
+});
+document.addEventListener(
+  "pointerdown",
+  (e) => {
+    if (!e.target.closest?.(".iv-sheet") && !headerBox(e.target)) lastField = ""; // something else chosen since
+  },
+  true,
+);
+
+function armedField() {
+  const now = headerBox(document.activeElement);
+  if (now) return now;
+  return lastField && Date.now() - lastFieldAt < ARMED_MS ? lastField : "";
+}
+
+/** Enter in an invoice detail goes to the next one, Shift+Enter to the one before (Enter never approves). */
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
+  const el = e.target;
+  if (!el.matches?.('.inv-details input[form="inv"], .inv-details select[form="inv"]') || el.type === "hidden") return;
+  // Only boxes that can take the focus: not disabled, shown, not folded away in a closed <details> (Place of supply,
+  // B-623); and if one still refuses it, the one after.
+  const boxes = [...document.querySelectorAll('.inv-details input[form="inv"]:not([type=hidden]), .inv-details select[form="inv"]')]
+    .filter((b) => b === el || (!b.disabled && b.getClientRects().length && !b.closest("details:not([open])")));
+  const step = e.shiftKey ? -1 : 1;
+  e.preventDefault();
+  for (let i = boxes.indexOf(el) + step; i >= 0 && i < boxes.length; i += step) {
+    boxes[i].focus();
+    if (document.activeElement === boxes[i]) {
+      boxes[i].select?.();
+      break;
+    }
+  }
+});
+
+/* ---------- A word double-clicked on the page fills the detail focused last ---------- */
+
+async function fillFromWord(event) {
+  if (!viewer || event.field) return; // a field's box: its click showed that field; it fills nothing
+  const field = armedField();
+  if (!field) {
+    toast({ text: "Click in an invoice detail first (Invoice #, PO #…), then double-click its word on the page.", tone: "info" }, 6000);
+    return;
+  }
+  try {
+    viewer.setWords(await loadWords());
+  } catch (err) {
+    toast({ text: err.message || String(err), tone: "err" }, 9000);
+    return;
+  }
+  const word = viewer.wordAt(event.x, event.y);
+  if (!word) return;
+  const name = fieldName(field);
+  if (event.line && !confirm(`“${word.t}” is in a line item. Use it for ${name}?`)) return;
+  const el = input(field);
+  if (el?.value.trim() && detail(field)?.querySelector(".inv-sure.ok") &&
+      !confirm(`${name} is verified (“${el.value.trim()}”). Replace it with “${word.t}”?`)) return;
+  await onViewerEvent({ type: "assign", field, text: word.t, boxes: [boxOf(word)] });
+}
+
+function boxOf(word) {
+  return [word.page, ...word.b.map((v) => Math.round(v * 1e5) / 1e5)];
+}
+
+/* ---------- The lines ---------- */
+
+const blank = (select) => !select || !select.value || select.value === "UNASSIGNED";
+
+function lineNo(tr) {
+  return tr.querySelector('[name="line_number"]')?.value || "";
+}
+
+function lineName(tr) {
+  const n = lineNo(tr);
+  return n ? `Line ${n}` : "The line";
+}
+
+/** The lines numbered 1, 2, 3… stay so when one is added between them; otherwise a new line takes the next number. */
+function numberNew(tr) {
+  const rows = gridRows();
+  const others = rows.filter((r) => r !== tr);
+  const numbers = others.map((r) => Number(lineNo(r)));
+  const inOrder = numbers.every((n, i) => n === i + 1);
+  if (inOrder) rows.forEach((r, i) => (r.querySelector('[name="line_number"]').value = String(i + 1)));
+  else tr.querySelector('[name="line_number"]').value = String(Math.max(0, ...numbers.filter(Number.isFinite)) + 1);
+}
+
+function deleteRow(tr) {
+  const which = tr.closest("[data-grid]")?.dataset.grid;
+  const what = which === "taxes" ? "Tax line deleted." : `${lineName(tr)} deleted.`;
+  return undoable(what, () => {
+    const next = tr.nextElementSibling || tr.previousElementSibling;
+    tr.remove();
+    if (which === "lines") fillSplitLines();
+    next?.querySelector("input:not([type=hidden]), textarea, select")?.focus({ preventScroll: true });
+    soon(0);
+  });
+}
+
+function setGl(tr, gl, cc) {
+  const g = tr.querySelector('[name="line_gl"]');
+  if (g && gl !== undefined) {
+    setValue(g, gl);
+    const cell = g.closest(".is-guess");
+    if (cell) {
+      cell.classList.remove("is-guess");
+      cell.querySelector(".inv-guess")?.remove();
+    }
+  }
+  const c = tr.querySelector('[name="line_cc"]');
+  if (c && cc !== undefined) setValue(c, cc);
+}
+
+function openSplit(tr) {
+  if (!split) return;
+  fillSplitLines();
+  splitLine.value = lineNo(tr);
+  split.open = true; // its "toggle" sets the parts from this line
+  split.scrollIntoView({ block: "nearest" });
+  setTimeout(() => split.querySelector('[name="part_pct"]')?.focus(), 50);
+}
+
+function lineMenu(tr) {
+  const rows = gridRows();
+  const i = rows.indexOf(tr);
+  const gl = tr.querySelector('[name="line_gl"]');
+  const cc = tr.querySelector('[name="line_cc"]');
+  const above = rows[i - 1];
+  const others = rows.filter((r) => r !== tr);
+  const without = others.filter((r) => blank(r.querySelector('[name="line_gl"]')));
+  const n = lineNo(tr);
+  const suggested = n ? document.querySelector(`[data-live="suggest"] .inv-sugg[data-line="${CSS.escape(n)}"] [data-gl]`) : null;
+  const what = cc ? "GL account and cost center" : "GL account";
+  return [
+    { icon: "delete", label: "Delete line", id: "delete", hint: "", run: () => deleteRow(tr) },
+    { icon: "control_point_duplicate", label: "Duplicate line", id: "duplicate", run: () => undoable(`${lineName(tr)} duplicated.`, () => {
+      const copy = makeRow("lines", { ...rowState(tr), key: newKey() }, tr);
+      numberNew(copy);
+      fillSplitLines();
+      soon(0);
+    }) },
+    { icon: "add_row_below", label: "Insert a line below", id: "insert", run: () => undoable("Line added.", () => {
+      const row = makeRow("lines", { key: newKey(), values: {}, taxes: [] }, tr);
+      numberNew(row);
+      fillSplitLines();
+      row.querySelector('[name="line_description"]')?.focus();
+      soon(0);
+    }) },
+    "-",
+    { icon: "call_split", label: "Split this line…", id: "split", disabled: n ? false : "Give the line a number first", run: () => openSplit(tr) },
+    suggested ? { icon: "add_task", label: `Use the suggested account (${suggested.dataset.gl})`, id: "suggested", run: () => suggested.click() } : null,
+    { icon: "vertical_align_top", label: `Copy the ${what} from the line above`, id: "above",
+      disabled: !above ? "It is the first line" : blank(above.querySelector('[name="line_gl"]')) ? "The line above has no GL account yet" : false,
+      run: () => undoable(`${lineName(tr)}: ${what} copied from the line above.`, () => {
+        setGl(tr, above.querySelector('[name="line_gl"]').value, above.querySelector('[name="line_cc"]')?.value);
+        soon(0);
+      }) },
+    { icon: "backspace", label: "Clear GL account", id: "clear-gl", disabled: blank(gl) ? "It has none yet" : false,
+      run: () => undoable(`${lineName(tr)}: GL account cleared.`, () => {
+        setGl(tr, "UNASSIGNED");
+        soon(0);
+      }) },
+    "-",
+    { icon: "playlist_add_check", label: "Use this GL account on the lines without one", id: "fill",
+      disabled: blank(gl) ? "Pick this line's GL account first" : !without.length ? "Every other line has a GL account" : false,
+      run: () => undoable(`GL ${gl.value} put on ${without.length === 1 ? "1 line" : `${without.length} lines`}.`, () => {
+        without.forEach((r) => setGl(r, gl.value));
+        soon(0);
+      }) },
+    { icon: "done_all", label: "…on every line", id: "fill-all", disabled: blank(gl) ? "Pick this line's GL account first" : !others.length ? "It is the only line" : false,
+      run: () => {
+        if (!confirm(`Put GL account ${gl.value} on every line (${rows.length} lines), replacing the accounts they have?`)) return;
+        return undoable(`GL ${gl.value} put on every line.`, () => {
+          others.forEach((r) => setGl(r, gl.value));
+          soon(0);
+        });
+      } },
+  ];
+}
+
+/* ---------- The tax lines ---------- */
+
+function num(el) {
+  const text = (el?.value || "").trim();
+  const v = Number(text.replace(/[,$\s]/g, ""));
+  return text !== "" && Number.isFinite(v) ? v : null;
+}
+
+/* A tax line's taxable amount follows the lines ticked with its tax (B-610): ticking or unticking a line's GST box,
+   changing a ticked line's amount, deleting or adding one (every edit goes through soon()) updates the GST line's taxable amount (and its amount, at its rate) while it still
+   is the sum of the lines it was; a taxable amount the clerk typed is left alone, and the tax line's menu offers
+   "Taxable from the lines ticked GST". */
+
+function tickedSums() {
+  const sums = {};
+  for (const tr of gridRows()) {
+    const amount = num(tr.querySelector('[name="line_amount"]'));
+    if (amount === null) continue;
+    tr.querySelectorAll("input[type=checkbox]:checked").forEach((c) => (sums[c.value] = (sums[c.value] || 0) + amount));
+  }
+  for (const k of Object.keys(sums)) sums[k] = Math.round(sums[k] * 100) / 100;
+  return sums;
+}
+
+let lastSums = null; // the sums the tax lines were last made to follow (set at the start)
+
+function same(a, b) {
+  return a !== null && b !== null && Math.abs(a - b) < 0.005;
+}
+
+/** Put ``taxable`` on a tax line; its amount follows at its rate when it was rate x the old taxable. */
+function setTaxable(tr, taxable) {
+  const rate = num(tr.querySelector('[name="tax_rate_pct"]'));
+  const was = num(tr.querySelector('[name="tax_taxable"]'));
+  const amountBox = tr.querySelector('[name="tax_amount"]');
+  const amount = num(amountBox);
+  tr.querySelector('[name="tax_taxable"]').value = taxable.toFixed(2);
+  if (rate !== null && (amount === null || (was !== null && same(amount, Math.round(rate * was) / 100)))) {
+    amountBox.value = (Math.round(rate * taxable) / 100).toFixed(2);
+  }
+}
+
+function followTicks() {
+  if (!lastSums) return false; // the page is still starting
+  const now = tickedSums();
+  let changed = false;
+  for (const tr of document.querySelectorAll('[data-grid="taxes"] > tr')) {
+    const kind = tr.querySelector('[name="tax_type"]')?.value;
+    const taxable = num(tr.querySelector('[name="tax_taxable"]'));
+    const before = lastSums[kind] || 0;
+    const after = now[kind] || 0;
+    // Only a tax line that was the sum follows it: a blank one (just added) stays blank, never a second copy (B-622).
+    if (!kind || same(before, after) || !same(taxable, before)) continue;
+    setTaxable(tr, after);
+    changed = true;
+  }
+  lastSums = now;
+  return changed;
+}
+
+
+function taxMenu(tr) {
+  const kind = tr.querySelector('[name="tax_type"]')?.value;
+  const sum = tickedSums()[kind] || 0;
+  const label = tr.querySelector('[name="tax_type"]')?.selectedOptions[0]?.textContent || kind;
+  const rate = num(tr.querySelector('[name="tax_rate_pct"]'));
+  const taxable = num(tr.querySelector('[name="tax_taxable"]'));
+  const amount = rate !== null && taxable !== null ? Math.round(rate * taxable) / 100 : null;
+  return [
+    { icon: "calculate", label: "Recalculate the amount (rate × taxable)", id: "recalc",
+      disabled: amount === null ? "Put in the rate and the taxable amount first" : false,
+      run: () => undoable(`Tax amount recalculated: ${amount.toFixed(2)}.`, () => {
+        tr.querySelector('[name="tax_amount"]').value = amount.toFixed(2);
+        soon(0);
+      }) },
+    { icon: "sync", label: `Taxable from the lines ticked ${label}: ${sum.toFixed(2)}`, id: "sync",
+      disabled: !sum ? `No line is ticked ${label}` : same(num(tr.querySelector('[name="tax_taxable"]')), sum) ? "It is that already" : false,
+      run: () => undoable(`Taxable amount set from the lines ticked ${label}: ${sum.toFixed(2)}.`, () => {
+        setTaxable(tr, sum);
+        soon(0);
+      }) },
+    "-",
+    { icon: "delete", label: "Delete tax line", id: "delete", run: () => deleteRow(tr) },
+  ];
+}
+
+/* ---------- The page ---------- */
+
+function short(text) {
+  return text.length > 24 ? `${text.slice(0, 23)}…` : text;
+}
+
+async function addLineFromWords(picked) {
+  const snap = snapshot();
+  const body = new FormData();
+  body.append("field", "line_new");
+  body.append("text", picked.map((p) => p.t).join(" "));
+  const answer = await post(`${base}/teach`, body);
+  if (!answer.ok) {
+    toast({ text: answer.error || "That didn't work.", tone: "err" }, 9000);
+    return;
+  }
+  addLineFrom(answer.value);
+  offerUndo(answer.toast || "Line added.", snap);
+  soon(0);
+}
+
+async function pageMenu(_stage, ctx) {
+  if (!viewer) return null;
+  const at = ctx.keyboard ? null : { x: ctx.x, y: ctx.y };
+  let word = null;
+  if (at && !viewer.teach) {
+    try {
+      viewer.setWords(await loadWords());
+      word = viewer.wordAt(at.x, at.y);
+    } catch {
+      word = null; // the words can't be read: the zoom and the turn still work
+    }
+  }
+  const fields = headerTargets();
+  const teach = viewer.teach
+    ? [{ icon: "close", label: "Stop teaching", hint: "Esc", id: "stop", run: () => viewer.cancelTeach() }]
+    : [
+        word ? { icon: "input", label: `Use “${short(word.t)}” for…`, id: "use",
+                 items: fields.map(([f, l]) => ({ icon: "", label: l, id: `use-${f}`, run: () => onViewerEvent({ type: "assign", field: f, text: word.t, boxes: [boxOf(word)] }) })) } : null,
+        { icon: "ads_click", label: "Teach a field here", id: "teach", items: fields.map(([f, l]) => ({ icon: "", label: l, id: `teach-${f}`, run: () => teachHere(f) })) },
+        { icon: "playlist_add", label: "Add a line from this row of words", id: "line",
+          disabled: word ? false : "Right-click on a row of the invoice's lines", run: () => addLineFromWords(viewer.lineOf(word)) },
+      ];
+  return [
+    { icon: "zoom_in", label: at ? "Zoom in here" : "Zoom in", hint: "+", id: "zoom-in", run: () => viewer.zoomStep(1, at) },
+    { icon: "zoom_out", label: "Zoom out", hint: "−", id: "zoom-out", run: () => viewer.zoomStep(-1, at) },
+    { icon: "fit_width", label: "Fit width", hint: "0", id: "fit-width", run: () => viewer.setZoom("fit") },
+    { icon: "fit_screen", label: "Fit page", hint: "9", id: "fit-page", run: () => viewer.setZoom("page") },
+    { icon: "rotate_right", label: "Rotate", hint: "R", id: "rotate", run: () => viewer.rotate() },
+    "-",
+    ...teach,
+  ];
+}
+
+/* ---------- Which menu: the first that matches (a box on the page is its field's, not the page's) ---------- */
+
+if (form) {
+  register(".iv-row[data-field]", (el) => fieldMenu(el.dataset.field, "list"));
+  register(".iv-f[data-field], .iv-tag[data-field]", (el) => fieldMenu(el.dataset.field, "page"));
+  register(".iv-stage", pageMenu);
+  register(".inv-details [data-field]", (el, ctx) =>
+    ctx.target.closest(".inv-vendor-add, .inv-vendor-match, .rvw-hint") ? null : fieldMenu(el.dataset.field, "form"));
+  register('[data-grid="lines"] > tr', (tr) => lineMenu(tr));
+  register('[data-grid="taxes"] > tr', (tr) => taxMenu(tr));
+}
+
+/* ---------- Ctrl+Z, P (Park), X (Reject) ---------- */
+
+document.addEventListener("keydown", (e) => {
+  if (e.defaultPrevented || e.altKey || e.target.closest?.("dialog, [role=dialog]")) return;
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === "z" || e.key === "Z")) {
+    // Not in a text box, where Ctrl+Z is the box's own; but in a box of the review form nothing was typed in since
+    // the change (typing there drops the Undo), as after a right-click in it: there the change is what to undo.
+    if (typing(e.target) && e.target.form !== form) return;
+    if (undo()) e.preventDefault();
+    return;
+  }
+  if (e.ctrlKey || e.metaKey || e.shiftKey || typing(e.target)) return;
+  const pop = { p: "[data-park]", P: "[data-park]", x: "[data-reject]", X: "[data-reject]" }[e.key];
+  const details = pop && document.querySelector(pop);
+  if (!details) return;
+  e.preventDefault();
+  document.querySelectorAll("details.pop[open]").forEach((d) => d !== details && d.removeAttribute("open"));
+  details.open = true; // only opened: the reason is typed and its button pressed, as with a click
+  details.querySelector("input[type=text]")?.focus();
+});
+
+/* ---------- A note, added without leaving the page (the edits stay as they are) ---------- */
+
+const noteForm = document.querySelector("[data-note-form]");
+let noteSending = false; // one note at a time: Enter twice or a double click sends it once (B-625)
+noteForm?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  e.stopPropagation(); // not app.js's: it would go to the page again
+  if (noteSending) return;
+  noteSending = true;
+  try {
+    await sendNote();
+  } finally {
+    noteSending = false;
+  }
+});
+
+async function sendNote() {
+  const button = noteForm.querySelector("button[type=submit]");
+  const body = new FormData(noteForm);
+  body.append("inline", "1");
+  if (button) button.disabled = true;
+  const answer = await post(noteForm.action, body);
+  if (button) button.disabled = false;
+  if (!answer.ok || typeof answer.html !== "string") {
+    follow(answer);
+    return;
+  }
+  const list = document.querySelector("[data-notes]");
+  if (list) list.innerHTML = answer.html; // drawn by the server, every text escaped
+  const count = document.querySelector("[data-notes-count]");
+  if (count) count.textContent = answer.count ? ` · ${answer.count}` : "";
+  noteForm.reset();
+  if (answer.toast) toast(answer.toast, 3000);
+  noteForm.querySelector("input[type=text]")?.focus();
+}
+
 /* ---------- Start ---------- */
 
 showMailLanguage();
 fillSplitLines();
 showVendorMatch();
+for (const name of absentList()) viewer?.setEdited(name, "", true); // marked before: the Fields list says so
+lastSums = tickedSums(); // what the tax lines follow from now on (B-610)
 // The queue shows what this screen shows: check once on opening (today's checks, and any draft kept).
 if (form) check();
