@@ -6285,3 +6285,15 @@ reproduced with a script first, then given a failing test and fixed.
   are due March 2 (D-62).
 - **Test:** `tests/test_sweep_pilot_fixes.py::test_eom_terms_in_words`
 - **Lesson:** A fix for a word covers its synonyms the code already knows.
+
+#### B-675 · A one-word vendor (TELUS, IKEA) stayed "check" even after AP had approved it for this supplier · low
+- **Where:** `ap_coder/capture/__init__.py` (`_mark_doubtful_vendor`, `_approved_before`)
+- **Symptom:** after B-669, TELUS, ROGERS, IKEA, BDO and KPMG were "check" on every invoice without a vendor master,
+  so they could never go through on their own.
+- **Cause:** only the vendor master lifted the mark.
+- **Reproduce:** `sweepreview/telus.py`.
+- **Reproduced:** yes (found by the review of the sweep fixes)
+- **Fix:** a one-word name AP approved for this supplier before (the same `vendor_key`, on a page the supplier's
+  template learned from) is not marked. A name that is only a legal form or the bill-to's still is.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_a_one_word_vendor_approved_before_for_this_supplier_is_not_check`
+- **Lesson:** A doubt the person has already settled is not asked again.

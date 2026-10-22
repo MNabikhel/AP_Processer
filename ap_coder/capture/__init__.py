@@ -46,6 +46,7 @@ log = logging.getLogger(__name__)
 
 # One word in capitals ("POSTES" for "POSTES CANADA"): often part of a name, or a heading read as one.
 _ONE_CAPS_WORD = re.compile(r"[^\W\d_]{2,}")
+ONE_WORD_REASON = "the vendor reads as one word in capitals: check it is the whole name"
 
 
 def doubtful_vendor(value: Any, customer_names: set[str]) -> str:
@@ -62,14 +63,28 @@ def doubtful_vendor(value: Any, customer_names: set[str]) -> str:
     if not words or all(w in _LEGAL_SUFFIXES for w in words):
         return "the vendor reads as a legal form only: check the name on the page"
     if _ONE_CAPS_WORD.fullmatch(text) and text.isupper():
-        return "the vendor reads as one word in capitals: check it is the whole name"
+        return ONE_WORD_REASON
     if plain(text) in customer_names:
         return "the vendor reads as the name in the bill-to (yours, as the customer): check who the vendor is"
     return ""
 
 
-def _mark_doubtful_vendor(layout: DocLayout, fields: dict[str, FieldResult], checks: list[dict[str, Any]]) -> None:
-    """A doubtful vendor name (``doubtful_vendor``) is "check", unless the vendor master confirms it by its name."""
+def _approved_before(template: Any, value: Any) -> bool:
+    """Whether AP approved this very vendor name (its ``vendor_key``) on a page of this supplier's template."""
+    from ..core.memory import vendor_key
+
+    key = vendor_key(str(value or ""))
+    documents = (
+        template.get("documents") if isinstance(template, dict) else getattr(template, "documents", None)
+    ) or {}
+    return bool(key) and any(key in (seen or {}).get("vendor_name", []) for seen in documents.values())
+
+
+def _mark_doubtful_vendor(layout: DocLayout, fields: dict[str, FieldResult], checks: list[dict[str, Any]],
+                          template: Any = None) -> None:  # fmt: skip
+    """A doubtful vendor name (``doubtful_vendor``) is "check", unless the vendor master confirms it by its name; a
+    one-word name (TELUS, IKEA) also not when AP approved that very name for this supplier before (``template``: the
+    supplier's, B-675), so such a vendor can still go through on its own without a vendor master."""
     from .reader import _in_bill_to, plain
 
     fr = fields.get("vendor_name")
@@ -79,6 +94,8 @@ def _mark_doubtful_vendor(layout: DocLayout, fields: dict[str, FieldResult], che
         return
     customers = {plain(ln.text.strip()) for ln in layout.lines() if _in_bill_to(layout, ln)}
     why = doubtful_vendor(fr.value, customers)
+    if why == ONE_WORD_REASON and _approved_before(template, fr.value):
+        return
     if why:
         fr.status, fr.confidence = CHECK, min(fr.confidence, 0.6)
         fr.reasons = [*fr.reasons, why]
@@ -521,7 +538,7 @@ def analyze(path: str | Path, *, di_raw: dict[str, Any] | None = None, ai_values
         checks.append(agreement)
     if "vlm" in sources and layout.source == "text":
         checks.append(text_layer_check(layout, page_text or [], fields, sources["rules"]))
-    _mark_doubtful_vendor(layout, fields, checks)
+    _mark_doubtful_vendor(layout, fields, checks, template)
     coarse = min((page.dpi for page in layout.pages if page.dpi), default=0.0)
     if layout.source != "text" and 0 < coarse < COARSE_DPI:
         for fr in fields.values():

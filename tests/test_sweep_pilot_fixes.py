@@ -676,3 +676,31 @@ def test_eom_terms_in_words():
     assert payment({"invoice_date": "2026-01-15", "grand_total": 1.0, "payment_terms": "fin de mois"}).due == dt.date(
         2026, 1, 31
     )
+
+
+# --- B-675: a one-word vendor (TELUS) stayed "check" after AP had approved it for this supplier -----------------------
+
+
+def test_a_one_word_vendor_approved_before_for_this_supplier_is_not_check(tmp_path):
+    from ap_coder.capture import _mark_doubtful_vendor
+    from ap_coder.capture.layout import build_layout
+    from ap_coder.capture.supplier import Template
+    from ap_coder.capture.types import FieldResult
+
+    path = tmp_path / "telus.txt"
+    path.write_text("TELUS\n510 W Georgia St, Vancouver BC V6B 0M3\nINVOICE\n")
+    layout = build_layout(path)
+    approved = Template(documents={"sha-1": {"vendor_name": ["telus"]}})
+
+    def marked(name, template=None):
+        fields = {"vendor_name": FieldResult("vendor_name", name, 0.99, "verified", [], {}, [])}
+        _mark_doubtful_vendor(layout, fields, [], template)
+        return fields["vendor_name"].status
+
+    assert marked("TELUS") == "check"  # never approved: a person looks
+    assert marked("TELUS", approved) == "verified"  # AP approved this very name for this supplier
+    assert marked("TELUS", approved.to_dict()) == "verified"
+    assert marked("ROGERS", approved) == "check"  # another name: still a look
+    assert (
+        marked("Inc.", Template(documents={"x": {"vendor_name": ["inc"]}})) == "check"
+    )  # only the one-word rule lifts
