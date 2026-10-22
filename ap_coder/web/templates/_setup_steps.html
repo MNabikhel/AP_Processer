@@ -1,0 +1,3 @@
+{# The getting-started checklist (pages/process.py first_steps), on the welcome page and Import invoices: every row is
+   counted. What to do about LM Studio is the Next step card above it, with Check again (B-529). #}
+<div>{% for state, label, detail in steps %}{{ ui.step(state, label, detail, step_links.get(label, "") if label != "Process your first invoices" or where != "/process" else "") }}{% endfor %}</div>

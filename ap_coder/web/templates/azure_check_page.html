@@ -2,9 +2,13 @@
 {% block title %}Azure check · AP Coder{% endblock %}
 {% block heading %}Azure check{% endblock %}
 {% block subtitle %}Optional: Azure AI Document Intelligence as a second opinion on some invoices. Off by default.{% endblock %}
-{% block aside %}<a class="link" href="/settings#reading"><span class="ms" aria-hidden="true">arrow_back</span>Settings → Reading</a>{% endblock %}
+{% block aside %}<a class="link" href="/settings/reading"><span class="ms" aria-hidden="true">arrow_back</span>Settings → Reading</a>{% endblock %}
 {% block content %}
 <div class="narrow">
+  {% if shown %}
   {% include "partials/azure_check.html" %}
+  {% else %}{# the offline pilot build: no cloud service (B-516) #}
+  <section class="card">{{ ui.empty_state("Not part of this build", "AP Coder reads every invoice on this computer, and this pilot build uses no cloud service. The optional Azure check is set up by IT, with the developer tools on (Settings → About).") }}</section>
+  {% endif %}
 </div>
 {% endblock %}

@@ -2623,10 +2623,17 @@ class Store:
             read["status"] = PAGE_WAITING
         return read
 
-    def page_reads_waiting(self) -> int:
-        """How many invoices wait for the page reader (interrupted reads included)."""
+    def page_reads_waiting(self, still_open: bool = False) -> int:
+        """How many invoices wait for the page reader (interrupted reads included). ``still_open``: only those not
+        approved, rejected or exported yet, the ones a person waits for (the reader still reads the others, to score
+        itself against what AP approved)."""
+        sql = f"SELECT COUNT(*) FROM page_reads WHERE {_IN_LINE}"
+        args: list[Any] = [_stale_before()]
+        if still_open:
+            sql += " AND invoice_id IN (SELECT id FROM invoices WHERE status IN (?, ?, ?))"
+            args += [REVIEW, PARKED, PENDING]
         with self._conn() as conn:
-            row = conn.execute(f"SELECT COUNT(*) FROM page_reads WHERE {_IN_LINE}", (_stale_before(),)).fetchone()
+            row = conn.execute(sql, args).fetchone()
         return int(row[0])
 
     def page_read_pages_average(self, recent: int = 50) -> float | None:
@@ -3813,14 +3820,16 @@ def _tax_signature(output: dict[str, Any]) -> list[tuple[str, float]]:
 SAMPLE_DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
 
 
-def load_sample_setup(store: Store, data_dir: Path = SAMPLE_DATA_DIR) -> None:
-    """Load the bundled sample GL accounts, cost centers, tax mapping and policy (for trying things out)."""
+def load_sample_setup(store: Store, data_dir: Path = SAMPLE_DATA_DIR, cost_centers: bool = True) -> None:
+    """Load the bundled sample GL accounts, tax mapping and policy (for trying things out), and with ``cost_centers``
+    the sample cost centers. The dashboard's "Use the sample GL accounts" and the demo leave the cost centers out: the
+    pilot codes each line to a GL account only (D-53); a cost center list can still be imported later."""
     import csv
 
-    for table, filename, code_col in (
-        ("gl_accounts", "chart_of_accounts.csv", "gl_code"),
-        ("cost_centers", "cost_centers.csv", "cost_center"),
-    ):
+    tables = [("gl_accounts", "chart_of_accounts.csv", "gl_code")]
+    if cost_centers:
+        tables.append(("cost_centers", "cost_centers.csv", "cost_center"))
+    for table, filename, code_col in tables:
         with (data_dir / filename).open(encoding="utf-8-sig", newline="") as fh:
             rows = list(csv.DictReader(fh))
         store.import_accounts(table, rows, code_col, "description", "category")
@@ -3828,6 +3837,15 @@ def load_sample_setup(store: Store, data_dir: Path = SAMPLE_DATA_DIR) -> None:
         for row in csv.DictReader(fh):
             store.set_tax_treatment(row["tax_type"], row["treatment"], row.get("gl_code") or "")
     store.set_setting("policy_notes", (data_dir / "coding_policy.md").read_text(encoding="utf-8-sig"))
+
+
+def load_sample_cost_centers(store: Store, data_dir: Path = SAMPLE_DATA_DIR) -> None:
+    """Load the bundled sample cost centers on their own: the list a company that codes to cost centers imports
+    later (the sample setup leaves them out, D-53)."""
+    import csv
+
+    with (data_dir / "cost_centers.csv").open(encoding="utf-8-sig", newline="") as fh:
+        store.import_accounts("cost_centers", list(csv.DictReader(fh)), "cost_center", "description", "category")
 
 
 def load_sample_vendor_master(store: Store, data_dir: Path = SAMPLE_DATA_DIR, only_new: bool = False) -> list[str]:

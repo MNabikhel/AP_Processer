@@ -360,7 +360,37 @@ def _aoai_hint(exc: Exception) -> str:
     return hints.get(status, "") if isinstance(status, int) else ""
 
 
+# What only a build that may use the internet (AP_ALLOW_INTERNET=1) has: Azure's endpoints and connections, the size of
+# the prompt sent to Azure OpenAI, and its package. The offline build's report leaves them out (B-516).
+CLOUD_AREAS = (
+    "DI endpoint", "DI auth", "DI model", "DI connectivity", "AOAI endpoint", "AOAI auth", "AOAI api version",
+    "AOAI model", "AOAI connectivity", "vision mode", "prompt size", "package azure-ai-documentintelligence",
+)  # fmt: skip
+
+
+def for_this_build(checks: list[Check]) -> list[Check]:
+    """The checks as this build's report shows them: in the offline build without the cloud's (``CLOUD_AREAS``),
+    the GL list without "schema enum" (Azure OpenAI's word for it), and the openai package named for what it does
+    here (LM Studio's client)."""
+    if internet_allowed():
+        return checks
+    out = []
+    for c in checks:
+        if c.area in CLOUD_AREAS:
+            continue
+        detail = c.detail.replace("; enforced as schema enum", "; codes limited to the list")
+        detail = detail.replace(
+            "; too many codes for schema enums -> free-text codes + local validation",
+            "; too many codes to limit the AI to them: each is checked after it answers",
+        )
+        if c.area == "package openai" and c.status == PASS:
+            detail += " (LM Studio's client)"
+        out.append(Check(c.area, c.status, detail))
+    return out
+
+
 def format_checks(checks: list[Check]) -> str:
+    checks = for_this_build(checks)
     lines = ["## AP Coder doctor report (no secrets or endpoint URLs included)", ""]
     width = max(len(c.area) for c in checks)
     for c in checks:

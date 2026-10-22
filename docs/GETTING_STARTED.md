@@ -27,22 +27,26 @@ Every invoice is read the same way, with nothing to choose. Part of that is **Ov
 page-reading model (about 1 GB) that reads every page of every invoice as a second reader. It runs in
 [LM Studio](https://lmstudio.ai/) on the laptop.
 
-1. **IT installs LM Studio** (0.4.8 or newer) with OvisOCR2 already in it, and optionally a chat model
-   (**Gemma 4 12B**, QAT Q4_0, or **Qwen 3.5 9B**, Q4_K_M) that suggests GL accounts for lines nothing was learned for. Nothing is
-   downloaded on the laptop. The files and sizes are in [PILOT.md](PILOT.md#what-you-need); direct links and steps
+1. **IT installs LM Studio** (0.4.8 or newer) with OvisOCR2 and the chat model already in it (**Gemma 4 12B**,
+   QAT Q4_0, or **Qwen 3.5 9B**, Q4_K_M): the chat model is the AI reviewer, and suggests GL accounts for lines
+   nothing was learned for. The pilot runs with both. Nothing is downloaded on the laptop. The files and sizes are in [PILOT.md](PILOT.md#what-you-need); direct links and steps
    for Gemma 4 12B are in [LM_STUDIO.md](LM_STUDIO.md#using-gemma-4-12b-instead-of-qwen-35-9b-windows-laptop).
 2. **Start the server:** open LM Studio, **Developer** tab → **Start server**.
 3. **That's all.** When AP Coder starts, it finds OvisOCR2 on its own and runs its self-test by itself (it
    reads a sample invoice whose answers are known): 10 to 20 minutes on a laptop the first time.
-   **Settings → Reading** shows its progress. There is no model to pick and nothing to link.
+   **Settings → Reading** shows whether LM Studio runs and the self-test's progress; **Check again** asks again
+   after you start it. There is no model to pick and nothing to link.
 
-Without LM Studio, AP Coder still works: invoices are read by the PDF's text or OCR, and wait for a
-person. A banner on the Process and Review pages says so.
+LM Studio running is step 0 of the [Quick start](QUICK_START.md) and the first row of the welcome page's checklist.
+Without it AP Coder still works, but every invoice waits for a person: nothing is checked by OvisOCR2 or the AI
+reviewer, and GL accounts are suggested only from what AP approved before (a line unlike anything approved has
+none). A banner on the Import invoices and Review pages says so.
 
 ## Step 2: Install (~10 min, one double-click)
 
-AP Coder is an offline enterprise build: the laptop never connects to the internet, not even to set up
-(see [PILOT.md](PILOT.md)). IT gives you three things:
+AP Coder is an offline enterprise build: set up from the offline bundle, the laptop never connects to the internet,
+not even to set up (see [PILOT.md](PILOT.md); a ZIP downloaded from GitHub instead downloads its packages and OCR
+models once, the first time). IT gives you three things:
 
 - **Python 3.11 or newer**, already installed (3.12 recommended: the offline bundle has packages for the
   Python versions it was built for). AP Coder uses the Python you have (`python3` or `python`) and never
@@ -50,7 +54,7 @@ AP Coder is an offline enterprise build: the laptop never connects to the intern
   python.exe to PATH"** ticked on the first screen.
 - **The offline bundle**, a ZIP such as `APProcessor-offline-<version>-<date>.zip` (on a USB stick or a
   share). It holds the code, every package (`wheelhouse/`) and the OCR models (`models/`).
-- **LM Studio**, with OvisOCR2 (and, optionally, the chat model) already in it (Step 1).
+- **LM Studio**, with OvisOCR2 and the chat model already in it (Step 1).
 
 **Get the code.** Unzip the bundle to a folder that is **not** synced by OneDrive, e.g.
 `C:\APCoder\app`.
@@ -183,10 +187,15 @@ Open **GL accounts & tax**:
    in afterwards, delete codes you don't want AP to use, and download the list. Include your
    sales-tax receivable accounts (e.g. *GST/HST Recoverable*, *QST Recoverable*).
    Good descriptions matter: the AI matches invoice lines against them.
-2. **Cost centers:** optional. Leave empty if you don't code to cost centers.
-3. **Sales tax setup:**
+   To look around first, **Use the sample GL accounts**: they come without cost centers, so each line needs only
+   a GL account (the pilot codes no cost centers).
+2. **Cost centers:** optional, and not used in the pilot. Leave empty if you don't code to cost centers; a list
+   imported later makes each line need one.
+3. **Sales tax accounts** (the tab on this page, not the **Sales tax** page under More):
    - GST, HST and QST: *Recoverable*, and pick the receivable GL account for each.
-   - PST: *add to each expense line's GL*. Alternatively, choose a separate PST expense account.
+   - PST and other taxes: *add to each expense line's GL* (they then need no account). Alternatively, choose a
+     separate PST expense account.
+   - Then **Save tax setup**.
 4. **Coding policy:** plain-English rules, one per line, e.g. "Laptops under $2,500 go to 6010".
    This is your fastest tuning lever.
 5. **Fixed rules:** lines that must always go to one account (a vendor, words in the line, or both),
@@ -262,7 +271,8 @@ For each invoice:
 
 Every approved line is stored as a lesson: *confirmed* if the AI was right, *corrected* if you
 changed it. The next invoice from that vendor sees those lessons, and **Learning & accuracy**
-tracks how often the AI is right. A mistaken lesson can be removed with *Forget*. **Learning &
+tracks how often the AI is right. A line approved by mistake can be removed from the coding memory with
+*Forget*. **Learning &
 accuracy → Supplier learning** is the training view, vendor by vendor: how often each field was corrected
 and how far each vendor is from touchless.
 
@@ -270,7 +280,8 @@ and how far each vendor is from touchless.
 person. Leave it off for the first weeks and watch *Supplier learning*. When your regular vendors are
 close to the bar, an AP lead turns it on (with a confirmation, recorded in the Activity log). A vendor then
 goes touchless by itself once it has at least 20 reviewed invoices, header fields read right at least 99%
-of the time with 95% confidence, and the last 10 without a correction: usually about 30 clean invoices.
+of the time with 95% confidence, and the last 10 without a correction: in practice about 30 to 40 invoices
+approved without a correction. *Supplier learning* shows each vendor's own number.
 5% are still audited, and one correction suspends the vendor. Some invoices always go to a person (a
 changed bank account or GST/HST number, a possible duplicate, a total above *Largest invoice approved
 without a person*, 5,000.00 CAD by default, and others: Settings → Automation lists them). See
@@ -321,7 +332,6 @@ Run these in `scripts\terminal.bat` as `python -m ap_coder <command>`.
 | `process <files/folders>` | batch processing without the dashboard; results also appear in the review queue. Files already processed are skipped (`--force` to redo), so it is safe to run again after Ctrl+C |
 | `labels` / `evaluate` | spreadsheet-based labelling and scoring (an alternative to reviewing in the dashboard) |
 | `read-pages [--minutes 240]` | have OvisOCR2 read the invoices waiting for it, then stop (Task Scheduler overnight) |
-| `schema` | the exact JSON Schema sent to Azure OpenAI (developers) |
 
 **A scheduled task after an update.** There is no command that follows the current version by itself: a task
 names one folder's `.venv`. An update unzipped **over** the old folder keeps that path. One unzipped into a **new**

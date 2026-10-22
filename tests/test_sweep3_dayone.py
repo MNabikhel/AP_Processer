@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from ap_coder.core.config import Settings
 from ap_coder.core.reference_data import UNASSIGNED
-from ap_coder.core.store import REVIEW, Store, load_sample_setup
+from ap_coder.core.store import REVIEW, Store, load_sample_cost_centers, load_sample_setup
 from ap_coder.ops.demo import load_demo
 from ap_coder.web.app import create_app
 from ap_coder.web.pages import MORE_MODULES, PAGES
@@ -31,6 +31,7 @@ for _module in [*MORE_MODULES, *(p.module for p in PAGES if p.module)]:
 def demo_db(tmp_path_factory):
     """The demo invoices, loaded once (copied for each test: loading reads ten PDFs)."""
     path = tmp_path_factory.mktemp("demo") / "private" / "ap_coder.db"
+    load_sample_cost_centers(Store(path))  # the demo has none (D-53): these tests are about cost centers
     load_demo(Store(path), Settings())
     return path
 
@@ -280,7 +281,13 @@ def test_insights_learning_activity_and_the_queue_count_approved_as_coded_alike(
     clean, total = approved_as_coded(store)
     assert total >= 4 and clean <= total - 1
     shown = f"{clean} of {total}"
-    insights = client.get("/insights").text
+    from ap_coder.web.pages import insights as insights_page
+
+    insights_page.MIN_APPROVALS, kept = 0, insights_page.MIN_APPROVALS  # (its figures show from 20 approvals: B-515)
+    try:
+        insights = client.get("/insights").text
+    finally:
+        insights_page.MIN_APPROVALS = kept
     learning = client.get("/learning").text
     activity = client.get("/activity").text
     for page in (insights, learning):
@@ -415,7 +422,7 @@ def test_the_approved_today_tile_says_how_many_wait_for_a_second_approval():
         review_page.approved_today = original
     assert tile["value"] == "2"
     assert "1 waiting for a second approval" in tile["sub"]
-    assert "1 fully approved in all" in tile["sub"]
+    assert "1 approved in total" in tile["sub"]  # (plain words: B-517)
 
 
 def test_a_dry_run_with_nothing_to_load_has_no_stray_dash():

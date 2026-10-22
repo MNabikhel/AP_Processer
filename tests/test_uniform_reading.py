@@ -350,18 +350,19 @@ def _ovis(state="loaded"):
 
 
 def test_reading_status_with_nothing_running(store):
-    from ap_coder.ai.reading import OFF, OPTIONAL, WARN, ReadingStatus, reading_status
+    from ap_coder.ai.reading import OPTIONAL, WAITING, ReadingStatus, reading_status
 
     status = reading_status(Settings(), store)
     assert isinstance(status, ReadingStatus)
     assert [r.name for r in status.readers] == ["PDF text layer", "OCR (two engines)", "Table finder",
                                                 "Page reader (OvisOCR2)", "Rule reader", "Supplier templates",
                                                 "Business checks", "GL coding model", "AI reviewer"]  # fmt: skip
-    # On, but with no chat model it can't review: invoices wait for a person (said, as a warning).
-    assert status.reader("AI reviewer").state == WARN and "load Gemma 4 12B" in status.reader("AI reviewer").detail
+    # On, but LM Studio isn't running: it waits for it, and says to start it and Check again (B-510).
+    assert status.reader("AI reviewer").state == WAITING and "Check again" in status.reader("AI reviewer").detail
     assert (status.page_reader_model, status.page_reader_ready, status.self_test) == ("", False, "no model")
     # The GL coding model is optional: not running, it is "not set up", not "not working".
-    assert status.reader("Page reader (OvisOCR2)").state == OFF and status.reader("GL coding model").state == OPTIONAL
+    assert status.reader("Page reader (OvisOCR2)").state == WAITING
+    assert status.reader("GL coding model").state == OPTIONAL
     assert status.banner == "LM Studio isn't running: invoices are read by OCR only and wait for a person."
     assert status.queue == 0 and status.eta_minutes is None and status.figures_agree is None
 

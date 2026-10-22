@@ -427,7 +427,8 @@ def _approve_one(app, base: str) -> tuple[int | None, list[str]]:
 
     store = app.state.store
     gl = store.list_accounts("gl_accounts")[0]["code"]
-    cc = store.list_accounts("cost_centers")[0]["code"]
+    ccs = store.list_accounts("cost_centers")  # none in the demo (D-53): a line then needs only its GL account
+    cc = ccs[0]["code"] if ccs else ""
     refused = []
     for row in store.list_invoices(REVIEW):
         if offline_flow.request(base, "GET", f"/review/{row['id']}").status != 200:

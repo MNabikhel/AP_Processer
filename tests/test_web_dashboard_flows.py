@@ -461,7 +461,8 @@ def test_spend_all_currencies_in_cad(client, store):
     assert client.get("/sales-tax", params=period).status_code == 200
 
 
-def test_the_training_zip_holds_the_corrected_approval(client, store):
+def test_the_training_zip_holds_the_corrected_approval(client, store, monkeypatch):
+    monkeypatch.setenv("AP_DEVELOPER_TOOLS", "1")  # a developer tool (B-511)
     invoice_id = add_clean(store)
     store.approve_invoice(invoice_id, dict(gt(), invoice_number="WRONG-1"), "Jane")
 

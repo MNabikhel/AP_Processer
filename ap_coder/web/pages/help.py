@@ -1,27 +1,37 @@
-"""Help: getting started, how every invoice is read, the AP routine, what every check means and what to do about it
-(``ap_coder.ops.help.CHECKS``, searchable by word and area), questions, shortcuts and where the data is. The search and
-the area are in the address (``/help?q=duplicate&area=Sales+tax``), so a filtered list can be linked to; the page also
-filters as you type.
+"""Help: getting started (in the Quick start's order), how every invoice is read, the AP routine, what every check
+means and what to do about it (``ap_coder.ops.help.CHECKS``, grouped by what the tester does and folded, searchable by
+word and area), questions, shortcuts, and for IT where the data is. The search and the area are in the address
+(``/help?q=duplicate&area=Sales+tax``), so a filtered list can be linked to; the page also filters as you type. The
+checks only the optional Azure check raises are left out unless it is on (or the internet is allowed), and the
+developer changelog shows with the developer tools (B-514).
+
+Report a problem draws at once; its setup report (the doctor, a few seconds: it looks at OCR) is fetched by the page
+afterwards from ``/help/report/setup`` and kept a few minutes (B-520).
 """
 
 from __future__ import annotations
 
 import re
+import threading
+import time
 from typing import Any
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 
 from ap_coder.core import paths
-from ap_coder.ops.help import AREAS, CHECKS, FAQ, QUICK_START, ROUTINE, CheckHelp
+from ap_coder.ops.help import AREAS, CHECKS, CLOUD_CHECKS, FAQ, QUICK_START, ROUTINE, TO_DO, WHATS_NEW, CheckHelp
+from ap_coder.ops.offline import internet_allowed
 from ap_coder.web import minimd
-from ap_coder.web.core import data_dir, get_store, render, short_path
+from ap_coder.web.core import data_dir, developer_tools, get_store, render, short_path
 from ap_coder.web.pages import BY_KEY
-from ap_coder.web.pages.settings_reading import HOW_IT_READS
+from ap_coder.web.pages.settings_reading import HOW_IT_READS, azure_check_on
 
 router = APIRouter()
 
-STEP_PAGES = ["accounts", "purchase_orders", "process", "review", "exports"]
+SETUP_KEEP_SECONDS = 300  # the setup report is kept this long once made
+_setup_cache: dict[str, tuple[float, str]] = {}
+_setup_lock = threading.Lock()
 SHORTCUTS = [
     (("Ctrl", "Enter"), "Approve & teach the open invoice"),
     (("Alt", "→"), "Next invoice"),
@@ -30,12 +40,15 @@ SHORTCUTS = [
 ]
 
 
-def matching_checks(query: str = "", area: str | None = None) -> list[tuple[str, CheckHelp]]:
-    """The check catalog filtered by a search text (code, title, meaning or action) and an area."""
+def matching_checks(query: str = "", area: str | None = None, cloud: bool = True) -> list[tuple[str, CheckHelp]]:
+    """The check catalog filtered by a search text (code, title, meaning or action) and an area; without ``cloud``,
+    the checks only the Azure check raises are left out."""
     pattern = re.compile(re.escape(query.strip()), re.IGNORECASE) if query.strip() else None
     out = []
     for code, about in CHECKS.items():
         if area and about.area != area:
+            continue
+        if not cloud and code in CLOUD_CHECKS:
             continue
         if pattern and not pattern.search(" ".join((code, about.title, about.meaning, about.action))):
             continue
@@ -69,8 +82,27 @@ def quick_start_page(request: Request) -> HTMLResponse:
     return render(request, "help_quick_start.html", "help", doc=quick_start_doc())
 
 
+def forget_setup_report() -> None:
+    """The setup report is made again on its next use (after Check again or a setting saved)."""
+    with _setup_lock:
+        _setup_cache.clear()
+
+
 def setup_report(store: Any) -> str:
-    """The doctor's report (``python -m ap_coder doctor``, offline, without asking LM Studio): safe to paste."""
+    """The doctor's report (``python -m ap_coder doctor``, offline, without asking LM Studio): safe to paste. Kept
+    ``SETUP_KEEP_SECONDS`` once made: it takes a few seconds (it looks at the OCR engines)."""
+    key = str(store.path)
+    with _setup_lock:
+        kept = _setup_cache.get(key)
+        if kept and time.monotonic() - kept[0] < SETUP_KEEP_SECONDS:
+            return kept[1]
+    report = _make_setup_report(store)
+    with _setup_lock:
+        _setup_cache[key] = (time.monotonic(), report)
+    return report
+
+
+def _make_setup_report(store: Any) -> str:
     from ap_coder.core.config import Settings
     from ap_coder.ops.cli import _load_reference, build_parser
     from ap_coder.ops.doctor import format_checks, run_checks
@@ -98,17 +130,28 @@ def activity_report(store: Any, include_codes: bool) -> str:
         return f"## AP Coder run summary\n\nThe summary could not be made: {type(exc).__name__}: {exc}"
 
 
+@router.get("/help/report/setup", response_class=PlainTextResponse)
+def report_setup(request: Request) -> PlainTextResponse:
+    """The setup report, fetched by Report a problem once the page is drawn (B-520)."""
+    return PlainTextResponse(setup_report(get_store(request)), headers={"Cache-Control": "no-store"})
+
+
 @router.get("/help/report", response_class=HTMLResponse)
 def report_page(request: Request, codes: bool = False) -> HTMLResponse:
-    """Report a problem: what to write, and the two reports to copy (no command line)."""
+    """Report a problem: what to write, and the two reports to copy (no command line). The setup report comes after
+    the page (``/help/report/setup``): the page opens at once."""
     store = get_store(request)
     logs = paths.user_settings_path().parent / "logs"
+    key = str(store.path)
+    with _setup_lock:
+        kept = _setup_cache.get(key)
+    ready = kept[1] if kept and time.monotonic() - kept[0] < SETUP_KEEP_SECONDS else ""
     return render(
         request,
         "help_report.html",
         "help",
         title="Report a problem",
-        setup=setup_report(store),
+        setup=ready,
         activity=activity_report(store, codes),
         codes=codes,
         key_file=short_path(data_dir(store) / "share_report_key.csv"),
@@ -125,21 +168,29 @@ def link(key: str) -> dict[str, str] | None:
 def help_page(request: Request, q: str = "", area: str = "") -> HTMLResponse:
     store = get_store(request)
     area = area if area in AREAS else ""
-    checks = matching_checks(q, area or None)
+    cloud = internet_allowed() or azure_check_on(store)
+    checks = matching_checks(q, area or None, cloud)
     data = data_dir(store)
+    groups = [
+        {"area": a, "title": title, "checks": [(code, about) for code, about in checks if about.area == a]}
+        for a, title in TO_DO.items()
+    ]
     return render(
         request,
         "help.html",
         "help",
-        news=whats_new(),
-        quick_start=[(title, text, link(key)) for (title, text), key in zip(QUICK_START, STEP_PAGES, strict=True)],
+        news=whats_new() if developer_tools(store) else "",
+        whats_new=WHATS_NEW,
+        quick_start=QUICK_START,
         how_it_reads=HOW_IT_READS,
         routine=[(when, [(task, link(key)) for task, key in tasks]) for when, tasks in ROUTINE],
         areas=AREAS,
         area=area,
         q=q,
         checks=checks,
-        check_total=len(CHECKS),
+        groups=[g for g in groups if g["checks"]],
+        open_groups=bool(q.strip() or area),
+        check_total=len(matching_checks(cloud=cloud)),
         faq=FAQ,
         shortcuts=SHORTCUTS,
         where=[

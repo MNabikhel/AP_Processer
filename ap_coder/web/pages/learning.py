@@ -5,8 +5,9 @@
   (an ERP export of AP lines: upload, match the columns, teach).
 * Supplier learning: what each vendor's reviewed invoices taught, the fields the clerk corrected, how far it is from
   going touchless, and an AP lead's "Keep supervised" / "Allow again" (recorded in the Activity log with their name).
-* Readers: each capture reader against what AP approved (scorecard, field by field) and the training data export
-  (a ZIP of page images and approved values, a GET download made on this computer).
+* Readers (a developer tool, shown with Settings → About's "Show developer tools" or AP_DEVELOPER_TOOLS=1, B-511):
+  each capture reader against what AP approved (scorecard, field by field) and the training data export (a ZIP of
+  page images and approved values, a GET download made on this computer).
 
 Every change is a POST answered with where to go next; the reader picked, the memory search and the uploaded history
 waiting for its columns are in the address.
@@ -16,6 +17,7 @@ from __future__ import annotations
 
 import datetime as dt
 import io
+import re
 import secrets
 import tempfile
 import threading
@@ -25,7 +27,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, File, Form, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from markupsafe import Markup
 
@@ -38,6 +40,7 @@ from ap_coder.web.charts import SERIES, Series, line_chart, percent
 from ap_coder.web.core import (
     TARGET_ACCURACY,
     accuracy_note,
+    developer_tools,
     done,
     get_settings,
     get_store,
@@ -339,10 +342,10 @@ def suppliers_context(store: Store) -> dict[str, Any]:
         parts = [
             ui.plural(stats.invoices, "invoice") + " reviewed",
             f"{ui.plural(corrected, 'correction')} in the last {len(recent)}" if recent else "no corrections yet",
-            f"accuracy at least {stats.lower_bound(policy.z):.1%}" if stats.n else "no fields checked yet",
         ]
-        if state not in ("autonomous", "ready", HELD):
-            parts.append(to_go_text(to_go))
+        if state in ("learning", "supervised"):  # one number, said once (B-508): not the bar's parts again
+            why = to_go_text(to_go)[:1].upper() + to_go_text(to_go)[1:] + "."
+        why = re.sub(r", accuracy at least [\d.]+%", "", why)  # a statistic the tester can't act on (B-508)
         fields = [
             {"label": FIELD_LABELS.get(f, f), "n": fs.n, "corrected": fs.n - fs.correct,
              "accuracy": f"{fs.accuracy:.0%}", "tone": "ok" if fs.correct == fs.n else "warn"}
@@ -362,7 +365,9 @@ def suppliers_context(store: Store) -> dict[str, Any]:
             "window": ui.plural(stats.window_invoices, "reviewed invoice"), "latest": latest,
         })  # fmt: skip
     out.sort(key=lambda r: (_STATE_ORDER.get(r["state"], 9), -r["invoices"], r["name"].lower()))
-    return {"suppliers": out, "touchless_on": on, "policy": policy.describe()}
+    from ap_coder.web.pages.settings_automation import typical_to_go
+
+    return {"suppliers": out, "touchless_on": on, "policy": policy, "typical": typical_to_go(store)}
 
 
 # --- Readers ------------------------------------------------------------------------------------------------------
@@ -459,8 +464,10 @@ def training_context(store: Store) -> dict[str, Any]:
 def learning_page(request: Request) -> HTMLResponse:
     store = get_store(request)
     q = request.query_params
+    developer = developer_tools(store)
+    tabs = {k: v for k, v in TABS.items() if k != "readers" or developer}
     tab = q.get("tab") if q.get("tab") in TABS else "coding"
-    context: dict[str, Any] = {"tab": tab, "tabs": TABS, "url": _url}
+    context: dict[str, Any] = {"tab": tab, "tabs": tabs, "url": _url, "developer": developer}
     if tab == "coding":
         context.update(_history_context(store, q.get("history"), q.get("sheet")))
         context.update(coding_context(store, q.get("mem_q") or "", get_settings(request)))
@@ -468,7 +475,7 @@ def learning_page(request: Request) -> HTMLResponse:
         context.update(suppliers_context(store))
     elif tab == "lessons":
         context.update(lessons_context(store))
-    else:
+    elif developer:
         context.update(readers_context(store, q.get("reader")))
     return render(request, "learning.html", "learning", **context)
 
@@ -539,9 +546,9 @@ async def memory_forget(request: Request) -> JSONResponse:
     except ValueError:
         ids = []
     if not ids:
-        return refuse("Tick the lessons to forget first.")
+        return refuse("Tick the lines to forget first.")
     n = get_store(request).delete_feedback([int(i) for i in ids], actor=reviewer())
-    return done(request, "/learning#memory", f"Forgot {ui.plural(n or len(ids), 'lesson')}.")
+    return done(request, "/learning#memory", f"Forgot {ui.plural(n or len(ids), 'line')} from the coding memory.")
 
 
 @router.post("/learning/history/upload")
@@ -608,6 +615,8 @@ def training_zip(request: Request) -> Response:
     from ap_coder.ai.training_export import export_training_set
 
     store = get_store(request)
+    if not developer_tools(store):  # supplier invoices in a ZIP: a developer tool, not the pilot's (B-511)
+        raise HTTPException(status_code=404, detail="The training data export is a developer tool.")
     spool = tempfile.SpooledTemporaryFile(max_size=64 * 1024 * 1024)  # noqa: SIM115 - closed after streaming
     export_training_set(store, spool)
     size = spool.tell()

@@ -22,7 +22,8 @@ def store(tmp_path):
 
 
 @pytest.fixture
-def client(store):
+def client(store, monkeypatch):
+    monkeypatch.setenv("AP_DEVELOPER_TOOLS", "1")  # the Readers tab is a developer tool (B-511)
     s = Settings()
     return TestClient(create_app(replace(s, llm=replace(s.llm, provider="off")), store), base_url="http://localhost")
 

@@ -37,10 +37,11 @@ plan that turns the pilot into a decision, see [PILOT_PLAN.md](PILOT_PLAN.md).
     loaded, set *Max Concurrent Predictions* to 1 for OvisOCR2 in LM Studio.
   - *Overnight instead.* `python -m ap_coder read-pages --minutes 240` reads the queue and stops; schedule
     it with Task Scheduler for a laptop that is busy during the day.
-- **Optional: a chat model in LM Studio**, for GL suggestions. Without it every invoice is still read and
-  checked the same way, and each line is coded from what AP approved before for that vendor, the vendor
-  master's default account and your fixed coding rules. A line with nothing to learn from is left for you to
-  code. With a model running, it also proposes accounts for vendors and lines it has not seen yet.
+- **A chat model in LM Studio** (the pilot runs with it): the AI reviewer, and GL suggestions for new lines.
+  Without it every invoice is still read and checked the same way, waits for a person, and each line is
+  suggested an account only from what AP approved before for that vendor, the vendor master's default account
+  and your fixed coding rules; a line with nothing to learn from is left for you to code. With the model
+  running, it also proposes accounts for vendors and lines it has not seen yet.
 
   **Which model, and what to expect** (measured on the ten samples with nothing approved yet, through the
   same OpenAI-compatible server API LM Studio uses): the invoice is always read by AP Coder's own reader,
@@ -80,7 +81,8 @@ plan that turns the pilot into a decision, see [PILOT_PLAN.md](PILOT_PLAN.md).
     is several times larger, so expect it to be slower on the same laptop; a graphics card is much faster.
   - The chat model only suggests accounts: it never reads the invoice. Invoices are read by AP Coder's own
     readers and OvisOCR2.
-- **No Azure.** The offline build never uses cloud services and the installer asks no cloud questions.
+- **No Azure needed.** The offline build reads and codes every invoice on the laptop, and the installer asks no
+  cloud questions. The optional Azure check is off by default and sends nothing unless IT switches it on.
   Azure exists only for developers with the internet allowed (`AP_ALLOW_INTERNET=1`).
 
 ## Install: one button
@@ -206,9 +208,11 @@ bundle with the internet cut off, on Windows and on a Mac that has only Python 3
    reject). Each corrected field is recorded for that vendor and updates its template; the confirmation
    says what was learned and how far the vendor is from touchless. *Learning & accuracy → Supplier
    learning* shows each vendor's training. Bulk approvals nobody opened don't count toward touchless.
-4. **Export to JD Edwards E1:** *Exports* → pick the approved invoices → *JD Edwards E1* → download the
-   ZIP (F0411Z1 / F0911Z1 CSVs and a README with the loading steps). Load it with R04110ZA, proof mode
-   first. Details and the one-time JDE settings: [JDE_E1.md](JDE_E1.md).
+4. **Export:** the pilot exports to Excel or CSV: *Exports* → pick the approved invoices → *Excel workbook*
+   (the first time) or *CSV, one row per GL line* → download the batch and import it into the ERP. Exports opens
+   on the format used last. **JD Edwards E1** (a ZIP of F0411Z1 / F0911Z1 CSVs to load with R04110ZA) is hidden
+   for the pilot: *Settings → About → Show JD Edwards settings* shows its settings tab and export format again
+   ([JDE_E1.md](JDE_E1.md)).
 
 ## Touchless processing: when to turn it on
 

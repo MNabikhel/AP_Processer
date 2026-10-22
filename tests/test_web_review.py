@@ -53,7 +53,7 @@ def test_invoices_waiting_for_gl_accounts_offer_the_sample_accounts(client, stor
 def test_the_queue_lists_kpis_today_and_rows(client, demo):
     pending = demo.list_invoices(REVIEW)
     text = client.get("/review").text
-    for label in ("Waiting", "Approved today", "Coding accuracy", "Lessons learned"):
+    for label in ("Waiting", "Approved today", "Coding accuracy", "Coding memory"):
         assert label in text
     assert f"To review · {len(pending)}" in text and "Approved · " in text and "Failed / rejected · 0" in text
     for inv in pending:
@@ -209,15 +209,21 @@ def test_the_setup_step_names_the_self_tests_state(store, monkeypatch):
     from ap_coder.web.pages import process
 
     def step(self_test, ready=False):
-        status = SimpleNamespace(page_reader_ready=ready, self_test=self_test)
+        status = SimpleNamespace(page_reader_ready=ready, self_test=self_test, lm_studio=self_test != "off")
         monkeypatch.setattr(process, "reading_status_or_none", lambda settings, store, **k: status)
-        return process.setup_steps(store, Settings())[4]
+        monkeypatch.setattr(process, "provider_status", lambda s: SimpleNamespace(ready=True, label="LM Studio · q"))
+        return process.setup_steps(store, Settings())[0]  # LM Studio, the first step (B-504)
 
-    assert step("passed", ready=True)[0] == "ok"
+    assert step("passed", ready=True)[:2] == ("ok", "LM Studio running")
     assert step("pending")[0] == "wait" and "testing itself" in step("pending")[2]  # nothing wrong: calm
     assert step("running")[0] == "wait" and "use AP Coder meanwhile" in step("running")[2]
-    assert step("failed") == ("bad", "OvisOCR2", "failed its self-test (Settings → Reading)")
-    assert step("no model")[0] == "todo" and "not running in LM Studio" in step("no model")[2]
+    assert step("failed") == (
+        "bad",
+        "LM Studio running",
+        "running, but OvisOCR2 failed its self-test (Settings → Reading)",
+    )
+    assert step("no model")[0] == "todo" and "OvisOCR2 isn't in it" in step("no model")[2]
+    assert step("off")[0] == "todo" and "Start server, then Check again" in step("off")[2]
 
 
 def test_the_rail_calls_the_manual_import_import_invoices(client):

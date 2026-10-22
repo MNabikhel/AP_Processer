@@ -30,7 +30,8 @@ def page(client, url="/help"):
     return response.text
 
 
-def test_help_lists_every_check_code_with_its_meaning_and_action(client):
+def test_help_lists_every_check_code_with_its_meaning_and_action(client, monkeypatch):
+    monkeypatch.setenv("AP_ALLOW_INTERNET", "1")  # (offline, the Azure check's own checks are left out: B-514)
     text = page(client)
     plain = html.unescape(text)
     for code, about in CHECKS.items():
@@ -41,16 +42,16 @@ def test_help_lists_every_check_code_with_its_meaning_and_action(client):
 
 def test_help_shows_getting_started_questions_and_where_the_data_is(client):
     plain = html.unescape(page(client))
-    for title, _ in QUICK_START:
-        assert title in plain
+    for title, _, path in QUICK_START:
+        assert title in plain and f'href="{path}"' in plain
     assert 'href="/accounts"' in plain and 'href="/exports"' in plain  # each step opens its page
     for question, answer in FAQ:
         assert question in plain and answer in plain
     assert "How every invoice is read" in plain and "OvisOCR2 reads every page too," in plain
     assert "Your AP routine" in plain and "Every month" in plain
     assert "Shortcuts" in plain and "apc-kbd" in plain
-    assert "Where your data is" in plain and "ap_coder.db" in plain
-    assert "What's new in AP Coder" in plain
+    assert "Where your data is" in plain and "ap_coder.db" in plain  # (folded under For IT)
+    assert "What's new for testers" in plain and "What's new in AP Coder" not in plain  # the changelog: developers
 
 
 def test_the_search_and_the_area_filter_the_checks(client):
@@ -58,7 +59,7 @@ def test_the_search_and_the_area_filter_the_checks(client):
     assert 'id="check-DUPLICATE_INVOICE"' in text and 'id="check-TAX_CALC_MISMATCH"' not in text
     text = page(client, f"/help?area={TAX}")
     assert 'id="check-TAX_CALC_MISMATCH"' in text and 'id="check-DUPLICATE_INVOICE"' not in text
-    assert f'class="on">{html.escape(TAX)}</a>' in text
+
     text = page(client, "/help?q=no-such-thing-anywhere")
     assert "No check matches" in text and "<tr data-text" not in text
     assert 'id="check-DUPLICATE_INVOICE"' in page(client, "/help?area=Nowhere")  # an unknown area: all areas

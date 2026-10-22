@@ -36,31 +36,10 @@
 <section class="card" id="dupaudit" aria-labelledby="dupaudit-title">
   <div class="card-head">
     <div><h4 id="dupaudit-title">Duplicate payment audit</h4>
-      <p class="muted">Bills that may have been approved, or posted in the ERP, twice: number typos, the same bill under two
-        vendor names, the same amount days apart. Includes the ERP invoice register when imported (Exports).</p></div>
-    <a class="btn" href="{{ url(audit=1) }}#dupaudit"><span class="ms" aria-hidden="true">search</span>{{ "Run it again" if pairs is not none else "Run the audit" }}</a>
+      <p class="muted">Bills that may have been approved, or posted in the ERP, twice. It is on the Exports page, next to
+        the ERP invoice register it also checks.</p></div>
+    <a class="btn" href="/exports?audit=1#audit"><span class="ms" aria-hidden="true">arrow_forward</span>Run it on Exports</a>
   </div>
-  {% if pairs is not none %}
-  <p class="muted">Results of {{ audit_at.strftime("%H:%M") }}: run it again after approving or importing more.</p>
-  {% if not pairs %}
-  {{ ui.pill("No likely duplicates found", "ok", "check") }}
-  {% else %}
-  <div class="table-wrap"><table class="apc-table">
-    <thead><tr><th>Why</th><th>Bill</th><th>Possible duplicate</th><th class="r">Amount</th></tr></thead>
-    <tbody>
-      {% for p in pair_rows %}
-      <tr><td>{{ ui.pill(p.why, p.tone) }}</td>
-        <td class="w"><b>{{ p.first.vendor_name }}</b><div class="apc-muted">{{ p.first.label }}</div></td>
-        <td class="w"><b>{{ p.second.vendor_name }}</b><div class="apc-muted">{{ p.second.label }}</div></td>
-        <td class="r">{{ p.amount }} <span class="apc-muted">{{ p.currency }}</span></td></tr>
-      {% endfor %}
-    </tbody>
-  </table></div>
-  {% if pairs | length > pair_rows | length %}<p class="muted">The first {{ pair_rows | length }} of {{ pairs | length }}: download the CSV for all.</p>{% endif %}
-  <a class="btn" href="/activity/duplicates.csv" download><span class="ms" aria-hidden="true">download</span>Download (CSV)</a>
-  <p class="muted">Check each pair against the documents: a real duplicate that was paid is recovered from the vendor as a credit or refund.</p>
-  {% endif %}
-  {% endif %}
 </section>
 
 <section class="card" id="log" aria-labelledby="log-title">

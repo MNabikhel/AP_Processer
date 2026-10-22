@@ -19,7 +19,7 @@ from ap_coder.coding.tax import (
 )
 from ap_coder.core.memory import vendor_key
 from ap_coder.core.schema import InvoiceCoding
-from ap_coder.core.store import Store
+from ap_coder.core.store import Store, load_sample_cost_centers
 from ap_coder.erp import jde
 
 from .conftest import DATA, ROOT, SAMPLES
@@ -495,6 +495,7 @@ def test_exports_page_jde_flow(db):
     from .webclient import client_for, follow, post
 
     store = Store(db)
+    load_sample_cost_centers(store)  # JD Edwards' business units come from cost centers (the demo has none: D-53)
     load_demo(store)
     client = client_for(store)
     ready = {i["vendor_name"]: i["id"] for i in store.unexported_approved()}
@@ -541,6 +542,7 @@ def test_a_jde_batch_downloads_again_with_the_same_vouchers(db):
     from .webclient import client_for, follow, post
 
     store = Store(db)
+    load_sample_cost_centers(store)  # JD Edwards' business units come from cost centers (the demo has none: D-53)
     load_demo(store)
     client = client_for(store)
     northwind = next(i for i in store.unexported_approved() if i["vendor_name"].startswith("Northwind"))
@@ -582,6 +584,7 @@ def _one_jde_batch(store, send_due_date=True, **final_changes):
 
     from .webclient import client_for, follow, post
 
+    load_sample_cost_centers(store)  # JD Edwards' business units come from cost centers (the demo has none: D-53)
     load_demo(store)
     northwind = next(i for i in store.unexported_approved() if i["vendor_name"].startswith("Northwind"))
     if final_changes:

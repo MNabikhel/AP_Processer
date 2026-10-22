@@ -19,7 +19,6 @@
 <tr data-row="{{ key }}">
   <td class="c-no"><input type="hidden" name="line_key" value="{{ key }}" form="inv">
     <input type="hidden" name="line_reason" value="{{ row.reasoning_justification or '' }}" form="inv">
-    {% if not g.has_cc %}<input type="hidden" name="line_cc" value="{{ row.predicted_cost_center or '' }}" form="inv">{% endif %}
     <input type="number" name="line_number" value="{{ num(row.line_number) }}" step="1" min="0" form="inv" aria-label="Line number"></td>
   <td class="c-desc"><textarea name="line_description" rows="1" form="inv" aria-label="Description" data-one-line>{{ (row.description or '') | replace('\r', ' ') | replace('\n', ' ') }}</textarea></td>
   <td class="c-del"><button type="button" class="icon-btn" data-del-row title="Delete this line" aria-label="Delete this line"><span class="ms" aria-hidden="true">delete</span></button></td>

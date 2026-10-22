@@ -1,4 +1,10 @@
 {# Settings → JD Edwards E1 (pages/settings_jde.py). #}
+{% if jde_hidden %}
+<div class="flash info" role="status"><span class="ms" aria-hidden="true">visibility_off</span>
+  <div>The pilot exports to Excel and CSV, so these JD Edwards E1 settings are hidden from the tab bar and JD Edwards E1
+    isn't offered on Exports. To use them, turn on <a href="/settings/about#show">Show JD Edwards settings</a> in
+    Settings → About.</div></div>
+{% endif %}
 {% macro text_field(name, label, maxlen, help) -%}
 <label class="field">{{ label }}
   <input type="text" name="{{ name }}" value="{{ js[name] }}" maxlength="{{ maxlen }}"{% if help %} title="{{ help }}"{% endif %}>

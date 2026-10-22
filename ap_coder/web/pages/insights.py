@@ -1,9 +1,11 @@
-"""Insights: the business case. Volume, the straight-through rate (approved exactly as coded), the time it saves,
-the cloud cost, AP operations (queue age, days to approve, discounts), what the checks catch, approvals by week and
-the projection at your monthly volume, from ``ap_coder.erp.insights`` (the same figures as the one-page report).
+"""Insights: the business case. Volume, the straight-through rate (approved exactly as coded), the time it saves
+(the cloud cost only in a build that may use the internet), AP operations (queue age, days to approve,
+discounts), what the checks catch, approvals by week and the projection at your monthly volume, from
+``ap_coder.erp.insights`` (the same figures as the one-page report).
 
 The assumptions behind the figures are a POST (saved with who changed them); the one-page business case is a GET
-download.
+download. Before ``MIN_APPROVALS`` approvals the page says when its figures come (B-515): a share of two approvals is
+noise, not a business case.
 """
 
 from __future__ import annotations
@@ -16,11 +18,17 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from ap_coder.core import ui
+from ap_coder.core.store import APPROVED
 from ap_coder.erp.insights import AS_CODED, Assumptions, compute, operations, report_html
+from ap_coder.ops.offline import internet_allowed
 from ap_coder.web.charts import OK_GREEN, SERIES, WARN_AMBER, Series, bar_chart
 from ap_coder.web.core import done, get_store, posted_form, refuse, render, reviewer
 
 router = APIRouter()
+
+MIN_APPROVALS = 20  # Insights' figures show once this many invoices are approved
+CLOUD_FIELDS = {"di_usd_per_1000_pages", "aoai_usd_per_m_input", "aoai_usd_per_m_cached", "aoai_usd_per_m_output",
+                "usd_to_cad"}  # fmt: skip  # the cloud's prices: shown only where the internet is allowed
 
 LABELS = {
     "manual_minutes": ("Manual processing today (min / invoice)", 0.5),
@@ -53,17 +61,23 @@ def per_currency(totals: dict[str, float]) -> str:
     return " + ".join(f"{t:,.0f} {c}" for c, t in totals.items()) or "0"
 
 
-def kpis(s: dict[str, Any]) -> list[tuple[str, str, str, str]]:
-    """The four headline figures: (label, value, tone, note)."""
+def kpis(s: dict[str, Any], cloud: bool = False) -> list[tuple[str, str, str, str]]:
+    """The four headline figures: (label, value, tone, note). The cloud's cost only where the internet is allowed
+    (``cloud``): the offline build has none to show (B-515)."""
     cost = s["cost_per_invoice_cad"]
+    last = (
+        ("Cloud cost / invoice", "$0" if cost is None else f"${cost:,.3f}", "amber",
+         f"Azure, measured on {ui.plural(s['cost_measured_invoices'], 'invoice')}" if cost is not None
+         else "read and coded on this computer")
+        if cloud
+        else ("Needs attention", pct(s["needs_attention_rate"]), "amber", "of invoices, flagged by the checks")
+    )  # fmt: skip
     return [
         ("Invoices processed", f"{s['processed']:,}", "blue", f"{s['approved']} approved · {s['failed']} unreadable"),
         (AS_CODED, pct(s["straight_through"]), "green",
          f"{s['approved_clean']} of {s['approved']} needed no change"),
         ("Hours saved", f"{s['hours_saved']:,.1f}", "violet", f"≈ ${s['value_saved']:,.0f} of AP time"),
-        ("Cloud cost / invoice", "$0" if cost is None else f"${cost:,.3f}", "amber",
-         f"Azure, measured on {ui.plural(s['cost_measured_invoices'], 'invoice')}" if cost is not None
-         else "read and coded on this computer"),
+        last,
     ]  # fmt: skip
 
 
@@ -102,12 +116,15 @@ def weekly_chart(weekly: list[dict[str, Any]]) -> Any:
 
 
 def assumption_fields(a: Assumptions) -> list[dict[str, Any]]:
+    """The assumptions' fields; the cloud's prices are posted as they are (hidden) where the internet isn't allowed."""
     out = []
+    cloud = internet_allowed()
     for f in fields(Assumptions):
         label, step = LABELS[f.name]
         whole = f.name == "monthly_volume"
         value = getattr(a, f.name)
-        out.append({"name": f.name, "label": label, "step": step, "value": int(value) if whole else f"{value:.2f}"})
+        out.append({"name": f.name, "label": label, "step": step, "value": int(value) if whole else f"{value:.2f}",
+                    "hidden": f.name in CLOUD_FIELDS and not cloud})  # fmt: skip
     return out
 
 
@@ -116,8 +133,11 @@ def insights_page(request: Request) -> HTMLResponse:
     store = get_store(request)
     s = compute(store)
     a: Assumptions = s["assumptions"]
-    if not s["processed"]:
-        return render(request, "insights.html", "insights", s=s, fields=assumption_fields(a))
+    fully = len(store.list_invoices(APPROVED))  # fully approved (a second approval waiting doesn't count yet)
+    if fully < MIN_APPROVALS:
+        return render(request, "insights.html", "insights", s=s, fields=assumption_fields(a), early=True,
+                      min_approvals=MIN_APPROVALS, fully=fully)  # fmt: skip
+    cloud = internet_allowed()
     ops = operations(store)
     biggest_age = max(ops["ageing"].values()) or 1
     ageing = [
@@ -137,12 +157,13 @@ def insights_page(request: Request) -> HTMLResponse:
         "insights",
         s=s,
         a=a,
-        kpis=kpis(s),
+        kpis=kpis(s, cloud),
+        cloud=cloud,
         ops=ops,
         ops_kpis=operation_kpis(ops),
         ageing=ageing,
         projection=p,
-        net=(p["value_saved"] - p["azure_cost"]) if p else None,
+        net=(p["value_saved"] - (p["azure_cost"] if cloud else 0)) if p else None,
         issues=issues,
         biggest_issue=biggest_issue,
         issue_color=SERIES[0],

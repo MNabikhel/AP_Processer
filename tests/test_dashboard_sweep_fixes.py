@@ -214,8 +214,8 @@ def test_insights_charge_no_cloud_cost_for_invoices_read_and_coded_on_this_compu
     load_demo(store)
     assert compute(store)["cost_per_invoice_cad"] is None
     assert compute(store)["projection"]["azure_cost"] == 0
-    page = client.get("/insights").text
-    assert "read and coded on this computer" in page and "Azure, measured" not in page
+    page = client.get("/insights").text  # (no cloud cost shown at all offline: B-515)
+    assert "Cloud cost" not in page and "Azure, measured" not in page
     monkeypatch.setenv("AP_ALLOW_INTERNET", "1")  # a developer build that may use Azure: its cost is measured
     assert compute(store)["cost_per_invoice_cad"] > 0
 
@@ -261,8 +261,9 @@ def test_getting_started_counts_only_the_steps_that_are_needed(tmp_path, monkeyp
     store = Store(tmp_path / "private" / "ap_coder.db")
     client = client_for(store)
     page = client.get("/review").text
-    assert "Chat model for GL suggestions" in page and "optional" in page
-    # reading invoices done; GL, tax mapping, OvisOCR2, your name and the first invoices to do
-    assert "aria-label='1/6'" in page, page
+    # Every row shown is counted (B-503): reading invoices done; LM Studio, GL, tax mapping, your name, your province
+    # and the first invoices to do. (The chat model is part of the LM Studio step.)
+    assert "Chat model for GL suggestions" not in page
+    assert "aria-label='1/7'" in page, page
     load_sample_setup(store)
-    assert "aria-label='3/6'" in client.get("/review").text
+    assert "aria-label='3/7'" in client.get("/review").text

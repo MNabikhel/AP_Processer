@@ -269,8 +269,9 @@ def today_pills(store: Store, invoices: list[dict[str, Any]]) -> list[tuple[str,
 def kpis(store: Store, pending: list[dict[str, Any]], flagged: list[dict[str, Any]],
          approved: list[dict[str, Any]], awaiting: list[dict[str, Any]] = (),
          settings: Any = None) -> list[dict[str, Any]]:  # fmt: skip
-    """The four figures at the top: waiting, approved today, coding accuracy, lessons learned. Approved today counts
-    this reviewer's approvals, a first approval waiting for its second (``awaiting``) included, and says so."""
+    """The four figures at the top: waiting, approved today, coding accuracy, the coding memory (B-512). Approved today
+    counts this reviewer's approvals, a first approval waiting for its second (``awaiting``) included, and says so in
+    plain words (B-517)."""
     metrics = store.metrics()
     done_today = approved_today(store)
     total_today = done_today + len(pending)
@@ -282,9 +283,9 @@ def kpis(store: Store, pending: list[dict[str, Any]], flagged: list[dict[str, An
     return [
         {"label": "Waiting", "value": f"{len(pending):,}", "sub": f"{len(flagged)} need attention"},
         {"label": "Approved today", "value": f"{done_today:,}",
-         "sub": f"of {total_today:,} today · "
-                + (f"{len(awaiting):,} waiting for a second approval · " if awaiting else "")
-                + f"{len(approved):,} fully approved in all",
+         "sub": f"{len(pending):,} still to review"
+                + (f" · {len(awaiting):,} waiting for a second approval" if awaiting else "")
+                + f" · {len(approved):,} approved in total",
          "bar": done_today / total_today if total_today else 0.0},
         {"label": "Coding accuracy", "value": "—" if accuracy is None else f"{accuracy:.1%}",  # as on Learning
          "sub": "after the first approvals" if accuracy is None
@@ -292,8 +293,8 @@ def kpis(store: Store, pending: list[dict[str, Any]], flagged: list[dict[str, An
          "delta": "" if accuracy is None or not compared else f"{(accuracy - TARGET_ACCURACY) * 100:+.1f} pts".replace(
              "-", "−"),
          "good": accuracy is not None and accuracy >= TARGET_ACCURACY, "wrap": bool(note)},
-        {"label": "Lessons learned", "value": f"{metrics['lines_reviewed']:,}",
-         "sub": f"{corrections} correction{'s' if corrections != 1 else ''} taught"},
+        {"label": "Coding memory", "value": f"{metrics['lines_reviewed']:,}",
+         "sub": f"lines reviewed · {corrections:,} corrected"},  # (short: one line at 1366, B-532)
     ]  # fmt: skip
 
 
@@ -399,15 +400,16 @@ def _second(inv: dict[str, Any], first: dict[str, Any] | None, me: str, my_login
 
 def _getting_started(request: Request, store: Store, invoices: list[dict[str, Any]]) -> HTMLResponse:
     from ap_coder.ops.demo import demo_available
-    from ap_coder.web.pages.process import STEP_LINKS, first_steps, next_step
+    from ap_coder.web.pages.process import LM_STUDIO_STEPS, STEP_LINKS, first_steps, next_step, step_state
 
     steps, done_steps, needed = first_steps(store, get_settings(request), bool(invoices))  # as Import invoices counts
-    named = steps[5][0] == "ok"  # (before a name is given, first_name() is the computer login: "Good morning, root")
+    named = step_state(steps, "Your name") == "ok"  # (before it, first_name() is the login: "Good morning, root")
     return render(
         request, "review_welcome.html", "review",
         greeting=f"{ui.greeting()}, {first_name()}" if named else ui.greeting(),
         next=next_step(steps),
         step_links=STEP_LINKS,
+        lm_studio_steps=LM_STUDIO_STEPS,
         steps=steps,
         ring_value=done_steps / needed,
         ring_label=f"{done_steps}/{needed}",
@@ -470,7 +472,7 @@ def review_sample_gl(request: Request, back: str = Form("/review")) -> JSONRespo
     store = get_store(request)
     if store.list_accounts("gl_accounts"):  # a page left open while the clerk imported their own chart
         return refuse("You already have GL accounts: the sample setup is only for an empty list.")
-    load_sample_setup(store)
+    load_sample_setup(store, cost_centers=False)  # each line needs only a GL account (D-53)
     return done(
         request, local_url(back, "/review"), "Sample GL accounts loaded. Replace them with yours in GL accounts & tax."
     )

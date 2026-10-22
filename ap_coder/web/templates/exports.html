@@ -25,7 +25,7 @@
   </div>
   <p class="muted small">{{ format_help[fmt] }}</p>
   {% for p in blocking %}
-  <div class="flash err"><span class="ms" aria-hidden="true">settings</span><div>{{ p }} Set it in <a href="/settings#jde">Settings → JD Edwards E1</a>.</div></div>
+  <div class="flash err"><span class="ms" aria-hidden="true">settings</span><div>{{ p }} Set it in <a href="/settings/jde">Settings → JD Edwards E1</a>.</div></div>
   {% endfor %}
   <form method="post" action="/exports/create" id="export-form" data-busy="Exporting…">
     <input type="hidden" name="fmt" value="{{ fmt }}">

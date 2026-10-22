@@ -5202,3 +5202,274 @@ PDFs imported into a scratch data folder with the sample GL accounts and screens
   match pointed elsewhere (marked as a guess either way); on the samples the name match was right more often than a
   small model (21 vs 11 of 41), so which one to show first, when they disagree, is worth measuring on the pilot's
   invoices.
+### Before testing: navigation, settings and help
+
+A product audit of the dashboard as the pilot tester first meets it (1366 x 768 and 1366 x 650 laptop screens, a fresh
+install and the demo), and the fresh-install review that followed. The owner decided four things with it: LM Studio
+runs for the pilot (step 0), the menu shows only the seven everyday pages, exports are Excel or CSV only, and the pilot
+codes no cost centers (D-52, D-53). Tests: `tests/test_before_testing.py` unless named.
+
+#### B-502 · Settings and Help were below the window on a laptop · medium
+- **Where:** `ap_coder/web/templates/base.html`, `ap_coder/web/static/app.css` (`.rail`), `ap_coder/web/pages/__init__.py`
+- **Symptom:** at 1366 x 768 the left menu (16 pages in five sections) scrolled under its sticky footer: Settings and
+  Help could not be seen without scrolling the menu.
+- **Cause:** the whole rail scrolled, with the footer stuck over its end.
+- **Reproduced:** yes (audit screenshot; Playwright at 1366 x 768 and 1366 x 650)
+- **Fix:** the menu shows the seven everyday pages; the nine others fold under **More** (open on one of its pages,
+  otherwise as the browser left it); Settings and Help are pinned above the footer, outside the part that scrolls.
+- **Test:** `test_the_menu_shows_the_seven_core_pages_and_folds_the_rest_under_more`,
+  `test_in_a_browser_settings_and_help_are_on_screen_on_a_laptop` (768 and 650), `test_in_a_browser_the_more_fold_is_remembered`
+- **Lesson:** Check a menu at the smallest screen it is used on, with every fold open.
+
+#### B-503 · The getting-started counter counted rows it didn't show · medium
+- **Where:** `ap_coder/web/pages/process.py` (`setup_steps`, `first_steps`), `templates/_setup_steps.html`
+- **Symptom:** the welcome page listed 8 or 9 steps but counted "x/6": the province showed green but was never
+  counted, the optional chat model was listed but not counted.
+- **Fix:** every row shown is counted, in the Quick start's order: LM Studio running, reading invoices, your name,
+  your province, GL accounts, sales tax accounts, your first invoices. The chat model is part of the LM Studio row.
+- **Test:** `test_the_welcome_checklist_counts_exactly_the_rows_it_shows_with_lm_studio_first`,
+  `test_import_invoices_counts_the_same_rows`, `test_the_province_counts_once_given`
+- **Lesson:** A counter counts what the list shows, nothing hidden and nothing extra.
+
+#### B-504 · Without LM Studio the checklist said "!" forever, with no way to check again · medium
+- **Where:** `ap_coder/web/pages/process.py` (`lm_studio_step`), `ap_coder/web/pages/settings_reading.py` (`check_again`)
+- **Symptom:** the OvisOCR2 row stayed "!" with "see Settings → Reading"; nothing on the welcome page said how to start
+  LM Studio or let the tester check again.
+- **Fix:** "LM Studio running" is the first row; until it runs, the card says how to start it and has **Check again**,
+  which comes back to the page it was pressed on (a page of this dashboard only).
+- **Test:** `test_check_again_from_the_welcome_page_comes_back_to_it`, `tests/test_web_review.py::test_the_setup_step_names_the_self_tests_state`
+
+#### B-505 · The Quick start said what the app doesn't do · medium
+- **Where:** `docs/QUICK_START.md`
+- **Symptom:** it said there are no GL suggestions without LM Studio (lines AP approved before are still suggested);
+  LM Studio was not a step; step 2 named a button the page doesn't have, sent the tester to the sidebar's Sales tax page
+  instead of the GL page's tab, and left out **Save tax setup**; step 6 didn't say which export format is used.
+- **Fix:** step 0 is starting LM Studio (with **Check again**, not "start AP Coder again"), what is missing without it
+  said as it is; step 2 follows the page's own words (PST needs no account: it is added to each line); step 6 says
+  the first export is an Excel workbook and how to choose CSV.
+- **Test:** `test_the_guides_match_the_app`, `tests/test_sweep4_first_launch.py::test_the_quick_start_names_only_buttons_and_pages_the_dashboard_has`
+
+#### B-506 · Settings opened on its most technical tab · low
+- **Where:** `ap_coder/web/pages/settings.py`, `templates/settings_reading.html`
+- **Symptom:** Settings opened on Reading: nine readers, model tables, URLs and the AI reviewer's rounds and minutes.
+- **Fix:** Settings opens on Review. Reading starts with what the tester acts on (LM Studio running or not, with Check
+  again, OvisOCR2 and the chat model found), the self-test and the AI reviewer's switch; the rest is under **For IT**.
+- **Test:** `test_settings_opens_on_review_and_hides_jd_edwards_until_asked`, `test_reading_says_whether_lm_studio_runs_and_folds_the_rest_for_it`
+
+#### B-507 · Three forms and three Saves on Settings → Review, and a message about the wrong thing · medium
+- **Where:** `ap_coder/web/pages/settings.py` (`save_review`, `saved_text`), `templates/settings_review.html`
+- **Symptom:** a change in one card was lost by saving another; saving a name said "Saved. Invoices read from now on
+  use it."; "Ask why after the same correction (times)" was unclear.
+- **Fix:** one form, one **Save**; the confidence slider, the GL list rule and the "ask for the reason" count are under
+  **Advanced**, reworded; the message names what was saved and says "invoices read from now on" only of what applies to
+  them. The old addresses still work.
+- **Test:** `test_the_review_tab_is_one_form_with_one_save_and_the_risky_settings_folded`, `test_saving_your_name_says_your_name_was_saved`
+
+#### B-508 · Touchless processing was the page's main button, and its bar was told three ways · medium
+- **Where:** `templates/settings_automation.html`, `ap_coder/web/pages/settings_automation.py` (`typical_to_go`),
+  `ap_coder/web/pages/learning.py` (`suppliers_context`)
+- **Symptom:** "Turn on touchless processing…" was the blue button though the pilot leaves it off; the guides said
+  "20, the last 10 clean" and "about 30", the vendors 31, 34, 38, 62; Supplier learning said how far each vendor was
+  twice, with "accuracy at least 75.7%".
+- **Fix:** a plain button and "Leave it off during the pilot."; the bar's rules and, once, what they mean in practice
+  (about 30 to 40 invoices without a correction, worked out from the bar); each vendor says its own number once.
+- **Test:** `test_touchless_is_not_the_pages_main_button_and_says_to_leave_it_off`, `test_supplier_learning_says_how_many_more_invoices_once`
+
+#### B-509 · "N invoices waiting for OvisOCR2" counted invoices already approved · low
+- **Where:** `ap_coder/core/store.py` (`page_reads_waiting`), `ap_coder/ai/reading.py` (`_queue`)
+- **Fix:** the count is of the invoices still to approve; the reader still reads the others (to score itself).
+- **Test:** `test_the_reading_queue_counts_only_invoices_still_to_approve`
+
+#### B-510 · Without LM Studio the AI reviewer and OvisOCR2 looked broken · low
+- **Where:** `ap_coder/ai/reading.py`, `ap_coder/web/pages/settings_reading.py` (`READER_PILL`)
+- **Symptom:** amber "Needs a look" and red "Not working" before LM Studio was even started.
+- **Fix:** "Waiting for LM Studio", with what to do: start it, then Check again.
+- **Test:** `test_without_lm_studio_the_ai_reviewer_says_to_start_it_and_check_again`
+
+#### B-511 · A developer tool on the tester's Learning page · low
+- **Where:** `ap_coder/web/pages/learning.py`, `ap_coder/web/core.py` (`developer_tools`)
+- **Symptom:** Learning → Readers showed evidence patterns, the benchmark, a command line and "Download training data
+  (ZIP)" of the supplier invoices.
+- **Fix:** shown with Settings → About's "Show developer tools" (or `AP_DEVELOPER_TOOLS=1`); the download answers 404
+  otherwise.
+- **Test:** `test_the_readers_tab_and_the_training_data_are_developer_tools`
+
+#### B-512 · Three different things called "lessons" · low
+- **Where:** `ap_coder/web/pages/review.py` (`kpis`), `templates/learning.html`, `templates/settings_data.html`, `templates/vendors.html`
+- **Symptom:** "Lessons learned 13" (lines reviewed), the Lessons tab's "2" (repeated corrections), "Memory: every lesson".
+- **Fix:** the lines AP confirmed or corrected are the **coding memory** everywhere; **lessons** are only the
+  corrections AP keeps making, with AP's reason (their own tab).
+- **Test:** `test_the_queue_figures_are_plain_and_the_coding_memory_has_one_name`
+
+#### B-513 · The duplicate payment audit was on two pages · low
+- **Fix:** it is on Exports, next to the ERP register it also checks; Activity links there. (`/activity/duplicates.csv` stays.)
+- **Test:** `test_the_duplicate_payment_audit_is_in_one_place`
+
+#### B-514 · Help was 7,600 px of codes, pointed at hidden settings, and showed a developer changelog · medium
+- **Where:** `ap_coder/web/pages/help.py`, `templates/help.html`, `ap_coder/ops/help.py` (`TO_DO`, `CLOUD_CHECKS`,
+  `QUICK_START`, `WHATS_NEW`), `static/js/help.js`
+- **Symptom:** 83 checks in one table with their codes; the Azure checks said "Settings → Reading", which hides Azure in
+  this build; "What's new" listed PRs, schema versions and environment variables; its Getting started order differed
+  from the welcome page and the Quick start.
+- **Fix:** the checks are grouped by what the tester does about them, folded (opened by a search), without codes
+  (still searchable and linkable); the Azure checks only where the internet is allowed or the check is on; a short
+  "What's new for testers" (the changelog with the developer tools); Getting started in the Quick start's order; the
+  folders under For IT.
+- **Test:** `test_help_groups_the_checks_by_what_to_do_folded_without_codes`, `tests/test_web_help.py`
+
+#### B-515 · Insights showed a cloud cost in an offline product, and figures from two approvals · low
+- **Where:** `ap_coder/web/pages/insights.py`, `templates/insights.html`
+- **Fix:** no cloud cost, prices or net of it offline (only where the internet is allowed); the figures show from 20
+  approvals, with an empty state saying so before.
+- **Test:** `test_insights_has_no_cloud_cost_offline_and_waits_for_twenty_approvals`
+
+#### B-516 · The setup report and the Azure check's page assumed a cloud build · low
+- **Where:** `ap_coder/ops/doctor.py` (`for_this_build`), `ap_coder/web/pages/azure.py`, `ap_coder/ops/cli.py`, `docs/GETTING_STARTED.md`
+- **Symptom:** the doctor listed Azure packages and endpoints, the prompt size and "schema enum"; `/settings/azure-check`
+  showed the Azure form; the guide offered `schema` ("sent to Azure OpenAI").
+- **Fix:** the offline build's report leaves the cloud lines out and says "codes limited to the list"; the Azure page
+  says it isn't part of this build unless the internet is allowed, the check is on, or the developer tools are; the
+  `schema` command is a developer's, out of the tester's guide.
+- **Test:** `test_the_offline_doctor_report_has_no_cloud_lines`, `test_the_azure_check_page_says_it_is_not_part_of_the_offline_build`
+
+#### B-517 · "Approved today 4 · of 28 today · 6 fully approved in all" · low
+- **Where:** `ap_coder/web/pages/review.py` (`kpis`, the text only)
+- **Fix:** "4 · 24 still to review · 6 approved in total" (and the second approvals waiting, when any).
+- **Test:** `test_the_queue_figures_are_plain_and_the_coding_memory_has_one_name`, `tests/test_sweep3_dayone.py`
+
+#### B-518 · The guides' launcher window wasn't the real one · low
+- **Where:** `README.md` (PILOT.md's quotes and the launcher's own LM Studio line: the launcher's change, merged
+  alongside)
+- **Symptom:** "[OK]" where the window shows ✓ and !; "then start AP Coder again" for LM Studio.
+- **Fix:** README's window as it shows; the guides say: start LM Studio, then press Check again in Settings →
+  Reading, with no need to restart AP Coder (the launcher's wording).
+- **Test:** `test_the_guides_match_the_app`
+
+#### B-519 · Vendors said "Ask the vendor above" where there was none · low
+- **Fix:** "open a vendor in the list above, and its Ask the vendor section drafts the email".
+- **Test:** `test_vendors_say_where_ask_the_vendor_is`
+
+#### B-520 · Help → Report a problem took about 4 s to open · low
+- **Where:** `ap_coder/web/pages/help.py` (`report_setup`, `setup_report`), `static/js/help.js`
+- **Cause:** the setup report (the doctor, which looks at the OCR engines) was made while the page was drawn.
+- **Fix:** the page opens at once; the setup report is fetched after it (Copy waits for it) and kept 5 minutes.
+- **Test:** `test_report_a_problem_opens_at_once_and_fetches_the_setup_report`,
+  `tests/test_web_pilot_walkthrough.py::test_in_a_browser_report_a_problem_shows_it_is_working`
+
+#### B-521 · Full folder paths on the tester's pages · low
+- **Where:** `templates/settings_about.html`, `templates/help.html`, `templates/help_report.html`
+- **Fix:** under **For IT** folds; About's update note says AP Coder may stay open (the update stops it, PILOT.md).
+- **Test:** `test_about_folds_the_full_paths_for_it`
+
+#### B-522 · "Who are you?" was a bare line · low
+- **Where:** `templates/who.html`, `templates/settings_review.html`
+- **Fix:** a page that says what the name is for and where to change it; Settings → Review links to it.
+- **Test:** `test_who_is_a_proper_page_linking_to_settings`
+
+#### B-523 · "Sales tax" was two different places · low
+- **Where:** `ap_coder/web/pages/accounts.py` (`TABS`), `templates/accounts.html`
+- **Fix:** the GL page's tab is **Sales tax accounts**; it says GST, HST and QST need an account and PST none.
+- **Test:** `test_the_accounts_page_names_its_tax_tab_apart_from_the_sales_tax_page`
+
+#### B-524 · Exports forgot the format chosen · low
+- **Where:** `ap_coder/web/pages/exports.py` (`last_format`, `shown_formats`)
+- **Fix:** Exports opens on the format of the last batch made (Excel at first); JD Edwards E1 only once shown (D-52).
+- **Test:** `test_exports_open_on_the_last_format_used`
+
+#### B-525 · The guides disagreed with each other · low
+- **Where:** `docs/GETTING_STARTED.md`, `docs/PILOT.md` ("No Azure"), `templates/settings_about.html`
+- **Symptom:** About said to close AP Coder before updating, PILOT that it may stay open (it may: the update stops it);
+  "never connects, not even to set up" where a GitHub ZIP downloads its packages and models once; PILOT's "No Azure"
+  where the Azure check exists, off by default.
+- **Fix:** each said as it is: the update may start with AP Coder open; a GitHub ZIP downloads once; the Azure check
+  is opt-in and sends nothing unless switched on. (Python 3.11 or newer, 3.12 recommended, everywhere: the launcher's
+  change, which also aligns `pyproject.toml`.)
+- **Test:** `test_about_folds_the_full_paths_for_it`, `test_the_guides_match_the_app`
+
+An independent review of the branch walked the pilot path end to end and found what follows. Tests:
+`tests/test_before_testing_review.py`.
+
+#### B-526 · An update hid JD Edwards from a company already using it · high
+- **Where:** `ap_coder/web/core.py` (`jde_shown`), `ap_coder/web/pages/exports.py` (`last_format`)
+- **Symptom:** after the update the JD Edwards E1 tab and export format were gone, with no word, for a database with
+  JD Edwards settings and batches: *Show JD Edwards settings* starts off.
+- **Fix:** a database with JD Edwards settings saved or a JD Edwards batch made has the switch turned on, once and
+  stored (switched off by hand it stays off); Exports keeps a JD Edwards format used last. docs/JDE_E1.md and
+  PILOT_PLAN.md name the switch.
+- **Test:** `test_a_jd_edwards_user_keeps_the_tab_and_the_format_after_the_update`,
+  `test_a_new_install_has_jd_edwards_hidden_and_nothing_stored`
+- **Lesson:** Hiding a feature for new users must not take it from those already using it.
+
+#### B-527 · Saving Settings → About stored the developer variable as if it were ticked · medium
+- **Where:** `ap_coder/web/pages/settings.py` (`save_shown`), `templates/settings_about.html`, `ap_coder/web/core.py`
+- **Symptom:** with `AP_DEVELOPER_TOOLS` set, the page posted developer=1 and saved it in the data folder, so the tools
+  stayed on after the variable went; the page and `developer_tools()` read the variable two ways (`0` was "on" for
+  one of them); every save logged both switches.
+- **Fix:** the variable is read one way (1, true, yes on; 0, false, no, nothing off); when it is set the switch shows
+  "on (set by AP_DEVELOPER_TOOLS)" and nothing is stored; only a switch that changed is saved and logged.
+- **Test:** `test_the_developer_env_var_is_read_one_way`, `test_the_env_var_is_shown_as_on_and_never_stored`,
+  `test_save_shown_logs_only_what_changed`
+
+#### B-528 · The demo kept cost centers the tester could not see · medium
+- **Where:** `ap_coder/ops/demo.py` (`_without_cost_centers`, Harbourview's mistake), `templates/_invoice_lines.html`
+- **Symptom:** with no cost center list, the demo invoices still carried CC200, CC400 from their ground truth: an
+  approved one kept them, the CSV export wrote them, the coding memory learned them, and a hidden `line_cc` posted them
+  back; Harbourview's "mistake to correct" was a cost center, invisible.
+- **Fix:** without a cost center list the demo loads its invoices without cost centers; Harbourview's mistake is a GL
+  account (6110 for a legal review); no hidden cost center is posted when there is no list.
+- **Test:** `test_the_demo_has_no_cost_center_anywhere`, `test_harbourviews_demo_mistake_is_a_gl_account`,
+  `test_no_hidden_cost_center_is_posted_without_a_list`
+- **Lesson:** A field hidden from the screen must be gone from the data too, or it travels unseen.
+
+#### B-529 · The welcome page said "Add your name" before LM Studio, and "Start server" whatever was missing · medium
+- **Where:** `ap_coder/web/pages/process.py` (`lm_studio_step`, `lm_studio_help`, `next_step`), `templates/_next_step.html`
+- **Symptom:** the Next step card asked for the name while step 0 was LM Studio, and Check again was below the fold
+  at 1366 x 650; with LM Studio running but without OvisOCR2 or a chat model the box still said "Developer tab → Start
+  server"; LM Studio with no chat model was ticked done, though the pilot runs with it.
+- **Fix:** while LM Studio isn't ready, it is the Next step, at the top, with what to do for its state (start it, add
+  OvisOCR2, load the chat model) and Check again; the row is done only with OvisOCR2 ready and the chat model loaded.
+- **Test:** `test_the_lm_studio_step_needs_ovisocr2_and_the_chat_model`, `test_the_next_step_is_lm_studio_with_check_again_on_a_laptop`,
+  `test_the_running_but_empty_lm_studio_box_says_what_is_missing`
+
+#### B-530 · "Sales tax" had three names, and the name step said "recorded in it" · low
+- **Fix:** "Sales tax accounts" for the checklist row, the next step and the tab; "GST, HST and QST each need a GL
+  account (PST needs none)" everywhere; "each approval is recorded under it".
+- **Test:** `test_one_name_for_the_sales_tax_accounts_and_recorded_under_it`
+
+#### B-531 · The Quick start and the screens disagreed · low
+- **Where:** `docs/QUICK_START.md`, `ap_coder/ops/help.py` (`QUICK_START`), `templates/help.html`
+- **Symptom:** "Start (every day)" didn't say to start LM Studio; step 2 stopped at Upload, though a preview and a
+  second **Import GL accounts** follow; Help's Getting started had six steps numbered differently and claimed to be
+  the welcome page's.
+- **Fix:** start LM Studio first every day; step 2 as the page goes; Help lists the Quick start's seven steps, 0 to 6,
+  by the same names, and says the welcome checklist ticks steps 0 to 3.
+- **Test:** `test_help_and_the_quick_start_number_the_same_steps`
+
+#### B-532 · "Coding memory" was two different numbers · low
+- **Where:** `ap_coder/web/pages/settings.py` (`data_context`), `templates/settings_data.html`, `ap_coder/web/pages/review.py` (`kpis`)
+- **Symptom:** the queue counted AP's reviewed lines, Settings → Data every row of the memory (the ERP history
+  included, cut at 50,000); the queue tile's note was cut off at 1366.
+- **Fix:** one number, AP's reviewed lines, with the ERP history counted apart ("plus N lines from ERP history"); a
+  short note.
+- **Test:** `test_the_coding_memory_is_one_number_with_erp_history_apart`
+
+#### B-533 · Smaller points from the review · low
+- Insights counts fully approved invoices towards its 20 (a second approval waiting does not count yet).
+- Help, filtered by area or a search, links back to all the checks.
+- A failed self-test shows what OvisOCR2 read on Settings → Reading itself, not folded under For IT.
+- Report a problem's setup report is made again after Check again or a saved setting.
+- **Test:** `tests/test_before_testing.py` (Insights, Help), `tests/test_reading_pages.py`
+
+#### B-534 · A purchase order's cost center was still compared with no cost center list · medium
+- **Where:** `ap_coder/coding/po.py` (`match_invoice`), `templates/_invoice_live.html`, `templates/learning.html`
+- **Symptom:** the sample POs carry cost centers (CC400, CC700); with no cost center list, demo invoices 1, 5, 9 and 10
+  got "PO-88213 line 1 is coded to GL 6010 · CC400" and a "coding" problem on the PO match, and *Use the PO's
+  coding* would have put a cost center the tester cannot see on the line. The GL posting preview and the coding
+  memory table showed an empty Cost center column.
+- **Cause:** the PO check compared the PO line's cost center with the line's (empty) one whatever the setup.
+- **Fix:** without a cost center list a PO's cost centers are not read: not compared, not said, not copied to a line;
+  the two tables show the Cost center column only when a row has one. The CSV export keeps its Cost center column
+  (empty): it is the ERP import's fixed layout, and a column that comes and goes would break an import mapping (the
+  custom layout can leave it out).
+- **Test:** `tests/test_before_testing_review.py::test_without_a_cost_center_list_a_po_compares_no_cost_center`,
+  `test_without_a_cost_center_list_no_empty_cost_center_column`

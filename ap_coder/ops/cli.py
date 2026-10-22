@@ -219,7 +219,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("demo", help="Load the sample invoices into the review queue (no Azure needed)")
     p.add_argument("--remove", action="store_true", help="Remove the demo invoices and their lessons instead")
 
-    p = sub.add_parser("schema", help="Print the strict JSON Schema sent to Azure OpenAI")
+    p = sub.add_parser("schema", help="Developers: print the coding schema a cloud build sends to Azure OpenAI")
     p.add_argument("--no-constrain-codes", action="store_true", help="Do not embed valid codes as enums")
     _add_reference_args(p)
     return parser

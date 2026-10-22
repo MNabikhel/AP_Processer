@@ -39,17 +39,19 @@ def render(text: str, *, top: int = 4) -> Markup:
     para: list[str] = []
     items: list[str] = []
     kind = ""
+    start = 1  # the first number of a numbered list (the Quick start's steps start at 0)
 
     def flush() -> None:
-        nonlocal kind
+        nonlocal kind, start
         if para:
             html.append(f"<p>{inline(' '.join(para))}</p>")
             para.clear()
         if items:
             tag = "ol" if kind == "ol" else "ul"
-            html.append(f"<{tag}>" + "".join(f"<li>{inline(i)}</li>" for i in items) + f"</{tag}>")
+            opening = f'<ol start="{start}">' if kind == "ol" and start != 1 else f"<{tag}>"
+            html.append(opening + "".join(f"<li>{inline(i)}</li>" for i in items) + f"</{tag}>")
             items.clear()
-        kind = ""
+        kind, start = "", 1
 
     for raw in str(text or "").splitlines():
         line = raw.rstrip()
@@ -64,6 +66,8 @@ def render(text: str, *, top: int = 4) -> Markup:
             new_kind = "ul" if item.re is _BULLET else "ol"
             if para or (kind and kind != new_kind):
                 flush()
+            if not items and new_kind == "ol":
+                start = int(re.match(r"\s*(\d+)", line).group(1))
             kind = new_kind
             items.append(item.group(1))
         elif items and raw[:1].isspace():

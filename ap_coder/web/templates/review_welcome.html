@@ -32,7 +32,7 @@
           it.</p></div>
       {{ ui.ring(ring_value, size=60, stroke=6, label=ring_label) }}
     </div>
-    <div>{% for state, label, detail in steps %}{{ ui.step(state, label, detail, step_links.get(label, "")) }}{% endfor %}</div>
+    {% include "_setup_steps.html" %}
   </section>
   {% if not demo_first %}{% include "_demo_card.html" %}{% endif %}
 </div>

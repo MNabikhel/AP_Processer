@@ -73,10 +73,10 @@ def test_the_needs_attention_threshold_label_is_one_sentence(client):
     assert re.fullmatch(r"\s*<span>Send to <i>Needs attention</i> when the AI's confidence is below</span>\s*", label)
 
 
-def test_getting_started_asks_for_your_province_without_counting_it(tmp_path, monkeypatch):
+def test_getting_started_asks_for_your_province_and_counts_it(tmp_path, monkeypatch):
     """No step said where invoices are delivered to you: with no ship-to read, every invoice said "Province of supply
     unknown; tax regime cannot be verified" and the sales tax went unchecked, and nothing pointed at Settings →
-    Review, where the province is set. The step is recommended, not counted (the ring stays as it was)."""
+    Review, where the province is set. The step counts like the others (B-503: the ring counts every row shown)."""
     from ap_coder.web.pages import process
 
     monkeypatch.setattr(process, "ocr_available", lambda: True)
@@ -84,14 +84,14 @@ def test_getting_started_asks_for_your_province_without_counting_it(tmp_path, mo
     client = TestClient(_app(fresh), base_url="http://localhost")
     page = client.get("/review").text
     started = page.split("Getting started", 1)[1]
-    assert "Your province" in started and "recommended" in started
+    assert "Your province" in started and "Settings → Review" in started
     assert 'href="/settings/review">Your province' in started
     ring = re.search(r"aria-label='(\d+)/(\d+)'", page).groups()
-    assert ring[1] == "6"  # counted as before (whatever else is done on this computer)
+    assert ring[1] == "7"
     fresh.set_setting("our_province", "ON")
     page = client.get("/review").text
     assert "Ontario" in page.split("Getting started", 1)[1]
-    assert re.search(r"aria-label='(\d+)/(\d+)'", page).groups() == ring  # still not counted
+    assert re.search(r"aria-label='(\d+)/(\d+)'", page).groups() == (str(int(ring[0]) + 1), "7")
     assert "Your province" in client.get("/process").text
 
 
@@ -462,15 +462,12 @@ def test_with_lm_studio_off_the_review_screen_says_it_once(client, store):
 
 def test_in_a_browser_report_a_problem_shows_it_is_working(browser, store):
     """Help → Report a problem took about 3 s the first time (it gathers the setup report) with nothing on the screen
-    saying so: the link now says it is gathering the reports while the page comes."""
-    page, errors = _open(browser, "/help")
-    # the click as the browser handles it, the page left where it is (so what the link turned into can be read)
-    link = page.evaluate(
-        "() => { window.addEventListener('click', (e) => e.preventDefault(), {once: true});"
-        " const a = document.querySelector('a[href=\"/help/report\"]'); a.click();"
-        " return [a.getAttribute('aria-busy'), a.textContent]; }"
-    )
-    assert link == ["true", "Gathering the reports…"], link
+    saying so. The page now opens at once and fetches the setup report after (B-520): its box says it is gathering
+    it, then holds it."""
+    page, errors = _open(browser, "/help/report")
+    box = page.locator("#setup-report")
+    assert box.get_attribute("placeholder") and "Gathering" in box.get_attribute("placeholder")
+    page.wait_for_function("() => document.getElementById('setup-report').value.includes('doctor report')")
     assert errors == []
 
 
@@ -645,7 +642,7 @@ def test_supplier_learning_and_automation_use_the_same_plain_words(tmp_path, gro
     for old in ("go touchless", "goes touchless", "Goes touchless", "gone touchless", "touchless invoice",
                 "clean in a row", "clean invoice", "yet again"):  # fmt: skip
         assert old not in text, old
-    assert "more in a row without a correction needed" in text
+    assert "more invoices approved without a correction before this vendor can skip review" in text
 
 
 def test_in_a_browser_a_slow_link_reads_as_before_when_the_page_does_not_come(browser, store):

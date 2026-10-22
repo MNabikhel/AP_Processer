@@ -204,15 +204,16 @@
 {%- endmacro %}
 
 {% macro posting_table(p) -%}
+{% set show_cc = p.rows | selectattr("cc") | list %}{# no cost center on any row (no list: D-53): no empty column #}
 <div class="rvw-gl table-wrap"><table class="apc-table">
-  <thead><tr><th></th><th>GL account</th><th>Cost center</th><th>Description</th><th class="r">Net</th><th class="r">Non-rec. tax</th><th class="r">Amount</th></tr></thead>
+  <thead><tr><th></th><th>GL account</th>{% if show_cc %}<th>Cost center</th>{% endif %}<th>Description</th><th class="r">Net</th><th class="r">Non-rec. tax</th><th class="r">Amount</th></tr></thead>
   <tbody>{% for r in p.rows %}
     <tr><td><span class="rvw-kind">{{ r.kind }}</span></td>
       <td><div class="gl{{ ' todo' if r.todo else '' }}">{{ r.gl }}<small>{{ r.gl_name }}</small></div></td>
-      <td>{{ r.cc }}</td><td class="w">{{ r.description }}</td>
+      {% if show_cc %}<td>{{ r.cc }}</td>{% endif %}<td class="w">{{ r.description }}</td>
       <td class="r">{{ r.net }}</td><td class="r">{{ r.nonrec }}</td><td class="r"><b>{{ r.amount }}</b></td></tr>
   {% endfor %}</tbody>
-  <tfoot><tr><td></td><td>{{ ui.pill("Balanced", "ok") if p.balanced else ui.pill("Off by " ~ p.off, "err") }}</td><td></td><td>Total</td><td></td><td></td>
+  <tfoot><tr><td></td><td>{{ ui.pill("Balanced", "ok") if p.balanced else ui.pill("Off by " ~ p.off, "err") }}</td>{% if show_cc %}<td></td>{% endif %}<td>Total</td><td></td><td></td>
     <td class="r">{{ p.total }} <span class="rq-cur">{{ p.currency }}</span></td></tr></tfoot>
 </table></div>
 {%- endmacro %}

@@ -3,6 +3,8 @@
 import datetime as dt
 import json
 
+import pytest
+
 from ap_coder.ai.pipeline import finalise_coding
 from ap_coder.core.config import Settings
 from ap_coder.core.schema import InvoiceCoding
@@ -33,7 +35,7 @@ def test_demo_accruals(tmp_path):
     assert "Invoice INV-30981" not in not_in_erp  # Cascade is dated October 1, after the period end
     totals = accruals.summary(items)
     assert totals[accruals.RECEIVED] == (1, {"CAD": 210.0})
-    assert sum(t for _, _, t in accruals.by_gl(items)) == round(sum(a.amount for a in items), 2)
+    assert sum(t for _, _, t in accruals.by_gl(items)) == pytest.approx(round(sum(a.amount for a in items), 2))
     assert "PO-89904 line 5" in accruals.to_csv(items, END).decode("utf-8-sig")
 
 

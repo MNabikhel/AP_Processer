@@ -79,7 +79,7 @@ DEMO_INVOICES = [
     DemoInvoice(
         "harbourview_NS_HST_HPS-2026-0347", 0.9,
         [
-            Mistake(3, "predicted_cost_center", "CC200", "Professional fees are charged to Finance."),
+            Mistake(3, "predicted_gl_code", "6110", "Contract review reads like consulting work."),
             Mistake(4, "predicted_gl_code", "UNASSIGNED", "Disbursements could be several accounts; not sure."),
         ],
     ),
@@ -94,6 +94,18 @@ def demo_available() -> bool:
 
 def _ground_truth(stem: str) -> dict[str, Any]:
     return json.loads((SAMPLES_DIR / "ground_truth" / f"{stem}.json").read_text(encoding="utf-8"))
+
+
+def _without_cost_centers(truth: dict[str, Any]) -> dict[str, Any]:
+    """The ground truth without its cost centers, for a database with no cost center list (the pilot's, D-53): a
+    tester sees none, so none may be kept, exported or learned (B-528)."""
+    truth = copy.deepcopy(truth)
+    for li in truth.get("line_items", []):
+        li["predicted_cost_center"] = ""
+    for row in truth.get("gl_distribution") or []:
+        if isinstance(row, dict) and "cost_center" in row:
+            row["cost_center"] = ""
+    return truth
 
 
 def _ai_output(demo: DemoInvoice, truth: dict[str, Any]) -> dict[str, Any]:
@@ -162,7 +174,7 @@ def load_demo(store: Store, settings: Settings | None = None) -> dict[str, int]:
     settings = settings or Settings()
     if not store.list_accounts("gl_accounts"):
         before = _setup(store)
-        load_sample_setup(store)
+        load_sample_setup(store, cost_centers=False)  # as "Use the sample GL accounts": GL accounts only (D-53)
         store.set_setting(DEMO_SETUP_SETTING, json.dumps({"before": before, "after": _setup(store)}))
     real_invoices = len(store.list_invoices()) - store.demo_count()
     if not store.has_vendor_master() and not real_invoices:
@@ -179,6 +191,8 @@ def load_demo(store: Store, settings: Settings | None = None) -> dict[str, int]:
         if pdf.name in existing or not pdf.exists():
             continue
         truth = _ground_truth(demo.stem)
+        if reference.cost_centers is None:
+            truth = _without_cost_centers(truth)
         ai = _ai_output(demo, truth)
         coding = InvoiceCoding.model_validate({k: v for k, v in ai.items() if k != "gl_distribution"})
         output, report = finalise_coding(coding, reference, settings, store=store)

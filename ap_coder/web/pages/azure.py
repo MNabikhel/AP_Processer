@@ -40,9 +40,20 @@ def card(request: Request) -> dict[str, Any]:
 templates.env.globals["azure_check_card"] = card
 
 
+def shown(request: Request) -> bool:
+    """Whether the Azure check's page shows its card: where the internet is allowed, while the check is on, or with the
+    developer tools (IT setting it up). The offline pilot build otherwise says it isn't part of it (B-516)."""
+    from ap_coder.ops.offline import internet_allowed
+    from ap_coder.web.core import developer_tools
+    from ap_coder.web.pages.settings_reading import azure_check_on
+
+    store = get_store(request)
+    return internet_allowed() or azure_check_on(store) or developer_tools(store)
+
+
 @router.get(HOME, response_class=HTMLResponse)
 def azure_check_page(request: Request) -> HTMLResponse:
-    return render(request, "azure_check_page.html", "settings")
+    return render(request, "azure_check_page.html", "settings", shown=shown(request))
 
 
 def _number(text: str, what: str) -> float:

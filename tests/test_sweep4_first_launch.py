@@ -351,7 +351,8 @@ def test_report_a_problem_gives_both_reports_to_copy_without_a_command_line(demo
     client = _client(Store(target))
     text = client.get("/help/report").text
     assert "Report a problem" in text and "Describe it in words" in text
-    assert "AP Coder doctor report" in text  # the setup report, as `doctor` writes it
+    assert 'data-url="/help/report/setup"' in text  # the setup report comes after the page (B-520)
+    assert "AP Coder doctor report" in client.get("/help/report/setup").text  # as `doctor` writes it
     assert "AP Coder run summary (redacted)" in text  # the share report, as `share-report` writes it
     assert "data-copy-from" in text and "python -m" not in text and "terminal.bat" not in text
     assert "dashboard-errors.log" in text and "launch.log" in text  # where the details of a failure are
@@ -361,8 +362,10 @@ def test_report_a_problem_gives_both_reports_to_copy_without_a_command_line(demo
 
 
 def test_report_a_problem_on_a_new_laptop_says_there_is_nothing_to_summarise_yet(fresh):
-    text = _client(fresh).get("/help/report").text
-    assert "AP Coder doctor report" in text and "No invoices processed yet" in text
+    client = _client(fresh)
+    text = client.get("/help/report").text
+    assert "No invoices processed yet" in text
+    assert "AP Coder doctor report" in client.get("/help/report/setup").text
 
 
 # --- The Quick start: one printable page, in the docs and in the dashboard -----------------------------------------
@@ -396,10 +399,10 @@ def test_the_quick_start_names_only_buttons_and_pages_the_dashboard_has(fresh, d
 def test_the_quick_start_is_one_short_page_in_plain_words():
     text = QUICK_START.read_text(encoding="utf-8")
     assert len(text.split()) < 750  # one printed page, give or take
-    for heading in ("## Install", "## Start", "## The first six steps", "## Where things are", "## When you are stuck",
+    for heading in ("## Install", "## Start", "## The first steps", "## Where things are", "## When you are stuck",
                     "## Reporting a problem"):  # fmt: skip
         assert heading in text
-    assert len(re.findall(r"(?m)^[1-6]\. ", text)) == 6
+    assert len(re.findall(r"(?m)^[0-6]\. ", text)) == 7  # step 0: start LM Studio (B-505)
     for jargon in ("python", "venv", "pip ", "AP_", ".env", "terminal.bat", "manager"):
         assert jargon not in text, jargon
 
@@ -409,8 +412,8 @@ def test_the_quick_start_is_a_printable_page_under_help(fresh):
     page = client.get("/help/quick-start")
     assert page.status_code == 200
     text = html.unescape(page.text)
-    assert "<h2>The first six steps</h2>" in text
-    assert "<ol>" in page.text and "Save review settings" in text and "Report a problem" in text
+    assert "<h2>The first steps</h2>" in text
+    assert "<ol" in page.text and "Save tax setup" in text and "Report a problem" in text
     assert "data-print" in page.text  # the Print button
     css = client.get("/static/app.css").text
     assert "@media print" in css and ".rail" in css.split("@media print", 1)[1]  # printed without the menu
@@ -442,13 +445,17 @@ def test_the_welcome_page_leads_through_name_gl_accounts_and_first_invoices_one_
     monkeypatch.delenv("AP_REVIEWER", raising=False)
     monkeypatch.setattr(core, "login", lambda: "jsmith")
     client = _client(fresh)
+    assert "Start LM Studio" in _next_step(client.get("/review").text)  # step 0 first (B-529), then:
+    from ap_coder.web.pages import process
+
+    monkeypatch.setattr(process, "lm_studio_step", lambda store, settings: ("ok", process.LM_STUDIO, "ready"))
 
     page = client.get("/review").text
     card = _next_step(page)
     assert "Add your name" in card and 'class="btn primary" href="/settings/review"' in card
     assert "jsmith" not in _title(page)  # no "Good morning, jsmith" before a name is given
     assert "Optional: start LM Studio" not in page
-    for href in ("/accounts", "/accounts?tab=tax", "/settings/review", "/settings/reading", "/process"):
+    for href in ("/accounts", "/accounts?tab=tax", "/settings/review", "/process"):  # (LM Studio: done, above)
         assert f'href="{href}"' in page.split("Getting started", 1)[1], href  # each step to do opens its page
 
     paths.write_user_settings(reviewer="Pat Tester")
@@ -471,6 +478,9 @@ def test_import_invoices_shows_the_next_step_until_it_is_its_own(fresh, monkeypa
 
     monkeypatch.delenv("AP_REVIEWER", raising=False)
     client = _client(fresh)
+    from ap_coder.web.pages import process
+
+    monkeypatch.setattr(process, "lm_studio_step", lambda store, settings: ("ok", process.LM_STUDIO, "ready"))
     assert "Add your name" in _next_step(client.get("/process").text)
 
     paths.write_user_settings(reviewer="Pat Tester")

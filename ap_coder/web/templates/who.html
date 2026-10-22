@@ -1,15 +1,26 @@
 {% extends "base.html" %}
+{# "Who are you?" (pages/who.py): a colleague on the office network gives their name; on this computer, who approves
+   here and where that name is changed (B-522). #}
 {% block header %}
 <header class="apc-head apc-anim"><div>
-  {{ ui.breadcrumbs(["AP Coder"]) }}
+  {{ ui.breadcrumbs(["AP Coder", "System"]) }}
   <h1 class="apc-title">Who are you?</h1>
+  <div class="apc-sub">The name each approval and change is recorded under.</div>
 </div></header>
 {% endblock %}
 {% block content %}
+<div class="narrow">
 <section class="card">
   {% if here %}
-  <p>On this computer you approve as <b>{{ reviewer }}</b>. Change your name in <a href="/settings/review">Settings → Review</a>.</p>
+  <h4><span class="ms" aria-hidden="true">badge</span> On this computer</h4>
+  <p>You approve as <b>{{ reviewer }}</b>. Every invoice you approve and every change you make is recorded under this
+    name in the Activity log.</p>
+  <p class="muted">Change it in Settings → Review (it is kept for your Windows account, so two people sharing this
+    laptop each keep their own). A colleague who opens AP Coder from their own computer on the office network gives
+    their name on this page instead.</p>
+  <div class="row"><a class="btn primary" href="/settings/review"><span class="ms" aria-hidden="true">edit</span>Change your name in Settings → Review</a></div>
   {% else %}
+  <h4><span class="ms" aria-hidden="true">badge</span> Give your name</h4>
   <p>This AP Coder runs on another computer of the office. Give your name once: it goes on every invoice you approve
     and every change you make, so a colleague can give the second approval.</p>
   <form method="post" action="/who" class="stack" data-busy="Saving…">
@@ -21,4 +32,5 @@
   </form>
   {% endif %}
 </section>
+</div>
 {% endblock %}

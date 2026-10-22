@@ -183,7 +183,13 @@ def test_the_import_list_says_ready_only_for_an_invoice_the_queue_calls_ready(st
             said,
             reasons.get(inv["id"]),
         )
-    insights = client.get("/insights").text  # its share is the checks' flag, said so: not the queue's "Ready"
+    from ap_coder.web.pages import insights as insights_page
+
+    insights_page.MIN_APPROVALS, kept = 0, insights_page.MIN_APPROVALS  # (its figures show from 20 approvals: B-515)
+    try:
+        insights = client.get("/insights").text  # its share is the checks' flag, said so: not the queue's "Ready"
+    finally:
+        insights_page.MIN_APPROVALS = kept
     assert "Flagged by the checks when processed" in insights and "Sent for a closer look" not in insights
     rows = client.get("/process").text.split("<div class='apc-rrow'>")[1:]  # Recently processed: the same pill
     for inv in pending:

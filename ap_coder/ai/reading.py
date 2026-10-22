@@ -26,6 +26,8 @@ log = logging.getLogger(__name__)
 OK, WARN, OFF = "ok", "warn", "off"
 TESTING = "testing"  # loaded and working, testing itself before it is trusted (nothing is wrong)
 OPTIONAL = "optional"  # an optional part that is simply not set up here (nothing is wrong)
+WAITING = "waiting"  # LM Studio isn't running: start it, then Check again (the first step of the Quick start)
+START_LM_STUDIO = "Start LM Studio (Developer tab → Start server), then press Check again."
 
 PDF_TEXT, OCR, TABLE_FINDER, PAGE_READER, RULES, TEMPLATES, CHECKS, GL_MODEL, REVIEWER = (
     "PDF text layer", "OCR (two engines)", "Table finder", "Page reader (OvisOCR2)", "Rule reader",
@@ -153,6 +155,9 @@ def _page_reader(settings: Any, store: Any, use_cache: bool, out: ReadingStatus)
         out.lm_studio = bool(status.reachable)
         if not status.usable:
             out.self_test, out.self_test_detail = "no model", status.note or "OvisOCR2 isn't running in LM Studio."
+            if not status.reachable:  # nothing broken: LM Studio isn't started yet (B-510)
+                said = f"Runs in LM Studio, which isn't running. {START_LM_STUDIO} Meanwhile invoices are read by OCR"
+                return ReaderLine(PAGE_READER, WAITING, f"{said} and wait for a person.")
             return ReaderLine(PAGE_READER, OFF, f"{out.self_test_detail} Invoices are read by OCR alone and wait for a "
                                                 "person.")  # fmt: skip
         out.page_reader_model = status.model
@@ -215,6 +220,9 @@ def _reviewer(settings: Any, store: Any, out: ReadingStatus) -> ReaderLine:
     how = (f"Checks every invoice against its pages with the chat model, thinking first, asked again until it is sure "
            f"(up to {cfg.rounds} rounds and {cfg.minutes:g} min an invoice); no invoice is approved without a person "
            "until it agrees.")  # fmt: skip
+    if not out.gl_model and not out.lm_studio:  # nothing broken: LM Studio isn't started yet (B-510)
+        said = f"Uses the chat model in LM Studio, which isn't running. {START_LM_STUDIO}"
+        return ReaderLine(REVIEWER, WAITING, f"{said} Until then invoices wait for a person.{tally}")
     if not out.gl_model:
         return ReaderLine(REVIEWER, WARN, f"{how} No chat model is running in LM Studio: load Gemma 4 12B; until "
                                           f"then invoices wait for a person.{tally}")  # fmt: skip
@@ -227,7 +235,7 @@ def _queue(settings: Any, store: Any, out: ReadingStatus) -> None:
     try:
         from .page_worker import figure_totals, wait_seconds
 
-        out.queue = int(store.page_reads_waiting())
+        out.queue = int(store.page_reads_waiting(still_open=True))  # the invoices a person waits for (B-509)
         seconds = wait_seconds(settings, store, out.page_reader_model) if out.page_reader_model else None
         out.eta_minutes = round(seconds / 60, 1) if seconds is not None else None
         same, seen = figure_totals(store).get("digital", (0, 0))
