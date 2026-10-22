@@ -36,13 +36,27 @@ export function messageElement(msg) {
     `<span class="ms" aria-hidden="true">${escapeHtml(msg.icon || ICONS[tone] || "info")}</span>` +
     `<div><div>${escapeHtml(msg.text)}</div>${details ? `<ul>${details}</ul>` : ""}</div>` +
     `<button type="button" class="flash-close" data-dismiss aria-label="Dismiss"><span class="ms" aria-hidden="true">close</span></button>`;
+  if (msg.action) {
+    // An action beside the text (the review screen's Undo): pressed once, then the message goes.
+    const act = document.createElement("button");
+    act.type = "button";
+    act.className = "flash-act";
+    act.innerHTML = msg.action.icon ? `<span class="ms" aria-hidden="true">${escapeHtml(msg.action.icon)}</span>` : "";
+    act.append(msg.action.label);
+    if (msg.action.title) act.title = msg.action.title;
+    act.addEventListener("click", () => {
+      el.remove();
+      msg.action.run();
+    });
+    el.querySelector(".flash-close").before(act);
+  }
   return el;
 }
 
-/** Show a short message in the corner. */
+/** Show a short message in the corner; returns its element (gone after ``ms``). */
 export function toast(msg, ms = 6000) {
   const box = document.getElementById("toasts");
-  if (!box) return;
+  if (!box) return null;
   const el = messageElement(typeof msg === "string" ? { text: msg, tone: "info" } : msg);
   // Above a bar fixed at the window's foot (the review screen's approve bar), never over its buttons.
   const bar = document.querySelector(".inv-actionbar");
@@ -50,6 +64,7 @@ export function toast(msg, ms = 6000) {
   box.style.bottom = `${Math.max(20, window.innerHeight - top + 12)}px`;
   box.appendChild(el);
   setTimeout(() => el.remove(), ms);
+  return el;
 }
 
 /** POST to the dashboard with the page header; returns the JSON answer (an {error} on failure). */

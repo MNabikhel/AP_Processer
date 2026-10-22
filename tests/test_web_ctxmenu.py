@@ -217,3 +217,55 @@ def _review(browser, invoice_id):
     page.wait_for_selector(".iv-sheet:not(.loading)")
     page.wait_for_load_state("networkidle")  # the opening check has answered
     return page, errors
+
+
+MENU = ".cm[role=menu]"
+
+
+def _item(page, id_):
+    return page.locator(f"{MENU} [data-cm='{id_}']")
+
+
+def _menu(page, target, **click):
+    """Right-click ``target`` (a locator): the menu, once it is open."""
+    target.click(button="right", **click)
+    page.wait_for_selector(MENU)
+    return page.locator(MENU)
+
+
+def _checked(page):
+    return page.expect_request(lambda r: r.url.endswith("/check") and r.method == "POST")
+
+
+def test_in_a_browser_right_click_a_detail_clear_it_and_undo_puts_it_back(browser, store):
+    invoice_id = store.list_invoices(REVIEW)[0]["id"]
+    page, errors = _review(browser, invoice_id)
+    box = page.locator('.inv-details input[name="invoice_number"]')
+    before = box.input_value()
+    assert before
+    menu = _menu(page, box)
+    assert menu.get_attribute("role") == "menu"
+    labels = menu.locator("[role=menuitem]").all_inner_texts()
+    assert any("Clear this value" in t for t in labels) and any("Copy value" in t for t in labels), labels
+    assert any("Teach where it is" in t for t in labels) and any("Show on page" in t for t in labels), labels
+    # the invoice number is needed: "Not on this invoice" is there, greyed, with why
+    absent = _item(page, "absent")
+    assert absent.get_attribute("aria-disabled") == "true" and "can't be left out" in absent.get_attribute("title")
+    with _checked(page) as sent:
+        _item(page, "clear").click()
+    assert re.search(r'name="invoice_number"\r\n\r\n\r\n', sent.value.post_data or "")
+    assert box.input_value() == "" and menu.count() == 0
+    undo = page.locator("#toasts .flash-act")
+    assert undo.is_visible() and "cleared" in page.inner_text("#toasts")
+    page.wait_for_load_state("networkidle")
+    with _checked(page) as sent:
+        undo.click()
+    assert box.input_value() == before
+    assert f'name="invoice_number"\r\n\r\n{before}\r\n' in (sent.value.post_data or "")
+    # Ctrl+Z (outside a text box) undoes too
+    _menu(page, box)
+    _item(page, "clear").click()
+    page.locator("body").click(position={"x": 5, "y": 5})
+    page.keyboard.press("Control+z")
+    assert box.input_value() == before
+    assert errors == []

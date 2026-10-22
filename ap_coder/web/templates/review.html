@@ -210,3 +210,8 @@
   </section>
 {% endif %}
 {% endblock %}
+{% block scripts %}
+{# The queue as it was left (its filter, search, sort and where it was scrolled to) when you come back from an
+   invoice (D-60). #}
+<script type="module" src="/static/js/queue.js?v={{ static_version }}"></script>
+{% endblock %}

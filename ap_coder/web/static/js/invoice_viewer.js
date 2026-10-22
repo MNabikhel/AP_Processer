@@ -15,8 +15,13 @@
    Events: {type: "select", field}, {type: "assign", field, text, boxes: [[page, x0, y0, x1, y1], ...]} (the words
    picked, in reading order), {type: "teach_cancel", field}, {type: "selection", page, rect: [x0, y0, x1, y1], x, y}
    (a box dragged on the page with the mouse, outside teach mode: x, y where the mouse was let go, in the window) and
-   {type: "line_hover", index, on} (a line item's outline on the page, pointed at or left). Coordinates are fractions of the page (0..1, origin
-   top-left), pages numbered from 1. Text from the invoice is only ever set as text (never as HTML).
+   {type: "line_hover", index, on} (a line item's outline on the page, pointed at or left) and {type: "dblclick", page, x,
+   y} (a double click on the page outside teach mode, x and y in the window: invoice.js fills a field with the word).
+   Coordinates are fractions of the page (0..1, origin top-left), pages numbered from 1. Text from the invoice is only
+   ever set as text (never as HTML).
+
+   The field list follows the form: viewer.setEdited(name, value, absent) shows a field changed there as "Edited" with
+   its new value (or "Not on this invoice"); setEdited(name, null) shows the reading again (D-60).
 */
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -47,14 +52,15 @@ const GROUPS = [
   ["Amounts & tax", ["subtotal", "other_charges", "gst_amount", "hst_amount", "pst_amount", "qst_amount", "tax_total", "grand_total"]],
 ];
 // A shape for each status as well as a colour, so the status never depends on colour alone.
-const GLYPH = { verified: "\u2713", likely: "\u2713", check: "!", failed: "\u2715", missing: "" };
-const STATUS_TEXT = { verified: "Verified", likely: "Likely", check: "Check", missing: "Not found", failed: "Failed check" };
+const GLYPH = { verified: "\u2713", likely: "\u2713", check: "!", failed: "\u2715", missing: "", edited: "\u270E" };
+const STATUS_TEXT = { verified: "Verified", likely: "Likely", check: "Check", missing: "Not found", failed: "Failed check", edited: "Edited" };
 const STATUS_HELP = {
   verified: "Readers agree and the checks pass",
   likely: "One strong reading, checks pass: a quick look",
   check: "Readers disagree or are unsure: look at it",
   missing: "Not found on the invoice",
   failed: "A check failed: look at it",
+  edited: "Changed on the form",
 };
 const READERS = {
   text: "PDF text",
@@ -214,6 +220,7 @@ export class InvoiceViewer {
     this.tipTimer = 0;
     this.tipFor = null;
     this.lastHeight = -1;
+    this.edits = new Map(); // field -> {value, absent}: changed on the form since the page was read (D-60)
     this.build();
   }
 
@@ -329,6 +336,11 @@ export class InvoiceViewer {
     this.sheet.addEventListener("pointermove", (e) => this.dragMove(e));
     this.sheet.addEventListener("pointerup", (e) => this.dragEnd(e));
     this.sheet.addEventListener("pointercancel", () => this.dragCancel());
+    this.sheet.addEventListener("dblclick", (e) => {
+      if (this.teach || this.hand || this.spaceHand || !this.pageInfo()) return;
+      e.preventDefault();
+      this.emit({ type: "dblclick", page: this.page, x: e.clientX, y: e.clientY });
+    });
     this.tags.addEventListener("click", (e) => {
       const tag = e.target.closest(".iv-tag");
       if (tag) this.select(tag.dataset.field, { from: "page" });
@@ -548,9 +560,12 @@ export class InvoiceViewer {
     );
     this.rows = new Map();
     const rowFor = (f) => {
-      const tone = toneOf(f);
-      const missing = f.status === "missing";
-      const value = missing || !f.display ? h("span", { class: "iv-row-value none" }, missing ? "Not found" : "—") : h("span", { class: "iv-row-value" }, f.display);
+      const edit = this.edits.get(f.field);
+      const tone = edit ? "edited" : toneOf(f);
+      const missing = !edit && f.status === "missing";
+      const shown = edit ? (edit.absent ? "" : edit.value) : f.display;
+      const blank = edit ? (edit.absent ? "Not on this invoice" : "—") : missing ? "Not found" : "—";
+      const value = missing || !shown ? h("span", { class: "iv-row-value none" }, blank) : h("span", { class: "iv-row-value" }, shown);
       const row = h(
         "button",
         {
@@ -559,7 +574,7 @@ export class InvoiceViewer {
           class: `iv-row t-${tone}`,
           dataset: { field: f.field },
           "aria-describedby": "iv-tip",
-          "aria-label": `${f.label}: ${missing ? "not found" : f.display || "blank"}. ${STATUS_TEXT[tone]}${missing ? "" : `, ${pct(f.confidence)} confidence`}.`,
+          "aria-label": `${f.label}: ${missing ? "not found" : shown || (edit && edit.absent ? "not on this invoice" : "blank")}. ${STATUS_TEXT[tone]}${missing || edit ? "" : `, ${pct(f.confidence)} confidence`}.`,
           onclick: () => {
             // The card would cover the box just brought into view: it stays shut until the pointer leaves.
             this.tipMuted = row;
@@ -569,7 +584,7 @@ export class InvoiceViewer {
         },
         h("span", { class: "iv-dot", "aria-hidden": "true" }, GLYPH[tone]),
         h("span", { class: "iv-row-text" }, h("span", { class: "iv-row-label" }, f.label), value),
-        h("span", { class: "iv-badge", "aria-hidden": "true", title: STATUS_TEXT[tone] }, missing ? "—" : pct(f.confidence))
+        h("span", { class: "iv-badge", "aria-hidden": "true", title: STATUS_TEXT[tone] }, edit ? "edited" : missing ? "—" : pct(f.confidence))
       );
       row.addEventListener("pointerenter", () => {
         this.setHover(f.field, null);
@@ -656,6 +671,8 @@ export class InvoiceViewer {
       ),
     ];
     if (f.status !== "missing" && f.display) out.push(h("p", { class: "iv-tip-value" }, f.display));
+    const edit = this.edits.get(f.field);
+    if (edit) out.push(h("p", { class: "iv-tip-help" }, edit.absent ? "You marked it as not on this invoice." : `You changed it on the form: ${edit.value || "blank"}.`));
     out.push(h("p", { class: "iv-tip-help" }, STATUS_HELP[tone]));
     if (f.reasons && f.reasons.length) out.push(h("ul", { class: "iv-tip-reasons" }, f.reasons.map((r) => h("li", null, r))));
     const sources = Object.entries(f.sources || {});
@@ -852,10 +869,10 @@ export class InvoiceViewer {
   }
 
   /** "+" or "-": the next step of ZOOM_STEPS up or down from the zoom shown. */
-  zoomStep(dir) {
+  zoomStep(dir, at = null) {
     const now = this.zoomPct();
     const next = dir > 0 ? ZOOM_STEPS.find((z) => z > now * 1.01) : [...ZOOM_STEPS].reverse().find((z) => z < now / 1.01);
-    if (next !== undefined) this.setZoom(next);
+    if (next !== undefined) this.setZoom(next, at);
   }
 
   /** The page fractions (x, y; 0..1 on the page, not clamped) under a point of the window, the rotation undone. */
@@ -1644,6 +1661,57 @@ export class InvoiceViewer {
     if (!rect || page !== this.page) return;
     const [x0, y0, x1, y1] = rect;
     this.gSel.append(s("rect", { class: "iv-drag done", x: x0, y: y0, width: x1 - x0, height: y1 - y0 }));
+  }
+
+  /** A field changed on the form: its row says "Edited" with the new value, or "Not on this invoice" (``absent``);
+   *  ``value`` null: the reading again. */
+  setEdited(name, value, absent = false) {
+    if (value === null || value === undefined) {
+      if (!this.edits.delete(name)) return;
+    } else {
+      const was = this.edits.get(name);
+      if (was && was.value === value && was.absent === absent) return;
+      this.edits.set(name, { value: String(value), absent: Boolean(absent) });
+    }
+    if (!this.byName.has(name)) return;
+    const focused = this.rows && [...this.rows.entries()].find(([, r]) => r === document.activeElement);
+    this.renderPanel();
+    this.renderSelection();
+    if (focused) this.rows.get(focused[0])?.focus({ preventScroll: true });
+  }
+
+  /** The edits shown (to put back on Undo). */
+  editsNow() {
+    return new Map(this.edits);
+  }
+
+  restoreEdits(edits) {
+    this.edits = new Map(edits);
+    this.renderPanel();
+    this.renderSelection();
+  }
+
+  /** A field has a box on the page to show. */
+  hasBox(name) {
+    const f = this.byName.get(name);
+    return Boolean(f && f.status !== "missing" && (f.boxes || []).length);
+  }
+
+  /** The word under a point of the window on the page shown ({t, b, page} or null): the words must be set. */
+  wordAt(clientX, clientY) {
+    if (!this.pageInfo()) return null;
+    const [x, y] = this.pageAt(clientX, clientY);
+    const pad = 0.002;
+    const w = (this.words[this.page - 1] || []).find((v) => x >= v.b[0] - pad && x <= v.b[2] + pad && y >= v.b[1] - pad && y <= v.b[3] + pad);
+    return w ? { t: w.t, b: w.b, page: this.page } : null;
+  }
+
+  /** The words on the same printed line as ``word`` (a row of the line table), in reading order. */
+  lineOf(word) {
+    const cy = (word.b[1] + word.b[3]) / 2;
+    const ht = word.b[3] - word.b[1];
+    const same = (this.words[word.page - 1] || []).filter((v) => Math.abs((v.b[1] + v.b[3]) / 2 - cy) <= 0.6 * Math.max(ht, v.b[3] - v.b[1]));
+    return readingOrder(same.map((v) => ({ t: v.t, b: v.b, page: word.page, x: v.b[0], cy: (v.b[1] + v.b[3]) / 2, h: v.b[3] - v.b[1] })));
   }
 
   /** Highlight a field's box (its input in the form got the focus), without telling the page back. */

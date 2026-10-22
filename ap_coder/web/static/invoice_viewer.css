@@ -56,6 +56,8 @@
 .t-check { --tone: var(--check); --tone-ink: var(--check-ink); --tone-bg: var(--check-bg); --paper: var(--p-check); }
 .t-failed { --tone: var(--failed); --tone-ink: var(--failed-ink); --tone-bg: var(--failed-bg); --paper: var(--p-failed); }
 .t-missing { --tone: var(--missing); --tone-ink: var(--missing-ink); --tone-bg: var(--missing-bg); --paper: var(--p-line); }
+/* A field changed on the form (D-60): the violet of a person's own edit */
+.t-edited { --tone: #5b4bc4; --tone-ink: #5b4bc4; --tone-bg: #f3f1fd; --paper: var(--p-line); }
 
 /* ---- Layout: fields on the left, the page on the right; fields on top on a narrow screen ---- */
 .iv {
