@@ -97,16 +97,23 @@ def uses_cost_centers(reference: ReferenceData) -> bool:
     return reference.cost_centers is not None and bool(reference.cost_centers.codes)
 
 
-def codes_to_pick(lines: Any, cost_centers: bool) -> str:
+MANY_LINES = 4  # this many lines or more to pick for: counted, and Apply to all lines… pointed to (B-667)
+
+
+def codes_to_pick(lines: Any, cost_centers: bool, hint: bool = True) -> str:
     """What approval still needs on the lines (dicts or line items): "Pick a GL account for line 2 and a cost center
     for lines 1, 2 to approve", or "" when every line has a GL account and, where cost centers are used, a cost
-    center. The review screen's Approve bar and the queue's Ready ask this one question, so they always agree."""
+    center. The review screen's Approve bar and the queue's Ready ask this one question, so they always agree.
+    ``MANY_LINES`` or more are counted ("for 15 lines"), with ``hint`` (the review screen, where it is) "(or use
+    Apply to all lines…)"."""
 
     def code(li: Any, key: str) -> str:
         value = li.get(key) if isinstance(li, dict) else getattr(li, key, "")
         return "" if is_blank(value) else str(value)
 
     def which(numbers: list[str]) -> str:
+        if len(numbers) >= MANY_LINES:
+            return f"{len(numbers)} lines"
         return f"line{'s' if len(numbers) > 1 else ''} {', '.join(numbers)}"
 
     lines = list(lines or [])
@@ -119,7 +126,10 @@ def codes_to_pick(lines: Any, cost_centers: bool) -> str:
     parts = ([f"a GL account for {which(uncoded)}"] if uncoded else []) + (
         [f"a cost center for {which(no_cc)}"] if no_cc else []
     )
-    return f"Pick {' and '.join(parts)} to approve" if parts else ""
+    if not parts:
+        return ""
+    many = hint and max(len(uncoded), len(no_cc)) >= MANY_LINES
+    return f"Pick {' and '.join(parts)} to approve" + (" (or use Apply to all lines…)" if many else "")
 
 
 def split_line(lines: pd.DataFrame, line_number: int, parts: list[tuple[str, str, float]]) -> pd.DataFrame:

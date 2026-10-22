@@ -147,7 +147,7 @@ def _to_fix(invoice_id: int, final: str | None, ai: str | None, validation: str 
     coded = (json.loads(final) if final else None) or (json.loads(ai) if ai else None) or {}
     issues = ((json.loads(validation) if validation else None) or {}).get("issues") or []
     answer = (
-        codes_to_pick(coded.get("line_items"), cost_centers).removesuffix(" to approve"),
+        codes_to_pick(coded.get("line_items"), cost_centers, hint=False).removesuffix(" to approve"),
         sum(1 for i in issues if i.get("severity") == "error"),
     )
     _TO_FIX[invoice_id] = (asked, answer)

@@ -511,3 +511,15 @@ def test_the_approval_message_names_a_renamed_vendor_and_states_progress_plainly
     assert message.startswith("You changed the vendor (“BDO Canada” to “BDO Canada LLP”): the same vendor to AP Coder, "
                               "so not a correction. BDO Canada LLP: 1 invoice reviewed, ")  # fmt: skip
     assert "clean approvals toward skipping review" in message and "more invoices approved" not in message
+
+
+# --- B-667: "Pick a GL account for lines 1, 2, 3, … 15" ---------------------------------------------------------------
+
+
+def test_many_blank_lines_point_to_apply_to_all_lines():
+    from ap_coder.coding.review import codes_to_pick
+
+    lines = [{"line_number": n, "predicted_gl_code": "UNASSIGNED"} for n in range(1, 16)]
+    assert codes_to_pick(lines, False) == "Pick a GL account for 15 lines to approve (or use Apply to all lines…)"
+    assert codes_to_pick(lines, False, hint=False) == "Pick a GL account for 15 lines to approve"
+    assert codes_to_pick(lines[:3], False) == "Pick a GL account for lines 1, 2, 3 to approve"

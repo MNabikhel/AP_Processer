@@ -239,8 +239,11 @@ def test_counts_of_one_read_as_sentences(client, store):
     for li in doc["line_items"]:
         li["predicted_cost_center"] = "UNASSIGNED"
     invoice_id = _flagged(store, doc, invoice_number="NW-2")
-    numbers = ", ".join(str(li["line_number"]) for li in doc["line_items"])
-    assert f"Pick a cost center for lines {numbers} to approve" in client.get(f"/review/{invoice_id}").text
+    n = len(doc["line_items"])  # 4 or more are counted, with the way to fill them all (B-667)
+    assert (
+        f"Pick a cost center for {n} lines to approve (or use Apply to all lines…)"
+        in client.get(f"/review/{invoice_id}").text
+    )
 
     warned = re.sub(r"\s+", " ", client.get("/exports?fmt=jde").text)
     assert "1 invoice cannot go to JD Edwards yet and is left out of the batch" in warned

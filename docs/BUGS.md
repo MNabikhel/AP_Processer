@@ -6178,3 +6178,16 @@ reproduced with a script first, then given a failing test and fixed.
   approvals toward skipping review*, after an approval and on Learning → Suppliers.
 - **Test:** `tests/test_sweep_pilot_fixes.py::test_the_approval_message_names_a_renamed_vendor_and_states_progress_plainly`
 - **Lesson:** A message after an action acknowledges the action, then says how far along things are.
+
+#### B-667 · "Pick a GL account for lines 1, 2, 3, … 15" on a receipt of 15 lines · low
+- **Where:** `ap_coder/coding/review.py` (`codes_to_pick`), `ap_coder/web/pages/review.py`
+- **Symptom:** the Approve bar listed all fifteen line numbers, and did not point to *Apply to all lines…*, the one
+  action that fills them.
+- **Cause:** the line numbers were always listed.
+- **Reproduce:** a receipt read with 15 lines and no GL account.
+- **Reproduced:** yes (the real-invoice run)
+- **Fix:** 4 lines or more are counted: *Pick a GL account for 15 lines to approve (or use Apply to all lines…)*;
+  the queue, which has no such button, says *Pick a GL account for 15 lines*.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_many_blank_lines_point_to_apply_to_all_lines`,
+  `tests/test_dashboard_sweep_fixes.py::test_counts_of_one_read_as_sentences`
+- **Lesson:** Past a few items, count them and point to the action that handles them all.
