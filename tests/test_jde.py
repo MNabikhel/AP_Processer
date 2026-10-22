@@ -364,14 +364,20 @@ def test_an_unmapped_pay_from_account_is_said_and_codes_match_whatever_their_cas
     settings = jde.JdeSettings(bank_glba={"cad-op": "00012345"})
     rows = {r["VLEDTN"]: r for r in _files([cad, usd], settings)[jde.HEADER_FILE]}
     assert rows["APC1"]["VLGLBA"] == "00012345" and rows["APC2"]["VLGLBA"] == ""
-    notes = jde.bank_notes([cad, usd], settings)
-    assert list(notes) == [2] and "USD-OP" in notes[2][0] and "AAI PB" in notes[2][0]
+    none = _invoice(AB, 3)
+    notes = jde.bank_notes([cad, usd, none], settings)
+    assert notes == {  # B-689: whole sentences
+        2: ["AP Coder #2 is paid from USD-OP, which has no G/L bank account (VLGLBA) mapped: E1 pays it from its "
+            "default bank (AAI PB), which may not be that account."],
+        3: ["AP Coder #3 has no Pay from account: E1 pays it from its default bank (AAI PB)."],
+    }  # fmt: skip
     assert jde.bank_notes([cad, usd], jde.JdeSettings()) == {}  # no mapping in use: nothing to say
     report = jde.dry_run([cad, usd], settings, AN8)
     assert "USD-OP" in jde.dry_run_text(report)
     data, _, _ = jde.build_zip([cad, usd], settings, AN8, batch=3)
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
-        assert "USD-OP" in zf.read("README.txt").decode()
+        readme = zf.read("README.txt").decode()
+    assert "AP Coder #2 is paid from USD-OP" in readme and "AP Coder #2: AP Coder" not in readme
 
 
 def test_z_files_hold_the_text_as_it_is_without_spreadsheet_quoting():

@@ -6755,3 +6755,16 @@ Found while building the pilot tester's requests on the review screen's invoice 
 - **Test:** `tests/test_header_details.py::test_only_a_number_not_read_is_filled_from_the_vendor_list_and_not_a_correction`,
   `::test_in_a_browser_a_number_read_and_cleared_is_not_filled_from_the_vendor_list`
 - **Lesson:** "Not a correction" holds only where there was nothing to correct.
+
+#### B-689 · The JD Edwards README's note on an unmapped bank account was garbled · low
+- **Where:** `ap_coder/erp/jde.py` (`bank_notes`, `readme`)
+- **Symptom:** an invoice with no Pay from account was listed as "AP Coder #1: no G/L bank account (VLGLBA) is
+  mapped for it has no Pay from account and: …".
+- **Cause:** one sentence was patched together for both cases (B-684).
+- **Reproduce:** map one bank account's VLGLBA, export an invoice with no Pay from account.
+- **Reproduced:** yes (found by the re-review of B-681 to B-687)
+- **Fix:** one whole sentence per case ("AP Coder #1 has no Pay from account: E1 pays it from its default bank (AAI
+  PB)."; "AP Coder #4 is paid from USD-OP, which has no G/L bank account (VLGLBA) mapped: …"), listed as they are,
+  then where to map them.
+- **Test:** `tests/test_jde.py::test_an_unmapped_pay_from_account_is_said_and_codes_match_whatever_their_case`
+- **Lesson:** Two cases, two sentences.

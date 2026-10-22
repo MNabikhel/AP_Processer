@@ -828,10 +828,12 @@ def bank_notes(invoices: list[dict[str, Any]], settings: JdeSettings) -> dict[in
         if glba(final, settings):
             continue
         code = str(final.get("pay_from_account") or "").strip()
-        which = f"its Pay from account {code}" if code else "it has no Pay from account and"
-        out[int(inv.get("id") or 0)] = [
-            f"no G/L bank account (VLGLBA) is mapped for {which}: E1 pays it from its default bank (AAI PB), which may "
-            "not be the account chosen (Settings → JD Edwards E1)"
+        inv_id = int(inv.get("id") or 0)
+        out[inv_id] = [  # whole sentences (B-689)
+            f"AP Coder #{inv_id} is paid from {code}, which has no G/L bank account (VLGLBA) mapped: E1 pays it from "
+            "its default bank (AAI PB), which may not be that account."
+            if code
+            else f"AP Coder #{inv_id} has no Pay from account: E1 pays it from its default bank (AAI PB)."
         ]
     return out
 
@@ -939,8 +941,8 @@ def readme(
     if notes:
         title = "In this batch, paid from E1's default bank: check before loading"
         lines += ["", title, "-" * len(title)]
-        for inv_id, said in notes.items():
-            lines.append(f"AP Coder #{inv_id}: " + "; ".join(said))
+        lines += [n for said in notes.values() for n in said]
+        lines.append("Map them in Settings -> JD Edwards E1 -> G/L bank account (VLGLBA) per Pay from account.")
     if to_check:
         title = "In this batch, but the current settings or vendor master would refuse them: check before loading"
         lines += ["", title, "-" * len(title)]
