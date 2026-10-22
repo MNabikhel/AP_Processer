@@ -241,7 +241,9 @@ def parse_absent(raw: Any, header: dict[str, str]) -> list[str]:
         return []
     if not isinstance(data, list):
         return []
-    return [n for n in dict.fromkeys(str(x) for x in data) if n in ABSENT_FIELDS and not str(header.get(n) or "").strip()]
+    return [
+        n for n in dict.fromkeys(str(x) for x in data) if n in ABSENT_FIELDS and not str(header.get(n) or "").strip()
+    ]
 
 
 def settle_absent(issues: list[Any], absent: list[str]) -> list[Any]:

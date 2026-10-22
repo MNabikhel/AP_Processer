@@ -123,8 +123,9 @@ def test_errors_are_never_settled_by_absent():
     issues = [Issue("warning", "GST_HST_NUMBER_MISSING", "x"), Issue("info", "PO_NOT_QUOTED", "y"),
               Issue("error", "MISSING_INVOICE_NUMBER", "z"), Issue("warning", "QST_NUMBER_MISSING", "q")]  # fmt: skip
     out = invoice_view.settle_absent(issues, ["gst_hst_registration_number", "po_number"])
-    assert [(i.severity, i.code) for i in out] == [("info", "GST_HST_NUMBER_ABSENT"), ("error", "MISSING_INVOICE_NUMBER"),
-                                                   ("warning", "QST_NUMBER_MISSING")]  # fmt: skip
+    assert [(i.severity, i.code) for i in out] == [
+        ("info", "GST_HST_NUMBER_ABSENT"), ("error", "MISSING_INVOICE_NUMBER"), ("warning", "QST_NUMBER_MISSING")
+    ]  # fmt: skip
 
 
 # --- A note, the duplicate's link, the invoice number ------------------------------------------------------------
@@ -143,7 +144,10 @@ def test_a_note_added_from_the_review_screen_answers_the_notes_without_leaving_i
 def test_a_possible_duplicate_links_to_the_other_invoice_and_the_number_can_be_copied(client, store):
     first, second = (store.get_invoice(i["id"]) for i in store.list_invoices(REVIEW)[:2])
     output = copy.deepcopy(second["ai_output"])
-    output["vendor_name"], output["invoice_number"] = first["ai_output"]["vendor_name"], first["ai_output"]["invoice_number"]
+    output["vendor_name"], output["invoice_number"] = (
+        first["ai_output"]["vendor_name"],
+        first["ai_output"]["invoice_number"],
+    )
     _set_output(store, second["id"], output)
     with store._conn() as conn:
         conn.execute("UPDATE invoices SET invoice_number = ? WHERE id = ?", (output["invoice_number"], second["id"]))
@@ -163,7 +167,7 @@ def test_park_reject_undo_and_the_menu_keys_are_in_both_shortcut_lists(client, s
 
     page = client.get(f"/review/{store.list_invoices(REVIEW)[0]['id']}").text
     rows = html_lib.unescape(page.split("Shortcuts", 1)[1].split("</table>", 1)[0])
-    for spec, what in SHORTCUT_ROWS:
+    for _spec, what in SHORTCUT_ROWS:
         if what.startswith(("Park", "Reject", "Undo", "More options")):
             assert what in rows, (what, rows)
     assert {w.split(" ")[0].rstrip(":") for _, w in SHORTCUT_ROWS} >= {"Park", "Reject", "Undo", "More"}
@@ -312,7 +316,9 @@ def test_in_a_browser_a_fields_row_and_a_box_on_the_page_have_the_fields_menu(br
     _menu(page, shown.locator("rect.iv-box").first, force=True)
     assert _item(page, "show").get_attribute("aria-disabled") is None
     _item(page, "show").click()
-    page.wait_for_function("n => document.querySelector(`.iv-f[data-field=\"${n}\"]`).classList.contains('selected')", arg=name)
+    page.wait_for_function(
+        "n => document.querySelector(`.iv-f[data-field=\"${n}\"]`).classList.contains('selected')", arg=name
+    )
     assert errors == []
 
 
@@ -490,7 +496,9 @@ def test_in_a_browser_a_word_double_clicked_on_the_page_fills_the_detail_focused
     y = frame["y"] + (word["b"][1] + word["b"][3]) / 2 * frame["height"]
     with page.expect_response(lambda r: r.url.endswith("/teach")):
         page.mouse.dblclick(x, y)
-    page.wait_for_function("t => document.querySelector('.inv-details input[name=po_number]').value === t", arg=word["t"])
+    page.wait_for_function(
+        "t => document.querySelector('.inv-details input[name=po_number]').value === t", arg=word["t"]
+    )
     taught = json.loads(page.eval_on_selector("[data-taught]", "t => t.value"))
     assert taught["po_number"][0][0] == 1
     assert page.locator("#toasts .flash-act").is_visible()  # Undo
