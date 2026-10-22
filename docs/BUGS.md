@@ -6248,3 +6248,16 @@ reproduced with a script first, then given a failing test and fixed.
 - **Test:** `tests/test_sweep_pilot_fixes.py::test_a_unit_price_read_right_is_never_replaced_behind_the_screen`,
   `tests/test_web_invoice.py::test_in_a_browser_the_unit_price_of_a_quantity_1_line_follows_its_amount_only_when_it_was_the_amount`
 - **Lesson:** Never change behind the screen what the screen shows: change it on the screen, or not at all.
+
+#### B-672 · The vendor's remit address could fill a "Bill to" printed without a postal code · medium
+- **Where:** `ap_coder/ai/offline_coder.py` (`addresses`)
+- **Symptom:** a "Bill to" block with no postal-code line left its label waiting, and the next province anywhere on
+  the page filled it: *Please remit to: … Calgary AB* became our bill-to, so the place of supply (D-61) was the
+  vendor's province after all.
+- **Cause:** a label waited for an address for the rest of the page.
+- **Reproduce:** the review's example: `provinces()` gave ('', 'AB').
+- **Reproduced:** yes (found by the review of the sweep fixes; it predates B-651)
+- **Fix:** a ship-to or bill-to label takes a province only from its own block, the 6 lines after it, and never
+  from a remit-to or "payable to" block (the vendor's own address, which can still be the supplier's).
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_a_bill_to_takes_a_province_only_from_its_own_block`
+- **Lesson:** A label's value is near the label.

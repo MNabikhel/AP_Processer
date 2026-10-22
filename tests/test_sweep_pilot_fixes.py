@@ -624,3 +624,21 @@ def test_a_unit_price_read_right_is_never_replaced_behind_the_screen(tmp_path, m
     draft.lines[0]["amount"] = 90.0
     result = analyse(store, Settings(), store.reference_data(), store.get_invoice(iid), draft)
     assert result.output["line_items"][0]["unit_price"] == 100.0  # as on screen
+
+
+# --- B-672: the vendor's remit address could fill a "Bill to" with no postal code -------------------------------------
+
+
+def test_a_bill_to_takes_a_province_only_from_its_own_block():
+    from ap_coder.ai.offline_coder import addresses, provinces
+
+    remit = ("Prairie Print Ltd.\nINVOICE\nBill to:\nFabrikam Canada\nAttn: Accounts payable\n\nCards  100.00\n"
+             "Total  100.00\nPlease remit to: Prairie Print Ltd., 100 Main St SW, Calgary AB T2P 1J9\n")  # fmt: skip
+    assert provinces(remit) == ("", "")
+    remit_below = remit.replace("Please remit to: Prairie", "Please remit to:\nPrairie")
+    assert provinces(remit_below) == ("", "")
+    far = ("Acme Supply\n1 Main St, Toronto ON M5V 1A1\nBill to:\nFabrikam\n" + "Line\n" * 10
+           + "Head office: 5 Bay St, Halifax NS B3H 1A1\n")  # fmt: skip
+    assert addresses(far) == ("ON", "", "")  # far below its label: the letterhead's or footer's, not the bill-to's
+    near = "Acme Supply\n1 Main St, Toronto ON M5V 1A1\nBill to:\nFabrikam\n500 Front St\nHalifax NS B3H 1A1\n"
+    assert addresses(near) == ("ON", "", "NS")
