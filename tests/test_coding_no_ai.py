@@ -156,6 +156,20 @@ def test_a_line_waiting_for_confirmation_offers_both_accounts_and_says_why(refer
     assert not_sure(found[0]) == said
 
 
+def test_a_similar_line_held_back_says_it_was_a_similar_line_ap_changed(reference):
+    """A slip on the hose assembly holds back the merely similar crimp fitting too (the safe side), but the screen
+    must not say AP changed the fitting: it names the similar line (B-607)."""
+    from ap_coder.ai.offline_coder import not_sure
+
+    rows = _decisions(("Acme", "6220", "Hydraulic hose assembly", "corrected"),
+                      *[("Acme", "5000", "Hydraulic hose assembly", "accepted")] * 6)  # fmt: skip
+    found = suggest_gl("Hydraulic hose crimp fitting", "Acme", rows, reference)
+    assert not found[0].auto
+    said = not_sure(found[0])
+    assert "AP changed this line" not in said and "“Hydraulic hose assembly”" in said
+    assert not any("for this line before" in why for s in found for why in s.reasons)
+
+
 def test_other_vendors_evidence_is_quick_with_thousands_of_vendors(reference):
     """Each other vendor's closest line is found in one pass (B-604): 6,000 vendors coding the same words took
     most of a second per line."""

@@ -5910,6 +5910,19 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
 - **Test:** `tests/test_coding_no_ai.py::test_a_line_waiting_for_confirmation_offers_both_accounts_and_says_why`
 - **Lesson:** When the app holds back for a person, it shows the person what it is unsure between.
 
+#### B-607 · A line held back by a similar line's recode said AP had changed it · low
+- **Where:** `ap_coder/ai/suggest.py` (`suggest_gl`)
+- **Symptom:** a slip on "Hydraulic hose assembly" (6 × 5000, then 6220 once) held back "Hydraulic hose crimp
+  fitting" too (the safe side), but its reasons read *AP changed this line from 5000 (approved 6 times)…* and
+  *approved 6 times for this line before AP changed it*: AP never coded the fitting.
+- **Cause:** the wording assumed the held line was the line being coded.
+- **Reproduce:** the rows above; suggest for "Hydraulic hose crimp fitting".
+- **Reproduced:** yes (found by the re-review of the learning changes)
+- **Fix:** when the held line is another description, the reasons name it: *AP changed a similar line, “Hydraulic
+  hose assembly”, from 5000 (approved 6 times) to 6220 once: check which is right.*
+- **Test:** `tests/test_coding_no_ai.py::test_a_similar_line_held_back_says_it_was_a_similar_line_ap_changed`
+- **Lesson:** A reason must name the thing it is about, not assume it.
+
 #### Looked at and left (install, launcher and updates)
 
 - **N-251** · A GitHub ZIP unzipped over an older one leaves the files the newer one no longer has (the offline

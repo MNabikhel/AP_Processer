@@ -249,9 +249,13 @@ def suggest_gl(
             f"coded this way {_plural(decisions, 'time')} for similar lines from this vendor", "vendor", auto,
             best.cost_center)  # fmt: skip
 
+    # The line AP changed: this one, or a similar line of this vendor (then named, B-607).
+    held_line = "this line" if held is None or _normalise(held.description) == _normalise(description) else (
+        f"a similar line, “{held.description}”,")  # fmt: skip
     if held is not None:
         add(held.was, found[held.gl_code].score - 0.01,
-            f"approved {_plural(held.reversed, 'time')} for this line before AP changed it", "vendor")  # fmt: skip
+            f"approved {_plural(held.reversed, 'time')} for {held_line.rstrip(',')} before AP changed it",
+            "vendor")  # fmt: skip
 
     # Each other vendor's evidence for an account: its closest line coded to it (one pass over the lines).
     weight: dict[str, float] = {}
@@ -302,7 +306,7 @@ def suggest_gl(
     top.auto = held is None and level is not None and not any(strong.get(s.gl_code, -1) >= level for s in ranked[1:])
     if held is not None:
         found[held.gl_code].check = (
-            f"AP changed this line from {held.was} (approved {_plural(held.reversed, 'time')}) to {held.gl_code} "
+            f"AP changed {held_line} from {held.was} (approved {_plural(held.reversed, 'time')}) to {held.gl_code} "
             "once: check which is right"
         )  # fmt: skip
     return [s for s in ranked if s.score >= 0.4 * top.score][:limit]
