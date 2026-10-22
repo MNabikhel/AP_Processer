@@ -38,7 +38,7 @@ from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCE_NAMES
 from ap_coder.core import ui
 from ap_coder.core.memory import ACCEPTED, CODED, CORRECTED, vendor_key
 from ap_coder.core.reference_data import ReferenceData
-from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store
+from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store, coded_blanks
 from ap_coder.erp import stamp
 from ap_coder.web import document, identity
 from ap_coder.web import invoice_view as view
@@ -492,8 +492,14 @@ def _closed(store: Store, reference: ReferenceData | None, inv: dict[str, Any]) 
         out["posting"] = view.distribution(doc, reference)
     if inv["status"] in (APPROVED, PENDING):
         edits = inv.get("edits") or []
-        out["edits"] = ("no changes to the suggested coding" if not edits
-                        else "changed: " + ", ".join(view.EDIT_LABELS.get(e, e) for e in edits))  # fmt: skip
+        changed = [e for e in edits if e != "line_coded"]
+        out["edits"] = ("no changes to the suggested coding" if not changed
+                        else "changed: " + ", ".join(view.EDIT_LABELS.get(e, e) for e in changed))  # fmt: skip
+        if "line_coded" in edits:  # the reviewer's own coding where the AI proposed none (B-670)
+            n = coded_blanks(inv.get("ai_output"), inv.get("final_output"))
+            out["edits"] += (
+                f"; AP coded {ui.plural(n, 'line')} the AI left blank" if n else "; AP coded lines the AI left blank"
+            )
         out["can_stamp"] = stamp.can_stamp(inv)
     if inv["status"] == PENDING:
         me, my_login = reviewer(), login()

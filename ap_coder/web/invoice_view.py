@@ -92,7 +92,8 @@ NEEDS_GL = "Needs an account"  # what a clerk sees instead of the stored UNASSIG
 NEEDS_CC = "Needs a cost center"
 NOT_TOUCHLESS = "It can't be approved without a person until OvisOCR2 has read it."
 EDIT_LABELS = {
-    "line_coding": "GL coding", "line_count": "lines added or removed", "tax_lines": "sales tax",
+    "line_coding": "GL coding", "line_coded": "lines the AI left blank coded by AP",
+    "line_count": "lines added or removed", "tax_lines": "sales tax",
     "vendor_name": "vendor", "invoice_number": "invoice #", "invoice_date": "date", "po_number": "PO #",
     "payment_terms": "terms", "due_date": "due date", "currency": "currency",
     "supplier_province": "supplier province", "ship_to_province": "place of supply",

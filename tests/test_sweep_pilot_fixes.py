@@ -574,3 +574,26 @@ def test_a_vendor_read_from_the_bill_to_is_check(tmp_path):
     assert marked("Fabrikam Canada Ltée") == "check"
     assert marked("Northern Pet Supply Ltd.") == "verified"
     assert marked("POSTES", [{"code": "VENDOR_NAME_MATCH", "ok": True}]) == "verified"  # the vendor master says so
+
+
+# --- B-670: an invoice whose lines AP coded counted as "approved without any edit" ------------------------------------
+
+
+def test_lines_coded_by_hand_are_an_edit_of_their_own(tmp_path, monkeypatch):
+    from ap_coder.ops.share_report import _learning_section
+    from ap_coder.web.pages.invoice import _closed
+
+    store = Store(tmp_path / "ap.db")
+    read = _blank_invoice()
+    iid = store.add_invoice(tmp_path / "x.pdf", read, {"requires_review": True})
+    final = copy.deepcopy(read)
+    final["line_items"][0]["predicted_gl_code"] = "6110"
+    assert store.approve_invoice(iid, final, "pat") == {ACCEPTED: 0, CORRECTED: 0, CODED: 1}  # accuracy: B-650
+    inv = store.get_invoice(iid)
+    assert inv["edits"] == ["line_coded"]
+    m = store.metrics()
+    assert m["invoices_approved_without_edits"] == 0 and m["invoices_coded_by_hand"] == 1
+    report = "\n".join(_learning_section(store, False))
+    assert "invoices approved without any edit: 0 of 1" in report
+    assert "invoices with lines AP coded where the AI left them blank: 1" in report
+    assert _closed(store, None, inv)["edits"] == "no changes to the suggested coding; AP coded 1 line the AI left blank"

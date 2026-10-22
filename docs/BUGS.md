@@ -6217,3 +6217,19 @@ reproduced with a script first, then given a failing test and fixed.
 - **Test:** `tests/test_sweep_pilot_fixes.py::test_a_doubtful_vendor_name_is_marked_check`,
   `::test_a_vendor_read_from_the_bill_to_is_check`
 - **Lesson:** A value can be read right and still not be the field's: check that it looks like one.
+
+#### B-670 · An invoice whose lines AP coded by hand counted as "approved without any edit" · medium
+- **Where:** `ap_coder/core/store.py` (`approve_invoice`, `coded_blanks`, `metrics`), `ap_coder/ops/share_report.py`,
+  `ap_coder/web/pages/invoice.py` (`_closed`)
+- **Symptom:** after B-650, an invoice whose every line the coder left blank and AP coded was stored with no edit:
+  `invoices_approved_without_edits`, the share report's *invoices approved without any edit* and the closed
+  invoice's *no changes to the suggested coding* all credited the AI with coding it never did.
+- **Cause:** B-650 rightly stopped counting a filled blank as a change of coding, and with it the only edit recorded.
+- **Reproduce:** `sweepreview/r650.py`.
+- **Reproduced:** yes (found by the review of the sweep fixes)
+- **Fix:** the hand coding is its own edit, *line_coded*: never "approved without any edit"; the share report says
+  *invoices with lines AP coded where the AI left them blank: N*; the closed invoice says *no changes to the suggested
+  coding; AP coded 3 lines the AI left blank*. The accuracy stays as B-650 made it. The share report no longer fails
+  when no line was proposed at all (accuracy *nothing proposed yet*).
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_lines_coded_by_hand_are_an_edit_of_their_own`
+- **Lesson:** When a count stops counting something, check what else that count fed.
