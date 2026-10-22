@@ -380,3 +380,22 @@ def test_extreme_dates_in_the_address_are_clamped(tmp_path, monkeypatch):
                 "/month-end/accruals.csv?end=9999-12-31", "/activity/controls-report?start=9999-12-31",
                 "/activity/controls-report?start=0001-01-01&end=0001-01-01"):  # fmt: skip
         assert client.get(url).status_code == 200, url
+
+
+# --- B-660: the automatic backup ran only when the dashboard started --------------------------------------------------
+
+
+def test_the_daily_backup_also_runs_while_the_dashboard_keeps_running(tmp_path, monkeypatch):
+    store, client = _web(tmp_path, monkeypatch)
+    backup = client.app.state.daily_backup
+    assert client.get("/healthz").status_code == 200 and backup.thread is None  # just started: the start's own
+    backup.last -= backup.every  # an hour later
+    assert client.get("/healthz").status_code == 200
+    backup.thread.join(10)
+    assert len(store.list_backups()) == 1
+    first = backup.thread
+    backup.last -= backup.every  # another hour: checked again, but one backup a day (auto_backup's own rule)
+    client.get("/healthz")
+    assert backup.thread is not first
+    backup.thread.join(10)
+    assert len(store.list_backups()) == 1

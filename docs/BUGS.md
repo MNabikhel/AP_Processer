@@ -6083,3 +6083,15 @@ reproduced with a script first, then given a failing test and fixed.
 - **Fix:** a date read from the address is kept between 1900-01-01 and 2999-12-31.
 - **Test:** `tests/test_sweep_pilot_fixes.py::test_extreme_dates_in_the_address_are_clamped`
 - **Lesson:** A date from outside is checked for range as well as for form.
+
+#### B-660 · The automatic backup ran only when the dashboard started · low
+- **Where:** `ap_coder/web/app.py` (`DailyBackup`, `BackupCheck`)
+- **Symptom:** a dashboard left running for a week (the pilot laptop is rarely restarted) made one backup, on the
+  day it started.
+- **Cause:** `Store.auto_backup` was called only in the app's start-up.
+- **Reproduce:** start the dashboard, keep it running past a day: Settings → Data lists one automatic backup.
+- **Reproduced:** yes (by reading the code; the start-up call is the only one)
+- **Fix:** each request lets the dashboard check, at most once an hour, whether the day's backup is due; the backup
+  runs on its own thread, so no page waits. `auto_backup` keeps its rules (once a day, the newest 14).
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_the_daily_backup_also_runs_while_the_dashboard_keeps_running`
+- **Lesson:** "Once a day" in a program that runs for days needs a clock, not a start.
