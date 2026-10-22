@@ -230,7 +230,8 @@ class JdeSettings:
         out.answers = {str(k): str(v) for k, v in out.answers.items()}
         if not isinstance(out.bank_glba, dict):
             out.bank_glba = {}
-        out.bank_glba = {str(k).strip(): str(v).strip() for k, v in out.bank_glba.items() if str(k).strip()}
+        out.bank_glba = {str(k).strip().upper(): str(v).strip() for k, v in out.bank_glba.items()
+                         if str(k).strip() and str(v).strip()}  # fmt: skip
         if not isinstance(out.an8_overrides, dict):
             out.an8_overrides = {}
         # Vendor keys saved under older vendor-matching rules, as today's rules give them ("energir sec" -> "energir").
@@ -614,7 +615,7 @@ def voucher_rows(
         "VLRMK": f"AP Coder #{v.inv_id}"[:30],
     }  # fmt: skip
     if settings.bank_glba:  # the G/L bank account of the Pay from account (D-66); blank: E1's AAI PB
-        common["VLGLBA"] = settings.bank_glba.get(str(final.get("pay_from_account") or ""), "")
+        common["VLGLBA"] = glba(final, settings)
 
     def amounts(gross: int, stam: int, atxa: int) -> dict[str, Any]:
         out: dict[str, Any] = {}
@@ -809,6 +810,32 @@ def validate(
 # --- Files -------------------------------------------------------------------------------------------------------
 
 
+def glba(final: dict[str, Any], settings: JdeSettings) -> str:
+    """VLGLBA of an invoice: the value mapped to its Pay from account, the code's case aside ("" when none)."""
+    mapped = {k.upper(): v for k, v in settings.bank_glba.items()}
+    return mapped.get(str(final.get("pay_from_account") or "").strip().upper(), "")
+
+
+def bank_notes(invoices: list[dict[str, Any]], settings: JdeSettings) -> dict[int, list[str]]:
+    """{invoice id: [note]} for the invoices whose Pay from account has no G/L bank account mapped, while the mapping
+    is in use (B-684): their VLGLBA is blank and E1 pays them from its default bank (AAI PB), which may not be the
+    account AP chose. A note to check before loading, never a reason to hold an invoice back."""
+    if not settings.bank_glba:
+        return {}
+    out: dict[int, list[str]] = {}
+    for inv in invoices:
+        final = inv.get("final_output") or {}
+        if glba(final, settings):
+            continue
+        code = str(final.get("pay_from_account") or "").strip()
+        which = f"its Pay from account {code}" if code else "it has no Pay from account and"
+        out[int(inv.get("id") or 0)] = [
+            f"no G/L bank account (VLGLBA) is mapped for {which}: E1 pays it from its default bank (AAI PB), which may "
+            "not be the account chosen (Settings → JD Edwards E1)"
+        ]
+    return out
+
+
 def header_columns(settings: JdeSettings) -> list[str]:
     extra = [c for c in settings.po_extra_columns if c not in HEADER_COLUMNS] if settings.po_matched else []
     bank = ["VLGLBA"] if settings.bank_glba and "VLGLBA" not in extra else []
@@ -853,7 +880,8 @@ def readme(
     left_out: Mapping[int, list[str]] | None = None, to_check: Mapping[int, list[str]] | None = None,
 ) -> str:  # fmt: skip
     """README.txt of the ZIP: what is in it and how to load it. ``left_out``: invoices not in the file;
-    ``to_check``: invoices in it that the current settings would refuse (a batch downloaded again)."""
+    ``to_check``: invoices in it that the current settings would refuse (a batch downloaded again); the invoices whose
+    Pay from account has no VLGLBA mapped are listed too (``bank_notes``)."""
     totals: dict[str, float] = {}
     for inv in invoices:
         final = inv.get("final_output") or {}
@@ -907,6 +935,12 @@ def readme(
         lines += ["", "Not in this batch (fix them, then export again)", "-" * 47]
         for inv_id, problems in left_out.items():
             lines.append(f"AP Coder #{inv_id}: " + "; ".join(problems))
+    notes = bank_notes(invoices, settings)
+    if notes:
+        title = "In this batch, paid from E1's default bank: check before loading"
+        lines += ["", title, "-" * len(title)]
+        for inv_id, said in notes.items():
+            lines.append(f"AP Coder #{inv_id}: " + "; ".join(said))
     if to_check:
         title = "In this batch, but the current settings or vendor master would refuse them: check before loading"
         lines += ["", title, "-" * len(title)]
@@ -982,6 +1016,7 @@ def dry_run(
     making a batch. {"blocking": [...], "vouchers": [...], "held": [...], "files": {file: rows}, "totals": {...}}."""
     blocking = settings_problems(settings)
     problems = validate(invoices, settings, vendor_lookup, prior)
+    notes = bank_notes(invoices, settings)
     out: dict[str, Any] = {
         "batch": f"{settings.batch_prefix.strip()}{batch}"[:15],
         "user": settings.user.strip(),
@@ -1044,6 +1079,7 @@ def dry_run(
                     for d in dists
                 ],
                 "matches": len(matches),
+                "notes": notes.get(inv_id, []),
                 "balance": (
                     f"distribution {_shown(dist_total, settings, v.decimals)} = gross {v.gross / 100:,.2f} "
                     f"- tax E1 posts {posted:,.2f} (code {v.tax_code or 'none'})"
@@ -1095,6 +1131,7 @@ def dry_run_text(report: dict[str, Any]) -> str:
         if v["matches"]:
             lines.append(f"  F0411Z1T: {v['matches']} PO match line(s)")
         lines.append(f"  {v['balance']}")
+        lines += [f"  NOTE: {n}" for n in v.get("notes") or []]
         lines.append("")
     for h in report["held"]:
         lines.append(f"HELD BACK  AP Coder #{h['id']}  {h['vendor']}  invoice {h['number']}  {h['date']}")

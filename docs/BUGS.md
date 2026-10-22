@@ -6680,3 +6680,20 @@ Found while building the pilot tester's requests on the review screen's invoice 
   use — pick another)" and blocks.
 - **Test:** `tests/test_header_details.py::test_pay_from_an_unknown_or_closed_account_is_never_approved`
 - **Lesson:** An override is for a judgement call; paying from an account that does not exist is not one.
+
+#### B-684 · A Pay from account not mapped exactly got a blank VLGLBA, with nothing said · medium
+- **Where:** `ap_coder/erp/jde.py` (`voucher_rows`, `glba`, `bank_notes`, `dry_run`, `readme`),
+  `ap_coder/web/pages/settings_jde.py`, `templates/settings_jde.html`
+- **Symptom:** with only CAD-OP mapped, a USD invoice's VLGLBA was blank and E1 paid it from its default bank (AAI
+  PB) without a word; a key typed "cad-op" mapped nothing at all; the mapping was one line of CODE=value pairs where
+  an account was easily missed.
+- **Cause:** an exact-case lookup, no check of the invoices against the mapping, and a free-text setting.
+- **Reproduce:** map only CAD-OP (or "cad-op"), export a USD invoice paid from USD-OP.
+- **Reproduced:** yes (found by the review of the header side)
+- **Fix:** codes match whatever their case; once the mapping is in use, the dry run and the batch's README list each
+  invoice whose Pay from account has no VLGLBA (a note, not a hold); Settings → JD Edwards E1 lists every bank
+  account in use with its own box. The cash GL is not used as a default (a BU.Object.Subsidiary, not the short
+  account ID GLBA holds; docs/JDE_E1.md).
+- **Test:** `tests/test_jde.py::test_an_unmapped_pay_from_account_is_said_and_codes_match_whatever_their_case`,
+  `tests/test_web_settings.py::test_jde_lists_every_bank_account_with_its_g_l_bank_account`
+- **Lesson:** A mapping that falls back silently needs someone told when it falls back.

@@ -230,9 +230,12 @@ document type that is not 2 characters, a domestic currency that is not a 3-lett
 **VLGLBA (G/L bank account).** Each approved invoice records *Pay from*, the company bank account that pays it
 (GL accounts & tax → Bank accounts, D-66). E1 keeps the bank account of a voucher in GLBA as its *short account ID*,
 which AP Coder does not know, so the column is a mapped setting: Settings → JD Edwards E1 → *G/L bank account (VLGLBA)
-per Pay from account*, as `CAD-OP=00012345` pairs from the JDE team. With no pair (the default) F0411Z1 has no VLGLBA
-column and E1 takes the bank from the AAI PB, as before; a voucher whose account has no pair gets a blank VLGLBA.
-Confirm with the JDE team whether R04110ZA keeps a VLGLBA it is given.
+per Pay from account*, one box for each bank account in use (the code's case does not matter). With every box blank
+(the default) F0411Z1 has no VLGLBA column and E1 takes the bank from the AAI PB, as before. Once any box is filled, a
+voucher whose account has none gets a blank VLGLBA, and the dry run and the batch's README.txt list it to check before
+loading (B-684). The bank account's own cash GL is *not* used as a default: it maps to BU.Object.Subsidiary (as the
+distribution lines are written), which is not the short account ID GLBA holds, and a wrong bank is worse than E1's
+default. Confirm with the JDE team whether R04110ZA keeps a VLGLBA it is given.
 
 ## F0911Z1: G/L distribution lines
 
