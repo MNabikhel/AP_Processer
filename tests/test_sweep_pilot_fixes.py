@@ -316,3 +316,20 @@ def test_payment_terms_written_other_ways():
         assert due(terms) == dt.date(2026, 3, 1), terms
     assert payment({"invoice_date": "2026-01-15", "grand_total": 100.0, "payment_terms": "2/10 Net: 30"}).terms \
         .discount_days == 10  # fmt: skip
+
+
+# --- B-657: French column headers with accents ------------------------------------------------------------------------
+
+
+def test_french_headers_with_accents_are_recognised():
+    from ap_coder.coding import po, vendors
+    from ap_coder.erp import registers, statements
+
+    assert po.map_columns(["Bon de commande", "Fournisseur", "Reçu", "Prix unitaire"])["received_quantity"] == "Reçu"
+    master = vendors.master_columns(["Fournisseur", "Numéro", "Numéro TPS", "Numéro TVQ", "Statut"])
+    assert (master["erp_id"], master["gst"], master["qst"]) == ("Numéro", "Numéro TPS", "Numéro TVQ")
+    assert statements.map_columns(["Facture", "Date", "Montant", "Crédit", "Solde"])["credit"] == "Crédit"
+    assert registers.map_columns(["Fournisseur", "Facture", "Montant"])["vendor_name"] == "Fournisseur"
+    from ap_coder.core.headers import header_key
+
+    assert header_key("Numéro de facture") == "numerodefacture" and header_key("Œuvre N°") == "oeuvreno"

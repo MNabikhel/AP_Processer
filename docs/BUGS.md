@@ -6045,3 +6045,16 @@ reproduced with a script first, then given a failing test and fixed.
   net 45.
 - **Test:** `tests/test_sweep_pilot_fixes.py::test_payment_terms_written_other_ways`
 - **Lesson:** Terms are typed by people: read each way they are written, not only the textbook one.
+
+#### B-657 · French column headers with accents were not recognised · low-medium
+- **Where:** `ap_coder/erp/statements.py`, `ap_coder/coding/po.py`, `ap_coder/coding/vendors.py`,
+  `ap_coder/erp/registers.py`, `ap_coder/erp/jde.py` (header matching); `ap_coder/core/headers.py` (new)
+- **Symptom:** a PO file's "Reçu" column, a vendor master's "Numéro", "Numéro TPS" and "Numéro TVQ", a statement's
+  "Crédit" were not matched, though their aliases ("recu", "numero", "numerotps", "numerotvq", "credit") are listed.
+- **Cause:** each header was cleaned with `re.sub(r"[^a-z0-9]", "", …)`, which deleted the accented letter
+  ("Reçu" -> "rcu").
+- **Reproduce:** `po.map_columns(["Bon de commande", "Reçu"])`.
+- **Reproduced:** yes
+- **Fix:** one shared `header_key` folds accents (NFKD, with œ, æ, ß and "N°") before cleaning; the five places use it.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_french_headers_with_accents_are_recognised`
+- **Lesson:** Fold accents before deleting what is not a letter.
