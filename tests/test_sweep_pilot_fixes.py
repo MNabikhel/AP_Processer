@@ -659,3 +659,20 @@ def test_a_ship_to_outside_canada_is_not_said_to_be_missing():
     messages = [f.message for f in check_taxes(coding, setup) if "Ontario" in f.message]
     assert messages and not any("no ship-to or bill-to printed" in m for m in messages), messages
     assert all("the ship-to printed is outside Canada" in m for m in messages), messages
+
+
+# --- B-674: "30 fin de mois", "end of month 30" were due at the end of the month --------------------------------------
+
+
+def test_eom_terms_in_words():
+    import datetime as dt
+
+    from ap_coder.coding.terms import payment
+
+    for terms in ("30 fin de mois", "fin de mois 30", "30 end of month", "end of month 30", "Net 30 end of the month",
+                  "30 jours fin de mois"):  # fmt: skip
+        doc = {"invoice_date": "2026-01-15", "grand_total": 100.0, "payment_terms": terms}
+        assert payment(doc, 30).due == dt.date(2026, 3, 2), terms
+    assert payment({"invoice_date": "2026-01-15", "grand_total": 1.0, "payment_terms": "fin de mois"}).due == dt.date(
+        2026, 1, 31
+    )

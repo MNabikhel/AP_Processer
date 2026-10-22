@@ -6273,3 +6273,15 @@ reproduced with a script first, then given a failing test and fixed.
 - **Fix:** it says *(the ship-to printed is outside Canada: checked against your province in Settings)*.
 - **Test:** `tests/test_sweep_pilot_fixes.py::test_a_ship_to_outside_canada_is_not_said_to_be_missing`
 - **Lesson:** Say why a fallback was taken, not only that it was.
+
+#### B-674 · "30 fin de mois" and "end of month 30" were still due at the end of the month · low
+- **Where:** `ap_coder/coding/terms.py` (`parse_terms`)
+- **Symptom:** B-656 read "30 EOM" and "EOM 30", but "30 fin de mois", "fin de mois 30", "30 end of month" and
+  "end of month 30" (typed by the clerk, or in the vendor master) were due on the last day of the invoice's month.
+- **Cause:** the days beside EOM were looked for only beside the literal "EOM".
+- **Reproduce:** `payment({"invoice_date": "2026-01-15", "payment_terms": "30 fin de mois", ...})`.
+- **Reproduced:** yes (found by the review of the sweep fixes)
+- **Fix:** "fin de mois", "end of month" and "end of the month" are read as EOM before the days are looked for: all
+  are due March 2 (D-62).
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_eom_terms_in_words`
+- **Lesson:** A fix for a word covers its synonyms the code already knows.
