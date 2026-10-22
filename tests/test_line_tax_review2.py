@@ -128,7 +128,9 @@ def test_an_out_of_province_vendor_or_one_without_a_pst_number_is_due_not_exempt
     away = tax_codes(lines, taxes, [], "", "BC", "2026-06-01", supplier_province="AB", pst_number="PST-1234-5678")
     nonum = tax_codes(lines, taxes, [], "", "BC", "2026-06-01", supplier_province="BC", pst_number="")
     home = tax_codes(lines, taxes, [], "", "BC", "2026-06-01", supplier_province="BC", pst_number="PST-1234-5678")
-    assert [tax_code_of(li) for li in away] == [tax_code_of(li) for li in nonum] == ["GST+PST", "GST"]
+    assert [tax_code_of(li) for li in away] == ["GST+PST", "GST"]
+    # no PST number printed, but PST charged on the laptop: the vendor collects it, so it is asked (B-719)
+    assert [tax_code_of(li) for li in nonum] == ["GST+PST", "GST~PST"] and exemption_to_confirm(nonum[1]) == "PST"
     assert [tax_code_of(li) for li in home] == ["GST+PST", "GST~PST"]
 
 

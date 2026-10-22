@@ -6855,3 +6855,15 @@ reproduced with a script first, then given a failing test and fixed.
   (an estimate to look at), now line by line.
 - **Test:** `tests/test_line_tax_review2.py::test_qst_not_charged_is_said_without_self_assess_b718`
 - **Lesson:** Two taxes alike in form can differ in what they cost.
+
+#### B-719 · A PST number not printed made a line "due" though the vendor charged PST on the others · low-medium
+- **Where:** `ap_coder/ai/offline_coder.py` (`tax_codes`)
+- **Symptom:** a BC vendor charging PST on the laptop but printing no PST number: the bookkeeping line was taken as
+  PST due (self-assess) without asking.
+- **Cause:** B-715 treated a missing number as "not collecting" whatever the invoice charged.
+- **Reproduce:** `tax_codes(lines, taxes, [], "", "BC", "2026-06-01", supplier_province="BC", pst_number="")`.
+- **Reproduced:** yes (found by the CPA's final check)
+- **Fix:** PST charged on the invoice shows the vendor collects it (no province requires the number on every
+  invoice): a missing number counts only when no PST is charged anywhere; otherwise the exemption is asked (B-715).
+- **Test:** `tests/test_line_tax_review3.py::test_a_missing_pst_number_does_not_make_a_line_due_when_pst_is_charged_b719`
+- **Lesson:** Weigh the evidence on the page over a field that is merely missing.

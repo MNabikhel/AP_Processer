@@ -396,10 +396,12 @@ def tax_codes(lines: list[LineItem], tax_lines: list[TaxLine], flags: list[str],
             return None
         return table.rate_for(tax_type, where if where != OUTSIDE_CANADA else "", on)
 
-    # A vendor out of the province of supply, or without a PST number, that does not charge the PST on a line: the
-    # PST is due on it (self-assess), not taken as exempt (B-715).
+    # A vendor out of the province of supply that does not charge the PST on a line: the PST is due on it
+    # (self-assess), not taken as exempt (B-715). A PST number not printed says nothing when the vendor charges PST on
+    # other lines (it collects it; no province requires the number on every invoice): only when it charges none (B-719).
     away = bool(supplier_province) and supplier_province != province
-    no_number = pst_number is not None and not str(pst_number).strip()
+    pst_charged = any(t.tax_type == "PST" and abs(t.tax_amount) > 0.004 for t in tax_lines)
+    no_number = pst_number is not None and not str(pst_number).strip() and not pst_charged
     return prefill(lines, tax_lines, flags, parse_legend(text), keep=keep or [], rate_for=rate_for,
                    vendor_collects=not (away or no_number)).lines  # fmt: skip
 
