@@ -6011,6 +6011,19 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
 - **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_a_tax_lines_taxable_follows_the_lines_ticked_with_it_b610`
 - **Lesson:** Two parts of a screen that say the same thing must move together, but never over what a person typed.
 
+#### B-620 · A duplicated line posted the original's key, so the copy's taxes were read from the original's boxes · high
+- **Where:** `ap_coder/web/static/js/invoice.js` (`makeRow`, Duplicate line in a line's right-click menu)
+- **Symptom:** after *Duplicate line*, unticking a tax on the copy changed nothing the server saw; deleting the original
+  took the copy's taxes with it.
+- **Cause:** the copy was made from the original's values, its hidden `line_key` too, while its tax boxes were named
+  after its new key (`line_tax_<key>`); the server reads a row's taxes from `line_tax_<its line_key>`.
+- **Reproduce:** /review/3, duplicate line 1, untick PST on the copy; or duplicate line 1 and delete the original.
+- **Reproduced:** yes
+- **Fix:** a row made from a state never takes its `line_key` from it: it keeps the key its template was made with
+  (the original's on Undo, a new one for a copy). Undo, Insert below and Copy from above go through the same code.
+- **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_a_duplicated_line_posts_its_own_key_and_its_own_taxes_b620`
+- **Lesson:** A copy of a row copies its values, never its identity.
+
 #### Looked at and left (install, launcher and updates)
 
 - **N-251** · A GitHub ZIP unzipped over an older one leaves the files the newer one no longer has (the offline

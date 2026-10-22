@@ -616,3 +616,32 @@ def test_in_a_browser_a_tax_lines_taxable_follows_the_lines_ticked_with_it_b610(
     _item(page, "sync").click()
     assert _taxable(page, kind) == f"{expected + amounts[0]:.2f}"
     assert errors == []
+
+
+def _posted(request, name):
+    return re.findall(rf'name="{re.escape(name)}"\r\n\r\n([^\r]*)\r\n', request.post_data or "")
+
+
+def test_in_a_browser_a_duplicated_line_posts_its_own_key_and_its_own_taxes_b620(browser, store):
+    """B-620: a duplicated line posted the original's line_key, so the server read the copy's taxes from the
+    original's boxes (line_tax_<key>), and deleting the original took the copy's taxes with it."""
+    invoice_id = _with_gst(store)
+    page, errors = _review(browser, invoice_id)
+    n = _lines(page).count()
+    _menu(page, _lines(page).first.locator("[data-del-row]"))
+    _item(page, "duplicate").click()
+    copy_row = _lines(page).nth(1)
+    keys = page.eval_on_selector_all("[data-grid=lines] [name=line_key]", "s => s.map(x => x.value)")
+    assert len(set(keys)) == n + 1, keys
+    copy_key = copy_row.locator("[name=line_key]").input_value()
+    assert copy_row.get_attribute("data-row") == copy_key
+    ticked = copy_row.locator("input[type=checkbox]:checked").first
+    kind = ticked.get_attribute("value")
+    assert ticked.get_attribute("name") == f"line_tax_{copy_key}"
+    # the original goes: the copy keeps its taxes, as posted
+    _menu(page, _lines(page).first.locator("[data-del-row]"))
+    with _checked(page) as sent:
+        _item(page, "delete").click()
+    assert _posted(sent.value, "line_key")[0] == copy_key
+    assert kind in _posted(sent.value, f"line_tax_{copy_key}")
+    assert errors == []

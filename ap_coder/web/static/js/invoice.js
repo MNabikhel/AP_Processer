@@ -1049,6 +1049,9 @@ function makeRow(which, state, after = null) {
   else body.append(tr);
   enhance(tr);
   for (const [name, value] of Object.entries(state.values || {})) {
+    // The row's key is the one its template was made with (state.key, or a new one for a copy): its tax boxes are
+    // named line_tax_<key>, which the server reads for the row whose line_key it is (B-620).
+    if (name === "line_key") continue;
     const el = tr.querySelector(`[name="${CSS.escape(name)}"]`);
     if (!el) continue;
     if (el.matches("select[data-picker]")) setValue(el, value) || setValue(el, "UNASSIGNED");
