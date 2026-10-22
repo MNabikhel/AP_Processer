@@ -6109,3 +6109,43 @@ reproduced with a script first, then given a failing test and fixed.
 - **Test:** `tests/test_dashboard_sweep_fixes.py::test_the_queued_note_reads_as_a_sentence` and the test after it,
   `tests/test_web_pilot_walkthrough.py::test_one_invoice_read_is_waiting_not_they_are`
 - **Lesson:** Say what the person can do now before what a background part will do later.
+
+#### B-662 · "As printed … ≠ 45.00" stayed after the clerk fixed the amounts, and so did "quantity × price" · low
+- **Where:** `ap_coder/web/invoice_view.py` (`analyse`, `totals_settled`, `price_follows_amount`)
+- **Symptom:** on PJ's receipt the clerk typed the amounts from the page and they added up, but *as printed,
+  subtotal 40.00 + tax 0.00 ≠ total 45.00* stayed on screen; on BDO's quantity-1 line the clerk changed the amount
+  and *quantity × unit price = 0.00 but the amount is …* appeared.
+- **Cause:** the warning is capture's, about the page as first read, and was shown whatever the screen held now; the
+  unit price stayed as read when only the amount was changed.
+- **Reproduce:** a read that fails the totals check; change the line and the subtotal so that they add up.
+- **Reproduced:** yes (the real-invoice run)
+- **Fix:** once the amounts on screen differ from those read and add up (subtotal + tax = total, the tax lines =
+  the tax), the "as printed" warning is left out; the coding's own checks still say if they don't. On a quantity-1
+  line whose amount was changed (its unit price as read), or that has no unit price, the unit price is the amount
+  (in the check and in what is approved).
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_fixed_values_drop_the_as_printed_warning_and_the_unit_price_follows`
+- **Lesson:** A warning about how a value was read ends when a person replaces the value.
+
+#### B-663 · Payment terms not found were silent: the due date quietly assumed 30 days · low
+- **Where:** `ap_coder/coding/terms.py` (`payment_findings`), `ap_coder/ops/help.py`
+- **Symptom:** an invoice whose terms were missed showed a due date 30 days out with nothing saying it was assumed.
+- **Cause:** the default from Settings → Review was applied without a finding.
+- **Reproduce:** an invoice with no terms, no due date and no vendor master terms.
+- **Reproduced:** yes
+- **Fix:** an information line, *Payment terms not found: the due date assumes 30 days (Settings → Review, Days to
+  pay). Check the invoice.* (or *Payment terms “As agreed” not understood: …*); not for a credit note. It holds
+  nothing back.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_terms_not_found_say_the_due_date_is_assumed`
+- **Lesson:** A default put in for a person says so.
+
+#### B-664 · A correct invoice date older than 3 years showed a red "Failed check 13%" · low
+- **Where:** `ap_coder/capture/confidence.py` (`run_checks`, `LOOK_CHECKS`)
+- **Symptom:** an old statement correctly dated 2021 had its date in red, *Failed check 13%*, as if misread.
+- **Cause:** one check (`DATE_PLAUSIBLE`) failed both a date far ahead (misread) and one long ago (often right).
+- **Reproduce:** read an invoice dated more than 3 years before today.
+- **Reproduced:** yes
+- **Fix:** a date more than 3 years back is its own check (`DATE_RECENT`): amber *Check*, *dated more than 3 years
+  ago: check the year*; a date more than 60 days ahead still fails. Both still keep the invoice from going through
+  on its own.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_an_old_date_is_a_check_not_a_failed_check`
+- **Lesson:** Red is for what is wrong; amber for what is unusual.

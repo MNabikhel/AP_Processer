@@ -1101,6 +1101,41 @@ class Analysis:
     live: dict[str, Any] = field(default_factory=dict)
 
 
+_TOTALS = ("subtotal", "tax_total", "grand_total")
+
+
+def totals_settled(coding: InvoiceCoding, ai: dict[str, Any]) -> bool:
+    """Whether the reviewer changed the amounts as read and they now add up (subtotal + tax = total, the tax lines
+    = the tax): capture's "as printed, … ≠ total" no longer says anything about the invoice on screen (B-662)."""
+
+    def cents(value: Any) -> int:
+        try:
+            return round(float(value or 0) * 100)
+        except (TypeError, ValueError):
+            return 0
+
+    changed = any(cents(ai.get(f)) != cents(getattr(coding, f)) for f in _TOTALS)
+    changed = changed or sorted(cents(t.get("tax_amount")) for t in ai.get("tax_lines") or []) != sorted(
+        cents(t.tax_amount) for t in coding.tax_lines
+    )
+    adds_up = abs(cents(coding.subtotal) + cents(coding.tax_total) - cents(coding.grand_total)) <= 1
+    taxes = abs(sum(cents(t.tax_amount) for t in coding.tax_lines) - cents(coding.tax_total)) <= 1
+    return changed and adds_up and (taxes or not coding.tax_lines)
+
+
+def price_follows_amount(coding: InvoiceCoding, ai: dict[str, Any]) -> None:
+    """On a line of quantity 1 whose amount the reviewer changed (its unit price left as read) or that has no unit
+    price, the unit price is the amount: "quantity × price = 40.00 but the amount is 45.00" would only repeat the old
+    reading (B-662)."""
+    for before, li in pair_lines(ai.get("line_items") or [], list(coding.line_items)):
+        if li.quantity != 1 or abs(li.unit_price - li.amount) < 0.005:
+            continue
+        price_as_read = before is not None and abs(float(before.get("unit_price") or 0) - li.unit_price) < 0.005
+        amount_changed = before is not None and abs(float(before.get("amount") or 0) - li.amount) >= 0.005
+        if (price_as_read and amount_changed) or not li.unit_price:
+            li.unit_price = li.amount
+
+
 def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dict[str, Any], draft: Draft,
             signature: str = "") -> Analysis:  # fmt: skip
     """The screen's coding, checked as approval checks it. ``signature``: the reviewer's name, for the email to the
@@ -1113,6 +1148,8 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     if not problems:
         coding, problems = coding_from_inputs(header, lines_frame(draft.lines), tax_frame(draft.taxes), ai,
                                               UNASSIGNED if has_cc else "")  # fmt: skip
+    if coding is not None:
+        price_follows_amount(coding, ai)
     if coding is None:
         live = {"ok": False, "problems": problems, "amount_line": _amount_line(header),
                 "fallback": stored_summary(inv, start)}  # fmt: skip
@@ -1146,9 +1183,13 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
         # showed it on the page.
         confirmed = bool(inv.get("final_output")) or "invoice_date" in draft.taught
         assumed = coding.invoice_date if coding.invoice_date == ai.get("invoice_date") and not confirmed else None
+        settled = totals_settled(coding, ai)
         for severity, code, message in review_issues(capture, coding.currency, assumed_date=assumed):
-            if code != "CAPTURE_CHECK_FIELDS":  # the fields to check are highlighted in amber: no need to list them
-                report.issues.append(Issue(severity, code, message))
+            if code == "CAPTURE_CHECK_FIELDS":  # the fields to check are highlighted in amber: no need to list them
+                continue
+            if code == "CAPTURE_TOTALS" and settled:  # the reviewer fixed the amounts and they add up now (B-662)
+                continue
+            report.issues.append(Issue(severity, code, message))
     errors = [i for i in report.issues if i.severity == "error"]
     warnings = [i for i in report.issues if i.severity == "warning"]
     default_days = store.default_terms_days()

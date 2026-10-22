@@ -399,3 +399,85 @@ def test_the_daily_backup_also_runs_while_the_dashboard_keeps_running(tmp_path, 
     assert backup.thread is not first
     backup.thread.join(10)
     assert len(store.list_backups()) == 1
+
+
+# --- B-662: a stale "as printed" warning, and a quantity-1 line whose amount the clerk fixed --------------------------
+
+
+def test_fixed_values_drop_the_as_printed_warning_and_the_unit_price_follows(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from ap_coder.core.config import Settings
+    from ap_coder.core.store import load_sample_setup
+    from ap_coder.web import invoice_view
+    from ap_coder.web.invoice_view import Draft, analyse
+
+    store = Store(tmp_path / "ap.db")
+    load_sample_setup(store)
+    read = _blank_invoice()  # read as 40.00, but the total printed is 45.00 (a receipt with no tax)
+    read["line_items"][0].update(unit_price=40.0, amount=40.0, predicted_gl_code="6000")
+    read.update(subtotal=40.0, tax_total=0.0, grand_total=45.0)
+    iid = store.add_invoice(tmp_path / "x.pdf", read, {"requires_review": True})
+    check = {"code": "TOTALS_ADD_UP", "ok": False, "detail": "subtotal 40.00 + tax 0.00 ≠ total 45.00"}
+    capture = SimpleNamespace(fields={}, checks=[check], pages_left_out=0, page_count=1)
+    monkeypatch.setattr(invoice_view, "capture_of", lambda *a: capture)
+
+    def codes(draft):
+        result = analyse(store, Settings(), store.reference_data(), store.get_invoice(iid), draft)
+        return {i.code for i in result.errors + result.warnings}, result
+
+    assert "CAPTURE_TOTALS" in codes(Draft.stored(read))[0]  # as read: the warning stands
+    fixed = Draft.stored(read)  # the clerk puts in what the page says: the line is 45.00
+    fixed.header["subtotal"] = "45.00"
+    fixed.lines[0]["amount"] = 45.0
+    found, result = codes(fixed)
+    assert "CAPTURE_TOTALS" not in found and "LINE_MATH" not in found, found
+    assert result.output["line_items"][0]["unit_price"] == 45.0
+
+
+# --- B-663: payment terms not found were silent -----------------------------------------------------------------------
+
+
+def test_terms_not_found_say_the_due_date_is_assumed():
+    import datetime as dt
+
+    from ap_coder.coding.terms import payment_findings
+    from ap_coder.ops.help import CHECKS
+
+    doc = {"invoice_date": "2026-10-01", "grand_total": 100.0, "payment_terms": ""}
+    found = {c: (s, m) for s, c, m in payment_findings(doc, 30, today=dt.date(2026, 10, 2))}
+    assert found["TERMS_NOT_FOUND"] == ("info", "Payment terms not found: the due date assumes 30 days (Settings → "
+                                                "Review, Days to pay). Check the invoice.")  # fmt: skip
+    unread = {
+        c: m for _, c, m in payment_findings({**doc, "payment_terms": "As agreed"}, 45, today=dt.date(2026, 10, 2))
+    }
+    assert unread["TERMS_NOT_FOUND"].startswith(
+        "Payment terms “As agreed” not understood: the due date assumes 45 days"
+    )
+    for quiet in ({**doc, "payment_terms": "Net 30"}, {**doc, "due_date": "2026-11-15"}, {**doc, "grand_total": -5.0}):
+        assert "TERMS_NOT_FOUND" not in {c for _, c, _ in payment_findings(quiet, 30, today=dt.date(2026, 10, 2))}
+    assert "TERMS_NOT_FOUND" not in {c for _, c, _ in payment_findings(doc, 30, vendor_terms="Net 45")}
+    assert "TERMS_NOT_FOUND" in CHECKS
+
+
+# --- B-664: a correct date older than 3 years showed a red "Failed check 13%" -----------------------------------------
+
+
+def test_an_old_date_is_a_check_not_a_failed_check(tmp_path):
+    import datetime as dt
+
+    from ap_coder.capture import analyze
+    from ap_coder.web.invoice_view import capture_confidence
+
+    text = PRAIRIE.replace("October 1, 2026", "March 3, 2021")
+    path = tmp_path / "old.txt"
+    path.write_text(text)
+    r = analyze(str(path), today=dt.date(2026, 10, 22))
+    date = r.fields["invoice_date"]
+    assert date.value == "2021-03-03" and date.status == "check"
+    assert "check: dated more than 3 years ago: check the year" in date.reasons
+    assert not any(x.startswith("check failed") for x in date.reasons)
+    badge = capture_confidence(r)["invoice_date"]
+    assert badge["status"] == "check" and badge["tone"] == "warn"
+    future = analyze(str(path), today=dt.date(2020, 1, 1)).fields["invoice_date"]
+    assert any(x.startswith("check failed") for x in future.reasons)  # a date far ahead still fails

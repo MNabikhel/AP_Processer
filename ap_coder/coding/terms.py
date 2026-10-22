@@ -355,6 +355,11 @@ def payment_findings(
              f"{p.terms.discount_pct:g}% early-payment discount (about {p.discount_amount:,.2f}) if paid by "
              f"{p.discount_by:%b} {p.discount_by.day}")
         )  # fmt: skip
+    if p.source == "default" and float(coding.get("grand_total") or 0) > 0:  # never silent (B-663)
+        printed = (coding.get("payment_terms") or "").strip()
+        what = f"Payment terms “{printed}” not understood" if printed else "Payment terms not found"
+        findings.append((INFO, "TERMS_NOT_FOUND", f"{what}: the due date assumes {default_days} days (Settings → "
+                         "Review, Days to pay). Check the invoice."))  # fmt: skip
     left = p.days_left(today)
     if left is not None and left < 0 and float(coding.get("grand_total") or 0) > 0:
         ago = f"overdue since {overdue_since(p.due)}" if left < -LONG_OVERDUE_DAYS else f"{-left} days ago"
