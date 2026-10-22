@@ -427,12 +427,17 @@ def test_fixed_values_drop_the_as_printed_warning_and_the_unit_price_follows(tmp
         return {i.code for i in result.errors + result.warnings}, result
 
     assert "CAPTURE_TOTALS" in codes(Draft.stored(read))[0]  # as read: the warning stands
-    fixed = Draft.stored(read)  # the clerk puts in what the page says: the line is 45.00
-    fixed.header["subtotal"] = "45.00"
+    fixed = Draft.stored(read)  # the clerk puts in what the page says: the line is 45.00 (the page's unit price
+    fixed.header["subtotal"] = "45.00"  # follows on screen, B-671: it posts 45.00 too)
     fixed.lines[0]["amount"] = 45.0
+    fixed.lines[0]["unit_price"] = 45.0
     found, result = codes(fixed)
     assert "CAPTURE_TOTALS" not in found and "LINE_MATH" not in found, found
     assert result.output["line_items"][0]["unit_price"] == 45.0
+    stale = Draft.stored(read)  # what the screen shows is what is checked and approved: never changed behind it
+    stale.lines[0]["amount"] = 45.0
+    found, result = codes(stale)
+    assert "LINE_MATH" in found and result.output["line_items"][0]["unit_price"] == 40.0
 
 
 # --- B-663: payment terms not found were silent -----------------------------------------------------------------------
@@ -574,3 +579,128 @@ def test_a_vendor_read_from_the_bill_to_is_check(tmp_path):
     assert marked("Fabrikam Canada Ltée") == "check"
     assert marked("Northern Pet Supply Ltd.") == "verified"
     assert marked("POSTES", [{"code": "VENDOR_NAME_MATCH", "ok": True}]) == "verified"  # the vendor master says so
+
+
+# --- B-670: an invoice whose lines AP coded counted as "approved without any edit" ------------------------------------
+
+
+def test_lines_coded_by_hand_are_an_edit_of_their_own(tmp_path, monkeypatch):
+    from ap_coder.ops.share_report import _learning_section
+    from ap_coder.web.pages.invoice import _closed
+
+    store = Store(tmp_path / "ap.db")
+    read = _blank_invoice()
+    iid = store.add_invoice(tmp_path / "x.pdf", read, {"requires_review": True})
+    final = copy.deepcopy(read)
+    final["line_items"][0]["predicted_gl_code"] = "6110"
+    assert store.approve_invoice(iid, final, "pat") == {ACCEPTED: 0, CORRECTED: 0, CODED: 1}  # accuracy: B-650
+    inv = store.get_invoice(iid)
+    assert inv["edits"] == ["line_coded"]
+    m = store.metrics()
+    assert m["invoices_approved_without_edits"] == 0 and m["invoices_coded_by_hand"] == 1
+    report = "\n".join(_learning_section(store, False))
+    assert "invoices approved without any edit: 0 of 1" in report
+    assert "invoices with lines AP coded where the AI left them blank: 1" in report
+    assert _closed(store, None, inv)["edits"] == "no changes to the suggested coding; AP coded 1 line the AI left blank"
+
+
+# --- B-671: a unit price read right was replaced by the amount, behind the screen -------------------------------------
+
+
+def test_a_unit_price_read_right_is_never_replaced_behind_the_screen(tmp_path, monkeypatch):
+    """ "Chair (10% off)": quantity 1, unit price 100.00 read right, the amount misread as 9.00; the clerk puts in
+    90.00. The stored price became 90.00 while the screen still showed 100.00."""
+    from ap_coder.core.config import Settings
+    from ap_coder.core.store import load_sample_setup
+    from ap_coder.web.invoice_view import Draft, analyse
+
+    store = Store(tmp_path / "ap.db")
+    load_sample_setup(store)
+    read = _blank_invoice()
+    read["line_items"][0].update(description="Chair (10% off)", unit_price=100.0, amount=9.0, predicted_gl_code="6000")
+    read.update(subtotal=90.0, grand_total=90.0)
+    iid = store.add_invoice(tmp_path / "x.pdf", read, {"requires_review": True})
+    draft = Draft.stored(read)
+    draft.lines[0]["amount"] = 90.0
+    result = analyse(store, Settings(), store.reference_data(), store.get_invoice(iid), draft)
+    assert result.output["line_items"][0]["unit_price"] == 100.0  # as on screen
+
+
+# --- B-672: the vendor's remit address could fill a "Bill to" with no postal code -------------------------------------
+
+
+def test_a_bill_to_takes_a_province_only_from_its_own_block():
+    from ap_coder.ai.offline_coder import addresses, provinces
+
+    remit = ("Prairie Print Ltd.\nINVOICE\nBill to:\nFabrikam Canada\nAttn: Accounts payable\n\nCards  100.00\n"
+             "Total  100.00\nPlease remit to: Prairie Print Ltd., 100 Main St SW, Calgary AB T2P 1J9\n")  # fmt: skip
+    assert provinces(remit) == ("", "")
+    remit_below = remit.replace("Please remit to: Prairie", "Please remit to:\nPrairie")
+    assert provinces(remit_below) == ("", "")
+    far = ("Acme Supply\n1 Main St, Toronto ON M5V 1A1\nBill to:\nFabrikam\n" + "Line\n" * 10
+           + "Head office: 5 Bay St, Halifax NS B3H 1A1\n")  # fmt: skip
+    assert addresses(far) == ("ON", "", "")  # far below its label: the letterhead's or footer's, not the bill-to's
+    near = "Acme Supply\n1 Main St, Toronto ON M5V 1A1\nBill to:\nFabrikam\n500 Front St\nHalifax NS B3H 1A1\n"
+    assert addresses(near) == ("ON", "", "NS")
+
+
+# --- B-673: a ship-to outside Canada was said to be "no ship-to or bill-to printed" -----------------------------------
+
+
+def test_a_ship_to_outside_canada_is_not_said_to_be_missing():
+    from ap_coder.coding.tax import OUTSIDE_CANADA, TaxSetup, check_taxes
+    from ap_coder.core.schema import TaxLine
+
+    coding = InvoiceCoding.model_validate({**_blank_invoice(), "supplier_province": "AB", "tax_total": 5.0,
+                                           "grand_total": 105.0, "ship_to_province": OUTSIDE_CANADA})  # fmt: skip
+    coding.tax_lines = [TaxLine(tax_type="GST", province="", rate=0.05, taxable_amount=100.0, tax_amount=5.0)]
+    setup = TaxSetup.default()
+    setup.our_province = "ON"
+    messages = [f.message for f in check_taxes(coding, setup) if "Ontario" in f.message]
+    assert messages and not any("no ship-to or bill-to printed" in m for m in messages), messages
+    assert all("the ship-to printed is outside Canada" in m for m in messages), messages
+
+
+# --- B-674: "30 fin de mois", "end of month 30" were due at the end of the month --------------------------------------
+
+
+def test_eom_terms_in_words():
+    import datetime as dt
+
+    from ap_coder.coding.terms import payment
+
+    for terms in ("30 fin de mois", "fin de mois 30", "30 end of month", "end of month 30", "Net 30 end of the month",
+                  "30 jours fin de mois"):  # fmt: skip
+        doc = {"invoice_date": "2026-01-15", "grand_total": 100.0, "payment_terms": terms}
+        assert payment(doc, 30).due == dt.date(2026, 3, 2), terms
+    assert payment({"invoice_date": "2026-01-15", "grand_total": 1.0, "payment_terms": "fin de mois"}).due == dt.date(
+        2026, 1, 31
+    )
+
+
+# --- B-675: a one-word vendor (TELUS) stayed "check" after AP had approved it for this supplier -----------------------
+
+
+def test_a_one_word_vendor_approved_before_for_this_supplier_is_not_check(tmp_path):
+    from ap_coder.capture import _mark_doubtful_vendor
+    from ap_coder.capture.layout import build_layout
+    from ap_coder.capture.supplier import Template
+    from ap_coder.capture.types import FieldResult
+
+    path = tmp_path / "telus.txt"
+    path.write_text("TELUS\n510 W Georgia St, Vancouver BC V6B 0M3\nINVOICE\n")
+    layout = build_layout(path)
+    approved = Template(documents={"sha-1": {"vendor_name": ["telus"]}})
+
+    def marked(name, template=None):
+        fields = {"vendor_name": FieldResult("vendor_name", name, 0.99, "verified", [], {}, [])}
+        _mark_doubtful_vendor(layout, fields, [], template)
+        return fields["vendor_name"].status
+
+    assert marked("TELUS") == "check"  # never approved: a person looks
+    assert marked("TELUS", approved) == "verified"  # AP approved this very name for this supplier
+    assert marked("TELUS", approved.to_dict()) == "verified"
+    assert marked("ROGERS", approved) == "check"  # another name: still a look
+    assert (
+        marked("Inc.", Template(documents={"x": {"vendor_name": ["inc"]}})) == "check"
+    )  # only the one-word rule lifts

@@ -280,6 +280,17 @@ def nothing_proposed(s_gl: str | None, s_cc: str | None) -> bool:
     return s_gl is not None and s_gl in ("", UNASSIGNED) and (s_cc or "") in ("", UNASSIGNED)
 
 
+def coded_blanks(ai: dict[str, Any] | None, final: dict[str, Any] | None) -> int:
+    """How many lines the AI left blank (``nothing_proposed``) that the reviewer gave a GL account: the reviewer's own
+    coding, an edit of its own ("line_coded"), not a correction (B-670)."""
+    return sum(
+        1
+        for before, li in pair_lines((ai or {}).get("line_items") or [], (final or {}).get("line_items") or [])
+        if before is not None and li.get("predicted_gl_code") not in (None, "", UNASSIGNED)
+        and nothing_proposed(before.get("predicted_gl_code"), before.get("predicted_cost_center"))
+    )  # fmt: skip
+
+
 def suggestion_kept(s_gl: str | None, s_cc: str | None, f_gl: str, f_cc: str | None) -> bool:
     """Whether the reviewer kept the GL account and cost center proposed for a line (``s_gl`` None: no line was
     proposed). A GL or cost center left blank ("UNASSIGNED", or a cost center still to pick) was not proposed:
@@ -1507,7 +1518,7 @@ class Store:
         key = vendor_key(vendor_name)
         now = _now()
         counts = {ACCEPTED: 0, CORRECTED: 0, CODED: 0}
-        reviewer_changed = 0
+        reviewer_changed = reviewer_coded = 0
         # Lines a fixed coding rule set: the AI's own answer is what its accuracy is measured on.
         by_rule = {c["line_number"]: c for c in (inv.get("meta") or {}).get("rules_applied") or []}
         feedback_rows = []
@@ -1535,6 +1546,8 @@ class Store:
             )
             if not kept_rule and replaced:
                 reviewer_changed += 1
+            if not kept_rule and blank and not guess:  # coded by hand where the AI left the line blank (B-670)
+                reviewer_coded += 1
             if rule is not None:  # the AI's own answer, as first recorded (not a rule's)
                 s_gl, s_cc = rule.get("gl_from"), rule.get("cc_from", "")
             # Accuracy measures what the AI proposed: the blanks it left are not counted against it. A line whose
@@ -1567,6 +1580,8 @@ class Store:
             edits.append("tax_lines")
         if reviewer_changed:  # what the reviewer changed (a rule's coding kept is not a change)
             edits.append("line_coding")
+        if reviewer_coded:  # no correction, but not the AI's coding either: never "approved without any edit"
+            edits.append("line_coded")
         if len(ai.get("line_items", [])) != len(final_output.get("line_items", [])):
             edits.append("line_count")
         with self._conn() as conn:
@@ -3814,6 +3829,9 @@ class Store:
             untouched = conn.execute(
                 "SELECT COUNT(*) FROM invoices WHERE status = ? AND edits = '[]'", (APPROVED,)
             ).fetchone()[0]
+            coded_by_hand = conn.execute(
+                "SELECT COUNT(*) FROM invoices WHERE status = ? AND edits LIKE '%\"line_coded\"%'", (APPROVED,)
+            ).fetchone()[0]
         # ISO weeks (Monday to Sunday, "2026-W41"), as on the Insights page: SQLite's %W numbers them differently.
         weeks: dict[str, dict[str, Any]] = {}
         for r in daily:
@@ -3833,6 +3851,7 @@ class Store:
             "line_accuracy": round(outcome.get(ACCEPTED, 0) / measured, 4) if measured else None,
             "invoices_by_status": {r["status"]: r["n"] for r in statuses},
             "invoices_approved_without_edits": untouched,
+            "invoices_coded_by_hand": coded_by_hand,
             "weekly": [weeks[w] for w in sorted(weeks)],
             "by_vendor": [dict(r) for r in by_vendor],
             "top_corrections": [dict(r) for r in corrections],

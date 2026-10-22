@@ -698,6 +698,26 @@ linesGrid?.addEventListener("focusin", (e) => {
   if (viewer && i >= 0) viewer.revealLine(i);
 });
 
+/* ---------- A quantity-1 line: its unit price follows a changed amount when it was blank, 0 or the amount (B-671) ---------- */
+
+linesGrid?.addEventListener("focusin", (e) => {
+  if (e.target.name === "line_amount") e.target.dataset.before = e.target.value;
+});
+linesGrid?.addEventListener("change", (e) => {
+  if (e.target.name !== "line_amount") return;
+  const tr = e.target.closest("tr");
+  const qty = tr?.querySelector("[name=line_quantity]");
+  const price = tr?.querySelector("[name=line_unit_price]");
+  const before = e.target.dataset.before ?? "";
+  e.target.dataset.before = e.target.value;
+  if (!qty || !price || Number(qty.value) !== 1) return;
+  const was = Number(price.value);
+  if (price.value === "" || was === 0 || (before !== "" && Math.abs(was - Number(before)) < 0.005)) {
+    price.value = e.target.value;
+    price.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+});
+
 /* ---------- Words picked on the page by dragging a box: what are they? ---------- */
 
 const LINE_COLUMNS = [

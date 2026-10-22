@@ -197,6 +197,8 @@ def parse_terms(text: str | None) -> Terms:
     if not text:
         return Terms()
     eom = _eom(text)
+    # "30 fin de mois", "end of month 30": read as "30 EOM" and "EOM 30" (B-674, D-62).
+    text = _EOM.sub("EOM", text)
     text = _FRACTION_PCT.sub(
         lambda m: f"{int(m.group(1)) / int(m.group(2)):g}%" if int(m.group(2)) else m.group(0), text
     )

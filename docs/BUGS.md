@@ -6434,9 +6434,8 @@ reproduced with a script first, then given a failing test and fixed.
 - **Reproduce:** a read that fails the totals check; change the line and the subtotal so that they add up.
 - **Reproduced:** yes (the real-invoice run)
 - **Fix:** once the amounts on screen differ from those read and add up (subtotal + tax = total, the tax lines =
-  the tax), the "as printed" warning is left out; the coding's own checks still say if they don't. On a quantity-1
-  line whose amount was changed (its unit price as read), or that has no unit price, the unit price is the amount
-  (in the check and in what is approved).
+  the tax), the "as printed" warning is left out; the coding's own checks still say if they don't. (The unit price
+  was first rewritten on the server, behind the screen: replaced by B-671.)
 - **Test:** `tests/test_sweep_pilot_fixes.py::test_fixed_values_drop_the_as_printed_warning_and_the_unit_price_follows`
 - **Lesson:** A warning about how a value was read ends when a person replaces the value.
 
@@ -6531,3 +6530,84 @@ reproduced with a script first, then given a failing test and fixed.
 - **Test:** `tests/test_sweep_pilot_fixes.py::test_a_doubtful_vendor_name_is_marked_check`,
   `::test_a_vendor_read_from_the_bill_to_is_check`
 - **Lesson:** A value can be read right and still not be the field's: check that it looks like one.
+
+#### B-670 · An invoice whose lines AP coded by hand counted as "approved without any edit" · medium
+- **Where:** `ap_coder/core/store.py` (`approve_invoice`, `coded_blanks`, `metrics`), `ap_coder/ops/share_report.py`,
+  `ap_coder/web/pages/invoice.py` (`_closed`)
+- **Symptom:** after B-650, an invoice whose every line the coder left blank and AP coded was stored with no edit:
+  `invoices_approved_without_edits`, the share report's *invoices approved without any edit* and the closed
+  invoice's *no changes to the suggested coding* all credited the AI with coding it never did.
+- **Cause:** B-650 rightly stopped counting a filled blank as a change of coding, and with it the only edit recorded.
+- **Reproduce:** `sweepreview/r650.py`.
+- **Reproduced:** yes (found by the review of the sweep fixes)
+- **Fix:** the hand coding is its own edit, *line_coded*: never "approved without any edit"; the share report says
+  *invoices with lines AP coded where the AI left them blank: N*; the closed invoice says *no changes to the suggested
+  coding; AP coded 3 lines the AI left blank*. The accuracy stays as B-650 made it. The share report no longer fails
+  when no line was proposed at all (accuracy *nothing proposed yet*).
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_lines_coded_by_hand_are_an_edit_of_their_own`
+- **Lesson:** When a count stops counting something, check what else that count fed.
+
+#### B-671 · A unit price read right was replaced by the amount, and the screen still showed the old one · low-medium
+- **Where:** `ap_coder/web/invoice_view.py` (B-662's `price_follows_amount`, removed), `ap_coder/web/static/js/invoice.js`
+- **Symptom:** "Chair (10% off)", quantity 1, unit price 100.00 read right, the amount misread as 9.00: the clerk
+  put in 90.00 and the approved price became 90.00 (it goes to the JD Edwards file and to PO price matching) while
+  the screen still showed 100.00.
+- **Cause:** B-662 made the server put the amount in the unit price of any quantity-1 line whose amount changed
+  with its price as read, whatever that price was, and nothing showed it.
+- **Reproduce:** `sweepreview/p662.py`.
+- **Reproduced:** yes (found by the review of the sweep fixes)
+- **Fix:** nothing is changed behind the screen: what is shown is what is checked and approved. On the screen, a
+  quantity-1 line's unit price follows a changed amount only when it was blank, 0 or the same number as the amount
+  (BDO's line); a price read right stays, and *quantity × unit price* then says the two differ.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_a_unit_price_read_right_is_never_replaced_behind_the_screen`,
+  `tests/test_web_invoice.py::test_in_a_browser_the_unit_price_of_a_quantity_1_line_follows_its_amount_only_when_it_was_the_amount`
+- **Lesson:** Never change behind the screen what the screen shows: change it on the screen, or not at all.
+
+#### B-672 · The vendor's remit address could fill a "Bill to" printed without a postal code · medium
+- **Where:** `ap_coder/ai/offline_coder.py` (`addresses`)
+- **Symptom:** a "Bill to" block with no postal-code line left its label waiting, and the next province anywhere on
+  the page filled it: *Please remit to: … Calgary AB* became our bill-to, so the place of supply (D-61) was the
+  vendor's province after all.
+- **Cause:** a label waited for an address for the rest of the page.
+- **Reproduce:** the review's example: `provinces()` gave ('', 'AB').
+- **Reproduced:** yes (found by the review of the sweep fixes; it predates B-651)
+- **Fix:** a ship-to or bill-to label takes a province only from its own block, the 6 lines after it, and never
+  from a remit-to or "payable to" block (the vendor's own address, which can still be the supplier's).
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_a_bill_to_takes_a_province_only_from_its_own_block`
+- **Lesson:** A label's value is near the label.
+
+#### B-673 · A ship-to outside Canada was said to be "no ship-to or bill-to printed" · low
+- **Where:** `ap_coder/coding/tax.py` (`check_taxes`)
+- **Symptom:** the demo's Cascade invoice, shipped to Seattle, said *… Ontario (your province in Settings: no
+  ship-to or bill-to printed) …*.
+- **Cause:** B-651's wording followed the place of supply's source, which falls back to our province for a ship-to
+  outside Canada as for one not printed.
+- **Reproduce:** check the taxes of an invoice with a ship-to outside Canada.
+- **Reproduced:** yes (found by the review of the sweep fixes)
+- **Fix:** it says *(the ship-to printed is outside Canada: checked against your province in Settings)*.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_a_ship_to_outside_canada_is_not_said_to_be_missing`
+- **Lesson:** Say why a fallback was taken, not only that it was.
+
+#### B-674 · "30 fin de mois" and "end of month 30" were still due at the end of the month · low
+- **Where:** `ap_coder/coding/terms.py` (`parse_terms`)
+- **Symptom:** B-656 read "30 EOM" and "EOM 30", but "30 fin de mois", "fin de mois 30", "30 end of month" and
+  "end of month 30" (typed by the clerk, or in the vendor master) were due on the last day of the invoice's month.
+- **Cause:** the days beside EOM were looked for only beside the literal "EOM".
+- **Reproduce:** `payment({"invoice_date": "2026-01-15", "payment_terms": "30 fin de mois", ...})`.
+- **Reproduced:** yes (found by the review of the sweep fixes)
+- **Fix:** "fin de mois", "end of month" and "end of the month" are read as EOM before the days are looked for: all
+  are due March 2 (D-62).
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_eom_terms_in_words`
+- **Lesson:** A fix for a word covers its synonyms the code already knows.
+
+#### B-675 · A one-word vendor (TELUS, IKEA) stayed "check" even after AP had approved it for this supplier · low
+- **Where:** `ap_coder/capture/__init__.py` (`_mark_doubtful_vendor`, `_approved_before`)
+- **Symptom:** after B-669, TELUS, ROGERS, IKEA, BDO and KPMG were "check" on every invoice without a vendor master,
+  so they could never go through on their own.
+- **Cause:** only the vendor master lifted the mark.
+- **Reproduce:** `sweepreview/telus.py`.
+- **Reproduced:** yes (found by the review of the sweep fixes)
+- **Fix:** a one-word name AP approved for this supplier before (the same `vendor_key`, on a page the supplier's
+  template learned from) is not marked. A name that is only a legal form or the bill-to's still is.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_a_one_word_vendor_approved_before_for_this_supplier_is_not_check`
+- **Lesson:** A doubt the person has already settled is not asked again.
