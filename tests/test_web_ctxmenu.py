@@ -800,3 +800,28 @@ def test_in_a_browser_a_note_is_posted_once_however_often_it_is_sent_b625(browse
     assert len(notes) == 2, notes
     assert page.locator("[data-notes] .ev").count() == 2
     assert errors == []
+
+
+def test_in_a_browser_the_queue_restores_only_the_view_an_invoice_was_opened_from_b626(browser, store):
+    """B-626: the queue put back a filter it was left with long before (an invoice opened from elsewhere), and sent an
+    address with its own message (?flash=) to the old filter, losing the message."""
+    chromium, base = browser
+    page = chromium.new_page(viewport=LAPTOP)
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    invoice_id = store.list_invoices(REVIEW)[0]["id"]
+    page.goto(base + "/review?show=all&sort=amount")  # looked at, left without opening an invoice from it
+    page.goto(base + "/search")
+    page.goto(base + f"/review/{invoice_id}")
+    page.wait_for_selector(".iv-sheet:not(.loading)")
+    page.locator("[data-nav=queue]").click()
+    page.wait_for_load_state("networkidle")
+    assert page.url.endswith("/review"), page.url
+    # opened from the queue, but the queue's address has its own message: it is shown, not replaced
+    page.goto(base + "/review?show=all&sort=amount")
+    page.eval_on_selector(".rq-list li:first-child a.rq-row", "a => a.click()")
+    page.wait_for_selector(".iv-sheet:not(.loading)")
+    page.goto(base + "/review?flash=nope", referer=base + f"/review/{invoice_id}")
+    page.wait_for_load_state("networkidle")
+    assert "show=all" not in page.url, page.url
+    assert errors == []

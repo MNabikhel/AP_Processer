@@ -1,22 +1,28 @@
-/* The review queue (/review): coming back to it from an invoice (its Queue button, Alt+↑, the menu) shows it as it was
-   left: the same filter, search and sort, scrolled to where it was (D-60). Kept for this browser tab only
-   (sessionStorage); a browser that refuses it just opens the queue as usual. */
+/* The review queue (/review): coming back to it from an invoice opened from it (its Queue button, Alt+↑) shows it as
+   it was left: the same filter, search and sort, scrolled to where it was (D-60). Kept for this browser tab only
+   (sessionStorage); a browser that refuses it just opens the queue as usual.
+
+   Only a click from the queue to an invoice leaves a mark (the view and where it was scrolled), and the next time the
+   queue opens the mark is used up, whatever happens (B-626): a view looked at long before is never put back. The
+   queue's address with a query of its own (a message: ?flash=, a search, a filter) is never replaced. */
 
 const KEY = "apc-queue";
 
-/** The address's query without the one-off message token (?flash=), which app.js takes out anyway. */
-function query(search) {
-  const params = new URLSearchParams(search);
-  params.delete("flash");
-  const text = params.toString();
-  return text ? `?${text}` : "";
+function read() {
+  try {
+    const mark = JSON.parse(sessionStorage.getItem(KEY) || "null");
+    sessionStorage.removeItem(KEY); // used up: once
+    return mark;
+  } catch {
+    return null;
+  }
 }
 
-function save() {
+function write(mark) {
   try {
-    sessionStorage.setItem(KEY, JSON.stringify({ search: query(location.search), y: Math.round(window.scrollY) }));
+    sessionStorage.setItem(KEY, JSON.stringify(mark));
   } catch {
-    /* not kept: the queue opens at the top next time */
+    /* not kept: the queue opens as usual next time */
   }
 }
 
@@ -29,29 +35,27 @@ function fromInvoice() {
   }
 }
 
-let saved = null;
-try {
-  saved = JSON.parse(sessionStorage.getItem(KEY) || "null");
-} catch {
-  saved = null;
+/** The query the page was opened with: app.js takes ?flash= out of the address before this runs. */
+function openedWith() {
+  try {
+    const nav = performance.getEntriesByType("navigation")[0];
+    return nav ? new URL(nav.name).search : location.search;
+  } catch {
+    return location.search;
+  }
 }
 
-const here = query(location.search);
-const back = saved && (fromInvoice() || saved.coming);
-if (back && !here && saved.search) {
-  try {
-    sessionStorage.setItem(KEY, JSON.stringify({ ...saved, coming: true })); // the page it goes to scrolls back too
-  } catch {
-    /* then it opens at the top */
-  }
-  location.replace(`/review${saved.search}`); // the filter it was left with
-} else {
-  if (back && saved.search === here && saved.y > 0) {
-    // once the rows are drawn (the module runs after the page is parsed)
-    requestAnimationFrame(() => window.scrollTo(0, Math.min(saved.y, document.documentElement.scrollHeight)));
-  }
-  window.addEventListener("pagehide", save);
-  document.addEventListener("click", (e) => {
-    if (e.target.closest?.("a[href]")) save();
-  });
+const mark = read();
+const back = mark && (fromInvoice() || mark.coming);
+if (back && !openedWith() && mark.search) {
+  write({ ...mark, coming: true }); // the page it goes to scrolls back too
+  location.replace(`/review${mark.search}`); // the view the invoice was opened from
+} else if (back && mark.search === location.search && mark.y > 0) {
+  // once the rows are drawn (the module runs after the page is parsed)
+  requestAnimationFrame(() => window.scrollTo(0, Math.min(mark.y, document.documentElement.scrollHeight)));
 }
+
+// An invoice opened from the queue: the mark to come back to.
+document.addEventListener("click", (e) => {
+  if (e.target.closest?.(".rq-list a.rq-row")) write({ search: location.search, y: Math.round(window.scrollY) });
+});

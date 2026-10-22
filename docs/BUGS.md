@@ -6090,6 +6090,20 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
 - **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_a_note_is_posted_once_however_often_it_is_sent_b625`
 - **Lesson:** A send that waits must remember it is waiting.
 
+#### B-626 · The queue put back a filter from long before, and replaced an address with its own message · low
+- **Where:** `ap_coder/web/static/js/queue.js`
+- **Symptom:** search the queue for "zzzz", go to the Invoice directory, open an invoice from there, press *Queue*: the
+  queue opened searching "zzzz". A queue address with a message (`?flash=`) was sent to the old filter, the message
+  lost.
+- **Cause:** the queue's view was kept each time the queue was left, and put back whenever the queue opened from any
+  invoice without a query; the message token was not counted as a query (app.js takes it out of the address first).
+- **Reproduce:** as in the symptom (`/review?q=zzzz`, `/search`, `/review/5`, Queue).
+- **Reproduced:** yes
+- **Fix:** only a click from the queue to an invoice leaves a mark, used up the next time the queue opens; the view is
+  put back only for an address without a query of its own, read as the page was opened (before app.js tidies it).
+- **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_the_queue_restores_only_the_view_an_invoice_was_opened_from_b626`
+- **Lesson:** Remember a place only when the person leaves from it, and forget it once used.
+
 #### Looked at and left (install, launcher and updates)
 
 - **N-251** · A GitHub ZIP unzipped over an older one leaves the files the newer one no longer has (the offline
