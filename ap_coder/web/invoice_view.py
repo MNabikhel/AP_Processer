@@ -1389,10 +1389,12 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     # The approve bar: never post to UNASSIGNED; where cost centers are used, a line without one isn't posted either.
     # The queue asks the same question (pages/review.py attention), so its Ready means Approve is open here.
     pick = codes_to_pick(coding.line_items, uses_cost_centers(reference))
-    if accounts and not coding.pay_from_account:  # never approved without the account it is paid from (D-66)
-        from ap_coder.coding.banks import PICK
+    from ap_coder.coding.banks import blocking
 
-        pick = f"{pick}; {PICK[0].lower()}{PICK[1:]}" if pick else PICK
+    # never approved without one of our accounts in use to pay from, whatever is ticked (D-66, B-683)
+    bank = blocking(coding.pay_from_account, store.bank_accounts())
+    if bank:
+        pick = f"{pick}; {bank[0].lower()}{bank[1:]}" if pick else bank
     key = override_key(errors) if errors else ""
     allow = not pick and (not errors or draft.override == key)
     changed = ai_changes(coding, ai, uses_cost_centers(reference))
@@ -1451,7 +1453,7 @@ def pay_from_choices(store: Store, header: dict[str, str]) -> dict[str, Any]:
     chosen = header.get("pay_from_account") or ""
     accounts = [a for a in store.bank_accounts() if a["active"] or a["code"] == chosen]
     return {
-        "options": [(a["code"], banks.label(a) + ("" if a["active"] else " (not in use)"), a["currency"])
+        "options": [(a["code"], banks.label(a) + ("" if a["active"] else " (not in use — pick another)"), a["currency"])
                     for a in accounts],
         "value": chosen,
         "any": any(a["active"] for a in accounts),

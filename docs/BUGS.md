@@ -6666,3 +6666,17 @@ Found while building the pilot tester's requests on the review screen's invoice 
 - **Test:** `tests/test_header_details.py::test_in_a_browser_undo_after_a_vendor_change_puts_back_the_vendor_with_its_numbers`,
   `::test_numbers_marked_from_the_vendor_list_are_always_this_vendors`
 - **Lesson:** What is undone together was done together: one snapshot, from before the first of its changes.
+
+#### B-683 · "Approve anyway" approved a Pay from account that is unknown or no longer in use · medium
+- **Where:** `ap_coder/coding/banks.py` (`blocking`), `ap_coder/web/invoice_view.py` (`analyse`, `pay_from_choices`)
+- **Symptom:** a posted `pay_from_account=BOGUS` was stored once "Approve anyway" was ticked; an account set not in
+  use after it was chosen stayed listed as "(not in use)" and paid the invoice the same way.
+- **Cause:** PAY_FROM_UNKNOWN was an ordinary error, which the override lets through; only a missing account
+  blocked approval.
+- **Reproduce:** post `pay_from_account=BOGUS` to /review/<id>/check, tick Approve anyway, approve.
+- **Reproduced:** yes (found by the review of the header side)
+- **Fix:** once an account is in use, approval needs one of the accounts in use, never overridable (`banks.blocking`,
+  asked by the approve bar and the approval); an account no longer in use that is still chosen is listed "(not in
+  use — pick another)" and blocks.
+- **Test:** `tests/test_header_details.py::test_pay_from_an_unknown_or_closed_account_is_never_approved`
+- **Lesson:** An override is for a judgement call; paying from an account that does not exist is not one.

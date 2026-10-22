@@ -414,3 +414,25 @@ def test_in_a_browser_undo_after_a_vendor_change_puts_back_the_vendor_with_its_n
     state = json.loads(page.locator("input[data-from-vendor]").input_value())
     assert state["vendor"] == "pacific office supply" and state["fields"][GST] == "555666775 RT0001"
     assert errors == []
+
+
+def test_pay_from_an_unknown_or_closed_account_is_never_approved(client, store):
+    """B-683: PAY_FROM_UNKNOWN was an error "Approve anyway" let through: a made-up code was stored, and an account
+    set "not in use" after it was chosen could still pay."""
+    _banks(store)
+    invoice_id = _red_river(store)
+    bogus = form_of(store, invoice_id, pay_from_account="BOGUS", pay_from_for="CAD")
+    answer = check(client, invoice_id, bogus)
+    assert not answer["allow"] and "BOGUS is not one of your bank accounts in use" in html.unescape(
+        answer["sections"]["bar"])  # fmt: skip
+    refused = client.post(f"/review/{invoice_id}/approve", data=_approvable(client, invoice_id, bogus), headers=PAGE)
+    assert refused.status_code == 400 and store.get_invoice(invoice_id)["status"] == REVIEW
+    # chosen, then closed: shown as such, and blocks
+    rows, _ = banks.clean_rows([dict(BANKS[1], active="no")])
+    store.save_bank_accounts(rows)
+    closed = form_of(store, invoice_id, pay_from_account="CAD-PAY", pay_from_for="CAD")
+    assert not check(client, invoice_id, closed)["allow"]
+    refused = client.post(f"/review/{invoice_id}/approve", data=_approvable(client, invoice_id, closed), headers=PAGE)
+    assert refused.status_code == 400 and store.get_invoice(invoice_id)["status"] == REVIEW
+    page = client.get(f"/review/{invoice_id}").text
+    assert "(not in use — pick another)" in page

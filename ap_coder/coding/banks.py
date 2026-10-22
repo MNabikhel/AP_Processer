@@ -170,6 +170,21 @@ def choose(accounts: list[dict[str, Any]], currency: str, preferred: str = "") -
     return str(same[0]["code"]) if len(same) == 1 else ""
 
 
+def blocking(code: str, accounts: list[dict[str, Any]]) -> str:
+    """What stops approval about the Pay from account, "" when nothing: once an account is in use, the invoice needs
+    one of the accounts in use (``accounts``: ``Store.bank_accounts()``). Never overridable ("Approve anyway" is for
+    a check a person can judge, not for paying from no account, a made-up one or a closed one, B-683). The review
+    screen's approve bar, the approval itself and the queue's Ready all ask this (B-685)."""
+    active = [a for a in accounts if a.get("active")]
+    if not active:
+        return ""
+    if not code:
+        return PICK
+    if not any(a["code"] == code for a in active):
+        return f"Pick another bank account to pay from: {code} is not one of your bank accounts in use"
+    return ""
+
+
 def findings(code: str, currency: str, accounts: list[dict[str, Any]]) -> list[tuple[str, str, str]]:
     """(severity, check, message) for the account an invoice is paid from. None while no account is set up (the
     review screen says how to add them)."""
