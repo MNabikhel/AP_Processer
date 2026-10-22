@@ -95,7 +95,7 @@
       {% macro field(name, cls="", type="text", placeholder="", hint="", step="", choices="") -%}
       {% set s = sure.get(name) %}{% set flags = live.flags or {} %}{% set filled = draft.from_vendor.fields or {} %}
       <label class="field {{ cls }}{% if name in flags %} is-flagged{% endif %}" data-field="{{ name }}"{% if name in absent_ok %} data-absent-ok{% endif %}{% if name in draft.absent %} data-absent{% endif %}>
-        <span class="lbl">{{ labels[name] }}{% if s %} <span class="inv-sure {{ s.tone }}" title="{{ s.help }}"><span class="ms" aria-hidden="true">{{ s.icon }}</span>{{ s.text }}</span>{% endif %}
+        <span class="lbl">{{ labels[name] }}{% if s %} <span class="inv-sure {{ s.tone }}" title="{{ s.help }}"{% if name in filled %} hidden{% endif %}><span class="ms" aria-hidden="true">{{ s.icon }}</span>{{ s.text }}</span>{% endif %}
           {% if hint %}<span class="rvw-hint" title="{{ hint }}"><span class="ms" aria-hidden="true">info</span></span>{% endif %}</span>
         <input type="{{ type }}" name="{{ name }}" value="{{ draft.header[name] }}" form="inv"{% if placeholder %} placeholder="{{ placeholder }}"{% endif %}{% if step %} step="{{ step }}"{% endif %}{% if hint %} title="{{ hint }}"{% endif %}{% if choices %} data-picker="free" data-picker-noun="{{ name }}" data-choices="{{ choices }}" autocomplete="off"{% endif %}>
         <span class="inv-absent small muted"{% if name not in draft.absent %} hidden{% endif %}><span class="ms" aria-hidden="true">do_not_disturb_on</span>Not on this invoice</span>
@@ -155,7 +155,7 @@
         {{ field("due_date", placeholder=due_placeholder, hint="Only if printed; otherwise it comes from the terms (shown greyed)") }}
         {{ field("currency", choices="CAD|Canadian dollar,USD|US dollar,EUR|Euro,GBP|British pound") }}
         {# Our bank account it is paid from (D-66): a list only, of the accounts set up on GL accounts & tax. #}
-        <label class="field inv-pay-from{% if 'pay_from_account' in flags %} is-flagged{% endif %}" data-field="pay_from_account">
+        <label class="field wide inv-pay-from{% if 'pay_from_account' in flags %} is-flagged{% endif %}" data-field="pay_from_account">
           <span class="lbl">{{ labels["pay_from_account"] }} <span class="rvw-hint" title="Your company's bank account that pays this invoice. It follows the invoice's currency (the default account of that currency, or the one this vendor was last paid from)."><span class="ms" aria-hidden="true">info</span></span></span>
           {% if pay_from.any %}
           <select name="pay_from_account" form="inv" data-pay-from>

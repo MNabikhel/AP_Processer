@@ -540,7 +540,11 @@ function setFromVendor(state) {
 function showFromVendor() {
   const fields = fromVendor().fields || {};
   document.querySelectorAll(".inv-details [data-from-vendor-note]").forEach((note) => {
-    note.hidden = !(note.closest("[data-field]")?.dataset.field in fields);
+    const field = note.closest("[data-field]");
+    note.hidden = !(field?.dataset.field in fields);
+    // how sure the reading was says nothing of a number that came from the vendor list
+    const sure = field?.querySelector(".lbl > .inv-sure");
+    if (sure) sure.hidden = !note.hidden;
   });
 }
 
