@@ -1,6 +1,7 @@
-"""GL accounts & tax: the codes the AI may use, how each sales tax posts, the coding policy and fixed rules.
+"""GL accounts & tax: the codes the AI may use, how each sales tax posts, the coding policy, fixed rules and our
+bank accounts (the account an invoice is paid from, D-66).
 
-``GET /accounts?tab=gl|cc|tax|policy|rules``. GL accounts and cost centers are imported from a spreadsheet (upload,
+``GET /accounts?tab=gl|cc|tax|policy|rules|bank``. GL accounts and cost centers are imported from a spreadsheet (upload,
 then pick the code / description / category columns: ``?file=``), edited in place and downloaded as CSV
 (``GET /accounts/<table>.csv``). Before any GL account exists, the sample setup can be loaded instead.
 """
@@ -14,6 +15,7 @@ import pandas as pd
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
+from ap_coder.coding import banks
 from ap_coder.coding.rules import Rule
 from ap_coder.coding.rules import suggest as suggest_rules
 from ap_coder.coding.tax import DEFAULT_RATES_PATH, RATES_FILE, TAX_TYPES, TREATMENTS, TaxRateTable, rates_path
@@ -45,6 +47,7 @@ TABS = {
     "tax": "Sales tax accounts",  # (not the Sales tax page under More: M2)
     "policy": "Coding policy",
     "rules": "Fixed rules",
+    "bank": "Bank accounts",
 }
 BLANK_ROWS = 3  # empty rows under a list, to add more
 EXPENSE_TO_LINE = "expense_to_line"
@@ -185,6 +188,8 @@ def accounts_page(request: Request, tab: str = "gl", file: str = "", sheet: str 
         context.update(tax_context(store))
     elif tab == "rules":
         context.update(rules_context(store, gl, cc))
+    elif tab == "bank":
+        context["bank"] = bank_context(store, gl, file, sheet)
     return render(request, "accounts.html", "accounts", **context)
 
 
@@ -208,6 +213,132 @@ def use_sample(request: Request) -> JSONResponse:
             icon="science",
         ),  # fmt: skip
     )
+
+
+
+# --- Our bank accounts (D-66) --------------------------------------------------------------------------------------
+# The company's own accounts, the ones invoices are paid from ("Pay from" on the review screen). Only the last 4 digits
+# of an account number are ever shown, here too: the grid's box is blank (typing replaces the number), and there is a
+# template to download, not the list.
+
+BANK_TEMPLATE = (
+    "code,name,currency,institution,transit,account_number,gl_account,default,active\r\n"
+    "CAD-OP,Sample Bank CAD operating,CAD,000,00000,0000001234,,yes,yes\r\n"
+)
+
+
+def bank_shown(store: Store) -> list[dict[str, Any]]:
+    """The bank accounts as the Bank accounts tab shows them (its ``page_version`` is posted with the grid)."""
+    return store.bank_accounts()
+
+
+def bank_context(store: Store, gl: list[dict[str, Any]], file: str, sheet: str) -> dict[str, Any]:
+    rows = bank_shown(store)
+    imp, imp_error = None, ""
+    if file:
+        try:
+            upload, df, sheets = read_upload(file, sheet or None)
+            if df.empty:
+                imp_error = "This file has no rows under its header line."
+            guessed = banks.columns_for([str(c) for c in df.columns])
+            imp = sheet_context(file, upload, df, sheets, sheet, banks.IMPORT_FIELDS, guessed, ("code", "currency"))
+        except SheetError as exc:
+            imp_error = str(exc)
+    return {
+        "rows": [{**r, "shown": banks.masked(r["account_number"]), "label": banks.label(r)} for r in rows],
+        "version": page_version(rows),  # posted with the grid (B-655)
+        "blank": BLANK_ROWS,
+        "gl_options": [(a["code"], f"{a['code']} · {short_name(a['description'])}") for a in gl],
+        "imp": imp,
+        "imp_error": imp_error,
+    }
+
+
+def _gl_codes(store: Store) -> set[str] | None:
+    """The GL accounts a bank account's cash GL must be one of (None while no chart is loaded)."""
+    codes = {a["code"] for a in store.list_accounts("gl_accounts")}
+    return codes or None
+
+
+@router.post("/accounts/bank/upload")
+async def bank_upload(request: Request, file: UploadFile = File(...)) -> JSONResponse:  # noqa: B008
+    token, problem = await receive_sheet(file)
+    if problem:
+        return refuse(problem)
+    return done(request, f"/accounts?tab=bank&file={token}#import")
+
+
+@router.post("/accounts/bank/import")
+async def bank_import(request: Request) -> JSONResponse:
+    form = await posted_form(request)
+    store = get_store(request)
+    token, sheet = str(form.get("file") or ""), str(form.get("sheet") or "")
+    try:
+        _upload, df, _sheets = read_upload(token, sheet or None)
+    except SheetError as exc:
+        return refuse(str(exc))
+    if df.empty:
+        return refuse("This file has no rows under its header line.")
+    columns = list(df.columns)
+    picked = {f: str(form.get(f"col_{f}") or "") for f in banks.IMPORT_FIELDS}
+    picked = {f: c for f, c in picked.items() if c in columns}
+    if "code" not in picked:
+        return refuse("Pick the column with each account's code (e.g. CAD-OP).")
+    records = [{f: rec.get(c) for f, c in picked.items()} for rec in df.to_dict("records")]
+    keep = {r["code"]: r for r in store.bank_accounts()}
+    for r in records:  # a column not picked keeps what the account has
+        old = keep.get(str(r.get("code") or "").strip())
+        if old:
+            for f in banks.COLUMNS:
+                if f not in picked:
+                    r[f] = old[f]
+    rows, problems = banks.clean_rows(records, _gl_codes(store))
+    if problems:
+        return refuse("Nothing was imported: " + " ".join(problems[:6]) + (" …" if len(problems) > 6 else ""))
+    if not rows:
+        return refuse("No row has a code in the column picked: nothing was imported.")
+    result = store.save_bank_accounts(rows, actor=reviewer(), imported=True)
+    drop_upload(token)
+    return done(request, "/accounts?tab=bank",
+                f"Imported: {result['added']} added, {result['updated']} updated.")  # fmt: skip
+
+
+@router.post("/accounts/bank/save")
+async def bank_save(request: Request) -> JSONResponse:
+    """The edited grid: each row by its code (a new row's code typed in), the account number kept when its box is
+    left blank, the default (one per currency) and whether it is in use."""
+    form = await posted_form(request)
+    store = get_store(request)
+    stale = stale_page(form, bank_shown(store))  # an account imported meanwhile would be overwritten (B-655)
+    if stale is not None:
+        return stale
+    stored = {r["code"]: r for r in store.bank_accounts()}
+    cols = {f: form.getlist(f) for f in ("code", "name", "currency", "institution", "transit", "account_number",
+                                         "gl_account")}  # fmt: skip
+    defaults, active = {str(v) for v in form.getlist("is_default")}, {str(v) for v in form.getlist("active")}
+    records = []
+    for n, code in enumerate(cols["code"]):
+        row = {f: str(values[n] if n < len(values) else "").strip() for f, values in cols.items()}
+        old = stored.get(row["code"])
+        if old and not row["account_number"]:
+            row["account_number"] = old["account_number"]  # left blank: unchanged (it is never shown in full)
+        row["is_default"] = "yes" if str(n) in defaults else "no"
+        row["active"] = "yes" if (str(n) in active or not old) else "no"
+        records.append(row)
+    rows, problems = banks.clean_rows(records, _gl_codes(store))
+    if problems:
+        return refuse(" ".join(problems[:6]))
+    result = store.save_bank_accounts(rows, actor=reviewer())
+    changed = result["added"] + result["updated"]
+    return done(request, "/accounts?tab=bank",
+                f"Saved: {ui.plural(changed, 'bank account')} changed." if changed else "Nothing changed.")  # fmt: skip
+
+
+@router.get("/accounts/bank/template.csv")
+def bank_template() -> Response:
+    """The columns a bank account file takes, with one made-up row (never the accounts themselves: only the last 4
+    digits of an account number are ever shown)."""
+    return download(BANK_TEMPLATE.encode("utf-8-sig"), "bank_accounts_template.csv", "text/csv")
 
 
 # --- GL accounts and cost centers ----------------------------------------------------------------------------------
@@ -387,3 +518,4 @@ def add_rule(
         "/accounts?tab=rules",
         flash_message(f"Rule added: {rule.vendor} → {rule.gl_code}.", "ok", icon="rule_settings"),
     )
+
