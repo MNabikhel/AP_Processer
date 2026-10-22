@@ -2283,6 +2283,46 @@ def credit_printed_positive(layout: DocLayout) -> bool:
 
 _TAX_HEAD = re.compile(r"^(?:vat|tax|gst|hst|pst|qst|tps|tvq|tvh|tva|ust|mwst|iva)\b")  # a tax column's heading word
 _ROW_NUMBER_HEAD = re.compile(r"^(?:no\.?|#|pos\.?|n\s?°)\s+(?=[a-z])")  # "No. Description": the row number's heading
+# The heading of a line table's tax-code column ("Tax", "Tax code", "Tx", "GST/PST", "Code taxe"): its cells say which
+# taxes the line carries ("G", "GP", "G R", "E", "*"), kept as the line's ``tax_flags`` and not in its description.
+_TAX_CODE_HEAD = re.compile(
+    r"^(?:tax(?:es)?(?:\s*(?:code|cd|cat(?:egory)?|flag|type|ind(?:icator)?))?|tx|taxe?s?\s*code|codes?\s*(?:de\s*)?"
+    r"tax(?:e|es)?|(?:gst|tps)\s*/\s*(?:pst|hst|qst|rst|tvq|tvh)|(?:gst|hst|pst|qst|rst|tps|tvq|tvh))\s*:?$"
+)
+# A tax-code cell: letters ("G", "GP", "G R", "G,P"), a star, or a word that says it ("Exempt", "GST/PST", "HST ON").
+_TAX_FLAG_CELL = re.compile(
+    r"^(?:[A-Z*]{1,3}(?:[\s,/+&]+[A-Z*]{1,3}){0,3}"
+    r"|(?i:exempt(?:ed)?|exon[ée]r[ée]e?|zero[- ]?rated|non[- ]?taxable|taxable|n\s*/\s*[ta]|yes|no|oui|non)"
+    r"|(?i:(?:gst|hst|pst|qst|rst|tps|tvq|tvh)(?:\s*[/+&]\s*(?:gst|hst|pst|qst|rst|tps|tvq|tvh))?)(?:\s+[A-Z]{2})?)$"
+)
+
+
+def tax_code_column(row: list[Line], cols: dict[str, Box]) -> Box | None:
+    """The box of the line table's tax-code column heading in its heading row (``heading_row``'s lines), when it has
+    one: a segment that is only that heading, or such a word in a run of headings ("Unit Price Tax Amount"). None when
+    there is none, or it is one of the named columns."""
+    for line in row:
+        p = plain(line.text).strip()
+        if _TAX_CODE_HEAD.match(p):
+            box = line.box
+        else:
+            word = next((w for w in line.words if re.fullmatch(r"tax(?:es)?|tx|taxe?s?", plain(w.text).strip(" :"))),
+                        None)  # fmt: skip
+            if word is None or not _heading_cells(line, {}):
+                continue
+            box = word.box
+        if not any(abs(box.cx - b.cx) < 0.01 and abs(box.cy - b.cy) < 0.01 for b in cols.values()):
+            return box
+    return None
+
+
+def tax_flag_cell(text: str) -> bool:
+    """Whether a cell's text reads as a line's tax code ("G", "G R", "GP", "E", "*", "Exempt", "HST ON")."""
+    return bool(_TAX_FLAG_CELL.match(" ".join((text or "").split())))
+
+
+def _under_tax_column(seg: Line, column: Box | None) -> bool:
+    return column is not None and abs(seg.box.cx - column.cx) < max(0.035, column.width) and tax_flag_cell(seg.text)
 
 
 def _heading_name(text: str) -> str | None:
@@ -2674,6 +2714,7 @@ def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | 
             printed_sum = at_sum if rows_read else printed_sum
             continue
         y_top, cols = header
+        tax_column = tax_code_column(found[1], cols) if found else None
         rows: dict[float, list[Line]] = {}
         stop_y = stop_cy = 1.0
         for line in page.lines:
@@ -2714,10 +2755,13 @@ def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | 
                 else:
                     last = None
                 continue
+            # The tax-code column's cell ("G R") is the line's tax code, not part of its description (D-64).
+            flags = [s for s in segs if s is not amt_seg and _under_tax_column(s, tax_column)
+                     and not ("description" in cols and abs(s.box.x0 - cols["description"].x0) < 0.05)]  # fmt: skip
             # A number cell (qty, price, amount, row number) is not part of the description; a description
             # with a number in it ("Meraki MR46", "Cat6 cables", "1 year licence") is.
-            desc = " ".join(s.text for s in segs if s is not amt_seg and not _NUMBER_CELL.match(s.text) or
-                            ("description" in cols and abs(s.box.x0 - cols["description"].x0) < 0.05))  # fmt: skip
+            desc = " ".join(s.text for s in segs if s not in flags and (s is not amt_seg and not _NUMBER_CELL.match(s.text)
+                            or ("description" in cols and abs(s.box.x0 - cols["description"].x0) < 0.05)))  # fmt: skip
             qty = price = None
             if "quantity" in cols:
                 q = next((f for s, f in nums if f and abs(s.box.cx - cols["quantity"].cx) < 0.05), None)
@@ -2738,7 +2782,8 @@ def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | 
                     qty, price = fit
             row_box = union_all([s.box for s in segs])
             score = 0.8 if (qty is None or price is None or abs(qty * price - amount) <= 0.011) else 0.5
-            items.append(LineReading(desc.strip(), qty, price, amount, [row_box] if row_box else [], score))
+            items.append(LineReading(desc.strip(), qty, price, amount, [row_box] if row_box else [], score,
+                                     tax_flags=" ".join(" ".join(s.text.split()) for s in flags)))  # fmt: skip
             money.append(_printed_as_money(amt_token))
             last = (items[-1], max(seg.box.y1 for seg in segs))
     if guessed:  # kept only when they add up

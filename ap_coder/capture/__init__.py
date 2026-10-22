@@ -225,7 +225,7 @@ def _choose_lines(layout: DocLayout, fields: dict[str, FieldResult], own: list[L
     )
     if same and layout.source in ("ocr", "mixed"):
         return [LineReading(b.description, b.quantity, b.unit_price, b.amount, list(a.boxes), max(a.score, b.score),
-                            "vlm", sorted({a.source, *a.agreed} - {"", "vlm"}))
+                            "vlm", sorted({a.source, *a.agreed} - {"", "vlm"}), b.tax_flags or a.tax_flags)
                 for a, b in zip(own, vlm, strict=True)]  # fmt: skip
     return own
 
@@ -255,7 +255,7 @@ def _discounts_taken_off(items: list[LineReading], targets: list[float]) -> list
     if not targets or _adds_up(items, targets):
         return items
     off = [LineReading(li.description, li.quantity, li.unit_price, -li.amount, list(li.boxes), li.score, li.source,
-                       list(li.agreed))
+                       list(li.agreed), li.tax_flags)
            if li.amount and li.amount > 0 and li.quantity is None and _DISCOUNT_LINE.search(li.description) else li
            for li in items]  # fmt: skip
     return off if off != items and _adds_up(off, targets) else items
@@ -324,7 +324,7 @@ def _boxed_rows(layout: DocLayout, items: list[LineReading]) -> list[LineReading
             boxes = [union_all([ln.box for ln in page.lines if _same_row(ln.box, spot)] if page else []) or spot]
             after = (spot.page, max(first.cy, spot.cy) + 0.006)
         out.append(LineReading(li.description, li.quantity, li.unit_price, li.amount, boxes, li.score, "vlm",
-                               list(li.agreed)))  # fmt: skip
+                               list(li.agreed), li.tax_flags))  # fmt: skip
     return out
 
 

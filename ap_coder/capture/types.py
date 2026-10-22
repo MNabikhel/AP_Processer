@@ -225,6 +225,9 @@ class LineReading:
     score: float = 0.0
     source: str = ""  # the reader whose row this is (LINE_SOURCES); "" for a reading stored before it was recorded
     agreed: list[str] = field(default_factory=list)  # other readers that read the same row (amount, quantity, words)
+    # The text of the line table's tax column on this row, as printed ("G", "GP", "G R", "H", "E", "*", "exempt"): the
+    # line's tax code, read with the invoice's legend (``coding.line_tax.prefill``, D-64). "" when there is none.
+    tax_flags: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -235,7 +238,8 @@ class LineReading:
     def from_dict(cls, d: dict[str, Any]) -> LineReading:
         return cls(d.get("description") or "", d.get("quantity"), d.get("unit_price"), d.get("amount"),
                    [Box.from_list(b) for b in d.get("boxes") or []], float(d.get("score") or 0),
-                   str(d.get("source") or ""), [str(s) for s in d.get("agreed") or []])  # fmt: skip
+                   str(d.get("source") or ""), [str(s) for s in d.get("agreed") or []],
+                   str(d.get("tax_flags") or ""))  # fmt: skip
 
 
 @dataclass
