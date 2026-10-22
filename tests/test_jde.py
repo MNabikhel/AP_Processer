@@ -253,6 +253,34 @@ def test_match_header_gives_no_tax_to_an_exempt_line():
     assert sum(sum(t) for t in taxes) == round(doc["grand_total"] * 100)
 
 
+def test_match_header_an_exempt_or_zero_rated_line_is_its_own_pay_item_with_the_exempt_code():
+    """D-64: a line marked exempt or zero-rated (no tax put on it) says so to E1, on its pay item and, with the
+    distribution's tax columns, on its G/L line; the taxed lines keep the invoice's code. One pay item: the
+    invoice's."""
+    doc = json.loads((SAMPLES / "ground_truth" / f"{ON}.json").read_text())
+    doc["line_items"][-1].update(taxes_applied=[], tax_status="exempt")
+    doc["line_items"][-2].update(taxes_applied=[], tax_status="zero_rated")
+    free = doc["line_items"][-1]["amount"] + doc["line_items"][-2]["amount"]
+    taxable = round(doc["subtotal"] - free, 2)
+    hst = round(taxable * 0.13, 2)
+    doc["tax_lines"][0].update(taxable_amount=taxable, tax_amount=hst)
+    doc.update(tax_total=hst, grand_total=round(doc["subtotal"] + hst, 2))
+    inv = _invoice(ON, **doc)
+    settings = jde.JdeSettings(line_numbering=jde.MATCH_HEADER, amount_mode=jde.AMOUNT_TAX, dist_tax_columns=True)
+    assert jde.validate([inv], settings, AN8) == {}
+    files = _files([inv], settings)
+    heads, lines = files[jde.HEADER_FILE], files[jde.DIST_FILE]
+    assert [h["VLEXR1"] for h in heads] == ["V", "V", "V", "E", "E"]
+    assert [x["VNEXR1"] for x in lines] == ["V", "V", "V", "E", "E"]
+    assert all(int(h["VLSTAM"]) == 0 and int(h["VLATXA"]) == 0 for h in heads[-2:])
+    assert sum(int(h["VLATXA"]) + int(h["VLATXN"]) + int(h["VLSTAM"]) for h in heads) == round(doc["grand_total"] * 100)
+    one = _files([inv], jde.JdeSettings(amount_mode=jde.AMOUNT_TAX, dist_tax_columns=True))
+    assert [h["VLEXR1"] for h in one[jde.HEADER_FILE]] == ["V"]
+    # A configured exempt code is used, not "E"
+    custom = _files([inv], jde.JdeSettings(line_numbering=jde.MATCH_HEADER, exempt_code="X"))[jde.HEADER_FILE]
+    assert [h["VLEXR1"] for h in custom][-2:] == ["X", "X"]
+
+
 def _yen_invoice(old_distribution=False):
     """Three 10-yen lines with BC PST (2 yen), one 1,000-yen line without; GST 52 yen on everything. An old
     distribution was spread in cents (10.66 + 10.67 + 10.67): rounded line by line to the yen, that is 33, not 32."""

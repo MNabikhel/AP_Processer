@@ -483,3 +483,28 @@ def test_the_exports_have_a_tax_code_column():
     assert ("tax_code", "Tax code") in exports.LINE_COLUMNS and "tax_code" in export_layout.FIELDS
     csv_text = exports.build_csv([{"id": 1, "final_output": final}]).decode("utf-8-sig")
     assert "Tax code" in csv_text.splitlines()[0] and ",Exempt," in csv_text
+
+
+# --- The chat model's lines, the audit trail --------------------------------------------------------------------------
+
+
+def test_the_chat_models_lines_without_taxes_are_worked_out_and_its_own_kept():
+    from ap_coder.ai.pipeline import _model_line_taxes
+
+    lines = [_line(1, 9200, description="Desk"), _line(2, 3960, description="Chair"),
+             _line(3, 1200, description="Design"), _line(4, 285, description="Delivery")]  # fmt: skip
+    coding = _coding(lines, [_tax("GST", 0.05, 14645), _tax("PST", 0.07, 13445, 941.15, "MB")], "MB")
+    _model_line_taxes(coding, "")
+    assert [tax_code_of(li) for li in coding.line_items] == ["GST+PST", "GST+PST", "GST", "GST+PST"]
+    said = _coding([_line(1, 100, ["GST"]), _line(2, 50)], [_tax("GST", 0.05, 100)], "AB")
+    _model_line_taxes(said, "")
+    assert [tax_code_of(li) for li in said.line_items] == ["GST", "NONE"]  # the model said something: kept
+
+
+def test_the_audit_trail_says_a_lines_tax_code_changed():
+    from ap_coder.core.audit import diff_coding
+
+    ai = {"line_items": [{"line_number": 1, "amount": 100, "taxes_applied": ["GST", "PST"]}]}
+    final = {"line_items": [{"line_number": 1, "amount": 100, "taxes_applied": [], "tax_status": "exempt"}]}
+    change = next(c for c in diff_coding(ai, final) if c["what"] == "line 1 tax code")
+    assert (change["before"], change["after"]) == ("GST + PST", "Exempt")
