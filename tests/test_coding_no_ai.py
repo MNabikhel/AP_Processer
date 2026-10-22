@@ -203,3 +203,28 @@ def test_the_coding_benchmark_runs_and_is_deterministic(tmp_path, capsys):
     md = (out / "report.md").read_text(encoding="utf-8")
     assert "## First invoice from a vendor" in md and "## Has AP coded this item before?" in md
     assert simulate(4, 3, 5) == rows  # the same seed gives the same company, invoices and proposals
+
+
+def test_the_realistic_coding_benchmark_adds_what_the_default_leaves_out(tmp_path):
+    """``--realistic``: ERP history before the first invoice, reviewer mistakes, kept chat-model guesses and a split
+    account; the default run is not changed by it (its numbers stay comparable)."""
+    from ap_coder.bench.__main__ import main
+    from ap_coder.bench.coding import REALISTIC, SPLIT, simulate, true_gl
+
+    assert true_gl("Monthly maintenance contract", "supply", quantity=12) == "6220"  # split only when asked
+    assert (
+        true_gl("Monthly maintenance contract", "supply", quantity=12, split=True)
+        == SPLIT["Monthly maintenance contract"][1]
+    )
+    out = tmp_path / "real"
+    assert main(["coding", "--vendors", "8", "--invoices", "4", "--seed", "3", "--realistic", "--out", str(out)]) == 0
+    report = json.loads((out / "report.json").read_text(encoding="utf-8"))
+    assert report["config"]["realism"]["mistakes"] == REALISTIC.mistakes
+    rows = [json.loads(x) for x in (out / "lines.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert rows == simulate(8, 4, 3, REALISTIC)
+    assert any(r["position"] == 1 and r["seen"] != "never" for r in rows)  # history imported first
+    assert any(r["in_line"] != r["proposed"] for r in rows)  # the chat model's guesses on the blank lines
+    assert any(r["approved"] != r["truth"] for r in rows)  # a mistake, or a wrong guess kept
+    assert "split" in rows[0] and "history_warnings" in report["summary"]
+    plain = simulate(8, 4, 3)
+    assert "approved" not in plain[0] and len(plain) == len(rows)

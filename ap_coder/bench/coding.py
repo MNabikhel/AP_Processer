@@ -76,7 +76,8 @@ UTILITY_ITEMS = {
 UTILITY_NAMES = {"hydro": ["Hydro", "Power", "Energy"], "gas": ["Gas"], "water": ["Water & Wastewater"],
                  "telecom": ["Telecom", "Communications"]}  # fmt: skip
 COST_CENTER = {"5000": "CC600", "6000": "CC200", "6010": "CC400", "6020": "CC400", "6040": "CC400", "6110": "CC400",
-               "6200": "CC600", "6210": "CC700", "6220": "CC700", "6230": "CC700", "6400": "CC510"}  # fmt: skip
+               "6200": "CC600", "6210": "CC700", "6220": "CC700", "6230": "CC700", "6400": "CC510",
+               "1550": "CC700"}  # fmt: skip
 # What a supplier sells: its trade's items (vendors of one trade overlap), plus a few others.
 TRADES = {
     "office": ["Copy paper 8.5x11, case of 10", "Toner cartridge HP 58X", "Shipping cartons 18x12x12"],
@@ -117,14 +118,56 @@ VARIANT_RATE = 0.15  # an invoice line worded differently from the supplier's us
 
 # AP changes its mind: from halfway through, spare parts kept in stock are coded to materials.
 RECODED = {"Bearing 6205-2RS": (0.5, "5000"), "Hydraulic hose assembly 1/2 in.": (0.5, "5000")}
+# One item truly split between two accounts (``Realism.split``): a maintenance contract billed for more than 3 months
+# ahead is a prepaid expense, a shorter one repairs. Its words alone cannot tell which.
+SPLIT = {"Monthly maintenance contract": (3, "1550")}  # item -> (months up to which it is not split, the other one)
 
 
-def true_gl(item: str, kind: str, t: float = 0.0) -> str:
-    """The account of ``item`` sold by a vendor of ``kind``, at time ``t`` (0 to 1) of the stream."""
+@dataclass(frozen=True)
+class Realism:
+    """What the default benchmark leaves out, each off unless asked for (``--realistic`` turns them all on):
+
+    * ``mistakes``: the share of lines AP approves with a wrong account by mistake (a plausible one), right again
+      on the vendor's later invoices;
+    * ``history``: the share of vendors whose past coding is imported from the ERP before their first invoice
+      (``Store.import_history``): each of their items one to four times, in their wording, at the account it had
+      then, ``history_noise`` of them on a wrong account;
+    * ``guesses``: the chat model guesses an account for every line left blank (``guess_right`` of them right), and
+      the reviewer keeps it (outcome *coded*), a wrong one too ``guess_kept_wrong`` of the time;
+    * ``split``: the maintenance contract goes to two accounts by its quantity (``SPLIT``).
+    """
+
+    mistakes: float = 0.0
+    history: float = 0.0
+    history_noise: float = 0.0
+    guesses: bool = False
+    guess_right: float = 0.7
+    guess_kept_wrong: float = 0.25
+    split: bool = False
+
+    @property
+    def any(self) -> bool:
+        return bool(self.mistakes or self.history or self.guesses or self.split)
+
+
+REALISTIC = Realism(mistakes=0.02, history=0.4, history_noise=0.02, guesses=True, split=True)
+# The wrong account a person (or the chat model) might plausibly pick: one of the accounts the catalog's items go to.
+PLAUSIBLE = sorted(set(ITEM_GL.values()) | set(UTILITY_GL.values()) | {gl for _, gl in SPLIT.values()})
+
+
+def true_gl(item: str, kind: str, t: float = 0.0, quantity: float = 1.0, split: bool = False) -> str:
+    """The account of ``item`` sold by a vendor of ``kind``, at time ``t`` (0 to 1) of the stream, for
+    ``quantity`` of it (a split item, ``split``, goes by its quantity)."""
     if kind in UTILITY_GL:
         return UTILITY_GL[kind]
+    if split and item in SPLIT and quantity > SPLIT[item][0]:
+        return SPLIT[item][1]
     since, gl = RECODED.get(item, (2.0, ""))
     return gl if t >= since else ITEM_GL[item]
+
+
+def plausible_wrong(rng: random.Random, truth: str) -> str:
+    return rng.choice([gl for gl in PLAUSIBLE if gl != truth])
 
 
 # --- the company ------------------------------------------------------------------------------------------------
@@ -142,8 +185,8 @@ class Vendor:
     house: dict[tuple[str, str], str] = field(default_factory=dict)  # (item, language) -> its usual wording
     sku: dict[str, str] = field(default_factory=dict)  # item -> the vendor's code for it
 
-    def gl(self, item: str, t: float = 0.0) -> str:
-        return true_gl(item, self.kind, t)
+    def gl(self, item: str, t: float = 0.0, quantity: float = 1.0, split: bool = False) -> str:
+        return true_gl(item, self.kind, t, quantity, split)
 
 
 def _split(text: str) -> tuple[str, str]:
@@ -333,16 +376,46 @@ def _source(suggestion: Any) -> str:
     return "other"
 
 
-def simulate(vendors: int = 30, invoices: int = 30, seed: int = 1) -> list[dict[str, Any]]:
-    """Every line of every invoice, in the order they arrived, with what was proposed and the truth."""
+def _history_rows(seed: int, company: list[Vendor], realism: Realism) -> dict[int, list[dict[str, Any]]]:
+    """{vendor: its past coding as the ERP exports it}, for ``realism.history`` of the vendors: each item one to four
+    times, in the vendor's wording, at the account it had before the period."""
+    rng = random.Random(f"ap-bench-coding:{seed}:history")
+    out: dict[int, list[dict[str, Any]]] = {}
+    for vi, v in enumerate(company):
+        if rng.random() >= realism.history:
+            continue
+        rows = []
+        for item in v.items:
+            for _ in range(rng.randint(1, 4)):
+                lg = v.lang if v.lang != "bi" else rng.choice(["en", "fr"])
+                month = rng.randint(1, 12)
+                text = v.house[(item, lg)].replace("{month}", MONTHS[lg][month - 1])
+                quantity = float(rng.choice([1, 1, 2, 6, 12]))
+                gl = v.gl(item, 0.0, quantity, realism.split)
+                if rng.random() < realism.history_noise:
+                    gl = plausible_wrong(rng, gl)
+                rows.append({"vendor_name": v.name, "description": text.upper() if v.style["upper"] else text,
+                             "gl_code": gl, "cost_center": COST_CENTER[gl], "amount": 100.0,
+                             "date": f"2024-{month:02d}-15"})  # fmt: skip
+        out[vi] = rows
+    return out
+
+
+def simulate(
+    vendors: int = 30, invoices: int = 30, seed: int = 1, realism: Realism | None = None
+) -> list[dict[str, Any]]:
+    """Every line of every invoice, in the order they arrived, with what was proposed and the truth. ``realism``:
+    what the default run leaves out (reviewer mistakes, ERP history, kept chat-model guesses, a split account)."""
+    from ap_coder.ai.inference import MODEL_SUGGESTED
     from ap_coder.ai.offline_coder import code_from_capture
     from ap_coder.ai.suggest import suggest_gl
     from ap_coder.coding import rules
-    from ap_coder.core.memory import _normalise
+    from ap_coder.core.memory import _normalise, compare_with_history
     from ap_coder.core.reference_data import UNASSIGNED, load_reference_data
     from ap_coder.core.store import Store
     from ap_coder.web.invoice_view import suggestions
 
+    realism = realism or Realism()
     reference = load_reference_data(
         DATA / "chart_of_accounts.csv", DATA / "cost_centers.csv", DATA / "tax_gl_mapping.csv",
         DATA / "coding_policy.md",
@@ -357,30 +430,63 @@ def simulate(vendors: int = 30, invoices: int = 30, seed: int = 1) -> list[dict[
         store.import_vendor_master(
             [{"vendor_name": v.name, "default_gl": v.default_gl, "status": "active"} for v in company]
         )
+        if realism.history:
+            history = _history_rows(seed, company, realism)
+            store.import_history([r for vi in sorted(history) for r in history[vi]])
+            for vi, past in history.items():
+                for r in past:
+                    seen_texts[vi].add(_normalise(r["description"]))
+                for item in company[vi].items:
+                    seen_items[vi].add(item)
+                    sold_by[item].add(vi)
         for n, (t, vi, position) in enumerate(arrivals(seed, vendors, invoices)):
             v = company[vi]
             rng = random.Random(f"ap-bench-coding:{seed}:{vi}:{position}")
+            act = random.Random(f"ap-bench-coding:{seed}:{vi}:{position}:reviewer")  # the realism's own draws
             on = dt.date(2025, 1, 6) + dt.timedelta(days=int(t * 540))
             lines = invoice_lines(rng, v, on.month)
             number = f"INV-{vi:03d}-{position + 1:04d}"
+            truths = [v.gl(line.item, t, line.quantity, realism.split) for line in lines]
 
             # 1. What the app proposes with no AI model (pipeline.process: code from capture, then the rules).
             feedback = store.feedback_rows()
             coding = code_from_capture(_capture(v.name, number, on, lines), reference, feedback, store).coding
             coding, rule_changes = rules.apply(coding, store.coding_rules())
             shown = {s["position"]: [o["gl"] for o in s["options"]] for s in suggestions(store, reference, coding)}
+            proposals = [li.predicted_gl_code for li in coding.line_items]
 
-            # 2. AP approves the true account of every line.
+            # The chat model's guess for each line left blank (``pipeline._local_accounts``), marked as a guess.
+            if realism.guesses:
+                for li, truth in zip(coding.line_items, truths, strict=True):
+                    if li.predicted_gl_code == UNASSIGNED:
+                        li.predicted_gl_code = truth if act.random() < realism.guess_right else plausible_wrong(
+                            act, truth
+                        )  # fmt: skip
+                        li.predicted_cost_center = COST_CENTER[li.predicted_gl_code]
+                        li.reasoning_justification = f"{MODEL_SUGGESTED}: a line like the ones it was shown"
+            # The HISTORY_CONFLICT check on the lines as the reviewer sees them (``pipeline.finalise_coding``).
+            warned = {h["line_number"] for h in compare_with_history(coding, feedback) if h["status"] == "conflict"}
+
+            # 2. AP approves the true account of every line: a guess that was wrong is sometimes kept, and a few
+            # lines get a wrong account by mistake (right again on a later invoice).
             output = coding.model_dump(mode="json")
             invoice_id = store.add_invoice(Path(tmp) / f"{number}.pdf", output, None,
                                            meta={"rules_applied": rule_changes})  # fmt: skip
             final = json.loads(json.dumps(output))
-            for li, line in zip(final["line_items"], lines, strict=True):
-                li["predicted_gl_code"] = v.gl(line.item, t)
-                li["predicted_cost_center"] = COST_CENTER[v.gl(line.item, t)]
+            approved = []
+            for li, ai, truth in zip(final["line_items"], coding.line_items, truths, strict=True):
+                gl = truth
+                guess = realism.guesses and ai.reasoning_justification.startswith(MODEL_SUGGESTED)
+                if guess and ai.predicted_gl_code != truth and act.random() < realism.guess_kept_wrong:
+                    gl = ai.predicted_gl_code
+                elif realism.mistakes and act.random() < realism.mistakes:
+                    gl = plausible_wrong(act, truth)
+                li["predicted_gl_code"] = gl
+                li["predicted_cost_center"] = COST_CENTER[gl]
+                approved.append(gl)
 
             for pos, (li, line) in enumerate(zip(coding.line_items, lines, strict=True)):
-                truth = v.gl(line.item, t)
+                truth = truths[pos]
                 ranked = suggest_gl(line.text, v.name, feedback, reference, limit=3, default_gl=v.default_gl)
                 top = ranked[0] if ranked else None
                 norm = _normalise(line.text)
@@ -390,32 +496,36 @@ def simulate(vendors: int = 30, invoices: int = 30, seed: int = 1) -> list[dict[
                     else "other vendors only" if sold_by[line.item] - {vi}
                     else "never"
                 )  # fmt: skip
-                proposed = li.predicted_gl_code
-                rows.append(
-                    {
-                        "invoice": n + 1,
-                        "vendor": v.name,
-                        "vendor_kind": v.kind,
-                        "position": position + 1,
-                        "line": pos + 1,
-                        "text": line.text,
-                        "item": line.item,
-                        "lang": line.lang,
-                        "truth": truth,
-                        "proposed": proposed,
-                        "assigned": proposed != UNASSIGNED,
-                        "correct": proposed == truth,
-                        "source": _source(top) if proposed != UNASSIGNED else "",
-                        "top": [s.gl_code for s in ranked],
-                        "top_score": round(top.score, 4) if top else 0.0,
-                        "top_source": _source(top),
-                        "top_auto": bool(getattr(top, "auto", True)) if top else False,
-                        "shown": shown.get(pos, []),
-                        "seen": seen,
-                        "default_gl": bool(v.default_gl),
-                        "recoded": line.item in RECODED and t >= RECODED[line.item][0],
-                    }
-                )
+                proposed = proposals[pos]
+                row = {
+                    "invoice": n + 1,
+                    "vendor": v.name,
+                    "vendor_kind": v.kind,
+                    "position": position + 1,
+                    "line": pos + 1,
+                    "text": line.text,
+                    "item": line.item,
+                    "lang": line.lang,
+                    "truth": truth,
+                    "proposed": proposed,
+                    "assigned": proposed != UNASSIGNED,
+                    "correct": proposed == truth,
+                    "source": _source(top) if proposed != UNASSIGNED else "",
+                    "top": [s.gl_code for s in ranked],
+                    "top_score": round(top.score, 4) if top else 0.0,
+                    "top_source": _source(top),
+                    "top_auto": bool(getattr(top, "auto", True)) if top else False,
+                    "shown": shown.get(pos, []),
+                    "seen": seen,
+                    "default_gl": bool(v.default_gl),
+                    "recoded": line.item in RECODED and t >= RECODED[line.item][0],
+                    "in_line": li.predicted_gl_code,  # what the reviewer saw: the proposal, or the chat model's guess
+                    "warned": li.line_number in warned,  # HISTORY_CONFLICT on the line
+                }
+                if realism.any:
+                    row["approved"] = approved[pos]
+                    row["split"] = line.item in SPLIT and realism.split
+                rows.append(row)
             store.approve_invoice(invoice_id, final, REVIEWER)
             for line in lines:
                 seen_items[vi].add(line.item)
@@ -469,6 +579,22 @@ def _bucket(position: int) -> str:
     return "?"
 
 
+def history_warnings(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """The HISTORY_CONFLICT warning on the lines that had an account (the proposal or the chat model's guess): how
+    often it was a false alarm (the account was right), and how many of the wrong accounts it caught."""
+    shown = [r for r in rows if r.get("in_line", r["proposed"]) != "UNASSIGNED"]
+    right = [r for r in shown if r.get("in_line", r["proposed"]) == r["truth"]]
+    wrong = [r for r in shown if r.get("in_line", r["proposed"]) != r["truth"]]
+    after_recode = [r for r in right if r["recoded"]]
+    return {
+        "lines": len(shown),
+        "false_alarms": sum(r.get("warned", False) for r in right),
+        "false_alarms_after_recode": sum(r.get("warned", False) for r in after_recode),
+        "wrong": len(wrong),
+        "caught": sum(r.get("warned", False) for r in wrong),
+    }
+
+
 def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
     wrong = Counter((r["truth"], r["proposed"], r["source"]) for r in rows if r["assigned"] and not r["correct"])
     return {
@@ -494,6 +620,8 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
             for s in sorted({r["source"] for r in rows if r["assigned"]})
         },
         "recoded": line_stats([r for r in rows if r["recoded"]]),
+        "split": line_stats([r for r in rows if r.get("split")]),
+        "history_warnings": history_warnings(rows),
         "top_errors": [{"truth": t, "proposed": p, "source": s, "lines": n} for (t, p, s), n in wrong.most_common(12)],
     }
 
@@ -516,6 +644,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "# GL coding without an AI model\n",
         f"{cfg['vendors']} vendors x {cfg['invoices']} invoices (seed {cfg['seed']}): {o['lines']} lines, coded as "
         "they arrive from what AP approved before (no chat model, no Azure), then approved with the true account.\n",
+        *([f"Realistic run: {cfg['realism']}\n"] if cfg.get("realism") else []),
         f"- **Accuracy** (right account proposed, of all lines): **{_pct(o['accuracy'])}**",
         f"- **Precision** (proposed accounts that were right): **{_pct(o['precision'])}** ({o['wrong']} wrong)",
         f"- **Coverage** (lines given an account, not left UNASSIGNED): **{_pct(o['coverage'])}**",
@@ -550,6 +679,21 @@ def render_markdown(report: dict[str, Any]) -> str:
             f"such lines after the change, accuracy {_pct(rc['accuracy'])}, precision {_pct(rc['precision'])} "
             f"({rc['wrong']} wrong).\n"
         )
+    sp = s.get("split") or {}
+    if sp.get("lines"):
+        out.append(
+            f"The maintenance contract goes to prepaid expenses when billed for more than 3 months, else repairs: on "
+            f"its {sp['lines']} lines, accuracy {_pct(sp['accuracy'])}, precision {_pct(sp['precision'])} "
+            f"({sp['wrong']} wrong).\n"
+        )
+    hw = s.get("history_warnings") or {}
+    if hw.get("lines"):
+        out.append(
+            f"The *reviewers coded similar lines ... to GL* warning (HISTORY_CONFLICT), on the {hw['lines']} lines "
+            f"that had an account: {hw['false_alarms']} false alarms on a right account "
+            f"({hw['false_alarms_after_recode']} of them after AP recoded spare parts); it caught {hw['caught']} "
+            f"of the {hw['wrong']} wrong accounts.\n"
+        )
     if s["top_errors"]:
         out.append("## Most frequent wrong accounts\n")
         out.append(_table(["true", "proposed", "source", "lines"],
@@ -560,16 +704,23 @@ def render_markdown(report: dict[str, Any]) -> str:
 
 
 def run_coding(
-    vendors: int = 30, invoices: int = 30, seed: int = 1, out: str | Path = "bench_coding"
+    vendors: int = 30,
+    invoices: int = 30,
+    seed: int = 1,
+    out: str | Path = "bench_coding",
+    realism: Realism | None = None,
 ) -> dict[str, Any]:
     """Simulate the company, then write report.json, report.md and lines.jsonl into ``out``."""
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     t0 = time.perf_counter()
-    rows = simulate(vendors, invoices, seed)
+    rows = simulate(vendors, invoices, seed, realism)
     seconds = time.perf_counter() - t0
+    config: dict[str, Any] = {"vendors": vendors, "invoices": invoices, "seed": seed}
+    if realism is not None and realism.any:
+        config["realism"] = {k: v for k, v in vars(realism).items() if v}
     report = {
-        "config": {"vendors": vendors, "invoices": invoices, "seed": seed},
+        "config": config,
         "summary": summarize(rows),
         "timing": {"seconds": round(seconds, 1), "ms_per_line": round(1000 * seconds / max(1, len(rows)), 1)},
     }
