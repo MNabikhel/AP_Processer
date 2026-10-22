@@ -11,8 +11,8 @@
    * Keys: Ctrl+Enter approves (typed in another form or a dialog, it is theirs), Alt+←/→ previous / next invoice
      and Alt+↑ the queue (not in a text box, where they move the caret). Enter in a text box approves nothing: in an
      invoice detail it goes to the next one (Shift+Enter the one before). P opens Park, X opens Reject (only opens).
-   * Right-click (or Shift+F10) a field, a line, a tax line or the page: a menu of what to do with it (ctxmenu.js,
-     D-60). Deleting, clearing, splitting and the like can be undone: the message says Undo, and Ctrl+Z (not in a
+   * Right-click a field's name (or Shift+F10 in its box), a line, a tax line or the page: a menu of what to do with it
+     (ctxmenu.js, D-60; inside a text box a right-click is the browser's own, with Paste). Deleting, clearing, splitting and the like can be undone: the message says Undo, and Ctrl+Z (not in a
      text box of another form) does the same. Only the last change is kept to undo, until something else is edited.
 
    Everything from the server is either HTML it escaped (the sections, the rows) or set as text here.

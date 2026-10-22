@@ -11,8 +11,9 @@
 
    * Opens at the pointer on a right-click, or under the focused element with Shift+F10 or the ContextMenu key
      (ctx.keyboard). It stays inside the window.
-   * Shift + right-click, and a right-click inside a text box while text is selected in it (or on selected text of the
-     page), is left to the browser: its own menu, so copy and paste still work. So is the account picker's list.
+   * A right-click inside a text box is the browser's own (Paste, Copy, the spelling), as are Shift + right-click, a
+     right-click on text selected on the page and in the account picker's list. A field's menu opens on its name, its
+     row in the Fields list or its box on the page, and with Shift+F10 / the ContextMenu key in its box.
    * role=menu / menuitem: ↑ ↓ Home End move, Enter or Space picks, → opens a submenu and ← or Esc closes it, Esc or
      Tab closes the menu (the focus goes back where it was), a letter goes to the next item starting with it. Every key
      pressed in the menu stays in it: the page viewer's keys (H, R, +), the popovers' Esc and teaching a field never
@@ -36,16 +37,14 @@ export function isOpen() {
   return Boolean(root);
 }
 
-/** The text box or the page has a selection the right-click is on: the browser's own menu (copy) is wanted. */
+const NOT_TEXT = new Set(["checkbox", "radio", "button", "submit", "reset", "image", "file", "range", "color", "hidden"]);
+
+/** A right-click the browser's own menu is for: inside a text box (Paste, the spelling: B-624), in the account
+    picker's list, or on text selected on the page (Copy). */
 function nativeWanted(target) {
   if (target.closest?.("[data-picker-layer]")) return true; // the account picker's list: nothing special
-  if (target.matches?.("input, textarea")) {
-    try {
-      if (typeof target.selectionStart === "number" && target.selectionStart !== target.selectionEnd) return true;
-    } catch {
-      /* a number box has no selection to ask about */
-    }
-  }
+  if (target.isContentEditable || target.tagName === "TEXTAREA") return true;
+  if (target.tagName === "INPUT" && !NOT_TEXT.has(target.type)) return true;
   const sel = window.getSelection?.();
   if (sel && !sel.isCollapsed && sel.rangeCount && !target.closest?.(".iv")) {
     for (let i = 0; i < sel.rangeCount; i++) if (sel.getRangeAt(i).intersectsNode(target)) return true;

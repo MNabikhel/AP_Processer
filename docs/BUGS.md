@@ -6064,6 +6064,20 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
 - **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_enter_goes_past_a_detail_folded_away_b623`
 - **Lesson:** Moving the focus is only done once the focus has moved: check where it landed.
 
+#### B-624 · A right-click inside a text box showed the field's menu, without Paste · low-medium
+- **Where:** `ap_coder/web/static/js/ctxmenu.js` (`nativeWanted`)
+- **Symptom:** a right-click inside an empty invoice detail, a line's description or an amount opened AP Coder's menu:
+  no Paste, no spelling suggestions.
+- **Cause:** the browser's own menu was left only for a right-click on text selected in the box.
+- **Reproduce:** right-click inside the empty QST # box.
+- **Reproduced:** yes
+- **Fix:** a right-click inside a text box (or text area) is always the browser's. A field's menu opens on a
+  right-click of its name, its row in the Fields list or its box on the page, and with Shift+F10 (or the ContextMenu
+  key) in its box; a line's on the rest of its row (its delete button, its tax chips). The Help page and the Quick
+  start say so.
+- **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_a_right_click_inside_a_text_box_is_the_browsers_paste_menu_b624`
+- **Lesson:** Where people type, the browser's menu is part of typing: add to it from around the box, not over it.
+
 #### Looked at and left (install, launcher and updates)
 
 - **N-251** · A GitHub ZIP unzipped over an older one leaves the files the newer one no longer has (the offline

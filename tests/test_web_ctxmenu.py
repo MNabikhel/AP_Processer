@@ -218,6 +218,10 @@ def _open(browser, path):
 
 def _review(browser, invoice_id):
     page, errors = _open(browser, f"/review/{invoice_id}")
+    page.evaluate(
+        """() => document.addEventListener("contextmenu", (e) => setTimeout(() => {
+             window.__prevented = e.defaultPrevented; }), true)"""
+    )
     page.wait_for_selector(".iv-sheet:not(.loading)")
     page.wait_for_load_state("networkidle")  # the opening check has answered
     return page, errors
@@ -237,17 +241,22 @@ def _menu(page, target, **click):
     return page.locator(MENU)
 
 
+def _name(page, field):
+    """A detail's name above its box: where its menu opens on a right-click (inside the box it is the browser's)."""
+    return page.locator(f'.inv-details [data-field="{field}"] .lbl')
+
+
 def _checked(page):
     return page.expect_request(lambda r: r.url.endswith("/check") and r.method == "POST")
 
 
-def test_in_a_browser_right_click_a_detail_clear_it_and_undo_puts_it_back(browser, store):
+def test_in_a_browser_right_click_a_details_name_clear_it_and_undo_puts_it_back(browser, store):
     invoice_id = store.list_invoices(REVIEW)[0]["id"]
     page, errors = _review(browser, invoice_id)
     box = page.locator('.inv-details input[name="invoice_number"]')
     before = box.input_value()
     assert before
-    menu = _menu(page, box)
+    menu = _menu(page, _name(page, "invoice_number"))
     assert menu.get_attribute("role") == "menu"
     labels = menu.locator("[role=menuitem]").all_inner_texts()
     assert any("Clear this value" in t for t in labels) and any("Copy value" in t for t in labels), labels
@@ -267,7 +276,7 @@ def test_in_a_browser_right_click_a_detail_clear_it_and_undo_puts_it_back(browse
     assert box.input_value() == before
     assert f'name="invoice_number"\r\n\r\n{before}\r\n' in (sent.value.post_data or "")
     # Ctrl+Z (outside a text box) undoes too
-    _menu(page, box)
+    _menu(page, _name(page, "invoice_number"))
     _item(page, "clear").click()
     page.locator("body").click(position={"x": 5, "y": 5})
     page.keyboard.press("Control+z")
@@ -280,7 +289,7 @@ def test_in_a_browser_not_on_this_invoice_leaves_it_blank_with_a_note_and_nothin
     page, errors = _review(browser, invoice_id)
     box = page.locator('.inv-details input[name="gst_hst_registration_number"]')
     before = box.input_value()
-    _menu(page, box)
+    _menu(page, _name(page, "gst_hst_registration_number"))
     with _checked(page) as sent:
         _item(page, "absent").click()
     assert '["gst_hst_registration_number"]' in (sent.value.post_data or "")
@@ -293,7 +302,7 @@ def test_in_a_browser_not_on_this_invoice_leaves_it_blank_with_a_note_and_nothin
     if row.count():  # the Fields list beside the page follows the form
         assert "Not on this invoice" in row.inner_text() and "t-edited" in row.get_attribute("class")
     # marked already: the item says so; a value typed in unmarks it
-    _menu(page, box)
+    _menu(page, _name(page, "gst_hst_registration_number"))
     assert _item(page, "absent").get_attribute("aria-disabled") == "true"
     page.keyboard.press("Escape")
     assert page.locator(MENU).count() == 0
@@ -336,7 +345,7 @@ def test_in_a_browser_delete_a_line_and_undo_brings_it_back_with_its_picker_work
     n = _lines(page).count()
     first = _lines(page).first.locator("textarea[name=line_description]").input_value()
     gl = _gl(page, 0)
-    _menu(page, _lines(page).first.locator("td.c-no"))
+    _menu(page, _lines(page).first.locator("[data-del-row]"))
     labels = page.locator(f"{MENU} [role=menuitem]").all_inner_texts()
     for want in ("Delete line", "Duplicate line", "Insert a line below", "Split this line", "Clear GL account"):
         assert any(want in t for t in labels), (want, labels)
@@ -363,23 +372,23 @@ def test_in_a_browser_duplicate_insert_copy_from_above_and_clear_a_lines_account
     page, errors = _review(browser, invoice_id)
     n = _lines(page).count()
     description = _lines(page).first.locator("textarea[name=line_description]").input_value()
-    _menu(page, _lines(page).first.locator("td.c-no"))
+    _menu(page, _lines(page).first.locator("[data-del-row]"))
     _item(page, "duplicate").click()
     assert _lines(page).count() == n + 1
     assert _lines(page).nth(1).locator("textarea[name=line_description]").input_value() == description
     numbers = page.eval_on_selector_all("[data-grid=lines] [name=line_number]", "s => s.map(x => x.value)")
     assert numbers == [str(i + 1) for i in range(n + 1)] or len(set(numbers)) == n + 1, numbers
-    _menu(page, _lines(page).first.locator("td.c-no"))
+    _menu(page, _lines(page).first.locator("[data-del-row]"))
     _item(page, "insert").click()
     assert _lines(page).count() == n + 2
     assert _lines(page).nth(1).locator("textarea[name=line_description]").input_value() == ""
     assert _gl(page, 1) == "UNASSIGNED"
     # the new line: its account from the line above, then cleared again
-    _menu(page, _lines(page).nth(1).locator("td.c-no"))
+    _menu(page, _lines(page).nth(1).locator("[data-del-row]"))
     _item(page, "above").click()
     assert _gl(page, 1) == _gl(page, 0) != "UNASSIGNED"
     assert _lines(page).nth(1).locator(".pk-input").input_value().startswith(_gl(page, 0))
-    _menu(page, _lines(page).nth(1).locator("td.c-no"))
+    _menu(page, _lines(page).nth(1).locator("[data-del-row]"))
     with _checked(page):
         _item(page, "clear-gl").click()
     assert _gl(page, 1) == "UNASSIGNED"
@@ -740,4 +749,28 @@ def test_in_a_browser_enter_goes_past_a_detail_folded_away_b623(browser, store):
     assert page.evaluate("document.activeElement.name") == "original_invoice_number"
     page.keyboard.press("Shift+Enter")
     assert page.evaluate("document.activeElement.name") == "currency"
+    assert errors == []
+
+
+def test_in_a_browser_a_right_click_inside_a_text_box_is_the_browsers_paste_menu_b624(browser, store):
+    """B-624: a right-click inside an empty text box showed the field's menu, without Paste or the spelling."""
+    invoice_id = store.list_invoices(REVIEW)[0]["id"]
+    page, errors = _review(browser, invoice_id)
+    for box in (
+        page.locator('.inv-details input[name="qst_registration_number"]'),  # empty: nothing selected
+        page.locator('.inv-details input[name="invoice_number"]'),
+        _lines(page).first.locator("textarea[name=line_description]"),
+        _lines(page).first.locator("[name=line_amount]"),
+    ):
+        box.click(button="right")
+        page.wait_for_timeout(150)
+        assert page.locator(MENU).count() == 0, box
+        assert not page.evaluate("window.__prevented"), box
+    # the field's menu: its name, or Shift+F10 in the box
+    _menu(page, page.locator('.inv-details [data-field="invoice_number"] .lbl'))
+    assert _item(page, "clear").count() == 1
+    page.keyboard.press("Escape")
+    page.locator('.inv-details input[name="invoice_number"]').focus()
+    page.keyboard.press("Shift+F10")
+    page.wait_for_selector(MENU)
     assert errors == []
