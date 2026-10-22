@@ -6858,8 +6858,8 @@ Found while building the pilot tester's requests on the review screen's invoice 
 - **Reproduce:** an Ontario supply charged GST only.
 - **Reproduced:** yes (found by the CPA's second review)
 - **Fix:** HST_NOT_CHARGED: "the vendor should have charged HST (ON 13%); the GST is claimable. If you can't claim full
-  input tax credits, you may need to self-assess the provincial part (ETA s.218.1)". ITC_AT_RISK is kept for HST
-  charged where GST applies.
+  input tax credits, you may need to self-assess the provincial part (ETA s.218.1)" (reworded by B-721). ITC_AT_RISK
+  is kept for HST charged where GST applies.
 - **Test:** `tests/test_line_tax_review2.py::test_gst_charged_where_hst_applies_is_hst_not_charged_not_an_itc_risk_b717`
 - **Lesson:** Say the consequence that applies, not the one of a similar case.
 
@@ -7024,3 +7024,70 @@ Found while building the pilot tester's requests on the review screen's invoice 
   them asks again.
 - **Test:** `tests/test_header_details.py::test_the_queue_does_not_decode_every_invoice_again_for_pay_from`
 - **Lesson:** A new question in a remembered answer is remembered with it.
+
+#### B-719 · A PST number not printed made a line "due" though the vendor charged PST on the others · low-medium
+- **Where:** `ap_coder/ai/offline_coder.py` (`tax_codes`)
+- **Symptom:** a BC vendor charging PST on the laptop but printing no PST number: the bookkeeping line was taken as
+  PST due (self-assess) without asking.
+- **Cause:** B-715 treated a missing number as "not collecting" whatever the invoice charged.
+- **Reproduce:** `tax_codes(lines, taxes, [], "", "BC", "2026-06-01", supplier_province="BC", pst_number="")`.
+- **Reproduced:** yes (found by the CPA's final check)
+- **Fix:** PST charged on the invoice shows the vendor collects it (no province requires the number on every
+  invoice): a missing number counts only when no PST is charged anywhere; otherwise the exemption is asked (B-715).
+- **Test:** `tests/test_line_tax_review3.py::test_a_missing_pst_number_does_not_make_a_line_due_when_pst_is_charged_b719`
+- **Lesson:** Weigh the evidence on the page over a field that is merely missing.
+
+#### B-720 · The Tax check still called QST not charged "self-assess" · low
+- **Where:** `ap_coder/coding/taxmath.py` (the "selfassess" row), `ap_coder/web/templates/_invoice_live.html` (its pill)
+- **Symptom:** a Quebec invoice with QST due and not charged showed a "self-assess" pill and "self-assess $149.75",
+  though the finding (B-718) says a registrant generally owes nothing net.
+- **Cause:** B-718 changed the finding and the labels, not the Tax check row.
+- **Reproduce:** `math_check` on a QC invoice charging GST only.
+- **Reproduced:** yes (found by the CPA's final check)
+- **Fix:** the row carries its pill: "QST not charged" with the B-718 note for QST, "self-assess" for PST.
+- **Test:** `tests/test_line_tax_review3.py::test_the_tax_check_says_qst_not_charged_without_self_assess_b720`
+- **Lesson:** A wording rule lives in one constant; every place that says it reads that constant.
+
+#### B-721 · GST charged where HST applies cited s.218.1 · low
+- **Where:** `ap_coder/coding/tax.py` (HST_NOT_CHARGED), `ap_coder/ops/help.py`, docs/SALES_TAX.md
+- **Symptom:** the finding pointed a buyer without full input tax credits to a s.218.1 self-assessment of the
+  provincial part.
+- **Cause:** s.218.1 covers supplies brought into a participating province; on a supply made in Ontario the
+  recipient stays liable for the HST payable under s.165, and the remedy is a corrected invoice.
+- **Reproduce:** an Ontario supply from an Alberta vendor charged GST only.
+- **Reproduced:** yes (found by the CPA's final check)
+- **Fix:** "the vendor should have charged HST (ON 13%); the GST is claimable. You remain liable for the provincial
+  part (ETA s.165): ask for a corrected invoice." Same in the Help entry and the guide.
+- **Test:** `tests/test_line_tax_review3.py::test_hst_not_charged_cites_the_recipients_liability_under_s165_b721`
+- **Lesson:** Cite the section that makes the person liable, and give the fix that removes the problem.
+
+#### B-722 · The Self-assessment report did not say which PST JD Edwards accrues itself · low
+- **Where:** `ap_coder/coding/taxreturn.py` (`self_assessment`, its CSV), `ap_coder/web/templates/sales_tax.html`,
+  `ap_coder/erp/jde.py` (`accrues_use_tax`)
+- **Symptom:** an invoice exported to JD Edwards with the self-assessed code (B), where E1 accrues the PST, was
+  listed in the report like any other: booked from it, the PST was accrued twice. Only the dry run warned (B-716).
+- **Cause:** the report did not look at how the invoice was exported.
+- **Reproduce:** a BC invoice charging GST only, approved and exported in a JD Edwards batch: Month-end →
+  Self-assessment.
+- **Reproduced:** yes (found by the CPA's final check)
+- **Fix:** an invoice in a JD Edwards batch (not undone) whose code is B carries the note "JD Edwards accrues this one
+  (code B): don't book it again from this report" on the page and in the CSV (Note column); the page counts them.
+  The code comes from the same function as the export's.
+- **Test:** `tests/test_line_tax_review3.py::test_the_self_assessment_report_marks_invoices_jd_edwards_accrues_with_code_b_b722`
+- **Lesson:** A warning belongs where the action it prevents is taken, not only where it is caused.
+
+#### B-723 · An inferred exemption picked again after another code was not recorded as confirmed · minor
+- **Where:** `ap_coder/coding/line_tax.py` (`confirm_line`), `ap_coder/web/static/js/invoice.js` (`confirmTaxCode`),
+  `ap_coder/web/invoice_view.py` (`grid`), `ap_coder/web/templates/_invoice_lines.html`
+- **Symptom:** the clerk changed a line from "GST only · PST exempt" (inferred) to "PST not charged" and back: the
+  approval recorded no "confirmed on review", an audit gap.
+- **Cause:** the first change removed the inferred note from the line's reasoning, so the second had nothing to
+  confirm.
+- **Reproduce:** a BC line with the inferred note: pick "GST only · PST not charged", then "GST only · PST exempt".
+- **Reproduced:** yes (found by the CPA's final check)
+- **Fix:** the inference is kept on the row (`data-tax-inferred`, from the invoice as read; the draft keeps it too),
+  and any explicit pick of an exempting code on such a line records "PST exemption confirmed on review";
+  `confirm_line(reason, code, inferred=...)` does the same on the server.
+- **Test:** `tests/test_line_tax_review3.py::test_picking_the_inferred_exemption_again_records_it_as_confirmed_b723`,
+  `tests/test_web_tax_codes.py::test_in_a_browser_picking_the_inferred_exemption_again_confirms_it_b723`
+- **Lesson:** Keep what was inferred apart from what is shown, so a later choice can still be compared with it.

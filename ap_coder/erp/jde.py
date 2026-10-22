@@ -442,6 +442,32 @@ def an8_problem(reason: str) -> bool:
     return reason.startswith(NO_AN8) or BAD_AN8 in reason
 
 
+def _tax_area_code(final: dict[str, Any], settings: JdeSettings) -> tuple[list[dict[str, Any]], str, str, str]:
+    """The Canadian tax lines charged, the province of supply, and the JDE tax area and explanation code for it."""
+    charged = [
+        t for t in final.get("tax_lines") or []
+        if t.get("tax_type") in CANADIAN_TAX_TYPES and abs(float(t.get("tax_amount") or 0)) > 0.004
+    ]  # fmt: skip
+    types = {t["tax_type"] for t in charged}
+    province = _place_of_supply(final)
+    row = settings.tax_map.get(province) or TaxArea("", "")
+    area, code = row.tax_area.strip(), row.code.strip().upper()
+    if charged and province in ("", OUTSIDE_CANADA):
+        pass
+    elif not charged and province != OUTSIDE_CANADA:
+        code = settings.exempt_code.strip().upper()  # nothing charged: exempt (keeps the area)
+    elif province in PST_PROVINCES and types & {"GST", "HST"} and "PST" not in types:
+        code = settings.self_assessed_code.strip().upper()  # PST to self-assess
+    return charged, province, area, code
+
+
+def accrues_use_tax(final: dict[str, Any], settings: JdeSettings) -> bool:
+    """True when this invoice goes to JD Edwards with the self-assessed code (B): E1 accrues the PST (use tax)
+    itself, so the Self-assessment report must not have it booked again (B-716, B-722)."""
+    code = _tax_area_code(final, settings)[3]
+    return bool(code) and code == settings.self_assessed_code.strip().upper()
+
+
 def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
     final = inv.get("final_output") or {}
     v = _Voucher(int(inv.get("id") or 0), final, [])
@@ -473,20 +499,9 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
     v.decimals = NO_DECIMAL_CURRENCIES.get(v.currency, 2)
 
     # Tax area and explanation code from the province of supply.
-    charged = [
-        t for t in final.get("tax_lines") or []
-        if t.get("tax_type") in CANADIAN_TAX_TYPES and abs(float(t.get("tax_amount") or 0)) > 0.004
-    ]  # fmt: skip
-    types = {t["tax_type"] for t in charged}
-    v.province = _place_of_supply(final)
-    row = settings.tax_map.get(v.province) or TaxArea("", "")
-    v.tax_area, v.tax_code = row.tax_area.strip(), row.code.strip().upper()
+    charged, v.province, v.tax_area, v.tax_code = _tax_area_code(final, settings)
     if charged and v.province in ("", OUTSIDE_CANADA):
         add("province of supply unknown: no JDE tax area for the Canadian tax charged")
-    elif not charged and v.province != OUTSIDE_CANADA:
-        v.tax_code = settings.exempt_code.strip().upper()  # nothing charged: exempt (keeps the area)
-    elif v.province in PST_PROVINCES and types & {"GST", "HST"} and "PST" not in types:
-        v.tax_code = settings.self_assessed_code.strip().upper()  # PST to self-assess
     if v.tax_code not in RECOVERABLE_BY_CODE:
         add(f"tax explanation code {v.tax_code!r} is not one AP Coder can balance (V, C, B, E or blank)")
     elif charged and v.tax_code in ("V", "C", "B") and not v.tax_area:

@@ -216,3 +216,24 @@ def test_in_a_browser_confirm_the_tax_code_clears_an_inferred_exemption_b715(bro
     reason = line.locator("[name=line_reason]").input_value()
     assert "RST exemption confirmed on review" in reason and "inferred" not in reason
     assert errors == []
+
+
+def test_in_a_browser_picking_the_inferred_exemption_again_confirms_it_b723(browser, store):
+    from ap_coder.coding.line_tax import inferred_note
+
+    from .test_web_ctxmenu import _set_output
+
+    invoice_id = _invoice(store, RED_RIVER)
+    output = store.get_invoice(invoice_id)["ai_output"]
+    output["line_items"][2]["reasoning_justification"] = f"Design. {inferred_note('RST')}"
+    _set_output(store, invoice_id, output)
+    page, errors = _review(browser, invoice_id)
+    line = page.locator("[data-grid=lines] > tr").nth(2)
+    assert line.get_attribute("data-tax-inferred") == "RST"  # kept from the invoice as read
+    select = line.locator("select[data-tax-code]")
+    select.select_option("GST")  # RST not charged: the note goes
+    assert "RST exemption" not in line.locator("[name=line_reason]").input_value()
+    select.select_option("GST~PST")  # and back to exempt: an explicit pick, confirmed
+    reason = line.locator("[name=line_reason]").input_value()
+    assert "RST exemption confirmed on review" in reason and "inferred" not in reason
+    assert errors == []

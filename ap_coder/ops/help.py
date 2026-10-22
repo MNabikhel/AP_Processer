@@ -392,8 +392,7 @@ CHECKS: dict[str, CheckHelp] = {
         TAX, "GST charged where HST applies",
         "The vendor charged GST alone on a supply in an HST province: it should have charged HST. The GST charged is "
         "claimable.",
-        "Ask the vendor to charge HST. If you can't claim full input tax credits, the provincial part may have to be "
-        "self-assessed (ETA s.218.1): check with your tax team.",
+        "Ask the vendor for a corrected invoice charging HST: you remain liable for the provincial part (ETA s.165).",
     ),
     "PST_EXEMPTION_TO_CONFIRM": CheckHelp(
         TAX, "PST exemption to confirm",

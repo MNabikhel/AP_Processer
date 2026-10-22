@@ -65,15 +65,22 @@ def exemption_to_confirm(line: Any) -> str:
     return m.group(1) if m else ""
 
 
-def confirm_line(reason: str, code: str) -> str:
+_CONFIRMED_RE = re.compile(r"\b(PST|RST) exemption confirmed on review\.")
+
+
+def confirm_line(reason: str, code: str, inferred: str | None = None) -> str:
     """A line's reasoning once a person picked or confirmed its tax ``code``: the "check it" note goes; an inferred
-    exemption still in the code is recorded as confirmed, and goes if the code no longer exempts it."""
+    exemption still in the code is recorded as confirmed, and goes if the code no longer exempts it. ``inferred``: the
+    reasoning as first worked out, so that picking the exemption again after picking another code is still recorded
+    as confirmed on review (B-723)."""
     text = str(reason or "").replace(GUESS_NOTE, " ")
-    m = _INFERRED.search(text)
+    parsed = parse_code(code)
+    still = parsed is not None and "PST" in parsed[1]
+    m = _INFERRED.search(text) or _CONFIRMED_RE.search(text)
     if m:
-        parsed = parse_code(code)
-        still = parsed is not None and "PST" in parsed[1]
         text = text.replace(m.group(0), _CONFIRMED.format(name=m.group(1)) if still else " ")
+    elif still and (first := _INFERRED.search(str(inferred or ""))):
+        text = f"{text} {_CONFIRMED.format(name=first.group(1))}"
     return " ".join(text.split())
 
 

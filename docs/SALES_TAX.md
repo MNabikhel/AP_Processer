@@ -102,14 +102,15 @@ What the checks say about the codes:
 - *Exempt line seems taxed*: a line marked exempt or zero-rated (from that tax) whose amount the tax charged needs.
 - *Input tax credit at risk*: HST charged where GST applies. Only the tax properly payable is claimable (ETA s.169); the
   booking is not changed by AP Coder.
-- *GST charged where HST applies*: the vendor should have charged HST; the GST is claimable. If you can't claim full
-  input tax credits, the provincial part may have to be self-assessed (ETA s.218.1).
+- *GST charged where HST applies*: the vendor should have charged HST; the GST is claimable. You remain liable for
+  the provincial part (ETA s.165): ask for a corrected invoice.
 - *QST not charged*: a QST registrant buying for its commercial activities generally owes nothing net (it would claim
   the QST back); otherwise it is self-assessed. The code says "GST only · QST not charged", without "self-assess".
 - Every check says the same of a credit note as of its invoice (a credit reverses it line for line, ETA s.232).
 - The **Self-assessment** report works line by line: the lines a PST or QST is due on and not charged, at the official
   rate. It is booked from the report by journal entry; an invoice exported to JD Edwards with a code that has E1 accrue
-  the use tax (B) must not be booked again from it (the JD Edwards dry run warns).
+  the use tax (B) must not be booked again from it: the dry run warns, and the report marks each such invoice "JD
+  Edwards accrues this one (code B): don't book it again from this report" (also in its CSV, Note column).
 - *The Tax check doesn't add up*: a line is named when its amount is the difference; when another choice of lines
   would make the tax, "pick which lines carry PST"; only when no choice of lines can, "the vendor's tax looks wrong"
   ("tax charged in error can't be claimed" is said of GST, HST and QST only: PST is never claimed). While some lines

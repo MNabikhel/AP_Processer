@@ -186,7 +186,7 @@
   <tbody>
   {% for r in taxes %}
     <tr class="{{ 'tc-self' if r.kind == 'selfassess' else 'is-ok' if r.ok else 'is-check' }}" data-tax-row="{{ r.tax_type }}{{ '-due' if r.kind == 'selfassess' else '' }}">
-      <td>{% if r.kind == "selfassess" %}<span class="tc-self-pill" title="{{ r.detail }}">self-assess</span>{% elif r.ok %}<span class="tc-ok" aria-label="Adds up">✓</span>{% else %}<span class="tc-check" title="{{ r.detail }}">check</span>{% endif %} <b>{{ r.what }}</b></td>
+      <td>{% if r.kind == "selfassess" %}<span class="tc-self-pill" title="{{ r.detail }}">{{ r.pill }}</span>{% elif r.ok %}<span class="tc-ok" aria-label="Adds up">✓</span>{% else %}<span class="tc-check" title="{{ r.detail }}">check</span>{% endif %} <b>{{ r.what }}</b></td>
       <td>{{ r.which }}</td>
       <td class="r">{{ r.base }} × {{ r.rate or "—" }} = <b>{{ r.expected }}</b></td>
       <td class="r">{{ r.charged }}</td><td class="r">{% if r.diff %}<b class="tc-diff">{{ r.diff }}</b>{% else %}—{% endif %}</td></tr>

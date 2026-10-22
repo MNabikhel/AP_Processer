@@ -128,7 +128,9 @@ def test_an_out_of_province_vendor_or_one_without_a_pst_number_is_due_not_exempt
     away = tax_codes(lines, taxes, [], "", "BC", "2026-06-01", supplier_province="AB", pst_number="PST-1234-5678")
     nonum = tax_codes(lines, taxes, [], "", "BC", "2026-06-01", supplier_province="BC", pst_number="")
     home = tax_codes(lines, taxes, [], "", "BC", "2026-06-01", supplier_province="BC", pst_number="PST-1234-5678")
-    assert [tax_code_of(li) for li in away] == [tax_code_of(li) for li in nonum] == ["GST+PST", "GST"]
+    assert [tax_code_of(li) for li in away] == ["GST+PST", "GST"]
+    # no PST number printed, but PST charged on the laptop: the vendor collects it, so it is asked (B-719)
+    assert [tax_code_of(li) for li in nonum] == ["GST+PST", "GST~PST"] and exemption_to_confirm(nonum[1]) == "PST"
     assert [tax_code_of(li) for li in home] == ["GST+PST", "GST~PST"]
 
 
@@ -199,7 +201,7 @@ def test_gst_charged_where_hst_applies_is_hst_not_charged_not_an_itc_risk_b717(r
     codes = {f.code: f for f in check_taxes(on, reference.tax)}
     assert "ITC_AT_RISK" not in codes and "HST_NOT_CHARGED" in codes
     message = codes["HST_NOT_CHARGED"].message
-    assert "the GST is claimable" in message and "ETA s.218.1" in message and "13%" in message
+    assert "the GST is claimable" in message and "ETA s.165" in message and "13%" in message
     from ap_coder.ops.help import CHECKS
 
     assert "HST_NOT_CHARGED" in CHECKS

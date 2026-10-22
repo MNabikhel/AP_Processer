@@ -166,12 +166,18 @@ def math_check(coding: InvoiceCoding, setup: Any = None) -> dict[str, Any]:
                 continue
             label = tax_name(tax_type, province)
             base = round(sum(li.amount for li in due), 2)
+            amount = money(round(base * rate, places))
+            if tax_type == "QST":  # a registrant generally owes nothing net: not "self-assess" (B-718, B-720)
+                from .tax import QST_NOT_CHARGED
+
+                pill, detail = "QST not charged", f"{label} not charged on {money(base)} ({amount}): {QST_NOT_CHARGED}"
+            else:
+                pill, detail = "self-assess", f"{label} due on {money(base)} and not charged: self-assess {amount}"
             tax_rows.append({"kind": "selfassess", "what": label, "tax_type": tax_type, "ok": True, "count": len(due),
                              "of": n, "which": f"{len(due)} of {n} lines not charged" if len(due) < n
                              else "every line, not charged", "base": money(base), "rate": f"{rate * 100:.4g}%",
-                             "expected": money(round(base * rate, places)), "charged": money(0), "diff": "",
-                             "detail": f"{label} due on {money(base)} and not charged: self-assess "
-                                       f"{money(round(base * rate, places))}", "lines": []})  # fmt: skip
+                             "expected": amount, "charged": money(0), "diff": "",
+                             "pill": pill, "detail": detail, "lines": []})  # fmt: skip
     rows.append(lines_row)
     rows += tax_rows
     computed = round(coding.subtotal + taxes_total, 2)

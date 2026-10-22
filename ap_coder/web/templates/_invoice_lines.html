@@ -28,7 +28,7 @@
 {# The cells in the order they show (B-478): #, description, delete; GL account (cost center), amount; tax code,
    qty, unit price. The grid's CSS puts them on those three rows; Tab goes through them in the same order. #}
 {% macro line_row(row, g, key) -%}
-<tr data-row="{{ key }}">
+<tr data-row="{{ key }}"{% if row.tax_inferred %} data-tax-inferred="{{ row.tax_inferred }}"{% endif %}>
   <td class="c-no"><input type="hidden" name="line_key" value="{{ key }}" form="inv">
     <input type="hidden" name="line_reason" value="{{ row.reasoning_justification or '' }}" form="inv">
     <input type="number" name="line_number" value="{{ num(row.line_number) }}" step="1" min="0" form="inv" aria-label="Line number"></td>
