@@ -120,6 +120,8 @@ def math_check(coding: InvoiceCoding, setup: Any = None) -> dict[str, Any]:
             if suspects and len(suspects) == 1 and suspects[0] in items:
                 li = suspects[0]
                 row["named"] = f"Line {li.line_number} ({_short(li.description)}, {money(li.amount)})"
+                row["why"] = (f"may not carry {label}: the {label} charged adds up without it." if base_gap < 0
+                              else f"may carry {label} too: the {label} charged adds up with it.")  # fmt: skip
             for li in suspects:
                 marks.setdefault(li.line_number, why if len(suspects) < len(flagged) or not flagged else
                                  f"Check the tax code: the {label} does not add up")  # fmt: skip

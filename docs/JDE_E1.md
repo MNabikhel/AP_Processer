@@ -94,6 +94,11 @@ F4008 tax areas:
 | No tax charged | same area | E (exempt) | gross |
 | Outside Canada | blank | blank | gross (a US sales tax is part of the expense lines) |
 
+A line marked **Exempt** or **Zero-rated** (its tax code, D-64) says so line by line in *match header* mode: its pay
+item carries the exempt code (Settings → JD Edwards, default E) in VLEXR1, with no tax on it, and so does its G/L
+line's VNEXR1 when the distribution's tax columns are on. The other lines keep the invoice's code. With one pay item
+(*sequential*), the invoice's code is used for all of it, as before.
+
 ### Why the distribution balances (and when it does not)
 
 The explanation code decides which part of the tax E1 posts by itself (through the tax AAIs) and which

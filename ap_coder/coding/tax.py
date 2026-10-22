@@ -397,11 +397,25 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
             if flagged:
                 ways.append(round(sum(round(li.amount * tl.rate, places) for li in flagged), places))
         if not any(_close(way, tl.tax_amount, unit) for way in ways):
+            # The taxable is the lines marked with the tax (it follows them on the review screen) and one line's
+            # amount is the difference: the tax charged is right for the other lines, a line's tax code is what to
+            # look at (a warning that names it), not the vendor's arithmetic.
+            marked = [li for li in coding.line_items if tl.tax_type in li.taxes_applied]
+            gap = round((tl.tax_amount - expected) / tl.rate, 2) if tl.rate else 0.0
+            suspect = None
+            if marked and _close(round(sum(li.amount for li in marked), 2), tl.taxable_amount, tol) and gap:
+                suspect = (_gap_line(marked, -gap, tol) if gap < 0 else
+                           _gap_line([li for li in coding.line_items if li not in marked], gap, tol))  # fmt: skip
+            hint = ""
+            if suspect is not None:
+                name = tax_name(tl.tax_type, tl.province or prov)
+                said = f"line {suspect.line_number} ({_short(suspect.description)}, {suspect.amount:,.2f})"
+                hint = f": {said} may be exempt from {name}" if gap < 0 else f": {said} may carry {name} too"
             add(
-                WARNING if _close(expected, tl.tax_amount, rounding) else ERROR,
+                WARNING if _close(expected, tl.tax_amount, rounding) or suspect is not None else ERROR,
                 "TAX_CALC_MISMATCH",
                 f"{label}: {tl.taxable_amount:.2f} x {tl.rate:.5g} = {expected:.2f} "
-                f"but invoice charges {tl.tax_amount:.2f}",
+                f"but invoice charges {tl.tax_amount:.2f}{hint}",
             )
 
         if tl.tax_type == "OTHER":

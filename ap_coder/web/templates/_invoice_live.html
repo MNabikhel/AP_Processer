@@ -187,9 +187,10 @@
   {% for r in taxes %}
     <tr class="{{ 'is-ok' if r.ok else 'is-check' }}" data-tax-row="{{ r.tax_type }}">
       <td>{% if r.ok %}<span class="tc-ok" aria-label="Adds up">✓</span>{% else %}<span class="tc-check" title="{{ r.detail }}">check</span>{% endif %} <b>{{ r.what }}</b></td>
-      <td>{{ r.which }}{% if r.named %}<div class="tc-named">{{ r.named }}</div>{% elif not r.ok and r.count == 0 %}<div class="tc-named">Pick it as the tax code of the lines it applies to</div>{% endif %}</td>
+      <td>{{ r.which }}</td>
       <td class="r">{{ r.base }} × {{ r.rate or "—" }} = <b>{{ r.expected }}</b></td>
       <td class="r">{{ r.charged }}</td><td class="r">{% if r.diff %}<b class="tc-diff">{{ r.diff }}</b>{% else %}—{% endif %}</td></tr>
+    {% if not r.ok %}<tr class="tc-why is-check"><td colspan="5"><span class="ms" aria-hidden="true">arrow_right</span>{% if r.named %}{{ r.named }} {{ r.why }}{% elif r.count == 0 %}Pick {{ r.what }} as the tax code of the lines it applies to.{% else %}{{ r.detail }}: check the lines' tax codes.{% endif %}</td></tr>{% endif %}
   {% else %}
     <tr><td colspan="5" class="muted">No sales tax charged on this invoice, and no line is marked with one.</td></tr>
   {% endfor %}
