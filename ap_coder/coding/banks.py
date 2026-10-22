@@ -170,6 +170,15 @@ def choose(accounts: list[dict[str, Any]], currency: str, preferred: str = "") -
     return str(same[0]["code"]) if len(same) == 1 else ""
 
 
+def opening_choice(doc: dict[str, Any], approved: bool, accounts: list[dict[str, Any]], last: str = "") -> str:
+    """The Pay from account the review screen opens with for a stored coding ``doc``: the one approved before (a
+    reopened or sent-back invoice, ``approved``), else the default (``choose``; ``last``: this vendor's last one)."""
+    code = str(doc.get("pay_from_account") or "")
+    if approved and code:
+        return code
+    return choose(accounts, str(doc.get("currency") or "CAD"), last) if accounts else ""
+
+
 def blocking(code: str, accounts: list[dict[str, Any]]) -> str:
     """What stops approval about the Pay from account, "" when nothing: once an account is in use, the invoice needs
     one of the accounts in use (``accounts``: ``Store.bank_accounts()``). Never overridable ("Approve anyway" is for

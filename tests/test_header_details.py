@@ -436,3 +436,32 @@ def test_pay_from_an_unknown_or_closed_account_is_never_approved(client, store):
     assert refused.status_code == 400 and store.get_invoice(invoice_id)["status"] == REVIEW
     page = client.get(f"/review/{invoice_id}").text
     assert "(not in use — pick another)" in page
+
+
+def test_the_queue_is_ready_only_when_the_pay_from_rule_lets_approve(client, store):
+    """B-685: the queue's Ready ignored Pay from: with bank accounts set up after an invoice was read, Ready showed
+    for an invoice whose review screen would not open Approve (no account in its currency)."""
+    from ap_coder.coding.bulk import bulk_approve
+    from ap_coder.web.pages.review import attention
+
+    ready_before = {i["id"] for i in store.list_invoices(REVIEW)} - set(attention(store, None, store.list_invoices(REVIEW)))
+    assert ready_before  # the demo has invoices Ready
+    rows, _ = banks.clean_rows([{"code": "USD-OP", "name": "US", "currency": "USD", "is_default": "yes"}])
+    store.save_bank_accounts(rows)
+    pending = store.list_invoices(REVIEW)
+    why = attention(store, None, pending)
+    cad = [i for i in pending if i["id"] in ready_before and (i["currency"] or "CAD") == "CAD"]
+    assert cad and all("Pick the bank account to pay this invoice from" in why[i["id"]] for i in cad)
+    for inv in cad:  # the review screen agrees: Approve is not open
+        assert not check(client, inv["id"], form_of(store, inv["id"]))["allow"]
+    # bulk approval: no CAD account to pay from, so it is left, and says why
+    from ap_coder.core.config import Settings
+
+    result = bulk_approve(store, store.reference_data(), Settings(), [cad[0]["id"]], "Pat")
+    assert result["approved"] == [] and "Pick the bank account to pay this invoice from" in str(result["skipped"])
+    # a CAD default: Ready again, and bulk approval pays from it
+    rows, _ = banks.clean_rows([{"code": "CAD-OP", "name": "Operating", "currency": "CAD", "is_default": "yes"}])
+    store.save_bank_accounts(rows)
+    for inv in cad:  # (the screen's checks above flagged them in the queue: opened again, they are clean)
+        assert check(client, inv["id"], form_of(store, inv["id"]))["allow"]
+    assert not {i["id"] for i in cad} & set(attention(store, None, store.list_invoices(REVIEW)))

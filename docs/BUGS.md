@@ -6697,3 +6697,19 @@ Found while building the pilot tester's requests on the review screen's invoice 
 - **Test:** `tests/test_jde.py::test_an_unmapped_pay_from_account_is_said_and_codes_match_whatever_their_case`,
   `tests/test_web_settings.py::test_jde_lists_every_bank_account_with_its_g_l_bank_account`
 - **Lesson:** A mapping that falls back silently needs someone told when it falls back.
+
+#### B-685 · The queue's Ready ignored the Pay from requirement · low-medium
+- **Where:** `ap_coder/web/pages/review.py` (`attention`), `ap_coder/coding/banks.py` (`opening_choice`,
+  `blocking`), `ap_coder/web/invoice_view.py` (`settle_header`, `analyse`)
+- **Symptom:** with bank accounts set up after invoices were read, the queue said Ready for an invoice whose review
+  screen kept Approve closed (no account in its currency to pay from).
+- **Cause:** Ready read the checks stored when the invoice was read; the review screen's Pay from rule was its own.
+- **Reproduce:** load the demo, add only a USD default bank account: the CAD invoices stay Ready, their Approve is
+  closed.
+- **Reproduced:** yes (found by the review of the header side)
+- **Fix:** the queue asks the review screen's question: the account the screen would open with
+  (`banks.opening_choice`), then what stops approval (`banks.blocking`), one pair of functions for the screen, the
+  approval and the queue. Bulk approval already chose the currency's default (or this vendor's last account) and
+  leaves an invoice with none, saying "Pick the bank account to pay this invoice from"; a test now holds it to that.
+- **Test:** `tests/test_header_details.py::test_the_queue_is_ready_only_when_the_pay_from_rule_lets_approve`
+- **Lesson:** Two pages that answer the same question must call the same function.

@@ -159,7 +159,11 @@ def attention(store: Store, reference: ReferenceData | None, pending: list[dict[
     """Why each invoice of ``pending`` (the queue) needs attention, by id; one not listed is Ready: its review
     screen's Approve is open as it stands. The lines' codes are asked as the review screen asks (``codes_to_pick``),
     then the checks' flag (an error, or confidence under ``threshold``; None: the flag alone, without its words)."""
+    from ap_coder.coding import banks
+
     cost_centers = reference is not None and uses_cost_centers(reference)
+    accounts = store.bank_accounts()
+    last: dict[str, str] = {}  # this vendor's last Pay from account, asked once per vendor
     stored = {  # one query, not one per invoice; the text is decoded only for an invoice not asked before
         r["id"]: r
         for r in store.invoice_columns(
@@ -173,8 +177,17 @@ def attention(store: Store, reference: ReferenceData | None, pending: list[dict[
             inv["id"], r.get("final_output"), r.get("ai_output"), r.get("validation"), cost_centers
         )
         low = threshold is not None and (inv.get("adjusted_confidence") or 0.0) < threshold
+        bank = ""
+        if any(a["active"] for a in accounts):  # the review screen's Pay from rule (B-685): its Approve, its Ready
+            final = json.loads(r["final_output"]) if r.get("final_output") else None
+            doc = final or (json.loads(r["ai_output"]) if r.get("ai_output") else {}) or {}
+            key = vendor_key(doc.get("vendor_name") or inv.get("vendor_name") or "")
+            if key not in last:
+                last[key] = store.last_pay_from(key)
+            bank = banks.blocking(banks.opening_choice(doc, bool(final), accounts, last[key]), accounts)
         why = [
             to_pick,
+            bank,
             f"{ui.plural(errors, 'error')} to fix" if errors else "",
             f"confidence under {threshold:.0%}" if low and inv.get("requires_review") else "",
         ]
