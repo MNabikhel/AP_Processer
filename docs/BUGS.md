@@ -5898,6 +5898,35 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
 - **Lesson:** A box that holds typed text apart from the value it posts must settle it before every way the form can
   be sent, the keyboard shortcuts too.
 
+#### B-591 · Space did nothing on the form's boxes and buttons while the mouse rested on the page · medium
+- **Where:** `ap_coder/web/static/js/invoice_viewer.js` (`viewKey`, the `keyup` listener)
+- **Symptom:** the keyboard on a line's tax box or on *Add a line*, the mouse resting over the invoice's page: Space
+  neither ticked the box nor pressed the button.
+- **Cause:** Space held the Hand whenever the pointer was over the page, wherever the focus was; the `keyup` that
+  ended the Hand cancelled the button's press as well.
+- **Reproduce:** at 1366 x 768, focus line 1's GST box, rest the mouse on the page, press Space: the box stays as it was.
+- **Reproduced:** yes
+- **Fix:** Space holds the Hand only with the focus on the page itself, or with the focus nowhere (the page's body) and
+  the pointer over the page; a box, button or link anywhere else keeps it. The `keyup` is taken only after a `keydown`
+  the viewer took.
+- **Test:** `tests/test_web_viewer.py::test_in_a_browser_space_on_a_box_or_button_of_the_form_is_theirs_with_the_mouse_over_the_page`,
+  `::test_in_a_browser_space_elsewhere_on_the_review_screen_scrolls_as_usual`
+- **Lesson:** A page-wide key belongs to where the focus is first; where the mouse rests only decides when the focus
+  is nowhere.
+
+#### B-592 · Page Up / Page Down turned the invoice's page from anywhere on the review screen · medium-low
+- **Where:** `ap_coder/web/static/js/invoice_viewer.js` (`viewKey`)
+- **Symptom:** on a two-page invoice, Page Down with the mouse over the line items (or the focus on a button of the
+  form) showed the invoice's page 2 instead of scrolling the screen.
+- **Cause:** the viewer took Page Up / Page Down from the whole window, outside the text boxes.
+- **Reproduce:** open a two-page invoice, rest the mouse on the line items, press Page Down.
+- **Reproduced:** yes
+- **Fix:** they turn the invoice's pages with the pointer over the Document card or the focus in it; anywhere else
+  the browser scrolls the screen as usual.
+- **Test:** `tests/test_web_viewer.py::test_in_a_browser_page_down_turns_the_invoice_page_only_from_the_document_card`
+- **Lesson:** Keys the browser already uses for the whole page are taken only where the person is clearly working on
+  the part that takes them.
+
 #### B-593 · An open account list stayed put while the page scrolled, its box gone off the screen · low-medium
 - **Where:** `ap_coder/web/static/js/picker.js` (`place`, the scroll and resize listeners)
 - **Symptom:** a GL account's list open, the page scrolled with the wheel: the list stayed on the screen while its box

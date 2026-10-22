@@ -556,3 +556,68 @@ def test_in_a_browser_a_fit_does_not_drift_as_the_dashboard_page_scrolls(browser
     page.wait_for_timeout(300)
     assert _readout(page) != next(iter(shown)) or fit == "Fit width"
     assert errors == []
+
+
+# --- The second review's findings (B-591, B-592) --------------------------------------------------------------------
+
+
+def _over_the_page(page):
+    stage = page.locator(".iv-stage").bounding_box()
+    page.mouse.move(stage["x"] + stage["width"] / 2, stage["y"] + min(stage["height"] / 2, 120))
+
+
+def test_in_a_browser_space_on_a_box_or_button_of_the_form_is_theirs_with_the_mouse_over_the_page(browser, store):
+    """B-591: the mouse resting on the page, Space on a line's tax box or on "Add a line" did nothing: the viewer took
+    it for the Hand."""
+    page, errors = _open(browser, store)
+    page.evaluate("window.scrollTo(0, 0)")
+    tax = page.locator("[data-grid=lines] input[type=checkbox] >> nth=0")
+    ticked = tax.is_checked()
+    tax.focus()
+    _over_the_page(page)
+    page.keyboard.press(" ")
+    assert tax.is_checked() != ticked
+    assert not page.evaluate("document.querySelector('.iv').classList.contains('hand')")
+    rows = page.locator("[data-grid=lines] tr").count()
+    page.locator("[data-add-row=lines]").focus()
+    _over_the_page(page)
+    page.keyboard.press(" ")
+    page.wait_for_function(f"document.querySelectorAll('[data-grid=lines] tr').length === {rows + 1}")
+    # The focus nowhere (the page's body), the mouse over the page: Space still holds the Hand.
+    page.evaluate("document.activeElement.blur()")
+    _over_the_page(page)
+    page.keyboard.down(" ")
+    assert page.evaluate("document.querySelector('.iv').classList.contains('hand')")
+    page.keyboard.up(" ")
+    assert not page.evaluate("document.querySelector('.iv').classList.contains('hand')")
+    assert errors == []
+
+
+def test_in_a_browser_page_down_turns_the_invoice_page_only_from_the_document_card(browser, store):
+    """B-592: Page Up / Page Down turned the invoice's page from anywhere on the review screen, where they should
+    scroll the screen."""
+    page, errors = _open(browser, store, vendor="Mont-Royal")
+    page.evaluate("window.scrollTo(0, 0)")
+    lines = page.locator("#lines").bounding_box()
+    page.mouse.move(lines["x"] + 20, lines["y"] + 20)  # over the line items, the focus on the page's body
+    page.evaluate("document.activeElement && document.activeElement.blur()")
+    page.keyboard.press("PageDown")
+    page.wait_for_timeout(400)
+    assert "Page 1 of 2" in page.inner_text(".iv-where")
+    assert page.evaluate("window.scrollY") > 0  # the screen scrolled as usual
+    # The focus on a button of the form, the mouse away: the screen's.
+    page.evaluate("window.scrollTo(0, 0)")
+    page.locator("[data-add-row=lines]").focus()
+    page.mouse.move(lines["x"] + 20, lines["y"] + 20)
+    page.keyboard.press("PageDown")
+    assert "Page 1 of 2" in page.inner_text(".iv-where")
+    # The mouse over the Document card: the invoice's page.
+    page.evaluate("document.activeElement.blur(); window.scrollTo(0, 0)")
+    _over_the_page(page)
+    page.keyboard.press("PageDown")
+    assert "Page 2 of 2" in page.inner_text(".iv-where")
+    page.mouse.move(lines["x"] + 20, lines["y"] + 20)
+    page.locator("[aria-label='Fit page']").focus()  # the focus in the card, the mouse away
+    page.keyboard.press("PageUp")
+    assert "Page 1 of 2" in page.inner_text(".iv-where")
+    assert errors == []

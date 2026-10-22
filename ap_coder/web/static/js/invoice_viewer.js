@@ -134,11 +134,6 @@ function isTyping(target) {
   return target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) && target.type !== "checkbox";
 }
 
-/** A control Space presses (a button, a link, a tick box): Space is left to it. */
-function isControl(target) {
-  return Boolean(target && target.closest && target.closest("button, a[href], summary, input, select, textarea, [role=button], [role=switch], [contenteditable]"));
-}
-
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 /** "Invoice number" -> "invoice number", but "GST/HST number" and "PO number" stay as they are. */
@@ -198,6 +193,9 @@ export class InvoiceViewer {
     this.rotations = new Map(); // page -> quarter turns shown (0, 90, 180, 270), for this invoice only, never saved
     this.hand = false; // the Hand: a drag moves the page instead of picking words
     this.spaceHand = false; // the Hand while Space is held
+    this.spaceTaken = false; // the Space down was the viewer's: its keyup is too
+    this.overStage = false; // the pointer is over the page
+    this.overCard = false; // the pointer is over the Document card
     this.picScale = 1; // the scale of the picture showing (1, 2 or 3)
     this.imgFor = ""; // the page the picture showing is of (its address at scale 1)
     this.fieldsOpen = this.savedFields(); // null until chosen: then it follows the viewer's height
@@ -366,6 +364,9 @@ export class InvoiceViewer {
     });
     this.stage.addEventListener("pointerenter", () => (this.overStage = true));
     this.stage.addEventListener("pointerleave", () => (this.overStage = false));
+    const card = this.card();
+    card.addEventListener("pointerenter", () => (this.overCard = true));
+    card.addEventListener("pointerleave", () => (this.overCard = false));
     this.stage.addEventListener("wheel", (e) => this.onWheel(e), { passive: false });
     new ResizeObserver(() => {
       const size = `${this.stage.clientWidth}x${this.stage.clientHeight}`;
@@ -377,13 +378,16 @@ export class InvoiceViewer {
     this.stage.addEventListener("scroll", () => this.hideTip(), { passive: true });
     window.addEventListener("keydown", (e) => this.onKey(e));
     window.addEventListener("keyup", (e) => {
-      if (e.key !== " " || !this.spaceHand) return;
+      // only a Space the viewer took when it went down (a button pressed with Space is pressed as it comes up, B-591)
+      if (e.key !== " " || !this.spaceTaken) return;
       e.preventDefault();
+      this.spaceTaken = false;
       this.spaceHand = false;
       this.renderHand();
     });
     window.addEventListener("blur", () => {
       this.hideTip();
+      this.spaceTaken = false;
       if (this.spaceHand) {
         this.spaceHand = false;
         this.renderHand();
@@ -1517,17 +1521,25 @@ export class InvoiceViewer {
     }
   }
 
+  /** The card the viewer is in (the review screen's Document card), else the viewer. */
+  card() {
+    return this.root.closest(".inv-doc") || this.root;
+  }
+
   /** The page's keys: + = - zoom, 0 fit width, 9 (or Shift+0) fit page, H the Hand, Space held the Hand for a
    *  moment, R rotate, Page Up / Page Down the page. True when the key was one of them. */
   viewKey(e) {
     if (!this.pageInfo() || (e.target.closest && e.target.closest("dialog[open], [role=dialog]"))) return false;
     const k = e.key;
     if (k === " ") {
-      // Space holds the Hand with the pointer on the page, or the focus in the Document card (not on a button
-      // there, which Space presses); anywhere else it scrolls the dashboard page as usual.
-      const card = this.root.closest(".inv-doc") || this.root;
-      if (!this.overStage && !(card.contains(e.target) && !isControl(e.target))) return false;
+      // Space holds the Hand with the focus on the page itself, or with the focus nowhere (the body) and the pointer
+      // on the page. A box, a button or a link anywhere else keeps Space for itself, the pointer wherever it rests
+      // (B-591); with neither, it scrolls the dashboard page as usual.
+      const onPage = this.stage.contains(e.target);
+      const nowhere = !e.target || e.target === document.body || e.target === document.documentElement;
+      if (!onPage && !(nowhere && this.overStage)) return false;
       e.preventDefault();
+      this.spaceTaken = true;
       if (!this.spaceHand) {
         this.spaceHand = true;
         this.renderHand();
@@ -1541,7 +1553,11 @@ export class InvoiceViewer {
     else if (k === "0") act = () => this.setZoom(FIT_WIDTH);
     else if (k === "h" || k === "H") act = () => this.setHand(!this.hand);
     else if (k === "r" || k === "R") act = () => this.rotate();
-    else if ((k === "PageDown" || k === "PageUp") && this.pages.length > 1) act = () => this.showPage(this.page + (k === "PageDown" ? 1 : -1));
+    // Page Up / Page Down turn the invoice's pages with the pointer over the Document card or the focus in it; else
+    // they scroll the screen as usual (B-592).
+    else if ((k === "PageDown" || k === "PageUp") && this.pages.length > 1 && (this.overCard || this.card().contains(e.target))) {
+      act = () => this.showPage(this.page + (k === "PageDown" ? 1 : -1));
+    }
     if (!act) return false;
     e.preventDefault();
     act();
