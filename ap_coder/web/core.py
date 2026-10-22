@@ -328,6 +328,15 @@ def refuse(text: str, status: int = 400, **extra: Any) -> JSONResponse:
     return JSONResponse({"ok": False, "error": str(text), **extra}, status_code=status)
 
 
+# A date typed in an address ("/month-end?end=0001-01-01") is kept within these years: the reports count days and
+# months from it, which would run past the calendar's first or last day (B-659).
+OLDEST_DAY, LATEST_DAY = dt.date(1900, 1, 1), dt.date(2999, 12, 31)
+
+
+def clamp_day(day: dt.date) -> dt.date:
+    return min(max(day, OLDEST_DAY), LATEST_DAY)
+
+
 # A form that saves a whole list or page posts a stamp of what it showed (``page_version``, in a hidden "version"
 # field): changed since in another tab or by a colleague, the save is refused rather than overwriting it (B-655).
 STALE_PAGE = (

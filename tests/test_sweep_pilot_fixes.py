@@ -368,3 +368,15 @@ def test_rules_applied_on_screen_never_drop_a_background_check(tmp_path, monkeyp
     screen.join()
     meta = store.get_invoice(iid)["meta"]
     assert "ai_reviewer" in meta and "rules_applied" in meta
+
+
+# --- B-659: extreme dates in the address gave a server error ----------------------------------------------------------
+
+
+def test_extreme_dates_in_the_address_are_clamped(tmp_path, monkeypatch):
+    store, client = _web(tmp_path, monkeypatch)
+    store.add_invoice(tmp_path / "x.pdf", _blank_invoice(), {"requires_review": True})
+    for url in ("/month-end?end=0001-01-01", "/month-end?end=9999-12-31", "/month-end/accruals.csv?end=0001-01-01",
+                "/month-end/accruals.csv?end=9999-12-31", "/activity/controls-report?start=9999-12-31",
+                "/activity/controls-report?start=0001-01-01&end=0001-01-01"):  # fmt: skip
+        assert client.get(url).status_code == 200, url

@@ -6070,3 +6070,16 @@ reproduced with a script first, then given a failing test and fixed.
 - **Fix:** the write lock is taken before the read (`BEGIN IMMEDIATE`), as `update_after_check` does.
 - **Test:** `tests/test_sweep_pilot_fixes.py::test_rules_applied_on_screen_never_drop_a_background_check`
 - **Lesson:** Every read-modify-write of a shared row takes the lock before it reads.
+
+#### B-659 · A date at the calendar's ends in the address gave a server error · low
+- **Where:** `ap_coder/web/pages/month_end.py` (`day`), `ap_coder/web/pages/activity.py` (`_date`),
+  `ap_coder/web/core.py` (`clamp_day`)
+- **Symptom:** `/month-end?end=0001-01-01`, its `accruals.csv`, and `/activity/controls-report?start=9999-12-31`
+  answered "Internal Server Error" (OverflowError).
+- **Cause:** the accruals count a year back from the period end (`erp/accruals.py`), the controls report a day past
+  its last day (`erp/controls.py`): both ran past the first or last day Python knows.
+- **Reproduce:** open those addresses.
+- **Reproduced:** yes
+- **Fix:** a date read from the address is kept between 1900-01-01 and 2999-12-31.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_extreme_dates_in_the_address_are_clamped`
+- **Lesson:** A date from outside is checked for range as well as for form.
