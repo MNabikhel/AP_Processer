@@ -49,7 +49,7 @@ INVOICE_COLUMNS = [
     ("currency", "Currency"), ("subtotal", "Subtotal"), ("tax_total", "Tax"), ("grand_total", "Total"),
     ("supplier_province", "Supplier province"), ("ship_to_province", "Place of supply"),
     ("reviewer", "Approved by"), ("reviewed_at", "Approved at"), ("second_reviewer", "Second approver"),
-    ("file_name", "File"),
+    ("file_name", "File"), ("pay_from", "Pay from"), ("pay_from_gl", "Pay from GL"),
 ]  # fmt: skip
 LINE_COLUMNS = [
     ("batch", "Batch"), ("invoice_id", "AP Coder #"), ("vendor_id", "Vendor ID"), ("vendor_name", "Vendor"),
@@ -57,7 +57,7 @@ LINE_COLUMNS = [
     ("invoice_date", "Invoice date"), ("currency", "Currency"), ("line", "Line"), ("kind", "Type"),
     ("gl_code", "GL account"), ("gl_name", "GL name"), ("cost_center", "Cost center"),
     ("description", "Description"), ("net_amount", "Net"), ("non_recoverable_tax", "Non-recoverable tax"),
-    ("amount", "Amount"),
+    ("amount", "Amount"), ("pay_from", "Pay from"), ("pay_from_gl", "Pay from GL"),
 ]  # fmt: skip
 MONEY_HEADERS = {"Subtotal", "Tax", "Total", "Net", "Non-recoverable tax", "Amount"}
 # Real dates in the workbook (Excel sorts and filters them as dates), not text (B-470); the CSV keeps YYYY-MM-DD.
@@ -80,16 +80,29 @@ def _vendor_id(final: dict[str, Any], vendor_ids: dict[str, str]) -> str:
     return master_vendor_id(vendor_ids, final.get("vendor_name"), final.get("gst_hst_registration_number"))
 
 
+def pay_from(final: dict[str, Any], bank_accounts: dict[str, dict[str, Any]] | None) -> dict[str, str]:
+    """{"pay_from": the bank account's name, "pay_from_gl": its cash GL account} for the account an invoice is paid
+    from (D-66), as the accounts are today (a batch is rebuilt with today's master data, D-29); blank when none."""
+    code = str(final.get("pay_from_account") or "")
+    account = (bank_accounts or {}).get(code) if code else None
+    if account is None:
+        return {"pay_from": code, "pay_from_gl": ""}
+    return {"pay_from": str(account.get("name") or code), "pay_from_gl": str(account.get("gl_account") or "")}
+
+
 def invoice_rows(
-    invoices: list[dict[str, Any]], batch: int | str = "", vendor_ids: dict[str, str] | None = None
-) -> list[dict[str, Any]]:
-    """``invoices``: store.get_invoice() dicts of approved invoices; ``vendor_ids``: ``Store.vendor_ids()``."""
+    invoices: list[dict[str, Any]], batch: int | str = "", vendor_ids: dict[str, str] | None = None,
+    bank_accounts: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:  # fmt: skip
+    """``invoices``: store.get_invoice() dicts of approved invoices; ``vendor_ids``: ``Store.vendor_ids()``;
+    ``bank_accounts``: our bank accounts by code (``Store.bank_accounts``), for Pay from."""
     vendor_ids = vendor_ids or {}
     rows = []
     for inv in invoices:
         final = inv.get("final_output") or {}
         rows.append(
             {
+                **pay_from(final, bank_accounts),
                 **{k: final.get(k) for k, _ in INVOICE_COLUMNS if k in final},
                 "batch": batch,
                 "invoice_id": inv["id"],
@@ -126,14 +139,17 @@ def distribution(final: dict[str, Any], tax_treatments: dict[str, TaxTreatment] 
 def line_rows(
     invoices: list[dict[str, Any]], gl_names: dict[str, str] | None = None, batch: int | str = "",
     vendor_ids: dict[str, str] | None = None, tax_treatments: dict[str, TaxTreatment] | None = None,
+    bank_accounts: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:  # fmt: skip
     gl_names, vendor_ids = gl_names or {}, vendor_ids or {}
     rows = []
     for inv in invoices:
         final = inv.get("final_output") or {}
+        paid_from = pay_from(final, bank_accounts)
         for e in distribution(final, tax_treatments):
             rows.append(
                 {
+                    **paid_from,
                     "batch": batch,
                     "invoice_id": inv["id"],
                     "vendor_id": _vendor_id(final, vendor_ids),
@@ -170,10 +186,11 @@ def gl_summary(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def build_xlsx(
     invoices: list[dict[str, Any]], gl_names: dict[str, str] | None = None, batch: int | str = "",
     vendor_ids: dict[str, str] | None = None, tax_treatments: dict[str, TaxTreatment] | None = None,
+    bank_accounts: dict[str, dict[str, Any]] | None = None,
 ) -> bytes:  # fmt: skip
-    lines = line_rows(invoices, gl_names, batch, vendor_ids, tax_treatments)
+    lines = line_rows(invoices, gl_names, batch, vendor_ids, tax_treatments, bank_accounts)
     wb = Workbook()
-    _sheet(wb.active, "Invoices", INVOICE_COLUMNS, invoice_rows(invoices, batch, vendor_ids))
+    _sheet(wb.active, "Invoices", INVOICE_COLUMNS, invoice_rows(invoices, batch, vendor_ids, bank_accounts))
     _sheet(wb.create_sheet(), "GL lines", LINE_COLUMNS, lines)
     _sheet(
         wb.create_sheet(), "By GL account",
@@ -212,11 +229,12 @@ def _sheet(ws: Any, title: str, columns: list[tuple[str, str]], rows: list[dict[
 def build_csv(
     invoices: list[dict[str, Any]], gl_names: dict[str, str] | None = None, batch: int | str = "",
     vendor_ids: dict[str, str] | None = None, tax_treatments: dict[str, TaxTreatment] | None = None,
+    bank_accounts: dict[str, dict[str, Any]] | None = None,
 ) -> bytes:  # fmt: skip
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow([label for _, label in LINE_COLUMNS])
-    for r in line_rows(invoices, gl_names, batch, vendor_ids, tax_treatments):
+    for r in line_rows(invoices, gl_names, batch, vendor_ids, tax_treatments, bank_accounts):
         # for the ERP's loader: text as it is, no spreadsheet apostrophe (see the module docstring)
         writer.writerow([r.get(key) if r.get(key) is not None else "" for key, _ in LINE_COLUMNS])
     return buf.getvalue().encode("utf-8-sig")  # BOM: Excel shows accents correctly
@@ -225,33 +243,35 @@ def build_csv(
 def custom_rows(
     invoices: list[dict[str, Any]], gl_names: dict[str, str] | None = None, batch: int | str = "",
     vendor_ids: dict[str, str] | None = None, tax_treatments: dict[str, TaxTreatment] | None = None,
+    bank_accounts: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:  # fmt: skip
     """Posting lines, each with its invoice's fields too (for a custom layout)."""
-    heads = {r["invoice_id"]: r for r in invoice_rows(invoices, batch, vendor_ids)}
-    lines = line_rows(invoices, gl_names, batch, vendor_ids, tax_treatments)
+    heads = {r["invoice_id"]: r for r in invoice_rows(invoices, batch, vendor_ids, bank_accounts)}
+    lines = line_rows(invoices, gl_names, batch, vendor_ids, tax_treatments, bank_accounts)
     return [{**heads.get(r["invoice_id"], {}), **r} for r in lines]
 
 
 def build(
     fmt: str, invoices: list[dict[str, Any]], gl_names: dict[str, str] | None = None, batch: int | str = "",
     vendor_ids: dict[str, str] | None = None, layout: Any = None,
-    tax_treatments: dict[str, TaxTreatment] | None = None,
+    tax_treatments: dict[str, TaxTreatment] | None = None, bank_accounts: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[bytes, str, str]:  # fmt: skip
     """(file bytes, file name, mime type). ``tax_treatments``: ``Store.tax_treatments()``, for the posting lines of
-    an invoice approved without them stored (``distribution``)."""
+    an invoice approved without them stored (``distribution``); ``bank_accounts``: our bank accounts by code, for the
+    Pay from columns (D-66)."""
     name = f"ap_coder_export_{batch}" if batch != "" else "ap_coder_export"
     if fmt == "jde":  # needs its settings and checks: see ap_coder.erp.jde.build_zip
         raise ValueError("JD Edwards files are built with ap_coder.erp.jde.build_zip")
     if fmt == "csv":
-        return build_csv(invoices, gl_names, batch, vendor_ids, tax_treatments), f"{name}.csv", "text/csv"
+        return build_csv(invoices, gl_names, batch, vendor_ids, tax_treatments, bank_accounts), f"{name}.csv", "text/csv"
     if fmt == "custom":
         from . import export_layout
 
-        rows = custom_rows(invoices, gl_names, batch, vendor_ids, tax_treatments)
+        rows = custom_rows(invoices, gl_names, batch, vendor_ids, tax_treatments, bank_accounts)
         return (
             export_layout.build(rows, layout or export_layout.Layout(export_layout.default_columns())),
             (f"{name}_custom.csv"),
             "text/csv",
         )
     mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    return build_xlsx(invoices, gl_names, batch, vendor_ids, tax_treatments), f"{name}.xlsx", mime
+    return build_xlsx(invoices, gl_names, batch, vendor_ids, tax_treatments, bank_accounts), f"{name}.xlsx", mime

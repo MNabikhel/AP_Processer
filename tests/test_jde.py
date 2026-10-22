@@ -341,6 +341,21 @@ def test_csv_columns_in_order_and_text_as_it_is():
     assert _csv(raw[jde.DIST_FILE])[0]["VNEXA"] == "=HYPERLINK(evil)"  # for a database loader, not Excel
 
 
+def test_the_g_l_bank_account_follows_the_pay_from_account_when_it_is_mapped():
+    """D-66: VLGLBA (the G/L bank account E1 pays from) is a mapped setting per Pay from account: with no mapping the
+    files are as before (no column, E1 takes the AAI PB bank); mapped, each voucher carries its account's value."""
+    paid = _invoice(ON, 1, pay_from_account="CAD-OP")
+    other = _invoice(QC, 2, pay_from_account="CAD-PAY")
+    none = _invoice(AB, 3)
+    assert "VLGLBA" not in _files([paid])[jde.HEADER_FILE][0]
+    settings = jde.JdeSettings(bank_glba={"CAD-OP": "00012345"})
+    rows = {r["VLEDTN"]: r for r in _files([paid, other, none], settings)[jde.HEADER_FILE]}
+    assert [rows[f"APC{i}"]["VLGLBA"] for i in (1, 2, 3)] == ["00012345", "", ""]
+    assert jde.header_columns(settings) == [*jde.HEADER_COLUMNS, "VLGLBA"]
+    assert jde.JdeSettings.from_json(settings.to_json()).bank_glba == {"CAD-OP": "00012345"}
+    assert jde.JdeSettings.from_json('{"bank_glba": "nope"}').bank_glba == {}
+
+
 def test_z_files_hold_the_text_as_it_is_without_spreadsheet_quoting():
     number = "+" + "A" * 24  # 25 characters: VLVINV's width
     inv = _invoice(ON, invoice_number=number)

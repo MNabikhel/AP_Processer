@@ -224,7 +224,15 @@ document type that is not 2 characters, a domestic currency that is not a 3-lett
 | VLPDCT | PO document type (default `OP`) | with VLPO |
 | VLPKCO | PO company (default: the company) | with VLPO |
 | VLRMK | `AP Coder #<id>` | remark |
+| VLGLBA | G/L bank account of the invoice's *Pay from* account | **unconfirmed**; only when mapped (below) |
 | *extra* | e.g. VLATFLG, VLPSTE | **unconfirmed**; only in PO-matched mode |
+
+**VLGLBA (G/L bank account).** Each approved invoice records *Pay from*, the company bank account that pays it
+(GL accounts & tax → Bank accounts, D-66). E1 keeps the bank account of a voucher in GLBA as its *short account ID*,
+which AP Coder does not know, so the column is a mapped setting: Settings → JD Edwards E1 → *G/L bank account (VLGLBA)
+per Pay from account*, as `CAD-OP=00012345` pairs from the JDE team. With no pair (the default) F0411Z1 has no VLGLBA
+column and E1 takes the bank from the AAI PB, as before; a voucher whose account has no pair gets a blank VLGLBA.
+Confirm with the JDE team whether R04110ZA keeps a VLGLBA it is given.
 
 ## F0911Z1: G/L distribution lines
 

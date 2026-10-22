@@ -33,6 +33,7 @@ FIELDS: dict[str, str] = {
     "net_amount": "Line net amount", "non_recoverable_tax": "Line non-recoverable tax",
     "amount": "Line amount (posting)", "batch": "Export batch", "invoice_id": "AP Coder #",
     "reviewer": "Approved by", "reviewed_at": "Approved at",
+    "pay_from": "Pay from (our bank account)", "pay_from_gl": "Pay from GL (the bank account's cash GL)",
 }  # fmt: skip
 DATE_FIELDS = {"invoice_date", "due_date", "reviewed_at"}
 MONEY_FIELDS = {"subtotal", "tax_total", "grand_total", "net_amount", "non_recoverable_tax", "amount"}

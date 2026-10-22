@@ -93,6 +93,8 @@ def jde_context(store: Store) -> dict[str, Any]:
         "gl_dates": jde.GL_DATES,
         "currencies": ", ".join(js.currencies),
         "extras": ", ".join(f"{k}={v}" for k, v in js.po_extra_columns.items()),
+        "bank_glba": ", ".join(f"{k}={v}" for k, v in js.bank_glba.items()),
+        "bank_codes": ", ".join(a["code"] for a in store.bank_accounts(active_only=True)),
         "gl_columns": GL_COLUMNS,
         "gl_rows": [vars(m) for m in js.gl_map],
         "tax_rows": [
@@ -140,6 +142,12 @@ async def save_general(request: Request) -> JSONResponse:
         if name.strip():
             pairs[name.strip().upper()] = value.strip()
     new.po_extra_columns = pairs
+    banks = {}
+    for part in text("bank_glba").split(","):
+        name, _, value = part.partition("=")
+        if name.strip():
+            banks[name.strip()] = value.strip()
+    new.bank_glba = banks
     problems = jde.settings_problems(new)
     if problems:
         return refuse(" ".join(problems))

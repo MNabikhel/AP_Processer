@@ -115,6 +115,8 @@ UNCONFIRMED = (
     "read as 0.001 (1000 needed) where a table conversion would not",
     "the tax area names (ON-HST, QC-GSTQST, …) and explanation codes",
     "VLCRR (exchange rate): left blank when no rate is set, so E1 takes it from the exchange-rate table",
+    "VLGLBA (G/L bank account), when set per Pay from account: the value E1 expects there (the bank account's short "
+    "account ID) and whether R04110ZA keeps it or takes the AAI PB bank",
 )
 
 HEADER_FILE, DIST_FILE, MATCH_FILE = "F0411Z1.csv", "F0911Z1.csv", "F0411Z1T.csv"
@@ -192,6 +194,9 @@ class JdeSettings:
     exempt_code: str = "E"
     dist_tax_columns: bool = False
     an8_overrides: dict[str, str] = field(default_factory=dict)  # vendor key → address number
+    # Pay from account code (our bank accounts, D-66) → VLGLBA, the G/L bank account E1 pays the voucher from, as the
+    # JDE team gives it (E1 keeps the short account ID there). Empty: no VLGLBA column, E1 takes the AAI PB bank.
+    bank_glba: dict[str, str] = field(default_factory=dict)
     answers: dict[str, str] = field(default_factory=dict)  # the JDE team's answers that are not settings (worksheet)
 
     def to_json(self) -> str:
@@ -223,6 +228,9 @@ class JdeSettings:
         if not isinstance(out.answers, dict):
             out.answers = {}
         out.answers = {str(k): str(v) for k, v in out.answers.items()}
+        if not isinstance(out.bank_glba, dict):
+            out.bank_glba = {}
+        out.bank_glba = {str(k).strip(): str(v).strip() for k, v in out.bank_glba.items() if str(k).strip()}
         if not isinstance(out.an8_overrides, dict):
             out.an8_overrides = {}
         # Vendor keys saved under older vendor-matching rules, as today's rules give them ("energir sec" -> "energir").
@@ -605,6 +613,8 @@ def voucher_rows(
                    else settings.po_company.strip() or settings.company_code) if send_po else "",
         "VLRMK": f"AP Coder #{v.inv_id}"[:30],
     }  # fmt: skip
+    if settings.bank_glba:  # the G/L bank account of the Pay from account (D-66); blank: E1's AAI PB
+        common["VLGLBA"] = settings.bank_glba.get(str(final.get("pay_from_account") or ""), "")
 
     def amounts(gross: int, stam: int, atxa: int) -> dict[str, Any]:
         out: dict[str, Any] = {}
@@ -801,7 +811,8 @@ def validate(
 
 def header_columns(settings: JdeSettings) -> list[str]:
     extra = [c for c in settings.po_extra_columns if c not in HEADER_COLUMNS] if settings.po_matched else []
-    return HEADER_COLUMNS + extra
+    bank = ["VLGLBA"] if settings.bank_glba and "VLGLBA" not in extra else []
+    return HEADER_COLUMNS + bank + extra
 
 
 def _csv(columns: list[str], rows: list[dict[str, Any]]) -> bytes:

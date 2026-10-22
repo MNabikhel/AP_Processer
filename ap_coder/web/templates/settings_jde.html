@@ -82,6 +82,11 @@
                title="COLUMN=value pairs added to F0411Z1 in PO-matched mode (e.g. the automation flags). Ask your JDE team which columns their match process needs.">
         <small class="muted">COLUMN=value pairs added to F0411Z1 in PO-matched mode (e.g. the automation flags). Ask your JDE
           team which columns their match process needs.</small></label>
+      <label class="field">G/L bank account (VLGLBA) per Pay from account · unconfirmed
+        <input type="text" name="bank_glba" value="{{ bank_glba }}" placeholder="{% if bank_codes %}e.g. {{ bank_codes.split(', ')[0] }}=00012345{% else %}CAD-OP=00012345{% endif %}"
+               title="Pay from account code = the G/L bank account E1 pays from (its short account ID, as your JDE team gives it). Blank: no VLGLBA column; E1 takes the bank account from the AAI PB.">
+        <small class="muted">CODE=value pairs: each of your bank accounts (GL accounts &amp; tax → Bank accounts{% if bank_codes %}: {{ bank_codes }}{% endif %})
+          and the G/L bank account E1 pays from, as your JDE team gives it. Blank: E1 takes its default bank (AAI PB).</small></label>
     </details>
     <div><button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save JD Edwards settings</button></div>
   </form>
