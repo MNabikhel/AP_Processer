@@ -777,15 +777,16 @@ def checks_details(report: Any) -> list[dict[str, str]]:
     return items
 
 
-def ai_changes(coding: InvoiceCoding, ai: dict[str, Any]) -> int:
+def ai_changes(coding: InvoiceCoding, ai: dict[str, Any], cost_centers: bool = True) -> int:
     """The lines whose suggested coding the reviewer changed, counted as the approval counts them: a GL account or
-    cost center the AI left blank and the reviewer picked changes nothing; a line still without a GL isn't taught."""
+    cost center the AI left blank and the reviewer picked changes nothing; a line still without a GL isn't taught.
+    Without a cost center list (``cost_centers`` False) the page has no cost center to keep: only the GL counts."""
     changed = 0
     for before, li in pair_lines(ai.get("line_items", []), list(coding.line_items)):
         if li.predicted_gl_code == UNASSIGNED:
             continue
         s_gl = before.get("predicted_gl_code") if before else None
-        s_cc = before.get("predicted_cost_center", "") if before else None
+        s_cc = (before.get("predicted_cost_center", "") if cost_centers else "") if before else None
         if not suggestion_kept(s_gl, s_cc, li.predicted_gl_code, li.predicted_cost_center):
             changed += 1
     return changed
@@ -809,7 +810,7 @@ def learn_text(coding: InvoiceCoding, ai: dict[str, Any], cost_centers: bool = F
             continue
         rule = by_rule.get(before.get("line_number")) if before else None
         s_gl = before.get("predicted_gl_code") if before else None
-        s_cc = before.get("predicted_cost_center", "") if before else None
+        s_cc = (before.get("predicted_cost_center", "") if cost_centers else "") if before else None  # B-562
         if rule is not None and rule.get("gl_to") == gl and (rule.get("cc_to") or "") == cc:
             ruled += 1
         elif line_guessed(before, rule):
@@ -1155,7 +1156,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     pick = codes_to_pick(coding.line_items, uses_cost_centers(reference))
     key = override_key(errors) if errors else ""
     allow = not pick and (not errors or draft.override == key)
-    changed = ai_changes(coding, ai)
+    changed = ai_changes(coding, ai, uses_cost_centers(reference))
     lines_n = len(coding.line_items)
     _, rule_changes = rules.apply(coding, store.coding_rules())
     doc = coding.model_dump()

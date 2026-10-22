@@ -465,3 +465,24 @@ def test_queue_accuracy_note_counts_measured_lines_not_guesses(tmp_path, monkeyp
     s = Settings()
     accuracy = review.kpis(store, [], [], [], settings=replace(s, llm=replace(s.llm, provider="off")))[2]
     assert accuracy["delta"] == "" and "improve as you approve" in accuracy["sub"]
+
+
+def test_without_a_cost_center_list_a_cost_center_from_memory_is_no_change(tmp_path):
+    """B-562: with no cost center list the page shows (and posts) no cost center. A line the AI coded with one from
+    coding memory (ERP history, approvals before the list was removed), approved untouched, is kept as suggested:
+    not "1 you changed", not a correction, not an edit."""
+    from ap_coder.web.invoice_view import ai_changes, learn_text
+
+    store = Store(tmp_path / "ap.db")
+    load_sample_setup(store, cost_centers=False)
+    ai = _invoice([{"description": "Copy paper", "amount": 20.0, "predicted_gl_code": "6000",
+                    "predicted_cost_center": "CC200",
+                    "reasoning_justification": "Approved 3 times for this vendor"}])  # fmt: skip
+    final = {**ai, "line_items": [{**ai["line_items"][0], "predicted_cost_center": ""}]}  # as the page posts it
+    coding = InvoiceCoding.model_validate(final)
+    assert ai_changes(coding, ai, cost_centers=False) == 0
+    assert learn_text(coding, ai, cost_centers=False) == "Teaches from 1 line: 1 as suggested"
+    iid = store.add_invoice(tmp_path / "a.pdf", ai, {"requires_review": True})
+    assert store.approve_invoice(iid, final, "Pat") == {ACCEPTED: 1, CORRECTED: 0, CODED: 0}
+    assert "line_coding" not in (store.get_invoice(iid)["edits"] or [])
+    assert store.metrics()["line_accuracy"] == 1.0

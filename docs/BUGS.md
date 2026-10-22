@@ -5802,6 +5802,21 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
 - **Test:** `tests/test_trust_review.py::test_queue_accuracy_note_counts_measured_lines_not_guesses`
 - **Lesson:** Two screens showing one figure must take it from the same count.
 
+#### B-562 · Without a cost center list, an untouched line counted as a correction · medium
+- **Where:** `ap_coder/core/store.py` (`approve_invoice`), `ap_coder/web/invoice_view.py` (`ai_changes`, `learn_text`)
+- **Symptom:** no cost center list (the pilot's set-up, D-53); a line coded from memory that held a cost center (ERP
+  history with a cost center column, approvals before the list was removed). Approved untouched, the bar said
+  *1 you changed*, the approval recorded a correction and a `line_coding` edit, and the accuracy fell.
+- **Cause:** the coder copies the remembered cost center into the line whatever the list; the page shows and posts
+  none without a list (B-528), so the approval compared "CC200" with "".
+- **Reproduce:** sample setup without cost centers; an invoice whose line is GL 6000, CC "CC200", reasoning
+  "Approved 3 times for this vendor"; post the page's own fields to /check, then approve.
+- **Reproduced:** yes (found by the merge review of trust-review + nav-settings)
+- **Fix:** without a cost center list the AI's cost center is not part of what it proposed: the approval, the
+  change count and the "Teaches from" line compare the GL account only.
+- **Test:** `tests/test_trust_review.py::test_without_a_cost_center_list_a_cost_center_from_memory_is_no_change`
+- **Lesson:** When a field is hidden from the screen, every comparison against what the screen posts must hide it too.
+
 #### Looked at and left (install, launcher and updates)
 
 - **N-251** · A GitHub ZIP unzipped over an older one leaves the files the newer one no longer has (the offline

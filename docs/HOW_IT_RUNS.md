@@ -96,8 +96,8 @@ key" at the end, for automated runs), `AP_ALLOW_INTERNET=1` (developers), `BROWS
 
 AP Coder runs on any CPython **3.11 or newer** (`scripts/launch.py:MINIMUM`; no upper bound). 3.12 is preferred,
 then the other versions the offline bundle is built for (3.11, 3.13, 3.14), because the wheelhouse has packages
-only for those. `pyproject.toml` says `>=3.10` and CI still tests 3.10 (`ap_coder/ops/doctor.py` warns on it), but the
-launchers never pick one older than 3.11. Python is never installed by the offline build.
+only for those. `pyproject.toml` says `>=3.11` too, and `ap_coder/ops/doctor.py` fails on an older one (D-55).
+Python is never installed by the offline build.
 
 ### Windows: `APProcessor.bat`
 
