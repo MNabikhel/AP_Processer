@@ -463,8 +463,16 @@ class InvoicePipeline:
                 model_values = self._model_reading(path) if page_text is not None and provider == "local" else None
                 captured = read_invoice(path, self.store, layout=layout, page_text=page_text, ai_values=model_values)
                 vendor = captured[0].fields.get("vendor_name")
-                if self.store is not None and vendor is not None and vendor.value:  # its lessons, past the cap too
-                    feedback = self.store.learning_rows(str(vendor.value))
+                if vendor is not None and vendor.value:
+                    # The vendor is known now: its lessons, past the cap too, and its examples for the chat model,
+                    # even when its name is not on the page as AP's history has it ("&" for "and", B-600).
+                    if self.store is not None:
+                        feedback = self.store.learning_rows(str(vendor.value))
+                    examples = select_examples(feedback, result.extraction.content, str(vendor.value))
+                    result.history_examples = len(examples)
+                    history_text = format_examples(
+                        examples, with_cost_center=self.reference.cost_centers is not None
+                    )  # fmt: skip
                 # A weak match (an account's name) is never put in the line: it is left blank, suggested on the
                 # review screen, and the chat model is asked about it when it answers (B-463).
                 result.coding = code_from_capture(

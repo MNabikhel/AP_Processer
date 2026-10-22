@@ -14,6 +14,11 @@ After coding:
   established pattern for that vendor. Agreement is shown as reinforcement in
   the dashboard; disagreement is flagged for review.
 
+Both follow AP when it changes its mind (``current``): once a correction to a
+new account is confirmed by one more decision, the older decisions for another
+account no longer count. A single correction is not enough on its own: it may
+be a slip, and then it still shows as a conflict with what AP did before.
+
 Accepted lines count as approvals, so patterns the AI gets right grow
 stronger over time; a reviewer can delete any bad record.
 """
@@ -130,6 +135,7 @@ class Pattern:
     approvals: int = 0
     corrections: int = 0
     last_seen: str = ""
+    superseded: bool = False  # AP has since recoded this line to another account and confirmed it (``current``)
 
     @property
     def decisions(self) -> int:
@@ -190,9 +196,17 @@ def aggregate(rows: list[dict[str, Any]]) -> list[Pattern]:
     return _AGGREGATED.get(rows, None, lambda: _aggregate(rows))
 
 
+# A correction counts against older decisions once AP has confirmed it: this many decisions in a row for the new
+# account, the correction included, whatever their outcome (filling in a line left blank is recorded as a correction).
+CONFIRMED_FIX = 2
+
+
 def _aggregate(rows: list[dict[str, Any]]) -> list[Pattern]:
     groups: dict[tuple[str, str, str, str], Pattern] = {}
-    for r in rows:
+    # Each line's latest account: [account, decisions in a row for it, outcome of the oldest of them, ended by an
+    # older decision for another account].
+    runs: dict[tuple[str, str], list[Any]] = {}
+    for r in rows:  # newest first (``Store.feedback_rows``)
         key = (r["vendor_key"], _normalise(r["description"]), r["final_gl"], r.get("final_cc") or "")
         p = groups.get(key)
         if p is None:
@@ -204,7 +218,25 @@ def _aggregate(rows: list[dict[str, Any]]) -> list[Pattern]:
         else:
             p.approvals += 1
         p.last_seen = max(p.last_seen, r.get("created_at") or "")
+        run = runs.get(key[:2])
+        if run is None:
+            runs[key[:2]] = [r["final_gl"], 1, r["outcome"], False]
+        elif not run[3]:
+            if r["final_gl"] == run[0]:
+                run[1], run[2] = run[1] + 1, r["outcome"]
+            else:
+                run[3] = True
+    for key, p in groups.items():
+        gl, n, first, changed = runs[key[:2]]
+        p.superseded = changed and first == CORRECTED and n >= CONFIRMED_FIX and p.gl_code != gl
     return list(groups.values())
+
+
+def current(patterns: list[Pattern]) -> list[Pattern]:
+    """``patterns`` without what AP has moved away from: on each line, the decisions for another account than the
+    one AP changed it to and confirmed with one more decision (``CONFIRMED_FIX``). Until then they all count: a
+    single correction may be a slip. Each line is its own: a recode of the laptops leaves the batteries' history."""
+    return [p for p in patterns if not p.superseded]
 
 
 def detect_vendors(patterns: list[Pattern], document_text: str, vendor_hint: str | None = None) -> set[str]:
@@ -223,7 +255,7 @@ def select_examples(
     max_vendor: int = 25,
     max_similar: int = 15,
 ) -> list[Pattern]:
-    patterns = aggregate(rows)
+    patterns = current(aggregate(rows))  # what AP moved away from is no example
     if not patterns:
         return []
     vendors = detect_vendors(patterns, document_text, vendor_hint)
@@ -303,7 +335,7 @@ def compare_with_history(coding: Any, rows: list[dict[str, Any]]) -> list[dict[s
     results = []
     for li in coding.line_items:
         line_tokens = tokens(li.description)
-        similar = [p for p in patterns if similarity(line_tokens, p.tokens) >= VENDOR_LINE_SIMILARITY]
+        similar = current([p for p in patterns if similarity(line_tokens, p.tokens) >= VENDOR_LINE_SIMILARITY])
         if not similar:
             continue
         votes: dict[str, int] = defaultdict(int)
