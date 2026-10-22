@@ -507,3 +507,52 @@ def test_in_a_browser_the_view_tools_fit_on_a_laptop_beside_the_pages(browser, s
         b = button.bounding_box()
         assert b["width"] >= 24 and b["height"] >= 24  # big enough to hit
     assert errors == []
+
+
+def test_in_a_browser_space_elsewhere_on_the_review_screen_scrolls_as_usual(browser, store):
+    """Space holds the Hand only with the pointer over the page or the focus in the Document card."""
+    page, errors = _open(browser, store)
+    page.evaluate("window.scrollTo(0, 0)")
+    lines = page.locator("#lines").bounding_box()
+    page.mouse.move(lines["x"] + 20, lines["y"] + 20)  # over the line items, the focus on the page's body
+    page.evaluate("document.activeElement && document.activeElement.blur()")
+    page.keyboard.press(" ")
+    page.wait_for_timeout(400)
+    assert page.evaluate("window.scrollY") > 0  # the dashboard page scrolled
+    assert not page.evaluate("document.querySelector('.iv').classList.contains('hand')")
+    # The focus in the Document card (the page clicked, say), the pointer elsewhere: Space holds the Hand.
+    page.evaluate("window.scrollTo(0, 0)")
+    page.locator(".iv-stage").focus()
+    y = page.evaluate("window.scrollY")
+    page.keyboard.down(" ")
+    assert page.evaluate("document.querySelector('.iv').classList.contains('hand')")
+    page.keyboard.up(" ")
+    assert page.evaluate("window.scrollY") == y
+    assert not page.evaluate("document.querySelector('.iv').classList.contains('hand')")
+    # A button in the card keeps Space for itself: it presses it.
+    page.locator("[aria-label='Hand']").focus()
+    page.keyboard.press(" ")
+    assert page.get_attribute("[aria-label='Hand']", "aria-pressed") == "true"
+    assert errors == []
+
+
+@pytest.mark.parametrize("fit", ["Fit page", "Fit width"])
+def test_in_a_browser_a_fit_does_not_drift_as_the_dashboard_page_scrolls(browser, store, fit):
+    page, errors = _open(browser, store)
+    page.click(f"[aria-label='{fit}']")
+    shown = set()
+    for y in (0, 150, 300, 600, 1200, 0):
+        page.evaluate(f"window.scrollTo(0, {y})")
+        page.wait_for_timeout(200)
+        shown.add(_readout(page))
+    assert len(shown) == 1, shown
+    if fit == "Fit page":  # once stuck, the whole page shows
+        _stuck(page)
+        room = page.evaluate(
+            "(() => { const s = document.querySelector('.iv-stage'); return [s.scrollHeight, s.clientHeight]; })()"
+        )
+        assert room[0] <= room[1] + 1, room
+    page.set_viewport_size({"width": 1366, "height": 660})  # a resize still fits again
+    page.wait_for_timeout(300)
+    assert _readout(page) != next(iter(shown)) or fit == "Fit width"
+    assert errors == []

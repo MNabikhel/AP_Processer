@@ -477,3 +477,20 @@ def test_the_guides_match_the_app():
         assert "[OK]" not in sample and "✓" in sample, name  # as the window shows it
         assert "then\nstart AP Coder again" not in text and "then start AP Coder again*" not in text, name
     assert "`schema`" not in (docs / "docs" / "GETTING_STARTED.md").read_text(encoding="utf-8")
+
+
+def test_the_page_modules_hold_the_real_reviewer_whichever_test_ran_first():
+    """B-581: the page modules are imported by ``create_app`` the first time it runs. In a test whose ``me`` fixture had
+    patched ``web.core.reviewer`` (test_web_invoice, test_web_pilot_walkthrough), ``from ap_coder.web.core import
+    reviewer`` copied the patched one into pages/settings.py for the rest of the run, and saving your name a second time
+    said it was saved again. conftest.py imports them first."""
+    import importlib
+
+    from ap_coder.web import core
+    from ap_coder.web.pages import MORE_MODULES, PAGES
+
+    for name in {*(p.module for p in PAGES), *MORE_MODULES}:
+        module = importlib.import_module(f"ap_coder.web.pages.{name}")
+        for attr in ("reviewer", "login"):
+            if hasattr(module, attr):
+                assert getattr(module, attr) is getattr(core, attr), (name, attr)

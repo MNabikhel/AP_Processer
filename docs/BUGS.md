@@ -5821,6 +5821,23 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
 - **Lesson:** A document viewer is judged against the PDF reader on the same laptop: zoom where the pointer is, a sharp
   page at any zoom, and the keys and wheel people already use.
 
+#### B-581 · A test of saving your name failed after the review screen's tests, depending on the order · low
+- **Where:** `tests/conftest.py`; `ap_coder/web/app.py` (`create_app` imports the page modules), the `me` fixtures of
+  `tests/test_web_invoice.py` and `tests/test_web_pilot_walkthrough.py`
+- **Symptom:** `test_before_testing.py::test_saving_your_name_says_your_name_was_saved` failed in some runs: saving
+  the province said *Saved your name and your province…*; alone, and in 20 runs after test_web_viewer, it passed.
+- **Cause:** not timing. `create_app` imports the page modules the first time it runs; when that was inside a test
+  whose `me` fixture had patched `web.core.reviewer`, `from ap_coder.web.core import reviewer` copied the patched
+  function into `pages/settings.py` (and `pages/insights.py`) for the rest of the run, so the saved name never matched
+  `reviewer()` and was "saved" again. Only the dashboard's tests were affected, never the app.
+- **Reproduce:** `pytest tests/test_web_invoice.py::test_every_demo_invoice_opens_whatever_its_state
+  tests/test_before_testing.py::test_saving_your_name_says_your_name_was_saved` (fails every time).
+- **Reproduced:** yes
+- **Fix:** conftest.py imports every page module before any test, so they hold the real functions.
+- **Test:** `tests/test_before_testing.py::test_the_page_modules_hold_the_real_reviewer_whichever_test_ran_first`
+- **Lesson:** A test that passes alone and fails in a run is usually order, not timing: rerun it after the files that
+  ran before it, and look for a patch copied by a `from x import y` done late.
+
 #### Looked at and left (install, launcher and updates)
 
 - **N-251** · A GitHub ZIP unzipped over an older one leaves the files the newer one no longer has (the offline

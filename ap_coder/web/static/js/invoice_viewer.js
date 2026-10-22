@@ -479,12 +479,18 @@ export class InvoiceViewer {
     const bar = document.querySelector(".inv-actionbar");
     const card = this.root.closest(".inv-doc");
     let margin = VIEWPORT_MARGIN;
+    let settledMargin = margin;
     if (bar && card) {
       const top = this.root.getBoundingClientRect().top;
       const stuck = 8 + (top - card.getBoundingClientRect().top);
       margin = bar.offsetHeight + Math.max(top, stuck) + 10;
+      settledMargin = bar.offsetHeight + stuck + 10;
     }
-    const height = vh ? Math.min(this.maxHeight, Math.max(MIN_FIT_HEIGHT, vh - margin)) : this.maxHeight;
+    const fit = (m) => (vh ? Math.min(this.maxHeight, Math.max(MIN_FIT_HEIGHT, vh - m)) : this.maxHeight);
+    const height = fit(margin);
+    // The height once the card has risen to its sticky place: Fit page fits that, so its % does not drift as the
+    // dashboard page scrolls.
+    this.settledHeight = fit(settledMargin);
     this.root.style.height = `${height}px`;
   }
 
@@ -774,6 +780,7 @@ export class InvoiceViewer {
     const w = st.clientWidth - parseFloat(cs.paddingLeft || 0) - parseFloat(cs.paddingRight || 0);
     let ht = st.clientHeight - parseFloat(cs.paddingTop || 0) - parseFloat(cs.paddingBottom || 0);
     if (!this.root.classList.contains("fixed")) ht = Math.max(MIN_FIT_HEIGHT, window.innerHeight - VIEWPORT_MARGIN);
+    else if (this.settledHeight) ht += this.settledHeight - this.root.offsetHeight; // as it is once stuck
     return [Math.max(0, w), Math.max(0, ht)];
   }
 
@@ -1516,9 +1523,10 @@ export class InvoiceViewer {
     if (!this.pageInfo() || (e.target.closest && e.target.closest("dialog[open], [role=dialog]"))) return false;
     const k = e.key;
     if (k === " ") {
-      // Space over a button presses it; elsewhere (or with the pointer on the page) it holds the Hand, and the
-      // dashboard page does not scroll.
-      if (isControl(e.target) && !this.overStage) return false;
+      // Space holds the Hand with the pointer on the page, or the focus in the Document card (not on a button
+      // there, which Space presses); anywhere else it scrolls the dashboard page as usual.
+      const card = this.root.closest(".inv-doc") || this.root;
+      if (!this.overStage && !(card.contains(e.target) && !isControl(e.target))) return false;
       e.preventDefault();
       if (!this.spaceHand) {
         this.spaceHand = true;
