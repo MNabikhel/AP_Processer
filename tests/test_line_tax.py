@@ -508,3 +508,17 @@ def test_the_audit_trail_says_a_lines_tax_code_changed():
     final = {"line_items": [{"line_number": 1, "amount": 100, "taxes_applied": [], "tax_status": "exempt"}]}
     change = next(c for c in diff_coding(ai, final) if c["what"] == "line 1 tax code")
     assert (change["before"], change["after"]) == ("GST + PST", "Exempt")
+
+
+def test_a_taxable_that_followed_the_lines_names_the_line_instead_of_an_arithmetic_error(reference):
+    """The review screen moves a tax line's taxable with the lines marked (B-610), never its amount (B-700): a line
+    marked wrongly then shows as taxable × rate ≠ tax. When one line's amount is the difference, that is a warning
+    naming the line, not an error in the vendor's arithmetic."""
+    lines = [_line(1, 9200, ["GST", "PST"]), _line(2, 3960, ["GST", "PST"]),
+             _line(3, 1200, ["GST", "PST"], description="Design"), _line(4, 285, ["GST", "PST"])]  # fmt: skip
+    coding = _coding(lines, [_tax("GST", 0.05, 14645), _tax("PST", 0.07, 14645, 941.15, "MB")], "MB")
+    found = [f for f in check_taxes(coding, reference.tax) if f.code == "TAX_CALC_MISMATCH"]
+    assert len(found) == 1 and found[0].severity == "warning"
+    assert "line 3 (Design, 1,200.00) may be exempt from RST" in found[0].message
+    wrong = _coding(lines, [_tax("GST", 0.05, 14645), _tax("PST", 0.07, 14645, 900.00, "MB")], "MB")
+    assert [f.severity for f in check_taxes(wrong, reference.tax) if f.code == "TAX_CALC_MISMATCH"] == ["error"]
