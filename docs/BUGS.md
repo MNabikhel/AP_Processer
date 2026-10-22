@@ -6191,3 +6191,15 @@ reproduced with a script first, then given a failing test and fixed.
 - **Test:** `tests/test_sweep_pilot_fixes.py::test_many_blank_lines_point_to_apply_to_all_lines`,
   `tests/test_dashboard_sweep_fixes.py::test_counts_of_one_read_as_sentences`
 - **Lesson:** Past a few items, count them and point to the action that handles them all.
+
+#### B-668 · The standard Custom CSV layout had an empty VendorID and no vendor name · low
+- **Where:** `ap_coder/erp/export_layout.py` (`default_columns`)
+- **Symptom:** without a vendor master (the pilot's set-up), every row of the Custom CSV export began with an empty
+  VendorID, and nothing in the file said whom each bill was from.
+- **Cause:** the standard layout had the ERP's vendor ID only.
+- **Reproduce:** export a batch as Custom CSV without a vendor master.
+- **Reproduced:** yes (`sweep/exp/custom.csv`)
+- **Fix:** the standard layout has *VendorName* after *VendorID*. A layout already saved on the Exports page is kept
+  as it is.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_the_standard_custom_csv_layout_names_the_vendor`
+- **Lesson:** A default export must make sense with the default set-up.

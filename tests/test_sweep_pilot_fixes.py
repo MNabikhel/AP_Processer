@@ -523,3 +523,16 @@ def test_many_blank_lines_point_to_apply_to_all_lines():
     assert codes_to_pick(lines, False) == "Pick a GL account for 15 lines to approve (or use Apply to all lines…)"
     assert codes_to_pick(lines, False, hint=False) == "Pick a GL account for 15 lines to approve"
     assert codes_to_pick(lines[:3], False) == "Pick a GL account for lines 1, 2, 3 to approve"
+
+
+# --- B-668: the standard Custom CSV layout had no vendor name ---------------------------------------------------------
+
+
+def test_the_standard_custom_csv_layout_names_the_vendor():
+    from ap_coder.erp import export_layout as el
+
+    headers = [c.header for c in el.default_columns()]
+    assert headers[:2] == ["VendorID", "VendorName"]
+    rows = [{"vendor_id": "", "vendor_name": "Acme Ltd", "invoice_number": "1", "amount": 10.0, "currency": "CAD"}]
+    first, second = el.build(rows, el.Layout(el.default_columns())).decode("utf-8-sig").splitlines()[:2]
+    assert first.startswith("VendorID,VendorName,") and second.startswith(",Acme Ltd,1,")
