@@ -444,7 +444,8 @@ def test_the_queue_is_ready_only_when_the_pay_from_rule_lets_approve(client, sto
     from ap_coder.coding.bulk import bulk_approve
     from ap_coder.web.pages.review import attention
 
-    ready_before = {i["id"] for i in store.list_invoices(REVIEW)} - set(attention(store, None, store.list_invoices(REVIEW)))
+    pending = store.list_invoices(REVIEW)
+    ready_before = {i["id"] for i in pending} - set(attention(store, None, pending))
     assert ready_before  # the demo has invoices Ready
     rows, _ = banks.clean_rows([{"code": "USD-OP", "name": "US", "currency": "USD", "is_default": "yes"}])
     store.save_bank_accounts(rows)

@@ -343,7 +343,8 @@ def settle_header(store: Store, draft: Draft) -> dict[str, str]:
     if not draft.pay_from_for or not header.get("pay_from_account"):
         draft.pay_from_for = ""
         accounts = store.bank_accounts()
-        chosen = banks.opening_choice({"currency": currency}, False, accounts, store.last_pay_from(key) if accounts else "")
+        last = store.last_pay_from(key) if accounts else ""
+        chosen = banks.opening_choice({"currency": currency}, False, accounts, last)
         if chosen != (header.get("pay_from_account") or ""):
             header["pay_from_account"] = changed["pay_from_account"] = chosen
     return changed
