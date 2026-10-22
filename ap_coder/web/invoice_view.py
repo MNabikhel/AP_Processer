@@ -300,9 +300,19 @@ def fill_from_vendor(
     key = vendor_key(header.get("vendor_name") or "")
     fields = {n: v for n, v in (state.get("fields") or {}).items()
               if n in TAX_NUMBER_FIELDS and v and str(header.get(n) or "").strip() == v}  # fmt: skip
-    if state.get("vendor") == key and "vendor" in state:
-        return {"vendor": key, "fields": fields}, {}
     changed: dict[str, str] = {}
+    if state.get("vendor") == key and "vendor" in state:
+        # A number marked as the vendor list's is this vendor's own, or it follows it (B-682: an Undo that kept the
+        # vendor and put back another one's numbers must not leave them labelled as this vendor's).
+        for name in list(fields):
+            number = str((vendor or {}).get(TAX_NUMBER_FIELDS[name]) or "").strip()
+            if number != fields[name]:
+                header[name] = changed[name] = number
+                if number:
+                    fields[name] = number
+                else:
+                    fields.pop(name)
+        return {"vendor": key, "fields": fields}, changed
     for name, column in TAX_NUMBER_FIELDS.items():
         number = str((vendor or {}).get(column) or "").strip()
         current = str(header.get(name) or "").strip()

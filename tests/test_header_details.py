@@ -198,12 +198,14 @@ def test_in_a_browser_picking_a_vendor_fills_its_numbers_and_follows_it(browser,
         _pick_vendor(page, "Prairie Network", "Prairie Network Supply")
         page.wait_for_function(f"document.querySelector('[name={GST}]').value === '609274188 RT0001'")
         assert qst.input_value() == "1111111111 TQ0001"
-        # Ctrl+Z puts the number back as it was, the vendor stays
+        # Ctrl+Z puts back the vendor with its numbers (B-682)
         page.keyboard.press("Control+z")
         page.wait_for_function(f"document.querySelector('[name={GST}]').value === '555666775 RT0001'")
-        assert "Prairie" in vendor.input_value()
+        assert "Pacific" in vendor.input_value()
         page.wait_for_timeout(900)  # checked again: the server does not fill it again
         assert gst.input_value() == "555666775 RT0001"
+        _pick_vendor(page, "Prairie Network", "Prairie Network Supply")
+        page.wait_for_function(f"document.querySelector('[name={GST}]').value === '609274188 RT0001'")
         # a printed number that differs from the vendor list: amber, with the list's number under it
         gst.fill("123456782 RT0001")
         page.wait_for_selector(f'[data-field="{GST}"].is-flagged')
@@ -381,3 +383,34 @@ def test_every_header_field_has_a_word_for_the_learning_message():
     headers = [f for f in InvoiceCoding.model_fields if f not in ("line_items", "tax_lines", "confidence_score")]
     missing = [f for f in headers if f not in FIELD_WORDS]
     assert missing == [] and FIELD_WORDS[PST] == "PST number"
+
+
+def test_numbers_marked_from_the_vendor_list_are_always_this_vendors():
+    """B-682 (the server's backstop): a number marked as filled from the vendor list that is not the vendor's own
+    (an Undo that kept the vendor but put back another one's numbers) follows the vendor now in the field."""
+    header = _header("Other Co", **{GST: "123456782 RT0001", QST: "1234567890 TQ0001"})
+    state = {"vendor": "other", "fields": {GST: "123456782 RT0001", QST: "1234567890 TQ0001"}}
+    state, changed = view.fill_from_vendor(header, state, [], OTHER)
+    assert changed == {GST: "741852966 RT0001", QST: ""}
+    assert state == {"vendor": "other", "fields": {GST: "741852966 RT0001"}}
+
+
+def test_in_a_browser_undo_after_a_vendor_change_puts_back_the_vendor_with_its_numbers(browser, store):
+    """B-682: Ctrl+Z after picking a second vendor kept that vendor but put back the first one's numbers, still
+    marked as from the vendor list."""
+    page, errors = _open_review(browser, store, "Red River", viewport=LAPTOP)
+    gst = page.locator(f"[name={GST}]")
+    gst.fill("")
+    page.wait_for_timeout(600)
+    _pick_vendor(page, "Pacific Office", "Pacific Office Supply")
+    page.wait_for_function(f"document.querySelector('[name={GST}]').value === '555666775 RT0001'")
+    _pick_vendor(page, "Prairie Network", "Prairie Network Supply")
+    page.wait_for_function(f"document.querySelector('[name={GST}]').value === '609274188 RT0001'")
+    page.keyboard.press("Control+z")
+    page.wait_for_function(f"document.querySelector('[name={GST}]').value === '555666775 RT0001'")
+    assert "Pacific" in page.locator("#vendor-name").input_value()  # the vendor and its numbers, together
+    page.wait_for_timeout(900)  # checked again: nothing moves
+    assert "Pacific" in page.locator("#vendor-name").input_value() and gst.input_value() == "555666775 RT0001"
+    state = json.loads(page.locator("input[data-from-vendor]").input_value())
+    assert state["vendor"] == "pacific office supply" and state["fields"][GST] == "555666775 RT0001"
+    assert errors == []

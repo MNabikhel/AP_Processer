@@ -548,14 +548,20 @@ function showFromVendor() {
   });
 }
 
+let vendorBefore = vendorInput?.value ?? ""; // the vendor as it was before the change being made (Undo's)
+
 /** The vendor field changed (picked, or left after typing): fill from the vendor list, with Undo. */
 function vendorChanged() {
   if (!vendorInput || !fromVendorBox) return;
   const key = vendorKey(vendorInput.value);
   const state = fromVendor();
   const fields = stillFilled(state);
+  const before = vendorBefore;
+  vendorBefore = vendorInput.value;
   if ("vendor" in state && state.vendor === key) return setFromVendor({ vendor: key, fields });
+  // Undo puts back the vendor with its numbers, together (B-682): the screen as it was before the vendor changed.
   const snap = snapshot();
+  snap.header = snap.header.map(([n, v]) => [n, n === "vendor_name" ? before : v]);
   const found = key ? vendors.list.find((v) => (v.key ?? vendorKey(v.name)) === key) : null;
   const absent = absentList();
   const changed = [];
@@ -580,18 +586,9 @@ function vendorChanged() {
   if (!changed.length) return;
   showVendorMatch();
   for (const name of changed) viewer?.setEdited(name, input(name).value.trim(), false);
-  // Undo puts the numbers back and keeps the vendor: the vendor as it is now, with the numbers it had before.
-  snap.header = snap.header.map(([n, v]) => [n, n === "from_vendor" ? JSON.stringify({ vendor: key, fields: stillFilledIn(snap, state) }) : v]);
   offerUndo({ text: `${changed.length === 1 ? "Tax number" : "Tax numbers"} filled from the vendor list.`, tone: "info", icon: "menu_book" }, snap);
 }
 
-/** ``stillFilled`` as the screen was in ``snap``. */
-function stillFilledIn(snap, state) {
-  const values = Object.fromEntries(snap.header);
-  const fields = {};
-  for (const [name, value] of Object.entries(state.fields || {})) if (value && (values[name] || "").trim() === value) fields[name] = value;
-  return fields;
-}
 
 /** What the server filled in (the vendor list's numbers, the default Pay from account) and the details its checks are
     about (amber, with a note), after a check. A value is put in only where the box still holds what was sent. */
@@ -1241,6 +1238,7 @@ function restore(snap) {
   if (snap.edits && viewer) viewer.restoreEdits(snap.edits);
   showAbsent();
   showFromVendor();
+  if (vendorInput) vendorBefore = vendorInput.value;
   showVendorMatch();
   fillSplitLines();
   lastSums = tickedSums();

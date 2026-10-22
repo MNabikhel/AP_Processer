@@ -6650,3 +6650,19 @@ Found while building the pilot tester's requests on the review screen's invoice 
 - **Test:** `tests/test_header_details.py::test_numbers_filled_from_the_vendor_list_are_not_corrections`,
   `::test_every_header_field_has_a_word_for_the_learning_message`
 - **Lesson:** A value AP Coder put in itself is neither a reading nor a correction: every learner must know which.
+
+#### B-682 · Undo after a vendor change kept the new vendor with the old vendor's numbers · medium
+- **Where:** `ap_coder/web/static/js/invoice.js` (`vendorChanged`), `ap_coder/web/invoice_view.py`
+  (`fill_from_vendor`)
+- **Symptom:** on an invoice with no GST/HST or PST number, picking Red River then Prairie and pressing Ctrl+Z left
+  Prairie as the vendor with Red River's numbers in the fields, still said to be "From the vendor list".
+- **Cause:** Undo put back the numbers but kept the vendor, and rewrote the draft's record to say the old numbers
+  were the new vendor's; the server trusted that record.
+- **Reproduce:** /review/3: clear GST/HST and PST, pick Red River, pick Prairie, Ctrl+Z.
+- **Reproduced:** yes (found by the review of the header side)
+- **Fix:** the Undo of a vendor change is one snapshot taken before the vendor changed: the vendor, its numbers and
+  the record of what was filled come back together. On the server, a number marked as the vendor list's that is not
+  the current vendor's own follows the vendor (replaced, or cleared when it has none).
+- **Test:** `tests/test_header_details.py::test_in_a_browser_undo_after_a_vendor_change_puts_back_the_vendor_with_its_numbers`,
+  `::test_numbers_marked_from_the_vendor_list_are_always_this_vendors`
+- **Lesson:** What is undone together was done together: one snapshot, from before the first of its changes.
