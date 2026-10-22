@@ -43,7 +43,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from ap_coder.core.paths import same_folder, version_key  # noqa: E402  (standard library only)
+from ap_coder.core.paths import read_user_settings, same_folder, version_key, write_user_settings  # noqa: E402
 from ap_coder.ops.offline import listening as offline_listening  # noqa: E402  (standard library only)
 
 SERVER_FILE = ".ap_coder_server.json"  # in the data folder, written by `python -m ap_coder serve`
@@ -66,11 +66,13 @@ class Server:
     token: str = ""
     legacy: bool = False  # AP Coder 0.1's Streamlit dashboard: no /healthz, stopped through its process
     user: str = ""  # the computer account running it ("": not said, by an older AP Coder)
+    build: str = ""  # the commit of the code it runs ("": not said, by AP Coder 0.2)
 
     def name(self) -> str:
         version = "0.1 (the Streamlit dashboard)" if self.legacy else (self.version or "of an unknown version")
+        build = f" (build {self.build})" if self.build else ""
         where = f" from {self.folder}" if self.folder else ""
-        return f"AP Coder {version}{where}"
+        return f"AP Coder {version}{build}{where}"
 
 
 # --- Finding one ------------------------------------------------------------------------------------------------
@@ -145,7 +147,7 @@ def find(ports: list[int], data: Path | None) -> list[Server]:
             token = str(record.get("token") or "") if own else ""
             user = str(info.get("user") or (record.get("user") if own else "") or "")
             found.append(Server(port, str(info.get("version") or ""), str(info.get("folder") or ""), pid, token,
-                                user=user))  # fmt: skip
+                                user=user, build=str(info.get("build") or "")))  # fmt: skip
         elif legacy_dashboard(port):
             pid = port_owner(port)
             folder = folder_in_command(command_line(pid)) if pid else ""
@@ -161,9 +163,10 @@ def this_user() -> str:
         return ""
 
 
-def judge(server: Server | Worker, root: Path, version: str) -> str:
+def judge(server: Server | Worker, root: Path, version: str, build: str = "") -> str:
     """``same`` (this folder and version: open it), ``newer`` (open it, never stop it), ``older`` (stop it: an
-    older version, or the same one from another folder) or ``other`` (another computer account's, e.g. a second
+    older version, the same one from another folder, or this folder's from before its code changed: another build,
+    a newer ZIP of the same version unzipped over it) or ``other`` (another computer account's, e.g. a second
     Windows user sharing this folder: never opened, it would act under their name, nor stopped under them)."""
     user, me = getattr(server, "user", ""), this_user()
     if user and me and user.casefold() != me.casefold():  # (Windows account names ignore case)
@@ -173,7 +176,8 @@ def judge(server: Server | Worker, root: Path, version: str) -> str:
     if version_key(server.version) > version_key(version):
         return "newer"
     if same_folder(server.folder, root) and server.version == version:
-        return "same"
+        theirs = getattr(server, "build", "")
+        return "older" if build and theirs and theirs != build else "same"
     return "older"
 
 
@@ -401,8 +405,43 @@ def stop(server: Server, wait: float = STOP_WAIT) -> bool:
     return not listening(server.port)
 
 
+TAKEN_OVER = "taken_over"  # in the settings file: which dashboard a newer AP Coder stopped, and when
+TAKEOVER_FRESH = 600.0  # seconds that note is believed by the window whose dashboard it stopped
+
+
+def note_takeover(port: int, root: Path) -> None:
+    """Say, in the settings file, that the dashboard on ``port`` is being stopped by the AP Coder in ``root``: the
+    window that ran it then says a newer one took over, instead of just ending (or saying it stopped on its own)."""
+    try:
+        write_user_settings(**{TAKEN_OVER: {"port": port, "by": str(root), "at": time.time()}})
+    except OSError:
+        pass  # only for that window's last line
+
+
+def clear_takeover() -> None:
+    """A start's own dashboard is about to start: an earlier note is no longer about any window."""
+    if TAKEN_OVER in read_user_settings():
+        try:
+            write_user_settings(**{TAKEN_OVER: None})
+        except OSError:
+            pass
+
+
+def taken_over(port: int) -> bool:
+    """The dashboard on ``port`` (this window's) was stopped by another AP Coder folder or version a moment ago."""
+    note = read_user_settings().get(TAKEN_OVER)
+    if not isinstance(note, dict) or note.get("port") != port:
+        return False
+    try:
+        fresh = 0 <= time.time() - float(note.get("at") or 0) <= TAKEOVER_FRESH
+    except (TypeError, ValueError):
+        return False
+    return fresh
+
+
 def take_over(root: Path, version: str, ports: list[int], data: Path | None,
-              say: Callable[[str], None] = print, patience: float = PATIENCE) -> tuple[str, int | None]:  # fmt: skip
+              say: Callable[[str], None] = print, patience: float = PATIENCE,
+              build: str = "") -> tuple[str, int | None]:  # fmt: skip
     """Make way for AP Coder ``version`` from ``root``. Returns what to do:
 
     * ``("open", port)``: this same folder and version is running: open it (nothing to set up);
@@ -413,12 +452,13 @@ def take_over(root: Path, version: str, ports: list[int], data: Path | None,
     * ``("blocked", port)``: an older one is still running after ``patience`` seconds: stop (port None: an older
       watch or read-pages)."""
     for server in find(ports, data):
-        verdict = judge(server, root, version)
+        verdict = judge(server, root, version, build)
         if verdict == "other":
             return "other", server.port
         if verdict in ("same", "newer"):
             return ("open" if verdict == "same" else "newer"), server.port
         say(f"{server.name()} is still running (port {server.port}): stopping it, so this version takes over.")
+        note_takeover(server.port, root)
         if stop(server):
             say("  Stopped it.")
             stopped.append(server.folder)

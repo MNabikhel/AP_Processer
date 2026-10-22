@@ -19,7 +19,6 @@ import math
 import os
 import platform
 import re
-import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -498,24 +497,17 @@ def restore_backup(request: Request, name: str = Form(""), confirm: str = Form("
 # --- About ---------------------------------------------------------------------------------------------------------
 
 
-def git_version() -> str:
-    if not (paths.PROJECT_DIR / ".git").exists():
-        return ""
-    try:
-        out = subprocess.run(
-            ["git", "log", "-1", "--format=%h · %cd", "--date=format:%Y-%m-%d %H:%M"],  # noqa: S607
-            cwd=paths.PROJECT_DIR, capture_output=True, text=True, timeout=5, check=False,
-        )  # fmt: skip
-        return out.stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        return ""
+def build_version() -> str:
+    """``build 3dacb6f, 2026-10-21 20:14``: which build this is (GitHub's ZIP, the offline bundle or a checkout), so
+    two copies of the same version can be told apart ("" when nothing is known)."""
+    return paths.build_label(paths.install_identity(paths.PROJECT_DIR))
 
 
 def about_context(store: Store) -> dict[str, Any]:
-    git = git_version()
+    build = build_version()
     return {
         "about": [
-            ("Version", __version__ + (f" · {git}" if git else ""), False),
+            ("Version", __version__ + (f" · {build}" if build else ""), False),
             ("Code folder", str(paths.PROJECT_DIR), True),
             ("Data folder", str(data_dir(store)), True),
             ("Settings file", str(env_path()), True),

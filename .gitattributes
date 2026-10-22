@@ -2,3 +2,5 @@
 *.bat -text
 *.sh text eol=lf
 *.command text eol=lf
+# The build stamp: GitHub's Download ZIP and git archive write the commit and its time into it (ap_coder/core/paths.py).
+ap_coder/BUILD export-subst

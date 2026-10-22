@@ -5473,3 +5473,329 @@ An independent review of the branch walked the pilot path end to end and found w
   custom layout can leave it out).
 - **Test:** `tests/test_before_testing_review.py::test_without_a_cost_center_list_a_po_compares_no_cost_center`,
   `test_without_a_cost_center_list_no_empty_cost_center_column`
+### Before testing: install, launcher and updates
+
+A fresh install of main (3dacb6f) the way the pilot tester does it, on Linux standing in for Windows: GitHub's ZIP
+(`git archive`) unzipped into a new home folder and double-clicked, four times from cold, then a newer ZIP unzipped
+into a new folder and over the old one. Then each fix below was run the same way again (a newer ZIP of the same
+version unzipped over a running one: the old window said a newer AP Coder took over, the new one said *Updated AP
+Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21)* and ran the self-check).
+
+#### B-542 · A newer GitHub ZIP of the same version could not be told from the older one · high
+- **Where:** `ap_coder/core/paths.py` (`install_identity`, `describe`), `scripts/launch.py` (`previous_install`,
+  `run`), `scripts/running.py` (`judge`), `ap_coder/web/app.py` (`/healthz`), `ap_coder/web/pages/settings.py`
+  (About), `ap_coder/ops/doctor.py`
+- **Symptom:** unzipped over the old folder, a newer ZIP said no *Updated* line, showed the older one's *Self-check
+  OK at setup* and ran no new self-check; Settings → About said only "0.2.0". Unzipped over a folder whose dashboard
+  was still running, the new start opened the old dashboard ("already running").
+- **Cause:** every version was 0.2.0, a ZIP carries no build information, and the install fingerprint was a hash of
+  `pyproject.toml`, which most changes leave alone; the running dashboard was judged by folder and version only.
+- **Reproduce:** `git archive` two commits of main, unzip the older one and double-click it, unzip the newer one over
+  it and double-click again.
+- **Reproduced:** yes (run2.log of the audit: *Self-check OK at setup (2026-10-21 20:14)*, no update said)
+- **Fix:** `ap_coder/BUILD` holds `$Format:%h %cI$`, marked `export-subst` in `.gitattributes`: GitHub's Download
+  ZIP and `git archive` write the commit and its time into it; the offline bundle builder writes it for its copy; a
+  checkout uses `git log -1`; a folder with neither, a hash of its code (`paths.build_stamp`). The fingerprint is the
+  pyproject plus that build, a ZIP's build time is its commit's (so an older ZIP in another folder is older), and the
+  launcher's state records the commit: *Updated AP Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build
+  87db17f, 2026-10-21)*, then the self-check. `/healthz` says the build, so a dashboard from before this folder was
+  unzipped over is stopped, not opened. Settings → About, the doctor and Help → Report a problem say the build. The
+  version is 0.3.0 for this pilot drop (D-54).
+- **Test:** `tests/test_launch_build.py::test_a_newer_zip_unzipped_over_the_older_one_is_an_update`,
+  `::test_a_stamped_zip_says_its_commit_and_time`, `::test_two_zips_of_one_version_are_two_builds`,
+  `::test_a_dashboard_of_this_folder_from_before_its_code_changed_is_older`, `::test_the_dashboard_says_its_build`,
+  `::test_settings_about_and_the_doctor_say_the_build`, `::test_the_bundle_builder_stamps_its_copy`; CI
+  `windows-github-zip`
+- **Lesson:** An identity built from a version number that nobody bumps is no identity: take it from what changes
+  with every build, the commit, and put it where every way of getting the code carries it.
+
+#### B-543 · The first run said nothing for about three of its first four minutes · medium
+- **Where:** `scripts/launch.py` (`ensure_venv`, `pip_install`, `PipProgress`, `heartbeat`)
+- **Symptom:** making `.venv` (30 s on the audit's run), pip installing 56 packages (135 s) and a 22 s gap after it
+  showed no line: a pilot tester would think it hung and close the window.
+- **Cause:** pip's own lines (one a package) are kept for the log, and nothing replaced them in the window; `python -m
+  venv` was run without a word.
+- **Reproduce:** GitHub's ZIP, a fresh home folder, double-click; time the window's lines.
+- **Reproduced:** yes (run1.log of the audit). The 22 s gap did not come back on any of the later runs, cold or warm
+  (3 s between pip's last line and the next step; nothing between the steps after it took more than 0.4 s): it was
+  pip itself finishing on a cold cache, and the heartbeat now covers it.
+- **Fix:** *Making AP Coder's own Python environment (the .venv folder; under a minute)...* before `venv`; while pip
+  runs, every 12 s without a line the window says how far it is, from pip's lines and the `.dist-info` folders that
+  appear: *Working out which packages are needed: 12 so far (pandas)...*, *Getting packages: 29 of 55
+  (opencv_python)...*, *Installing packages: 41 of 56 (onnxruntime)...*. The steps after pip get the same watch
+  (`settle_and_check`): 12 s without a line says *Still working: getting the OCR models...* (or the checks, the
+  self-check, the clean-up).
+- **Test:** `tests/test_launch_build.py::test_pip_progress_counts_what_it_found_fetched_and_installed`,
+  `::test_pip_progress_from_the_wheelhouse`, `::test_pip_says_how_far_it_is_while_it_is_quiet`,
+  `::test_making_the_venv_is_said`, `::test_a_quiet_step_after_pip_says_it_is_still_working`
+- **Lesson:** Moving noise to the log is half the job: whatever took its place in the window must still say that
+  something is happening.
+
+#### B-544 · A model download that lost its connection showed urllib's error and waited a day · medium
+- **Where:** `scripts/fetch_models.py` (`download`, `fetch`, `plain_reason`, `setup`), `scripts/launch.py`
+  (`ensure_models`, `models_due`, `readiness`, `one_engine`)
+- **Symptom:** 2 of 4 cold installs lost the connection to www.modelscope.cn. The window said *could not get
+  ch_PP-OCRv5_rec_mobile_infer.onnx: URLError: <urlopen error [Errno 104] Connection reset by peer>*, *Run this again
+  when the download works* (run what?), *Tried again tomorrow*, and the readiness line said the PP-OCRv5 models *come
+  from the offline bundle's models folder*, of a GitHub ZIP that has none.
+- **Cause:** one try per file; the launcher ran `fetch_models.main`, written for a person at the command line; the
+  failure was recorded with the day in it; the readiness line had one wording for both sources.
+- **Reproduce:** a first run from GitHub's ZIP on a flaky connection (or a proxy that resets every connection).
+- **Reproduced:** yes (old_run1.log in the audit's up/ and up2/)
+- **Fix:** each download is tried 3 times (after 3 s and 10 s; a 404 is not tried again); the window says *Couldn't
+  get X: the connection dropped, tried 3 times.* and *Couldn't download the OCR models (the connection dropped). AP
+  Coder will try again next time it starts; scans are still read with one engine meanwhile.*, the error itself goes
+  to the log; the next start tries again (twice a file, 20 s each), up to 3 starts a day, then *tomorrow*; the
+  readiness line says *one engine for now: the PP-OCRv5 models couldn't be downloaded yet; AP Coder tries again when
+  it starts* from the code alone, and the bundle wording only for a bundle.
+- **Test:** `tests/test_launch.py::test_a_failed_model_download_is_tried_again_and_said_plainly`,
+  `::test_plain_reasons_for_a_failed_download`, `tests/test_launch_build.py::test_the_ocr_line_says_where_the_models_come_from`
+- **Lesson:** A download over someone else's network fails now and then: try again before saying so, say it in the
+  words of the person reading, and say what happens next.
+
+#### B-545 · The window of an older AP Coder just ended when a newer one took over · low
+- **Where:** `scripts/running.py` (`take_over`, `note_takeover`, `taken_over`), `scripts/launch.py`
+  (`start_dashboard`, `main`, `keep_open`)
+- **Symptom:** the old window closed (Windows) or ended with nothing said, or with *AP Coder stopped on its own*;
+  the pilot tester could not tell an update from a crash.
+- **Cause:** the old start only saw its server end; nothing told it why.
+- **Reproduce:** start AP Coder, unzip a newer build (over it or elsewhere), double-click the new one.
+- **Reproduced:** yes
+- **Fix:** before stopping it, the new start notes in the settings file which port it stops; the old window, seeing
+  its dashboard end with that note fresh, says *A newer AP Coder took over; you can close this window.*, frees the
+  launch lock (the new start waits for it), and waits for Enter instead of vanishing (not with `AP_NO_PAUSE=1` or no
+  one at the window). Only windows of 0.3.0 and later can say it (N-252).
+- **Test:** `tests/test_launch_build.py::test_the_old_window_says_a_newer_ap_coder_took_over`,
+  `::test_an_old_note_or_another_port_is_not_this_window`, `::test_the_window_frees_the_lock_before_it_waits`
+- **Lesson:** When one process ends another on purpose, leave a note the other can read: the reason is the message.
+
+#### B-546 · The first run's counts and GL line did not add up · low
+- **Where:** `scripts/launch.py` (`_ensure_packages`, `pip_install`, `models_said`, `setup_check_lines`),
+  `scripts/fetch_models.py` (`came_with_package`)
+- **Symptom:** *Installing AP Coder's packages (15 missing)* then *Installed 56 packages*; *OCR models ready: 1
+  already there, 2 downloaded* on a brand-new computer; *Table finder: ... downloaded into <the whole data folder
+  path>/models.*; *GL accounts: none imported yet, so the sample ones are used* next to *Setup checks: all 9 passed
+  (the sample GL accounts, ...)* while the GL page showed 0 accounts.
+- **Cause:** pip installs what the 15 need too; the "already there" model is RapidOCR's angle classifier, inside its
+  package; the table finder line came from the command-line tool; the sample chart's checks were counted as passes
+  of this setup.
+- **Reproduce:** a first run from GitHub's ZIP.
+- **Reproduced:** yes (run1.log of the audit)
+- **Fix:** *Installing AP Coder's packages: 15 missing, with the packages they need in turn* and *Installed 56
+  packages (the 15 missing and the ones they need)*; *OCR models ready: 2 downloaded, and the table finder's; 1 came
+  with the OCR package.* (no path); *· GL accounts: none imported yet (import yours in GL accounts & tax, or use the
+  sample ones)* as a note, and *Setup checks: all 7 passed (tax mapping, coding rules, settings)* without the
+  sample's GL accounts and cost centers.
+- **Test:** `tests/test_launch.py::test_the_start_says_no_gl_accounts_were_imported_yet`,
+  `tests/test_launch.py::test_the_model_count_says_where_each_came_from`
+- **Lesson:** Two numbers on two lines are read together: say how they relate, or the reader decides something went
+  wrong.
+
+#### B-547 · The LM Studio line said to start AP Coder again · low
+- **Where:** `scripts/launch.py` (`lm_studio_line`)
+- **Symptom:** *To use it: open LM Studio, Developer tab → Start server, then start AP Coder again*; the pilot runs
+  LM Studio, and the dashboard picks it up without a restart.
+- **Cause:** written before Settings → Reading had *Check again*.
+- **Reproduce:** start AP Coder with LM Studio closed.
+- **Reproduced:** yes
+- **Fix:** *LM Studio isn't running yet: until it is, invoices are read by OCR only and wait for a person. To start
+  it: open LM Studio, Developer tab → Start server; then press Check again in AP Coder's Settings → Reading (no need
+  to restart AP Coder)*.
+- **Test:** `tests/test_launch_build.py::test_lm_studio_not_running_says_how_to_start_it_and_to_check_again`
+- **Lesson:** Advice in a start-up message ages with the app: check it against what the dashboard can do now.
+
+#### B-548 · pyproject allowed Python 3.10 while everything else said 3.11 · low
+- **Where:** `pyproject.toml` (`requires-python`, ruff `target-version`), `.github/workflows/ci.yml` (tests matrix),
+  `ap_coder/ops/doctor.py` (`_python_check`), `scripts/launch.py` (`venv_fits`, `bootstrap`)
+- **Symptom:** `requires-python = ">=3.10"` and CI tested 3.10, while APProcessor.bat / .command, the launcher, the
+  bundle (3.11 to 3.14), the doctor and the guides said 3.11 or newer.
+- **Cause:** the floor was raised in the launcher and the guides, not in the package or CI.
+- **Reproduce:** compare them.
+- **Reproduced:** yes
+- **Fix:** 3.11 everywhere: `requires-python = ">=3.11"`, ruff `py311`, CI tests 3.11, 3.12, 3.13 and 3.14, the doctor
+  fails a 3.10. A `.venv` made with 3.10 by AP Coder 0.1 (PR #1 and #2 allowed it) is made again with the newer Python
+  (it could no longer install 0.3), instead of being reused.
+- **Test:** `tests/test_launch_build.py::test_one_python_version_everywhere`,
+  `::test_a_venv_made_with_an_older_python_is_made_again`, `tests/test_config_and_cli.py::test_doctor_python_range_matches_the_launcher`
+- **Lesson:** A version floor lives in several places: change the package metadata and CI with the launcher, or the
+  one that is not changed is the one that is tested.
+
+#### B-549 · No CI job ran GitHub's ZIP the way the pilot tester does · medium
+- **Where:** `.github/workflows/ci.yml` (`windows-github-zip`)
+- **Symptom:** every Windows job set `AP_ALLOW_INTERNET=1` or used the offline bundle, from a plain folder, with no
+  Mark of the Web; none updated one ZIP with a newer one. B-542 and B-544 passed CI.
+- **Cause:** the jobs were written for the offline bundle, the path the pilot was first meant to use.
+- **Reproduce:** read the workflow.
+- **Reproduced:** yes
+- **Fix:** a Windows job makes two `git archive` ZIPs (this commit and an empty commit on top), marks them as
+  downloaded, `Expand-Archive`s the older into `Pilot tester Ré\` (a space and an accent), double-clicks
+  `APProcessor.bat` with no `AP_ALLOW_INTERNET` until the dashboard answers (checking the first run's lines and the
+  build on `/healthz`), leaves an invoice and a `.env` line in the data folder, unzips the newer ZIP over it while it
+  runs and double-clicks again: *Updated AP Coder from ... (build old ...) to ... (build new ...)*, the self-check,
+  the old window's *A newer AP Coder took over*, the data kept, Settings → About showing the new build.
+- **Test:** `tests/test_ci_workflow.py::test_ci_runs_github_zip_as_the_pilot_tester_does`
+- **Lesson:** Test the path the user takes, not the one the plan said they would take.
+
+#### B-550 · The bundle builder's dry run did not say where it downloads from · low
+- **Where:** `scripts/build_offline_bundle.py` (`plan`, `download_hosts`, `main`)
+- **Symptom:** IT behind a firewall that lets only named hosts through had no list: `--dry-run` printed pip commands
+  and model names, not the addresses.
+- **Cause:** the plan kept each model's checksum, not its URL.
+- **Reproduce:** `python scripts/build_offline_bundle.py --dry-run`
+- **Reproduced:** yes
+- **Fix:** the plan has each model's `url`, `download_hosts` (`pypi.org`, `files.pythonhosted.org`,
+  `www.modelscope.cn`) and what is not in the bundle (LM Studio and its models); stderr says the same in three lines
+  (stdout stays the JSON plan). PILOT.md §B has a *For IT* box: what the default build holds, why it carries the
+  `azure` extra, what it leaves out.
+- **Test:** `tests/test_launch_build.py::test_the_dry_run_names_every_address_the_build_downloads_from`
+- **Lesson:** A build that downloads needs a list of where from, for whoever runs the firewall.
+
+#### Found by the review of these fixes
+
+#### B-551 · The clean-up could delete a newer offline bundle's folder · high
+- **Where:** `ap_coder/core/paths.py` (`install_identity`, `compare`, `is_older`), `scripts/upgrade.py`
+  (`replaced_by`, `clean_up`), `scripts/launch.py` (`older_installs`)
+- **Symptom:** a GitHub ZIP started after a newer offline bundle of the same version, in Canada, took the bundle for
+  the older one: after its self-check the clean-up removed the bundle's `.venv` and then its whole folder.
+- **Cause:** B-542 ordered a ZIP by its commit's time (UTC) and a bundle by its manifest's `built` (IT's local time,
+  no zone), compared as text: 17:30 in Toronto sorted before 20:00 UTC. And the clean-up took every install on record
+  that was not newer, so a build that could not be ordered at all counted as older.
+- **Reproduce:** ZIP X stamped 2026-10-21T20:00Z, bundle Y stamped 21:00Z and built 17:30 local; start X.
+- **Reproduced:** yes (`is_older(Y, X)` was true)
+- **Fix:** a stamped build (a ZIP, or a bundle from 0.3.0 on: its builder writes the stamp) is ordered by its commit's
+  time in UTC; a bundle from before the stamp by its build time, and only against another such bundle. `compare`
+  answers older, newer, same (one commit, or the same code) or unknown; the clean-up takes only a folder certainly
+  older or another copy of this very build, and `clean_up` itself refuses any other (*Kept X: it can't be told
+  whether it is older than this AP Coder, so nothing in it was touched*). Never delete when in doubt.
+- **Test:** `tests/test_launch_build.py::test_a_newer_bundle_is_never_taken_for_an_older_one_across_time_zones`,
+  `::test_a_build_that_cant_be_ordered_is_never_cleaned_up`
+- **Lesson:** Two times compare only when they are on one clock: a local time without its zone is not comparable
+  with UTC, and a comparison that can't be made must say so rather than answer.
+
+#### B-552 · Python 3.10 stopped with AttributeError before it was told it is too old · low
+- **Where:** `ap_coder/core/paths.py` (`_utc`)
+- **Symptom:** `python scripts/launch.py` under 3.10: *AttributeError: module 'datetime' has no attribute 'UTC'*.
+- **Cause:** `datetime.UTC` is new in 3.11 (ruff's py311 target suggests it); the launcher's first phase runs on any
+  Python to say which one it needs.
+- **Reproduce:** `python3.10 -c "from ap_coder.core import paths; paths.install_identity()"`
+- **Reproduced:** yes
+- **Fix:** `datetime.timezone.utc` (with a note for ruff).
+- **Test:** `tests/test_launch_build.py::test_build_times_need_no_python_3_11`
+- **Lesson:** Code that exists to tell an old Python it is too old must itself run on that Python.
+
+#### B-553 · An older build over a newer one said "Updated", and a copied folder "from 0.3.0 to 0.3.0" · low
+- **Where:** `scripts/launch.py` (`update_line`)
+- **Symptom:** *Updated AP Coder from 0.3.0 (build new) to 0.3.0 (build old)*; *Updated AP Coder from 0.3.0 to 0.3.0.*
+- **Cause:** any change of fingerprint was said as an update.
+- **Reproduce:** unzip an older ZIP over a newer one; change a file of a folder with no build stamp.
+- **Reproduced:** yes
+- **Fix:** *Replaced AP Coder X with an older build, Y.* (it still starts and runs the self-check: going back is
+  sometimes what IT wants, and a database a newer AP Coder changed is refused anyway); *AP Coder's files in this
+  folder changed since it was last set up: checking it again.* when nothing names the two.
+- **Test:** `tests/test_launch_build.py::test_an_older_build_unzipped_over_a_newer_one_is_said_as_such`
+- **Lesson:** Say the direction of a change, not only that there was one.
+
+#### B-554 · A network that dropped the models' site silently held a first setup for about 10 minutes · medium
+- **Where:** `scripts/fetch_models.py` (`fetch`, `setup`, `unreached`), `scripts/launch.py` (`ensure_models`)
+- **Symptom:** each of 4 model files waited out 3 tries of 60 s; every later start about 2 minutes more; the window
+  said only that each could not be got.
+- **Cause:** every file was tried on its own, whatever had happened to the one before.
+- **Reproduce:** a firewall that drops www.modelscope.cn without answering.
+- **Reproduced:** yes (in the review)
+- **Fix:** a site not reached at all (no answer in time, no such name, refused) is asked for nothing more in that
+  run; the first setup waits 30 s an answer (3 tries), a later start 10 s (1 try); the window says once *AP Coder
+  couldn't reach www.modelscope.cn (a firewall may block it): ask IT, or use the offline bundle.* (measured: 104 s
+  for a first setup, 11 s for a later start). The *Still working* line comes less and less often when it would say
+  the same again.
+- **Test:** `tests/test_launch.py::test_a_site_that_never_answers_is_asked_once_and_said_once`
+- **Lesson:** When a server does not answer, the next request to it will not either: give up on the server, not on
+  each file.
+
+#### B-555 · The pip progress line could stay on one package's name · low
+- **Where:** `scripts/launch.py` (`PipProgress.status`)
+- **Symptom:** *Installing packages: 40 of 56 (Odd.Name)...* to the end, when a `.dist-info` was spelled otherwise.
+- **Cause:** the line named the first package not yet found installed.
+- **Reproduce:** a package list where one name never matches its `.dist-info` folder.
+- **Reproduced:** yes
+- **Fix:** it names the package after the last one found installed (pip installs in its list's order).
+- **Test:** `tests/test_launch_build.py::test_pip_progress_never_sticks_on_a_name_it_cant_match`
+- **Lesson:** Progress worked out from outside must move on when one item can't be matched.
+
+#### B-556 · A 3.10 .venv was remade before the old dashboard using it was stopped · low
+- **Where:** `scripts/launch.py` (`bootstrap`, `make_way_for_venv`)
+- **Symptom:** an old AP Coder window still open from that .venv: Windows refused to delete it (*Could not remove the
+  .venv folder*).
+- **Cause:** the first phase remakes .venv; old dashboards were stopped only in the second.
+- **Reproduce:** a 0.1 install made with Python 3.10, left running; unzip 0.3.0 over it and double-click.
+- **Reproduced:** yes (in the review, on its order of steps)
+- **Fix:** before .venv is made again, the older AP Coder running is stopped (as the second phase does).
+- **Test:** `tests/test_launch_build.py::test_an_older_venv_is_made_again_only_after_old_dashboards_stopped`
+- **Lesson:** Stop what uses a folder before deleting the folder.
+
+#### B-557 · The new CI job could fail wrongly, and checked the Mark of the Web only on the way in · low
+- **Where:** `.github/workflows/ci.yml` (`windows-github-zip`, `windows-pilot-launcher`)
+- **Symptom:** a first run whose only failed download was the table finder's (*Couldn't download the table finder's
+  model*) failed the job; the Mark of the Web was put on the files but never checked as taken off APProcessor.bat;
+  the later start's check for *Fetching the OCR models* matched nothing the launcher says.
+- **Cause:** the expected lines were written before the final wording.
+- **Reproduce:** read the workflow against the launcher's lines.
+- **Reproduced:** yes
+- **Fix:** the job accepts either download message (and the unreachable one), checks APProcessor.bat has lost its
+  Zone.Identifier while the other files keep it; the later start checks for *Downloading the OCR models*. PILOT and
+  UPGRADING say the 0.2.0 window just ends on this update (only 0.3.0 and later say a newer one took over).
+- **Test:** `tests/test_ci_workflow.py`
+- **Lesson:** A CI check for a line is only as good as the line's current wording: grep for what the code says.
+
+#### B-558 · A data folder inside an old GitHub ZIP folder was deleted with it · high
+- **Where:** `scripts/upgrade.py` (`removable`, `holds_data`, `data_folders`, `user_files`)
+- **Symptom:** with the data folder recorded as `OLD/data/mine`, `OLD/data` or `OLD/samples/mydata` (database and
+  invoices in it), the clean-up after an update said *Removed the older AP Coder folder ...* and the data was gone.
+- **Cause:** for a folder without a bundle manifest, `user_files` counts `data/` and `samples/` as AP Coder's own and
+  exempts a `.db` there; nothing asked whether a data folder lay inside the folder being removed.
+- **Reproduce:** an old GitHub ZIP folder set up, `data_dir` recorded inside its `data/`, `clean_up` from a new folder.
+- **Reproduced:** yes (in the review, and `tests/test_update_cleanup_data.py` before the fix)
+- **Fix:** a folder is kept whole (*... because it holds your data folder (X)*) when this start's data folder, the
+  data folder now, the one on record or the database's folder (`AP_DB_PATH`) is inside it and still holds files, or
+  when a database (`.db`, `.sqlite`, their journals) or an `invoices` folder is anywhere in it (its `.venv` and caches
+  aside). A clean-up never deletes a database file.
+- **Test:** `tests/test_update_cleanup_data.py::test_a_data_folder_inside_the_old_folder_is_never_deleted`,
+  `::test_a_database_or_invoices_anywhere_in_the_old_folder_keep_it`
+- **Lesson:** Before deleting a folder, ask whether the person's data is in it, wherever the rules say data belongs:
+  data ends up where people put it.
+
+#### B-559 · A recorded folder that was no longer an AP Coder install lost its .venv and models · medium
+- **Where:** `scripts/upgrade.py` (`clean_up`)
+- **Symptom:** a folder on record whose `ap_coder/` was gone still had its `.venv` and `models/` removed (*removed its
+  .venv and models; the folder itself stays ...*); and when the data folder was the old folder itself, its `models/`
+  (where the table finder's model is kept) went.
+- **Cause:** the partial clean-up ran for any folder `removable` refused, install or not.
+- **Reproduce:** record an install, delete its `ap_coder/`, start a newer one.
+- **Reproduced:** yes
+- **Fix:** only an AP Coder install is touched; any other recorded folder is said (*Kept X: it is no longer an AP Coder
+  folder, so nothing in it was touched*) and taken off the record. A folder that is the data folder keeps its
+  `models/`; a link inside one is never followed.
+- **Test:** `tests/test_update_cleanup_data.py::test_a_recorded_folder_that_is_no_longer_an_install_is_not_touched`,
+  `::test_the_data_folders_models_are_kept_when_the_data_folder_is_the_old_folder`
+- **Lesson:** A record says what a folder was, not what it is: check again before acting on it.
+
+#### B-560 · A link to an old folder was renamed and said to be "mostly removed" at every start · low
+- **Where:** `scripts/upgrade.py` (`clean_up`, `is_link`)
+- **Symptom:** a symlinked old folder: the link became `<link>.removing-<date>`, the window said *most of it was
+  removed; the rest is removed on a later start*, again at later starts; nothing behind it was deleted.
+- **Cause:** `remove_folder` renames first; renaming a link moves only the link.
+- **Reproduce:** record a symlink to an older install as an install, start a newer one.
+- **Reproduced:** yes
+- **Fix:** links (and Windows junctions) are never renamed, followed or emptied: *Skipped X: it is a link to another
+  folder, so nothing was removed*, and they are taken off the record.
+- **Test:** `tests/test_update_cleanup_data.py::test_a_link_to_an_old_folder_is_skipped_not_renamed`
+- **Lesson:** Clean-up code that walks or renames must decide what to do with links before it touches anything.
+
+#### Looked at and left (install, launcher and updates)
+
+- **N-251** · A GitHub ZIP unzipped over an older one leaves the files the newer one no longer has (the offline
+  bundle's manifest lists its files, so a bundle removes them: `upgrade.prune_stale`; a ZIP has no list). A file
+  left in `ap_coder/` could still be imported; none is today. A ZIP could carry a file list, but GitHub builds it.
+- **N-252** · A window of AP Coder 0.2.0 or older, still open when 0.3.0 takes over, still just ends: the message
+  comes from the old window's own code (B-545).
+- **N-253** · The `windows-github-zip` CI job (B-549) was written without a Windows computer to run it on; its first
+  runs may need a fix of the job itself (the steps it checks were run on Linux with the same ZIPs).

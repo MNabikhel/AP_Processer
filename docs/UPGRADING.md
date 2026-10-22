@@ -1,8 +1,8 @@
 # Updating from an older version
 
 Every merge into `main` was a version someone may have installed. All of them are `0.1.0` in their
-`pyproject.toml`; the current one is `0.2.0`, the web app (`python -m ap_coder serve`) instead of the Streamlit
-dashboard. This page says, for each older version, how its README had it installed and started, what the new
+`pyproject.toml`; then came `0.2.0`, the web app (`python -m ap_coder serve`) instead of the Streamlit
+dashboard, and `0.3.0`, the version of the pilot drop. This page says, for each older version, how its README had it installed and started, what the new
 version finds on such a computer, and what the update does with it. Each line was checked for real on Linux (old
 version installed as its README said, used, left running; the new offline bundle unzipped into a new folder and
 over the old one, and double-clicked with no internet): see *How this is checked* at the end.
@@ -17,6 +17,27 @@ Linux). Older folders also had `install.bat`, `install.sh`, `start.bat`, `start.
 bundle is unzipped over such a folder, those files are removed on its first start. Nothing to do by hand. The
 command prompt for AP Coder's commands is now `scripts\terminal.bat`, and the installer's questions are
 `APProcessor.bat --installer`.
+
+## Builds of one version
+
+Every `0.2.0` looked the same to the launcher: GitHub's ZIP carried nothing but the version, so a newer ZIP
+unzipped over an older one said no *Updated* line, showed the older one's *Self-check OK at setup* and ran no new
+self-check (docs/BUGS.md B-542). From `0.3.0` every copy says which build it is:
+
+- **GitHub's ZIP** (and `git archive`): `ap_coder/BUILD` holds `$Format:%h %cI$`, which git fills in with the commit
+  and its time (`export-subst` in `.gitattributes`).
+- **The offline bundle**: the builder writes the commit it was built from into `ap_coder/BUILD`; the bundle's build
+  time stays in `bundle_manifest.json`.
+- **A git checkout**: its HEAD. **A folder with neither**: a hash of its code files (not shown as a build).
+
+The launcher's fingerprint of a folder is its `pyproject.toml` and that build, so a newer build of the same version
+is an update: *Updated AP Coder from 0.3.0 (build 1a2b3c4, 2026-10-20) to 0.3.0 (build 5e6f7a8, 2026-10-21)*, then
+the self-check again. A dashboard still running from before (this folder unzipped over while it ran) says its
+build on `/healthz` and is stopped, not opened; a window of 0.3.0 or later then says *A newer AP Coder took over;
+you can close this window.* (a 0.2.0 window, the one this update replaces, just ends). An older build unzipped over a
+newer one says *Replaced AP Coder X with an older build, Y*. Only a folder certainly older than this one (or another
+copy of this very build) is ever cleaned up: builds are ordered by their commit's time in UTC, and a folder of the same
+version whose build can't be ordered (a bundle from before the stamp, a copy made by hand) is left alone. *Settings → About*, `python -m ap_coder doctor` and *Help → Report a problem* show the build.
 
 ## The older versions
 

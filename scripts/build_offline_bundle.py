@@ -4,12 +4,14 @@ Run it on a computer with internet (any OS):
 
     python scripts/build_offline_bundle.py              # Windows 64-bit + this computer, Python 3.11 to 3.14
     python scripts/build_offline_bundle.py --mac        # also Macs (Apple silicon and Intel)
-    python scripts/build_offline_bundle.py --dry-run    # show what it would do; downloads and writes nothing
+    python scripts/build_offline_bundle.py --dry-run    # what it would do, and every address it downloads from
+                                                        # (for firewall rules); downloads and writes nothing
     python scripts/build_offline_bundle.py --manifest-for FOLDER   # only write FOLDER's bundle_manifest.json
 
 The ZIP (in ``dist/``) holds one ``APProcessor/`` folder:
 
-* the code (the files git tracks, never ``private/`` data or a ``.env``)
+* the code (the files git tracks, never ``private/`` data or a ``.env``), its ``ap_coder/BUILD`` stamped with the
+  commit it was built from (Settings → About and the launcher tell builds of one version apart by it)
 * ``wheelhouse/``: every package for ``pip install -e ".[ocr]"`` (and ``.[dev]`` for ``--installer``, ``.[azure]`` for
   the optional Azure check, installed by the launcher when it can), as wheels for each platform and Python version
   asked for, plus pip, setuptools and wheel (where a package of the OCR add-on has no wheel, that target gets the
@@ -48,6 +50,9 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from check_deps import requirement_name, tomllib  # noqa: E402  (tomllib, or pip's copy on Python 3.10)
+
+# Where the build downloads from (for IT's firewall rules): pip's index and its files, then the OCR models' site.
+PIP_HOSTS = ("pypi.org", "files.pythonhosted.org")
 
 DEFAULT_PLATFORMS = ["win_amd64"]
 # --mac: both kinds of Mac, each at the oldest macOS the current packages are built for. Apple silicon: macOS 14
@@ -210,8 +215,33 @@ def plan(args: argparse.Namespace) -> dict:
         "pip_commands": pip_commands(
             reqs, stage / "wheelhouse", args.platform, args.python, not args.no_current, plain, optional
         ),
-        "models": [] if args.no_models else [{"name": m.name, "sha256": m.sha256} for m in offline.bundle_models()],
+        "models": []
+        if args.no_models
+        else [{"name": m.name, "url": m.url, "sha256": m.sha256} for m in offline.bundle_models()],  # fmt: skip
+        "download_hosts": download_hosts([] if args.no_models else [m.url for m in offline.bundle_models()]),
+        "not_in_the_bundle": "LM Studio and its models (OvisOCR2, the chat model): IT installs them on the laptop",
     }
+
+
+def download_hosts(urls: list[str]) -> list[str]:
+    """Every host the build downloads from, over HTTPS (port 443): pip's, then the models' (``urls``)."""
+    from urllib.parse import urlsplit
+
+    return [host for host in dict.fromkeys([*PIP_HOSTS, *(urlsplit(u).hostname or "" for u in urls)]) if host]
+
+
+def stamp_build(stage: Path) -> str:
+    """Write the commit this checkout is at into the bundle's ap_coder/BUILD (GitHub's ZIP gets it from git archive;
+    a bundle is copied file by file, which leaves the placeholder). Left as it is when the commit isn't known.
+    Returns the stamp ("" when none)."""
+    from ap_coder.core import paths
+
+    stamp = paths.build_stamp(ROOT)
+    if stamp["source"] not in ("git", "stamp") or not stamp["time"]:
+        return ""
+    text = f"{stamp['commit']} {stamp['time']}Z"
+    (stage / paths.BUILD_FILE).write_text(text + "\n", encoding="utf-8")
+    return text
 
 
 def _zip(stage: Path, dest: Path) -> None:
@@ -265,6 +295,9 @@ def build(args: argparse.Namespace) -> int:
         dest = stage / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / rel, dest)
+    stamped = stamp_build(stage)
+    if stamped:
+        print(f"      build stamp: {stamped}")
 
     print(f"[2/4] wheelhouse: {', '.join(p['targets'])}")
     (stage / "wheelhouse").mkdir(exist_ok=True)
@@ -354,6 +387,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         p = plan(args)
         print(json.dumps({**p, "source_files": f"{len(p['source_files'])} files"}, indent=2))
+        # (on stderr: stdout stays the JSON plan) The addresses for a firewall that lets only some through.
+        print(f"The build downloads from: {', '.join(p['download_hosts'])} (HTTPS, port 443).", file=sys.stderr)
+        for model in p["models"]:
+            print(f"  {model['url']}", file=sys.stderr)
+        print(f"Not in the bundle: {p['not_in_the_bundle']}.", file=sys.stderr)
         return 0
     return build(args)
 

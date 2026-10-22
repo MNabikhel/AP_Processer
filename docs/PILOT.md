@@ -139,9 +139,9 @@ first start and after an update; later starts show its last result and take a fe
 the summary says so plainly and AP Coder still starts. LM Studio is never installed by AP Coder: the
 summary only says whether it is running, which chat model is loaded, and whether OvisOCR2 was found and
 passed its self-test. Once it has: *[OK] Page reader: ath-maas_ovisocr2 found, self-test passed (reads every
-page of every invoice)*. Without LM Studio, one line says so and what to do: *[!!] LM Studio isn't running:
-invoices are read by OCR only and wait for a person. To use it: open LM Studio, Developer tab → Start server, then
-start AP Coder again*.
+page of every invoice)*. Without LM Studio, one line says so and what to do: *[!!] LM Studio isn't running yet:
+until it is, invoices are read by OCR only and wait for a person. To start it: open LM Studio, Developer tab → Start
+server; then press Check again in AP Coder's Settings → Reading (no need to restart AP Coder)*.
 
 ### Set up LM Studio: start the server, nothing to choose
 
@@ -175,6 +175,22 @@ downloading. Copy the ZIP to the laptop (USB stick), unzip it, double-click `APP
 `APProcessor.command`). Seeing `wheelhouse/`, the launcher installs from it with `pip --no-index` and never
 goes online.
 
+> **For IT: what is in the bundle, and where the build downloads from**
+>
+> - **What the default build holds:** the code (stamped with the commit it was built from: *Settings → About* and
+>   the launcher show it, e.g. *0.3.0, build 3dacb6f*), and packages for **Windows 64-bit and for the computer that
+>   builds it** (a build on a Mac also holds that Mac's; on Linux, Linux's), for Python 3.11, 3.12, 3.13 and 3.14,
+>   with the `ocr` (OCR for scans), `dev` (pytest, for `--installer --full-tests`) and `azure` extras, and the OCR
+>   and table-finder models. `--no-current` leaves the building computer's packages out.
+> - **Why `azure`:** the packages of the optional *Azure check* (*Settings → Reading → Azure check*, off by
+>   default), so turning it on needs no download. It sends nothing unless AP turns it on with your organisation's
+>   own Azure endpoint and key. For a pilot without Azure, `--extras ocr dev` leaves them out; nothing else changes.
+> - **Where it downloads from** (HTTPS, port 443): `pypi.org` and `files.pythonhosted.org` (the packages) and
+>   `www.modelscope.cn` (the models). `--dry-run` prints these hosts and each model's full address, without
+>   downloading anything.
+> - **Not in the bundle:** LM Studio and its models (OvisOCR2, the chat model). IT installs them on the laptop
+>   (*What you need*). Python is not in it either.
+
 The laptop's Python must be one the bundle was built for (3.11 to 3.14 by default; `bundle_manifest.json`
 lists them, and the launcher names them when it does not match; `--python 3.12` alone makes a smaller
 bundle). One exception: the OCR engine (onnxruntime) is not published for Intel Macs on Python 3.14, so
@@ -183,8 +199,11 @@ has it). The build says so, and `bundle_manifest.json` lists it under `without_o
 
 **On a computer with internet** you can skip the bundle: unzip GitHub's ZIP (**Code → Download ZIP**) and
 double-click `APProcessor.bat`. Like CloseDesk, its setup downloads the packages and OCR models once (and, with no
-Python, offers Python 3.12 with `winget`); AP Coder itself stays offline. `set AP_ALLOW_INTERNET=0` first
-forbids those downloads.
+Python, offers Python 3.12 with `winget`); AP Coder itself stays offline. The first run says what it is doing
+while pip works (*Installing packages: 23 of 56 (pandas)...*). A model download that fails (*the connection
+dropped*) is tried 3 times, then again the next time AP Coder starts (up to 3 starts a day); scans are read with one
+OCR engine meanwhile. `set AP_ALLOW_INTERNET=0` first forbids those downloads. A newer GitHub ZIP of the same
+version is an update like any other: each ZIP carries its build (`ap_coder/BUILD`, filled in by GitHub).
 
 **Check the install again** (a few seconds, nothing is saved): `APProcessor.bat --check` runs the
 self-check before starting; for every sample's line, run `python scripts\pilot_check.py` in `scripts\terminal.bat`.
@@ -267,8 +286,11 @@ That is all. The new version takes over:
 - **The old one stops.** An AP Coder still running (from the old folder, or the old version in this one) is
   stopped first, so two versions never use your data at once. If it can't be stopped, the window says
   *Close the old AP Coder window, then start again* and waits up to a minute for you to do it.
-- **It says what changed**: *Updated AP Coder from 0.1.0 (2026-09-01) to 0.2.0 (2026-10-11)*. It sets up
-  only what is new (from the new bundle's `wheelhouse/`, never the internet) and runs the self-check.
+- **It says what changed**: *Updated AP Coder from 0.2.0 to 0.3.0 (build 3dacb6f, 2026-10-21)*, also between two
+  builds of one version (two GitHub ZIPs, or two bundles). It sets up only what is new (from the new bundle's
+  `wheelhouse/`, never the internet) and runs the self-check. An older build unzipped over a newer one says
+  *Replaced AP Coder X with an older build, Y*. The old window, if it was still open, simply ends when it is 0.2.0
+  (this update); from 0.3.0 on it says *A newer AP Coder took over; you can close this window.*
 - **Your data is kept.** The data folder (`C:\Users\<you>\APCoder`) is never replaced. Before the new version
   brings the database up to date, it copies it to the `backups` folder
   (`ap_coder-<date>-before-update-from-schema-<n>.db`). Data an older version kept inside its own folder

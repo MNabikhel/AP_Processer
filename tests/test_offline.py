@@ -393,8 +393,10 @@ def test_bundle_dry_run_plans_without_writing(tmp_path, capsys, no_network):
     assert len(plan["models"]) == 4  # the three PP-OCRv5 models and the table finder
     assert plan["models"][-1] == {
         "name": "yolov8n_layout_general6.onnx",
+        "url": "https://www.modelscope.cn/models/RapidAI/RapidLayout/resolve/v1.2.0/onnx/360/yolov8n_layout_general6.onnx",
         "sha256": "927b6edcb268e896e6a170f7d78980591b408e04b3908f54d58eb69efd018c95",
     }
+    assert plan["download_hosts"] == ["pypi.org", "files.pythonhosted.org", "www.modelscope.cn"]  # for IT's firewall
     # --mac: one download per platform and Python version, Macs included.
     assert bundle.main(["--dry-run", "--no-models", "--mac", "--out", str(out)]) == 0
     plan = json.loads(capsys.readouterr().out)

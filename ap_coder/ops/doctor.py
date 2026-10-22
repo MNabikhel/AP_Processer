@@ -94,15 +94,22 @@ _PACKAGES = {
 _INSTALL_FIX = "run APProcessor.bat (Mac: APProcessor.command); it installs from the offline bundle"
 
 
+def ap_coder_build() -> str:
+    """``0.3.0, build 3dacb6f, 2026-10-21 20:14``: which AP Coder this is (every 0.2.0 looked the same before)."""
+    from .. import __version__
+    from ..core import paths
+
+    label = paths.build_label(paths.install_identity(paths.PROJECT_DIR))
+    return f"{__version__}, {label}" if label else __version__
+
+
 def _python_check(version: tuple[int, ...]) -> tuple[str, str, str]:
-    """3.11 or newer is what the launcher uses and the docs name (no upper bound); 3.10 still runs (CI tests it)
-    but warns."""
+    """3.11 or newer, as pyproject's requires-python, the launcher and the docs say (no upper bound; CI tests 3.11 to
+    3.14)."""
     shown = ".".join(str(n) for n in version[:3])
     if tuple(version[:2]) >= (3, 11):
         return "python", PASS, f"{shown} (3.11 or newer)"
-    if tuple(version[:2]) < (3, 10):
-        return "python", FAIL, f"{shown} (need 3.11 or newer)"
-    return "python", WARN, f"{shown} (older than the 3.11 or newer AP Coder uses)"
+    return "python", FAIL, f"{shown} (need 3.11 or newer: run APProcessor, which makes .venv with a newer Python)"
 
 
 def run_checks(
@@ -119,6 +126,7 @@ def run_checks(
         checks.append(Check(area, status, detail))
 
     # --- Runtime -------------------------------------------------------------
+    add("AP Coder", PASS, ap_coder_build())
     add(*_python_check(sys.version_info))
     for pkg in _PACKAGES:
         v = _version(pkg)
