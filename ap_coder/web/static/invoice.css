@@ -216,8 +216,8 @@
   line-height: 18px; padding: 5px 8px; border: 1px solid var(--lg-border); border-radius: var(--lg-r-sm, 6px);
   background: var(--lg-surface); color: var(--lg-text); field-sizing: content; max-height: 80px;}
 .inv-lines-grid textarea:focus {outline: none; border-color: var(--lg-accent); box-shadow: var(--lg-focus);}
-/* A long invoice (more than 10 lines): the same rows and Tab order, tighter: the captions on the first line only, a
-   one-line description box that grows as needed, the taxes on one line (B-479). */
+/* An invoice of more than 3 lines (B-479: 10, D-59): the same rows and Tab order, tighter: the captions on the first
+   line only, a one-line description box that grows as needed, the taxes on one line; about 105 px a line, not 150. */
 .inv-lines-grid.compact tr[data-row] {padding: 4px 0; gap: 3px 6px;}
 .inv-lines-grid.compact tr[data-row]:not(:first-child) td[data-label]::before {display: none;}
 .inv-lines-grid.compact textarea {min-height: 28px; padding: 4px 8px;}

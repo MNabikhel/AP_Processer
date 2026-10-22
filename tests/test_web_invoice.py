@@ -130,6 +130,26 @@ def test_the_review_screen_shows_the_document_the_form_the_grids_and_the_actions
     assert 'data-nav="next"' in text and 'data-nav="prev"' in text
 
 
+def test_an_invoice_of_more_than_three_lines_gets_the_tighter_line_grid(client, store):
+    """D-59: each line of the grid took about 150 px, so two lines showed at 1366 x 768; from four lines the grid is
+    the tighter one (captions on the first line only), about 105 px a line."""
+    import copy
+    import json
+
+    for inv in store.list_invoices(REVIEW):
+        lines = len(store.get_invoice(inv["id"])["ai_output"]["line_items"])
+        table = re.search(r'<table class="([^"]*)" id="lines">', client.get(f"/review/{inv['id']}").text).group(1)
+        assert ("compact" in table.split()) == (lines > 3), (inv["id"], lines, table)
+    inv = store.get_invoice(store.list_invoices(REVIEW)[0]["id"])
+    output = copy.deepcopy(inv["ai_output"])
+    for count, compact in ((3, False), (4, True)):
+        output["line_items"] = [{**copy.deepcopy(output["line_items"][0]), "line_number": i + 1} for i in range(count)]
+        with store._conn() as conn:
+            conn.execute("UPDATE invoices SET ai_output = ? WHERE id = ?", (json.dumps(output), inv["id"]))
+        table = re.search(r'<table class="([^"]*)" id="lines">', client.get(f"/review/{inv['id']}").text).group(1)
+        assert ("compact" in table.split()) == compact, count
+
+
 def test_every_demo_invoice_opens_whatever_its_state(client, store):
     for inv in store.list_invoices():
         assert client.get(f"/review/{inv['id']}").status_code == 200
