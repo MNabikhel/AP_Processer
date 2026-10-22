@@ -6203,3 +6203,17 @@ reproduced with a script first, then given a failing test and fixed.
   as it is.
 - **Test:** `tests/test_sweep_pilot_fixes.py::test_the_standard_custom_csv_layout_names_the_vendor`
 - **Lesson:** A default export must make sense with the default set-up.
+
+#### B-669 · A vendor read as "Inc.", one word in capitals or the bill-to's name could show as verified · low
+- **Where:** `ap_coder/capture/__init__.py` (`doubtful_vendor`, `_mark_doubtful_vendor`)
+- **Symptom:** in the real-invoice run the vendor came out as *Inc.*, as *POSTES* (of POSTES CANADA), or as the
+  customer's own name from the bill-to block, and the field was not marked for a look.
+- **Cause:** nothing judged whether the name chosen looked like a vendor's name.
+- **Reproduce:** a reading whose vendor is one of these.
+- **Reproduced:** yes (the real-invoice run)
+- **Fix:** a vendor name that is only a legal form, one word in capitals, or a line of the bill-to block is
+  *check* (confidence at most 60%), with the reason; never when the vendor master confirms the name. The capture
+  benchmark (200 invoices, seed 7) is unchanged.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_a_doubtful_vendor_name_is_marked_check`,
+  `::test_a_vendor_read_from_the_bill_to_is_check`
+- **Lesson:** A value can be read right and still not be the field's: check that it looks like one.
