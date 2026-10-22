@@ -6713,3 +6713,15 @@ Found while building the pilot tester's requests on the review screen's invoice 
   leaves an invoice with none, saying "Pick the bank account to pay this invoice from"; a test now holds it to that.
 - **Test:** `tests/test_header_details.py::test_the_queue_is_ready_only_when_the_pay_from_rule_lets_approve`
 - **Lesson:** Two pages that answer the same question must call the same function.
+
+#### B-686 · A crafted post could change the vendor's printed bank details · low
+- **Where:** `ap_coder/web/invoice_view.py` (`Draft.from_form`, `READ_ONLY`)
+- **Symptom:** the vendor's bank details are a read-only line on the review screen (D-66), but posting
+  `remit_bank_account` to /check or /approve replaced them, and with them what VENDOR_BANK_CHANGED compares.
+- **Cause:** the form still took every field of `FORM_FIELDS` from the post.
+- **Reproduce:** post `remit_bank_account=Account 999` with an approval.
+- **Reproduced:** yes (found by the review of the header side)
+- **Fix:** a read-only field (`READ_ONLY`: the vendor's bank details) keeps the stored value whatever is posted. It is
+  not in `TEACHABLE`, so no other way changes it on the review screen.
+- **Test:** `tests/test_header_details.py::test_a_posted_vendor_bank_detail_is_ignored`
+- **Lesson:** Read-only on the page means read-only on the server.

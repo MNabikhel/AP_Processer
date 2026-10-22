@@ -466,3 +466,20 @@ def test_the_queue_is_ready_only_when_the_pay_from_rule_lets_approve(client, sto
     for inv in cad:  # (the screen's checks above flagged them in the queue: opened again, they are clean)
         assert check(client, inv["id"], form_of(store, inv["id"]))["allow"]
     assert not {i["id"] for i in cad} & set(attention(store, None, store.list_invoices(REVIEW)))
+
+
+def test_a_posted_vendor_bank_detail_is_ignored(client, store):
+    """B-686: the vendor's printed bank details are read-only on the screen, but a crafted post still changed them
+    (and with them what the fraud check compares)."""
+    import sqlite3
+
+    invoice_id = _red_river(store)
+    printed = "Transit 12345, Institution 004, Account 7654321"
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE invoices SET ai_output = json_set(ai_output, '$.remit_bank_account', ?) WHERE id = ?",
+                     (printed, invoice_id))  # fmt: skip
+    base = view.Draft.stored(store.get_invoice(invoice_id)["ai_output"])
+    assert view.Draft.from_form({"remit_bank_account": "Account 999"}, base).header["remit_bank_account"] == printed
+    data = _approvable(client, invoice_id, form_of(store, invoice_id, remit_bank_account="Account 999"))
+    client.post(f"/review/{invoice_id}/approve", data=data, headers=PAGE)
+    assert store.get_invoice(invoice_id)["final_output"]["remit_bank_account"] == printed

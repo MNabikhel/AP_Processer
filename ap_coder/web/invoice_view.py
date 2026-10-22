@@ -73,6 +73,9 @@ AMOUNT_FIELDS = ("subtotal", "tax_total", "grand_total")
 # pay_from_account: our bank account the invoice is paid from (coding/banks.py).
 FORM_FIELDS = (*TEACHABLE, "supplier_province", "ship_to_province", "remit_bank_account", "original_invoice_number",
                "pay_from_account")  # fmt: skip
+# Kept as read whatever is posted: the vendor's printed bank details are evidence for the fraud check, shown read-only
+# and never taught on the page (not in TEACHABLE) (D-66, B-686).
+READ_ONLY = frozenset({"remit_bank_account"})
 FIELD_LABELS = {
     "vendor_name": "Vendor", "gst_hst_registration_number": "GST/HST #", "qst_registration_number": "QST #",
     "pst_registration_number": "PST #", "supplier_province": "Supplier province",
@@ -239,8 +242,8 @@ class Draft:
     def from_form(cls, form: Any, base: Draft) -> Draft:
         """The screen as posted. A header field missing from the form keeps ``base``'s value; the grids are taken
         from the form when it says it has them (``grids``), so deleting the last row is an edit too."""
-        header = {name: str(form.get(name)) if form.get(name) is not None else base.header.get(name, "")
-                  for name in FORM_FIELDS}  # fmt: skip
+        header = {name: str(form.get(name)) if form.get(name) is not None and name not in READ_ONLY
+                  else base.header.get(name, "") for name in FORM_FIELDS}  # fmt: skip
         lines, taxes = base.lines, base.taxes
         if form.get("grids"):
             keys = form.getlist("line_key")
