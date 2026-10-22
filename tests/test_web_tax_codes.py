@@ -152,3 +152,19 @@ def test_in_a_browser_the_dropdown_follows_the_place_of_supply(browser, store, p
     assert options[0] == first, options
     assert _codes(page)[0] == "GST+PST"  # each line keeps its own code, listed or not
     assert errors == []
+
+
+def test_a_worked_out_code_is_marked_until_its_note_goes_b713(client, store):
+    """A code worked out to check is marked on the line until the clerk picks or confirms it (the page takes the note
+    out of the line's reasoning, posted with it)."""
+    from ap_coder.coding.line_tax import GUESS_NOTE
+
+    invoice_id = _invoice(store, RED_RIVER)
+    inv = store.get_invoice(invoice_id)
+    ai = inv["ai_output"]
+    ai["line_items"][2]["reasoning_justification"] = f"Design. {GUESS_NOTE}"
+    reference = store.reference_data()
+    draft = invoice_view.Draft.stored(ai)
+    assert [r["tax_guess"] for r in invoice_view.grid(reference, draft, ai)["lines"]] == [False, False, True, False]
+    draft.lines[2]["reasoning_justification"] = "Design."  # confirmed: the note is gone from what is posted
+    assert not any(r["tax_guess"] for r in invoice_view.grid(reference, draft, ai)["lines"])
