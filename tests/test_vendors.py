@@ -396,3 +396,21 @@ def test_the_erp_vendor_list_brings_qst_pst_and_province(tmp_path):
     store.import_vendor_master([{**rows[0], "qst": "", "pst": "", "province": ""}])  # a file without them keeps them
     acme = next(v for v in store.master_vendors() if v["erp_id"] == "V1")
     assert acme["pst_number"] == "PST-1111-2222"
+
+
+def test_without_a_vendor_master_the_vendor_list_keeps_the_numbers_ap_gave_a_vendor(tmp_path):
+    """B-680: with no vendor master the review screen's vendor list is the vendors approved before; the GST/HST, QST
+    and PST numbers AP gave one of them on the Vendors page were left out of it, so the vendor field neither showed
+    them nor filled them in (D-65)."""
+    from ap_coder.core.store import Store
+
+    store = Store(tmp_path / "ap.db")
+    doc = {"vendor_name": "Acme Ltd", "invoice_number": "1", "invoice_date": "2026-10-01", "currency": "CAD",
+           "subtotal": 10.0, "tax_total": 0.0, "grand_total": 10.0, "confidence_score": 0.9, "line_items": []}
+    invoice_id = store.add_invoice(tmp_path / "a.pdf", doc, {})
+    store.approve_invoice(invoice_id, doc, "Jane")
+    store.save_vendor("acme", "Acme Ltd", expected_gst="123456782 RT0001", qst_number="1234567890 TQ0001",
+                      pst_number="PST-1234-5678")
+    (acme,) = [v for v in store.vendor_choices() if v["vendor_key"] == "acme"]
+    assert (acme["expected_gst"], acme["qst_number"], acme["pst_number"]) == (
+        "123456782 RT0001", "1234567890 TQ0001", "PST-1234-5678")

@@ -726,7 +726,8 @@ QUICK_START: list[tuple[str, str, str]] = [  # numbered 0 to 6, as docs/QUICK_ST
     ("Your name and province", "Settings → Review: each approval is recorded under your name; the province is where "
      "goods are delivered to you.", "/settings/review"),
     ("Your GL accounts and sales tax", "Import your GL accounts (or use the sample ones to try AP Coder), then pick "
-     "a GL account for GST, HST and QST on the Sales tax accounts tab.", "/accounts"),
+     "a GL account for GST, HST and QST on the Sales tax accounts tab. Optional: your company's bank accounts on the "
+     "Bank accounts tab, to say which one pays each invoice.", "/accounts"),
     ("Your first invoices", "Upload PDFs, scans, photos or saved emails. Each is read, coded and checked.",
      "/process"),
     ("Review", "Open an invoice and fix what the checks point to.", "/review"),
@@ -742,4 +743,7 @@ WHATS_NEW: list[str] = [
     "Settings opens on Review: your name, approvals and your province, with one Save.",
     "Exports are Excel or CSV for the pilot, and the page remembers the last one you used.",
     "The sample GL accounts come without cost centers: each line needs only a GL account.",
+    "On the review screen the invoice details come first, then the lines.",
+    "A vendor from the vendor list fills in the GST/HST, QST and PST numbers the invoice does not print, and says so.",
+    "Pay from: the company bank account that pays each invoice, from GL accounts & tax → Bank accounts.",
 ]

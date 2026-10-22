@@ -6611,3 +6611,23 @@ reproduced with a script first, then given a failing test and fixed.
   template learned from) is not marked. A name that is only a legal form or the bill-to's still is.
 - **Test:** `tests/test_sweep_pilot_fixes.py::test_a_one_word_vendor_approved_before_for_this_supplier_is_not_check`
 - **Lesson:** A doubt the person has already settled is not asked again.
+
+### Header side: invoice details, vendor tax numbers, bank accounts
+
+Found while building the pilot tester's requests on the review screen's invoice details (D-63, D-65, D-66).
+
+#### B-680 · Without a vendor master, the vendor list left out the tax numbers AP gave a vendor · low
+- **Where:** `ap_coder/core/store.py` (`vendor_choices`)
+- **Symptom:** with no vendor master imported, the review screen's vendor list is the vendors approved before; a
+  GST/HST, QST or PST number AP typed for one of them on the Vendors page was not in it, so the vendor field's list
+  did not show it, "The GST/HST number printed is …'s" never named that vendor, and the vendor list's numbers could
+  not be filled in (D-65).
+- **Cause:** the vendors approved before were listed from the invoices alone (key and name), never joined with their
+  row in the `vendors` table.
+- **Reproduce:** approve an invoice from Acme Ltd, give Acme a GST/HST number on the Vendors page, open another
+  invoice: the vendor list's Acme has no number.
+- **Reproduced:** yes
+- **Fix:** such a vendor carries the GST/HST, QST and PST numbers of its `vendors` row (the name is still the one on
+  its invoices).
+- **Test:** `tests/test_vendors.py::test_without_a_vendor_master_the_vendor_list_keeps_the_numbers_ap_gave_a_vendor`
+- **Lesson:** A list built from two sources carries what both know.
