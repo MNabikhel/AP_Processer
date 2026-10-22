@@ -6007,7 +6007,7 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
 - **Fix:** every edit of the screen (a box ticked, an amount changed, a line deleted, added or put back) updates a tax
   line's taxable amount to the sum of the lines ticked with its tax, and its amount at its rate, while the taxable
   amount is still the sum it was; one the clerk typed is left alone, and the tax line's right-click menu offers
-  *Update the taxable from the lines ticked GST (…)*.
+  *Taxable from the lines ticked GST: …*.
 - **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_a_tax_lines_taxable_follows_the_lines_ticked_with_it_b610`
 - **Lesson:** Two parts of a screen that say the same thing must move together, but never over what a person typed.
 

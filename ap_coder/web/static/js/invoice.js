@@ -1396,7 +1396,7 @@ function num(el) {
 /* A tax line's taxable amount follows the lines ticked with its tax (B-610): ticking or unticking a line's GST box,
    changing a ticked line's amount, deleting or adding one (every edit goes through soon()) updates the GST line's taxable amount (and its amount, at its rate) while it still
    is the sum of the lines it was; a taxable amount the clerk typed is left alone, and the tax line's menu offers
-   "Update the taxable from the ticked lines". */
+   "Taxable from the lines ticked GST". */
 
 function tickedSums() {
   const sums = {};
@@ -1459,7 +1459,7 @@ function taxMenu(tr) {
         tr.querySelector('[name="tax_amount"]').value = amount.toFixed(2);
         soon(0);
       }) },
-    { icon: "sync", label: `Update the taxable from the lines ticked ${label} (${sum.toFixed(2)})`, id: "sync",
+    { icon: "sync", label: `Taxable from the lines ticked ${label}: ${sum.toFixed(2)}`, id: "sync",
       disabled: !sum ? `No line is ticked ${label}` : same(num(tr.querySelector('[name="tax_taxable"]')), sum) ? "It is that already" : false,
       run: () => undoable(`Taxable amount set from the lines ticked ${label}: ${sum.toFixed(2)}.`, () => {
         setTaxable(tr, sum);
