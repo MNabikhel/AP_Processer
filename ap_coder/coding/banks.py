@@ -106,7 +106,9 @@ def columns_for(headers: Iterable[str]) -> dict[str, str]:
     return found
 
 
-def clean_rows(rows: Iterable[dict[str, Any]], gl_codes: set[str] | None = None) -> tuple[list[dict[str, Any]], list[str]]:
+def clean_rows(
+    rows: Iterable[dict[str, Any]], gl_codes: set[str] | None = None
+) -> tuple[list[dict[str, Any]], list[str]]:
     """(the accounts, the problems) from rows keyed by ``COLUMNS``. A row without a code is skipped when it is blank,
     else a problem; ``gl_codes``: the GL accounts loaded (None: no chart, any GL account is taken). The institution
     is kept at 3 digits and the transit at 5 (Canadian numbers), the currency upper case; two defaults for one
@@ -139,7 +141,8 @@ def clean_rows(rows: Iterable[dict[str, Any]], gl_codes: set[str] | None = None)
             "code": code, "name": values["name"] or code, "currency": currency,
             "institution": institution.zfill(3) if institution else "",
             "transit": transit.zfill(5) if transit else "", "account_number": _number(row.get("account_number")),
-            "gl_account": gl, "is_default": _flag(row.get("is_default"), False), "active": _flag(row.get("active"), True),
+            "gl_account": gl, "is_default": _flag(row.get("is_default"), False),
+            "active": _flag(row.get("active"), True),
         })  # fmt: skip
     defaults: dict[str, list[str]] = {}
     for a in out:
@@ -147,7 +150,9 @@ def clean_rows(rows: Iterable[dict[str, Any]], gl_codes: set[str] | None = None)
             defaults.setdefault(a["currency"], []).append(a["code"])
     for currency, codes in sorted(defaults.items()):
         if len(codes) > 1:
-            problems.append(f"Only one default account per currency: {', '.join(codes)} are all the {currency} default.")
+            problems.append(
+                f"Only one default account per currency: {', '.join(codes)} are all the {currency} default."
+            )
     return out, problems
 
 

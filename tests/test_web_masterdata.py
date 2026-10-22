@@ -6,8 +6,8 @@ the files the earlier dashboard gave; destructive actions ask first; text from f
 from __future__ import annotations
 
 import io
-from pathlib import Path
 from dataclasses import replace
+from pathlib import Path
 from urllib.parse import urlencode
 
 import openpyxl
@@ -411,8 +411,16 @@ def test_bank_accounts_are_imported_edited_and_never_shown_in_full(client, store
     assert "Sample Bank CAD operating" in page.text
     # a GL account that is not in the chart is refused, nothing imported
     bad = upload(client, "/accounts/bank/upload", "b.csv", b"Code,Currency,Cash GL\nX-1,CAD,9999\n")
-    answer = client.post("/accounts/bank/import", headers=PAGE, data={
-        "file": bad.url.params["file"], "col_code": "Code", "col_currency": "Currency", "col_gl_account": "Cash GL"})
+    answer = client.post(
+        "/accounts/bank/import",
+        headers=PAGE,
+        data={
+            "file": bad.url.params["file"],
+            "col_code": "Code",
+            "col_currency": "Currency",
+            "col_gl_account": "Cash GL",
+        },
+    )
     assert answer.status_code == 400 and "9999 is not in your GL accounts" in answer.json()["error"]
     # the grid: rename, a new USD default, CAD-OP no longer in use; a blank number keeps the stored one
     page = client.get("/accounts?tab=bank")

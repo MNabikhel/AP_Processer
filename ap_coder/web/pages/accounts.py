@@ -215,7 +215,6 @@ def use_sample(request: Request) -> JSONResponse:
     )
 
 
-
 # --- Our bank accounts (D-66) --------------------------------------------------------------------------------------
 # The company's own accounts, the ones invoices are paid from ("Pay from" on the review screen). Only the last 4 digits
 # of an account number are ever shown, here too: the grid's box is blank (typing replaces the number), and there is a
@@ -317,7 +316,7 @@ async def bank_save(request: Request) -> JSONResponse:
                                          "gl_account")}  # fmt: skip
     defaults, active = {str(v) for v in form.getlist("is_default")}, {str(v) for v in form.getlist("active")}
     records = []
-    for n, code in enumerate(cols["code"]):
+    for n in range(len(cols["code"])):
         row = {f: str(values[n] if n < len(values) else "").strip() for f, values in cols.items()}
         old = stored.get(row["code"])
         if old and not row["account_number"]:
@@ -518,4 +517,3 @@ def add_rule(
         "/accounts?tab=rules",
         flash_message(f"Rule added: {rule.vendor} → {rule.gl_code}.", "ok", icon="rule_settings"),
     )
-

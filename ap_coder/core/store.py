@@ -900,7 +900,9 @@ class Store:
             r["is_default"], r["active"] = bool(r["is_default"]), bool(r["active"])
         return rows
 
-    def save_bank_accounts(self, rows: list[dict[str, Any]], actor: str | None = None, imported: bool = False) -> dict[str, int]:
+    def save_bank_accounts(
+        self, rows: list[dict[str, Any]], actor: str | None = None, imported: bool = False
+    ) -> dict[str, int]:
         """Add or change accounts (``banks.clean_rows`` output), by code; an account not in ``rows`` is kept. An
         account made the default of its currency is the only one. Returns {"added", "updated"}."""
         from ..coding.banks import COLUMNS
@@ -908,6 +910,12 @@ class Store:
         before = {r["code"]: r for r in self.bank_accounts()}
         added = updated = 0
         now = _now()
+        upsert = (
+            f"INSERT INTO bank_accounts ({', '.join(COLUMNS)}, updated_at) VALUES ({', '.join('?' * len(COLUMNS))}, ?) "
+            "ON CONFLICT(code) DO UPDATE SET "
+            + ", ".join(f"{c} = excluded.{c}" for c in COLUMNS[1:])
+            + ", updated_at = excluded.updated_at"
+        )
         with self._conn() as conn:
             for row in rows:
                 values = [row[c] if c not in ("is_default", "active") else int(bool(row[c])) for c in COLUMNS]
@@ -918,12 +926,7 @@ class Store:
                     updated += 1
                 else:
                     added += 1
-                conn.execute(
-                    f"INSERT INTO bank_accounts ({', '.join(COLUMNS)}, updated_at) VALUES ({', '.join('?' * len(COLUMNS))}, ?) "
-                    "ON CONFLICT(code) DO UPDATE SET " + ", ".join(f"{c} = excluded.{c}" for c in COLUMNS[1:])
-                    + ", updated_at = excluded.updated_at",
-                    (*values, now),
-                )
+                conn.execute(upsert, (*values, now))
                 if row["is_default"] and row["active"]:
                     conn.execute("UPDATE bank_accounts SET is_default = 0 WHERE currency = ? AND code != ?",
                                  (row["currency"], row["code"]))  # fmt: skip

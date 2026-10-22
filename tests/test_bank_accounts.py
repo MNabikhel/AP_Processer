@@ -56,7 +56,11 @@ def test_rows_from_a_spreadsheet_are_checked():
     clean, problems = banks.clean_rows(rows, gl_codes={"1010"})
     first = clean[0]
     assert (first["currency"], first["institution"], first["transit"], first["account_number"]) == (
-        "CAD", "004", "00123", "0000001234")
+        "CAD",
+        "004",
+        "00123",
+        "0000001234",
+    )
     assert first["is_default"] and first["active"]
     assert [a["code"] for a in clean] == ["CAD-OP", "CAD-3"]
     assert any("not a 3-letter code" in p for p in problems)
@@ -86,6 +90,7 @@ def test_the_store_keeps_one_default_per_currency_and_the_vendors_last_account(t
     assert defaults == ["CAD-PAY"]  # the new default replaced the old one
     store.save_bank_accounts([dict(clean[2], active=False)])
     assert [a["code"] for a in store.bank_accounts(active_only=True)] == ["CAD-PAY", "CAD-OP"] or [
-        a["code"] for a in store.bank_accounts(active_only=True)] == ["CAD-OP", "CAD-PAY"]
+        a["code"] for a in store.bank_accounts(active_only=True)
+    ] == ["CAD-OP", "CAD-PAY"]
     assert store.last_pay_from("acme") == ""
     assert store.events(actions=["accounts_edited"])[0]["detail"]["table"] == "bank_accounts"
