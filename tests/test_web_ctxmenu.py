@@ -592,8 +592,13 @@ def test_in_a_browser_a_tax_lines_taxable_follows_the_lines_ticked_with_it_b610(
         ticked[0]
         and abs(float(_taxable(page, kind)) - sum(a for a, t in zip(amounts, ticked, strict=True) if t)) < 0.01
     )
+    # The tax chips: the box is hidden in its label, which is what a person clicks. Without force, so Playwright waits
+    # until the line stands still: each check's answer redraws the findings above the grid, which moves the lines.
+    box = rows.first.locator(f"input[type=checkbox][value={kind}]")
+    chip = rows.first.locator("label", has=page.locator(f"input[type=checkbox][value={kind}]"))
     with _checked(page):
-        rows.first.locator(f"input[type=checkbox][value={kind}]").uncheck(force=True)
+        chip.click()
+    assert not box.is_checked()
     expected = sum(a for a, t in zip(amounts, ticked, strict=True) if t) - amounts[0]
     assert _taxable(page, kind) == f"{expected:.2f}"
     # a taxable typed by the clerk is never overwritten: the tax line's menu offers to update it
@@ -601,8 +606,11 @@ def test_in_a_browser_a_tax_lines_taxable_follows_the_lines_ticked_with_it_b610(
         "[data-grid=taxes] select[name=tax_type]", "(s, k) => s.findIndex(x => x.value === k)", kind
     )
     tax = page.locator("[data-grid=taxes] > tr").nth(at)
-    tax.locator("[name=tax_taxable]").fill("100.00")
-    rows.first.locator(f"input[type=checkbox][value={kind}]").check(force=True)
+    with page.expect_response(lambda r: r.url.endswith("/check")):  # its findings redrawn before the next click
+        tax.locator("[name=tax_taxable]").fill("100.00")
+    page.wait_for_load_state("networkidle")
+    chip.click()
+    assert box.is_checked()
     assert _taxable(page, kind) == "100.00"
     _menu(page, tax.locator("td").first)
     _item(page, "sync").click()
