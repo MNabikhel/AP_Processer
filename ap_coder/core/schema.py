@@ -9,7 +9,8 @@ Two representations are kept side by side:
 
 The original target fields are unchanged; Canadian sales tax adds the
 province fields, supplier registration numbers, ``tax_lines`` (one per tax
-type charged) and ``taxes_applied`` on each line item.
+type charged) and ``taxes_applied`` on each line item, with ``tax_status`` saying why a line carries no tax
+(exempt, zero-rated, out of scope: decision D-64).
 """
 
 from __future__ import annotations
@@ -34,9 +35,13 @@ MAX_ENUM_VALUES_TOTAL = 500
 MAX_ENUM_CHARS_TOTAL = 7_500
 
 PROVINCE_VALUES = [*PROVINCES, OUTSIDE_CANADA, ""]
-# Enums that are always present: supplier/ship-to/tax-line provinces and two tax-type fields.
-FIXED_ENUM_VALUES = 3 * len(PROVINCE_VALUES) + 2 * len(TAX_TYPES)
-FIXED_ENUM_CHARS = 3 * sum(len(p) for p in PROVINCE_VALUES) + 2 * sum(len(t) for t in TAX_TYPES)
+# Why a line carries no tax (only with no taxes on it): "" when it carries some, or nothing is said (D-64).
+TAX_STATUSES = ["", "exempt", "zero_rated", "out_of_scope"]
+# Enums that are always present: supplier/ship-to/tax-line provinces, two tax-type fields and a line's tax status.
+FIXED_ENUM_VALUES = 3 * len(PROVINCE_VALUES) + 2 * len(TAX_TYPES) + len(TAX_STATUSES)
+FIXED_ENUM_CHARS = (
+    3 * sum(len(p) for p in PROVINCE_VALUES) + 2 * sum(len(t) for t in TAX_TYPES) + sum(len(s) for s in TAX_STATUSES)
+)
 
 
 def _code_property(description: str, codes: list[str] | None) -> dict[str, Any]:
@@ -107,6 +112,12 @@ def build_json_schema(reference: ReferenceData | None = None, *, constrain_codes
             "type": "array",
             "description": "Sales taxes charged on this line (empty if exempt / zero-rated).",
             "items": {"type": "string", "enum": list(TAX_TYPES)},
+        },
+        "tax_status": {
+            "type": "string",
+            "enum": TAX_STATUSES,
+            "description": "Only when taxes_applied is empty: exempt, zero_rated or out_of_scope when the invoice says "
+            "so for this line (a code or word printed beside it); otherwise an empty string.",
         },
         "reasoning_justification": {
             "type": "string",
@@ -343,6 +354,7 @@ class LineItem(BaseModel):
     predicted_gl_code: str
     predicted_cost_center: str = ""
     taxes_applied: list[str] = Field(default_factory=list)
+    tax_status: str = ""  # TAX_STATUSES: why a line with no taxes carries none (D-64)
     reasoning_justification: str = ""
 
     @field_validator("taxes_applied")
@@ -356,6 +368,23 @@ class LineItem(BaseModel):
             if v not in out:
                 out.append(v)
         return out
+
+    @field_validator("tax_status", mode="before")
+    @classmethod
+    def _tax_status(cls, value: Any) -> str:
+        text = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+        text = {"zero": "zero_rated", "zerorated": "zero_rated", "out": "out_of_scope"}.get(text, text)
+        if text not in TAX_STATUSES:
+            raise ValueError(f"tax_status must be one of {TAX_STATUSES}, got {value!r}")
+        return text
+
+    @model_validator(mode="after")
+    def _status_only_without_taxes(self) -> LineItem:
+        # A line that carries a tax is taxed: a status saying why it carries none means nothing there, and is dropped
+        # (the taxes are what was charged; a reader or the chat model may send both).
+        if self.taxes_applied and self.tax_status:
+            self.tax_status = ""
+        return self
 
 
 class InvoiceCoding(BaseModel):
