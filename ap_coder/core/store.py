@@ -1495,10 +1495,13 @@ class Store:
         feedback_rows = []
 
         kept = suggestion_kept
+        # Without a cost center list the review screen has none to show or keep: a cost center the AI copied from
+        # coding memory is not part of what it proposed (B-562).
+        cost_centers = bool(self.list_accounts("cost_centers"))
 
         for suggestion, li in pair_lines(ai.get("line_items", []), final_output.get("line_items", [])):
             s_gl = suggestion.get("predicted_gl_code") if suggestion else None
-            s_cc = suggestion.get("predicted_cost_center", "") if suggestion else None
+            s_cc = (suggestion.get("predicted_cost_center", "") if cost_centers else "") if suggestion else None
             f_gl, f_cc = li["predicted_gl_code"], li.get("predicted_cost_center", "")
             if f_gl == UNASSIGNED:
                 continue  # not a coding decision: nothing to learn from it
