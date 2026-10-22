@@ -288,7 +288,6 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
         values, round(subtotal + freight, 2), ship_to_province or ours or supplier_province,
         dt.date.fromisoformat(invoice_on) if invoice_on else None,
     )  # fmt: skip
-    taxes = [t.tax_type for t in tax_lines]
     default_gl = ""
     if store is not None and vendor:
         try:
@@ -305,6 +304,8 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
              else float(li.amount) / li.quantity if li.quantity else float(li.amount), float(li.amount))
             for i, li in enumerate(readings, 1)
         ]  # fmt: skip
+    # The tax-code cell printed on each line ("G R", "E"), read with the invoice's legend below (D-64).
+    flags = [li.tax_flags for li in readings] if readings else [""]
     # A credit note that prints its lines without a sign but its subtotal negative: the lines are the credit (their
     # sum is minus the subtotal), not lines owed with a charge twice their size taking them back. The quantity
     # keeps its sign and the unit price carries the credit's, as the reader codes a credit's line.
@@ -334,10 +335,12 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
                 predicted_gl_code=best.gl_code if best else UNASSIGNED,
                 predicted_cost_center=(best.cost_center if best else "")
                 or (UNASSIGNED if reference.cost_centers is not None else ""),
-                taxes_applied=taxes,
                 reasoning_justification=why,
             )
         )
+    # Which taxes each line carries: the codes printed beside the lines, else the lines that make each tax charged
+    # add up (not every tax on every line: a delivery or a service is often exempt from the provincial tax).
+    lines = tax_codes(lines, tax_lines, flags, text, ship_to_province or ours or supplier_province, invoice_on)
 
     found = [r.confidence for f, r in capture.fields.items() if r.value not in (None, "")]
     gl_known = sum(1 for li in lines if li.predicted_gl_code != UNASSIGNED) / len(lines)
@@ -369,6 +372,28 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
         line_items=lines,
     )
     return CodingResult(coding=coding, raw_response="", model=MODEL_NAME, attempts=0, hints=hints)
+
+
+def tax_codes(lines: list[LineItem], tax_lines: list[TaxLine], flags: list[str], text: str, province: str,
+              invoice_on: str = "", keep: list[int] | None = None) -> list[LineItem]:  # fmt: skip
+    """The lines with their tax codes (``line_tax.prefill``): ``flags`` the tax-code cell read on each line, ``text``
+    the page text (its legend: "Tax codes: G = GST 5%, R = Manitoba RST 7%"), the official rates in force on the
+    invoice's date where it is supplied."""
+    from ..coding.line_tax import parse_legend, prefill
+
+    table = _rate_table()
+    try:
+        on = dt.date.fromisoformat(invoice_on) if invoice_on else None
+    except ValueError:
+        on = None
+
+    def rate_for(tax_type: str, tax_province: str) -> float | None:
+        where = tax_province or province
+        if table is None or (tax_type != "GST" and where not in PROVINCE_VALUES):
+            return None
+        return table.rate_for(tax_type, where if where != OUTSIDE_CANADA else "", on)
+
+    return prefill(lines, tax_lines, flags, parse_legend(text), keep=keep or [], rate_for=rate_for).lines
 
 
 def _iso_or_empty(value: Any) -> str:

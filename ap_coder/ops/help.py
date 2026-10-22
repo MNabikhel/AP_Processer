@@ -349,13 +349,27 @@ CHECKS: dict[str, CheckHelp] = {
         "If the item is taxable, PST may have to be self-assessed and remitted; check with tax.",
     ),
     "TAX_NOT_ALLOCATED": CheckHelp(
-        TAX, "Tax on no line", "A tax is charged but no line is marked as subject to it.",
-        "Tick the tax in the Taxes column of the lines it applies to.",
+        TAX, "Tax on no line", "A tax is charged but no line's tax code carries it.",
+        "Pick the tax code (e.g. GST + PST) of the lines it applies to; the Tax check under the lines adds it up.",
     ),
     "TAX_BASE_MISMATCH": CheckHelp(
         TAX, "Taxable amount doesn't match the lines",
-        "The lines marked with a tax do not add up to that tax's taxable amount.",
-        "Fix the Taxes column on the lines so the right lines carry the tax.",
+        "The lines whose tax code carries a tax do not add up to what that tax was charged on. When one line's "
+        "amount is the difference, it is named: it may be exempt from that tax, or carry it too.",
+        "Fix the tax code of the lines (e.g. a delivery or a service exempt from PST is \"GST only\"); the Tax check "
+        "shows each tax adding up. If the vendor taxed the wrong lines, ask for a corrected invoice.",
+    ),
+    "LINE_TAX_NOT_CHARGED": CheckHelp(
+        TAX, "Line marked with a tax that isn't charged",
+        "A line's tax code says it carries a tax (e.g. PST) that the invoice does not charge at all.",
+        "If the line is exempt, pick Exempt or No tax charged. If it is taxable and the vendor did not charge the "
+        "provincial tax, it may have to be self-assessed (the Sales tax report lists it).",
+    ),
+    "EXEMPT_LINE_TAXED": CheckHelp(
+        TAX, "Exempt line seems taxed",
+        "A line is marked exempt or zero-rated, but the tax charged only adds up if that line is taxed.",
+        "Check the line: if it is taxable, change its tax code. If it really is exempt, the vendor charged tax on it: "
+        "ask for a corrected invoice.",
     ),
     "QST_ON_GST_INCLUSIVE": CheckHelp(
         TAX, "QST calculated on GST",
@@ -518,6 +532,12 @@ def help_for(code: str) -> CheckHelp | None:
 
 
 FAQ: list[tuple[str, str]] = [
+    (
+        "How do I say which lines are taxed?",
+        "Each line has a tax code: GST + PST, GST only, HST, Exempt, Zero-rated... AP Coder fills it from the codes "
+        "printed beside the lines, or from which lines make the tax charged add up. Change it where it is wrong: the "
+        "Tax check under the lines shows each tax (the lines marked × the rate) against what the invoice charges.",
+    ),
     (
         "Does any invoice or GL data leave this computer?",
         "No. Every invoice is read and coded on this computer: the PDF's own text or OCR, OvisOCR2 in LM Studio and "
@@ -700,4 +720,5 @@ WHATS_NEW: list[str] = [
     "Settings opens on Review: your name, approvals and your province, with one Save.",
     "Exports are Excel or CSV for the pilot, and the page remembers the last one you used.",
     "The sample GL accounts come without cost centers: each line needs only a GL account.",
+    "Each line has one tax code (GST + PST, GST only, Exempt...), and the Tax check under the lines adds each tax up.",
 ]

@@ -110,12 +110,13 @@ def vertical_rules(page: Any) -> list[tuple[float, float, float]]:
     return found
 
 
-def _header(page: PageLayout) -> tuple[float, dict[str, Box]] | None:
-    """The line table's column headings on the page: (their bottom, {column: heading box})."""
-    from .reader import heading_row
+def _header(page: PageLayout) -> tuple[float, dict[str, Box], Box | None] | None:
+    """The line table's column headings on the page: (their bottom, {column: heading box}, the tax-code column's
+    heading box or None)."""
+    from .reader import heading_row, tax_code_column
 
     found = heading_row(page)
-    return (max(other.box.y1 for other in found[1]), found[2]) if found else None
+    return (max(other.box.y1 for other in found[1]), found[2], tax_code_column(found[1], found[2])) if found else None
 
 
 def _rows(words: list[Word]) -> list[list[Word]]:
@@ -165,12 +166,12 @@ def _rule_cuts(rules: list[tuple[float, float, float]], lo: float, hi: float, to
 
 
 def _page_items(page: PageLayout, rules: list[tuple[float, float, float]], tables: list[Box]) -> list[LineReading]:
-    from .reader import _CARRIED, _LABELS, _amounts_in, plain
+    from .reader import _CARRIED, _LABELS, _amounts_in, plain, tax_flag_cell
 
     header = _header(page)
     if header is None:
         return []
-    top, cols = header
+    top, cols, tax_head = header
     heads = list(cols.values())
     hx = (min(b.x0 for b in heads) + max(b.x1 for b in heads)) / 2
     table = next((t for t in tables if t.x0 - TABLE_MARGIN <= hx <= t.x1 + TABLE_MARGIN
@@ -201,6 +202,9 @@ def _page_items(page: PageLayout, rules: list[tuple[float, float, float]], table
         names.append(named[0] if len(named) == 1 else ("" if not named else _closest(named, cols, a, b)))
     if "amount" not in names:
         return []
+    # The tax-code column (no heading of its own among the named ones): its cells are the line's tax code (D-64).
+    tax_at = next((i for i, (a, b) in enumerate(columns) if tax_head is not None and a <= tax_head.cx < b
+                   and not names[i]), None)  # fmt: skip
     desc_at = names.index("description") if "description" in names else None
 
     def cells(row: list[Word]) -> list[str]:
@@ -216,6 +220,9 @@ def _page_items(page: PageLayout, rules: list[tuple[float, float, float]], table
     text_height = statistics.median(heights)
     for row in rows:
         texts = cells(row)
+        flags = ""
+        if tax_at is not None and tax_flag_cell(texts[tax_at]):
+            flags, texts[tax_at] = " ".join(texts[tax_at].split()), ""
         joined = " ".join(t for t in texts if t)
         if _CARRIED.match(plain(joined).strip()):
             continue
@@ -240,7 +247,8 @@ def _page_items(page: PageLayout, rules: list[tuple[float, float, float]], table
         qty, price = _qty_and_price(qty_text, price_text, amount)
         ok = qty is None or price is None or abs(qty * price - amount) <= 0.011
         items.append(LineReading(_description(texts, names, desc_at), qty, price, amount,
-                                 [row_box] if row_box else [], 0.8 if ok else 0.5, source="text table"))  # fmt: skip
+                                 [row_box] if row_box else [], 0.8 if ok else 0.5, source="text table",
+                                 tax_flags=flags))  # fmt: skip
         last_y1 = max(w.box.y1 for w in row)
     return items
 

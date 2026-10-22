@@ -46,6 +46,7 @@
         "GST",
         "QST"
       ],
+      "tax_status": "",
       "reasoning_justification": "Brochure design for a marketing campaign."
     },
     {
@@ -60,6 +61,7 @@
         "GST",
         "QST"
       ],
+      "tax_status": "",
       "reasoning_justification": "Printing of brochures is marketing."
     },
     {
@@ -74,6 +76,7 @@
         "GST",
         "QST"
       ],
+      "tax_status": "",
       "reasoning_justification": "Digital advertising campaign."
     },
     {
@@ -88,6 +91,7 @@
         "GST",
         "QST"
       ],
+      "tax_status": "",
       "reasoning_justification": "Website translation for marketing."
     },
     {
@@ -102,6 +106,7 @@
         "GST",
         "QST"
       ],
+      "tax_status": "",
       "reasoning_justification": "Trade-show booth is an event cost for Marketing."
     },
     {
@@ -116,6 +121,7 @@
         "GST",
         "QST"
       ],
+      "tax_status": "",
       "reasoning_justification": "Client entertainment is coded to Sales."
     },
     {
@@ -130,6 +136,7 @@
         "GST",
         "QST"
       ],
+      "tax_status": "",
       "reasoning_justification": "Training is coded to the attendees' department (Sales)."
     },
     {
@@ -144,6 +151,7 @@
         "GST",
         "QST"
       ],
+      "tax_status": "",
       "reasoning_justification": "Courier for promotional material."
     }
   ]

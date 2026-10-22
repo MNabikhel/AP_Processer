@@ -65,6 +65,8 @@ def coding_from_inputs(
                 "taxes_applied": []
                 if taxes_applied is None or isinstance(taxes_applied, float)
                 else list(taxes_applied),
+                # why a line with no tax carries none (D-64); a grid without the column says nothing
+                "tax_status": text("tax_status") if "tax_status" in row else "",
                 "reasoning_justification": text("reasoning_justification"),
             }
         )

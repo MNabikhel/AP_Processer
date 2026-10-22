@@ -108,8 +108,10 @@ def test_the_review_screen_prints_the_chart_of_accounts_once_not_once_a_line(cli
     rows = page.split('<tbody data-grid="lines">', 1)[1].split("</tbody>", 1)[0]
     selects = re.findall(r'<select name="line_(?:gl|cc)".*?</select>', rows, re.S)
     assert len(selects) == 40 and all(s.count("<option") <= 2 for s in selects)
-    # once each in the page: 20 lines printed every account and cost center before (20 x full options)
-    assert page.count("<option") < 20 * full / 2, (page.count("<option"), full)
+    # once each in the page: 20 lines printed every account and cost center before (20 x full options). A line's
+    # tax code is a short list of its own (D-64), not counted.
+    codes = sum(s.count("<option") for s in re.findall(r'<select name="line_tax_code".*?</select>', page, re.S))
+    assert page.count("<option") - codes < 20 * full / 2, (page.count("<option"), codes, full)
     listed = json.loads(re.search(r'id="gl-options">(.*?)</script>', page, re.S).group(1))
     expected = invoice_view.gl_options(reference, output["line_items"])
     assert [code for code, _ in listed] == [code for code, _ in expected]

@@ -568,15 +568,16 @@ def _over_the_page(page):
 
 def test_in_a_browser_space_on_a_box_or_button_of_the_form_is_theirs_with_the_mouse_over_the_page(browser, store):
     """B-591: the mouse resting on the page, Space on a line's tax box or on "Add a line" did nothing: the viewer took
-    it for the Hand."""
+    it for the Hand. (A line's taxes are a dropdown now, D-64: Space in a line's description box is the box's.)"""
     page, errors = _open(browser, store)
     page.evaluate("window.scrollTo(0, 0)")
-    tax = page.locator("[data-grid=lines] input[type=checkbox] >> nth=0")
-    ticked = tax.is_checked()
-    tax.focus()
+    box = page.locator("[data-grid=lines] [name=line_description] >> nth=0")
+    before = box.input_value()
+    box.focus()
+    page.keyboard.press("End")
     _over_the_page(page)
     page.keyboard.press(" ")
-    assert tax.is_checked() != ticked
+    assert box.input_value() == before + " "
     assert not page.evaluate("document.querySelector('.iv').classList.contains('hand')")
     rows = page.locator("[data-grid=lines] tr").count()
     page.locator("[data-add-row=lines]").focus()

@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from ap_coder.coding.line_tax import tax_code_of
 from ap_coder.coding.rules import Rule
 from ap_coder.core.config import Settings
 from ap_coder.core.reference_data import UNASSIGNED
@@ -75,8 +76,7 @@ def form_of(store: Store, invoice_id: int, lines: Any = None, **header: str) -> 
     data["line_key"] = [f"r{i}" for i in range(len(rows))]
     for column, name in invoice_view.LINE_INPUTS.items():
         data[name] = ["" if r.get(column) is None else str(r.get(column)) for r in rows]
-    for i, r in enumerate(rows):
-        data[f"line_tax_r{i}"] = list(r.get("taxes_applied") or [])
+    data[invoice_view.LINE_TAX_CODE] = [tax_code_of(r) for r in rows]  # one tax code a line (D-64)
     for column, name in invoice_view.TAX_INPUTS.items():
         data[name] = ["" if t.get(column) is None else str(t.get(column)) for t in draft.taxes]
     return data
@@ -121,8 +121,9 @@ def test_the_review_screen_shows_the_document_the_form_the_grids_and_the_actions
         "Split a line",
         "Teach a field",
         "GL posting preview",
-        "Sales tax",
-        "Rate and amount check",
+        "Tax check",
+        "Tax lines, as printed on the invoice",
+        "Rates and GL accounts",
         "Notes",
         "Why these codes",
     ):
@@ -651,13 +652,15 @@ def test_the_viewer_knows_each_lines_amount_to_light_its_row(client, store):
 def test_the_math_line_by_line_and_on_the_approve_bar(client, store):
     pacific = next(i for i in store.list_invoices(REVIEW) if "Pacific" in (i["vendor_name"] or ""))
     sections = check(client, pacific["id"])["sections"]
-    assert "Math, line by line" in sections["taxcheck"] and "All adds up" in sections["taxcheck"]
+    assert "Tax check" in sections["taxcheck"] and "All adds up" in sections["taxcheck"]
     assert "Math: All adds up" in sections["bar"]
-    # PST ticked off the first line: the PST charged is no longer 7% of the lines marked.
+    # The first line made "GST only": the PST charged is no longer 7% of the lines marked PST.
     data = form_of(store, pacific["id"])
-    data["line_tax_r0"] = ["GST"]
-    sections = check(client, pacific["id"], data)["sections"]
-    assert "Math: 1 difference: PST" in sections["bar"] and "off by 62.30" in sections["taxcheck"]
+    data[invoice_view.LINE_TAX_CODE][0] = "GST"
+    answer = check(client, pacific["id"], data)
+    sections = answer["sections"]
+    assert "Math: 1 difference: PST" in sections["bar"] and '<b class="tc-diff">62.30</b>' in sections["taxcheck"]
+    assert answer["tax_marks"] == {"1": answer["tax_marks"]["1"]} and "PST" in answer["tax_marks"]["1"]
 
 
 @pytest.mark.parametrize(

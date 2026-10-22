@@ -240,13 +240,16 @@ def self_assessment(
         province = supply_province(doc, setup)
         # A printed "PST 0.00" is not a charge (as in the tax checks): that PST may still be owed.
         charged = {str(tl.get("tax_type") or "").upper() for tl in doc.get("tax_lines") or [] if _charged(tl)}
-        base = float(doc.get("subtotal") or 0)
+        items = doc.get("line_items") or []
         try:
             on = dt.date.fromisoformat(date)
         except ValueError:
             on = None
         for tax_type in sorted(regime_on(province, on, rates) & {"PST", "QST"}):
-            if tax_type in charged or abs(base) < 0.005:
+            if tax_type in charged:
+                continue
+            base = self_assessed_base(doc, items, tax_type)
+            if abs(base) < 0.005:
                 continue
             rate = rates.rate_for(tax_type, province, on) if on else None
             if not rate:
@@ -266,6 +269,19 @@ def self_assessment(
                 )  # fmt: skip
             )
     return sorted(out, key=lambda s: (s.province, s.invoice_date, s.invoice_id))
+
+
+def self_assessed_base(doc: dict[str, Any], items: list[dict[str, Any]], tax_type: str) -> float:
+    """What a PST or QST the vendor did not charge may be owed on (D-64): the lines whose tax code carries it (marked
+    taxable, but not charged); with none, the subtotal less the lines marked exempt, zero-rated or out of scope (they
+    owe nothing). An invoice without lines: its subtotal."""
+    from .line_tax import STATED
+
+    marked = [li for li in items if tax_type in (li.get("taxes_applied") or [])]
+    if marked:
+        return round(sum(float(li.get("amount") or 0) for li in marked), 2)
+    stated = [li for li in items if not (li.get("taxes_applied") or []) and str(li.get("tax_status") or "") in STATED]
+    return round(float(doc.get("subtotal") or 0) - sum(float(li.get("amount") or 0) for li in stated), 2)
 
 
 def self_assessment_csv(items: list[SelfAssessment], start: dt.date, end: dt.date) -> bytes:
