@@ -201,7 +201,7 @@ def test_gst_charged_where_hst_applies_is_hst_not_charged_not_an_itc_risk_b717(r
     codes = {f.code: f for f in check_taxes(on, reference.tax)}
     assert "ITC_AT_RISK" not in codes and "HST_NOT_CHARGED" in codes
     message = codes["HST_NOT_CHARGED"].message
-    assert "the GST is claimable" in message and "ETA s.218.1" in message and "13%" in message
+    assert "the GST is claimable" in message and "ETA s.165" in message and "13%" in message
     from ap_coder.ops.help import CHECKS
 
     assert "HST_NOT_CHARGED" in CHECKS

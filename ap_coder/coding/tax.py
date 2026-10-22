@@ -582,14 +582,14 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
                 add(WARNING, "ITC_AT_RISK",
                     f"HST charged on a supply in {name}, where it is not payable: only the tax properly payable is "
                     "claimable (ETA s.169), so claim the GST part only or get a corrected invoice")  # fmt: skip
-            # GST alone where HST applies is no risk to the claim: the GST charged is claimable (B-717).
+            # GST alone where HST applies is no risk to the claim: the GST charged is claimable (B-717); the
+            # recipient stays liable for the HST payable (s.165), not a s.218.1 self-assessment (B-721).
             if "GST" in charged and expected_types == {"HST"}:
                 hst = setup.rates.rate_for("HST", prov, on)
                 rate = f" ({prov} {hst * 100:.4g}%)" if hst else ""
                 add(WARNING, "HST_NOT_CHARGED",
-                    f"the vendor should have charged HST{rate} on a supply in {name}; the GST is claimable. If you "
-                    "can't claim full input tax credits, you may need to self-assess the provincial part (ETA "
-                    "s.218.1)")  # fmt: skip
+                    f"the vendor should have charged HST{rate} on a supply in {name}; the GST is claimable. You "
+                    "remain liable for the provincial part (ETA s.165): ask for a corrected invoice")  # fmt: skip
 
     # A PST exemption inferred from the vendor charging the PST on other lines: a person confirms it (B-715).
     from .line_tax import exemption_to_confirm

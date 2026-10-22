@@ -102,8 +102,8 @@ What the checks say about the codes:
 - *Exempt line seems taxed*: a line marked exempt or zero-rated (from that tax) whose amount the tax charged needs.
 - *Input tax credit at risk*: HST charged where GST applies. Only the tax properly payable is claimable (ETA s.169); the
   booking is not changed by AP Coder.
-- *GST charged where HST applies*: the vendor should have charged HST; the GST is claimable. If you can't claim full
-  input tax credits, the provincial part may have to be self-assessed (ETA s.218.1).
+- *GST charged where HST applies*: the vendor should have charged HST; the GST is claimable. You remain liable for
+  the provincial part (ETA s.165): ask for a corrected invoice.
 - *QST not charged*: a QST registrant buying for its commercial activities generally owes nothing net (it would claim
   the QST back); otherwise it is self-assessed. The code says "GST only · QST not charged", without "self-assess".
 - Every check says the same of a credit note as of its invoice (a credit reverses it line for line, ETA s.232).
