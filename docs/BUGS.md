@@ -6014,3 +6014,20 @@ reproduced with a script first, then given a failing test and fixed.
   transaction. A post without it (an older page) is approved as before.
 - **Test:** `tests/test_sweep_pilot_fixes.py::test_a_final_approval_from_a_stale_page_is_refused`
 - **Lesson:** An action on what a page shows must say what it showed.
+
+#### B-655 · A tab left open saved its old values over newer ones · medium
+- **Where:** `ap_coder/web/pages/settings.py` (`save_review`), `ap_coder/web/pages/accounts.py` (`accounts_save`,
+  `save_rules`), `ap_coder/web/core.py` (`page_version`, `stale_page`)
+- **Symptom:** an old Settings → Review tab, saved to change the days to pay, put the approval limit back to 0
+  (second approvals off) after a colleague had set it to 5,000; an old GL accounts grid saved after an import
+  deleted the account just imported; an old Rules tab dropped the rule added from a suggestion meanwhile.
+- **Cause:** each of these forms saves the whole page; nothing said which version of it the page showed.
+- **Reproduce:** `sweep2/s18.py`, `sweep2/s10.py`, `sweep2/s17.py`.
+- **Reproduced:** yes
+- **Fix:** the three forms post a stamp of what they showed (`version`); changed since, the save is refused and the
+  page stays as typed: *This page was changed elsewhere since you opened it: reload to see the latest, then make
+  your change again.* A post without a stamp (a script, a single field) is saved as before.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_a_stale_settings_tab_does_not_reset_the_approval_limit`,
+  `::test_a_stale_gl_grid_does_not_delete_an_account_imported_meanwhile`,
+  `::test_a_stale_rules_tab_does_not_drop_a_rule_added_meanwhile`
+- **Lesson:** A form that saves a whole list replaces what it did not show: make it say what it showed.

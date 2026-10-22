@@ -1,6 +1,7 @@
 {# Settings → Review (pages/settings.py): one form, one Save (B-507): your name, approval and payment, where invoices
    are delivered to you, and the AI's behaviour under Advanced. #}
 <form method="post" action="/settings/review" class="st-review" data-busy="Saving…">
+  <input type="hidden" name="version" value="{{ version }}">
   <div class="st-2">
     <section class="card">
       <h4>You</h4>

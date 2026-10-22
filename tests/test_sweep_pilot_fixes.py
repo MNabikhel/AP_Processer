@@ -8,7 +8,7 @@ from ap_coder.core.memory import ACCEPTED, CODED, CORRECTED
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import Store
 
-# --- B-650: filling in a blank GL account is the reviewer's coding, not a correction --------------------------------
+# --- B-650: filling in a blank GL account is the reviewer's coding, not a correction ----------------------------------
 
 
 def _blank_invoice():
@@ -121,7 +121,7 @@ def test_with_no_ship_to_printed_the_tax_check_says_the_province_is_ours():
     assert messages and all("your province in Settings: no ship-to or bill-to printed" in m for m in messages), messages
 
 
-# --- B-652: amounts printed without a leading zero -------------------------------------------------------------------
+# --- B-652: amounts printed without a leading zero --------------------------------------------------------------------
 
 
 def test_amounts_without_a_leading_zero():
@@ -148,7 +148,7 @@ def test_a_receipt_with_amounts_without_a_leading_zero_reads_them(tmp_path):
     assert r.fields["grand_total"].value == 1.12 and r.fields["subtotal"].status == "verified"
 
 
-# --- B-653: Settings → Reading said OvisOCR2 had read everything while invoices still waited -----------------------
+# --- B-653: Settings → Reading said OvisOCR2 had read everything while invoices still waited --------------------------
 
 
 def test_the_reading_tab_says_what_still_waits_for_ovisocr2(tmp_path):
@@ -175,7 +175,7 @@ def test_the_reading_tab_says_what_still_waits_for_ovisocr2(tmp_path):
     assert queue_text(status) == ("", "Nothing waiting for OvisOCR2.")
 
 
-# --- B-654: a final approval clicked on a stale page approved another version ----------------------------------------
+# --- B-654: a final approval clicked on a stale page approved another version -----------------------------------------
 
 
 def test_a_final_approval_from_a_stale_page_is_refused(tmp_path, monkeypatch):
@@ -213,3 +213,83 @@ def test_a_final_approval_from_a_stale_page_is_refused(tmp_path, monkeypatch):
     # The page drawn now gives it
     post(client, f"/review/{iid}/final-approve", shown(client.get("/review?tab=second").text))
     assert store.get_invoice(iid)["status"] == APPROVED
+
+
+# --- B-655: a stale tab saved over what another tab changed -----------------------------------------------------------
+
+STALE = "This page was changed elsewhere since you opened it: reload to see the latest, then make your change again."
+
+
+def _web(tmp_path, monkeypatch):
+    from ap_coder.core.store import load_sample_setup
+
+    from .webclient import client_for
+
+    monkeypatch.setenv("AP_REVIEWER", "Sam")
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(store)
+    return store, client_for(store)
+
+
+def _form(page, action):
+    import re
+
+    form = re.search(rf'<form[^>]*action="{re.escape(action)}"[^>]*>(.*?)</form>', page, re.S).group(1)
+    data = {}
+    for tag in re.findall(r"<input[^>]*>", form):
+        name, value = re.search(r'name="([^"]+)"', tag), re.search(r'value="([^"]*)"', tag)
+        if name and 'type="checkbox"' not in tag and 'type="file"' not in tag:
+            data.setdefault(name.group(1), []).append(value.group(1) if value else "")
+    for name, body in re.findall(r'<select[^>]*name="([^"]+)"[^>]*>(.*?)</select>', form, re.S):
+        chosen = re.search(r'<option value="([^"]*)"[^>]*selected', body)
+        data.setdefault(name, []).append(chosen.group(1) if chosen else "")
+    for name, body in re.findall(r'<textarea[^>]*name="([^"]+)"[^>]*>(.*?)</textarea>', form, re.S):
+        data.setdefault(name, []).append(body)
+    return data
+
+
+def test_a_stale_settings_tab_does_not_reset_the_approval_limit(tmp_path, monkeypatch):
+    from .webclient import post
+
+    store, client = _web(tmp_path, monkeypatch)
+    stale = _form(client.get("/settings/review").text, "/settings/review")
+    assert stale.get("version")
+    assert post(client, "/settings/review", {"approval_limit": "5000"}).json()["ok"]  # another tab, or a colleague
+    stale["terms_days"] = ["45"]
+    answer = post(client, "/settings/review", stale)
+    assert answer.status_code == 409 and answer.json()["error"] == STALE
+    assert store.approval_limit() == 5000 and store.default_terms_days() == 30
+    fresh = _form(client.get("/settings/review").text, "/settings/review")
+    fresh["terms_days"] = ["45"]
+    assert post(client, "/settings/review", fresh).json()["ok"]
+    assert store.approval_limit() == 5000 and store.default_terms_days() == 45
+
+
+def test_a_stale_gl_grid_does_not_delete_an_account_imported_meanwhile(tmp_path, monkeypatch):
+    from .webclient import post
+
+    store, client = _web(tmp_path, monkeypatch)
+    stale = _form(client.get("/accounts?tab=gl").text, "/accounts/gl_accounts/save")
+    store.import_accounts("gl_accounts", [{"c": "7777", "d": "New account from ERP"}], "c", "d")
+    stale["description"][0] = "edited"
+    answer = post(client, "/accounts/gl_accounts/save", stale)
+    assert answer.status_code == 409 and answer.json()["error"] == STALE
+    assert "7777" in {a["code"] for a in store.list_accounts("gl_accounts")}
+    fresh = _form(client.get("/accounts?tab=gl").text, "/accounts/gl_accounts/save")
+    fresh["description"][0] = "edited"
+    assert post(client, "/accounts/gl_accounts/save", fresh).json()["ok"]
+    assert "7777" in {a["code"] for a in store.list_accounts("gl_accounts")}
+
+
+def test_a_stale_rules_tab_does_not_drop_a_rule_added_meanwhile(tmp_path, monkeypatch):
+    from .webclient import post
+
+    store, client = _web(tmp_path, monkeypatch)
+    post(client, "/accounts/rules", {"vendor": ["Purolator"], "contains": [""], "gl_code": ["6000"],
+                                     "cost_center": [""]})  # fmt: skip
+    stale = _form(client.get("/accounts?tab=rules").text, "/accounts/rules")
+    assert post(client, "/accounts/rules/add", {"vendor": "Bell Canada", "gl_code": "6420"}).json()["ok"]
+    stale["gl_code"] = ["6010" if v == "6000" else v for v in stale["gl_code"]]
+    answer = post(client, "/accounts/rules", stale)
+    assert answer.status_code == 409 and answer.json()["error"] == STALE
+    assert sorted(r.vendor for r in store.coding_rules()) == ["Bell Canada", "Purolator"]
