@@ -1434,8 +1434,8 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
 
 
 def pay_from_choices(store: Store, header: dict[str, str]) -> dict[str, Any]:
-    """The Pay from list (D-66): our bank accounts in use, as "name · currency · ••••1234", the one chosen (an account no
-    longer in use stays listed while it is the one chosen), and whether there are any."""
+    """The Pay from list (D-66): our bank accounts in use, as "name · currency · ••••1234", the one chosen (an account
+    no longer in use stays listed while it is the one chosen), and whether there are any."""
     from ap_coder.coding import banks
 
     chosen = header.get("pay_from_account") or ""

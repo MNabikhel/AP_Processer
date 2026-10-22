@@ -1,6 +1,7 @@
 """The review screen's invoice details (the header): the vendor list's tax numbers filled in where none is printed
 (D-65), the details a check is about highlighted with a note, and "Pay from", our bank account (D-66)."""
 
+# ruff: noqa: F811  (the fixtures are tests/test_web_invoice.py's, imported)
 from __future__ import annotations
 
 import html
