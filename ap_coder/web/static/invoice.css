@@ -272,8 +272,11 @@ button.inv-pick {border: 0; font-family: inherit; text-align: left; cursor: poin
 button.inv-pick:hover {text-decoration: underline;}
 button.inv-pick .ms {font-size: 14px;}
 @media (max-width: 600px) {.rvw-split .legend span {white-space: normal;}}
-/* "Checking…" while the edits are checked (invoice.js check): nothing when idle. */
-.inv-checking {white-space: nowrap;} .inv-checking:empty {display: none;}
+/* "Checking…" while the edits are checked (invoice.js check): a small tag above the bar's left end (the toasts are at
+   the right), never in the bar, which would wrap and move its buttons; nothing when idle. */
+.inv-checking {position: absolute; left: 16px; bottom: calc(100% + 6px); padding: 2px 10px; white-space: nowrap;
+  background: var(--lg-surface); border: 1px solid var(--lg-border); border-radius: 999px; box-shadow: var(--lg-shadow-pop);}
+.inv-checking:empty {display: none;}
 /* margin-left: auto: at the right also when the bar wraps under a long hint (B-428) */
 .inv-actionbar-right {display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end;
   margin-left: auto;}
