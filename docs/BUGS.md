@@ -6611,3 +6611,44 @@ reproduced with a script first, then given a failing test and fixed.
   template learned from) is not marked. A name that is only a legal form or the bill-to's still is.
 - **Test:** `tests/test_sweep_pilot_fixes.py::test_a_one_word_vendor_approved_before_for_this_supplier_is_not_check`
 - **Lesson:** A doubt the person has already settled is not asked again.
+
+#### B-700 · Changing a line's taxes changed the tax the invoice charges, so the check could never disagree · medium
+- **Where:** `ap_coder/web/static/js/invoice.js` (`setTaxable`, `followTicks`)
+- **Symptom:** on Red River (Manitoba), marking the RST-exempt design service "GST + RST" moved the RST line's taxable
+  to 14,645.00 and its amount to 1,025.15: the RST printed (941.15) was gone from the screen, the RST row said it
+  added up, and only the total was off.
+- **Cause:** B-610 made a tax line's amount follow its taxable at its rate, as well as the taxable follow the lines.
+- **Reproduce:** the Red River demo invoice; line 3's tax code to "GST + RST".
+- **Reproduced:** yes (found building the Tax check, D-64)
+- **Fix:** the taxable follows the lines marked (unless typed, B-622); the amount is what the invoice charges and
+  never moves by itself. The Tax check then shows RST 84.00 off and line 3 in yellow.
+- **Test:** `tests/test_web_tax_codes.py::test_in_a_browser_a_lines_tax_code_moves_the_taxable_never_the_tax_charged_b700`
+- **Lesson:** What is printed on the invoice is the reference a check compares with: never recompute it from the
+  thing it checks.
+
+#### B-701 · A line table's tax column was read into the descriptions, and its codes were lost · medium
+- **Where:** `ap_coder/capture/reader.py` (`_read_line_items`, `tax_code_column`), `ap_coder/capture/tables.py`
+- **Symptom:** Red River's lines read "Delivery charge G R", "Space planning & design consultation (hours) G"; GC
+  Strategies' "Services HST ON Services for"; nothing kept which line carries which tax.
+- **Cause:** a "Tax" heading is not one of the columns the reader names, so its cells (not numbers) were joined to
+  the description.
+- **Reproduce:** `analyze("samples/redriver_MB_GST_RST_RRO-55821.pdf").line_items`.
+- **Reproduced:** yes (found building the line tax codes, D-64)
+- **Fix:** a heading row's tax-code column ("Tax", "Tax code", "Tx", "GST/PST", "Code taxe") is found; a cell under
+  it that reads as a tax code ("G", "G R", "GP", "E", "*", "Exempt", "HST ON") is kept as the line's `tax_flags` and
+  left out of its description. Capture bench (200, seed 7, 10% scans) and the English PDF corpus: unchanged but for
+  the four descriptions that lost their codes.
+- **Test:** `tests/test_line_tax_capture.py::test_the_tax_column_is_the_lines_code_not_part_of_its_description_b701`
+- **Lesson:** A column without a name is still a column: what it holds is data, not more description.
+
+#### B-702 · With no AI model every tax was put on every line · medium
+- **Where:** `ap_coder/ai/offline_coder.py` (`code_from_capture`)
+- **Symptom:** Red River read with no chat model: the design service (no RST) was marked RST, the math said "1
+  difference: PST" and the RST was spread onto the design service's GL line, on an invoice that adds up.
+- **Cause:** `taxes_applied` was every tax charged, on every line.
+- **Reproduce:** `code_from_capture(read_invoice(RED_RIVER)[0], reference, [])`.
+- **Reproduced:** yes (base: per-line taxes right on 40 of 41 demo lines, the Red River math off)
+- **Fix:** each line's tax code is pre-filled (`line_tax.prefill`): the codes printed beside it through the
+  invoice's legend, else the lines that make each tax add up (D-64). 41 of 41 demo lines right, all ten add up.
+- **Test:** `tests/test_line_tax_capture.py::test_offline_reading_codes_each_line_with_the_taxes_it_carries_b702`
+- **Lesson:** A default that is right on most invoices is still a guess: when the amounts can say, ask them.
