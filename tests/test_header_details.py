@@ -539,3 +539,23 @@ def test_in_a_browser_a_number_read_and_cleared_is_not_filled_from_the_vendor_li
     page.wait_for_timeout(1200)
     assert gst.input_value() == ""
     assert errors == []
+
+
+def test_the_queue_does_not_decode_every_invoice_again_for_pay_from(store, monkeypatch):
+    """B-690: since B-685 the queue decoded every waiting invoice's coding on each load once bank accounts existed
+    (0.17 s instead of 0.05 s at 5,000 invoices). The answer is remembered until the invoice, the bank accounts or the
+    approvals change."""
+    from ap_coder.web.pages import review
+
+    rows, _ = banks.clean_rows([{"code": "USD-OP", "name": "US", "currency": "USD", "is_default": "yes"}])
+    store.save_bank_accounts(rows)
+    pending = store.list_invoices(REVIEW)
+    first = review.attention(store, None, pending)
+    calls = []
+    real = review.json.loads
+    monkeypatch.setattr(review.json, "loads", lambda *a, **k: calls.append(1) or real(*a, **k))
+    assert review.attention(store, None, pending) == first and calls == []
+    rows, _ = banks.clean_rows([{"code": "CAD-OP", "name": "Operating", "currency": "CAD", "is_default": "yes"}])
+    store.save_bank_accounts(rows)  # the bank accounts changed: asked again
+    again = review.attention(store, None, pending)
+    assert calls and again != first

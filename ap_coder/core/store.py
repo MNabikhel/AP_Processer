@@ -937,6 +937,15 @@ class Store:
                     "codes": sorted(r["code"] for r in rows if before.get(r["code"]) != r)[:50]})  # fmt: skip
         return {"added": added, "updated": updated}
 
+    def approvals_stamp(self) -> tuple[Any, ...]:
+        """(approvals, the latest) of invoices approved or waiting for a second approval: changes when one is, so what
+        depends on past approvals (a vendor's last Pay from account) is worked out again (the queue, B-690)."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*), MAX(reviewed_at), MAX(id) FROM invoices WHERE status IN ('approved', 'pending_approval')"
+            ).fetchone()
+        return tuple(row)
+
     def last_pay_from(self, key: str) -> str:
         """The bank account this vendor's last approved invoice was paid from ("" when none recorded)."""
         if not key:

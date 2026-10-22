@@ -6768,3 +6768,17 @@ Found while building the pilot tester's requests on the review screen's invoice 
   then where to map them.
 - **Test:** `tests/test_jde.py::test_an_unmapped_pay_from_account_is_said_and_codes_match_whatever_their_case`
 - **Lesson:** Two cases, two sentences.
+
+#### B-690 · The queue decoded every waiting invoice again on each load once bank accounts existed · low
+- **Where:** `ap_coder/web/pages/review.py` (`attention`, `_PAY_FROM`), `ap_coder/core/store.py` (`approvals_stamp`)
+- **Symptom:** since B-685 the queue took 0.174 s instead of 0.053 s at 5,000 waiting invoices once bank accounts
+  were set up: each load decoded every invoice's coding for the Pay from rule.
+- **Cause:** the Pay from answer was worked out afresh each time, where the rest of `attention` is remembered
+  (`_TO_FIX`).
+- **Reproduce:** time the queue at 5,000 waiting invoices with and without a bank account.
+- **Reproduced:** yes (found by the re-review of B-681 to B-687)
+- **Fix:** the answer is remembered per invoice with what it depends on: the invoice's coding text, the bank
+  accounts, and the approvals (a vendor's last Pay from account; `Store.approvals_stamp`), so a change to any of
+  them asks again.
+- **Test:** `tests/test_header_details.py::test_the_queue_does_not_decode_every_invoice_again_for_pay_from`
+- **Lesson:** A new question in a remembered answer is remembered with it.
