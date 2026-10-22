@@ -209,7 +209,7 @@
 .inv-lines-grid td[data-label]::before {content: attr(data-label); display: block; font-size: 10.5px; line-height: 14px;
   color: var(--lg-subtle); font-weight: 500;}
 /* A line's tax code (D-64): one dropdown, yellow with a note when the Tax check points at the line. */
-.inv-lines-grid .c-tax select {width: 100%; max-width: 220px;}
+.inv-lines-grid .c-tax select {width: 100%;}
 .inv-lines-grid .c-tax.is-taxcheck select {border-color: var(--lg-warning); background: var(--lg-warning-weak);}
 .inv-taxnote {display: flex; align-items: flex-start; gap: 3px; margin-top: 2px; font-size: 11px; line-height: 14px;
   color: var(--lg-warning);}
