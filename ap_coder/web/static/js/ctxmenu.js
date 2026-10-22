@@ -11,9 +11,11 @@
 
    * Opens at the pointer on a right-click, or under the focused element with Shift+F10 or the ContextMenu key
      (ctx.keyboard). It stays inside the window.
-   * A right-click inside a text box is the browser's own (Paste, Copy, the spelling), as are Shift + right-click, a
-     right-click on text selected on the page and in the account picker's list. A field's menu opens on its name, its
-     row in the Fields list or its box on the page, and with Shift+F10 / the ContextMenu key in its box.
+   * A right-click inside an invoice detail's box is the browser's own (Paste, Copy, the spelling), as are Shift +
+     right-click, a right-click on text selected on the page and in the account picker's list. A field's menu opens on
+     its name, its row in the Fields list or its box on the page, and with Shift+F10 / the ContextMenu key in its box.
+     In a line or a tax line, a right-click on a box opens the line's menu, unless the box is in use (it had the focus
+     already: being typed in, text selected in it): then the browser's.
    * role=menu / menuitem: ↑ ↓ Home End move, Enter or Space picks, → opens a submenu and ← or Esc closes it, Esc or
      Tab closes the menu (the focus goes back where it was), a letter goes to the next item starting with it. Every key
      pressed in the menu stays in it: the page viewer's keys (H, R, +), the popovers' Esc and teaching a field never
@@ -39,12 +41,20 @@ export function isOpen() {
 
 const NOT_TEXT = new Set(["checkbox", "radio", "button", "submit", "reset", "image", "file", "range", "color", "hidden"]);
 
-/** A right-click the browser's own menu is for: inside a text box (Paste, the spelling: B-624), in the account
-    picker's list, or on text selected on the page (Copy). */
+let focusedBefore = null; // what had the focus as the right button went down (it focuses the box clicked)
+document.addEventListener("pointerdown", (e) => {
+  if (e.button === 2) focusedBefore = document.activeElement;
+}, true);
+
+/** A right-click the browser's own menu is for: inside a text box (Paste, the spelling: B-624) — in a grid's line or
+    tax line only while that box is in use, else the line's menu (B-628) — in the account picker's list, or on text
+    selected on the page (Copy). In use: it had the focus before the right button went down (text can only be selected
+    in a box that has it; a selection made by the click itself, as the account picker selects its text on focus, is
+    not the clerk's). */
 function nativeWanted(target) {
   if (target.closest?.("[data-picker-layer]")) return true; // the account picker's list: nothing special
-  if (target.isContentEditable || target.tagName === "TEXTAREA") return true;
-  if (target.tagName === "INPUT" && !NOT_TEXT.has(target.type)) return true;
+  const box = target.isContentEditable || target.tagName === "TEXTAREA" || (target.tagName === "INPUT" && !NOT_TEXT.has(target.type));
+  if (box) return !target.closest("[data-grid]") || target === focusedBefore;
   const sel = window.getSelection?.();
   if (sel && !sel.isCollapsed && sel.rangeCount && !target.closest?.(".iv")) {
     for (let i = 0; i < sel.rangeCount; i++) if (sel.getRangeAt(i).intersectsNode(target)) return true;
