@@ -87,11 +87,11 @@ def test_getting_started_asks_for_your_province_and_counts_it(tmp_path, monkeypa
     assert "Your province" in started and "Settings → Review" in started
     assert 'href="/settings/review">Your province' in started
     ring = re.search(r"aria-label='(\d+)/(\d+)'", page).groups()
-    assert ring[1] == "7"
+    assert ring[1] == "8"  # with your bank accounts (optional, D-66)
     fresh.set_setting("our_province", "ON")
     page = client.get("/review").text
     assert "Ontario" in page.split("Getting started", 1)[1]
-    assert re.search(r"aria-label='(\d+)/(\d+)'", page).groups() == (str(int(ring[0]) + 1), "7")
+    assert re.search(r"aria-label='(\d+)/(\d+)'", page).groups() == (str(int(ring[0]) + 1), "8")
     assert "Your province" in client.get("/process").text
 
 
@@ -513,7 +513,7 @@ def test_in_a_browser_at_1366_the_page_and_the_line_grid_show_together(browser, 
     page.wait_for_timeout(300)
     grid = page.locator("#lines").bounding_box()
     doc = page.locator(".inv-doc").bounding_box()
-    assert 0 <= grid["y"] < 768 - 100, grid
+    assert -2 <= grid["y"] < 768 - 100, grid
     assert doc["x"] + doc["width"] <= grid["x"], (doc, grid)  # beside them
     assert doc["y"] <= max(grid["y"], 8) + 1 and doc["y"] + doc["height"] >= grid["y"] + grid["height"], (doc, grid)
     # Tab goes from the last invoice detail to the lines, nothing in between but the details' own

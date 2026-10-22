@@ -405,12 +405,25 @@ def test_without_a_vendor_master_the_vendor_list_keeps_the_numbers_ap_gave_a_ven
     from ap_coder.core.store import Store
 
     store = Store(tmp_path / "ap.db")
-    doc = {"vendor_name": "Acme Ltd", "invoice_number": "1", "invoice_date": "2026-10-01", "currency": "CAD",
-           "subtotal": 10.0, "tax_total": 0.0, "grand_total": 10.0, "confidence_score": 0.9, "line_items": []}
+    doc = {
+        "vendor_name": "Acme Ltd",
+        "invoice_number": "1",
+        "invoice_date": "2026-10-01",
+        "currency": "CAD",
+        "subtotal": 10.0,
+        "tax_total": 0.0,
+        "grand_total": 10.0,
+        "confidence_score": 0.9,
+        "line_items": [],
+    }
     invoice_id = store.add_invoice(tmp_path / "a.pdf", doc, {})
     store.approve_invoice(invoice_id, doc, "Jane")
-    store.save_vendor("acme", "Acme Ltd", expected_gst="123456782 RT0001", qst_number="1234567890 TQ0001",
-                      pst_number="PST-1234-5678")
+    store.save_vendor(
+        "acme", "Acme Ltd", expected_gst="123456782 RT0001", qst_number="1234567890 TQ0001", pst_number="PST-1234-5678"
+    )
     (acme,) = [v for v in store.vendor_choices() if v["vendor_key"] == "acme"]
     assert (acme["expected_gst"], acme["qst_number"], acme["pst_number"]) == (
-        "123456782 RT0001", "1234567890 TQ0001", "PST-1234-5678")
+        "123456782 RT0001",
+        "1234567890 TQ0001",
+        "PST-1234-5678",
+    )

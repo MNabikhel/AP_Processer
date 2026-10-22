@@ -85,6 +85,9 @@ def _texts(answer: dict) -> str:
 def test_a_field_marked_not_on_this_invoice_is_no_longer_asked_for(client, store):
     invoice_id = _with_gst(store)
     blank = form_of(store, invoice_id, gst_hst_registration_number="")
+    # cleared by the clerk after the vendor was set: the vendor list does not fill it in again (D-65)
+    vendor = store.get_invoice(invoice_id)["vendor_key"]
+    blank["from_vendor"] = json.dumps({"vendor": vendor, "fields": {}})
     asked = _texts(check(client, invoice_id, blank))
     assert "GST/HST registration number not found" in asked
     marked = {**blank, "absent": json.dumps(["gst_hst_registration_number"])}

@@ -433,4 +433,9 @@ class InvoiceCoding(BaseModel):
         return province_code(value)
 
     def to_output(self) -> dict[str, Any]:
-        return self.model_dump()
+        """The target schema; ``pay_from_account`` only when one is chosen (it is ours, not read from the invoice:
+        an invoice coded without bank accounts set up keeps the target schema exactly, D-66)."""
+        out = self.model_dump()
+        if not out.get("pay_from_account"):
+            out.pop("pay_from_account", None)
+        return out
