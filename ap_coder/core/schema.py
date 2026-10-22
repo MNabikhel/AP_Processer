@@ -37,10 +37,11 @@ MAX_ENUM_CHARS_TOTAL = 7_500
 PROVINCE_VALUES = [*PROVINCES, OUTSIDE_CANADA, ""]
 # Why a line carries no tax (only with no taxes on it): "" when it carries some, or nothing is said (D-64).
 TAX_STATUSES = ["", "exempt", "zero_rated", "out_of_scope"]
-# Enums that are always present: supplier/ship-to/tax-line provinces, two tax-type fields and a line's tax status.
-FIXED_ENUM_VALUES = 3 * len(PROVINCE_VALUES) + 2 * len(TAX_TYPES) + len(TAX_STATUSES)
+# Enums that are always present: supplier/ship-to/tax-line provinces, three tax-type fields (a tax line's type, a
+# line's taxes charged and those it is exempt from) and a line's tax status.
+FIXED_ENUM_VALUES = 3 * len(PROVINCE_VALUES) + 3 * len(TAX_TYPES) + len(TAX_STATUSES)
 FIXED_ENUM_CHARS = (
-    3 * sum(len(p) for p in PROVINCE_VALUES) + 2 * sum(len(t) for t in TAX_TYPES) + sum(len(s) for s in TAX_STATUSES)
+    3 * sum(len(p) for p in PROVINCE_VALUES) + 3 * sum(len(t) for t in TAX_TYPES) + sum(len(s) for s in TAX_STATUSES)
 )
 
 
@@ -111,6 +112,13 @@ def build_json_schema(reference: ReferenceData | None = None, *, constrain_codes
         "taxes_applied": {
             "type": "array",
             "description": "Sales taxes charged on this line (empty if exempt / zero-rated).",
+            "items": {"type": "string", "enum": list(TAX_TYPES)},
+        },
+        "tax_exempt": {
+            "type": "array",
+            "description": "Taxes this line is exempt or zero-rated from while it may carry others (e.g. PST on a "
+            "service in BC that carries GST), as the invoice shows it (a code, or the tax charged on other lines and "
+            "not this one); empty otherwise.",
             "items": {"type": "string", "enum": list(TAX_TYPES)},
         },
         "tax_status": {
@@ -354,6 +362,9 @@ class LineItem(BaseModel):
     predicted_gl_code: str
     predicted_cost_center: str = ""
     taxes_applied: list[str] = Field(default_factory=list)
+    # The taxes the line is exempt or zero-rated from, tax by tax (D-64); None: stored before it existed, read as the
+    # vendor meant it (InvoiceCoding fills it: line_tax.legacy_exempt).
+    tax_exempt: list[str] | None = None
     tax_status: str = ""  # TAX_STATUSES: why a line with no taxes carries none (D-64)
     reasoning_justification: str = ""
 
@@ -368,6 +379,20 @@ class LineItem(BaseModel):
             if v not in out:
                 out.append(v)
         return out
+
+    @field_validator("tax_exempt")
+    @classmethod
+    def _exempt(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        out = []
+        for v in value:
+            v = v.strip().upper()
+            if v not in TAX_TYPES:
+                raise ValueError(f"tax_exempt entries must be one of {TAX_TYPES}, got {v!r}")
+            if v not in out:
+                out.append(v)
+        return [t for t in TAX_TYPES if t in out]
 
     @field_validator("tax_status", mode="before")
     @classmethod
@@ -384,6 +409,8 @@ class LineItem(BaseModel):
         # (the taxes are what was charged; a reader or the chat model may send both).
         if self.taxes_applied and self.tax_status:
             self.tax_status = ""
+        if self.tax_exempt:  # a tax charged is not exempt; a status says it for every tax
+            self.tax_exempt = [] if self.tax_status else [t for t in self.tax_exempt if t not in self.taxes_applied]
         return self
 
 
@@ -426,6 +453,15 @@ class InvoiceCoding(BaseModel):
         if isinstance(data, dict) and (PLACE_OF_SUPPLY in data or FROM_VENDOR_LIST in data):
             data = {k: v for k, v in data.items() if k not in (PLACE_OF_SUPPLY, FROM_VENDOR_LIST)}
         return data
+
+    @model_validator(mode="after")
+    def _fill_exempt(self) -> InvoiceCoding:
+        # An invoice stored before tax_exempt existed: read as the vendor meant it (line_tax.legacy_exempt, D-64).
+        if any(li.tax_exempt is None for li in self.line_items):
+            from ..coding.line_tax import fill_exempt
+
+            self.line_items = fill_exempt(self.line_items, self.tax_lines)
+        return self
 
     @field_validator("invoice_date")
     @classmethod

@@ -179,22 +179,22 @@
 <p class="muted">Fix the highlighted field to see the tax check.</p>
 {% else %}
 {% set m = live.math %}
-{% set taxes = m.rows | selectattr("kind", "equalto", "tax") | list %}
+{% set taxes = m.rows | selectattr("kind", "in", ["tax", "selfassess"]) | list %}
 <div class="rvw-subhead">Tax check {% if m.ok %}{{ ui.pill("All adds up", "ok", "check") }}{% else %}{{ ui.pill(m.text, "warn", "calculate") }}{% endif %}</div>
 <div class="table-wrap"><table class="apc-table inv-taxcheck" data-tax-check>
   <thead><tr><th>Tax</th><th>Lines marked</th><th class="r">Lines × rate = expected</th><th class="r">Charged</th><th class="r">Difference</th></tr></thead>
   <tbody>
   {% for r in taxes %}
-    <tr class="{{ 'is-ok' if r.ok else 'is-check' }}" data-tax-row="{{ r.tax_type }}">
-      <td>{% if r.ok %}<span class="tc-ok" aria-label="Adds up">✓</span>{% else %}<span class="tc-check" title="{{ r.detail }}">check</span>{% endif %} <b>{{ r.what }}</b></td>
+    <tr class="{{ 'tc-self' if r.kind == 'selfassess' else 'is-ok' if r.ok else 'is-check' }}" data-tax-row="{{ r.tax_type }}{{ '-due' if r.kind == 'selfassess' else '' }}">
+      <td>{% if r.kind == "selfassess" %}<span class="tc-self-pill" title="{{ r.detail }}">self-assess</span>{% elif r.ok %}<span class="tc-ok" aria-label="Adds up">✓</span>{% else %}<span class="tc-check" title="{{ r.detail }}">check</span>{% endif %} <b>{{ r.what }}</b></td>
       <td>{{ r.which }}</td>
       <td class="r">{{ r.base }} × {{ r.rate or "—" }} = <b>{{ r.expected }}</b></td>
       <td class="r">{{ r.charged }}</td><td class="r">{% if r.diff %}<b class="tc-diff">{{ r.diff }}</b>{% else %}—{% endif %}</td></tr>
-    {% if not r.ok %}<tr class="tc-why is-check"><td colspan="5"><span class="ms" aria-hidden="true">arrow_right</span>{% if r.named %}{{ r.named }} {{ r.why }}{% elif r.count == 0 %}Pick {{ r.what }} as the tax code of the lines it applies to.{% else %}{{ r.detail }}: check the lines' tax codes.{% endif %}</td></tr>{% endif %}
+    {% if not r.ok %}<tr class="tc-why is-check"><td colspan="5"><span class="ms" aria-hidden="true">arrow_right</span>{% if r.named %}{{ r.named }} {{ r.why }}{% elif r.count == 0 %}Pick {{ r.what }} as the tax code of the lines it applies to.{% elif r.why %}{{ r.why }}{% else %}{{ r.detail }}: check the lines' tax codes.{% endif %}</td></tr>{% endif %}
   {% else %}
     <tr><td colspan="5" class="muted">No sales tax charged on this invoice, and no line is marked with one.</td></tr>
   {% endfor %}
-  {% for r in m.rows if r.kind != "tax" %}
+  {% for r in m.rows if r.kind in ("lines", "total") %}
     <tr class="tc-sum {{ 'is-ok' if r.ok else 'is-check' }}" data-tax-row="{{ r.kind }}">
       <td colspan="2">{% if r.ok %}<span class="tc-ok" aria-label="Adds up">✓</span>{% else %}<span class="tc-check">check</span>{% endif %} <b>{{ r.what }}</b></td>
       <td colspan="2" class="r">{% if r.kind == "lines" %}{{ r.lines_total }} = {{ r.subtotal }}{% else %}{{ r.subtotal }} + {{ r.tax }} = {{ r.computed }}; total {{ r.total }}{% endif %}
@@ -246,6 +246,7 @@
   <div class="legend">{% for s in live.split %}<span><i class="s{{ loop.index0 }}"></i>{{ s.label }} <b>{{ s.amount }}</b> <em>{{ s.pct }}</em></span>{% endfor %}</div>
 </div>
 {% endif %}
+{% if live.posting.note %}<p class="rvw-posting-note small"><span class="ms" aria-hidden="true">error</span>{{ live.posting.note }}</p>{% endif %}
 {{ posting_table(live.posting) }}
 {% endif %}
 {%- endmacro %}

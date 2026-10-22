@@ -45,6 +45,7 @@ from dataclasses import asdict, dataclass, field
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
+from ..coding.line_tax import exempt_of, legacy_basis
 from ..coding.tax import CANADIAN_TAX_TYPES, OUTSIDE_CANADA, PLACE_OF_SUPPLY, PROVINCES, ZERO_DECIMAL_CURRENCIES
 from ..coding.vendors import norm_invoice_number
 from ..core.headers import header_key
@@ -636,7 +637,11 @@ def voucher_rows(
     # Each distribution line's own explanation code (D-64): a line marked exempt or zero-rated, on an invoice whose
     # code handles tax, is the exempt code when nothing of the tax is put on it; the others keep the invoice's.
     items = final.get("line_items") or []
-    stated = [li is not None and not (li.get("taxes_applied") or []) and li.get("tax_status") in EXEMPT_STATUSES
+    kinds = sorted({t["tax_type"] for t in v.charged})
+    basis = legacy_basis(items, final.get("tax_lines") or [])
+    stated = [li is not None and not (li.get("taxes_applied") or [])
+              and (li.get("tax_status") in EXEMPT_STATUSES
+                   or (bool(kinds) and not li.get("tax_status") and set(kinds) <= set(exempt_of(li, basis))))
               for li in _entry_lines(v.entries, items)]  # fmt: skip
     line_codes = [exempt if no_tax and v.tax_code not in ("", exempt) else v.tax_code for no_tax in stated]
     if v.po_matched:
@@ -1059,6 +1064,14 @@ def dry_run(
                     for d in dists
                 ],
                 "matches": len(matches),
+                # The self-assessed PST is booked from the Self-assessment report by journal entry; a code that has
+                # E1 accrue the use tax itself (B) would accrue it a second time (B-716).
+                "warnings": [
+                    f"code {v.tax_code} has JD Edwards accrue the PST (use tax): do not also book it from AP Coder's "
+                    "Self-assessment report, or the PST is accrued twice"
+                ]
+                if v.tax_code and v.tax_code == settings.self_assessed_code.strip().upper()
+                else [],
                 "balance": (
                     f"distribution {_shown(dist_total, settings, v.decimals)} = gross {v.gross / 100:,.2f} "
                     f"- tax E1 posts {posted:,.2f} (code {v.tax_code or 'none'})"
@@ -1109,6 +1122,7 @@ def dry_run_text(report: dict[str, Any]) -> str:
             lines.append(f"  F0911Z1 line {d['line']}: {d['account']}  {d['amount']}  {d['text']}")
         if v["matches"]:
             lines.append(f"  F0411Z1T: {v['matches']} PO match line(s)")
+        lines += [f"  WARNING: {w}" for w in v.get("warnings") or []]
         lines.append(f"  {v['balance']}")
         lines.append("")
     for h in report["held"]:

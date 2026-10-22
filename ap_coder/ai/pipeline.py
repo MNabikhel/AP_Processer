@@ -198,14 +198,23 @@ def _model_line_taxes(coding: InvoiceCoding, text: str) -> None:
     """The chat model's lines with their taxes worked out when it said nothing of them (no line has a tax or a
     status) and a tax is charged: the codes printed on the page are not there to read, so the lines that make each
     tax add up (``line_tax.prefill``, D-64). What the model said is kept."""
-    from ..coding.line_tax import charged_types, model_gave_no_taxes
+    from ..coding.line_tax import charged_types, fill_exempt, model_gave_no_taxes
     from .offline_coder import tax_codes
 
-    if not coding.line_items or not model_gave_no_taxes(coding.line_items) or not charged_types(coding.tax_lines):
+    charged = charged_types(coding.tax_lines)
+    if (
+        coding.line_items
+        and not model_gave_no_taxes(coding.line_items)
+        and not any(li.tax_exempt or li.tax_status for li in coding.line_items)
+    ):  # its taxes, and nothing of what is exempt: read as the vendor meant it (a tax charged on others is exempt)
+        coding.line_items = fill_exempt([li.model_copy(update={"tax_exempt": None}) for li in coding.line_items],
+                                        coding.tax_lines)  # fmt: skip
+    if not coding.line_items or not model_gave_no_taxes(coding.line_items) or not charged:
         return
     province = coding.ship_to_province or coding.supplier_province
     coding.line_items = tax_codes(list(coding.line_items), list(coding.tax_lines), [], text, province,
-                                  coding.invoice_date)  # fmt: skip
+                                  coding.invoice_date, supplier_province=coding.supplier_province,
+                                  pst_number=coding.pst_registration_number)  # fmt: skip
 
 
 DAMAGED_PICTURE = ("UnidentifiedImageError",)

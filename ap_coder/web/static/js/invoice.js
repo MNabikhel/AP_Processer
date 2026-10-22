@@ -149,10 +149,7 @@ if (form) {
     if (e.target.name !== "mail_lang") dropUndo();
     headerEdited(e.target);
     if (e.target.name === "mail_lang") return showMailLanguage();
-    if (e.target.matches("select[data-tax-code]")) {  // a worked-out tax code the clerk picked is theirs (D-64)
-      const cell = e.target.closest(".c-tax");
-      if (cell) delete cell.dataset.taxGuess;
-    }
+    if (e.target.matches("select[data-tax-code]")) confirmTaxCode(e.target.closest("tr")); // theirs now (B-713)
     if (e.target === vendorInput) vendorChanged(); // the vendor list's tax numbers, with Undo (D-65)
     if (e.target.name === "pay_from_account" && payFromFor) {  // picked: kept while the currency stays (D-66)
       payFromFor.value = (input("currency")?.value || "CAD").trim().toUpperCase() || "CAD";
@@ -1615,11 +1612,12 @@ function num(el) {
 
 const TAX_TYPES = ["GST", "HST", "PST", "QST", "OTHER"];
 
-/** The taxes a line's tax code carries: "GST+PST" is GST and PST; "EXEMPT", "ZERO", "OUT" and "NONE" none. */
+/** The taxes a line's tax code charges: "GST+PST" is GST and PST, "GST~PST" GST alone; "EXEMPT", "ZERO", "OUT" none. */
 function lineTaxes(tr) {
   const code = tr.querySelector("select[data-tax-code]")?.value || "";
   const ticked = [...tr.querySelectorAll("input[type=checkbox]:checked")].map((c) => c.value); // a page of before
-  return [...code.split("+").filter((t) => TAX_TYPES.includes(t)), ...ticked.filter((t) => TAX_TYPES.includes(t))];
+  // "GST~PST": GST charged, PST exempt (D-64): only the part before "~" is charged
+  return [...code.split("~")[0].split("+").filter((t) => TAX_TYPES.includes(t)), ...ticked.filter((t) => TAX_TYPES.includes(t))];
 }
 
 function tickedSums() {
@@ -1700,7 +1698,30 @@ function showTaxMarks(marks) {
   }
 }
 
-/** The tax-code items of a line's menu: copy the line above's, put this one on every line, mark it exempt. */
+const GUESS_NOTE = "Tax code worked out from the tax charged: check it."; // line_tax.GUESS_NOTE
+const INFERRED = /\b(PST|RST) exemption inferred \(charged on the other lines, not this one\): confirm it\./; // line_tax._INFERRED
+
+/** The clerk picked or confirmed a line's tax code: no longer marked to check, and its note goes from the line's
+    reasoning (posted with it), so the approved coding does not keep it (B-713). */
+function confirmTaxCode(tr) {
+  const cell = tr?.querySelector(".c-tax");
+  if (!cell) return;
+  delete cell.dataset.taxGuess;
+  const reason = tr.querySelector('[name="line_reason"]');
+  if (reason) {
+    // line_tax.confirm_line: the "check it" note goes; a PST exemption inferred and still in the code is recorded as
+    // confirmed on review (B-715), and goes when the code no longer exempts it.
+    let text = reason.value.replace(GUESS_NOTE, " ");
+    const code = tr.querySelector("select[data-tax-code]")?.value || "";
+    const exempt = (code.split("~")[1] || "").split("+");
+    text = text.replace(INFERRED, (_m, name) => (exempt.includes("PST") ? `${name} exemption confirmed on review.` : " "));
+    reason.value = text.replace(/\s+/g, " ").trim();
+  }
+  showTaxMarks(taxMarks);
+}
+
+/** The tax-code items of a line's menu: confirm a worked-out code, copy the line above's, put this one on every line,
+    mark it exempt. */
 function taxCodeItems(tr, above, others) {
   const select = tr.querySelector("select[data-tax-code]");
   if (!select) return [];
@@ -1709,10 +1730,16 @@ function taxCodeItems(tr, above, others) {
   const aboveCode = above?.querySelector("select[data-tax-code]")?.value || "";
   const set = (row, value) => {
     setTaxCode(row.querySelector("select[data-tax-code]"), value);
-    const cell = row.querySelector(".c-tax");
-    if (cell) delete cell.dataset.taxGuess; // the clerk's choice now
+    confirmTaxCode(row); // the clerk's choice now
   };
+  const guessed = Boolean(tr.querySelector(".c-tax")?.dataset.taxGuess) ||
+    INFERRED.test(tr.querySelector('[name="line_reason"]')?.value || "");
   return [
+    guessed ? { icon: "task_alt", label: `Confirm the tax code (${label})`, id: "tax-confirm",
+      run: () => undoable(`${lineName(tr)}: tax code confirmed.`, () => {
+        confirmTaxCode(tr);
+        soon(0);
+      }) } : null,
     { icon: "vertical_align_top", label: "Copy the tax code from the line above", id: "tax-above",
       disabled: !above ? "It is the first line" : aboveCode === code ? "It has that code already" : false,
       run: () => undoable(`${lineName(tr)}: tax code copied from the line above.`, () => {

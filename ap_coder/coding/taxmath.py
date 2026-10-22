@@ -9,7 +9,7 @@ from typing import Any
 from ..core.schema import InvoiceCoding
 from ..core.ui import money, plural
 from .line_tax import tax_name
-from .tax import PROVINCES, TAX_TYPES, currency_places, supply_source
+from .tax import PROVINCES, REGIME, TAX_TYPES, currency_places, supply_source
 
 
 def _short(text: str, size: int = 28) -> str:
@@ -17,8 +17,8 @@ def _short(text: str, size: int = 28) -> str:
     return text if len(text) <= size else text[: size - 1].rstrip() + "…"
 
 
-def _gap_lines(lines: list[Any], gap: float, tol: float) -> list[Any]:
-    return [li for li in lines if abs(li.amount - gap) <= tol + 1e-9 and abs(li.amount) > 0.004]
+def _gap_lines(lines: list[Any], gap: float, tol: float, sign: int = 1) -> list[Any]:
+    return [li for li in lines if abs(sign * li.amount - gap) <= tol + 1e-9 and abs(li.amount) > 0.004]
 
 
 def math_check(coding: InvoiceCoding, setup: Any = None) -> dict[str, Any]:
@@ -70,23 +70,34 @@ def math_check(coding: InvoiceCoding, setup: Any = None) -> dict[str, Any]:
         which = "every line" if flagged and len(flagged) == n else f"{len(flagged)} of {n} lines"
         row: dict[str, Any] = {"kind": "tax", "what": label, "tax_type": tax_type, "count": len(flagged), "of": n,
                                "which": which, "base": money(base), "charged": money(charged), "lines": []}  # fmt: skip
-        rates = {round(t.rate, 6) for t in taxes}
-        rate = None
+        rates = sorted({round(t.rate, 6) for t in taxes})
         official = None
         if setup is not None and tax_type != "OTHER":
             where = (taxes[0].province if taxes and taxes[0].province else province) if tax_type != "GST" else ""
             if tax_type == "GST" or where in PROVINCES:
                 official = setup.rates.rate_for(tax_type, where, on)
-        if official is not None:
-            rate = official
-        elif len(rates) == 1:
-            rate = rates.pop()
-        elif len(rates) > 1:  # the same tax at two rates (goods and freight): checked per tax line elsewhere
-            continue
+        # The rate printed is the one checked (a lawful other rate, BC PST 10% on liquor, or the same tax at two
+        # rates: B-705); whether it is the official one is the rate check's (TAX_RATE_NONSTANDARD). Marked and not
+        # charged: the official rate, for what would be owed.
+        rate = rates[0] if len(rates) == 1 else (official if not rates else None)
         if not flagged and abs(charged) >= 0.005:
-            row.update(ok=False, diff=money(charged), rate=f"{rate * 100:.4g}%" if rate else "", expected="—",
+            row.update(ok=False, diff=money(charged), rate=" / ".join(f"{r * 100:.4g}%" for r in rates), expected="—",
                        detail=f"{money(charged)} charged, but no line is marked {label}: pick it as the tax code "
                               "of the lines it applies to")  # fmt: skip
+            tax_rows.append(row)
+            continue
+        if len(rates) > 1:  # the same tax at two rates: each tax line at its rate, their bases against the lines
+            expected = round(sum(round(t.taxable_amount * t.rate, places) for t in taxes), places)
+            printed_base = round(sum(t.taxable_amount for t in taxes), 2)
+            ok = abs(expected - charged) <= unit * (len(taxes) + 0.5) and abs(printed_base - base) <= 0.01 * n + 0.01
+            parts = " + ".join(f"{money(t.taxable_amount)} × {t.rate * 100:.4g}%" for t in taxes)
+            row.update(ok=ok, rate=" / ".join(f"{r * 100:.4g}%" for r in rates), expected=money(expected),
+                       diff="" if ok else money(round(charged - expected, 2)),
+                       detail=f"{parts} = {money(expected)} on {which} ({money(base)}); charged "
+                              f"{money(charged)}")  # fmt: skip
+            if not ok:
+                row["why"] = (f"The {label} lines are charged on {money(printed_base)}, the lines marked {label} "
+                              f"add up to {money(base)}: check the tax codes, or the vendor's {label}.")  # fmt: skip
             tax_rows.append(row)
             continue
         if rate is None:  # marked, not charged, no rate known (a foreign tax): nothing to expect
@@ -105,27 +116,62 @@ def math_check(coding: InvoiceCoding, setup: Any = None) -> dict[str, Any]:
                           f"{money(charged)}")  # fmt: skip
         if not ok:
             tol = 0.01 * n + 0.01
-            base_gap = round(gap / rate, 2) if rate else 0.0  # what the lines are short of (or over) the tax's base
+            # In the size of the amounts: a credit note reverses an invoice line for line (ETA s.232, B-704).
+            sign = -1 if (charged or base) < 0 else 1
+            base_gap = sign * round(gap / rate, 2) if rate else 0.0  # what the lines are short of (or over)
             if abs(charged) < 0.005:
                 suspects = flagged
                 why = f"Marked {label}, but no {label} is charged"
             elif base_gap < 0:
-                suspects = _gap_lines(flagged, -base_gap, tol) or flagged
+                suspects = _gap_lines(flagged, -base_gap, tol, sign)
                 why = f"May not carry {label}: the {label} charged adds up without it"
             else:
                 unmarked = [li for li in items if tax_type not in li.taxes_applied]
-                suspects = _gap_lines(unmarked, base_gap, tol) or flagged
+                suspects = _gap_lines(unmarked, base_gap, tol, sign)
                 why = f"May carry {label} too: the {label} charged adds up with it"
-            row["lines"] = [li.line_number for li in suspects]
-            if suspects and len(suspects) == 1 and suspects[0] in items:
+            if len(suspects) == 1 and abs(charged) >= 0.005:
                 li = suspects[0]
                 row["named"] = f"Line {li.line_number} ({_short(li.description)}, {money(li.amount)})"
                 row["why"] = (f"may not carry {label}: the {label} charged adds up without it." if base_gap < 0
                               else f"may carry {label} too: the {label} charged adds up with it.")  # fmt: skip
+            elif abs(charged) >= 0.005:
+                suspects = []
+                from .line_tax import can_explain
+
+                explained = can_explain([li.amount for li in items], charged, rate)
+                if explained:  # a choice of the lines makes it: the marking, not the vendor (B-714)
+                    row["why"] = (f"The lines marked don't make the {label} charged ({money(charged)}): pick which "
+                                  f"lines carry {label}.")  # fmt: skip
+                elif explained is None:
+                    row["why"] = (f"The lines marked don't make the {label} charged ({money(charged)}): check which "
+                                  f"lines carry {label}, or the vendor's {label}.")  # fmt: skip
+                else:  # no set of lines makes it: the vendor's arithmetic (B-703)
+                    claim = " (tax charged in error can't be claimed)" if tax_type in ("GST", "HST", "QST") else ""
+                    row["why"] = (f"The {label} charged ({money(charged)}) isn't {rate * 100:.4g}% of the lines "
+                                  f"marked {label} ({money(base)} → {money(expected)}): the vendor's tax looks wrong, "
+                                  f"ask for a corrected invoice{claim}.")  # fmt: skip
+            row["lines"] = [li.line_number for li in suspects]
             for li in suspects:
-                marks.setdefault(li.line_number, why if len(suspects) < len(flagged) or not flagged else
-                                 f"Check the tax code: the {label} does not add up")  # fmt: skip
+                marks.setdefault(li.line_number, why)
         tax_rows.append(row)
+    # A provincial tax due on lines and not charged on them (an out-of-province or unregistered vendor, a missed
+    # line): what is to self-assess, at the official rate (not a difference: nothing was charged, B-709).
+    if setup is not None and province in PROVINCES:
+        from .line_tax import DUE, tax_state
+
+        for tax_type in [t for t in ("PST", "QST") if t in REGIME.get(province, ())]:
+            due = [li for li in items if tax_state(li, tax_type) == DUE]
+            rate = setup.rates.rate_for(tax_type, province, on)
+            if not due or not rate:
+                continue
+            label = tax_name(tax_type, province)
+            base = round(sum(li.amount for li in due), 2)
+            tax_rows.append({"kind": "selfassess", "what": label, "tax_type": tax_type, "ok": True, "count": len(due),
+                             "of": n, "which": f"{len(due)} of {n} lines not charged" if len(due) < n
+                             else "every line, not charged", "base": money(base), "rate": f"{rate * 100:.4g}%",
+                             "expected": money(round(base * rate, places)), "charged": money(0), "diff": "",
+                             "detail": f"{label} due on {money(base)} and not charged: self-assess "
+                                       f"{money(round(base * rate, places))}", "lines": []})  # fmt: skip
     rows.append(lines_row)
     rows += tax_rows
     computed = round(coding.subtotal + taxes_total, 2)

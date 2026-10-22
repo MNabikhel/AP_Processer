@@ -644,6 +644,9 @@ async def approve(request: Request, invoice_id: int) -> JSONResponse:
     open_issues = [{"code": i.code, "severity": i.severity, "line": i.line_number}
                    for i in analysis.errors + analysis.warnings]  # fmt: skip
     me = reviewer()
+    from ap_coder.coding.line_tax import confirm_codes
+
+    confirm_codes(analysis.output)  # approving confirms the tax codes worked out to check (B-713)
     try:
         counts = store.approve_invoice(invoice_id, analysis.output, me, open_issues=open_issues, login=login())
     except (KeyError, ValueError) as exc:  # KeyError: deleted meanwhile, after it was read above

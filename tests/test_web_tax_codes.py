@@ -29,10 +29,11 @@ def _invoice(store, name: str) -> int:
 def test_the_dropdown_offers_the_codes_of_the_place_of_supply(client, store):
     page = client.get(f"/review/{_invoice(store, RED_RIVER)}").text
     assert page.count('name="line_tax_code"') == 4 + 1  # each line, and the template of a new one
-    for label in ("GST + RST", "GST only", "RST only", "Exempt", "Zero-rated", "No tax (out of scope)",
-                  "No tax charged"):  # fmt: skip
+    for label in ("GST + RST", "GST only · RST exempt", "GST only · RST not charged (self-assess)",
+                  "RST only · GST exempt", "Exempt from both", "Zero-rated", "No tax (out of scope)"):  # fmt: skip
         assert f">{label}</option>" in page, label
-    assert '<option value="GST" selected>GST only</option>' in page  # the design service: no RST
+    # the design service: RST charged on the other lines, not on it: exempt from RST
+    assert '<option value="GST~PST" selected>GST only · RST exempt</option>' in page
     assert "Tax check" in page and "Lines × rate = expected" in page
 
 
@@ -98,7 +99,7 @@ def test_in_a_browser_a_lines_tax_code_moves_the_taxable_never_the_tax_charged_b
     """B-700: changing a line's taxes recalculated the tax line's amount too, so what the invoice charges changed with
     the clerk's marking and the check could never disagree."""
     page, errors = _review(browser, _invoice(store, RED_RIVER))
-    assert _codes(page) == ["GST+PST", "GST+PST", "GST", "GST+PST"]
+    assert _codes(page) == ["GST+PST", "GST+PST", "GST~PST", "GST+PST"]
     assert _taxable(page, "PST") == "13445.00" and _amount(page, "PST") == "941.15"
     select = page.locator("[data-grid=lines] select[data-tax-code]").nth(2)
     with page.expect_response(lambda r: r.url.endswith("/check")):
@@ -118,7 +119,7 @@ def test_in_a_browser_the_tax_check_follows_the_codes_and_undo_puts_a_code_back(
     page, errors = _review(browser, _invoice(store, RED_RIVER))
     options = page.eval_on_selector_all("[data-grid=lines] select[data-tax-code] >> nth=0 >> option",
                                         "o => o.map(x => x.textContent)")  # fmt: skip
-    assert options[:3] == ["GST + RST", "GST only", "RST only"] and "Exempt" in options
+    assert options[:3] == ["GST + RST", "GST only · RST exempt", "GST only · RST not charged (self-assess)"]
     assert "all adds up" in page.locator("[data-live=taxcheck]").inner_text().lower()
     line = page.locator("[data-grid=lines] > tr").nth(3)
     _menu(page, line.locator("[name=line_description]"))
@@ -150,4 +151,68 @@ def test_in_a_browser_the_dropdown_follows_the_place_of_supply(browser, store, p
                                         "o => o.map(x => x.textContent)")  # fmt: skip
     assert options[0] == first, options
     assert _codes(page)[0] == "GST+PST"  # each line keeps its own code, listed or not
+    assert errors == []
+
+
+def test_a_worked_out_code_is_marked_until_its_note_goes_b713(client, store):
+    """A code worked out to check is marked on the line until the clerk picks or confirms it (the page takes the note
+    out of the line's reasoning, posted with it)."""
+    from ap_coder.coding.line_tax import GUESS_NOTE
+
+    invoice_id = _invoice(store, RED_RIVER)
+    inv = store.get_invoice(invoice_id)
+    ai = inv["ai_output"]
+    ai["line_items"][2]["reasoning_justification"] = f"Design. {GUESS_NOTE}"
+    reference = store.reference_data()
+    draft = invoice_view.Draft.stored(ai)
+    assert [r["tax_guess"] for r in invoice_view.grid(reference, draft, ai)["lines"]] == [False, False, True, False]
+    draft.lines[2]["reasoning_justification"] = "Design."  # confirmed: the note is gone from what is posted
+    assert not any(r["tax_guess"] for r in invoice_view.grid(reference, draft, ai)["lines"])
+
+
+def test_approval_waits_until_an_inferred_pst_exemption_is_confirmed_b715(client, store):
+    from ap_coder.coding.line_tax import confirm_line, inferred_note
+
+    from .test_web_ctxmenu import _set_output
+
+    invoice_id = _invoice(store, RED_RIVER)
+    output = store.get_invoice(invoice_id)["ai_output"]
+    output["line_items"][2]["reasoning_justification"] = f"Design. {inferred_note('RST')}"
+    _set_output(store, invoice_id, output)
+    data = form_of(store, invoice_id)
+    answer = check(client, invoice_id, data)
+    assert (
+        not answer["allow"]
+        and "Confirm the RST on line 3: exempt, or not charged (self-assess)?" in (answer["sections"]["bar"])
+    )
+    assert "RST exemption inferred" in answer["sections"]["checks"]
+    # confirmed on the page (the line's reasoning posted without the note): approval opens, the confirmation kept
+    data[invoice_view.LINE_INPUTS["reasoning_justification"]][2] = confirm_line(
+        data[invoice_view.LINE_INPUTS["reasoning_justification"]][2], "GST~PST"
+    )
+    answer = check(client, invoice_id, data)
+    assert "Confirm the RST" not in answer["sections"]["bar"]
+    assert (
+        "RST exemption confirmed on review"
+        in client.app.state.invoice_drafts[invoice_id]["lines"][2]["reasoning_justification"]
+    )
+
+
+def test_in_a_browser_confirm_the_tax_code_clears_an_inferred_exemption_b715(browser, store):
+    from ap_coder.coding.line_tax import inferred_note
+
+    from .test_web_ctxmenu import _set_output
+
+    invoice_id = _invoice(store, RED_RIVER)
+    output = store.get_invoice(invoice_id)["ai_output"]
+    output["line_items"][2]["reasoning_justification"] = f"Design. {inferred_note('RST')}"
+    _set_output(store, invoice_id, output)
+    page, errors = _review(browser, invoice_id)
+    assert "Confirm the RST on line 3" in page.locator("[data-live=bar]").inner_text()
+    line = page.locator("[data-grid=lines] > tr").nth(2)
+    _menu(page, line.locator("[name=line_description]"))
+    _item(page, "tax-confirm").click()
+    page.wait_for_function("!document.querySelector('[data-live=bar]').innerText.includes('Confirm the RST')")
+    reason = line.locator("[name=line_reason]").input_value()
+    assert "RST exemption confirmed on review" in reason and "inferred" not in reason
     assert errors == []

@@ -45,7 +45,7 @@ def test_offline_reading_codes_each_line_with_the_taxes_it_carries_b702(referenc
     and the math said "1 difference: PST" on an invoice that adds up."""
     capture, _, _ = read_invoice(RED_RIVER)
     coding = code_from_capture(capture, reference, [], text=local_extraction(RED_RIVER).content).coding
-    assert [tax_code_of(li) for li in coding.line_items] == ["GST+PST", "GST+PST", "GST", "GST+PST"]
+    assert [tax_code_of(li) for li in coding.line_items] == ["GST+PST", "GST+PST", "GST~PST", "GST+PST"]
     assert math_check(coding, reference.tax)["ok"]
 
 
