@@ -240,7 +240,8 @@ def _approvable(client, invoice_id: int, data: dict) -> dict:
 def test_without_bank_accounts_nothing_asks_for_one(client, store):
     invoice_id = _red_river(store)
     answer = check(client, invoice_id, form_of(store, invoice_id))
-    assert "Add your bank accounts on GL accounts &amp; tax to choose which account pays" in answer["sections"]["checks"]
+    checks = html.unescape(answer["sections"]["checks"])
+    assert "Add your bank accounts on GL accounts & tax to choose which account pays" in checks
     page = client.get(f"/review/{invoice_id}").text
     assert 'name="pay_from_account"' not in page and 'href="/accounts?tab=bank"' in page
     assert "Pay into" not in page
@@ -251,8 +252,8 @@ def test_pay_from_defaults_to_the_currencys_account_and_is_stored(client, store)
     invoice_id = _red_river(store)
     page = client.get(f"/review/{invoice_id}").text
     select = page.split('name="pay_from_account"', 1)[1].split("</select>", 1)[0]
-    assert '<option value="CAD-OP" data-currency="CAD" selected>Sample Bank CAD operating · CAD · ••••1234</option>' in (
-        select)
+    option = '<option value="CAD-OP" data-currency="CAD" selected>Sample Bank CAD operating · CAD · ••••1234</option>'
+    assert option in select
     assert "0000001234" not in page  # never the whole number
     assert "Add your bank accounts" not in check(client, invoice_id, form_of(store, invoice_id))["sections"]["checks"]
     # the currency changes: the default follows it (never an account in another currency kept unsaid)
