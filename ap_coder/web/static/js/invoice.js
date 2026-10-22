@@ -1263,14 +1263,18 @@ document.addEventListener("keydown", (e) => {
   if (e.key !== "Enter" || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
   const el = e.target;
   if (!el.matches?.('.inv-details input[form="inv"], .inv-details select[form="inv"]') || el.type === "hidden") return;
+  // Only boxes that can take the focus: not disabled, shown, not folded away in a closed <details> (Place of supply,
+  // B-623); and if one still refuses it, the one after.
   const boxes = [...document.querySelectorAll('.inv-details input[form="inv"]:not([type=hidden]), .inv-details select[form="inv"]')]
-    .filter((b) => !b.disabled && b.getClientRects().length);
-  const i = boxes.indexOf(el);
-  const next = boxes[i + (e.shiftKey ? -1 : 1)];
+    .filter((b) => b === el || (!b.disabled && b.getClientRects().length && !b.closest("details:not([open])")));
+  const step = e.shiftKey ? -1 : 1;
   e.preventDefault();
-  if (next) {
-    next.focus();
-    next.select?.();
+  for (let i = boxes.indexOf(el) + step; i >= 0 && i < boxes.length; i += step) {
+    boxes[i].focus();
+    if (document.activeElement === boxes[i]) {
+      boxes[i].select?.();
+      break;
+    }
   }
 });
 

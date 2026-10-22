@@ -728,3 +728,16 @@ def test_in_a_browser_a_new_blank_tax_line_does_not_take_the_ticked_sum_b622(bro
     assert new.locator("[name=tax_taxable]").input_value() == ""  # stays blank: not a second copy of the sum
     assert _taxable(page, kind) != before  # the tax line that was the sum follows
     assert errors == []
+
+
+def test_in_a_browser_enter_goes_past_a_detail_folded_away_b623(browser, store):
+    """B-623: Enter in Currency stayed there: the next box, Place of supply, is folded away in a closed <details>."""
+    invoice_id = store.list_invoices(REVIEW)[0]["id"]
+    page, errors = _review(browser, invoice_id)
+    assert page.locator(".inv-supply-pick").get_attribute("open") is None
+    page.locator('.inv-details input[name="currency"]').focus()
+    page.keyboard.press("Enter")
+    assert page.evaluate("document.activeElement.name") == "original_invoice_number"
+    page.keyboard.press("Shift+Enter")
+    assert page.evaluate("document.activeElement.name") == "currency"
+    assert errors == []

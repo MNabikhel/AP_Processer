@@ -6052,6 +6052,18 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
 - **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_a_new_blank_tax_line_does_not_take_the_ticked_sum_b622`
 - **Lesson:** "Follows the lines" must mean "was the lines' sum": a blank is a person's work still to do.
 
+#### B-623 · Enter in Currency went nowhere · medium-low
+- **Where:** `ap_coder/web/static/js/invoice.js` (Enter between the invoice details)
+- **Symptom:** Enter moved from detail to detail down to Currency, then stayed there.
+- **Cause:** the next box, Place of supply, is folded away in a closed `<details>` (it still has a layout box, so it
+  passed the "shown" test); focusing it did nothing, and Enter had already been stopped.
+- **Reproduce:** on an invoice whose place of supply is the ship-to, click in Currency and press Enter.
+- **Reproduced:** yes
+- **Fix:** boxes in a closed `<details>`, hidden or disabled are skipped, and when a box still does not take the
+  focus, Enter goes on to the one after (Shift+Enter: before).
+- **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_enter_goes_past_a_detail_folded_away_b623`
+- **Lesson:** Moving the focus is only done once the focus has moved: check where it landed.
+
 #### Looked at and left (install, launcher and updates)
 
 - **N-251** · A GitHub ZIP unzipped over an older one leaves the files the newer one no longer has (the offline
