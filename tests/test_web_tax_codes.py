@@ -9,8 +9,12 @@ import pytest
 from ap_coder.core.store import REVIEW
 from ap_coder.web import invoice_view
 
-from .test_web_ctxmenu import _checked, _item, _menu, _review, _taxable, browser, client, demo_db, me, store  # noqa: F401
+from . import test_web_ctxmenu as ctxmenu
+from .test_web_ctxmenu import _item, _menu, _review, _taxable
 from .test_web_invoice import check, form_of
+
+# The review screen of the demo invoices, in a browser too: the fixtures of the right-click menus' tests.
+demo_db, store, client, browser, me = ctxmenu.demo_db, ctxmenu.store, ctxmenu.client, ctxmenu.browser, ctxmenu.me
 
 RED_RIVER = "Red River"
 

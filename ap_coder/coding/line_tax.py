@@ -126,7 +126,8 @@ def code_label(code: str, province: str = "") -> str:
         # "GST only" where it is one of the province's two taxes, so it reads as a choice; "HST", "GST" alone where
         # it is the province's only tax, and a tax the province does not use ("Foreign tax") by its name.
         usual = REGIME.get(province, frozenset())
-        return f"{names[0]} only" if types[0] in usual and len(usual) > 1 else names[0]
+        choice = (types[0] in usual and len(usual) > 1) or (types[0] == "GST" and usual == {"HST"})
+        return f"{names[0]} only" if choice else names[0]
     return " + ".join(names)
 
 
@@ -207,7 +208,7 @@ def all_labels(province: str = "") -> dict[str, str]:
 TAXABLE = "TAXABLE"  # "*", "T", "Y": the line is taxable, with the taxes charged
 _LEGEND_ENTRY = re.compile(r"(?<![A-Za-z0-9])([A-Z]{1,2}|\*)\s*(?:=|:|-|–)\s*([^,;=\n]{2,48})")
 _WORDS = (
-    (re.compile(r"(?i)\b(?:gst|tps)\b(?!\s*/)"), "GST"),
+    (re.compile(r"(?i)\b(?:gst|tps)\b"), "GST"),
     (re.compile(r"(?i)\b(?:hst|tvh)\b"), "HST"),
     (re.compile(r"(?i)\b(?:pst|rst|tvp)\b|\bretail\s+sales\s+tax\b|\bprovincial\s+(?:sales\s+)?tax\b"), "PST"),
     (re.compile(r"(?i)\b(?:qst|tvq)\b"), "QST"),
@@ -420,6 +421,8 @@ def solve(amounts: Sequence[float], target: float, rate: float, descriptions: Se
     tol = tolerance_cents(n, rate)
     if abs(sum(cents) - goal) <= tol:
         return Solved("all", everything, count=1)
+    if abs(goal) <= tol:  # nothing left to carry it (the lines printed with it carry it all): none of these
+        return Solved("unique", frozenset(), count=1)
     # Lines of no amount change no sum: left out of the search, and carry the tax with the lines (taxable as usual).
     live = [k for k in range(n) if cents[k] != 0]
     if not live or len(live) > MAX_SOLVER_LINES:
@@ -508,6 +511,7 @@ def prefill(
     descriptions = [str(_get(li, "description") or "") for li in items]
     free = [k for k in range(n) if codes[k] is None]
     assigned: dict[int, set[str]] = {k: set() for k in free}
+    solved_any = False
     for tax_type in charged:
         taxes = [
             t for t in tax_lines if _get(t, "tax_type") == tax_type and abs(float(_get(t, "tax_amount") or 0)) > 0.004
@@ -531,11 +535,10 @@ def prefill(
             assigned[free[j]].add(tax_type)
         if solved.kind == "several":
             check |= {free[j] for j in solved.doubt}
-        for j in range(len(free)):
-            how[free[j]] = how[free[j]] or ("all" if solved.kind in ("all", "none") else "solver")
+        solved_any = solved_any or solved.kind in ("unique", "several")
     for k in free:
         codes[k] = (ordered(assigned[k]), "")
-        how[k] = how[k] or "none"
+        how[k] = ("solver" if solved_any else "all") if charged else "none"
     for k in range(n):
         taxes, status = codes[k] or ([], "")
         if isinstance(items[k], dict):
