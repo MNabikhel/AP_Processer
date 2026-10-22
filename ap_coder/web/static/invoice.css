@@ -349,3 +349,16 @@ button.inv-pick .ms {font-size: 14px;}
 .inv-absent .ms {font-size: 14px;}
 .rvw-dup-link {display: inline-flex; align-items: center; gap: 2px; margin-left: 6px; font-weight: 600; white-space: nowrap;}
 .rvw-dup-link .ms {font-size: 14px;}
+
+/* ---- An invoice detail a check is about (D-65): amber, with a one-line note under it; the tax numbers filled from
+   the vendor list say so; the vendor's printed bank details are read-only; Pay from is a list (D-66) ------------- */
+.inv-details .is-flagged input, .inv-details .is-flagged select {border-color: var(--lg-warning); background: var(--lg-warning-weak);}
+.inv-details .is-flagged .inv-bank-value {border-color: var(--lg-warning); background: var(--lg-warning-weak);}
+.inv-flag {display: flex; align-items: center; gap: 4px; margin-top: 3px; font-size: 12px; line-height: 15px; color: var(--lg-warning);}
+.inv-flag[hidden], .inv-from-vendor[hidden] {display: none;}
+.inv-flag .ms, .inv-from-vendor .ms {font-size: 14px;}
+.inv-from-vendor {display: inline-flex; align-items: center; gap: 4px; margin-top: 3px; font-size: 12px; color: var(--lg-muted);}
+.inv-bank-value {display: flex; align-items: center; min-height: 34px; padding: 0 10px; border: 1px solid var(--lg-border);
+  border-radius: 8px; background: var(--lg-surface-2, transparent); font-variant-numeric: tabular-nums;}
+.inv-bank-printed[hidden] {display: none;}
+.inv-pay-none {display: flex; align-items: center; min-height: 34px;}

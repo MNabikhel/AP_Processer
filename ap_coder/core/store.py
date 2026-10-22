@@ -3332,12 +3332,17 @@ class Store:
             rows = [dict(r) for r in conn.execute("SELECT * FROM vendors WHERE in_master IN (1, 2)")]
             if not any(r["in_master"] == 1 for r in rows):
                 known = {r["vendor_key"] for r in rows}
+                # the tax numbers AP gave such a vendor on the Vendors page come along (the review screen fills them)
+                own = {r["vendor_key"]: dict(r) for r in conn.execute("SELECT * FROM vendors WHERE in_master = 0")}
                 for r in conn.execute(
                     "SELECT vendor_key, MAX(vendor_name) name FROM invoices WHERE status = 'approved' AND vendor_key "
                     "!= '' GROUP BY vendor_key"
                 ):
                     if r["vendor_key"] not in known:
-                        rows.append({"vendor_key": r["vendor_key"], "display_name": r["name"], "in_master": 0})
+                        numbers = {c: own.get(r["vendor_key"], {}).get(c) or ""
+                                   for c in ("expected_gst", "qst_number", "pst_number")}  # fmt: skip
+                        rows.append({"vendor_key": r["vendor_key"], "display_name": r["name"], "in_master": 0,
+                                     **numbers})  # fmt: skip
         return sorted(rows, key=lambda r: str(r.get("display_name") or "").lower())
 
     def add_vendor_here(

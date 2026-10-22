@@ -277,6 +277,26 @@ def tax_number_findings(
     return out
 
 
+def expected_tax_numbers(coding: InvoiceCoding, store: Store, exclude_invoice_id: int | None = None) -> dict[str, str]:
+    """{invoice field: what it is compared with} for the tax numbers ``tax_number_findings`` checks, in a few words
+    for the note under the field on the review screen (D-65): "Vendor list: 123456789 RT0001", else "Usual for this
+    vendor: …" from its approved invoices."""
+    key = vendor_key(coding.vendor_name)
+    if not key:
+        return {}
+    master = store.get_vendor(key)
+    history = [h for h in store.vendor_invoices(key) if h["id"] != exclude_invoice_id]
+    out = {}
+    for _severity, _code, field, column, past, _name, norm, _same in _TAX_NUMBERS:
+        if master and norm(master.get(column)):
+            out[field] = f"Vendor list: {master[column]}"
+            continue
+        known = sorted({h.get(past) or "" for h in history if h["status"] == "approved"} - {""})
+        if known:
+            out[field] = f"Usual for this vendor: {', '.join(known)}"
+    return out
+
+
 def vendor_findings(
     coding: InvoiceCoding, store: Store, exclude_invoice_id: int | None = None
 ) -> list[tuple[str, str, str]]:
