@@ -588,15 +588,19 @@ def test_in_a_browser_a_tax_lines_taxable_follows_the_lines_ticked_with_it_b610(
     rows = _lines(page)
     amounts = [float(rows.nth(i).locator("[name=line_amount]").input_value()) for i in range(rows.count())]
     ticked = [rows.nth(i).locator(f"input[type=checkbox][value={kind}]").is_checked() for i in range(rows.count())]
-    assert ticked[0] and abs(float(_taxable(page, kind)) - sum(a for a, t in zip(amounts, ticked) if t)) < 0.01
+    assert (
+        ticked[0]
+        and abs(float(_taxable(page, kind)) - sum(a for a, t in zip(amounts, ticked, strict=True) if t)) < 0.01
+    )
     with _checked(page):
         rows.first.locator(f"input[type=checkbox][value={kind}]").uncheck(force=True)
-    expected = sum(a for a, t in zip(amounts, ticked) if t) - amounts[0]
+    expected = sum(a for a, t in zip(amounts, ticked, strict=True) if t) - amounts[0]
     assert _taxable(page, kind) == f"{expected:.2f}"
     # a taxable typed by the clerk is never overwritten: the tax line's menu offers to update it
-    tax = page.locator("[data-grid=taxes] > tr").nth(
-        page.eval_on_selector_all("[data-grid=taxes] select[name=tax_type]", "(s, k) => s.findIndex(x => x.value === k)", kind)
+    at = page.eval_on_selector_all(
+        "[data-grid=taxes] select[name=tax_type]", "(s, k) => s.findIndex(x => x.value === k)", kind
     )
+    tax = page.locator("[data-grid=taxes] > tr").nth(at)
     tax.locator("[name=tax_taxable]").fill("100.00")
     rows.first.locator(f"input[type=checkbox][value={kind}]").check(force=True)
     assert _taxable(page, kind) == "100.00"
