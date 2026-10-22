@@ -107,7 +107,7 @@ TOUCHPOINTS = {
     "ap_coder/ops/doctor.py": "doctor --online: Azure only with AP_ALLOW_INTERNET=1; LM Studio as local_llm",
     "ap_coder/ops/offline.py": "import_azure: imports only; free_port binds and connects on this computer's dashboard "
     "address (no proxy)",
-    "ap_coder/web/pages/settings.py": "git log -1 on this checkout (no network)",
+    "ap_coder/core/paths.py": "git log -1 on this checkout, for its build (no network)",
     "scripts/launch.py": "pip --no-index from the wheelhouse (PyPI only with AP_ALLOW_INTERNET=1); socket binds "
     "127.0.0.1; webbrowser opens http://localhost",
     "scripts/running.py": "the dashboard on 127.0.0.1 (no proxy)",
@@ -427,7 +427,8 @@ def _approve_one(app, base: str) -> tuple[int | None, list[str]]:
 
     store = app.state.store
     gl = store.list_accounts("gl_accounts")[0]["code"]
-    cc = store.list_accounts("cost_centers")[0]["code"]
+    ccs = store.list_accounts("cost_centers")  # none in the demo (D-53): a line then needs only its GL account
+    cc = ccs[0]["code"] if ccs else ""
     refused = []
     for row in store.list_invoices(REVIEW):
         if offline_flow.request(base, "GET", f"/review/{row['id']}").status != 200:

@@ -506,7 +506,13 @@ def main(argv: list[str] | None = None, venv: str | None = None) -> int:
     state = launch.load_state()
     packages = launch.ensure_packages(state, extras=EXTRAS)[:2]  # all in place by now: nothing installed
     ident = launch.identity()
-    state.update(setup_done=True, fingerprint=ident["fingerprint"], version=ident["version"], build=ident["build"])
+    state.update(
+        setup_done=True,
+        fingerprint=ident["fingerprint"],
+        version=ident["version"],
+        build=ident["build"],
+        commit=ident["commit"],
+    )
     launch.save_state(state)
     paths.record_install(ident)  # the current install: an older folder started later hands over to this one
     upgrade.write_marker(ROOT, ident)

@@ -329,7 +329,7 @@ def test_the_agreement_check():
     assert all(li.agreed == ["vlm"] for li in page)
     assert sources_line(page, [passed]) == "Line items: 2 of 2 read the same by OvisOCR2 and the table finder."
     assert sources_line(page, [failed]).startswith("Line items read differently by two readers")
-    assert "one reader only" in sources_line([_line("Widget A", 1.0, source="words")])
+    assert sources_line([_line("Widget A", 1.0, source="words")]) == ""  # one reader only: nothing to act on (B-464)
     assert sources_line([]) == ""
     assert help_for(CHECK_CODE).area == "Reading the document"
 

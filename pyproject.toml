@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ap-coder"
-version = "0.2.0"
+version = "0.3.0"
 description = "AP invoice coder: reads and codes invoices on this computer (offline), Canadian sales tax, review dashboard"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "openpyxl>=3.1",
     "openai>=1.68",
@@ -47,7 +47,7 @@ ap-coder = "ap_coder.ops.cli:main"
 include = ["ap_coder*"]
 
 [tool.setuptools.package-data]
-ap_coder = ["assets/*", "static/*", "capture/calibration.json", "web/templates/*", "web/templates/partials/*",
+ap_coder = ["BUILD", "assets/*", "static/*", "capture/calibration.json", "web/templates/*", "web/templates/partials/*",
             "web/static/*", "web/static/js/*"]
 
 [tool.pytest.ini_options]
@@ -59,7 +59,7 @@ markers = [
 
 [tool.ruff]
 line-length = 120
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

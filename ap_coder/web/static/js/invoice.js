@@ -110,6 +110,16 @@ async function flush() {
   else if (running) await running;
 }
 
+/* A line's description wraps in its box (a textarea) but is one line: Enter adds no line break (B-467). */
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.ctrlKey && !e.metaKey && e.target.matches?.("textarea[data-one-line]")) e.preventDefault();
+});
+document.addEventListener("input", (e) => {
+  if (e.target.matches?.("textarea[data-one-line]") && /[\r\n]/.test(e.target.value)) {
+    e.target.value = e.target.value.replace(/\s*[\r\n]+\s*/g, " ");
+  }
+});
+
 if (form) {
   document.addEventListener("input", (e) => {
     if (e.target.form === form && e.target.type !== "checkbox" && e.target.type !== "radio") soon();
@@ -117,6 +127,10 @@ if (form) {
   document.addEventListener("change", (e) => {
     if (e.target.form !== form) return;
     if (e.target.name === "mail_lang") return showMailLanguage();
+    if (e.target.name === "line_gl") {  // a guessed account the reviewer picked again is no longer a guess
+      const cell = e.target.closest(".is-guess");
+      if (cell) { cell.classList.remove("is-guess"); cell.querySelector(".inv-guess")?.remove(); }
+    }
     soon(e.target.tagName === "SELECT" || e.target.type === "checkbox" ? 0 : 200);
   });
 }

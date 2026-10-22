@@ -8,7 +8,7 @@
 {% if not has_gl %}
 <section class="card sample">
   <div class="card-head">
-    {{ ui.empty_note("Just exploring?", " Use the sample GL accounts, cost centers and tax setup to try the app.", "science") }}
+    {{ ui.empty_note("Just exploring?", " Use the sample GL accounts and tax setup to try the app (no cost centers: each line needs only a GL account).", "science") }}
     <form method="post" action="/accounts/sample" data-busy="Loading…">
       <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">download</span>Use the sample GL accounts</button>
     </form>
@@ -92,8 +92,9 @@
 {% elif tab == "tax" %}
 <section class="card">
   <h4>How each sales tax posts</h4>
-  <p class="muted">Recoverable taxes (input tax credits / refunds) go to their own GL account. Non-recoverable PST is
-    normally added to the cost of the expense lines it applies to.</p>
+  <p class="muted">Recoverable taxes (input tax credits / refunds) go to their own GL account: pick one for GST, HST
+    and QST. Non-recoverable PST (and any other tax) is normally added to the cost of the expense lines it applies to,
+    so it needs no account of its own. Then Save tax setup.</p>
   <form method="post" action="/accounts/tax" class="stack" id="tax-form" data-busy="Saving…">
     <div class="table-wrap">
       <table class="apc-table edit">

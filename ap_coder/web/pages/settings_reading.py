@@ -1,4 +1,5 @@
-"""Settings → Reading: how AP Coder reads every invoice, the same way each time, and how each reader is doing.
+"""Settings → Reading: whether LM Studio runs (with Check again), OvisOCR2's self-test, the AI reviewer, and folded
+under "For IT" how AP Coder reads every invoice, the same way each time, and how each reader is doing (B-506).
 
 Nothing to choose here. Every invoice goes through the same readers (``ap_coder.ai.reading``); the tab shows each one's
 state, the page reader's (OvisOCR2 in LM Studio) self-test (run again from here, its progress polled from
@@ -29,6 +30,7 @@ from ap_coder.web.core import (
     get_settings,
     get_store,
     jobs,
+    local_url,
     message,
     reading_status_or_none,
     reference_or_none,
@@ -57,6 +59,7 @@ READER_PILL = {
     "ok": ("Working", "ok", "check_circle"),
     "warn": ("Needs a look", "warn", "warning"),
     "testing": ("Testing itself", "info", "hourglass_top"),
+    "waiting": ("Waiting for LM Studio", "info", "hourglass_empty"),  # not started yet: nothing is broken
     "off": ("Not working", "err", "error"),
     "optional": ("Not set up (optional)", "gray", "do_not_disturb_on"),  # nothing wrong: an optional part left out
 }
@@ -247,6 +250,7 @@ def page_reader_context(settings: Settings, store: Store, status: Any) -> dict[s
     from ap_coder.ai.local_llm import LM_STUDIO_STEPS
 
     running = lm_studio_running(settings)
+    chat = chat_model(settings)
     model = status.page_reader_model
     testing = testing_snapshot(store)
     test = page_worker.saved_test(store, model) if model else None
@@ -285,7 +289,8 @@ def page_reader_context(settings: Settings, store: Store, status: Any) -> dict[s
             if vlm and vlm.get("fields")
             else ""
         ),
-        "steps": setup_steps(status, running, chat_model(settings)),
+        "steps": setup_steps(status, running, chat),
+        "chat": chat[1].split(" · ")[-1] if chat[0] else "",
     }
 
 
@@ -375,14 +380,21 @@ def save_reviewer(
 
 
 @router.post("/settings/reading/check")
-def check_again(request: Request) -> JSONResponse:
-    """Ask LM Studio and the readers afresh (the page normally uses a short-lived cache)."""
+def check_again(request: Request, back: str = Form(URL)) -> JSONResponse:
+    """Ask LM Studio and the readers afresh (the page normally uses a short-lived cache); back to ``back`` (the
+    welcome page's and Import invoices' checklist), a page of this dashboard, else Settings → Reading."""
     from ap_coder.ai.local_llm import forget_status
+    from ap_coder.web.pages.help import forget_setup_report
 
     page_reader.forget_status()
     forget_status()
-    reading_status_or_none(get_settings(request), get_store(request), use_cache=False)
-    return done(request, URL, "Checked again just now.", tone="info")
+    forget_setup_report()  # Report a problem's setup report says what is true now
+    status = reading_status_or_none(get_settings(request), get_store(request), use_cache=False)
+    if status is not None and not status.lm_studio:
+        said, tone = "Checked again just now: LM Studio still isn't running.", "warn"
+    else:
+        said, tone = "Checked again just now.", "info"
+    return done(request, local_url(back, URL), said, tone=tone)
 
 
 @router.post("/settings/reading/self-test")

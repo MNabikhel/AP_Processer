@@ -456,6 +456,7 @@ def test_the_key_never_appears_in_the_page_logs_or_activity(store, monkeypatch, 
     monkeypatch.setattr(azure_check, "packages_installed", lambda: True)
     caplog.set_level(logging.DEBUG)
     client = _client(store)
+    monkeypatch.setenv("AP_DEVELOPER_TOOLS", "1")  # IT sets it up with the developer tools on (B-516)
     page = client.get("/settings/azure-check")
     assert page.status_code == 200 and "Off — AP Coder works fully offline without it." in page.text
     answer = client.post("/settings/azure-check", headers=PAGE, data={
@@ -565,6 +566,7 @@ def test_test_connection_reads_the_sample_and_shows_the_comparison(store, monkey
     monkeypatch.setattr(azure_check, "make_client", lambda cfg: fake)
     refused = client.post("/settings/azure-check/test", headers=PAGE).json()  # off: nothing is sent, not even a test
     assert refused["ok"] is False and "Switch it on" in refused["error"] and fake.calls == []
+    monkeypatch.setenv("AP_DEVELOPER_TOOLS", "1")  # (the page with the check off: the developer tools, B-516)
     assert "nothing is sent to Azure while it is off" in client.get("/settings/azure-check").text
     azure_check.save_settings(store, enabled=True, endpoint=ENDPOINT, api_key=KEY)
     answer = client.post("/settings/azure-check/test", headers=PAGE).json()

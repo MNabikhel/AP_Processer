@@ -791,13 +791,79 @@ def user_files(folder: Path, limit: int = 3) -> list[str]:
     return found
 
 
-def removable(folder: Path, root: Path) -> str:
+def replaced_by(folder: Path, mine: dict) -> bool:
+    """The install in ``folder`` is certainly older than ``mine`` (an install identity), or another copy of the same
+    build: the only kind a clean-up may take. A folder whose build can't be ordered with this one (the same version
+    from before the build stamp, copied by hand, a checkout) is never taken: never deleted when in doubt (B-551)."""
+    return paths.compare(paths.install_identity(folder), mine) in ("older", "same")
+
+
+DATABASE_SUFFIXES = (".db", ".db-wal", ".db-shm", ".sqlite", ".sqlite3")  # never deleted by a clean-up
+
+
+def _within(child: Path, folder: Path) -> bool:
+    try:
+        child, folder = child.resolve(), folder.resolve()
+    except OSError:
+        return False
+    return child == folder or child.is_relative_to(folder)
+
+
+def data_folders(data: Path | None = None) -> list[Path]:
+    """Every folder that holds (or held) the person's data: ``data`` (this start's), the data folder now
+    (``paths.private_dir``), the one on record, and the database's folder when AP_DB_PATH names another."""
+    found = [data] if data else []
+    found.append(paths.private_dir())
+    recorded = paths.user_path(str(paths.read_user_settings().get("data_dir") or ""))
+    database = paths.env_path("AP_DB_PATH")
+    found += [f for f in (recorded, database.parent if database else None) if f]
+    return list(dict.fromkeys(found))
+
+
+def _has_files(place: Path) -> bool:
+    """``place`` holds a file of the person's (anything but the README.md a bundle puts in private/)."""
+    try:
+        return any(p.is_file() and p.name != "README.md" for p in place.rglob("*"))
+    except OSError:
+        return True  # (can't be read: kept)
+
+
+def holds_data(folder: Path, data: Path | None = None) -> str:
+    """Why ``folder`` holds the person's data ("" when not): a data folder is in it, or a database or an invoices
+    folder anywhere in it (its .venv and caches aside). Such a folder is never deleted (B-558)."""
+    for place in data_folders(data):
+        if _within(place, folder) and _has_files(place):  # (one whose data already moved out is not)
+            return f"it holds your data folder ({place})"
+    for current, dirs, files in os.walk(folder):
+        here = Path(current)
+        dirs[:] = [d for d in dirs if d not in GENERATED and ".removing-" not in d and not (here / d).is_symlink()]
+        if "invoices" in dirs:
+            return f"it holds an invoices folder ({(here / 'invoices').relative_to(folder).as_posix()})"
+        for name in files:
+            if name.lower().endswith(DATABASE_SUFFIXES):
+                return f"it holds a database ({(here / name).relative_to(folder).as_posix()})"
+    return ""
+
+
+def is_link(folder: Path) -> bool:
+    """A symbolic link (or, on Windows, a junction): never renamed, followed or emptied by a clean-up (B-560)."""
+    try:
+        return folder.is_symlink() or bool(getattr(os.path, "isjunction", lambda _p: False)(folder))
+    except OSError:
+        return False
+
+
+def removable(folder: Path, root: Path, data: Path | None = None) -> str:
     """Why ``folder`` (an older install) must be kept whole ("" when it can go): it is this folder or holds it, a
-    git checkout, not an AP Coder bundle folder, running, or holds files AP Coder did not put there."""
+    git checkout, holds the person's data (:func:`holds_data`), not an AP Coder bundle folder, running, or holds files
+    AP Coder did not put there."""
     if paths.same_folder(folder, root) or str(root.resolve()).startswith(str(folder.resolve()) + os.sep):
         return "it holds this AP Coder"
     if (folder / ".git").exists():
         return "it is a git checkout"
+    data_here = holds_data(folder, data)
+    if data_here:
+        return data_here
     launcher = any((folder / name).is_file() for name in LAUNCHERS)
     # Unzipped from a bundle, set up by the launcher, or an AP Coder from before both (GitHub's ZIP, installed with
     # install.bat or by hand): its pyproject names the project.
@@ -819,8 +885,13 @@ def clean_up(root: Path, data: Path, old: list[Path], say: Say = print) -> int:
     A folder done is taken off the record; one in use is tried again on a later start. Returns the bytes freed (and
     says what was removed)."""
     freed = 0
+    mine = paths.install_identity(root)  # (no version: not an install folder, e.g. a test's: nothing to order by)
     for folder in old:
         if paths.same_folder(folder, root) or (folder / ".git").exists():
+            continue
+        if is_link(folder):  # (renaming it moved only the link, and was said as "mostly removed" at every start)
+            say(f"  Skipped {folder}: it is a link to another folder, so nothing was removed (taken off the record).")
+            paths.forget_install(folder)
             continue
         if not folder.exists():
             for rest in removing(folder):  # what an earlier removal left behind
@@ -833,6 +904,15 @@ def clean_up(root: Path, data: Path, old: list[Path], say: Say = print) -> int:
         if lock_held(folder):
             say(f"  {folder}: AP Coder is running from it; it is cleaned up on a later start.")
             continue
+        if not is_install(folder):  # (on record, but its AP Coder is gone: what is left is not ours to take, B-559)
+            say(f"  Kept {folder}: it is no longer an AP Coder folder, so nothing in it was touched (taken off the "
+                "record).")  # fmt: skip
+            paths.forget_install(folder)
+            continue
+        if mine["version"] and not replaced_by(folder, mine):  # (whoever passed it)
+            say(f"  Kept {folder}: it can't be told whether it is older than this AP Coder, so nothing in it was "
+                "touched.")  # fmt: skip
+            continue
         try:
             adopt_legacy(folder, data, say)
         except OSError as exc:  # a file of its data in use or read-only: the folder stays, whole, for now
@@ -840,7 +920,7 @@ def clean_up(root: Path, data: Path, old: list[Path], say: Say = print) -> int:
                 "start.")  # fmt: skip
             continue
         needed = repoint_files(folder, data, root, say)  # before anything in it goes
-        why = removable(folder, root)
+        why = removable(folder, root, data)
         later = False  # the whole folder is to go, on a later start: kept on record
         if not why and needed:
             shown = ", ".join(Path(n).name for n in needed[:3]) + (" …" if len(needed) > 3 else "")
@@ -861,7 +941,10 @@ def clean_up(root: Path, data: Path, old: list[Path], say: Say = print) -> int:
                 continue
             # Not even renamed (Windows: an old AP Coder window still has it as its current folder): what can go now.
             why, later = "a program still has it open (an old AP Coder window?); it is removed on a later start", True
-        parts = [p for p in (folder / ".venv", folder / "models") if p.exists()] + removing(folder)
+        # (its models/ stays when it is the data folder: the table finder's model is kept there, B-559)
+        ours = [folder / ".venv"] + ([] if any(paths.same_folder(d, folder) for d in data_folders(data)) else
+                                     [folder / "models"])  # fmt: skip
+        parts = [p for p in ours if p.exists() and not is_link(p)] + removing(folder)
         size = sum(size_of(p) for p in parts)
         left = [p for p in parts if not remove_folder(p)] + removing(folder)
         gone = size - sum(size_of(p) for p in left if p.exists())

@@ -409,7 +409,7 @@ def test_an_older_version_running_from_this_folder_is_taken_over_not_waited_for(
     old = launch.running.Server(8501, legacy=True)
     stops: list[int] = []
 
-    def take_over(root, version, ports, data, say):
+    def take_over(root, version, ports, data, say, build=""):
         stops.append(1)
         other.close()  # stopped: the old start ends
         return "clear", None
@@ -675,9 +675,11 @@ def test_the_start_says_no_gl_accounts_were_imported_yet(launch, monkeypatch):
     passed (GL accounts, ...)" as if the setup were done."""
     monkeypatch.delenv("AP_REFERENCE_DIR", raising=False)
     lines = launch.setup_check_lines()
-    assert ("warn", "GL accounts: none imported yet, so the sample ones are used: import yours on GL accounts & "
-                    "tax") in lines  # fmt: skip
-    assert not any(text.startswith("Setup checks: all ") and "(GL accounts" in text for _level, text in lines)
+    assert ("info", launch.NO_GL_YET) in lines
+    assert launch.NO_GL_YET.endswith("none imported yet (import yours in GL accounts & tax, or use the sample ones)")
+    # L7: the sample's GL accounts and cost centers are not counted as passed checks of this setup
+    setup = next(text for _level, text in lines if text.startswith("Setup checks: all "))
+    assert "GL accounts" not in setup and "sample" not in setup
     monkeypatch.setenv("AP_REFERENCE_DIR", str(ROOT / "data"))  # a reference folder of its own: nothing to say
     assert not any("none imported yet" in text for _level, text in launch.setup_check_lines())
 
@@ -739,15 +741,16 @@ def no_models(launch, tmp_path, monkeypatch):
         raise OSError("network blocked")
 
     monkeypatch.setattr(fetch_models.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(fetch_models, "sleep", lambda seconds: None)  # (a failed download is tried again at once)
     return fetch_models, downloads
 
 
 def test_offline_models_are_never_downloaded_and_a_failure_is_said_once(launch, no_models, monkeypatch, capsys):
     fetch_models, downloads = no_models
     monkeypatch.setattr(launch, "plain_download", lambda: False)  # an offline bundle without its models folder
-    ran: list[list[str]] = []
-    real_main = fetch_models.main
-    monkeypatch.setattr(fetch_models, "main", lambda argv: ran.append(argv) or real_main(argv))
+    ran: list[bool] = []
+    real_setup = fetch_models.setup
+    monkeypatch.setattr(fetch_models, "setup", lambda **k: ran.append(k["online"]) or real_setup(**k))
     state: dict = {}
     for _ in range(3):  # three starts
         launch.ensure_models(first=False, state=state)
@@ -759,7 +762,7 @@ def test_offline_models_are_never_downloaded_and_a_failure_is_said_once(launch, 
     for _ in range(2):
         launch.ensure_models(first=False, state=state)
     out = capsys.readouterr().out
-    assert downloads == [] and len(ran) == 1 and "Copying the OCR models from the offline bundle" in out
+    assert downloads == [] and ran == [False] and "Copying the OCR models from the offline bundle" in out
     assert out.count("Not tried again") == 1
 
 
@@ -768,24 +771,110 @@ def test_models_are_downloaded_only_with_the_opt_in(launch, no_models, monkeypat
     monkeypatch.setenv("AP_ALLOW_INTERNET", "1")
     state: dict = {}
     launch.ensure_models(first=False, state=state)
-    launch.ensure_models(first=False, state=state)  # the failed download is not retried on every start
-    assert len(downloads) == 4 and "Downloading the OCR models" in capsys.readouterr().out  # (+ the table finder)
+    assert len(downloads) == 4 * 3 and "Downloading the OCR models" in capsys.readouterr().out  # (+ the table finder)
 
 
-def test_the_code_alone_downloads_the_models_once_without_the_opt_in(launch, no_models, monkeypatch, capsys):
+def test_a_failed_model_download_is_tried_again_and_said_plainly(launch, no_models, monkeypatch, capsys):
+    """M1: 2 of 4 first setups from GitHub's ZIP lost the connection ("Connection reset by peer"): the window showed
+    urllib's raw error, "Run this again" (run what?), said the models come from the offline bundle (there is none), and
+    did not try again before the next day. Each download is tried 3 times; a failure is said in plain words and tried
+    again at the next start (up to 3 starts a day)."""
     fetch_models, downloads = no_models
     monkeypatch.delenv("AP_ALLOW_INTERNET", raising=False)
     monkeypatch.setattr(launch, "plain_download", lambda: True)  # GitHub's ZIP
+    waited: list[float] = []
+    monkeypatch.setattr(fetch_models, "sleep", waited.append)
+
+    def reset(url, timeout=None):
+        downloads.append(url)
+        raise fetch_models.urllib.error.URLError(ConnectionResetError(104, "Connection reset by peer"))
+
+    monkeypatch.setattr(fetch_models.urllib.request, "urlopen", reset)
     state: dict = {}
-    launch.ensure_models(first=False, state=state)
-    launch.ensure_models(first=False, state=state)  # the failed download is not retried on every start
+    launch.ensure_models(first=True, state=state)
     out = capsys.readouterr().out
-    assert len(downloads) == 4 and "Downloading the OCR models" in out and "Tried again tomorrow" in out
+    assert len(downloads) == 4 * 3 and waited == list(fetch_models.RETRY_WAITS) * 4  # each file 3 times
     assert any("yolov8n_layout" in url for url in downloads)  # the table finder's model too
+    assert "URLError" not in out and "Errno" not in out and "Run this again" not in out
+    assert "Couldn't get ch_PP-OCRv5_mobile_det.onnx: the connection dropped, tried 3 times." in out
+    assert ("Couldn't download the OCR models (the connection dropped). AP Coder will try again next time it starts; "
+            "scans are still read with one engine meanwhile.") in out  # fmt: skip
+    assert "URLError" in launch.log_path().read_text(encoding="utf-8")  # the details: in the log, for IT
     assert "AP_ALLOW_INTERNET" not in launch.os.environ  # set for the download only
-    state["models_failed"] = state["models_failed"].rsplit("|", 1)[0] + "|2000-01-01"  # failed on an earlier day
+    assert "offline bundle" not in launch.one_engine(True) and "tries again" in launch.one_engine(True)
+
+    downloads.clear()
+    launch.ensure_models(first=False, state=state)  # the next start: tried again (once each, more briefly)
+    out = capsys.readouterr().out
+    assert len(downloads) == 4 and "Downloading the OCR models again" in out
+    launch.ensure_models(first=False, state=state)  # the third start today: the next try is tomorrow
+    assert "AP Coder will try again tomorrow" in capsys.readouterr().out
+    downloads.clear()
     launch.ensure_models(first=False, state=state)
-    assert len(downloads) == 8  # tried again
+    assert downloads == []  # not a fourth time today
+    state["models_tries"]["day"] = "2000-01-01"  # a later day
+    launch.ensure_models(first=False, state=state)
+    assert len(downloads) == 4
+
+    monkeypatch.setattr(fetch_models.urllib.request, "urlopen", lambda url, timeout=None: io.BytesIO(b"model"))
+    monkeypatch.setattr(fetch_models, "intact", lambda path, model: path.is_file() and path.stat().st_size > 0)
+    launch.ensure_models(first=False, state=state)  # the connection works again
+    out = capsys.readouterr().out
+    assert "OCR models ready: 3 downloaded, and the table finder's." in out and "models_failed" not in state
+
+
+def test_a_site_that_never_answers_is_asked_once_and_said_once(launch, no_models, monkeypatch, capsys):
+    """B-554: on a network that drops www.modelscope.cn silently, every model waited out every try: about 10 minutes
+    of a first setup, 2 of every later start. The site is given up on after its first file, and said once."""
+    fetch_models, downloads = no_models
+    monkeypatch.setattr(launch, "plain_download", lambda: True)  # GitHub's ZIP
+
+    def silent(url, timeout=None):
+        downloads.append((url, timeout))
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(fetch_models.urllib.request, "urlopen", silent)
+    state: dict = {}
+    launch.ensure_models(first=True, state=state)
+    out = capsys.readouterr().out
+    assert len(downloads) == 3 and {t for _u, t in downloads} == {fetch_models.FIRST_TIMEOUT}  # one file, 3 tries
+    assert out.count("Downloading ") == 2  # ("Downloading the OCR models", and the first file only)
+    assert ("AP Coder couldn't reach www.modelscope.cn (a firewall may block it): ask IT, or use the offline bundle."
+            in out) and out.count("couldn't reach") == 1  # fmt: skip
+    downloads.clear()
+    launch.ensure_models(first=False, state=state)  # a later start: one try, briefly
+    assert downloads == [(downloads[0][0], fetch_models.LATER_TIMEOUT)]
+
+
+def test_the_model_count_says_where_each_came_from(launch):
+    """L7: "OCR models ready: 1 already there, 2 downloaded" on a brand-new computer: the one already there is the
+    angle classifier that comes inside RapidOCR's package."""
+    import fetch_models
+
+    result = fetch_models.Result(kept=["ch_ppocr_mobile_v2.0_cls_infer.onnx"],
+                                 downloaded=["ch_PP-OCRv5_mobile_det.onnx", "ch_PP-OCRv5_rec_mobile_infer.onnx",
+                                             "yolov8n_layout_general6.onnx"])  # fmt: skip
+    came = launch.fetch_models.came_with_package("ch_ppocr_mobile_v2.0_cls_infer.onnx")
+    said = launch.models_said(result)
+    assert said.startswith("2 downloaded, and the table finder's; ")
+    assert said.endswith("1 came with the OCR package" if came else "1 already in place")
+    assert launch.models_said(fetch_models.Result(copied=["a.onnx", "b.onnx"])) == "2 copied from the offline bundle"
+
+
+def test_plain_reasons_for_a_failed_download():
+    import fetch_models
+
+    error = fetch_models.urllib.error
+    assert fetch_models.plain_reason(error.URLError(ConnectionResetError(104, "reset"))) == "the connection dropped"
+    assert fetch_models.plain_reason(error.URLError("[Errno 104] Connection reset by peer")) == "the connection dropped"
+    assert fetch_models.plain_reason(TimeoutError("timed out")) == "the connection timed out"
+    assert "couldn't find the download site" in fetch_models.plain_reason(
+        error.URLError("[Errno -3] Temporary failure in name resolution")
+    )
+    refused = error.HTTPError("u", 404, "Not Found", {}, None)
+    assert fetch_models.plain_reason(refused) == "the download site answered 404"
+    assert not fetch_models._retry(error.HTTPError("u", 404, "Not Found", {}, None))  # a refusal: not tried again
+    assert fetch_models._retry(error.HTTPError("u", 503, "Busy", {}, None)) and fetch_models._retry(OSError("x"))
 
 
 def test_the_table_finder_is_downloaded_into_the_data_folder(no_models, tmp_path, monkeypatch, capsys):

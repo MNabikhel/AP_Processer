@@ -1,15 +1,41 @@
-{# Settings → About (pages/settings.py). #}
-<section class="card narrow">
+{# Settings → About (pages/settings.py): the version, what this pilot shows (D-52) and, for IT, the folders. #}
+<div class="narrow">
+<section class="card">
   <h4>About this installation</h4>
   <dl class="apc-kv">
-    {% for label, value, is_path in about %}
-    <dt>{{ label }}</dt><dd>{% if is_path %}<code>{{ value }}</code>{% else %}{{ value }}{% endif %}</dd>
-    {% endfor %}
+    {% for label, value, is_path in about if not is_path %}<dt>{{ label }}</dt><dd>{{ value }}</dd>{% endfor %}
   </dl>
   <div class="st-note">
-    <p><b>Updating:</b> close AP Coder, unzip the new bundle (over this folder or anywhere) and double-click its
-      <code>APProcessor.bat</code> (<code>APProcessor.command</code> on a Mac). Your data, settings and shortcut are kept.</p>
+    <p><b>Updating:</b> unzip the new bundle (over this folder or anywhere) and double-click its
+      <code>APProcessor.bat</code> (<code>APProcessor.command</code> on a Mac). You can leave AP Coder open: the update
+      stops it and starts the new version. Your data, settings and shortcut are kept.</p>
     <p><b>Help:</b> the <a href="/help/quick-start">Quick start</a> (one page to print) and <a href="/help">Help</a>.
-      Something wrong? <a href="/help/report" data-busy="Gathering the reports…">Report a problem</a>.</p>
+      Something wrong? <a href="/help/report">Report a problem</a>.</p>
   </div>
 </section>
+
+<section class="card" id="show">
+  <h4>What this pilot shows</h4>
+  <p class="muted">The pilot exports to Excel and CSV. The JD Edwards E1 settings and export, and the tools for
+    developers, are hidden; nothing is removed, and they come back here.</p>
+  <form method="post" action="/settings/about/show" class="stack" data-busy="Saving…">
+    <label class="check"><input type="checkbox" name="show_jde" value="1"{% if show_jde %} checked{% endif %}>
+      Show JD Edwards settings (a Settings tab, and JD Edwards E1 as an export format)</label>
+    {% if developer_env %}
+    <p class="check"><span class="ms" aria-hidden="true">check_box</span> Show developer tools:
+      on (set by AP_DEVELOPER_TOOLS), on this computer only</p>
+    {% else %}
+    <label class="check"><input type="checkbox" name="developer" value="1"{% if developer_tools %} checked{% endif %}>
+      Show developer tools (Learning &amp; accuracy → Readers, the training data export, the developer changelog)</label>
+    {% endif %}
+    <button class="btn" type="submit"><span class="ms" aria-hidden="true">save</span>Save</button>
+  </form>
+</section>
+
+<details class="card st-forit" id="for-it">
+  <summary><span class="ms" aria-hidden="true">engineering</span>For IT: the folders</summary>{# full paths: B-521 #}
+  <dl class="apc-kv">
+    {% for label, value, is_path in about if is_path %}<dt>{{ label }}</dt><dd><code>{{ value }}</code></dd>{% endfor %}
+  </dl>
+</details>
+</div>

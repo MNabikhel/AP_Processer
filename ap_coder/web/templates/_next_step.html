@@ -1,11 +1,21 @@
-{# The one thing to do next on a new laptop (pages/process.py next_step): the welcome page and Import invoices. #}
+{# The one thing to do next on a new laptop (pages/process.py next_step): the welcome page and Import invoices. While
+   LM Studio isn't ready it is the step (step 0 of the Quick start), with what to do and Check again (B-529). #}
 {% if next %}
 <section class="card next-step" aria-labelledby="next-step-title">
   <div class="apc-eyebrow">Next step</div>
   <h4 id="next-step-title"><span class="ms" aria-hidden="true">{{ next.icon }}</span> {{ next.title }}</h4>
   <p class="muted">{{ next.text }}</p>
+  {% if next.steps %}<ol class="next-steps">{% for step in next.steps %}<li>{{ step }}</li>{% endfor %}</ol>{% endif %}
   <div class="row">
+    {% if next.check %}
+    <form method="post" action="/settings/reading/check" data-busy="Checking…">
+      <input type="hidden" name="back" value="{{ where }}">
+      <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">refresh</span>Check again</button>
+    </form>
+    <a class="link" href="{{ next.href }}">{{ next.button }} <span class="ms" aria-hidden="true">arrow_forward</span></a>
+    {% else %}
     <a class="btn primary" href="{{ next.href }}"><span class="ms" aria-hidden="true">arrow_forward</span>{{ next.button }}</a>
+    {% endif %}
     {% if next.sample %}
     <form method="post" action="/review/sample-gl">
       <input type="hidden" name="back" value="{{ where }}">

@@ -114,3 +114,19 @@ def test_the_browser_is_looked_up_once_not_inside_a_running_playwright(monkeypat
             assert conftest.chromium_path() == first
     finally:
         conftest.chromium_path.cache_clear()
+
+
+@needs_ci
+def test_ci_runs_github_zip_as_the_pilot_tester_does():
+    """M5: no job ran GitHub's ZIP the way the pilot tester does: every Windows job set AP_ALLOW_INTERNET=1 or used the
+    offline bundle, from a plain folder, with nothing marked as downloaded, and no job updated one ZIP with a newer
+    one. This one does: a git archive marked with the Mark of the Web, Expand-Archive into a path with a space and an
+    accent, no opt-in to the internet, then a newer ZIP of the same version unzipped over it."""
+    jobs = yaml.safe_load(CI.read_text(encoding="utf-8"))["jobs"]
+    job = jobs["windows-github-zip"]
+    assert job["runs-on"].startswith("windows")
+    assert not any("AP_ALLOW_INTERNET" in env for _where, env in _env_blocks(job))
+    text = "\n".join(str(step.get("run") or "") for step in job["steps"])
+    for needed in ("git archive", "Expand-Archive", "Zone.Identifier", "Pilot tester Ré", "APProcessor.bat",
+                   "Updated AP Coder from", "A newer AP Coder took over", "kept.pdf"):  # fmt: skip
+        assert needed in text, needed

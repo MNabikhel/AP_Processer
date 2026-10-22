@@ -66,6 +66,15 @@
         <div><b>Start here:</b> choose one invoice or a few, then click <b>Process</b>. They wait for you in the review
           queue. No invoices at hand? <b>Load demo invoices</b> (on this page) gives you ten to practise on.</div></div>
       {% endif %}
+      {% if demo_first %}
+      <div class="flash warn" role="status" id="demo-first"><span class="ms" aria-hidden="true">science</span>
+        <div><div><b>Remove the demo invoices before you import your own.</b> Otherwise the demo's approvals, lessons and
+          vendors are counted with yours: in coding accuracy, Activity and the vendor list.</div>
+          <form method="post" action="/demo/remove" class="row" data-busy="Removing the demo…">
+            <input type="hidden" name="back" value="/process"><input type="hidden" name="sure" value="1">
+            <button class="btn" type="submit"><span class="ms" aria-hidden="true">delete_sweep</span>Remove the demo invoices</button>
+          </form></div></div>
+      {% endif %}
       <p class="muted">Each file is saved to the invoices folder on this computer, then read, coded and checked. A photo or
         a scanned picture is made into a PDF first; the picture is kept in the <code>originals</code> folder there.</p>
       <form id="upload-form" method="post" action="/process/upload" enctype="multipart/form-data" data-upload>
@@ -83,7 +92,7 @@
           {% if not ready %}<span class="muted">Finish the setup first (GL accounts).</span>{% endif %}
         </div>
       </form>
-      {% if not ready and steps[2][0] != "ok" %}
+      {% if not ready %}
       <form method="post" action="/review/sample-gl" class="row">
         <input type="hidden" name="back" value="/process">
         <span class="muted">No GL accounts yet?</span>
@@ -135,7 +144,7 @@
         <div><h4>Setup</h4><p class="muted">What AP Coder needs before it reads invoices, then your first ones.</p></div>
         {{ ui.pill(steps_done ~ " of " ~ steps_needed ~ " done", "ok" if steps_done == steps_needed else "gray") }}
       </div>
-      <div>{% for state, label, detail in steps %}{{ ui.step(state, label, detail, step_links.get(label, "") if label != "Process your first invoices" else "") }}{% endfor %}</div>
+      {% include "_setup_steps.html" %}
     </section>
 
     {% if recent %}

@@ -4897,3 +4897,932 @@ were approved, parked and exported and a backup was made every 2 seconds (no loc
 - **N-171** · Capture's findings (B-458, B-459) are added after the confidence is worked out: a warning about the page
   keeps an invoice from bulk approval, but does not by itself flag it in the queue
   (Ready means Approve is open, which a warning does not close).
+
+### Before testing: review screen and coding
+
+A product review before the pilot tester's first week, on the set-up they will use: LM Studio chosen as the chat
+model (and often not running yet), English vendor PDFs, no cost centers, Excel/CSV exports. Fifteen of the English
+PDFs imported into a scratch data folder with the sample GL accounts and screenshot at 1366×768.
+
+#### B-463 · With LM Studio chosen but not running, an account's name was put in the line as if learned · high
+- **Where:** `ap_coder/ai/pipeline.py` (`_process`, `_local_accounts`), `ap_coder/ai/offline_coder.py`
+  (`code_from_capture`), `ap_coder/core/store.py` (`approve_invoice`), `ap_coder/web/invoice_view.py`
+- **Symptom:** Google → 6320 Meals, AWS → 6110 Consulting, an IT consultancy → 6100 Legal, a $281k Microsoft bill →
+  1500 Computer Equipment: an account whose name shares a word with the line was filled in the GL dropdown, looked
+  like a learned code, left Approve open, and counted as "coded as suggested" in coding accuracy; Month-end accrued
+  on it. README and `offline_coder`'s own docstring say such a weak match is left blank and only suggested.
+- **Cause:** the pipeline coded with `assign_weak=provider == "local"`, and the provider is always "local" in this
+  offline build, whether or not LM Studio answers; the chat model was then asked only about lines with no
+  suggestion at all. The approval counted any account the AI put in a line as its proposal.
+- **Reproduce:** sample GL accounts, LM Studio at an address nothing answers, import `ca_ubc_google.pdf`,
+  `ca_oc_aws_10002100.pdf`: lines coded `WEAK_MATCH`, Approve open, "all as suggested".
+- **Reproduced:** yes (9 of 15 invoices had a weak match put in a line)
+- **Fix:** a weak match is never put in a line: it stays blank with "Not sure enough to code it (maybe 6110 …)" and
+  the review screen's suggestion, and is kept as a hint (`CodingResult.hints`). The chat model, when it answers, is
+  asked about these lines too; its account says whether the account's name agrees or pointed elsewhere. An account
+  no approval backs (the model's, or an older version's weak match: `offline_coder.guessed`) is marked on the review
+  screen ("A guess, not learned yet: check it"), the approve bar says "1 guessed account to check" instead of "all
+  as suggested", and when the reviewer keeps it, it counts as the reviewer's coding (`store.proposed_coding`: as if
+  left blank), never as "coded as suggested" in accuracy or the lessons (D-51).
+- **Test:** `tests/test_trust_review.py::test_with_lm_studio_chosen_but_not_answering_a_weak_match_is_left_blank`,
+  `::test_the_chat_models_answer_is_a_guess_and_says_how_it_compares_with_the_weak_match`,
+  `::test_a_kept_guess_is_the_reviewers_coding_not_coded_as_suggested`,
+  `::test_the_review_screen_marks_a_guess_and_does_not_call_it_as_suggested`
+- **Lesson:** "Is the model configured?" is not "did the model answer?": decide per invoice, from what happened.
+
+#### B-466 · Month-end accrued guesses, mixed CAD and USD rows, and said "already in the ERP" with nothing imported · medium
+- **Where:** `ap_coder/erp/accruals.py`, `ap_coder/web/pages/month_end.py`, `ap_coder/web/templates/month_end.html`
+- **Symptom:** invoices nobody had approved were accrued on their weak-match accounts with nothing to say so; the
+  by-account table listed one account twice (once in CAD, once in USD); an invoice dated 2012 was accrued without a
+  word; with no invoice and no register at all the page said "Everything incurred … is already in the ERP".
+- **Cause:** the accrual read any account in the coding; `by_gl` keyed on (account, currency); no date check; one
+  empty-state sentence for every case.
+- **Reproduce:** the 15 PDFs above, Month-end at the default period end; a fresh data folder's Month-end.
+- **Reproduced:** yes
+- **Fix:** an invoice in review or parked is accrued as "proposed: not approved yet" (a "Proposed" tag on screen,
+  the note in the CSV), on the accounts it was really given (a guessed account counts as none: "Needs an account");
+  the by-account table has one row per account and a column per currency; an invoice dated more than a year before
+  the period end was left out and listed (since B-474: accrued, flagged "Check date");
+  the empty state says what is true (nothing imported yet, or everything dated by then exported).
+- **Test:** `tests/test_trust_review.py::test_month_end_accrues_an_unapproved_invoice_as_proposed_and_never_on_a_guess`,
+  `::test_month_end_lists_an_invoice_dated_over_a_year_back_instead_of_accruing_it`,
+  `::test_month_end_groups_an_account_in_two_currencies_on_one_row`, `::test_month_end_with_nothing_imported_says_so`
+- **Lesson:** An empty state is a claim too: check it against an empty database.
+
+#### B-464 · The checks spoke the code's language: "invoice_number is empty", VENDOR_NEW, UNASSIGNED · medium
+- **Where:** `ap_coder/coding/validation.py`, `ap_coder/coding/tax.py`, `ap_coder/core/ui.py` (`check`),
+  `ap_coder/ai/lessons.py`, `ap_coder/web/templates/learning.html`, `ap_coder/core/audit.py`,
+  `ap_coder/capture/line_items.py` (`sources_line`)
+- **Symptom:** the review screen said "Invoice_number is empty", "Vendor_name is empty", "GL code '9999' is not in
+  the GL accounts", "line items sum to … but subtotal = …", "prebuilt-invoice InvoiceTotal = …, model grand_total =
+  …"; "Details and what to do" showed VENDOR_NEW, CC_UNASSIGNED beside each title; Learning → Lessons said "read as
+  UNASSIGNED" and Activity "UNASSIGNED → 6110"; the document card said "Line items read by one reader only (1 from
+  the PDF's table): not yet compared with a second reader."
+- **Cause:** the messages were written for developers; `readable()` only replaced a few field names.
+- **Reproduce:** the 15 PDFs; an invoice with no number; Details and what to do.
+- **Reproduced:** yes
+- **Fix:** plain sentences that say what to do ("No invoice number: type it from the page", "GL account 9999 is not
+  in your GL accounts: pick one from the list", "the lines add up to … but the subtotal is …", "Azure read the total
+  as …, AP Coder as …", "the scan is hard to read (62% sure of its words): check the values against the page"); a
+  check's code is its hover (`title`) and stays in the problem report; a blank account reads "left blank" / "blank";
+  the one-reader note is gone (nothing to act on; the queue says when OvisOCR2 has not read an invoice).
+- **Test:** `tests/test_trust_review.py::test_the_checks_say_what_is_missing_in_plain_words_and_keep_their_codes_for_a_hover`,
+  `::test_a_lesson_on_a_blank_account_reads_left_blank_not_unassigned`; `tests/test_table_reading.py` (the note)
+- **Lesson:** Read every message as the pilot tester would: a field name with an underscore is a bug.
+
+#### B-465 · What kept Approve closed was "Worth a look", not counted in "N must be fixed" · medium
+- **Where:** `ap_coder/web/invoice_view.py` (`checks_summary`, `checks_details`), `ap_coder/web/templates/_invoice_live.html`
+- **Symptom:** "2 must be fixed · 3 to look at", with "Line 1: no GL account yet: pick one" among the three to look
+  at, though it is what disabled Approve; Details called it "Worth a look".
+- **Cause:** the summary grouped by severity, and a line without an account is a warning (it lowers the confidence
+  less than an error), while the approve bar blocks on it.
+- **Reproduce:** BDO's invoice in the 15 PDFs.
+- **Reproduced:** yes
+- **Fix:** three groups, each under its heading: "Before you can approve (N)" (an account or cost center to pick:
+  each a link to its box, "Press G to go to the first one"), "Must be fixed (N)", "Check before approving (N)"
+  (the warnings: an assumed invoice date, INVOICE_DATE_NOT_FOUND, sits there plainly). Details uses the same words.
+- **Test:** `tests/test_trust_review.py::test_what_keeps_approve_closed_is_its_own_group_before_the_errors_and_warnings`
+- **Lesson:** Group by what the person can do next, not by the code's severity.
+
+#### B-467 · At 1366 × 768 the review screen showed 150–200 px of the invoice and the lines 1,200 px down · high
+- **Where:** `ap_coder/web/templates/invoice.html`, `_invoice_lines.html`, `ap_coder/web/static/invoice.css`,
+  `invoice_viewer.css`, `js/invoice_viewer.js`, `js/invoice.js`, `ap_coder/web/pages/invoice.py`
+- **Symptom:** breadcrumb, a navigation row, the LM Studio banner and the summary pushed the document card down;
+  in it the field list, a toolbar on two rows and the legend left 150–200 px of the page on screen; the line grid
+  came after the invoice details, about 1,200 px down, and Qty / Unit price scrolled sideways.
+- **Cause:** a layout made for a wide screen; the banner (B-444) stood in for two notes but cost a row.
+- **Reproduce:** any invoice of the 15 PDFs at 1366 × 768 (`shots/before/review_*_vp.png`).
+- **Reproduced:** yes
+- **Fix:** one row at the top (Queue · Reviewing 3 of 15 · a short "LM Studio isn't running" note · Shortcuts ·
+  Previous · Next), no banner on this page (the queue has it); the document and the column beside it half and half,
+  the document sticky and taller (the viewer is the window less 190 px); the viewer's legend is in its toolbar, as
+  swatches with counts; the line grid sits right under the checks, each line on two rows (description, which wraps,
+  and taxes; then GL account, cost center, qty, unit price, amount), nothing scrolls sideways; the invoice details
+  follow. Ctrl+Enter, G, N, Alt+arrows work as before; Enter in a description adds no line break.
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_in_a_browser_at_1366_the_page_and_the_line_grid_show_together`,
+  `::test_with_lm_studio_off_the_review_screen_says_it_once`
+- **Lesson:** Check the screen at the pilot tester's resolution, not the developer's.
+
+#### B-468 · Demo invoices mixed into the real numbers · medium
+- **Where:** `ap_coder/web/pages/process.py`, `ap_coder/web/templates/process.html`
+- **Symptom:** after trying the demo and importing real invoices, "Demo reviewer" was among Activity's people, the
+  demo's lessons counted in coding accuracy and the demo's vendors were listed with the real ones.
+- **Cause:** nothing asked to remove the demo before the first real import (the demo card sits lower on the page).
+- **Reproduce:** load the demo, import a PDF: no word about the demo.
+- **Reproduced:** yes
+- **Fix:** the simpler safe one: while the demo is loaded and no invoice of your own is, Import invoices says
+  "Remove the demo invoices before you import your own" with the button that removes them (as the demo card does).
+  Nothing is removed without the click.
+- **Test:** `tests/test_trust_review.py::test_the_import_page_asks_to_remove_the_demo_before_the_first_real_invoice`
+- **Lesson:** Practice data needs a clear way out at the moment real data comes in.
+
+#### B-469 · "Overdue 5042 days", and an invoice dated years back said nothing · medium
+- **Where:** `ap_coder/coding/terms.py` (`describe`, `payment_findings`), `ap_coder/web/pages/review.py` (`due_note`),
+  `ap_coder/ops/help.py`
+- **Symptom:** the queue and the review screen counted days for a bill due in 2012; an invoice dated 2017 (a misread
+  date, or a very late bill) raised no warning.
+- **Cause:** days were the only unit; no check on the invoice date's age.
+- **Reproduce:** `ca_uoft_ex3_gst.pdf` (dated 2017) among the 15 PDFs.
+- **Reproduced:** yes
+- **Fix:** past 60 days, "Overdue since Dec 2012" (queue, review screen, the overdue note); a new warning,
+  OLD_INVOICE_DATE ("dated 2017-10-05, more than a year ago: check the date on the page"), in "Check before
+  approving", with its Help entry; Month-end flags such invoices (B-466, B-474). Since B-476 it is information only.
+- **Test:** `tests/test_trust_review.py::test_a_long_overdue_bill_says_since_when_and_an_old_invoice_date_is_flagged`
+- **Lesson:** A number nobody can picture ("5042 days") is a sign the value itself needs a check.
+
+#### B-470 · The Excel export's dates were text · low
+- **Where:** `ap_coder/erp/exports.py` (`_sheet`)
+- **Symptom:** Invoice date, Due date and Approved at were text cells: Excel would not sort or filter them as dates.
+- **Cause:** the ISO strings were written as they are.
+- **Reproduce:** export the approved invoices as Excel, open the Invoices sheet.
+- **Reproduced:** yes
+- **Fix:** in the workbook they are dates (yyyy-mm-dd; Approved at with the time); the CSV keeps YYYY-MM-DD text.
+- **Test:** `tests/test_trust_review.py::test_the_excel_export_writes_real_dates`
+- **Lesson:** A spreadsheet is for people: give it typed values.
+
+#### B-471 · The queue showed the file's name as the vendor, and a doubtful name as read · medium
+- **Where:** `ap_coder/web/pages/review.py` (`queue_rows`), `ap_coder/web/templates/review.html`,
+  `ap_coder/core/store.py` (`vendor_name_checks`), `ap_coder/web/templates/vendors.html`
+- **Symptom:** an invoice with no vendor name read was listed under its file name ("scan_0042.pdf") as the vendor;
+  "SOMETHING JOHN" (read with 32%) looked like any vendor; Vendors listed it with the real ones.
+- **Cause:** `vendor_name or file_name`; the capture's confidence was not looked at.
+- **Reproduce:** `ca_owensound_water.pdf` among the 15 PDFs.
+- **Reproduced:** yes
+- **Fix:** "No vendor name" in place of a missing one, a name the readers marked to check in italics with "?" and
+  "Vendor name: check it" under it (the file's name on hover); on Vendors, a vendor with no approved invoice and no
+  record is tagged "Not approved yet". No vendor record is created at import (only on approval, an import of the
+  vendor list, or "Add new vendor"): checked, nothing to change there.
+- **Test:** `tests/test_trust_review.py::test_the_queue_says_no_vendor_name_and_marks_a_name_to_check`
+- **Lesson:** A fallback value must not look like the real one.
+
+#### B-472 · "Every header field was read right" after approving an invoice nobody corrected · low
+- **Where:** `ap_coder/capture/workflow.py` (`taught_message`)
+- **Symptom:** approving an invoice whose vendor was wrong but not edited said every header field was read right.
+- **Cause:** "no correction" was worded as "all correct".
+- **Reproduce:** approve an untouched invoice.
+- **Reproduced:** yes
+- **Fix:** "You changed no header field."
+- **Test:** `tests/test_touchless.py`, `tests/test_touchless_pages.py` (the message)
+- **Lesson:** Say what is known (nothing changed), not what is hoped (all right).
+
+#### B-473 · "Teaches from 1 line · all as suggested" on a line with no GL account yet · medium
+- **Where:** `ap_coder/web/invoice_view.py` (`learn_text`), `ap_coder/web/templates/_invoice_live.html` (the approve bar)
+- **Symptom:** BDO's only line had no GL account yet (nothing proposed, Approve closed) and the approve bar said
+  "Teaches from 1 line · all as suggested"; once the reviewer picked the account it still said "all as suggested".
+- **Cause:** the bar had two words only: "you changed N of its codes", else "all as suggested"; a line still to code,
+  or filled by the reviewer where nothing was proposed, fell under "all as suggested" (filling a blank is no change,
+  D-39, but it is not a suggestion kept either).
+- **Reproduce:** `ca_oc_bdo.pdf` among the 15 PDFs (`shots/after/review_4_vp.png`).
+- **Reproduced:** yes
+- **Fix:** the bar says what approving teaches, line by line, as the approval counts it: "1 line to code" (no GL
+  account, or no cost center where they are used: nothing taught from it yet), then "Teaches from N lines:" with
+  "1 you coded" (nothing proposed, or only a guess, and the reviewer picked the account), "1 you changed", "1 as
+  suggested" (an account proposed and kept), "1 guessed account to check" (B-463).
+- **Test:** `tests/test_trust_review.py::test_the_approve_bar_says_lines_to_code_coded_by_you_or_kept_as_suggested`;
+  `tests/test_dashboard_sweep_fixes.py`, `tests/test_web_invoice.py` (the bar's words)
+- **Lesson:** A default phrase ("all as suggested") must be earned by the data, not reached by falling through.
+
+#### B-474 · Month-end listed an invoice with no date as "invoice dated None", and left old ones out silently · medium
+- **Where:** `ap_coder/erp/accruals.py` (`_not_in_erp`, `undated`), `ap_coder/web/pages/month_end.py`,
+  `ap_coder/web/templates/month_end.html`
+- **Symptom:** found by the review of this branch. An invoice with no date went to B-466's "dated more than a year
+  before" list as "invoice dated None"; and an invoice dated more than a year back was left out of the accruals and
+  the CSV, though AP may well need to accrue it.
+- **Cause:** a missing date compared as "" (before every date); B-466 chose to exclude old invoices.
+- **Reproduce:** the review's `check2.py` (dates "", None, this month, last year).
+- **Reproduced:** yes
+- **Fix:** an invoice with no date is listed apart, "No invoice date: can't be accrued until it has one"; one dated
+  more than a year before the period end is accrued, flagged "Check date" on screen and "dated over a year ago:
+  check" in the CSV, with how many and how much at the top of the page: AP decides.
+- **Test:** `tests/test_trust_review.py::test_month_end_flags_an_invoice_dated_over_a_year_back_and_lists_one_with_no_date`
+- **Lesson:** Test a date check with no date at all.
+
+#### B-475 · A coding rule over a guess, or the reviewer's own account, still read as the model's guess · high
+- **Where:** `ap_coder/coding/rules.py` (`apply`), `ap_coder/core/store.py` (`approve_invoice`, `line_guessed`,
+  `metrics`), `ap_coder/web/invoice_view.py` (`grid`, `learn_text`), `ap_coder/ai/lessons.py` (`outcomes`),
+  `ap_coder/core/audit.py`, `ap_coder/web/pages/invoice.py` (the approval message), `ap_coder/web/templates/learning.html`
+- **Symptom:** found by the review of this branch. A fixed coding rule applied after the chat model kept the model's
+  reasoning: the line was marked a guess, the bar said "1 guessed account to check", and the approval recorded the
+  model's guess as the AI's proposal, corrected (6010 → 6000). The same after "Use PO coding". An account the
+  reviewer picked was marked a guess again whenever the server drew the grid (the hidden reasoning is the model's;
+  only the page's script took the mark away). A kept guess counted as corrected (D-51 at first), a changed guess was a
+  lesson "read as 6010", and the audit trail said "all as the AI suggested".
+- **Cause:** "a guess" was read from the line's reasoning text, which the rule and the screen do not change.
+- **Reproduce:** the review's `rule.py`; pick another account on a guessed line, then add a line.
+- **Reproduced:** yes
+- **Fix:** a rule that codes a line says so in its reasoning ("Coded by the coding rule …") and records whether it
+  replaced a guess (`from_guess`); a row is marked only while its account is still the one the AI guessed for its line
+  (compared with the invoice as read, not by the text). What the reviewer approves on a guessed line is their own
+  coding: a new outcome, "coded", learned from but out of coding accuracy, the top corrections, the vendor accuracy and
+  the lessons; the approval says "1 you coded", the audit trail "coded by the reviewer (the AI only guessed)", the bar
+  "1 by a coding rule" for a rule's line (D-51 updated).
+- **Test:** `tests/test_trust_review.py::test_a_coding_rule_over_a_guess_is_the_rules_coding_not_a_guess_and_not_a_correction`,
+  `::test_an_account_the_reviewer_picked_over_a_guess_is_never_marked_again`,
+  `::test_the_approval_message_says_you_coded_for_a_kept_guess`,
+  `::test_a_kept_guess_is_the_reviewers_coding_not_coded_as_suggested`
+- **Lesson:** Decide a state from the values (the account the AI guessed, the account now), not from a label that
+  other steps don't update.
+
+#### B-476 · OLD_INVOICE_DATE held invoices back as a warning, and fired on credit notes · medium
+- **Where:** `ap_coder/coding/terms.py` (`payment_findings`), `ap_coder/ai/pipeline.py` (`finalise_coding`),
+  `ap_coder/web/invoice_view.py`, `ap_coder/coding/bulk.py`, `ap_coder/ops/help.py`
+- **Symptom:** found by the review of this branch. B-469's check was a warning (it lowered the confidence, kept
+  invoices from bulk approval and touchless) measured against today, so an invoice in the queue for a while became
+  "old", and a credit note (often old on purpose) was flagged.
+- **Cause:** a new check given a warning's weight.
+- **Reproduce:** an invoice dated 13 months back; a credit note of the same date.
+- **Reproduced:** yes
+- **Fix:** information only ("Good to know"), measured from the day AP Coder read the invoice (`received`, its import
+  day on the review screen and in bulk approval), not raised for a credit note; Help says so.
+- **Test:** `tests/test_trust_review.py::test_an_old_invoice_date_is_a_note_measured_from_the_day_it_came_in_and_not_for_a_credit_note`,
+  `::test_a_long_overdue_bill_says_since_when_and_an_old_invoice_date_is_flagged`
+- **Lesson:** Give a new check the weight of what it costs the person, not of what it found.
+
+#### B-477 · Bulk approval said why an invoice was left with the check's code ("VENDOR_ON_HOLD: …") · low
+- **Where:** `ap_coder/coding/bulk.py`
+- **Symptom:** found by the review of this branch: the "not approved" details read "VENDOR_BANK_CHANGED: the bank
+  account to pay into changed".
+- **Cause:** `f"{code}: {message}"`.
+- **Reproduce:** bulk-approve an invoice with a stored warning that needs a person.
+- **Reproduced:** yes
+- **Fix:** the message alone, capitalised (the check's Help title when it has none); the code stays in the problem
+  report.
+- **Test:** `tests/test_trust_review.py::test_bulk_approval_says_why_an_invoice_was_left_without_the_check_code`
+- **Lesson:** B-464 again: search for every place that prints a code.
+
+#### B-478 · The line grid's Tab order crossed its rows, the page view sat under the approve bar, amounts were cut · medium
+- **Where:** `ap_coder/web/templates/_invoice_lines.html`, `ap_coder/web/templates/invoice.html`,
+  `ap_coder/web/static/invoice.css`, `ap_coder/web/static/js/invoice_viewer.js`
+- **Symptom:** found by the review of this branch. In B-467's two-row lines Tab went description → amount → GL →
+  taxes → qty → unit price, up and down across the rows; in Fit mode at 1366 × 768 the bottom 80–170 px of the page
+  view was under the approve bar; "-199.98" was cut in its box and the GL account's name had little room.
+- **Cause:** the cells kept the old table order; the viewer's height was the window less a fixed 190 px.
+- **Reproduce:** the review's `keys.py` and `shots.py` at 1366 × 768.
+- **Reproduced:** yes
+- **Fix:** three rows a line, the cells in the order they show and Tab follows: # · description · delete; GL account
+  (wide: no cost centers in the pilot) · amount; taxes · qty · unit price. The viewer ends above the approve bar
+  wherever the Document card is (it grows as the card rises to its sticky place). On a screen 1700 px wide or more
+  the document gets three fifths of the width.
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_in_a_browser_tab_follows_the_line_grid_as_it_shows_and_the_page_view_ends_above_the_bar`
+- **Lesson:** A visual reorder in CSS needs the DOM order to match, or the keyboard tells a different story.
+
+#### B-479 · A replaced guess was "no changes", and the lines AP coded were missing from "Lines reviewed" · medium
+- **Where:** `ap_coder/core/store.py` (`approve_invoice`, `metrics`), `ap_coder/web/pages/learning.py`,
+  `ap_coder/web/templates/invoice.html`, `ap_coder/web/static/invoice.css`
+- **Symptom:** found by the re-review of this branch. A reviewer who put another account in place of the model's
+  guess was recorded as no edit: the approved screen said there were no changes to the suggested coding and it counted
+  as approved without edits, while the audit showed "line 1 GL: 6000 → 1500". "Lessons learned" (queue) and "Lines
+  reviewed" (Learning) left out the lines AP coded over a guess (B-475), though AP Coder learns from them. A 25-line
+  invoice's grid was about 4,600 px tall at 1366 × 768.
+- **Cause:** B-475 skipped guessed lines when counting the reviewer's changes, and took the "coded" lines out of the
+  reviewed total along with the accuracy.
+- **Reproduce:** approve an invoice after picking another account on a guessed line; the re-review's `add25.py`.
+- **Reproduced:** yes
+- **Fix:** a guess kept is no edit, another account in its place is; `lines_reviewed` counts every line AP reviewed
+  (the coded ones too, `lines_coded`), the accuracy only what the AI proposed (`lines_measured`). An invoice of more
+  than 10 lines gets a tighter grid (captions on the first line only, one-line description boxes, the taxes on one
+  line): the same rows and Tab order, about 3,200 px for 25 lines.
+- **Test:** `tests/test_trust_review.py::test_replacing_a_guessed_account_is_an_edit_and_coded_lines_count_as_reviewed`
+- **Lesson:** Leaving a line out of one figure (accuracy) is not leaving it out of all of them.
+
+#### Looked at and left (review screen and coding)
+
+- **N-172** · After Approve, the address bar was said to stay on the approved invoice's address. Not reproduced:
+  the answer's address is opened (`location.assign`) and `location.href` is the next invoice's (`/review/8` after
+  approving `/review/14`, five runs); Playwright's `page.url` read straight after the click can still show the old
+  one, which is likely what was seen. Nothing changed.
+- **N-173** · Vendors still lists a name read off an invoice not approved yet ("Inc."), tagged "Not approved yet":
+  hiding it would hide its bank-account and GST/HST history (a fraud signal) and "Ask the vendor" for its invoices
+  in the queue.
+- **N-174** · Fixed (B-473).
+- **N-175** · B-468 asks before the first real import; a demo kept after real invoices are imported still counts in
+  the figures until removed (excluding it everywhere is a larger change across Activity, Learning, Insights and
+  Vendors).
+- **N-176** · With the chat model answering, its account for a line with a weak match is kept even when the name
+  match pointed elsewhere (marked as a guess either way); on the samples the name match was right more often than a
+  small model (21 vs 11 of 41), so which one to show first, when they disagree, is worth measuring on the pilot's
+  invoices.
+### Before testing: navigation, settings and help
+
+A product audit of the dashboard as the pilot tester first meets it (1366 x 768 and 1366 x 650 laptop screens, a fresh
+install and the demo), and the fresh-install review that followed. The owner decided four things with it: LM Studio
+runs for the pilot (step 0), the menu shows only the seven everyday pages, exports are Excel or CSV only, and the pilot
+codes no cost centers (D-52, D-53). Tests: `tests/test_before_testing.py` unless named.
+
+#### B-502 · Settings and Help were below the window on a laptop · medium
+- **Where:** `ap_coder/web/templates/base.html`, `ap_coder/web/static/app.css` (`.rail`), `ap_coder/web/pages/__init__.py`
+- **Symptom:** at 1366 x 768 the left menu (16 pages in five sections) scrolled under its sticky footer: Settings and
+  Help could not be seen without scrolling the menu.
+- **Cause:** the whole rail scrolled, with the footer stuck over its end.
+- **Reproduced:** yes (audit screenshot; Playwright at 1366 x 768 and 1366 x 650)
+- **Fix:** the menu shows the seven everyday pages; the nine others fold under **More** (open on one of its pages,
+  otherwise as the browser left it); Settings and Help are pinned above the footer, outside the part that scrolls.
+- **Test:** `test_the_menu_shows_the_seven_core_pages_and_folds_the_rest_under_more`,
+  `test_in_a_browser_settings_and_help_are_on_screen_on_a_laptop` (768 and 650), `test_in_a_browser_the_more_fold_is_remembered`
+- **Lesson:** Check a menu at the smallest screen it is used on, with every fold open.
+
+#### B-503 · The getting-started counter counted rows it didn't show · medium
+- **Where:** `ap_coder/web/pages/process.py` (`setup_steps`, `first_steps`), `templates/_setup_steps.html`
+- **Symptom:** the welcome page listed 8 or 9 steps but counted "x/6": the province showed green but was never
+  counted, the optional chat model was listed but not counted.
+- **Fix:** every row shown is counted, in the Quick start's order: LM Studio running, reading invoices, your name,
+  your province, GL accounts, sales tax accounts, your first invoices. The chat model is part of the LM Studio row.
+- **Test:** `test_the_welcome_checklist_counts_exactly_the_rows_it_shows_with_lm_studio_first`,
+  `test_import_invoices_counts_the_same_rows`, `test_the_province_counts_once_given`
+- **Lesson:** A counter counts what the list shows, nothing hidden and nothing extra.
+
+#### B-504 · Without LM Studio the checklist said "!" forever, with no way to check again · medium
+- **Where:** `ap_coder/web/pages/process.py` (`lm_studio_step`), `ap_coder/web/pages/settings_reading.py` (`check_again`)
+- **Symptom:** the OvisOCR2 row stayed "!" with "see Settings → Reading"; nothing on the welcome page said how to start
+  LM Studio or let the tester check again.
+- **Fix:** "LM Studio running" is the first row; until it runs, the card says how to start it and has **Check again**,
+  which comes back to the page it was pressed on (a page of this dashboard only).
+- **Test:** `test_check_again_from_the_welcome_page_comes_back_to_it`, `tests/test_web_review.py::test_the_setup_step_names_the_self_tests_state`
+
+#### B-505 · The Quick start said what the app doesn't do · medium
+- **Where:** `docs/QUICK_START.md`
+- **Symptom:** it said there are no GL suggestions without LM Studio (lines AP approved before are still suggested);
+  LM Studio was not a step; step 2 named a button the page doesn't have, sent the tester to the sidebar's Sales tax page
+  instead of the GL page's tab, and left out **Save tax setup**; step 6 didn't say which export format is used.
+- **Fix:** step 0 is starting LM Studio (with **Check again**, not "start AP Coder again"), what is missing without it
+  said as it is; step 2 follows the page's own words (PST needs no account: it is added to each line); step 6 says
+  the first export is an Excel workbook and how to choose CSV.
+- **Test:** `test_the_guides_match_the_app`, `tests/test_sweep4_first_launch.py::test_the_quick_start_names_only_buttons_and_pages_the_dashboard_has`
+
+#### B-506 · Settings opened on its most technical tab · low
+- **Where:** `ap_coder/web/pages/settings.py`, `templates/settings_reading.html`
+- **Symptom:** Settings opened on Reading: nine readers, model tables, URLs and the AI reviewer's rounds and minutes.
+- **Fix:** Settings opens on Review. Reading starts with what the tester acts on (LM Studio running or not, with Check
+  again, OvisOCR2 and the chat model found), the self-test and the AI reviewer's switch; the rest is under **For IT**.
+- **Test:** `test_settings_opens_on_review_and_hides_jd_edwards_until_asked`, `test_reading_says_whether_lm_studio_runs_and_folds_the_rest_for_it`
+
+#### B-507 · Three forms and three Saves on Settings → Review, and a message about the wrong thing · medium
+- **Where:** `ap_coder/web/pages/settings.py` (`save_review`, `saved_text`), `templates/settings_review.html`
+- **Symptom:** a change in one card was lost by saving another; saving a name said "Saved. Invoices read from now on
+  use it."; "Ask why after the same correction (times)" was unclear.
+- **Fix:** one form, one **Save**; the confidence slider, the GL list rule and the "ask for the reason" count are under
+  **Advanced**, reworded; the message names what was saved and says "invoices read from now on" only of what applies to
+  them. The old addresses still work.
+- **Test:** `test_the_review_tab_is_one_form_with_one_save_and_the_risky_settings_folded`, `test_saving_your_name_says_your_name_was_saved`
+
+#### B-508 · Touchless processing was the page's main button, and its bar was told three ways · medium
+- **Where:** `templates/settings_automation.html`, `ap_coder/web/pages/settings_automation.py` (`typical_to_go`),
+  `ap_coder/web/pages/learning.py` (`suppliers_context`)
+- **Symptom:** "Turn on touchless processing…" was the blue button though the pilot leaves it off; the guides said
+  "20, the last 10 clean" and "about 30", the vendors 31, 34, 38, 62; Supplier learning said how far each vendor was
+  twice, with "accuracy at least 75.7%".
+- **Fix:** a plain button and "Leave it off during the pilot."; the bar's rules and, once, what they mean in practice
+  (about 30 to 40 invoices without a correction, worked out from the bar); each vendor says its own number once.
+- **Test:** `test_touchless_is_not_the_pages_main_button_and_says_to_leave_it_off`, `test_supplier_learning_says_how_many_more_invoices_once`
+
+#### B-509 · "N invoices waiting for OvisOCR2" counted invoices already approved · low
+- **Where:** `ap_coder/core/store.py` (`page_reads_waiting`), `ap_coder/ai/reading.py` (`_queue`)
+- **Fix:** the count is of the invoices still to approve; the reader still reads the others (to score itself).
+- **Test:** `test_the_reading_queue_counts_only_invoices_still_to_approve`
+
+#### B-510 · Without LM Studio the AI reviewer and OvisOCR2 looked broken · low
+- **Where:** `ap_coder/ai/reading.py`, `ap_coder/web/pages/settings_reading.py` (`READER_PILL`)
+- **Symptom:** amber "Needs a look" and red "Not working" before LM Studio was even started.
+- **Fix:** "Waiting for LM Studio", with what to do: start it, then Check again.
+- **Test:** `test_without_lm_studio_the_ai_reviewer_says_to_start_it_and_check_again`
+
+#### B-511 · A developer tool on the tester's Learning page · low
+- **Where:** `ap_coder/web/pages/learning.py`, `ap_coder/web/core.py` (`developer_tools`)
+- **Symptom:** Learning → Readers showed evidence patterns, the benchmark, a command line and "Download training data
+  (ZIP)" of the supplier invoices.
+- **Fix:** shown with Settings → About's "Show developer tools" (or `AP_DEVELOPER_TOOLS=1`); the download answers 404
+  otherwise.
+- **Test:** `test_the_readers_tab_and_the_training_data_are_developer_tools`
+
+#### B-512 · Three different things called "lessons" · low
+- **Where:** `ap_coder/web/pages/review.py` (`kpis`), `templates/learning.html`, `templates/settings_data.html`, `templates/vendors.html`
+- **Symptom:** "Lessons learned 13" (lines reviewed), the Lessons tab's "2" (repeated corrections), "Memory: every lesson".
+- **Fix:** the lines AP confirmed or corrected are the **coding memory** everywhere; **lessons** are only the
+  corrections AP keeps making, with AP's reason (their own tab).
+- **Test:** `test_the_queue_figures_are_plain_and_the_coding_memory_has_one_name`
+
+#### B-513 · The duplicate payment audit was on two pages · low
+- **Fix:** it is on Exports, next to the ERP register it also checks; Activity links there. (`/activity/duplicates.csv` stays.)
+- **Test:** `test_the_duplicate_payment_audit_is_in_one_place`
+
+#### B-514 · Help was 7,600 px of codes, pointed at hidden settings, and showed a developer changelog · medium
+- **Where:** `ap_coder/web/pages/help.py`, `templates/help.html`, `ap_coder/ops/help.py` (`TO_DO`, `CLOUD_CHECKS`,
+  `QUICK_START`, `WHATS_NEW`), `static/js/help.js`
+- **Symptom:** 83 checks in one table with their codes; the Azure checks said "Settings → Reading", which hides Azure in
+  this build; "What's new" listed PRs, schema versions and environment variables; its Getting started order differed
+  from the welcome page and the Quick start.
+- **Fix:** the checks are grouped by what the tester does about them, folded (opened by a search), without codes
+  (still searchable and linkable); the Azure checks only where the internet is allowed or the check is on; a short
+  "What's new for testers" (the changelog with the developer tools); Getting started in the Quick start's order; the
+  folders under For IT.
+- **Test:** `test_help_groups_the_checks_by_what_to_do_folded_without_codes`, `tests/test_web_help.py`
+
+#### B-515 · Insights showed a cloud cost in an offline product, and figures from two approvals · low
+- **Where:** `ap_coder/web/pages/insights.py`, `templates/insights.html`
+- **Fix:** no cloud cost, prices or net of it offline (only where the internet is allowed); the figures show from 20
+  approvals, with an empty state saying so before.
+- **Test:** `test_insights_has_no_cloud_cost_offline_and_waits_for_twenty_approvals`
+
+#### B-516 · The setup report and the Azure check's page assumed a cloud build · low
+- **Where:** `ap_coder/ops/doctor.py` (`for_this_build`), `ap_coder/web/pages/azure.py`, `ap_coder/ops/cli.py`, `docs/GETTING_STARTED.md`
+- **Symptom:** the doctor listed Azure packages and endpoints, the prompt size and "schema enum"; `/settings/azure-check`
+  showed the Azure form; the guide offered `schema` ("sent to Azure OpenAI").
+- **Fix:** the offline build's report leaves the cloud lines out and says "codes limited to the list"; the Azure page
+  says it isn't part of this build unless the internet is allowed, the check is on, or the developer tools are; the
+  `schema` command is a developer's, out of the tester's guide.
+- **Test:** `test_the_offline_doctor_report_has_no_cloud_lines`, `test_the_azure_check_page_says_it_is_not_part_of_the_offline_build`
+
+#### B-517 · "Approved today 4 · of 28 today · 6 fully approved in all" · low
+- **Where:** `ap_coder/web/pages/review.py` (`kpis`, the text only)
+- **Fix:** "4 · 24 still to review · 6 approved in total" (and the second approvals waiting, when any).
+- **Test:** `test_the_queue_figures_are_plain_and_the_coding_memory_has_one_name`, `tests/test_sweep3_dayone.py`
+
+#### B-518 · The guides' launcher window wasn't the real one · low
+- **Where:** `README.md` (PILOT.md's quotes and the launcher's own LM Studio line: the launcher's change, merged
+  alongside)
+- **Symptom:** "[OK]" where the window shows ✓ and !; "then start AP Coder again" for LM Studio.
+- **Fix:** README's window as it shows; the guides say: start LM Studio, then press Check again in Settings →
+  Reading, with no need to restart AP Coder (the launcher's wording).
+- **Test:** `test_the_guides_match_the_app`
+
+#### B-519 · Vendors said "Ask the vendor above" where there was none · low
+- **Fix:** "open a vendor in the list above, and its Ask the vendor section drafts the email".
+- **Test:** `test_vendors_say_where_ask_the_vendor_is`
+
+#### B-520 · Help → Report a problem took about 4 s to open · low
+- **Where:** `ap_coder/web/pages/help.py` (`report_setup`, `setup_report`), `static/js/help.js`
+- **Cause:** the setup report (the doctor, which looks at the OCR engines) was made while the page was drawn.
+- **Fix:** the page opens at once; the setup report is fetched after it (Copy waits for it) and kept 5 minutes.
+- **Test:** `test_report_a_problem_opens_at_once_and_fetches_the_setup_report`,
+  `tests/test_web_pilot_walkthrough.py::test_in_a_browser_report_a_problem_shows_it_is_working`
+
+#### B-521 · Full folder paths on the tester's pages · low
+- **Where:** `templates/settings_about.html`, `templates/help.html`, `templates/help_report.html`
+- **Fix:** under **For IT** folds; About's update note says AP Coder may stay open (the update stops it, PILOT.md).
+- **Test:** `test_about_folds_the_full_paths_for_it`
+
+#### B-522 · "Who are you?" was a bare line · low
+- **Where:** `templates/who.html`, `templates/settings_review.html`
+- **Fix:** a page that says what the name is for and where to change it; Settings → Review links to it.
+- **Test:** `test_who_is_a_proper_page_linking_to_settings`
+
+#### B-523 · "Sales tax" was two different places · low
+- **Where:** `ap_coder/web/pages/accounts.py` (`TABS`), `templates/accounts.html`
+- **Fix:** the GL page's tab is **Sales tax accounts**; it says GST, HST and QST need an account and PST none.
+- **Test:** `test_the_accounts_page_names_its_tax_tab_apart_from_the_sales_tax_page`
+
+#### B-524 · Exports forgot the format chosen · low
+- **Where:** `ap_coder/web/pages/exports.py` (`last_format`, `shown_formats`)
+- **Fix:** Exports opens on the format of the last batch made (Excel at first); JD Edwards E1 only once shown (D-52).
+- **Test:** `test_exports_open_on_the_last_format_used`
+
+#### B-525 · The guides disagreed with each other · low
+- **Where:** `docs/GETTING_STARTED.md`, `docs/PILOT.md` ("No Azure"), `templates/settings_about.html`
+- **Symptom:** About said to close AP Coder before updating, PILOT that it may stay open (it may: the update stops it);
+  "never connects, not even to set up" where a GitHub ZIP downloads its packages and models once; PILOT's "No Azure"
+  where the Azure check exists, off by default.
+- **Fix:** each said as it is: the update may start with AP Coder open; a GitHub ZIP downloads once; the Azure check
+  is opt-in and sends nothing unless switched on. (Python 3.11 or newer, 3.12 recommended, everywhere: the launcher's
+  change, which also aligns `pyproject.toml`.)
+- **Test:** `test_about_folds_the_full_paths_for_it`, `test_the_guides_match_the_app`
+
+An independent review of the branch walked the pilot path end to end and found what follows. Tests:
+`tests/test_before_testing_review.py`.
+
+#### B-526 · An update hid JD Edwards from a company already using it · high
+- **Where:** `ap_coder/web/core.py` (`jde_shown`), `ap_coder/web/pages/exports.py` (`last_format`)
+- **Symptom:** after the update the JD Edwards E1 tab and export format were gone, with no word, for a database with
+  JD Edwards settings and batches: *Show JD Edwards settings* starts off.
+- **Fix:** a database with JD Edwards settings saved or a JD Edwards batch made has the switch turned on, once and
+  stored (switched off by hand it stays off); Exports keeps a JD Edwards format used last. docs/JDE_E1.md and
+  PILOT_PLAN.md name the switch.
+- **Test:** `test_a_jd_edwards_user_keeps_the_tab_and_the_format_after_the_update`,
+  `test_a_new_install_has_jd_edwards_hidden_and_nothing_stored`
+- **Lesson:** Hiding a feature for new users must not take it from those already using it.
+
+#### B-527 · Saving Settings → About stored the developer variable as if it were ticked · medium
+- **Where:** `ap_coder/web/pages/settings.py` (`save_shown`), `templates/settings_about.html`, `ap_coder/web/core.py`
+- **Symptom:** with `AP_DEVELOPER_TOOLS` set, the page posted developer=1 and saved it in the data folder, so the tools
+  stayed on after the variable went; the page and `developer_tools()` read the variable two ways (`0` was "on" for
+  one of them); every save logged both switches.
+- **Fix:** the variable is read one way (1, true, yes on; 0, false, no, nothing off); when it is set the switch shows
+  "on (set by AP_DEVELOPER_TOOLS)" and nothing is stored; only a switch that changed is saved and logged.
+- **Test:** `test_the_developer_env_var_is_read_one_way`, `test_the_env_var_is_shown_as_on_and_never_stored`,
+  `test_save_shown_logs_only_what_changed`
+
+#### B-528 · The demo kept cost centers the tester could not see · medium
+- **Where:** `ap_coder/ops/demo.py` (`_without_cost_centers`, Harbourview's mistake), `templates/_invoice_lines.html`
+- **Symptom:** with no cost center list, the demo invoices still carried CC200, CC400 from their ground truth: an
+  approved one kept them, the CSV export wrote them, the coding memory learned them, and a hidden `line_cc` posted them
+  back; Harbourview's "mistake to correct" was a cost center, invisible.
+- **Fix:** without a cost center list the demo loads its invoices without cost centers; Harbourview's mistake is a GL
+  account (6110 for a legal review); no hidden cost center is posted when there is no list.
+- **Test:** `test_the_demo_has_no_cost_center_anywhere`, `test_harbourviews_demo_mistake_is_a_gl_account`,
+  `test_no_hidden_cost_center_is_posted_without_a_list`
+- **Lesson:** A field hidden from the screen must be gone from the data too, or it travels unseen.
+
+#### B-529 · The welcome page said "Add your name" before LM Studio, and "Start server" whatever was missing · medium
+- **Where:** `ap_coder/web/pages/process.py` (`lm_studio_step`, `lm_studio_help`, `next_step`), `templates/_next_step.html`
+- **Symptom:** the Next step card asked for the name while step 0 was LM Studio, and Check again was below the fold
+  at 1366 x 650; with LM Studio running but without OvisOCR2 or a chat model the box still said "Developer tab → Start
+  server"; LM Studio with no chat model was ticked done, though the pilot runs with it.
+- **Fix:** while LM Studio isn't ready, it is the Next step, at the top, with what to do for its state (start it, add
+  OvisOCR2, load the chat model) and Check again; the row is done only with OvisOCR2 ready and the chat model loaded.
+- **Test:** `test_the_lm_studio_step_needs_ovisocr2_and_the_chat_model`, `test_the_next_step_is_lm_studio_with_check_again_on_a_laptop`,
+  `test_the_running_but_empty_lm_studio_box_says_what_is_missing`
+
+#### B-530 · "Sales tax" had three names, and the name step said "recorded in it" · low
+- **Fix:** "Sales tax accounts" for the checklist row, the next step and the tab; "GST, HST and QST each need a GL
+  account (PST needs none)" everywhere; "each approval is recorded under it".
+- **Test:** `test_one_name_for_the_sales_tax_accounts_and_recorded_under_it`
+
+#### B-531 · The Quick start and the screens disagreed · low
+- **Where:** `docs/QUICK_START.md`, `ap_coder/ops/help.py` (`QUICK_START`), `templates/help.html`
+- **Symptom:** "Start (every day)" didn't say to start LM Studio; step 2 stopped at Upload, though a preview and a
+  second **Import GL accounts** follow; Help's Getting started had six steps numbered differently and claimed to be
+  the welcome page's.
+- **Fix:** start LM Studio first every day; step 2 as the page goes; Help lists the Quick start's seven steps, 0 to 6,
+  by the same names, and says the welcome checklist ticks steps 0 to 3.
+- **Test:** `test_help_and_the_quick_start_number_the_same_steps`
+
+#### B-532 · "Coding memory" was two different numbers · low
+- **Where:** `ap_coder/web/pages/settings.py` (`data_context`), `templates/settings_data.html`, `ap_coder/web/pages/review.py` (`kpis`)
+- **Symptom:** the queue counted AP's reviewed lines, Settings → Data every row of the memory (the ERP history
+  included, cut at 50,000); the queue tile's note was cut off at 1366.
+- **Fix:** one number, AP's reviewed lines, with the ERP history counted apart ("plus N lines from ERP history"); a
+  short note.
+- **Test:** `test_the_coding_memory_is_one_number_with_erp_history_apart`
+
+#### B-533 · Smaller points from the review · low
+- Insights counts fully approved invoices towards its 20 (a second approval waiting does not count yet).
+- Help, filtered by area or a search, links back to all the checks.
+- A failed self-test shows what OvisOCR2 read on Settings → Reading itself, not folded under For IT.
+- Report a problem's setup report is made again after Check again or a saved setting.
+- **Test:** `tests/test_before_testing.py` (Insights, Help), `tests/test_reading_pages.py`
+
+#### B-534 · A purchase order's cost center was still compared with no cost center list · medium
+- **Where:** `ap_coder/coding/po.py` (`match_invoice`), `templates/_invoice_live.html`, `templates/learning.html`
+- **Symptom:** the sample POs carry cost centers (CC400, CC700); with no cost center list, demo invoices 1, 5, 9 and 10
+  got "PO-88213 line 1 is coded to GL 6010 · CC400" and a "coding" problem on the PO match, and *Use the PO's
+  coding* would have put a cost center the tester cannot see on the line. The GL posting preview and the coding
+  memory table showed an empty Cost center column.
+- **Cause:** the PO check compared the PO line's cost center with the line's (empty) one whatever the setup.
+- **Fix:** without a cost center list a PO's cost centers are not read: not compared, not said, not copied to a line;
+  the two tables show the Cost center column only when a row has one. The CSV export keeps its Cost center column
+  (empty): it is the ERP import's fixed layout, and a column that comes and goes would break an import mapping (the
+  custom layout can leave it out).
+- **Test:** `tests/test_before_testing_review.py::test_without_a_cost_center_list_a_po_compares_no_cost_center`,
+  `test_without_a_cost_center_list_no_empty_cost_center_column`
+### Before testing: install, launcher and updates
+
+A fresh install of main (3dacb6f) the way the pilot tester does it, on Linux standing in for Windows: GitHub's ZIP
+(`git archive`) unzipped into a new home folder and double-clicked, four times from cold, then a newer ZIP unzipped
+into a new folder and over the old one. Then each fix below was run the same way again (a newer ZIP of the same
+version unzipped over a running one: the old window said a newer AP Coder took over, the new one said *Updated AP
+Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21)* and ran the self-check).
+
+#### B-542 · A newer GitHub ZIP of the same version could not be told from the older one · high
+- **Where:** `ap_coder/core/paths.py` (`install_identity`, `describe`), `scripts/launch.py` (`previous_install`,
+  `run`), `scripts/running.py` (`judge`), `ap_coder/web/app.py` (`/healthz`), `ap_coder/web/pages/settings.py`
+  (About), `ap_coder/ops/doctor.py`
+- **Symptom:** unzipped over the old folder, a newer ZIP said no *Updated* line, showed the older one's *Self-check
+  OK at setup* and ran no new self-check; Settings → About said only "0.2.0". Unzipped over a folder whose dashboard
+  was still running, the new start opened the old dashboard ("already running").
+- **Cause:** every version was 0.2.0, a ZIP carries no build information, and the install fingerprint was a hash of
+  `pyproject.toml`, which most changes leave alone; the running dashboard was judged by folder and version only.
+- **Reproduce:** `git archive` two commits of main, unzip the older one and double-click it, unzip the newer one over
+  it and double-click again.
+- **Reproduced:** yes (run2.log of the audit: *Self-check OK at setup (2026-10-21 20:14)*, no update said)
+- **Fix:** `ap_coder/BUILD` holds `$Format:%h %cI$`, marked `export-subst` in `.gitattributes`: GitHub's Download
+  ZIP and `git archive` write the commit and its time into it; the offline bundle builder writes it for its copy; a
+  checkout uses `git log -1`; a folder with neither, a hash of its code (`paths.build_stamp`). The fingerprint is the
+  pyproject plus that build, a ZIP's build time is its commit's (so an older ZIP in another folder is older), and the
+  launcher's state records the commit: *Updated AP Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build
+  87db17f, 2026-10-21)*, then the self-check. `/healthz` says the build, so a dashboard from before this folder was
+  unzipped over is stopped, not opened. Settings → About, the doctor and Help → Report a problem say the build. The
+  version is 0.3.0 for this pilot drop (D-54).
+- **Test:** `tests/test_launch_build.py::test_a_newer_zip_unzipped_over_the_older_one_is_an_update`,
+  `::test_a_stamped_zip_says_its_commit_and_time`, `::test_two_zips_of_one_version_are_two_builds`,
+  `::test_a_dashboard_of_this_folder_from_before_its_code_changed_is_older`, `::test_the_dashboard_says_its_build`,
+  `::test_settings_about_and_the_doctor_say_the_build`, `::test_the_bundle_builder_stamps_its_copy`; CI
+  `windows-github-zip`
+- **Lesson:** An identity built from a version number that nobody bumps is no identity: take it from what changes
+  with every build, the commit, and put it where every way of getting the code carries it.
+
+#### B-543 · The first run said nothing for about three of its first four minutes · medium
+- **Where:** `scripts/launch.py` (`ensure_venv`, `pip_install`, `PipProgress`, `heartbeat`)
+- **Symptom:** making `.venv` (30 s on the audit's run), pip installing 56 packages (135 s) and a 22 s gap after it
+  showed no line: a pilot tester would think it hung and close the window.
+- **Cause:** pip's own lines (one a package) are kept for the log, and nothing replaced them in the window; `python -m
+  venv` was run without a word.
+- **Reproduce:** GitHub's ZIP, a fresh home folder, double-click; time the window's lines.
+- **Reproduced:** yes (run1.log of the audit). The 22 s gap did not come back on any of the later runs, cold or warm
+  (3 s between pip's last line and the next step; nothing between the steps after it took more than 0.4 s): it was
+  pip itself finishing on a cold cache, and the heartbeat now covers it.
+- **Fix:** *Making AP Coder's own Python environment (the .venv folder; under a minute)...* before `venv`; while pip
+  runs, every 12 s without a line the window says how far it is, from pip's lines and the `.dist-info` folders that
+  appear: *Working out which packages are needed: 12 so far (pandas)...*, *Getting packages: 29 of 55
+  (opencv_python)...*, *Installing packages: 41 of 56 (onnxruntime)...*. The steps after pip get the same watch
+  (`settle_and_check`): 12 s without a line says *Still working: getting the OCR models...* (or the checks, the
+  self-check, the clean-up).
+- **Test:** `tests/test_launch_build.py::test_pip_progress_counts_what_it_found_fetched_and_installed`,
+  `::test_pip_progress_from_the_wheelhouse`, `::test_pip_says_how_far_it_is_while_it_is_quiet`,
+  `::test_making_the_venv_is_said`, `::test_a_quiet_step_after_pip_says_it_is_still_working`
+- **Lesson:** Moving noise to the log is half the job: whatever took its place in the window must still say that
+  something is happening.
+
+#### B-544 · A model download that lost its connection showed urllib's error and waited a day · medium
+- **Where:** `scripts/fetch_models.py` (`download`, `fetch`, `plain_reason`, `setup`), `scripts/launch.py`
+  (`ensure_models`, `models_due`, `readiness`, `one_engine`)
+- **Symptom:** 2 of 4 cold installs lost the connection to www.modelscope.cn. The window said *could not get
+  ch_PP-OCRv5_rec_mobile_infer.onnx: URLError: <urlopen error [Errno 104] Connection reset by peer>*, *Run this again
+  when the download works* (run what?), *Tried again tomorrow*, and the readiness line said the PP-OCRv5 models *come
+  from the offline bundle's models folder*, of a GitHub ZIP that has none.
+- **Cause:** one try per file; the launcher ran `fetch_models.main`, written for a person at the command line; the
+  failure was recorded with the day in it; the readiness line had one wording for both sources.
+- **Reproduce:** a first run from GitHub's ZIP on a flaky connection (or a proxy that resets every connection).
+- **Reproduced:** yes (old_run1.log in the audit's up/ and up2/)
+- **Fix:** each download is tried 3 times (after 3 s and 10 s; a 404 is not tried again); the window says *Couldn't
+  get X: the connection dropped, tried 3 times.* and *Couldn't download the OCR models (the connection dropped). AP
+  Coder will try again next time it starts; scans are still read with one engine meanwhile.*, the error itself goes
+  to the log; the next start tries again (twice a file, 20 s each), up to 3 starts a day, then *tomorrow*; the
+  readiness line says *one engine for now: the PP-OCRv5 models couldn't be downloaded yet; AP Coder tries again when
+  it starts* from the code alone, and the bundle wording only for a bundle.
+- **Test:** `tests/test_launch.py::test_a_failed_model_download_is_tried_again_and_said_plainly`,
+  `::test_plain_reasons_for_a_failed_download`, `tests/test_launch_build.py::test_the_ocr_line_says_where_the_models_come_from`
+- **Lesson:** A download over someone else's network fails now and then: try again before saying so, say it in the
+  words of the person reading, and say what happens next.
+
+#### B-545 · The window of an older AP Coder just ended when a newer one took over · low
+- **Where:** `scripts/running.py` (`take_over`, `note_takeover`, `taken_over`), `scripts/launch.py`
+  (`start_dashboard`, `main`, `keep_open`)
+- **Symptom:** the old window closed (Windows) or ended with nothing said, or with *AP Coder stopped on its own*;
+  the pilot tester could not tell an update from a crash.
+- **Cause:** the old start only saw its server end; nothing told it why.
+- **Reproduce:** start AP Coder, unzip a newer build (over it or elsewhere), double-click the new one.
+- **Reproduced:** yes
+- **Fix:** before stopping it, the new start notes in the settings file which port it stops; the old window, seeing
+  its dashboard end with that note fresh, says *A newer AP Coder took over; you can close this window.*, frees the
+  launch lock (the new start waits for it), and waits for Enter instead of vanishing (not with `AP_NO_PAUSE=1` or no
+  one at the window). Only windows of 0.3.0 and later can say it (N-252).
+- **Test:** `tests/test_launch_build.py::test_the_old_window_says_a_newer_ap_coder_took_over`,
+  `::test_an_old_note_or_another_port_is_not_this_window`, `::test_the_window_frees_the_lock_before_it_waits`
+- **Lesson:** When one process ends another on purpose, leave a note the other can read: the reason is the message.
+
+#### B-546 · The first run's counts and GL line did not add up · low
+- **Where:** `scripts/launch.py` (`_ensure_packages`, `pip_install`, `models_said`, `setup_check_lines`),
+  `scripts/fetch_models.py` (`came_with_package`)
+- **Symptom:** *Installing AP Coder's packages (15 missing)* then *Installed 56 packages*; *OCR models ready: 1
+  already there, 2 downloaded* on a brand-new computer; *Table finder: ... downloaded into <the whole data folder
+  path>/models.*; *GL accounts: none imported yet, so the sample ones are used* next to *Setup checks: all 9 passed
+  (the sample GL accounts, ...)* while the GL page showed 0 accounts.
+- **Cause:** pip installs what the 15 need too; the "already there" model is RapidOCR's angle classifier, inside its
+  package; the table finder line came from the command-line tool; the sample chart's checks were counted as passes
+  of this setup.
+- **Reproduce:** a first run from GitHub's ZIP.
+- **Reproduced:** yes (run1.log of the audit)
+- **Fix:** *Installing AP Coder's packages: 15 missing, with the packages they need in turn* and *Installed 56
+  packages (the 15 missing and the ones they need)*; *OCR models ready: 2 downloaded, and the table finder's; 1 came
+  with the OCR package.* (no path); *· GL accounts: none imported yet (import yours in GL accounts & tax, or use the
+  sample ones)* as a note, and *Setup checks: all 7 passed (tax mapping, coding rules, settings)* without the
+  sample's GL accounts and cost centers.
+- **Test:** `tests/test_launch.py::test_the_start_says_no_gl_accounts_were_imported_yet`,
+  `tests/test_launch.py::test_the_model_count_says_where_each_came_from`
+- **Lesson:** Two numbers on two lines are read together: say how they relate, or the reader decides something went
+  wrong.
+
+#### B-547 · The LM Studio line said to start AP Coder again · low
+- **Where:** `scripts/launch.py` (`lm_studio_line`)
+- **Symptom:** *To use it: open LM Studio, Developer tab → Start server, then start AP Coder again*; the pilot runs
+  LM Studio, and the dashboard picks it up without a restart.
+- **Cause:** written before Settings → Reading had *Check again*.
+- **Reproduce:** start AP Coder with LM Studio closed.
+- **Reproduced:** yes
+- **Fix:** *LM Studio isn't running yet: until it is, invoices are read by OCR only and wait for a person. To start
+  it: open LM Studio, Developer tab → Start server; then press Check again in AP Coder's Settings → Reading (no need
+  to restart AP Coder)*.
+- **Test:** `tests/test_launch_build.py::test_lm_studio_not_running_says_how_to_start_it_and_to_check_again`
+- **Lesson:** Advice in a start-up message ages with the app: check it against what the dashboard can do now.
+
+#### B-548 · pyproject allowed Python 3.10 while everything else said 3.11 · low
+- **Where:** `pyproject.toml` (`requires-python`, ruff `target-version`), `.github/workflows/ci.yml` (tests matrix),
+  `ap_coder/ops/doctor.py` (`_python_check`), `scripts/launch.py` (`venv_fits`, `bootstrap`)
+- **Symptom:** `requires-python = ">=3.10"` and CI tested 3.10, while APProcessor.bat / .command, the launcher, the
+  bundle (3.11 to 3.14), the doctor and the guides said 3.11 or newer.
+- **Cause:** the floor was raised in the launcher and the guides, not in the package or CI.
+- **Reproduce:** compare them.
+- **Reproduced:** yes
+- **Fix:** 3.11 everywhere: `requires-python = ">=3.11"`, ruff `py311`, CI tests 3.11, 3.12, 3.13 and 3.14, the doctor
+  fails a 3.10. A `.venv` made with 3.10 by AP Coder 0.1 (PR #1 and #2 allowed it) is made again with the newer Python
+  (it could no longer install 0.3), instead of being reused.
+- **Test:** `tests/test_launch_build.py::test_one_python_version_everywhere`,
+  `::test_a_venv_made_with_an_older_python_is_made_again`, `tests/test_config_and_cli.py::test_doctor_python_range_matches_the_launcher`
+- **Lesson:** A version floor lives in several places: change the package metadata and CI with the launcher, or the
+  one that is not changed is the one that is tested.
+
+#### B-549 · No CI job ran GitHub's ZIP the way the pilot tester does · medium
+- **Where:** `.github/workflows/ci.yml` (`windows-github-zip`)
+- **Symptom:** every Windows job set `AP_ALLOW_INTERNET=1` or used the offline bundle, from a plain folder, with no
+  Mark of the Web; none updated one ZIP with a newer one. B-542 and B-544 passed CI.
+- **Cause:** the jobs were written for the offline bundle, the path the pilot was first meant to use.
+- **Reproduce:** read the workflow.
+- **Reproduced:** yes
+- **Fix:** a Windows job makes two `git archive` ZIPs (this commit and an empty commit on top), marks them as
+  downloaded, `Expand-Archive`s the older into `Pilot tester Ré\` (a space and an accent), double-clicks
+  `APProcessor.bat` with no `AP_ALLOW_INTERNET` until the dashboard answers (checking the first run's lines and the
+  build on `/healthz`), leaves an invoice and a `.env` line in the data folder, unzips the newer ZIP over it while it
+  runs and double-clicks again: *Updated AP Coder from ... (build old ...) to ... (build new ...)*, the self-check,
+  the old window's *A newer AP Coder took over*, the data kept, Settings → About showing the new build.
+- **Test:** `tests/test_ci_workflow.py::test_ci_runs_github_zip_as_the_pilot_tester_does`
+- **Lesson:** Test the path the user takes, not the one the plan said they would take.
+
+#### B-550 · The bundle builder's dry run did not say where it downloads from · low
+- **Where:** `scripts/build_offline_bundle.py` (`plan`, `download_hosts`, `main`)
+- **Symptom:** IT behind a firewall that lets only named hosts through had no list: `--dry-run` printed pip commands
+  and model names, not the addresses.
+- **Cause:** the plan kept each model's checksum, not its URL.
+- **Reproduce:** `python scripts/build_offline_bundle.py --dry-run`
+- **Reproduced:** yes
+- **Fix:** the plan has each model's `url`, `download_hosts` (`pypi.org`, `files.pythonhosted.org`,
+  `www.modelscope.cn`) and what is not in the bundle (LM Studio and its models); stderr says the same in three lines
+  (stdout stays the JSON plan). PILOT.md §B has a *For IT* box: what the default build holds, why it carries the
+  `azure` extra, what it leaves out.
+- **Test:** `tests/test_launch_build.py::test_the_dry_run_names_every_address_the_build_downloads_from`
+- **Lesson:** A build that downloads needs a list of where from, for whoever runs the firewall.
+
+#### Found by the review of these fixes
+
+#### B-551 · The clean-up could delete a newer offline bundle's folder · high
+- **Where:** `ap_coder/core/paths.py` (`install_identity`, `compare`, `is_older`), `scripts/upgrade.py`
+  (`replaced_by`, `clean_up`), `scripts/launch.py` (`older_installs`)
+- **Symptom:** a GitHub ZIP started after a newer offline bundle of the same version, in Canada, took the bundle for
+  the older one: after its self-check the clean-up removed the bundle's `.venv` and then its whole folder.
+- **Cause:** B-542 ordered a ZIP by its commit's time (UTC) and a bundle by its manifest's `built` (IT's local time,
+  no zone), compared as text: 17:30 in Toronto sorted before 20:00 UTC. And the clean-up took every install on record
+  that was not newer, so a build that could not be ordered at all counted as older.
+- **Reproduce:** ZIP X stamped 2026-10-21T20:00Z, bundle Y stamped 21:00Z and built 17:30 local; start X.
+- **Reproduced:** yes (`is_older(Y, X)` was true)
+- **Fix:** a stamped build (a ZIP, or a bundle from 0.3.0 on: its builder writes the stamp) is ordered by its commit's
+  time in UTC; a bundle from before the stamp by its build time, and only against another such bundle. `compare`
+  answers older, newer, same (one commit, or the same code) or unknown; the clean-up takes only a folder certainly
+  older or another copy of this very build, and `clean_up` itself refuses any other (*Kept X: it can't be told
+  whether it is older than this AP Coder, so nothing in it was touched*). Never delete when in doubt.
+- **Test:** `tests/test_launch_build.py::test_a_newer_bundle_is_never_taken_for_an_older_one_across_time_zones`,
+  `::test_a_build_that_cant_be_ordered_is_never_cleaned_up`
+- **Lesson:** Two times compare only when they are on one clock: a local time without its zone is not comparable
+  with UTC, and a comparison that can't be made must say so rather than answer.
+
+#### B-552 · Python 3.10 stopped with AttributeError before it was told it is too old · low
+- **Where:** `ap_coder/core/paths.py` (`_utc`)
+- **Symptom:** `python scripts/launch.py` under 3.10: *AttributeError: module 'datetime' has no attribute 'UTC'*.
+- **Cause:** `datetime.UTC` is new in 3.11 (ruff's py311 target suggests it); the launcher's first phase runs on any
+  Python to say which one it needs.
+- **Reproduce:** `python3.10 -c "from ap_coder.core import paths; paths.install_identity()"`
+- **Reproduced:** yes
+- **Fix:** `datetime.timezone.utc` (with a note for ruff).
+- **Test:** `tests/test_launch_build.py::test_build_times_need_no_python_3_11`
+- **Lesson:** Code that exists to tell an old Python it is too old must itself run on that Python.
+
+#### B-553 · An older build over a newer one said "Updated", and a copied folder "from 0.3.0 to 0.3.0" · low
+- **Where:** `scripts/launch.py` (`update_line`)
+- **Symptom:** *Updated AP Coder from 0.3.0 (build new) to 0.3.0 (build old)*; *Updated AP Coder from 0.3.0 to 0.3.0.*
+- **Cause:** any change of fingerprint was said as an update.
+- **Reproduce:** unzip an older ZIP over a newer one; change a file of a folder with no build stamp.
+- **Reproduced:** yes
+- **Fix:** *Replaced AP Coder X with an older build, Y.* (it still starts and runs the self-check: going back is
+  sometimes what IT wants, and a database a newer AP Coder changed is refused anyway); *AP Coder's files in this
+  folder changed since it was last set up: checking it again.* when nothing names the two.
+- **Test:** `tests/test_launch_build.py::test_an_older_build_unzipped_over_a_newer_one_is_said_as_such`
+- **Lesson:** Say the direction of a change, not only that there was one.
+
+#### B-554 · A network that dropped the models' site silently held a first setup for about 10 minutes · medium
+- **Where:** `scripts/fetch_models.py` (`fetch`, `setup`, `unreached`), `scripts/launch.py` (`ensure_models`)
+- **Symptom:** each of 4 model files waited out 3 tries of 60 s; every later start about 2 minutes more; the window
+  said only that each could not be got.
+- **Cause:** every file was tried on its own, whatever had happened to the one before.
+- **Reproduce:** a firewall that drops www.modelscope.cn without answering.
+- **Reproduced:** yes (in the review)
+- **Fix:** a site not reached at all (no answer in time, no such name, refused) is asked for nothing more in that
+  run; the first setup waits 30 s an answer (3 tries), a later start 10 s (1 try); the window says once *AP Coder
+  couldn't reach www.modelscope.cn (a firewall may block it): ask IT, or use the offline bundle.* (measured: 104 s
+  for a first setup, 11 s for a later start). The *Still working* line comes less and less often when it would say
+  the same again.
+- **Test:** `tests/test_launch.py::test_a_site_that_never_answers_is_asked_once_and_said_once`
+- **Lesson:** When a server does not answer, the next request to it will not either: give up on the server, not on
+  each file.
+
+#### B-555 · The pip progress line could stay on one package's name · low
+- **Where:** `scripts/launch.py` (`PipProgress.status`)
+- **Symptom:** *Installing packages: 40 of 56 (Odd.Name)...* to the end, when a `.dist-info` was spelled otherwise.
+- **Cause:** the line named the first package not yet found installed.
+- **Reproduce:** a package list where one name never matches its `.dist-info` folder.
+- **Reproduced:** yes
+- **Fix:** it names the package after the last one found installed (pip installs in its list's order).
+- **Test:** `tests/test_launch_build.py::test_pip_progress_never_sticks_on_a_name_it_cant_match`
+- **Lesson:** Progress worked out from outside must move on when one item can't be matched.
+
+#### B-556 · A 3.10 .venv was remade before the old dashboard using it was stopped · low
+- **Where:** `scripts/launch.py` (`bootstrap`, `make_way_for_venv`)
+- **Symptom:** an old AP Coder window still open from that .venv: Windows refused to delete it (*Could not remove the
+  .venv folder*).
+- **Cause:** the first phase remakes .venv; old dashboards were stopped only in the second.
+- **Reproduce:** a 0.1 install made with Python 3.10, left running; unzip 0.3.0 over it and double-click.
+- **Reproduced:** yes (in the review, on its order of steps)
+- **Fix:** before .venv is made again, the older AP Coder running is stopped (as the second phase does).
+- **Test:** `tests/test_launch_build.py::test_an_older_venv_is_made_again_only_after_old_dashboards_stopped`
+- **Lesson:** Stop what uses a folder before deleting the folder.
+
+#### B-557 · The new CI job could fail wrongly, and checked the Mark of the Web only on the way in · low
+- **Where:** `.github/workflows/ci.yml` (`windows-github-zip`, `windows-pilot-launcher`)
+- **Symptom:** a first run whose only failed download was the table finder's (*Couldn't download the table finder's
+  model*) failed the job; the Mark of the Web was put on the files but never checked as taken off APProcessor.bat;
+  the later start's check for *Fetching the OCR models* matched nothing the launcher says.
+- **Cause:** the expected lines were written before the final wording.
+- **Reproduce:** read the workflow against the launcher's lines.
+- **Reproduced:** yes
+- **Fix:** the job accepts either download message (and the unreachable one), checks APProcessor.bat has lost its
+  Zone.Identifier while the other files keep it; the later start checks for *Downloading the OCR models*. PILOT and
+  UPGRADING say the 0.2.0 window just ends on this update (only 0.3.0 and later say a newer one took over).
+- **Test:** `tests/test_ci_workflow.py`
+- **Lesson:** A CI check for a line is only as good as the line's current wording: grep for what the code says.
+
+#### B-558 · A data folder inside an old GitHub ZIP folder was deleted with it · high
+- **Where:** `scripts/upgrade.py` (`removable`, `holds_data`, `data_folders`, `user_files`)
+- **Symptom:** with the data folder recorded as `OLD/data/mine`, `OLD/data` or `OLD/samples/mydata` (database and
+  invoices in it), the clean-up after an update said *Removed the older AP Coder folder ...* and the data was gone.
+- **Cause:** for a folder without a bundle manifest, `user_files` counts `data/` and `samples/` as AP Coder's own and
+  exempts a `.db` there; nothing asked whether a data folder lay inside the folder being removed.
+- **Reproduce:** an old GitHub ZIP folder set up, `data_dir` recorded inside its `data/`, `clean_up` from a new folder.
+- **Reproduced:** yes (in the review, and `tests/test_update_cleanup_data.py` before the fix)
+- **Fix:** a folder is kept whole (*... because it holds your data folder (X)*) when this start's data folder, the
+  data folder now, the one on record or the database's folder (`AP_DB_PATH`) is inside it and still holds files, or
+  when a database (`.db`, `.sqlite`, their journals) or an `invoices` folder is anywhere in it (its `.venv` and caches
+  aside). A clean-up never deletes a database file.
+- **Test:** `tests/test_update_cleanup_data.py::test_a_data_folder_inside_the_old_folder_is_never_deleted`,
+  `::test_a_database_or_invoices_anywhere_in_the_old_folder_keep_it`
+- **Lesson:** Before deleting a folder, ask whether the person's data is in it, wherever the rules say data belongs:
+  data ends up where people put it.
+
+#### B-559 · A recorded folder that was no longer an AP Coder install lost its .venv and models · medium
+- **Where:** `scripts/upgrade.py` (`clean_up`)
+- **Symptom:** a folder on record whose `ap_coder/` was gone still had its `.venv` and `models/` removed (*removed its
+  .venv and models; the folder itself stays ...*); and when the data folder was the old folder itself, its `models/`
+  (where the table finder's model is kept) went.
+- **Cause:** the partial clean-up ran for any folder `removable` refused, install or not.
+- **Reproduce:** record an install, delete its `ap_coder/`, start a newer one.
+- **Reproduced:** yes
+- **Fix:** only an AP Coder install is touched; any other recorded folder is said (*Kept X: it is no longer an AP Coder
+  folder, so nothing in it was touched*) and taken off the record. A folder that is the data folder keeps its
+  `models/`; a link inside one is never followed.
+- **Test:** `tests/test_update_cleanup_data.py::test_a_recorded_folder_that_is_no_longer_an_install_is_not_touched`,
+  `::test_the_data_folders_models_are_kept_when_the_data_folder_is_the_old_folder`
+- **Lesson:** A record says what a folder was, not what it is: check again before acting on it.
+
+#### B-560 · A link to an old folder was renamed and said to be "mostly removed" at every start · low
+- **Where:** `scripts/upgrade.py` (`clean_up`, `is_link`)
+- **Symptom:** a symlinked old folder: the link became `<link>.removing-<date>`, the window said *most of it was
+  removed; the rest is removed on a later start*, again at later starts; nothing behind it was deleted.
+- **Cause:** `remove_folder` renames first; renaming a link moves only the link.
+- **Reproduce:** record a symlink to an older install as an install, start a newer one.
+- **Reproduced:** yes
+- **Fix:** links (and Windows junctions) are never renamed, followed or emptied: *Skipped X: it is a link to another
+  folder, so nothing was removed*, and they are taken off the record.
+- **Test:** `tests/test_update_cleanup_data.py::test_a_link_to_an_old_folder_is_skipped_not_renamed`
+- **Lesson:** Clean-up code that walks or renames must decide what to do with links before it touches anything.
+
+#### B-561 · The queue held the coding accuracy against the target too early, counting kept guesses · low
+- **Where:** `ap_coder/web/pages/review.py` (`kpis`)
+- **Symptom:** after 50 lines approved, mostly kept guesses, the queue showed the distance to the 90% target while
+  the Learning page still said *GL suggestions improve as you approve*.
+- **Cause:** the queue passed `lines_reviewed` (guesses included) to `accuracy_note`; the accuracy itself counts only
+  measured lines (B-475), as the Learning page does.
+- **Reproduce:** metrics with 400 lines reviewed, 10 measured; open the queue.
+- **Reproduced:** yes
+- **Fix:** the queue passes `lines_measured`.
+- **Test:** `tests/test_trust_review.py::test_queue_accuracy_note_counts_measured_lines_not_guesses`
+- **Lesson:** Two screens showing one figure must take it from the same count.
+
+#### B-562 · Without a cost center list, an untouched line counted as a correction · medium
+- **Where:** `ap_coder/core/store.py` (`approve_invoice`), `ap_coder/web/invoice_view.py` (`ai_changes`, `learn_text`)
+- **Symptom:** no cost center list (the pilot's set-up, D-53); a line coded from memory that held a cost center (ERP
+  history with a cost center column, approvals before the list was removed). Approved untouched, the bar said
+  *1 you changed*, the approval recorded a correction and a `line_coding` edit, and the accuracy fell.
+- **Cause:** the coder copies the remembered cost center into the line whatever the list; the page shows and posts
+  none without a list (B-528), so the approval compared "CC200" with "".
+- **Reproduce:** sample setup without cost centers; an invoice whose line is GL 6000, CC "CC200", reasoning
+  "Approved 3 times for this vendor"; post the page's own fields to /check, then approve.
+- **Reproduced:** yes (found by the merge review of trust-review + nav-settings)
+- **Fix:** without a cost center list the AI's cost center is not part of what it proposed: the approval, the
+  change count and the "Teaches from" line compare the GL account only.
+- **Test:** `tests/test_trust_review.py::test_without_a_cost_center_list_a_cost_center_from_memory_is_no_change`
+- **Lesson:** When a field is hidden from the screen, every comparison against what the screen posts must hide it too.
+
+#### Looked at and left (install, launcher and updates)
+
+- **N-251** · A GitHub ZIP unzipped over an older one leaves the files the newer one no longer has (the offline
+  bundle's manifest lists its files, so a bundle removes them: `upgrade.prune_stale`; a ZIP has no list). A file
+  left in `ap_coder/` could still be imported; none is today. A ZIP could carry a file list, but GitHub builds it.
+- **N-252** · A window of AP Coder 0.2.0 or older, still open when 0.3.0 takes over, still just ends: the message
+  comes from the old window's own code (B-545).
+- **N-253** · The `windows-github-zip` CI job (B-549) was written without a Windows computer to run it on; its first
+  runs may need a fix of the job itself (the steps it checks were run on Linux with the same ZIPs).

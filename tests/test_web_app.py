@@ -52,25 +52,28 @@ def test_every_page_in_the_rail_answers(client):
         assert f"<title>{page.title} · AP Coder</title>".replace("&", "&amp;") in response.text, page.path
         assert 'aria-current="page"' in response.text
     text = client.get("/help").text
-    for page in PAGES:  # the rail lists every page, in its sections
+    for page in PAGES:  # the rail lists every page (the less used ones under More)
         assert f'href="{page.path}"' in text
-    for section in ("Work", "Close &amp; compliance", "Master data", "Analytics", "System"):
-        assert section in text
+    assert 'id="nav-more"' in text and "System" in text  # (the page's section, in its breadcrumbs)
     assert "Offline · Data stays on this computer" in text
 
 
-NAV_SECTIONS = {
+NAV_SECTIONS = {  # the breadcrumbs' sections
     "Work": ["review", "process", "search"],
     "Close & compliance": ["exports", "month_end", "sales_tax", "statements"],
     "Master data": ["vendors", "purchase_orders", "accounts"],
     "Analytics": ["learning", "spend", "insights", "activity"],
     "System": ["settings", "help"],
 }
+RAIL_ORDER = ["review", "process", "search", "exports", "accounts",  # then More:
+              "month_end", "sales_tax", "statements", "vendors", "purchase_orders", "learning", "spend", "insights",
+              "activity", "settings", "help"]  # fmt: skip
 
 
 def test_rail_order_and_sections():
-    assert [p.key for p in PAGES] == [k for keys in NAV_SECTIONS.values() for k in keys]
+    assert [p.key for p in PAGES] == RAIL_ORDER
     assert {p.key: p.section for p in PAGES} == {k: s for s, keys in NAV_SECTIONS.items() for k in keys}
+    assert [p.key for p in PAGES if p.more] == RAIL_ORDER[5:14]
 
 
 def test_unknown_pages_and_invoices_are_not_found(client):

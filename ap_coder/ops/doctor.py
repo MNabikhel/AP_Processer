@@ -94,15 +94,22 @@ _PACKAGES = {
 _INSTALL_FIX = "run APProcessor.bat (Mac: APProcessor.command); it installs from the offline bundle"
 
 
+def ap_coder_build() -> str:
+    """``0.3.0, build 3dacb6f, 2026-10-21 20:14``: which AP Coder this is (every 0.2.0 looked the same before)."""
+    from .. import __version__
+    from ..core import paths
+
+    label = paths.build_label(paths.install_identity(paths.PROJECT_DIR))
+    return f"{__version__}, {label}" if label else __version__
+
+
 def _python_check(version: tuple[int, ...]) -> tuple[str, str, str]:
-    """3.11 or newer is what the launcher uses and the docs name (no upper bound); 3.10 still runs (CI tests it)
-    but warns."""
+    """3.11 or newer, as pyproject's requires-python, the launcher and the docs say (no upper bound; CI tests 3.11 to
+    3.14)."""
     shown = ".".join(str(n) for n in version[:3])
     if tuple(version[:2]) >= (3, 11):
         return "python", PASS, f"{shown} (3.11 or newer)"
-    if tuple(version[:2]) < (3, 10):
-        return "python", FAIL, f"{shown} (need 3.11 or newer)"
-    return "python", WARN, f"{shown} (older than the 3.11 or newer AP Coder uses)"
+    return "python", FAIL, f"{shown} (need 3.11 or newer: run APProcessor, which makes .venv with a newer Python)"
 
 
 def run_checks(
@@ -119,6 +126,7 @@ def run_checks(
         checks.append(Check(area, status, detail))
 
     # --- Runtime -------------------------------------------------------------
+    add("AP Coder", PASS, ap_coder_build())
     add(*_python_check(sys.version_info))
     for pkg in _PACKAGES:
         v = _version(pkg)
@@ -360,7 +368,37 @@ def _aoai_hint(exc: Exception) -> str:
     return hints.get(status, "") if isinstance(status, int) else ""
 
 
+# What only a build that may use the internet (AP_ALLOW_INTERNET=1) has: Azure's endpoints and connections, the size of
+# the prompt sent to Azure OpenAI, and its package. The offline build's report leaves them out (B-516).
+CLOUD_AREAS = (
+    "DI endpoint", "DI auth", "DI model", "DI connectivity", "AOAI endpoint", "AOAI auth", "AOAI api version",
+    "AOAI model", "AOAI connectivity", "vision mode", "prompt size", "package azure-ai-documentintelligence",
+)  # fmt: skip
+
+
+def for_this_build(checks: list[Check]) -> list[Check]:
+    """The checks as this build's report shows them: in the offline build without the cloud's (``CLOUD_AREAS``),
+    the GL list without "schema enum" (Azure OpenAI's word for it), and the openai package named for what it does
+    here (LM Studio's client)."""
+    if internet_allowed():
+        return checks
+    out = []
+    for c in checks:
+        if c.area in CLOUD_AREAS:
+            continue
+        detail = c.detail.replace("; enforced as schema enum", "; codes limited to the list")
+        detail = detail.replace(
+            "; too many codes for schema enums -> free-text codes + local validation",
+            "; too many codes to limit the AI to them: each is checked after it answers",
+        )
+        if c.area == "package openai" and c.status == PASS:
+            detail += " (LM Studio's client)"
+        out.append(Check(c.area, c.status, detail))
+    return out
+
+
 def format_checks(checks: list[Check]) -> str:
+    checks = for_this_build(checks)
     lines = ["## AP Coder doctor report (no secrets or endpoint URLs included)", ""]
     width = max(len(c.area) for c in checks)
     for c in checks:

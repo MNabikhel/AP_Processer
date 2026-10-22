@@ -37,7 +37,7 @@ from ..coding.tax import DEFAULT_TREATMENTS, TAX_TYPES, TREATMENTS, TaxRateTable
 from ..coding.terms import DEFAULT_TERMS_DAYS, payment
 from ..coding.vendors import norm_invoice_number
 from .audit import diff_coding
-from .memory import ACCEPTED, CORRECTED, VENDOR_KEY_RULES, pair_lines, refresh_vendor_key, vendor_key
+from .memory import ACCEPTED, CODED, CORRECTED, VENDOR_KEY_RULES, pair_lines, refresh_vendor_key, vendor_key
 from .paths import PROJECT_DIR, default_db_path, find_moved_file, private_dir  # noqa: F401  (re-exported)
 from .reference_data import UNASSIGNED, ReferenceData, ReferenceTable, parse_policy_notes
 
@@ -282,6 +282,31 @@ def suggestion_kept(s_gl: str | None, s_cc: str | None, f_gl: str, f_cc: str | N
     if s_gl is None or (gl_blank and cc_blank):
         return False
     return (gl_blank or s_gl == f_gl) and (cc_blank or s_cc == (f_cc or ""))
+
+
+def line_guessed(suggestion: dict[str, Any] | None, rule: dict[str, Any] | None = None) -> bool:
+    """Whether the AI only guessed this line's account (``offline_coder.guessed``: the chat model's own pick, an
+    older version's weak match), also under a fixed coding rule that replaced the guess (``rule``: its entry in the
+    invoice's ``rules_applied``, which says ``from_guess``)."""
+    from ..ai.offline_coder import guessed
+
+    if rule is not None and "from_guess" in rule:
+        return bool(rule["from_guess"])
+    return bool(suggestion) and guessed((suggestion or {}).get("reasoning_justification"))
+
+
+def proposed_coding(suggestion: dict[str, Any] | None) -> tuple[str | None, str | None]:
+    """(GL account, cost center) the AI really proposed for a line (``suggestion``: the line as read, None: no line).
+    An account no approval backs (the chat model's own pick, an older version's weak match: ``offline_coder.guessed``)
+    was a guess for a person to check, not a proposal: it counts as left blank, so a reviewer who keeps it coded the
+    line, and coding accuracy and the lessons never count it as "coded as suggested" (B-463)."""
+    if not suggestion:
+        return None, None
+    from ..ai.offline_coder import guessed
+
+    if guessed(suggestion.get("reasoning_justification")):
+        return UNASSIGNED, ""
+    return suggestion.get("predicted_gl_code"), suggestion.get("predicted_cost_center", "")
 
 
 def fold_text(value: Any) -> Any:
@@ -1463,28 +1488,35 @@ class Store:
         vendor_name = final_output.get("vendor_name", "")
         key = vendor_key(vendor_name)
         now = _now()
-        counts = {ACCEPTED: 0, CORRECTED: 0}
+        counts = {ACCEPTED: 0, CORRECTED: 0, CODED: 0}
         reviewer_changed = 0
         # Lines a fixed coding rule set: the AI's own answer is what its accuracy is measured on.
         by_rule = {c["line_number"]: c for c in (inv.get("meta") or {}).get("rules_applied") or []}
         feedback_rows = []
 
         kept = suggestion_kept
+        # Without a cost center list the review screen has none to show or keep: a cost center the AI copied from
+        # coding memory is not part of what it proposed (B-562).
+        cost_centers = bool(self.list_accounts("cost_centers"))
 
         for suggestion, li in pair_lines(ai.get("line_items", []), final_output.get("line_items", [])):
             s_gl = suggestion.get("predicted_gl_code") if suggestion else None
-            s_cc = suggestion.get("predicted_cost_center", "") if suggestion else None
+            s_cc = (suggestion.get("predicted_cost_center", "") if cost_centers else "") if suggestion else None
             f_gl, f_cc = li["predicted_gl_code"], li.get("predicted_cost_center", "")
             if f_gl == UNASSIGNED:
                 continue  # not a coding decision: nothing to learn from it
             rule = by_rule.get(suggestion.get("line_number")) if suggestion else None
+            guess = line_guessed(suggestion, rule)
             kept_rule = rule is not None and rule.get("gl_to") == f_gl and (rule.get("cc_to") or "") == (f_cc or "")
-            if not kept_rule and not kept(s_gl, s_cc, f_gl, f_cc):
+            # A kept guess is no edit; another account in its place is (B-479), as any change to what was proposed.
+            replaced = (f_gl != s_gl or (f_cc or "") != (s_cc or "")) if guess else not kept(s_gl, s_cc, f_gl, f_cc)
+            if not kept_rule and replaced:
                 reviewer_changed += 1
             if rule is not None:  # the AI's own answer, as first recorded (not a rule's)
                 s_gl, s_cc = rule.get("gl_from"), rule.get("cc_from", "")
-            # Accuracy measures what the AI proposed: the blanks it left are not counted against it.
-            outcome = ACCEPTED if kept(s_gl, s_cc, f_gl, f_cc) else CORRECTED
+            # Accuracy measures what the AI proposed: the blanks it left are not counted against it. A line whose
+            # account it only guessed is the reviewer's own coding: neither confirmed nor corrected (B-475).
+            outcome = CODED if guess else ACCEPTED if kept(s_gl, s_cc, f_gl, f_cc) else CORRECTED
             counts[outcome] += 1
             feedback_rows.append(
                 (
@@ -1542,6 +1574,7 @@ class Store:
                 feedback_rows = []  # nobody checked it: nothing to learn from, nothing to measure accuracy on
             self._log(conn, "approved", invoice_id, reviewer, {
                 "lines": len(final_output.get("line_items", [])), "corrected": counts[CORRECTED],
+                **({"coded": counts[CODED]} if counts[CODED] else {}),
                 "total": final_output.get("grand_total"), "changes": diff_coding(ai, final_output),
                 **({"bulk": True} if bulk else {}),
                 **({"needs_second": True, "second_reason": second_reason} if needs_second else {}),
@@ -2593,10 +2626,17 @@ class Store:
             read["status"] = PAGE_WAITING
         return read
 
-    def page_reads_waiting(self) -> int:
-        """How many invoices wait for the page reader (interrupted reads included)."""
+    def page_reads_waiting(self, still_open: bool = False) -> int:
+        """How many invoices wait for the page reader (interrupted reads included). ``still_open``: only those not
+        approved, rejected or exported yet, the ones a person waits for (the reader still reads the others, to score
+        itself against what AP approved)."""
+        sql = f"SELECT COUNT(*) FROM page_reads WHERE {_IN_LINE}"
+        args: list[Any] = [_stale_before()]
+        if still_open:
+            sql += " AND invoice_id IN (SELECT id FROM invoices WHERE status IN (?, ?, ?))"
+            args += [REVIEW, PARKED, PENDING]
         with self._conn() as conn:
-            row = conn.execute(f"SELECT COUNT(*) FROM page_reads WHERE {_IN_LINE}", (_stale_before(),)).fetchone()
+            row = conn.execute(sql, args).fetchone()
         return int(row[0])
 
     def page_read_pages_average(self, recent: int = 50) -> float | None:
@@ -3323,7 +3363,7 @@ class Store:
             lessons = {
                 r["vendor_key"]: dict(r)
                 for r in conn.execute(
-                    """SELECT vendor_key, COUNT(*) lessons, SUM(outcome != 'history') lines,
+                    """SELECT vendor_key, COUNT(*) lessons, SUM(outcome NOT IN ('history', 'coded')) lines,
                               SUM(outcome = 'accepted') accepted FROM feedback GROUP BY vendor_key"""
                 )
             }
@@ -3354,7 +3394,21 @@ class Store:
                 r[field] = master.get(field) or ""
             r["in_master"] = master.get("in_master") == 1
             r["added_here"] = master.get("in_master") == 2
+            r["has_record"] = bool(master)  # in the vendor list, added here or set up by AP (on hold, notes)
         return sorted(rows, key=lambda r: -r["spend_in_cad"])
+
+    def vendor_name_checks(self, ids: list[int]) -> dict[int, str]:
+        """{invoice id: how sure the capture is of its vendor name} ("verified", "likely", "check", "missing"), in
+        one query; an invoice with no capture is left out (the review queue's "check" mark, B-471)."""
+        if not ids:
+            return {}
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT invoice_id, json_extract(capture_json, '$.fields.vendor_name.status') FROM invoice_capture "
+                f"WHERE {_in_list('invoice_id')}",
+                (json.dumps([int(i) for i in ids]),),
+            ).fetchall()
+        return {int(r[0]): str(r[1] or "") for r in rows}
 
     def vendor_gl_usage(self, key: str) -> list[dict[str, Any]]:
         """GL accounts reviewers used for this vendor's lines, most used first."""
@@ -3707,12 +3761,12 @@ class Store:
             daily = conn.execute(
                 """SELECT substr(created_at, 1, 10) day,
                           SUM(outcome = 'accepted') accepted, SUM(outcome = 'corrected') corrected
-                   FROM feedback WHERE outcome != 'history' GROUP BY day"""
+                   FROM feedback WHERE outcome NOT IN ('history', 'coded') GROUP BY day"""
             ).fetchall()
             by_vendor = conn.execute(
                 """SELECT vendor_name, COUNT(*) lines, SUM(outcome = 'accepted') accepted,
                           SUM(outcome = 'corrected') corrected, MAX(created_at) last_seen
-                   FROM feedback WHERE outcome != 'history' GROUP BY vendor_key ORDER BY lines DESC"""
+                   FROM feedback WHERE outcome NOT IN ('history', 'coded') GROUP BY vendor_key ORDER BY lines DESC"""
             ).fetchall()
             corrections = conn.execute(
                 """SELECT COALESCE(suggested_gl, '(new line)') suggested_gl, final_gl, COUNT(*) n
@@ -3730,12 +3784,16 @@ class Store:
             week["accepted"] += r["accepted"] or 0
             week["corrected"] += r["corrected"] or 0
         outcome = {r["outcome"]: r["n"] for r in lines}
-        total = sum(outcome.values())
+        # Every line AP reviewed (and AP Coder learns from), the ones it coded over a guess too (B-479); the accuracy
+        # measures only what the AI proposed: confirmed or corrected (B-475).
+        measured = outcome.get(ACCEPTED, 0) + outcome.get(CORRECTED, 0)
         return {
-            "lines_reviewed": total,
+            "lines_reviewed": sum(outcome.values()),
+            "lines_measured": measured,
+            "lines_coded": outcome.get(CODED, 0),
             "lines_accepted": outcome.get(ACCEPTED, 0),
             "lines_corrected": outcome.get(CORRECTED, 0),
-            "line_accuracy": round(outcome.get(ACCEPTED, 0) / total, 4) if total else None,
+            "line_accuracy": round(outcome.get(ACCEPTED, 0) / measured, 4) if measured else None,
             "invoices_by_status": {r["status"]: r["n"] for r in statuses},
             "invoices_approved_without_edits": untouched,
             "weekly": [weeks[w] for w in sorted(weeks)],
@@ -3765,14 +3823,16 @@ def _tax_signature(output: dict[str, Any]) -> list[tuple[str, float]]:
 SAMPLE_DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
 
 
-def load_sample_setup(store: Store, data_dir: Path = SAMPLE_DATA_DIR) -> None:
-    """Load the bundled sample GL accounts, cost centers, tax mapping and policy (for trying things out)."""
+def load_sample_setup(store: Store, data_dir: Path = SAMPLE_DATA_DIR, cost_centers: bool = True) -> None:
+    """Load the bundled sample GL accounts, tax mapping and policy (for trying things out), and with ``cost_centers``
+    the sample cost centers. The dashboard's "Use the sample GL accounts" and the demo leave the cost centers out: the
+    pilot codes each line to a GL account only (D-53); a cost center list can still be imported later."""
     import csv
 
-    for table, filename, code_col in (
-        ("gl_accounts", "chart_of_accounts.csv", "gl_code"),
-        ("cost_centers", "cost_centers.csv", "cost_center"),
-    ):
+    tables = [("gl_accounts", "chart_of_accounts.csv", "gl_code")]
+    if cost_centers:
+        tables.append(("cost_centers", "cost_centers.csv", "cost_center"))
+    for table, filename, code_col in tables:
         with (data_dir / filename).open(encoding="utf-8-sig", newline="") as fh:
             rows = list(csv.DictReader(fh))
         store.import_accounts(table, rows, code_col, "description", "category")
@@ -3780,6 +3840,15 @@ def load_sample_setup(store: Store, data_dir: Path = SAMPLE_DATA_DIR) -> None:
         for row in csv.DictReader(fh):
             store.set_tax_treatment(row["tax_type"], row["treatment"], row.get("gl_code") or "")
     store.set_setting("policy_notes", (data_dir / "coding_policy.md").read_text(encoding="utf-8-sig"))
+
+
+def load_sample_cost_centers(store: Store, data_dir: Path = SAMPLE_DATA_DIR) -> None:
+    """Load the bundled sample cost centers on their own: the list a company that codes to cost centers imports
+    later (the sample setup leaves them out, D-53)."""
+    import csv
+
+    with (data_dir / "cost_centers.csv").open(encoding="utf-8-sig", newline="") as fh:
+        store.import_accounts("cost_centers", list(csv.DictReader(fh)), "cost_center", "description", "category")
 
 
 def load_sample_vendor_master(store: Store, data_dir: Path = SAMPLE_DATA_DIR, only_new: bool = False) -> list[str]:

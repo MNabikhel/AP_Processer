@@ -14,7 +14,11 @@ The code is in `ap_coder/erp/jde.py` (pure logic), the settings in `ap_coder/web
 
 ## Using it
 
-1. **Settings → JD Edwards E1**: company, user ID, batch prefix, document type, the amount and account
+The pilot exports to Excel and CSV, so the JD Edwards E1 tab and export format are hidden until **Settings → About
+→ Show JD Edwards settings** is ticked (D-52). A database already set up for JD Edwards (its settings saved, or a JD
+Edwards batch made) has it turned on by itself when it is updated: nothing is taken away.
+
+1. **Settings → JD Edwards E1** (once *Show JD Edwards settings* is on): company, user ID, batch prefix, document type, the amount and account
    formats, the GL → BU.Object.Subsidiary mapping (a table, or import a CSV / Excel file), the province →
    tax area table and, if used, PO-matched vouchers. Go through the *Confirm with your JDE team* checklist.
 
@@ -28,7 +32,8 @@ The code is in `ap_coder/erp/jde.py` (pure logic), the settings in `ap_coder/web
 2. **Supplier numbers**: each vendor's JDE address number (AN8) comes from the vendor master's ERP ID
    (Vendors page → import the vendor master from E1). A vendor whose ERP ID is not its address number can
    be given one in Settings → JD Edwards E1 → *Supplier address numbers*.
-3. **Exports**: pick the invoices, choose *JD Edwards E1*, and export. Invoices that fail the checks
+3. **Exports**: pick the invoices, choose *JD Edwards E1* (offered once *Show JD Edwards settings* is on), and
+   export. Invoices that fail the checks
    (below) are listed with the reasons and are **left out of the batch**; they stay in *Ready to export*.
    Before exporting, **Dry run** (on Exports, with *JD Edwards E1* chosen) downloads exactly what a batch of
    the ready invoices would load, without making one (`jde.dry_run`): for each voucher its supplier (AN8), tax
@@ -252,8 +257,8 @@ decimal point, AEXP (amount, in the amount format) and CRCD (currency).
 
 ## Open questions for the JDE team
 
-Every question here is in the worksheet (Settings → JD Edwards E1 → *Download the worksheet*); a test checks that
-each one stays covered.
+Every question here is in the worksheet (Settings → JD Edwards E1 → *Download the worksheet*, with *Show JD Edwards
+settings* on in Settings → About); a test checks that each one stays covered.
 
 * Company numbers, the business units for the header (VLMCU) and lines, and the PO company.
 * Document type for imported vouchers (PV or a custom one), credit notes, and the **P0400047 version** run by

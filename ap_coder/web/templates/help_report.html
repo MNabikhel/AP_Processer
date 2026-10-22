@@ -14,7 +14,7 @@
       <li>What you were doing (the page, the button you clicked) and what you expected.</li>
       <li>What happened instead: copy the message AP Coder showed, word for word.</li>
       <li>Name an invoice by its <b>doc</b> number from report 3 below (for example "doc-07"), never by sending the
-        invoice: the file <code>{{ key_file }}</code> on this computer says which invoice each doc number is.</li>
+        invoice: a file in the data folder (<code>share_report_key.csv</code>) says which invoice each doc number is.</li>
     </ul>
   </section>
 
@@ -24,7 +24,8 @@
       <p class="muted">Whether each part of AP Coder is set up and working: no keys, account codes or names.</p></div>
       <button type="button" class="btn" data-copy-from="setup-report"><span class="ms" aria-hidden="true">content_copy</span>Copy</button>
     </div>
-    <textarea id="setup-report" class="hp-report" rows="12" readonly aria-label="The setup report">{{ setup }}</textarea>
+    <textarea id="setup-report" class="hp-report" rows="12" readonly aria-label="The setup report"
+              data-url="/help/report/setup"{% if not setup %} aria-busy="true" placeholder="Gathering the setup report… (a few seconds)"{% endif %}>{{ setup }}</textarea>
   </section>
 
   <section class="card">
@@ -47,8 +48,11 @@
 
   <section class="card">
     <h4><span class="ms" aria-hidden="true">description</span> If AP Coder would not start, or a page went wrong</h4>
-    <p class="muted">The full details are kept in these files on this computer. Attach them if you are asked to.</p>
-    <ul>{% for path in logs %}<li><code>{{ path }}</code></li>{% endfor %}</ul>
+    <p class="muted">The full details are kept in two log files on this computer. Attach them if you are asked to.</p>
+    <details class="st-forit">
+      <summary><span class="ms" aria-hidden="true">engineering</span>For IT: where they are</summary>
+      <ul>{% for path in logs %}<li><code>{{ path }}</code></li>{% endfor %}</ul>
+    </details>
   </section>
 </div>
 {% endblock %}

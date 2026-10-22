@@ -21,7 +21,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        python: ["3.10", "3.12", "3.13", "3.14"]
+        python: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -247,13 +247,135 @@ jobs:
             ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
           Write-Host "dashboard served after $seconds s"
           if (-not $ok) { throw 'the later start did not serve the dashboard within a minute' }
-          if ($out -match 'First run|Collecting|Installing|Running the self-check|Fetching the OCR models') { throw 'the later start set something up again' }
+          if ($out -match 'First run|Collecting|Installing|Running the self-check|Downloading the OCR models') { throw 'the later start set something up again' }
           # (.venv reused: nothing set up again, above. The window no longer names .venv: B-240's plain wording.)
           foreach ($m in @('Python 3\.12\.\d+', 'AP Coder readiness:', 'Packages: all \d+ in place', 'Self-check OK at setup')) {
             if ($out -notmatch $m) { throw "the later start did not print: $m" }
           }
           $links = @(Get-ChildItem ([Environment]::GetFolderPath('Desktop')) -Filter 'AP Coder*.lnk')
           if ($links.Count -ne 1) { throw "expected 1 desktop shortcut, found $($links.Count)" }
+
+  windows-github-zip:
+    # The pilot tester's own path: GitHub's Download ZIP (a git archive: no wheelhouse, no models, ap_coder/BUILD
+    # stamped with the commit), marked as downloaded (Mark of the Web), unzipped with Expand-Archive into a folder whose
+    # path has spaces and an accent, and double-clicked WITHOUT AP_ALLOW_INTERNET: the setup downloads the packages and
+    # OCR models by itself, once. Then a newer ZIP of the same version is unzipped over it while it runs: the new start
+    # stops the old dashboard (its window says a newer AP Coder took over), says "Updated AP Coder from <old build> to
+    # <new build>", runs the self-check again and keeps the data.
+    name: GitHub's ZIP on Windows (unzipped, double-clicked, updated by a newer ZIP)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      AP_NO_PAUSE: "1"
+      BROWSER: none
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Two GitHub ZIPs of this version, an older and a newer build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git archive --format=zip --prefix=AP_Processer-main/ -o "$env:RUNNER_TEMP\old.zip" HEAD
+          git -c user.name=ci -c user.email=ci@example.invalid commit --allow-empty -q -m 'A newer build'
+          git archive --format=zip --prefix=AP_Processer-main/ -o "$env:RUNNER_TEMP\new.zip" HEAD
+          foreach ($zip in 'old', 'new') {
+            # As a browser saves it: the Mark of the Web (zone 3, the internet) on the ZIP.
+            Set-Content -LiteralPath "$env:RUNNER_TEMP\$zip.zip" -Stream Zone.Identifier -Value "[ZoneTransfer]`r`nZoneId=3"
+          }
+          "OLD=$(git rev-parse --short=7 HEAD~1)" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "NEW=$(git rev-parse --short=7 HEAD)" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+      - name: Unzip the older one, double-click it with no opt-in to the internet, use it, then update it with the newer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:AP_ALLOW_INTERNET) { throw 'AP_ALLOW_INTERNET is set: this job is the default GitHub ZIP path' }
+          $parent = Join-Path $env:RUNNER_TEMP 'Pilot tester Ré'
+          $folder = Join-Path $parent 'AP_Processer-main'
+          function Unzip($zip) {
+            Expand-Archive -LiteralPath "$env:RUNNER_TEMP\$zip.zip" -DestinationPath $parent -Force
+            # Explorer's Extract All marks every file it unzips from a marked ZIP: so are these.
+            # (Not .venv nor the lock file the running start holds: they are not in the ZIP.)
+            Get-ChildItem -LiteralPath $folder -Recurse -File |
+              Where-Object { $_.FullName -notlike '*\.venv\*' -and $_.Name -ne '.ap_coder_launch.lock' } |
+              ForEach-Object { Set-Content -LiteralPath $_.FullName -Stream Zone.Identifier -Value "[ZoneTransfer]`r`nZoneId=3" -ErrorAction SilentlyContinue }
+          }
+          function Up($proc, $minutes) {
+            foreach ($i in 1..($minutes * 12)) {
+              Start-Sleep -Seconds 5
+              try { return Invoke-RestMethod -Uri 'http://127.0.0.1:8595/healthz' -TimeoutSec 5 } catch { }
+              if ($proc.HasExited) { return $null }
+            }
+            return $null
+          }
+          function Stop-All {
+            Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and ($_.CommandLine -like '*ap_coder*' -or $_.CommandLine -like '*launch.py*') } |
+              ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+          }
+          try {
+            Unzip 'old'
+            $build = (Get-Content -LiteralPath "$folder\ap_coder\BUILD" -Raw).Trim()
+            Write-Host "ap_coder\BUILD: $build"
+            if ($build -notmatch "^$env:OLD ") { throw "the ZIP's build stamp was not filled in: $build" }
+            $old = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', 'APProcessor.bat', '--port', '8595' -PassThru `
+              -WorkingDirectory $folder -RedirectStandardOutput "$env:RUNNER_TEMP\old.out" -RedirectStandardError "$env:RUNNER_TEMP\old.err"
+            $health = Up $old 20
+            $out = Get-Content "$env:RUNNER_TEMP\old.out" -Raw -ErrorAction SilentlyContinue
+            Write-Host $out
+            Get-Content "$env:RUNNER_TEMP\old.err" -Tail 40 -ErrorAction SilentlyContinue
+            if (-not $health) { throw 'GitHub''s ZIP did not bring the dashboard up' }
+            if ($health.build -ne $env:OLD) { throw "the dashboard says build $($health.build), not $env:OLD" }
+            foreach ($m in @('First run', 'Making AP Coder.s own Python environment', 'GitHub.s ZIP', 'Installed \d+ packages',
+                             'OCR models ready|Couldn.t download the (OCR models|table finder)|couldn.t reach www', 'LM Studio isn.t running',
+                             'GL accounts: none imported yet', 'Self-check OK: \d+ of \d+')) {
+              if ($out -notmatch $m) { throw "the first start did not print: $m" }
+            }
+            if ($out -match 'AP_ALLOW_INTERNET=1 allows|URLError|Traceback') { throw 'it said something it should not' }
+            # The launcher takes the Mark of the Web off its own launchers (so Windows stops asking "Do you want to run
+            # this file?"): gone from APProcessor.bat, still on the rest.
+            $motw = Get-Item -LiteralPath "$folder\APProcessor.bat" -Stream Zone.Identifier -ErrorAction SilentlyContinue
+            if ($motw) { throw 'APProcessor.bat still has the Mark of the Web' }
+            if (-not (Get-Item -LiteralPath "$folder\pyproject.toml" -Stream Zone.Identifier -ErrorAction SilentlyContinue)) { throw 'the files were not marked as downloaded' }
+            # Something of the pilot tester's in the data folder, to find again after the update.
+            $data = (Get-Content (Join-Path $env:USERPROFILE '.ap_coder\settings.json') | ConvertFrom-Json).data_dir
+            Copy-Item -LiteralPath "$folder\samples\harbourview_NS_HST_HPS-2026-0347.pdf" -Destination "$data\invoices\kept.pdf"
+            Add-Content -LiteralPath "$data\.env" -Value '# the pilot tester''s line: kept by the update'
+            if (-not (Test-Path "$data\ap_coder.db")) { throw "no database in $data" }
+
+            # The newer ZIP, unzipped over the older one while its dashboard runs, and double-clicked.
+            Unzip 'new'
+            $new = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', 'APProcessor.bat', '--port', '8595' -PassThru `
+              -WorkingDirectory $folder -RedirectStandardOutput "$env:RUNNER_TEMP\new.out" -RedirectStandardError "$env:RUNNER_TEMP\new.err"
+            $health = $null
+            foreach ($i in 1..120) {
+              Start-Sleep -Seconds 5
+              try { $h = Invoke-RestMethod -Uri 'http://127.0.0.1:8595/healthz' -TimeoutSec 5; if ($h.build -eq $env:NEW) { $health = $h; break } } catch { }
+              if ($new.HasExited) { break }
+            }
+            $out = Get-Content "$env:RUNNER_TEMP\new.out" -Raw -ErrorAction SilentlyContinue
+            Write-Host $out
+            Get-Content "$env:RUNNER_TEMP\new.err" -Tail 40 -ErrorAction SilentlyContinue
+            $oldOut = Get-Content "$env:RUNNER_TEMP\old.out" -Raw -ErrorAction SilentlyContinue
+            Write-Host "--- the older window, at the end:"
+            Write-Host (($oldOut -split "`n") | Select-Object -Last 5 | Out-String)
+            if (-not $health) { throw 'the newer build did not take over' }
+            foreach ($m in @("stopping it, so this version takes over", "Updated AP Coder from 0\.\d+\.\d+ \(build $env:OLD, [\d-]+\) to 0\.\d+\.\d+ \(build $env:NEW, [\d-]+\)",
+                             'Running the self-check', 'Self-check OK: \d+ of \d+')) {
+              if ($out -notmatch $m) { throw "the update did not print: $m" }
+            }
+            if ($out -match 'First run|Self-check OK at setup|Installed \d+ packages') { throw 'the update set everything up again, or skipped the self-check' }
+            if ($oldOut -notmatch 'A newer AP Coder took over; you can close this window') { throw 'the older window did not say a newer AP Coder took over' }
+            if (-not $old.HasExited) { throw 'the older window is still running' }
+            # The data is kept.
+            if (-not (Test-Path "$data\invoices\kept.pdf")) { throw 'the invoice in the data folder is gone' }
+            if (-not (Select-String -LiteralPath "$data\.env" -Pattern 'kept by the update' -SimpleMatch -Quiet)) { throw 'the .env line is gone' }
+            if (-not (Test-Path "$data\ap_coder.db")) { throw 'the database is gone' }
+            $about = Invoke-WebRequest -Uri 'http://127.0.0.1:8595/settings/about' -UseBasicParsing -TimeoutSec 20
+            if ($about.Content -notmatch "build $env:NEW") { throw 'Settings > About does not say the build' }
+          } finally {
+            Stop-All
+          }
 
   windows-offline-bundle:
     # The air-gapped pilot: build the offline bundle, unzip it on Windows and install it with the internet

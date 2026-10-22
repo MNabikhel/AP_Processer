@@ -73,10 +73,10 @@ def test_the_needs_attention_threshold_label_is_one_sentence(client):
     assert re.fullmatch(r"\s*<span>Send to <i>Needs attention</i> when the AI's confidence is below</span>\s*", label)
 
 
-def test_getting_started_asks_for_your_province_without_counting_it(tmp_path, monkeypatch):
+def test_getting_started_asks_for_your_province_and_counts_it(tmp_path, monkeypatch):
     """No step said where invoices are delivered to you: with no ship-to read, every invoice said "Province of supply
     unknown; tax regime cannot be verified" and the sales tax went unchecked, and nothing pointed at Settings →
-    Review, where the province is set. The step is recommended, not counted (the ring stays as it was)."""
+    Review, where the province is set. The step counts like the others (B-503: the ring counts every row shown)."""
     from ap_coder.web.pages import process
 
     monkeypatch.setattr(process, "ocr_available", lambda: True)
@@ -84,14 +84,14 @@ def test_getting_started_asks_for_your_province_without_counting_it(tmp_path, mo
     client = TestClient(_app(fresh), base_url="http://localhost")
     page = client.get("/review").text
     started = page.split("Getting started", 1)[1]
-    assert "Your province" in started and "recommended" in started
+    assert "Your province" in started and "Settings → Review" in started
     assert 'href="/settings/review">Your province' in started
     ring = re.search(r"aria-label='(\d+)/(\d+)'", page).groups()
-    assert ring[1] == "6"  # counted as before (whatever else is done on this computer)
+    assert ring[1] == "7"
     fresh.set_setting("our_province", "ON")
     page = client.get("/review").text
     assert "Ontario" in page.split("Getting started", 1)[1]
-    assert re.search(r"aria-label='(\d+)/(\d+)'", page).groups() == ring  # still not counted
+    assert re.search(r"aria-label='(\d+)/(\d+)'", page).groups() == (str(int(ring[0]) + 1), "7")
     assert "Your province" in client.get("/process").text
 
 
@@ -450,8 +450,10 @@ def test_with_lm_studio_off_the_review_screen_says_it_once(client, store):
     laptop the invoice's picture started at the bottom of the screen."""
     inv = store.list_invoices(REVIEW)[0]
     page = client.get(f"/review/{inv['id']}").text
-    banner = html.unescape(page.split('<div class="banner', 1)[1].split("</div>", 1)[0])
-    assert "LM Studio isn't running" in banner and "a person approves it" in banner
+    # B-467: no banner on the review screen (the queue has it), one short note in its top row
+    assert '<div class="banner' not in page
+    note = html.unescape(page.split('class="apc-pill warn rvw-lm"', 1)[1].split("</span>", 2)[1])
+    assert "LM Studio isn't running" in note and "a person approves it" in note
     assert "OvisOCR2 isn't running: see Settings" not in page
     assert "checks this invoice against its pages when the chat model is free" not in page
     assert "OvisOCR2 isn't running" not in client.get(f"/review/{inv['id']}/reader").json()["html"]
@@ -460,15 +462,12 @@ def test_with_lm_studio_off_the_review_screen_says_it_once(client, store):
 
 def test_in_a_browser_report_a_problem_shows_it_is_working(browser, store):
     """Help → Report a problem took about 3 s the first time (it gathers the setup report) with nothing on the screen
-    saying so: the link now says it is gathering the reports while the page comes."""
-    page, errors = _open(browser, "/help")
-    # the click as the browser handles it, the page left where it is (so what the link turned into can be read)
-    link = page.evaluate(
-        "() => { window.addEventListener('click', (e) => e.preventDefault(), {once: true});"
-        " const a = document.querySelector('a[href=\"/help/report\"]'); a.click();"
-        " return [a.getAttribute('aria-busy'), a.textContent]; }"
-    )
-    assert link == ["true", "Gathering the reports…"], link
+    saying so. The page now opens at once and fetches the setup report after (B-520): its box says it is gathering
+    it, then holds it."""
+    page, errors = _open(browser, "/help/report")
+    box = page.locator("#setup-report")
+    assert box.get_attribute("placeholder") and "Gathering" in box.get_attribute("placeholder")
+    page.wait_for_function("() => document.getElementById('setup-report').value.includes('doctor report')")
     assert errors == []
 
 
@@ -486,6 +485,69 @@ def test_in_a_browser_with_lm_studio_off_the_invoice_shows_above_the_fold(browse
     top = page.locator(".iv-sheet").first.bounding_box()["y"]
     bar = page.locator(".inv-actionbar").bounding_box()["y"]
     assert bar - top >= 150, (top, bar)  # a good part of the page shows above the approve bar
+    assert errors == []
+
+
+def test_in_a_browser_at_1366_the_page_and_the_line_grid_show_together(browser, store):
+    """B-467: at 1366 x 768 only 150-200 px of the invoice's page showed, the line grid started about 1,200 px down
+    and its Qty and Unit price scrolled sideways."""
+    page, errors = _review(browser, store)
+    sheet = page.locator(".iv-sheet").first.bounding_box()
+    bar = page.locator(".inv-actionbar").bounding_box()["y"]
+    assert bar - sheet["y"] >= 300, (sheet, bar)
+    grid = page.locator("#lines").bounding_box()
+    assert grid["y"] < 768, grid  # beside the page, under the checks
+    wrap = page.evaluate(
+        "(() => { const w = document.querySelector('#lines').closest('.table-wrap');"
+        " return [w.scrollWidth, w.clientWidth, document.documentElement.scrollWidth]; })()"
+    )
+    assert wrap[0] <= wrap[1] and wrap[2] <= 1366, wrap  # nothing scrolls sideways
+    for name in ("line_quantity", "line_unit_price", "line_amount"):
+        box = page.locator(f"[name={name}] >> nth=0").bounding_box()
+        assert box["x"] + box["width"] <= grid["x"] + grid["width"] + 1, (name, box, grid)
+    page.mouse.move(900, 400)
+    page.mouse.wheel(0, 1200)
+    page.wait_for_timeout(300)
+    assert page.locator(".inv-doc").bounding_box()["y"] >= 0  # the page stays in view (sticky)
+    assert not page.locator(".banner").count()  # LM Studio's banner is on the queue, not here
+    assert errors == []
+
+
+def test_in_a_browser_tab_follows_the_line_grid_as_it_shows_and_the_page_view_ends_above_the_bar(browser, store):
+    """B-478: Tab went description → amount → GL → taxes → qty → unit price, across the two rows on screen; in Fit
+    mode the bottom 80-170 px of the page view sat under the approve bar; an amount of "-199.98" was cut off."""
+    page, errors = _review(browser, store)
+    page.click("textarea[name=line_description] >> nth=0")
+    seen = []
+    for _ in range(12):
+        box = page.evaluate(
+            "(() => { const e = document.activeElement; const r = e.closest('td').getBoundingClientRect();"
+            " return [e.name || e.getAttribute('aria-label') || e.tagName, r.top, r.left,"
+            " e.closest('tr') === document.querySelector('[data-grid=lines] tr')]; })()"
+        )
+        if not box[3]:
+            break
+        seen.append(box)
+        page.keyboard.press("Tab")
+    names = [b[0] for b in seen if b[0] != "line_cc"]  # the demo uses cost centers: beside the GL account
+    assert names[:4] == ["line_description", "Delete this line", "line_gl", "line_amount"], names
+    assert names[-2:] == ["line_quantity", "line_unit_price"], names
+    rows = [round(b[1] / 20) for b in seen]  # rows on screen, then left to right in each
+    assert all(
+        a < b or (a == b and seen[i][2] <= seen[i + 1][2]) for i, (a, b) in enumerate(zip(rows, rows[1:], strict=False))
+    )
+    for scroll in (0, 400, 1200):  # at the top, rising, stuck: the page view always ends above the bar
+        page.evaluate(f"window.scrollTo(0, {scroll})")
+        page.wait_for_timeout(250)
+        viewer = page.locator("#iv").bounding_box()
+        bar = page.locator(".inv-actionbar").bounding_box()["y"]
+        assert viewer["y"] + viewer["height"] <= bar + 1, (scroll, viewer, bar)
+    assert viewer["height"] >= 520, viewer  # stuck: taller
+    amount = page.locator("[name=line_amount] >> nth=0")
+    amount.fill("-199998.98")
+    assert page.evaluate("(e) => e.scrollWidth <= e.clientWidth", amount.element_handle())
+    gl = page.locator("[name=line_gl] >> nth=0").bounding_box()
+    assert gl["width"] >= 220, gl  # room for the account's name (the demo has cost centers beside it)
     assert errors == []
 
 
@@ -580,7 +642,7 @@ def test_supplier_learning_and_automation_use_the_same_plain_words(tmp_path, gro
     for old in ("go touchless", "goes touchless", "Goes touchless", "gone touchless", "touchless invoice",
                 "clean in a row", "clean invoice", "yet again"):  # fmt: skip
         assert old not in text, old
-    assert "more in a row without a correction needed" in text
+    assert "more invoices approved without a correction before this vendor can skip review" in text
 
 
 def test_in_a_browser_a_slow_link_reads_as_before_when_the_page_does_not_come(browser, store):

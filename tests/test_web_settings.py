@@ -111,8 +111,8 @@ def test_every_tab_renders_with_lm_studio_down(client, tab):
     assert "Traceback" not in text
 
 
-def test_settings_opens_on_reading_and_says_lm_studio_is_down(client):
-    text = html.unescape(client.get("/settings").text)
+def test_settings_reading_says_lm_studio_is_down(client):
+    text = html.unescape(client.get("/settings/reading").text)  # (Settings opens on Review: B-506)
     assert "How AP Coder reads every invoice" in text and "The page's own words." in text
     assert "PDF text layer" in text  # the readers table, from the real reading_status
     assert "No self-test: LM Studio isn't running" in text and "To start LM Studio on this computer" in text
@@ -168,7 +168,7 @@ def test_check_again_asks_lm_studio_afresh(client, monkeypatch):
     forgot = []
     monkeypatch.setattr(page_reader, "forget_status", lambda: forgot.append(True))
     text = follow(client, post(client, "/settings/reading/check"))
-    assert forgot and "Checked again just now." in text
+    assert forgot and "Checked again just now" in text
 
 
 # --- The self-test and Load ---------------------------------------------------------------------------------------
@@ -285,10 +285,12 @@ def test_touchless_limit_is_saved_and_checked(client, store):
 
 def test_review_settings_are_written_to_the_env_and_logged(client, store, env_file):
     text = client.get("/settings/review").text
-    assert "Review and AI behaviour" in text and 'name="threshold"' in text
+    assert "Advanced: how the AI decides" in text and 'name="threshold"' in text
     data = {"reviewer_name": "Dana Clerk", "threshold": "90"}  # constrain unticked
     text = follow(client, post(client, "/settings/review", data))
-    assert "Saved 3 changes." in text
+    saved = text.split("Saved ", 1)[1].split("</div>", 1)[0]  # what was saved, in words (B-507)
+    assert all(w in saved for w in ("your name", "the confidence threshold", "the GL account list rule"))
+    assert "apply to invoices read from now on" in saved
     env = read_env(env_file)
     assert env["AP_REVIEW_THRESHOLD"] == "0.90" and env["AP_CONSTRAIN_CODES"] == "false"
     assert os.environ["AP_REVIEW_THRESHOLD"] == "0.90"  # applied to the running dashboard
@@ -302,7 +304,8 @@ def test_review_settings_are_written_to_the_env_and_logged(client, store, env_fi
 def test_approval_settings_are_saved(client, store):
     data = {"approval_limit": "25000", "terms_days": "45", "fx_rates": "USD=1.37"}
     text = follow(client, post(client, "/settings/review/approval", data))
-    assert "Saved." in text
+    saved = html.unescape(text).split("Saved ", 1)[1].split("</div>", 1)[0]
+    assert all(w in saved for w in ("the days to pay", "the exchange rates", "the second-approval limit"))
     assert store.approval_limit() == 25000.0 and store.default_terms_days() == 45
     assert store.get_setting("fx_rates") == "USD=1.37"
     assert "Nothing changed." in follow(client, post(client, "/settings/review/approval", data))
@@ -459,7 +462,7 @@ def test_where_invoices_are_delivered_to_us(client, store):
     from .test_web_invoice import PAGE as HEADERS
 
     page = client.get("/settings/review").text
-    assert "Where invoices are delivered to you" in page and 'name="our_province"' in page
+    assert "Your province (where goods are delivered to you)" in page and 'name="our_province"' in page
     bad = client.post("/settings/review/supply", data={"our_province": "XX"}, headers=HEADERS)
     assert bad.status_code == 400
     bad = client.post("/settings/review/supply", data={"our_province": "BC", "site_provinces": "CC400 BC"},
@@ -469,7 +472,7 @@ def test_where_invoices_are_delivered_to_us(client, store):
                      headers=HEADERS)  # fmt: skip
     assert ok.status_code == 200
     assert store.our_province() == "BC" and store.site_provinces() == {"CC400": "ON", "CC500": "AB"}
-    assert "CC400=ON" in client.get("/settings/review").text
+    assert "CC400=ON" in client.get("/settings/review").text  # (shown once set, even with no cost centers)
 
 
 def test_the_ai_reviewer_settings(client, store):

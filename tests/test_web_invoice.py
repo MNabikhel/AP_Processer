@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 from ap_coder.coding.rules import Rule
 from ap_coder.core.config import Settings
 from ap_coder.core.reference_data import UNASSIGNED
-from ap_coder.core.store import APPROVED, PARKED, PENDING, REJECTED, REVIEW, Store
+from ap_coder.core.store import APPROVED, PARKED, PENDING, REJECTED, REVIEW, Store, load_sample_cost_centers
 from ap_coder.ops.demo import load_demo
 from ap_coder.web import invoice_view
 from ap_coder.web.app import create_app
@@ -31,6 +31,7 @@ PAGE = {"X-AP-Coder": "1"}
 def demo_db(tmp_path_factory):
     """The demo invoices, loaded once (copied for each test: loading reads ten PDFs)."""
     path = tmp_path_factory.mktemp("demo") / "private" / "ap_coder.db"
+    load_sample_cost_centers(Store(path))  # the demo has none (D-53): the line grid's cost centers are tested here
     load_demo(Store(path), Settings())
     return path
 
@@ -166,10 +167,7 @@ def test_edits_are_checked_kept_and_counted_on_the_approve_bar(client, store):
         return rows
 
     answer = check(client, inv_id, form_of(store, inv_id, recode))
-    assert (
-        'data-change-count="1"' in answer["sections"]["bar"]
-        and "you changed 1 of its codes" in answer["sections"]["bar"]
-    )
+    assert 'data-change-count="1"' in answer["sections"]["bar"] and "1 you changed" in answer["sections"]["bar"]
     assert "6800" in answer["sections"]["posting"] or "6020" in answer["sections"]["posting"]
     # The draft survives leaving the screen; Start over drops it.
     assert 'data-change-count="1"' in client.get(f"/review/{inv_id}").text

@@ -26,16 +26,16 @@ the code, so updates never touch it) and one desktop shortcut. Every start then 
 
 ```
 AP Coder readiness:
-  [OK] Python 3.12.10
-  [OK] Packages: all 15 in place
-  [OK] OCR for scanned invoices
-  [OK] Data folder: C:\Users\you\APCoder
-  [OK] Chat model: lmstudio-community/gemma-4-12B-it-QAT-GGUF loaded in LM Studio (can see pages)
-  [OK] Chat model test passed: accounts from the chart in 4s: line 1 -> 6100, line 2 -> 6400
-  [OK] Page reader: ath-maas_ovisocr2 found, self-test passed (reads every page of every invoice)
-  [OK] Setup checks: all 9 passed (GL accounts, tax mapping, coding rules, settings)
-  [OK] Desktop shortcut 'AP Coder' made
-  [OK] Self-check OK: 10 of 10 sample invoices read right, and a scan with local OCR (9 s)
+  ✓ Python 3.12.10
+  ✓ Packages: all 15 in place
+  ✓ OCR for scanned invoices
+  ✓ Data folder: C:\Users\you\APCoder
+  ✓ Chat model: lmstudio-community/gemma-4-12B-it-QAT-GGUF loaded in LM Studio (can see pages)
+  ✓ Chat model test passed: accounts from the chart in 4s: line 1 -> 6100, line 2 -> 6400
+  ✓ Page reader: ath-maas_ovisocr2 found, self-test passed (reads every page of every invoice)
+  ✓ Setup checks: all 9 passed (GL accounts, tax mapping, coding rules, settings)
+  ✓ Desktop shortcut 'AP Coder' made
+  ✓ Self-check OK: 10 of 10 sample invoices read right, and a scan with local OCR (9 s)
 ```
 
 The first time takes a few minutes; later starts take seconds and install nothing. A problem is one plain line in
@@ -282,8 +282,11 @@ on the next double-click finds it through `GET /healthz` and opens it instead of
 stops the running one cleanly (`POST /shutdown`, with a token only this computer's data folder holds) before the new
 version takes over. Fonts, icons and scripts all come from the app; nothing is loaded from the internet.
 
-The left rail groups the pages; each page has its own address, so a page (or an invoice, `/review/<id>`) can be
-bookmarked or opened in a second tab.
+The left rail shows the seven pages a pilot tester uses every day (Review queue, Import invoices, Invoice directory,
+Exports, GL accounts & tax, then Settings and Help, always on screen); the others are folded under **More**, which
+opens by itself on one of its pages and otherwise stays as the browser left it. The first column below is the
+page's breadcrumb. Each page has its own address, so a page (or an invoice, `/review/<id>`) can be bookmarked or
+opened in a second tab.
 
 | Rail section | Page | What it does |
 |---|---|---|
@@ -297,11 +300,11 @@ bookmarked or opened in a second tab.
 | Master data | **Vendors** | Import the **vendor master** from the ERP (vendor IDs in exports, unknown vendors flagged, vendor terms, default GL); spend, AI accuracy and controls per vendor (hold, expected GST/HST number, notes); recurring vendors and late invoices. |
 | Master data | **Purchase orders** | Import open POs (one row per line, received quantities optional); what has been invoiced against each; close, reopen, delete. |
 | Master data | **GL accounts & tax** | Import GL accounts (cost codes) from CSV/Excel by choosing the **code**, **description** and **category** columns; edit, categorise, delete. Optional cost centers. Tax treatments and GLs. Coding policy. **Fixed rules** (vendor and/or words → GL account and cost center), with rules suggested from past coding. |
-| Analytics | **Learning & accuracy** | AI accuracy against the 90% target, weekly trend, per-vendor accuracy, most common corrections, and the memory itself (*Forget* a bad lesson). *Teach from past coding* imports last year's AP lines from the ERP. *Supplier learning* is the per-vendor training view: what each vendor's invoices taught, how often a field was corrected, how far it is from touchless, and *Keep supervised*. *Readers* scores each reader (OCR, page reader, template, AI) against AP's approvals and exports the training data. |
+| Analytics | **Learning & accuracy** | AI accuracy against the 90% target, weekly trend, per-vendor accuracy, most common corrections, and the coding memory itself (every line AP confirmed, corrected or coded; *Forget* a wrong one), and the **Lessons** tab (a correction AP keeps making, with AP's reason). *Teach from past coding* imports last year's AP lines from the ERP. *Supplier learning* is the per-vendor training view: what each vendor's invoices taught, how often a field was corrected, how far it is from touchless, and *Keep supervised*. *Readers* scores each reader (OCR, page reader, template, AI) against AP's approvals and exports the training data. |
 | Analytics | **Spend** | Spend by month (by GL category), top GL accounts, vendors and cost centers, net of recoverable tax; **all invoice data as Excel** (invoices, lines, GL posting) for pivot tables or Power BI. |
-| Analytics | **Insights** | Straight-through rate, hours saved, cost per invoice, a monthly projection; AP operations (queue ageing, days to approve, discounts approved in time); a one-page business case to download. |
-| Analytics | **Activity** | The audit trail (who did what, with every change to the AI's coding), filterable, CSV; the **controls report** for internal audit; the **duplicate payment audit** (number typos, same bill under two vendor names, same amount days apart, also against the ERP register). |
-| System | **Settings** | **Reading:** how every invoice is read and each reader's state, OvisOCR2 (found in LM Studio, its self-test, queue, and how often it agrees with digital PDFs' own figures), the models in LM Studio with **Load**. **Automation:** the touchless switch, the largest invoice approved without a person, the bar every vendor must meet, what always goes to a person, touchless rate and errors found. **Review:** your name (per Windows user), review threshold, only-my-GL-codes, approval limit, default payment days, exchange rates. **JD Edwards E1**, **Data & backups** (backups and restore, with an optional second backup folder, e.g. OneDrive), **About**. The optional Azure Document Intelligence check has a card of its own under Reading (off by default). |
+| Analytics | **Insights** | From 20 approvals on: straight-through rate, hours saved, a monthly projection; AP operations (queue ageing, days to approve, discounts approved in time); a one-page business case to download. |
+| Analytics | **Activity** | The audit trail (who did what, with every change to the AI's coding), filterable, CSV; the **controls report** for internal audit; a link to the **duplicate payment audit**, which is on Exports (number typos, same bill under two vendor names, same amount days apart, also against the ERP register). |
+| System | **Settings** | Opens on **Review:** one form, one Save: your name (per Windows user), your province, approval limit, default payment days, exchange rates, and under *Advanced* the review threshold, only-my-GL-codes and when to ask why. **Reading:** whether LM Studio runs (with **Check again**), OvisOCR2's self-test and queue, the AI reviewer; under *For IT* how every invoice is read, each reader's state and the models in LM Studio with **Load**. **Automation:** the touchless switch (leave it off during the pilot), the largest invoice approved without a person, the bar every vendor must meet, what always goes to a person, touchless rate and errors found. **Data & backups** (backups and restore, with an optional second backup folder, e.g. OneDrive), **About** (what this pilot shows: *Show JD Edwards settings* adds the **JD Edwards E1** tab and export format, *Show developer tools* adds Learning → Readers and the training data; folders for IT). The optional Azure Document Intelligence check has a card of its own under Reading, shown where the internet is allowed or once it is on. |
 | System | **Help** | Quick start, every check explained, questions, shortcuts. |
 
 ## Canadian sales tax
@@ -357,7 +360,7 @@ This is a memory of your team's decisions. No model is retrained.
 | `share-report [--include-codes]` | Redacted summary of the dashboard database (or an output folder): no vendor names, amounts, descriptions or file names. |
 | `extract <files/dirs…>` | Document Intelligence only; writes `.extraction.md` and raw `.di.json`. |
 | `labels` / `evaluate` | Spreadsheet-based ground truth and scoring, as an alternative to dashboard review. |
-| `schema` | Prints the exact strict JSON Schema sent to Azure OpenAI. |
+| `schema` | Developers: prints the strict JSON Schema a cloud build (`AP_ALLOW_INTERNET=1`) sends to Azure OpenAI. The offline build sends nothing. |
 
 Reference data comes from the dashboard database once GL accounts are imported. For command-line
 use without the dashboard, CSV files are looked up in this order: `AP_REFERENCE_DIR`, then

@@ -95,18 +95,18 @@ def validate_coding(
 
     # --- Header -----------------------------------------------------------
     if not coding.vendor_name.strip():
-        add(ERROR, "MISSING_VENDOR", "vendor_name is empty")
+        add(ERROR, "MISSING_VENDOR", "No vendor name: type it from the page")
     if not coding.invoice_number.strip():
-        add(ERROR, "MISSING_INVOICE_NUMBER", "invoice_number is empty")
+        add(ERROR, "MISSING_INVOICE_NUMBER", "No invoice number: type it from the page")
     if not re.fullmatch(r"[A-Z]{3}", coding.currency):
-        add(WARNING, "CURRENCY_FORMAT", f"currency {coding.currency!r} is not an ISO 4217 code")
+        add(WARNING, "CURRENCY_FORMAT", f"The currency “{coding.currency}” is not a 3-letter code such as CAD or USD")
     if not coding.line_items:
-        add(ERROR, "NO_LINE_ITEMS", "no line items were extracted")
+        add(ERROR, "NO_LINE_ITEMS", "No line items were read: add a line for what the invoice charges")
 
     # --- Line items -------------------------------------------------------
     numbers = [li.line_number for li in coding.line_items]
     if numbers != list(range(1, len(numbers) + 1)):
-        add(WARNING, "LINE_NUMBERING", f"line numbers are not sequential from 1: {numbers}")
+        add(WARNING, "LINE_NUMBERING", f"The line numbers don't run 1, 2, 3…: {', '.join(map(str, numbers))}")
 
     tax_gls = reference.tax.tax_gl_codes()
     for li in coding.line_items:
@@ -116,16 +116,26 @@ def validate_coding(
             add(
                 WARNING,
                 "LINE_MATH",
-                f"quantity x unit_price = {expected:.2f} but amount = {li.amount:.2f}",
+                f"quantity × unit price = {expected:.2f} but the amount is {li.amount:.2f}",
                 li.line_number,
             )
 
         if li.predicted_gl_code == UNASSIGNED:
             add(WARNING, "GL_UNASSIGNED", "no GL account yet: pick one", li.line_number)
         elif reference.chart_of_accounts.get(li.predicted_gl_code) is None:
-            add(ERROR, "GL_UNKNOWN", f"GL code {li.predicted_gl_code!r} is not in the GL accounts", li.line_number)
+            add(
+                ERROR,
+                "GL_UNKNOWN",
+                f"GL account {li.predicted_gl_code} is not in your GL accounts: pick one from the list",
+                li.line_number,
+            )
         elif li.predicted_gl_code in tax_gls:
-            add(ERROR, "GL_IS_TAX_ACCOUNT", f"GL {li.predicted_gl_code} is a sales-tax account", li.line_number)
+            add(
+                ERROR,
+                "GL_IS_TAX_ACCOUNT",
+                f"GL account {li.predicted_gl_code} is a sales-tax account: pick the expense account",
+                li.line_number,
+            )
 
         if reference.cost_centers is None:
             pass  # cost centers not configured
@@ -135,7 +145,7 @@ def validate_coding(
             add(
                 ERROR,
                 "CC_UNKNOWN",
-                f"cost center {li.predicted_cost_center!r} is not in the Cost Center list",
+                f"cost center {li.predicted_cost_center} is not in your cost centers: pick one from the list",
                 li.line_number,
             )
 
@@ -151,12 +161,12 @@ def validate_coding(
     }
     line_tolerance = _rounding_tolerance(len(coding.line_items))
     if coding.line_items and not _close(line_sum, coding.subtotal, line_tolerance):
-        add(ERROR, "SUBTOTAL_MISMATCH", f"line items sum to {line_sum:.2f} but subtotal = {coding.subtotal:.2f}")
+        add(ERROR, "SUBTOTAL_MISMATCH", f"the lines add up to {line_sum:.2f} but the subtotal is {coding.subtotal:.2f}")
     if not _close(computed_total, coding.grand_total):
         add(
             ERROR,
             "TOTAL_MISMATCH",
-            f"subtotal + tax = {computed_total:.2f} but grand_total = {coding.grand_total:.2f}",
+            f"subtotal + tax = {computed_total:.2f} but the total is {coding.grand_total:.2f}",
         )
     # The GL posting (line amounts + tax lines) must equal the amount payable to the cent. The checks
     # above each allow a little rounding; this catches small differences that add up (e.g. a misread line).
@@ -168,8 +178,8 @@ def validate_coding(
         add(
             ERROR,
             "POSTING_UNBALANCED",
-            f"GL posting totals {posting_total:.2f} but the invoice total is {coding.grand_total:.2f} "
-            f"(off by {posting_total - coding.grand_total:+.2f}); correct a line amount or tax line",
+            f"the GL posting adds up to {posting_total:.2f} but the invoice total is {coding.grand_total:.2f} "
+            f"(off by {posting_total - coding.grand_total:+.2f}): correct a line amount or a tax line",
         )
     # --- Canadian sales tax ------------------------------------------------------
     known = set(reference.chart_of_accounts.codes)
@@ -214,6 +224,9 @@ def validate_coding(
     )
 
 
+_DI_WORDS = {"InvoiceTotal": "total", "SubTotal": "subtotal", "TotalTax": "tax total"}
+
+
 def _cross_check(coding: InvoiceCoding, extraction: ExtractionResult, add: Any, checks: dict[str, Any]) -> None:
     if extraction.mean_word_confidence is not None:
         checks["mean_ocr_word_confidence"] = round(extraction.mean_word_confidence, 4)
@@ -221,7 +234,8 @@ def _cross_check(coding: InvoiceCoding, extraction: ExtractionResult, add: Any, 
             add(
                 WARNING,
                 "LOW_OCR_CONFIDENCE",
-                f"mean OCR word confidence {extraction.mean_word_confidence:.2f} < {_LOW_OCR_CONFIDENCE}",
+                f"the scan is hard to read ({extraction.mean_word_confidence:.0%} sure of its words): check the values "
+                "against the page",
             )
 
     fields = extraction.invoice_fields
@@ -233,7 +247,7 @@ def _cross_check(coding: InvoiceCoding, extraction: ExtractionResult, add: Any, 
         add(
             WARNING,
             "DI_INVOICE_ID_DIFFERS",
-            f"prebuilt-invoice read InvoiceId {di_id!r}, model output {coding.invoice_number!r}",
+            f"Azure read the invoice number as “{di_id}”, AP Coder as “{coding.invoice_number}”",
         )
 
     di_date = (fields.get("InvoiceDate") or {}).get("value")
@@ -241,7 +255,7 @@ def _cross_check(coding: InvoiceCoding, extraction: ExtractionResult, add: Any, 
         add(
             WARNING,
             "DI_DATE_DIFFERS",
-            f"prebuilt-invoice read InvoiceDate {di_date}, model output {coding.invoice_date}",
+            f"Azure read the invoice date as {str(di_date)[:10]}, AP Coder as {coding.invoice_date}",
         )
 
     for di_name, attr in (("InvoiceTotal", "grand_total"), ("SubTotal", "subtotal"), ("TotalTax", "tax_total")):
@@ -251,7 +265,11 @@ def _cross_check(coding: InvoiceCoding, extraction: ExtractionResult, add: Any, 
             ours = getattr(coding, attr)
             checks[f"di_{attr}"] = amount
             if not _close(ours, float(amount)):
-                add(WARNING, "DI_AMOUNT_DIFFERS", f"prebuilt-invoice {di_name} = {amount}, model {attr} = {ours}")
+                add(
+                    WARNING,
+                    "DI_AMOUNT_DIFFERS",
+                    f"Azure read the {_DI_WORDS[di_name]} as {float(amount):,.2f}, AP Coder as {ours:,.2f}",
+                )
 
 
 def currency_not_found(assumed: str | None = None) -> Issue:

@@ -26,6 +26,7 @@ from ap_coder.web.core import (
     done,
     flash_message,
     get_store,
+    jde_shown,
     message,
     posted_form,
     reference_or_none,
@@ -53,6 +54,21 @@ SHORT_FORMATS = {
     jde.FORMAT: "JD Edwards E1 (Z-tables)",
 }
 AGAIN_FORMATS = {"custom": "Custom CSV", jde.FORMAT: "JD Edwards E1 (ZIP)"}  # the others read as XLSX, CSV
+FORMAT_SETTING = "export_format"  # the format of the last batch made: the page opens on it (Excel at first)
+
+
+def shown_formats(store: Store, *keep: str) -> list[str]:
+    """The export formats offered: JD Edwards E1 only once its settings are shown (Settings → About; the pilot exports
+    to Excel and CSV), or when ``keep`` names it (a JD Edwards batch made before, a link to it)."""
+    return [f for f in exports.FORMATS if f != jde.FORMAT or jde_shown(store) or f in keep]
+
+
+def last_format(store: Store) -> str:
+    """The format the page opens on: the last one a batch was made in (M4), else the Excel workbook."""
+    fmt = store.get_setting(FORMAT_SETTING) or "xlsx"
+    return fmt if fmt in shown_formats(store) else "xlsx"
+
+
 REGISTER_LABELS = {
     "vendor_name": "Vendor",
     "invoice_number": "Invoice number",
@@ -199,7 +215,7 @@ def layout_from_form(form: Any) -> tuple[export_layout.Layout, list[str], list[s
 @router.get("/exports", response_class=HTMLResponse)
 def exports_page(
     request: Request,
-    fmt: str = "xlsx",
+    fmt: str = "",
     made: int = 0,
     batch: int = 0,
     bfmt: str = "",
@@ -208,7 +224,7 @@ def exports_page(
     sheet: str = "",
 ) -> HTMLResponse:
     store = get_store(request)
-    fmt = fmt if fmt in exports.FORMATS else "xlsx"
+    fmt = fmt if fmt in exports.FORMATS else last_format(store)
     ready = store.unexported_approved()
     batches = store.export_batches()
     live = [b for b in batches if not b["undone_at"]]
@@ -270,7 +286,7 @@ def exports_page(
         ],
         exported_count=sum(b["invoices"] for b in live),
         fmt=fmt,
-        formats=SHORT_FORMATS,
+        formats={f: SHORT_FORMATS[f] for f in shown_formats(store, fmt) if f in SHORT_FORMATS},
         format_help=exports.FORMATS,
         jde_format=jde.FORMAT,
         problems=problem_rows(store, problems),
@@ -279,7 +295,7 @@ def exports_page(
         just=just,
         chosen=chosen,
         again_fmt=again_fmt,
-        again_formats={f: AGAIN_FORMATS.get(f, f.upper()) for f in exports.FORMATS},
+        again_formats={f: AGAIN_FORMATS.get(f, f.upper()) for f in shown_formats(store, again_fmt)},
         left_out=left_out,
         layout=current,
         layout_rows=layout_rows,
@@ -324,6 +340,8 @@ async def create_batch(request: Request) -> JSONResponse:
             return refuse("None of the ticked invoices can go to JD Edwards yet: fix them first (see the list).")
     try:
         batch = store.create_export_batch(chosen, fmt, actor=current_reviewer())
+        if fmt != store.get_setting(FORMAT_SETTING):
+            store.set_setting(FORMAT_SETTING, fmt)  # the page opens on it next time (M4)
     except ValueError:  # the page is drawn again: what is still ready to export, without them
         return done(
             request,

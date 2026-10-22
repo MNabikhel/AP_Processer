@@ -174,9 +174,10 @@ def store(tmp_path):
 
 
 @pytest.fixture
-def client(store):
+def client(store, monkeypatch):
     from .webclient import client_for
 
+    monkeypatch.setenv("AP_DEVELOPER_TOOLS", "1")  # the Readers tab is a developer tool (B-511)
     return client_for(store)
 
 

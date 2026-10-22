@@ -49,8 +49,9 @@ Process the week's invoices in AP Coder **and** code them the usual way. Do not 
 - [ ] Turn on the **folder watcher** (`watch`, or Task Scheduler with `--once`) and have the AP mailbox's
       emails saved into the invoices folder ([MAILBOX_SETUP.md](MAILBOX_SETUP.md)): check *Emails that need a
       person* on Import invoices each day.
-- [ ] Send the JDE team the worksheet (**Settings → JD Edwards E1 → Download the worksheet**), import their
-      answers, and read **Exports → Dry run** before the first test load.
+- [ ] When JD Edwards is in scope: tick **Settings → About → Show JD Edwards settings**, send the JDE team the
+      worksheet (**Settings → JD Edwards E1 → Download the worksheet**), import their answers, and read
+      **Exports → Dry run** before the first test load. (The pilot itself exports to Excel or CSV.)
 - [ ] Look at **Vendors that make work** and ask the worst offenders for better invoices.
 - [ ] **Touchless, if ready:** when several regular vendors are close to the bar on *Learning & accuracy
       → Supplier learning* and corrections have settled, an AP lead turns on touchless processing in

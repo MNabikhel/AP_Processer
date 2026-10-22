@@ -120,7 +120,10 @@ def test_a_folder_of_emails_becomes_a_checked_jde_batch(tmp_path, monkeypatch):
         doc["gl_distribution"] = build_gl_distribution(coding, tax)
         store.approve_invoice(inv["id"], doc, "tester")
     assert {i["status"] for i in store.list_invoices()} == {APPROVED}
-    assert left_for_person < 20  # most lines arrive coded
+    # Nothing learned yet: a line is coded only from strong evidence, a weak match (an account's name) waits for the
+    # person (B-463), as do the cost centers; every line has its GL account and cost center to approve.
+    lines = sum(len((store.get_invoice(i["id"])["ai_output"] or {})["line_items"]) for i in queue)
+    assert 0 < left_for_person <= 2 * lines
 
     # 3. Before the JDE team answers, the dry run holds every invoice back and says why.
     client = client_for(store)

@@ -74,7 +74,7 @@
     </details>
   </section>
   <section class="card" aria-labelledby="feed-title">
-    <h4 id="feed-title">Recent lessons</h4>
+    <h4 id="feed-title">Latest in the coding memory</h4>
     {% if not feed %}<p class="muted">No reviewed lines yet: only past coding from the ERP.</p>{% endif %}
     <div class="apc-feed">
       {% for r in feed %}
@@ -83,6 +83,8 @@
           {% if r.outcome == "corrected" %}
           <b>{{ r.reviewer }}</b> corrected <b>{{ r.short }}</b>
           {% if r.suggested_gl == unassigned %}<i>no account</i>{% elif r.suggested_gl %}<span class="apc-strike apc-mono">{{ r.suggested_gl }}</span>{% else %}<i>new line</i>{% endif %}<span class="apc-arrow">→</span><b class="apc-mono">{{ r.final_gl }}</b>
+          {% elif r.outcome == "coded" %}
+          <b>{{ r.reviewer }}</b> coded <b>{{ r.short }}</b> <span class="apc-arrow">→</span><b class="apc-mono">{{ r.final_gl }}</b> <span class="apc-muted">(the AI only guessed)</span>
           {% else %}
           <b>{{ r.reviewer }}</b> confirmed <b>{{ r.short }}</b> <span class="apc-arrow">→</span><b class="apc-mono">{{ r.final_gl }}</b>
           {% endif %}
@@ -115,9 +117,10 @@
 </div>
 
 <details class="card an-expander" id="memory"{% if mem_q %} open{% endif %}>
-  <summary><span class="ms" aria-hidden="true">psychology</span>Memory: every lesson, with the option to forget</summary>
-  <p class="muted">Lessons from the same vendor are shown to the AI on the next invoice; corrections count most. Tick
-    <i>Forget?</i> to remove a lesson a reviewer got wrong.</p>
+  <summary><span class="ms" aria-hidden="true">psychology</span>Coding memory: every line AP confirmed, corrected or coded, with the option to forget</summary>
+  <p class="muted">The lines AP approved for a vendor are shown to the AI with that vendor's next invoice; corrections
+    count most. Tick <i>Forget?</i> to remove a line a reviewer got wrong. (Lessons, on their own tab, are something
+    else: a correction AP keeps making, with AP's reason.)</p>
   <form class="an-filters" method="get" action="/learning#memory" role="search">
     <label class="field an-grow">Search the memory
       <span class="an-search"><span class="ms" aria-hidden="true">search</span>
@@ -125,20 +128,21 @@
     <button class="btn sm" type="submit">Search</button>
   </form>
   {% if not memory %}
-  {{ ui.empty_note("No lessons match", " Try another search.", "search_off") }}
+  {{ ui.empty_note("No lines match", " Try another search.", "search_off") }}
   {% else %}
-  <form method="post" action="/learning/memory/forget" data-confirm="Forget the ticked lessons? The AI no longer sees them.">
+  <form method="post" action="/learning/memory/forget" data-confirm="Forget the ticked lines? The AI no longer sees them.">
     <div class="table-wrap an-scroll"><table class="apc-table">
-      <thead><tr><th>Forget?</th><th>Date</th><th>Vendor</th><th>Line</th><th>AI suggested</th><th>Final GL</th><th>Cost center</th><th>Outcome</th><th>Reviewer</th></tr></thead>
+      {% set show_cc = memory | selectattr("final_cc") | list %}{# none (no cost center list: D-53): no empty column #}
+      <thead><tr><th>Forget?</th><th>Date</th><th>Vendor</th><th>Line</th><th>AI suggested</th><th>Final GL</th>{% if show_cc %}<th>Cost center</th>{% endif %}<th>Outcome</th><th>Reviewer</th></tr></thead>
       <tbody>{% for r in memory %}
-        <tr><td><input type="checkbox" name="ids" value="{{ r.id }}" aria-label="Forget the lesson {{ r.description }}"></td>
+        <tr><td><input type="checkbox" name="ids" value="{{ r.id }}" aria-label="Forget the line {{ r.description }}"></td>
           <td>{{ r.date }}</td><td>{{ r.vendor_name }}</td><td class="w">{{ r.description }}</td><td>{{ "no account" if r.suggested_gl == unassigned else (r.suggested_gl or "") }}</td>
-          <td>{{ r.final_gl }}</td><td>{{ r.final_cc or "" }}</td><td>{{ r.outcome_text }}</td><td>{{ r.reviewer or "" }}</td></tr>
+          <td>{{ r.final_gl }}</td>{% if show_cc %}<td>{{ r.final_cc or "" }}</td>{% endif %}<td>{{ r.outcome_text }}</td><td>{{ r.reviewer or "" }}</td></tr>
       {% endfor %}</tbody>
     </table></div>
     <div class="row">
-      <button class="btn" type="submit"><span class="ms" aria-hidden="true">delete_sweep</span>Forget the ticked lessons</button>
-      <span class="muted">{% if memory_matching > memory | length %}Showing {{ memory | length }} of {{ memory_matching | num }}{% else %}{{ memory_matching | plural("lesson") }}{% endif %}{% if mem_q %} matching “{{ mem_q }}”{% endif %} · {{ memory_total | num }} in the memory{% if memory_total >= 2000 %} (the newest 2,000){% endif %}.</span>
+      <button class="btn" type="submit"><span class="ms" aria-hidden="true">delete_sweep</span>Forget the ticked lines</button>
+      <span class="muted">{% if memory_matching > memory | length %}Showing {{ memory | length }} of {{ memory_matching | num }}{% else %}{{ memory_matching | plural("line") }}{% endif %}{% if mem_q %} matching “{{ mem_q }}”{% endif %} · {{ memory_total | num }} in the memory{% if memory_total >= 2000 %} (the newest 2,000){% endif %}.</span>
     </div>
   </form>
   {% endif %}
@@ -152,7 +156,10 @@
 <p class="muted">
   {% if touchless_on %}Touchless processing is <b>on</b>: a vendor that meets the bar skips review by itself, and one correction sends it back to review.
   {% else %}Touchless processing is <b>off</b> (Settings → Automation): every invoice is reviewed by a person, and each approval keeps training its vendor.{% endif %}
-  The bar, the same for every vendor: {{ policy }}.</p>
+  The bar, the same for every vendor (<a href="/settings/automation">Settings → Automation</a>): at least
+  {{ policy.min_invoices }} invoices reviewed, the last {{ policy.clean_streak }} without a correction, and its fields
+  read right {{ "{:.0%}".format(policy.min_lower_bound) }} of the time. In practice a new vendor needs about
+  {{ typical }} invoices approved without a correction; each vendor below says how many more it needs.</p>
 {% for s in suppliers %}
 <section class="card an-supplier" aria-label="{{ s.name }}">
   {{ s.row }}
@@ -199,7 +206,8 @@
 {% endif %}
 
 {% elif tab == "lessons" %}
-<p class="muted">What AP keeps correcting, remembered per vendor and kind of document, with AP's reasons. The AI reviewer
+<p class="muted">A lesson is a correction AP keeps making, remembered per vendor and kind of document, with AP's
+  reason (the coding memory, on the Coding accuracy tab, keeps every line AP approved). The AI reviewer
   and the GL suggestions read them with each vendor's invoices, and the review screen shows them. When the same correction
   comes back {{ why_after }} times, AP Coder asks why before saving (Settings → Review). Edit a reason, or retire a lesson
   that is no longer true.</p>
@@ -212,7 +220,7 @@
     <thead><tr><th>Vendor</th><th>What</th><th>AP's value</th><th class="r">Corrected</th><th class="r">Since the reason</th><th class="r">Right since</th><th>AP's reason</th><th></th></tr></thead>
     <tbody>{% for l in lessons %}
       <tr{% if l.retired %} class="muted"{% endif %}><td>{{ l.vendor_name }} <span class="muted small">{{ l.kind }}</span></td>
-        <td>{{ l.what }}</td><td>{{ l.value }}{% if l.proposed %}<div class="muted small">read as {{ l.proposed }}</div>{% endif %}</td>
+        <td>{{ l.what }}</td><td>{{ l.value }}{% if l.proposed == "UNASSIGNED" %}<div class="muted small">left blank</div>{% elif l.proposed %}<div class="muted small">read as {{ l.proposed }}</div>{% endif %}</td>
         <td class="r">{{ l.corrected }}</td><td class="r">{{ l.since_why }}</td><td class="r">{{ l.confirmed }}</td>
         <td class="w"><form method="post" action="/learning/lessons/explain" class="row" data-busy="Saving…">
           <input type="hidden" name="situation" value="{{ l.situation }}">
@@ -227,6 +235,8 @@
 </section>
 {% endif %}
 
+{% elif not developer %}
+<section class="card">{{ ui.empty_state("A tool for developers", "How each reader of the page scores against what AP approved, and the training data export, are developer tools. They show once Show developer tools is on in Settings → About.") }}</section>
 {% else %}
 <p class="muted">Each approval compares what every reader found on the page with what AP approved. The combined value is
   what the review screen showed; a reader that keeps agreeing with AP earns its trust.</p>

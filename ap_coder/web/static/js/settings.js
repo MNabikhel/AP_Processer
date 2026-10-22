@@ -2,9 +2,9 @@
    slider's value, and old links to /settings#automation (the tabs are pages of their own: /settings/automation). */
 import { pollJob } from "./app.js";
 
-const TABS = ["reading", "automation", "review", "jde", "data", "about"];
+const TABS = ["review", "reading", "automation", "jde", "data", "about"];
 const hash = location.hash.replace("#", "");
-if (location.pathname.replace(/\/$/, "") === "/settings" && TABS.includes(hash) && hash !== "reading") {
+if (location.pathname.replace(/\/$/, "") === "/settings" && TABS.includes(hash) && hash !== "review") {
   location.replace(`/settings/${hash}`);
 }
 

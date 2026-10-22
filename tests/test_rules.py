@@ -51,7 +51,7 @@ def test_apply_changes_only_matching_lines(ground_truth):
     coded, changes = rules.apply(coding, [rule, Rule("", "laptop", "6010")])  # the laptop rule changes nothing
     assert [c["line_number"] for c in changes] == [5]
     assert changes[0] == {"line_number": 5, "rule": "any vendor, line contains “delivery”", "gl_from": "6800",
-                          "gl_to": "5200", "cc_from": "CC400", "cc_to": "CC100"}  # fmt: skip
+                          "gl_to": "5200", "cc_from": "CC400", "cc_to": "CC100", "from_guess": False}  # fmt: skip
     lines = {li.line_number: li for li in coded.line_items}
     assert (lines[5].predicted_gl_code, lines[5].predicted_cost_center) == ("5200", "CC100")
     assert lines[1].predicted_gl_code == "6010" and coding.line_items[4].predicted_gl_code == "6800"  # a copy

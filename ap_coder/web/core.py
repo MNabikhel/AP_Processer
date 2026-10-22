@@ -44,7 +44,7 @@ from ap_coder.core.reference_data import UNASSIGNED, ReferenceData
 from ap_coder.core.store import REVIEW, Store
 from ap_coder.web import identity
 from ap_coder.web.jobs import Jobs
-from ap_coder.web.pages import BANNER_PAGES, BY_KEY, PAGES, SECTIONS
+from ap_coder.web.pages import BANNER_PAGES, BY_KEY, PAGES, PINNED
 
 WEB_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = WEB_DIR / "templates"
@@ -330,19 +330,69 @@ def refuse(text: str, status: int = 400, **extra: Any) -> JSONResponse:
 # --- Drawing a page ----------------------------------------------------------------------------------------------
 
 
+# --- What this pilot shows (Settings → About, D-52) -----------------------------------------------------------------
+SHOW_JDE = "show_jde_settings"  # "1": Settings → JD Edwards E1 is a tab, and JD Edwards E1 an export format
+DEVELOPER_TOOLS = "show_developer_tools"  # "1": Learning → Readers, the training data, What's new for developers
+DEVELOPER_ENV = "AP_DEVELOPER_TOOLS"  # =1: the same, for a developer's computer
+
+
+def _switch(store: Store, key: str) -> bool:
+    try:
+        return store.get_setting(key) == "1"
+    except Exception:  # noqa: BLE001 - a setting that can't be read is off: the page still opens
+        return False
+
+
+def jde_shown(store: Store) -> bool:
+    """Whether the JD Edwards E1 settings and export are shown: off for the pilot (Excel and CSV exports only); a
+    switch on Settings → About shows them, nothing is removed. A database already set up for JD Edwards (its settings
+    saved, or a JD Edwards batch made) has it turned on, once and stored, so an update takes nothing away (B-526)."""
+    try:
+        value = store.get_setting(SHOW_JDE, "unset")
+        if value != "unset":
+            return value == "1"
+        from ap_coder.erp import jde
+
+        used = bool(store.get_setting(jde.SETTING_KEY)) or any(
+            b["format"] == jde.FORMAT for b in store.export_batches()
+        )
+        if used:
+            store.set_setting(SHOW_JDE, "1")
+        return used
+    except Exception:  # noqa: BLE001 - a setting that can't be read is off: the page still opens
+        return False
+
+
+def developer_env_on() -> bool:
+    """AP_DEVELOPER_TOOLS read one way everywhere: 1, true or yes is on; 0, false, no or nothing is off (B-527)."""
+    return os.environ.get(DEVELOPER_ENV, "").strip().lower() in ("1", "true", "yes")
+
+
+def developer_tools(store: Store) -> bool:
+    """Whether the developer tools show (Learning → Readers, the training data export, the developer changelog):
+    the switch on Settings → About, or AP_DEVELOPER_TOOLS=1."""
+    return developer_env_on() or _switch(store, DEVELOPER_TOOLS)
+
+
 def nav_counts(store: Store) -> dict[str, int]:
     """The count badges of the rail: invoices waiting for review (the one queue to work through) and approved
     invoices not exported yet."""
     return {"review": len(store.list_invoices(REVIEW)), "exports": len(store.unexported_approved())}
 
 
-def rail(store: Store) -> list[dict[str, Any]]:
-    """The rail's sections, each with its pages and counts."""
+def rail(store: Store) -> dict[str, list[dict[str, Any]]]:
+    """The rail's three groups, each page with its count: the everyday pages (``main``), the pages folded under More
+    (``more``) and Settings and Help, pinned at its foot (``pinned``)."""
     counts = nav_counts(store)
-    return [
-        {"title": section, "pages": [{"page": p, "count": counts.get(p.key, 0)} for p in PAGES if p.section == section]}
-        for section in SECTIONS
-    ]
+
+    def items(pages: list[Any]) -> list[dict[str, Any]]:
+        return [{"page": p, "count": counts.get(p.key, 0)} for p in pages]
+
+    return {
+        "main": items([p for p in PAGES if not p.more and p.key not in PINNED]),
+        "more": items([p for p in PAGES if p.more]),
+        "pinned": items([p for p in PAGES if p.key in PINNED]),
+    }
 
 
 def render(request: Request, template: str, page: str, status_code: int = 200, **context: Any) -> HTMLResponse:

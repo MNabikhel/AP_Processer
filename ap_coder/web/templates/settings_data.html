@@ -13,7 +13,7 @@
   {{ ui.tiles([
     ui.tile("Database", db_size, "database", "blue", "ap_coder.db"),
     ui.tile("Invoices", invoice_count, "receipt_long", "green", file_count | plural("file") ~ " in invoices/"),
-    ui.tile("Lessons", lesson_count, "psychology", "violet", "reviewer decisions"),
+    ui.tile("Coding memory", lesson_count, "psychology", "violet", "lines AP reviewed" ~ ((", plus " ~ (history_count | plural("line")) ~ " from ERP history") if history_count else "")),
     ui.tile("Backups", backups | length, "backup", "amber", "kept in backups/"),
   ]) }}
 </section>

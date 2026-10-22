@@ -96,8 +96,8 @@ key" at the end, for automated runs), `AP_ALLOW_INTERNET=1` (developers), `BROWS
 
 AP Coder runs on any CPython **3.11 or newer** (`scripts/launch.py:MINIMUM`; no upper bound). 3.12 is preferred,
 then the other versions the offline bundle is built for (3.11, 3.13, 3.14), because the wheelhouse has packages
-only for those. `pyproject.toml` says `>=3.10` and CI still tests 3.10 (`ap_coder/ops/doctor.py` warns on it), but the
-launchers never pick one older than 3.11. Python is never installed by the offline build.
+only for those. `pyproject.toml` says `>=3.11` too, and `ap_coder/ops/doctor.py` fails on an older one (D-55).
+Python is never installed by the offline build.
 
 ### Windows: `APProcessor.bat`
 
@@ -165,8 +165,11 @@ Python 3.12"*).
   the hint then names it (`sudo apt install python3.12-venv`) instead of "reinstall Python".
 
 What the .venv has been through is kept in `.venv/ap_coder_launcher.json` (`STATE`: `setup_done`, `fingerprint`,
-`version`, `build`, `port`, `self_check`, and the "tried once" marks `ocr_failed`, `ocr2_failed`, `azure_failed`,
-`models_failed`); it goes with the .venv when that is remade.
+`version`, `build`, `commit`, `port`, `self_check`, and the "tried once" marks `ocr_failed`, `ocr2_failed`,
+`azure_failed`, `models_failed` (with `models_tries`: a failed download's starts today); it goes with the .venv when
+that is remade. The fingerprint is `pyproject.toml` plus the build (`ap_coder/core/paths.py:build_stamp`: the
+commit in `ap_coder/BUILD`, which GitHub's ZIP and the offline bundle fill in; a checkout's HEAD; else a hash of the
+code), so a newer build of the same version is an update too.
 
 ## 5. Packages: the wheelhouse and pip
 
@@ -279,10 +282,12 @@ or data) is not found again on later starts (`upgrade.left_to_clean`), so it is 
 * **Data folder** (`scripts/launch.py:ensure_data_folder`): created with `invoices/`; the readiness line checks it is
   writable (`readiness`).
 * **Database too new**: see above.
-* **OCR models** (`scripts/launch.py:ensure_models` → `scripts/fetch_models.py:main`): RapidOCR 3's PP-OCRv5 models
+* **OCR models** (`scripts/launch.py:ensure_models` → `scripts/fetch_models.py:setup`): RapidOCR 3's PP-OCRv5 models
   (det, cls, rec) are copied from the bundle's `models/` into RapidOCR's package folder inside `.venv`, only when
   missing (SHA-256 checked on the first run, `ap_coder/ops/offline.py:missing_models`). Never downloaded offline; a
-  failure is said once and not retried until the bundle's `models/` folder changes (`models_attempt`). Without them,
+  failure is said once and not retried until the bundle's `models/` folder changes (`models_attempt`). From the code
+  alone each download is tried 3 times; a failure is said in plain words (the error in the log) and tried again at
+  the next start, up to 3 starts a day (`models_due`). Without them,
   scans are read by the second engine (`rapidocr-onnxruntime`, PP-OCRv4 models inside its package).
 * **Table finder** (`ap_coder/ops/offline.py:table_finder_path`): RapidLayout's `yolov8n_layout_general6.onnx` is read in
   place from the bundle's `models/`, else `<data>/models/`, else `AP_TABLE_FINDER_MODEL`; SHA-256 checked; never

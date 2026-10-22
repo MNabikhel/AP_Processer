@@ -32,6 +32,7 @@ def launch(tmp_path, monkeypatch):
     (here / "scripts" / "launch.py").write_text("")
     (here / "pyproject.toml").write_text('[project]\nname = "ap-coder"\nversion = "0.2.0"\n')
     (here / "bundle_manifest.json").write_text(json.dumps({"version": "0.2.0", "built": "2026-10-11T09:00:00"}))
+    (here / "ap_coder" / "BUILD").write_text("b2b2b2b 2026-10-11T08:00:00+00:00\n")  # the offline bundle's stamp
     (here / "APProcessor.bat").write_text("")
     (here / "APProcessor.command").write_text("")
     venv = here / ".venv"
@@ -154,8 +155,8 @@ def test_an_older_dashboard_still_running_is_stopped_not_opened(launch, monkeypa
     """It was opened as if it were this version: the person saw the old version while this one was half set up."""
     started, _, _ = _quiet_setup(launch, monkeypatch)
     from_port = []
-    monkeypatch.setattr(launch.running, "take_over", lambda root, version, ports, data, say: from_port.append(ports)
-                        or ("clear", None))  # fmt: skip
+    monkeypatch.setattr(launch.running, "take_over", lambda root, version, ports, data, say, build="":
+                        from_port.append(ports) or ("clear", None))  # fmt: skip
     monkeypatch.setattr(launch, "open_browser", lambda url: pytest.fail("opened the old dashboard"))
     args, rest = launch.parse(["--port", "8597"])
     assert launch.run(args, rest) == 0 and started
@@ -196,7 +197,7 @@ def test_an_update_in_the_same_folder_is_said_and_checked(launch, monkeypatch, c
                        "self_check": {"ok": True, "at": "2026-09-01 10:05"}})  # fmt: skip
     assert launch.run(*launch.parse([])) == 0
     out = capsys.readouterr().out
-    assert "Updated AP Coder from 0.1.0 (2026-09-01) to 0.2.0 (2026-10-11)" in out and checks == [1]
+    assert "Updated AP Coder from 0.1.0 (2026-09-01) to 0.2.0 (build b2b2b2b, 2026-10-11)" in out and checks == [1]
     state = launch.load_state()
     assert state["version"] == "0.2.0" and state["fingerprint"] == launch.fingerprint()
     assert launch.run(*launch.parse([])) == 0 and checks == [1]  # the next start: nothing new
@@ -208,7 +209,7 @@ def test_an_update_unzipped_over_an_ap_coder_from_before_the_launcher_is_said(la
     _quiet_setup(launch, monkeypatch)
     monkeypatch.setattr(launch, "registered_version", lambda: "0.1.0")
     assert launch.run(*launch.parse(["--venv=reused"])) == 0
-    assert "Updated AP Coder from 0.1.0 to 0.2.0 (2026-10-11)" in capsys.readouterr().out
+    assert "Updated AP Coder from 0.1.0 to 0.2.0 (build b2b2b2b, 2026-10-11)" in capsys.readouterr().out
     monkeypatch.setattr(launch, "registered_version", lambda: "0.2.0")  # registered again: the next start
     assert launch.run(*launch.parse(["--venv=reused"])) == 0 and "Updated" not in capsys.readouterr().out
 
@@ -225,7 +226,7 @@ def test_an_update_from_another_folder_takes_over_and_cleans_up_after_its_self_c
     args, rest = launch.parse(["--venv=created"])
     assert launch.run(args, rest) == 0
     out = capsys.readouterr().out
-    assert "Updated AP Coder from 0.1.0 to 0.2.0 (2026-10-11)" in out and checks == [1]
+    assert "Updated AP Coder from 0.1.0 to 0.2.0 (build b2b2b2b, 2026-10-11)" in out and checks == [1]
     assert paths.current_install()["folder"] == str(launch.ROOT)
     assert cleaned == [[old]] and "Cleaned up the older AP Coder: 12 MB freed" in out
     assert (launch.ROOT / ".ap_coder_install.json").exists()
@@ -379,7 +380,7 @@ def test_leftovers_of_an_older_version_unzipped_over_are_removed(launch, monkeyp
     manifest = {
         "version": "0.2.0",
         "built": "2026-10-11T09:00:00",
-        "files": {"ap_coder/x.py": "0" * 64, "scripts/launch.py": "0" * 64},
+        "files": {"ap_coder/x.py": "0" * 64, "ap_coder/BUILD": "0" * 64, "scripts/launch.py": "0" * 64},
     }
     (launch.ROOT / "bundle_manifest.json").write_text(json.dumps(manifest))
     (launch.ROOT / "ap_coder" / "x.py").write_text("")
@@ -405,7 +406,7 @@ def test_an_older_folder_started_by_mistake_opens_the_newest(launch, monkeypatch
     monkeypatch.setattr(launch.upgrade, "hand_over", lambda folder, argv, env: handed.append((folder, argv)) or 0)
     assert launch.main(["--port", "8502"]) == 0
     assert handed == [(newest, ["--port", "8502"])]
-    assert f"A newer AP Coder (0.3.0) is in {newest}: opening that one" in capsys.readouterr().out
+    assert f"A newer AP Coder, 0.3.0, is in {newest}: opening that one" in capsys.readouterr().out
     # This older folder (an older bundle unzipped again by mistake) is on record: the newest cleans it up.
     assert paths.current_install()["folder"] == str(newest)
     assert any(paths.same_folder(e["folder"], launch.ROOT) for e in paths.installs())

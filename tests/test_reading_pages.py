@@ -21,7 +21,7 @@ from .webclient import client_for, follow, post, web_settings
 
 STEM = "harbourview_NS_HST_HPS-2026-0347"
 MODEL = "ath-maas_ovisocr2"
-TAB_NAMES = ["Reading", "Automation", "Review", "JD Edwards E1", "Data & backups", "About"]
+TAB_NAMES = ["Review", "Reading", "Automation", "Data & backups", "About"]  # JD Edwards E1 hidden (D-52)
 
 
 @pytest.fixture
@@ -133,12 +133,12 @@ def _test_finished(store, seconds=30):
 # --- Settings: the tabs, nothing to choose -------------------------------------------------------------------------
 
 
-def test_settings_tabs_are_reading_automation_review_erp_data_about(client, status):
+def test_settings_tabs_are_review_reading_automation_data_about(client, status):
     page = client.get("/settings").text
     tabs = re.findall(r'href="/settings/(\w+)"[^>]*>(?:<span[^>]*>[^<]*</span>)?\s*([^<]+)<', page)
-    assert [key for key, _ in tabs][:6] == ["reading", "automation", "review", "jde", "data", "about"]
-    assert [html.unescape(name).strip() for _, name in tabs][:6] == TAB_NAMES
-    assert sorted(TAB_KEYS) == sorted(key for key, _ in tabs[:6])
+    assert [key for key, _ in tabs][:5] == ["review", "reading", "automation", "data", "about"]
+    assert [html.unescape(name).strip() for _, name in tabs][:5] == TAB_NAMES
+    assert sorted(TAB_KEYS) == sorted([*(key for key, _ in tabs[:5]), "jde"])
     labels = " ".join(name for _, name in tabs)
     assert "AI model" not in labels and "Page reader" not in labels and "Azure" not in labels
 
@@ -156,8 +156,12 @@ def test_every_settings_tab_the_app_names_exists():
             (path.name, m.group(1)) for m in re.finditer(r"Settings (?:→|->|>|&rarr;) ([A-Za-z&][\w &;]*)", source)
         ]
     assert named
-    wrong = [(name, tab) for name, tab in named if not any(tab.startswith(t) or t.startswith(tab) for t in TAB_NAMES)
-             and not tab.startswith(("JD Edwards", "Data &amp;"))]  # fmt: skip
+    wrong = [
+        (name, tab)
+        for name, tab in named
+        if not any(tab.startswith(t) or t.startswith(tab) for t in TAB_NAMES)
+        and not tab.startswith(("JD", "Data &amp;"))
+    ]  # (JD Edwards E1: hidden, D-52)
     assert not wrong, wrong
 
 
@@ -339,7 +343,7 @@ def test_the_banner_shows_on_the_review_queue_with_a_link_to_settings(client, st
     page = client.get("/review").text
     banner = page.split(BANNER, 1)[1].split("</div>", 1)[0]
     assert "OvisOCR2 isn't in LM Studio" in _text(banner) and "Open Settings → Reading" in _text(banner)
-    assert 'href="/settings#reading"' in banner
+    assert 'href="/settings/reading"' in banner
 
 
 def test_no_banner_when_every_reader_works_or_the_status_fails(client, status):

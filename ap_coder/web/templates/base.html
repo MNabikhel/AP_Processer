@@ -16,10 +16,7 @@
       <a class="brand" href="/" aria-label="AP Coder: review queue">
         <img src="/assets/logo.svg" alt="AP Coder" height="24">
       </a>
-      <nav class="nav">
-        {% for section in rail %}
-        <div class="nav-section">{{ section.title }}</div>
-        {% for item in section.pages %}
+      {% macro nav_link(item) %}
         <a href="{{ item.page.path }}" class="nav-link{% if item.page.key == page %} on{% endif %}"
            {% if item.page.key == page %}aria-current="page"{% endif %}>
           <span class="ms" aria-hidden="true">{{ item.page.icon }}</span>
@@ -27,8 +24,33 @@
           {% if item.count %}<span class="count{% if item.page.key == 'review' %} accent{% endif %}"
             title="{{ item.count | num }}">{{ item.count | num }}</span>{% endif %}
         </a>
-        {% endfor %}
-        {% endfor %}
+      {% endmacro %}
+      {# The everyday pages, then the rest folded under More (open on one of its pages; otherwise as this browser left
+         it), then Settings and Help, pinned above the footer so they are always on screen (D-52). #}
+      <nav class="nav" aria-label="Pages">
+        {% for item in rail.main %}{{ nav_link(item) }}{% endfor %}
+        {% set in_more = rail.more | selectattr("page.key", "equalto", page) | list %}
+        <details class="nav-more" id="nav-more"{% if in_more %} open data-here{% endif %}>
+          <summary class="nav-link"><span class="ms" aria-hidden="true">more_horiz</span><span class="label">More</span><span class="ms chev" aria-hidden="true">expand_more</span></summary>
+          {% for item in rail.more %}{{ nav_link(item) }}{% endfor %}
+        </details>
+        <script>
+          (function () { // remembered per browser; a page under More opens it without changing what was chosen
+            var more = document.getElementById("nav-more");
+            try { if (!more.open && localStorage.getItem("apc-nav-more") === "open") more.open = true; } catch (e) {}
+            var here = document.querySelector(".rail .nav-link.on");
+            var fixed = getComputedStyle(more.closest(".rail")).position === "fixed";  // (a phone: the page scrolls)
+            if (here && fixed && more.contains(here)) {  // once the menu below it is drawn too
+              document.addEventListener("DOMContentLoaded", function () { here.scrollIntoView({block: "nearest"}); });
+            }
+            more.querySelector("summary").addEventListener("click", function () {
+              setTimeout(function () { try { localStorage.setItem("apc-nav-more", more.open ? "open" : "closed"); } catch (e) {} });
+            });
+          })();
+        </script>
+      </nav>
+      <nav class="nav nav-pinned" aria-label="Settings and help">
+        {% for item in rail.pinned %}{{ nav_link(item) }}{% endfor %}
       </nav>
       <div class="rail-foot">
         {% if demo_count %}<div class="rail-demo">{{ ui.pill("Demo invoices loaded", "gray", "science") }}</div>{% endif %}
@@ -56,7 +78,7 @@
       <div class="banner {{ banner_tone or 'warn' }}" role="status">
         <span class="ms" aria-hidden="true">{{ 'hourglass_top' if banner_tone == 'info' else 'visibility_off' }}</span>
         <span>{{ banner }}</span>
-        <a href="/settings#reading">Open Settings → Reading <span class="ms" aria-hidden="true">arrow_forward</span></a>
+        <a href="/settings/reading">Open Settings → Reading <span class="ms" aria-hidden="true">arrow_forward</span></a>
       </div>
       {% endif %}
       <div id="flashes" class="flashes">

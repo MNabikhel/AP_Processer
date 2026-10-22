@@ -167,9 +167,13 @@ def mark(level: str) -> str:
     return MARKS[fancy_marks()][level]
 
 
+_said = {"at": time.monotonic()}  # when the window last said something (the heartbeat speaks up after a silence)
+
+
 def say(message: str = "") -> None:
     print(message, flush=True)
     log(message)
+    _said["at"] = time.monotonic()
 
 
 # --- The log: what each start said, for IT after the window is closed ---------------------------------------------
@@ -319,6 +323,7 @@ def ensure_venv(python: str = sys.executable, rebuild: bool = False) -> str:
                 "Could not remove the .venv folder to make it again.",
                 "Close every AP Coder window, delete the .venv folder, then start AP Coder again.",
             )
+    say("Making AP Coder's own Python environment (the .venv folder; under a minute)...")
     result = subprocess.run([python, "-m", "venv", str(VENV)])
     if result.returncode != 0 or not venv_works():
         hint = "Reinstall Python 3.12 from https://www.python.org/downloads/, then start AP Coder again."
@@ -421,7 +426,10 @@ def fitting_pythons() -> list[str]:
 def venv_fits() -> bool:
     """The double-click's quick check, run with .venv's Python (``--venv-ok``): use .venv as it is? Yes, unless its
     Python has no packages in the offline bundle, AP Coder's packages are not all in place yet, and a Python the
-    bundle has packages for is installed (then .venv is made again with that one)."""
+    bundle has packages for is installed (then .venv is made again with that one); never when its Python is older than
+    AP Coder runs on (a 3.10 .venv from AP Coder 0.1: .venv is made again with a newer Python)."""
+    if not supported(sys.version_info):
+        return False
     here = f"{sys.version_info[0]}.{sys.version_info[1]}"
     fitting = fitting_pythons()
     if not fitting or here in fitting:
@@ -531,9 +539,13 @@ def bootstrap(argv: list[str]) -> int:
             except KeyboardInterrupt:
                 return 0
     made_with = venv_version()
-    rebuild = bool(VENV_PY.exists() and fitting and made_with and made_with not in fitting and shown in fitting
-                   and not venv_fits_probe())  # fmt: skip
-    if rebuild:
+    too_old = bool(VENV_PY.exists() and made_with and not supported(_version_key(made_with)) and supported(version))
+    rebuild = too_old or bool(VENV_PY.exists() and fitting and made_with and made_with not in fitting and shown in
+                              fitting and not venv_fits_probe())  # fmt: skip
+    if too_old:
+        say(f".venv was made with Python {made_with}, older than AP Coder needs (3.11 or newer): making it again with "
+            f"Python {shown}.")  # fmt: skip
+    elif rebuild:
         say(f".venv was made with Python {made_with}, which this offline bundle has no packages for: making it "
             f"again with Python {shown}.")  # fmt: skip
     if not supported(version) and not VENV_PY.exists():
@@ -547,6 +559,10 @@ def bootstrap(argv: list[str]) -> int:
     if not VENV_PY.exists():
         say("First run: setting up AP Coder. This takes a few minutes; later starts take seconds.")
     say(f"Python {sys.version.split()[0]} found on this computer: {sys.executable}")
+    if rebuild:  # an old window may still run from that .venv (Windows can't delete it then): stopped first (B-556)
+        code = make_way_for_venv(argv)
+        if code is not None:
+            return code
     try:
         status = ensure_venv(rebuild=True) if rebuild else ensure_venv()
     except SetupError as exc:
@@ -555,6 +571,22 @@ def bootstrap(argv: list[str]) -> int:
         return subprocess.call([str(VENV_PY), str(Path(__file__).resolve()), *argv, f"--venv={status}"])
     except KeyboardInterrupt:
         return 0
+
+
+def make_way_for_venv(argv: list[str]) -> int | None:
+    """Before .venv is made again: an older AP Coder still running (perhaps from that .venv) is stopped, as the second
+    phase would stop it. Returns an exit code when this start must stop, else None."""
+    ident = identity()
+    rest = parse(argv)[1]
+    verdict, port = running.take_over(ROOT, ident["version"], candidate_ports(rest, load_state()), paths.private_dir(),
+                                      say, build=ident["code"])  # fmt: skip
+    if verdict == "other":
+        return failed(someone_elses(port))
+    if verdict == "blocked":
+        return failed(older_still_running(port))
+    if verdict in ("open", "newer"):
+        return open_running(port)
+    return None
 
 
 def failed(exc: SetupError) -> int:
@@ -777,9 +809,15 @@ def pip_env(source: list[str]) -> dict[str, str]:
     return env
 
 
+# How many of AP Coder's own requirements the pip run under way installs (_ensure_packages): pip installs what those
+# need too, so the count it ends with is larger, and says so.
+_wanted = {"count": 0}
+
+
 def pip_install(args: list[str]) -> bool:
     """``pip install`` with its progress lines (not the long "already satisfied" list). Offline without a
     wheelhouse it runs nothing: there is nowhere to install from."""
+    wanted = _wanted["count"]
     source = pip_source()
     if source is None:
         say("    Nothing installed: this offline build installs packages only from the bundle's wheelhouse folder.")
@@ -789,22 +827,142 @@ def pip_install(args: list[str]) -> bool:
     proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding="utf-8",
                             errors="replace", env=pip_env(source))  # fmt: skip
     assert proc.stdout is not None
-    for out in proc.stdout:
-        text = out.rstrip()
-        if text.startswith("Successfully installed"):  # sixty names: said as a count, the names in the log
-            log(text)
-            say(f"    Installed {plural(len(text.split()) - 2, 'package')}.")
-        elif text and not text.startswith(QUIET_PIP_LINES):
-            say(f"    {text}")
-        elif text:
-            log(text)  # pip's progress, a line a package: for IT, in the log only
-        if any(sign in text for sign in DISK_FULL):
-            _disk_full.append(text)
-        if any(sign in text for sign in PATH_TOO_LONG):
-            _path_too_long.append(text)
-        if any(sign in text for sign in FILE_IN_USE):
-            _file_in_use.append(text)
-    return proc.wait() == 0
+    progress = PipProgress(site_packages())
+    with heartbeat(progress):
+        for out in proc.stdout:
+            text = out.rstrip()
+            progress.feed(text)
+            if text.startswith("Successfully installed"):  # sixty names: said as a count, the names in the log
+                log(text)
+                count = len(text.split()) - 2
+                also = f" (the {wanted} missing and the ones they need)" if 0 < wanted < count else ""
+                say(f"    Installed {plural(count, 'package')}{also}.")
+            elif text and not text.startswith(QUIET_PIP_LINES):
+                say(f"    {text}")
+            elif text:
+                log(text)  # pip's progress, a line a package: for IT, in the log only
+            if any(sign in text for sign in DISK_FULL):
+                _disk_full.append(text)
+            if any(sign in text for sign in PATH_TOO_LONG):
+                _path_too_long.append(text)
+            if any(sign in text for sign in FILE_IN_USE):
+                _file_in_use.append(text)
+        return proc.wait() == 0
+
+
+HEARTBEAT = 12.0  # seconds pip may work without a line in the window before one says how far it is
+
+
+def _package_key(name: str) -> str:
+    return re.sub(r"[-_.]+", "_", name).lower()
+
+
+def site_packages() -> Path | None:
+    """Where pip puts this Python's packages (each one's ``<name>-<version>.dist-info`` says it is installed)."""
+    import sysconfig
+
+    try:
+        return Path(sysconfig.get_paths()["purelib"])
+    except (KeyError, OSError):
+        return None
+
+
+class PipProgress:
+    """How far ``pip install`` is, from its own lines (which stay in the log): the packages it found and fetched, then,
+    while it unpacks them silently, the ones whose ``.dist-info`` folder appeared (pip installs them in the order its
+    "Installing collected packages" line lists them). A first setup from GitHub's ZIP is 2 to 3 minutes of pip."""
+
+    def __init__(self, site: Path | None) -> None:
+        self.site = site
+        self.seen: list[str] = []  # the packages pip found it needs ("Collecting x", "Processing ./x.whl")
+        self.got: list[str] = []  # the ones it has the files of ("Downloading x.whl", "Using cached x.whl")
+        self.installing: list[str] = []  # "Installing collected packages: a, b, c"
+        self.before: set[str] = set()  # the .dist-info folders there when it started installing
+
+    def _dist_infos(self) -> set[str]:
+        try:
+            return {p.name for p in self.site.iterdir() if p.name.endswith(".dist-info")} if self.site else set()
+        except OSError:
+            return set()
+
+    @staticmethod
+    def _add(names: list[str], name: str) -> None:
+        if name and _package_key(name) not in {_package_key(n) for n in names}:
+            names.append(name)
+
+    def feed(self, text: str) -> None:
+        line = text.strip()
+        words = line.split()
+        if line.startswith("Collecting ") and len(words) > 1:  # "Collecting python-dotenv>=1.0 (from ap-coder)"
+            self._add(self.seen, re.split(r"[<>=!~;\[(,@]", words[1])[0])
+        elif line.startswith("Processing ") and len(words) > 1:  # "Processing ./wheelhouse/pandas-3.0.6-cp312-....whl"
+            name = words[1].replace("\\", "/").rstrip("/").rsplit("/", 1)[-1].split("-")[0]
+            self._add(self.seen, name)
+            self._add(self.got, name)  # (from the wheelhouse: found and fetched at once)
+        elif line.startswith(("Downloading ", "Using cached ")):  # a wheel, or only its metadata (".whl.metadata")
+            at = 2 if line.startswith("Using") else 1
+            file = words[at] if len(words) > at else ""
+            if file and not file.endswith(".metadata") and "-" in file:
+                self._add(self.got, file.rsplit("/", 1)[-1].split("-")[0])
+        elif line.startswith("Installing collected packages:"):
+            self.installing = [n.strip() for n in line.split(":", 1)[1].split(",") if n.strip()]
+            self.before = self._dist_infos()
+
+    def status(self) -> str:
+        """The line to say now ("" when there is nothing to tell yet)."""
+        if self.installing:
+            new = {_package_key(n.split("-")[0]) for n in self._dist_infos() - self.before}
+            done = [i for i, n in enumerate(self.installing) if _package_key(n) in new]
+            # The one after the last installed (pip goes in its list's order): a name whose .dist-info is spelled
+            # another way never holds the line on itself (B-555).
+            after = done[-1] + 1 if done else 0
+            now = f" ({self.installing[after]})" if after < len(self.installing) else ""
+            return f"    Installing packages: {len(done)} of {len(self.installing)}{now}..."
+        if self.got:
+            return f"    Getting packages: {len(self.got)} of {max(len(self.seen), len(self.got))} ({self.got[-1]})..."
+        if self.seen:
+            return f"    Working out which packages are needed: {len(self.seen)} so far ({self.seen[-1]})..."
+        return "    Starting pip..."
+
+
+class Step:
+    """What the setup is doing between its own lines, for the heartbeat: ``now`` ("checking the packages")."""
+
+    def __init__(self, now: str = "") -> None:
+        self.now = now
+
+    def status(self) -> str:
+        return f"  Still working: {self.now}..." if self.now else ""
+
+
+class heartbeat:  # noqa: N801 - used as ``with heartbeat(progress):``
+    """While a long step runs (pip, the setup after it): a line every HEARTBEAT seconds the window has said nothing,
+    from ``progress.status()`` (said and logged like any other). A first setup was silent for minutes (B-543)."""
+
+    def __init__(self, progress: PipProgress | Step, every: float | None = None) -> None:
+        self.progress, self.every = progress, every
+        self.done = threading.Event()
+
+    def _beat(self) -> None:
+        every = HEARTBEAT if self.every is None else self.every
+        wait, last = every, ""
+        while not self.done.wait(min(1.0, every)):
+            if time.monotonic() - _said["at"] >= wait:
+                said = self.progress.status()
+                _said["at"] = time.monotonic()
+                wait = min(wait * 2, every * 5) if said == last else every  # the same line again: less often
+                last = said
+                if said:
+                    say(said)
+
+    def __enter__(self) -> heartbeat:
+        self.thread = threading.Thread(target=self._beat, name="pip-heartbeat", daemon=True)
+        self.thread.start()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.done.set()
+        self.thread.join(timeout=5)
 
 
 # How pip says Windows refused a file it must write or replace: open in another program (an AP Coder window still
@@ -1050,7 +1208,8 @@ def _ensure_packages(state: dict, extras: tuple[str, ...]) -> tuple[str, str, bo
             "from the internet once, for the setup only. AP Coder itself never goes online.")  # fmt: skip
     plain = tuple(e for e in extras if e != "ocr")
     if self_problem and missing:
-        say(f"Installing AP Coder's packages ({len(missing)} missing). The first time takes a few minutes.")
+        say(f"Installing AP Coder's packages: {len(missing)} missing, with the packages they need in turn. The first "
+            "time takes a few minutes.")  # fmt: skip
         tries = [editable(extras)] + ([editable(plain)] if plain != extras else [])
     elif self_problem:
         say("Registering this AP Coder folder in .venv (nothing to download).")
@@ -1062,8 +1221,12 @@ def _ensure_packages(state: dict, extras: tuple[str, ...]) -> tuple[str, str, bo
     for number, pip_args in enumerate(tries):
         if number:
             say("The OCR add-on (for scanned invoices) could not be installed here; trying without it.")
-        if pip_install(pip_args):
-            break
+        _wanted["count"] = len(missing)
+        try:
+            if pip_install(pip_args):
+                break
+        finally:
+            _wanted["count"] = 0
     left, self_left = missing_packages(extras)
     if (self_left or left) and _disk_full:
         raise disk_full_error()
@@ -1146,56 +1309,122 @@ def database_too_new(data: Path, version: str) -> SetupError | None:
 
 
 def models_attempt() -> str:
-    """What a copy of the OCR models depends on: this version, the opt-in, and the bundle's models/ folder.
-    A copy that failed is tried again only when one of them changes (e.g. the full bundle is unzipped); a download
-    that failed (the code alone) is tried again the next day."""
-    import datetime
-
+    """What a copy of the OCR models depends on: this version, the opt-in, and the bundle's models/ folder. A copy
+    from the bundle that failed is tried again only when one of them changes (e.g. the full bundle is unzipped)."""
     folder = fetch_models.BUNDLE_MODELS
     try:
         files = sorted(f"{p.name}:{p.stat().st_size}" for p in folder.iterdir()) if folder.is_dir() else []
     except OSError:
         files = []
     online = setup_online() and not folder.is_dir()
-    day = datetime.date.today().isoformat() if online else ""
-    return f"{fingerprint()}|{online}|{folder.is_dir()}|{','.join(files)}|{day}"
+    return f"{fingerprint()}|{online}|{folder.is_dir()}|{','.join(files)}"
+
+
+# A download that failed (the code alone) is tried again at the next start, at most this many starts a day: a laptop
+# that went offline after its first setup is not held up at every start.
+MODEL_TRIES_A_DAY = 3
+
+
+def models_due(state: dict, attempt: str, online: bool) -> bool:
+    """Whether to try the OCR models now, after a try that failed (state["models_failed"])."""
+    import datetime
+
+    if state.get("models_failed") != attempt:
+        return True
+    if not online:
+        return False  # a copy from the bundle: only once the models folder changes
+    tried = state.get("models_tries") or {}
+    return tried.get("day") != datetime.date.today().isoformat() or int(tried.get("count") or 0) < MODEL_TRIES_A_DAY
+
+
+def _models_failed(state: dict, attempt: str, online: bool) -> str:
+    """Record a failed try; returns when the next one is ("next time it starts" / "tomorrow")."""
+    import datetime
+
+    state["models_failed"] = attempt
+    if not online:
+        return ""
+    today = datetime.date.today().isoformat()
+    tried = state.get("models_tries") or {}
+    count = int(tried.get("count") or 0) + 1 if tried.get("day") == today else 1
+    state["models_tries"] = {"day": today, "count": count}
+    return "tomorrow" if count >= MODEL_TRIES_A_DAY else "next time it starts"
 
 
 def ensure_models(first: bool, state: dict) -> None:
     """The PP-OCRv5 OCR models, put in place only when missing (checksums checked on the first run): copied from
     the offline bundle's models/ folder; downloaded only when the setup may (:func:`setup_online`: the code alone,
     or AP_ALLOW_INTERNET=1), with the table finder's model then too (into the data folder's models/ folder, so the
-    code folder never looks like a bundle). When that fails it is said once and recorded, not tried again on every
-    start (a download: not before the next day)."""
+    code folder never looks like a bundle). A download is tried 3 times; when it still fails it is said plainly and
+    tried again at the next start (up to MODEL_TRIES_A_DAY starts a day). A copy from the bundle that failed is said
+    once, and tried again when the bundle's models folder changes."""
     from ap_coder.ops import offline
 
     online = not fetch_models.BUNDLE_MODELS.is_dir() and setup_online()
     finder = online and offline.onnxruntime_installed() and offline.table_finder_path() is None
     if (not offline.ppocrv5_installed() or not offline.missing_models(verify=first)) and not finder:
         state.pop("models_failed", None)
+        state.pop("models_tries", None)
         return
     attempt = models_attempt()
-    if state.get("models_failed") == attempt:
+    if not models_due(state, attempt, online):
         return  # said when it failed; the readiness summary still says scans are read with one engine
     if not online and not fetch_models.BUNDLE_MODELS.is_dir():
         say("The PP-OCRv5 OCR models are not here, and this offline build never downloads them: they come from the "
             "offline bundle's models folder. Scans are read with the other OCR engine.")  # fmt: skip
         state["models_failed"] = attempt
         return
-    say("Downloading the OCR models (once)." if online else "Copying the OCR models from the offline bundle (once).")
+    again = online and state.get("models_failed") == attempt
     if online:
+        say("Downloading the OCR models again (the last try didn't finish)." if again else
+            "Downloading the OCR models (once).")  # fmt: skip
         with setup_downloads():
-            code = fetch_models.main(["--table-finder"] if finder else [])
-        if finder and offline.table_finder_path() is None:
-            code = code or 1
+            result = fetch_models.setup(online=True, table_finder=finder, first=not again, say=say, log=log)
     else:
-        code = fetch_models.main([])
-    if code != 0:
-        later = "Tried again tomorrow." if online else "Not tried again until the models folder changes."
-        say(f"(Not needed to start: scans are read with the other OCR engine. {later})")
-        state["models_failed"] = attempt
-    else:
+        say("Copying the OCR models from the offline bundle (once).")
+        result = fetch_models.setup(online=False, table_finder=False, first=first, say=say, log=log)
+    if result.ok:
         state.pop("models_failed", None)
+        state.pop("models_tries", None)
+        say(f"OCR models ready: {models_said(result)}.")
+        return
+    when = _models_failed(state, attempt, online)
+    if not online:
+        say("(Not needed to start: scans are read with the other OCR engine. Not tried again until the models folder "
+            "changes.)")  # fmt: skip
+        return
+    finder_only = result.failed == [offline.TABLE_FINDER_NAME]
+    what = "the table finder's model" if finder_only else "the OCR models"
+    meanwhile = "line items are still read without it" if finder_only else "scans are still read with one engine"
+    if result.unreachable:  # no answer at all: said once, with whom to ask (B-554)
+        say(f"AP Coder couldn't reach {', '.join(result.unreachable)} (a firewall may block it): ask IT, or use the "
+            f"offline bundle. AP Coder will try again {when}; {meanwhile} meanwhile.")  # fmt: skip
+        return
+    why = result.reasons[0] if result.reasons else "the download didn't finish"
+    say(f"Couldn't download {what} ({why}). AP Coder will try again {when}; {meanwhile} meanwhile.")
+
+
+def models_said(result: Any) -> str:
+    """ "2 downloaded and the table finder's, 1 came with the OCR package": where each model file came from."""
+    from ap_coder.ops import offline
+
+    finder = offline.TABLE_FINDER_NAME
+    parts = []
+    for how, files in (("downloaded", result.downloaded), ("copied from the offline bundle", result.copied)):
+        ocr = len([f for f in files if f != finder])
+        if ocr and finder in files:
+            parts.append(f"{ocr} {how}, and the table finder's")
+        elif ocr:
+            parts.append(f"{ocr} {how}")
+        elif finder in files:
+            parts.append(f"the table finder's {how}")
+    kept = [f for f in result.kept if f != finder]
+    package = [f for f in kept if fetch_models.came_with_package(f)]
+    if package:
+        parts.append(f"{len(package)} came with the OCR package")
+    if len(kept) > len(package):
+        parts.append(f"{len(kept) - len(package)} already in place")
+    return "; ".join(parts) or "all in place"
 
 
 def desktop() -> Path | None:
@@ -1350,8 +1579,9 @@ def lm_studio_line(status: Any = None) -> tuple[str, str]:
     if status is None:
         return "info", "Chat model: not checked (optional)"
     if not status.reachable:
-        return "warn", ("LM Studio isn't running: invoices are read by OCR only and wait for a person. To use it: open "
-                        "LM Studio, Developer tab → Start server, then start AP Coder again")  # fmt: skip
+        return "warn", ("LM Studio isn't running yet: until it is, invoices are read by OCR only and wait for a "
+                        "person. To start it: open LM Studio, Developer tab → Start server; then press Check again in "
+                        "AP Coder's Settings → Reading (no need to restart AP Coder)")  # fmt: skip
     if not status.active:
         return "warn", f"{status.server}: running, but no chat model is loaded (optional: load Gemma 4 12B to use it)"
     sees = "can see pages" if status.vision else "reads text only"
@@ -1428,7 +1658,7 @@ def _ask_chat_model() -> tuple[str, str]:
 
 
 # The doctor's checks the summary already has a line of its own for (or that never need saying at a start).
-COVERED_CHECKS = ("python", "package ", "OCR", "table finder", "data folder", "local model", "page reader",
+COVERED_CHECKS = ("AP Coder", "python", "package ", "OCR", "table finder", "data folder", "local model", "page reader",
                   "engine", "prompt size", "AI model")  # fmt: skip
 
 
@@ -1446,16 +1676,20 @@ def setup_check_lines() -> list[tuple[str, str]]:
         sample = reference_source(args).startswith("BUNDLED")
     except Exception as exc:  # noqa: BLE001 - the summary never stops the start
         return [("warn", f"Setup checks: not run ({type(exc).__name__}: {exc})")]
-    lines = [("warn", "GL accounts: none imported yet, so the sample ones are used: import yours on GL accounts & "
-                      "tax")] if sample else []  # fmt: skip
-    shown = [c for c in checks if not c.area.startswith(COVERED_CHECKS)]
+    lines = [("info", NO_GL_YET)] if sample else []
+    # With no GL accounts imported, the checks of the sample's lists say nothing about this setup: not counted.
+    shown = [c for c in checks if not c.area.startswith(COVERED_CHECKS) and not (sample and c.area in SAMPLE_LISTS)]
     problems = [("fail" if c.status == FAIL else "warn", f"{c.area}: {c.detail}") for c in shown
                 if c.status in (FAIL, WARN)]  # fmt: skip
     if problems:
         return lines + problems
     passed = sum(1 for c in shown if c.status == "PASS")
-    gl = "the sample GL accounts" if sample else "GL accounts"
-    return lines + [("ok", f"Setup checks: all {passed} passed ({gl}, tax mapping, coding rules, settings)")]
+    gl = "" if sample else "GL accounts, "
+    return lines + [("ok", f"Setup checks: all {passed} passed ({gl}tax mapping, coding rules, settings)")]
+
+
+NO_GL_YET = "GL accounts: none imported yet (import yours in GL accounts & tax, or use the sample ones)"
+SAMPLE_LISTS = ("GL accounts", "cost centers")  # the doctor's checks of the imported lists
 
 
 def page_reader_line() -> tuple[str, str]:
@@ -1491,8 +1725,7 @@ def readiness(packages: tuple[str, str], state: dict | None = None, force: bool 
     if v5 and not offline.missing_models():
         lines.append(("ok", "OCR for scanned invoices"))
     elif v4 or v5:
-        lines.append(("ok", "OCR for scanned invoices (one engine: the PP-OCRv5 models come from the offline "
-                            "bundle's models folder)"))  # fmt: skip
+        lines.append(("ok", f"OCR for scanned invoices ({one_engine(v5)})"))
     else:
         lines.append(("warn", "OCR not installed: scanned invoices can't be read (text PDFs are fine)"))
     data = paths.private_dir()
@@ -1514,6 +1747,17 @@ def readiness(packages: tuple[str, str], state: dict | None = None, force: bool 
         lines.append(page_reader_line())
     lines += setup_check_lines()
     return lines
+
+
+def one_engine(v5: bool) -> str:
+    """Why scans are read by one OCR engine, by where the PP-OCRv5 models come from here."""
+    if not v5:
+        return "one engine"
+    if fetch_models.BUNDLE_MODELS.is_dir() or not setup_online():
+        if internet_forbidden() and not fetch_models.BUNDLE_MODELS.is_dir() and not (ROOT / "wheelhouse").is_dir():
+            return f"one engine: the PP-OCRv5 models are downloaded at setup, and {INTERNET_ENV}=0 forbids it"
+        return "one engine: the PP-OCRv5 models come from the offline bundle's models folder"
+    return "one engine for now: the PP-OCRv5 models couldn't be downloaded yet; AP Coder tries again when it starts"
 
 
 def self_check() -> tuple[bool, str]:
@@ -1576,9 +1820,9 @@ def candidate_ports(rest: list[str], state: dict) -> list[int]:
 
 def running_dashboard(rest: list[str], state: dict) -> int | None:
     """The port of this folder's own AP Coder (this version), already running here, else None."""
-    version = identity()["version"]
+    ident = identity()
     for server in running.find(candidate_ports(rest, state), paths.private_dir()):
-        if running.judge(server, ROOT, version) == "same":
+        if running.judge(server, ROOT, ident["version"], ident["code"]) == "same":
             return server.port
     return None
 
@@ -1701,11 +1945,12 @@ def stop_older(argv: list[str], wait: float = 30.0) -> int | None:
     """The start holding this folder's lock serves an older AP Coder (this folder unzipped over while it ran: its
     dashboard is never this version's, so waiting for one would last half an hour): it is stopped like any older one,
     and its start then ends, freeing the lock. Returns an exit code when this start must stop, else None."""
-    version = identity()["version"]
+    ident = identity()
+    version, build = ident["version"], ident["code"]
     ports = candidate_ports(argv, load_state())
-    if not any(running.judge(s, ROOT, version) == "older" for s in running.find(ports, paths.private_dir())):
+    if not any(running.judge(s, ROOT, version, build) == "older" for s in running.find(ports, paths.private_dir())):
         return None
-    verdict, port = running.take_over(ROOT, version, ports, paths.private_dir(), say)
+    verdict, port = running.take_over(ROOT, version, ports, paths.private_dir(), say, build=build)
     if verdict == "blocked":
         return failed(older_still_running(port))
     if verdict == "other":
@@ -1772,6 +2017,7 @@ def start_dashboard(rest: list[str], state: dict) -> int:
         say(f"Port {DEFAULT_PORT} is in use by another program: AP Coder uses port {port} ({dashboard_url(port)}).")
     state["port"] = port
     save_state(state)
+    running.clear_takeover()
     say("Starting AP Coder: it opens in your browser. Keep this window open while you use it; close it to stop.")
     try:
         proc = subprocess.Popen(server_command(port, rest), cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -1802,7 +2048,11 @@ def start_dashboard(rest: list[str], state: dict) -> int:
                 open_browser(dashboard_url(port))
                 opened = True
         shown.join(timeout=5)
-        if proc.returncode:  # (stopped by an update or the window closed: 0, or nothing is left to read this)
+        if running.taken_over(port):  # a newer AP Coder (or this folder unzipped over) stopped it to take over
+            say()
+            say(TOOK_OVER)
+            return TOOK_OVER_CODE
+        if proc.returncode:  # (the window closed: nothing is left to read this)
             say()
             line("fail", f"AP Coder stopped on its own (code {proc.returncode}); the lines above may say why.")
             say("  What to do: double-click AP Coder again. If it happens again, use Help → Report a problem, and "
@@ -1817,6 +2067,34 @@ def start_dashboard(rest: list[str], state: dict) -> int:
         return 0
 
 
+def update_line(previous: dict, ident: dict) -> str:
+    """What changed since this folder was last set up: "Updated AP Coder from X to Y"; "Replaced AP Coder X with an
+    older build, Y" (an older ZIP or bundle unzipped over a newer one: it starts, and the self-check runs, B-553); or,
+    when nothing names the two (a folder copied by hand), that its files changed."""
+    exact = paths.describe(previous) == paths.describe(ident)  # the same version, rebuilt the same day
+    old, new = paths.describe(previous, exact), paths.describe(ident, exact)
+    if old == new:
+        return "AP Coder's files in this folder changed since it was last set up: checking it again."
+    if paths.compare(previous, ident) == "newer":
+        return f"Replaced AP Coder {old} with an older build, {new}."
+    return f"Updated AP Coder from {old} to {new}."
+
+
+TOOK_OVER = "A newer AP Coder took over; you can close this window."
+TOOK_OVER_CODE = 75  # the second phase tells the first (which holds the lock) to free it, then keep the window open
+
+
+def keep_open() -> None:
+    """Leave the window open on its last line (a double-clicked APProcessor.bat closes its window as soon as it ends,
+    with nothing said): until Enter, unless AP_NO_PAUSE=1 or nobody is at the window."""
+    if os.environ.get("AP_NO_PAUSE") or not (getattr(sys.stdin, "isatty", lambda: False)()):
+        return
+    try:
+        input("Press Enter to close. ")
+    except (EOFError, OSError, KeyboardInterrupt):
+        pass
+
+
 def previous_install(state: dict, ident: dict, legacy: list[str]) -> dict | None:
     """The AP Coder this start updates (None when it is no update): this folder's own, when its version or packages
     changed since .venv was set up here (unzipped over it); else, in a new folder, the newest older install."""
@@ -1825,7 +2103,11 @@ def previous_install(state: dict, ident: dict, legacy: list[str]) -> dict | None
                 ident["version"] and state.get("build", ident["build"]) == ident["build"])  # fmt: skip
         if same:
             return None
-        return {"version": state.get("version") or registered_version(), "build": state.get("build", "")}
+        return {
+            "version": state.get("version") or registered_version(),
+            "build": state.get("build", ""),
+            "commit": state.get("commit", ""),
+        }
     older = [i for i in upgrade.previous_versions(ROOT, legacy) if paths.is_older(i, ident)]
     if older:
         return older[-1]
@@ -1851,14 +2133,15 @@ def legacy_folders() -> list[str]:
 
 
 def older_installs(ident: dict, legacy: list[str]) -> list[Path]:
-    """Every other install this one replaces (on record, or AP Coder 0.1's): never one that is newer."""
+    """Every other install this one replaces (on record, or AP Coder 0.1's): only one certainly older than this one, or
+    another copy of this very build; never one that is newer or whose build can't be ordered with this one (B-551)."""
     folders = [Path(e["folder"]) for e in paths.installs() if not paths.same_folder(e["folder"], ROOT)]
     folders += upgrade.legacy_installs(ROOT, legacy)
     found: list[Path] = []
     for folder in folders:
         if any(paths.same_folder(folder, f) for f in found):
             continue
-        if upgrade.is_install(folder) and paths.is_older(ident, paths.install_identity(folder)):
+        if upgrade.is_install(folder) and not upgrade.replaced_by(folder, ident):
             continue
         found.append(folder)
     return found
@@ -1866,6 +2149,77 @@ def older_installs(ident: dict, legacy: list[str]) -> list[Path]:
 
 def plural(count: int, word: str) -> str:
     return f"{count} {word}{'' if count == 1 else 's'}"
+
+
+def settle_and_check(
+    args: argparse.Namespace,
+    state: dict,
+    ident: dict,
+    first: bool,
+    previous: dict | None,
+    legacy: list[str],
+    packages: tuple[str, str, bool],
+    step: Step,
+) -> list[tuple[str, str]] | int:
+    """Everything after the packages: the data folder and settings, the OCR models, the record of installs, the
+    readiness lines, the self-check and the clean-up of older installs. Returns the readiness lines, or the exit code
+    of a step that stops the start. ``step`` says what it is doing, for the heartbeat."""
+    level, summary, installed = packages
+    step.now = "checking the packages and the data folder"
+    if str(ROOT) not in sys.path:  # ap_coder itself, even when it was only just installed
+        sys.path.insert(0, str(ROOT))
+    try:
+        data = ensure_data_folder()
+    except upgrade.DataMoveError as exc:  # never started on half the data: the next start finishes the move
+        save_state(state)
+        return failed(SetupError(str(exc), exc.hint))
+    notes = settle_settings(data, ident["version"])
+    too_new = database_too_new(data, ident["version"])
+    if too_new:
+        save_state(state)
+        return failed(too_new)
+    step.now = "getting the OCR models"
+    ensure_models(first, state)
+    paths.record_install(ident)
+    upgrade.write_marker(ROOT, ident)
+    shortcut = ensure_shortcut()
+    step.now = "checking LM Studio and the setup"
+    lines = readiness((level, summary), state, force=args.check) + notes + sync_notes(data)
+    if shortcut:
+        lines.append(("ok" if shortcut.startswith("Desktop") else "warn", shortcut))
+    old = older_installs(ident, legacy)
+    unchecked = bool(old) and not state.get("self_check")  # (set up by --installer: checked before the clean-up)
+    if first or installed or args.check or previous or unchecked:
+        step.now = "the self-check, reading the sample invoices"
+        ok, result = self_check()
+        state["self_check"] = {"ok": ok, "at": time.strftime("%Y-%m-%d %H:%M"), "result": result}
+        lines.append(("ok" if ok else "fail", result))
+        if not ok:
+            lines.append(("info", f"AP Coder still starts. The details are in {log_path()}: send it with Help → "
+                                  "Report a problem in AP Coder."))  # fmt: skip
+    elif state.get("self_check"):
+        last = state["self_check"]
+        word = "OK" if last.get("ok") else "FAILED"
+        lines.append(("ok" if last.get("ok") else "warn",
+                      f"Self-check {word} at setup ({last.get('at', '?')})"))  # fmt: skip
+    if old and (state.get("self_check") or {}).get("ok"):
+        step.now = "cleaning up the older AP Coder"
+        say("Cleaning up the older AP Coder:")
+        freed = upgrade.clean_up(ROOT, data, old, say)
+        if freed:
+            lines.append(("ok", f"Cleaned up the older AP Coder: {upgrade.shown_size(freed)} freed"))
+        lines += retire_settings(data, ident["version"])  # (a settings file it moved in)
+    elif old:
+        kept = ", ".join(str(f) for f in old)
+        lines.append(("warn", f"The older AP Coder is kept in {kept} until the self-check passes"))
+    state.update(
+        setup_done=True,
+        fingerprint=ident["fingerprint"],
+        version=ident["version"],
+        build=ident["build"],
+        commit=ident["commit"],
+    )
+    return lines
 
 
 def run(args: argparse.Namespace, rest: list[str]) -> int:
@@ -1882,7 +2236,8 @@ def run(args: argparse.Namespace, rest: list[str]) -> int:
         return failed(blocker)
 
     # An AP Coder already running: this one opened; an older one (or another folder's) stopped first.
-    verdict, port = running.take_over(ROOT, ident["version"], candidate_ports(rest, state), paths.private_dir(), say)
+    verdict, port = running.take_over(ROOT, ident["version"], candidate_ports(rest, state), paths.private_dir(), say,
+                                      build=ident["code"])  # fmt: skip
     if verdict == "other":  # another computer account's: never opened under their name, nor stopped under them
         return failed(someone_elses(port))
     if verdict == "open":
@@ -1897,8 +2252,7 @@ def run(args: argparse.Namespace, rest: list[str]) -> int:
     previous = previous_install(state, ident, legacy)
     upgrade.remember(upgrade.legacy_installs(ROOT, legacy))  # (what found them changes below: kept on record)
     if previous:
-        exact = paths.describe(previous) == paths.describe(ident)  # the same version, rebuilt the same day
-        say(f"Updated AP Coder from {paths.describe(previous, exact)} to {paths.describe(ident, exact)}.")
+        say(update_line(previous, ident))
     removed, freed = upgrade.prune_stale(ROOT)
     if removed:
         say(f"Removed {plural(len(removed), 'file')} the older version left in this folder "
@@ -1908,49 +2262,11 @@ def run(args: argparse.Namespace, rest: list[str]) -> int:
     except SetupError as exc:
         save_state(state)
         return failed(exc)
-    if str(ROOT) not in sys.path:  # ap_coder itself, even when it was only just installed
-        sys.path.insert(0, str(ROOT))
-    try:
-        data = ensure_data_folder()
-    except upgrade.DataMoveError as exc:  # never started on half the data: the next start finishes the move
-        save_state(state)
-        return failed(SetupError(str(exc), exc.hint))
-    notes = settle_settings(data, ident["version"])
-    too_new = database_too_new(data, ident["version"])
-    if too_new:
-        save_state(state)
-        return failed(too_new)
-    ensure_models(first, state)
-    paths.record_install(ident)
-    upgrade.write_marker(ROOT, ident)
-    shortcut = ensure_shortcut()
-    lines = readiness((level, packages), state, force=args.check) + notes + sync_notes(data)
-    if shortcut:
-        lines.append(("ok" if shortcut.startswith("Desktop") else "warn", shortcut))
-    old = older_installs(ident, legacy)
-    unchecked = bool(old) and not state.get("self_check")  # (set up by --installer: checked before the clean-up)
-    if first or installed or args.check or previous or unchecked:
-        ok, result = self_check()
-        state["self_check"] = {"ok": ok, "at": time.strftime("%Y-%m-%d %H:%M"), "result": result}
-        lines.append(("ok" if ok else "fail", result))
-        if not ok:
-            lines.append(("info", f"AP Coder still starts. The details are in {log_path()}: send it with Help → "
-                                  "Report a problem in AP Coder."))  # fmt: skip
-    elif state.get("self_check"):
-        last = state["self_check"]
-        word = "OK" if last.get("ok") else "FAILED"
-        lines.append(("ok" if last.get("ok") else "warn",
-                      f"Self-check {word} at setup ({last.get('at', '?')})"))  # fmt: skip
-    if old and (state.get("self_check") or {}).get("ok"):
-        say("Cleaning up the older AP Coder:")
-        freed = upgrade.clean_up(ROOT, data, old, say)
-        if freed:
-            lines.append(("ok", f"Cleaned up the older AP Coder: {upgrade.shown_size(freed)} freed"))
-        lines += retire_settings(data, ident["version"])  # (a settings file it moved in)
-    elif old:
-        kept = ", ".join(str(f) for f in old)
-        lines.append(("warn", f"The older AP Coder is kept in {kept} until the self-check passes"))
-    state.update(setup_done=True, fingerprint=ident["fingerprint"], version=ident["version"], build=ident["build"])
+    step = Step()
+    with heartbeat(step):
+        lines = settle_and_check(args, state, ident, first, previous, legacy, (level, packages, installed), step)
+    if isinstance(lines, int):
+        return lines
     save_state(state)
     print_summary(lines)
     if args.no_start:
@@ -1985,7 +2301,12 @@ def inside_zip_view() -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     try:
-        return _main(argv)
+        code = _main(argv)
+        if code == TOOK_OVER_CODE and os.environ.get(LOCK_HELD_ENV) == str(os.getpid()):  # the window's own process
+            release_lock()  # (the newer AP Coder's start may be waiting for it)
+            keep_open()
+            return 0
+        return code
     except KeyboardInterrupt:
         return 0
     except Exception as exc:  # noqa: BLE001 - said plainly, the details in the log
@@ -2019,7 +2340,7 @@ def _main(argv: list[str] | None = None) -> int:
     if args.venv is None:  # the first phase: an older folder started by mistake opens the newest instead
         newer = upgrade.newer_install(ROOT)
         if newer is not None:
-            say(f"A newer AP Coder ({paths.describe(newer)}) is in {newer['folder']}: opening that one.")
+            say(f"A newer AP Coder, {paths.describe(newer)}, is in {newer['folder']}: opening that one.")
             upgrade.remember([ROOT])  # (an older bundle unzipped again: on record, so the newest cleans it up)
             return upgrade.hand_over(Path(newer["folder"]), argv, LOCK_HELD_ENV)
     if not in_venv():

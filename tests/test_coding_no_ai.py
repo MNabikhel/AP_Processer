@@ -126,9 +126,9 @@ def test_the_offline_coder_leaves_weak_matches_for_ap_with_a_suggestion(tmp_path
     assert gloves.predicted_gl_code == "5000"
     assert paper.predicted_gl_code == UNASSIGNED and paper.reasoning_justification.startswith("Not sure enough")
     assert [o["gl"] for o in suggestions(store, reference, coding)[0]["options"]][:1] == ["6000"]  # on the screen
-    # With the local chat model, a weak match is kept (the model only gets lines with no suggestion at all).
-    weak = code_from_capture(_capture("Acme", "Copy paper"), reference, feedback, store, assign_weak=True).coding
-    assert weak.line_items[0].predicted_gl_code == "6000"
+    # B-463: never put in the line, with or without the chat model: kept as a hint for the model's answer.
+    weak = code_from_capture(_capture("Acme", "Copy paper"), reference, feedback, store)
+    assert weak.coding.line_items[0].predicted_gl_code == UNASSIGNED and weak.hints == {1: "6000"}
 
 
 # --- the history is read once per invoice -----------------------------------------------------------------------
