@@ -16,7 +16,8 @@
    picked, in reading order), {type: "teach_cancel", field}, {type: "selection", page, rect: [x0, y0, x1, y1], x, y}
    (a box dragged on the page with the mouse, outside teach mode: x, y where the mouse was let go, in the window) and
    {type: "line_hover", index, on} (a line item's outline on the page, pointed at or left) and {type: "dblclick", page, x,
-   y} (a double click on the page outside teach mode, x and y in the window: invoice.js fills a field with the word).
+   y, field, line} (a double click on the page outside teach mode, x and y in the window; field: the field whose box it
+   was on, line: on a line item's outline. invoice.js fills the detail being typed in with a plain word).
    Coordinates are fractions of the page (0..1, origin top-left), pages numbered from 1. Text from the invoice is only
    ever set as text (never as HTML).
 
@@ -339,7 +340,10 @@ export class InvoiceViewer {
     this.sheet.addEventListener("dblclick", (e) => {
       if (this.teach || this.hand || this.spaceHand || !this.pageInfo()) return;
       e.preventDefault();
-      this.emit({ type: "dblclick", page: this.page, x: e.clientX, y: e.clientY });
+      // What was double-clicked: a field's box (its click selected it already), a line item, or plain words (B-621).
+      const box = e.target.closest && e.target.closest(".iv-f, .iv-tag");
+      const line = Boolean(e.target.closest && e.target.closest(".iv-lg"));
+      this.emit({ type: "dblclick", page: this.page, x: e.clientX, y: e.clientY, field: box ? box.dataset.field : null, line });
     });
     this.tags.addEventListener("click", (e) => {
       const tag = e.target.closest(".iv-tag");

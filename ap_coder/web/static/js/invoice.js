@@ -1120,7 +1120,11 @@ async function undoable(text, change) {
 /* ---------- The invoice details: clear one, not on this invoice, Enter to the next ---------- */
 
 const TEACHABLE = new Set([...document.querySelectorAll("[data-teach-field] option")].map((o) => o.value));
-let lastField = ""; // the invoice detail focused last: a word double-clicked on the page fills it
+// The invoice detail a word double-clicked on the page fills (B-621): the one being typed in, or the one just left for
+// the page (within ARMED_MS, nothing outside the page clicked since).
+const ARMED_MS = 5000;
+let lastField = "";
+let lastFieldAt = 0;
 
 function detail(name) {
   return document.querySelector(`.inv-details [data-field="${CSS.escape(name)}"]`);
@@ -1228,10 +1232,31 @@ function fieldMenu(name, where) {
   ];
 }
 
+function headerBox(el) {
+  const label = el?.closest?.(".inv-details [data-field]");
+  return label && TEACHABLE.has(label.dataset.field) && el.name === label.dataset.field ? label.dataset.field : "";
+}
+
 document.addEventListener("focusin", (e) => {
-  const label = e.target.closest?.(".inv-details [data-field]");
-  if (label && TEACHABLE.has(label.dataset.field) && e.target.name === label.dataset.field) lastField = label.dataset.field;
+  const name = headerBox(e.target);
+  if (name) lastField = name;
 });
+document.addEventListener("focusout", (e) => {
+  if (headerBox(e.target) === lastField) lastFieldAt = Date.now();
+});
+document.addEventListener(
+  "pointerdown",
+  (e) => {
+    if (!e.target.closest?.(".iv-sheet") && !headerBox(e.target)) lastField = ""; // something else chosen since
+  },
+  true,
+);
+
+function armedField() {
+  const now = headerBox(document.activeElement);
+  if (now) return now;
+  return lastField && Date.now() - lastFieldAt < ARMED_MS ? lastField : "";
+}
 
 /** Enter in an invoice detail goes to the next one, Shift+Enter to the one before (Enter never approves). */
 document.addEventListener("keydown", (e) => {
@@ -1252,8 +1277,9 @@ document.addEventListener("keydown", (e) => {
 /* ---------- A word double-clicked on the page fills the detail focused last ---------- */
 
 async function fillFromWord(event) {
-  if (!viewer) return;
-  if (!lastField) {
+  if (!viewer || event.field) return; // a field's box: its click showed that field; it fills nothing
+  const field = armedField();
+  if (!field) {
     toast({ text: "Click in an invoice detail first (Invoice #, PO #…), then double-click its word on the page.", tone: "info" }, 6000);
     return;
   }
@@ -1265,7 +1291,12 @@ async function fillFromWord(event) {
   }
   const word = viewer.wordAt(event.x, event.y);
   if (!word) return;
-  await onViewerEvent({ type: "assign", field: lastField, text: word.t, boxes: [boxOf(word)] });
+  const name = fieldName(field);
+  if (event.line && !confirm(`“${word.t}” is in a line item. Use it for ${name}?`)) return;
+  const el = input(field);
+  if (el?.value.trim() && detail(field)?.querySelector(".inv-sure.ok") &&
+      !confirm(`${name} is verified (“${el.value.trim()}”). Replace it with “${word.t}”?`)) return;
+  await onViewerEvent({ type: "assign", field, text: word.t, boxes: [boxOf(word)] });
 }
 
 function boxOf(word) {

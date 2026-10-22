@@ -484,23 +484,21 @@ def test_in_a_browser_shift_right_click_gives_the_browsers_own_menu(browser, sto
     assert errors == []
 
 
-def test_in_a_browser_a_word_double_clicked_on_the_page_fills_the_detail_focused_last(browser, store):
+def test_in_a_browser_a_word_double_clicked_on_the_page_fills_the_detail_being_typed_in(browser, store):
     invoice_id = store.list_invoices(REVIEW)[0]["id"]
     page, errors = _review(browser, invoice_id)
-    words = page.evaluate(f"fetch('/review/{invoice_id}/words').then(r => r.json()).then(a => a.words[0])")
-    word = min((w for w in words if re.fullmatch(r"[A-Za-z]{4,}", w["t"])), key=lambda w: w["b"][1])
-    box = page.locator('.inv-details input[name="po_number"]')
-    box.focus()
-    frame = page.locator(".iv-frame").bounding_box()
-    x = frame["x"] + (word["b"][0] + word["b"][2]) / 2 * frame["width"]
-    y = frame["y"] + (word["b"][1] + word["b"][3]) / 2 * frame["height"]
+    name = "qst_registration_number"  # blank on this invoice: nothing to replace, nothing verified
+    box = page.locator(f'.inv-details input[name="{name}"]')
+    assert box.input_value() == ""
+    box.click()  # (it may scroll the window: the word is found after)
+    word, x, y = _plain_word(page, invoice_id)  # a word outside every field's box and line item
     with page.expect_response(lambda r: r.url.endswith("/teach")):
         page.mouse.dblclick(x, y)
     page.wait_for_function(
-        "t => document.querySelector('.inv-details input[name=po_number]').value === t", arg=word["t"]
+        "([n, t]) => document.querySelector(`.inv-details input[name=${n}]`).value === t", arg=[name, word["t"]]
     )
     taught = json.loads(page.eval_on_selector("[data-taught]", "t => t.value"))
-    assert taught["po_number"][0][0] == 1
+    assert taught[name][0][0] == 1
     assert page.locator("#toasts .flash-act").is_visible()  # Undo
     assert errors == []
 
@@ -644,4 +642,69 @@ def test_in_a_browser_a_duplicated_line_posts_its_own_key_and_its_own_taxes_b620
         _item(page, "delete").click()
     assert _posted(sent.value, "line_key")[0] == copy_key
     assert kind in _posted(sent.value, f"line_tax_{copy_key}")
+    assert errors == []
+
+
+def _plain_word(page, invoice_id, pattern=r"[A-Za-z]{4,}"):
+    """A word on page 1 outside every field's box and every line item: (word, x, y in the window)."""
+    data = json.loads(page.inner_text("#viewer-data"))
+    boxes = [b for f in data["fields"] for b in f.get("boxes") or []] + [
+        b for li in data["line_items"] for b in li.get("boxes") or []
+    ]
+    words = page.evaluate(f"fetch('/review/{invoice_id}/words').then(r => r.json()).then(a => a.words[0])")
+
+    def inside(w):
+        cx, cy = (w["b"][0] + w["b"][2]) / 2, (w["b"][1] + w["b"][3]) / 2
+        return any(b[0] == 1 and b[1] - 0.01 <= cx <= b[3] + 0.01 and b[2] - 0.01 <= cy <= b[4] + 0.01 for b in boxes)
+
+    word = min((w for w in words if re.fullmatch(pattern, w["t"]) and not inside(w)), key=lambda w: w["b"][1])
+    frame = page.locator(".iv-frame").bounding_box()
+    x = frame["x"] + (word["b"][0] + word["b"][2]) / 2 * frame["width"]
+    y = frame["y"] + (word["b"][1] + word["b"][3]) / 2 * frame["height"]
+    return word, x, y
+
+
+def _box_center(page, field):
+    r = page.locator(f".iv-f[data-field={field}] rect.iv-box").first.bounding_box()
+    return r["x"] + r["width"] / 2, r["y"] + r["height"] / 2
+
+
+def test_in_a_browser_a_double_click_fills_only_the_detail_chosen_and_never_from_a_fields_box_b621(browser, store):
+    """B-621: a double-click on the GST/HST number's box put that number in Invoice # (the detail focused last), and
+    approving would have taught the supplier template so."""
+    invoice_id = store.list_invoices(REVIEW)[0]["id"]
+    page, errors = _review(browser, invoice_id)
+    teaches: list[str] = []
+    page.on("request", lambda r: teaches.append(r.url) if r.url.endswith("/teach") else None)
+    asked: list[str] = []
+    page.on("dialog", lambda d: (asked.append(d.message), d.dismiss()))
+    number = page.locator('.inv-details input[name="invoice_number"]')
+    before = number.input_value()
+    other = page.locator(".iv-f[data-field]:not([data-field=invoice_number])").first.get_attribute("data-field")
+    number.click()
+    page.mouse.dblclick(*_box_center(page, other))  # another field's box: it is shown, nothing is filled
+    page.wait_for_timeout(400)
+    assert number.input_value() == before and teaches == []
+    # a plain word, but the detail was left for something else: nothing is filled
+    blank = next(
+        n
+        for n in ("qst_registration_number", "pst_registration_number", "po_number", "due_date")
+        if not page.locator(f'.inv-details [data-field="{n}"] .inv-sure').count()
+    )
+    box = page.locator(f'.inv-details input[name="{blank}"]')
+    box.click()
+    page.locator(".inv-details .rvw-group").first.click()  # clicked elsewhere since
+    word, x, y = _plain_word(page, invoice_id)
+    page.mouse.dblclick(x, y)
+    page.wait_for_timeout(400)
+    assert teaches == [] and "Click in an invoice detail first" in page.inner_text("#toasts")
+    # a verified detail is never replaced without asking
+    verified = page.locator(".inv-details [data-field]:has(.inv-sure.ok) input[form=inv]").first
+    assert verified.count()
+    was = verified.input_value()
+    verified.click()
+    word, x, y = _plain_word(page, invoice_id)
+    page.mouse.dblclick(x, y)
+    page.wait_for_timeout(400)
+    assert asked and "verified" in asked[0] and verified.input_value() == was and teaches == []
     assert errors == []

@@ -6024,6 +6024,21 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
 - **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_a_duplicated_line_posts_its_own_key_and_its_own_taxes_b620`
 - **Lesson:** A copy of a row copies its values, never its identity.
 
+#### B-621 · A double-click on the GST/HST number's box on the page put it in Invoice # · high
+- **Where:** `ap_coder/web/static/js/invoice.js` (`fillFromWord`), `ap_coder/web/static/js/invoice_viewer.js` (dblclick)
+- **Symptom:** after clicking in Invoice #, a double-click on the GST/HST number's box on the page made the invoice
+  number 609274188; approving would have taught the supplier template that the invoice number is printed there.
+- **Cause:** any double-click on the page filled the invoice detail focused last, however long ago and whatever was
+  clicked since, on a field's box or a line item too, over a verified value without asking.
+- **Reproduce:** /review/9, click in Invoice #, double-click the GST/HST number's box on the page.
+- **Reproduced:** yes
+- **Fix:** a double-click on a field's box fills nothing (its click shows that field). A plain word fills the detail
+  being typed in, or the one just left for the page (5 seconds, nothing outside the page clicked since); otherwise
+  a message says to click in a detail first. A verified value is replaced only after asking, and a word inside a line
+  item is used for a detail only after asking.
+- **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_a_double_click_fills_only_the_detail_chosen_and_never_from_a_fields_box_b621`
+- **Lesson:** A shortcut that writes a value (and teaches it) must be sure which value the person meant.
+
 #### Looked at and left (install, launcher and updates)
 
 - **N-251** · A GitHub ZIP unzipped over an older one leaves the files the newer one no longer has (the offline
