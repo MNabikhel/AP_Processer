@@ -421,6 +421,7 @@ def _dashboard(settings: Settings, store):
 def _approve_one(app, base: str) -> tuple[int | None, list[str]]:
     """Approve one invoice on its review screen, as the page posts it: its coding, with an account and a cost center
     picked for the lines left for AP (as a reviewer does)."""
+    from ap_coder.coding.line_tax import tax_code_of
     from ap_coder.core.store import REVIEW
     from ap_coder.web import invoice_view
     from ap_coder.web.invoice_view import Draft
@@ -444,8 +445,7 @@ def _approve_one(app, base: str) -> tuple[int | None, list[str]]:
         pairs += [("line_key", f"r{i}") for i in range(len(lines))]
         for column, name in invoice_view.LINE_INPUTS.items():
             pairs += [(name, "" if r.get(column) is None else str(r.get(column))) for r in lines]
-        for i, r in enumerate(lines):
-            pairs += [(f"line_tax_r{i}", str(t)) for t in r.get("taxes_applied") or []]
+        pairs += [(invoice_view.LINE_TAX_CODE, tax_code_of(r)) for r in lines]  # one tax code a line (D-64)
         for column, name in invoice_view.TAX_INPUTS.items():
             pairs += [(name, "" if t.get(column) is None else str(t.get(column))) for t in draft.taxes]
         checked = offline_flow.post_form(base, f"/review/{row['id']}/check", pairs)  # the page checks each edit

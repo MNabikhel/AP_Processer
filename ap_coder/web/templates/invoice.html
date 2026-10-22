@@ -90,7 +90,7 @@
       <div class="table-wrap">
         <table class="apc-table inv-grid-table inv-lines-grid{% if grid.lines | length > 3 %} compact{% endif %}" id="lines">
           <thead><tr><th>#</th><th>Description</th><th><span class="rvw-sr">Delete</span></th><th>GL account</th>{% if grid.has_cc %}<th>Cost center</th>{% endif %}
-            <th class="r">Amount</th><th>Taxes</th><th class="r">Qty</th><th class="r">Unit price</th></tr></thead>
+            <th class="r">Amount</th><th>Tax code</th><th class="r">Qty</th><th class="r">Unit price</th></tr></thead>
           <tbody data-grid="lines">{{ grids.line_rows(grid) }}</tbody>
         </table>
       </div>
@@ -137,6 +137,21 @@
           </div>
         </details>
       </div>
+      {# The Tax check (D-64): each tax charged or marked, worked out again from the lines' tax codes at the official
+         rate, against what the invoice charges; then the subtotal and the total. Drawn again after each edit. #}
+      <div class="inv-taxcheck-wrap" data-live="taxcheck" aria-live="polite">{{ live_ui.taxcheck(live, inv.id) }}</div>
+      <details class="inv-more inv-taxlines" open>
+        <summary><span class="ms" aria-hidden="true">receipt_long</span>Tax lines, as printed on the invoice</summary>
+        <div class="table-wrap">
+          <table class="apc-table inv-grid-table" id="taxes">
+            <thead><tr><th>Tax</th><th>Province</th><th class="r">Rate %</th><th class="r">Taxable</th><th class="r">Amount</th><th><span class="rvw-sr">Delete</span></th></tr></thead>
+            <tbody data-grid="taxes">{{ grids.tax_rows(grid) }}</tbody>
+          </table>
+        </div>
+        {{ grids.tax_template(grid) }}
+        <button type="button" class="btn sm" data-add-row="taxes"><span class="ms" aria-hidden="true">add</span>Add a tax line</button>
+      </details>
+      <script type="application/json" id="tax-code-labels">{{ grid.tax_code_labels | tojson }}</script>
       <div data-live="reasons">{{ live_ui.reasons(live, inv.id) }}</div>
     </section>
 
@@ -222,19 +237,6 @@
     {% include "_invoice_notes.html" %}
   </div>
 </div>
-
-<section class="card inv-tax">
-  {{ live_ui.head("Sales tax") }}
-  <div class="table-wrap">
-    <table class="apc-table inv-grid-table" id="taxes">
-      <thead><tr><th>Tax</th><th>Province</th><th class="r">Rate %</th><th class="r">Taxable</th><th class="r">Amount</th><th><span class="rvw-sr">Delete</span></th></tr></thead>
-      <tbody data-grid="taxes">{{ grids.tax_rows(grid) }}</tbody>
-    </table>
-  </div>
-  {{ grids.tax_template(grid) }}
-  <button type="button" class="btn sm" data-add-row="taxes"><span class="ms" aria-hidden="true">add</span>Add a tax line</button>
-  <div data-live="taxcheck">{{ live_ui.taxcheck(live, inv.id) }}</div>
-</section>
 
 <section class="card inv-posting">
   {{ live_ui.head("GL posting preview", "The journal lines approval sends to the ERP.") }}

@@ -161,7 +161,8 @@ def validate_coding(
     }
     line_tolerance = _rounding_tolerance(len(coding.line_items))
     if coding.line_items and not _close(line_sum, coding.subtotal, line_tolerance):
-        add(ERROR, "SUBTOTAL_MISMATCH", f"the lines add up to {line_sum:.2f} but the subtotal is {coding.subtotal:.2f}")
+        add(ERROR, "SUBTOTAL_MISMATCH", f"the lines add up to {line_sum:.2f} but the subtotal is {coding.subtotal:.2f}"
+            + (TAX_INCLUDED_HINT if prices_include_tax(coding) else ""))  # fmt: skip
     if not _close(computed_total, coding.grand_total):
         add(
             ERROR,
@@ -225,6 +226,22 @@ def validate_coding(
 
 
 _DI_WORDS = {"InvoiceTotal": "total", "SubTotal": "subtotal", "TotalTax": "tax total"}
+
+
+# Prices that include the tax (a receipt): the lines add up to the total, not the subtotal. Said, never converted
+# (D-64): which tax is in which price is not printed.
+TAX_INCLUDED_HINT = (
+    ": they add up to the total, so the prices seem to include the tax (as on a receipt). Enter each line's amount "
+    "before tax, or one line for the subtotal"
+)
+
+
+def prices_include_tax(coding: Any) -> bool:
+    """Whether the lines add up to the invoice's total (tax included) rather than its subtotal, with tax charged."""
+    lines = round(sum(li.amount for li in coding.line_items), 2)
+    tax = round(sum(t.tax_amount for t in coding.tax_lines), 2) or coding.tax_total
+    return (bool(coding.line_items) and abs(tax) > 0.004 and abs(lines - coding.grand_total) <= 0.011
+            and abs(lines - coding.subtotal) > 0.011)  # fmt: skip
 
 
 def _cross_check(coding: InvoiceCoding, extraction: ExtractionResult, add: Any, checks: dict[str, Any]) -> None:

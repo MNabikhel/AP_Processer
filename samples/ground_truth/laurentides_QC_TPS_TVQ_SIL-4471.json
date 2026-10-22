@@ -46,6 +46,7 @@
         "GST",
         "QST"
       ],
+      "tax_status": "",
       "reasoning_justification": "Office cleaning."
     },
     {
@@ -60,6 +61,7 @@
         "GST",
         "QST"
       ],
+      "tax_status": "",
       "reasoning_justification": "Office supplies."
     },
     {
@@ -74,6 +76,7 @@
         "GST",
         "QST"
       ],
+      "tax_status": "",
       "reasoning_justification": "HVAC repair."
     }
   ]

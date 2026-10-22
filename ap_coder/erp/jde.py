@@ -71,6 +71,7 @@ ACCOUNT_MODES = {
     ACCOUNT_COLUMNS: "Separate columns (VNMCU, VNOBJ, VNSUB)",
 }
 SEQUENTIAL, MATCH_HEADER = "sequential", "match_header"
+EXEMPT_STATUSES = ("exempt", "zero_rated")  # a line's tax_status that E1 takes as exempt (D-64)
 LINE_NUMBERING = {
     SEQUENTIAL: "Sequential: one pay item (VLEDLN 1), distribution lines 1, 2, 3…",
     MATCH_HEADER: "Match header: one pay item per distribution line (VNEDLN = VLEDLN)",
@@ -606,12 +607,12 @@ def voucher_rows(
         "VLRMK": f"AP Coder #{v.inv_id}"[:30],
     }  # fmt: skip
 
-    def amounts(gross: int, stam: int, atxa: int) -> dict[str, Any]:
+    def amounts(gross: int, stam: int, atxa: int, code: str | None = None) -> dict[str, Any]:
         out: dict[str, Any] = {}
         prefix = ("VLACR", "VLCTXA", "VLCTXN", "VLCTAM") if v.foreign else ("VLAG", "VLATXA", "VLATXN", "VLSTAM")
         if settings.amount_mode == AMOUNT_GROSS:
             out[prefix[0]] = _amount(gross, settings, v.decimals)
-        elif v.tax_code in ("E", "") or not stam:
+        elif (v.tax_code if code is None else code) in ("E", "", exempt) or not stam:
             out.update({prefix[1]: _amount(0, settings, v.decimals), prefix[2]: _amount(gross, settings, v.decimals),
                         prefix[3]: _amount(0, settings, v.decimals)})  # fmt: skip
         else:
@@ -621,6 +622,13 @@ def voucher_rows(
         return out
 
     extras = dict(settings.po_extra_columns) if settings.po_matched else {}
+    exempt = settings.exempt_code.strip().upper()
+    # Each distribution line's own explanation code (D-64): a line marked exempt or zero-rated, on an invoice whose
+    # code handles tax, is the exempt code when nothing of the tax is put on it; the others keep the invoice's.
+    items = final.get("line_items") or []
+    stated = [li is not None and not (li.get("taxes_applied") or []) and li.get("tax_status") in EXEMPT_STATUSES
+              for li in _entry_lines(v.entries, items)]  # fmt: skip
+    line_codes = [exempt if no_tax and v.tax_code not in ("", exempt) else v.tax_code for no_tax in stated]
     if v.po_matched:
         header = {**common, "VLEDLN": 1, **amounts(v.gross, v.stam, v.atxa), **extras}
         matches = []
@@ -646,7 +654,7 @@ def voucher_rows(
             "VNEXR": str(final.get("invoice_number") or "").strip()[:30],
             "VNSBL": acct.sbl, "VNSBLT": acct.sblt,
             "VNTXA1": v.tax_area if settings.dist_tax_columns else "",
-            "VNEXR1": v.tax_code if settings.dist_tax_columns else "",
+            "VNEXR1": line_codes[n - 1] if settings.dist_tax_columns else "",
         }  # fmt: skip
         if settings.account_mode == ACCOUNT_ANI:
             row.update({"VNAM": "2", "VNANI": ani(acct) if account else ""})
@@ -678,8 +686,10 @@ def voucher_rows(
         stams = [s + _units(e.get("non_recoverable_tax"), v.decimals) for e, s in zip(v.entries, shares, strict=True)]
         stams[max(range(len(base)), key=lambda i: abs(base[i]))] += v.stam - sum(stams)
         grosses = [e["cents"] + s for e, s in zip(v.entries, shares, strict=True)]
+        # An exempt line's pay item says so (its own VLEXR1) only when no tax is put on it.
+        line_codes = [c if c != exempt or not s else v.tax_code for c, s in zip(line_codes, stams, strict=True)]
         headers = [
-            {**common, "VLEDLN": n, **amounts(g, s, a), **extras}
+            {**common, "VLEDLN": n, "VLEXR1": line_codes[n - 1], **amounts(g, s, a, line_codes[n - 1]), **extras}
             for n, (g, s, a) in enumerate(zip(grosses, stams, atxas, strict=True), 1)
         ]
         return headers, [dist_row(n, e) for n, e in enumerate(v.entries, 1)], []
@@ -687,16 +697,21 @@ def voucher_rows(
     return [header], [dist_row(n, e) for n, e in enumerate(v.entries, 1)], []
 
 
-def _entry_taxes(entries: list[dict[str, Any]], items: list[dict[str, Any]]) -> list[set[str]]:
-    """The taxes the invoice line behind each distribution line is marked with (none for a tax line). Expense
-    lines follow the invoice lines in order; matched by line number when the counts differ."""
+def _entry_lines(entries: list[dict[str, Any]], items: list[dict[str, Any]]) -> list[dict[str, Any] | None]:
+    """The invoice line behind each distribution line (None for a tax line). Expense lines follow the invoice lines
+    in order; matched by line number when the counts differ."""
     if sum(1 for e in entries if e.get("kind") == "expense") == len(items):
-        marked = iter([set(li.get("taxes_applied") or []) for li in items])
-        return [next(marked) if e.get("kind") == "expense" else set() for e in entries]
-    by_number: dict[Any, set[str]] = {}
+        it = iter(items)
+        return [next(it) if e.get("kind") == "expense" else None for e in entries]
+    by_number: dict[Any, dict[str, Any]] = {}
     for li in items:
-        by_number.setdefault(li.get("line_number"), set(li.get("taxes_applied") or []))
-    return [by_number.get(e.get("line_number"), set()) if e.get("kind") == "expense" else set() for e in entries]
+        by_number.setdefault(li.get("line_number"), li)
+    return [by_number.get(e.get("line_number")) if e.get("kind") == "expense" else None for e in entries]
+
+
+def _entry_taxes(entries: list[dict[str, Any]], items: list[dict[str, Any]]) -> list[set[str]]:
+    """The taxes the invoice line behind each distribution line is marked with (none for a tax line)."""
+    return [set((li or {}).get("taxes_applied") or []) for li in _entry_lines(entries, items)]
 
 
 def _text(value: Any, size: int) -> str:

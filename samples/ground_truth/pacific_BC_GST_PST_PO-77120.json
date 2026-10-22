@@ -46,6 +46,7 @@
         "GST",
         "PST"
       ],
+      "tax_status": "",
       "reasoning_justification": "Printer supplies."
     },
     {
@@ -60,6 +61,7 @@
         "GST",
         "PST"
       ],
+      "tax_status": "",
       "reasoning_justification": "Monitors below threshold."
     },
     {
@@ -74,6 +76,7 @@
         "GST",
         "PST"
       ],
+      "tax_status": "",
       "reasoning_justification": "Office paper."
     }
   ]

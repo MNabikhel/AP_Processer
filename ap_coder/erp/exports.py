@@ -56,8 +56,8 @@ LINE_COLUMNS = [
     ("invoice_number", "Invoice #"),
     ("invoice_date", "Invoice date"), ("currency", "Currency"), ("line", "Line"), ("kind", "Type"),
     ("gl_code", "GL account"), ("gl_name", "GL name"), ("cost_center", "Cost center"),
-    ("description", "Description"), ("net_amount", "Net"), ("non_recoverable_tax", "Non-recoverable tax"),
-    ("amount", "Amount"),
+    ("description", "Description"), ("tax_code", "Tax code"), ("net_amount", "Net"),
+    ("non_recoverable_tax", "Non-recoverable tax"), ("amount", "Amount"),
 ]  # fmt: skip
 MONEY_HEADERS = {"Subtotal", "Tax", "Total", "Net", "Non-recoverable tax", "Amount"}
 # Real dates in the workbook (Excel sorts and filters them as dates), not text (B-470); the CSV keeps YYYY-MM-DD.
@@ -131,7 +131,9 @@ def line_rows(
     rows = []
     for inv in invoices:
         final = inv.get("final_output") or {}
-        for e in distribution(final, tax_treatments):
+        dist = distribution(final, tax_treatments)
+        codes = line_tax_codes(dist, final.get("line_items") or [])
+        for e, code in zip(dist, codes, strict=True):
             rows.append(
                 {
                     "batch": batch,
@@ -149,12 +151,29 @@ def line_rows(
                     "gl_name": gl_names.get(e.get("gl_code") or "", ""),
                     "cost_center": e.get("cost_center") or "",
                     "description": e.get("description") or "",
+                    "tax_code": code,
                     "net_amount": e.get("net_amount"),
                     "non_recoverable_tax": e.get("non_recoverable_tax"),
                     "amount": e.get("amount"),
                 }  # fmt: skip
             )
     return rows
+
+
+def line_tax_codes(dist: list[dict[str, Any]], items: list[dict[str, Any]]) -> list[str]:
+    """The tax code of the invoice line behind each posting line ("GST+PST", "Exempt", D-64), "" for a tax line: the
+    expense lines follow the invoice lines in order (``build_gl_distribution``); matched by line number when the
+    counts differ."""
+    from ..coding.line_tax import export_code
+
+    expenses = [e for e in dist if e.get("kind") == "expense"]
+    if len(expenses) == len(items):
+        it = iter(items)
+        return [export_code(next(it)) if e.get("kind") == "expense" else "" for e in dist]
+    by_number: dict[Any, str] = {}
+    for li in items:
+        by_number.setdefault(li.get("line_number"), export_code(li))
+    return [by_number.get(e.get("line_number"), "") if e.get("kind") == "expense" else "" for e in dist]
 
 
 def gl_summary(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:

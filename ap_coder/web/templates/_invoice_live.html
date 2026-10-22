@@ -176,32 +176,47 @@
 
 {% macro taxcheck(live, invoice_id) -%}
 {% if not live.ok %}
-<p class="muted">Fix the highlighted field to see the rate and amount check.</p>
+<p class="muted">Fix the highlighted field to see the tax check.</p>
 {% else %}
 {% set m = live.math %}
-<div class="rvw-subhead">Math, line by line {% if m.ok %}{{ ui.pill("All adds up", "ok", "check") }}{% else %}{{ ui.pill(m.text, "warn", "calculate") }}{% endif %}</div>
-<div class="table-wrap"><table class="apc-table inv-math">
-  <tbody>{% for r in m.rows %}
-    <tr><td><span class="{{ 'ok' if r.ok else 'bad' }}" aria-label="{{ 'Adds up' if r.ok else 'Does not add up' }}">{{ '✓' if r.ok else '✕' }}</span> <b>{{ r.what }}</b></td>
-      <td class="w">{{ r.detail }}</td><td class="r">{% if r.diff %}<span class="bad">off by {{ r.diff }}</span>{% endif %}</td></tr>
-  {% endfor %}</tbody>
+{% set taxes = m.rows | selectattr("kind", "equalto", "tax") | list %}
+<div class="rvw-subhead">Tax check {% if m.ok %}{{ ui.pill("All adds up", "ok", "check") }}{% else %}{{ ui.pill(m.text, "warn", "calculate") }}{% endif %}</div>
+<div class="table-wrap"><table class="apc-table inv-taxcheck" data-tax-check>
+  <thead><tr><th>Tax</th><th>Lines marked</th><th class="r">Base</th><th class="r">Rate</th><th class="r">Expected</th><th class="r">Charged</th><th class="r">Difference</th></tr></thead>
+  <tbody>
+  {% for r in taxes %}
+    <tr class="{{ 'is-ok' if r.ok else 'is-check' }}" data-tax-row="{{ r.tax_type }}">
+      <td>{% if r.ok %}<span class="tc-ok" aria-label="Adds up">✓</span>{% else %}<span class="tc-check" title="{{ r.detail }}">check</span>{% endif %} <b>{{ r.what }}</b></td>
+      <td>{{ r.which }}{% if r.named %}<div class="tc-named">{{ r.named }}</div>{% elif not r.ok and r.count == 0 %}<div class="tc-named">Pick it as the tax code of the lines it applies to</div>{% endif %}</td>
+      <td class="r">{{ r.base }}</td><td class="r">{{ r.rate or "—" }}</td><td class="r">{{ r.expected }}</td>
+      <td class="r">{{ r.charged }}</td><td class="r">{% if r.diff %}<b class="tc-diff">{{ r.diff }}</b>{% else %}—{% endif %}</td></tr>
+  {% else %}
+    <tr><td colspan="7" class="muted">No sales tax charged on this invoice, and no line is marked with one.</td></tr>
+  {% endfor %}
+  {% for r in m.rows if r.kind != "tax" %}
+    <tr class="tc-sum {{ 'is-ok' if r.ok else 'is-check' }}" data-tax-row="{{ r.kind }}">
+      <td colspan="2">{% if r.ok %}<span class="tc-ok" aria-label="Adds up">✓</span>{% else %}<span class="tc-check">check</span>{% endif %} <b>{{ r.what }}</b></td>
+      <td colspan="4" class="r">{% if r.kind == "lines" %}{{ r.lines_total }} = {{ r.subtotal }}{% else %}{{ r.subtotal }} + {{ r.tax }} = {{ r.computed }}; total {{ r.total }}{% endif %}
+        {%- if r.hint %}<div class="tc-named">{{ r.hint }}</div>{% endif %}</td>
+      <td class="r">{% if r.diff %}<b class="tc-diff">{{ r.diff }}</b>{% else %}—{% endif %}</td></tr>
+  {% endfor %}
+  </tbody>
 </table></div>
+{% if live.tax_check %}
+<details class="inv-more">
+  <summary><span class="ms" aria-hidden="true">percent</span>Rates and GL accounts</summary>
+  <div class="table-wrap"><table class="apc-table">
+    <thead><tr><th>Tax</th><th class="r">Rate</th><th class="r">Official</th><th class="r">Charged</th><th>Posts to</th></tr></thead>
+    <tbody>{% for t in live.tax_check %}
+      <tr><td><span class="rq-tax">{{ t.tax }}</span> {{ t.province }}</td>
+        <td class="r"><span class="{{ 'ok' if t.rate_ok else 'bad' }}" aria-label="{{ 'Right' if t.rate_ok else 'Wrong' }}">{{ '✓' if t.rate_ok else '✕' }}</span> {{ t.rate }}</td>
+        <td class="r">{{ t.official }}</td>
+        <td class="r"><span class="{{ 'ok' if t.math_ok else 'bad' }}" aria-label="{{ 'Adds up' if t.math_ok else 'Does not add up' }}">{{ '✓' if t.math_ok else '✕' }}</span> {{ t.amount }}</td>
+        <td class="w">{{ t.posts_to }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</details>
 {% endif %}
-{% if not live.ok %}
-{% elif not live.tax_check %}
-<p class="muted">No sales tax on this invoice.</p>
-{% else %}
-<div class="rvw-subhead">Rate and amount check</div>
-<div class="table-wrap"><table class="apc-table">
-  <thead><tr><th>Tax</th><th class="r">Rate</th><th class="r">Official</th><th class="r">Charged</th><th>Posts to</th></tr></thead>
-  <tbody>{% for t in live.tax_check %}
-    <tr><td><span class="rq-tax">{{ t.tax }}</span> {{ t.province }}</td>
-      <td class="r"><span class="{{ 'ok' if t.rate_ok else 'bad' }}" aria-label="{{ 'Right' if t.rate_ok else 'Wrong' }}">{{ '✓' if t.rate_ok else '✕' }}</span> {{ t.rate }}</td>
-      <td class="r">{{ t.official }}</td>
-      <td class="r"><span class="{{ 'ok' if t.math_ok else 'bad' }}" aria-label="{{ 'Adds up' if t.math_ok else 'Does not add up' }}">{{ '✓' if t.math_ok else '✕' }}</span> {{ t.amount }}</td>
-      <td class="w">{{ t.posts_to }}</td></tr>
-  {% endfor %}</tbody>
-</table></div>
 {% endif %}
 {%- endmacro %}
 

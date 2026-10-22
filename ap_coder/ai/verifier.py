@@ -31,6 +31,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from ..coding.line_tax import tax_code_of
+
 log = logging.getLogger(__name__)
 
 SETTING = "verifier"  # Settings → Reading, as JSON: {"on", "rounds", "minutes"}
@@ -143,7 +145,7 @@ def proposal(output: dict[str, Any], vendor: dict[str, Any] | None, gl_names: di
     out["lines"] = [
         {"line_number": li.get("line_number"), "description": str(li.get("description") or "")[:DESCRIPTION_CHARS],
          "quantity": li.get("quantity"), "unit_price": li.get("unit_price"), "amount": _shown(li.get("amount")),
-         "taxes": list(li.get("taxes_applied") or []),
+         "taxes": list(li.get("taxes_applied") or []), "tax_code": tax_code_of(li),
          "gl_account": f"{li.get('predicted_gl_code') or ''} {gl_names.get(str(li.get('predicted_gl_code')), '')}"
          .strip()}
         for li in output.get("line_items") or []

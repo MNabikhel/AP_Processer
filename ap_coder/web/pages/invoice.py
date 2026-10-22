@@ -431,8 +431,9 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
     return render(
         request, "invoice.html", "review", mode="review", **context,
         draft=draft, kept=kept, live=analysis.live, sure=sure,
-        grid=view.grid(reference, draft, inv.get("ai_output") or {},
-                       view.vendor_accounts(store, draft.header.get("vendor_name") or "")),
+        grid={**view.grid(reference, draft, inv.get("ai_output") or {},
+                          view.vendor_accounts(store, draft.header.get("vendor_name") or "")),
+              "tax_marks": analysis.live.get("tax_marks") or {}},
         labels=view.FIELD_LABELS, provinces=view.province_options(),
         due_placeholder=f"{computed.isoformat()} (from terms)" if computed else "YYYY-MM-DD",
         sent_back=_sent_back(store, invoice_id), poll_seconds=PAGE_READER_POLL_SECONDS,
@@ -598,8 +599,12 @@ async def check(request: Request, invoice_id: int) -> JSONResponse:
     # the account lists' "Used for this vendor", for the vendor now in the vendor field (B-596)
     listed = {code for code, _ in view.gl_options(reference, draft.lines)}
     used = [c for c in view.vendor_accounts(store, draft.header.get("vendor_name") or "") if c in listed]
+    # the lines' tax codes where the invoice is supplied now, and the lines the Tax check points at (D-64)
+    codes = view.tax_choices(draft, reference.tax)
     return JSONResponse({"ok": True, "valid": analysis.coding is not None, "allow": analysis.allow,
                          "problems": analysis.problems, "vendor_accounts": used,
+                         "tax_codes": codes["options"], "tax_code_labels": codes["labels"],
+                         "tax_marks": {str(k): v for k, v in (analysis.live.get("tax_marks") or {}).items()},
                          "sections": _render_live(analysis.live, invoice_id)})  # fmt: skip
 
 

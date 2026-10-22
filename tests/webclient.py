@@ -9,6 +9,7 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
+from ap_coder.coding.line_tax import tax_code_of
 from ap_coder.core.config import Settings
 from ap_coder.core.store import Store
 from ap_coder.web.app import create_app
@@ -51,8 +52,7 @@ def draft_form(client: TestClient, invoice_id: int) -> dict[str, Any]:
     data: dict[str, Any] = {**saved["header"], "grids": "1", "line_key": [f"r{i}" for i in range(len(rows))]}
     for column, name in invoice_view.LINE_INPUTS.items():
         data[name] = ["" if r.get(column) is None else str(r.get(column)) for r in rows]
-    for i, r in enumerate(rows):
-        data[f"line_tax_r{i}"] = list(r.get("taxes_applied") or [])
+    data[invoice_view.LINE_TAX_CODE] = [tax_code_of(r) for r in rows]  # one tax code a line (D-64)
     for column, name in invoice_view.TAX_INPUTS.items():
         data[name] = ["" if t.get(column) is None else str(t.get(column)) for t in taxes]
     return data

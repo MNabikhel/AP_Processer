@@ -80,6 +80,9 @@ function applySections(answer) {
     }
   }
   if (approveButton) approveButton.disabled = !answer.allow;
+  // the lines' tax codes where the invoice is supplied now, and the lines the Tax check points at (D-64)
+  if (Array.isArray(answer.tax_codes)) setTaxCodeOptions(answer.tax_codes, answer.tax_code_labels);
+  if (answer.tax_marks && typeof answer.tax_marks === "object") showTaxMarks(answer.tax_marks);
   // the accounts of the vendor now in the vendor field: the account lists' "Used for this vendor" (B-596)
   if (Array.isArray(answer.vendor_accounts)) vendorAccounts = answer.vendor_accounts;
   showMailLanguage();
@@ -111,7 +114,7 @@ async function check() {
 }
 
 function soon(ms = 450) {
-  followTicks(); // every edit comes here: a tax line's taxable follows its ticked lines (B-610)
+  followTicks(); // every edit comes here: a tax line's taxable follows the lines whose tax code carries it (B-610)
   clearTimeout(timer);
   timer = setTimeout(check, ms);
 }
@@ -144,6 +147,10 @@ if (form) {
     if (e.target.name !== "mail_lang") dropUndo();
     headerEdited(e.target);
     if (e.target.name === "mail_lang") return showMailLanguage();
+    if (e.target.matches("select[data-tax-code]")) {  // a worked-out tax code the clerk picked is theirs (D-64)
+      const cell = e.target.closest(".c-tax");
+      if (cell) delete cell.dataset.taxGuess;
+    }
     if (e.target.name === "line_gl") {  // a guessed account the reviewer picked again is no longer a guess
       const cell = e.target.closest(".is-guess");
       if (cell) { cell.classList.remove("is-guess"); cell.querySelector(".inv-guess")?.remove(); }
@@ -249,6 +256,7 @@ function setLines(html) {
   }
   fillSplitLines();
   lastSums = tickedSums(); // the lines drawn again (a split): what the tax lines follow from now on
+  showTaxMarks(taxMarks);
 }
 
 async function gridAction(url, extra, button, undoText = "") {
@@ -1084,6 +1092,7 @@ function makeRow(which, state, after = null) {
     const el = tr.querySelector(`[name="${CSS.escape(name)}"]`);
     if (!el) continue;
     if (el.matches("select[data-picker]")) setValue(el, value) || setValue(el, "UNASSIGNED");
+    else if (el.matches("select[data-tax-code]")) setTaxCode(el, value);
     else el.value = value;
   }
   tr.querySelectorAll("input[type=checkbox]").forEach((c) => (c.checked = (state.taxes || []).includes(c.value)));
@@ -1437,6 +1446,8 @@ function lineMenu(tr) {
         soon(0);
       }) },
     "-",
+    ...taxCodeItems(tr, above, others),
+    "-",
     { icon: "playlist_add_check", label: "Use this GL account on the lines without one", id: "fill",
       disabled: blank(gl) ? "Pick this line's GL account first" : !without.length ? "Every other line has a GL account" : false,
       run: () => undoable(`GL ${gl.value} put on ${without.length === 1 ? "1 line" : `${without.length} lines`}.`, () => {
@@ -1462,20 +1473,130 @@ function num(el) {
   return text !== "" && Number.isFinite(v) ? v : null;
 }
 
-/* A tax line's taxable amount follows the lines ticked with its tax (B-610): ticking or unticking a line's GST box,
-   changing a ticked line's amount, deleting or adding one (every edit goes through soon()) updates the GST line's taxable amount (and its amount, at its rate) while it still
-   is the sum of the lines it was; a taxable amount the clerk typed is left alone, and the tax line's menu offers
-   "Taxable from the lines ticked GST". */
+/* A tax line's taxable amount follows the lines whose tax code carries its tax (B-610, D-64): changing a line's tax
+   code ("GST + PST" to "GST only"), changing a marked line's amount, deleting or adding one (every edit goes through
+   soon()) updates the PST line's taxable amount (and its amount, at its rate) while it still is the sum of the lines
+   it was; a taxable amount the clerk typed, or left blank, is left alone (B-622), and the tax line's menu offers
+   "Taxable from the lines marked PST". */
+
+const TAX_TYPES = ["GST", "HST", "PST", "QST", "OTHER"];
+
+/** The taxes a line's tax code carries: "GST+PST" is GST and PST; "EXEMPT", "ZERO", "OUT" and "NONE" none. */
+function lineTaxes(tr) {
+  const code = tr.querySelector("select[data-tax-code]")?.value || "";
+  const ticked = [...tr.querySelectorAll("input[type=checkbox]:checked")].map((c) => c.value); // a page of before
+  return [...code.split("+").filter((t) => TAX_TYPES.includes(t)), ...ticked.filter((t) => TAX_TYPES.includes(t))];
+}
 
 function tickedSums() {
   const sums = {};
   for (const tr of gridRows()) {
     const amount = num(tr.querySelector('[name="line_amount"]'));
     if (amount === null) continue;
-    tr.querySelectorAll("input[type=checkbox]:checked").forEach((c) => (sums[c.value] = (sums[c.value] || 0) + amount));
+    for (const t of new Set(lineTaxes(tr))) sums[t] = (sums[t] || 0) + amount;
   }
   for (const k of Object.keys(sums)) sums[k] = Math.round(sums[k] * 100) / 100;
   return sums;
+}
+
+/* ---------- The lines' tax codes (D-64) ---------- */
+
+let taxLabels = {};
+try {
+  taxLabels = JSON.parse(document.getElementById("tax-code-labels")?.textContent || "{}");
+} catch {
+  taxLabels = {};
+}
+let taxMarks = {}; // {line number: why}: the lines the Tax check points at, drawn yellow
+
+/** Put ``code`` in a line's tax-code dropdown, adding it when the place of supply doesn't list it (kept as it is). */
+function setTaxCode(select, code) {
+  if (!select || !code) return;
+  if (![...select.options].some((o) => o.value === code)) {
+    const option = document.createElement("option");
+    option.value = code;
+    option.textContent = taxLabels[code] || code;
+    select.append(option);
+  }
+  select.value = code;
+}
+
+/** The dropdowns' choices where the invoice is supplied now: each line keeps its own code, listed or not. */
+function setTaxCodeOptions(options, labels) {
+  if (labels && typeof labels === "object") taxLabels = labels;
+  const fill = (select) => {
+    const keep = select.value;
+    const now = [...select.options].map((o) => [o.value, o.textContent]);
+    const want = options.map(([code, label]) => [String(code), String(label)]);
+    if (keep && !want.some(([code]) => code === keep)) want.push([keep, taxLabels[keep] || keep]);
+    if (JSON.stringify(now) === JSON.stringify(want)) return;
+    select.replaceChildren(...want.map(([code, label]) => {
+      const option = document.createElement("option");
+      option.value = code;
+      option.textContent = label;
+      return option;
+    }));
+    select.value = keep;
+  };
+  document.querySelectorAll('[data-grid="lines"] select[data-tax-code]').forEach(fill);
+  const tpl = document.getElementById("line-template");
+  tpl?.content.querySelectorAll("select[data-tax-code]").forEach((select) => {
+    const keep = select.value;
+    fill(select);
+    if (!keep) select.selectedIndex = 0;
+  });
+}
+
+/** Draw yellow the tax-code cells of the lines the Tax check points at (``marks``: {line number: why}). */
+function showTaxMarks(marks) {
+  taxMarks = marks || {};
+  for (const tr of gridRows()) {
+    const cell = tr.querySelector(".c-tax");
+    if (!cell) continue;
+    const why = taxMarks[lineNo(tr)] || (cell.dataset.taxGuess ? cell.dataset.taxGuess : "");
+    cell.classList.toggle("is-taxcheck", Boolean(why));
+    if (why) cell.title = why;
+    else cell.removeAttribute("title");
+    const note = cell.querySelector("[data-tax-note]");
+    if (note) {
+      note.hidden = !why;
+      const text = note.querySelector("[data-tax-note-text]");
+      if (text) text.textContent = why;
+    }
+  }
+}
+
+/** The tax-code items of a line's menu: copy the line above's, put this one on every line, mark it exempt. */
+function taxCodeItems(tr, above, others) {
+  const select = tr.querySelector("select[data-tax-code]");
+  if (!select) return [];
+  const code = select.value;
+  const label = select.selectedOptions[0]?.textContent || code;
+  const aboveCode = above?.querySelector("select[data-tax-code]")?.value || "";
+  const set = (row, value) => {
+    setTaxCode(row.querySelector("select[data-tax-code]"), value);
+    const cell = row.querySelector(".c-tax");
+    if (cell) delete cell.dataset.taxGuess; // the clerk's choice now
+  };
+  return [
+    { icon: "vertical_align_top", label: "Copy the tax code from the line above", id: "tax-above",
+      disabled: !above ? "It is the first line" : aboveCode === code ? "It has that code already" : false,
+      run: () => undoable(`${lineName(tr)}: tax code copied from the line above.`, () => {
+        set(tr, aboveCode);
+        soon(0);
+      }) },
+    { icon: "block", label: "Mark this line exempt", id: "tax-exempt", disabled: code === "EXEMPT" ? "It is exempt already" : false,
+      run: () => undoable(`${lineName(tr)}: marked exempt.`, () => {
+        set(tr, "EXEMPT");
+        soon(0);
+      }) },
+    { icon: "done_all", label: `Use “${label}” on every line`, id: "tax-all",
+      disabled: !others.length ? "It is the only line" : others.every((r) => r.querySelector("select[data-tax-code]")?.value === code) ? "Every line has it already" : false,
+      run: () => undoable(`Tax code “${label}” put on every line.`, () => {
+        others.forEach((r) => set(r, code));
+        soon(0);
+      }) },
+  ];
 }
 
 let lastSums = null; // the sums the tax lines were last made to follow (set at the start)
@@ -1529,9 +1650,9 @@ function taxMenu(tr) {
         tr.querySelector('[name="tax_amount"]').value = amount.toFixed(2);
         soon(0);
       }) },
-    { icon: "sync", label: `Taxable from the lines ticked ${label}: ${sum.toFixed(2)}`, id: "sync",
-      disabled: !sum ? `No line is ticked ${label}` : same(num(tr.querySelector('[name="tax_taxable"]')), sum) ? "It is that already" : false,
-      run: () => undoable(`Taxable amount set from the lines ticked ${label}: ${sum.toFixed(2)}.`, () => {
+    { icon: "sync", label: `Taxable from the lines marked ${label}: ${sum.toFixed(2)}`, id: "sync",
+      disabled: !sum ? `No line is marked ${label}` : same(num(tr.querySelector('[name="tax_taxable"]')), sum) ? "It is that already" : false,
+      run: () => undoable(`Taxable amount set from the lines marked ${label}: ${sum.toFixed(2)}.`, () => {
         setTaxable(tr, sum);
         soon(0);
       }) },

@@ -179,6 +179,16 @@ def options(province: str, charged: Iterable[str] = (), current: Iterable[str] =
     return [(c, code_label(c, province)) for c in codes]
 
 
+EXPORT_WORDS = {CODE_EXEMPT: "Exempt", CODE_ZERO: "Zero-rated", CODE_OUT: "Out of scope", CODE_NONE: "No tax"}
+
+
+def export_code(line: Any) -> str:
+    """A line's tax code as an export file says it: "GST+PST", "HST", "Exempt", "Zero-rated", "Out of scope",
+    "No tax"."""
+    code = tax_code_of(line)
+    return EXPORT_WORDS.get(code, code)
+
+
 def all_labels(province: str = "") -> dict[str, str]:
     """A label for every code there is (every combination of taxes and the no-tax codes), for a line's own unusual
     code the dropdown keeps."""
@@ -360,7 +370,9 @@ def _sums(values: Sequence[int]) -> tuple[Any, Any]:
     return sums, masks
 
 
-def subset_solutions(amounts: Sequence[int], target: int, tol: int, cap: int = MAX_SOLUTIONS) -> tuple[list[Solution], int]:
+def subset_solutions(
+    amounts: Sequence[int], target: int, tol: int, cap: int = MAX_SOLUTIONS
+) -> tuple[list[Solution], int]:
     """(up to ``cap`` subsets of ``amounts`` (cents) whose sum is within ``tol`` of ``target``, how many there are in
     all), by meeting in the middle: the sums of each half, sorted, matched. Exact: every subset is counted. Negative
     amounts (a discount, a credit line) are lines like any other."""
@@ -497,11 +509,14 @@ def prefill(
     free = [k for k in range(n) if codes[k] is None]
     assigned: dict[int, set[str]] = {k: set() for k in free}
     for tax_type in charged:
-        taxes = [t for t in tax_lines if _get(t, "tax_type") == tax_type and abs(float(_get(t, "tax_amount") or 0)) > 0.004]
+        taxes = [
+            t for t in tax_lines if _get(t, "tax_type") == tax_type and abs(float(_get(t, "tax_amount") or 0)) > 0.004
+        ]
         tax = sum(float(_get(t, "tax_amount") or 0) for t in taxes)
         province = str(_get(taxes[0], "province") or "")
         rate = None
-        if rate_for is not None and tax_type != "OTHER" and len({round(float(_get(t, "rate") or 0), 6) for t in taxes}) == 1:
+        one_rate = len({round(float(_get(t, "rate") or 0), 6) for t in taxes}) == 1
+        if rate_for is not None and tax_type != "OTHER" and one_rate:
             rate = rate_for(tax_type, province)
         rate = rate or float(_get(taxes[0], "rate") or 0)
         base = sum(_tax_base(t, rate if len(taxes) == 1 else float(_get(t, "rate") or 0)) for t in taxes)
@@ -510,7 +525,8 @@ def prefill(
         carried = sum(amounts[k] for k in range(n) if codes[k] is not None and tax_type in codes[k][0])
         if not free:
             continue
-        solved = solve([amounts[k] for k in free], round(base - carried, 2), rate or 0.05, [descriptions[k] for k in free])
+        target = round(base - carried, 2)
+        solved = solve([amounts[k] for k in free], target, rate or 0.05, [descriptions[k] for k in free])
         for j in solved.lines:
             assigned[free[j]].add(tax_type)
         if solved.kind == "several":

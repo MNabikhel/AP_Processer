@@ -38,6 +38,7 @@
       "taxes_applied": [
         "GST"
       ],
+      "tax_status": "",
       "reasoning_justification": "Courier of documents for Finance; GST only in Alberta."
     },
     {
@@ -51,6 +52,7 @@
       "taxes_applied": [
         "GST"
       ],
+      "tax_status": "",
       "reasoning_justification": "Freight on raw materials goes to 5100 with the plant's cost center."
     },
     {
@@ -64,6 +66,7 @@
       "taxes_applied": [
         "GST"
       ],
+      "tax_status": "",
       "reasoning_justification": "Document shredding is a waste-removal facilities service."
     },
     {
@@ -77,6 +80,7 @@
       "taxes_applied": [
         "GST"
       ],
+      "tax_status": "",
       "reasoning_justification": "Printing of brochures is marketing."
     }
   ]

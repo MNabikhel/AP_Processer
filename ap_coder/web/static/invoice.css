@@ -208,9 +208,13 @@
 .inv-lines-grid td input, .inv-lines-grid td select {min-width: 0 !important;}
 .inv-lines-grid td[data-label]::before {content: attr(data-label); display: block; font-size: 10.5px; line-height: 14px;
   color: var(--lg-subtle); font-weight: 500;}
-.inv-lines-grid .c-tax::before {display: none !important;}
-.inv-lines-grid td.c-tax {display: flex; align-items: flex-end;}  /* the cell fills its row (Tab and rows agree), the chips at its foot */
-.inv-lines-grid .c-tax .inv-taxes {flex-wrap: wrap; gap: 3px;}
+/* A line's tax code (D-64): one dropdown, yellow with a note when the Tax check points at the line. */
+.inv-lines-grid .c-tax select {width: 100%; max-width: 220px;}
+.inv-lines-grid .c-tax.is-taxcheck select {border-color: var(--lg-warning); background: var(--lg-warning-weak);}
+.inv-taxnote {display: flex; align-items: flex-start; gap: 3px; margin-top: 2px; font-size: 11px; line-height: 14px;
+  color: var(--lg-warning);}
+.inv-taxnote[hidden] {display: none;}
+.inv-taxnote .ms {font-size: 13px; flex: none;}
 .inv-lines-grid td.c-del {display: flex; align-items: flex-start;}
 .inv-lines-grid textarea {width: 100%; min-height: 30px; height: auto; resize: vertical; font: inherit; font-size: 13px;
   line-height: 18px; padding: 5px 8px; border: 1px solid var(--lg-border); border-radius: var(--lg-r-sm, 6px);
@@ -221,8 +225,6 @@
 .inv-lines-grid.compact tr[data-row] {padding: 4px 0; gap: 3px 6px;}
 .inv-lines-grid.compact tr[data-row]:not(:first-child) td[data-label]::before {display: none;}
 .inv-lines-grid.compact textarea {min-height: 28px; padding: 4px 8px;}
-.inv-lines-grid.compact .c-tax .inv-taxes {flex-wrap: nowrap;}
-.inv-lines-grid.compact .inv-taxes span {padding: 0 4px; line-height: 20px;}
 .inv-lines-grid.compact input, .inv-lines-grid.compact select {height: 28px;}
 .inv-lines-grid tr.inv-row-hot {background: color-mix(in srgb, var(--lg-accent) 10%, transparent);}
 .inv-lines-grid tr.inv-row-hot td {background: none;}
@@ -318,6 +320,21 @@ button.inv-pick .ms {font-size: 14px;}
 .inv-chooser q {font-size: 13px; color: var(--lg-text); word-break: break-word;}
 .inv-chooser select {width: 100%;}
 .inv-chooser .row {display: flex; justify-content: flex-end; gap: 8px;}
+
+/* The Tax check under the line items (D-64): each tax, the lines marked × the official rate against what is charged. */
+.inv-taxcheck-wrap {margin-top: 14px;}
+.inv-taxcheck {font-size: 12.5px;}
+.inv-taxcheck th, .inv-taxcheck td {padding: 5px 6px; white-space: nowrap;}
+.inv-taxcheck td:nth-child(2) {white-space: normal;}
+.inv-taxcheck tr.is-check td {background: var(--lg-warning-weak);}
+.inv-taxcheck tr.tc-sum td {border-top: 1px solid var(--lg-hairline);}
+.inv-taxcheck .tc-ok {color: #166534; font-weight: 700;}
+.inv-taxcheck .tc-check {display: inline-block; padding: 0 6px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  line-height: 18px; color: #92400e; background: #fef3c7; border: 1px solid #fcd34d;}
+.inv-taxcheck .tc-diff {color: #92400e;}
+.inv-taxcheck .tc-named {font-size: 11.5px; color: var(--lg-warning); white-space: normal;}
+.inv-taxlines {margin-top: 10px;}
+.inv-taxlines > .btn {margin-top: 6px;}
 
 /* The math, line by line, and its one-line verdict on the approve bar. */
 .inv-math td:first-child {white-space: nowrap;}

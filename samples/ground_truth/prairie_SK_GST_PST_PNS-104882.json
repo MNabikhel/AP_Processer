@@ -46,6 +46,7 @@
         "GST",
         "PST"
       ],
+      "tax_status": "",
       "reasoning_justification": "Access points below the 2,500 per-unit capitalisation threshold."
     },
     {
@@ -60,6 +61,7 @@
         "GST",
         "PST"
       ],
+      "tax_status": "",
       "reasoning_justification": "Network cables and accessories."
     },
     {
@@ -74,6 +76,7 @@
         "GST",
         "PST"
       ],
+      "tax_status": "",
       "reasoning_justification": "Technical implementation service."
     },
     {
@@ -88,6 +91,7 @@
         "GST",
         "PST"
       ],
+      "tax_status": "",
       "reasoning_justification": "12-month licence paid upfront is a prepaid expense."
     }
   ]
