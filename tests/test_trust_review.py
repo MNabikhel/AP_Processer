@@ -451,3 +451,17 @@ def test_replacing_a_guessed_account_is_an_edit_and_coded_lines_count_as_reviewe
     assert m["invoices_approved_without_edits"] == 1
     assert m["lines_reviewed"] == 4 and m["lines_coded"] == 2  # every line AP reviewed, the coded ones too
     assert m["line_accuracy"] == 1.0  # the accuracy still leaves the guesses out
+
+
+def test_queue_accuracy_note_counts_measured_lines_not_guesses(tmp_path, monkeypatch):
+    """The queue's coding accuracy is held against the target only after 50 measured lines: kept guesses are out of
+    the accuracy, so they don't count towards those 50 (as on the Learning page)."""
+    from ap_coder.web.pages import review
+
+    store = Store(tmp_path / "ap.db")
+    real = store.metrics
+    monkeypatch.setattr(store, "metrics", lambda: {**real(), "line_accuracy": 0.95, "lines_reviewed": 400,
+                                                   "lines_measured": 10})  # fmt: skip
+    s = Settings()
+    accuracy = review.kpis(store, [], [], [], settings=replace(s, llm=replace(s.llm, provider="off")))[2]
+    assert accuracy["delta"] == "" and "improve as you approve" in accuracy["sub"]

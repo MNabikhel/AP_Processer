@@ -5790,6 +5790,18 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
 - **Test:** `tests/test_update_cleanup_data.py::test_a_link_to_an_old_folder_is_skipped_not_renamed`
 - **Lesson:** Clean-up code that walks or renames must decide what to do with links before it touches anything.
 
+#### B-561 · The queue held the coding accuracy against the target too early, counting kept guesses · low
+- **Where:** `ap_coder/web/pages/review.py` (`kpis`)
+- **Symptom:** after 50 lines approved, mostly kept guesses, the queue showed the distance to the 90% target while
+  the Learning page still said *GL suggestions improve as you approve*.
+- **Cause:** the queue passed `lines_reviewed` (guesses included) to `accuracy_note`; the accuracy itself counts only
+  measured lines (B-475), as the Learning page does.
+- **Reproduce:** metrics with 400 lines reviewed, 10 measured; open the queue.
+- **Reproduced:** yes
+- **Fix:** the queue passes `lines_measured`.
+- **Test:** `tests/test_trust_review.py::test_queue_accuracy_note_counts_measured_lines_not_guesses`
+- **Lesson:** Two screens showing one figure must take it from the same count.
+
 #### Looked at and left (install, launcher and updates)
 
 - **N-251** · A GitHub ZIP unzipped over an older one leaves the files the newer one no longer has (the offline

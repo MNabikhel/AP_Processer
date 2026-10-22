@@ -279,7 +279,7 @@ def kpis(store: Store, pending: list[dict[str, Any]], flagged: list[dict[str, An
     corrections = metrics["lines_corrected"]
     note, compared = ("", True)
     if settings is not None and accuracy is not None:
-        note, compared = accuracy_note(settings, metrics["lines_reviewed"])
+        note, compared = accuracy_note(settings, metrics["lines_measured"])
     return [
         {"label": "Waiting", "value": f"{len(pending):,}", "sub": f"{len(flagged)} need attention"},
         {"label": "Approved today", "value": f"{done_today:,}",
