@@ -35,7 +35,7 @@ The welcome page's checklist ticks steps 0 to 3 off as you do them, and its *Nex
    as text) → **Process N uploaded invoices**.
 4. Review: **Review queue** → open an invoice. Compare it with the page and fix what the checks point to: a line
    without a GL account, an amount marked in amber. Beside each value: Verified, Likely, Check or Failed check.
-   Right-click a field or a line for more options; Undo puts back the last change.
+   Right-click a field or a line for more; Undo reverts it.
 5. Your first approval: **Approve & teach** (or Ctrl+Enter). AP Coder learns from each correction.
 6. Your first export: **Exports** → **Export N invoices** → **Download batch N**, then import that file into the
    ERP. The first export is an **Excel workbook**; for a CSV file, click **CSV, one row per GL line** above the list
@@ -46,7 +46,7 @@ Just looking around? On the welcome page click **Load demo invoices**: ten sampl
 
 ## Where things are
 
-- Pages you use less (Month-end, Vendors, Learning & accuracy...) are under **More** in the menu.
+- Pages you use less (Month-end, Vendors...) are under **More** in the menu.
 - The dashboard: http://127.0.0.1:8501, on this computer only.
 - Your data (invoices, database, daily backups): the data folder, `C:\Users\<you>\APCoder`. Updates keep it.
 - The folder AP Coder reads invoices from: **Import invoices** → **Open folder**.

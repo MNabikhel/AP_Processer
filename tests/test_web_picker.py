@@ -310,6 +310,7 @@ def test_in_a_browser_new_lines_and_split_lines_get_the_picker(browser, store):
     # Split the first line in two: the parts' accounts are pickers too, and the new rows from the server get theirs
     page.click("[data-split] > summary")
     parts = page.locator("[data-parts] .pk-input[data-picker-name=part_gl]")
+    parts.nth(1).wait_for()  # the popover's "toggle" (it fills the parts) comes after the click
     assert parts.count() == 2
     parts.nth(1).click()
     page.keyboard.type(accounts[3])
