@@ -6031,3 +6031,17 @@ reproduced with a script first, then given a failing test and fixed.
   `::test_a_stale_gl_grid_does_not_delete_an_account_imported_meanwhile`,
   `::test_a_stale_rules_tab_does_not_drop_a_rule_added_meanwhile`
 - **Lesson:** A form that saves a whole list replaces what it did not show: make it say what it showed.
+
+#### B-656 · "30 EOM" was due at the end of the month, and "Net: 45" was not read · medium
+- **Where:** `ap_coder/coding/terms.py` (`_NET`, `_SLASH`, `_DISCOUNT`)
+- **Symptom:** with an invoice of January 15, "30 EOM", "10 EOM" and "EOM 30" were all due January 31; "Net: 45",
+  "Net - 45", "NET-45" and "45 net" were not read, so the due date fell back to the default 30 days.
+- **Cause:** the net days were read only after "Net" (with at most a slash) or before "days"; EOM with a number
+  beside it gave the end of the month itself.
+- **Reproduce:** `payment({"invoice_date": "2026-01-15", "payment_terms": "30 EOM", ...})`.
+- **Reproduced:** yes
+- **Fix:** the days beside EOM, before or after it, are the days after the end of the month (D-62): "30 EOM" and
+  "EOM 30" are due March 2, "10 EOM" February 10; "Net" takes a colon or a dash before its days, and "45 net" is
+  net 45.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_payment_terms_written_other_ways`
+- **Lesson:** Terms are typed by people: read each way they are written, not only the textbook one.

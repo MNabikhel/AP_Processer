@@ -293,3 +293,26 @@ def test_a_stale_rules_tab_does_not_drop_a_rule_added_meanwhile(tmp_path, monkey
     answer = post(client, "/accounts/rules", stale)
     assert answer.status_code == 409 and answer.json()["error"] == STALE
     assert sorted(r.vendor for r in store.coding_rules()) == ["Bell Canada", "Purolator"]
+
+
+# --- B-656: payment terms "30 EOM", "EOM 30", "Net: 45", "45 net" (D-62) ----------------------------------------------
+
+
+def test_payment_terms_written_other_ways():
+    import datetime as dt
+
+    from ap_coder.coding.terms import payment
+
+    def due(terms):
+        return payment({"invoice_date": "2026-01-15", "grand_total": 100.0, "payment_terms": terms}, 30).due
+
+    # EOM terms count the days from the end of the invoice's month (Jan 31)
+    eom = [("30 EOM", "2026-03-02"), ("10 EOM", "2026-02-10"), ("EOM 30", "2026-03-02"), ("Net 30 EOM", "2026-03-02"),
+           ("30 days EOM", "2026-03-02"), ("EOM", "2026-01-31"), ("Net EOM", "2026-01-31"),
+           ("EOM net 30", "2026-03-02"), ("Net 10 EOM", "2026-02-10")]  # fmt: skip
+    for terms, day in eom:
+        assert due(terms) == dt.date.fromisoformat(day), terms
+    for terms in ("Net: 45", "Net - 45", "NET-45", "45 net", "45 days net", "Net 45", "net45", "N45"):
+        assert due(terms) == dt.date(2026, 3, 1), terms
+    assert payment({"invoice_date": "2026-01-15", "grand_total": 100.0, "payment_terms": "2/10 Net: 30"}).terms \
+        .discount_days == 10  # fmt: skip
