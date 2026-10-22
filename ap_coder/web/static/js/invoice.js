@@ -16,6 +16,7 @@
 
 import { HEADERS, follow, post, toast } from "./app.js";
 import { InvoiceViewer } from "./invoice_viewer.js";
+import { enhance, fold, registerGroups, setSource, setValue } from "./picker.js";
 
 const form = document.getElementById("inv");
 const invoiceId = document.body.querySelector("[data-invoice]")?.dataset.invoice || location.pathname.split("/")[2];
@@ -42,6 +43,7 @@ if (viewerRoot && viewerData) {
 let timer = 0;
 let running = null; // the check under way (a promise), with any rounds asked for meanwhile
 let queued = false; // edits made while a check runs: check again after it
+const checking = document.querySelector("[data-checking]"); // "Checking…" beside the approve bar meanwhile
 
 function input(name) {
   return form ? document.querySelector(`[form="inv"][name="${CSS.escape(name)}"]`) : null;
@@ -92,10 +94,12 @@ async function check() {
       else if (answer.error) toast({ text: answer.error, tone: "err" }, 9000);
     } while (queued);
   })();
+  if (checking) checking.textContent = "Checking…";
   try {
     await running;
   } finally {
     running = null;
+    if (checking) checking.textContent = "";
   }
 }
 
@@ -180,6 +184,7 @@ document.addEventListener("click", (e) => {
     if (!tpl || !body) return;
     const html = tpl.innerHTML.replaceAll("__KEY__", `n${Date.now().toString(36)}${newRows++}`);
     body.insertAdjacentHTML("beforeend", html);
+    enhance(body.lastElementChild);
     body.lastElementChild?.querySelector("input:not([type=hidden]), select")?.focus();
     if (which === "lines") fillSplitLines();
     soon(0);
@@ -206,7 +211,10 @@ document.addEventListener("click", (e) => {
 
 function setLines(html) {
   const body = document.querySelector('[data-grid="lines"]');
-  if (body) body.innerHTML = html; // rows drawn by the server, every text escaped
+  if (body) {
+    body.innerHTML = html; // rows drawn by the server, every text escaped
+    enhance(body); // their account pickers
+  }
   fillSplitLines();
 }
 
@@ -214,15 +222,46 @@ async function gridAction(url, extra, button) {
   await flush();
   const data = {};
   for (const [k, v] of Object.entries(extra || {})) if (v !== undefined) data[k] = v;
-  if (button) button.disabled = true;
-  const answer = await post(url, formData(data));
-  if (button) button.disabled = false;
-  if (answer.ok && typeof answer.lines === "string") {
-    setLines(answer.lines);
-    if (answer.toast) toast(answer.toast);
-    await check();
-  } else follow(answer);
+  if (button) {
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    button.classList.add("busy");
+  }
+  try {
+    const answer = await post(url, formData(data));
+    if (answer.ok && typeof answer.lines === "string") {
+      setLines(answer.lines);
+      if (answer.toast) toast(answer.toast);
+      await check();
+    } else follow(answer);
+  } finally {
+    if (button) {  // always usable again, whatever went wrong
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+      button.classList.remove("busy");
+    }
+  }
 }
+
+/* ---------- The account pickers' groups: the accounts this vendor's lines went to, and the ones suggested ---------- */
+
+let vendorAccounts = [];
+try {
+  vendorAccounts = JSON.parse(document.getElementById("gl-vendor")?.textContent || "[]") || [];
+} catch {
+  vendorAccounts = [];
+}
+
+registerGroups("gl", (select) => {
+  const groups = [{ label: "Used for this vendor", values: vendorAccounts }];
+  // the line's suggestions (the Suggested GL accounts card): a line's own, or the line being split
+  const number = select.closest("tr")?.querySelector('[name="line_number"]')?.value || (select.closest("[data-split]") ? splitLine?.value : "");
+  if (number) {
+    const card = document.querySelector(`[data-live="suggest"] .inv-sugg[data-line="${CSS.escape(number)}"]`);
+    groups.push({ label: "Suggested", values: [...(card?.querySelectorAll("[data-gl]") || [])].map((b) => b.dataset.gl) });
+  }
+  return groups;
+});
 
 /* ---------- Apply to all lines: one GL account / cost center for the lines without one ---------- */
 
@@ -274,8 +313,9 @@ function addPart(gl, cc, pct) {
   const tr = parts.lastElementChild;
   const glSelect = tr.querySelector('[name="part_gl"]');
   const ccSelect = tr.querySelector('[name="part_cc"]');
-  if (gl && [...glSelect.options].some((o) => o.value === gl)) glSelect.value = gl;
-  if (ccSelect && cc && [...ccSelect.options].some((o) => o.value === cc)) ccSelect.value = cc;
+  enhance(tr); // the account pickers (their choices: the page's #gl-options and #cc-options)
+  if (gl) setValue(glSelect, gl); // the line's accounts
+  if (ccSelect && cc) setValue(ccSelect, cc);
   tr.querySelector('[name="part_pct"]').value = pct;
 }
 
@@ -344,19 +384,10 @@ try {
    "the" and the legal forms at the end aside: "The Northwind IT Solutions Inc." -> "northwind it solutions"). The
    vendor list comes with each vendor's key from the server; this keys the name being typed. Keep it in step with
    memory.py: tests/test_web_invoice.py compares the two on many spellings. */
-const LIGATURES = { "œ": "oe", "Œ": "OE", "æ": "ae", "Æ": "AE", "ß": "ss", "ø": "o", "Ø": "O", "ł": "l" };
 const LEGAL_SUFFIXES = new Set(
   ("inc incorporated incorporee ltd ltee limited limitee corp corporation co company cie llc llp lp plc ulc pc pllc " +
     "enr senc sencrl sec srl gmbh ag kg sa sas sarl bv nv pty spa ltda and").split(" "),
 );
-
-function fold(text) {
-  return (text || "")
-    .replace(/[œŒæÆßøØł]/g, (c) => LIGATURES[c])
-    .normalize("NFKD")
-    .replace(/\p{Mn}/gu, "")
-    .toLowerCase();
-}
 
 export function vendorKey(name) {
   const text = fold(name)
@@ -429,6 +460,15 @@ function setVendor(name) {
 }
 
 vendorInput?.addEventListener("input", showVendorMatch);
+// The vendor field's list (picker.js): the vendors of the vendor list, with their ERP ID and GST/HST number.
+if (vendorInput) {
+  setSource(vendorInput, () =>
+    vendors.list.map((v) => ({
+      value: v.name,
+      extra: [v.id, v.gst ? `GST/HST ${v.gst}` : "", v.added ? "added here" : ""].filter(Boolean).join(" · "),
+    })),
+  );
+}
 input("gst_hst_registration_number")?.addEventListener("input", showVendorMatch);
 
 vendorAdd?.addEventListener("toggle", () => {
@@ -455,11 +495,7 @@ vendorAdd?.querySelector("[data-new-go]")?.addEventListener("click", async (e) =
     return;
   }
   const added = { name: answer.vendor, key: answer.key ?? vendorKey(answer.vendor), id: "", gst: body.get("gst"), qst: body.get("qst"), pst: body.get("pst"), added: true };
-  vendors.list = vendors.list.filter((v) => v.key !== added.key).concat([added]);
-  const option = document.createElement("option");
-  option.value = added.name;
-  option.textContent = "added here";
-  document.getElementById("vendor-list")?.append(option);
+  vendors.list = vendors.list.filter((v) => v.key !== added.key).concat([added]); // the vendor field offers it now
   vendorAdd.removeAttribute("open");
   if (answer.toast) toast(answer.toast);
   setVendor(added.name);
@@ -733,6 +769,7 @@ function addLineFrom(value) {
   if (!tpl || !body || !value) return;
   body.insertAdjacentHTML("beforeend", tpl.innerHTML.replaceAll("__KEY__", `n${Date.now().toString(36)}${newRows++}`));
   const tr = body.lastElementChild;
+  enhance(tr);
   tr.querySelector('[name="line_description"]').value = value.description || "";
   tr.querySelector('[name="line_amount"]').value = Number(value.amount).toFixed(2);
   fillSplitLines();

@@ -526,7 +526,8 @@ def test_the_vendor_is_picked_from_the_vendor_list_or_added_as_a_new_vendor(clie
 
     cascade = next(i for i in store.list_invoices(REVIEW) if "Cascade" in (i["vendor_name"] or ""))
     page = client.get(f"/review/{cascade['id']}").text
-    assert 'list="vendor-list"' in page and "Add new vendor" in page
+    # picked from the vendor list (#vendor-data) with the picker, typed freely (D-56)
+    assert re.search(r'id="vendor-name"[^>]*data-picker="free"', page) and "Add new vendor" in page
     data = json.loads(re.search(r'<script type="application/json" id="vendor-data">(.*?)</script>', page, re.S)
                       .group(1))  # fmt: skip
     assert data["enforced"] and any(v["id"] == "V10023" for v in data["list"])

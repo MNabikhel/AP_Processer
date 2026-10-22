@@ -24,6 +24,7 @@ from typing import Any
 import pandas as pd
 
 from ap_coder.ai.extraction import ExtractionResult
+from ap_coder.ai.history import HISTORY
 from ap_coder.ai.pipeline import finalise_coding
 from ap_coder.ai.suggest import suggest_gl
 from ap_coder.capture.normalize import parse_amount, parse_date
@@ -51,7 +52,7 @@ from ap_coder.coding.taxmath import math_check  # noqa: F401 - the review screen
 from ap_coder.coding.terms import describe as terms_describe
 from ap_coder.coding.terms import payment
 from ap_coder.core.config import Settings
-from ap_coder.core.memory import pair_lines, vendor_key
+from ap_coder.core.memory import ACCEPTED, CODED, CORRECTED, pair_lines, vendor_key
 from ap_coder.core.reference_data import UNASSIGNED, ReferenceData, short_name
 from ap_coder.core.schema import PROVINCE_VALUES, InvoiceCoding
 from ap_coder.core.store import Store, suggestion_kept
@@ -434,10 +435,27 @@ def received_on(inv: dict[str, Any]) -> dt.date | None:
         return None
 
 
-def grid(reference: ReferenceData, draft: Draft, ai: dict[str, Any] | None = None) -> dict[str, Any]:
+def vendor_accounts(store: Store, vendor_name: str, limit: int = 6) -> list[str]:
+    """The GL accounts this vendor's lines were approved to, most used first (the newest first among equals), at most
+    ``limit``: the account picker's "Used for this vendor" (D-56). Only what a person decided (or the ERP's history),
+    never what the AI proposed; lines left without an account are not counted."""
+    if not (vendor_name or "").strip():
+        return []
+    decided = {ACCEPTED, CORRECTED, CODED, HISTORY}
+    counts: dict[str, int] = {}
+    for row in store.feedback_rows(vendor_name=vendor_name):  # newest first: a tie keeps the newest first
+        code = _text(row.get("final_gl"))
+        if row.get("outcome") in decided and code and code != UNASSIGNED:
+            counts[code] = counts.get(code, 0) + 1
+    return sorted(counts, key=lambda c: -counts[c])[:limit]  # sorted() is stable
+
+
+def grid(reference: ReferenceData, draft: Draft, ai: dict[str, Any] | None = None,
+         vendor_gls: list[str] | None = None) -> dict[str, Any]:  # fmt: skip
     """What the line and tax grids need: the rows, with a stable key each, and the choices of every cell. ``ai``: the
     invoice as read: a row whose account is still the one the AI only guessed for its line is marked (B-463), not one
-    whose account the reviewer, a coding rule or the PO coding put there (B-475)."""
+    whose account the reviewer, a coding rule or the PO coding put there (B-475). ``vendor_gls``: the accounts the
+    vendor's lines went to (``vendor_accounts``), offered first by the account picker; those still in the list."""
     from ap_coder.core.store import line_guessed
 
     guesses = {
@@ -455,8 +473,11 @@ def grid(reference: ReferenceData, draft: Draft, ai: dict[str, Any] | None = Non
             for i, row in enumerate(draft.lines)
         ],
         "taxes": draft.taxes,
-        "gl_options": gl_options(reference, draft.lines),
-        "cc_options": cc_options(reference, draft.lines),
+        "gl_options": (gls := gl_options(reference, draft.lines)),
+        "cc_options": (ccs := cc_options(reference, draft.lines)),
+        "gl_labels": dict(gls),  # a line's own choice, printed in its cell (the picker has the whole list)
+        "cc_labels": dict(ccs),
+        "vendor_accounts": [c for c in vendor_gls or [] if c in {code for code, _ in gls}],
         "tax_types": list(TAX_TYPES),
         "tax_labels": {t: TAX_LABELS.get(t, t) for t in TAX_TYPES},
         "tax_provinces": tax_province_options(),

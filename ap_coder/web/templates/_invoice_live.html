@@ -127,7 +127,7 @@
   {{ head("Suggested GL accounts") }}
   <p class="muted">From how similar lines were coded before and from your GL account descriptions.</p>
   {% for s in live.suggestions %}
-  <div class="inv-sugg">
+  <div class="inv-sugg" data-line="{{ s.number }}">
     <div class="rvw-sugg-line"><b>Line {{ s.number }}</b> <span class="rvw-muted">{{ s.description }}</span></div>
     <div class="row">
       {% for o in s.options %}

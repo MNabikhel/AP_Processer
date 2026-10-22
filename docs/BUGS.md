@@ -5802,6 +5802,38 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
 - **Test:** `tests/test_trust_review.py::test_queue_accuracy_note_counts_measured_lines_not_guesses`
 - **Lesson:** Two screens showing one figure must take it from the same count.
 
+#### B-563 · The account lists only jumped by first letters, and printed the chart of accounts for every line · medium
+- **Where:** `ap_coder/web/templates/_invoice_lines.html`, `invoice.html`, `accounts.html`, `statements.html`
+- **Symptom:** the pilot tester said the dropdowns are lacking: typing in one only jumps to a label starting with
+  those letters, and every label starts with its code (*audit* never found *6120 · Professional Fees - Audit*), with
+  no sign of the accounts this vendor's lines usually go to; each line printed all the accounts, so 300 accounts ×
+  20 lines made about 6,000 options in the page.
+- **Cause:** plain native `<select>`s, each with the whole list.
+- **Reproduce:** open an invoice of 20 lines; count `<option` in the page; type a word from inside an account name.
+- **Reproduced:** yes
+- **Fix:** the picker (D-56): words matched anywhere, marked; *Used for this vendor* and *Suggested* first; the list
+  printed once as JSON, each line's select holding only its choice. The vendor and currency fields use it as free text.
+- **Test:** `tests/test_web_picker.py` (`::test_the_review_screen_prints_the_chart_of_accounts_once_not_once_a_line`,
+  `::test_in_a_browser_typing_a_word_from_inside_an_account_name_finds_it_and_enter_picks_it`,
+  `::test_vendor_accounts_are_the_ones_its_approved_lines_went_to_most_used_first` and the others)
+- **Lesson:** A choice among hundreds needs a search, and a page that repeats a list per row should print it once.
+
+#### B-564 · Esc left the focus nowhere after closing Split a line, and a failed grid action could leave its button off · low
+- **Where:** `ap_coder/web/static/js/app.js` (Esc on popovers), `ap_coder/web/static/js/invoice.js` (`gridAction`)
+- **Symptom:** Esc closed *Split a line…* or *Apply to all lines…* and the keyboard focus was lost (on the page's
+  body); a grid action whose answer could not be drawn left its button disabled until the page was reloaded; nothing
+  said a check of the edits was still under way.
+- **Cause:** the Esc handler only closed the popovers; `gridAction` enabled its button again only on the happy path.
+- **Reproduce:** open Split a line, Tab into it, press Esc; `document.activeElement` is the body.
+- **Reproduced:** by reading the code (no test failed before the fix: none pressed Esc in a popover)
+- **Fix:** Esc gives the focus back to the popover's button (an open picker list closes first, and teaching a field is
+  not cancelled with it); the button is busy (`aria-busy`) during the action and usable again in a `finally`;
+  *Checking…* shows beside the approve bar while a check runs.
+- **Test:** `tests/test_web_picker.py::test_in_a_browser_the_split_popover_closes_on_escape_and_gives_back_the_focus`,
+  `::test_in_a_browser_new_lines_and_split_lines_get_the_picker`
+- **Lesson:** Whatever closes a popover must say where the focus goes; whatever disables a button must enable it in a
+  `finally`.
+
 #### Looked at and left (install, launcher and updates)
 
 - **N-251** · A GitHub ZIP unzipped over an older one leaves the files the newer one no longer has (the offline

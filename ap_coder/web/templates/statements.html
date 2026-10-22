@@ -31,7 +31,7 @@
   <h4>Statement</h4>
   <form method="post" action="/statements/upload" enctype="multipart/form-data" class="row upload-row" data-busy="Reading…">
     <label class="field">Vendor
-      <select name="vendor">{% for key, name in names.items() %}<option value="{{ key }}"{% if key == vendor %} selected{% endif %}>{{ name }}</option>{% endfor %}</select></label>
+      <select name="vendor" data-picker data-picker-noun="vendor">{% for key, name in names.items() %}<option value="{{ key }}"{% if key == vendor %} selected{% endif %}>{{ name }}</option>{% endfor %}</select></label>
     <label class="field">Statement (CSV or Excel)
       <input type="file" name="file" accept=".csv,.xlsx,.xls" required></label>
     <button class="btn{{ '' if s else ' primary' }}" type="submit"><span class="ms" aria-hidden="true">upload_file</span>Upload</button>
@@ -43,7 +43,7 @@
     {{ columns(s) }}
     <div class="row">
       <label class="field inline">Vendor
-        <select name="vendor">{% for key, name in names.items() %}<option value="{{ key }}"{% if key == vendor %} selected{% endif %}>{{ name }}</option>{% endfor %}</select></label>
+        <select name="vendor" data-picker data-picker-noun="vendor">{% for key, name in names.items() %}<option value="{{ key }}"{% if key == vendor %} selected{% endif %}>{{ name }}</option>{% endfor %}</select></label>
       <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">fact_check</span>Reconcile</button>
     </div>
   </form>

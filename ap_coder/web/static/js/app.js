@@ -193,7 +193,8 @@ document.addEventListener("click", (event) => {
   }
   const close = event.target.closest("[data-dismiss]");
   if (close) close.closest(".flash")?.remove();
-  // A popover closes when you click elsewhere.
+  // A popover closes when you click elsewhere (a choice in a picker's list, drawn on the body, is in it).
+  if (event.target.closest("[data-picker-layer]")) return;
   document.querySelectorAll("details.pop[open]").forEach((d) => {
     if (!d.contains(event.target)) d.removeAttribute("open");
   });
@@ -208,8 +209,18 @@ function resetSlowLink(a) {
 // Back to a page whose slow link was clicked (the browser keeps it): the link reads as it did.
 window.addEventListener("pageshow", () => document.querySelectorAll("a[data-busy][aria-busy]").forEach(resetSlowLink));
 
+// Esc closes the open popovers; the keyboard focus inside one goes back to its button (Split a line…, Apply to all).
+// (A picker's list open in it closes first: picker.js stops that Esc.)
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") document.querySelectorAll("details.pop[open]").forEach((d) => d.removeAttribute("open"));
+  if (event.key !== "Escape" || event.defaultPrevented) return;
+  document.querySelectorAll("details.pop[open]").forEach((d) => {
+    const inside = d.contains(document.activeElement);
+    d.removeAttribute("open");
+    if (inside) {
+      d.querySelector(":scope > summary")?.focus();
+      event.preventDefault(); // used: teaching a field (invoice_viewer.js) goes on
+    }
+  });
 });
 
 // A popover opens inside the screen: on a narrow one (a phone), a popover lined up with the right of its button would
