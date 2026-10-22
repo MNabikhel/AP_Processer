@@ -536,3 +536,41 @@ def test_the_standard_custom_csv_layout_names_the_vendor():
     rows = [{"vendor_id": "", "vendor_name": "Acme Ltd", "invoice_number": "1", "amount": 10.0, "currency": "CAD"}]
     first, second = el.build(rows, el.Layout(el.default_columns())).decode("utf-8-sig").splitlines()[:2]
     assert first.startswith("VendorID,VendorName,") and second.startswith(",Acme Ltd,1,")
+
+
+# --- B-669: a vendor read as "Inc.", one word in capitals, or the bill-to's name was not marked "check" ---------------
+
+
+def test_a_doubtful_vendor_name_is_marked_check():
+    from ap_coder.capture import doubtful_vendor
+
+    assert doubtful_vendor("Inc.", set()) == "the vendor reads as a legal form only: check the name on the page"
+    assert doubtful_vendor("Limitée", set()).startswith("the vendor reads as a legal form only")
+    assert doubtful_vendor("POSTES", set()) == ("the vendor reads as one word in capitals: check it is the whole "
+                                                "name")  # fmt: skip
+    assert doubtful_vendor("Fabrikam Canada Ltée", {"fabrikam canada ltee"}) == (
+        "the vendor reads as the name in the bill-to (yours, as the customer): check who the vendor is"
+    )
+    for fine in ("Northwind IT Solutions Inc.", "Bell Canada", "IKEA Canada", "Énergir", "3M Canada", "A&W"):
+        assert doubtful_vendor(fine, {"fabrikam canada ltee"}) == "", fine
+
+
+def test_a_vendor_read_from_the_bill_to_is_check(tmp_path):
+    from ap_coder.capture import _mark_doubtful_vendor
+    from ap_coder.capture.layout import build_layout
+    from ap_coder.capture.types import FieldResult
+
+    text = ("Northern Pet Supply Ltd.\n12 King St W, Toronto ON M5H 1A1\nBill to:\nFabrikam Canada Ltée\n"
+            "1000 rue De La Gauchetière O., Montréal QC H3B 4W5\nINVOICE\nInvoice # 77\n")  # fmt: skip
+    path = tmp_path / "billto.txt"
+    path.write_text(text)
+    layout = build_layout(path)
+
+    def marked(name, checks=()):
+        fields = {"vendor_name": FieldResult("vendor_name", name, 0.99, "verified", [], {}, [])}
+        _mark_doubtful_vendor(layout, fields, list(checks))
+        return fields["vendor_name"].status
+
+    assert marked("Fabrikam Canada Ltée") == "check"
+    assert marked("Northern Pet Supply Ltd.") == "verified"
+    assert marked("POSTES", [{"code": "VENDOR_NAME_MATCH", "ok": True}]) == "verified"  # the vendor master says so

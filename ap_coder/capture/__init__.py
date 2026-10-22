@@ -44,6 +44,46 @@ from .types import (
 
 log = logging.getLogger(__name__)
 
+# One word in capitals ("POSTES" for "POSTES CANADA"): often part of a name, or a heading read as one.
+_ONE_CAPS_WORD = re.compile(r"[^\W\d_]{2,}")
+
+
+def doubtful_vendor(value: Any, customer_names: set[str]) -> str:
+    """Why the vendor name read is doubtful, "" when it is not: only a legal form ("Inc.", "Limitée"), one word in
+    capitals ("POSTES"), or the name printed in the bill-to block (ours, as the customer). ``customer_names``: the
+    bill-to lines, folded (``reader.plain``). Such a name is shown "check", never verified (B-669)."""
+    from ..core.memory import _LEGAL_SUFFIXES
+    from .reader import plain
+
+    text = " ".join(str(value or "").split())
+    if not text:
+        return ""
+    words = re.findall(r"[a-z0-9]+", plain(text))
+    if not words or all(w in _LEGAL_SUFFIXES for w in words):
+        return "the vendor reads as a legal form only: check the name on the page"
+    if _ONE_CAPS_WORD.fullmatch(text) and text.isupper():
+        return "the vendor reads as one word in capitals: check it is the whole name"
+    if plain(text) in customer_names:
+        return "the vendor reads as the name in the bill-to (yours, as the customer): check who the vendor is"
+    return ""
+
+
+def _mark_doubtful_vendor(layout: DocLayout, fields: dict[str, FieldResult], checks: list[dict[str, Any]]) -> None:
+    """A doubtful vendor name (``doubtful_vendor``) is "check", unless the vendor master confirms it by its name."""
+    from .reader import _in_bill_to, plain
+
+    fr = fields.get("vendor_name")
+    if fr is None or fr.status in (CHECK, MISSING) or not fr.value:
+        return
+    if any(c.get("code") == "VENDOR_NAME_MATCH" and c.get("ok") for c in checks):
+        return
+    customers = {plain(ln.text.strip()) for ln in layout.lines() if _in_bill_to(layout, ln)}
+    why = doubtful_vendor(fr.value, customers)
+    if why:
+        fr.status, fr.confidence = CHECK, min(fr.confidence, 0.6)
+        fr.reasons = [*fr.reasons, why]
+
+
 # The readings' confidence was measured on scans of 150 dpi and up. On a coarser page (a fax at 100 dpi: two thirds of
 # its values right in the October 2026 stress test, some wrong ones shown as verified) a person checks every value.
 COARSE_DPI = 140
@@ -481,6 +521,7 @@ def analyze(path: str | Path, *, di_raw: dict[str, Any] | None = None, ai_values
         checks.append(agreement)
     if "vlm" in sources and layout.source == "text":
         checks.append(text_layer_check(layout, page_text or [], fields, sources["rules"]))
+    _mark_doubtful_vendor(layout, fields, checks)
     coarse = min((page.dpi for page in layout.pages if page.dpi), default=0.0)
     if layout.source != "text" and 0 < coarse < COARSE_DPI:
         for fr in fields.values():
