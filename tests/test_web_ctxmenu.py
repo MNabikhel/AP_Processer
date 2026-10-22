@@ -726,11 +726,10 @@ def test_in_a_browser_a_new_blank_tax_line_does_not_take_the_ticked_sum_b622(bro
     new = page.locator("[data-grid=taxes] > tr").last
     new.locator("[name=tax_type]").select_option(kind)
     assert new.locator("[name=tax_taxable]").input_value() == ""
-    rows = _lines(page)
-    chip = rows.first.locator("label", has=page.locator(f"input[type=checkbox][value={kind}]"))
+    code = _lines(page).first.locator("select[data-tax-code]")  # the line's tax code (D-64)
     page.wait_for_load_state("networkidle")
     with _checked(page):
-        chip.click()
+        code.select_option("EXEMPT")
     assert new.locator("[name=tax_taxable]").input_value() == ""  # stays blank: not a second copy of the sum
     assert _taxable(page, kind) != before  # the tax line that was the sum follows
     assert errors == []

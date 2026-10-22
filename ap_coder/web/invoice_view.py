@@ -571,10 +571,11 @@ def grid(reference: ReferenceData, draft: Draft, ai: dict[str, Any] | None = Non
 def tax_choices(draft: Draft, setup: Any = None) -> dict[str, Any]:
     """The choices of the lines' tax-code dropdowns where the invoice on screen is supplied (D-61, D-64): {options:
     [(code, label)], labels: {code: label} for every code, province}. The lines' own codes are always among them."""
-    province = supply_line(draft.header, draft.lines, setup)["province"]
+    header, lines = getattr(draft, "header", None) or {}, list(getattr(draft, "lines", None) or [])
+    province = supply_line(header, lines, setup)["province"]
     charged = charged_types([{"tax_type": t.get("tax_type"), "tax_amount": _number(t.get("tax_amount"))}
-                             for t in draft.taxes])  # fmt: skip
-    current = [tax_code_of(row) for row in draft.lines]
+                             for t in getattr(draft, "taxes", None) or []])  # fmt: skip
+    current = [tax_code_of(row) for row in lines]
     return {"options": tax_code_options(province, charged, current), "labels": all_labels(province),
             "province": province}  # fmt: skip
 
