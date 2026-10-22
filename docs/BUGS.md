@@ -6078,6 +6078,18 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
 - **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_a_right_click_inside_a_text_box_is_the_browsers_paste_menu_b624`
 - **Lesson:** Where people type, the browser's menu is part of typing: add to it from around the box, not over it.
 
+#### B-625 · A note was posted twice while an edit waited to be checked · low
+- **Where:** `ap_coder/web/static/js/invoice.js` (the submit that waits for the check; the note sent in place)
+- **Symptom:** with an edit not checked yet, Enter twice in the note box, or a double click on *Add note*, added the
+  note twice.
+- **Cause:** a form sent while an edit waits is held until the check is done, then sent; each Enter or click was held
+  and sent, and the note sent in place had no guard of its own.
+- **Reproduce:** type in PO #, then at once type a note and press Enter twice.
+- **Reproduced:** yes
+- **Fix:** a form already held is not sent again meanwhile (Park and Reject too), and a note being sent is sent once.
+- **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_a_note_is_posted_once_however_often_it_is_sent_b625`
+- **Lesson:** A send that waits must remember it is waiting.
+
 #### Looked at and left (install, launcher and updates)
 
 - **N-251** · A GitHub ZIP unzipped over an older one leaves the files the newer one no longer has (the offline

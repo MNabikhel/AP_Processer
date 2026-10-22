@@ -774,3 +774,29 @@ def test_in_a_browser_a_right_click_inside_a_text_box_is_the_browsers_paste_menu
     page.keyboard.press("Shift+F10")
     page.wait_for_selector(MENU)
     assert errors == []
+
+
+def test_in_a_browser_a_note_is_posted_once_however_often_it_is_sent_b625(browser, store):
+    """B-625: with an edit waiting to be checked, Enter twice in the note box (or a double click on Add note) posted
+    the note twice: each submit waited for the check, then went."""
+    invoice_id = store.list_invoices(REVIEW)[0]["id"]
+    page, errors = _review(browser, invoice_id)
+    notes: list[str] = []
+    page.on("request", lambda r: notes.append(r.url) if r.url.endswith("/note") else None)
+    page.evaluate("document.querySelector('.inv-notes details').open = true")
+    box = page.locator("[data-note-form] input[name=text]")
+    page.locator('.inv-details input[name="po_number"]').fill("PO-1234")  # an edit waiting to be checked
+    box.fill("first note")
+    box.press("Enter")
+    box.press("Enter")
+    page.wait_for_selector("[data-notes] .ev")
+    page.wait_for_load_state("networkidle")
+    assert len(notes) == 1, notes
+    page.locator('.inv-details input[name="po_number"]').fill("PO-5678")
+    box.fill("second note")
+    page.locator("[data-note-form] button[type=submit]").dblclick()
+    page.wait_for_function("() => document.querySelectorAll('[data-notes] .ev').length === 2")
+    page.wait_for_load_state("networkidle")
+    assert len(notes) == 2, notes
+    assert page.locator("[data-notes] .ev").count() == 2
+    assert errors == []

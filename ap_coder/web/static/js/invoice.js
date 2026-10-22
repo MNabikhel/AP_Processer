@@ -152,12 +152,19 @@ if (form) {
   });
 }
 
-/* Another form or a link while edits wait to be checked: check (and keep) them first. */
+/* Another form or a link while edits wait to be checked: check (and keep) them first. A form already waiting is not
+   sent again by a second Enter or click meanwhile (B-625). */
 let passing = null;
+const waiting = new WeakSet();
 document.addEventListener(
   "submit",
   (e) => {
     const f = e.target;
+    if (waiting.has(f)) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return;
+    }
     if (f === form) {
       // Approving sends every field as it is now: a check still waiting (the field just left fired "change") would
       // only reach the server after the approval, and be told the invoice is no longer in the queue.
@@ -168,7 +175,9 @@ document.addEventListener(
     if (!form || passing === f || !(timer || running)) return;
     e.preventDefault();
     e.stopImmediatePropagation();
+    waiting.add(f);
     flush().then(() => {
+      waiting.delete(f);
       passing = f;
       f.requestSubmit(e.submitter || undefined);
       passing = null;
@@ -1599,9 +1608,20 @@ document.addEventListener("keydown", (e) => {
 /* ---------- A note, added without leaving the page (the edits stay as they are) ---------- */
 
 const noteForm = document.querySelector("[data-note-form]");
+let noteSending = false; // one note at a time: Enter twice or a double click sends it once (B-625)
 noteForm?.addEventListener("submit", async (e) => {
   e.preventDefault();
   e.stopPropagation(); // not app.js's: it would go to the page again
+  if (noteSending) return;
+  noteSending = true;
+  try {
+    await sendNote();
+  } finally {
+    noteSending = false;
+  }
+});
+
+async function sendNote() {
   const button = noteForm.querySelector("button[type=submit]");
   const body = new FormData(noteForm);
   body.append("inline", "1");
@@ -1619,7 +1639,7 @@ noteForm?.addEventListener("submit", async (e) => {
   noteForm.reset();
   if (answer.toast) toast(answer.toast, 3000);
   noteForm.querySelector("input[type=text]")?.focus();
-});
+}
 
 /* ---------- Start ---------- */
 
