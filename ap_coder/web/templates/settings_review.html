@@ -19,7 +19,8 @@
           {% for code, label in provinces.items() %}<option value="{{ code }}"{% if code == our_province %} selected{% endif %}>{{ label }}</option>{% endfor %}
         </select></label>
       <p class="muted">Sales tax follows where the goods are delivered to you, not where the vendor is. When an invoice
-        prints no ship-to, the sales tax check uses this province. A ship-to printed on the invoice always wins.</p>
+        prints no ship-to and no bill-to, the sales tax check uses this province. A ship-to printed on the invoice
+        always wins, then a bill-to.</p>
       {% if uses_cost_centers or site_provinces %}
       <label class="field">Sites in other provinces, by cost center (optional)
         <textarea name="site_provinces" rows="3" placeholder="CC400=BC&#10;CC500=ON">{{ site_provinces }}</textarea></label>

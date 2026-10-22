@@ -35,9 +35,19 @@ from functools import cached_property, lru_cache
 from typing import Any
 
 ACCEPTED, CORRECTED = "accepted", "corrected"
-# A line whose account the AI only guessed (``offline_coder.guessed``): what the reviewer approved is their own coding,
-# learned from like any other, but neither confirmed nor corrected: coding accuracy leaves it out (B-475).
+# A line whose account the AI only guessed (``offline_coder.guessed``), or left blank, then coded by the reviewer: what
+# the reviewer approved is their own coding, learned from like any other, but neither confirmed nor corrected: coding
+# accuracy leaves it out (B-475, B-650).
 CODED = "coded"
+
+
+def changed_account(row: dict[str, Any]) -> bool:
+    """Whether a feedback row set the line's account in place of what was proposed, for the learning memory: a
+    correction, or a blank the reviewer filled in (recorded as coded since B-650: for the memory it still moves the
+    line to the account picked, as a correction does, B-605)."""
+    outcome = row.get("outcome")
+    return outcome == CORRECTED or (outcome == CODED and (row.get("suggested_gl") or "") in ("", "UNASSIGNED"))
+
 
 # Legal-form words dropped from the END of a vendor name ("Mueller GmbH & Co. KG" -> "mueller"), in English and
 # French ("Limitée", "Incorporée", "s.e.c." for a société en commandite).
@@ -197,14 +207,15 @@ def aggregate(rows: list[dict[str, Any]]) -> list[Pattern]:
 
 
 # A correction counts against older decisions once AP has confirmed it: this many decisions in a row for the new
-# account, the correction included, whatever their outcome (filling in a line left blank is recorded as a correction).
+# account, the correction included, whatever their outcome (filling in a line left blank counts as a correction here:
+# ``changed_account``).
 CONFIRMED_FIX = 2
 
 
 def _aggregate(rows: list[dict[str, Any]]) -> list[Pattern]:
     groups: dict[tuple[str, str, str, str], Pattern] = {}
-    # Each line's latest account: [account, decisions in a row for it, outcome of the oldest of them, ended by an
-    # older decision for another account].
+    # Each line's latest account: [account, decisions in a row for it, whether the oldest of them changed the account,
+    # ended by an older decision for another account].
     runs: dict[tuple[str, str], list[Any]] = {}
     for r in rows:  # newest first (``Store.feedback_rows``)
         key = (r["vendor_key"], _normalise(r["description"]), r["final_gl"], r.get("final_cc") or "")
@@ -213,22 +224,22 @@ def _aggregate(rows: list[dict[str, Any]]) -> list[Pattern]:
             p = groups[key] = Pattern(
                 r["vendor_key"], r["vendor_name"], r["description"], r["final_gl"], r.get("final_cc") or ""
             )
-        if r["outcome"] == CORRECTED:
+        if changed_account(r):
             p.corrections += 1
         else:
             p.approvals += 1
         p.last_seen = max(p.last_seen, r.get("created_at") or "")
         run = runs.get(key[:2])
         if run is None:
-            runs[key[:2]] = [r["final_gl"], 1, r["outcome"], False]
+            runs[key[:2]] = [r["final_gl"], 1, changed_account(r), False]
         elif not run[3]:
             if r["final_gl"] == run[0]:
-                run[1], run[2] = run[1] + 1, r["outcome"]
+                run[1], run[2] = run[1] + 1, changed_account(r)
             else:
                 run[3] = True
     for key, p in groups.items():
         gl, n, first, changed = runs[key[:2]]
-        p.superseded = changed and first == CORRECTED and n >= CONFIRMED_FIX and p.gl_code != gl
+        p.superseded = changed and first and n >= CONFIRMED_FIX and p.gl_code != gl
     return list(groups.values())
 
 

@@ -35,7 +35,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..core.memory import CORRECTED, RowsCache, _normalise, tokens, vendor_key
+from ..core.memory import RowsCache, _normalise, changed_account, tokens, vendor_key
 from ..core.reference_data import UNASSIGNED, ReferenceData
 from .line_match import Index, keys
 
@@ -117,7 +117,7 @@ def _build_memory(feedback: list[dict[str, Any]], valid: frozenset[str]) -> _Mem
         gl = r["final_gl"]
         run = next((i for i, (_, x) in enumerate(seq) if x["final_gl"] != gl), len(seq))
         p = _Pattern(r["vendor_key"], r["description"], keys(r["description"]), gl, r.get("final_cc") or "", rank,
-                     run, corrected=r.get("outcome") == CORRECTED)  # fmt: skip
+                     run, corrected=changed_account(r))  # fmt: skip
         if run < len(seq):  # older decisions for another account: superseded
             p.was = seq[run][1]["final_gl"]
             p.reversed = next((i for i, (_, x) in enumerate(seq[run:]) if x["final_gl"] != p.was), len(seq) - run)

@@ -273,6 +273,13 @@ def _norm_number(value: str) -> str:
     return norm_invoice_number(value)
 
 
+def nothing_proposed(s_gl: str | None, s_cc: str | None) -> bool:
+    """Whether the AI left a line it read with no GL account and no cost center (``s_gl`` None: a line the reviewer
+    added, which is not this). The reviewer who codes it codes it, as a guess replaced or kept: no correction, out of
+    the coding accuracy (D-39, B-650)."""
+    return s_gl is not None and s_gl in ("", UNASSIGNED) and (s_cc or "") in ("", UNASSIGNED)
+
+
 def suggestion_kept(s_gl: str | None, s_cc: str | None, f_gl: str, f_cc: str | None) -> bool:
     """Whether the reviewer kept the GL account and cost center proposed for a line (``s_gl`` None: no line was
     proposed). A GL or cost center left blank ("UNASSIGNED", or a cost center still to pick) was not proposed:
@@ -517,6 +524,13 @@ class Store:
         from ..capture.workflow import AUTONOMOUS_REVIEWER
 
         conn.execute("DELETE FROM feedback WHERE reviewer = ?", (AUTONOMOUS_REVIEWER,))
+        # Older versions recorded a GL account filled in where the AI proposed none as a correction: it is the
+        # reviewer's coding (B-650), recounted whatever the version (the learning memory reads both alike).
+        conn.execute(
+            "UPDATE feedback SET outcome = ? WHERE outcome = ? AND suggested_gl IN ('', ?) "
+            "AND COALESCE(suggested_cc, '') IN ('', ?)",
+            (CODED, CORRECTED, UNASSIGNED, UNASSIGNED),
+        )
         if version < SCHEMA_VERSION:
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
@@ -1509,14 +1523,23 @@ class Store:
             guess = line_guessed(suggestion, rule)
             kept_rule = rule is not None and rule.get("gl_to") == f_gl and (rule.get("cc_to") or "") == (f_cc or "")
             # A kept guess is no edit; another account in its place is (B-479), as any change to what was proposed.
-            replaced = (f_gl != s_gl or (f_cc or "") != (s_cc or "")) if guess else not kept(s_gl, s_cc, f_gl, f_cc)
+            blank = nothing_proposed(s_gl, s_cc)
+            replaced = (
+                (f_gl != s_gl or (f_cc or "") != (s_cc or ""))
+                if guess
+                else not blank and not kept(s_gl, s_cc, f_gl, f_cc)
+            )
             if not kept_rule and replaced:
                 reviewer_changed += 1
             if rule is not None:  # the AI's own answer, as first recorded (not a rule's)
                 s_gl, s_cc = rule.get("gl_from"), rule.get("cc_from", "")
             # Accuracy measures what the AI proposed: the blanks it left are not counted against it. A line whose
-            # account it only guessed is the reviewer's own coding: neither confirmed nor corrected (B-475).
-            outcome = CODED if guess else ACCEPTED if kept(s_gl, s_cc, f_gl, f_cc) else CORRECTED
+            # account it only guessed, or left blank, is the reviewer's own coding: neither confirmed nor corrected
+            # (B-475, B-650). (The rule's own answer decides: a rule that filled a blank leaves the line coded.)
+            outcome = (
+                CODED if guess or nothing_proposed(s_gl, s_cc) else ACCEPTED if kept(s_gl, s_cc, f_gl, f_cc)
+                else CORRECTED
+            )  # fmt: skip
             counts[outcome] += 1
             feedback_rows.append(
                 (

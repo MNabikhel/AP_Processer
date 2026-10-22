@@ -427,7 +427,7 @@ def test_a_worked_out_place_of_supply_follows_the_recoded_lines(reference):
     assert out2["place_of_supply"] == "AB"
     assert "PROVINCIAL_TAX_NOT_CHARGED" not in {i.code for i in rep2.issues}
     line = supply_line(edited, edited["line_items"], ours.tax)
-    assert line["province"] == "AB" and line["why"] == "your province (Settings): no ship-to printed"
+    assert line["province"] == "AB" and line["why"] == "your province (Settings): no ship-to or bill-to printed"
     # And back to the BC site: BC PST missing is flagged again.
     back = {**edited, "line_items": [{**li, "predicted_cost_center": "CC400"} for li in edited["line_items"]]}
     out3, rep3 = finalise_coding(InvoiceCoding.model_validate(back), ours, Settings())
@@ -435,7 +435,8 @@ def test_a_worked_out_place_of_supply_follows_the_recoded_lines(reference):
     assert supply_line(back, back["line_items"], ours.tax)["why"].startswith("the province of the cost center")
     # A ship-to printed (or set by the reviewer) to our own province is said to be the ship-to, not Settings.
     printed = {**back, "ship_to_province": "AB"}
-    assert supply_line(printed, printed["line_items"], ours.tax)["why"] == "the ship-to on the invoice"
+    why = supply_line(printed, printed["line_items"], ours.tax)["why"]
+    assert why == "the invoice's ship-to, else its bill-to (or as you set it)"
 
 
 def test_a_new_rate_row_wins_over_an_old_one_left_open():

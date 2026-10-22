@@ -4887,7 +4887,7 @@ were approved, parked and exported and a backup was made every 2 seconds (no loc
   folder first; the command line is for developers.
 - **N-167** · Two approvals of the same supplier at the same moment (two computers on the office network) each read,
   update and save the supplier's template: one of the two lessons can be lost. Not reproduced (one pilot tester).
-- **N-168** · A GL account the coder left blank and AP filled in counts as a correction for the lessons, so the
+- **N-168** · (Fixed by B-650.) A GL account the coder left blank and AP filled in counts as a correction for the lessons, so the
   "why" question comes after 3 invoices of a vendor imported together before any was approved (GCstrategies on the
   English PDFs), where D-39 counts filling a blank as no change. The lesson is also what tells the AI the account,
   so whether a filled blank asks "why" is a design question: left.
@@ -5932,3 +5932,55 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
   comes from the old window's own code (B-545).
 - **N-253** · The `windows-github-zip` CI job (B-549) was written without a Windows computer to run it on; its first
   runs may need a fix of the job itself (the steps it checks were run on Linux with the same ZIPs).
+
+### Pilot sweeps: counts, stale pages, terms and reading
+
+Two sweeps over the pilot set-up (LM Studio off, English and French vendor PDFs, Excel/CSV exports), each finding
+reproduced with a script first, then given a failing test and fixed.
+
+#### B-650 · Filling in a GL account the coder left blank counted as a correction · medium
+- **Where:** `ap_coder/core/store.py` (`approve_invoice`, `nothing_proposed`), `ap_coder/web/invoice_view.py`
+  (`ai_changes`), `ap_coder/ai/lessons.py` (`outcomes`), `ap_coder/core/memory.py` (`changed_account`)
+- **Symptom:** with LM Studio off, the queue and Learning showed 28.1% coding accuracy and "46 corrections" while
+  no proposal was wrong; the approval said "0 of 1 line coded as suggested" though the bar had said "1 you coded".
+- **Cause:** `suggestion_kept` is False when nothing was proposed, and the approval took that as a correction; the
+  review screen's change count and the lessons did the same (N-168).
+- **Reproduce:** add an invoice whose line reads UNASSIGNED; approve it with 6110; `metrics()`.
+- **Reproduced:** yes (`sweep/repro/r1_blank_counts_corrected.py`)
+- **Fix:** a line the AI left with no account and no cost center is recorded as coded, as D-39 says: out of the
+  accuracy, the per-vendor accuracy and the lessons' corrections, and no "line_coding" edit. Rows an older version
+  recorded so are recounted when the database opens. The learning memory still learns the account from it and still
+  reads it as a change of account (a recode confirmed by filling in a blank, B-605).
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_filling_in_a_blank_gl_account_is_coded_not_corrected` and the
+  two tests after it
+- **Lesson:** One rule for "corrected", in one function, used by every count.
+
+#### B-651 · An invoice with no ship-to took the vendor's own province as its ship-to · medium
+- **Where:** `ap_coder/ai/offline_coder.py` (`provinces`), `ap_coder/coding/tax.py` (`check_taxes`),
+  `ap_coder/web/invoice_view.py` (`supply_line`)
+- **Symptom:** an Alberta print shop's invoice to an Ontario company, with no ship-to or bill-to printed, was
+  checked as an Alberta supply (GST only: no warning), and the review screen said the province came from "the ship-to
+  on the invoice"; Settings → Review's own province was never used, against D-23.
+- **Cause:** `provinces` returned `ship_to or bill_to or supplier`: the vendor's province was stored as if printed.
+- **Reproduce:** `provinces()` of the Prairie Print text (Calgary letterhead, no customer address), then
+  `supply_source` with our province ON.
+- **Reproduced:** yes (`sweep/repro/r3_vendor_province_as_ship_to.py`)
+- **Fix:** only a printed ship-to, else a labelled bill-to (ours, as the customer: D-61), is read as the ship-to;
+  with neither the place of supply is our province, and the tax warnings say it was assumed ("your province in
+  Settings: no ship-to or bill-to printed"). The review screen says "the invoice's ship-to, else its bill-to".
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_the_vendors_province_is_never_the_ship_to` and the two tests
+  after it
+- **Lesson:** A fallback stored in the field it falls back from stops being a fallback: it looks read.
+
+#### B-652 · Amounts printed without a leading zero were read a hundred times too large · low
+- **Where:** `ap_coder/capture/normalize.py` (`_AMOUNT`, `_number`, `looks_like_money`)
+- **Symptom:** "$.99" was read as 99.00, "HST 13% $.65" as 65.00 and "-.50" as +50.00: the totals failed their check.
+- **Cause:** the amount pattern needs a digit before the point; the cents alone were taken as a whole number and the
+  minus sign was not seen before a point.
+- **Reproduce:** `parse_amount("$.65")`, `parse_amount("-.50")`; read `sweep/repro/docs/leading_point2.txt`.
+- **Reproduced:** yes (`sweep/repro/r2_leading_point.py`)
+- **Fix:** a point followed by two digits, not after a letter, a digit or another point ("No.12" stays 12), is
+  cents; a minus or an opening parenthesis before it makes it negative.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_amounts_without_a_leading_zero`,
+  `::test_a_receipt_with_amounts_without_a_leading_zero_reads_them`
+- **Lesson:** Test the printed forms of an amount the till prints, not only the ones a spreadsheet does.

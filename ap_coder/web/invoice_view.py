@@ -54,7 +54,7 @@ from ap_coder.core.config import Settings
 from ap_coder.core.memory import pair_lines, vendor_key
 from ap_coder.core.reference_data import UNASSIGNED, ReferenceData, short_name
 from ap_coder.core.schema import PROVINCE_VALUES, InvoiceCoding
-from ap_coder.core.store import Store, suggestion_kept
+from ap_coder.core.store import Store, nothing_proposed, suggestion_kept
 from ap_coder.core.ui import TAX_LABELS, money, plural
 from ap_coder.ops.help import help_for
 from ap_coder.web.document import clean_boxes
@@ -413,9 +413,10 @@ def supply_line(header: dict[str, Any], lines: list[dict[str, Any]], setup: Any)
         return {"province": OUTSIDE_CANADA, "label": "Outside Canada", "why": "delivered outside Canada: no Canadian "
                 "sales tax", "open": False}  # fmt: skip
     why = {  # the ship-to field holds only what is printed or set by the reviewer (pipeline.finalise_coding)
-        SUPPLY_PRINTED: "the ship-to on the invoice",
+        # A bill-to read under a customer label is ours, used when no ship-to is printed (D-61): said as either.
+        SUPPLY_PRINTED: "the invoice's ship-to, else its bill-to (or as you set it)",
         SUPPLY_SITE: "the province of the cost center the lines are coded to",
-        SUPPLY_OURS: "your province (Settings): no ship-to printed",
+        SUPPLY_OURS: "your province (Settings): no ship-to or bill-to printed",
         SUPPLY_VENDOR: "only the vendor's province: set where it is delivered to you",
     }.get(source, "unknown: choose where it is delivered to you")
     label = f"{province} · {PROVINCE_NAMES[province]}" if province in PROVINCE_NAMES else "Not known"
@@ -787,6 +788,8 @@ def ai_changes(coding: InvoiceCoding, ai: dict[str, Any], cost_centers: bool = T
             continue
         s_gl = before.get("predicted_gl_code") if before else None
         s_cc = (before.get("predicted_cost_center", "") if cost_centers else "") if before else None
+        if nothing_proposed(s_gl, s_cc):
+            continue  # the reviewer's coding, not a change (B-650)
         if not suggestion_kept(s_gl, s_cc, li.predicted_gl_code, li.predicted_cost_center):
             changed += 1
     return changed
@@ -818,7 +821,7 @@ def learn_text(coding: InvoiceCoding, ai: dict[str, Any], cost_centers: bool = F
                 guesses += 1
             else:
                 coded += 1
-        elif s_gl in (None, "", UNASSIGNED) and (s_cc or "") in ("", UNASSIGNED):  # nothing proposed: theirs
+        elif s_gl is None or nothing_proposed(s_gl, s_cc):  # nothing proposed: theirs
             coded += 1
         elif suggestion_kept(s_gl, s_cc, gl, cc):
             kept += 1
