@@ -99,10 +99,37 @@ CHECKS: dict[str, CheckHelp] = {
     ),
     "VENDOR_BANK_CHANGED": CheckHelp(
         FRAUD, "Bank account changed",
-        "The bank account the invoice asks to be paid into differs from the one on this vendor's earlier approved "
+        "The bank details printed on the invoice for payment differ from the ones on this vendor's earlier approved "
         "invoices. A message or invoice announcing new banking details is the most common way AP is defrauded.",
         "Call the vendor on a number from your vendor file (not the one on this invoice or in the email) and "
         "confirm the change before paying or updating the vendor's banking in the ERP.",
+    ),
+    "PAY_FROM_MISSING": CheckHelp(
+        PAYMENT, "No bank account to pay from",
+        "Your bank accounts are set up, but none is chosen to pay this invoice from: none is the default for the "
+        "invoice's currency, or there are two and neither is the default.",
+        "Pick the account under Pay from in the invoice details. To have one chosen for you, make it the default "
+        "of its currency on GL accounts & tax → Bank accounts.",
+    ),
+    "PAY_FROM_UNKNOWN": CheckHelp(
+        PAYMENT, "Bank account not in use",
+        "The bank account chosen to pay this invoice from is no longer one of your bank accounts in use.",
+        "Pick another account under Pay from, or put the account back in use on GL accounts & tax → Bank "
+        "accounts.",
+    ),
+    "PAY_FROM_CURRENCY": CheckHelp(
+        PAYMENT, "Paid from an account in another currency",
+        "The bank account chosen to pay this invoice from is in another currency than the invoice: the bank "
+        "converts the payment, at its rate and fees.",
+        "Pick an account in the invoice's currency under Pay from, or keep this one if paying with a conversion is "
+        "intended.",
+    ),
+    "PAY_FROM_NO_ACCOUNTS": CheckHelp(
+        PAYMENT, "No bank accounts yet",
+        "Your company's bank accounts are not set up, so the invoice does not say which account pays it. Nothing "
+        "requires one until they are.",
+        "Optional: add your bank accounts on GL accounts & tax → Bank accounts (import them from a spreadsheet or "
+        "type them in).",
     ),
     "CREDIT_NOTE_FOR": CheckHelp(
         FRAUD, "Credit note for an invoice",
@@ -395,6 +422,21 @@ CHECKS: dict[str, CheckHelp] = {
     "QST_NUMBER_FORMAT": CheckHelp(
         TAX, "QST number looks wrong", "The QST number is not in the format 1234567890 TQ 0001.",
         "Check it against the document; you can verify numbers on Revenu Québec's registry.",
+    ),
+    "GST_HST_NUMBER_NOT_PRINTED": CheckHelp(
+        TAX, "GST/HST number not printed",
+        "The GST/HST number shown was filled in from the vendor list: it is not printed on the invoice. For a "
+        "purchase of $100 or more, CRA needs the supplier's registration number on the invoice itself to allow the "
+        "input tax credit; the vendor list's copy does not count.",
+        "Check the page once more for the number; if it really is not there, ask the vendor for an invoice that "
+        "shows it before claiming the credit (or claim no credit on this one).",
+    ),
+    "QST_NUMBER_NOT_PRINTED": CheckHelp(
+        TAX, "QST number not printed",
+        "The QST number shown was filled in from the vendor list: it is not printed on the invoice. For a purchase of "
+        "$100 or more, Revenu Québec needs the supplier's QST number on the invoice to allow the input tax refund.",
+        "Check the page once more; if the number is not there, ask the vendor for an invoice that shows it before "
+        "claiming the refund.",
     ),
     "TAX_GL_UNMAPPED": CheckHelp(
         TAX, "Tax has no GL account",

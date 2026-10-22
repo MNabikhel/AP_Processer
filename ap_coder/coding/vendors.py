@@ -19,7 +19,7 @@ expected GST/HST number, notes). ``vendor_findings`` turns that into checks on a
 * VENDOR_MATCHED_BY_TAX_NUMBER (info): not found by name, but the GST/HST number belongs to a master vendor
 * CREDIT_NOTE_FOR (info) / CREDIT_NOTE_ORIGINAL_UNKNOWN (info) / CREDIT_EXCEEDS_INVOICE (warning): the invoice a
   credit note credits, found or not, and a credit larger than it
-* VENDOR_BANK_CHANGED (warning): the bank account to pay into differs from the one on this vendor's approved
+* VENDOR_BANK_CHANGED (warning): the bank details printed for payment differ from the ones on this vendor's approved
   invoices, the most common payment fraud (a fake "our banking details have changed")
 """
 
@@ -367,7 +367,7 @@ def vendor_findings(
     if not history:
         return findings
 
-    # Bank account to pay into, compared with the ones on this vendor's approved invoices.
+    # The bank details printed for payment, compared with the ones on this vendor's approved invoices.
     account = coding.remit_bank_account
     known_accounts = [
         h["bank_account"] for h in history if h["status"] == "approved" and bank_digits(h["bank_account"])[0]
@@ -379,7 +379,7 @@ def vendor_findings(
             shown = f"{shown}, at a different bank or branch number"
         findings.append(
             (WARNING, "VENDOR_BANK_CHANGED",
-             f"the bank account to pay into ({shown}) differs from the one on this vendor's "
+             f"the bank details printed for payment ({shown}) differ from the ones on this vendor's "
              f"approved invoices ({', '.join(usual)}): confirm by phone, on a number from your vendor file, not from "
              "the invoice, before paying or changing the vendor's banking")
         )  # fmt: skip

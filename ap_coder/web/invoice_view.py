@@ -1368,9 +1368,9 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
         output[FROM_VENDOR_LIST] = from_list  # kept with the coding: the tax return's claims at risk read it
     accounts = store.bank_accounts(active_only=True)
     if not accounts:  # nothing asks for a Pay from account, and the screen says where to add them (D-66)
-        from ap_coder.coding.banks import NONE_YET
+        from ap_coder.coding.banks import INFO, NONE_YET
 
-        report.issues.append(Issue("info", "PAY_FROM_NO_ACCOUNTS", NONE_YET))
+        report.issues.append(Issue(INFO, "PAY_FROM_NO_ACCOUNTS", NONE_YET))
     errors = [i for i in report.issues if i.severity == "error"]
     warnings = [i for i in report.issues if i.severity == "warning"]
     default_days = store.default_terms_days()

@@ -1502,7 +1502,7 @@ HEADER_PROVEN_SOFT = {"LINES_ADD_UP"}
 
 # Findings that always send an invoice to a person, whatever its supplier's record: fraud and duplicate signals.
 ALWAYS_A_PERSON: dict[str, str] = {
-    "VENDOR_BANK_CHANGED": "the bank account to pay into changed",
+    "VENDOR_BANK_CHANGED": "the vendor's bank details changed",
     "VENDOR_TAX_NUMBER_CHANGED": "the GST/HST number changed",
     "VENDOR_QST_CHANGED": "the QST number changed",
     "VENDOR_PST_CHANGED": "the PST number changed",
@@ -1538,7 +1538,7 @@ ALWAYS_A_PERSON: dict[str, str] = {
 # What always goes to a person, in plain English (Settings → Automation).
 ALWAYS_A_PERSON_RULES: list[tuple[str, str]] = [
     ("A vendor's first invoices", "until the vendor meets the bar above"),
-    ("Bank account changed", "the account to pay into differs from the vendor's approved invoices"),
+    ("Bank details changed", "the vendor's bank details differ from its approved invoices"),
     ("GST/HST number changed", "it differs from the vendor's usual number or the vendor master"),
     ("Possible duplicate", "same number, same amount under a new number, already in the ERP, or another vendor name"),
     ("Unusual amount", "far above what this vendor usually bills"),
