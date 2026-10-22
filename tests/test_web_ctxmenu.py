@@ -588,24 +588,22 @@ def _taxable(page, kind):
 
 
 def test_in_a_browser_a_tax_lines_taxable_follows_the_lines_ticked_with_it_b610(browser, store):
-    """B-610: ticking or unticking a line's GST box left the GST line's taxable amount as it was."""
+    """B-610: ticking or unticking a line's GST box left the GST line's taxable amount as it was. The boxes are one
+    tax code a line now (D-64): the taxable follows the lines whose code carries the tax."""
     invoice_id = _with_gst(store)
     page, errors = _review(browser, invoice_id)
     kind = "GST" if _taxable(page, "GST") else "HST"
     rows = _lines(page)
     amounts = [float(rows.nth(i).locator("[name=line_amount]").input_value()) for i in range(rows.count())]
-    ticked = [rows.nth(i).locator(f"input[type=checkbox][value={kind}]").is_checked() for i in range(rows.count())]
+    codes = [rows.nth(i).locator("select[data-tax-code]").input_value() for i in range(rows.count())]
+    ticked = [kind in code.split("+") for code in codes]
     assert (
         ticked[0]
         and abs(float(_taxable(page, kind)) - sum(a for a, t in zip(amounts, ticked, strict=True) if t)) < 0.01
     )
-    # The tax chips: the box is hidden in its label, which is what a person clicks. Without force, so Playwright waits
-    # until the line stands still: each check's answer redraws the findings above the grid, which moves the lines.
-    box = rows.first.locator(f"input[type=checkbox][value={kind}]")
-    chip = rows.first.locator("label", has=page.locator(f"input[type=checkbox][value={kind}]"))
+    code = rows.first.locator("select[data-tax-code]")
     with _checked(page):
-        chip.click()
-    assert not box.is_checked()
+        code.select_option("EXEMPT")
     expected = sum(a for a, t in zip(amounts, ticked, strict=True) if t) - amounts[0]
     assert _taxable(page, kind) == f"{expected:.2f}"
     # a taxable typed by the clerk is never overwritten: the tax line's menu offers to update it
@@ -613,11 +611,10 @@ def test_in_a_browser_a_tax_lines_taxable_follows_the_lines_ticked_with_it_b610(
         "[data-grid=taxes] select[name=tax_type]", "(s, k) => s.findIndex(x => x.value === k)", kind
     )
     tax = page.locator("[data-grid=taxes] > tr").nth(at)
-    with page.expect_response(lambda r: r.url.endswith("/check")):  # its findings redrawn before the next click
+    with page.expect_response(lambda r: r.url.endswith("/check")):  # its findings redrawn before the next change
         tax.locator("[name=tax_taxable]").fill("100.00")
     page.wait_for_load_state("networkidle")
-    chip.click()
-    assert box.is_checked()
+    code.select_option(codes[0])
     assert _taxable(page, kind) == "100.00"
     _menu(page, tax.locator("td").first)
     _item(page, "sync").click()
@@ -631,10 +628,12 @@ def _posted(request, name):
 
 def test_in_a_browser_a_duplicated_line_posts_its_own_key_and_its_own_taxes_b620(browser, store):
     """B-620: a duplicated line posted the original's line_key, so the server read the copy's taxes from the
-    original's boxes (line_tax_<key>), and deleting the original took the copy's taxes with it."""
+    original's boxes (line_tax_<key>), and deleting the original took the copy's taxes with it. Each row posts its
+    own tax code now (D-64), in its place."""
     invoice_id = _with_gst(store)
     page, errors = _review(browser, invoice_id)
     n = _lines(page).count()
+    kind = _lines(page).first.locator("select[data-tax-code]").input_value()
     _menu(page, _lines(page).first.locator("[data-del-row]"))
     _item(page, "duplicate").click()
     copy_row = _lines(page).nth(1)
@@ -642,15 +641,13 @@ def test_in_a_browser_a_duplicated_line_posts_its_own_key_and_its_own_taxes_b620
     assert len(set(keys)) == n + 1, keys
     copy_key = copy_row.locator("[name=line_key]").input_value()
     assert copy_row.get_attribute("data-row") == copy_key
-    ticked = copy_row.locator("input[type=checkbox]:checked").first
-    kind = ticked.get_attribute("value")
-    assert ticked.get_attribute("name") == f"line_tax_{copy_key}"
-    # the original goes: the copy keeps its taxes, as posted
+    assert copy_row.locator("select[data-tax-code]").input_value() == kind
+    # the original goes: the copy keeps its tax code, as posted
     _menu(page, _lines(page).first.locator("[data-del-row]"))
     with _checked(page) as sent:
         _item(page, "delete").click()
     assert _posted(sent.value, "line_key")[0] == copy_key
-    assert kind in _posted(sent.value, f"line_tax_{copy_key}")
+    assert _posted(sent.value, "line_tax_code")[0] == kind
     assert errors == []
 
 

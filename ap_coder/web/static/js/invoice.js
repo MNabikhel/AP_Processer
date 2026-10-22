@@ -1605,16 +1605,10 @@ function same(a, b) {
   return a !== null && b !== null && Math.abs(a - b) < 0.005;
 }
 
-/** Put ``taxable`` on a tax line; its amount follows at its rate when it was rate x the old taxable. */
+/** Put ``taxable`` on a tax line. Its amount is what the invoice charges, never changed by the lines' tax codes
+    (B-700): the Tax check then says when the lines marked and the tax charged disagree. */
 function setTaxable(tr, taxable) {
-  const rate = num(tr.querySelector('[name="tax_rate_pct"]'));
-  const was = num(tr.querySelector('[name="tax_taxable"]'));
-  const amountBox = tr.querySelector('[name="tax_amount"]');
-  const amount = num(amountBox);
   tr.querySelector('[name="tax_taxable"]').value = taxable.toFixed(2);
-  if (rate !== null && (amount === null || (was !== null && same(amount, Math.round(rate * was) / 100)))) {
-    amountBox.value = (Math.round(rate * taxable) / 100).toFixed(2);
-  }
 }
 
 function followTicks() {

@@ -325,6 +325,7 @@ button.inv-pick .ms {font-size: 14px;}
 .inv-taxcheck-wrap {margin-top: 14px;}
 .inv-taxcheck {font-size: 12.5px;}
 .inv-taxcheck th, .inv-taxcheck td {padding: 5px 6px; white-space: nowrap;}
+.inv-taxcheck th {font-size: 11.5px;}
 .inv-taxcheck td:nth-child(2) {white-space: normal;}
 .inv-taxcheck tr.is-check td {background: var(--lg-warning-weak);}
 .inv-taxcheck tr.tc-sum td {border-top: 1px solid var(--lg-hairline);}
@@ -333,8 +334,6 @@ button.inv-pick .ms {font-size: 14px;}
   line-height: 18px; color: #92400e; background: #fef3c7; border: 1px solid #fcd34d;}
 .inv-taxcheck .tc-diff {color: #92400e;}
 .inv-taxcheck .tc-named {font-size: 11.5px; color: var(--lg-warning); white-space: normal;}
-.inv-taxlines {margin-top: 10px;}
-.inv-taxlines > .btn {margin-top: 6px;}
 
 /* The math, line by line, and its one-line verdict on the approve bar. */
 .inv-math td:first-child {white-space: nowrap;}

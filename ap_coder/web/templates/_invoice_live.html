@@ -182,21 +182,21 @@
 {% set taxes = m.rows | selectattr("kind", "equalto", "tax") | list %}
 <div class="rvw-subhead">Tax check {% if m.ok %}{{ ui.pill("All adds up", "ok", "check") }}{% else %}{{ ui.pill(m.text, "warn", "calculate") }}{% endif %}</div>
 <div class="table-wrap"><table class="apc-table inv-taxcheck" data-tax-check>
-  <thead><tr><th>Tax</th><th>Lines marked</th><th class="r">Base</th><th class="r">Rate</th><th class="r">Expected</th><th class="r">Charged</th><th class="r">Difference</th></tr></thead>
+  <thead><tr><th>Tax</th><th>Lines marked</th><th class="r">Lines × rate = expected</th><th class="r">Charged</th><th class="r">Difference</th></tr></thead>
   <tbody>
   {% for r in taxes %}
     <tr class="{{ 'is-ok' if r.ok else 'is-check' }}" data-tax-row="{{ r.tax_type }}">
       <td>{% if r.ok %}<span class="tc-ok" aria-label="Adds up">✓</span>{% else %}<span class="tc-check" title="{{ r.detail }}">check</span>{% endif %} <b>{{ r.what }}</b></td>
       <td>{{ r.which }}{% if r.named %}<div class="tc-named">{{ r.named }}</div>{% elif not r.ok and r.count == 0 %}<div class="tc-named">Pick it as the tax code of the lines it applies to</div>{% endif %}</td>
-      <td class="r">{{ r.base }}</td><td class="r">{{ r.rate or "—" }}</td><td class="r">{{ r.expected }}</td>
+      <td class="r">{{ r.base }} × {{ r.rate or "—" }} = <b>{{ r.expected }}</b></td>
       <td class="r">{{ r.charged }}</td><td class="r">{% if r.diff %}<b class="tc-diff">{{ r.diff }}</b>{% else %}—{% endif %}</td></tr>
   {% else %}
-    <tr><td colspan="7" class="muted">No sales tax charged on this invoice, and no line is marked with one.</td></tr>
+    <tr><td colspan="5" class="muted">No sales tax charged on this invoice, and no line is marked with one.</td></tr>
   {% endfor %}
   {% for r in m.rows if r.kind != "tax" %}
     <tr class="tc-sum {{ 'is-ok' if r.ok else 'is-check' }}" data-tax-row="{{ r.kind }}">
       <td colspan="2">{% if r.ok %}<span class="tc-ok" aria-label="Adds up">✓</span>{% else %}<span class="tc-check">check</span>{% endif %} <b>{{ r.what }}</b></td>
-      <td colspan="4" class="r">{% if r.kind == "lines" %}{{ r.lines_total }} = {{ r.subtotal }}{% else %}{{ r.subtotal }} + {{ r.tax }} = {{ r.computed }}; total {{ r.total }}{% endif %}
+      <td colspan="2" class="r">{% if r.kind == "lines" %}{{ r.lines_total }} = {{ r.subtotal }}{% else %}{{ r.subtotal }} + {{ r.tax }} = {{ r.computed }}; total {{ r.total }}{% endif %}
         {%- if r.hint %}<div class="tc-named">{{ r.hint }}</div>{% endif %}</td>
       <td class="r">{% if r.diff %}<b class="tc-diff">{{ r.diff }}</b>{% else %}—{% endif %}</td></tr>
   {% endfor %}
