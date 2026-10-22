@@ -6104,6 +6104,19 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
 - **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_the_queue_restores_only_the_view_an_invoice_was_opened_from_b626`
 - **Lesson:** Remember a place only when the person leaves from it, and forget it once used.
 
+#### B-627 · A detail clicked in long before was still filled by a double-clicked word · medium
+- **Where:** `ap_coder/web/static/js/invoice.js` (`armedField`, B-621)
+- **Symptom:** click in Invoice #, type nothing, scroll, wait 10 seconds, double-click "Waverley" in the vendor's
+  address: Invoice # silently became "Waverley".
+- **Cause:** B-621's 5-second window counted from when the focus left the detail; the double-click's own first click
+  takes the focus to the page, so the detail had always "just" been left.
+- **Reproduce:** /review/5, as in the symptom.
+- **Reproduced:** yes
+- **Fix:** the window counts from the clerk's own use of the detail (the focus coming to it, a key, an edit), never from
+  leaving it; a detail used longer ago than 5 seconds is not filled, focused or not.
+- **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_a_detail_left_long_ago_is_not_filled_by_a_double_click_b627`
+- **Lesson:** Time a person's intent from what they did, not from a side effect of what they do next.
+
 #### Looked at and left (install, launcher and updates)
 
 - **N-251** · A GitHub ZIP unzipped over an older one leaves the files the newer one no longer has (the offline

@@ -825,3 +825,30 @@ def test_in_a_browser_the_queue_restores_only_the_view_an_invoice_was_opened_fro
     page.wait_for_load_state("networkidle")
     assert "show=all" not in page.url, page.url
     assert errors == []
+
+
+def test_in_a_browser_a_detail_left_long_ago_is_not_filled_by_a_double_click_b627(browser, store):
+    """B-627: the double-click's own first click took the focus from the detail, and that moment counted as "just
+    left": a detail clicked in long before (nothing typed) was filled by a double-clicked word."""
+    invoice_id = store.list_invoices(REVIEW)[0]["id"]
+    page, errors = _review(browser, invoice_id)
+    page.evaluate("window.AP_ARMED_MS = 400")  # the window, shortened for the test (5 s in use)
+    teaches: list[str] = []
+    page.on("request", lambda r: teaches.append(r.url) if r.url.endswith("/teach") else None)
+    name = "qst_registration_number"
+    box = page.locator(f'.inv-details input[name="{name}"]')
+    box.click()  # clicked in, nothing typed
+    word, x, y = _plain_word(page, invoice_id)
+    page.wait_for_timeout(900)  # longer than the window
+    page.mouse.dblclick(x, y)
+    page.wait_for_timeout(400)
+    assert box.input_value() == "" and teaches == []
+    # typed in just now: the detail is the one meant
+    box.click()
+    box.type("x")
+    box.press("Backspace")
+    word, x, y = _plain_word(page, invoice_id)
+    with page.expect_response(lambda r: r.url.endswith("/teach")):
+        page.mouse.dblclick(x, y)
+    page.wait_for_function("n => document.querySelector(`.inv-details input[name=${n}]`).value !== ''", arg=name)
+    assert errors == []

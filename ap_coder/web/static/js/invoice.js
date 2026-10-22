@@ -1129,8 +1129,10 @@ async function undoable(text, change) {
 /* ---------- The invoice details: clear one, not on this invoice, Enter to the next ---------- */
 
 const TEACHABLE = new Set([...document.querySelectorAll("[data-teach-field] option")].map((o) => o.value));
-// The invoice detail a word double-clicked on the page fills (B-621): the one being typed in, or the one just left for
-// the page (within ARMED_MS, nothing outside the page clicked since).
+// The invoice detail a word double-clicked on the page fills (B-621): the one being typed in, or the one the clerk last
+// clicked or typed in within ARMED_MS (nothing outside the page clicked since). The time is that of the clerk's own
+// use of the box (focus, a key, an edit), never of leaving it: the double-click's first click takes the focus from
+// it, and that moment is not "just used" (B-627). window.AP_ARMED_MS shortens it for the tests.
 const ARMED_MS = 5000;
 let lastField = "";
 let lastFieldAt = 0;
@@ -1246,13 +1248,14 @@ function headerBox(el) {
   return label && TEACHABLE.has(label.dataset.field) && el.name === label.dataset.field ? label.dataset.field : "";
 }
 
-document.addEventListener("focusin", (e) => {
-  const name = headerBox(e.target);
-  if (name) lastField = name;
-});
-document.addEventListener("focusout", (e) => {
-  if (headerBox(e.target) === lastField) lastFieldAt = Date.now();
-});
+for (const type of ["focusin", "keydown", "input"]) {
+  document.addEventListener(type, (e) => {
+    const name = headerBox(e.target);
+    if (!name) return;
+    lastField = name;
+    lastFieldAt = Date.now();
+  });
+}
 document.addEventListener(
   "pointerdown",
   (e) => {
@@ -1262,9 +1265,8 @@ document.addEventListener(
 );
 
 function armedField() {
-  const now = headerBox(document.activeElement);
-  if (now) return now;
-  return lastField && Date.now() - lastFieldAt < ARMED_MS ? lastField : "";
+  // Focused long ago and nothing typed since (still focused or not): not the detail meant.
+  return lastField && Date.now() - lastFieldAt < (window.AP_ARMED_MS || ARMED_MS) ? lastField : "";
 }
 
 /** Enter in an invoice detail goes to the next one, Shift+Enter to the one before (Enter never approves). */
