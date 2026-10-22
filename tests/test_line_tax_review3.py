@@ -49,7 +49,7 @@ def test_the_tax_check_says_qst_not_charged_without_self_assess_b720(reference):
 def test_hst_not_charged_cites_the_recipients_liability_under_s165_b721(reference):
     on = _invoice("ON", [("Software", 1000.0)], [("GST", "", 0.05, 1000.0, 50.0)], supplier="AB")
     message = next(f.message for f in check_taxes(on, reference.tax) if f.code == "HST_NOT_CHARGED")
-    assert "you remain liable for the provincial part (ETA s.165): ask for a corrected invoice" in message
+    assert "You remain liable for the provincial part (ETA s.165): ask for a corrected invoice" in message
     assert "218.1" not in message and "the GST is claimable" in message
     from ap_coder.ops.help import CHECKS
 
