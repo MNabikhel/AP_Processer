@@ -478,7 +478,10 @@ def check(before: dict, new: Path, port: int, old_ports: list[int], old_pids: li
     db = data / "ap_coder.db"
     after = snapshot(db) if db.is_file() else {"invoices": [], "settings": {}, "vendors": [], "rules": []}
     if before.get("schema_version") is not None:
-        c.that(after["settings"].get("schema_version") == "15", f"database brought to schema 15 "
+        # The schema the new version's own store writes (not a number this check would have to be kept in step with).
+        found = re.search(r"^SCHEMA_VERSION = (\d+)", (new / "ap_coder" / "core" / "store.py").read_text(), re.M)
+        want = found.group(1) if found else "?"
+        c.that(after["settings"].get("schema_version") == want, f"database brought to schema {want} "
                f"(was {before['schema_version']})")  # fmt: skip
     rows = {r["id"]: r for r in after["invoices"]}
     c.that(len(rows) == len(before["invoices"]), f"{len(before['invoices'])} invoices kept ({len(rows)})")
