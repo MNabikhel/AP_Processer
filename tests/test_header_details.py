@@ -7,6 +7,7 @@ from __future__ import annotations
 import html
 import json
 
+from ap_coder.coding import banks
 from ap_coder.coding.validation import Issue
 from ap_coder.core.schema import FROM_VENDOR_LIST
 from ap_coder.core.store import APPROVED, REVIEW, Store
@@ -210,3 +211,111 @@ def test_in_a_browser_picking_a_vendor_fills_its_numbers_and_follows_it(browser,
         assert flag.is_visible() and "Vendor list: 609274188 RT0001" in flag.inner_text()
         assert not page.locator(f'[data-field="{GST}"] [data-from-vendor-note]').is_visible()
         assert errors == []
+
+
+# --- Pay from: our bank account (D-66) -------------------------------------------------------------------------------
+
+BANKS = [
+    {"code": "CAD-OP", "name": "Sample Bank CAD operating", "currency": "CAD", "account_number": "0000001234",
+     "is_default": "yes"},
+    {"code": "CAD-PAY", "name": "Sample Bank CAD payables", "currency": "CAD", "account_number": "0000004321"},
+    {"code": "USD-OP", "name": "Sample Bank USD", "currency": "USD", "account_number": "0000005678"},
+]  # fmt: skip
+
+
+def _banks(store: Store) -> None:
+    rows, problems = banks.clean_rows(BANKS)
+    assert not problems
+    store.save_bank_accounts(rows)
+
+
+def _approvable(client, invoice_id: int, data: dict) -> dict:
+    """``data`` with "Approve anyway" ticked for the errors the check finds (the demo's are not this test's)."""
+    bar = check(client, invoice_id, data)["sections"]["bar"]
+    if 'name="override" value="' in bar:
+        data = {**data, "override": bar.split('name="override" value="', 1)[1].split('"')[0]}
+    return data
+
+
+def test_without_bank_accounts_nothing_asks_for_one(client, store):
+    invoice_id = _red_river(store)
+    answer = check(client, invoice_id, form_of(store, invoice_id))
+    assert "Add your bank accounts on GL accounts &amp; tax to choose which account pays" in answer["sections"]["checks"]
+    page = client.get(f"/review/{invoice_id}").text
+    assert 'name="pay_from_account"' not in page and 'href="/accounts?tab=bank"' in page
+    assert "Pay into" not in page
+
+
+def test_pay_from_defaults_to_the_currencys_account_and_is_stored(client, store):
+    _banks(store)
+    invoice_id = _red_river(store)
+    page = client.get(f"/review/{invoice_id}").text
+    select = page.split('name="pay_from_account"', 1)[1].split("</select>", 1)[0]
+    assert '<option value="CAD-OP" data-currency="CAD" selected>Sample Bank CAD operating · CAD · ••••1234</option>' in (
+        select)
+    assert "0000001234" not in page  # never the whole number
+    assert "Add your bank accounts" not in check(client, invoice_id, form_of(store, invoice_id))["sections"]["checks"]
+    # the currency changes: the default follows it (never an account in another currency kept unsaid)
+    usd = check(client, invoice_id, form_of(store, invoice_id, currency="USD", pay_from_account="CAD-OP"))
+    assert usd["header"]["values"] == {"pay_from_account": "USD-OP"}
+    # picked by the reviewer: kept while the currency stays, with a warning when it is in another currency
+    picked = check(client, invoice_id, form_of(store, invoice_id, pay_from_account="USD-OP", pay_from_for="CAD"))
+    assert picked["header"]["values"] == {} and picked["header"]["flags"]["pay_from_account"]
+    assert "A CAD invoice paid from Sample Bank USD, a USD account" in html.unescape(picked["sections"]["checks"])
+    data = _approvable(client, invoice_id, form_of(store, invoice_id, pay_from_account="CAD-PAY", pay_from_for="CAD"))
+    assert client.post(f"/review/{invoice_id}/approve", data=data, headers=PAGE).json()["ok"]
+    assert store.get_invoice(invoice_id)["final_output"]["pay_from_account"] == "CAD-PAY"
+    assert store.last_pay_from(store.get_invoice(invoice_id)["vendor_key"]) == "CAD-PAY"  # this vendor's next one
+
+
+def test_an_invoice_with_no_account_in_its_currency_is_not_approved_without_one(client, store):
+    _banks(store)
+    invoice_id = _red_river(store)
+    data = form_of(store, invoice_id, currency="EUR")
+    answer = check(client, invoice_id, data)
+    assert answer["header"]["values"].get("pay_from_account", "") == "" and not answer["allow"]
+    assert "Pick the bank account to pay this invoice from" in html.unescape(answer["sections"]["bar"])
+    refused = client.post(f"/review/{invoice_id}/approve", data=_approvable(client, invoice_id, data), headers=PAGE)
+    assert refused.status_code == 400 and "Pick the bank account to pay this invoice from" in refused.json()["error"]
+    assert store.get_invoice(invoice_id)["status"] == REVIEW
+
+
+def test_the_vendors_printed_bank_details_are_shown_masked_and_not_edited(client, store):
+    import sqlite3
+
+    invoice_id = _red_river(store)
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE invoices SET ai_output = json_set(ai_output, '$.remit_bank_account', "
+                     "'Transit 12345, Institution 004, Account 7654321') WHERE id = ?", (invoice_id,))  # fmt: skip
+    page = client.get(f"/review/{invoice_id}").text
+    shown = page.split('data-field="remit_bank_account"', 1)[1].split("</div>", 1)[0]
+    assert "Bank details printed on the invoice" in shown and "…4321" in shown and "7654321" not in page
+    assert 'name="remit_bank_account"' not in page  # read-only: not a box
+    data = form_of(store, invoice_id)
+    data.pop("remit_bank_account")  # the page posts none
+    answer = check(client, invoice_id, data)
+    assert answer["ok"]
+    data = _approvable(client, invoice_id, data)
+    client.post(f"/review/{invoice_id}/approve", data=data, headers=PAGE)
+    final = store.get_invoice(invoice_id)["final_output"]
+    assert final["remit_bank_account"] == "Transit 12345, Institution 004, Account 7654321"  # kept for the fraud check
+
+
+def test_in_a_browser_pay_from_is_a_list_that_follows_the_currency(browser, store):
+    _banks(store)
+    page, errors = _open_review(browser, store, "Red River", viewport=LAPTOP)
+    select = page.locator("select[name=pay_from_account]")
+    assert select.input_value() == "CAD-OP"
+    labels = select.locator("option").all_inner_texts()
+    assert labels[1:] == ["Sample Bank CAD operating · CAD · ••••1234", "Sample Bank CAD payables · CAD · ••••4321",
+                          "Sample Bank USD · USD · ••••5678"]  # fmt: skip
+    currency = page.locator("[form=inv][name=currency]")
+    currency.fill("USD")
+    currency.press("Tab")
+    page.wait_for_function("document.querySelector('select[name=pay_from_account]').value === 'USD-OP'")
+    select.select_option("CAD-PAY")  # picked: a CAD account for a USD invoice is kept, and said
+    page.wait_for_selector('[data-field="pay_from_account"].is-flagged')
+    assert "Not an account in the invoice's currency" in page.inner_text('[data-field="pay_from_account"]')
+    page.wait_for_timeout(600)
+    assert select.input_value() == "CAD-PAY"
+    assert errors == []
