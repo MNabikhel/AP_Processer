@@ -225,10 +225,16 @@ export class InvoiceViewer {
     this.foldBtn = h("button", { type: "button", class: "iv-fold", "aria-expanded": "true", onclick: () => this.setFieldsOpen(!this.root.classList.contains("fields-open"), true) }, "Hide");
     this.meter = h("div", { class: "iv-meter", "aria-hidden": "true" });
     this.list = h("div", { class: "iv-list", "aria-label": "Fields read from the invoice" });
+    this.onlyInput = h("input", { type: "checkbox", role: "switch", onchange: () => this.setOnlyCheck(this.onlyInput.checked) });
+    const only = h("label", { class: "iv-switch" }, this.onlyInput, h("span", { class: "iv-track", "aria-hidden": "true" }), h("span", null, "To check only"));
+    only.title = "Show only the fields that need checking";
+    // The key to the boxes' colours and "To check only" sit on the Fields line, so the tools above the page take one
+    // row and the page gets the room (D-57); beside the page (a wide viewer), on a line of their own under it.
+    this.legend = h("div", { class: "iv-legend", role: "note", "aria-label": "Colours of the boxes" });
     this.panel = h(
       "aside",
       { class: "iv-panel", "aria-label": "Fields" },
-      h("div", { class: "iv-panel-head" }, h("h2", null, "Fields"), this.summary, this.foldBtn),
+      h("div", { class: "iv-panel-head" }, h("h2", null, "Fields"), this.summary, h("div", { class: "iv-panel-tools" }, this.legend, only), this.foldBtn),
       this.meter,
       this.list
     );
@@ -252,9 +258,7 @@ export class InvoiceViewer {
       h("kbd", null, "n")
     );
     this.count = h("span", { class: "iv-count", "aria-live": "polite" });
-    this.onlyInput = h("input", { type: "checkbox", role: "switch", onchange: () => this.setOnlyCheck(this.onlyInput.checked) });
-    const only = h("label", { class: "iv-switch" }, this.onlyInput, h("span", { class: "iv-track", "aria-hidden": "true" }), h("span", null, "To check only"));
-    only.title = "Show only the fields that need checking";
+    // One row of tools above the page: zoom, fit, the Hand, Rotate, Next to check, then the pages (D-57).
     this.toolbar = h(
       "div",
       { class: "iv-toolbar", role: "toolbar", "aria-label": "Page tools" },
@@ -267,10 +271,7 @@ export class InvoiceViewer {
         this.rotateBtn,
         this.pager
       ),
-      h("div", { class: "iv-check" }, this.stepBtn, this.count),
-      only,
-      // The key to the boxes' colours, in the same bar: one row of tools above the page (B-467).
-      (this.legend = h("div", { class: "iv-legend", role: "note", "aria-label": "Colours of the boxes" }))
+      h("div", { class: "iv-check" }, this.stepBtn, this.count)
     );
 
     this.teachText = h("div", { class: "iv-teach-text" });
@@ -301,7 +302,11 @@ export class InvoiceViewer {
     this.frame = h("div", { class: "iv-frame" }, this.sheet);
     this.empty = h("p", { class: "iv-empty", hidden: true }, "No page to show.");
     this.stage = h("div", { class: "iv-stage", tabindex: "-1" }, this.frame, this.empty);
-    this.main = h("section", { class: "iv-main", "aria-label": "Invoice page" }, this.toolbar, this.teachBar, this.stage);
+    // A tag in the page's corner while the Hand is on or the page is shown turned: what a drag does now, and that
+    // the turn is on screen only (D-57).
+    this.modeTag = h("div", { class: "iv-mode", "aria-live": "polite" });
+    this.stageWrap = h("div", { class: "iv-stage-wrap" }, this.stage, this.modeTag);
+    this.main = h("section", { class: "iv-main", "aria-label": "Invoice page" }, this.toolbar, this.teachBar, this.stageWrap);
     this.tip = h("div", { class: "iv-tip", role: "tooltip", id: "iv-tip", hidden: true });
     replace(this.root, this.panel, this.main);
     document.body.append(this.tip); // on <body>: the card around the viewer would hold a fixed card in
@@ -719,7 +724,8 @@ export class InvoiceViewer {
     this.frame.hidden = !info;
     const many = this.pages.length > 1;
     this.pager.hidden = !many;
-    replace(this.where, info ? `Page ${this.page} of ${this.pages.length}` : "");
+    // "Page" folds away in a narrow viewer (still read out): "1 of 2" keeps the tools on one row
+    replace(this.where, info ? [h("span", { class: "iv-where-word" }, "Page "), `${this.page} of ${this.pages.length}`] : "");
     this.prevBtn.disabled = this.page <= 1;
     this.nextBtn.disabled = this.page >= this.pages.length;
     if (!info) return;
@@ -826,6 +832,7 @@ export class InvoiceViewer {
     const shift = { 90: [H, 0], 180: [W, H], 270: [0, W] }[rot];
     this.sheet.style.transform = shift ? `translate(${shift[0]}px, ${shift[1]}px) rotate(${rot}deg)` : "";
     this.root.classList.toggle("turned", Boolean(rot));
+    this.renderMode();
     this.renderZoom();
     this.sharpen();
   }
@@ -925,6 +932,19 @@ export class InvoiceViewer {
   renderHand() {
     this.handBtn.setAttribute("aria-pressed", String(this.hand));
     this.root.classList.toggle("hand", this.hand || this.spaceHand);
+    this.renderMode();
+  }
+
+  /** The tag in the page's corner: the Hand on (how to turn it off), the page turned (on screen only). */
+  renderMode() {
+    const tags = [];
+    if (this.hand) tags.push(["hand", "Hand: drag to move · H to turn off"]);
+    else if (this.spaceHand) tags.push(["hand", "Hand: drag to move"]);
+    if (this.rot && this.pageInfo()) tags.push(["turned", `Turned ${this.rot}°: view only, nothing is saved`]);
+    const text = tags.map((t) => t[1]).join("\n");
+    if (text === this.modeText) return;
+    this.modeText = text;
+    replace(this.modeTag, tags.map(([kind, words]) => h("span", { class: `iv-mode-tag ${kind}` }, words)));
   }
 
   panWanted(e) {

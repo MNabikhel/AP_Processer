@@ -621,3 +621,83 @@ def test_in_a_browser_page_down_turns_the_invoice_page_only_from_the_document_ca
     page.keyboard.press("PageUp")
     assert "Page 1 of 2" in page.inner_text(".iv-where")
     assert errors == []
+
+
+# --- More room for the page, and the Hand and a turned page said on it (D-57) ---------------------------------------
+
+
+def test_in_a_browser_the_page_tools_take_one_row_and_the_key_sits_on_the_fields_line(browser, store):
+    """At 1366 x 768 the tools above the page took two rows (zoom…, then Next to check, To check only and the colour
+    key): about 300 px of the page showed. Now one row of tools, the key and To check only on the Fields line."""
+    for vendor in ("Mont-Royal", "Cascade"):  # two pages, then one
+        page, errors = _open(browser, store, vendor=vendor)
+        page.evaluate("window.scrollTo(0, 0)")
+        bar = page.locator(".iv-toolbar").bounding_box()
+        assert bar["height"] <= 46, (vendor, bar)
+        zoom = page.locator(".iv-zoom").bounding_box()
+        for tool in (".iv-step", ".iv-tool.iv-rotate") + ((".iv-pager",) if vendor == "Mont-Royal" else ()):
+            box = page.locator(tool).bounding_box()
+            assert abs((box["y"] + box["height"] / 2) - (zoom["y"] + zoom["height"] / 2)) <= 2, (vendor, tool)
+        head = page.locator(".iv-panel-head").bounding_box()
+        assert head["height"] <= 44, head
+        for part in (".iv-panel-head h2", ".iv-legend", ".iv-switch", ".iv-fold"):
+            box = page.locator(part).bounding_box()
+            assert page.locator(part).is_visible(), part
+            assert head["y"] <= box["y"] and box["y"] + box["height"] <= head["y"] + head["height"], part
+        assert "Verified" in page.inner_text(".iv-legend")
+        assert "verified" in page.inner_text(".iv-summary")  # the counts in words, for a screen reader
+        stage = page.locator(".iv-stage").bounding_box()
+        action = page.locator(".inv-actionbar").bounding_box()["y"]
+        assert min(stage["y"] + stage["height"], action) - stage["y"] >= 330, (vendor, stage)
+        page.click(".iv-switch")  # still works where it now is
+        assert page.evaluate("document.querySelector('.iv').classList.contains('only-check')")
+        assert errors == []
+
+
+def test_in_a_browser_the_teach_bar_takes_two_lines_beside_the_form(browser, store):
+    page, errors = _open(browser, store, vendor="Mont-Royal")
+    page.click("[data-teach] > summary")
+    page.select_option("[data-teach-field]", "invoice_number")
+    page.click("[data-teach-go]")
+    page.wait_for_selector(".iv-w")
+    bar = page.locator(".iv-teach").bounding_box()
+    use = page.locator(".iv-teach .iv-btn.primary").bounding_box()
+    title = page.locator(".iv-teach-text b").bounding_box()
+    assert bar["height"] <= 70, bar
+    # the buttons on its first line
+    assert abs((use["y"] + use["height"] / 2) - (title["y"] + title["height"] / 2)) <= 4
+    assert errors == []
+
+
+def _mode(page) -> str:
+    return page.inner_text(".iv-mode").strip() if page.locator(".iv-mode").is_visible() else ""
+
+
+def test_in_a_browser_the_hand_and_a_turned_page_are_said_on_the_page(browser, store):
+    page, errors = _open(browser, store)
+    assert _mode(page) == ""
+    page.click("[aria-label='Hand']")
+    assert page.get_attribute("[aria-label='Hand']", "aria-pressed") == "true"
+    assert _mode(page) == "Hand: drag to move · H to turn off"
+    stage = page.locator(".iv-stage").bounding_box()
+    tag = page.locator(".iv-mode").bounding_box()
+    assert stage["x"] <= tag["x"] and tag["y"] + tag["height"] <= stage["y"] + stage["height"]  # in the page's corner
+    assert page.evaluate("getComputedStyle(document.querySelector('.iv-mode')).pointerEvents") == "none"
+    page.locator(".iv-stage").focus()
+    page.keyboard.press("h")
+    assert _mode(page) == ""
+    page.keyboard.press("r")
+    assert _mode(page) == "Turned 90°: view only, nothing is saved"
+    page.keyboard.press("h")
+    assert _mode(page).splitlines() == ["Hand: drag to move · H to turn off", "Turned 90°: view only, nothing is saved"]
+    page.keyboard.press("h")
+    for _ in range(3):
+        page.keyboard.press("r")
+    assert _mode(page) == ""  # turned all the way round: upright again
+    # Space held: the Hand for a moment
+    _over_the_page(page)
+    page.keyboard.down(" ")
+    assert _mode(page) == "Hand: drag to move"
+    page.keyboard.up(" ")
+    assert _mode(page) == ""
+    assert errors == []
