@@ -333,3 +333,38 @@ def test_french_headers_with_accents_are_recognised():
     from ap_coder.core.headers import header_key
 
     assert header_key("Numéro de facture") == "numerodefacture" and header_key("Œuvre N°") == "oeuvreno"
+
+
+# --- B-658: a coding rule applied on the review screen could drop the AI reviewer's check -----------------------------
+
+
+def test_rules_applied_on_screen_never_drop_a_background_check(tmp_path, monkeypatch):
+    import json as _json
+    import threading
+
+    import ap_coder.core.store as store_module
+
+    store = Store(tmp_path / "ap.db")
+    iid = store.add_invoice(tmp_path / "x.pdf", _blank_invoice(), {"requires_review": True})
+    paused, go = threading.Event(), threading.Event()
+
+    class SlowJson:  # the screen's write pauses between its read and its write
+        def __getattr__(self, name):
+            return getattr(_json, name)
+
+        def dumps(self, obj, *a, **k):
+            if threading.current_thread().name == "screen" and isinstance(obj, dict) and "rules_applied" in obj:
+                paused.set()
+                go.wait(1)
+            return _json.dumps(obj, *a, **k)
+
+    monkeypatch.setattr(store_module, "json", SlowJson())
+    change = {"line_number": 1, "rule": "r", "gl_from": "6000", "gl_to": "6010", "cc_from": "", "cc_to": ""}
+    screen = threading.Thread(target=store.add_rules_applied, args=(iid, [change]), name="screen")
+    screen.start()
+    paused.wait(5)
+    store.update_after_check(iid, None, None, ("X",), {"ai_reviewer": {"verdict": "checked"}})
+    go.set()
+    screen.join()
+    meta = store.get_invoice(iid)["meta"]
+    assert "ai_reviewer" in meta and "rules_applied" in meta

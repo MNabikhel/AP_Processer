@@ -6058,3 +6058,15 @@ reproduced with a script first, then given a failing test and fixed.
 - **Fix:** one shared `header_key` folds accents (NFKD, with œ, æ, ß and "N°") before cleaning; the five places use it.
 - **Test:** `tests/test_sweep_pilot_fixes.py::test_french_headers_with_accents_are_recognised`
 - **Lesson:** Fold accents before deleting what is not a letter.
+
+#### B-658 · A coding rule applied on the review screen could drop the AI reviewer's notes · low
+- **Where:** `ap_coder/core/store.py` (`add_rules_applied`)
+- **Symptom:** the AI reviewer's check, saved by the background thread while the reviewer applied a coding rule on
+  the screen, was gone from the invoice afterwards.
+- **Cause:** `add_rules_applied` read the invoice's notes, changed them and wrote them back without the write lock,
+  so a write in between was overwritten (`update_after_check` takes the lock first).
+- **Reproduce:** `sweep2/s11.py` (the screen's write paused between its read and its write).
+- **Reproduced:** yes
+- **Fix:** the write lock is taken before the read (`BEGIN IMMEDIATE`), as `update_after_check` does.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_rules_applied_on_screen_never_drop_a_background_check`
+- **Lesson:** Every read-modify-write of a shared row takes the lock before it reads.

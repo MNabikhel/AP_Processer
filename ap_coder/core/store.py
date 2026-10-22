@@ -1997,6 +1997,8 @@ class Store:
         """Remember lines a fixed coding rule set on the review screen (as rules applied at processing are), so
         the AI's accuracy is measured on its own answer for them."""
         with self._conn() as conn:
+            # The write lock from the read to the write: a background check's notes saved in between are kept (B-658).
+            conn.execute("BEGIN IMMEDIATE")
             row = conn.execute("SELECT meta FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
             if row is None:
                 return
