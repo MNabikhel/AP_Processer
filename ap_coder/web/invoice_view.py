@@ -33,6 +33,7 @@ from ap_coder.coding import rules, vendor_mail
 from ap_coder.coding.line_tax import (
     all_labels,
     charged_types,
+    exemption_to_confirm,
     fill_exempt,
     legacy_basis,
     parse_code,
@@ -555,6 +556,8 @@ def grid(reference: ReferenceData, draft: Draft, ai: dict[str, Any] | None = Non
         for before, row in paired
         if before and row and tax_guessed(row) and tax_code_of(row, charged) == tax_code_of(before, charged)
     }
+    # A PST exemption inferred when the invoice was read: picking it again later is still confirmed on review (B-723).
+    inferred = {id(row): exemption_to_confirm(before) for before, row in paired if before and row}
     codes = tax_choices(draft, reference.tax)
     return {  # "guessed": an account no approval backs, marked for the reviewer to check (B-463)
         "lines": [
@@ -564,6 +567,7 @@ def grid(reference: ReferenceData, draft: Draft, ai: dict[str, Any] | None = Non
                 "guessed": id(row) in guesses and row.get("predicted_gl_code") not in (None, "", UNASSIGNED),
                 "tax_code": tax_code_of(row, charged),
                 "tax_guess": id(row) in tax_guesses,
+                "tax_inferred": inferred.get(id(row), ""),
             }
             for i, row in enumerate(draft.lines)
         ],
@@ -1210,7 +1214,6 @@ def tax_marks(math: dict[str, Any], issues: list[Any]) -> dict[int, str]:
 def posting_note(coding: InvoiceCoding, reference: ReferenceData) -> str:
     """A word over the GL posting preview when a non-recoverable tax (PST) is spread over the lines marked with it
     while some lines' tax codes are still to check: the spread may be on the wrong lines (B-714)."""
-    from ap_coder.coding.line_tax import exemption_to_confirm
     from ap_coder.coding.tax import EXPENSE_TO_LINE
 
     spread = [t for t in charged_types(coding.tax_lines) if reference.tax.treatment(t).treatment == EXPENSE_TO_LINE]

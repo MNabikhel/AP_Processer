@@ -6906,3 +6906,19 @@ reproduced with a script first, then given a failing test and fixed.
   The code comes from the same function as the export's.
 - **Test:** `tests/test_line_tax_review3.py::test_the_self_assessment_report_marks_invoices_jd_edwards_accrues_with_code_b_b722`
 - **Lesson:** A warning belongs where the action it prevents is taken, not only where it is caused.
+
+#### B-723 · An inferred exemption picked again after another code was not recorded as confirmed · minor
+- **Where:** `ap_coder/coding/line_tax.py` (`confirm_line`), `ap_coder/web/static/js/invoice.js` (`confirmTaxCode`),
+  `ap_coder/web/invoice_view.py` (`grid`), `ap_coder/web/templates/_invoice_lines.html`
+- **Symptom:** the clerk changed a line from "GST only · PST exempt" (inferred) to "PST not charged" and back: the
+  approval recorded no "confirmed on review", an audit gap.
+- **Cause:** the first change removed the inferred note from the line's reasoning, so the second had nothing to
+  confirm.
+- **Reproduce:** a BC line with the inferred note: pick "GST only · PST not charged", then "GST only · PST exempt".
+- **Reproduced:** yes (found by the CPA's final check)
+- **Fix:** the inference is kept on the row (`data-tax-inferred`, from the invoice as read; the draft keeps it too),
+  and any explicit pick of an exempting code on such a line records "PST exemption confirmed on review";
+  `confirm_line(reason, code, inferred=...)` does the same on the server.
+- **Test:** `tests/test_line_tax_review3.py::test_picking_the_inferred_exemption_again_records_it_as_confirmed_b723`,
+  `tests/test_web_tax_codes.py::test_in_a_browser_picking_the_inferred_exemption_again_confirms_it_b723`
+- **Lesson:** Keep what was inferred apart from what is shown, so a later choice can still be compared with it.
