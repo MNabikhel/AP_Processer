@@ -13,7 +13,7 @@ from ap_coder.coding import taxreturn
 from ap_coder.coding.tax import check_taxes, gst_check_digit_ok
 from ap_coder.core.memory import ACCEPTED, CODED, CORRECTED
 from ap_coder.core.schema import InvoiceCoding
-from ap_coder.core.store import APPROVED, PENDING, Store, load_sample_setup
+from ap_coder.core.store import APPROVED, PENDING, Store, load_sample_cost_centers, load_sample_setup
 from ap_coder.erp import stamp
 from ap_coder.erp.insights import _week
 from ap_coder.ops import help as help_catalog
@@ -98,6 +98,7 @@ def test_the_sample_invoices_use_numbers_that_pass_the_check_digit():
 
 def test_filling_in_a_blank_cost_center_confirms_the_ai(tmp_path):
     store = Store(tmp_path / "s.db")
+    load_sample_cost_centers(store)  # a cost center to pick needs a list (without one only the GL counts: B-562)
     ai = _gt()
     for li in ai["line_items"]:
         li["predicted_cost_center"] = "UNASSIGNED"  # the AI left the cost center to pick
