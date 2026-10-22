@@ -6039,6 +6039,19 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
 - **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_a_double_click_fills_only_the_detail_chosen_and_never_from_a_fields_box_b621`
 - **Lesson:** A shortcut that writes a value (and teaches it) must be sure which value the person meant.
 
+#### B-622 · A tax line added blank took the ticked lines' sum, so the tax counted twice · medium
+- **Where:** `ap_coder/web/static/js/invoice.js` (`followTicks`, B-610)
+- **Symptom:** *Add a tax line* (GST, blank), then tick or untick a line's GST: the new line's taxable amount became
+  the same sum as the GST line already there, and the checks counted the GST twice.
+- **Cause:** B-610 let a tax line follow the ticked lines when its taxable amount was blank as well as when it was the
+  old sum.
+- **Reproduce:** on an invoice with GST, add a tax line, untick GST on line 1.
+- **Reproduced:** yes
+- **Fix:** only a tax line whose taxable amount was the old sum follows; a blank one stays blank (its right-click menu
+  can still set it from the ticked lines).
+- **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_a_new_blank_tax_line_does_not_take_the_ticked_sum_b622`
+- **Lesson:** "Follows the lines" must mean "was the lines' sum": a blank is a person's work still to do.
+
 #### Looked at and left (install, launcher and updates)
 
 - **N-251** · A GitHub ZIP unzipped over an older one leaves the files the newer one no longer has (the offline

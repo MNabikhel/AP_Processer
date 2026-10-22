@@ -708,3 +708,23 @@ def test_in_a_browser_a_double_click_fills_only_the_detail_chosen_and_never_from
     page.wait_for_timeout(400)
     assert asked and "verified" in asked[0] and verified.input_value() == was and teaches == []
     assert errors == []
+
+
+def test_in_a_browser_a_new_blank_tax_line_does_not_take_the_ticked_sum_b622(browser, store):
+    """B-622: a tax line added blank took the sum of the ticked lines at the next edit, so the tax counted twice."""
+    invoice_id = _with_gst(store)
+    page, errors = _review(browser, invoice_id)
+    kind = "GST" if _taxable(page, "GST") else "HST"
+    before = _taxable(page, kind)
+    page.click("[data-add-row=taxes]")
+    new = page.locator("[data-grid=taxes] > tr").last
+    new.locator("[name=tax_type]").select_option(kind)
+    assert new.locator("[name=tax_taxable]").input_value() == ""
+    rows = _lines(page)
+    chip = rows.first.locator("label", has=page.locator(f"input[type=checkbox][value={kind}]"))
+    page.wait_for_load_state("networkidle")
+    with _checked(page):
+        chip.click()
+    assert new.locator("[name=tax_taxable]").input_value() == ""  # stays blank: not a second copy of the sum
+    assert _taxable(page, kind) != before  # the tax line that was the sum follows
+    assert errors == []

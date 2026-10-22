@@ -1470,7 +1470,8 @@ function followTicks() {
     const taxable = num(tr.querySelector('[name="tax_taxable"]'));
     const before = lastSums[kind] || 0;
     const after = now[kind] || 0;
-    if (!kind || same(before, after) || !(taxable === null || same(taxable, before))) continue;
+    // Only a tax line that was the sum follows it: a blank one (just added) stays blank, never a second copy (B-622).
+    if (!kind || same(before, after) || !same(taxable, before)) continue;
     setTaxable(tr, after);
     changed = true;
   }
