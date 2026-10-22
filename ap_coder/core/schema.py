@@ -358,6 +358,11 @@ class LineItem(BaseModel):
         return out
 
 
+# The tax registration numbers filled from the vendor list, not printed on the invoice (the review screen, D-65): a list
+# of field names stored beside the coding, like the place of supply worked out.
+FROM_VENDOR_LIST = "tax_numbers_from_vendor_list"
+
+
 class InvoiceCoding(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -374,7 +379,8 @@ class InvoiceCoding(BaseModel):
     qst_registration_number: str = ""
     pst_registration_number: str = ""
     original_invoice_number: str = ""
-    remit_bank_account: str = ""
+    remit_bank_account: str = ""  # the vendor's banking details as printed: evidence for the fraud check, never paid to
+    pay_from_account: str = ""  # the code of OUR bank account it is paid from (coding/banks.py, D-66)
     subtotal: float
     tax_lines: list[TaxLine] = Field(default_factory=list)
     tax_total: float
@@ -387,8 +393,9 @@ class InvoiceCoding(BaseModel):
     def _drop_worked_out(cls, data: Any) -> Any:
         # A stored invoice keeps the place of supply worked out when no ship-to is printed beside the coding
         # (pipeline.finalise_coding); it is worked out again from the lines each time, so it is dropped here.
-        if isinstance(data, dict) and PLACE_OF_SUPPLY in data:
-            data = {k: v for k, v in data.items() if k != PLACE_OF_SUPPLY}
+        # Likewise the tax numbers the review screen filled from the vendor list (D-65): kept beside the coding.
+        if isinstance(data, dict) and (PLACE_OF_SUPPLY in data or FROM_VENDOR_LIST in data):
+            data = {k: v for k, v in data.items() if k not in (PLACE_OF_SUPPLY, FROM_VENDOR_LIST)}
         return data
 
     @field_validator("invoice_date")
