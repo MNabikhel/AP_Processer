@@ -131,8 +131,8 @@ def due_note(ai: dict[str, Any], default_days: int, vendor_terms: str = "") -> t
     return f"Due {p.due:%b} {p.due.day}", ""
 
 
-_TO_FIX: dict[int, tuple[int, tuple[str, int]]] = {}
-_PAY_FROM: dict[int, tuple[int, str]] = {}  # the Pay from part of ``attention`` by invoice id: (what it was asked, why)  # ``_to_fix`` by invoice id: (what it was asked, the answer)
+_TO_FIX: dict[int, tuple[int, tuple[str, int]]] = {}  # ``_to_fix`` by invoice id: (what it was asked, the answer)
+_PAY_FROM: dict[int, tuple[int, str]] = {}  # the Pay from part of ``attention`` by invoice id: (asked, why)
 
 
 def _to_fix(invoice_id: int, final: str | None, ai: str | None, validation: str | None,
