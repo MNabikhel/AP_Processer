@@ -430,7 +430,8 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
     return render(
         request, "invoice.html", "review", mode="review", **context,
         draft=draft, kept=kept, live=analysis.live, sure=sure,
-        grid=view.grid(reference, draft, inv.get("ai_output") or {}),
+        grid=view.grid(reference, draft, inv.get("ai_output") or {},
+                       view.vendor_accounts(store, draft.header.get("vendor_name") or "")),
         labels=view.FIELD_LABELS, provinces=view.province_options(),
         due_placeholder=f"{computed.isoformat()} (from terms)" if computed else "YYYY-MM-DD",
         sent_back=_sent_back(store, invoice_id), poll_seconds=PAGE_READER_POLL_SECONDS,
