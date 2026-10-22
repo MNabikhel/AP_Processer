@@ -6117,6 +6117,21 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
 - **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_a_detail_left_long_ago_is_not_filled_by_a_double_click_b627`
 - **Lesson:** Time a person's intent from what they did, not from a side effect of what they do next.
 
+#### B-628 · A right-click on a line opened its menu on only a third of it · low
+- **Where:** `ap_coder/web/static/js/ctxmenu.js` (`nativeWanted`)
+- **Symptom:** since B-624 every text box gave the browser's menu, so a line's menu opened on 24 of 72 spots of a line,
+  and a tax line's only on its two drop-downs.
+- **Cause:** the rule for an invoice detail's box (the browser's menu, for Paste) was applied to the grids' boxes too,
+  which fill nearly all of a line.
+- **Reproduce:** right-click a line's amount or description, or a tax line's rate: the browser's menu.
+- **Reproduced:** yes
+- **Fix:** in a line or a tax line, a right-click on a box opens the line's menu unless the box is in use: it had the
+  focus before the right button went down (being typed in, text selected in it), when the browser's menu (Paste) is
+  wanted. The invoice details stay as they were: the browser's menu in the box, the field's menu on its name. The
+  Help page and D-60 say where each menu opens.
+- **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_a_right_click_on_a_lines_box_opens_the_line_menu_unless_it_is_in_use_b628`
+- **Lesson:** Where a menu opens is part of the menu: count the spots it can be found on.
+
 #### Looked at and left (install, launcher and updates)
 
 - **N-251** · A GitHub ZIP unzipped over an older one leaves the files the newer one no longer has (the offline

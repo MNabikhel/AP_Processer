@@ -753,14 +753,13 @@ def test_in_a_browser_enter_goes_past_a_detail_folded_away_b623(browser, store):
 
 
 def test_in_a_browser_a_right_click_inside_a_text_box_is_the_browsers_paste_menu_b624(browser, store):
-    """B-624: a right-click inside an empty text box showed the field's menu, without Paste or the spelling."""
+    """B-624: a right-click inside an empty text box showed the field's menu, without Paste or the spelling. (A line's
+    boxes: the browser's while in use, else the line's menu, B-628.)"""
     invoice_id = store.list_invoices(REVIEW)[0]["id"]
     page, errors = _review(browser, invoice_id)
     for box in (
         page.locator('.inv-details input[name="qst_registration_number"]'),  # empty: nothing selected
         page.locator('.inv-details input[name="invoice_number"]'),
-        _lines(page).first.locator("textarea[name=line_description]"),
-        _lines(page).first.locator("[name=line_amount]"),
     ):
         box.click(button="right")
         page.wait_for_timeout(150)
@@ -851,4 +850,38 @@ def test_in_a_browser_a_detail_left_long_ago_is_not_filled_by_a_double_click_b62
     with page.expect_response(lambda r: r.url.endswith("/teach")):
         page.mouse.dblclick(x, y)
     page.wait_for_function("n => document.querySelector(`.inv-details input[name=${n}]`).value !== ''", arg=name)
+    assert errors == []
+
+
+def test_in_a_browser_a_right_click_on_a_lines_box_opens_the_line_menu_unless_it_is_in_use_b628(browser, store):
+    """B-628: with every box the browser's (B-624), a right-click on a line opened its menu on only a third of it, and
+    on a tax line only on its two drop-downs."""
+    invoice_id = _with_gst(store)
+    page, errors = _review(browser, invoice_id)
+    row = _lines(page).first
+    for cell in ("[name=line_number]", "textarea[name=line_description]", "[name=line_amount]", "[name=line_quantity]",
+                 ".pk-input[data-picker-name=line_gl]"):  # fmt: skip
+        _menu(page, row.locator(cell))
+        assert _item(page, "delete").count() == 1, cell
+        page.keyboard.press("Escape")
+    tax = page.locator("[data-grid=taxes] > tr").first
+    for cell in ("[name=tax_rate_pct]", "[name=tax_taxable]", "[name=tax_amount]"):
+        _menu(page, tax.locator(cell))
+        assert _item(page, "recalc").count() == 1, cell
+        page.keyboard.press("Escape")
+    # a box in use (focused, typing): the browser's menu, for Paste
+    amount = row.locator("[name=line_amount]")
+    amount.click()
+    amount.click(button="right")
+    page.wait_for_timeout(150)
+    assert page.locator(MENU).count() == 0
+    description = row.locator("textarea[name=line_description]")
+    description.click()
+    description.click(button="right")
+    page.wait_for_timeout(150)
+    assert page.locator(MENU).count() == 0
+    # the invoice details stay as they are: the browser's menu in the box, the field's menu on its name
+    page.locator('.inv-details input[name="po_number"]').click(button="right")
+    page.wait_for_timeout(150)
+    assert page.locator(MENU).count() == 0
     assert errors == []
