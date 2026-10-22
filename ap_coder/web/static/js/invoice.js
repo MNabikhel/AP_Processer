@@ -111,6 +111,7 @@ async function check() {
 }
 
 function soon(ms = 450) {
+  followTicks(); // every edit comes here: a tax line's taxable follows its ticked lines (B-610)
   clearTimeout(timer);
   timer = setTimeout(check, ms);
 }
@@ -238,6 +239,7 @@ function setLines(html) {
     enhance(body); // their account pickers
   }
   fillSplitLines();
+  lastSums = tickedSums(); // the lines drawn again (a split): what the tax lines follow from now on
 }
 
 async function gridAction(url, extra, button, undoText = "") {
@@ -1077,6 +1079,7 @@ function restore(snap) {
   showAbsent();
   showVendorMatch();
   fillSplitLines();
+  lastSums = tickedSums();
 }
 
 function dropUndo() {
@@ -1390,7 +1393,62 @@ function num(el) {
   return text !== "" && Number.isFinite(v) ? v : null;
 }
 
+/* A tax line's taxable amount follows the lines ticked with its tax (B-610): ticking or unticking a line's GST box,
+   changing a ticked line's amount, deleting or adding one (every edit goes through soon()) updates the GST line's taxable amount (and its amount, at its rate) while it still
+   is the sum of the lines it was; a taxable amount the clerk typed is left alone, and the tax line's menu offers
+   "Update the taxable from the ticked lines". */
+
+function tickedSums() {
+  const sums = {};
+  for (const tr of gridRows()) {
+    const amount = num(tr.querySelector('[name="line_amount"]'));
+    if (amount === null) continue;
+    tr.querySelectorAll("input[type=checkbox]:checked").forEach((c) => (sums[c.value] = (sums[c.value] || 0) + amount));
+  }
+  for (const k of Object.keys(sums)) sums[k] = Math.round(sums[k] * 100) / 100;
+  return sums;
+}
+
+let lastSums = null; // the sums the tax lines were last made to follow (set at the start)
+
+function same(a, b) {
+  return a !== null && b !== null && Math.abs(a - b) < 0.005;
+}
+
+/** Put ``taxable`` on a tax line; its amount follows at its rate when it was rate x the old taxable. */
+function setTaxable(tr, taxable) {
+  const rate = num(tr.querySelector('[name="tax_rate_pct"]'));
+  const was = num(tr.querySelector('[name="tax_taxable"]'));
+  const amountBox = tr.querySelector('[name="tax_amount"]');
+  const amount = num(amountBox);
+  tr.querySelector('[name="tax_taxable"]').value = taxable.toFixed(2);
+  if (rate !== null && (amount === null || (was !== null && same(amount, Math.round(rate * was) / 100)))) {
+    amountBox.value = (Math.round(rate * taxable) / 100).toFixed(2);
+  }
+}
+
+function followTicks() {
+  if (!lastSums) return false; // the page is still starting
+  const now = tickedSums();
+  let changed = false;
+  for (const tr of document.querySelectorAll('[data-grid="taxes"] > tr')) {
+    const kind = tr.querySelector('[name="tax_type"]')?.value;
+    const taxable = num(tr.querySelector('[name="tax_taxable"]'));
+    const before = lastSums[kind] || 0;
+    const after = now[kind] || 0;
+    if (!kind || same(before, after) || !(taxable === null || same(taxable, before))) continue;
+    setTaxable(tr, after);
+    changed = true;
+  }
+  lastSums = now;
+  return changed;
+}
+
+
 function taxMenu(tr) {
+  const kind = tr.querySelector('[name="tax_type"]')?.value;
+  const sum = tickedSums()[kind] || 0;
+  const label = tr.querySelector('[name="tax_type"]')?.selectedOptions[0]?.textContent || kind;
   const rate = num(tr.querySelector('[name="tax_rate_pct"]'));
   const taxable = num(tr.querySelector('[name="tax_taxable"]'));
   const amount = rate !== null && taxable !== null ? Math.round(rate * taxable) / 100 : null;
@@ -1399,6 +1457,12 @@ function taxMenu(tr) {
       disabled: amount === null ? "Put in the rate and the taxable amount first" : false,
       run: () => undoable(`Tax amount recalculated: ${amount.toFixed(2)}.`, () => {
         tr.querySelector('[name="tax_amount"]').value = amount.toFixed(2);
+        soon(0);
+      }) },
+    { icon: "sync", label: `Update the taxable from the lines ticked ${label} (${sum.toFixed(2)})`, id: "sync",
+      disabled: !sum ? `No line is ticked ${label}` : same(num(tr.querySelector('[name="tax_taxable"]')), sum) ? "It is that already" : false,
+      run: () => undoable(`Taxable amount set from the lines ticked ${label}: ${sum.toFixed(2)}.`, () => {
+        setTaxable(tr, sum);
         soon(0);
       }) },
     "-",
@@ -1524,5 +1588,6 @@ showMailLanguage();
 fillSplitLines();
 showVendorMatch();
 for (const name of absentList()) viewer?.setEdited(name, "", true); // marked before: the Fields list says so
+lastSums = tickedSums(); // what the tax lines follow from now on (B-610)
 // The queue shows what this screen shows: check once on opening (today's checks, and any draft kept).
 if (form) check();

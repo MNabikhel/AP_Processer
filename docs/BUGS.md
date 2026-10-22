@@ -5997,6 +5997,20 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
 - **Test:** `tests/test_web_picker.py::test_in_a_browser_the_vendor_list_ends_with_add_as_a_new_vendor`
 - **Lesson:** A list that covers a message must carry the message, or the way out it offered.
 
+#### B-610 · Ticking a line's GST box left the GST line's taxable amount as it was · low-medium
+- **Where:** `ap_coder/web/static/js/invoice.js` (the review screen's tax lines)
+- **Symptom:** ticking or unticking a line's GST, HST, PST or QST box changed nothing in the Sales tax grid: the clerk
+  typed the tax line's taxable amount (and its amount) again by hand (two of 20 real invoices in a test run).
+- **Cause:** the tax lines were only ever what was read or typed; nothing tied them to the lines ticked with them.
+- **Reproduce:** on an invoice with GST, untick GST on line 1: the GST line still shows the old taxable amount.
+- **Reproduced:** yes
+- **Fix:** every edit of the screen (a box ticked, an amount changed, a line deleted, added or put back) updates a tax
+  line's taxable amount to the sum of the lines ticked with its tax, and its amount at its rate, while the taxable
+  amount is still the sum it was; one the clerk typed is left alone, and the tax line's right-click menu offers
+  *Update the taxable from the lines ticked GST (…)*.
+- **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_a_tax_lines_taxable_follows_the_lines_ticked_with_it_b610`
+- **Lesson:** Two parts of a screen that say the same thing must move together, but never over what a person typed.
+
 #### Looked at and left (install, launcher and updates)
 
 - **N-251** · A GitHub ZIP unzipped over an older one leaves the files the newer one no longer has (the offline

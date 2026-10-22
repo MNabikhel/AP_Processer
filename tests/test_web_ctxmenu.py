@@ -569,3 +569,38 @@ def test_in_a_browser_the_queue_remembers_its_filter_and_where_it_was_scrolled(b
     page.wait_for_load_state("networkidle")
     page.wait_for_function("y => Math.abs(window.scrollY - y) < 40", arg=y)
     assert errors == []
+
+
+def _taxable(page, kind):
+    return page.eval_on_selector_all(
+        "[data-grid=taxes] > tr",
+        "(rows, k) => rows.filter(r => r.querySelector('[name=tax_type]').value === k)"
+        ".map(r => r.querySelector('[name=tax_taxable]').value)[0]",
+        kind,
+    )
+
+
+def test_in_a_browser_a_tax_lines_taxable_follows_the_lines_ticked_with_it_b610(browser, store):
+    """B-610: ticking or unticking a line's GST box left the GST line's taxable amount as it was."""
+    invoice_id = _with_gst(store)
+    page, errors = _review(browser, invoice_id)
+    kind = "GST" if _taxable(page, "GST") else "HST"
+    rows = _lines(page)
+    amounts = [float(rows.nth(i).locator("[name=line_amount]").input_value()) for i in range(rows.count())]
+    ticked = [rows.nth(i).locator(f"input[type=checkbox][value={kind}]").is_checked() for i in range(rows.count())]
+    assert ticked[0] and abs(float(_taxable(page, kind)) - sum(a for a, t in zip(amounts, ticked) if t)) < 0.01
+    with _checked(page):
+        rows.first.locator(f"input[type=checkbox][value={kind}]").uncheck(force=True)
+    expected = sum(a for a, t in zip(amounts, ticked) if t) - amounts[0]
+    assert _taxable(page, kind) == f"{expected:.2f}"
+    # a taxable typed by the clerk is never overwritten: the tax line's menu offers to update it
+    tax = page.locator("[data-grid=taxes] > tr").nth(
+        page.eval_on_selector_all("[data-grid=taxes] select[name=tax_type]", "(s, k) => s.findIndex(x => x.value === k)", kind)
+    )
+    tax.locator("[name=tax_taxable]").fill("100.00")
+    rows.first.locator(f"input[type=checkbox][value={kind}]").check(force=True)
+    assert _taxable(page, kind) == "100.00"
+    _menu(page, tax.locator("td").first)
+    _item(page, "sync").click()
+    assert _taxable(page, kind) == f"{expected + amounts[0]:.2f}"
+    assert errors == []
