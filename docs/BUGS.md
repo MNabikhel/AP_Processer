@@ -6738,3 +6738,20 @@ Found while building the pilot tester's requests on the review screen's invoice 
   nowhere), so it says nothing about the numbers, and any change still gives a new stamp.
 - **Test:** `tests/test_web_masterdata.py::test_the_bank_accounts_version_stamp_holds_no_account_number`
 - **Lesson:** A hash of a secret with little entropy is the secret.
+
+#### B-688 · A GST/HST number read wrong, replaced from the vendor list, was learned as read right · medium
+- **Where:** `ap_coder/web/invoice_view.py` (`fill_from_vendor`, `settle_header`, `unread_numbers`),
+  `ap_coder/core/schema.py` (`as_read`), `ap_coder/web/static/js/invoice.js` (`vendorChanged`)
+- **Symptom:** invoice 6 read as GST/HST 999999998 RT0001: the clerk cleared it, picked a vendor, the vendor list
+  filled 812345676 RT0001, and the approval said "You changed no header field"; the supplier and the readers were
+  scored right for 999999998.
+- **Cause:** B-681's `as_read` put back the reading for every number marked as filled from the vendor list, and any
+  blank number was filled and marked, also one the clerk had just cleared.
+- **Reproduce:** read 999999998 RT0001 on invoice 6, clear it, pick Prairie then Agence, approve.
+- **Reproduced:** yes (found by the re-review of B-681 to B-687)
+- **Fix:** only a number the reading left blank (not printed) is filled from the vendor list and marked, in the
+  browser and on the server; a number read and cleared is the clerk's to type, a correction like any other.
+  `as_read` puts back only a number the reading had blank.
+- **Test:** `tests/test_header_details.py::test_only_a_number_not_read_is_filled_from_the_vendor_list_and_not_a_correction`,
+  `::test_in_a_browser_a_number_read_and_cleared_is_not_filled_from_the_vendor_list`
+- **Lesson:** "Not a correction" holds only where there was nothing to correct.

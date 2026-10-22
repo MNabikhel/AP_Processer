@@ -367,7 +367,8 @@ def as_read(final: dict[str, Any], proposed: dict[str, Any]) -> dict[str, Any]:
     """``final`` with each tax number filled from the vendor list (``FROM_VENDOR_LIST``, only numbers the reviewer
     left as filled) put back as ``proposed`` had it: what was read, for learning and for counting edits. Such a
     number is no correction of the reading (D-65, B-681)."""
-    filled = [f for f in final.get(FROM_VENDOR_LIST) or [] if isinstance(f, str)]
+    # only a number the reading left blank: one read and replaced is a correction (B-688)
+    filled = [f for f in final.get(FROM_VENDOR_LIST) or [] if isinstance(f, str) and not proposed.get(f)]
     if not filled:
         return final
     return {**final, **{f: proposed.get(f, "") for f in filled}}

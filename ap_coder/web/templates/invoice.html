@@ -68,7 +68,8 @@
   {# The fields marked "Not on this invoice" (the right-click menu of a field, D-60): a JSON list. #}
   <input type="hidden" name="absent" value="{{ draft.absent | tojson | forceescape }}" data-absent>
   {# The tax numbers filled from the vendor list (D-65), and the currency the Pay from account was picked for (D-66). #}
-  <input type="hidden" name="from_vendor" value="{{ draft.from_vendor | tojson | forceescape }}" data-from-vendor>
+  <input type="hidden" name="from_vendor" value="{{ draft.from_vendor | tojson | forceescape }}" data-from-vendor
+         data-unread="{{ unread_numbers | tojson | forceescape }}">
   <input type="hidden" name="pay_from_for" value="{{ draft.pay_from_for }}" data-pay-from-for>
   {% for k, v in query.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
   {% if nav.next_id %}<input type="hidden" name="next_id" value="{{ nav.next_id }}">{% endif %}

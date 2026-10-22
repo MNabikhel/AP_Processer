@@ -181,6 +181,7 @@ def _pick_vendor(page, typed: str, name: str) -> None:
 
 
 def test_in_a_browser_picking_a_vendor_fills_its_numbers_and_follows_it(browser, store):  # noqa: F811
+    _red_river(store, printed=False)  # no GST/HST number read: the vendor list fills it (B-688)
     page, errors = _open_review(browser, store, "Red River", viewport=LAPTOP)
     if True:
         gst, qst = page.locator(f"[name={GST}]"), page.locator(f"[name={QST}]")
@@ -327,6 +328,16 @@ def test_in_a_browser_pay_from_is_a_list_that_follows_the_currency(browser, stor
 # --- Review findings (B-681 to B-687) --------------------------------------------------------------------------------
 
 
+def _approval_message(client, invoice_id: int, data: dict) -> str:
+    """The message shown after Approve & teach (on the page it opens next)."""
+    answer = client.post(f"/review/{invoice_id}/approve", data=data, headers=PAGE).json()
+    assert answer.get("ok"), answer
+    import re
+
+    page = html.unescape(client.get(answer["redirect"]).text)
+    return re.search(r"<div><div>(Approved [^<]*)</div>", page).group(1)
+
+
 def _blank_reading(store: Store, invoice_id: int, *fields: str) -> None:
     """As if ``fields`` had not been read on the invoice (its coding and its capture)."""
     import sqlite3
@@ -357,9 +368,8 @@ def test_numbers_filled_from_the_vendor_list_are_not_corrections(client, store):
     data = _approvable(client, invoice_id, form_of(store, invoice_id, **{GST: state["fields"][GST],
                                                                          PST: state["fields"][PST]}))  # fmt: skip
     data["from_vendor"] = json.dumps(state)
-    answer = client.post(f"/review/{invoice_id}/approve", data=data, headers=PAGE).json()
-    said = json.dumps(answer)
-    assert "correction" not in said and "registration number" not in said, said
+    said = _approval_message(client, invoice_id, data)
+    assert "Approved" in said and "correction" not in said and "registration number" not in said, said
     inv = store.get_invoice(invoice_id)
     assert inv["status"] == APPROVED and inv["final_output"][GST] == "741852966 RT0001"
     assert GST not in inv["edits"] and PST not in inv["edits"]
@@ -398,6 +408,7 @@ def test_numbers_marked_from_the_vendor_list_are_always_this_vendors():
 def test_in_a_browser_undo_after_a_vendor_change_puts_back_the_vendor_with_its_numbers(browser, store):
     """B-682: Ctrl+Z after picking a second vendor kept that vendor but put back the first one's numbers, still
     marked as from the vendor list."""
+    _red_river(store, printed=False)
     page, errors = _open_review(browser, store, "Red River", viewport=LAPTOP)
     gst = page.locator(f"[name={GST}]")
     gst.fill("")
@@ -483,3 +494,48 @@ def test_a_posted_vendor_bank_detail_is_ignored(client, store):
     data = _approvable(client, invoice_id, form_of(store, invoice_id, remit_bank_account="Account 999"))
     client.post(f"/review/{invoice_id}/approve", data=data, headers=PAGE)
     assert store.get_invoice(invoice_id)["final_output"]["remit_bank_account"] == printed
+
+
+# --- Re-review (B-688 to B-690) --------------------------------------------------------------------------------------
+
+
+def test_only_a_number_not_read_is_filled_from_the_vendor_list_and_not_a_correction(client, store):
+    """B-688: a GST/HST number read wrong (999999998 RT0001), cleared by the clerk, then filled from the vendor list
+    was taken back to the wrong reading for learning: "You changed no header field", and the reading scored right."""
+    from ap_coder.core.schema import as_read
+
+    # the rules: only a field the reading left blank is filled and marked; the clerk's clearing is the clerk's edit
+    header = _header()
+    state, changed = view.fill_from_vendor(header, {}, [], ACME, unread={QST, PST})
+    assert GST not in changed and header[GST] == "" and state["fields"] == {QST: "1234567890 TQ0001"}
+    final = {GST: "123456782 RT0001", QST: "1234567890 TQ0001", FROM_VENDOR_LIST: [GST, QST]}
+    assert as_read(final, {GST: "999999998 RT0001", QST: ""}) == {**final, QST: ""}  # a reading kept is no fill
+    # on the screen
+    invoice_id = next(i["id"] for i in store.list_invoices(REVIEW) if i["vendor_name"].startswith("Agence"))
+    import sqlite3
+
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE invoices SET ai_output = json_set(ai_output, '$.gst_hst_registration_number', "
+                     "'999999998 RT0001') WHERE id = ?", (invoice_id,))  # fmt: skip
+    data = form_of(store, invoice_id, **{GST: ""})
+    data["from_vendor"] = json.dumps({"vendor": "prairie network supply", "fields": {}})  # another vendor picked
+    answer = check(client, invoice_id, data)
+    assert GST not in answer["header"]["values"] and GST not in answer["header"]["from_vendor"]["fields"]
+    data = _approvable(client, invoice_id, {**data, GST: "812345676 RT0001",
+                                            "from_vendor": json.dumps(answer["header"]["from_vendor"])})  # fmt: skip
+    said = _approval_message(client, invoice_id, data)
+    assert "correction (GST/HST number)" in said, said
+    inv = store.get_invoice(invoice_id)
+    assert GST in inv["edits"] and FROM_VENDOR_LIST not in inv["final_output"]
+
+
+def test_in_a_browser_a_number_read_and_cleared_is_not_filled_from_the_vendor_list(browser, store):
+    """B-688: the clerk cleared a GST/HST number that was read: picking a vendor leaves it for the clerk to type."""
+    page, errors = _open_review(browser, store, "Red River", viewport=LAPTOP)
+    gst = page.locator(f"[name={GST}]")
+    gst.fill("")
+    page.wait_for_timeout(600)
+    _pick_vendor(page, "Pacific Office", "Pacific Office Supply")
+    page.wait_for_timeout(1200)
+    assert gst.input_value() == ""
+    assert errors == []

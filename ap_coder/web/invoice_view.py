@@ -292,14 +292,21 @@ def parse_from_vendor(raw: Any) -> dict[str, Any]:
 
 
 def fill_from_vendor(
-    header: dict[str, str], state: dict[str, Any], absent: list[str], vendor: dict[str, Any] | None
+    header: dict[str, str],
+    state: dict[str, Any],
+    absent: list[str],
+    vendor: dict[str, Any] | None,
+    unread: set[str] | None = None,
 ) -> tuple[dict[str, Any], dict[str, str]]:
     """The tax numbers a vendor of the vendor list gives a draft (D-65): (the new ``Draft.from_vendor``, {field: value}
     changed in ``header``, which is updated). When the vendor is new to the draft (picked, typed, or the screen just
     opened), each blank GST/HST, QST and PST number takes the vendor list's, and a number filled from the vendor before
     follows the new one (replaced, or cleared when it has none). A number read from the invoice or typed is never
     touched, nor a field marked not on this invoice; a filled number the reviewer changed or cleared since is theirs.
-    ``vendor``: the vendor's row (``Store.get_vendor``), None when it is not in the list."""
+    ``vendor``: the vendor's row (``Store.get_vendor``), None when it is not in the list; ``unread``: the fields the
+    reading left blank (not printed), the only ones filled (None: any blank one). A number read and cleared by the
+    reviewer is the reviewer's to type: filled from the vendor list, the change would be learned as no correction
+    (B-688)."""
     key = vendor_key(header.get("vendor_name") or "")
     fields = {n: v for n, v in (state.get("fields") or {}).items()
               if n in TAX_NUMBER_FIELDS and v and str(header.get(n) or "").strip() == v}  # fmt: skip
@@ -326,12 +333,19 @@ def fill_from_vendor(
                 fields[name] = number
             else:
                 fields.pop(name)
-        elif not current and number and name not in absent:
+        elif not current and number and name not in absent and (unread is None or name in unread):
             header[name] = changed[name] = fields[name] = number
     return {"vendor": key, "fields": fields}, changed
 
 
-def settle_header(store: Store, draft: Draft) -> dict[str, str]:
+def unread_numbers(read: dict[str, Any] | None) -> set[str] | None:
+    """The tax number fields the reading (``ai_output``) left blank: the ones the vendor list may fill (B-688)."""
+    if read is None:
+        return None
+    return {n for n in TAX_NUMBER_FIELDS if not str(read.get(n) or "").strip()}
+
+
+def settle_header(store: Store, draft: Draft, read: dict[str, Any] | None = None) -> dict[str, str]:
     """What the server fills in the invoice details before they are checked: the vendor list's tax numbers (D-65) and
     the default Pay from account (D-66). Returns {field: value} changed, for the screen to show."""
     from ap_coder.coding import banks
@@ -339,7 +353,7 @@ def settle_header(store: Store, draft: Draft) -> dict[str, str]:
     header = draft.header
     key = vendor_key(header.get("vendor_name") or "")
     vendor = store.get_vendor(key) if key else None
-    draft.from_vendor, changed = fill_from_vendor(header, draft.from_vendor, draft.absent, vendor)
+    draft.from_vendor, changed = fill_from_vendor(header, draft.from_vendor, draft.absent, vendor, unread_numbers(read))
     currency = (header.get("currency") or "CAD").strip().upper() or "CAD"
     if draft.pay_from_for and draft.pay_from_for != currency:
         draft.pay_from_for = ""  # picked for another currency: the default follows the invoice's currency
@@ -1328,7 +1342,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     ai = inv["ai_output"] or {}
     start = inv.get("final_output") or ai
     has_cc = reference.cost_centers is not None
-    filled = settle_header(store, draft)  # the vendor list's tax numbers, the default Pay from account
+    filled = settle_header(store, draft, ai)  # the vendor list's tax numbers, the default Pay from account
     header, problems = header_values(draft.header)
     coding = None
     if not problems:

@@ -564,6 +564,13 @@ function vendorChanged() {
   snap.header = snap.header.map(([n, v]) => [n, n === "vendor_name" ? before : v]);
   const found = key ? vendors.list.find((v) => (v.key ?? vendorKey(v.name)) === key) : null;
   const absent = absentList();
+  // only a number the reading left blank (not printed): one the clerk cleared is the clerk's to type (B-688)
+  let unread = null;
+  try {
+    unread = JSON.parse(fromVendorBox.dataset.unread || "null");
+  } catch {
+    unread = null;
+  }
   const changed = [];
   for (const [name, column] of Object.entries(TAX_FIELDS)) {
     const el = input(name);
@@ -577,7 +584,7 @@ function vendorChanged() {
       }
       if (number) fields[name] = number;
       else delete fields[name];
-    } else if (!current && number && !absent.includes(name)) {
+    } else if (!current && number && !absent.includes(name) && (!Array.isArray(unread) || unread.includes(name))) {
       el.value = fields[name] = number;
       changed.push(name);
     }
