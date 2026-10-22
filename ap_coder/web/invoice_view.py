@@ -56,7 +56,7 @@ from ap_coder.coding.terms import payment
 from ap_coder.core.config import Settings
 from ap_coder.core.memory import ACCEPTED, CODED, CORRECTED, pair_lines, vendor_key
 from ap_coder.core.reference_data import UNASSIGNED, ReferenceData, short_name
-from ap_coder.core.schema import PROVINCE_VALUES, InvoiceCoding
+from ap_coder.core.schema import FROM_VENDOR_LIST, PROVINCE_VALUES, InvoiceCoding
 from ap_coder.core.store import Store, nothing_proposed, suggestion_kept
 from ap_coder.core.ui import TAX_LABELS, money, plural
 from ap_coder.ops.help import help_for
@@ -71,11 +71,14 @@ TEACHABLE = (
     "grand_total",
 )  # fmt: skip
 AMOUNT_FIELDS = ("subtotal", "tax_total", "grand_total")
-FORM_FIELDS = (*TEACHABLE, "supplier_province", "ship_to_province", "remit_bank_account", "original_invoice_number")
+# remit_bank_account: the vendor's banking details as read, shown read-only (evidence for the fraud check, D-66);
+# pay_from_account: our bank account the invoice is paid from (coding/banks.py).
+FORM_FIELDS = (*TEACHABLE, "supplier_province", "ship_to_province", "remit_bank_account", "original_invoice_number",
+               "pay_from_account")  # fmt: skip
 FIELD_LABELS = {
     "vendor_name": "Vendor", "gst_hst_registration_number": "GST/HST #", "qst_registration_number": "QST #",
     "pst_registration_number": "PST #", "supplier_province": "Supplier province",
-    "remit_bank_account": "Pay into (bank account)",
+    "remit_bank_account": "Bank details printed on the invoice", "pay_from_account": "Pay from",
     "invoice_number": "Invoice #", "invoice_date": "Invoice date", "po_number": "PO #",
     "payment_terms": "Payment terms", "due_date": "Due date", "currency": "Currency",
     "ship_to_province": "Place of supply", "original_invoice_number": "Credits invoice #", "subtotal": "Subtotal",
@@ -119,8 +122,26 @@ ABSENT_FIELDS = {
     "po_number": {"PO_NOT_QUOTED": None},
     "payment_terms": {},
     "due_date": {},
-    "remit_bank_account": {},
     "original_invoice_number": {},
+}  # fmt: skip
+# The tax registration numbers a vendor in the vendor list fills when they are blank (D-65): {field: vendor column}.
+TAX_NUMBER_FIELDS = {"gst_hst_registration_number": "expected_gst", "qst_registration_number": "qst_number",
+                     "pst_registration_number": "pst_number"}  # fmt: skip
+FROM_VENDOR_NOTE = "From the vendor list — not printed on the invoice"
+# The checks that are about one invoice detail: the detail is highlighted in amber with a short note under it (the
+# checks panel lists them too). {check: (field, note)}; a note of None is worked out (``field_flags``).
+FIELD_FLAGS: dict[str, tuple[str, str | None]] = {
+    "VENDOR_TAX_NUMBER_CHANGED": ("gst_hst_registration_number", None),
+    "GST_NUMBER_CHECK_DIGIT": ("gst_hst_registration_number", "Fails the CRA check digit"),
+    "GST_HST_NUMBER_FORMAT": ("gst_hst_registration_number", "Not in the format 123456789 RT0001"),
+    "VENDOR_QST_CHANGED": ("qst_registration_number", None),
+    "QST_NUMBER_FORMAT": ("qst_registration_number", "Not in the format 1234567890 TQ0001"),
+    "VENDOR_PST_CHANGED": ("pst_registration_number", None),
+    "VENDOR_BANK_CHANGED": ("remit_bank_account", "Not the account on this vendor's approved invoices: confirm by "
+                            "phone before paying"),
+    "PAY_FROM_CURRENCY": ("pay_from_account", "Not an account in the invoice's currency"),
+    "PAY_FROM_MISSING": ("pay_from_account", "Pick the account that pays this invoice"),
+    "PAY_FROM_UNKNOWN": ("pay_from_account", "Not one of your bank accounts in use"),
 }  # fmt: skip
 # How sure the capture is of a field, beside its label in the form: (tone, icon).
 CAPTURE_BADGES = {"verified": ("ok", "check_circle"), "likely": ("info", "check"), "check": ("warn", "error"),
@@ -182,10 +203,17 @@ class Draft:
     reader_at: str = ""  # when OvisOCR2's reading came in, as the screen was drawn ("" before it)
     mail_lang: str = ""
     absent: list[str] = field(default_factory=list)  # fields marked "Not on this invoice" (ABSENT_FIELDS), blank
+    # The tax numbers filled from the vendor list (D-65): {"vendor": the vendor key they were filled for, "fields":
+    # {field: number filled}}; {} before any fill was tried.
+    from_vendor: dict[str, Any] = field(default_factory=dict)
+    # The currency the reviewer picked the Pay from account for ("" while it is the default, which follows the
+    # invoice's currency and vendor: D-66).
+    pay_from_for: str = ""
 
     @classmethod
-    def stored(cls, start: dict[str, Any], reader_at: str = "") -> Draft:
-        """The screen as it opens: the stored coding (a sent-back invoice: its first approver's version)."""
+    def stored(cls, start: dict[str, Any], reader_at: str = "", approved: bool = False) -> Draft:
+        """The screen as it opens: the stored coding (a sent-back invoice: its first approver's version, ``approved``:
+        its Pay from account is the one approved, kept)."""
         header = {}
         for name in FORM_FIELDS:
             value = start.get(name, "CAD" if name == "currency" else "")
@@ -203,7 +231,13 @@ class Draft:
             taxes.append({"tax_type": t.get("tax_type") or "", "province": t.get("province") or "",
                           "rate_pct": rate_pct, "taxable_amount": t.get("taxable_amount"),
                           "tax_amount": t.get("tax_amount")})  # fmt: skip
-        return cls(header=header, lines=lines, taxes=taxes, reader_at=reader_at)
+        filled = [n for n in start.get(FROM_VENDOR_LIST) or [] if n in TAX_NUMBER_FIELDS and header.get(n)]
+        from_vendor = (
+            {"vendor": vendor_key(header["vendor_name"]), "fields": {n: header[n] for n in filled}} if filled else {}
+        )
+        pay_from_for = (header["currency"] or "CAD") if approved and header.get("pay_from_account") else ""
+        return cls(header=header, lines=lines, taxes=taxes, reader_at=reader_at, from_vendor=from_vendor,
+                   pay_from_for=pay_from_for)  # fmt: skip
 
     @classmethod
     def from_form(cls, form: Any, base: Draft) -> Draft:
@@ -237,13 +271,85 @@ class Draft:
             for t in taxes:
                 t.update({c: _number_cell(t[c]) for c in NUMBER_CELLS if c in t})
         absent = parse_absent(form.get("absent"), header) if form.get("absent") is not None else base.absent
+        from_vendor = (
+            parse_from_vendor(form.get("from_vendor")) if form.get("from_vendor") is not None else base.from_vendor
+        )
+        pay_from_for = (
+            str(form.get("pay_from_for") or "") if form.get("pay_from_for") is not None else base.pay_from_for
+        )
         return cls(header=header, lines=lines, taxes=taxes, taught=parse_taught(form.get("taught")),
                    override=str(form.get("override") or ""), reader_at=str(form.get("reader_at") or base.reader_at),
-                   mail_lang=str(form.get("mail_lang") or ""), absent=absent)  # fmt: skip
+                   mail_lang=str(form.get("mail_lang") or ""), absent=absent, from_vendor=from_vendor,
+                   pay_from_for=pay_from_for.strip().upper()[:3])  # fmt: skip
 
     def to_dict(self) -> dict[str, Any]:
         return {"header": self.header, "lines": self.lines, "taxes": self.taxes, "taught": self.taught,
-                "reader_at": self.reader_at, "absent": self.absent}  # fmt: skip
+                "reader_at": self.reader_at, "absent": self.absent, "from_vendor": self.from_vendor,
+                "pay_from_for": self.pay_from_for}  # fmt: skip
+
+
+def parse_from_vendor(raw: Any) -> dict[str, Any]:
+    """The form's ``from_vendor`` JSON ({"vendor": key, "fields": {field: number}}), only the tax number fields."""
+    try:
+        data = json.loads(raw) if isinstance(raw, str) and raw.strip() else {}
+    except ValueError:
+        return {}
+    if not isinstance(data, dict) or not isinstance(data.get("vendor"), str):
+        return {}
+    fields = data.get("fields") if isinstance(data.get("fields"), dict) else {}
+    return {"vendor": data["vendor"],
+            "fields": {str(k): str(v) for k, v in fields.items() if k in TAX_NUMBER_FIELDS and v}}  # fmt: skip
+
+
+def fill_from_vendor(
+    header: dict[str, str], state: dict[str, Any], absent: list[str], vendor: dict[str, Any] | None
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """The tax numbers a vendor of the vendor list gives a draft (D-65): (the new ``Draft.from_vendor``, {field: value}
+    changed in ``header``, which is updated). When the vendor is new to the draft (picked, typed, or the screen just
+    opened), each blank GST/HST, QST and PST number takes the vendor list's, and a number filled from the vendor before
+    follows the new one (replaced, or cleared when it has none). A number read from the invoice or typed is never
+    touched, nor a field marked not on this invoice; a filled number the reviewer changed or cleared since is theirs.
+    ``vendor``: the vendor's row (``Store.get_vendor``), None when it is not in the list."""
+    key = vendor_key(header.get("vendor_name") or "")
+    fields = {n: v for n, v in (state.get("fields") or {}).items()
+              if n in TAX_NUMBER_FIELDS and v and str(header.get(n) or "").strip() == v}  # fmt: skip
+    if state.get("vendor") == key and "vendor" in state:
+        return {"vendor": key, "fields": fields}, {}
+    changed: dict[str, str] = {}
+    for name, column in TAX_NUMBER_FIELDS.items():
+        number = str((vendor or {}).get(column) or "").strip()
+        current = str(header.get(name) or "").strip()
+        if name in fields:  # filled from the vendor before: follows the vendor now in the field
+            if number != current:
+                header[name] = changed[name] = number
+            if number:
+                fields[name] = number
+            else:
+                fields.pop(name)
+        elif not current and number and name not in absent:
+            header[name] = changed[name] = fields[name] = number
+    return {"vendor": key, "fields": fields}, changed
+
+
+def settle_header(store: Store, draft: Draft) -> dict[str, str]:
+    """What the server fills in the invoice details before they are checked: the vendor list's tax numbers (D-65) and
+    the default Pay from account (D-66). Returns {field: value} changed, for the screen to show."""
+    from ap_coder.coding import banks
+
+    header = draft.header
+    key = vendor_key(header.get("vendor_name") or "")
+    vendor = store.get_vendor(key) if key else None
+    draft.from_vendor, changed = fill_from_vendor(header, draft.from_vendor, draft.absent, vendor)
+    currency = (header.get("currency") or "CAD").strip().upper() or "CAD"
+    if draft.pay_from_for and draft.pay_from_for != currency:
+        draft.pay_from_for = ""  # picked for another currency: the default follows the invoice's currency
+    if not draft.pay_from_for or not header.get("pay_from_account"):
+        draft.pay_from_for = ""
+        accounts = store.bank_accounts()
+        chosen = banks.choose(accounts, currency, store.last_pay_from(key)) if accounts else ""
+        if chosen != (header.get("pay_from_account") or ""):
+            header["pay_from_account"] = changed["pay_from_account"] = chosen
+    return changed
 
 
 def parse_absent(raw: Any, header: dict[str, str]) -> list[str]:
@@ -1242,6 +1348,7 @@ class Analysis:
     allow: bool = False
     changed: bool = False  # differs from the stored coding (an edit not approved yet)
     live: dict[str, Any] = field(default_factory=dict)
+    filled: dict[str, str] = field(default_factory=dict)  # details the server filled in (``settle_header``)
 
 
 _TOTALS = ("subtotal", "tax_total", "grand_total")
@@ -1273,6 +1380,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     ai = inv["ai_output"] or {}
     start = inv.get("final_output") or ai
     has_cc = reference.cost_centers is not None
+    filled = settle_header(store, draft)  # the vendor list's tax numbers, the default Pay from account
     header, problems = header_values(draft.header)
     coding = None
     if not problems:
@@ -1281,7 +1389,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     if coding is None:
         live = {"ok": False, "problems": problems, "amount_line": _amount_line(header),
                 "fallback": stored_summary(inv, start)}  # fmt: skip
-        return Analysis(coding=None, problems=problems, live=live)
+        return Analysis(coding=None, problems=problems, live=live, filled=filled)
 
     meta = inv.get("meta") or {}
     extraction = ExtractionResult(
@@ -1320,6 +1428,15 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
             report.issues.append(Issue(severity, code, message))
     if draft.absent:  # fields the reviewer said are not on this invoice: nothing asks for them (D-60)
         report.issues = settle_absent(report.issues, draft.absent)
+    from_list = sorted((draft.from_vendor.get("fields") or {}).keys())
+    report.issues += not_printed(coding, from_list)
+    if from_list:
+        output[FROM_VENDOR_LIST] = from_list  # kept with the coding: the tax return's claims at risk read it
+    accounts = store.bank_accounts(active_only=True)
+    if not accounts:  # nothing asks for a Pay from account, and the screen says where to add them (D-66)
+        from ap_coder.coding.banks import INFO, NONE_YET
+
+        report.issues.append(Issue(INFO, "PAY_FROM_NO_ACCOUNTS", NONE_YET))
     errors = [i for i in report.issues if i.severity == "error"]
     warnings = [i for i in report.issues if i.severity == "warning"]
     default_days = store.default_terms_days()
@@ -1328,6 +1445,10 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     # The approve bar: never post to UNASSIGNED; where cost centers are used, a line without one isn't posted either.
     # The queue asks the same question (pages/review.py attention), so its Ready means Approve is open here.
     pick = codes_to_pick(coding.line_items, uses_cost_centers(reference))
+    if accounts and not coding.pay_from_account:  # never approved without the account it is paid from (D-66)
+        from ap_coder.coding.banks import PICK
+
+        pick = f"{pick}; {PICK[0].lower()}{PICK[1:]}" if pick else PICK
     key = override_key(errors) if errors else ""
     allow = not pick and (not errors or draft.override == key)
     changed = ai_changes(coding, ai, uses_cost_centers(reference))
@@ -1366,6 +1487,8 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
         "tax_marks": tax_marks(math, report.issues),
         "split": spend_split(output, reference),
         "posting": distribution(output, reference),
+        "flags": field_flags(report.issues, store, coding, inv["id"]),
+        "from_vendor": from_list,
         "bar": {
             "amount": money(coding.grand_total), "currency": coding.currency, "lines": lines_n, "changed": changed,
             "learn": learn_text(coding, ai, uses_cost_centers(reference), meta.get("rules_applied")),
@@ -1374,7 +1497,81 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
         },
     }  # fmt: skip
     return Analysis(coding=coding, problems=[], output=output, report=report, errors=errors, warnings=warnings,
-                    allow=allow, changed=differs_from_stored(coding, start), live=live)  # fmt: skip
+                    allow=allow, changed=differs_from_stored(coding, start), live=live, filled=filled)  # fmt: skip
+
+
+def pay_from_choices(store: Store, header: dict[str, str]) -> dict[str, Any]:
+    """The Pay from list (D-66): our bank accounts in use, as "name · currency · ••••1234", the one chosen (an account
+    no longer in use stays listed while it is the one chosen), and whether there are any."""
+    from ap_coder.coding import banks
+
+    chosen = header.get("pay_from_account") or ""
+    accounts = [a for a in store.bank_accounts() if a["active"] or a["code"] == chosen]
+    return {
+        "options": [(a["code"], banks.label(a) + ("" if a["active"] else " (not in use)"), a["currency"])
+                    for a in accounts],
+        "value": chosen,
+        "any": any(a["active"] for a in accounts),
+        "unknown": bool(chosen) and all(a["code"] != chosen for a in accounts),
+    }  # fmt: skip
+
+
+def not_printed(coding: InvoiceCoding, from_list: list[str]) -> list[Any]:
+    """The information that a tax number filled from the vendor list is not printed on the invoice, when the invoice
+    charges that tax and is at or over the documentary threshold: from $100 (CRA, Input Tax Credit Information
+    (GST/HST) Regulations; Revenu Québec the same for the QST), the supplier's registration number must be on the
+    invoice to claim the input tax credit (refund). The vendor list's number is no substitute (D-65)."""
+    from ap_coder.coding.taxreturn import document_threshold
+    from ap_coder.coding.validation import INFO, Issue
+
+    charged = {t.tax_type for t in coding.tax_lines if abs(t.tax_amount) > 0.004}
+    threshold = document_threshold(coding.invoice_date)
+    if abs(coding.grand_total) < threshold:
+        return []
+    out = []
+    amount = f"${threshold:,.0f}"
+    if "gst_hst_registration_number" in from_list and charged & {"GST", "HST"}:
+        out.append(
+            Issue(
+                INFO,
+                "GST_HST_NUMBER_NOT_PRINTED",
+                "The GST/HST number isn't printed on this invoice: CRA "
+                f"needs it on the invoice to claim the input tax credit for purchases of {amount} or more",
+            )
+        )
+    if "qst_registration_number" in from_list and "QST" in charged:
+        out.append(
+            Issue(
+                INFO,
+                "QST_NUMBER_NOT_PRINTED",
+                "The QST number isn't printed on this invoice: Revenu Québec "
+                f"needs it on the invoice to claim the input tax refund for purchases of {amount} or more",
+            )
+        )
+    return out  # fmt: skip
+
+
+def field_flags(
+    issues: list[Any], store: Store, coding: InvoiceCoding, invoice_id: int | None = None
+) -> dict[str, str]:
+    """{invoice detail: the note under it} for the checks about one detail (``FIELD_FLAGS``): the screen highlights the
+    detail in amber, with the note, as well as listing the check. The tax numbers' note says what the vendor list (or
+    this vendor's approved invoices) has."""
+    from ap_coder.coding.vendors import expected_tax_numbers
+
+    flags: dict[str, list[str]] = {}
+    expected: dict[str, str] | None = None
+    for issue in issues:
+        if issue.code not in FIELD_FLAGS or issue.severity == "info":
+            continue
+        name, note = FIELD_FLAGS[issue.code]
+        if note is None:
+            if expected is None:
+                expected = expected_tax_numbers(coding, store, invoice_id)
+            note = expected.get(name) or "Differs from this vendor's"
+        if note not in flags.setdefault(name, []):
+            flags[name].append(note)
+    return {name: " · ".join(notes) for name, notes in flags.items()}
 
 
 def _amount_line(header: dict[str, Any]) -> dict[str, Any] | None:

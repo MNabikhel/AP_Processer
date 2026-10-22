@@ -420,10 +420,10 @@ def test_bulk_approval_says_why_an_invoice_was_left_without_the_check_code(tmp_p
     line = {"description": "Audit", "amount": 50.0, "predicted_gl_code": "6100", "reasoning_justification": "x"}
     iid = store.add_invoice(tmp_path / "a.pdf", _invoice([line]), {"requires_review": False, "issues": [
         {"severity": "warning", "code": "VENDOR_BANK_CHANGED",
-         "message": "the bank account to pay into changed"}]})  # fmt: skip
+         "message": "the vendor's bank details changed"}]})  # fmt: skip
     result = bulk_approve(store, store.reference_data(), Settings(), [iid], "Pat")
     ((_, why),) = result["skipped"]
-    assert why == "The bank account to pay into changed" and "VENDOR_BANK_CHANGED" not in why
+    assert why == "The vendor's bank details changed" and "VENDOR_BANK_CHANGED" not in why
 
 
 # --- B-479: a changed guess is an edit; the lines AP reviewed include the ones it coded ------------------------------

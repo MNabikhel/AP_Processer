@@ -16,6 +16,8 @@ SOURCES = [
     "ai/verifier.py",
     "ai/azure_check.py",
     "ai/pipeline.py",
+    "coding/banks.py",
+    "web/invoice_view.py",
 ]
 
 

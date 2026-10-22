@@ -63,7 +63,7 @@ function formData(extra) {
   return body;
 }
 
-function applySections(answer) {
+function applySections(answer, posted = null) {
   for (const [name, html] of Object.entries(answer.sections || {})) {
     const el = document.querySelector(`[data-live="${name}"]`);
     if (!el) continue;
@@ -85,6 +85,7 @@ function applySections(answer) {
   if (answer.tax_marks && typeof answer.tax_marks === "object") showTaxMarks(answer.tax_marks);
   // the accounts of the vendor now in the vendor field: the account lists' "Used for this vendor" (B-596)
   if (Array.isArray(answer.vendor_accounts)) vendorAccounts = answer.vendor_accounts;
+  if (answer.header) applyHeader(answer.header, posted);
   showMailLanguage();
 }
 
@@ -99,8 +100,9 @@ async function check() {
   running = (async () => {
     do {
       queued = false;
-      const answer = await post(`${base}/check`, formData());
-      if (answer.ok) applySections(answer);
+      const body = formData();
+      const answer = await post(`${base}/check`, body);
+      if (answer.ok) applySections(answer, body);
       else if (answer.error) toast({ text: answer.error, tone: "err" }, 9000);
     } while (queued);
   })();
@@ -150,6 +152,10 @@ if (form) {
     if (e.target.matches("select[data-tax-code]")) {  // a worked-out tax code the clerk picked is theirs (D-64)
       const cell = e.target.closest(".c-tax");
       if (cell) delete cell.dataset.taxGuess;
+    }
+    if (e.target === vendorInput) vendorChanged(); // the vendor list's tax numbers, with Undo (D-65)
+    if (e.target.name === "pay_from_account" && payFromFor) {  // picked: kept while the currency stays (D-66)
+      payFromFor.value = (input("currency")?.value || "CAD").trim().toUpperCase() || "CAD";
     }
     if (e.target.name === "line_gl") {  // a guessed account the reviewer picked again is no longer a guess
       const cell = e.target.closest(".is-guess");
@@ -479,7 +485,9 @@ function showVendorMatch() {
     else vendorLine("verified", "ok", `In the vendor list${id}`);
     return;
   }
-  const bn = businessNumber(input("gst_hst_registration_number")?.value);
+  // (a number filled from the vendor list is that vendor's: it says nothing about who sent the invoice)
+  const filled = "gst_hst_registration_number" in (fromVendor().fields || {});
+  const bn = filled ? "" : businessNumber(input("gst_hst_registration_number")?.value);
   const byNumber = bn ? vendors.list.find((v) => businessNumber(v.gst) === bn) : null;
   if (byNumber) {
     vendorLine("info", "warn", `The GST/HST number printed is ${byNumber.name}'s.`, {
@@ -500,7 +508,130 @@ function showVendorMatch() {
 function setVendor(name) {
   vendorInput.value = name;
   showVendorMatch();
+  vendorChanged();
   soon(0);
+}
+
+/* ---------- The vendor list's tax numbers (D-65) ----------
+   A vendor of the vendor list fills each blank GST/HST, QST and PST number with its own, and says so under the field
+   ("From the vendor list — not printed on the invoice"); a number filled from the vendor follows it when the vendor
+   changes. A number read from the invoice or typed is never touched. The server applies the same rule on every check
+   (invoice_view.fill_from_vendor), so a vendor typed in is filled too; here it is at once, with Undo. */
+
+const TAX_FIELDS = { gst_hst_registration_number: "gst", qst_registration_number: "qst", pst_registration_number: "pst" };
+const fromVendorBox = document.querySelector("input[data-from-vendor]");
+const payFromFor = document.querySelector("input[data-pay-from-for]");
+
+function fromVendor() {
+  try {
+    const state = JSON.parse(fromVendorBox?.value || "{}");
+    return state && typeof state === "object" ? state : {};
+  } catch {
+    return {};
+  }
+}
+
+/** The fields still holding the number filled from the vendor (one changed or cleared since is the reviewer's). */
+function stillFilled(state) {
+  const fields = {};
+  for (const [name, value] of Object.entries(state.fields || {})) {
+    if (name in TAX_FIELDS && value && (input(name)?.value || "").trim() === value) fields[name] = value;
+  }
+  return fields;
+}
+
+function setFromVendor(state) {
+  if (fromVendorBox) fromVendorBox.value = JSON.stringify(state);
+  showFromVendor();
+}
+
+function showFromVendor() {
+  const fields = fromVendor().fields || {};
+  document.querySelectorAll(".inv-details [data-from-vendor-note]").forEach((note) => {
+    const field = note.closest("[data-field]");
+    note.hidden = !(field?.dataset.field in fields);
+    // how sure the reading was says nothing of a number that came from the vendor list
+    const sure = field?.querySelector(".lbl > .inv-sure");
+    if (sure) sure.hidden = !note.hidden;
+  });
+}
+
+/** The vendor field changed (picked, or left after typing): fill from the vendor list, with Undo. */
+function vendorChanged() {
+  if (!vendorInput || !fromVendorBox) return;
+  const key = vendorKey(vendorInput.value);
+  const state = fromVendor();
+  const fields = stillFilled(state);
+  if ("vendor" in state && state.vendor === key) return setFromVendor({ vendor: key, fields });
+  const snap = snapshot();
+  const found = key ? vendors.list.find((v) => (v.key ?? vendorKey(v.name)) === key) : null;
+  const absent = absentList();
+  const changed = [];
+  for (const [name, column] of Object.entries(TAX_FIELDS)) {
+    const el = input(name);
+    if (!el) continue;
+    const number = String(found?.[column] || "").trim();
+    const current = el.value.trim();
+    if (name in fields) {
+      if (number !== current) {
+        el.value = number;
+        changed.push(name);
+      }
+      if (number) fields[name] = number;
+      else delete fields[name];
+    } else if (!current && number && !absent.includes(name)) {
+      el.value = fields[name] = number;
+      changed.push(name);
+    }
+  }
+  setFromVendor({ vendor: key, fields });
+  if (!changed.length) return;
+  showVendorMatch();
+  for (const name of changed) viewer?.setEdited(name, input(name).value.trim(), false);
+  // Undo puts the numbers back and keeps the vendor: the vendor as it is now, with the numbers it had before.
+  snap.header = snap.header.map(([n, v]) => [n, n === "from_vendor" ? JSON.stringify({ vendor: key, fields: stillFilledIn(snap, state) }) : v]);
+  offerUndo({ text: `${changed.length === 1 ? "Tax number" : "Tax numbers"} filled from the vendor list.`, tone: "info", icon: "menu_book" }, snap);
+}
+
+/** ``stillFilled`` as the screen was in ``snap``. */
+function stillFilledIn(snap, state) {
+  const values = Object.fromEntries(snap.header);
+  const fields = {};
+  for (const [name, value] of Object.entries(state.fields || {})) if (value && (values[name] || "").trim() === value) fields[name] = value;
+  return fields;
+}
+
+/** What the server filled in (the vendor list's numbers, the default Pay from account) and the details its checks are
+    about (amber, with a note), after a check. A value is put in only where the box still holds what was sent. */
+function applyHeader(header, posted) {
+  const sent = (name) => (posted ? posted.get(name) ?? "" : null);
+  for (const [name, value] of Object.entries(header.values || {})) {
+    const el = input(name);
+    if (!el || (sent(name) !== null && el.value !== sent(name))) continue;
+    el.value = value;
+    if (name in TAX_FIELDS) viewer?.setEdited(name, value.trim(), false);
+  }
+  if (fromVendorBox && header.from_vendor && (sent("from_vendor") === null || fromVendorBox.value === sent("from_vendor"))) {
+    fromVendorBox.value = JSON.stringify(header.from_vendor);
+  }
+  if (payFromFor && typeof header.pay_from_for === "string" && (sent("pay_from_for") === null || payFromFor.value === sent("pay_from_for"))) {
+    payFromFor.value = header.pay_from_for;
+  }
+  showFromVendor();
+  if (header.flags) showFlags(header.flags);
+}
+
+/** The invoice details a check is about: amber, with its note under it (the checks list them too). */
+function showFlags(flags) {
+  document.querySelectorAll(".inv-details [data-field]").forEach((field) => {
+    const note = flags[field.dataset.field] || "";
+    field.classList.toggle("is-flagged", Boolean(note));
+    const box = field.querySelector(":scope > [data-flag]");
+    if (!box) return;
+    box.hidden = !note;
+    const text = box.querySelector("[data-flag-text]");
+    if (text) text.textContent = note;
+  });
 }
 
 vendorInput?.addEventListener("input", showVendorMatch);
@@ -1046,7 +1177,7 @@ let undoState = null; // {snap, note}: the screen before the last change, and th
 function headerElements() {
   return [...document.querySelectorAll('#inv [name], [form="inv"][name]')].filter(
     (el) => !el.closest("[data-grid]") && !["checkbox", "radio", "submit"].includes(el.type) &&
-      (el.type !== "hidden" || el.name === "taught" || el.name === "absent"),
+      (el.type !== "hidden" || ["taught", "absent", "from_vendor", "pay_from_for"].includes(el.name)),
   );
 }
 
@@ -1118,6 +1249,7 @@ function restore(snap) {
   }
   if (snap.edits && viewer) viewer.restoreEdits(snap.edits);
   showAbsent();
+  showFromVendor();
   showVendorMatch();
   fillSplitLines();
   lastSums = tickedSums();
@@ -1211,6 +1343,7 @@ function headerEdited(el) {
   const label = el.closest?.(".inv-details [data-field]");
   if (!label || el.name !== label.dataset.field) return;
   if (el.value.trim() && absentList().includes(el.name)) setAbsent(el.name, false);
+  if (el.name in TAX_FIELDS) setFromVendor({ ...fromVendor(), fields: stillFilled(fromVendor()) }); // typed over: theirs
   viewer?.setEdited(el.name, el.value.trim(), absentList().includes(el.name));
 }
 
@@ -1224,6 +1357,7 @@ function clearField(name, absent = false) {
     setTaught(boxes);
   }
   setAbsent(name, absent);
+  if (name in TAX_FIELDS) setFromVendor({ ...fromVendor(), fields: stillFilled(fromVendor()) });
   if (name === "vendor_name" || name === "gst_hst_registration_number") showVendorMatch();
   viewer?.setEdited(name, "", absent);
   soon(0);

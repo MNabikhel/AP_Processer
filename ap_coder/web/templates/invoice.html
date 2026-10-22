@@ -67,6 +67,9 @@
   <input type="hidden" name="taught" value="{{ taught_json | tojson | forceescape }}" data-taught>
   {# The fields marked "Not on this invoice" (the right-click menu of a field, D-60): a JSON list. #}
   <input type="hidden" name="absent" value="{{ draft.absent | tojson | forceescape }}" data-absent>
+  {# The tax numbers filled from the vendor list (D-65), and the currency the Pay from account was picked for (D-66). #}
+  <input type="hidden" name="from_vendor" value="{{ draft.from_vendor | tojson | forceescape }}" data-from-vendor>
+  <input type="hidden" name="pay_from_for" value="{{ draft.pay_from_for }}" data-pay-from-for>
   {% for k, v in query.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
   {% if nav.next_id %}<input type="hidden" name="next_id" value="{{ nav.next_id }}">{% endif %}
 </form>
@@ -84,6 +87,104 @@
 
   <div class="col">
     <section class="card inv-checks" data-live="checks" aria-live="polite">{{ live_ui.checks(live, inv.id) }}</section>
+
+    {# The invoice details before the lines (D-63): the header is checked against the page first, then lines coded. #}
+    <section class="card inv-details">
+      {{ live_ui.head("Invoice details") }}
+      {% set flags = live.flags or {} %}{% set filled = (draft.from_vendor.fields or {}) %}
+      {% macro field(name, cls="", type="text", placeholder="", hint="", step="", choices="") -%}
+      {% set s = sure.get(name) %}{% set flags = live.flags or {} %}{% set filled = draft.from_vendor.fields or {} %}
+      <label class="field {{ cls }}{% if name in flags %} is-flagged{% endif %}" data-field="{{ name }}"{% if name in absent_ok %} data-absent-ok{% endif %}{% if name in draft.absent %} data-absent{% endif %}>
+        <span class="lbl">{{ labels[name] }}{% if s %} <span class="inv-sure {{ s.tone }}" title="{{ s.help }}"{% if name in filled %} hidden{% endif %}><span class="ms" aria-hidden="true">{{ s.icon }}</span>{{ s.text }}</span>{% endif %}
+          {% if hint %}<span class="rvw-hint" title="{{ hint }}"><span class="ms" aria-hidden="true">info</span></span>{% endif %}</span>
+        <input type="{{ type }}" name="{{ name }}" value="{{ draft.header[name] }}" form="inv"{% if placeholder %} placeholder="{{ placeholder }}"{% endif %}{% if step %} step="{{ step }}"{% endif %}{% if hint %} title="{{ hint }}"{% endif %}{% if choices %} data-picker="free" data-picker-noun="{{ name }}" data-choices="{{ choices }}" autocomplete="off"{% endif %}>
+        <span class="inv-absent small muted"{% if name not in draft.absent %} hidden{% endif %}><span class="ms" aria-hidden="true">do_not_disturb_on</span>Not on this invoice</span>
+        {% if name in tax_fields %}<span class="inv-from-vendor small muted" data-from-vendor-note{% if name not in filled %} hidden{% endif %}><span class="ms" aria-hidden="true">menu_book</span>{{ from_vendor_note }}</span>{% endif %}
+        <span class="inv-flag small" data-flag{% if name not in flags %} hidden{% endif %}><span class="ms" aria-hidden="true">error</span><span data-flag-text>{{ flags.get(name, "") }}</span></span>
+      </label>
+      {%- endmacro %}
+      {% macro province(name, hint="") -%}
+      <label class="field" data-field="{{ name }}"><span class="lbl">{{ labels[name] }}{% if hint %} <span class="rvw-hint" title="{{ hint }}"><span class="ms" aria-hidden="true">info</span></span>{% endif %}</span>
+        <select name="{{ name }}" form="inv">{% for code, label in provinces %}<option value="{{ code }}"{% if code == draft.header[name] %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+      {%- endmacro %}
+      <div class="rvw-group">Supplier</div>
+      <div class="inv-grid">
+        {% set s = sure.get("vendor_name") %}
+        <div class="field wide inv-vendor" data-field="vendor_name">
+          <label for="vendor-name"><span class="lbl">{{ labels["vendor_name"] }}{% if s %} <span class="inv-sure {{ s.tone }}" title="{{ s.help }}"><span class="ms" aria-hidden="true">{{ s.icon }}</span>{{ s.text }}</span>{% endif %}
+            <span class="rvw-hint" title="Pick the vendor from the vendor list: start typing its name. A vendor that is not in it can be added as a new vendor."><span class="ms" aria-hidden="true">info</span></span></span></label>
+          {# The vendor list to pick from: the picker (static/js/picker.js), with the vendors of #vendor-data (D-56). #}
+          <input id="vendor-name" type="text" name="vendor_name" value="{{ draft.header["vendor_name"] }}" form="inv" data-picker="free" data-picker-noun="vendor" autocomplete="off"
+                 placeholder="Start typing to pick from the vendor list" aria-describedby="vendor-match">
+          <div class="inv-vendor-match small" id="vendor-match" data-vendor-match aria-live="polite"></div>
+          <details class="pop inv-vendor-add" data-vendor-add>
+            <summary class="btn sm ghost"><span class="ms" aria-hidden="true">person_add</span>Add new vendor…</summary>
+            <div class="pop-body stack">
+              <p class="small muted">A vendor not in the vendor list. Its invoices need a person until it is set up in JD Edwards and the vendor list is imported again.</p>
+              <label class="field">Vendor name<input type="text" data-new="name" autocomplete="off"></label>
+              <div class="row">
+                <label class="field grow">GST/HST #<input type="text" data-new="gst" placeholder="123456789RT0001"></label>
+                <label class="field grow">QST #<input type="text" data-new="qst" placeholder="1234567890TQ0001"></label>
+              </div>
+              <div class="row">
+                <label class="field grow">PST #<input type="text" data-new="pst" placeholder="PST-1234-5678"></label>
+                <label class="field">Province<select data-new="province"><option value="">—</option>{% for code, label in provinces %}{% if code %}<option value="{{ code }}">{{ label }}</option>{% endif %}{% endfor %}</select></label>
+              </div>
+              <button class="btn primary sm" type="button" data-new-go><span class="ms" aria-hidden="true">person_add</span>Add to the vendor list</button>
+            </div>
+          </details>
+          <script type="application/json" id="vendor-data">{{ vendors | tojson }}</script>
+        </div>
+        {{ field("gst_hst_registration_number", hint="The supplier's GST/HST registration number") }}
+        {{ field("qst_registration_number", hint="The supplier's QST registration number (Québec)") }}
+        {{ field("pst_registration_number", hint="The supplier's provincial sales tax number (BC PST, Manitoba RST, Saskatchewan PST)") }}
+        {{ province("supplier_province") }}
+        {# The vendor's banking details as read from the invoice: evidence, never edited or paid to (D-66). #}
+        <div class="field inv-bank-printed{% if 'remit_bank_account' in flags %} is-flagged{% endif %}" data-field="remit_bank_account"{% if not bank_shown %} hidden{% endif %}>
+          <span class="lbl">{{ labels["remit_bank_account"] }} <span class="rvw-hint" title="The vendor's banking details as printed, for fraud control: compared with the ones on this vendor's approved invoices. Never paid to from here: the bank account that pays is Pay from."><span class="ms" aria-hidden="true">info</span></span></span>
+          <span class="inv-bank-value">{{ bank_shown }}</span>
+          <span class="inv-flag small" data-flag{% if 'remit_bank_account' not in flags %} hidden{% endif %}><span class="ms" aria-hidden="true">error</span><span data-flag-text>{{ flags.get("remit_bank_account", "") }}</span></span>
+        </div>
+      </div>
+      <div class="rvw-group">Invoice</div>
+      <div class="inv-grid">
+        {{ field("invoice_number") }}
+        {{ field("invoice_date", placeholder="YYYY-MM-DD", hint="Format YYYY-MM-DD") }}
+        {{ field("po_number", hint="Purchase order the invoice quotes, if any") }}
+        {{ field("payment_terms", placeholder="e.g. Net 30, 2/10 Net 30") }}
+        {{ field("due_date", placeholder=due_placeholder, hint="Only if printed; otherwise it comes from the terms (shown greyed)") }}
+        {{ field("currency", choices="CAD|Canadian dollar,USD|US dollar,EUR|Euro,GBP|British pound") }}
+        {# Our bank account it is paid from (D-66): a list only, of the accounts set up on GL accounts & tax. #}
+        <label class="field wide inv-pay-from{% if 'pay_from_account' in flags %} is-flagged{% endif %}" data-field="pay_from_account">
+          <span class="lbl">{{ labels["pay_from_account"] }} <span class="rvw-hint" title="Your company's bank account that pays this invoice. It follows the invoice's currency (the default account of that currency, or the one this vendor was last paid from)."><span class="ms" aria-hidden="true">info</span></span></span>
+          {% if pay_from.any %}
+          <select name="pay_from_account" form="inv" data-pay-from>
+            <option value=""{% if not pay_from.value %} selected{% endif %}>Pick the account that pays</option>
+            {% for code, label, currency in pay_from.options %}<option value="{{ code }}" data-currency="{{ currency }}"{% if code == pay_from.value %} selected{% endif %}>{{ label }}</option>{% endfor %}
+          </select>
+          {% else %}
+          <span class="small muted inv-pay-none"><a class="link" href="/accounts?tab=bank">Add your bank accounts</a> on GL accounts &amp; tax to choose which account pays</span>
+          {% endif %}
+          <span class="inv-flag small" data-flag{% if 'pay_from_account' not in flags %} hidden{% endif %}><span class="ms" aria-hidden="true">error</span><span data-flag-text>{{ flags.get("pay_from_account", "") }}</span></span>
+        </label>
+        <div class="field inv-supply" data-field="ship_to_province">
+          <span class="lbl">{{ labels["ship_to_province"] }} <span class="rvw-hint" title="The province whose sales tax applies: where the goods are delivered to you (services: generally where you are), not where the vendor is or ships from."><span class="ms" aria-hidden="true">info</span></span></span>
+          <details class="inv-supply-pick"{% if supply.open %} open{% endif %}>
+            <summary><b>{{ supply.label }}</b> <span class="muted small">{{ supply.why }}</span> <span class="link small">Change</span></summary>
+            <select name="ship_to_province" form="inv" aria-label="{{ labels['ship_to_province'] }}">{% for code, label in provinces %}<option value="{{ code }}"{% if code == draft.header["ship_to_province"] %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+          </details>
+        </div>
+        {{ field("original_invoice_number", hint="On a credit note: the invoice it credits") }}
+      </div>
+      <div class="rvw-group">Amounts</div>
+      <div class="inv-grid three">
+        {{ field("subtotal", type="number", step="0.01") }}
+        {{ field("tax_total", type="number", step="0.01") }}
+        {{ field("grand_total", type="number", step="0.01") }}
+      </div>
+      <div data-live="amounts">{{ live_ui.amounts(live, inv.id) }}</div>
+    </section>
+
 
     <section class="card inv-lines">
       {{ live_ui.head("Line items", "Change a GL account or cost center in its cell; add or delete lines below the grid.") }}
@@ -146,82 +247,6 @@
 
     <div data-live="po" class="inv-live">{{ live_ui.po(live, inv.id) }}</div>
     <div data-live="suggest" class="inv-live">{{ live_ui.suggest(live, inv.id) }}</div>
-
-
-    <section class="card inv-details">
-      {{ live_ui.head("Invoice details") }}
-      {% macro field(name, cls="", type="text", placeholder="", hint="", step="", choices="") -%}
-      {% set s = sure.get(name) %}
-      <label class="field {{ cls }}" data-field="{{ name }}"{% if name in absent_ok %} data-absent-ok{% endif %}{% if name in draft.absent %} data-absent{% endif %}>
-        <span class="lbl">{{ labels[name] }}{% if s %} <span class="inv-sure {{ s.tone }}" title="{{ s.help }}"><span class="ms" aria-hidden="true">{{ s.icon }}</span>{{ s.text }}</span>{% endif %}
-          {% if hint %}<span class="rvw-hint" title="{{ hint }}"><span class="ms" aria-hidden="true">info</span></span>{% endif %}</span>
-        <input type="{{ type }}" name="{{ name }}" value="{{ draft.header[name] }}" form="inv"{% if placeholder %} placeholder="{{ placeholder }}"{% endif %}{% if step %} step="{{ step }}"{% endif %}{% if hint %} title="{{ hint }}"{% endif %}{% if choices %} data-picker="free" data-picker-noun="{{ name }}" data-choices="{{ choices }}" autocomplete="off"{% endif %}>
-        <span class="inv-absent small muted"{% if name not in draft.absent %} hidden{% endif %}><span class="ms" aria-hidden="true">do_not_disturb_on</span>Not on this invoice</span>
-      </label>
-      {%- endmacro %}
-      {% macro province(name, hint="") -%}
-      <label class="field" data-field="{{ name }}"><span class="lbl">{{ labels[name] }}{% if hint %} <span class="rvw-hint" title="{{ hint }}"><span class="ms" aria-hidden="true">info</span></span>{% endif %}</span>
-        <select name="{{ name }}" form="inv">{% for code, label in provinces %}<option value="{{ code }}"{% if code == draft.header[name] %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
-      {%- endmacro %}
-      <div class="rvw-group">Supplier</div>
-      <div class="inv-grid">
-        {% set s = sure.get("vendor_name") %}
-        <div class="field wide inv-vendor" data-field="vendor_name">
-          <label for="vendor-name"><span class="lbl">{{ labels["vendor_name"] }}{% if s %} <span class="inv-sure {{ s.tone }}" title="{{ s.help }}"><span class="ms" aria-hidden="true">{{ s.icon }}</span>{{ s.text }}</span>{% endif %}
-            <span class="rvw-hint" title="Pick the vendor from the vendor list: start typing its name. A vendor that is not in it can be added as a new vendor."><span class="ms" aria-hidden="true">info</span></span></span></label>
-          {# The vendor list to pick from: the picker (static/js/picker.js), with the vendors of #vendor-data (D-56). #}
-          <input id="vendor-name" type="text" name="vendor_name" value="{{ draft.header["vendor_name"] }}" form="inv" data-picker="free" data-picker-noun="vendor" autocomplete="off"
-                 placeholder="Start typing to pick from the vendor list" aria-describedby="vendor-match">
-          <div class="inv-vendor-match small" id="vendor-match" data-vendor-match aria-live="polite"></div>
-          <details class="pop inv-vendor-add" data-vendor-add>
-            <summary class="btn sm ghost"><span class="ms" aria-hidden="true">person_add</span>Add new vendor…</summary>
-            <div class="pop-body stack">
-              <p class="small muted">A vendor not in the vendor list. Its invoices need a person until it is set up in JD Edwards and the vendor list is imported again.</p>
-              <label class="field">Vendor name<input type="text" data-new="name" autocomplete="off"></label>
-              <div class="row">
-                <label class="field grow">GST/HST #<input type="text" data-new="gst" placeholder="123456789RT0001"></label>
-                <label class="field grow">QST #<input type="text" data-new="qst" placeholder="1234567890TQ0001"></label>
-              </div>
-              <div class="row">
-                <label class="field grow">PST #<input type="text" data-new="pst" placeholder="PST-1234-5678"></label>
-                <label class="field">Province<select data-new="province"><option value="">—</option>{% for code, label in provinces %}{% if code %}<option value="{{ code }}">{{ label }}</option>{% endif %}{% endfor %}</select></label>
-              </div>
-              <button class="btn primary sm" type="button" data-new-go><span class="ms" aria-hidden="true">person_add</span>Add to the vendor list</button>
-            </div>
-          </details>
-          <script type="application/json" id="vendor-data">{{ vendors | tojson }}</script>
-        </div>
-        {{ field("gst_hst_registration_number", hint="The supplier's GST/HST registration number") }}
-        {{ field("qst_registration_number", hint="The supplier's QST registration number (Québec)") }}
-        {{ field("pst_registration_number", hint="The supplier's provincial sales tax number (BC PST, Manitoba RST, Saskatchewan PST)") }}
-        {{ province("supplier_province") }}
-        {{ field("remit_bank_account", hint="The bank details printed for payment, if any: compared with this vendor's earlier invoices") }}
-      </div>
-      <div class="rvw-group">Invoice</div>
-      <div class="inv-grid">
-        {{ field("invoice_number") }}
-        {{ field("invoice_date", placeholder="YYYY-MM-DD", hint="Format YYYY-MM-DD") }}
-        {{ field("po_number", hint="Purchase order the invoice quotes, if any") }}
-        {{ field("payment_terms", placeholder="e.g. Net 30, 2/10 Net 30") }}
-        {{ field("due_date", placeholder=due_placeholder, hint="Only if printed; otherwise it comes from the terms (shown greyed)") }}
-        {{ field("currency", choices="CAD|Canadian dollar,USD|US dollar,EUR|Euro,GBP|British pound") }}
-        <div class="field inv-supply" data-field="ship_to_province">
-          <span class="lbl">{{ labels["ship_to_province"] }} <span class="rvw-hint" title="The province whose sales tax applies: where the goods are delivered to you (services: generally where you are), not where the vendor is or ships from."><span class="ms" aria-hidden="true">info</span></span></span>
-          <details class="inv-supply-pick"{% if supply.open %} open{% endif %}>
-            <summary><b>{{ supply.label }}</b> <span class="muted small">{{ supply.why }}</span> <span class="link small">Change</span></summary>
-            <select name="ship_to_province" form="inv" aria-label="{{ labels['ship_to_province'] }}">{% for code, label in provinces %}<option value="{{ code }}"{% if code == draft.header["ship_to_province"] %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
-          </details>
-        </div>
-        {{ field("original_invoice_number", hint="On a credit note: the invoice it credits") }}
-      </div>
-      <div class="rvw-group">Amounts</div>
-      <div class="inv-grid three">
-        {{ field("subtotal", type="number", step="0.01") }}
-        {{ field("tax_total", type="number", step="0.01") }}
-        {{ field("grand_total", type="number", step="0.01") }}
-      </div>
-      <div data-live="amounts">{{ live_ui.amounts(live, inv.id) }}</div>
-    </section>
 
     {% include "_invoice_notes.html" %}
   </div>

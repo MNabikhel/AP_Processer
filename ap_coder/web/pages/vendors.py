@@ -27,6 +27,7 @@ from ap_coder.coding.vendors import (
     master_rows,
     norm_tax_number,
     same_bank_account,
+    vendor_number_problems,
 )
 from ap_coder.core import ui
 from ap_coder.core.reference_data import short_name
@@ -165,6 +166,7 @@ def vendor_detail(store: Store, v: dict[str, Any], language: str) -> dict[str, A
         "tax_history": history(invoices, "gst_hst_number", lambda a, b: norm_tax_number(a) == norm_tax_number(b), str),
         "bank_history": history(invoices, "bank_account", same_bank, mask_account, apart=bank_branch),
         "asks": ask_vendor(store, invoices, language),
+        "number_problems": vendor_number_problems(v),
         "lang": language,
     }
 
@@ -269,6 +271,7 @@ def vendors_page(
         recurring_late=recurring.LATE,
         recurring_soon=recurring.DUE_SOON,
         workload=workload_rows(store) if vendors else [],
+        number_problems=vendor_number_problems,
     )
 
 

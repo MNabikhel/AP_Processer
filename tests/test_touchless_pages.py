@@ -36,7 +36,7 @@ def test_automation_tab_turns_touchless_on_with_a_confirmation(client, store):
     assert "Off: every invoice is reviewed by a person" in page
     assert "at least 20" in page and "Invoices in a row without a correction" in page and "the last 10" in page
     assert "5% of the invoices that skip review" in page
-    assert "Bank account changed" in page and "Possible duplicate" in page and "5,000.00 CAD" in page
+    assert "Bank details changed" in page and "Possible duplicate" in page and "5,000.00 CAD" in page
     assert "Credit note" in page and "Not in the vendor master" in page and "Over the approval limit" in page
     assert re.search(r'<button[^>]*type="submit"[^>]*disabled', _switch(page))  # needs "I understand"
     response = post(client, "/settings/automation/touchless", {"turn": "on"})

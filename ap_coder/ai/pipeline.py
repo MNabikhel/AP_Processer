@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 from ..capture.bridge import review_issues
 from ..capture.layout import CannotRead
 from ..capture.workflow import AUTONOMOUS_REVIEWER, autonomy_decision, capture_invoice
+from ..coding import banks
 from ..coding.po import po_findings
 from ..coding.rules import apply as apply_rules
 from ..coding.tax import PLACE_OF_SUPPLY, SUPPLY_OURS, SUPPLY_SITE, build_gl_distribution, supply_source
@@ -155,6 +156,16 @@ def finalise_coding(
         if store is not None
         else None
     )
+    # The bank account it is paid from (ours, D-66): the vendor's last one, else the currency's default, when none is
+    # chosen yet; checked once our accounts are set up.
+    bank_findings: list[tuple[str, str, str]] = []
+    if store is not None:
+        accounts = store.bank_accounts()
+        if accounts and not coding.pay_from_account:
+            coding.pay_from_account = banks.choose(
+                accounts, coding.currency, store.last_pay_from(vendor_key(coding.vendor_name))
+            )
+        bank_findings = banks.findings(coding.pay_from_account, coding.currency, accounts)
     report = validate_coding(
         coding,
         reference,
@@ -163,6 +174,7 @@ def finalise_coding(
         history=history,
         duplicate_of=duplicates,
         vendor_findings=(vendor_findings(coding, store, exclude_invoice_id) if store is not None else [])
+        + bank_findings
         + payment_findings(
             coding.to_output(),
             store.default_terms_days() if store is not None else 30,
