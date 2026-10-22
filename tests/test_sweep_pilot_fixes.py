@@ -427,12 +427,17 @@ def test_fixed_values_drop_the_as_printed_warning_and_the_unit_price_follows(tmp
         return {i.code for i in result.errors + result.warnings}, result
 
     assert "CAPTURE_TOTALS" in codes(Draft.stored(read))[0]  # as read: the warning stands
-    fixed = Draft.stored(read)  # the clerk puts in what the page says: the line is 45.00
-    fixed.header["subtotal"] = "45.00"
+    fixed = Draft.stored(read)  # the clerk puts in what the page says: the line is 45.00 (the page's unit price
+    fixed.header["subtotal"] = "45.00"  # follows on screen, B-671: it posts 45.00 too)
     fixed.lines[0]["amount"] = 45.0
+    fixed.lines[0]["unit_price"] = 45.0
     found, result = codes(fixed)
     assert "CAPTURE_TOTALS" not in found and "LINE_MATH" not in found, found
     assert result.output["line_items"][0]["unit_price"] == 45.0
+    stale = Draft.stored(read)  # what the screen shows is what is checked and approved: never changed behind it
+    stale.lines[0]["amount"] = 45.0
+    found, result = codes(stale)
+    assert "LINE_MATH" in found and result.output["line_items"][0]["unit_price"] == 40.0
 
 
 # --- B-663: payment terms not found were silent -----------------------------------------------------------------------
@@ -597,3 +602,25 @@ def test_lines_coded_by_hand_are_an_edit_of_their_own(tmp_path, monkeypatch):
     assert "invoices approved without any edit: 0 of 1" in report
     assert "invoices with lines AP coded where the AI left them blank: 1" in report
     assert _closed(store, None, inv)["edits"] == "no changes to the suggested coding; AP coded 1 line the AI left blank"
+
+
+# --- B-671: a unit price read right was replaced by the amount, behind the screen -------------------------------------
+
+
+def test_a_unit_price_read_right_is_never_replaced_behind_the_screen(tmp_path, monkeypatch):
+    """ "Chair (10% off)": quantity 1, unit price 100.00 read right, the amount misread as 9.00; the clerk puts in
+    90.00. The stored price became 90.00 while the screen still showed 100.00."""
+    from ap_coder.core.config import Settings
+    from ap_coder.core.store import load_sample_setup
+    from ap_coder.web.invoice_view import Draft, analyse
+
+    store = Store(tmp_path / "ap.db")
+    load_sample_setup(store)
+    read = _blank_invoice()
+    read["line_items"][0].update(description="Chair (10% off)", unit_price=100.0, amount=9.0, predicted_gl_code="6000")
+    read.update(subtotal=90.0, grand_total=90.0)
+    iid = store.add_invoice(tmp_path / "x.pdf", read, {"requires_review": True})
+    draft = Draft.stored(read)
+    draft.lines[0]["amount"] = 90.0
+    result = analyse(store, Settings(), store.reference_data(), store.get_invoice(iid), draft)
+    assert result.output["line_items"][0]["unit_price"] == 100.0  # as on screen

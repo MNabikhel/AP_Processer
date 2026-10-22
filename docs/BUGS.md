@@ -6120,9 +6120,8 @@ reproduced with a script first, then given a failing test and fixed.
 - **Reproduce:** a read that fails the totals check; change the line and the subtotal so that they add up.
 - **Reproduced:** yes (the real-invoice run)
 - **Fix:** once the amounts on screen differ from those read and add up (subtotal + tax = total, the tax lines =
-  the tax), the "as printed" warning is left out; the coding's own checks still say if they don't. On a quantity-1
-  line whose amount was changed (its unit price as read), or that has no unit price, the unit price is the amount
-  (in the check and in what is approved).
+  the tax), the "as printed" warning is left out; the coding's own checks still say if they don't. (The unit price
+  was first rewritten on the server, behind the screen: replaced by B-671.)
 - **Test:** `tests/test_sweep_pilot_fixes.py::test_fixed_values_drop_the_as_printed_warning_and_the_unit_price_follows`
 - **Lesson:** A warning about how a value was read ends when a person replaces the value.
 
@@ -6233,3 +6232,19 @@ reproduced with a script first, then given a failing test and fixed.
   when no line was proposed at all (accuracy *nothing proposed yet*).
 - **Test:** `tests/test_sweep_pilot_fixes.py::test_lines_coded_by_hand_are_an_edit_of_their_own`
 - **Lesson:** When a count stops counting something, check what else that count fed.
+
+#### B-671 · A unit price read right was replaced by the amount, and the screen still showed the old one · low-medium
+- **Where:** `ap_coder/web/invoice_view.py` (B-662's `price_follows_amount`, removed), `ap_coder/web/static/js/invoice.js`
+- **Symptom:** "Chair (10% off)", quantity 1, unit price 100.00 read right, the amount misread as 9.00: the clerk
+  put in 90.00 and the approved price became 90.00 (it goes to the JD Edwards file and to PO price matching) while
+  the screen still showed 100.00.
+- **Cause:** B-662 made the server put the amount in the unit price of any quantity-1 line whose amount changed
+  with its price as read, whatever that price was, and nothing showed it.
+- **Reproduce:** `sweepreview/p662.py`.
+- **Reproduced:** yes (found by the review of the sweep fixes)
+- **Fix:** nothing is changed behind the screen: what is shown is what is checked and approved. On the screen, a
+  quantity-1 line's unit price follows a changed amount only when it was blank, 0 or the same number as the amount
+  (BDO's line); a price read right stays, and *quantity × unit price* then says the two differ.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_a_unit_price_read_right_is_never_replaced_behind_the_screen`,
+  `tests/test_web_invoice.py::test_in_a_browser_the_unit_price_of_a_quantity_1_line_follows_its_amount_only_when_it_was_the_amount`
+- **Lesson:** Never change behind the screen what the screen shows: change it on the screen, or not at all.

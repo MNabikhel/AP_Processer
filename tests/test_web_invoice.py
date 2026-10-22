@@ -1073,3 +1073,30 @@ def test_in_a_browser_ten_files_chosen_to_import_are_listed_clear_of_the_process
         box = names.nth(i).bounding_box()
         assert box["y"] + box["height"] <= button["y"] + 0.5, (i, box, button)
     assert page.errors == []
+
+
+def test_in_a_browser_the_unit_price_of_a_quantity_1_line_follows_its_amount_only_when_it_was_the_amount(
+    browser, store
+):
+    """B-671: on a quantity-1 line the unit price follows a changed amount on screen, only when it was blank or 0 or
+    the same number as the amount; a price read right ("Chair (10% off)": 100.00, amount 9.00 -> 90.00) stays."""
+    page, errors = _open_review(browser, store, "Cascade", viewport={"width": 1400, "height": 1000})
+    row = page.locator('[data-grid="lines"] tr').first
+    qty, price, amount = (row.locator(f"[name={n}]") for n in ("line_quantity", "line_unit_price", "line_amount"))
+    qty.fill("1")
+    price.fill("40")
+    amount.fill("40")
+    amount.blur()
+    amount.fill("45")
+    amount.blur()
+    assert price.input_value() == "45"
+    price.fill("100")
+    amount.fill("9")
+    amount.blur()
+    amount.fill("90")
+    amount.blur()
+    assert price.input_value() == "100"
+    price.fill("")
+    amount.fill("12.5")
+    amount.blur()
+    assert price.input_value() == "12.5" and errors == []

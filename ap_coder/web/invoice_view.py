@@ -1124,19 +1124,6 @@ def totals_settled(coding: InvoiceCoding, ai: dict[str, Any]) -> bool:
     return changed and adds_up and (taxes or not coding.tax_lines)
 
 
-def price_follows_amount(coding: InvoiceCoding, ai: dict[str, Any]) -> None:
-    """On a line of quantity 1 whose amount the reviewer changed (its unit price left as read) or that has no unit
-    price, the unit price is the amount: "quantity × price = 40.00 but the amount is 45.00" would only repeat the old
-    reading (B-662)."""
-    for before, li in pair_lines(ai.get("line_items") or [], list(coding.line_items)):
-        if li.quantity != 1 or abs(li.unit_price - li.amount) < 0.005:
-            continue
-        price_as_read = before is not None and abs(float(before.get("unit_price") or 0) - li.unit_price) < 0.005
-        amount_changed = before is not None and abs(float(before.get("amount") or 0) - li.amount) >= 0.005
-        if (price_as_read and amount_changed) or not li.unit_price:
-            li.unit_price = li.amount
-
-
 def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dict[str, Any], draft: Draft,
             signature: str = "") -> Analysis:  # fmt: skip
     """The screen's coding, checked as approval checks it. ``signature``: the reviewer's name, for the email to the
@@ -1149,8 +1136,6 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     if not problems:
         coding, problems = coding_from_inputs(header, lines_frame(draft.lines), tax_frame(draft.taxes), ai,
                                               UNASSIGNED if has_cc else "")  # fmt: skip
-    if coding is not None:
-        price_follows_amount(coding, ai)
     if coding is None:
         live = {"ok": False, "problems": problems, "amount_line": _amount_line(header),
                 "fallback": stored_summary(inv, start)}  # fmt: skip
