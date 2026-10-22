@@ -557,7 +557,8 @@ def test_the_bank_accounts_version_stamp_holds_no_account_number(client, store):
     from ap_coder.coding import banks
     from ap_coder.web.core import page_version
 
-    rows, _ = banks.clean_rows([{"code": "CAD-OP", "name": "Operating", "currency": "CAD", "account_number": "1234567"}])
+    account = {"code": "CAD-OP", "name": "Operating", "currency": "CAD", "account_number": "1234567"}
+    rows, _ = banks.clean_rows([account])
     store.save_bank_accounts(rows)
     page = client.get("/accounts?tab=bank").text
     stamp = page.split('name="version" value="', 1)[1].split('"', 1)[0]
@@ -566,4 +567,5 @@ def test_the_bank_accounts_version_stamp_holds_no_account_number(client, store):
     store.save_bank_accounts([{**rows[0], "account_number": "7654567"}])  # another number, the same last 4 digits
     page = client.get("/accounts?tab=bank").text
     assert page.split('name="version" value="', 1)[1].split('"', 1)[0] != stamp  # still a new page version
-    assert client.post("/accounts/bank/save", data={"version": stamp, "code": ["CAD-OP"]}, headers=PAGE).status_code == 409
+    stale = client.post("/accounts/bank/save", data={"version": stamp, "code": ["CAD-OP"]}, headers=PAGE)
+    assert stale.status_code == 409

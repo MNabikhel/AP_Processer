@@ -24,10 +24,10 @@ from ap_coder.core.reference_data import short_name
 from ap_coder.core.safe import csv_cell
 from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.web.core import (
+    STALE_PAGE,
     done,
     flash_message,
     get_store,
-    STALE_PAGE,
     page_version,
     posted_form,
     refuse,
