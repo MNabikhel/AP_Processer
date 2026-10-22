@@ -382,6 +382,8 @@ def _dashboard_words(*clients) -> str:
     for client in clients:
         for url in ("/review", "/process", "/accounts", "/settings/review", "/settings/reading", "/exports", "/help"):
             texts.append(client.get(url).text)
+        # The Quick start page's own buttons (its Print): the buttons only, not the guide's text naming them.
+        texts += re.findall(r"<button\b.*?</button>", client.get("/help/quick-start").text, re.S)
     return re.sub(r"\s+", " ", html.unescape("\n".join(texts)))
 
 
