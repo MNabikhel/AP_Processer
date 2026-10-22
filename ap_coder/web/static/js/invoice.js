@@ -16,7 +16,7 @@
 
 import { HEADERS, follow, post, toast } from "./app.js";
 import { InvoiceViewer } from "./invoice_viewer.js";
-import { enhance, fold, registerGroups, setSource, setValue } from "./picker.js";
+import { enhance, fold, registerGroups, setAction, setSource, setValue } from "./picker.js";
 
 const form = document.getElementById("inv");
 const invoiceId = document.body.querySelector("[data-invoice]")?.dataset.invoice || location.pathname.split("/")[2];
@@ -75,6 +75,8 @@ function applySections(answer) {
     }
   }
   if (approveButton) approveButton.disabled = !answer.allow;
+  // the accounts of the vendor now in the vendor field: the account lists' "Used for this vendor" (B-596)
+  if (Array.isArray(answer.vendor_accounts)) vendorAccounts = answer.vendor_accounts;
   showMailLanguage();
 }
 
@@ -243,7 +245,9 @@ async function gridAction(url, extra, button) {
   }
 }
 
-/* ---------- The account pickers' groups: the accounts this vendor's lines went to, and the ones suggested ---------- */
+/* ---------- The account pickers' groups: the accounts this vendor's lines went to, and the ones suggested ----------
+   "Used for this vendor" starts as the page's #gl-vendor; each check of the edits answers it again for the vendor in
+   the vendor field (B-596). */
 
 let vendorAccounts = [];
 try {
@@ -470,6 +474,20 @@ if (vendorInput) {
   );
 }
 input("gst_hst_registration_number")?.addEventListener("input", showVendorMatch);
+// The vendor list's last row, while it covers the line under the field (B-597): a name not in the list is added.
+if (vendorInput && vendorAdd) {
+  setAction(vendorInput, (typed) => {
+    const key = vendorKey(typed);
+    if (!vendors.enforced || !key || vendors.list.some((v) => (v.key ?? vendorKey(v.name)) === key)) return null;
+    return {
+      label: "Not in the vendor list: add as a new vendor…",
+      run: () => {
+        showVendorMatch();
+        vendorAdd.open = true; // its "toggle" fills the name typed and focuses it
+      },
+    };
+  });
+}
 
 vendorAdd?.addEventListener("toggle", () => {
   if (!vendorAdd.open) return;

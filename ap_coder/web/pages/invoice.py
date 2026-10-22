@@ -586,8 +586,11 @@ async def check(request: Request, invoice_id: int) -> JSONResponse:
     if analysis.report is not None:
         store.refresh_confidence(invoice_id, analysis.report.adjusted_confidence, analysis.report.requires_review)
     _keep_draft(request, invoice_id, draft, analysis.coding is None or analysis.changed or bool(draft.taught))
+    # the account lists' "Used for this vendor", for the vendor now in the vendor field (B-596)
+    listed = {code for code, _ in view.gl_options(reference, draft.lines)}
+    used = [c for c in view.vendor_accounts(store, draft.header.get("vendor_name") or "") if c in listed]
     return JSONResponse({"ok": True, "valid": analysis.coding is not None, "allow": analysis.allow,
-                         "problems": analysis.problems,
+                         "problems": analysis.problems, "vendor_accounts": used,
                          "sections": _render_live(analysis.live, invoice_id)})  # fmt: skip
 
 

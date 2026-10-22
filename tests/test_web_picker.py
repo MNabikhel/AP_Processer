@@ -455,3 +455,220 @@ def test_in_a_browser_checking_shows_while_a_check_runs_and_goes_after_even_when
     page.wait_for_function("() => document.querySelector('[data-checking]').textContent === 'Checking…'")
     page.wait_for_function("() => document.querySelector('[data-checking]').textContent === ''", timeout=5000)
     assert errors == []
+
+
+# --- The second review's findings (B-590, B-593, B-595 to B-597, D-56) -------------------------------------------
+
+
+def _clean(client, store) -> int:
+    """An invoice of the queue that may be approved as it is."""
+    for inv in store.list_invoices(REVIEW):
+        if client.post(f"/review/{inv['id']}/check", data={}, headers=PAGE).json()["allow"]:
+            return inv["id"]
+    raise AssertionError("no clean demo invoice")
+
+
+def _is_open(page) -> bool:
+    return page.evaluate("!document.querySelector('.pk-layer')?.hidden && !!document.querySelector('.pk-layer')")
+
+
+def test_in_a_browser_ctrl_enter_with_the_list_open_approves_the_account_typed(browser, client, store):
+    """B-590: an account typed (the list open, its match highlighted), then Ctrl+Enter: the approval sent the old
+    account and the list stayed open."""
+    invoice_id = _clean(client, store)
+    page, errors = _review(browser, invoice_id)
+    before = page.eval_on_selector("[data-grid=lines] select[name=line_gl]", "s => s.value")
+    code = next(c for c in _accounts(store) if c != before)
+    sent: list[str] = []
+
+    def keep(route):
+        sent.append(route.request.post_data or "")
+        route.abort()
+
+    page.route("**/approve", keep)
+    page.locator(GL).first.click()
+    page.keyboard.type(code)
+    assert _is_open(page) and _options(page).first.inner_text().startswith(code)
+    page.keyboard.press("Control+Enter")
+    page.wait_for_function("() => document.querySelector('.pk-layer').hidden")
+    page.wait_for_timeout(1500)
+    assert sent and _posted_gls_in(sent[0])[0] == code, [_posted_gls_in(s) for s in sent]
+    assert page.eval_on_selector("[data-grid=lines] select[name=line_gl]", "s => s.value") == code
+    assert errors == []
+
+
+def _posted_gls_in(body: str) -> list[str]:
+    return re.findall(r'name="line_gl"\r\n\r\n([^\r]*)\r\n', body)
+
+
+def test_in_a_browser_tab_onto_an_account_box_leaves_its_list_closed(browser, store):
+    """D-56: tabbing through a grid of 20 lines opened a list on every account box. The list opens on typing, a click,
+    Alt+↓, F4, or Enter (Space on a box without an account)."""
+    page, errors = _review(browser, store.list_invoices(REVIEW)[0]["id"])
+    field = page.locator(GL).first
+    page.click("textarea[name=line_description] >> nth=0")
+    for _ in range(4):
+        page.keyboard.press("Tab")
+        if page.evaluate("document.activeElement.dataset.pickerName") == "line_gl":
+            break
+    assert page.evaluate("document.activeElement.dataset.pickerName") == "line_gl"
+    assert not _is_open(page) and field.get_attribute("aria-expanded") == "false"
+    for key in ("Alt+ArrowDown", "F4", "Enter"):
+        page.keyboard.press(key)
+        assert _is_open(page), key
+        page.keyboard.press("Escape")
+        assert not _is_open(page), key
+    page.keyboard.type("a")
+    assert _is_open(page)
+    page.keyboard.press("Escape")
+    page.click("textarea[name=line_description] >> nth=0")
+    field.click()
+    assert _is_open(page)
+    # Space on a box without an account opens the list (and types no space)
+    page.keyboard.press("Escape")
+    page.select_option("[data-grid=lines] select[name=line_gl] >> nth=0", UNASSIGNED)
+    page.click("textarea[name=line_description] >> nth=0")
+    field.focus()
+    assert not _is_open(page)
+    page.keyboard.press(" ")
+    assert _is_open(page) and _options(page).count() > 3
+    assert errors == []
+
+
+def _layer(page):
+    return page.locator(".pk-layer").bounding_box()
+
+
+def test_in_a_browser_an_open_list_follows_its_box_and_closes_once_the_box_scrolls_away(browser, store):
+    """B-593: the list stayed where it opened while the page scrolled; its box gone off the screen, a click on the
+    list still changed that line."""
+    page, errors = _review(browser, store.list_invoices(REVIEW)[0]["id"])
+    field = page.locator(GL).first
+    field.scroll_into_view_if_needed()
+    page.evaluate("window.scrollTo(0, 0)")
+    field.click()
+    assert _is_open(page)
+    page.evaluate("window.scrollBy(0, 60)")
+    page.wait_for_timeout(150)
+    f, layer = field.bounding_box(), _layer(page)
+    assert _is_open(page) and abs(layer["y"] - (f["y"] + f["height"] + 4)) <= 2, (f, layer)
+    page.evaluate("window.scrollBy(0, 2000)")  # the box is gone above the screen
+    page.wait_for_timeout(150)
+    assert not _is_open(page) and field.get_attribute("aria-expanded") == "false"
+    # Under the approve bar: closed too.
+    low = page.locator(GL).last
+    page.evaluate("window.scrollTo(0, 0)")
+    bar_top = page.locator(".inv-actionbar").bounding_box()["y"]
+    page.evaluate("(dy) => window.scrollBy(0, dy)", low.bounding_box()["y"] - (bar_top - 50))
+    low.click()
+    assert _is_open(page)
+    page.evaluate("window.scrollBy(0, -60)")
+    page.wait_for_timeout(150)
+    assert low.bounding_box()["y"] > bar_top and not _is_open(page)
+    assert errors == []
+
+
+def test_in_a_browser_a_resize_keeps_the_open_list_on_the_screen_above_the_approve_bar(browser, store):
+    page, errors = _review(browser, store.list_invoices(REVIEW)[0]["id"])
+    field = page.locator(GL).first
+    page.evaluate("window.scrollTo(0, 0)")
+    bar_top = page.locator(".inv-actionbar").bounding_box()["y"]
+    page.evaluate("(dy) => window.scrollBy(0, dy)", field.bounding_box()["y"] - (bar_top - 300))
+    field.click()
+    assert _is_open(page)
+    for height in (640, 560, 900):
+        page.set_viewport_size({"width": 1366, "height": height})
+        page.wait_for_timeout(200)
+        if not _is_open(page):  # its box gone under the approve bar: closed
+            assert field.bounding_box()["y"] + 10 > page.locator(".inv-actionbar").bounding_box()["y"], height
+            break
+        layer, bar = _layer(page), page.locator(".inv-actionbar").bounding_box()["y"]
+        assert layer["y"] >= 0 and layer["y"] + layer["height"] <= bar + 1, (height, layer, bar)
+    assert errors == []
+
+
+def test_in_a_browser_a_vendor_pointed_at_then_tab_keeps_the_name_typed(browser, store):
+    """B-595: the vendor typed, the mouse resting on a vendor of the list, then Tab: the name typed was replaced by the
+    vendor under the mouse."""
+    page, errors = _review(browser, store.list_invoices(REVIEW)[0]["id"])
+    vendors = json.loads(page.inner_text("#vendor-data"))["list"]
+    vendor = page.locator("#vendor-name")
+    vendor.fill("")
+    typed = vendors[0]["name"][:3].lower()
+    vendor.type(typed)
+    assert _options(page).count() >= 1
+    page.locator(".pk-layer [role=option]").first.hover()
+    page.keyboard.press("Tab")
+    assert vendor.input_value() == typed
+    # A vendor reached with the arrow keys is picked by Tab
+    vendor.fill("")
+    vendor.type(typed)
+    page.keyboard.press("ArrowDown")
+    name = page.evaluate("document.querySelector('.pk-option.is-active').title.split(' · ')[0]")
+    page.keyboard.press("Tab")
+    assert vendor.input_value() == name
+    # Enter on a vendor pointed at picks it
+    vendor.fill("")
+    vendor.type(typed)
+    option = page.locator(".pk-layer [role=option]").first
+    option.hover()
+    name = option.get_attribute("title").split(" · ")[0]
+    page.keyboard.press("Enter")
+    assert vendor.input_value() == name
+    assert errors == []
+
+
+def test_in_a_browser_the_accounts_used_for_this_vendor_follow_the_vendor_field(browser, store):
+    """B-596: "Used for this vendor" kept the vendor of the page as it opened: another vendor picked, the list still
+    offered the first one's accounts."""
+    first, second = (store.get_invoice(i["id"]) for i in store.list_invoices(REVIEW)[:2])
+    assert first["vendor_name"] != second["vendor_name"]
+    accounts = _accounts(store)
+    approved = copy.deepcopy(first["ai_output"])
+    for li in approved["line_items"]:
+        li["predicted_gl_code"] = accounts[-1]
+    store.approve_invoice(first["id"], approved, "Pat Tester")
+    assert invoice_view.vendor_accounts(store, first["vendor_name"]) == [accounts[-1]]
+    assert accounts[-1] not in invoice_view.vendor_accounts(store, second["vendor_name"])
+
+    page, errors = _review(browser, second["id"])
+    vendor = page.locator("#vendor-name")
+    with page.expect_response(lambda r: r.url.endswith("/check")) as answered:
+        vendor.fill(first["vendor_name"])
+        vendor.press("Escape")
+    assert answered.value.json()["vendor_accounts"] == [accounts[-1]]
+    page.wait_for_load_state("networkidle")
+    page.locator(GL).first.click()
+    group = page.locator(".pk-layer [role=group]").first
+    assert group.locator(".pk-group").inner_text().lower() == "used for this vendor"
+    assert group.locator("[role=option]").all_inner_texts()[0].startswith(accounts[-1])
+    assert errors == []
+
+
+def test_in_a_browser_the_vendor_list_ends_with_add_as_a_new_vendor(browser, store):
+    """B-597: while the vendor list showed, it covered "Not in the vendor list: … add it as a new vendor" under the
+    field: its last row now says it, and adds the vendor."""
+    page, errors = _review(browser, store.list_invoices(REVIEW)[0]["id"])
+    vendors = json.loads(page.inner_text("#vendor-data"))
+    assert vendors["enforced"]
+    vendor = page.locator("#vendor-name")
+    vendor.fill("")
+    vendor.type(vendors["list"][0]["name"][:3].lower())
+    last = _options(page).last
+    assert last.inner_text().startswith("Not in the vendor list: add as a new vendor")
+    assert page.evaluate("document.querySelector('[data-vendor-add]').open") is False
+    page.keyboard.press("Tab")  # Tab never picks it
+    assert page.evaluate("document.querySelector('[data-vendor-add]').open") is False
+    vendor.fill("")
+    vendor.type(vendors["list"][0]["name"][:3].lower())
+    _options(page).last.click()
+    page.wait_for_function("document.querySelector('[data-vendor-add]').open")
+    assert page.input_value("[data-new=name]") == vendors["list"][0]["name"][:3].lower()
+    assert not _is_open(page)
+    # The name of a vendor of the list, typed in full: nothing to add
+    vendor.fill("")
+    page.keyboard.press("Escape")
+    vendor.fill(vendors["list"][0]["name"][:-1])
+    vendor.type(vendors["list"][0]["name"][-1])
+    assert not any(t.startswith("Not in the vendor list") for t in _options(page).all_inner_texts())
+    assert errors == []

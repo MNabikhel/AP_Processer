@@ -5883,6 +5883,73 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
 - **Lesson:** A test that passes alone and fails in a run is usually order, not timing: rerun it after the files that
   ran before it, and look for a patch copied by a `from x import y` done late.
 
+#### B-590 · Ctrl+Enter with an account list open approved the old account · medium
+- **Where:** `ap_coder/web/static/js/picker.js` (`key`), `ap_coder/web/static/js/invoice.js` (Ctrl+Enter)
+- **Symptom:** "freight" typed in line 1's GL account, 5100 highlighted in the list, then Ctrl+Enter: the approval
+  sent line 1's old account (6300) and the list stayed open over the screen.
+- **Cause:** the picker left every Ctrl/⌘ key alone, so nothing picked the highlighted account; the review screen's
+  Ctrl+Enter then read the form with the select's old value. A regression of the picker (D-56): a native select
+  had no typed text to lose.
+- **Reproduce:** on the review screen, type an account's name in a line's GL account, press Ctrl+Enter before Enter.
+- **Reproduced:** yes
+- **Fix:** Ctrl/⌘+Enter with the list open picks the choice as Tab does (the one highlighted, once something was
+  typed), closes the list and lets the key go on: the select holds the new account before the form is read and checked.
+- **Test:** `tests/test_web_picker.py::test_in_a_browser_ctrl_enter_with_the_list_open_approves_the_account_typed`
+- **Lesson:** A box that holds typed text apart from the value it posts must settle it before every way the form can
+  be sent, the keyboard shortcuts too.
+
+#### B-593 · An open account list stayed put while the page scrolled, its box gone off the screen · low-medium
+- **Where:** `ap_coder/web/static/js/picker.js` (`place`, the scroll and resize listeners)
+- **Symptom:** a GL account's list open, the page scrolled with the wheel: the list stayed on the screen while its box
+  went off it (or under the approve bar), and a click on the list changed a line no one could see.
+- **Cause:** on scroll the list was placed again from its box, but never closed, and was not held above the approve bar.
+- **Reproduce:** open a line's GL account list, scroll the page down 2,000 px; the list is still there.
+- **Reproduced:** yes
+- **Fix:** on scroll and resize the list follows its box, and closes once the box can't be seen (off the screen, or
+  under the approve bar or a header that stays put: what is drawn at the box's middle is not the box); it is kept on
+  the screen above the approve bar.
+- **Test:** `tests/test_web_picker.py::test_in_a_browser_an_open_list_follows_its_box_and_closes_once_the_box_scrolls_away`,
+  `::test_in_a_browser_a_resize_keeps_the_open_list_on_the_screen_above_the_approve_bar`
+- **Lesson:** A layer drawn apart from what it belongs to must follow it, and go when it goes.
+
+#### B-595 · The vendor typed was replaced by the vendor under the mouse when Tab was pressed · low
+- **Where:** `ap_coder/web/static/js/picker.js` (the list's `mousemove`, `key` for Tab)
+- **Symptom:** a new vendor's name typed in the vendor field, the mouse resting on a vendor of the list, then Tab:
+  the field held the vendor under the mouse, not the name typed.
+- **Cause:** the mouse moved the list's highlight, and Tab picked whatever was highlighted.
+- **Reproduce:** type "age" in the vendor field, rest the mouse on the first vendor of the list, press Tab.
+- **Reproduced:** yes
+- **Fix:** the mouse only marks its row (Enter or a click picks it); Tab picks the choice highlighted from the keyboard
+  (in a free box such as the vendor, one reached with the arrows).
+- **Test:** `tests/test_web_picker.py::test_in_a_browser_a_vendor_pointed_at_then_tab_keeps_the_name_typed`
+- **Lesson:** Where the mouse happens to rest is not a choice: only a click, or a key the person pressed, is.
+
+#### B-596 · "Used for this vendor" kept the vendor of the page as it opened · low
+- **Where:** `ap_coder/web/static/js/invoice.js` (`#gl-vendor`, `applySections`), `ap_coder/web/pages/invoice.py`
+  (`check`)
+- **Symptom:** the vendor field changed to another vendor of the list; the account lists still offered the first
+  vendor's accounts under *Used for this vendor*.
+- **Cause:** the accounts were printed once in the page (`#gl-vendor`) and never asked for again.
+- **Reproduce:** approve an invoice of vendor A with account X, open an invoice of vendor B, type A in the vendor
+  field, open a line's GL account list: X is not in the group.
+- **Reproduced:** yes
+- **Fix:** each check of the edits (`POST /review/<id>/check`, run after every change of the vendor field) answers
+  `vendor_accounts` for the vendor in the field, and the group shows those.
+- **Test:** `tests/test_web_picker.py::test_in_a_browser_the_accounts_used_for_this_vendor_follow_the_vendor_field`
+- **Lesson:** What a page prints once about a field must be asked again when the field can change.
+
+#### B-597 · The vendor list covered "Not in the vendor list: add it as a new vendor" while typing · low
+- **Where:** `ap_coder/web/static/js/picker.js` (`setAction`), `ap_coder/web/static/js/invoice.js` (the vendor field)
+- **Symptom:** while a vendor name was typed, its list lay over the line under the field that says the name is not in
+  the vendor list and offers to add it.
+- **Cause:** the list is drawn under the box, where that line is.
+- **Reproduce:** with a vendor list imported, type "age" in the vendor field.
+- **Reproduced:** yes
+- **Fix:** the vendor list ends with a row *Not in the vendor list: add as a new vendor…* while the name typed is not a
+  vendor of the list; choosing it opens *Add new vendor…* with the name typed (Tab never picks it).
+- **Test:** `tests/test_web_picker.py::test_in_a_browser_the_vendor_list_ends_with_add_as_a_new_vendor`
+- **Lesson:** A list that covers a message must carry the message, or the way out it offered.
+
 #### Looked at and left (install, launcher and updates)
 
 - **N-251** · A GitHub ZIP unzipped over an older one leaves the files the newer one no longer has (the offline

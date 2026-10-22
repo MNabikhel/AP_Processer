@@ -2,8 +2,9 @@
    JavaScript, nothing from the internet. Loaded on every page (base.html); page scripts import it as "./picker.js".
 
    * select[data-picker]: the select stays in the form, with its name, and is what is posted; it is only hidden, under
-     a text box that shows its choice. Focus, a click or typing opens the list: every word typed must be in the code or
-     the name (accents and case aside), the words found are marked. Picking sets the select's value and fires its
+     a text box that shows its choice. Typing, a click, Alt+↓, F4 or Enter opens the list (Space too, on a box without
+     a choice), never the focus alone: tabbing through a grid of 20 lines stays quiet. Every word typed must be in the
+     code or the name (accents and case aside), the words found are marked. Picking sets the select's value and fires its
      "input" and "change", as a choice in the select itself would.
        data-options="gl-options"  the choices are the JSON [[value, label], ...] of <script id="gl-options">, printed
                                   once in the page (the select itself holds only its own choice); else its options
@@ -12,10 +13,15 @@
        data-picker-line           its label says the line: "Line 3 GL account" (the row's line_number)
    * input[data-picker="free"]: the text typed is the value; the list only offers what to type.
        data-choices="CAD|Canadian dollar,USD|US dollar"   the choices, else setSource(input, () => items)
-   * Keys: ↑/↓, PageUp/PageDown, Home/End move; Enter picks; Esc closes (a select's choice as it was); Tab picks the
-     highlighted choice when something was typed, then moves on; Alt+↓ opens.
+       setAction(input, (typed) => ({label, run}) or null)  a last row that does something (Add as a new vendor)
+   * Keys: ↑/↓, PageUp/PageDown, Home/End move; Enter picks (the row under the mouse too); Esc closes (a select's
+     choice as it was); Tab picks the choice highlighted from the keyboard when something was typed (in a free box: a
+     choice reached with the arrows; never the one the mouse rests on), then moves on; Ctrl/⌘+Enter picks as Tab does,
+     closes the list and is left to the page (the review screen approves with the choice picked, B-590).
    * The list is drawn in one fixed layer on the page's body (a grid's overflow never cuts it off), under the box, or
-     above it when there is no room below (the review screen's approve bar counts as the bottom of the window).
+     above it when there is no room below (the review screen's approve bar counts as the bottom of the window). It
+     follows its box as the page scrolls or the window is resized, and closes once the box can't be seen (off the
+     screen, or under the approve bar or a header that stays put: B-593).
 
    Without JavaScript the select is an ordinary select (with data-options, holding only its own choice). */
 
@@ -37,6 +43,7 @@ const MOST = 400; // choices drawn at most: more is found by typing
 
 const pickers = new WeakMap(); // select or input -> its Picker
 const sources = new WeakMap(); // free input -> () => items
+const actions = new WeakMap(); // free input -> (typed) => {label, run} or null: the list's last row
 const groupMakers = new Map(); // data-groups name -> (select) => [{label, values}]
 const jsonLists = new Map(); // script id -> items
 let layer = null;
@@ -158,7 +165,7 @@ function makeLayer() {
     const opt = e.target.closest("[role=option]");
     if (opt && shown) shown.pick(Number(opt.dataset.i));
   });
-  layer.addEventListener("mousemove", (e) => {
+  layer.addEventListener("mousemove", (e) => {  // the row under the mouse is marked: Enter picks it, Tab doesn't (B-595)
     const opt = e.target.closest("[role=option]");
     if (opt && shown && Number(opt.dataset.i) !== shown.active) shown.setActive(Number(opt.dataset.i), false);
   });
@@ -178,7 +185,8 @@ class Picker {
   constructor(el) {
     this.free = el.tagName === "INPUT";
     this.select = this.free ? null : el;
-    this.active = -1;
+    this.active = -1; // the row highlighted (Enter picks it): by the keys or under the mouse
+    this.keyActive = -1; // the row highlighted from the keyboard (Tab and Ctrl+Enter pick it), never by the mouse
     this.view = [];
     this.typed = false;
     if (this.free) {
@@ -207,9 +215,9 @@ class Picker {
     input.spellcheck = false;
     this.name();
     this.sync();
-    input.addEventListener("focus", () => {
+    input.addEventListener("focus", () => {  // the list stays closed: Tab through a grid is quiet (D-56)
       this.name();
-      if (!this.free) this.open();
+      if (!this.free) this.input.select(); // typing replaces the choice shown (focused by a script too: G, a finding)
     });
     input.addEventListener("click", () => this.open());
     input.addEventListener("input", (e) => {
@@ -285,6 +293,7 @@ class Picker {
     listbox.replaceChildren();
     this.view = [];
     this.active = -1;
+    this.keyActive = -1;
     this.input.setAttribute("aria-expanded", "false");
     this.input.removeAttribute("aria-activedescendant");
     if (restore) this.sync();
@@ -375,6 +384,23 @@ class Picker {
       }
       if (box.childElementCount) listbox.append(box);
     });
+    // A free box's last row, under what matches (it covers what the page says under the box): Add as a new vendor.
+    const action = this.free && this.view.length ? actions.get(this.input)?.(typed) : null;
+    if (action) {
+      const i = this.view.length;
+      this.view.push({ value: "", label: action.label, run: action.run });
+      const opt = document.createElement("div");
+      opt.className = "pk-option pk-action";
+      opt.id = `pk-o-${i}`;
+      opt.dataset.i = String(i);
+      opt.setAttribute("role", "option");
+      opt.setAttribute("aria-selected", "false");
+      const name = document.createElement("span");
+      name.className = "pk-name";
+      name.textContent = action.label;
+      opt.append(name);
+      listbox.append(opt);
+    }
     note.hidden = true;
     if (!this.view.length && ws.length) {
       note.textContent = `No ${this.noun()} matches “${typed}”`;
@@ -393,6 +419,7 @@ class Picker {
     }
     this.place();
     this.setActive(active, true);
+    this.keyActive = active;
     if (active <= 0) listbox.scrollTop = 0;
   }
 
@@ -422,11 +449,30 @@ class Picker {
     if (!n) return;
     const from = this.active < 0 ? (by > 0 ? -1 : n) : this.active;
     this.setActive(Math.max(0, Math.min(n - 1, from + by)));
+    this.keyActive = this.active;
+  }
+
+  /** The choice Tab (and Ctrl+Enter) picks: the one highlighted from the keyboard, once something was typed (in a
+      free box, one reached with the arrows: none is highlighted by itself); never a row that does something. */
+  tabChoice() {
+    const i = this.keyActive;
+    return i >= 0 && (this.free || this.typed) && this.view[i] && !this.view[i].run ? i : -1;
+  }
+
+  /** No choice yet: the select has none (or "Needs an account"), or the box is empty. */
+  empty() {
+    return this.free ? !this.input.value : !this.select.value || this.select.value === "UNASSIGNED" || !this.input.value.trim();
   }
 
   pick(i) {
     const it = this.view[i];
     if (!it) return;
+    if (it.run) {  // the row that does something: the box keeps what was typed
+      this.close(false);
+      const typed = this.input.value;
+      setTimeout(() => it.run(typed)); // once the click is over: a click outside a popover closes it (app.js)
+      return;
+    }
     if (this.free) {
       this.close(false);
       if (this.input.value !== it.value) {
@@ -445,9 +491,18 @@ class Picker {
   }
 
   key(e) {
-    if (e.ctrlKey || e.metaKey) return;
     const open = this.isOpen();
     const k = e.key;
+    if (e.ctrlKey || e.metaKey) {
+      // Ctrl/⌘+Enter approves on the review screen: the choice typed is picked first, as Tab picks it, and the list
+      // closes; the key then goes on to the page, which reads the form with the new choice (B-590).
+      if (k === "Enter" && open) {
+        const i = this.tabChoice();
+        if (i >= 0) this.pick(i);
+        else this.close();
+      }
+      return;
+    }
     if (k === "ArrowDown" || k === "ArrowUp") {
       e.preventDefault();
       if (!open) this.open();
@@ -456,8 +511,8 @@ class Picker {
       return;
     }
     if (!open) {
-      if (k === "Enter" && !this.free) {
-        e.preventDefault(); // never sends the form the box is in
+      if ((k === "Enter" && !this.free) || k === "F4" || (k === " " && !e.altKey && !e.shiftKey && this.empty())) {
+        e.preventDefault(); // Enter never sends the form the box is in; Space types no space in an empty box
         this.open();
       }
       return;
@@ -468,6 +523,7 @@ class Picker {
     } else if ((k === "Home" || k === "End") && !this.free) {
       e.preventDefault();
       this.setActive(k === "Home" ? 0 : this.view.length - 1);
+      this.keyActive = this.active;
     } else if (k === "Enter") {
       e.preventDefault();
       if (this.active >= 0) this.pick(this.active);
@@ -477,9 +533,29 @@ class Picker {
       e.stopPropagation(); // only the list closes, not the popover it is in, nor teaching a field
       this.close();
     } else if (k === "Tab") {
-      if (this.active >= 0 && (this.free || this.typed)) this.pick(this.active);
+      const i = this.tabChoice();
+      if (i >= 0) this.pick(i);
       else this.close();
     }
+  }
+
+  /** The box can be seen: on the screen, not scrolled out of its card, nor under the approve bar or a header that
+      stays at the top of the window (what is drawn at its middle is the box). */
+  visible() {
+    const r = this.input.getBoundingClientRect();
+    if (!r.width || !r.height || r.bottom <= 0 || r.top >= innerHeight || r.right <= 0 || r.left >= innerWidth) return false;
+    const x = Math.min(Math.max(r.left + r.width / 2, 0), innerWidth - 1);
+    const y = r.top + r.height / 2;
+    if (y < 0 || y >= innerHeight) return false;
+    const hit = document.elementFromPoint(x, y);
+    return !hit || hit === this.input || (!this.free && this.input.parentElement.contains(hit)) || layer.contains(hit);
+  }
+
+  /** The page scrolled or the window changed size: the list follows its box, or closes once the box is out of
+      sight (a click on it would change a line no one can see, B-593). */
+  follow() {
+    if (this.visible()) this.place();
+    else this.close();
   }
 
   place() {
@@ -488,6 +564,7 @@ class Picker {
     const bar = document.querySelector(".inv-actionbar");
     const barTop = bar ? bar.getBoundingClientRect().top : innerHeight;
     const bottom = barTop > r.bottom + 40 ? barTop : innerHeight;
+    const floor = barTop > r.top ? barTop : innerHeight; // the list never goes under the approve bar
     const gap = 4;
     const edge = 8;
     const noteH = note.hidden ? 0 : 34;
@@ -496,12 +573,13 @@ class Picker {
     const above = r.top - gap - edge;
     const up = below < Math.min(want, 180) && above > below;
     const room = Math.max(ROW * 3, up ? above : below);
-    listbox.style.maxHeight = `${Math.max(ROW * 2, Math.min(ROWS * ROW + 8, room - noteH))}px`;
+    listbox.style.maxHeight = `${Math.max(ROW * 2, Math.min(ROWS * ROW + 8, room - noteH - 2))}px`; // 2: its border
     const width = Math.min(Math.max(r.width, 360), innerWidth - 2 * edge);
     layer.style.width = `${width}px`;
     layer.style.left = `${Math.max(edge, Math.min(r.left, innerWidth - width - edge))}px`;
     const tall = layer.offsetHeight;
-    layer.style.top = `${up ? Math.max(edge, r.top - gap - tall) : r.bottom + gap}px`;
+    const top = up ? r.top - gap - tall : r.bottom + gap;
+    layer.style.top = `${Math.max(edge, Math.min(top, floor - edge - tall))}px`; // kept on the screen, above the bar
     layer.classList.toggle("up", up);
   }
 }
@@ -545,6 +623,12 @@ export function setSource(input, make) {
   sources.set(input, make);
 }
 
+/** A free box's last row while its list shows: ``make(typed)`` gives {label, run} (run(typed) when it is chosen), or
+    null for none. Tab never picks it. */
+export function setAction(input, make) {
+  actions.set(input, make);
+}
+
 /** Groups shown above the whole list while nothing is typed, for selects with data-groups="name". */
 export function registerGroups(name, make) {
   groupMakers.set(name, make);
@@ -560,9 +644,9 @@ document.addEventListener(
 document.addEventListener("pointerdown", (e) => {
   if (shown && e.target !== shown.input && !layer.contains(e.target)) shown.close();
 });
-window.addEventListener("resize", () => shown?.place());
+window.addEventListener("resize", () => shown?.follow());
 document.addEventListener("scroll", (e) => {
-  if (shown && !layer.contains(e.target)) shown.place();
+  if (shown && !layer.contains(e.target)) shown.follow();
 }, { capture: true, passive: true });
 
 enhance();

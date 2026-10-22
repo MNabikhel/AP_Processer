@@ -34,6 +34,10 @@ td > .pk, .field > .pk, .inv-parts .pk {width: 100%;}
 .pk-name {flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;}
 .pk-extra {flex: 0 1 auto; max-width: 50%; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; color: var(--lg-muted);}
 .pk-tick {flex: none; font-size: 16px; color: var(--lg-accent);}
+/* A row that does something (Add as a new vendor): the last one, always in view under the choices (B-597). */
+.pk-action {position: sticky; bottom: -4px; margin-bottom: -4px; padding-bottom: 8px; background: var(--lg-surface);
+  border-top: 1px solid var(--lg-hairline); color: var(--lg-accent); font-weight: 500;}
+.pk-action.is-active {background: var(--lg-accent-weak);}
 .pk-option mark {background: #fde68a; color: inherit; border-radius: 2px; padding: 0 1px; margin: 0 -1px;}
 .pk-note {padding: 8px 12px; font-size: 12.5px; color: var(--lg-muted); border-top: 1px solid var(--lg-hairline);}
 .pk-list:empty {display: none;}
