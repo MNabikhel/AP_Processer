@@ -492,13 +492,44 @@ def test_in_a_browser_with_lm_studio_off_the_invoice_shows_above_the_fold(browse
 
 def test_in_a_browser_at_1366_the_page_and_the_line_grid_show_together(browser, store):
     """B-467: at 1366 x 768 only 150-200 px of the invoice's page showed, the line grid started about 1,200 px down
-    and its Qty and Unit price scrolled sideways."""
+    and its Qty and Unit price scrolled sideways. D-63: the invoice details come first (the header is checked against
+    the page, then the lines coded), the lines right after them, a scroll away, with the page still beside them."""
     page, errors = _review(browser, store)
     sheet = page.locator(".iv-sheet").first.bounding_box()
     bar = page.locator(".inv-actionbar").bounding_box()["y"]
     assert bar - sheet["y"] >= 300, (sheet, bar)
+    details = page.locator(".inv-details").bounding_box()
+    assert details["y"] < 768, details  # beside the page, under the checks
     grid = page.locator("#lines").bounding_box()
-    assert grid["y"] < 768, grid  # beside the page, under the checks
+    assert details["y"] + details["height"] <= grid["y"], (details, grid)  # the details, then the lines
+    order = page.evaluate(
+        "[...document.querySelectorAll('.inv-split > .col > *')].map((e) => e.className + ' ' + (e.dataset.live || ''))"
+    )
+    kinds = [next((k for k in ("inv-checks", "inv-details", "inv-lines", "po", "suggest", "inv-notes") if k in c), c)
+             for c in order]  # fmt: skip
+    assert kinds[:5] == ["inv-checks", "inv-details", "inv-lines", "po", "suggest"], order
+    # The lines are a scroll away, and the page stays beside them (sticky)
+    page.evaluate("document.querySelector('#lines').scrollIntoView({block: 'start'})")
+    page.wait_for_timeout(300)
+    grid = page.locator("#lines").bounding_box()
+    doc = page.locator(".inv-doc").bounding_box()
+    assert 0 <= grid["y"] < 768 - 100, grid
+    assert doc["x"] + doc["width"] <= grid["x"], (doc, grid)  # beside them
+    assert doc["y"] <= max(grid["y"], 8) + 1 and doc["y"] + doc["height"] >= grid["y"] + grid["height"], (doc, grid)
+    # Tab goes from the last invoice detail to the lines, nothing in between but the details' own
+    page.focus("[name=grand_total]")
+    seen = []
+    for _ in range(15):
+        page.keyboard.press("Tab")
+        where = page.evaluate(
+            "(() => { const e = document.activeElement; return e.closest('.inv-lines') ? 'lines'"
+            " : e.closest('.inv-details') ? 'details' : (e.name || e.tagName); })()"
+        )
+        seen.append(where)
+        if where == "lines":
+            break
+    assert seen[-1] == "lines" and set(seen[:-1]) <= {"details"}, seen
+    page.evaluate("window.scrollTo(0, 0)")
     wrap = page.evaluate(
         "(() => { const w = document.querySelector('#lines').closest('.table-wrap');"
         " return [w.scrollWidth, w.clientWidth, document.documentElement.scrollWidth]; })()"
