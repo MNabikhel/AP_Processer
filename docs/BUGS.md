@@ -6725,3 +6725,16 @@ Found while building the pilot tester's requests on the review screen's invoice 
   not in `TEACHABLE`, so no other way changes it on the review screen.
 - **Test:** `tests/test_header_details.py::test_a_posted_vendor_bank_detail_is_ignored`
 - **Lesson:** Read-only on the page means read-only on the server.
+
+#### B-687 · The Bank accounts page's version stamp was a hash of the full account numbers · low
+- **Where:** `ap_coder/web/pages/accounts.py` (`bank_context`, `bank_save`, `bank_version`)
+- **Symptom:** the grid's version stamp (B-655) was `page_version` of the accounts, an unkeyed SHA-1 of every
+  column, the full account numbers included: from the page alone (masked to the last 4 digits), a short number could
+  be found again by trying every one.
+- **Cause:** the stamp was made like the other grids', whose rows hold nothing secret.
+- **Reproduce:** hash candidate numbers with the page's other values until the stamp matches.
+- **Reproduced:** yes (found by the review of the header side)
+- **Fix:** the stamp is an HMAC-SHA256 of the accounts with a secret made once per database (a setting, shown
+  nowhere), so it says nothing about the numbers, and any change still gives a new stamp.
+- **Test:** `tests/test_web_masterdata.py::test_the_bank_accounts_version_stamp_holds_no_account_number`
+- **Lesson:** A hash of a secret with little entropy is the secret.

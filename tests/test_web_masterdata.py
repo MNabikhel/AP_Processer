@@ -548,3 +548,22 @@ def test_an_excel_cell_reading_na_is_kept_as_typed():
     assert [r["Cost center"] for r in settings_jde.read_sheet("cc.xlsx", raw.getvalue())] == codes
     ((_columns, rows),) = learning.read_sheets("cc.xlsx", raw.getvalue()).values()
     assert [r["Cost center"] for r in rows] == codes
+
+
+def test_the_bank_accounts_version_stamp_holds_no_account_number(client, store):
+    """B-687: the page's version stamp was a hash of the rows with their full account numbers: a short number could
+    be found again from the page by trying every one. It is a hash of what the page shows (the last 4 digits) and when
+    each account last changed."""
+    from ap_coder.coding import banks
+    from ap_coder.web.core import page_version
+
+    rows, _ = banks.clean_rows([{"code": "CAD-OP", "name": "Operating", "currency": "CAD", "account_number": "1234567"}])
+    store.save_bank_accounts(rows)
+    page = client.get("/accounts?tab=bank").text
+    stamp = page.split('name="version" value="', 1)[1].split('"', 1)[0]
+    full = store.bank_accounts()
+    assert stamp != page_version(full)  # keyed with this database's own secret: nothing to try numbers against
+    store.save_bank_accounts([{**rows[0], "account_number": "7654567"}])  # another number, the same last 4 digits
+    page = client.get("/accounts?tab=bank").text
+    assert page.split('name="version" value="', 1)[1].split('"', 1)[0] != stamp  # still a new page version
+    assert client.post("/accounts/bank/save", data={"version": stamp, "code": ["CAD-OP"]}, headers=PAGE).status_code == 409

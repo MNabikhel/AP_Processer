@@ -27,6 +27,7 @@ from ap_coder.web.core import (
     done,
     flash_message,
     get_store,
+    STALE_PAGE,
     page_version,
     posted_form,
     refuse,
@@ -105,7 +106,7 @@ def account_context(store: Store, table: str, file: str, sheet: str) -> dict[str
         "table": table,
         "noun": noun,
         "rows": rows,
-        "version": page_version(rows),  # posted with the grid (B-655)
+        "version": bank_version(store, rows),  # posted with the grid (B-655), holding no account number (B-687)
         "blank": BLANK_ROWS,
         "categories": counts.most_common(),
         "imp": imp,
@@ -220,6 +221,7 @@ def use_sample(request: Request) -> JSONResponse:
 # of an account number are ever shown, here too: the grid's box is blank (typing replaces the number), and there is a
 # template to download, not the list.
 
+BANK_STAMP_SECRET = "bank_page_secret"  # (settings) the key of the grid's version stamp
 BANK_TEMPLATE = (
     "code,name,currency,institution,transit,account_number,gl_account,default,active\r\n"
     "CAD-OP,Sample Bank CAD operating,CAD,000,00000,0000001234,,yes,yes\r\n"
@@ -229,6 +231,22 @@ BANK_TEMPLATE = (
 def bank_shown(store: Store) -> list[dict[str, Any]]:
     """The bank accounts as the Bank accounts tab shows them (its ``page_version`` is posted with the grid)."""
     return store.bank_accounts()
+
+
+def bank_version(store: Store, rows: list[dict[str, Any]]) -> str:
+    """The Bank accounts grid's version stamp: an HMAC of the accounts with this database's own secret, so the page
+    holds nothing a short account number could be found again from (B-687), and any change makes a new stamp."""
+    import hashlib
+    import hmac
+    import json
+    import secrets
+
+    secret = store.get_setting(BANK_STAMP_SECRET)
+    if not secret:
+        secret = secrets.token_hex(32)
+        store.set_setting(BANK_STAMP_SECRET, secret)
+    text = json.dumps(rows, sort_keys=True, default=repr).encode()
+    return hmac.new(secret.encode(), text, hashlib.sha256).hexdigest()[:16]
 
 
 def bank_context(store: Store, gl: list[dict[str, Any]], file: str, sheet: str) -> dict[str, Any]:
@@ -245,7 +263,7 @@ def bank_context(store: Store, gl: list[dict[str, Any]], file: str, sheet: str) 
             imp_error = str(exc)
     return {
         "rows": [{**r, "shown": banks.masked(r["account_number"]), "label": banks.label(r)} for r in rows],
-        "version": page_version(rows),  # posted with the grid (B-655)
+        "version": bank_version(store, rows),  # posted with the grid (B-655), holding no account number (B-687)
         "blank": BLANK_ROWS,
         "gl_options": [(a["code"], f"{a['code']} · {short_name(a['description'])}") for a in gl],
         "imp": imp,
@@ -308,9 +326,9 @@ async def bank_save(request: Request) -> JSONResponse:
     left blank, the default (one per currency) and whether it is in use."""
     form = await posted_form(request)
     store = get_store(request)
-    stale = stale_page(form, bank_shown(store))  # an account imported meanwhile would be overwritten (B-655)
-    if stale is not None:
-        return stale
+    posted = form.get("version")  # an account imported meanwhile would be overwritten (B-655)
+    if posted is not None and str(posted) != bank_version(store, bank_shown(store)):
+        return refuse(STALE_PAGE, 409)
     stored = {r["code"]: r for r in store.bank_accounts()}
     cols = {f: form.getlist(f) for f in ("code", "name", "currency", "institution", "transit", "account_number",
                                          "gl_account")}  # fmt: skip
