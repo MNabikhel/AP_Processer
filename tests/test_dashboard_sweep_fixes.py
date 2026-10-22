@@ -38,13 +38,19 @@ def test_the_queued_note_reads_as_a_sentence(store, monkeypatch):
 
     monkeypatch.setattr(process, "reading_status_or_none", lambda *a: SimpleNamespace(page_reader_ready=False))
     settings = web_settings()
+    # Ready to review now: OvisOCR2 only double-checks them later (it said "they wait for it", F1)
     assert process.queued_note(settings, store, 2) == (
-        "2 invoices queued for OvisOCR2, which isn't running: they wait for it (Settings → Reading)."
+        "OvisOCR2 will double-check them when LM Studio runs (Settings → Reading)."
     )
     assert process.queued_note(settings, store, 1) == (
-        "1 invoice queued for OvisOCR2, which isn't running: it waits for it (Settings → Reading)."
+        "OvisOCR2 will double-check it when LM Studio runs (Settings → Reading)."
     )
     assert process.queued_note(settings, store, 0) == ""
+    running = SimpleNamespace(page_reader_ready=False, lm_studio=True)
+    monkeypatch.setattr(process, "reading_status_or_none", lambda *a: running)
+    assert process.queued_note(settings, store, 2) == (
+        "OvisOCR2 will double-check them once it is loaded in LM Studio (Settings → Reading)."
+    )
 
 
 def test_the_queued_note_does_not_call_a_running_ovisocr2_not_running(store, monkeypatch):
@@ -58,8 +64,8 @@ def test_the_queued_note_does_not_call_a_running_ovisocr2_not_running(store, mon
         status = SimpleNamespace(page_reader_ready=False, page_reader_model="ath-maas_ovisocr2", self_test=state)
         monkeypatch.setattr(process, "reading_status_or_none", lambda *a, s=status: s)
         assert process.queued_note(settings, store, 2) == (
-            f"2 invoices queued for OvisOCR2, which runs in LM Studio but isn't trusted yet ({why}): they wait for "
-            "it (Settings → Reading)."
+            f"OvisOCR2 runs in LM Studio but isn't trusted yet ({why}): it will double-check them once it passes "
+            "(Settings → Reading)."
         )
 
 

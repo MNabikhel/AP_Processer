@@ -217,7 +217,9 @@ def test_one_invoice_read_is_waiting_not_they_are(tmp_path):
     assert client.post("/process/upload", files=files, headers=PAGE).json()["ok"]
     assert app.state.jobs.get("process").wait(180)
     texts = [m["text"] for m in client.get("/process/status").json()["result"]["messages"]]
-    assert any(t.startswith("1 invoice read and coded. It's waiting in the review queue.") for t in texts), texts
+    assert any(t.startswith("1 invoice read and coded. It's ready to review in the review queue.") for t in texts), (
+        texts
+    )
 
 
 # --- Master data and learning ------------------------------------------------------------------------------------

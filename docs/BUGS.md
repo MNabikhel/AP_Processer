@@ -6095,3 +6095,17 @@ reproduced with a script first, then given a failing test and fixed.
   runs on its own thread, so no page waits. `auto_backup` keeps its rules (once a day, the newest 14).
 - **Test:** `tests/test_sweep_pilot_fixes.py::test_the_daily_backup_also_runs_while_the_dashboard_keeps_running`
 - **Lesson:** "Once a day" in a program that runs for days needs a clock, not a start.
+
+#### B-661 · After an import, "they wait for OvisOCR2" contradicted "waiting in the review queue" · low
+- **Where:** `ap_coder/web/pages/process.py` (`queued_note`, the message after processing)
+- **Symptom:** *20 invoices read and coded. They're waiting in the review queue. 20 invoices queued for OvisOCR2,
+  which isn't running: they wait for it*: the pilot tester could not tell whether to review them now.
+- **Cause:** the note described the page reader's queue as if the invoices waited in it.
+- **Reproduce:** import invoices with LM Studio off.
+- **Reproduced:** yes (the real-invoice run)
+- **Fix:** *20 invoices read and coded. They're ready to review in the review queue. OvisOCR2 will double-check
+  them when LM Studio runs (Settings → Reading)* (or *once it is loaded in LM Studio*, *once it passes* its
+  self-test, or *double-checks them in the background* when it runs).
+- **Test:** `tests/test_dashboard_sweep_fixes.py::test_the_queued_note_reads_as_a_sentence` and the test after it,
+  `tests/test_web_pilot_walkthrough.py::test_one_invoice_read_is_waiting_not_they_are`
+- **Lesson:** Say what the person can do now before what a background part will do later.
