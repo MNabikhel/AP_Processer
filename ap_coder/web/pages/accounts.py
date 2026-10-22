@@ -106,7 +106,7 @@ def account_context(store: Store, table: str, file: str, sheet: str) -> dict[str
         "table": table,
         "noun": noun,
         "rows": rows,
-        "version": bank_version(store, rows),  # posted with the grid (B-655), holding no account number (B-687)
+        "version": page_version(rows),  # posted with the grid (B-655)
         "blank": BLANK_ROWS,
         "categories": counts.most_common(),
         "imp": imp,
