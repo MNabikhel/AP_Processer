@@ -503,6 +503,7 @@ def _closed(store: Store, reference: ReferenceData | None, inv: dict[str, Any]) 
             bool(my_login) and my_login.casefold() == first_login.casefold()
         )
         out["limit"] = store.approval_limit()
+        out["approval"] = (first or {}).get("id") or ""  # posted back with the final approval (B-654)
     if inv["status"] == FAILED:
         error = (inv.get("error") or "No reason recorded.").strip()
         first, _, details = error.partition("\n")

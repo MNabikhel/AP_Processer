@@ -196,7 +196,7 @@
       <div class="row end">
         <form method="post" action="/review/{{ inv.id }}/final-approve">
           <button class="btn primary sm" type="submit"{% if inv.same %} disabled title="You approved it first (same name or computer login): someone else gives the second approval"{% endif %}>
-            <span class="ms" aria-hidden="true">how_to_reg</span>Final approval</button></form>
+            <span class="ms" aria-hidden="true">how_to_reg</span>Final approval</button><input type="hidden" name="approval" value="{{ inv.approval }}"></form>
         <details class="pop right">
           <summary class="btn sm"><span class="ms" aria-hidden="true">undo</span>Send back</summary>
           <form class="pop-body stack" method="post" action="/review/{{ inv.id }}/send-back">

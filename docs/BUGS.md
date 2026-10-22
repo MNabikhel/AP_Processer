@@ -5997,3 +5997,20 @@ reproduced with a script first, then given a failing test and fixed.
   with none at all, *Nothing waiting for OvisOCR2.*
 - **Test:** `tests/test_sweep_pilot_fixes.py::test_the_reading_tab_says_what_still_waits_for_ovisocr2`
 - **Lesson:** A count narrowed for one reason must not be described as the whole.
+
+#### B-654 · A final approval clicked on a stale page approved a version the approver never saw · medium
+- **Where:** `ap_coder/core/store.py` (`final_approve`), `ap_coder/web/pages/review.py` (`review_final_approve`),
+  `templates/review.html`, `templates/invoice.html`
+- **Symptom:** Bob opened the Second approval tab; meanwhile Anne had the invoice sent back, changed the bank account
+  and the GL accounts, and approved it again; Bob's click on the page he had loaded gave the final approval to the
+  new version, bank account included.
+- **Cause:** `final_approve` compared the first approval with a row it had just read itself; the form posted nothing
+  saying which approval the page showed.
+- **Reproduce:** `sweep2/s12.py`.
+- **Reproduced:** yes
+- **Fix:** both Final approval buttons post the first approval they show (its audit event); approved again since, the
+  approval is refused (*Not done: this invoice was sent back and approved again by Anne since you opened this page
+  … Reload to see the latest version, then give the final approval*). The check and the approval are one
+  transaction. A post without it (an older page) is approved as before.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_a_final_approval_from_a_stale_page_is_refused`
+- **Lesson:** An action on what a page shows must say what it showed.

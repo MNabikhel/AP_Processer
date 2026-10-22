@@ -329,6 +329,10 @@ def fold_text(value: Any) -> Any:
     return "".join(c for c in decomposed if not unicodedata.combining(c)).casefold()
 
 
+class ApprovedAgain(ValueError):
+    """A second approval given on a page drawn before the invoice was sent back and approved again (B-654)."""
+
+
 class DatabaseTooNew(RuntimeError):
     """The database was made by a newer AP Coder: this (older) one never opens it, so it is never downgraded."""
 
@@ -1647,9 +1651,11 @@ class Store:
         """Does this invoice need a second approver (``second_approval_reason``)?"""
         return bool(self.second_approval_reason(coding, limit, unknown_rate=unknown_rate))
 
-    def final_approve(self, invoice_id: int, approver: str, login: str = "") -> None:
+    def final_approve(self, invoice_id: int, approver: str, login: str = "", shown: str | None = None) -> None:
         """The second approval: by someone other than the first approver (another name and, when the
-        dashboard records it, another computer login). The invoice can then be exported."""
+        dashboard records it, another computer login). The invoice can then be exported. ``shown``: the first
+        approval the page showed (its ``approved`` event's id, as the page posts it): approved again since, it is
+        refused (``ApprovedAgain``), as the version now waiting is not the one the approver looked at (B-654)."""
         inv = self.get_invoice(invoice_id)
         if inv is None or inv["status"] != PENDING:
             raise ValueError(f"invoice {invoice_id} is not waiting for a second approval")
@@ -1660,6 +1666,12 @@ class Store:
         if login and first_login and login.casefold() == first_login.casefold():
             raise PermissionError("the second approval must come from another computer login than the first")
         with self._conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")  # checked and approved in one go: no new first approval in between
+            latest = conn.execute(
+                "SELECT MAX(id) FROM events WHERE invoice_id = ? AND action = 'approved'", (invoice_id,)
+            ).fetchone()[0]
+            if shown is not None and str(shown).strip() != str(latest or ""):
+                raise ApprovedAgain(f"invoice {invoice_id} was approved again since the page was opened")
             cur = conn.execute(
                 # Same first approval as checked above: it may have been sent back and re-approved meanwhile.
                 "UPDATE invoices SET status = ?, second_reviewer = ?, second_reviewed_at = ? "

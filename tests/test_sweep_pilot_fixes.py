@@ -173,3 +173,43 @@ def test_the_reading_tab_says_what_still_waits_for_ovisocr2(tmp_path):
                            "read, to check its reading against what AP approved: nothing waits for you.")  # fmt: skip
     status.queue_closed = 0
     assert queue_text(status) == ("", "Nothing waiting for OvisOCR2.")
+
+
+# --- B-654: a final approval clicked on a stale page approved another version ------------------------------------------
+
+
+def test_a_final_approval_from_a_stale_page_is_refused(tmp_path, monkeypatch):
+    import json
+    import re
+
+    from ap_coder.core.store import APPROVED, PENDING, load_sample_setup
+
+    from .conftest import SAMPLE_STEM, SAMPLES
+    from .webclient import client_for, post
+
+    monkeypatch.setenv("AP_REVIEWER", "Sam")
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(store)
+    store.set_setting("approval_limit", "10000")
+    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+    iid = store.add_invoice(tmp_path / "a.pdf", gt, {})
+    store.approve_invoice(iid, gt, "Jane")
+    client = client_for(store)
+
+    def shown(page):
+        form = re.search(rf'action="/review/{iid}/final-approve">(.*?)</form>', page, re.S).group(1)
+        return dict(re.findall(r'<input type="hidden" name="([^"]+)" value="([^"]*)"', form))
+
+    queue_tab, invoice_page = shown(client.get("/review?tab=second").text), shown(client.get(f"/review/{iid}").text)
+    first = next(e for e in store.events(iid) if e["action"] == "approved")
+    assert queue_tab == invoice_page == {"approval": str(first["id"])}
+    # Meanwhile Jane has it sent back, changes the bank account and approves again
+    store.send_back(iid, "Jane", "fix")
+    store.approve_invoice(iid, {**gt, "remit_bank_account": "00099-001-7654321"}, "Jane")
+    answer = post(client, f"/review/{iid}/final-approve", queue_tab).json()
+    assert store.get_invoice(iid)["status"] == PENDING
+    message = client.get(answer["redirect"]).text
+    assert "approved again by Jane since you opened this page" in message and "reload" in message.lower()
+    # The page drawn now gives it
+    post(client, f"/review/{iid}/final-approve", shown(client.get("/review?tab=second").text))
+    assert store.get_invoice(iid)["status"] == APPROVED
