@@ -5831,6 +5831,70 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
   `::test_a_single_correction_or_a_kept_guess_still_warns`, `::test_examples_leave_out_coding_ap_has_moved_away_from`
 - **Lesson:** Two memories of the same decisions must agree on which decision is the latest word.
 
+#### B-602 · A recode of one line silenced the history of the vendor's similar lines · high
+- **Where:** `ap_coder/core/memory.py` (`compare_with_history`, `current`)
+- **Symptom:** laptops recoded to 1500 and confirmed; the laptop batteries (12 approvals to 6010, never recoded) then
+  warned *reviewers coded similar lines from this vendor to GL 1500*, and a battery coded 1500 showed as a match.
+- **Cause:** `current` (B-601) was applied to all the vendor's similar lines pooled together: the confirmed recode of
+  one line dropped the older decisions of every other similar line.
+- **Reproduce:** rows newest first: laptop 1500 accepted, laptop 1500 corrected, 12 × battery 6010, 12 × laptop 6010;
+  compare a battery line.
+- **Reproduced:** yes
+- **Fix:** each line (vendor and description) is put up to date on its own, in `memory.aggregate` (`superseded`),
+  before similar lines are pooled.
+- **Test:** `tests/test_memory_store.py::test_a_recode_confirmed_on_one_line_leaves_similar_lines_their_own_history`
+- **Lesson:** A rule about one line's history must be applied to that line before lines are pooled.
+
+#### B-603 · A line waiting for AP to confirm a recode was still filled in by the vendor's usual account · medium
+- **Where:** `ap_coder/ai/suggest.py` (`suggest_gl`, `_build_memory`)
+- **Symptom:** a slip to 6220 against six approvals of the bearing to 5000: the next bearing was filled in with 6220
+  from *all 5 different lines AP coded for this vendor went to it*, or from other vendors' lines.
+- **Cause:** only this vendor's and other vendors' line sources waited for the confirmation (D-58); the usual account
+  could still code the line, and the slip itself counted as one of the vendor's lines for it.
+- **Reproduce:** the rows above, plus four other lines of the vendor on 6220; suggest for the bearing.
+- **Reproduced:** yes
+- **Fix:** while the vendor's closest line is an unconfirmed recode, no source codes the line; the unconfirmed line
+  does not count toward the usual account.
+- **Test:** `tests/test_coding_no_ai.py::test_a_line_waiting_for_confirmation_is_not_coded_by_any_source`
+- **Lesson:** A hold on a line must hold every source that can fill it, not only the one it was written for.
+
+#### B-604 · Other vendors' evidence was counted in quadratic time · medium
+- **Where:** `ap_coder/ai/suggest.py` (`suggest_gl`, the cross-vendor majority of D-58)
+- **Symptom:** with 50,000 rows from 5,000 vendors, a line like "Freight charges" took about 200 ms instead of 15 ms;
+  6,000 vendors with the same words took most of a second per line.
+- **Cause:** each vendor's closest line was found by scanning all the account's lines once per vendor.
+- **Reproduce:** 6,000 vendors each coding "Freight charges"; time one suggestion.
+- **Reproduced:** yes
+- **Fix:** one pass over the lines keeps each vendor's closest one. On ties the account more vendors agree on now
+  ranks first, so the majority can code the line.
+- **Test:** `tests/test_coding_no_ai.py::test_other_vendors_evidence_is_quick_with_thousands_of_vendors`
+- **Lesson:** Code that runs for every line of every invoice is timed with a memory as big as a real one.
+
+#### B-605 · A recode confirmed by filling in the blank line did not count as confirmed · low
+- **Where:** `ap_coder/core/memory.py` (`aggregate`)
+- **Symptom:** after a reversal was left blank and the clerk filled it in with the new account, the history check
+  still warned against it and the chat model's examples still showed the old account, until a third decision.
+- **Cause:** the confirmation was counted from the newest correction; filling in a blank line is recorded as a
+  correction too (`suggestion_kept`), so it started the count again.
+- **Reproduce:** rows newest first: 1500 corrected (blank proposed), 1500 corrected, 12 × 6010; compare a 1500 line.
+- **Reproduced:** yes
+- **Fix:** decisions in a row for the new account confirm it, whatever their outcome; the count starts at the
+  correction that changed the account.
+- **Test:** `tests/test_memory_store.py::test_a_recode_confirmed_by_filling_in_the_blank_counts`
+- **Lesson:** Test a confirmation with the outcome the app really records, not the one it seems it should.
+
+#### B-606 · A recode left for checking said "Not sure enough" and hid the account AP had approved ten times · low
+- **Where:** `ap_coder/ai/suggest.py` (`suggest_gl`), `ap_coder/ai/offline_coder.py` (`not_sure`)
+- **Symptom:** *Not sure enough to code it (maybe 5000: coded this way 1 time ...): pick the account*, with 5000 the
+  only suggestion; 6220, approved 10 times, appeared nowhere.
+- **Cause:** the old account was merged into the line's history as superseded, so no source offered it.
+- **Reproduce:** rows newest first: 5000 corrected, 10 × 6220 accepted; suggest for the line.
+- **Reproduced:** yes
+- **Fix:** both accounts are suggested, and the line says *AP changed this line from 6220 (approved 10 times) to
+  5000 once: check which is right.*
+- **Test:** `tests/test_coding_no_ai.py::test_a_line_waiting_for_confirmation_offers_both_accounts_and_says_why`
+- **Lesson:** When the app holds back for a person, it shows the person what it is unsure between.
+
 #### Looked at and left (install, launcher and updates)
 
 - **N-251** · A GitHub ZIP unzipped over an older one leaves the files the newer one no longer has (the offline

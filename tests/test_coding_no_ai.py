@@ -119,6 +119,56 @@ def test_a_correction_against_several_approvals_is_shown_until_confirmed(referen
     assert suggest_gl("Bearing 6205-2RS", "Acme", once, reference)[0].auto
 
 
+def _decisions(*rows: tuple[str, str, str, str]) -> list[dict]:
+    """Feedback rows newest first: (vendor, account, description, outcome)."""
+    out = _history(*[(v, gl, d) for v, gl, d, _ in rows])
+    for row, (*_, outcome) in zip(out, rows, strict=True):
+        row["outcome"] = outcome
+    return out
+
+
+def test_a_line_waiting_for_confirmation_is_not_coded_by_any_source(reference):
+    """A slip to 6220 against six approvals of the bearing to 5000: neither the vendor's usual account (its other
+    lines go to 6220) nor other vendors' lines may code it meanwhile, and the slip itself does not count toward the
+    usual account (B-603)."""
+    bearing = "Bearing 6205-2RS"
+    others = ["Hydraulic hose assembly", "Pump rebuild kit", "Valve service call", "Conveyor belt repair"]
+    rows = _decisions(("Acme", "6220", bearing, "corrected"), *[("Acme", "6220", d, "accepted") for d in others],
+                      *[("Acme", "5000", bearing, "accepted")] * 6)  # fmt: skip
+    found = suggest_gl(bearing, "Acme", rows, reference)
+    assert not found[0].auto
+    assert not any("5 different lines" in why for s in found for why in s.reasons)
+    rows = _decisions(("Acme", "6220", bearing, "corrected"), *[("Acme", "5000", bearing, "accepted")] * 6,
+                      *[(f"Other {i}", "6220", bearing + " sealed", "accepted") for i in range(3)])  # fmt: skip
+    assert not suggest_gl(bearing, "Acme", rows, reference)[0].auto
+
+
+def test_a_line_waiting_for_confirmation_offers_both_accounts_and_says_why(reference):
+    """The review screen offers the new account and the one AP approved ten times, and says plainly what happened
+    (B-606)."""
+    from ap_coder.ai.offline_coder import not_sure
+
+    rows = _decisions(("Acme", "5000", "Bearing 6205-2RS", "corrected"),
+                      *[("Acme", "6220", "Bearing 6205-2RS", "accepted")] * 10)  # fmt: skip
+    found = suggest_gl("Bearing 6205-2RS", "Acme", rows, reference)
+    assert [s.gl_code for s in found[:2]] == ["5000", "6220"] and not found[0].auto
+    said = "AP changed this line from 6220 (approved 10 times) to 5000 once: check which is right."
+    assert not_sure(found[0]) == said
+
+
+def test_other_vendors_evidence_is_quick_with_thousands_of_vendors(reference):
+    """Each other vendor's closest line is found in one pass (B-604): 6,000 vendors coding the same words took
+    most of a second per line."""
+    import time
+
+    rows = _history(*[(f"Vendor {i}", "5100" if i % 10 else "6800", "Freight charges") for i in range(6000)])
+    suggest_gl("Freight charges", "Newco", rows, reference)  # the index, built once
+    started = time.perf_counter()
+    top = suggest_gl("Freight charges", "Newco", rows, reference)[0]
+    assert time.perf_counter() - started < 0.3
+    assert (top.gl_code, top.auto) == ("5100", True)
+
+
 def test_the_latest_decision_wins_and_a_recode_elsewhere_holds_old_codes_back(reference):
     feedback = _history(
         ("Acme", "5000", "Bearing 6205-2RS"),  # newest: AP now codes spare parts to materials

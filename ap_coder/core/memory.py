@@ -135,9 +135,7 @@ class Pattern:
     approvals: int = 0
     corrections: int = 0
     last_seen: str = ""
-    newest: int = 1 << 62  # place of its latest decision in the rows (newest first): 0 for the newest of all
-    corrected_at: int | None = None  # place of its latest correction, None if never corrected
-    since_fix: int = 0  # its decisions from its latest correction on, that one included
+    superseded: bool = False  # AP has since recoded this line to another account and confirmed it (``current``)
 
     @property
     def decisions(self) -> int:
@@ -198,9 +196,17 @@ def aggregate(rows: list[dict[str, Any]]) -> list[Pattern]:
     return _AGGREGATED.get(rows, None, lambda: _aggregate(rows))
 
 
+# A correction counts against older decisions once AP has confirmed it: this many decisions in a row for the new
+# account, the correction included, whatever their outcome (filling in a line left blank is recorded as a correction).
+CONFIRMED_FIX = 2
+
+
 def _aggregate(rows: list[dict[str, Any]]) -> list[Pattern]:
     groups: dict[tuple[str, str, str, str], Pattern] = {}
-    for rank, r in enumerate(rows):  # newest first (``Store.feedback_rows``)
+    # Each line's latest account: [account, decisions in a row for it, outcome of the oldest of them, ended by an
+    # older decision for another account].
+    runs: dict[tuple[str, str], list[Any]] = {}
+    for r in rows:  # newest first (``Store.feedback_rows``)
         key = (r["vendor_key"], _normalise(r["description"]), r["final_gl"], r.get("final_cc") or "")
         p = groups.get(key)
         if p is None:
@@ -209,40 +215,28 @@ def _aggregate(rows: list[dict[str, Any]]) -> list[Pattern]:
             )
         if r["outcome"] == CORRECTED:
             p.corrections += 1
-            if p.corrected_at is None:
-                p.corrected_at, p.since_fix = rank, p.decisions
         else:
             p.approvals += 1
-        p.newest = min(p.newest, rank)
         p.last_seen = max(p.last_seen, r.get("created_at") or "")
+        run = runs.get(key[:2])
+        if run is None:
+            runs[key[:2]] = [r["final_gl"], 1, r["outcome"], False]
+        elif not run[3]:
+            if r["final_gl"] == run[0]:
+                run[1], run[2] = run[1] + 1, r["outcome"]
+            else:
+                run[3] = True
+    for key, p in groups.items():
+        gl, n, first, changed = runs[key[:2]]
+        p.superseded = changed and first == CORRECTED and n >= CONFIRMED_FIX and p.gl_code != gl
     return list(groups.values())
 
 
-# A correction counts against older decisions once AP has confirmed it this many times (the correction included).
-CONFIRMED_FIX = 2
-
-
 def current(patterns: list[Pattern]) -> list[Pattern]:
-    """``patterns`` (of one line, or of similar lines) without what AP has moved away from: the patterns of another
-    account whose decisions are all older than the latest correction, once that correction is confirmed
-    (``CONFIRMED_FIX``). Until then they all count: a single correction may be a slip."""
-    fixes = [p for p in patterns if p.corrected_at is not None]
-    if not fixes:
-        return patterns
-    latest = min(fixes, key=lambda p: p.corrected_at or 0)
-    if latest.since_fix < CONFIRMED_FIX:
-        return patterns
-    return [p for p in patterns if p.gl_code == latest.gl_code or p.newest < (latest.corrected_at or 0)]
-
-
-def _current_lines(patterns: list[Pattern]) -> list[Pattern]:
-    by_line: dict[tuple[str, str], list[Pattern]] = defaultdict(list)
-    for p in patterns:
-        by_line[(p.vendor_key, _normalise(p.description))].append(p)
-    return [p for same in by_line.values() for p in current(same)]
-
-
-_CURRENT = RowsCache()
+    """``patterns`` without what AP has moved away from: on each line, the decisions for another account than the
+    one AP changed it to and confirmed with one more decision (``CONFIRMED_FIX``). Until then they all count: a
+    single correction may be a slip. Each line is its own: a recode of the laptops leaves the batteries' history."""
+    return [p for p in patterns if not p.superseded]
 
 
 def detect_vendors(patterns: list[Pattern], document_text: str, vendor_hint: str | None = None) -> set[str]:
@@ -261,7 +255,7 @@ def select_examples(
     max_vendor: int = 25,
     max_similar: int = 15,
 ) -> list[Pattern]:
-    patterns = _CURRENT.get(rows, None, lambda: _current_lines(aggregate(rows)))  # AP moved away: no example
+    patterns = current(aggregate(rows))  # what AP moved away from is no example
     if not patterns:
         return []
     vendors = detect_vendors(patterns, document_text, vendor_hint)

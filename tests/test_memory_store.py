@@ -193,6 +193,37 @@ def test_a_single_correction_or_a_kept_guess_still_warns(ground_truth):
     assert _laptop(fixed, ground_truth, "6010")["status"] == "match"
 
 
+def test_a_recode_confirmed_on_one_line_leaves_similar_lines_their_own_history(ground_truth):
+    """The laptops moved to 1500 and confirmed; the laptop batteries, twelve times 6010, were never recoded: their
+    6010 is still a match and 1500 a conflict (B-602). Each line's recode counts for that line only."""
+    laptop, battery = "Dell Latitude 7450 laptop", "Dell Latitude 7450 laptop battery"
+    rows = [_row("Northwind IT Solutions Inc.", laptop, "1500"),
+            _row("Northwind IT Solutions Inc.", laptop, "1500", outcome=CORRECTED, suggested="6010")]  # fmt: skip
+    rows += [_row("Northwind IT Solutions Inc.", battery, "6010") for _ in range(12)]
+    rows += [_row("Northwind IT Solutions Inc.", laptop, "6010") for _ in range(12)]
+
+    def check(gl):
+        coding = copy.deepcopy(ground_truth)
+        coding["line_items"] = coding["line_items"][:1]
+        coding["line_items"][0].update(description=battery, predicted_gl_code=gl)
+        return compare_with_history(InvoiceCoding.model_validate(coding), rows)[0]
+
+    assert check("6010")["status"] == "match"
+    wrong = check("1500")
+    assert wrong["status"] == "conflict" and wrong["history_gl"] == "6010"
+
+
+def test_a_recode_confirmed_by_filling_in_the_blank_counts(ground_truth):
+    """After a reversal is left blank, the clerk who fills it in with the new account is recorded as a correction
+    (a blank was proposed): that confirms the recode as well as an approval would (B-605)."""
+    rows = [_row("Northwind IT Solutions Inc.", LAPTOP, "1500", outcome=CORRECTED, suggested="UNASSIGNED"),
+            _row("Northwind IT Solutions Inc.", LAPTOP, "1500", outcome=CORRECTED, suggested="6010")]  # fmt: skip
+    rows += [_row("Northwind IT Solutions Inc.", LAPTOP, "6010") for _ in range(12)]
+    assert _laptop(rows, ground_truth, "1500")["status"] == "match"
+    examples = select_examples(rows, "Northwind IT Solutions Inc. invoice")
+    assert [(e.gl_code, e.decisions) for e in examples] == [("1500", 2)]
+
+
 def test_examples_leave_out_coding_ap_has_moved_away_from():
     """The chat model is shown the laptops' new account once AP confirmed it, not the approvals it replaced."""
     rows = [_row("Northwind IT Solutions Inc.", LAPTOP, "1500"),

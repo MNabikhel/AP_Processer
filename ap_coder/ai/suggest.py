@@ -64,6 +64,7 @@ class Suggestion:
     reasons: list[str] = field(default_factory=list)
     source: str = ""  # where the best evidence came from: "vendor", "others", "usual", "master" or "words"
     auto: bool = False  # strong enough to code the line without a person picking it
+    check: str = ""  # why a person must check it, said plainly (a recode not confirmed yet), "" otherwise
 
 
 @dataclass
@@ -125,7 +126,8 @@ def _build_memory(feedback: list[dict[str, Any]], valid: frozenset[str]) -> _Mem
     usual: dict[str, Counter[str]] = defaultdict(Counter)
     newest: dict[str, int] = {}
     for p in patterns:
-        usual[p.vendor_key][p.gl_code] += 1
+        if not p.unconfirmed:  # a slip, maybe: no evidence for the vendor's usual account yet
+            usual[p.vendor_key][p.gl_code] += 1
         newest[p.vendor_key] = min(newest.get(p.vendor_key, p.rank), p.rank)
     index = Index([p.keys for p in patterns], [p.gl_code for p in patterns])
     return _Memory(patterns, index, dict(usual), newest)
@@ -230,6 +232,10 @@ def suggest_gl(
         return moved_away.get(gl, newest) < newest
 
     best_of = {gl: max(hits, key=lambda h: h[0]) for gl, hits in mine.items()}
+    # This vendor's closest line was just recoded against several approvals, unconfirmed: nothing codes the line
+    # until AP confirms it (a slip and a change of mind look the same), and both accounts are offered.
+    closest = max(best_of.values(), key=lambda h: (h[0], -h[1].rank), default=None)
+    held = closest[1] if closest and closest[0] >= VENDOR_AUTO_SIMILARITY and closest[1].unconfirmed else None
     for gl, hits in mine.items():
         decisions = sum(p.decisions for _, p in hits)
         best_sim, best = max(hits, key=lambda h: (h[0], -h[1].rank))
@@ -243,20 +249,28 @@ def suggest_gl(
             f"coded this way {_plural(decisions, 'time')} for similar lines from this vendor", "vendor", auto,
             best.cost_center)  # fmt: skip
 
-    # Each other vendor's evidence for an account: its closest line coded to it.
-    weight = {gl: sum(max(s for s, p in hits if p.vendor_key == k) for k in {p.vendor_key for _, p in hits})
-              for gl, hits in others.items()}  # fmt: skip
+    if held is not None:
+        add(held.was, found[held.gl_code].score - 0.01,
+            f"approved {_plural(held.reversed, 'time')} for this line before AP changed it", "vendor")  # fmt: skip
+
+    # Each other vendor's evidence for an account: its closest line coded to it (one pass over the lines).
+    weight: dict[str, float] = {}
+    for gl, hits in others.items():
+        closest_of: dict[str, float] = {}
+        for s, p in hits:
+            closest_of[p.vendor_key] = max(s, closest_of.get(p.vendor_key, 0.0))
+        weight[gl] = sum(closest_of.values())
+    evidence = sum(weight.values())
     for gl, hits in others.items():
         decisions = sum(p.decisions for _, p in hits)
         vendors = len({p.vendor_key for _, p in hits})
         best_sim, best = max(hits, key=lambda h: (h[0], h[1].decisions))
         # No other vendor coded similar lines to another account, or several agree on this one by far.
-        agreed = len(weight) == 1 or (
-            vendors >= OTHERS_AUTO_VENDORS and weight[gl] >= OTHERS_AUTO_SHARE * sum(weight.values())
-        )  # fmt: skip
+        agreed = len(weight) == 1 or (vendors >= OTHERS_AUTO_VENDORS and weight[gl] >= OTHERS_AUTO_SHARE * evidence)
         auto = (best_sim >= OTHERS_AUTO_SIMILARITY and agreed and not stale(gl, min(p.rank for _, p in hits))
                 and not best.unconfirmed)  # fmt: skip
-        add(gl, 0.35 + 0.3 * best_sim + 0.02 * min(decisions, 5),
+        # As alike and as often: the account more other vendors agree on comes first.
+        add(gl, 0.35 + 0.3 * best_sim + 0.02 * min(decisions, 5) + 0.01 * weight[gl] / evidence,
             f"used for similar lines from {_plural(vendors, 'other vendor')}", "others", auto,
             best.cost_center)  # fmt: skip
 
@@ -285,5 +299,10 @@ def suggest_gl(
     # own lines outrank its usual account, which outranks other vendors' lines.
     top = ranked[0]
     level = strong.get(top.gl_code)
-    top.auto = level is not None and not any(strong.get(s.gl_code, -1) >= level for s in ranked[1:])
+    top.auto = held is None and level is not None and not any(strong.get(s.gl_code, -1) >= level for s in ranked[1:])
+    if held is not None:
+        found[held.gl_code].check = (
+            f"AP changed this line from {held.was} (approved {_plural(held.reversed, 'time')}) to {held.gl_code} "
+            "once: check which is right"
+        )  # fmt: skip
     return [s for s in ranked if s.score >= 0.4 * top.score][:limit]

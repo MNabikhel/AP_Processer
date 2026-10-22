@@ -63,13 +63,17 @@ moved similar lines away from an account (for any vendor), that account is not f
 may be out of date. It is still suggested.
 
 A correction that goes against 5 or more approvals in a row of the same line is not filled in by itself on the
-next invoice: it is suggested, and filled in once AP has confirmed it on one more invoice. A slip (the wrong
-account picked once) and a change of mind look the same until then, and a slip filled in again on every later
-invoice is the most common wrong account on the realistic benchmark.
+next invoice, by any source (the vendor's usual account and other vendors' lines included), and it does not count
+toward the vendor's usual account: both accounts are suggested and the line says *AP changed this line from 6220
+(approved 10 times) to 5000 once: check which is right.* Once AP has confirmed it on one more invoice it is filled
+in. A slip (the wrong account picked once) and a change of mind look the same until then, and a slip filled in
+again on every later invoice is the most common wrong account on the realistic benchmark.
 
 The check *reviewers coded similar lines from this vendor to GL ...* and the examples of AP's coding shown to the
-local chat model follow the same rule (`memory.current`): once a correction is confirmed by one more decision, the
-older decisions for another account no longer count (B-601). Before, they counted forever: after twelve approvals,
+local chat model follow the same rule (`memory.current`): once a correction is confirmed by one more decision for
+the new account (whatever its outcome: filling in a line left blank is recorded as a correction), the older
+decisions for another account on that line no longer count (B-601, B-605). Each line is its own: recoding the
+laptops leaves the batteries' history as it was (B-602). Before, they counted forever: after twelve approvals,
 a recode warned on about fifty more lines. A single correction still counts as one vote among the older ones, so
 a slip still warns.
 
@@ -193,11 +197,11 @@ the default run and `--realistic`.
 
 | run | lines | accuracy | precision | coverage | wrong |
 |---|---:|---:|---:|---:|---:|
-| default, seed 31 | 2,191 | 96.4% → **96.4%** | 99.7% → **99.7%** | 96.6% → **96.6%** | 6 → 6 |
+| default, seed 31 | 2,191 | 96.4% → **96.3%** | 99.7% → **99.7%** | 96.6% → **96.6%** | 6 → 6 |
 | default, seed 32 | 2,273 | 95.8% → **95.7%** | 99.5% → **99.5%** | 96.3% → **96.2%** | 11 → 11 |
 | default, seed 33 | 2,235 | 96.1% → **95.9%** | 99.7% → **99.7%** | 96.4% → **96.2%** | 6 → 6 |
-| default, seed 34 | 2,199 | 95.7% → **95.7%** | 99.8% → **99.8%** | 95.9% → **95.9%** | 5 → 5 |
-| realistic, seed 31 | 2,191 | 92.9% → **93.1%** | 96.5% → **97.3%** | 96.3% → **95.6%** | 73 → 56 |
+| default, seed 34 | 2,199 | 95.7% → **95.6%** | 99.8% → **99.8%** | 95.9% → **95.9%** | 5 → 5 |
+| realistic, seed 31 | 2,191 | 92.9% → **93.1%** | 96.5% → **97.4%** | 96.3% → **95.5%** | 73 → 54 |
 | realistic, seed 32 | 2,273 | 92.7% → **92.9%** | 96.6% → **97.4%** | 96.0% → **95.3%** | 75 → 56 |
 | realistic, seed 33 | 2,235 | 93.3% → **94.0%** | 97.5% → **98.3%** | 95.8% → **95.6%** | 54 → 36 |
 | realistic, seed 34 | 2,199 | 90.0% → **91.8%** | 95.7% → **96.8%** | 94.1% → **94.8%** | 90 → 66 |
@@ -206,19 +210,19 @@ The four fresh runs together (8,898 lines each way), split:
 
 | lines | default: accuracy | default: wrong | realistic: count | realistic: accuracy | realistic: precision | realistic: wrong |
 |---|---:|---:|---:|---:|---:|---:|
-| all | 96.0% → **95.9%** | 28 → 28 | 8,898 | 92.2% → **92.9%** | 96.6% → **97.5%** | 292 → 214 |
+| all | 96.0% → **95.9%** | 28 → 28 | 8,898 | 92.2% → **92.9%** | 96.6% → **97.5%** | 292 → 212 |
 | first invoice from a vendor | 44.6% → **44.6%** | 5 → 5 | 296 | 74.0% → **74.3%** | 93.6% → **93.6%** | 15 → 15 |
-| later invoices | 97.8% → **97.7%** | 23 → 23 | 8,602 | 92.9% → **93.6%** | 96.7% → **97.6%** | 277 → 199 |
-| this vendor, same words | 99.3% → **99.2%** | 16 → 16 | 7,253 | 93.5% → **94.2%** | 96.5% → **97.4%** | 249 → 181 |
+| later invoices | 97.8% → **97.7%** | 23 → 23 | 8,602 | 92.9% → **93.6%** | 96.7% → **97.6%** | 277 → 197 |
+| this vendor, same words | 99.3% → **99.2%** | 16 → 16 | 7,253 | 93.5% → **94.2%** | 96.5% → **97.5%** | 249 → 179 |
 | other vendors only | 66.3% → **66.3%** | 8 → 8 | 308 | 63.6% → **65.9%** | 94.2% → **94.4%** | 12 → 12 |
-| spare parts after AP recoded them | 83.9% → **82.3%** | 21 → 21 | 378 | 78.8% → **78.6%** | 90.8% → **91.7%** | 30 → 27 |
+| spare parts after AP recoded them | 83.9% → **81.5%** | 21 → 21 | 378 | 78.8% → **78.0%** | 90.8% → **91.3%** | 30 → 28 |
 | the split maintenance contract | - | - | 236 | 37.3% → **36.9%** | 48.6% → **48.6%** | 93 → 92 |
 
-The warning *reviewers coded similar lines ... to GL*: false alarms on a right account 20 → 13 (default, all after
-the spare parts' recode) and 49 → 51 (realistic). On the realistic run it caught 139 of 405 wrong accounts before
-and 79 of 333 after: most of the ones it caught were a slip filled in again, which is now left for AP instead.
+The warning *reviewers coded similar lines ... to GL*: false alarms on a right account 20 → 9 (default, all after
+the spare parts' recode) and 49 → 50 (realistic). On the realistic run it caught 139 of 405 wrong accounts before
+and 75 of 330 after: most of the ones it caught were a slip filled in again, which is now left for AP instead.
 
-What the realistic run shows: a quarter fewer wrong accounts filled in (292 → 214), with accuracy up 0.7 points.
+What the realistic run shows: a quarter fewer wrong accounts filled in (292 → 212), with accuracy up 0.7 points.
 On the default run, which has no mistakes, nothing changes but the first spare part after AP recoded it, now
 checked once by a person (accuracy 0.1 point lower, no wrong account more). Of the wrong accounts left on the
 realistic run, most are the split maintenance contract (92: about half its lines; the words cannot tell) and
