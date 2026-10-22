@@ -6261,3 +6261,15 @@ reproduced with a script first, then given a failing test and fixed.
   from a remit-to or "payable to" block (the vendor's own address, which can still be the supplier's).
 - **Test:** `tests/test_sweep_pilot_fixes.py::test_a_bill_to_takes_a_province_only_from_its_own_block`
 - **Lesson:** A label's value is near the label.
+
+#### B-673 · A ship-to outside Canada was said to be "no ship-to or bill-to printed" · low
+- **Where:** `ap_coder/coding/tax.py` (`check_taxes`)
+- **Symptom:** the demo's Cascade invoice, shipped to Seattle, said *… Ontario (your province in Settings: no
+  ship-to or bill-to printed) …*.
+- **Cause:** B-651's wording followed the place of supply's source, which falls back to our province for a ship-to
+  outside Canada as for one not printed.
+- **Reproduce:** check the taxes of an invoice with a ship-to outside Canada.
+- **Reproduced:** yes (found by the review of the sweep fixes)
+- **Fix:** it says *(the ship-to printed is outside Canada: checked against your province in Settings)*.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_a_ship_to_outside_canada_is_not_said_to_be_missing`
+- **Lesson:** Say why a fallback was taken, not only that it was.

@@ -642,3 +642,20 @@ def test_a_bill_to_takes_a_province_only_from_its_own_block():
     assert addresses(far) == ("ON", "", "")  # far below its label: the letterhead's or footer's, not the bill-to's
     near = "Acme Supply\n1 Main St, Toronto ON M5V 1A1\nBill to:\nFabrikam\n500 Front St\nHalifax NS B3H 1A1\n"
     assert addresses(near) == ("ON", "", "NS")
+
+
+# --- B-673: a ship-to outside Canada was said to be "no ship-to or bill-to printed" -----------------------------------
+
+
+def test_a_ship_to_outside_canada_is_not_said_to_be_missing():
+    from ap_coder.coding.tax import OUTSIDE_CANADA, TaxSetup, check_taxes
+    from ap_coder.core.schema import TaxLine
+
+    coding = InvoiceCoding.model_validate({**_blank_invoice(), "supplier_province": "AB", "tax_total": 5.0,
+                                           "grand_total": 105.0, "ship_to_province": OUTSIDE_CANADA})  # fmt: skip
+    coding.tax_lines = [TaxLine(tax_type="GST", province="", rate=0.05, taxable_amount=100.0, tax_amount=5.0)]
+    setup = TaxSetup.default()
+    setup.our_province = "ON"
+    messages = [f.message for f in check_taxes(coding, setup) if "Ontario" in f.message]
+    assert messages and not any("no ship-to or bill-to printed" in m for m in messages), messages
+    assert all("the ship-to printed is outside Canada" in m for m in messages), messages

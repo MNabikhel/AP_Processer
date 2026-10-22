@@ -363,6 +363,9 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
         SUPPLY_OURS: " (your province in Settings: no ship-to or bill-to printed)",
         SUPPLY_VENDOR: " (only the vendor's province: no ship-to or bill-to printed)",
     }.get(source, "")
+    if assumed and (getattr(coding, "ship_to_province", "") or "") == OUTSIDE_CANADA:  # printed, not missing (B-673)
+        where = "your province in Settings" if source == SUPPLY_OURS else "only the vendor's province"
+        assumed = f" (the ship-to printed is outside Canada: checked against {where})"
     tax_lines = list(coding.tax_lines)
     # Canadian taxes actually charged (a printed "GST 0.00" on an exempt invoice is not a charge).
     charged = {tl.tax_type for tl in tax_lines if abs(tl.tax_amount) > 0.004 and tl.tax_type != "OTHER"}
