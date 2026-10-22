@@ -6,7 +6,9 @@ over it; boxes and words are fractions of the page (0..1, origin top-left), page
 viewer's 100% is the page's real size whatever resolution the picture was drawn at.
 
 Pictures are cached on the file's path, size and time (and the scale asked for): a page is drawn once however often it
-is asked for. A page zoomed in is asked for at scale 2 or 3 (240 or 360 dpi, B-580), so it stays sharp.
+is asked for, the pictures kept being at most ``PICTURE_CACHE_BYTES`` in all (the least recently used go first). A
+page zoomed in is asked for at scale 2 or 3 (240 or 360 dpi, B-580), so it stays sharp; a scan (a picture, or a PDF
+page that is one picture) is never drawn sharper than it was scanned (B-594).
 """
 
 from __future__ import annotations
@@ -14,9 +16,11 @@ from __future__ import annotations
 import functools
 import io
 import math
-from collections.abc import Iterable, Mapping
+import threading
+from collections import OrderedDict
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from ap_coder.capture.types import MISSING, STATUSES, Box, FieldResult, LineReading
 
@@ -29,6 +33,8 @@ MAX_SIDE = 2400  # pixels: a page is never drawn bigger than this at scale 1, wh
 SCALES = (1, 2, 3)  # the picture at 1x, 2x or 3x the dpi: the viewer asks for a sharper one when zoomed in
 SCALE_SIDES = {1: 1.0, 2: 2.0, 3: 2.5}  # the cap at each scale, as a multiple of MAX_SIDE: 2,400, 4,800, 6,000 px
 SCREEN_DPI = 96
+PICTURE_CACHE_BYTES = 96 * 1024 * 1024  # the pictures kept, in all: a scan at scale 3 alone can be 10-15 MB
+SCAN_COVER = 0.9  # a PDF page whose one picture covers this much of it is a scan
 
 # The order of the field list: as an invoice reads, header first, then the money, then the terms.
 FIELD_ORDER = (
@@ -101,8 +107,78 @@ def page_png(path: str | Path, number: int, scale: int = 1) -> bytes:
     return _png_cached(*_stamp(p), int(number), clean_scale(scale))
 
 
-@functools.lru_cache(maxsize=32)
-def _png_cached(path: str, _mtime: int, _size: int, number: int, scale: int = 1) -> bytes:
+class CacheInfo(NamedTuple):
+    hits: int
+    misses: int
+    currsize: int
+    bytes: int
+    max_bytes: int
+
+
+class _PictureCache:
+    """The pictures drawn, by their arguments, the most recently used kept up to ``max_bytes`` in all (B-594: 32 of
+    them at any size could be 380 MB). The newest is always kept, however big. Safe across the server's threads; two
+    threads asking for the same new picture may both draw it."""
+
+    def __init__(self, draw: Callable[..., bytes], max_bytes: int) -> None:
+        self.draw = draw
+        self.max_bytes = max_bytes
+        self._kept: OrderedDict[tuple[Any, ...], bytes] = OrderedDict()
+        self._bytes = self._hits = self._misses = 0
+        self._lock = threading.Lock()
+        functools.update_wrapper(self, draw)
+
+    def __call__(self, *key: Any) -> bytes:
+        with self._lock:
+            if key in self._kept:
+                self._kept.move_to_end(key)
+                self._hits += 1
+                return self._kept[key]
+        value = self.draw(*key)
+        with self._lock:
+            self._misses += 1
+            if key not in self._kept:
+                self._kept[key] = value
+                self._bytes += len(value)
+            while self._bytes > self.max_bytes and len(self._kept) > 1:
+                _, old = self._kept.popitem(last=False)
+                self._bytes -= len(old)
+        return value
+
+    def cache_info(self) -> CacheInfo:
+        with self._lock:
+            return CacheInfo(self._hits, self._misses, len(self._kept), self._bytes, self.max_bytes)
+
+    def cache_clear(self) -> None:
+        with self._lock:
+            self._kept.clear()
+            self._bytes = self._hits = self._misses = 0
+
+
+def _scan_dpi(page: Any) -> float:
+    """The resolution a PDF page was scanned at: its one picture's pixels over the inches it covers, when that picture
+    covers the page (a scanner's PDF, with or without a text layer); else 0 (a page of text and drawings)."""
+    try:
+        images = page.get_images(full=True)
+        if len(images) != 1:
+            return 0.0
+        xref, _, width, height = images[0][:4]
+        rects = page.get_image_rects(xref)
+    except Exception:  # noqa: BLE001 - an odd PDF is drawn as any other page
+        return 0.0
+    page_area = page.rect.width * page.rect.height
+    if len(rects) != 1 or not page_area or not width or not height:
+        return 0.0
+    shown = rects[0] & page.rect
+    if shown.is_empty or shown.width * shown.height < SCAN_COVER * page_area:
+        return 0.0
+    # the picture may be turned on the page: its longer side goes with the longer side it covers
+    px = sorted((width, height))
+    inches = sorted((rects[0].width / 72, rects[0].height / 72))
+    return max(px[0] / inches[0], px[1] / inches[1]) if inches[0] > 0 else 0.0
+
+
+def _draw_png(path: str, _mtime: int, _size: int, number: int, scale: int = 1) -> bytes:
     dpi, cap = DPI * scale, max_side(scale)
     if Path(path).suffix.lower() == PDF:
         import pymupdf
@@ -111,6 +187,9 @@ def _png_cached(path: str, _mtime: int, _size: int, number: int, scale: int = 1)
             if number > doc.page_count:
                 raise IndexError(number)
             page = doc[number - 1]
+            scanned = _scan_dpi(page)
+            if scanned:  # a scan has no more detail than it was scanned with: never drawn sharper (B-594)
+                dpi = min(dpi, max(DPI, scanned))
             rect = page.rect  # points, after the page's own rotation
             zoom = min(dpi / 72, cap / max(rect.width, rect.height, 1))
             return page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False).tobytes("png")
@@ -118,6 +197,9 @@ def _png_cached(path: str, _mtime: int, _size: int, number: int, scale: int = 1)
         if index == number:
             return png
     raise IndexError(number)
+
+
+_png_cached = _PictureCache(_draw_png, PICTURE_CACHE_BYTES)
 
 
 def _image_pages(path: str, sizes_only: bool = False, dpi: float = 0, cap: int = 0) -> list[tuple[float, float, bytes]]:

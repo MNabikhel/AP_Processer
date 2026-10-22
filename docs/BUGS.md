@@ -5860,7 +5860,8 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
 - **Fix:** zoom from 50% to 400% (- / % / +, Fit width, Fit page, Ctrl + wheel and pinch around the pointer, the keys
   + - 0 9), the Hand (its button, H, Space held, the middle button) to drag the page, Rotate (on screen only), Page Up
   / Page Down; the page is asked for at `?scale=2` or `3` (240 or 360 dpi, capped at 4,800 and 6,000 px, a scan never
-  enlarged) when zoomed in, loaded aside and swapped in (D-57).
+  drawn sharper than it was scanned: a picture, or a scanned PDF's page since B-594) when zoomed in, loaded aside and
+  swapped in (D-57).
 - **Test:** `tests/test_web_viewer.py`, `tests/test_web_document.py::test_a_pdf_page_is_drawn_two_and_three_times_as_sharp`
   and the tests after it
 - **Lesson:** A document viewer is judged against the PDF reader on the same laptop: zoom where the pointer is, a sharp
@@ -5940,6 +5941,23 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
 - **Test:** `tests/test_web_picker.py::test_in_a_browser_an_open_list_follows_its_box_and_closes_once_the_box_scrolls_away`,
   `::test_in_a_browser_a_resize_keeps_the_open_list_on_the_screen_above_the_approve_bar`
 - **Lesson:** A layer drawn apart from what it belongs to must follow it, and go when it goes.
+
+#### B-594 · A scanned PDF's page was drawn beyond the scan at 360 dpi, and the pictures kept could reach 380 MB · low-medium
+- **Where:** `ap_coder/web/document.py` (`_png_cached`, now `_draw_png` and `_PictureCache`)
+- **Symptom:** zoomed in, a 300 dpi scanned PDF was drawn at 360 dpi (3,060 x 3,960 px, 12 MB of PNG) for no more
+  detail than the scan has; the pictures kept were 32 whatever their size, about 380 MB of a pilot laptop's memory
+  after a morning of scans zoomed in. B-580 and D-57 said a scan is never enlarged: only true of pictures (PNG, JPEG,
+  TIFF), not of a PDF holding one.
+- **Cause:** a PDF page was always drawn at `DPI x scale`; the cache was `lru_cache(maxsize=32)`, counted in pictures.
+- **Reproduce:** a PDF of one 2,550 x 3,300 px picture on a letter page: `page_png(path, 1, 3)` is 3,060 x 3,960 px.
+- **Reproduced:** yes
+- **Fix:** a PDF page that is one picture covering it (a scanner's PDF, text layer or not) is drawn at most at that
+  picture's own resolution (its pixels over the inches it covers), never below 120 dpi; the pictures are kept up to
+  96 MB in all (`PICTURE_CACHE_BYTES`), the least recently used going first.
+- **Test:** `tests/test_web_document.py::test_a_scanned_pdf_page_is_never_drawn_sharper_than_it_was_scanned`,
+  `::test_the_pictures_kept_are_bounded_by_their_size_in_bytes`
+- **Lesson:** A cache of things whose size varies by a hundred times is bounded in bytes, not in count; and a rule
+  said of "a scan" must hold for every way a scan comes in.
 
 #### B-595 · The vendor typed was replaced by the vendor under the mouse when Tab was pressed · low
 - **Where:** `ap_coder/web/static/js/picker.js` (the list's `mousemove`, `key` for Tab)

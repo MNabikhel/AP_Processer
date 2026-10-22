@@ -146,6 +146,70 @@ def test_a_scan_is_never_enlarged_beyond_its_own_resolution(tmp_path):
     assert png_size(page_png(path, 1, scale=3)) == (1700, 2200)
 
 
+def _scanned_pdf(path: Path, dpi: int, inches: tuple[float, float] = (4, 5), logo: bool = False) -> Path:
+    """A PDF whose page is one picture scanned at ``dpi`` covering the whole page (a scanner's PDF); ``logo``: a small
+    picture on a page of text instead (not a scan)."""
+    import pymupdf
+
+    picture = Image.new("L", (round(inches[0] * dpi), round(inches[1] * dpi)), 235)
+    buf = io.BytesIO()
+    picture.save(buf, "JPEG", quality=80)
+    with pymupdf.open() as doc:
+        page = doc.new_page(width=inches[0] * 72, height=inches[1] * 72)
+        if logo:
+            page.insert_text((20, 200), "INVOICE 1001  Total 105.00", fontsize=11)
+            page.insert_image(pymupdf.Rect(20, 20, 92, 56), stream=buf.getvalue())
+        else:
+            page.insert_image(page.rect, stream=buf.getvalue())
+        doc.save(path)
+    return path
+
+
+def _near(size: tuple[int, int], expected: tuple[int, int]) -> bool:
+    return all(abs(a - b) <= 1 for a, b in zip(size, expected, strict=True))
+
+
+def test_a_scanned_pdf_page_is_never_drawn_sharper_than_it_was_scanned(tmp_path):
+    """B-594: a scanned PDF's page was drawn at 360 dpi at scale 3 whatever it was scanned at: a 300 dpi scan made
+    a picture bigger than the scan, for no more detail."""
+    scan = _scanned_pdf(tmp_path / "scan300.pdf", 300)  # 4 x 5 in at 300 dpi: 1200 x 1500 px
+    assert _near(png_size(page_png(scan, 1, scale=1)), (480, 600))  # 120 dpi, as before
+    assert _near(png_size(page_png(scan, 1, scale=2)), (960, 1200))  # 240 dpi: less than the scan
+    assert _near(png_size(page_png(scan, 1, scale=3)), (1200, 1500))  # 300 dpi, the scan's own, not 360
+    low = _scanned_pdf(tmp_path / "scan200.pdf", 200)  # 800 x 1000 px
+    assert _near(png_size(page_png(low, 1, scale=2)), (800, 1000))
+    assert _near(png_size(page_png(low, 1, scale=3)), (800, 1000))
+    poor = _scanned_pdf(tmp_path / "scan72.pdf", 72)  # a poor scan is still drawn at 120 dpi at scale 1
+    assert _near(png_size(page_png(poor, 1, scale=1)), (480, 600))
+    # A page of text with a small picture on it is no scan: drawn at 360 dpi.
+    text = _scanned_pdf(tmp_path / "logo.pdf", 300, logo=True)
+    assert _near(png_size(page_png(text, 1, scale=3)), (1440, 1800))
+
+
+def test_the_pictures_kept_are_bounded_by_their_size_in_bytes(monkeypatch):
+    """B-594: 32 pictures were kept whatever their size: 32 scans at scale 3 were about 380 MB."""
+    assert document.PICTURE_CACHE_BYTES == 96 * 1024 * 1024
+    one = page_png(SAMPLE, 1)
+    two = page_png(SAMPLE, 2)
+    info = document._png_cached.cache_info()
+    assert info.bytes == len(one) + len(two) and info.currsize == 2
+    monkeypatch.setattr(document._png_cached, "max_bytes", len(one) + len(two))
+    page_png(SAMPLE, 1)  # used again: now the newest
+    sharp = page_png(SAMPLE, 1, scale=2)  # the oldest (page 2) goes first
+    assert len(sharp) > len(two)
+    info = document._png_cached.cache_info()
+    assert info.bytes <= info.max_bytes or info.currsize == 1, info
+    misses = info.misses
+    page_png(SAMPLE, 2)  # dropped: drawn again
+    assert document._png_cached.cache_info().misses == misses + 1
+    page_png(SAMPLE, 2)
+    assert document._png_cached.cache_info().misses == misses + 1  # and kept
+    # A picture bigger than the whole room is still given, and the newest is kept
+    monkeypatch.setattr(document._png_cached, "max_bytes", 10)
+    assert page_png(SAMPLE, 1, scale=3)
+    assert document._png_cached.cache_info().currsize == 1
+
+
 # --- Words ------------------------------------------------------------------------------------------------------------
 
 
