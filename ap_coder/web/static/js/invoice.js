@@ -63,7 +63,7 @@ function formData(extra) {
   return body;
 }
 
-function applySections(answer) {
+function applySections(answer, posted = null) {
   for (const [name, html] of Object.entries(answer.sections || {})) {
     const el = document.querySelector(`[data-live="${name}"]`);
     if (!el) continue;
@@ -80,8 +80,12 @@ function applySections(answer) {
     }
   }
   if (approveButton) approveButton.disabled = !answer.allow;
+  // the lines' tax codes where the invoice is supplied now, and the lines the Tax check points at (D-64)
+  if (Array.isArray(answer.tax_codes)) setTaxCodeOptions(answer.tax_codes, answer.tax_code_labels);
+  if (answer.tax_marks && typeof answer.tax_marks === "object") showTaxMarks(answer.tax_marks);
   // the accounts of the vendor now in the vendor field: the account lists' "Used for this vendor" (B-596)
   if (Array.isArray(answer.vendor_accounts)) vendorAccounts = answer.vendor_accounts;
+  if (answer.header) applyHeader(answer.header, posted);
   showMailLanguage();
 }
 
@@ -96,8 +100,9 @@ async function check() {
   running = (async () => {
     do {
       queued = false;
-      const answer = await post(`${base}/check`, formData());
-      if (answer.ok) applySections(answer);
+      const body = formData();
+      const answer = await post(`${base}/check`, body);
+      if (answer.ok) applySections(answer, body);
       else if (answer.error) toast({ text: answer.error, tone: "err" }, 9000);
     } while (queued);
   })();
@@ -111,7 +116,7 @@ async function check() {
 }
 
 function soon(ms = 450) {
-  followTicks(); // every edit comes here: a tax line's taxable follows its ticked lines (B-610)
+  followTicks(); // every edit comes here: a tax line's taxable follows the lines whose tax code carries it (B-610)
   clearTimeout(timer);
   timer = setTimeout(check, ms);
 }
@@ -144,6 +149,11 @@ if (form) {
     if (e.target.name !== "mail_lang") dropUndo();
     headerEdited(e.target);
     if (e.target.name === "mail_lang") return showMailLanguage();
+    if (e.target.matches("select[data-tax-code]")) confirmTaxCode(e.target.closest("tr")); // theirs now (B-713)
+    if (e.target === vendorInput) vendorChanged(); // the vendor list's tax numbers, with Undo (D-65)
+    if (e.target.name === "pay_from_account" && payFromFor) {  // picked: kept while the currency stays (D-66)
+      payFromFor.value = (input("currency")?.value || "CAD").trim().toUpperCase() || "CAD";
+    }
     if (e.target.name === "line_gl") {  // a guessed account the reviewer picked again is no longer a guess
       const cell = e.target.closest(".is-guess");
       if (cell) { cell.classList.remove("is-guess"); cell.querySelector(".inv-guess")?.remove(); }
@@ -249,6 +259,7 @@ function setLines(html) {
   }
   fillSplitLines();
   lastSums = tickedSums(); // the lines drawn again (a split): what the tax lines follow from now on
+  showTaxMarks(taxMarks);
 }
 
 async function gridAction(url, extra, button, undoText = "") {
@@ -471,7 +482,9 @@ function showVendorMatch() {
     else vendorLine("verified", "ok", `In the vendor list${id}`);
     return;
   }
-  const bn = businessNumber(input("gst_hst_registration_number")?.value);
+  // (a number filled from the vendor list is that vendor's: it says nothing about who sent the invoice)
+  const filled = "gst_hst_registration_number" in (fromVendor().fields || {});
+  const bn = filled ? "" : businessNumber(input("gst_hst_registration_number")?.value);
   const byNumber = bn ? vendors.list.find((v) => businessNumber(v.gst) === bn) : null;
   if (byNumber) {
     vendorLine("info", "warn", `The GST/HST number printed is ${byNumber.name}'s.`, {
@@ -492,7 +505,134 @@ function showVendorMatch() {
 function setVendor(name) {
   vendorInput.value = name;
   showVendorMatch();
+  vendorChanged();
   soon(0);
+}
+
+/* ---------- The vendor list's tax numbers (D-65) ----------
+   A vendor of the vendor list fills each blank GST/HST, QST and PST number with its own, and says so under the field
+   ("From the vendor list — not printed on the invoice"); a number filled from the vendor follows it when the vendor
+   changes. A number read from the invoice or typed is never touched. The server applies the same rule on every check
+   (invoice_view.fill_from_vendor), so a vendor typed in is filled too; here it is at once, with Undo. */
+
+const TAX_FIELDS = { gst_hst_registration_number: "gst", qst_registration_number: "qst", pst_registration_number: "pst" };
+const fromVendorBox = document.querySelector("input[data-from-vendor]");
+const payFromFor = document.querySelector("input[data-pay-from-for]");
+
+function fromVendor() {
+  try {
+    const state = JSON.parse(fromVendorBox?.value || "{}");
+    return state && typeof state === "object" ? state : {};
+  } catch {
+    return {};
+  }
+}
+
+/** The fields still holding the number filled from the vendor (one changed or cleared since is the reviewer's). */
+function stillFilled(state) {
+  const fields = {};
+  for (const [name, value] of Object.entries(state.fields || {})) {
+    if (name in TAX_FIELDS && value && (input(name)?.value || "").trim() === value) fields[name] = value;
+  }
+  return fields;
+}
+
+function setFromVendor(state) {
+  if (fromVendorBox) fromVendorBox.value = JSON.stringify(state);
+  showFromVendor();
+}
+
+function showFromVendor() {
+  const fields = fromVendor().fields || {};
+  document.querySelectorAll(".inv-details [data-from-vendor-note]").forEach((note) => {
+    const field = note.closest("[data-field]");
+    note.hidden = !(field?.dataset.field in fields);
+    // how sure the reading was says nothing of a number that came from the vendor list
+    const sure = field?.querySelector(".lbl > .inv-sure");
+    if (sure) sure.hidden = !note.hidden;
+  });
+}
+
+let vendorBefore = vendorInput?.value ?? ""; // the vendor as it was before the change being made (Undo's)
+
+/** The vendor field changed (picked, or left after typing): fill from the vendor list, with Undo. */
+function vendorChanged() {
+  if (!vendorInput || !fromVendorBox) return;
+  const key = vendorKey(vendorInput.value);
+  const state = fromVendor();
+  const fields = stillFilled(state);
+  const before = vendorBefore;
+  vendorBefore = vendorInput.value;
+  if ("vendor" in state && state.vendor === key) return setFromVendor({ vendor: key, fields });
+  // Undo puts back the vendor with its numbers, together (B-682): the screen as it was before the vendor changed.
+  const snap = snapshot();
+  snap.header = snap.header.map(([n, v]) => [n, n === "vendor_name" ? before : v]);
+  const found = key ? vendors.list.find((v) => (v.key ?? vendorKey(v.name)) === key) : null;
+  const absent = absentList();
+  // only a number the reading left blank (not printed): one the clerk cleared is the clerk's to type (B-688)
+  let unread = null;
+  try {
+    unread = JSON.parse(fromVendorBox.dataset.unread || "null");
+  } catch {
+    unread = null;
+  }
+  const changed = [];
+  for (const [name, column] of Object.entries(TAX_FIELDS)) {
+    const el = input(name);
+    if (!el) continue;
+    const number = String(found?.[column] || "").trim();
+    const current = el.value.trim();
+    if (name in fields) {
+      if (number !== current) {
+        el.value = number;
+        changed.push(name);
+      }
+      if (number) fields[name] = number;
+      else delete fields[name];
+    } else if (!current && number && !absent.includes(name) && (!Array.isArray(unread) || unread.includes(name))) {
+      el.value = fields[name] = number;
+      changed.push(name);
+    }
+  }
+  setFromVendor({ vendor: key, fields });
+  if (!changed.length) return;
+  showVendorMatch();
+  for (const name of changed) viewer?.setEdited(name, input(name).value.trim(), false);
+  offerUndo({ text: `${changed.length === 1 ? "Tax number" : "Tax numbers"} filled from the vendor list.`, tone: "info", icon: "menu_book" }, snap);
+}
+
+
+/** What the server filled in (the vendor list's numbers, the default Pay from account) and the details its checks are
+    about (amber, with a note), after a check. A value is put in only where the box still holds what was sent. */
+function applyHeader(header, posted) {
+  const sent = (name) => (posted ? posted.get(name) ?? "" : null);
+  for (const [name, value] of Object.entries(header.values || {})) {
+    const el = input(name);
+    if (!el || (sent(name) !== null && el.value !== sent(name))) continue;
+    el.value = value;
+    if (name in TAX_FIELDS) viewer?.setEdited(name, value.trim(), false);
+  }
+  if (fromVendorBox && header.from_vendor && (sent("from_vendor") === null || fromVendorBox.value === sent("from_vendor"))) {
+    fromVendorBox.value = JSON.stringify(header.from_vendor);
+  }
+  if (payFromFor && typeof header.pay_from_for === "string" && (sent("pay_from_for") === null || payFromFor.value === sent("pay_from_for"))) {
+    payFromFor.value = header.pay_from_for;
+  }
+  showFromVendor();
+  if (header.flags) showFlags(header.flags);
+}
+
+/** The invoice details a check is about: amber, with its note under it (the checks list them too). */
+function showFlags(flags) {
+  document.querySelectorAll(".inv-details [data-field]").forEach((field) => {
+    const note = flags[field.dataset.field] || "";
+    field.classList.toggle("is-flagged", Boolean(note));
+    const box = field.querySelector(":scope > [data-flag]");
+    if (!box) return;
+    box.hidden = !note;
+    const text = box.querySelector("[data-flag-text]");
+    if (text) text.textContent = note;
+  });
 }
 
 vendorInput?.addEventListener("input", showVendorMatch);
@@ -1038,7 +1178,7 @@ let undoState = null; // {snap, note}: the screen before the last change, and th
 function headerElements() {
   return [...document.querySelectorAll('#inv [name], [form="inv"][name]')].filter(
     (el) => !el.closest("[data-grid]") && !["checkbox", "radio", "submit"].includes(el.type) &&
-      (el.type !== "hidden" || el.name === "taught" || el.name === "absent"),
+      (el.type !== "hidden" || ["taught", "absent", "from_vendor", "pay_from_for"].includes(el.name)),
   );
 }
 
@@ -1084,6 +1224,7 @@ function makeRow(which, state, after = null) {
     const el = tr.querySelector(`[name="${CSS.escape(name)}"]`);
     if (!el) continue;
     if (el.matches("select[data-picker]")) setValue(el, value) || setValue(el, "UNASSIGNED");
+    else if (el.matches("select[data-tax-code]")) setTaxCode(el, value);
     else el.value = value;
   }
   tr.querySelectorAll("input[type=checkbox]").forEach((c) => (c.checked = (state.taxes || []).includes(c.value)));
@@ -1109,6 +1250,8 @@ function restore(snap) {
   }
   if (snap.edits && viewer) viewer.restoreEdits(snap.edits);
   showAbsent();
+  showFromVendor();
+  if (vendorInput) vendorBefore = vendorInput.value;
   showVendorMatch();
   fillSplitLines();
   lastSums = tickedSums();
@@ -1202,6 +1345,7 @@ function headerEdited(el) {
   const label = el.closest?.(".inv-details [data-field]");
   if (!label || el.name !== label.dataset.field) return;
   if (el.value.trim() && absentList().includes(el.name)) setAbsent(el.name, false);
+  if (el.name in TAX_FIELDS) setFromVendor({ ...fromVendor(), fields: stillFilled(fromVendor()) }); // typed over: theirs
   viewer?.setEdited(el.name, el.value.trim(), absentList().includes(el.name));
 }
 
@@ -1215,6 +1359,7 @@ function clearField(name, absent = false) {
     setTaught(boxes);
   }
   setAbsent(name, absent);
+  if (name in TAX_FIELDS) setFromVendor({ ...fromVendor(), fields: stillFilled(fromVendor()) });
   if (name === "vendor_name" || name === "gst_hst_registration_number") showVendorMatch();
   viewer?.setEdited(name, "", absent);
   soon(0);
@@ -1437,6 +1582,8 @@ function lineMenu(tr) {
         soon(0);
       }) },
     "-",
+    ...taxCodeItems(tr, above, others),
+    "-",
     { icon: "playlist_add_check", label: "Use this GL account on the lines without one", id: "fill",
       disabled: blank(gl) ? "Pick this line's GL account first" : !without.length ? "Every other line has a GL account" : false,
       run: () => undoable(`GL ${gl.value} put on ${without.length === 1 ? "1 line" : `${without.length} lines`}.`, () => {
@@ -1462,20 +1609,165 @@ function num(el) {
   return text !== "" && Number.isFinite(v) ? v : null;
 }
 
-/* A tax line's taxable amount follows the lines ticked with its tax (B-610): ticking or unticking a line's GST box,
-   changing a ticked line's amount, deleting or adding one (every edit goes through soon()) updates the GST line's taxable amount (and its amount, at its rate) while it still
-   is the sum of the lines it was; a taxable amount the clerk typed is left alone, and the tax line's menu offers
-   "Taxable from the lines ticked GST". */
+/* A tax line's taxable amount follows the lines whose tax code carries its tax (B-610, D-64): changing a line's tax
+   code ("GST + PST" to "GST only"), changing a marked line's amount, deleting or adding one (every edit goes through
+   soon()) updates the PST line's taxable amount (and its amount, at its rate) while it still is the sum of the lines
+   it was; a taxable amount the clerk typed, or left blank, is left alone (B-622), and the tax line's menu offers
+   "Taxable from the lines marked PST". */
+
+const TAX_TYPES = ["GST", "HST", "PST", "QST", "OTHER"];
+
+/** The taxes a line's tax code charges: "GST+PST" is GST and PST, "GST~PST" GST alone; "EXEMPT", "ZERO", "OUT" none. */
+function lineTaxes(tr) {
+  const code = tr.querySelector("select[data-tax-code]")?.value || "";
+  const ticked = [...tr.querySelectorAll("input[type=checkbox]:checked")].map((c) => c.value); // a page of before
+  // "GST~PST": GST charged, PST exempt (D-64): only the part before "~" is charged
+  return [...code.split("~")[0].split("+").filter((t) => TAX_TYPES.includes(t)), ...ticked.filter((t) => TAX_TYPES.includes(t))];
+}
 
 function tickedSums() {
   const sums = {};
   for (const tr of gridRows()) {
     const amount = num(tr.querySelector('[name="line_amount"]'));
     if (amount === null) continue;
-    tr.querySelectorAll("input[type=checkbox]:checked").forEach((c) => (sums[c.value] = (sums[c.value] || 0) + amount));
+    for (const t of new Set(lineTaxes(tr))) sums[t] = (sums[t] || 0) + amount;
   }
   for (const k of Object.keys(sums)) sums[k] = Math.round(sums[k] * 100) / 100;
   return sums;
+}
+
+/* ---------- The lines' tax codes (D-64) ---------- */
+
+let taxLabels = {};
+try {
+  taxLabels = JSON.parse(document.getElementById("tax-code-labels")?.textContent || "{}");
+} catch {
+  taxLabels = {};
+}
+let taxMarks = {}; // {line number: why}: the lines the Tax check points at, drawn yellow
+
+/** Put ``code`` in a line's tax-code dropdown, adding it when the place of supply doesn't list it (kept as it is). */
+function setTaxCode(select, code) {
+  if (!select || !code) return;
+  if (![...select.options].some((o) => o.value === code)) {
+    const option = document.createElement("option");
+    option.value = code;
+    option.textContent = taxLabels[code] || code;
+    select.append(option);
+  }
+  select.value = code;
+}
+
+/** The dropdowns' choices where the invoice is supplied now: each line keeps its own code, listed or not. */
+function setTaxCodeOptions(options, labels) {
+  if (labels && typeof labels === "object") taxLabels = labels;
+  const fill = (select) => {
+    const keep = select.value;
+    const now = [...select.options].map((o) => [o.value, o.textContent]);
+    const want = options.map(([code, label]) => [String(code), String(label)]);
+    if (keep && !want.some(([code]) => code === keep)) want.push([keep, taxLabels[keep] || keep]);
+    if (JSON.stringify(now) === JSON.stringify(want)) return;
+    select.replaceChildren(...want.map(([code, label]) => {
+      const option = document.createElement("option");
+      option.value = code;
+      option.textContent = label;
+      return option;
+    }));
+    select.value = keep;
+  };
+  document.querySelectorAll('[data-grid="lines"] select[data-tax-code]').forEach(fill);
+  const tpl = document.getElementById("line-template");
+  tpl?.content.querySelectorAll("select[data-tax-code]").forEach((select) => {
+    const keep = select.value;
+    fill(select);
+    if (!keep) select.selectedIndex = 0;
+  });
+}
+
+/** Draw yellow the tax-code cells of the lines the Tax check points at (``marks``: {line number: why}). */
+function showTaxMarks(marks) {
+  taxMarks = marks || {};
+  for (const tr of gridRows()) {
+    const cell = tr.querySelector(".c-tax");
+    if (!cell) continue;
+    const why = taxMarks[lineNo(tr)] || (cell.dataset.taxGuess ? cell.dataset.taxGuess : "");
+    cell.classList.toggle("is-taxcheck", Boolean(why));
+    if (why) cell.title = why;
+    else cell.removeAttribute("title");
+    const note = cell.querySelector("[data-tax-note]");
+    if (note) {
+      note.hidden = !why;
+      const text = note.querySelector("[data-tax-note-text]");
+      if (text) text.textContent = why;
+    }
+  }
+}
+
+const GUESS_NOTE = "Tax code worked out from the tax charged: check it."; // line_tax.GUESS_NOTE
+const INFERRED = /\b(PST|RST) exemption inferred \(charged on the other lines, not this one\): confirm it\./; // line_tax._INFERRED
+const CONFIRMED = /\b(PST|RST) exemption confirmed on review\./; // line_tax._CONFIRMED_RE
+
+/** The clerk picked or confirmed a line's tax code: no longer marked to check, and its note goes from the line's
+    reasoning (posted with it), so the approved coding does not keep it (B-713). */
+function confirmTaxCode(tr) {
+  const cell = tr?.querySelector(".c-tax");
+  if (!cell) return;
+  delete cell.dataset.taxGuess;
+  const reason = tr.querySelector('[name="line_reason"]');
+  if (reason) {
+    // line_tax.confirm_line: the "check it" note goes; a PST exemption inferred and still in the code is recorded as
+    // confirmed on review (B-715), and goes when the code no longer exempts it.
+    // The inference is kept on the row, so picking the exemption again after another code is still confirmed (B-723).
+    let text = reason.value.replace(GUESS_NOTE, " ");
+    const code = tr.querySelector("select[data-tax-code]")?.value || "";
+    const still = (code.split("~")[1] || "").split("+").includes("PST");
+    const found = text.match(INFERRED) || text.match(CONFIRMED);
+    if (text.match(INFERRED)) tr.dataset.taxInferred = text.match(INFERRED)[1];
+    if (found) text = text.replace(found[0], still ? `${found[1]} exemption confirmed on review.` : " ");
+    else if (still && tr.dataset.taxInferred) text = `${text} ${tr.dataset.taxInferred} exemption confirmed on review.`;
+    reason.value = text.replace(/\s+/g, " ").trim();
+  }
+  showTaxMarks(taxMarks);
+}
+
+/** The tax-code items of a line's menu: confirm a worked-out code, copy the line above's, put this one on every line,
+    mark it exempt. */
+function taxCodeItems(tr, above, others) {
+  const select = tr.querySelector("select[data-tax-code]");
+  if (!select) return [];
+  const code = select.value;
+  const label = select.selectedOptions[0]?.textContent || code;
+  const aboveCode = above?.querySelector("select[data-tax-code]")?.value || "";
+  const set = (row, value) => {
+    setTaxCode(row.querySelector("select[data-tax-code]"), value);
+    confirmTaxCode(row); // the clerk's choice now
+  };
+  const guessed = Boolean(tr.querySelector(".c-tax")?.dataset.taxGuess) ||
+    INFERRED.test(tr.querySelector('[name="line_reason"]')?.value || "");
+  return [
+    guessed ? { icon: "task_alt", label: `Confirm the tax code (${label})`, id: "tax-confirm",
+      run: () => undoable(`${lineName(tr)}: tax code confirmed.`, () => {
+        confirmTaxCode(tr);
+        soon(0);
+      }) } : null,
+    { icon: "vertical_align_top", label: "Copy the tax code from the line above", id: "tax-above",
+      disabled: !above ? "It is the first line" : aboveCode === code ? "It has that code already" : false,
+      run: () => undoable(`${lineName(tr)}: tax code copied from the line above.`, () => {
+        set(tr, aboveCode);
+        soon(0);
+      }) },
+    { icon: "block", label: "Mark this line exempt", id: "tax-exempt", disabled: code === "EXEMPT" ? "It is exempt already" : false,
+      run: () => undoable(`${lineName(tr)}: marked exempt.`, () => {
+        set(tr, "EXEMPT");
+        soon(0);
+      }) },
+    { icon: "done_all", label: `Use “${label}” on every line`, id: "tax-all",
+      disabled: !others.length ? "It is the only line" : others.every((r) => r.querySelector("select[data-tax-code]")?.value === code) ? "Every line has it already" : false,
+      run: () => undoable(`Tax code “${label}” put on every line.`, () => {
+        others.forEach((r) => set(r, code));
+        soon(0);
+      }) },
+  ];
 }
 
 let lastSums = null; // the sums the tax lines were last made to follow (set at the start)
@@ -1484,16 +1776,10 @@ function same(a, b) {
   return a !== null && b !== null && Math.abs(a - b) < 0.005;
 }
 
-/** Put ``taxable`` on a tax line; its amount follows at its rate when it was rate x the old taxable. */
+/** Put ``taxable`` on a tax line. Its amount is what the invoice charges, never changed by the lines' tax codes
+    (B-700): the Tax check then says when the lines marked and the tax charged disagree. */
 function setTaxable(tr, taxable) {
-  const rate = num(tr.querySelector('[name="tax_rate_pct"]'));
-  const was = num(tr.querySelector('[name="tax_taxable"]'));
-  const amountBox = tr.querySelector('[name="tax_amount"]');
-  const amount = num(amountBox);
   tr.querySelector('[name="tax_taxable"]').value = taxable.toFixed(2);
-  if (rate !== null && (amount === null || (was !== null && same(amount, Math.round(rate * was) / 100)))) {
-    amountBox.value = (Math.round(rate * taxable) / 100).toFixed(2);
-  }
 }
 
 function followTicks() {
@@ -1529,9 +1815,9 @@ function taxMenu(tr) {
         tr.querySelector('[name="tax_amount"]').value = amount.toFixed(2);
         soon(0);
       }) },
-    { icon: "sync", label: `Taxable from the lines ticked ${label}: ${sum.toFixed(2)}`, id: "sync",
-      disabled: !sum ? `No line is ticked ${label}` : same(num(tr.querySelector('[name="tax_taxable"]')), sum) ? "It is that already" : false,
-      run: () => undoable(`Taxable amount set from the lines ticked ${label}: ${sum.toFixed(2)}.`, () => {
+    { icon: "sync", label: `Taxable from the lines marked ${label}: ${sum.toFixed(2)}`, id: "sync",
+      disabled: !sum ? `No line is marked ${label}` : same(num(tr.querySelector('[name="tax_taxable"]')), sum) ? "It is that already" : false,
+      run: () => undoable(`Taxable amount set from the lines marked ${label}: ${sum.toFixed(2)}.`, () => {
         setTaxable(tr, sum);
         soon(0);
       }) },

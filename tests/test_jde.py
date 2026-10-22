@@ -253,6 +253,34 @@ def test_match_header_gives_no_tax_to_an_exempt_line():
     assert sum(sum(t) for t in taxes) == round(doc["grand_total"] * 100)
 
 
+def test_match_header_an_exempt_or_zero_rated_line_is_its_own_pay_item_with_the_exempt_code():
+    """D-64: a line marked exempt or zero-rated (no tax put on it) says so to E1, on its pay item and, with the
+    distribution's tax columns, on its G/L line; the taxed lines keep the invoice's code. One pay item: the
+    invoice's."""
+    doc = json.loads((SAMPLES / "ground_truth" / f"{ON}.json").read_text())
+    doc["line_items"][-1].update(taxes_applied=[], tax_status="exempt")
+    doc["line_items"][-2].update(taxes_applied=[], tax_status="zero_rated")
+    free = doc["line_items"][-1]["amount"] + doc["line_items"][-2]["amount"]
+    taxable = round(doc["subtotal"] - free, 2)
+    hst = round(taxable * 0.13, 2)
+    doc["tax_lines"][0].update(taxable_amount=taxable, tax_amount=hst)
+    doc.update(tax_total=hst, grand_total=round(doc["subtotal"] + hst, 2))
+    inv = _invoice(ON, **doc)
+    settings = jde.JdeSettings(line_numbering=jde.MATCH_HEADER, amount_mode=jde.AMOUNT_TAX, dist_tax_columns=True)
+    assert jde.validate([inv], settings, AN8) == {}
+    files = _files([inv], settings)
+    heads, lines = files[jde.HEADER_FILE], files[jde.DIST_FILE]
+    assert [h["VLEXR1"] for h in heads] == ["V", "V", "V", "E", "E"]
+    assert [x["VNEXR1"] for x in lines] == ["V", "V", "V", "E", "E"]
+    assert all(int(h["VLSTAM"]) == 0 and int(h["VLATXA"]) == 0 for h in heads[-2:])
+    assert sum(int(h["VLATXA"]) + int(h["VLATXN"]) + int(h["VLSTAM"]) for h in heads) == round(doc["grand_total"] * 100)
+    one = _files([inv], jde.JdeSettings(amount_mode=jde.AMOUNT_TAX, dist_tax_columns=True))
+    assert [h["VLEXR1"] for h in one[jde.HEADER_FILE]] == ["V"]
+    # A configured exempt code is used, not "E"
+    custom = _files([inv], jde.JdeSettings(line_numbering=jde.MATCH_HEADER, exempt_code="X"))[jde.HEADER_FILE]
+    assert [h["VLEXR1"] for h in custom][-2:] == ["X", "X"]
+
+
 def _yen_invoice(old_distribution=False):
     """Three 10-yen lines with BC PST (2 yen), one 1,000-yen line without; GST 52 yen on everything. An old
     distribution was spread in cents (10.66 + 10.67 + 10.67): rounded line by line to the yen, that is 33, not 32."""
@@ -339,6 +367,45 @@ def test_csv_columns_in_order_and_text_as_it_is():
     assert raw[jde.DIST_FILE].decode().splitlines()[0].split(",") == jde.DIST_COLUMNS
     assert not raw[jde.HEADER_FILE].startswith(b"\xef\xbb\xbf")  # no BOM for database loaders
     assert _csv(raw[jde.DIST_FILE])[0]["VNEXA"] == "=HYPERLINK(evil)"  # for a database loader, not Excel
+
+
+def test_the_g_l_bank_account_follows_the_pay_from_account_when_it_is_mapped():
+    """D-66: VLGLBA (the G/L bank account E1 pays from) is a mapped setting per Pay from account: with no mapping the
+    files are as before (no column, E1 takes the AAI PB bank); mapped, each voucher carries its account's value."""
+    paid = _invoice(ON, 1, pay_from_account="CAD-OP")
+    other = _invoice(QC, 2, pay_from_account="CAD-PAY")
+    none = _invoice(AB, 3)
+    assert "VLGLBA" not in _files([paid])[jde.HEADER_FILE][0]
+    settings = jde.JdeSettings(bank_glba={"CAD-OP": "00012345"})
+    rows = {r["VLEDTN"]: r for r in _files([paid, other, none], settings)[jde.HEADER_FILE]}
+    assert [rows[f"APC{i}"]["VLGLBA"] for i in (1, 2, 3)] == ["00012345", "", ""]
+    assert jde.header_columns(settings) == [*jde.HEADER_COLUMNS, "VLGLBA"]
+    assert jde.JdeSettings.from_json(settings.to_json()).bank_glba == {"CAD-OP": "00012345"}
+    assert jde.JdeSettings.from_json('{"bank_glba": "nope"}').bank_glba == {}
+
+
+def test_an_unmapped_pay_from_account_is_said_and_codes_match_whatever_their_case():
+    """B-684: with only CAD-OP mapped, a USD invoice's VLGLBA was blank with no word of it (E1 then pays from its
+    default bank, AAI PB); a key typed "cad-op" mapped nothing."""
+    cad = _invoice(ON, 1, pay_from_account="CAD-OP")
+    usd = _invoice(USD, 2, pay_from_account="USD-OP")
+    settings = jde.JdeSettings(bank_glba={"cad-op": "00012345"})
+    rows = {r["VLEDTN"]: r for r in _files([cad, usd], settings)[jde.HEADER_FILE]}
+    assert rows["APC1"]["VLGLBA"] == "00012345" and rows["APC2"]["VLGLBA"] == ""
+    none = _invoice(AB, 3)
+    notes = jde.bank_notes([cad, usd, none], settings)
+    assert notes == {  # B-689: whole sentences
+        2: ["AP Coder #2 is paid from USD-OP, which has no G/L bank account (VLGLBA) mapped: E1 pays it from its "
+            "default bank (AAI PB), which may not be that account."],
+        3: ["AP Coder #3 has no Pay from account: E1 pays it from its default bank (AAI PB)."],
+    }  # fmt: skip
+    assert jde.bank_notes([cad, usd], jde.JdeSettings()) == {}  # no mapping in use: nothing to say
+    report = jde.dry_run([cad, usd], settings, AN8)
+    assert "USD-OP" in jde.dry_run_text(report)
+    data, _, _ = jde.build_zip([cad, usd], settings, AN8, batch=3)
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        readme = zf.read("README.txt").decode()
+    assert "AP Coder #2 is paid from USD-OP" in readme and "AP Coder #2: AP Coder" not in readme
 
 
 def test_z_files_hold_the_text_as_it_is_without_spreadsheet_quoting():

@@ -143,3 +143,11 @@ button.link.danger {color: var(--lg-danger);}
 .dir-table thead th:last-child, .dir-filters td:last-child {background: var(--lg-head);}
 .dir-table tbody tr:hover td.dir-actions {background: var(--lg-hover);}
 .dir-note {display: block; white-space: normal; max-width: 14rem; margin-top: 2px; text-align: right;}
+/* Bank accounts (GL accounts & tax, D-66): the short numbers in narrow boxes, so the grid fits a 1366 px laptop. */
+.apc-table.edit.bank-grid input[name="code"] {min-width: 96px;}
+.apc-table.edit.bank-grid input.wide {min-width: 200px;}
+.apc-table.edit.bank-grid input[name="currency"] {min-width: 56px; width: 64px;}
+.apc-table.edit.bank-grid input[name="institution"] {min-width: 56px; width: 64px;}
+.apc-table.edit.bank-grid input[name="transit"] {min-width: 72px; width: 80px;}
+.apc-table.edit.bank-grid input[name="account_number"] {min-width: 104px;}
+.apc-table.edit.bank-grid select[name="gl_account"], .apc-table.edit.bank-grid input[name="gl_account"] {min-width: 140px;}

@@ -67,6 +67,10 @@
   <input type="hidden" name="taught" value="{{ taught_json | tojson | forceescape }}" data-taught>
   {# The fields marked "Not on this invoice" (the right-click menu of a field, D-60): a JSON list. #}
   <input type="hidden" name="absent" value="{{ draft.absent | tojson | forceescape }}" data-absent>
+  {# The tax numbers filled from the vendor list (D-65), and the currency the Pay from account was picked for (D-66). #}
+  <input type="hidden" name="from_vendor" value="{{ draft.from_vendor | tojson | forceescape }}" data-from-vendor
+         data-unread="{{ unread_numbers | tojson | forceescape }}">
+  <input type="hidden" name="pay_from_for" value="{{ draft.pay_from_for }}" data-pay-from-for>
   {% for k, v in query.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
   {% if nav.next_id %}<input type="hidden" name="next_id" value="{{ nav.next_id }}">{% endif %}
 </form>
@@ -85,74 +89,19 @@
   <div class="col">
     <section class="card inv-checks" data-live="checks" aria-live="polite">{{ live_ui.checks(live, inv.id) }}</section>
 
-    <section class="card inv-lines">
-      {{ live_ui.head("Line items", "Change a GL account or cost center in its cell; add or delete lines below the grid.") }}
-      <div class="table-wrap">
-        <table class="apc-table inv-grid-table inv-lines-grid{% if grid.lines | length > 3 %} compact{% endif %}" id="lines">
-          <thead><tr><th>#</th><th>Description</th><th><span class="rvw-sr">Delete</span></th><th>GL account</th>{% if grid.has_cc %}<th>Cost center</th>{% endif %}
-            <th class="r">Amount</th><th>Taxes</th><th class="r">Qty</th><th class="r">Unit price</th></tr></thead>
-          <tbody data-grid="lines">{{ grids.line_rows(grid) }}</tbody>
-        </table>
-      </div>
-      {{ grids.line_template(grid) }}
-      {# The account picker's lists (static/js/picker.js), printed once for every line's cell (D-56). #}
-      <script type="application/json" id="gl-options">{{ grid.gl_options | tojson }}</script>
-      {% if grid.has_cc %}<script type="application/json" id="cc-options">{{ grid.cc_options | tojson }}</script>{% endif %}
-      <script type="application/json" id="gl-vendor">{{ grid.vendor_accounts | tojson }}</script>
-      <div class="row">
-        <button type="button" class="btn sm" data-add-row="lines"><span class="ms" aria-hidden="true">add</span>Add a line</button>
-        <details class="pop" data-split>
-          <summary class="btn sm"><span class="ms" aria-hidden="true">call_split</span>Split a line…</summary>
-          <div class="pop-body inv-split-pop">
-            <p class="muted">Split one line across several GL accounts{% if grid.has_cc %} or cost centers{% endif %} by percentage (shared costs).</p>
-            <label class="field">Line<select name="split_line" data-split-line></select></label>
-            <table class="apc-table inv-parts"><thead><tr><th>GL account</th>{% if grid.has_cc %}<th>Cost center</th>{% endif %}<th class="r">%</th><th></th></tr></thead>
-              <tbody data-parts></tbody></table>
-            <template id="part-template"><tr>
-              <td><select name="part_gl" aria-label="GL account" data-picker data-picker-noun="account" data-options="gl-options" data-groups="gl"><option value="UNASSIGNED">{{ grid.gl_labels["UNASSIGNED"] }}</option></select></td>
-              {% if grid.has_cc %}<td><select name="part_cc" aria-label="Cost center" data-picker data-picker-noun="cost center" data-options="cc-options"><option value="UNASSIGNED">{{ grid.cc_labels["UNASSIGNED"] }}</option></select></td>{% endif %}
-              <td class="r"><input type="number" name="part_pct" value="50" min="0" max="100" step="any" aria-label="Percent"></td>
-              <td><button type="button" class="icon-btn" data-del-part aria-label="Remove this part"><span class="ms" aria-hidden="true">close</span></button></td>
-            </tr></template>
-            <div class="row"><button type="button" class="btn sm ghost" data-add-part><span class="ms" aria-hidden="true">add</span>Add a part</button>
-              <span class="muted" data-split-total></span></div>
-            <p class="muted">Each part keeps the description and taxes of the line.</p>
-            <button type="button" class="btn primary sm" data-split-go disabled><span class="ms" aria-hidden="true">call_split</span>Split the line</button>
-          </div>
-        </details>
-        <details class="pop" data-fill>
-          <summary class="btn sm"><span class="ms" aria-hidden="true">playlist_add_check</span>Apply to all lines…</summary>
-          <div class="pop-body inv-split-pop">
-            <p class="muted">Code every line that has no GL account{% if grid.has_cc %} or no cost center{% endif %} yet in one go. Lines already coded keep theirs.</p>
-            <label class="field">GL account<select data-fill-gl aria-label="GL account for the lines without one" data-picker data-picker-noun="account" data-groups="gl">
-              <option value="">Leave as they are</option>
-              {% for code, label in grid.gl_options if code != "UNASSIGNED" %}<option value="{{ code }}">{{ label }}</option>{% endfor %}</select></label>
-            {% if grid.has_cc %}
-            <label class="field">Cost center<select data-fill-cc aria-label="Cost center for the lines without one" data-picker data-picker-noun="cost center">
-              <option value="">Leave as they are</option>
-              {% for code, label in grid.cc_options if code != "UNASSIGNED" %}<option value="{{ code }}"{% if code == usual_cc %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
-            {% if usual_cc %}<p class="muted small">Suggested: every past approval of this vendor used cost center {{ usual_cc }}.</p>{% endif %}
-            {% endif %}
-            <button type="button" class="btn primary sm" data-fill-go><span class="ms" aria-hidden="true">playlist_add_check</span>Apply to all lines without one</button>
-          </div>
-        </details>
-      </div>
-      <div data-live="reasons">{{ live_ui.reasons(live, inv.id) }}</div>
-    </section>
-
-    <div data-live="po" class="inv-live">{{ live_ui.po(live, inv.id) }}</div>
-    <div data-live="suggest" class="inv-live">{{ live_ui.suggest(live, inv.id) }}</div>
-
-
+    {# The invoice details before the lines (D-63): the header is checked against the page first, then lines coded. #}
     <section class="card inv-details">
       {{ live_ui.head("Invoice details") }}
+      {% set flags = live.flags or {} %}{% set filled = (draft.from_vendor.fields or {}) %}
       {% macro field(name, cls="", type="text", placeholder="", hint="", step="", choices="") -%}
-      {% set s = sure.get(name) %}
-      <label class="field {{ cls }}" data-field="{{ name }}"{% if name in absent_ok %} data-absent-ok{% endif %}{% if name in draft.absent %} data-absent{% endif %}>
-        <span class="lbl">{{ labels[name] }}{% if s %} <span class="inv-sure {{ s.tone }}" title="{{ s.help }}"><span class="ms" aria-hidden="true">{{ s.icon }}</span>{{ s.text }}</span>{% endif %}
+      {% set s = sure.get(name) %}{% set flags = live.flags or {} %}{% set filled = draft.from_vendor.fields or {} %}
+      <label class="field {{ cls }}{% if name in flags %} is-flagged{% endif %}" data-field="{{ name }}"{% if name in absent_ok %} data-absent-ok{% endif %}{% if name in draft.absent %} data-absent{% endif %}>
+        <span class="lbl">{{ labels[name] }}{% if s %} <span class="inv-sure {{ s.tone }}" title="{{ s.help }}"{% if name in filled %} hidden{% endif %}><span class="ms" aria-hidden="true">{{ s.icon }}</span>{{ s.text }}</span>{% endif %}
           {% if hint %}<span class="rvw-hint" title="{{ hint }}"><span class="ms" aria-hidden="true">info</span></span>{% endif %}</span>
         <input type="{{ type }}" name="{{ name }}" value="{{ draft.header[name] }}" form="inv"{% if placeholder %} placeholder="{{ placeholder }}"{% endif %}{% if step %} step="{{ step }}"{% endif %}{% if hint %} title="{{ hint }}"{% endif %}{% if choices %} data-picker="free" data-picker-noun="{{ name }}" data-choices="{{ choices }}" autocomplete="off"{% endif %}>
         <span class="inv-absent small muted"{% if name not in draft.absent %} hidden{% endif %}><span class="ms" aria-hidden="true">do_not_disturb_on</span>Not on this invoice</span>
+        {% if name in tax_fields %}<span class="inv-from-vendor small muted" data-from-vendor-note{% if name not in filled %} hidden{% endif %}><span class="ms" aria-hidden="true">menu_book</span>{{ from_vendor_note }}</span>{% endif %}
+        <span class="inv-flag small" data-flag{% if name not in flags %} hidden{% endif %}><span class="ms" aria-hidden="true">error</span><span data-flag-text>{{ flags.get(name, "") }}</span></span>
       </label>
       {%- endmacro %}
       {% macro province(name, hint="") -%}
@@ -191,7 +140,12 @@
         {{ field("qst_registration_number", hint="The supplier's QST registration number (Québec)") }}
         {{ field("pst_registration_number", hint="The supplier's provincial sales tax number (BC PST, Manitoba RST, Saskatchewan PST)") }}
         {{ province("supplier_province") }}
-        {{ field("remit_bank_account", hint="The bank details printed for payment, if any: compared with this vendor's earlier invoices") }}
+        {# The vendor's banking details as read from the invoice: evidence, never edited or paid to (D-66). #}
+        <div class="field inv-bank-printed{% if 'remit_bank_account' in flags %} is-flagged{% endif %}" data-field="remit_bank_account"{% if not bank_shown %} hidden{% endif %}>
+          <span class="lbl">{{ labels["remit_bank_account"] }} <span class="rvw-hint" title="The vendor's banking details as printed, for fraud control: compared with the ones on this vendor's approved invoices. Never paid to from here: the bank account that pays is Pay from."><span class="ms" aria-hidden="true">info</span></span></span>
+          <span class="inv-bank-value">{{ bank_shown }}</span>
+          <span class="inv-flag small" data-flag{% if 'remit_bank_account' not in flags %} hidden{% endif %}><span class="ms" aria-hidden="true">error</span><span data-flag-text>{{ flags.get("remit_bank_account", "") }}</span></span>
+        </div>
       </div>
       <div class="rvw-group">Invoice</div>
       <div class="inv-grid">
@@ -201,6 +155,19 @@
         {{ field("payment_terms", placeholder="e.g. Net 30, 2/10 Net 30") }}
         {{ field("due_date", placeholder=due_placeholder, hint="Only if printed; otherwise it comes from the terms (shown greyed)") }}
         {{ field("currency", choices="CAD|Canadian dollar,USD|US dollar,EUR|Euro,GBP|British pound") }}
+        {# Our bank account it is paid from (D-66): a list only, of the accounts set up on GL accounts & tax. #}
+        <label class="field wide inv-pay-from{% if 'pay_from_account' in flags %} is-flagged{% endif %}" data-field="pay_from_account">
+          <span class="lbl">{{ labels["pay_from_account"] }} <span class="rvw-hint" title="Your company's bank account that pays this invoice. It follows the invoice's currency (the default account of that currency, or the one this vendor was last paid from)."><span class="ms" aria-hidden="true">info</span></span></span>
+          {% if pay_from.any %}
+          <select name="pay_from_account" form="inv" data-pay-from>
+            <option value=""{% if not pay_from.value %} selected{% endif %}>Pick the account that pays</option>
+            {% for code, label, currency in pay_from.options %}<option value="{{ code }}" data-currency="{{ currency }}"{% if code == pay_from.value %} selected{% endif %}>{{ label }}</option>{% endfor %}
+          </select>
+          {% else %}
+          <span class="small muted inv-pay-none"><a class="link" href="/accounts?tab=bank">Add your bank accounts</a> on GL accounts &amp; tax to choose which account pays</span>
+          {% endif %}
+          <span class="inv-flag small" data-flag{% if 'pay_from_account' not in flags %} hidden{% endif %}><span class="ms" aria-hidden="true">error</span><span data-flag-text>{{ flags.get("pay_from_account", "") }}</span></span>
+        </label>
         <div class="field inv-supply" data-field="ship_to_province">
           <span class="lbl">{{ labels["ship_to_province"] }} <span class="rvw-hint" title="The province whose sales tax applies: where the goods are delivered to you (services: generally where you are), not where the vendor is or ships from."><span class="ms" aria-hidden="true">info</span></span></span>
           <details class="inv-supply-pick"{% if supply.open %} open{% endif %}>
@@ -219,12 +186,75 @@
       <div data-live="amounts">{{ live_ui.amounts(live, inv.id) }}</div>
     </section>
 
+
+    <section class="card inv-lines">
+      {{ live_ui.head("Line items", "Change a GL account or cost center in its cell; add or delete lines below the grid.") }}
+      <div class="table-wrap">
+        <table class="apc-table inv-grid-table inv-lines-grid{% if grid.lines | length > 3 %} compact{% endif %}" id="lines">
+          <thead><tr><th>#</th><th>Description</th><th><span class="rvw-sr">Delete</span></th><th>GL account</th>{% if grid.has_cc %}<th>Cost center</th>{% endif %}
+            <th class="r">Amount</th><th>Tax code</th><th class="r">Qty</th><th class="r">Unit price</th></tr></thead>
+          <tbody data-grid="lines">{{ grids.line_rows(grid) }}</tbody>
+        </table>
+      </div>
+      {{ grids.line_template(grid) }}
+      {# The account picker's lists (static/js/picker.js), printed once for every line's cell (D-56). #}
+      <script type="application/json" id="gl-options">{{ grid.gl_options | tojson }}</script>
+      {% if grid.has_cc %}<script type="application/json" id="cc-options">{{ grid.cc_options | tojson }}</script>{% endif %}
+      <script type="application/json" id="gl-vendor">{{ grid.vendor_accounts | tojson }}</script>
+      <div class="row">
+        <button type="button" class="btn sm" data-add-row="lines"><span class="ms" aria-hidden="true">add</span>Add a line</button>
+        <details class="pop" data-split>
+          <summary class="btn sm"><span class="ms" aria-hidden="true">call_split</span>Split a line…</summary>
+          <div class="pop-body inv-split-pop">
+            <p class="muted">Split one line across several GL accounts{% if grid.has_cc %} or cost centers{% endif %} by percentage (shared costs).</p>
+            <label class="field">Line<select name="split_line" data-split-line></select></label>
+            <table class="apc-table inv-parts"><thead><tr><th>GL account</th>{% if grid.has_cc %}<th>Cost center</th>{% endif %}<th class="r">%</th><th></th></tr></thead>
+              <tbody data-parts></tbody></table>
+            <template id="part-template"><tr>
+              <td><select name="part_gl" aria-label="GL account" data-picker data-picker-noun="account" data-options="gl-options" data-groups="gl"><option value="UNASSIGNED">{{ grid.gl_labels["UNASSIGNED"] }}</option></select></td>
+              {% if grid.has_cc %}<td><select name="part_cc" aria-label="Cost center" data-picker data-picker-noun="cost center" data-options="cc-options"><option value="UNASSIGNED">{{ grid.cc_labels["UNASSIGNED"] }}</option></select></td>{% endif %}
+              <td class="r"><input type="number" name="part_pct" value="50" min="0" max="100" step="any" aria-label="Percent"></td>
+              <td><button type="button" class="icon-btn" data-del-part aria-label="Remove this part"><span class="ms" aria-hidden="true">close</span></button></td>
+            </tr></template>
+            <div class="row"><button type="button" class="btn sm ghost" data-add-part><span class="ms" aria-hidden="true">add</span>Add a part</button>
+              <span class="muted" data-split-total></span></div>
+            <p class="muted">Each part keeps the description and tax code of the line.</p>
+            <button type="button" class="btn primary sm" data-split-go disabled><span class="ms" aria-hidden="true">call_split</span>Split the line</button>
+          </div>
+        </details>
+        <details class="pop" data-fill>
+          <summary class="btn sm"><span class="ms" aria-hidden="true">playlist_add_check</span>Apply to all lines…</summary>
+          <div class="pop-body inv-split-pop">
+            <p class="muted">Code every line that has no GL account{% if grid.has_cc %} or no cost center{% endif %} yet in one go. Lines already coded keep theirs.</p>
+            <label class="field">GL account<select data-fill-gl aria-label="GL account for the lines without one" data-picker data-picker-noun="account" data-groups="gl">
+              <option value="">Leave as they are</option>
+              {% for code, label in grid.gl_options if code != "UNASSIGNED" %}<option value="{{ code }}">{{ label }}</option>{% endfor %}</select></label>
+            {% if grid.has_cc %}
+            <label class="field">Cost center<select data-fill-cc aria-label="Cost center for the lines without one" data-picker data-picker-noun="cost center">
+              <option value="">Leave as they are</option>
+              {% for code, label in grid.cc_options if code != "UNASSIGNED" %}<option value="{{ code }}"{% if code == usual_cc %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+            {% if usual_cc %}<p class="muted small">Suggested: every past approval of this vendor used cost center {{ usual_cc }}.</p>{% endif %}
+            {% endif %}
+            <button type="button" class="btn primary sm" data-fill-go><span class="ms" aria-hidden="true">playlist_add_check</span>Apply to all lines without one</button>
+          </div>
+        </details>
+      </div>
+      {# The Tax check (D-64): each tax charged or marked, worked out again from the lines' tax codes at the official
+         rate, against what the invoice charges; then the subtotal and the total. Drawn again after each edit. #}
+      <div class="inv-taxcheck-wrap" data-live="taxcheck" aria-live="polite">{{ live_ui.taxcheck(live, inv.id) }}</div>
+      <script type="application/json" id="tax-code-labels">{{ grid.tax_code_labels | tojson }}</script>
+      <div data-live="reasons">{{ live_ui.reasons(live, inv.id) }}</div>
+    </section>
+
+    <div data-live="po" class="inv-live">{{ live_ui.po(live, inv.id) }}</div>
+    <div data-live="suggest" class="inv-live">{{ live_ui.suggest(live, inv.id) }}</div>
+
     {% include "_invoice_notes.html" %}
   </div>
 </div>
 
 <section class="card inv-tax">
-  {{ live_ui.head("Sales tax") }}
+  {{ live_ui.head("Tax lines, as printed on the invoice", "The taxes the invoice charges. A tax line's taxable amount follows the lines whose tax code carries it, unless you typed it; its amount is what the invoice charges.") }}
   <div class="table-wrap">
     <table class="apc-table inv-grid-table" id="taxes">
       <thead><tr><th>Tax</th><th>Province</th><th class="r">Rate %</th><th class="r">Taxable</th><th class="r">Amount</th><th><span class="rvw-sr">Delete</span></th></tr></thead>
@@ -233,7 +263,6 @@
   </div>
   {{ grids.tax_template(grid) }}
   <button type="button" class="btn sm" data-add-row="taxes"><span class="ms" aria-hidden="true">add</span>Add a tax line</button>
-  <div data-live="taxcheck">{{ live_ui.taxcheck(live, inv.id) }}</div>
 </section>
 
 <section class="card inv-posting">

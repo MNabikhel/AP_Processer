@@ -21,6 +21,8 @@ from pathlib import Path
 from typing import Any
 
 from ..ai.extraction import TEXT_EXTENSIONS
+from ..core.schema import as_read
+from ..core.ui import FIELD_WORDS
 from . import analyze, build_layout
 from .bridge import ai_values, vendor_record
 from .supplier import (
@@ -292,6 +294,10 @@ def learn_from_approval(store: Any, invoice_id: int, final: dict[str, Any], *, a
         return learned
     from ..ai.lessons import record as record_lessons
 
+    # A tax number the review screen filled from the vendor list was not read, nor corrected: everything learned here
+    # takes it as it was read (D-65, B-681). The approved coding keeps it.
+    approved = final
+    final = as_read(final, inv.get("ai_output") or {})
     record_lessons(store, invoice_id, inv.get("ai_output") or {}, final, actor)  # per situation (never raises)
     try:
         reader_rows = reader_outcome_rows(store.get_capture(invoice_id), final)
@@ -301,7 +307,7 @@ def learn_from_approval(store: Any, invoice_id: int, final: dict[str, Any], *, a
     except Exception as exc:  # learning must never block an approval
         log.warning("invoice %s: reader outcomes not recorded (%s)", invoice_id, exc)
     name = final.get("vendor_name") or ""
-    key = store.supplier_key_for(name, final.get("gst_hst_registration_number"))
+    key = store.supplier_key_for(name, approved.get("gst_hst_registration_number"))
     if not key:
         return learned
     learned.update(supplier=key, name=name)
@@ -332,15 +338,6 @@ def learn_from_approval(store: Any, invoice_id: int, final: dict[str, Any], *, a
     except Exception as exc:
         log.warning("invoice %s: supplier template not updated (%s)", invoice_id, exc)
     return learned
-
-
-FIELD_WORDS = {
-    "vendor_name": "vendor", "invoice_number": "invoice number", "invoice_date": "invoice date",
-    "due_date": "due date", "po_number": "PO number", "currency": "currency",
-    "gst_hst_registration_number": "GST/HST number", "qst_registration_number": "QST number", "subtotal": "subtotal",
-    "gst_amount": "GST", "hst_amount": "HST", "pst_amount": "PST", "qst_amount": "QST", "tax_total": "tax total",
-    "grand_total": "total", "payment_terms": "terms",
-}  # fmt: skip
 
 
 def supplier_progress(store: Any, key: str) -> tuple[str, int, str]:
@@ -380,12 +377,12 @@ def taught_message(store: Any, learned: dict[str, Any]) -> str:
     key = learned.get("supplier")
     if not key:
         return ""
-    corrected = [FIELD_WORDS.get(f, f.replace("_", " ")) for f in learned.get("corrected") or []]
+    corrected = [FIELD_WORDS.get(f, "a field") for f in learned.get("corrected") or []]
     reworded = learned.get("reworded") or []
     if corrected:
         head = f"Learned from your {plural(len(corrected), 'correction')} ({', '.join(corrected)})."
     elif reworded:
-        said = ", ".join(f"the {FIELD_WORDS.get(f, f.replace('_', ' '))} (“{a}” to “{b}”)" for f, a, b in reworded)
+        said = ", ".join(f"the {FIELD_WORDS.get(f, 'field')} (“{a}” to “{b}”)" for f, a, b in reworded)
         same = "the same vendor" if [f for f, _, _ in reworded] == ["vendor_name"] else "the same"
         head = f"You changed {said}: {same} to AP Coder, so not a correction."
     elif learned.get("fields"):

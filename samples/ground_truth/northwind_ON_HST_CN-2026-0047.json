@@ -38,6 +38,8 @@
       "taxes_applied": [
         "HST"
       ],
+      "tax_exempt": [],
+      "tax_status": "",
       "reasoning_justification": "Reverses a laptop expensed on NW-2026-0912 (below threshold)."
     },
     {
@@ -51,6 +53,8 @@
       "taxes_applied": [
         "HST"
       ],
+      "tax_exempt": [],
+      "tax_status": "",
       "reasoning_justification": "Reverses consulting hours billed on NW-2026-0912."
     }
   ]

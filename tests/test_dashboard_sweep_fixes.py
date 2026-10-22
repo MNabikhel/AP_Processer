@@ -274,8 +274,9 @@ def test_getting_started_counts_only_the_steps_that_are_needed(tmp_path, monkeyp
     client = client_for(store)
     page = client.get("/review").text
     # Every row shown is counted (B-503): reading invoices done; LM Studio, GL, tax mapping, your name, your province
-    # and the first invoices to do. (The chat model is part of the LM Studio step.)
+    # and the first invoices to do, and your bank accounts (optional, D-66). (The chat model is part of the LM Studio
+    # step.)
     assert "Chat model for GL suggestions" not in page
-    assert "aria-label='1/7'" in page, page
+    assert "aria-label='1/8'" in page, page
     load_sample_setup(store)
-    assert "aria-label='3/7'" in client.get("/review").text
+    assert "aria-label='3/8'" in client.get("/review").text

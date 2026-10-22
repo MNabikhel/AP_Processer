@@ -68,6 +68,18 @@ def plural(n: int, word: str, many: str = "") -> str:
 
 # Display names for tax types whose code is not what a clerk calls them (the stored value is unchanged).
 TAX_LABELS = {"OTHER": "Other tax"}
+# A field of the coding in a sentence ("Learned from your 2 corrections (invoice number, PST number)"): the one place
+# these words are kept (the learning messages, the lessons, Learning). Every header field has one (a test checks).
+FIELD_WORDS = {
+    "vendor_name": "vendor", "invoice_number": "invoice number", "invoice_date": "invoice date",
+    "due_date": "due date", "po_number": "PO number", "currency": "currency",
+    "gst_hst_registration_number": "GST/HST number", "qst_registration_number": "QST number",
+    "pst_registration_number": "PST number", "subtotal": "subtotal", "gst_amount": "GST", "hst_amount": "HST",
+    "pst_amount": "PST", "qst_amount": "QST", "tax_total": "total tax", "grand_total": "total",
+    "payment_terms": "payment terms", "supplier_province": "supplier province", "ship_to_province": "place of supply",
+    "original_invoice_number": "invoice credited", "remit_bank_account": "vendor's bank details",
+    "pay_from_account": "Pay from account", "line_gl": "GL account",
+}  # fmt: skip
 
 
 def tax_chip(tax_type: str) -> str:

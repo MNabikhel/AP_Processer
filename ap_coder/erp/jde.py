@@ -45,6 +45,7 @@ from dataclasses import asdict, dataclass, field
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
+from ..coding.line_tax import exempt_of, legacy_basis
 from ..coding.tax import CANADIAN_TAX_TYPES, OUTSIDE_CANADA, PLACE_OF_SUPPLY, PROVINCES, ZERO_DECIMAL_CURRENCIES
 from ..coding.vendors import norm_invoice_number
 from ..core.headers import header_key
@@ -71,6 +72,7 @@ ACCOUNT_MODES = {
     ACCOUNT_COLUMNS: "Separate columns (VNMCU, VNOBJ, VNSUB)",
 }
 SEQUENTIAL, MATCH_HEADER = "sequential", "match_header"
+EXEMPT_STATUSES = ("exempt", "zero_rated")  # a line's tax_status that E1 takes as exempt (D-64)
 LINE_NUMBERING = {
     SEQUENTIAL: "Sequential: one pay item (VLEDLN 1), distribution lines 1, 2, 3…",
     MATCH_HEADER: "Match header: one pay item per distribution line (VNEDLN = VLEDLN)",
@@ -115,6 +117,8 @@ UNCONFIRMED = (
     "read as 0.001 (1000 needed) where a table conversion would not",
     "the tax area names (ON-HST, QC-GSTQST, …) and explanation codes",
     "VLCRR (exchange rate): left blank when no rate is set, so E1 takes it from the exchange-rate table",
+    "VLGLBA (G/L bank account), when set per Pay from account: the value E1 expects there (the bank account's short "
+    "account ID) and whether R04110ZA keeps it or takes the AAI PB bank",
 )
 
 HEADER_FILE, DIST_FILE, MATCH_FILE = "F0411Z1.csv", "F0911Z1.csv", "F0411Z1T.csv"
@@ -192,6 +196,9 @@ class JdeSettings:
     exempt_code: str = "E"
     dist_tax_columns: bool = False
     an8_overrides: dict[str, str] = field(default_factory=dict)  # vendor key → address number
+    # Pay from account code (our bank accounts, D-66) → VLGLBA, the G/L bank account E1 pays the voucher from, as the
+    # JDE team gives it (E1 keeps the short account ID there). Empty: no VLGLBA column, E1 takes the AAI PB bank.
+    bank_glba: dict[str, str] = field(default_factory=dict)
     answers: dict[str, str] = field(default_factory=dict)  # the JDE team's answers that are not settings (worksheet)
 
     def to_json(self) -> str:
@@ -223,6 +230,10 @@ class JdeSettings:
         if not isinstance(out.answers, dict):
             out.answers = {}
         out.answers = {str(k): str(v) for k, v in out.answers.items()}
+        if not isinstance(out.bank_glba, dict):
+            out.bank_glba = {}
+        out.bank_glba = {str(k).strip().upper(): str(v).strip() for k, v in out.bank_glba.items()
+                         if str(k).strip() and str(v).strip()}  # fmt: skip
         if not isinstance(out.an8_overrides, dict):
             out.an8_overrides = {}
         # Vendor keys saved under older vendor-matching rules, as today's rules give them ("energir sec" -> "energir").
@@ -431,6 +442,32 @@ def an8_problem(reason: str) -> bool:
     return reason.startswith(NO_AN8) or BAD_AN8 in reason
 
 
+def _tax_area_code(final: dict[str, Any], settings: JdeSettings) -> tuple[list[dict[str, Any]], str, str, str]:
+    """The Canadian tax lines charged, the province of supply, and the JDE tax area and explanation code for it."""
+    charged = [
+        t for t in final.get("tax_lines") or []
+        if t.get("tax_type") in CANADIAN_TAX_TYPES and abs(float(t.get("tax_amount") or 0)) > 0.004
+    ]  # fmt: skip
+    types = {t["tax_type"] for t in charged}
+    province = _place_of_supply(final)
+    row = settings.tax_map.get(province) or TaxArea("", "")
+    area, code = row.tax_area.strip(), row.code.strip().upper()
+    if charged and province in ("", OUTSIDE_CANADA):
+        pass
+    elif not charged and province != OUTSIDE_CANADA:
+        code = settings.exempt_code.strip().upper()  # nothing charged: exempt (keeps the area)
+    elif province in PST_PROVINCES and types & {"GST", "HST"} and "PST" not in types:
+        code = settings.self_assessed_code.strip().upper()  # PST to self-assess
+    return charged, province, area, code
+
+
+def accrues_use_tax(final: dict[str, Any], settings: JdeSettings) -> bool:
+    """True when this invoice goes to JD Edwards with the self-assessed code (B): E1 accrues the PST (use tax)
+    itself, so the Self-assessment report must not have it booked again (B-716, B-722)."""
+    code = _tax_area_code(final, settings)[3]
+    return bool(code) and code == settings.self_assessed_code.strip().upper()
+
+
 def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
     final = inv.get("final_output") or {}
     v = _Voucher(int(inv.get("id") or 0), final, [])
@@ -462,20 +499,9 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
     v.decimals = NO_DECIMAL_CURRENCIES.get(v.currency, 2)
 
     # Tax area and explanation code from the province of supply.
-    charged = [
-        t for t in final.get("tax_lines") or []
-        if t.get("tax_type") in CANADIAN_TAX_TYPES and abs(float(t.get("tax_amount") or 0)) > 0.004
-    ]  # fmt: skip
-    types = {t["tax_type"] for t in charged}
-    v.province = _place_of_supply(final)
-    row = settings.tax_map.get(v.province) or TaxArea("", "")
-    v.tax_area, v.tax_code = row.tax_area.strip(), row.code.strip().upper()
+    charged, v.province, v.tax_area, v.tax_code = _tax_area_code(final, settings)
     if charged and v.province in ("", OUTSIDE_CANADA):
         add("province of supply unknown: no JDE tax area for the Canadian tax charged")
-    elif not charged and v.province != OUTSIDE_CANADA:
-        v.tax_code = settings.exempt_code.strip().upper()  # nothing charged: exempt (keeps the area)
-    elif v.province in PST_PROVINCES and types & {"GST", "HST"} and "PST" not in types:
-        v.tax_code = settings.self_assessed_code.strip().upper()  # PST to self-assess
     if v.tax_code not in RECOVERABLE_BY_CODE:
         add(f"tax explanation code {v.tax_code!r} is not one AP Coder can balance (V, C, B, E or blank)")
     elif charged and v.tax_code in ("V", "C", "B") and not v.tax_area:
@@ -605,13 +631,15 @@ def voucher_rows(
                    else settings.po_company.strip() or settings.company_code) if send_po else "",
         "VLRMK": f"AP Coder #{v.inv_id}"[:30],
     }  # fmt: skip
+    if settings.bank_glba:  # the G/L bank account of the Pay from account (D-66); blank: E1's AAI PB
+        common["VLGLBA"] = glba(final, settings)
 
-    def amounts(gross: int, stam: int, atxa: int) -> dict[str, Any]:
+    def amounts(gross: int, stam: int, atxa: int, code: str | None = None) -> dict[str, Any]:
         out: dict[str, Any] = {}
         prefix = ("VLACR", "VLCTXA", "VLCTXN", "VLCTAM") if v.foreign else ("VLAG", "VLATXA", "VLATXN", "VLSTAM")
         if settings.amount_mode == AMOUNT_GROSS:
             out[prefix[0]] = _amount(gross, settings, v.decimals)
-        elif v.tax_code in ("E", "") or not stam:
+        elif (v.tax_code if code is None else code) in ("E", "", exempt) or not stam:
             out.update({prefix[1]: _amount(0, settings, v.decimals), prefix[2]: _amount(gross, settings, v.decimals),
                         prefix[3]: _amount(0, settings, v.decimals)})  # fmt: skip
         else:
@@ -621,6 +649,17 @@ def voucher_rows(
         return out
 
     extras = dict(settings.po_extra_columns) if settings.po_matched else {}
+    exempt = settings.exempt_code.strip().upper()
+    # Each distribution line's own explanation code (D-64): a line marked exempt or zero-rated, on an invoice whose
+    # code handles tax, is the exempt code when nothing of the tax is put on it; the others keep the invoice's.
+    items = final.get("line_items") or []
+    kinds = sorted({t["tax_type"] for t in v.charged})
+    basis = legacy_basis(items, final.get("tax_lines") or [])
+    stated = [li is not None and not (li.get("taxes_applied") or [])
+              and (li.get("tax_status") in EXEMPT_STATUSES
+                   or (bool(kinds) and not li.get("tax_status") and set(kinds) <= set(exempt_of(li, basis))))
+              for li in _entry_lines(v.entries, items)]  # fmt: skip
+    line_codes = [exempt if no_tax and v.tax_code not in ("", exempt) else v.tax_code for no_tax in stated]
     if v.po_matched:
         header = {**common, "VLEDLN": 1, **amounts(v.gross, v.stam, v.atxa), **extras}
         matches = []
@@ -646,7 +685,7 @@ def voucher_rows(
             "VNEXR": str(final.get("invoice_number") or "").strip()[:30],
             "VNSBL": acct.sbl, "VNSBLT": acct.sblt,
             "VNTXA1": v.tax_area if settings.dist_tax_columns else "",
-            "VNEXR1": v.tax_code if settings.dist_tax_columns else "",
+            "VNEXR1": line_codes[n - 1] if settings.dist_tax_columns else "",
         }  # fmt: skip
         if settings.account_mode == ACCOUNT_ANI:
             row.update({"VNAM": "2", "VNANI": ani(acct) if account else ""})
@@ -678,8 +717,10 @@ def voucher_rows(
         stams = [s + _units(e.get("non_recoverable_tax"), v.decimals) for e, s in zip(v.entries, shares, strict=True)]
         stams[max(range(len(base)), key=lambda i: abs(base[i]))] += v.stam - sum(stams)
         grosses = [e["cents"] + s for e, s in zip(v.entries, shares, strict=True)]
+        # An exempt line's pay item says so (its own VLEXR1) only when no tax is put on it.
+        line_codes = [c if c != exempt or not s else v.tax_code for c, s in zip(line_codes, stams, strict=True)]
         headers = [
-            {**common, "VLEDLN": n, **amounts(g, s, a), **extras}
+            {**common, "VLEDLN": n, "VLEXR1": line_codes[n - 1], **amounts(g, s, a, line_codes[n - 1]), **extras}
             for n, (g, s, a) in enumerate(zip(grosses, stams, atxas, strict=True), 1)
         ]
         return headers, [dist_row(n, e) for n, e in enumerate(v.entries, 1)], []
@@ -687,16 +728,21 @@ def voucher_rows(
     return [header], [dist_row(n, e) for n, e in enumerate(v.entries, 1)], []
 
 
-def _entry_taxes(entries: list[dict[str, Any]], items: list[dict[str, Any]]) -> list[set[str]]:
-    """The taxes the invoice line behind each distribution line is marked with (none for a tax line). Expense
-    lines follow the invoice lines in order; matched by line number when the counts differ."""
+def _entry_lines(entries: list[dict[str, Any]], items: list[dict[str, Any]]) -> list[dict[str, Any] | None]:
+    """The invoice line behind each distribution line (None for a tax line). Expense lines follow the invoice lines
+    in order; matched by line number when the counts differ."""
     if sum(1 for e in entries if e.get("kind") == "expense") == len(items):
-        marked = iter([set(li.get("taxes_applied") or []) for li in items])
-        return [next(marked) if e.get("kind") == "expense" else set() for e in entries]
-    by_number: dict[Any, set[str]] = {}
+        it = iter(items)
+        return [next(it) if e.get("kind") == "expense" else None for e in entries]
+    by_number: dict[Any, dict[str, Any]] = {}
     for li in items:
-        by_number.setdefault(li.get("line_number"), set(li.get("taxes_applied") or []))
-    return [by_number.get(e.get("line_number"), set()) if e.get("kind") == "expense" else set() for e in entries]
+        by_number.setdefault(li.get("line_number"), li)
+    return [by_number.get(e.get("line_number")) if e.get("kind") == "expense" else None for e in entries]
+
+
+def _entry_taxes(entries: list[dict[str, Any]], items: list[dict[str, Any]]) -> list[set[str]]:
+    """The taxes the invoice line behind each distribution line is marked with (none for a tax line)."""
+    return [set((li or {}).get("taxes_applied") or []) for li in _entry_lines(entries, items)]
 
 
 def _text(value: Any, size: int) -> str:
@@ -799,9 +845,38 @@ def validate(
 # --- Files -------------------------------------------------------------------------------------------------------
 
 
+def glba(final: dict[str, Any], settings: JdeSettings) -> str:
+    """VLGLBA of an invoice: the value mapped to its Pay from account, the code's case aside ("" when none)."""
+    mapped = {k.upper(): v for k, v in settings.bank_glba.items()}
+    return mapped.get(str(final.get("pay_from_account") or "").strip().upper(), "")
+
+
+def bank_notes(invoices: list[dict[str, Any]], settings: JdeSettings) -> dict[int, list[str]]:
+    """{invoice id: [note]} for the invoices whose Pay from account has no G/L bank account mapped, while the mapping
+    is in use (B-684): their VLGLBA is blank and E1 pays them from its default bank (AAI PB), which may not be the
+    account AP chose. A note to check before loading, never a reason to hold an invoice back."""
+    if not settings.bank_glba:
+        return {}
+    out: dict[int, list[str]] = {}
+    for inv in invoices:
+        final = inv.get("final_output") or {}
+        if glba(final, settings):
+            continue
+        code = str(final.get("pay_from_account") or "").strip()
+        inv_id = int(inv.get("id") or 0)
+        out[inv_id] = [  # whole sentences (B-689)
+            f"AP Coder #{inv_id} is paid from {code}, which has no G/L bank account (VLGLBA) mapped: E1 pays it from "
+            "its default bank (AAI PB), which may not be that account."
+            if code
+            else f"AP Coder #{inv_id} has no Pay from account: E1 pays it from its default bank (AAI PB)."
+        ]
+    return out
+
+
 def header_columns(settings: JdeSettings) -> list[str]:
     extra = [c for c in settings.po_extra_columns if c not in HEADER_COLUMNS] if settings.po_matched else []
-    return HEADER_COLUMNS + extra
+    bank = ["VLGLBA"] if settings.bank_glba and "VLGLBA" not in extra else []
+    return HEADER_COLUMNS + bank + extra
 
 
 def _csv(columns: list[str], rows: list[dict[str, Any]]) -> bytes:
@@ -842,7 +917,8 @@ def readme(
     left_out: Mapping[int, list[str]] | None = None, to_check: Mapping[int, list[str]] | None = None,
 ) -> str:  # fmt: skip
     """README.txt of the ZIP: what is in it and how to load it. ``left_out``: invoices not in the file;
-    ``to_check``: invoices in it that the current settings would refuse (a batch downloaded again)."""
+    ``to_check``: invoices in it that the current settings would refuse (a batch downloaded again); the invoices whose
+    Pay from account has no VLGLBA mapped are listed too (``bank_notes``)."""
     totals: dict[str, float] = {}
     for inv in invoices:
         final = inv.get("final_output") or {}
@@ -896,6 +972,12 @@ def readme(
         lines += ["", "Not in this batch (fix them, then export again)", "-" * 47]
         for inv_id, problems in left_out.items():
             lines.append(f"AP Coder #{inv_id}: " + "; ".join(problems))
+    notes = bank_notes(invoices, settings)
+    if notes:
+        title = "In this batch, paid from E1's default bank: check before loading"
+        lines += ["", title, "-" * len(title)]
+        lines += [n for said in notes.values() for n in said]
+        lines.append("Map them in Settings -> JD Edwards E1 -> G/L bank account (VLGLBA) per Pay from account.")
     if to_check:
         title = "In this batch, but the current settings or vendor master would refuse them: check before loading"
         lines += ["", title, "-" * len(title)]
@@ -971,6 +1053,7 @@ def dry_run(
     making a batch. {"blocking": [...], "vouchers": [...], "held": [...], "files": {file: rows}, "totals": {...}}."""
     blocking = settings_problems(settings)
     problems = validate(invoices, settings, vendor_lookup, prior)
+    notes = bank_notes(invoices, settings)
     out: dict[str, Any] = {
         "batch": f"{settings.batch_prefix.strip()}{batch}"[:15],
         "user": settings.user.strip(),
@@ -1033,6 +1116,15 @@ def dry_run(
                     for d in dists
                 ],
                 "matches": len(matches),
+                # The self-assessed PST is booked from the Self-assessment report by journal entry; a code that has
+                # E1 accrue the use tax itself (B) would accrue it a second time (B-716).
+                "warnings": [
+                    f"code {v.tax_code} has JD Edwards accrue the PST (use tax): do not also book it from AP Coder's "
+                    "Self-assessment report, or the PST is accrued twice"
+                ]
+                if v.tax_code and v.tax_code == settings.self_assessed_code.strip().upper()
+                else [],
+                "notes": notes.get(inv_id, []),
                 "balance": (
                     f"distribution {_shown(dist_total, settings, v.decimals)} = gross {v.gross / 100:,.2f} "
                     f"- tax E1 posts {posted:,.2f} (code {v.tax_code or 'none'})"
@@ -1083,7 +1175,9 @@ def dry_run_text(report: dict[str, Any]) -> str:
             lines.append(f"  F0911Z1 line {d['line']}: {d['account']}  {d['amount']}  {d['text']}")
         if v["matches"]:
             lines.append(f"  F0411Z1T: {v['matches']} PO match line(s)")
+        lines += [f"  WARNING: {w}" for w in v.get("warnings") or []]
         lines.append(f"  {v['balance']}")
+        lines += [f"  NOTE: {n}" for n in v.get("notes") or []]
         lines.append("")
     for h in report["held"]:
         lines.append(f"HELD BACK  AP Coder #{h['id']}  {h['vendor']}  invoice {h['number']}  {h['date']}")

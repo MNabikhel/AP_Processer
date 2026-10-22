@@ -38,6 +38,8 @@
       "taxes_applied": [
         "OTHER"
       ],
+      "tax_exempt": [],
+      "tax_status": "",
       "reasoning_justification": "Monthly SaaS subscription; US sales tax expensed."
     },
     {
@@ -51,6 +53,8 @@
       "taxes_applied": [
         "OTHER"
       ],
+      "tax_exempt": [],
+      "tax_status": "",
       "reasoning_justification": "12-month support paid upfront is a prepaid expense."
     },
     {
@@ -64,6 +68,8 @@
       "taxes_applied": [
         "OTHER"
       ],
+      "tax_exempt": [],
+      "tax_status": "",
       "reasoning_justification": "Hardware below the 2,500 per-unit capitalisation threshold."
     },
     {
@@ -77,6 +83,8 @@
       "taxes_applied": [
         "OTHER"
       ],
+      "tax_exempt": [],
+      "tax_status": "",
       "reasoning_justification": "Delivery on a non-inventory purchase."
     }
   ]

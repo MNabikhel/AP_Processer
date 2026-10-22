@@ -512,13 +512,14 @@ def test_in_a_browser_the_view_tools_fit_on_a_laptop_beside_the_pages(browser, s
 def test_in_a_browser_space_elsewhere_on_the_review_screen_scrolls_as_usual(browser, store):
     """Space holds the Hand only with the pointer over the page or the focus in the Document card."""
     page, errors = _open(browser, store)
-    page.evaluate("window.scrollTo(0, 0)")
+    page.evaluate("document.querySelector('#lines').scrollIntoView({block: 'center'})")  # under the details (D-63)
+    start = page.evaluate("window.scrollY")
     lines = page.locator("#lines").bounding_box()
     page.mouse.move(lines["x"] + 20, lines["y"] + 20)  # over the line items, the focus on the page's body
     page.evaluate("document.activeElement && document.activeElement.blur()")
     page.keyboard.press(" ")
     page.wait_for_timeout(400)
-    assert page.evaluate("window.scrollY") > 0  # the dashboard page scrolled
+    assert page.evaluate("window.scrollY") > start  # the dashboard page scrolled
     assert not page.evaluate("document.querySelector('.iv').classList.contains('hand')")
     # The focus in the Document card (the page clicked, say), the pointer elsewhere: Space holds the Hand.
     page.evaluate("window.scrollTo(0, 0)")
@@ -568,15 +569,16 @@ def _over_the_page(page):
 
 def test_in_a_browser_space_on_a_box_or_button_of_the_form_is_theirs_with_the_mouse_over_the_page(browser, store):
     """B-591: the mouse resting on the page, Space on a line's tax box or on "Add a line" did nothing: the viewer took
-    it for the Hand."""
+    it for the Hand. (A line's taxes are a dropdown now, D-64: Space in a line's description box is the box's.)"""
     page, errors = _open(browser, store)
     page.evaluate("window.scrollTo(0, 0)")
-    tax = page.locator("[data-grid=lines] input[type=checkbox] >> nth=0")
-    ticked = tax.is_checked()
-    tax.focus()
+    box = page.locator("[data-grid=lines] [name=line_description] >> nth=0")
+    before = box.input_value()
+    box.focus()
+    page.keyboard.press("End")
     _over_the_page(page)
     page.keyboard.press(" ")
-    assert tax.is_checked() != ticked
+    assert box.input_value() == before + " "
     assert not page.evaluate("document.querySelector('.iv').classList.contains('hand')")
     rows = page.locator("[data-grid=lines] tr").count()
     page.locator("[data-add-row=lines]").focus()
@@ -597,14 +599,15 @@ def test_in_a_browser_page_down_turns_the_invoice_page_only_from_the_document_ca
     """B-592: Page Up / Page Down turned the invoice's page from anywhere on the review screen, where they should
     scroll the screen."""
     page, errors = _open(browser, store, vendor="Mont-Royal")
-    page.evaluate("window.scrollTo(0, 0)")
+    page.evaluate("document.querySelector('#lines').scrollIntoView({block: 'center'})")  # under the details (D-63)
+    start = page.evaluate("window.scrollY")
     lines = page.locator("#lines").bounding_box()
     page.mouse.move(lines["x"] + 20, lines["y"] + 20)  # over the line items, the focus on the page's body
     page.evaluate("document.activeElement && document.activeElement.blur()")
     page.keyboard.press("PageDown")
     page.wait_for_timeout(400)
     assert "Page 1 of 2" in page.inner_text(".iv-where")
-    assert page.evaluate("window.scrollY") > 0  # the screen scrolled as usual
+    assert page.evaluate("window.scrollY") > start  # the screen scrolled as usual
     # The focus on a button of the form, the mouse away: the screen's.
     page.evaluate("window.scrollTo(0, 0)")
     page.locator("[data-add-row=lines]").focus()

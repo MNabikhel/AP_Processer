@@ -35,6 +35,7 @@ from markupsafe import Markup
 from ap_coder.capture.confidence import LABELS
 from ap_coder.capture.workflow import learn_from_approval, on_reopen, taught_message
 from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCE_NAMES
+from ap_coder.coding.vendors import mask_account
 from ap_coder.core import ui
 from ap_coder.core.memory import ACCEPTED, CODED, CORRECTED, vendor_key
 from ap_coder.core.reference_data import ReferenceData
@@ -150,10 +151,11 @@ def current_draft(request: Request, inv: dict[str, Any]) -> tuple[view.Draft, bo
     after the draft was started (its edits are kept: the screen offers to start over from the reading)."""
     saved = _drafts(request).get(inv["id"])
     if saved is None:
-        return view.Draft.stored(_start(inv), _reader_at(inv)), False
+        return view.Draft.stored(_start(inv), _reader_at(inv), approved=bool(inv.get("final_output"))), False
     draft = view.Draft(header=dict(saved["header"]), lines=list(saved["lines"]), taxes=list(saved["taxes"]),
                        taught=dict(saved.get("taught") or {}), reader_at=saved.get("reader_at", ""),
-                       absent=list(saved.get("absent") or []))  # fmt: skip
+                       absent=list(saved.get("absent") or []), from_vendor=dict(saved.get("from_vendor") or {}),
+                       pay_from_for=str(saved.get("pay_from_for") or ""))  # fmt: skip
     return draft, draft.reader_at != _reader_at(inv)
 
 
@@ -431,13 +433,17 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
     return render(
         request, "invoice.html", "review", mode="review", **context,
         draft=draft, kept=kept, live=analysis.live, sure=sure,
-        grid=view.grid(reference, draft, inv.get("ai_output") or {},
-                       view.vendor_accounts(store, draft.header.get("vendor_name") or "")),
+        grid={**view.grid(reference, draft, inv.get("ai_output") or {},
+                          view.vendor_accounts(store, draft.header.get("vendor_name") or "")),
+              "tax_marks": analysis.live.get("tax_marks") or {}},
         labels=view.FIELD_LABELS, provinces=view.province_options(),
         due_placeholder=f"{computed.isoformat()} (from terms)" if computed else "YYYY-MM-DD",
         sent_back=_sent_back(store, invoice_id), poll_seconds=PAGE_READER_POLL_SECONDS,
         today=dt.date.today().isoformat(), taught_json=draft.taught, vendors=vendor_options(store),
-        absent_ok=list(view.ABSENT_FIELDS),
+        absent_ok=list(view.ABSENT_FIELDS), from_vendor_note=view.FROM_VENDOR_NOTE,
+        tax_fields=list(view.TAX_NUMBER_FIELDS), pay_from=view.pay_from_choices(store, draft.header),
+        unread_numbers=sorted(view.unread_numbers(inv.get("ai_output") or {}) or []),
+        bank_shown=mask_account(bank) if (bank := draft.header.get("remit_bank_account")) else "",
         supply=view.supply_line(draft.header, draft.lines, reference.tax),
         usual_cc=view.usual_cost_center(store, reference, draft.header.get("vendor_name") or ""),
     )  # fmt: skip
@@ -598,8 +604,17 @@ async def check(request: Request, invoice_id: int) -> JSONResponse:
     # the account lists' "Used for this vendor", for the vendor now in the vendor field (B-596)
     listed = {code for code, _ in view.gl_options(reference, draft.lines)}
     used = [c for c in view.vendor_accounts(store, draft.header.get("vendor_name") or "") if c in listed]
+    # the lines' tax codes where the invoice is supplied now, and the lines the Tax check points at (D-64)
+    codes = view.tax_choices(draft, reference.tax)
+    # What the server filled in the invoice details (the vendor list's tax numbers, the default Pay from account) and
+    # the details to highlight: the screen shows them (invoice.js applyHeader).
+    header = {"values": analysis.filled, "from_vendor": draft.from_vendor, "pay_from_for": draft.pay_from_for}
+    if analysis.coding is not None:
+        header["flags"] = analysis.live.get("flags") or {}
     return JSONResponse({"ok": True, "valid": analysis.coding is not None, "allow": analysis.allow,
-                         "problems": analysis.problems, "vendor_accounts": used,
+                         "problems": analysis.problems, "vendor_accounts": used, "header": header,
+                         "tax_codes": codes["options"], "tax_code_labels": codes["labels"],
+                         "tax_marks": {str(k): v for k, v in (analysis.live.get("tax_marks") or {}).items()},
                          "sections": _render_live(analysis.live, invoice_id)})  # fmt: skip
 
 
@@ -622,14 +637,19 @@ async def approve(request: Request, invoice_id: int) -> JSONResponse:
     # The same correction again and again: before saving, AP is asked once why (lessons.py). Skipping is fine: the
     # question comes back next time.
     from ap_coder.ai import lessons
+    from ap_coder.core.schema import as_read
 
-    asked = lessons.due_for_why(store, inv.get("ai_output") or {}, analysis.output)
+    ai = inv.get("ai_output") or {}
+    asked = lessons.due_for_why(store, ai, as_read(analysis.output, ai))  # a vendor-list number: no "why" (B-681)
     if asked and not form.get("why_done"):
         return JSONResponse({"ok": False, "ask_why": {"fields": asked, "threshold": lessons.why_after(store)}})
     after = next_url(store, invoice_id, query, form.get("next_id"))
     open_issues = [{"code": i.code, "severity": i.severity, "line": i.line_number}
                    for i in analysis.errors + analysis.warnings]  # fmt: skip
     me = reviewer()
+    from ap_coder.coding.line_tax import confirm_codes
+
+    confirm_codes(analysis.output)  # approving confirms the tax codes worked out to check (B-713)
     try:
         counts = store.approve_invoice(invoice_id, analysis.output, me, open_issues=open_issues, login=login())
     except (KeyError, ValueError) as exc:  # KeyError: deleted meanwhile, after it was read above

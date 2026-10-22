@@ -99,10 +99,37 @@ CHECKS: dict[str, CheckHelp] = {
     ),
     "VENDOR_BANK_CHANGED": CheckHelp(
         FRAUD, "Bank account changed",
-        "The bank account the invoice asks to be paid into differs from the one on this vendor's earlier approved "
+        "The bank details printed on the invoice for payment differ from the ones on this vendor's earlier approved "
         "invoices. A message or invoice announcing new banking details is the most common way AP is defrauded.",
         "Call the vendor on a number from your vendor file (not the one on this invoice or in the email) and "
         "confirm the change before paying or updating the vendor's banking in the ERP.",
+    ),
+    "PAY_FROM_MISSING": CheckHelp(
+        PAYMENT, "No bank account to pay from",
+        "Your bank accounts are set up, but none is chosen to pay this invoice from: none is the default for the "
+        "invoice's currency, or there are two and neither is the default.",
+        "Pick the account under Pay from in the invoice details. To have one chosen for you, make it the default "
+        "of its currency on GL accounts & tax → Bank accounts.",
+    ),
+    "PAY_FROM_UNKNOWN": CheckHelp(
+        PAYMENT, "Bank account not in use",
+        "The bank account chosen to pay this invoice from is no longer one of your bank accounts in use.",
+        "Pick another account under Pay from, or put the account back in use on GL accounts & tax → Bank "
+        "accounts.",
+    ),
+    "PAY_FROM_CURRENCY": CheckHelp(
+        PAYMENT, "Paid from an account in another currency",
+        "The bank account chosen to pay this invoice from is in another currency than the invoice: the bank "
+        "converts the payment, at its rate and fees.",
+        "Pick an account in the invoice's currency under Pay from, or keep this one if paying with a conversion is "
+        "intended.",
+    ),
+    "PAY_FROM_NO_ACCOUNTS": CheckHelp(
+        PAYMENT, "No bank accounts yet",
+        "Your company's bank accounts are not set up, so the invoice does not say which account pays it. Nothing "
+        "requires one until they are.",
+        "Optional: add your bank accounts on GL accounts & tax → Bank accounts (import them from a spreadsheet or "
+        "type them in).",
     ),
     "CREDIT_NOTE_FOR": CheckHelp(
         FRAUD, "Credit note for an invoice",
@@ -345,17 +372,52 @@ CHECKS: dict[str, CheckHelp] = {
     ),
     "PROVINCIAL_TAX_NOT_CHARGED": CheckHelp(
         TAX, "Provincial tax not charged",
-        "GST was charged but not the provincial sales tax of the place of supply.",
-        "If the item is taxable, PST may have to be self-assessed and remitted; check with tax.",
+        "Lines on which the provincial sales tax (PST, RST, QST) is due were not charged it: an out-of-province or "
+        "unregistered vendor, or a line the vendor missed.",
+        "The tax is self-assessed and remitted by you (BC PSTA s.49; the SK, MB and QST acts alike): the "
+        "Self-assessment report lists it. If the lines are exempt, pick “GST only · PST exempt”.",
     ),
     "TAX_NOT_ALLOCATED": CheckHelp(
-        TAX, "Tax on no line", "A tax is charged but no line is marked as subject to it.",
-        "Tick the tax in the Taxes column of the lines it applies to.",
+        TAX, "Tax on no line", "A tax is charged but no line's tax code carries it.",
+        "Pick the tax code (e.g. GST + PST) of the lines it applies to; the Tax check under the lines adds it up.",
     ),
     "TAX_BASE_MISMATCH": CheckHelp(
         TAX, "Taxable amount doesn't match the lines",
-        "The lines marked with a tax do not add up to that tax's taxable amount.",
-        "Fix the Taxes column on the lines so the right lines carry the tax.",
+        "The lines whose tax code carries a tax do not add up to what that tax was charged on. When one line's "
+        "amount is the difference, it is named: it may be exempt from that tax, or carry it too.",
+        "Fix the tax code of the lines (e.g. a delivery or a service exempt from PST is \"GST only\"); the Tax check "
+        "shows each tax adding up. If the vendor taxed the wrong lines, ask for a corrected invoice.",
+    ),
+    "HST_NOT_CHARGED": CheckHelp(
+        TAX, "GST charged where HST applies",
+        "The vendor charged GST alone on a supply in an HST province: it should have charged HST. The GST charged is "
+        "claimable.",
+        "Ask the vendor for a corrected invoice charging HST: you remain liable for the provincial part (ETA s.165).",
+    ),
+    "PST_EXEMPTION_TO_CONFIRM": CheckHelp(
+        TAX, "PST exemption to confirm",
+        "The vendor charged PST (RST in Manitoba) on other lines and not on this one, so AP Coder took the line as "
+        "exempt from it. It may also be a line the vendor missed, whose PST is then yours to self-assess.",
+        "Confirm the line's tax code (right-click the line → Confirm the tax code) if it is exempt, or pick “GST only "
+        "· PST not charged (self-assess)”. Approval waits until you do.",
+    ),
+    "ITC_AT_RISK": CheckHelp(
+        TAX, "Input tax credit at risk",
+        "HST charged on a supply where only GST applies. Only the tax properly payable can be claimed as an input tax "
+        "credit (ETA s.169).",
+        "Ask the vendor for a corrected invoice; until then, check with your tax team what can be claimed.",
+    ),
+    "LINE_TAX_NOT_CHARGED": CheckHelp(
+        TAX, "Line marked with a tax that isn't charged",
+        "A line's tax code says it carries a tax (e.g. PST) that the invoice does not charge at all.",
+        "If the lines are taxable, pick “GST only · PST not charged (self-assess)”: the PST is due and is "
+        "self-assessed (the Self-assessment report lists it). If they are exempt, pick “GST only · PST exempt”.",
+    ),
+    "EXEMPT_LINE_TAXED": CheckHelp(
+        TAX, "Exempt line seems taxed",
+        "A line is marked exempt or zero-rated, but the tax charged only adds up if that line is taxed.",
+        "Check the line: if it is taxable, change its tax code. If it really is exempt, the vendor charged tax on it: "
+        "ask for a corrected invoice.",
     ),
     "QST_ON_GST_INCLUSIVE": CheckHelp(
         TAX, "QST calculated on GST",
@@ -395,6 +457,21 @@ CHECKS: dict[str, CheckHelp] = {
     "QST_NUMBER_FORMAT": CheckHelp(
         TAX, "QST number looks wrong", "The QST number is not in the format 1234567890 TQ 0001.",
         "Check it against the document; you can verify numbers on Revenu Québec's registry.",
+    ),
+    "GST_HST_NUMBER_NOT_PRINTED": CheckHelp(
+        TAX, "GST/HST number not printed",
+        "The GST/HST number shown was filled in from the vendor list: it is not printed on the invoice. For a "
+        "purchase of $100 or more, CRA needs the supplier's registration number on the invoice itself to allow the "
+        "input tax credit; the vendor list's copy does not count.",
+        "Check the page once more for the number; if it really is not there, ask the vendor for an invoice that "
+        "shows it before claiming the credit (or claim no credit on this one).",
+    ),
+    "QST_NUMBER_NOT_PRINTED": CheckHelp(
+        TAX, "QST number not printed",
+        "The QST number shown was filled in from the vendor list: it is not printed on the invoice. For a purchase of "
+        "$100 or more, Revenu Québec needs the supplier's QST number on the invoice to allow the input tax refund.",
+        "Check the page once more; if the number is not there, ask the vendor for an invoice that shows it before "
+        "claiming the refund.",
     ),
     "TAX_GL_UNMAPPED": CheckHelp(
         TAX, "Tax has no GL account",
@@ -518,6 +595,12 @@ def help_for(code: str) -> CheckHelp | None:
 
 
 FAQ: list[tuple[str, str]] = [
+    (
+        "How do I say which lines are taxed?",
+        "Each line has a tax code: GST + PST, GST only, HST, Exempt, Zero-rated... AP Coder fills it from the codes "
+        "printed beside the lines, or from which lines make the tax charged add up. Change it where it is wrong: the "
+        "Tax check under the lines shows each tax (the lines marked × the rate) against what the invoice charges.",
+    ),
     (
         "Does any invoice or GL data leave this computer?",
         "No. Every invoice is read and coded on this computer: the PDF's own text or OCR, OvisOCR2 in LM Studio and "
@@ -684,7 +767,8 @@ QUICK_START: list[tuple[str, str, str]] = [  # numbered 0 to 6, as docs/QUICK_ST
     ("Your name and province", "Settings → Review: each approval is recorded under your name; the province is where "
      "goods are delivered to you.", "/settings/review"),
     ("Your GL accounts and sales tax", "Import your GL accounts (or use the sample ones to try AP Coder), then pick "
-     "a GL account for GST, HST and QST on the Sales tax accounts tab.", "/accounts"),
+     "a GL account for GST, HST and QST on the Sales tax accounts tab. Optional: your company's bank accounts on the "
+     "Bank accounts tab, to say which one pays each invoice.", "/accounts"),
     ("Your first invoices", "Upload PDFs, scans, photos or saved emails. Each is read, coded and checked.",
      "/process"),
     ("Review", "Open an invoice and fix what the checks point to.", "/review"),
@@ -700,4 +784,8 @@ WHATS_NEW: list[str] = [
     "Settings opens on Review: your name, approvals and your province, with one Save.",
     "Exports are Excel or CSV for the pilot, and the page remembers the last one you used.",
     "The sample GL accounts come without cost centers: each line needs only a GL account.",
+    "Each line has one tax code (GST + PST, GST only, Exempt...), and the Tax check under the lines adds each tax up.",
+    "On the review screen the invoice details come first, then the lines.",
+    "A vendor from the vendor list fills in the GST/HST, QST and PST numbers the invoice does not print, and says so.",
+    "Pay from: the company bank account that pays each invoice, from GL accounts & tax → Bank accounts.",
 ]

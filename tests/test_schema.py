@@ -12,7 +12,8 @@ TARGET_HEADER = [
 ]  # fmt: skip
 TARGET_LINE = [
     "line_number", "description", "quantity", "unit_price", "amount",
-    "predicted_gl_code", "predicted_cost_center", "taxes_applied", "reasoning_justification",
+    "predicted_gl_code", "predicted_cost_center", "taxes_applied", "tax_exempt", "tax_status",
+    "reasoning_justification",
 ]  # fmt: skip
 ORIGINAL_SPEC_HEADER = [
     "vendor_name", "invoice_number", "invoice_date", "currency", "subtotal",

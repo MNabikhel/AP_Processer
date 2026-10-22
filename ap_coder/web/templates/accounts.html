@@ -190,8 +190,87 @@
   {% endfor %}
 </section>
 {% endif %}
+{% elif tab == "bank" %}{% set b = bank %}
+<section class="card">
+  <h4>Bank accounts</h4>
+  <p class="muted">Your company's own bank accounts: the account each invoice is paid from (<i>Pay from</i> on the review
+    screen). Each invoice takes the default account of its currency, or the one this vendor was last paid from. Only the
+    last 4 digits of an account number are ever shown. Optional: without bank accounts, nothing asks for one.</p>
+
+  <details class="expander" id="import"{% if not b.rows or b.imp or b.imp_error %} open{% endif %}>
+    <summary><span class="ms" aria-hidden="true">upload</span>Import bank accounts from CSV or Excel</summary>
+    {% if b.imp_error %}<div class="flash err"><span class="ms" aria-hidden="true">error</span><div>{{ b.imp_error }}</div></div>{% endif %}
+    {% if b.imp %}
+    {{ preview(b.imp, "/accounts", {"tab": "bank", "file": b.imp.token}) }}
+    <form method="post" action="/accounts/bank/import" class="stack" data-busy="Importing…">
+      {{ columns(b.imp) }}
+      <p class="muted small">Accounts are matched by their code: a code already here is updated, a new one is added. A
+        column left at (none) keeps what each account has.</p>
+      <div class="row">
+        <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">upload</span>Import bank accounts</button>
+        <a class="link" href="/accounts?tab=bank">Cancel</a>
+      </div>
+    </form>
+    {% else %}
+    {{ upload_form("/accounts/bank/upload", "A CSV or Excel file of your bank accounts", "Upload a CSV or Excel file") }}
+    <p class="muted small">Columns: code, name, currency, institution, transit, account number, cash GL account, default,
+      active. <a class="link" href="/accounts/bank/template.csv" download>Download a template</a></p>
+    {% endif %}
+  </details>
+
+  {% if not b.rows %}
+  {{ ui.empty_note("No bank accounts yet", " Import them above, or type them in the grid below.", "account_balance") }}
+  {% endif %}
+  <form method="post" action="/accounts/bank/save" class="stack" data-busy="Saving…" id="bank-form">
+    <input type="hidden" name="version" value="{{ b.version }}">
+    <div class="table-wrap">
+      <table class="apc-table edit bank-grid">
+        <thead><tr><th>Code</th><th>Name</th><th>Currency</th><th>Institution</th><th>Transit</th><th>Account number</th>
+          <th>Cash GL account</th><th>Default</th><th>In use</th></tr></thead>
+        <tbody>
+          {% for r in b.rows %}{% set n = loop.index0 %}
+          <tr{% if not r.active %} class="muted"{% endif %}>
+            <td><input type="text" name="code" value="{{ r.code }}" readonly aria-label="Code" title="The code can't change: add a new account instead"></td>
+            <td><input type="text" name="name" value="{{ r.name }}" aria-label="Name {{ r.code }}" class="wide"></td>
+            <td><input type="text" name="currency" value="{{ r.currency }}" aria-label="Currency {{ r.code }}" maxlength="3" size="4"></td>
+            <td><input type="text" name="institution" value="{{ r.institution }}" aria-label="Institution {{ r.code }}" inputmode="numeric" size="4"></td>
+            <td><input type="text" name="transit" value="{{ r.transit }}" aria-label="Transit {{ r.code }}" inputmode="numeric" size="6"></td>
+            <td><input type="text" name="account_number" value="" placeholder="{{ r.shown or 'none' }}" aria-label="Account number {{ r.code }} (leave blank to keep {{ r.shown }})"
+                       inputmode="numeric" autocomplete="off" title="Shown as its last 4 digits. Type a number to replace it; leave blank to keep it."></td>
+            <td>{{ gl_pick(r.gl_account, b.gl_options, r.code) }}</td>
+            <td><label class="check"><input type="checkbox" name="is_default" value="{{ n }}"{% if r.is_default %} checked{% endif %} aria-label="Default for {{ r.currency }}: {{ r.code }}"></label></td>
+            <td><label class="check"><input type="checkbox" name="active" value="{{ n }}"{% if r.active %} checked{% endif %} aria-label="In use: {{ r.code }}"></label></td>
+          </tr>
+          {% endfor %}
+          {% for k in range(b.blank) %}{% set n = b.rows | length + k %}
+          <tr class="new">
+            <td><input type="text" name="code" value="" aria-label="New code" placeholder="e.g. CAD-OP"></td>
+            <td><input type="text" name="name" value="" aria-label="New name" class="wide"></td>
+            <td><input type="text" name="currency" value="" aria-label="New currency" placeholder="CAD" maxlength="3" size="4"></td>
+            <td><input type="text" name="institution" value="" aria-label="New institution" inputmode="numeric" size="4"></td>
+            <td><input type="text" name="transit" value="" aria-label="New transit" inputmode="numeric" size="6"></td>
+            <td><input type="text" name="account_number" value="" aria-label="New account number" inputmode="numeric" autocomplete="off"></td>
+            <td>{{ gl_pick("", b.gl_options, "new") }}</td>
+            <td><label class="check"><input type="checkbox" name="is_default" value="{{ n }}" aria-label="New: default for its currency"></label></td>
+            <td></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="muted small">One default per currency. An account no longer used: untick <i>In use</i> (it is kept for the
+      invoices already paid from it).</p>
+    <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save bank accounts</button>
+  </form>
+</section>
 {% endif %}
 {% endblock %}
+{% macro gl_pick(value, options, code) %}
+{% if options %}<select name="gl_account" aria-label="Cash GL account {{ code }}"><option value="">(none)</option>
+  {% for c, lbl in options %}<option value="{{ c }}"{% if c == value %} selected{% endif %}>{{ lbl }}</option>{% endfor %}
+  {% if value and value not in options | map("first") %}<option value="{{ value }}" selected>{{ value }} (not in your GL accounts)</option>{% endif %}</select>
+{% else %}<input type="text" name="gl_account" value="{{ value }}" aria-label="Cash GL account {{ code }}" size="8">{% endif %}
+{% endmacro %}
 {% macro rule_row(r, gl_names, cc_codes) %}
 <tr{% if not r %} class="new"{% endif %}>
   <td><input type="text" name="vendor" value="{{ r.vendor if r else '' }}" aria-label="Vendor" title="Part of the name is enough"></td>

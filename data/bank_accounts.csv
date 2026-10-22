@@ -1,0 +1,3 @@
+code,name,currency,institution,transit,account_number,gl_account,default,active
+CAD-OP,Sample Bank CAD operating,CAD,000,00000,0000001234,,yes,yes
+USD-OP,Sample Bank USD operating,USD,000,00000,0000005678,,yes,yes

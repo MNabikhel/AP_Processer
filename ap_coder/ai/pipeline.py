@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 from ..capture.bridge import review_issues
 from ..capture.layout import CannotRead
 from ..capture.workflow import AUTONOMOUS_REVIEWER, autonomy_decision, capture_invoice
+from ..coding import banks
 from ..coding.po import po_findings
 from ..coding.rules import apply as apply_rules
 from ..coding.tax import PLACE_OF_SUPPLY, SUPPLY_OURS, SUPPLY_SITE, build_gl_distribution, supply_source
@@ -155,6 +156,16 @@ def finalise_coding(
         if store is not None
         else None
     )
+    # The bank account it is paid from (ours, D-66): the vendor's last one, else the currency's default, when none is
+    # chosen yet; checked once our accounts are set up.
+    bank_findings: list[tuple[str, str, str]] = []
+    if store is not None:
+        accounts = store.bank_accounts()
+        if accounts and not coding.pay_from_account:
+            coding.pay_from_account = banks.choose(
+                accounts, coding.currency, store.last_pay_from(vendor_key(coding.vendor_name))
+            )
+        bank_findings = banks.findings(coding.pay_from_account, coding.currency, accounts)
     report = validate_coding(
         coding,
         reference,
@@ -163,6 +174,7 @@ def finalise_coding(
         history=history,
         duplicate_of=duplicates,
         vendor_findings=(vendor_findings(coding, store, exclude_invoice_id) if store is not None else [])
+        + bank_findings
         + payment_findings(
             coding.to_output(),
             store.default_terms_days() if store is not None else 30,
@@ -180,6 +192,29 @@ def finalise_coding(
             output[PLACE_OF_SUPPLY] = place
     output["gl_distribution"] = build_gl_distribution(coding, reference.tax)
     return output, report
+
+
+def _model_line_taxes(coding: InvoiceCoding, text: str) -> None:
+    """The chat model's lines with their taxes worked out when it said nothing of them (no line has a tax or a
+    status) and a tax is charged: the codes printed on the page are not there to read, so the lines that make each
+    tax add up (``line_tax.prefill``, D-64). What the model said is kept."""
+    from ..coding.line_tax import charged_types, fill_exempt, model_gave_no_taxes
+    from .offline_coder import tax_codes
+
+    charged = charged_types(coding.tax_lines)
+    if (
+        coding.line_items
+        and not model_gave_no_taxes(coding.line_items)
+        and not any(li.tax_exempt or li.tax_status for li in coding.line_items)
+    ):  # its taxes, and nothing of what is exempt: read as the vendor meant it (a tax charged on others is exempt)
+        coding.line_items = fill_exempt([li.model_copy(update={"tax_exempt": None}) for li in coding.line_items],
+                                        coding.tax_lines)  # fmt: skip
+    if not coding.line_items or not model_gave_no_taxes(coding.line_items) or not charged:
+        return
+    province = coding.ship_to_province or coding.supplier_province
+    coding.line_items = tax_codes(list(coding.line_items), list(coding.tax_lines), [], text, province,
+                                  coding.invoice_date, supplier_province=coding.supplier_province,
+                                  pst_number=coding.pst_registration_number)  # fmt: skip
 
 
 DAMAGED_PICTURE = ("UnidentifiedImageError",)
@@ -482,6 +517,7 @@ class InvoicePipeline:
                     self._local_accounts(result.coding, history_text)
             else:
                 result.coding = self.coder.code(result.extraction, self._images(path), history_text)
+                _model_line_taxes(result.coding.coding, result.extraction.content if result.extraction else "")
             result.timings["inference"] = time.perf_counter() - t1
             if self.store is not None:  # fixed coding rules set by AP win over the AI
                 coded, result.rules_applied = apply_rules(result.coding.coding, self.store.coding_rules())

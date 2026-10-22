@@ -94,6 +94,17 @@ F4008 tax areas:
 | No tax charged | same area | E (exempt) | gross |
 | Outside Canada | blank | blank | gross (a US sales tax is part of the expense lines) |
 
+A line marked **Exempt** or **Zero-rated** (its tax code, D-64) says so line by line in *match header* mode: its pay
+item carries the exempt code (Settings → JD Edwards, default E) in VLEXR1, with no tax on it, and so does its G/L
+line's VNEXR1 when the distribution's tax columns are on. The other lines keep the invoice's code. With one pay item
+(*sequential*), the invoice's code is used for all of it, as before.
+
+**Self-assessed PST** (a PST due and not charged by the vendor) is not in the voucher: book it from AP Coder's
+**Self-assessment** report (Month-end) by journal entry. An invoice whose explanation code already has E1 accrue the
+use tax (B, the self-assessed code) must not be booked again from that report, or the PST is accrued twice: the dry
+run says so on such a voucher, and once exported the Self-assessment report marks it "JD Edwards accrues this one
+(code B): don't book it again from this report".
+
 ### Why the distribution balances (and when it does not)
 
 The explanation code decides which part of the tax E1 posts by itself (through the tax AAIs) and which
@@ -224,7 +235,18 @@ document type that is not 2 characters, a domestic currency that is not a 3-lett
 | VLPDCT | PO document type (default `OP`) | with VLPO |
 | VLPKCO | PO company (default: the company) | with VLPO |
 | VLRMK | `AP Coder #<id>` | remark |
+| VLGLBA | G/L bank account of the invoice's *Pay from* account | **unconfirmed**; only when mapped (below) |
 | *extra* | e.g. VLATFLG, VLPSTE | **unconfirmed**; only in PO-matched mode |
+
+**VLGLBA (G/L bank account).** Each approved invoice records *Pay from*, the company bank account that pays it
+(GL accounts & tax → Bank accounts, D-66). E1 keeps the bank account of a voucher in GLBA as its *short account ID*,
+which AP Coder does not know, so the column is a mapped setting: Settings → JD Edwards E1 → *G/L bank account (VLGLBA)
+per Pay from account*, one box for each bank account in use (the code's case does not matter). With every box blank
+(the default) F0411Z1 has no VLGLBA column and E1 takes the bank from the AAI PB, as before. Once any box is filled, a
+voucher whose account has none gets a blank VLGLBA, and the dry run and the batch's README.txt list it to check before
+loading (B-684). The bank account's own cash GL is *not* used as a default: it maps to BU.Object.Subsidiary (as the
+distribution lines are written), which is not the short account ID GLBA holds, and a wrong bank is worse than E1's
+default. Confirm with the JDE team whether R04110ZA keeps a VLGLBA it is given.
 
 ## F0911Z1: G/L distribution lines
 

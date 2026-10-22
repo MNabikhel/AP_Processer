@@ -40,10 +40,12 @@ from .audit import diff_coding
 from .memory import ACCEPTED, CODED, CORRECTED, VENDOR_KEY_RULES, pair_lines, refresh_vendor_key, vendor_key
 from .paths import PROJECT_DIR, default_db_path, find_moved_file, private_dir  # noqa: F401  (re-exported)
 from .reference_data import UNASSIGNED, ReferenceData, ReferenceTable, parse_policy_notes
+from .schema import as_read
 
 # 10: erp_invoices, 11: coding_rules (by _SCHEMA), 12: currency, 13: credit notes not due,
-# 14: invoice_capture, supplier_profiles, supplier_outcomes (by _SCHEMA), 15: reader_outcomes, page_reads (by _SCHEMA)
-SCHEMA_VERSION = 15
+# 14: invoice_capture, supplier_profiles, supplier_outcomes (by _SCHEMA), 15: reader_outcomes, page_reads (by _SCHEMA),
+# 16: bank_accounts, our company's bank accounts (by _SCHEMA, D-66)
+SCHEMA_VERSION = 16
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
@@ -181,6 +183,11 @@ CREATE TABLE IF NOT EXISTS lesson_approvals (
     confirmed INTEGER NOT NULL DEFAULT 0, value TEXT NOT NULL DEFAULT '', proposed TEXT NOT NULL DEFAULT '',
     at TEXT NOT NULL, PRIMARY KEY (invoice_id, situation));
 CREATE INDEX IF NOT EXISTS lesson_approvals_situation ON lesson_approvals (situation);
+CREATE TABLE IF NOT EXISTS bank_accounts (
+    code TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', currency TEXT NOT NULL DEFAULT 'CAD',
+    institution TEXT NOT NULL DEFAULT '', transit TEXT NOT NULL DEFAULT '', account_number TEXT NOT NULL DEFAULT '',
+    gl_account TEXT NOT NULL DEFAULT '', is_default INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL);
 """
 
 # The page reader's queue (``page_reads.status``). A read still "reading" after STALE_READING_HOURS was
@@ -883,6 +890,77 @@ class Store:
                 self._log(conn, "accounts_deleted", actor=actor, detail={"table": table, "codes": list(codes)})
             return cur.rowcount
 
+    # --- Our bank accounts ("Pay from", D-66) -------------------------------------------------------------
+
+    def bank_accounts(self, active_only: bool = False) -> list[dict[str, Any]]:
+        """Our company's bank accounts (coding/banks.py), by currency then name; ``active_only``: those in use."""
+        where = " WHERE active = 1" if active_only else ""
+        with self._conn() as conn:
+            rows = [dict(r) for r in conn.execute(f"SELECT * FROM bank_accounts{where} ORDER BY currency, name, code")]
+        for r in rows:
+            r["is_default"], r["active"] = bool(r["is_default"]), bool(r["active"])
+        return rows
+
+    def save_bank_accounts(
+        self, rows: list[dict[str, Any]], actor: str | None = None, imported: bool = False
+    ) -> dict[str, int]:
+        """Add or change accounts (``banks.clean_rows`` output), by code; an account not in ``rows`` is kept. An
+        account made the default of its currency is the only one. Returns {"added", "updated"}."""
+        from ..coding.banks import COLUMNS
+
+        before = {r["code"]: r for r in self.bank_accounts()}
+        added = updated = 0
+        now = _now()
+        upsert = (
+            f"INSERT INTO bank_accounts ({', '.join(COLUMNS)}, updated_at) VALUES ({', '.join('?' * len(COLUMNS))}, ?) "
+            "ON CONFLICT(code) DO UPDATE SET "
+            + ", ".join(f"{c} = excluded.{c}" for c in COLUMNS[1:])
+            + ", updated_at = excluded.updated_at"
+        )
+        with self._conn() as conn:
+            for row in rows:
+                values = [row[c] if c not in ("is_default", "active") else int(bool(row[c])) for c in COLUMNS]
+                if row["code"] in before:
+                    old = before[row["code"]]
+                    if all(old[c] == row[c] for c in COLUMNS):
+                        continue
+                    updated += 1
+                else:
+                    added += 1
+                conn.execute(upsert, (*values, now))
+                if row["is_default"] and row["active"]:
+                    conn.execute("UPDATE bank_accounts SET is_default = 0 WHERE currency = ? AND code != ?",
+                                 (row["currency"], row["code"]))  # fmt: skip
+            if added or updated:
+                self._log(conn, "accounts_imported" if imported else "accounts_edited", actor=actor, detail={
+                    "table": "bank_accounts", "added": added, "updated": updated,
+                    "codes": sorted(r["code"] for r in rows if before.get(r["code"]) != r)[:50]})  # fmt: skip
+        return {"added": added, "updated": updated}
+
+    def approvals_stamp(self) -> tuple[Any, ...]:
+        """(approvals, the latest) of invoices approved or waiting for a second approval: changes when one is, so what
+        depends on past approvals (a vendor's last Pay from account) is worked out again (the queue, B-690)."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*), MAX(reviewed_at), MAX(id) FROM invoices "
+                "WHERE status IN ('approved', 'pending_approval')"
+            ).fetchone()
+        return tuple(row)
+
+    def last_pay_from(self, key: str) -> str:
+        """The bank account this vendor's last approved invoice was paid from ("" when none recorded)."""
+        if not key:
+            return ""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT json_extract(final_output, '$.pay_from_account') AS code FROM invoices WHERE vendor_key = ? "
+                "AND status IN ('approved', 'pending_approval') AND json_valid(final_output) "
+                "AND COALESCE(json_extract(final_output, '$.pay_from_account'), '') != '' "
+                "ORDER BY reviewed_at DESC, id DESC LIMIT 1",
+                (key,),
+            ).fetchone()
+        return str(row["code"]) if row else ""
+
     # --- Tax setup and policy ---------------------------------------------------------------------
 
     def tax_treatments(self) -> dict[str, TaxTreatment]:
@@ -1575,7 +1653,8 @@ class Store:
                     now,
                 )  # fmt: skip
             )
-        edits = [f for f in _HEADER_FIELDS if str(ai.get(f, "")) != str(final_output.get(f, ""))]
+        read = as_read(final_output, ai)  # a tax number filled from the vendor list is no edit (B-681)
+        edits = [f for f in _HEADER_FIELDS if str(ai.get(f, "")) != str(read.get(f, ""))]
         if _tax_signature(ai) != _tax_signature(final_output):
             edits.append("tax_lines")
         if reviewer_changed:  # what the reviewer changed (a rule's coding kept is not a change)
@@ -3265,12 +3344,17 @@ class Store:
             rows = [dict(r) for r in conn.execute("SELECT * FROM vendors WHERE in_master IN (1, 2)")]
             if not any(r["in_master"] == 1 for r in rows):
                 known = {r["vendor_key"] for r in rows}
+                # the tax numbers AP gave such a vendor on the Vendors page come along (the review screen fills them)
+                own = {r["vendor_key"]: dict(r) for r in conn.execute("SELECT * FROM vendors WHERE in_master = 0")}
                 for r in conn.execute(
                     "SELECT vendor_key, MAX(vendor_name) name FROM invoices WHERE status = 'approved' AND vendor_key "
                     "!= '' GROUP BY vendor_key"
                 ):
                     if r["vendor_key"] not in known:
-                        rows.append({"vendor_key": r["vendor_key"], "display_name": r["name"], "in_master": 0})
+                        numbers = {c: own.get(r["vendor_key"], {}).get(c) or ""
+                                   for c in ("expected_gst", "qst_number", "pst_number")}  # fmt: skip
+                        rows.append({"vendor_key": r["vendor_key"], "display_name": r["name"], "in_master": 0,
+                                     **numbers})  # fmt: skip
         return sorted(rows, key=lambda r: str(r.get("display_name") or "").lower())
 
     def add_vendor_here(

@@ -24,6 +24,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from ..core.safe import csv_row
+from ..core.schema import FROM_VENDOR_LIST
 from ..core.store import APPROVED, PARKED, PENDING, REVIEW, Store
 from .tax import (
     DEFAULT_TREATMENTS,
@@ -42,7 +43,10 @@ ITC, ITR = "GST/HST input tax credits (ITCs)", "QST input tax refunds (ITRs)"
 GROUPS = {"GST": ITC, "HST": ITC, "QST": ITR}
 # Below this total, no registration number is required on the invoice: $100 for invoices dated from 2021-04-21, $30
 # before (Input Tax Credit Information (GST/HST) Regulations, amended by Budget 2021 with effect from April 21, 2021;
-# Quebec's QST rules follow the same amounts).
+# Quebec's QST rules follow the same amounts). From $500 ($150 before) more is required (the recipient's name, the terms
+# of payment, a description of each supply), which this report does not check. Source: CRA, "Input tax credits –
+# Documents required" (GST/HST Memorandum 8.4, "Documentary Requirements for Claiming Input Tax Credits"), checked
+# 2026-10.
 DOCUMENT_THRESHOLD = 100.0
 DOCUMENT_THRESHOLD_BEFORE_2021 = 30.0
 DOCUMENT_THRESHOLD_FROM = "2021-04-21"
@@ -54,11 +58,13 @@ def document_threshold(invoice_date: str) -> float:
 
 
 NO_GST_NUMBER = "No valid GST/HST number"
+GST_NOT_PRINTED = "GST/HST number not printed on the invoice (from the vendor list)"
+QST_NOT_PRINTED = "QST number not printed on the invoice (from the vendor list)"
 NO_QST_NUMBER = "No valid QST number"
 GST_CHECK_DIGIT = "GST/HST number fails the CRA check digit"
 FOREIGN = "Foreign currency: convert to CAD"
 NOT_EXPORTED = "Not exported yet"
-RISKS = {NO_GST_NUMBER, NO_QST_NUMBER, GST_CHECK_DIGIT, FOREIGN}
+RISKS = {NO_GST_NUMBER, NO_QST_NUMBER, GST_CHECK_DIGIT, GST_NOT_PRINTED, QST_NOT_PRINTED, FOREIGN}
 
 
 @dataclass
@@ -109,14 +115,20 @@ class Report:
 
 
 def _registration_issue(tax_type: str, doc: dict[str, Any]) -> tuple[str, str]:
-    """(the number on the invoice, the issue when it is missing or invalid)."""
+    """(the number on the invoice, the issue when it is missing or invalid). A number the review screen filled from
+    the vendor list is not on the invoice (D-65): the claim needs it printed there."""
+    filled = set(doc.get(FROM_VENDOR_LIST) or [])
     if tax_type == "QST":
         number = str(doc.get("qst_registration_number") or "")
+        if valid_qst_number(number) and "qst_registration_number" in filled:
+            return number, QST_NOT_PRINTED
         return number, "" if valid_qst_number(number) else NO_QST_NUMBER
     number = str(doc.get("gst_hst_registration_number") or "")
     if not valid_gst_number(number):
         return number, NO_GST_NUMBER
-    return number, "" if gst_check_digit_ok(number) else GST_CHECK_DIGIT
+    if not gst_check_digit_ok(number):
+        return number, GST_CHECK_DIGIT
+    return number, GST_NOT_PRINTED if "gst_hst_registration_number" in filled else ""
 
 
 def supply_setup(store: Store, rates: TaxRateTable | None = None) -> TaxSetup:
@@ -221,18 +233,35 @@ class SelfAssessment:
     rate: float
     estimate: float
     currency: str
+    note: str = ""  # e.g. JD Edwards accrues it itself (code B): not to book again (B-722)
+
+
+JDE_ACCRUES = "JD Edwards accrues this one (code B): don't book it again from this report"
+
+
+def _jde_accruing(store: Store) -> Any:
+    """A test of a coded invoice: exported to JD Edwards (in a batch not undone) with the self-assessed code (B)."""
+    from ..erp import jde
+
+    batches = {b["id"] for b in store.export_batches() if b.get("format") == jde.FORMAT and not b.get("undone_at")}
+    if not batches:
+        return lambda batch, doc: False
+    settings = jde.load(store)
+    return lambda batch, doc: batch in batches and jde.accrues_use_tax(doc, settings)
 
 
 def self_assessment(
     store: Store, start: dt.date, end: dt.date, rates: TaxRateTable | None = None
 ) -> list[SelfAssessment]:
-    """Approved invoices for a supply in a PST or QST province that charge no PST / QST: the buyer may have to
-    self-assess it (an estimate at the official rate on the subtotal; exempt goods and services owe nothing)."""
+    """Approved invoices for a supply in a PST or QST province with lines the PST / QST is due on and not charged (an
+    out-of-province or unregistered vendor, or a line the vendor missed): the buyer self-assesses it (BC PSTA s.49 and
+    the SK, MB and QST acts alike), at the official rate on those lines (``self_assessed_base``, line by line, D-64)."""
     rates = rates or TaxRateTable.load()
     setup = supply_setup(store, rates)
     first, last = start.isoformat(), end.isoformat()
     out = []
-    for r in store.invoice_columns(("id", "final_output"), APPROVED):
+    accrued = _jde_accruing(store)
+    for r in store.invoice_columns(("id", "final_output", "export_batch"), APPROVED):
         doc = r["final_output"] or {}
         date = str(doc.get("invoice_date") or "")
         if not (first <= date <= last):
@@ -240,13 +269,14 @@ def self_assessment(
         province = supply_province(doc, setup)
         # A printed "PST 0.00" is not a charge (as in the tax checks): that PST may still be owed.
         charged = {str(tl.get("tax_type") or "").upper() for tl in doc.get("tax_lines") or [] if _charged(tl)}
-        base = float(doc.get("subtotal") or 0)
+        items = doc.get("line_items") or []
         try:
             on = dt.date.fromisoformat(date)
         except ValueError:
             on = None
         for tax_type in sorted(regime_on(province, on, rates) & {"PST", "QST"}):
-            if tax_type in charged or abs(base) < 0.005:
+            base = self_assessed_base(doc, items, tax_type, charged)
+            if abs(base) < 0.005:
                 continue
             rate = rates.rate_for(tax_type, province, on) if on else None
             if not rate:
@@ -263,9 +293,31 @@ def self_assessment(
                     rate,
                     round(base * rate, 2),
                     str(doc.get("currency") or "CAD").upper(),
+                    JDE_ACCRUES if tax_type == "PST" and accrued(r["export_batch"], doc) else "",
                 )  # fmt: skip
             )
     return sorted(out, key=lambda s: (s.province, s.invoice_date, s.invoice_id))
+
+
+def self_assessed_base(doc: dict[str, Any], items: list[dict[str, Any]], tax_type: str,
+                       charged: Any = None) -> float:  # fmt: skip
+    """What a PST or QST the vendor did not collect is owed on (D-64), line by line: the lines it is due on and not
+    charged (neither charged nor exempt), and the lines marked with it on an invoice that charges none of it. A line
+    exempt or zero-rated from it, or out of scope, owes nothing. An invoice without lines: its subtotal when the tax
+    is not charged. ``charged``: the taxes the invoice charges (worked out from its tax lines when not given)."""
+    from .line_tax import CHARGED, DUE, legacy_basis, tax_state
+
+    if charged is None:
+        charged = {str(tl.get("tax_type") or "").upper() for tl in doc.get("tax_lines") or [] if _charged(tl)}
+    if not items:
+        return 0.0 if tax_type in charged else round(float(doc.get("subtotal") or 0), 2)
+    basis = legacy_basis(items, doc.get("tax_lines") or [])
+    owed = 0.0
+    for li in items:
+        state = tax_state(li, tax_type, basis)
+        if state == DUE or (state == CHARGED and tax_type not in charged):
+            owed += float(li.get("amount") or 0)
+    return round(owed, 2)
 
 
 def self_assessment_csv(items: list[SelfAssessment], start: dt.date, end: dt.date) -> bytes:
@@ -273,10 +325,11 @@ def self_assessment_csv(items: list[SelfAssessment], start: dt.date, end: dt.dat
     w = csv.writer(out)
     w.writerow([f"PST / QST possibly to self-assess, invoices dated {start.isoformat()} to {end.isoformat()}"])
     w.writerow(["Province", "Tax", "Rate", "Subtotal", "Estimate", "Currency", "Vendor", "Invoice", "Invoice date",
-                "AP Coder #"])  # fmt: skip
+                "AP Coder #", "Note"])  # fmt: skip
     for s in items:
         w.writerow(csv_row([s.province, s.tax_type, f"{s.rate * 100:g}%", f"{s.base:.2f}", f"{s.estimate:.2f}",
-                            s.currency, s.vendor, s.invoice_number, s.invoice_date, s.invoice_id]))  # fmt: skip
+                            s.currency, s.vendor, s.invoice_number, s.invoice_date, s.invoice_id,
+                            s.note]))  # fmt: skip
     return ("\ufeff" + out.getvalue()).encode("utf-8")
 
 

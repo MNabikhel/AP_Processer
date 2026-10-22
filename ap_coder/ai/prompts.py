@@ -53,7 +53,9 @@ the tax applies to. Never invent a tax that is not printed, and never recalculat
 - `tax_total` is the sum of all tax lines.
 - `taxes_applied` on each line item lists the taxes charged on that line. Use the \
 invoice's tax indicators (e.g. G, H, P, Q, *, "exempt", "zero-rated") when printed; \
-otherwise apply each tax to the lines its taxable amount covers.
+otherwise apply each tax to the lines its taxable amount covers. A line with no tax has an \
+empty `taxes_applied`; its `tax_status` is `exempt`, `zero_rated` or `out_of_scope` only when \
+the invoice says so for that line, else an empty string.
 - `supplier_province` comes from the supplier's address. `ship_to_province` is where the \
 goods are delivered or services performed (use the bill-to address if there is no ship-to).
 - Copy the supplier's GST/HST registration number (9 digits + RT + 4 digits) and QST \

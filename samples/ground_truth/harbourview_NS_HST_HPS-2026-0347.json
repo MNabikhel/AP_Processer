@@ -38,6 +38,8 @@
       "taxes_applied": [
         "HST"
       ],
+      "tax_exempt": [],
+      "tax_status": "",
       "reasoning_justification": "Audit and tax advisory for Finance."
     },
     {
@@ -51,6 +53,8 @@
       "taxes_applied": [
         "HST"
       ],
+      "tax_exempt": [],
+      "tax_status": "",
       "reasoning_justification": "Management consulting for the Finance AP process."
     },
     {
@@ -64,6 +68,8 @@
       "taxes_applied": [
         "HST"
       ],
+      "tax_exempt": [],
+      "tax_status": "",
       "reasoning_justification": "Legal fees always go to CC800 regardless of the requesting department."
     },
     {
@@ -77,6 +83,8 @@
       "taxes_applied": [
         "HST"
       ],
+      "tax_exempt": [],
+      "tax_status": "",
       "reasoning_justification": "Courier disbursement re-billed by the firm."
     }
   ]

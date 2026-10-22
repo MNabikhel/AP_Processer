@@ -82,6 +82,17 @@
                title="COLUMN=value pairs added to F0411Z1 in PO-matched mode (e.g. the automation flags). Ask your JDE team which columns their match process needs.">
         <small class="muted">COLUMN=value pairs added to F0411Z1 in PO-matched mode (e.g. the automation flags). Ask your JDE
           team which columns their match process needs.</small></label>
+      <fieldset class="field"><legend>G/L bank account (VLGLBA) per Pay from account · unconfirmed</legend>
+        {% for b in bank_rows %}
+        <label class="field inline">{{ b.label }}
+          <input type="hidden" name="bank_code" value="{{ b.code }}">
+          <input type="text" name="bank_glba" value="{{ b.glba }}" placeholder="blank: E1's default bank (AAI PB)" aria-label="VLGLBA for {{ b.code }}"></label>
+        {% else %}
+        <p class="muted small">No bank accounts yet (GL accounts &amp; tax → Bank accounts).</p>
+        {% endfor %}
+        <small class="muted">For each of your bank accounts, the G/L bank account E1 pays from (its short account ID), as your
+          JDE team gives it. Blank: no VLGLBA (E1 takes its default bank, AAI PB); once any is filled, the dry run and
+          each batch's README list the invoices paid from an account left blank.</small></fieldset>
     </details>
     <div><button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save JD Edwards settings</button></div>
   </form>

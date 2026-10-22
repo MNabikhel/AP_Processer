@@ -236,7 +236,20 @@ def setup_steps(store: Store, settings: Settings) -> list[tuple[str, str, str]]:
         province_step(store),
         ("ok" if gl_count else "todo", "GL accounts", f"{gl_count} imported" if gl_count else "none yet: import them"),
         ("ok" if mapped == len(TAX_TYPES) else "todo", TAX_STEP, f"{mapped} of {len(TAX_TYPES)} set"),
+        bank_step(store),
     ]
+
+
+BANK_STEP = "Your bank accounts (optional)"
+
+
+def bank_step(store: Store) -> tuple[str, str, str]:
+    """Our bank accounts (GL accounts & tax → Bank accounts, D-66): optional, so the review screen can say which
+    account pays each invoice. Counted like every row (B-503)."""
+    n = len(store.bank_accounts(active_only=True))
+    if n:
+        return "ok", BANK_STEP, ui.plural(n, "account")
+    return "todo", BANK_STEP, "to choose which account pays each invoice"
 
 
 def step_state(steps: list[tuple[str, str, str]], label: str) -> str:
@@ -280,6 +293,7 @@ STEP_LINKS = {
     "Reading invoices": "/settings/reading",
     "GL accounts": "/accounts",
     TAX_STEP: "/accounts?tab=tax",
+    BANK_STEP: "/accounts?tab=bank",
     "Your name": "/settings/review",
     "Your province": "/settings/review",
     "Process your first invoices": "/process",

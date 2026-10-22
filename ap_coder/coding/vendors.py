@@ -19,7 +19,7 @@ expected GST/HST number, notes). ``vendor_findings`` turns that into checks on a
 * VENDOR_MATCHED_BY_TAX_NUMBER (info): not found by name, but the GST/HST number belongs to a master vendor
 * CREDIT_NOTE_FOR (info) / CREDIT_NOTE_ORIGINAL_UNKNOWN (info) / CREDIT_EXCEEDS_INVOICE (warning): the invoice a
   credit note credits, found or not, and a credit larger than it
-* VENDOR_BANK_CHANGED (warning): the bank account to pay into differs from the one on this vendor's approved
+* VENDOR_BANK_CHANGED (warning): the bank details printed for payment differ from the ones on this vendor's approved
   invoices, the most common payment fraud (a fake "our banking details have changed")
 """
 
@@ -277,6 +277,45 @@ def tax_number_findings(
     return out
 
 
+def vendor_number_problems(vendor: dict[str, Any]) -> list[str]:
+    """What is wrong with the tax numbers the vendor list holds for a vendor (the Vendors page warns, D-65): a GST/HST
+    number not in the format 123456789 RT0001 (a 9-digit Business Number alone is fine) or failing the CRA's check
+    digit, a QST number not in the format 1234567890 TQ0001. The review screen fills these numbers in."""
+    from .tax import gst_check_digit_ok, normalise_registration, valid_gst_number, valid_qst_number
+
+    out = []
+    gst = str(vendor.get("expected_gst") or "").strip()
+    if gst:
+        if not (valid_gst_number(gst) or re.fullmatch(r"\d{9}", normalise_registration(gst))):
+            out.append(f"GST/HST number {gst} is not in the format 123456789 RT0001")
+        elif not gst_check_digit_ok(gst):
+            out.append(f"GST/HST number {gst} fails the CRA check digit: mistyped, or not a real number")
+    qst = str(vendor.get("qst_number") or "").strip()
+    if qst and not valid_qst_number(qst):
+        out.append(f"QST number {qst} is not in the format 1234567890 TQ0001")
+    return out
+
+
+def expected_tax_numbers(coding: InvoiceCoding, store: Store, exclude_invoice_id: int | None = None) -> dict[str, str]:
+    """{invoice field: what it is compared with} for the tax numbers ``tax_number_findings`` checks, in a few words
+    for the note under the field on the review screen (D-65): "Vendor list: 123456789 RT0001", else "Usual for this
+    vendor: …" from its approved invoices."""
+    key = vendor_key(coding.vendor_name)
+    if not key:
+        return {}
+    master = store.get_vendor(key)
+    history = [h for h in store.vendor_invoices(key) if h["id"] != exclude_invoice_id]
+    out = {}
+    for _severity, _code, field, column, past, _name, norm, _same in _TAX_NUMBERS:
+        if master and norm(master.get(column)):
+            out[field] = f"Vendor list: {master[column]}"
+            continue
+        known = sorted({h.get(past) or "" for h in history if h["status"] == "approved"} - {""})
+        if known:
+            out[field] = f"Usual for this vendor: {', '.join(known)}"
+    return out
+
+
 def vendor_findings(
     coding: InvoiceCoding, store: Store, exclude_invoice_id: int | None = None
 ) -> list[tuple[str, str, str]]:
@@ -347,7 +386,7 @@ def vendor_findings(
     if not history:
         return findings
 
-    # Bank account to pay into, compared with the ones on this vendor's approved invoices.
+    # The bank details printed for payment, compared with the ones on this vendor's approved invoices.
     account = coding.remit_bank_account
     known_accounts = [
         h["bank_account"] for h in history if h["status"] == "approved" and bank_digits(h["bank_account"])[0]
@@ -359,7 +398,7 @@ def vendor_findings(
             shown = f"{shown}, at a different bank or branch number"
         findings.append(
             (WARNING, "VENDOR_BANK_CHANGED",
-             f"the bank account to pay into ({shown}) differs from the one on this vendor's "
+             f"the bank details printed for payment ({shown}) differ from the ones on this vendor's "
              f"approved invoices ({', '.join(usual)}): confirm by phone, on a number from your vendor file, not from "
              "the invoice, before paying or changing the vendor's banking")
         )  # fmt: skip

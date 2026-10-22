@@ -30,9 +30,11 @@ FIELDS: dict[str, str] = {
     "tax_total": "Invoice tax", "grand_total": "Invoice total", "gst_hst_registration_number": "Vendor GST/HST #",
     "qst_registration_number": "Vendor QST #", "line": "Line number", "kind": "Line type (Expense / Tax)",
     "gl_code": "GL account", "gl_name": "GL name", "cost_center": "Cost center", "description": "Line description",
+    "tax_code": "Line tax code (GST+PST, Exempt…)",
     "net_amount": "Line net amount", "non_recoverable_tax": "Line non-recoverable tax",
     "amount": "Line amount (posting)", "batch": "Export batch", "invoice_id": "AP Coder #",
     "reviewer": "Approved by", "reviewed_at": "Approved at",
+    "pay_from": "Pay from (our bank account)", "pay_from_gl": "Pay from GL (the bank account's cash GL)",
 }  # fmt: skip
 DATE_FIELDS = {"invoice_date", "due_date", "reviewed_at"}
 MONEY_FIELDS = {"subtotal", "tax_total", "grand_total", "net_amount", "non_recoverable_tax", "amount"}

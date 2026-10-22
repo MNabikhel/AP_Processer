@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import io
 from dataclasses import replace
+from pathlib import Path
 from urllib.parse import urlencode
 
 import openpyxl
@@ -35,6 +36,7 @@ MASTER_PAGES = [
     "/accounts?tab=tax",
     "/accounts?tab=policy",
     "/accounts?tab=rules",
+    "/accounts?tab=bank",
 ]
 
 
@@ -162,6 +164,24 @@ def test_a_vendor_is_given_its_qst_and_pst_numbers_and_province(client, busy):
     assert 'value="PST-1234-5678"' in detail and '<option value="BC" selected>' in detail
     bad = client.post("/vendors/save", data={**data, "province": "XX"}, headers=PAGE)
     assert bad.status_code == 400
+
+
+def test_a_vendor_list_number_that_fails_the_cra_check_is_warned_about(client, busy):
+    """D-65: the review screen fills the vendor list's numbers in, so a wrong one there is said on the Vendors page."""
+    from ap_coder.coding.vendors import vendor_number_problems
+
+    v = busy.vendor_summaries()[0]
+    data = {"key": v["vendor_key"], "status": "active", "expected_gst": "123456789 RT0001", "qst_number": "12345TQ"}
+    follow(client, client.post("/vendors/save", data=data, headers=PAGE))
+    detail = client.get("/vendors?" + urlencode({"open": v["vendor_key"]})).text
+    assert "GST/HST number 123456789 RT0001 fails the CRA check digit" in detail
+    assert "QST number 12345TQ is not in the format 1234567890 TQ0001" in detail
+    assert "Tax number to check" in client.get("/vendors").text
+    assert vendor_number_problems({"expected_gst": "123456782"}) == []  # the Business Number alone is fine
+    assert vendor_number_problems({"expected_gst": "12345"}) == [
+        "GST/HST number 12345 is not in the format 123456789 RT0001"
+    ]
+    assert vendor_number_problems({"expected_gst": "123456782 RT0001", "qst_number": "1234567890 TQ0001"}) == []
 
 
 def test_bank_and_tax_number_history_is_masked(client, store, tmp_path):
@@ -388,6 +408,67 @@ def test_gl_accounts_are_imported_from_excel_edited_and_downloaded(client, store
     assert client.get("/accounts/other.csv").status_code == 404
 
 
+def test_bank_accounts_are_imported_edited_and_never_shown_in_full(client, store):
+    """D-66: our bank accounts, imported with the columns picked like the other lists, edited in a grid (a default
+    per currency, In use), and only the last 4 digits of a number ever shown."""
+    load_sample_setup(store)
+    sample = (Path(__file__).resolve().parent.parent / "data" / "bank_accounts.csv").read_bytes()
+    page = upload(client, "/accounts/bank/upload", "bank_accounts.csv", sample)
+    for field, column in (("code", "code"), ("currency", "currency"), ("account_number", "account_number"),
+                          ("is_default", "default")):  # fmt: skip
+        assert f'<select name="col_{field}">' in page.text and f'<option value="{column}" selected>' in page.text
+    token = page.url.params["file"]
+    picked = {f"col_{f}": c for f, c in (("code", "code"), ("name", "name"), ("currency", "currency"),
+              ("institution", "institution"), ("transit", "transit"), ("account_number", "account_number"),
+              ("gl_account", "gl_account"), ("is_default", "default"), ("active", "active"))}  # fmt: skip
+    page = follow(client, client.post("/accounts/bank/import", data={"file": token, **picked}, headers=PAGE))
+    assert "Imported: 2 added, 0 updated." in page.text
+    accounts = {a["code"]: a for a in store.bank_accounts()}
+    assert accounts["CAD-OP"]["account_number"] == "0000001234" and accounts["CAD-OP"]["is_default"]
+    assert "0000001234" not in page.text and "••••1234" in page.text  # the last 4 digits only
+    assert "Sample Bank CAD operating" in page.text
+    # a GL account that is not in the chart is refused, nothing imported
+    bad = upload(client, "/accounts/bank/upload", "b.csv", b"Code,Currency,Cash GL\nX-1,CAD,9999\n")
+    answer = client.post(
+        "/accounts/bank/import",
+        headers=PAGE,
+        data={
+            "file": bad.url.params["file"],
+            "col_code": "Code",
+            "col_currency": "Currency",
+            "col_gl_account": "Cash GL",
+        },
+    )
+    assert answer.status_code == 400 and "9999 is not in your GL accounts" in answer.json()["error"]
+    # the grid: rename, a new USD default, CAD-OP no longer in use; a blank number keeps the stored one
+    page = client.get("/accounts?tab=bank")
+    version = page.text.split('name="version" value="', 2)[-1].split('"')[0]
+    shown = store.bank_accounts()  # CAD-OP, USD-OP
+    form = {
+        "version": version,
+        "code": [a["code"] for a in shown] + ["USD-2"],
+        "name": ["Operating", shown[1]["name"], "Second USD"],
+        "currency": ["CAD", "USD", "usd"],
+        "institution": ["", "", "3"],
+        "transit": ["", "", "12"],
+        "account_number": ["", "", "987654321"],
+        "gl_account": ["", "", "2310"],
+        "is_default": ["2"],
+        "active": ["1"],  # CAD-OP unticked
+    }
+    follow(client, client.post("/accounts/bank/save", data=form, headers=PAGE))
+    accounts = {a["code"]: a for a in store.bank_accounts()}
+    assert accounts["CAD-OP"]["name"] == "Operating" and not accounts["CAD-OP"]["active"]
+    assert accounts["CAD-OP"]["account_number"] == "0000001234"  # left blank: kept
+    assert accounts["USD-2"]["is_default"] and not accounts["USD-OP"]["is_default"]
+    assert (accounts["USD-2"]["institution"], accounts["USD-2"]["transit"]) == ("003", "00012")
+    stale = client.post("/accounts/bank/save", data=form, headers=PAGE)  # the page drawn before that save
+    assert stale.status_code == 409
+    template = client.get("/accounts/bank/template.csv")
+    assert template.status_code == 200 and b"account_number" in template.content
+    assert any(e["detail"].get("table") == "bank_accounts" for e in store.events(actions=["accounts_imported"]))
+
+
 def test_cost_centers_import_with_the_columns_picked(client, store):
     page = upload(client, "/accounts/cost_centers/upload", "cc.csv", b"Dept;Name\n100;Admin\n200;Sales\n")
     token = page.url.params["file"]
@@ -467,3 +548,24 @@ def test_an_excel_cell_reading_na_is_kept_as_typed():
     assert [r["Cost center"] for r in settings_jde.read_sheet("cc.xlsx", raw.getvalue())] == codes
     ((_columns, rows),) = learning.read_sheets("cc.xlsx", raw.getvalue()).values()
     assert [r["Cost center"] for r in rows] == codes
+
+
+def test_the_bank_accounts_version_stamp_holds_no_account_number(client, store):
+    """B-687: the page's version stamp was a hash of the rows with their full account numbers: a short number could
+    be found again from the page by trying every one. It is a hash of what the page shows (the last 4 digits) and when
+    each account last changed."""
+    from ap_coder.coding import banks
+    from ap_coder.web.core import page_version
+
+    account = {"code": "CAD-OP", "name": "Operating", "currency": "CAD", "account_number": "1234567"}
+    rows, _ = banks.clean_rows([account])
+    store.save_bank_accounts(rows)
+    page = client.get("/accounts?tab=bank").text
+    stamp = page.split('name="version" value="', 1)[1].split('"', 1)[0]
+    full = store.bank_accounts()
+    assert stamp != page_version(full)  # keyed with this database's own secret: nothing to try numbers against
+    store.save_bank_accounts([{**rows[0], "account_number": "7654567"}])  # another number, the same last 4 digits
+    page = client.get("/accounts?tab=bank").text
+    assert page.split('name="version" value="', 1)[1].split('"', 1)[0] != stamp  # still a new page version
+    stale = client.post("/accounts/bank/save", data={"version": stamp, "code": ["CAD-OP"]}, headers=PAGE)
+    assert stale.status_code == 409

@@ -74,6 +74,25 @@ def test_claims_to_check(tmp_path):
     assert {(c.invoice_id, c.tax_type) for c in report.at_risk()} == {(a, "GST"), (b, "QST")}
 
 
+def test_a_number_from_the_vendor_list_is_a_claim_at_risk(tmp_path):
+    """D-65: a GST/HST or QST number the review screen filled from the vendor list is not printed on the invoice, and
+    the claim needs it printed there (from $100): the claim is to check, and says why."""
+    from ap_coder.core.schema import FROM_VENDOR_LIST
+
+    store = Store(tmp_path / "t.db")
+    load_sample_setup(store)
+    doc = json.loads((SAMPLES / "ground_truth" / "montroyal_QC_TPS_TVQ_ACMR-2026-1187.json").read_text())
+    output, _ = finalise_coding(InvoiceCoding.model_validate(doc), store.reference_data(), Settings(), store=store)
+    output[FROM_VENDOR_LIST] = ["gst_hst_registration_number", "qst_registration_number"]
+    invoice_id = store.add_invoice(tmp_path / "m.pdf", output, {})
+    store.approve_invoice(invoice_id, output, "Jane")
+    store.create_export_batch([invoice_id], "csv")
+    issues = {c.tax_type: c.issues for c in taxreturn.build(store, *YEAR).claims}
+    assert issues == {"GST": [taxreturn.GST_NOT_PRINTED], "QST": [taxreturn.QST_NOT_PRINTED]}
+    assert len(taxreturn.build(store, *YEAR).at_risk()) == 2
+    assert InvoiceCoding.model_validate({k: v for k, v in output.items() if k != "gl_distribution"})  # still a coding
+
+
 def test_small_invoices_need_no_number(tmp_path):
     store = Store(tmp_path / "t.db")
     load_sample_setup(store)

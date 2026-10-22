@@ -253,3 +253,29 @@ def test_an_invoice_approved_without_a_stored_distribution_still_has_its_lines_i
     (lines,) = [ws for ws in load_workbook(io.BytesIO(exports.build("xlsx", [inv], {}, 3)[0])).worksheets
                 if ws.title == "GL lines"]  # fmt: skip
     assert lines.max_row == len(doc["line_items"]) + 2  # the header, each line and the HST
+
+
+def test_the_exports_say_which_bank_account_pays(demo_store):
+    """D-66: the workbook and the CSV have Pay from (our bank account's name) and Pay from GL (its cash GL); the
+    custom layout offers both as fields, and a saved layout is unchanged."""
+    from ap_coder.coding import banks
+    from ap_coder.erp import export_layout
+
+    rows, _ = banks.clean_rows([{"code": "CAD-OP", "name": "Sample Bank CAD operating", "currency": "CAD",
+                                 "gl_account": "1010", "is_default": "yes"}])  # fmt: skip
+    demo_store.save_bank_accounts(rows)
+    inv = demo_store.list_invoices(REVIEW)[0]
+    final = {**demo_store.get_invoice(inv["id"])["ai_output"], "pay_from_account": "CAD-OP"}
+    demo_store.approve_invoice(inv["id"], final, "Jordan Lee")
+    invoices = demo_store.get_invoices([inv["id"]])
+    accounts = {a["code"]: a for a in demo_store.bank_accounts()}
+    data, _, _ = exports.build("csv", invoices, bank_accounts=accounts)
+    lines = list(csv.DictReader(io.StringIO(data.decode("utf-8-sig"))))
+    assert {(r["Pay from"], r["Pay from GL"]) for r in lines} == {("Sample Bank CAD operating", "1010")}
+    book = load_workbook(io.BytesIO(exports.build("xlsx", invoices, bank_accounts=accounts)[0]))
+    head = [c.value for c in book["Invoices"][1]]
+    values = dict(zip(head, [c.value for c in book["Invoices"][2]], strict=True))
+    assert (values["Pay from"], values["Pay from GL"]) == ("Sample Bank CAD operating", "1010")
+    assert {"pay_from", "pay_from_gl"} <= set(export_layout.FIELDS)
+    assert "pay_from" not in {c.field for c in export_layout.default_columns()}
+    assert exports.pay_from({}, accounts) == {"pay_from": "", "pay_from_gl": ""}

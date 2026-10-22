@@ -9,7 +9,8 @@ Two representations are kept side by side:
 
 The original target fields are unchanged; Canadian sales tax adds the
 province fields, supplier registration numbers, ``tax_lines`` (one per tax
-type charged) and ``taxes_applied`` on each line item.
+type charged) and ``taxes_applied`` on each line item, with ``tax_status`` saying why a line carries no tax
+(exempt, zero-rated, out of scope: decision D-64).
 """
 
 from __future__ import annotations
@@ -34,9 +35,14 @@ MAX_ENUM_VALUES_TOTAL = 500
 MAX_ENUM_CHARS_TOTAL = 7_500
 
 PROVINCE_VALUES = [*PROVINCES, OUTSIDE_CANADA, ""]
-# Enums that are always present: supplier/ship-to/tax-line provinces and two tax-type fields.
-FIXED_ENUM_VALUES = 3 * len(PROVINCE_VALUES) + 2 * len(TAX_TYPES)
-FIXED_ENUM_CHARS = 3 * sum(len(p) for p in PROVINCE_VALUES) + 2 * sum(len(t) for t in TAX_TYPES)
+# Why a line carries no tax (only with no taxes on it): "" when it carries some, or nothing is said (D-64).
+TAX_STATUSES = ["", "exempt", "zero_rated", "out_of_scope"]
+# Enums that are always present: supplier/ship-to/tax-line provinces, three tax-type fields (a tax line's type, a
+# line's taxes charged and those it is exempt from) and a line's tax status.
+FIXED_ENUM_VALUES = 3 * len(PROVINCE_VALUES) + 3 * len(TAX_TYPES) + len(TAX_STATUSES)
+FIXED_ENUM_CHARS = (
+    3 * sum(len(p) for p in PROVINCE_VALUES) + 3 * sum(len(t) for t in TAX_TYPES) + sum(len(s) for s in TAX_STATUSES)
+)
 
 
 def _code_property(description: str, codes: list[str] | None) -> dict[str, Any]:
@@ -107,6 +113,19 @@ def build_json_schema(reference: ReferenceData | None = None, *, constrain_codes
             "type": "array",
             "description": "Sales taxes charged on this line (empty if exempt / zero-rated).",
             "items": {"type": "string", "enum": list(TAX_TYPES)},
+        },
+        "tax_exempt": {
+            "type": "array",
+            "description": "Taxes this line is exempt or zero-rated from while it may carry others (e.g. PST on a "
+            "service in BC that carries GST), as the invoice shows it (a code, or the tax charged on other lines and "
+            "not this one); empty otherwise.",
+            "items": {"type": "string", "enum": list(TAX_TYPES)},
+        },
+        "tax_status": {
+            "type": "string",
+            "enum": TAX_STATUSES,
+            "description": "Only when taxes_applied is empty: exempt, zero_rated or out_of_scope when the invoice says "
+            "so for this line (a code or word printed beside it); otherwise an empty string.",
         },
         "reasoning_justification": {
             "type": "string",
@@ -343,6 +362,10 @@ class LineItem(BaseModel):
     predicted_gl_code: str
     predicted_cost_center: str = ""
     taxes_applied: list[str] = Field(default_factory=list)
+    # The taxes the line is exempt or zero-rated from, tax by tax (D-64); None: stored before it existed, read as the
+    # vendor meant it (InvoiceCoding fills it: line_tax.legacy_exempt).
+    tax_exempt: list[str] | None = None
+    tax_status: str = ""  # TAX_STATUSES: why a line with no taxes carries none (D-64)
     reasoning_justification: str = ""
 
     @field_validator("taxes_applied")
@@ -356,6 +379,55 @@ class LineItem(BaseModel):
             if v not in out:
                 out.append(v)
         return out
+
+    @field_validator("tax_exempt")
+    @classmethod
+    def _exempt(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        out = []
+        for v in value:
+            v = v.strip().upper()
+            if v not in TAX_TYPES:
+                raise ValueError(f"tax_exempt entries must be one of {TAX_TYPES}, got {v!r}")
+            if v not in out:
+                out.append(v)
+        return [t for t in TAX_TYPES if t in out]
+
+    @field_validator("tax_status", mode="before")
+    @classmethod
+    def _tax_status(cls, value: Any) -> str:
+        text = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+        text = {"zero": "zero_rated", "zerorated": "zero_rated", "out": "out_of_scope"}.get(text, text)
+        if text not in TAX_STATUSES:
+            raise ValueError(f"tax_status must be one of {TAX_STATUSES}, got {value!r}")
+        return text
+
+    @model_validator(mode="after")
+    def _status_only_without_taxes(self) -> LineItem:
+        # A line that carries a tax is taxed: a status saying why it carries none means nothing there, and is dropped
+        # (the taxes are what was charged; a reader or the chat model may send both).
+        if self.taxes_applied and self.tax_status:
+            self.tax_status = ""
+        if self.tax_exempt:  # a tax charged is not exempt; a status says it for every tax
+            self.tax_exempt = [] if self.tax_status else [t for t in self.tax_exempt if t not in self.taxes_applied]
+        return self
+
+
+# The tax registration numbers filled from the vendor list, not printed on the invoice (the review screen, D-65): a list
+# of field names stored beside the coding, like the place of supply worked out.
+FROM_VENDOR_LIST = "tax_numbers_from_vendor_list"
+
+
+def as_read(final: dict[str, Any], proposed: dict[str, Any]) -> dict[str, Any]:
+    """``final`` with each tax number filled from the vendor list (``FROM_VENDOR_LIST``, only numbers the reviewer
+    left as filled) put back as ``proposed`` had it: what was read, for learning and for counting edits. Such a
+    number is no correction of the reading (D-65, B-681)."""
+    # only a number the reading left blank: one read and replaced is a correction (B-688)
+    filled = [f for f in final.get(FROM_VENDOR_LIST) or [] if isinstance(f, str) and not proposed.get(f)]
+    if not filled:
+        return final
+    return {**final, **{f: proposed.get(f, "") for f in filled}}
 
 
 class InvoiceCoding(BaseModel):
@@ -374,7 +446,8 @@ class InvoiceCoding(BaseModel):
     qst_registration_number: str = ""
     pst_registration_number: str = ""
     original_invoice_number: str = ""
-    remit_bank_account: str = ""
+    remit_bank_account: str = ""  # the vendor's banking details as printed: evidence for the fraud check, never paid to
+    pay_from_account: str = ""  # the code of OUR bank account it is paid from (coding/banks.py, D-66)
     subtotal: float
     tax_lines: list[TaxLine] = Field(default_factory=list)
     tax_total: float
@@ -387,9 +460,19 @@ class InvoiceCoding(BaseModel):
     def _drop_worked_out(cls, data: Any) -> Any:
         # A stored invoice keeps the place of supply worked out when no ship-to is printed beside the coding
         # (pipeline.finalise_coding); it is worked out again from the lines each time, so it is dropped here.
-        if isinstance(data, dict) and PLACE_OF_SUPPLY in data:
-            data = {k: v for k, v in data.items() if k != PLACE_OF_SUPPLY}
+        # Likewise the tax numbers the review screen filled from the vendor list (D-65): kept beside the coding.
+        if isinstance(data, dict) and (PLACE_OF_SUPPLY in data or FROM_VENDOR_LIST in data):
+            data = {k: v for k, v in data.items() if k not in (PLACE_OF_SUPPLY, FROM_VENDOR_LIST)}
         return data
+
+    @model_validator(mode="after")
+    def _fill_exempt(self) -> InvoiceCoding:
+        # An invoice stored before tax_exempt existed: read as the vendor meant it (line_tax.legacy_exempt, D-64).
+        if any(li.tax_exempt is None for li in self.line_items):
+            from ..coding.line_tax import fill_exempt
+
+            self.line_items = fill_exempt(self.line_items, self.tax_lines)
+        return self
 
     @field_validator("invoice_date")
     @classmethod
@@ -426,4 +509,9 @@ class InvoiceCoding(BaseModel):
         return province_code(value)
 
     def to_output(self) -> dict[str, Any]:
-        return self.model_dump()
+        """The target schema; ``pay_from_account`` only when one is chosen (it is ours, not read from the invoice:
+        an invoice coded without bank accounts set up keeps the target schema exactly, D-66)."""
+        out = self.model_dump()
+        if not out.get("pay_from_account"):
+            out.pop("pay_from_account", None)
+        return out

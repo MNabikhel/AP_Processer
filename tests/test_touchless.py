@@ -306,7 +306,7 @@ def touchless(tmp_path):
 @pytest.mark.parametrize(
     "code, reason",
     [
-        ("VENDOR_BANK_CHANGED", "the bank account to pay into changed"),
+        ("VENDOR_BANK_CHANGED", "the vendor's bank details changed"),
         ("VENDOR_TAX_NUMBER_CHANGED", "the GST/HST number changed"),
         ("DUPLICATE_INVOICE", "it may be a duplicate"),
         ("DUPLICATE_IN_ERP", "it may be a duplicate"),
@@ -498,7 +498,7 @@ def test_a_line_coded_from_a_weak_match_is_never_approved_without_a_person(touch
 def test_several_gates_are_all_named():
     gates = touchless_gates([{"code": "VENDOR_BANK_CHANGED"}, {"code": "DUPLICATE_INVOICE"},
                              {"code": "POSSIBLE_DUPLICATE_AMOUNT"}], grand_total=-5, over_limit=5000.0)  # fmt: skip
-    assert gates == ["the bank account to pay into changed", "it may be a duplicate", "it is a credit note",
+    assert gates == ["the vendor's bank details changed", "it may be a duplicate", "it is a credit note",
                      "the total is over the touchless limit of 5,000.00"]  # fmt: skip
 
 
