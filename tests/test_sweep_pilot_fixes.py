@@ -175,7 +175,7 @@ def test_the_reading_tab_says_what_still_waits_for_ovisocr2(tmp_path):
     assert queue_text(status) == ("", "Nothing waiting for OvisOCR2.")
 
 
-# --- B-654: a final approval clicked on a stale page approved another version ------------------------------------------
+# --- B-654: a final approval clicked on a stale page approved another version ----------------------------------------
 
 
 def test_a_final_approval_from_a_stale_page_is_refused(tmp_path, monkeypatch):
