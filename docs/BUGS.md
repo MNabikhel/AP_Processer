@@ -5847,6 +5847,41 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
   `::test_in_a_browser_new_lines_and_split_lines_get_the_picker`
 - **Lesson:** Whatever closes a popover must say where the focus goes; whatever disables a button must enable it in a
   `finally`.
+#### B-580 · The review screen's page could not be zoomed like a document: blurry close up, Ctrl + wheel zoomed the dashboard · medium
+- **Where:** `ap_coder/web/static/js/invoice_viewer.js` (zoom, `sizeSheet`, `pointAt`), `ap_coder/web/document.py`
+  (`page_png`), `ap_coder/web/pages/invoice.py` (`page_picture`)
+- **Symptom:** the pilot tester said zoom on the document viewer is lacking: only Fit, 100% and 150%; at 150% the page
+  was soft (a 120 dpi picture stretched); Ctrl + wheel or a pinch zoomed the whole dashboard; no way to drag the page
+  about or to turn a page scanned sideways to read it.
+- **Cause:** the viewer had three fixed zooms and one picture per page at 120 dpi; the wheel and the keys were left to
+  the browser.
+- **Reproduce:** open an invoice on the review screen at 1366 x 768, choose 150%, hold Ctrl and turn the wheel.
+- **Reproduced:** yes
+- **Fix:** zoom from 50% to 400% (- / % / +, Fit width, Fit page, Ctrl + wheel and pinch around the pointer, the keys
+  + - 0 9), the Hand (its button, H, Space held, the middle button) to drag the page, Rotate (on screen only), Page Up
+  / Page Down; the page is asked for at `?scale=2` or `3` (240 or 360 dpi, capped at 4,800 and 6,000 px, a scan never
+  enlarged) when zoomed in, loaded aside and swapped in (D-57).
+- **Test:** `tests/test_web_viewer.py`, `tests/test_web_document.py::test_a_pdf_page_is_drawn_two_and_three_times_as_sharp`
+  and the tests after it
+- **Lesson:** A document viewer is judged against the PDF reader on the same laptop: zoom where the pointer is, a sharp
+  page at any zoom, and the keys and wheel people already use.
+
+#### B-581 · A test of saving your name failed after the review screen's tests, depending on the order · low
+- **Where:** `tests/conftest.py`; `ap_coder/web/app.py` (`create_app` imports the page modules), the `me` fixtures of
+  `tests/test_web_invoice.py` and `tests/test_web_pilot_walkthrough.py`
+- **Symptom:** `test_before_testing.py::test_saving_your_name_says_your_name_was_saved` failed in some runs: saving
+  the province said *Saved your name and your province…*; alone, and in 20 runs after test_web_viewer, it passed.
+- **Cause:** not timing. `create_app` imports the page modules the first time it runs; when that was inside a test
+  whose `me` fixture had patched `web.core.reviewer`, `from ap_coder.web.core import reviewer` copied the patched
+  function into `pages/settings.py` (and `pages/insights.py`) for the rest of the run, so the saved name never matched
+  `reviewer()` and was "saved" again. Only the dashboard's tests were affected, never the app.
+- **Reproduce:** `pytest tests/test_web_invoice.py::test_every_demo_invoice_opens_whatever_its_state
+  tests/test_before_testing.py::test_saving_your_name_says_your_name_was_saved` (fails every time).
+- **Reproduced:** yes
+- **Fix:** conftest.py imports every page module before any test, so they hold the real functions.
+- **Test:** `tests/test_before_testing.py::test_the_page_modules_hold_the_real_reviewer_whichever_test_ran_first`
+- **Lesson:** A test that passes alone and fails in a run is usually order, not timing: rerun it after the files that
+  ran before it, and look for a patch copied by a `from x import y` done late.
 
 #### Looked at and left (install, launcher and updates)
 

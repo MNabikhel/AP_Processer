@@ -152,7 +152,25 @@ details.iv-group > summary:focus-visible { outline: 2px solid var(--brand); outl
 }
 .iv-seg:hover { color: var(--ink); }
 .iv-seg[aria-pressed="true"] { background: var(--card); color: var(--ink); box-shadow: 0 0 0 1px var(--line-strong); }
-.iv-seg:focus-visible, .iv-icon-btn:focus-visible, .iv-btn:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+.iv-seg:focus-visible, .iv-icon-btn:focus-visible, .iv-btn:focus-visible, .iv-zbtn:focus-visible, .iv-zpct:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+/* The view tools: zoom (- 100% +), Fit width / Fit page, the Hand, Rotate, then the pages at the end of the row */
+.iv-view { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0; }
+.iv-view > * { flex: none; }
+.iv-view .iv-pager { margin-left: auto; }
+.iv-where { white-space: nowrap; }
+.iv-zbtn, .iv-zpct {
+  display: grid; place-items: center; height: 26px; padding: 0; border: 0; border-radius: 6px; background: transparent;
+  color: var(--muted); cursor: pointer;
+}
+.iv-zbtn { width: 26px; }
+.iv-zpct { min-width: 46px; padding: 0 4px; font-size: 12.5px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink); }
+.iv-zbtn:hover:not(:disabled), .iv-zpct:hover { color: var(--ink); background: var(--card); }
+.iv-zbtn:disabled { opacity: .4; cursor: default; }
+.iv-zbtn[aria-pressed="true"] { background: var(--card); color: var(--ink); box-shadow: 0 0 0 1px var(--line-strong); }
+.iv-tool { width: 30px; height: 30px; color: var(--muted); }
+.iv-tool:hover:not(:disabled) { color: var(--ink); }
+.iv-tool[aria-pressed="true"] { background: var(--brand-50); border-color: var(--brand); color: var(--brand-600); }
+.iv.turned .iv-rotate { color: var(--brand-600); border-color: var(--brand); } /* the page shown turned */
 .iv-pager { display: inline-flex; align-items: center; gap: 2px; }
 .iv-where { min-width: 86px; text-align: center; font-size: 12.5px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
 .iv-icon-btn {
@@ -219,10 +237,13 @@ details.iv-group > summary:focus-visible { outline: 2px solid var(--brand); outl
 
 /* ---- The page ---- */
 .iv-stage { position: relative; flex: 1 1 auto; min-height: 0; padding: 16px; background: var(--well); overflow-x: auto; outline: none; }
-.iv.fixed .iv-stage { overflow: auto; overscroll-behavior: contain; }
-.iv-stage.zoomed .iv-sheet { margin: 0 auto; }
+/* the scroll bar's room is kept, so fitting the page never makes it come and go */
+.iv.fixed .iv-stage { overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+/* The room the page takes on screen (sized by the viewer for the zoom and the rotation); the sheet in it is the page
+   upright, turned with a transform when rotated, so the boxes over it turn with it. */
+.iv-frame { position: relative; margin: 0 auto; flex: none; }
 .iv-sheet {
-  position: relative; width: 100%; margin: 0 auto; background: #fff; line-height: 0;
+  position: absolute; left: 0; top: 0; transform-origin: 0 0; background: #fff; line-height: 0;
   border-radius: 2px; box-shadow: var(--paper-shadow);
 }
 .iv-sheet.loading { background: linear-gradient(100deg, #fff 30%, #f2f4f8 50%, #fff 70%) 0 0 / 200% 100%; animation: iv-shine 1.2s linear infinite; }
@@ -334,6 +355,7 @@ details.iv-group > summary:focus-visible { outline: 2px solid var(--brand); outl
   .iv-toolbar .iv-key b { font-size: 12px; }
   .iv-toolbar { padding: 6px 10px; gap: 6px 8px; }
   .iv-seg { padding: 0 8px; }
+  .iv-view { flex-basis: 100%; gap: 5px; }
   .iv-where { min-width: 64px; }
   .iv-stage { padding: 10px; }
   .iv-teach { padding: 10px; }
@@ -350,6 +372,9 @@ details.iv-group > summary:focus-visible { outline: 2px solid var(--brand); outl
 /* A box dragged across the page to pick the words in it (outside teach mode: then the page asks what they are). */
 .iv-sheet { cursor: crosshair; }
 .iv.dragging .iv-sheet, .iv.dragging .iv-f { cursor: crosshair; }
+/* The Hand (its button, H, Space held): a drag moves the page */
+.iv.hand .iv-stage, .iv.hand .iv-stage * { cursor: grab !important; }
+.iv.panning .iv-stage, .iv.panning .iv-stage * { cursor: grabbing !important; user-select: none; }
 .iv-sel { pointer-events: none; }
 .iv-drag { fill: var(--p-pick); fill-opacity: .08; stroke: var(--p-pick); stroke-width: 1.5; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
 .iv-drag.done { fill-opacity: .12; stroke-dasharray: none; }

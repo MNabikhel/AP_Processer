@@ -513,12 +513,14 @@ def _closed(store: Store, reference: ReferenceData | None, inv: dict[str, Any]) 
 
 
 @router.get("/review/{invoice_id:int}/page/{number:int}.png")
-def page_picture(request: Request, invoice_id: int, number: int) -> Response:
+def page_picture(request: Request, invoice_id: int, number: int, scale: str = "1") -> Response:
+    """The page as a picture; ``?scale=2`` or ``3`` draws it at 2 or 3 times the dpi for a page zoomed in (anything else
+    is 1). The scale is in the address, so the browser keeps each one apart."""
     inv = _invoice(get_store(request), invoice_id)
     if not Path(inv.get("source_path") or "").is_file():
         raise HTTPException(status_code=404, detail=f"This invoice's file is no longer at {inv.get('source_path')}.")
     try:
-        png = document.page_png(inv["source_path"], number)
+        png = document.page_png(inv["source_path"], number, document.clean_scale(scale))
     except (IndexError, OSError) as exc:
         raise HTTPException(status_code=404, detail="That page is not in the invoice's file.") from exc
     except Exception as exc:  # noqa: BLE001 - a damaged file: said plainly

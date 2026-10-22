@@ -106,6 +106,46 @@ def test_unknown_and_missing_files(tmp_path):
         page_sizes(tmp_path / "gone.pdf")
 
 
+# --- Sharper pictures for a page zoomed in (B-580) ------------------------------------------------------------------
+
+
+def test_a_pdf_page_is_drawn_two_and_three_times_as_sharp():
+    assert png_size(page_png(SAMPLE, 1, scale=1)) == (1020, 1320)  # 120 dpi, as before
+    assert png_size(page_png(SAMPLE, 1, scale=2)) == (2040, 2640)  # 240 dpi
+    assert png_size(page_png(SAMPLE, 1, scale=3)) == (3060, 3960)  # 360 dpi
+    assert page_png(SAMPLE, 1) == page_png(SAMPLE, 1, scale=1)
+
+
+def test_each_scale_has_its_own_cap(monkeypatch):
+    monkeypatch.setattr(document, "DPI", 1200)
+    for scale, cap in ((1, 2400), (2, 4800), (3, 6000)):
+        assert document.max_side(scale) == cap
+        assert max(png_size(page_png(SAMPLE, 1, scale=scale))) == cap
+
+
+@pytest.mark.parametrize("value", [0, 4, -1, "2.5", "x", None, "", 99])
+def test_a_scale_that_is_not_1_2_or_3_is_1(value):
+    assert document.clean_scale(value) == 1
+    assert document.clean_scale("2") == 2 and document.clean_scale(3) == 3
+
+
+def test_the_scale_is_part_of_the_cache_key():
+    one = page_png(SAMPLE, 1, scale=1)
+    two = page_png(SAMPLE, 1, scale=2)
+    assert one != two
+    assert page_png(SAMPLE, 1, scale=2) == two
+    info = document._png_cached.cache_info()
+    assert (info.hits, info.misses) == (1, 2)
+
+
+def test_a_scan_is_never_enlarged_beyond_its_own_resolution(tmp_path):
+    path = tmp_path / "scan.png"
+    Image.new("RGB", (1700, 2200), "white").save(path, dpi=(200, 200))
+    assert png_size(page_png(path, 1, scale=1)) == (1020, 1320)  # 120 dpi
+    assert png_size(page_png(path, 1, scale=2)) == (1700, 2200)  # 240 dpi asked, the scan's own 200 dpi given
+    assert png_size(page_png(path, 1, scale=3)) == (1700, 2200)
+
+
 # --- Words ------------------------------------------------------------------------------------------------------------
 
 
