@@ -111,32 +111,57 @@ def _rate_table() -> Any:
 
 
 def provinces(text: str) -> tuple[str, str]:
-    """(supplier province, ship-to province) from the addresses on the page: the first address is the
-    supplier's (its letterhead), the first after a "Bill to" / "Client" label the customer's. A US address
-    is OUTSIDE_CANADA. Each labelled address goes to the labels in the order they were read, so "Bill to" and
-    "Ship to" side by side (labels on one row, then each column's address) are told apart."""
+    """(supplier province, ship-to province) from the addresses on the page: the ship-to printed, else the address
+    printed under a customer label ("Bill to", "Sold to", "Client", "Facturé à": ours, as the customer), else "".
+    Never the vendor's own province (its letterhead): with no address of ours printed, the place of supply is worked
+    out as D-23 says, the cost center's site or our province (D-61, B-651)."""
+    supplier, ship_to, bill_to = addresses(text)
+    return supplier, ship_to or bill_to
+
+
+# A labelled address is printed within this many lines of its label ("Bill to:", the name, two street lines, the
+# city): a province further down is the vendor's footer, a remit-to or another block, never the bill-to's (B-672).
+ADDRESS_BLOCK_LINES = 6
+# The vendor's own payment address: never ours, whatever label waits for an address.
+_REMIT_LABEL = re.compile(
+    r"(?i)\bremit(?:tance)?\b|\bpay(?:able|ment)?\s+to\b|cheques?\s+payable|\bpayable\s+(?:à|a)\b|"
+    r"\bveuillez\s+(?:remettre|payer)\b|\bfaire\s+(?:le|votre)\s+ch[eè]que\b"
+)
+REMIT_BLOCK_LINES = 4
+
+
+def addresses(text: str) -> tuple[str, str, str]:
+    """(supplier, ship-to, bill-to) provinces from the addresses on the page: the first address is the supplier's
+    (its letterhead), the first after a "Ship to" / "Livré à" label the ship-to, the first after a "Bill to" /
+    "Sold to" / "Client" label the customer's. A US address is OUTSIDE_CANADA. Each labelled address goes to the
+    labels in the order they were read, so "Bill to" and "Ship to" side by side (labels on one row, then each
+    column's address) are told apart; only from its own block (``ADDRESS_BLOCK_LINES``), never from a remit-to."""
     supplier = bill_to = ship_to = ""
     after_label = False
-    pending: list[str] = []  # labels read whose address has not come yet
-    for line in text.splitlines():
-        if _SHIP_LABEL.search(line):
+    pending: list[tuple[str, int]] = []  # labels read whose address has not come yet, with their line
+    remit_until = -1
+    for n, line in enumerate(text.splitlines()):
+        if _REMIT_LABEL.search(line):
+            remit_until = n + REMIT_BLOCK_LINES
+        elif _SHIP_LABEL.search(line):
             after_label = True
-            pending.append("ship")
+            pending.append(("ship", n))
         elif _CUSTOMER_LABEL.search(line):
             after_label = True
-            pending.append("bill")
+            pending.append(("bill", n))
+        pending = [(kind, at) for kind, at in pending if n - at <= ADDRESS_BLOCK_LINES]
         m = _PROVINCE_AT.search(line)
         where = m.group(1) if m else (OUTSIDE_CANADA if us_address(line) else "")
         if not where:
             continue
         if not supplier and not after_label:
             supplier = where
-        elif pending:
-            if pending.pop(0) == "ship":
+        elif pending and n > remit_until:  # a remit-to is the vendor's, never ours
+            if pending.pop(0)[0] == "ship":
                 ship_to = ship_to or where  # the place of supply: where the goods or services go
             else:
                 bill_to = bill_to or where
-    return supplier, ship_to or bill_to or supplier
+    return supplier, ship_to, bill_to
 
 
 def default_currency(supplier_province: str) -> str:
@@ -256,8 +281,11 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
     freight = _amount(values, "other_charges") if charges is not None and charges.status in (VERIFIED, LIKELY) else 0.0
     supplier_province, ship_to_province = provinces(text)
     invoice_on = _iso_or_empty(values.get("invoice_date"))
+    # The province a tax line names when its rate does not say: where it is delivered as best known (the vendor's
+    # province is never stored as the ship-to, D-61).
+    ours = getattr(getattr(reference, "tax", None), "our_province", "") or ""
     tax_lines = _tax_lines(
-        values, round(subtotal + freight, 2), ship_to_province,
+        values, round(subtotal + freight, 2), ship_to_province or ours or supplier_province,
         dt.date.fromisoformat(invoice_on) if invoice_on else None,
     )  # fmt: skip
     taxes = [t.tax_type for t in tax_lines]

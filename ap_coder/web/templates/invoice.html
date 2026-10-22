@@ -8,6 +8,7 @@
 {% block head %}
 <link rel="stylesheet" href="/static/invoice.css?v={{ static_version }}">
 <link rel="stylesheet" href="/static/invoice_viewer.css?v={{ static_version }}">
+<link rel="stylesheet" href="/static/ctxmenu.css?v={{ static_version }}">
 {% endblock %}
 
 {% block header %}
@@ -31,6 +32,16 @@
           <tr><td>{{ ui.kbd("N") }}</td><td>Next field to check (on the page)</td></tr>
           <tr><td>{{ ui.kbd("G") }}</td><td>Go to the line still to code</td></tr>
           <tr><td>{{ ui.kbd("Esc") }}</td><td>Stop teaching a field</td></tr>
+          <tr><td>{{ ui.kbd("+") }} {{ ui.kbd("−") }} {{ ui.kbd("0") }} {{ ui.kbd("9") }}</td><td>Zoom the page in, out, to its width, all of it</td></tr>
+          <tr><td>{{ ui.kbd("Ctrl") }} + wheel</td><td>Zoom where the pointer is (or pinch)</td></tr>
+          <tr><td>{{ ui.kbd("H") }} or hold {{ ui.kbd("Space") }}</td><td>Drag to move the page</td></tr>
+          <tr><td>{{ ui.kbd("R") }}</td><td>Turn the page (on screen only)</td></tr>
+          <tr><td>{{ ui.kbd("PgUp") }} {{ ui.kbd("PgDn") }}</td><td>Previous or next page</td></tr>
+          <tr><td>{{ ui.kbd("Shift") }} + {{ ui.kbd("F10") }}</td><td>More options for a field, a line or the page (or right-click)</td></tr>
+          <tr><td>{{ ui.kbd("Ctrl") }} + {{ ui.kbd("Z") }}</td><td>Undo the last change (a line deleted, a value cleared)</td></tr>
+          <tr><td>{{ ui.kbd("P") }}</td><td>Park: opens Park, to say what it waits for</td></tr>
+          <tr><td>{{ ui.kbd("X") }}</td><td>Reject: opens Reject, to say why (nothing is rejected until you press it)</td></tr>
+          <tr><td>{{ ui.kbd("Enter") }} / {{ ui.kbd("Shift") }} + {{ ui.kbd("Enter") }}</td><td>Next or previous invoice detail</td></tr>
         </tbody></table>
       </div>
     </details>
@@ -54,6 +65,8 @@
   <input type="hidden" name="grids" value="1">
   <input type="hidden" name="reader_at" value="{{ draft.reader_at }}">
   <input type="hidden" name="taught" value="{{ taught_json | tojson | forceescape }}" data-taught>
+  {# The fields marked "Not on this invoice" (the right-click menu of a field, D-60): a JSON list. #}
+  <input type="hidden" name="absent" value="{{ draft.absent | tojson | forceescape }}" data-absent>
   {% for k, v in query.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
   {% if nav.next_id %}<input type="hidden" name="next_id" value="{{ nav.next_id }}">{% endif %}
 </form>
@@ -75,13 +88,17 @@
     <section class="card inv-lines">
       {{ live_ui.head("Line items", "Change a GL account or cost center in its cell; add or delete lines below the grid.") }}
       <div class="table-wrap">
-        <table class="apc-table inv-grid-table inv-lines-grid{% if grid.lines | length > 10 %} compact{% endif %}" id="lines">
+        <table class="apc-table inv-grid-table inv-lines-grid{% if grid.lines | length > 3 %} compact{% endif %}" id="lines">
           <thead><tr><th>#</th><th>Description</th><th><span class="rvw-sr">Delete</span></th><th>GL account</th>{% if grid.has_cc %}<th>Cost center</th>{% endif %}
             <th class="r">Amount</th><th>Taxes</th><th class="r">Qty</th><th class="r">Unit price</th></tr></thead>
           <tbody data-grid="lines">{{ grids.line_rows(grid) }}</tbody>
         </table>
       </div>
       {{ grids.line_template(grid) }}
+      {# The account picker's lists (static/js/picker.js), printed once for every line's cell (D-56). #}
+      <script type="application/json" id="gl-options">{{ grid.gl_options | tojson }}</script>
+      {% if grid.has_cc %}<script type="application/json" id="cc-options">{{ grid.cc_options | tojson }}</script>{% endif %}
+      <script type="application/json" id="gl-vendor">{{ grid.vendor_accounts | tojson }}</script>
       <div class="row">
         <button type="button" class="btn sm" data-add-row="lines"><span class="ms" aria-hidden="true">add</span>Add a line</button>
         <details class="pop" data-split>
@@ -92,8 +109,8 @@
             <table class="apc-table inv-parts"><thead><tr><th>GL account</th>{% if grid.has_cc %}<th>Cost center</th>{% endif %}<th class="r">%</th><th></th></tr></thead>
               <tbody data-parts></tbody></table>
             <template id="part-template"><tr>
-              <td><select name="part_gl" aria-label="GL account">{% for code, label in grid.gl_options %}<option value="{{ code }}">{{ label }}</option>{% endfor %}</select></td>
-              {% if grid.has_cc %}<td><select name="part_cc" aria-label="Cost center">{% for code, label in grid.cc_options %}<option value="{{ code }}">{{ label }}</option>{% endfor %}</select></td>{% endif %}
+              <td><select name="part_gl" aria-label="GL account" data-picker data-picker-noun="account" data-options="gl-options" data-groups="gl"><option value="UNASSIGNED">{{ grid.gl_labels["UNASSIGNED"] }}</option></select></td>
+              {% if grid.has_cc %}<td><select name="part_cc" aria-label="Cost center" data-picker data-picker-noun="cost center" data-options="cc-options"><option value="UNASSIGNED">{{ grid.cc_labels["UNASSIGNED"] }}</option></select></td>{% endif %}
               <td class="r"><input type="number" name="part_pct" value="50" min="0" max="100" step="any" aria-label="Percent"></td>
               <td><button type="button" class="icon-btn" data-del-part aria-label="Remove this part"><span class="ms" aria-hidden="true">close</span></button></td>
             </tr></template>
@@ -107,11 +124,11 @@
           <summary class="btn sm"><span class="ms" aria-hidden="true">playlist_add_check</span>Apply to all lines…</summary>
           <div class="pop-body inv-split-pop">
             <p class="muted">Code every line that has no GL account{% if grid.has_cc %} or no cost center{% endif %} yet in one go. Lines already coded keep theirs.</p>
-            <label class="field">GL account<select data-fill-gl aria-label="GL account for the lines without one">
+            <label class="field">GL account<select data-fill-gl aria-label="GL account for the lines without one" data-picker data-picker-noun="account" data-groups="gl">
               <option value="">Leave as they are</option>
               {% for code, label in grid.gl_options if code != "UNASSIGNED" %}<option value="{{ code }}">{{ label }}</option>{% endfor %}</select></label>
             {% if grid.has_cc %}
-            <label class="field">Cost center<select data-fill-cc aria-label="Cost center for the lines without one">
+            <label class="field">Cost center<select data-fill-cc aria-label="Cost center for the lines without one" data-picker data-picker-noun="cost center">
               <option value="">Leave as they are</option>
               {% for code, label in grid.cc_options if code != "UNASSIGNED" %}<option value="{{ code }}"{% if code == usual_cc %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
             {% if usual_cc %}<p class="muted small">Suggested: every past approval of this vendor used cost center {{ usual_cc }}.</p>{% endif %}
@@ -129,12 +146,13 @@
 
     <section class="card inv-details">
       {{ live_ui.head("Invoice details") }}
-      {% macro field(name, cls="", type="text", placeholder="", hint="", step="") -%}
+      {% macro field(name, cls="", type="text", placeholder="", hint="", step="", choices="") -%}
       {% set s = sure.get(name) %}
-      <label class="field {{ cls }}" data-field="{{ name }}">
+      <label class="field {{ cls }}" data-field="{{ name }}"{% if name in absent_ok %} data-absent-ok{% endif %}{% if name in draft.absent %} data-absent{% endif %}>
         <span class="lbl">{{ labels[name] }}{% if s %} <span class="inv-sure {{ s.tone }}" title="{{ s.help }}"><span class="ms" aria-hidden="true">{{ s.icon }}</span>{{ s.text }}</span>{% endif %}
           {% if hint %}<span class="rvw-hint" title="{{ hint }}"><span class="ms" aria-hidden="true">info</span></span>{% endif %}</span>
-        <input type="{{ type }}" name="{{ name }}" value="{{ draft.header[name] }}" form="inv"{% if placeholder %} placeholder="{{ placeholder }}"{% endif %}{% if step %} step="{{ step }}"{% endif %}{% if hint %} title="{{ hint }}"{% endif %}>
+        <input type="{{ type }}" name="{{ name }}" value="{{ draft.header[name] }}" form="inv"{% if placeholder %} placeholder="{{ placeholder }}"{% endif %}{% if step %} step="{{ step }}"{% endif %}{% if hint %} title="{{ hint }}"{% endif %}{% if choices %} data-picker="free" data-picker-noun="{{ name }}" data-choices="{{ choices }}" autocomplete="off"{% endif %}>
+        <span class="inv-absent small muted"{% if name not in draft.absent %} hidden{% endif %}><span class="ms" aria-hidden="true">do_not_disturb_on</span>Not on this invoice</span>
       </label>
       {%- endmacro %}
       {% macro province(name, hint="") -%}
@@ -147,9 +165,9 @@
         <div class="field wide inv-vendor" data-field="vendor_name">
           <label for="vendor-name"><span class="lbl">{{ labels["vendor_name"] }}{% if s %} <span class="inv-sure {{ s.tone }}" title="{{ s.help }}"><span class="ms" aria-hidden="true">{{ s.icon }}</span>{{ s.text }}</span>{% endif %}
             <span class="rvw-hint" title="Pick the vendor from the vendor list: start typing its name. A vendor that is not in it can be added as a new vendor."><span class="ms" aria-hidden="true">info</span></span></span></label>
-          <input id="vendor-name" type="text" name="vendor_name" value="{{ draft.header["vendor_name"] }}" form="inv" list="vendor-list" autocomplete="off"
+          {# The vendor list to pick from: the picker (static/js/picker.js), with the vendors of #vendor-data (D-56). #}
+          <input id="vendor-name" type="text" name="vendor_name" value="{{ draft.header["vendor_name"] }}" form="inv" data-picker="free" data-picker-noun="vendor" autocomplete="off"
                  placeholder="Start typing to pick from the vendor list" aria-describedby="vendor-match">
-          <datalist id="vendor-list">{% for v in vendors.list %}<option value="{{ v.name }}">{% if v.id %}{{ v.id }}{% endif %}{% if v.gst %} · GST/HST {{ v.gst }}{% endif %}{% if v.added %} · added here{% endif %}</option>{% endfor %}</datalist>
           <div class="inv-vendor-match small" id="vendor-match" data-vendor-match aria-live="polite"></div>
           <details class="pop inv-vendor-add" data-vendor-add>
             <summary class="btn sm ghost"><span class="ms" aria-hidden="true">person_add</span>Add new vendor…</summary>
@@ -182,7 +200,7 @@
         {{ field("po_number", hint="Purchase order the invoice quotes, if any") }}
         {{ field("payment_terms", placeholder="e.g. Net 30, 2/10 Net 30") }}
         {{ field("due_date", placeholder=due_placeholder, hint="Only if printed; otherwise it comes from the terms (shown greyed)") }}
-        {{ field("currency") }}
+        {{ field("currency", choices="CAD|Canadian dollar,USD|US dollar,EUR|Euro,GBP|British pound") }}
         <div class="field inv-supply" data-field="ship_to_province">
           <span class="lbl">{{ labels["ship_to_province"] }} <span class="rvw-hint" title="The province whose sales tax applies: where the goods are delivered to you (services: generally where you are), not where the vendor is or ships from."><span class="ms" aria-hidden="true">info</span></span></span>
           <details class="inv-supply-pick"{% if supply.open %} open{% endif %}>
@@ -226,8 +244,9 @@
 <div class="inv-actionbar" role="region" aria-label="Approve">
   <div class="inv-actionbar-left" data-live="bar">{{ live_ui.bar(live, inv.id) }}</div>
   <div class="inv-actionbar-right">
-    <details class="pop up">
-      <summary class="btn" title="Set it aside while waiting for information"><span class="ms" aria-hidden="true">pause_circle</span>Park</summary>
+    <span class="inv-checking small muted" data-checking role="status" aria-live="polite"></span>
+    <details class="pop up" data-park>
+      <summary class="btn" title="Set it aside while waiting for information (P)" aria-keyshortcuts="p"><span class="ms" aria-hidden="true">pause_circle</span>Park</summary>
       <form class="pop-body stack" method="post" action="/review/{{ inv.id }}/park">
         <p class="muted">Set it aside while waiting for information.</p>
         <label class="field">Waiting for<input type="text" name="reason" required placeholder="e.g. buyer to confirm the price"></label>
@@ -237,8 +256,8 @@
         <button class="btn" type="submit"><span class="ms" aria-hidden="true">pause_circle</span>Park</button>
       </form>
     </details>
-    <details class="pop up">
-      <summary class="btn" title="Not ours, or not to be paid"><span class="ms" aria-hidden="true">block</span>Reject</summary>
+    <details class="pop up" data-reject>
+      <summary class="btn" title="Not ours, or not to be paid (X opens this)" aria-keyshortcuts="x"><span class="ms" aria-hidden="true">block</span>Reject</summary>
       <form class="pop-body stack" method="post" action="/review/{{ inv.id }}/reject">
         <p class="muted">Not ours, or not to be paid. It can be reopened later.</p>
         <label class="field">Reason<input type="text" name="reason" placeholder="e.g. not our invoice"></label>
@@ -293,7 +312,7 @@
     <div class="row end">
       <form method="post" action="/review/{{ inv.id }}/final-approve">
         <button class="btn primary" type="submit"{% if same %} disabled title="You approved it first (same name or computer login): someone else gives the second approval"{% endif %}>
-          <span class="ms" aria-hidden="true">how_to_reg</span>Final approval</button></form>
+          <span class="ms" aria-hidden="true">how_to_reg</span>Final approval</button><input type="hidden" name="approval" value="{{ approval }}"></form>
       <details class="pop">
         <summary class="btn"><span class="ms" aria-hidden="true">undo</span>Send back</summary>
         <form class="pop-body stack" method="post" action="/review/{{ inv.id }}/send-back">

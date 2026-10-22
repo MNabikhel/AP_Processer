@@ -357,7 +357,15 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
         findings.append(TaxFinding(severity, code, message, line))
 
     on = _invoice_date(coding)
-    prov = place_of_supply(coding, setup)
+    prov, source = supply_source(coding, setup)
+    # Where the place of supply came from, when no ship-to is printed: the warnings say it was assumed (D-61).
+    assumed = {
+        SUPPLY_OURS: " (your province in Settings: no ship-to or bill-to printed)",
+        SUPPLY_VENDOR: " (only the vendor's province: no ship-to or bill-to printed)",
+    }.get(source, "")
+    if assumed and (getattr(coding, "ship_to_province", "") or "") == OUTSIDE_CANADA:  # printed, not missing (B-673)
+        where = "your province in Settings" if source == SUPPLY_OURS else "only the vendor's province"
+        assumed = f" (the ship-to printed is outside Canada: checked against {where})"
     tax_lines = list(coding.tax_lines)
     # Canadian taxes actually charged (a printed "GST 0.00" on an exempt invoice is not a charge).
     charged = {tl.tax_type for tl in tax_lines if abs(tl.tax_amount) > 0.004 and tl.tax_type != "OTHER"}
@@ -421,7 +429,7 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
                     f"{label} rate {tl.rate:.5g} differs from the official {official:.5g} on {coding.invoice_date}",
                 )
         if prov and tl.province and tl.tax_type != "GST" and tl.province != prov:
-            add(WARNING, "TAX_PROVINCE_DIFFERS", f"{label} charged but place of supply is {prov}")
+            add(WARNING, "TAX_PROVINCE_DIFFERS", f"{label} charged but place of supply is {prov}{assumed}")
 
     # Which invoice lines carry each tax, and does their sum match the taxable amount? Compared per
     # tax type, because the same tax can be printed more than once (e.g. on goods and on freight).
@@ -452,7 +460,7 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
             add(WARNING, "PROVINCE_UNKNOWN", "province of supply unknown; tax regime cannot be verified")
     elif abs(coding.subtotal) > 0.004:  # credit notes (negative) are checked too
         expected_types = regime_on(prov, on, setup.rates)
-        name = PROVINCE_NAMES[prov]
+        name = PROVINCE_NAMES[prov] + assumed
         if not charged:
             add(
                 WARNING,

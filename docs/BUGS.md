@@ -4887,7 +4887,7 @@ were approved, parked and exported and a backup was made every 2 seconds (no loc
   folder first; the command line is for developers.
 - **N-167** · Two approvals of the same supplier at the same moment (two computers on the office network) each read,
   update and save the supplier's template: one of the two lessons can be lost. Not reproduced (one pilot tester).
-- **N-168** · A GL account the coder left blank and AP filled in counts as a correction for the lessons, so the
+- **N-168** · (Fixed by B-650.) A GL account the coder left blank and AP filled in counts as a correction for the lessons, so the
   "why" question comes after 3 invoices of a vendor imported together before any was approved (GCstrategies on the
   English PDFs), where D-39 counts filling a blank as no change. The lesson is also what tells the AI the account,
   so whether a filled blank asks "why" is a design question: left.
@@ -5816,6 +5816,293 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
   change count and the "Teaches from" line compare the GL account only.
 - **Test:** `tests/test_trust_review.py::test_without_a_cost_center_list_a_cost_center_from_memory_is_no_change`
 - **Lesson:** When a field is hidden from the screen, every comparison against what the screen posts must hide it too.
+#### B-563 · The account lists only jumped by first letters, and printed the chart of accounts for every line · medium
+- **Where:** `ap_coder/web/templates/_invoice_lines.html`, `invoice.html`, `accounts.html`, `statements.html`
+- **Symptom:** the pilot tester said the dropdowns are lacking: typing in one only jumps to a label starting with
+  those letters, and every label starts with its code (*audit* never found *6120 · Professional Fees - Audit*), with
+  no sign of the accounts this vendor's lines usually go to; each line printed all the accounts, so 300 accounts ×
+  20 lines made about 6,000 options in the page.
+- **Cause:** plain native `<select>`s, each with the whole list.
+- **Reproduce:** open an invoice of 20 lines; count `<option` in the page; type a word from inside an account name.
+- **Reproduced:** yes
+- **Fix:** the picker (D-56): words matched anywhere, marked; *Used for this vendor* and *Suggested* first; the list
+  printed once as JSON, each line's select holding only its choice. The vendor and currency fields use it as free text.
+- **Test:** `tests/test_web_picker.py` (`::test_the_review_screen_prints_the_chart_of_accounts_once_not_once_a_line`,
+  `::test_in_a_browser_typing_a_word_from_inside_an_account_name_finds_it_and_enter_picks_it`,
+  `::test_vendor_accounts_are_the_ones_its_approved_lines_went_to_most_used_first` and the others)
+- **Lesson:** A choice among hundreds needs a search, and a page that repeats a list per row should print it once.
+
+#### B-564 · Esc left the focus nowhere after closing Split a line, and a failed grid action could leave its button off · low
+- **Where:** `ap_coder/web/static/js/app.js` (Esc on popovers), `ap_coder/web/static/js/invoice.js` (`gridAction`)
+- **Symptom:** Esc closed *Split a line…* or *Apply to all lines…* and the keyboard focus was lost (on the page's
+  body); a grid action whose answer could not be drawn left its button disabled until the page was reloaded; nothing
+  said a check of the edits was still under way.
+- **Cause:** the Esc handler only closed the popovers; `gridAction` enabled its button again only on the happy path.
+- **Reproduce:** open Split a line, Tab into it, press Esc; `document.activeElement` is the body.
+- **Reproduced:** by reading the code (no test failed before the fix: none pressed Esc in a popover)
+- **Fix:** Esc gives the focus back to the popover's button (an open picker list closes first, and teaching a field is
+  not cancelled with it); the button is busy (`aria-busy`) during the action and usable again in a `finally`;
+  *Checking…* shows beside the approve bar while a check runs.
+- **Test:** `tests/test_web_picker.py::test_in_a_browser_the_split_popover_closes_on_escape_and_gives_back_the_focus`,
+  `::test_in_a_browser_new_lines_and_split_lines_get_the_picker`
+- **Lesson:** Whatever closes a popover must say where the focus goes; whatever disables a button must enable it in a
+  `finally`.
+#### B-580 · The review screen's page could not be zoomed like a document: blurry close up, Ctrl + wheel zoomed the dashboard · medium
+- **Where:** `ap_coder/web/static/js/invoice_viewer.js` (zoom, `sizeSheet`, `pointAt`), `ap_coder/web/document.py`
+  (`page_png`), `ap_coder/web/pages/invoice.py` (`page_picture`)
+- **Symptom:** the pilot tester said zoom on the document viewer is lacking: only Fit, 100% and 150%; at 150% the page
+  was soft (a 120 dpi picture stretched); Ctrl + wheel or a pinch zoomed the whole dashboard; no way to drag the page
+  about or to turn a page scanned sideways to read it.
+- **Cause:** the viewer had three fixed zooms and one picture per page at 120 dpi; the wheel and the keys were left to
+  the browser.
+- **Reproduce:** open an invoice on the review screen at 1366 x 768, choose 150%, hold Ctrl and turn the wheel.
+- **Reproduced:** yes
+- **Fix:** zoom from 50% to 400% (- / % / +, Fit width, Fit page, Ctrl + wheel and pinch around the pointer, the keys
+  + - 0 9), the Hand (its button, H, Space held, the middle button) to drag the page, Rotate (on screen only), Page Up
+  / Page Down; the page is asked for at `?scale=2` or `3` (240 or 360 dpi, capped at 4,800 and 6,000 px, a scan never
+  drawn sharper than it was scanned: a picture, or a scanned PDF's page since B-594) when zoomed in, loaded aside and
+  swapped in (D-57).
+- **Test:** `tests/test_web_viewer.py`, `tests/test_web_document.py::test_a_pdf_page_is_drawn_two_and_three_times_as_sharp`
+  and the tests after it
+- **Lesson:** A document viewer is judged against the PDF reader on the same laptop: zoom where the pointer is, a sharp
+  page at any zoom, and the keys and wheel people already use.
+
+#### B-581 · A test of saving your name failed after the review screen's tests, depending on the order · low
+- **Where:** `tests/conftest.py`; `ap_coder/web/app.py` (`create_app` imports the page modules), the `me` fixtures of
+  `tests/test_web_invoice.py` and `tests/test_web_pilot_walkthrough.py`
+- **Symptom:** `test_before_testing.py::test_saving_your_name_says_your_name_was_saved` failed in some runs: saving
+  the province said *Saved your name and your province…*; alone, and in 20 runs after test_web_viewer, it passed.
+- **Cause:** not timing. `create_app` imports the page modules the first time it runs; when that was inside a test
+  whose `me` fixture had patched `web.core.reviewer`, `from ap_coder.web.core import reviewer` copied the patched
+  function into `pages/settings.py` (and `pages/insights.py`) for the rest of the run, so the saved name never matched
+  `reviewer()` and was "saved" again. Only the dashboard's tests were affected, never the app.
+- **Reproduce:** `pytest tests/test_web_invoice.py::test_every_demo_invoice_opens_whatever_its_state
+  tests/test_before_testing.py::test_saving_your_name_says_your_name_was_saved` (fails every time).
+- **Reproduced:** yes
+- **Fix:** conftest.py imports every page module before any test, so they hold the real functions.
+- **Test:** `tests/test_before_testing.py::test_the_page_modules_hold_the_real_reviewer_whichever_test_ran_first`
+- **Lesson:** A test that passes alone and fails in a run is usually order, not timing: rerun it after the files that
+  ran before it, and look for a patch copied by a `from x import y` done late.
+
+#### B-590 · Ctrl+Enter with an account list open approved the old account · medium
+- **Where:** `ap_coder/web/static/js/picker.js` (`key`), `ap_coder/web/static/js/invoice.js` (Ctrl+Enter)
+- **Symptom:** "freight" typed in line 1's GL account, 5100 highlighted in the list, then Ctrl+Enter: the approval
+  sent line 1's old account (6300) and the list stayed open over the screen.
+- **Cause:** the picker left every Ctrl/⌘ key alone, so nothing picked the highlighted account; the review screen's
+  Ctrl+Enter then read the form with the select's old value. A regression of the picker (D-56): a native select
+  had no typed text to lose.
+- **Reproduce:** on the review screen, type an account's name in a line's GL account, press Ctrl+Enter before Enter.
+- **Reproduced:** yes
+- **Fix:** Ctrl/⌘+Enter with the list open picks the choice as Tab does (the one highlighted, once something was
+  typed), closes the list and lets the key go on: the select holds the new account before the form is read and checked.
+- **Test:** `tests/test_web_picker.py::test_in_a_browser_ctrl_enter_with_the_list_open_approves_the_account_typed`
+- **Lesson:** A box that holds typed text apart from the value it posts must settle it before every way the form can
+  be sent, the keyboard shortcuts too.
+
+#### B-591 · Space did nothing on the form's boxes and buttons while the mouse rested on the page · medium
+- **Where:** `ap_coder/web/static/js/invoice_viewer.js` (`viewKey`, the `keyup` listener)
+- **Symptom:** the keyboard on a line's tax box or on *Add a line*, the mouse resting over the invoice's page: Space
+  neither ticked the box nor pressed the button.
+- **Cause:** Space held the Hand whenever the pointer was over the page, wherever the focus was; the `keyup` that
+  ended the Hand cancelled the button's press as well.
+- **Reproduce:** at 1366 x 768, focus line 1's GST box, rest the mouse on the page, press Space: the box stays as it was.
+- **Reproduced:** yes
+- **Fix:** Space holds the Hand only with the focus on the page itself, or with the focus nowhere (the page's body) and
+  the pointer over the page; a box, button or link anywhere else keeps it. The `keyup` is taken only after a `keydown`
+  the viewer took.
+- **Test:** `tests/test_web_viewer.py::test_in_a_browser_space_on_a_box_or_button_of_the_form_is_theirs_with_the_mouse_over_the_page`,
+  `::test_in_a_browser_space_elsewhere_on_the_review_screen_scrolls_as_usual`
+- **Lesson:** A page-wide key belongs to where the focus is first; where the mouse rests only decides when the focus
+  is nowhere.
+
+#### B-592 · Page Up / Page Down turned the invoice's page from anywhere on the review screen · medium-low
+- **Where:** `ap_coder/web/static/js/invoice_viewer.js` (`viewKey`)
+- **Symptom:** on a two-page invoice, Page Down with the mouse over the line items (or the focus on a button of the
+  form) showed the invoice's page 2 instead of scrolling the screen.
+- **Cause:** the viewer took Page Up / Page Down from the whole window, outside the text boxes.
+- **Reproduce:** open a two-page invoice, rest the mouse on the line items, press Page Down.
+- **Reproduced:** yes
+- **Fix:** they turn the invoice's pages with the pointer over the Document card or the focus in it; anywhere else
+  the browser scrolls the screen as usual.
+- **Test:** `tests/test_web_viewer.py::test_in_a_browser_page_down_turns_the_invoice_page_only_from_the_document_card`
+- **Lesson:** Keys the browser already uses for the whole page are taken only where the person is clearly working on
+  the part that takes them.
+
+#### B-593 · An open account list stayed put while the page scrolled, its box gone off the screen · low-medium
+- **Where:** `ap_coder/web/static/js/picker.js` (`place`, the scroll and resize listeners)
+- **Symptom:** a GL account's list open, the page scrolled with the wheel: the list stayed on the screen while its box
+  went off it (or under the approve bar), and a click on the list changed a line no one could see.
+- **Cause:** on scroll the list was placed again from its box, but never closed, and was not held above the approve bar.
+- **Reproduce:** open a line's GL account list, scroll the page down 2,000 px; the list is still there.
+- **Reproduced:** yes
+- **Fix:** on scroll and resize the list follows its box, and closes once the box can't be seen (off the screen, or
+  under the approve bar or a header that stays put: what is drawn at the box's middle is not the box); it is kept on
+  the screen above the approve bar.
+- **Test:** `tests/test_web_picker.py::test_in_a_browser_an_open_list_follows_its_box_and_closes_once_the_box_scrolls_away`,
+  `::test_in_a_browser_a_resize_keeps_the_open_list_on_the_screen_above_the_approve_bar`
+- **Lesson:** A layer drawn apart from what it belongs to must follow it, and go when it goes.
+
+#### B-594 · A scanned PDF's page was drawn beyond the scan at 360 dpi, and the pictures kept could reach 380 MB · low-medium
+- **Where:** `ap_coder/web/document.py` (`_png_cached`, now `_draw_png` and `_PictureCache`)
+- **Symptom:** zoomed in, a 300 dpi scanned PDF was drawn at 360 dpi (3,060 x 3,960 px, 12 MB of PNG) for no more
+  detail than the scan has; the pictures kept were 32 whatever their size, about 380 MB of a pilot laptop's memory
+  after a morning of scans zoomed in. B-580 and D-57 said a scan is never enlarged: only true of pictures (PNG, JPEG,
+  TIFF), not of a PDF holding one.
+- **Cause:** a PDF page was always drawn at `DPI x scale`; the cache was `lru_cache(maxsize=32)`, counted in pictures.
+- **Reproduce:** a PDF of one 2,550 x 3,300 px picture on a letter page: `page_png(path, 1, 3)` is 3,060 x 3,960 px.
+- **Reproduced:** yes
+- **Fix:** a PDF page that is one picture covering it (a scanner's PDF, text layer or not) is drawn at most at that
+  picture's own resolution (its pixels over the inches it covers), never below 120 dpi; the pictures are kept up to
+  96 MB in all (`PICTURE_CACHE_BYTES`), the least recently used going first.
+- **Test:** `tests/test_web_document.py::test_a_scanned_pdf_page_is_never_drawn_sharper_than_it_was_scanned`,
+  `::test_the_pictures_kept_are_bounded_by_their_size_in_bytes`
+- **Lesson:** A cache of things whose size varies by a hundred times is bounded in bytes, not in count; and a rule
+  said of "a scan" must hold for every way a scan comes in.
+
+#### B-595 · The vendor typed was replaced by the vendor under the mouse when Tab was pressed · low
+- **Where:** `ap_coder/web/static/js/picker.js` (the list's `mousemove`, `key` for Tab)
+- **Symptom:** a new vendor's name typed in the vendor field, the mouse resting on a vendor of the list, then Tab:
+  the field held the vendor under the mouse, not the name typed.
+- **Cause:** the mouse moved the list's highlight, and Tab picked whatever was highlighted.
+- **Reproduce:** type "age" in the vendor field, rest the mouse on the first vendor of the list, press Tab.
+- **Reproduced:** yes
+- **Fix:** the mouse only marks its row (Enter or a click picks it); Tab picks the choice highlighted from the keyboard
+  (in a free box such as the vendor, one reached with the arrows).
+- **Test:** `tests/test_web_picker.py::test_in_a_browser_a_vendor_pointed_at_then_tab_keeps_the_name_typed`
+- **Lesson:** Where the mouse happens to rest is not a choice: only a click, or a key the person pressed, is.
+
+#### B-596 · "Used for this vendor" kept the vendor of the page as it opened · low
+- **Where:** `ap_coder/web/static/js/invoice.js` (`#gl-vendor`, `applySections`), `ap_coder/web/pages/invoice.py`
+  (`check`)
+- **Symptom:** the vendor field changed to another vendor of the list; the account lists still offered the first
+  vendor's accounts under *Used for this vendor*.
+- **Cause:** the accounts were printed once in the page (`#gl-vendor`) and never asked for again.
+- **Reproduce:** approve an invoice of vendor A with account X, open an invoice of vendor B, type A in the vendor
+  field, open a line's GL account list: X is not in the group.
+- **Reproduced:** yes
+- **Fix:** each check of the edits (`POST /review/<id>/check`, run after every change of the vendor field) answers
+  `vendor_accounts` for the vendor in the field, and the group shows those.
+- **Test:** `tests/test_web_picker.py::test_in_a_browser_the_accounts_used_for_this_vendor_follow_the_vendor_field`
+- **Lesson:** What a page prints once about a field must be asked again when the field can change.
+
+#### B-597 · The vendor list covered "Not in the vendor list: add it as a new vendor" while typing · low
+- **Where:** `ap_coder/web/static/js/picker.js` (`setAction`), `ap_coder/web/static/js/invoice.js` (the vendor field)
+- **Symptom:** while a vendor name was typed, its list lay over the line under the field that says the name is not in
+  the vendor list and offers to add it.
+- **Cause:** the list is drawn under the box, where that line is.
+- **Reproduce:** with a vendor list imported, type "age" in the vendor field.
+- **Reproduced:** yes
+- **Fix:** the vendor list ends with a row *Not in the vendor list: add as a new vendor…* while the name typed is not a
+  vendor of the list; choosing it opens *Add new vendor…* with the name typed (Tab never picks it).
+- **Test:** `tests/test_web_picker.py::test_in_a_browser_the_vendor_list_ends_with_add_as_a_new_vendor`
+- **Lesson:** A list that covers a message must carry the message, or the way out it offered.
+
+#### B-610 · Ticking a line's GST box left the GST line's taxable amount as it was · low-medium
+- **Where:** `ap_coder/web/static/js/invoice.js` (the review screen's tax lines)
+- **Symptom:** ticking or unticking a line's GST, HST, PST or QST box changed nothing in the Sales tax grid: the clerk
+  typed the tax line's taxable amount (and its amount) again by hand (two of 20 real invoices in a test run).
+- **Cause:** the tax lines were only ever what was read or typed; nothing tied them to the lines ticked with them.
+- **Reproduce:** on an invoice with GST, untick GST on line 1: the GST line still shows the old taxable amount.
+- **Reproduced:** yes
+- **Fix:** every edit of the screen (a box ticked, an amount changed, a line deleted, added or put back) updates a tax
+  line's taxable amount to the sum of the lines ticked with its tax, and its amount at its rate, while the taxable
+  amount is still the sum it was; one the clerk typed is left alone, and the tax line's right-click menu offers
+  *Taxable from the lines ticked GST: …*.
+- **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_a_tax_lines_taxable_follows_the_lines_ticked_with_it_b610`
+- **Lesson:** Two parts of a screen that say the same thing must move together, but never over what a person typed.
+
+#### B-620 · A duplicated line posted the original's key, so the copy's taxes were read from the original's boxes · high
+- **Where:** `ap_coder/web/static/js/invoice.js` (`makeRow`, Duplicate line in a line's right-click menu)
+- **Symptom:** after *Duplicate line*, unticking a tax on the copy changed nothing the server saw; deleting the original
+  took the copy's taxes with it.
+- **Cause:** the copy was made from the original's values, its hidden `line_key` too, while its tax boxes were named
+  after its new key (`line_tax_<key>`); the server reads a row's taxes from `line_tax_<its line_key>`.
+- **Reproduce:** /review/3, duplicate line 1, untick PST on the copy; or duplicate line 1 and delete the original.
+- **Reproduced:** yes
+- **Fix:** a row made from a state never takes its `line_key` from it: it keeps the key its template was made with
+  (the original's on Undo, a new one for a copy). Undo, Insert below and Copy from above go through the same code.
+- **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_a_duplicated_line_posts_its_own_key_and_its_own_taxes_b620`
+- **Lesson:** A copy of a row copies its values, never its identity.
+
+#### B-621 · A double-click on the GST/HST number's box on the page put it in Invoice # · high
+- **Where:** `ap_coder/web/static/js/invoice.js` (`fillFromWord`), `ap_coder/web/static/js/invoice_viewer.js` (dblclick)
+- **Symptom:** after clicking in Invoice #, a double-click on the GST/HST number's box on the page made the invoice
+  number 609274188; approving would have taught the supplier template that the invoice number is printed there.
+- **Cause:** any double-click on the page filled the invoice detail focused last, however long ago and whatever was
+  clicked since, on a field's box or a line item too, over a verified value without asking.
+- **Reproduce:** /review/9, click in Invoice #, double-click the GST/HST number's box on the page.
+- **Reproduced:** yes
+- **Fix:** a double-click on a field's box fills nothing (its click shows that field). A plain word fills the detail
+  being typed in, or the one just left for the page (5 seconds, nothing outside the page clicked since); otherwise
+  a message says to click in a detail first. A verified value is replaced only after asking, and a word inside a line
+  item is used for a detail only after asking.
+- **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_a_double_click_fills_only_the_detail_chosen_and_never_from_a_fields_box_b621`
+- **Lesson:** A shortcut that writes a value (and teaches it) must be sure which value the person meant.
+
+#### B-622 · A tax line added blank took the ticked lines' sum, so the tax counted twice · medium
+- **Where:** `ap_coder/web/static/js/invoice.js` (`followTicks`, B-610)
+- **Symptom:** *Add a tax line* (GST, blank), then tick or untick a line's GST: the new line's taxable amount became
+  the same sum as the GST line already there, and the checks counted the GST twice.
+- **Cause:** B-610 let a tax line follow the ticked lines when its taxable amount was blank as well as when it was the
+  old sum.
+- **Reproduce:** on an invoice with GST, add a tax line, untick GST on line 1.
+- **Reproduced:** yes
+- **Fix:** only a tax line whose taxable amount was the old sum follows; a blank one stays blank (its right-click menu
+  can still set it from the ticked lines).
+- **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_a_new_blank_tax_line_does_not_take_the_ticked_sum_b622`
+- **Lesson:** "Follows the lines" must mean "was the lines' sum": a blank is a person's work still to do.
+
+#### B-623 · Enter in Currency went nowhere · medium-low
+- **Where:** `ap_coder/web/static/js/invoice.js` (Enter between the invoice details)
+- **Symptom:** Enter moved from detail to detail down to Currency, then stayed there.
+- **Cause:** the next box, Place of supply, is folded away in a closed `<details>` (it still has a layout box, so it
+  passed the "shown" test); focusing it did nothing, and Enter had already been stopped.
+- **Reproduce:** on an invoice whose place of supply is the ship-to, click in Currency and press Enter.
+- **Reproduced:** yes
+- **Fix:** boxes in a closed `<details>`, hidden or disabled are skipped, and when a box still does not take the
+  focus, Enter goes on to the one after (Shift+Enter: before).
+- **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_enter_goes_past_a_detail_folded_away_b623`
+- **Lesson:** Moving the focus is only done once the focus has moved: check where it landed.
+
+#### B-624 · A right-click inside a text box showed the field's menu, without Paste · low-medium
+- **Where:** `ap_coder/web/static/js/ctxmenu.js` (`nativeWanted`)
+- **Symptom:** a right-click inside an empty invoice detail, a line's description or an amount opened AP Coder's menu:
+  no Paste, no spelling suggestions.
+- **Cause:** the browser's own menu was left only for a right-click on text selected in the box.
+- **Reproduce:** right-click inside the empty QST # box.
+- **Reproduced:** yes
+- **Fix:** a right-click inside a text box (or text area) is always the browser's. A field's menu opens on a
+  right-click of its name, its row in the Fields list or its box on the page, and with Shift+F10 (or the ContextMenu
+  key) in its box; a line's on the rest of its row (its delete button, its tax chips). The Help page and the Quick
+  start say so.
+- **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_a_right_click_inside_a_text_box_is_the_browsers_paste_menu_b624`
+- **Lesson:** Where people type, the browser's menu is part of typing: add to it from around the box, not over it.
+
+#### B-625 · A note was posted twice while an edit waited to be checked · low
+- **Where:** `ap_coder/web/static/js/invoice.js` (the submit that waits for the check; the note sent in place)
+- **Symptom:** with an edit not checked yet, Enter twice in the note box, or a double click on *Add note*, added the
+  note twice.
+- **Cause:** a form sent while an edit waits is held until the check is done, then sent; each Enter or click was held
+  and sent, and the note sent in place had no guard of its own.
+- **Reproduce:** type in PO #, then at once type a note and press Enter twice.
+- **Reproduced:** yes
+- **Fix:** a form already held is not sent again meanwhile (Park and Reject too), and a note being sent is sent once.
+- **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_a_note_is_posted_once_however_often_it_is_sent_b625`
+- **Lesson:** A send that waits must remember it is waiting.
+
+#### B-626 · The queue put back a filter from long before, and replaced an address with its own message · low
+- **Where:** `ap_coder/web/static/js/queue.js`
+- **Symptom:** search the queue for "zzzz", go to the Invoice directory, open an invoice from there, press *Queue*: the
+  queue opened searching "zzzz". A queue address with a message (`?flash=`) was sent to the old filter, the message
+  lost.
+- **Cause:** the queue's view was kept each time the queue was left, and put back whenever the queue opened from any
+  invoice without a query; the message token was not counted as a query (app.js takes it out of the address first).
+- **Reproduce:** as in the symptom (`/review?q=zzzz`, `/search`, `/review/5`, Queue).
+- **Reproduced:** yes
+- **Fix:** only a click from the queue to an invoice leaves a mark, used up the next time the queue opens; the view is
+  put back only for an address without a query of its own, read as the page was opened (before app.js tidies it).
+- **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_the_queue_restores_only_the_view_an_invoice_was_opened_from_b626`
+- **Lesson:** Remember a place only when the person leaves from it, and forget it once used.
 
 #### B-600 · The local chat model was shown no examples of the vendor's coding when the vendor's name was not on the page as stored · medium
 - **Where:** `ap_coder/ai/pipeline.py` (`_process`)
@@ -5922,6 +6209,33 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
   hose assembly”, from 5000 (approved 6 times) to 6220 once: check which is right.*
 - **Test:** `tests/test_coding_no_ai.py::test_a_similar_line_held_back_says_it_was_a_similar_line_ap_changed`
 - **Lesson:** A reason must name the thing it is about, not assume it.
+#### B-627 · A detail clicked in long before was still filled by a double-clicked word · medium
+- **Where:** `ap_coder/web/static/js/invoice.js` (`armedField`, B-621)
+- **Symptom:** click in Invoice #, type nothing, scroll, wait 10 seconds, double-click "Waverley" in the vendor's
+  address: Invoice # silently became "Waverley".
+- **Cause:** B-621's 5-second window counted from when the focus left the detail; the double-click's own first click
+  takes the focus to the page, so the detail had always "just" been left.
+- **Reproduce:** /review/5, as in the symptom.
+- **Reproduced:** yes
+- **Fix:** the window counts from the clerk's own use of the detail (the focus coming to it, a key, an edit), never from
+  leaving it; a detail used longer ago than 5 seconds is not filled, focused or not.
+- **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_a_detail_left_long_ago_is_not_filled_by_a_double_click_b627`
+- **Lesson:** Time a person's intent from what they did, not from a side effect of what they do next.
+
+#### B-628 · A right-click on a line opened its menu on only a third of it · low
+- **Where:** `ap_coder/web/static/js/ctxmenu.js` (`nativeWanted`)
+- **Symptom:** since B-624 every text box gave the browser's menu, so a line's menu opened on 24 of 72 spots of a line,
+  and a tax line's only on its two drop-downs.
+- **Cause:** the rule for an invoice detail's box (the browser's menu, for Paste) was applied to the grids' boxes too,
+  which fill nearly all of a line.
+- **Reproduce:** right-click a line's amount or description, or a tax line's rate: the browser's menu.
+- **Reproduced:** yes
+- **Fix:** in a line or a tax line, a right-click on a box opens the line's menu unless the box is in use: it had the
+  focus before the right button went down (being typed in, text selected in it), when the browser's menu (Paste) is
+  wanted. The invoice details stay as they were: the browser's menu in the box, the field's menu on its name. The
+  Help page and D-60 say where each menu opens.
+- **Test:** `tests/test_web_ctxmenu.py::test_in_a_browser_a_right_click_on_a_lines_box_opens_the_line_menu_unless_it_is_in_use_b628`
+- **Lesson:** Where a menu opens is part of the menu: count the spots it can be found on.
 
 #### Looked at and left (install, launcher and updates)
 
@@ -5932,3 +6246,368 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
   comes from the old window's own code (B-545).
 - **N-253** · The `windows-github-zip` CI job (B-549) was written without a Windows computer to run it on; its first
   runs may need a fix of the job itself (the steps it checks were run on Linux with the same ZIPs).
+
+### Pilot sweeps: counts, stale pages, terms and reading
+
+Two sweeps over the pilot set-up (LM Studio off, English and French vendor PDFs, Excel/CSV exports), each finding
+reproduced with a script first, then given a failing test and fixed.
+
+#### B-650 · Filling in a GL account the coder left blank counted as a correction · medium
+- **Where:** `ap_coder/core/store.py` (`approve_invoice`, `nothing_proposed`), `ap_coder/web/invoice_view.py`
+  (`ai_changes`), `ap_coder/ai/lessons.py` (`outcomes`), `ap_coder/core/memory.py` (`changed_account`)
+- **Symptom:** with LM Studio off, the queue and Learning showed 28.1% coding accuracy and "46 corrections" while
+  no proposal was wrong; the approval said "0 of 1 line coded as suggested" though the bar had said "1 you coded".
+- **Cause:** `suggestion_kept` is False when nothing was proposed, and the approval took that as a correction; the
+  review screen's change count and the lessons did the same (N-168).
+- **Reproduce:** add an invoice whose line reads UNASSIGNED; approve it with 6110; `metrics()`.
+- **Reproduced:** yes (`sweep/repro/r1_blank_counts_corrected.py`)
+- **Fix:** a line the AI left with no account and no cost center is recorded as coded, as D-39 says: out of the
+  accuracy, the per-vendor accuracy and the lessons' corrections, and no "line_coding" edit. Rows an older version
+  recorded so are recounted when the database opens. The learning memory still learns the account from it and still
+  reads it as a change of account (a recode confirmed by filling in a blank, B-605).
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_filling_in_a_blank_gl_account_is_coded_not_corrected` and the
+  two tests after it
+- **Lesson:** One rule for "corrected", in one function, used by every count.
+
+#### B-651 · An invoice with no ship-to took the vendor's own province as its ship-to · medium
+- **Where:** `ap_coder/ai/offline_coder.py` (`provinces`), `ap_coder/coding/tax.py` (`check_taxes`),
+  `ap_coder/web/invoice_view.py` (`supply_line`)
+- **Symptom:** an Alberta print shop's invoice to an Ontario company, with no ship-to or bill-to printed, was
+  checked as an Alberta supply (GST only: no warning), and the review screen said the province came from "the ship-to
+  on the invoice"; Settings → Review's own province was never used, against D-23.
+- **Cause:** `provinces` returned `ship_to or bill_to or supplier`: the vendor's province was stored as if printed.
+- **Reproduce:** `provinces()` of the Prairie Print text (Calgary letterhead, no customer address), then
+  `supply_source` with our province ON.
+- **Reproduced:** yes (`sweep/repro/r3_vendor_province_as_ship_to.py`)
+- **Fix:** only a printed ship-to, else a labelled bill-to (ours, as the customer: D-61), is read as the ship-to;
+  with neither the place of supply is our province, and the tax warnings say it was assumed ("your province in
+  Settings: no ship-to or bill-to printed"). The review screen says "the invoice's ship-to, else its bill-to".
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_the_vendors_province_is_never_the_ship_to` and the two tests
+  after it
+- **Lesson:** A fallback stored in the field it falls back from stops being a fallback: it looks read.
+
+#### B-652 · Amounts printed without a leading zero were read a hundred times too large · low
+- **Where:** `ap_coder/capture/normalize.py` (`_AMOUNT`, `_number`, `looks_like_money`)
+- **Symptom:** "$.99" was read as 99.00, "HST 13% $.65" as 65.00 and "-.50" as +50.00: the totals failed their check.
+- **Cause:** the amount pattern needs a digit before the point; the cents alone were taken as a whole number and the
+  minus sign was not seen before a point.
+- **Reproduce:** `parse_amount("$.65")`, `parse_amount("-.50")`; read `sweep/repro/docs/leading_point2.txt`.
+- **Reproduced:** yes (`sweep/repro/r2_leading_point.py`)
+- **Fix:** a point followed by two digits, not after a letter, a digit or another point ("No.12" stays 12), is
+  cents; a minus or an opening parenthesis before it makes it negative.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_amounts_without_a_leading_zero`,
+  `::test_a_receipt_with_amounts_without_a_leading_zero_reads_them`
+- **Lesson:** Test the printed forms of an amount the till prints, not only the ones a spreadsheet does.
+
+#### B-653 · Settings → Reading said OvisOCR2 had read every invoice while 26 still waited · low
+- **Where:** `ap_coder/web/pages/settings_reading.py` (`queue_text`), `ap_coder/ai/reading.py` (`_queue`)
+- **Symptom:** *Nothing waiting for OvisOCR2: it has read every invoice processed so far*, with 26 page reads
+  waiting (24 approved invoices, 2 rejected).
+- **Cause:** the count is of the invoices a person waits for (B-509); the words said it was all of them.
+- **Reproduce:** queue a page read, approve the invoice, open Settings → Reading.
+- **Reproduced:** yes (the sweep's database)
+- **Fix:** with none to review waiting, the tab says *No invoice to review waits for OvisOCR2. It still has 26
+  approved or rejected invoices to read, to check its reading against what AP approved: nothing waits for you*;
+  with none at all, *Nothing waiting for OvisOCR2.*
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_the_reading_tab_says_what_still_waits_for_ovisocr2`
+- **Lesson:** A count narrowed for one reason must not be described as the whole.
+
+#### B-654 · A final approval clicked on a stale page approved a version the approver never saw · medium
+- **Where:** `ap_coder/core/store.py` (`final_approve`), `ap_coder/web/pages/review.py` (`review_final_approve`),
+  `templates/review.html`, `templates/invoice.html`
+- **Symptom:** Bob opened the Second approval tab; meanwhile Anne had the invoice sent back, changed the bank account
+  and the GL accounts, and approved it again; Bob's click on the page he had loaded gave the final approval to the
+  new version, bank account included.
+- **Cause:** `final_approve` compared the first approval with a row it had just read itself; the form posted nothing
+  saying which approval the page showed.
+- **Reproduce:** `sweep2/s12.py`.
+- **Reproduced:** yes
+- **Fix:** both Final approval buttons post the first approval they show (its audit event); approved again since, the
+  approval is refused (*Not done: this invoice was sent back and approved again by Anne since you opened this page
+  … Reload to see the latest version, then give the final approval*). The check and the approval are one
+  transaction. A post without it (an older page) is approved as before.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_a_final_approval_from_a_stale_page_is_refused`
+- **Lesson:** An action on what a page shows must say what it showed.
+
+#### B-655 · A tab left open saved its old values over newer ones · medium
+- **Where:** `ap_coder/web/pages/settings.py` (`save_review`), `ap_coder/web/pages/accounts.py` (`accounts_save`,
+  `save_rules`), `ap_coder/web/core.py` (`page_version`, `stale_page`)
+- **Symptom:** an old Settings → Review tab, saved to change the days to pay, put the approval limit back to 0
+  (second approvals off) after a colleague had set it to 5,000; an old GL accounts grid saved after an import
+  deleted the account just imported; an old Rules tab dropped the rule added from a suggestion meanwhile.
+- **Cause:** each of these forms saves the whole page; nothing said which version of it the page showed.
+- **Reproduce:** `sweep2/s18.py`, `sweep2/s10.py`, `sweep2/s17.py`.
+- **Reproduced:** yes
+- **Fix:** the three forms post a stamp of what they showed (`version`); changed since, the save is refused and the
+  page stays as typed: *This page was changed elsewhere since you opened it: reload to see the latest, then make
+  your change again.* A post without a stamp (a script, a single field) is saved as before.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_a_stale_settings_tab_does_not_reset_the_approval_limit`,
+  `::test_a_stale_gl_grid_does_not_delete_an_account_imported_meanwhile`,
+  `::test_a_stale_rules_tab_does_not_drop_a_rule_added_meanwhile`
+- **Lesson:** A form that saves a whole list replaces what it did not show: make it say what it showed.
+
+#### B-656 · "30 EOM" was due at the end of the month, and "Net: 45" was not read · medium
+- **Where:** `ap_coder/coding/terms.py` (`_NET`, `_SLASH`, `_DISCOUNT`)
+- **Symptom:** with an invoice of January 15, "30 EOM", "10 EOM" and "EOM 30" were all due January 31; "Net: 45",
+  "Net - 45", "NET-45" and "45 net" were not read, so the due date fell back to the default 30 days.
+- **Cause:** the net days were read only after "Net" (with at most a slash) or before "days"; EOM with a number
+  beside it gave the end of the month itself.
+- **Reproduce:** `payment({"invoice_date": "2026-01-15", "payment_terms": "30 EOM", ...})`.
+- **Reproduced:** yes
+- **Fix:** the days beside EOM, before or after it, are the days after the end of the month (D-62): "30 EOM" and
+  "EOM 30" are due March 2, "10 EOM" February 10; "Net" takes a colon or a dash before its days, and "45 net" is
+  net 45.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_payment_terms_written_other_ways`
+- **Lesson:** Terms are typed by people: read each way they are written, not only the textbook one.
+
+#### B-657 · French column headers with accents were not recognised · low-medium
+- **Where:** `ap_coder/erp/statements.py`, `ap_coder/coding/po.py`, `ap_coder/coding/vendors.py`,
+  `ap_coder/erp/registers.py`, `ap_coder/erp/jde.py` (header matching); `ap_coder/core/headers.py` (new)
+- **Symptom:** a PO file's "Reçu" column, a vendor master's "Numéro", "Numéro TPS" and "Numéro TVQ", a statement's
+  "Crédit" were not matched, though their aliases ("recu", "numero", "numerotps", "numerotvq", "credit") are listed.
+- **Cause:** each header was cleaned with `re.sub(r"[^a-z0-9]", "", …)`, which deleted the accented letter
+  ("Reçu" -> "rcu").
+- **Reproduce:** `po.map_columns(["Bon de commande", "Reçu"])`.
+- **Reproduced:** yes
+- **Fix:** one shared `header_key` folds accents (NFKD, with œ, æ, ß and "N°") before cleaning; the five places use it.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_french_headers_with_accents_are_recognised`
+- **Lesson:** Fold accents before deleting what is not a letter.
+
+#### B-658 · A coding rule applied on the review screen could drop the AI reviewer's notes · low
+- **Where:** `ap_coder/core/store.py` (`add_rules_applied`)
+- **Symptom:** the AI reviewer's check, saved by the background thread while the reviewer applied a coding rule on
+  the screen, was gone from the invoice afterwards.
+- **Cause:** `add_rules_applied` read the invoice's notes, changed them and wrote them back without the write lock,
+  so a write in between was overwritten (`update_after_check` takes the lock first).
+- **Reproduce:** `sweep2/s11.py` (the screen's write paused between its read and its write).
+- **Reproduced:** yes
+- **Fix:** the write lock is taken before the read (`BEGIN IMMEDIATE`), as `update_after_check` does.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_rules_applied_on_screen_never_drop_a_background_check`
+- **Lesson:** Every read-modify-write of a shared row takes the lock before it reads.
+
+#### B-659 · A date at the calendar's ends in the address gave a server error · low
+- **Where:** `ap_coder/web/pages/month_end.py` (`day`), `ap_coder/web/pages/activity.py` (`_date`),
+  `ap_coder/web/core.py` (`clamp_day`)
+- **Symptom:** `/month-end?end=0001-01-01`, its `accruals.csv`, and `/activity/controls-report?start=9999-12-31`
+  answered "Internal Server Error" (OverflowError).
+- **Cause:** the accruals count a year back from the period end (`erp/accruals.py`), the controls report a day past
+  its last day (`erp/controls.py`): both ran past the first or last day Python knows.
+- **Reproduce:** open those addresses.
+- **Reproduced:** yes
+- **Fix:** a date read from the address is kept between 1900-01-01 and 2999-12-31.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_extreme_dates_in_the_address_are_clamped`
+- **Lesson:** A date from outside is checked for range as well as for form.
+
+#### B-660 · The automatic backup ran only when the dashboard started · low
+- **Where:** `ap_coder/web/app.py` (`DailyBackup`, `BackupCheck`)
+- **Symptom:** a dashboard left running for a week (the pilot laptop is rarely restarted) made one backup, on the
+  day it started.
+- **Cause:** `Store.auto_backup` was called only in the app's start-up.
+- **Reproduce:** start the dashboard, keep it running past a day: Settings → Data lists one automatic backup.
+- **Reproduced:** yes (by reading the code; the start-up call is the only one)
+- **Fix:** each request lets the dashboard check, at most once an hour, whether the day's backup is due; the backup
+  runs on its own thread, so no page waits. `auto_backup` keeps its rules (once a day, the newest 14).
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_the_daily_backup_also_runs_while_the_dashboard_keeps_running`
+- **Lesson:** "Once a day" in a program that runs for days needs a clock, not a start.
+
+#### B-661 · After an import, "they wait for OvisOCR2" contradicted "waiting in the review queue" · low
+- **Where:** `ap_coder/web/pages/process.py` (`queued_note`, the message after processing)
+- **Symptom:** *20 invoices read and coded. They're waiting in the review queue. 20 invoices queued for OvisOCR2,
+  which isn't running: they wait for it*: the pilot tester could not tell whether to review them now.
+- **Cause:** the note described the page reader's queue as if the invoices waited in it.
+- **Reproduce:** import invoices with LM Studio off.
+- **Reproduced:** yes (the real-invoice run)
+- **Fix:** *20 invoices read and coded. They're ready to review in the review queue. OvisOCR2 will double-check
+  them when LM Studio runs (Settings → Reading)* (or *once it is loaded in LM Studio*, *once it passes* its
+  self-test, or *double-checks them in the background* when it runs).
+- **Test:** `tests/test_dashboard_sweep_fixes.py::test_the_queued_note_reads_as_a_sentence` and the test after it,
+  `tests/test_web_pilot_walkthrough.py::test_one_invoice_read_is_waiting_not_they_are`
+- **Lesson:** Say what the person can do now before what a background part will do later.
+
+#### B-662 · "As printed … ≠ 45.00" stayed after the clerk fixed the amounts, and so did "quantity × price" · low
+- **Where:** `ap_coder/web/invoice_view.py` (`analyse`, `totals_settled`, `price_follows_amount`)
+- **Symptom:** on PJ's receipt the clerk typed the amounts from the page and they added up, but *as printed,
+  subtotal 40.00 + tax 0.00 ≠ total 45.00* stayed on screen; on BDO's quantity-1 line the clerk changed the amount
+  and *quantity × unit price = 0.00 but the amount is …* appeared.
+- **Cause:** the warning is capture's, about the page as first read, and was shown whatever the screen held now; the
+  unit price stayed as read when only the amount was changed.
+- **Reproduce:** a read that fails the totals check; change the line and the subtotal so that they add up.
+- **Reproduced:** yes (the real-invoice run)
+- **Fix:** once the amounts on screen differ from those read and add up (subtotal + tax = total, the tax lines =
+  the tax), the "as printed" warning is left out; the coding's own checks still say if they don't. (The unit price
+  was first rewritten on the server, behind the screen: replaced by B-671.)
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_fixed_values_drop_the_as_printed_warning_and_the_unit_price_follows`
+- **Lesson:** A warning about how a value was read ends when a person replaces the value.
+
+#### B-663 · Payment terms not found were silent: the due date quietly assumed 30 days · low
+- **Where:** `ap_coder/coding/terms.py` (`payment_findings`), `ap_coder/ops/help.py`
+- **Symptom:** an invoice whose terms were missed showed a due date 30 days out with nothing saying it was assumed.
+- **Cause:** the default from Settings → Review was applied without a finding.
+- **Reproduce:** an invoice with no terms, no due date and no vendor master terms.
+- **Reproduced:** yes
+- **Fix:** an information line, *Payment terms not found: the due date assumes 30 days (Settings → Review, Days to
+  pay). Check the invoice.* (or *Payment terms “As agreed” not understood: …*); not for a credit note. It holds
+  nothing back.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_terms_not_found_say_the_due_date_is_assumed`
+- **Lesson:** A default put in for a person says so.
+
+#### B-664 · A correct invoice date older than 3 years showed a red "Failed check 13%" · low
+- **Where:** `ap_coder/capture/confidence.py` (`run_checks`, `LOOK_CHECKS`)
+- **Symptom:** an old statement correctly dated 2021 had its date in red, *Failed check 13%*, as if misread.
+- **Cause:** one check (`DATE_PLAUSIBLE`) failed both a date far ahead (misread) and one long ago (often right).
+- **Reproduce:** read an invoice dated more than 3 years before today.
+- **Reproduced:** yes
+- **Fix:** a date more than 3 years back is its own check (`DATE_RECENT`): amber *Check*, *dated more than 3 years
+  ago: check the year*; a date more than 60 days ahead still fails. Both still keep the invoice from going through
+  on its own.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_an_old_date_is_a_check_not_a_failed_check`
+- **Lesson:** Red is for what is wrong; amber for what is unusual.
+
+#### B-665 · A utility bill with no invoice number: the error did not say what to type · low
+- **Where:** `ap_coder/ops/help.py` (`MISSING_INVOICE_NUMBER`)
+- **Symptom:** a hydro bill prints an account number and a statement date, no invoice number: *No invoice number:
+  type it from the page*, and nothing on the page to type.
+- **Cause:** the help assumed every bill has an invoice number.
+- **Reproduce:** read a utility bill.
+- **Reproduced:** yes (the real-invoice run)
+- **Fix:** the help under the error adds *A utility bill or statement that prints none: type its account number
+  and the bill's month, e.g. 1234567-2026-09, so each month's bill has its own number.* (Prefilling it was left
+  out: the account number is not read as a field of its own yet.)
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_no_invoice_number_help_suggests_the_account_number_and_month`
+- **Lesson:** An error says what to do, also when the usual answer is not on the page.
+
+#### B-666 · "You changed no header field" after the vendor was changed, and "about 97 more invoices" · low
+- **Where:** `ap_coder/capture/workflow.py` (`learn_from_approval`, `taught_message`, `supplier_progress`),
+  `ap_coder/capture/supplier.py` (`to_go_text`), `ap_coder/web/pages/learning.py`
+- **Symptom:** the clerk changed "BDO Canada" to "BDO Canada LLP" and the approval said *You changed no header
+  field*; and *about 97 more invoices approved without a correction before this vendor can skip review* read as a
+  wall, with no sign of progress.
+- **Cause:** the two names are one vendor to AP Coder (`vendor_key`), so no field counted as corrected, and the
+  message said nothing else; the progress was said only as what was left.
+- **Reproduce:** approve an invoice with the vendor's legal form added.
+- **Reproduced:** yes (the real-invoice run)
+- **Fix:** *You changed the vendor (“BDO Canada” to “BDO Canada LLP”): the same vendor to AP Coder, so not a
+  correction* (also for an invoice or PO number written otherwise); the progress reads *3 of about 20 clean
+  approvals toward skipping review*, after an approval and on Learning → Suppliers.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_the_approval_message_names_a_renamed_vendor_and_states_progress_plainly`
+- **Lesson:** A message after an action acknowledges the action, then says how far along things are.
+
+#### B-667 · "Pick a GL account for lines 1, 2, 3, … 15" on a receipt of 15 lines · low
+- **Where:** `ap_coder/coding/review.py` (`codes_to_pick`), `ap_coder/web/pages/review.py`
+- **Symptom:** the Approve bar listed all fifteen line numbers, and did not point to *Apply to all lines…*, the one
+  action that fills them.
+- **Cause:** the line numbers were always listed.
+- **Reproduce:** a receipt read with 15 lines and no GL account.
+- **Reproduced:** yes (the real-invoice run)
+- **Fix:** 4 lines or more are counted: *Pick a GL account for 15 lines to approve (or use Apply to all lines…)*;
+  the queue, which has no such button, says *Pick a GL account for 15 lines*.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_many_blank_lines_point_to_apply_to_all_lines`,
+  `tests/test_dashboard_sweep_fixes.py::test_counts_of_one_read_as_sentences`
+- **Lesson:** Past a few items, count them and point to the action that handles them all.
+
+#### B-668 · The standard Custom CSV layout had an empty VendorID and no vendor name · low
+- **Where:** `ap_coder/erp/export_layout.py` (`default_columns`)
+- **Symptom:** without a vendor master (the pilot's set-up), every row of the Custom CSV export began with an empty
+  VendorID, and nothing in the file said whom each bill was from.
+- **Cause:** the standard layout had the ERP's vendor ID only.
+- **Reproduce:** export a batch as Custom CSV without a vendor master.
+- **Reproduced:** yes (`sweep/exp/custom.csv`)
+- **Fix:** the standard layout has *VendorName* after *VendorID*. A layout already saved on the Exports page is kept
+  as it is.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_the_standard_custom_csv_layout_names_the_vendor`
+- **Lesson:** A default export must make sense with the default set-up.
+
+#### B-669 · A vendor read as "Inc.", one word in capitals or the bill-to's name could show as verified · low
+- **Where:** `ap_coder/capture/__init__.py` (`doubtful_vendor`, `_mark_doubtful_vendor`)
+- **Symptom:** in the real-invoice run the vendor came out as *Inc.*, as *POSTES* (of POSTES CANADA), or as the
+  customer's own name from the bill-to block, and the field was not marked for a look.
+- **Cause:** nothing judged whether the name chosen looked like a vendor's name.
+- **Reproduce:** a reading whose vendor is one of these.
+- **Reproduced:** yes (the real-invoice run)
+- **Fix:** a vendor name that is only a legal form, one word in capitals, or a line of the bill-to block is
+  *check* (confidence at most 60%), with the reason; never when the vendor master confirms the name. The capture
+  benchmark (200 invoices, seed 7) is unchanged.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_a_doubtful_vendor_name_is_marked_check`,
+  `::test_a_vendor_read_from_the_bill_to_is_check`
+- **Lesson:** A value can be read right and still not be the field's: check that it looks like one.
+
+#### B-670 · An invoice whose lines AP coded by hand counted as "approved without any edit" · medium
+- **Where:** `ap_coder/core/store.py` (`approve_invoice`, `coded_blanks`, `metrics`), `ap_coder/ops/share_report.py`,
+  `ap_coder/web/pages/invoice.py` (`_closed`)
+- **Symptom:** after B-650, an invoice whose every line the coder left blank and AP coded was stored with no edit:
+  `invoices_approved_without_edits`, the share report's *invoices approved without any edit* and the closed
+  invoice's *no changes to the suggested coding* all credited the AI with coding it never did.
+- **Cause:** B-650 rightly stopped counting a filled blank as a change of coding, and with it the only edit recorded.
+- **Reproduce:** `sweepreview/r650.py`.
+- **Reproduced:** yes (found by the review of the sweep fixes)
+- **Fix:** the hand coding is its own edit, *line_coded*: never "approved without any edit"; the share report says
+  *invoices with lines AP coded where the AI left them blank: N*; the closed invoice says *no changes to the suggested
+  coding; AP coded 3 lines the AI left blank*. The accuracy stays as B-650 made it. The share report no longer fails
+  when no line was proposed at all (accuracy *nothing proposed yet*).
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_lines_coded_by_hand_are_an_edit_of_their_own`
+- **Lesson:** When a count stops counting something, check what else that count fed.
+
+#### B-671 · A unit price read right was replaced by the amount, and the screen still showed the old one · low-medium
+- **Where:** `ap_coder/web/invoice_view.py` (B-662's `price_follows_amount`, removed), `ap_coder/web/static/js/invoice.js`
+- **Symptom:** "Chair (10% off)", quantity 1, unit price 100.00 read right, the amount misread as 9.00: the clerk
+  put in 90.00 and the approved price became 90.00 (it goes to the JD Edwards file and to PO price matching) while
+  the screen still showed 100.00.
+- **Cause:** B-662 made the server put the amount in the unit price of any quantity-1 line whose amount changed
+  with its price as read, whatever that price was, and nothing showed it.
+- **Reproduce:** `sweepreview/p662.py`.
+- **Reproduced:** yes (found by the review of the sweep fixes)
+- **Fix:** nothing is changed behind the screen: what is shown is what is checked and approved. On the screen, a
+  quantity-1 line's unit price follows a changed amount only when it was blank, 0 or the same number as the amount
+  (BDO's line); a price read right stays, and *quantity × unit price* then says the two differ.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_a_unit_price_read_right_is_never_replaced_behind_the_screen`,
+  `tests/test_web_invoice.py::test_in_a_browser_the_unit_price_of_a_quantity_1_line_follows_its_amount_only_when_it_was_the_amount`
+- **Lesson:** Never change behind the screen what the screen shows: change it on the screen, or not at all.
+
+#### B-672 · The vendor's remit address could fill a "Bill to" printed without a postal code · medium
+- **Where:** `ap_coder/ai/offline_coder.py` (`addresses`)
+- **Symptom:** a "Bill to" block with no postal-code line left its label waiting, and the next province anywhere on
+  the page filled it: *Please remit to: … Calgary AB* became our bill-to, so the place of supply (D-61) was the
+  vendor's province after all.
+- **Cause:** a label waited for an address for the rest of the page.
+- **Reproduce:** the review's example: `provinces()` gave ('', 'AB').
+- **Reproduced:** yes (found by the review of the sweep fixes; it predates B-651)
+- **Fix:** a ship-to or bill-to label takes a province only from its own block, the 6 lines after it, and never
+  from a remit-to or "payable to" block (the vendor's own address, which can still be the supplier's).
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_a_bill_to_takes_a_province_only_from_its_own_block`
+- **Lesson:** A label's value is near the label.
+
+#### B-673 · A ship-to outside Canada was said to be "no ship-to or bill-to printed" · low
+- **Where:** `ap_coder/coding/tax.py` (`check_taxes`)
+- **Symptom:** the demo's Cascade invoice, shipped to Seattle, said *… Ontario (your province in Settings: no
+  ship-to or bill-to printed) …*.
+- **Cause:** B-651's wording followed the place of supply's source, which falls back to our province for a ship-to
+  outside Canada as for one not printed.
+- **Reproduce:** check the taxes of an invoice with a ship-to outside Canada.
+- **Reproduced:** yes (found by the review of the sweep fixes)
+- **Fix:** it says *(the ship-to printed is outside Canada: checked against your province in Settings)*.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_a_ship_to_outside_canada_is_not_said_to_be_missing`
+- **Lesson:** Say why a fallback was taken, not only that it was.
+
+#### B-674 · "30 fin de mois" and "end of month 30" were still due at the end of the month · low
+- **Where:** `ap_coder/coding/terms.py` (`parse_terms`)
+- **Symptom:** B-656 read "30 EOM" and "EOM 30", but "30 fin de mois", "fin de mois 30", "30 end of month" and
+  "end of month 30" (typed by the clerk, or in the vendor master) were due on the last day of the invoice's month.
+- **Cause:** the days beside EOM were looked for only beside the literal "EOM".
+- **Reproduce:** `payment({"invoice_date": "2026-01-15", "payment_terms": "30 fin de mois", ...})`.
+- **Reproduced:** yes (found by the review of the sweep fixes)
+- **Fix:** "fin de mois", "end of month" and "end of the month" are read as EOM before the days are looked for: all
+  are due March 2 (D-62).
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_eom_terms_in_words`
+- **Lesson:** A fix for a word covers its synonyms the code already knows.
+
+#### B-675 · A one-word vendor (TELUS, IKEA) stayed "check" even after AP had approved it for this supplier · low
+- **Where:** `ap_coder/capture/__init__.py` (`_mark_doubtful_vendor`, `_approved_before`)
+- **Symptom:** after B-669, TELUS, ROGERS, IKEA, BDO and KPMG were "check" on every invoice without a vendor master,
+  so they could never go through on their own.
+- **Cause:** only the vendor master lifted the mark.
+- **Reproduce:** `sweepreview/telus.py`.
+- **Reproduced:** yes (found by the review of the sweep fixes)
+- **Fix:** a one-word name AP approved for this supplier before (the same `vendor_key`, on a page the supplier's
+  template learned from) is not marked. A name that is only a legal form or the bill-to's still is.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_a_one_word_vendor_approved_before_for_this_supplier_is_not_check`
+- **Lesson:** A doubt the person has already settled is not asked again.

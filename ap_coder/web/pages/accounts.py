@@ -21,7 +21,18 @@ from ap_coder.core import ui
 from ap_coder.core.reference_data import short_name
 from ap_coder.core.safe import csv_cell
 from ap_coder.core.store import Store, load_sample_setup
-from ap_coder.web.core import done, flash_message, get_store, posted_form, refuse, render, reviewer, short_path
+from ap_coder.web.core import (
+    done,
+    flash_message,
+    get_store,
+    page_version,
+    posted_form,
+    refuse,
+    render,
+    reviewer,
+    short_path,
+    stale_page,
+)
 from ap_coder.web.files import SheetError, download, drop_upload, read_upload, receive_sheet, sheet_context
 from ap_coder.web.pages.process import tax_types_mapped
 
@@ -91,6 +102,7 @@ def account_context(store: Store, table: str, file: str, sheet: str) -> dict[str
         "table": table,
         "noun": noun,
         "rows": rows,
+        "version": page_version(rows),  # posted with the grid (B-655)
         "blank": BLANK_ROWS,
         "categories": counts.most_common(),
         "imp": imp,
@@ -119,6 +131,11 @@ def tax_context(store: Store) -> dict[str, Any]:
     }
 
 
+def rules_shown(store: Store) -> list[tuple[str, str, str, str]]:
+    """The coding rules as the Rules tab shows them (its ``page_version`` is posted with the form)."""
+    return [(r.vendor, r.contains, r.gl_code, r.cost_center) for r in store.coding_rules()]
+
+
 def rules_context(store: Store, gl: list[dict[str, Any]], cc: list[dict[str, Any]]) -> dict[str, Any]:
     current = store.coding_rules()
     gl_codes = [a["code"] for a in gl]
@@ -126,6 +143,7 @@ def rules_context(store: Store, gl: list[dict[str, Any]], cc: list[dict[str, Any
     suggestions = [(r, n) for r, n in suggest_rules(store.feedback_rows(), current) if r.gl_code in gl_codes][:8]
     return {
         "rules": current,
+        "rules_version": page_version(rules_shown(store)),
         "gl_names": names,
         "cc_codes": [a["code"] for a in cc],
         "unknown": sorted({r.gl_code for r in current if r.gl_code and r.gl_code not in gl_codes}),
@@ -248,6 +266,9 @@ async def accounts_save(request: Request, table: str) -> JSONResponse:
     tab, noun = table_for(table)
     form = await posted_form(request)
     store = get_store(request)
+    stale = stale_page(form, store.list_accounts(table))  # an account imported meanwhile would be deleted (B-655)
+    if stale is not None:
+        return stale
     codes, descriptions, categories = form.getlist("code"), form.getlist("description"), form.getlist("category")
     deleted = {str(d) for d in form.getlist("delete")}
     keep, removed = [], 0
@@ -331,7 +352,11 @@ async def save_rules(request: Request) -> JSONResponse:
     store = get_store(request)
     if not store.list_accounts("gl_accounts"):
         return refuse("Import your GL accounts first.")
-    rules, incomplete = rules_from_form(await posted_form(request))
+    form = await posted_form(request)
+    stale = stale_page(form, rules_shown(store))  # a rule added meanwhile would be dropped (B-655)
+    if stale is not None:
+        return stale
+    rules, incomplete = rules_from_form(form)
     saved = store.save_coding_rules(rules, actor=reviewer())
     left_out = f"; {ui.plural(len(incomplete), 'incomplete row')} left out (no GL account, or no vendor or words)"
     return done(

@@ -19,9 +19,10 @@ _CURRENCY_WORDS = re.compile(r"\b(CAD|USD|EUR|GBP|CDN|CA\$|US\$|C\$)\b", re.I)
 # "1 234 567"). One space group may also be a quantity set close to its price ("10 100.00" in a line item):
 # ``find_amounts`` tells them apart. "0.125" is a unit price with three decimals, never thousands, and "1.3023" one
 # with four ("1234.5678" and "12,345.6789" too: four decimals are never thousands). A credit's "CR" may follow a
-# stray point on a scan ("392.99.CR").
+# stray point on a scan ("392.99.CR"). Cents may be printed without the leading zero ("$.65", "-.50"), never after a
+# word or another number ("No.12", "1.234.56").
 _AMOUNT = re.compile(
-    r"""(?P<neg1>\((?=\s*(?:[$€£]\s*)?\d)|(?<![-−–])[-−–](?=(?:[$€£]\s*)?\d))?
+    r"""(?P<neg1>\((?=\s*(?:[$€£]\s*)?\.?\d)|(?<![-−–])[-−–](?=(?:[$€£]\s*)?\.?\d))?
         \s*(?:[$€£]\s*)?
         (?P<num>\d{1,6}[.,]\d{4}(?!\d)(?![.,']\d)
           |(?!0[,.']\d)\d{1,3}(?P<g>[,.'])\d{3}(?:(?P=g)\d{3})*(?!(?P=g))[.,]\d{4}(?!\d)(?![.,']\d)
@@ -30,6 +31,7 @@ _AMOUNT = re.compile(
           |\d{1,3}(?:[ \u00a0\u202f]\d{3})+,\d{1,2}(?!\d)
           |\d{1,3}(?:[ \u00a0\u202f]\d{3})+(?:\.\d{1,2})?(?![.,]?\d)
           |0[.,]\d{1,4}
+          |(?<![\w.,])\.\d{2}(?![\d.,])
           |\d+(?:[.,]\d{1,2})?)
         \s*(?:[$€£])?\s*(?P<neg2>\)|-(?!\s*\w)|\.?(?i:cr)\b)?""",
     re.X,
@@ -97,7 +99,7 @@ def _number(num: str) -> float | None:
         whole, frac = num[:last_sep], num[last_sep + 1 :]
     else:
         whole, frac = num, ""
-    whole = re.sub(r"[ ,.]", "", whole)
+    whole = re.sub(r"[ ,.]", "", whole) or ("0" if last_sep == 0 and num[0] == "." else "")  # ".65": 0.65
     if not whole.isdigit() or (frac and not frac.isdigit()):
         return None
     return float(f"{whole}.{frac or '0'}")
@@ -145,9 +147,9 @@ def find_amounts(text: str) -> list[tuple[float, int, int]]:
 
 
 def looks_like_money(text: str) -> bool:
-    """A token printed like money: two decimals, or a currency sign."""
+    """A token printed like money: two decimals (".65" too), or a currency sign."""
     s = text.strip()
-    return bool(re.search(r"\d[.,]\d{2}\b", s)) or bool(re.search(r"[$€£]\s*\d", s))
+    return bool(re.search(r"\d[.,]\d{2}\b|(?<![\w.,])\.\d{2}\b", s)) or bool(re.search(r"[$€£]\s*\.?\d", s))
 
 
 # ---------------------------------------------------------------- dates

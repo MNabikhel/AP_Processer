@@ -8,6 +8,21 @@ import pytest
 from ap_coder.core.config import Settings
 from ap_coder.core.reference_data import load_reference_data
 
+
+def _import_the_pages() -> None:
+    """Every page module, imported once before any test (B-581). ``create_app`` imports them the first time it runs;
+    inside a test whose ``me`` fixture had patched ``web.core.reviewer``, ``from ap_coder.web.core import reviewer``
+    would copy the patched one into the page for the rest of the run."""
+    import importlib
+
+    from ap_coder.web.pages import MORE_MODULES, PAGES
+
+    for name in {*(p.module for p in PAGES), *MORE_MODULES}:
+        importlib.import_module(f"ap_coder.web.pages.{name}")
+
+
+_import_the_pages()
+
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data"
 SAMPLES = ROOT / "samples"

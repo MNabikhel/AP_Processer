@@ -323,24 +323,25 @@ def ready_to_read(steps: list[tuple[str, str, str]]) -> bool:
 
 
 def queued_note(settings: Settings, store: Store, queued: int) -> str:
-    """After processing: the invoices now waiting for OvisOCR2, and when it reads them ("" when none were queued)."""
+    """After processing: when OvisOCR2 double-checks the invoices just queued for it ("" when none were). They are
+    ready to review now: nothing waits for it (F1: "they wait for it" read as if they could not be reviewed)."""
     if queued <= 0:
         return ""
     them = "it" if queued == 1 else "them"
     status = reading_status_or_none(settings, store)
     if status is not None and not status.page_reader_ready:
-        wait = "it waits" if queued == 1 else "they wait"
         test = getattr(status, "self_test", "")
         if getattr(status, "page_reader_model", "") and test in ("failed", "pending", "running"):
             why = "it failed its self-test" if test == "failed" else "its self-test hasn't passed yet"
-            return (f"{ui.plural(queued, 'invoice')} queued for OvisOCR2, which runs in LM Studio but isn't trusted "
-                    f"yet ({why}): {wait} for it (Settings → Reading).")  # fmt: skip
-        return (f"{ui.plural(queued, 'invoice')} queued for OvisOCR2, which isn't running: {wait} for it "
-                "(Settings → Reading).")  # fmt: skip
+            return (f"OvisOCR2 runs in LM Studio but isn't trusted yet ({why}): it will double-check {them} once it "
+                    "passes (Settings → Reading).")  # fmt: skip
+        if getattr(status, "lm_studio", False):
+            return f"OvisOCR2 will double-check {them} once it is loaded in LM Studio (Settings → Reading)."
+        return f"OvisOCR2 will double-check {them} when LM Studio runs (Settings → Reading)."
     eta = ""
     if status is not None and status.eta_minutes:
-        eta = f", {page_reader.duration(status.eta_minutes * 60)} for the whole queue"
-    return f"{ui.plural(queued, 'invoice')} queued for OvisOCR2: it reads {them} in the background{eta}."
+        eta = f" ({page_reader.duration(status.eta_minutes * 60)} for the whole queue)"
+    return f"OvisOCR2 double-checks {them} in the background{eta}."
 
 
 # --- Reading and coding (the background job) ------------------------------------------------------------------------
@@ -399,9 +400,9 @@ def process_files(store: Store, settings: Settings, paths: list[Path], *, alread
         messages = list(notes or [])
         if ok:
             note = queued_note(settings, store, queued)
-            waiting = "It's" if ok == 1 else "They're"  # (B-430)
-            messages.append(flash_message(f"{ui.plural(ok, 'invoice')} read and coded. {waiting} waiting in the review "
-                                          f"queue. {note}".strip(), "ok", icon="inbox"))  # fmt: skip
+            ready = "It's" if ok == 1 else "They're"  # (B-430)
+            messages.append(flash_message(f"{ui.plural(ok, 'invoice')} read and coded. {ready} ready to review in the "
+                                          f"review queue. {note}".strip(), "ok", icon="inbox"))  # fmt: skip
         if failed:
             messages.append(flash_message(f"{ui.plural(failed, 'file')} could not be processed. See Review queue → "
                                           "Failed / rejected.", "err"))  # fmt: skip

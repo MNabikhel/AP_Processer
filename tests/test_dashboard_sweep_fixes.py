@@ -1,6 +1,7 @@
 """Bugs found driving the dashboard in a browser as a clerk and an AP lead would (third sweep), each reproduced here
 through the page (ap_coder/web) or the helper it came from, so they are not made again."""
 
+import json
 import re
 from html.parser import HTMLParser
 from types import SimpleNamespace
@@ -38,13 +39,19 @@ def test_the_queued_note_reads_as_a_sentence(store, monkeypatch):
 
     monkeypatch.setattr(process, "reading_status_or_none", lambda *a: SimpleNamespace(page_reader_ready=False))
     settings = web_settings()
+    # Ready to review now: OvisOCR2 only double-checks them later (it said "they wait for it", F1)
     assert process.queued_note(settings, store, 2) == (
-        "2 invoices queued for OvisOCR2, which isn't running: they wait for it (Settings → Reading)."
+        "OvisOCR2 will double-check them when LM Studio runs (Settings → Reading)."
     )
     assert process.queued_note(settings, store, 1) == (
-        "1 invoice queued for OvisOCR2, which isn't running: it waits for it (Settings → Reading)."
+        "OvisOCR2 will double-check it when LM Studio runs (Settings → Reading)."
     )
     assert process.queued_note(settings, store, 0) == ""
+    running = SimpleNamespace(page_reader_ready=False, lm_studio=True)
+    monkeypatch.setattr(process, "reading_status_or_none", lambda *a: running)
+    assert process.queued_note(settings, store, 2) == (
+        "OvisOCR2 will double-check them once it is loaded in LM Studio (Settings → Reading)."
+    )
 
 
 def test_the_queued_note_does_not_call_a_running_ovisocr2_not_running(store, monkeypatch):
@@ -58,8 +65,8 @@ def test_the_queued_note_does_not_call_a_running_ovisocr2_not_running(store, mon
         status = SimpleNamespace(page_reader_ready=False, page_reader_model="ath-maas_ovisocr2", self_test=state)
         monkeypatch.setattr(process, "reading_status_or_none", lambda *a, s=status: s)
         assert process.queued_note(settings, store, 2) == (
-            f"2 invoices queued for OvisOCR2, which runs in LM Studio but isn't trusted yet ({why}): they wait for "
-            "it (Settings → Reading)."
+            f"OvisOCR2 runs in LM Studio but isn't trusted yet ({why}): it will double-check them once it passes "
+            "(Settings → Reading)."
         )
 
 
@@ -70,8 +77,10 @@ def test_the_split_menu_names_cost_centers_as_the_line_grid_does(client, store):
     doc["line_items"][0]["predicted_cost_center"] = "UNASSIGNED"
     invoice_id = _flagged(store, doc)
     page = client.get(f"/review/{invoice_id}").text
+    # the split's cost centers are picked from the page's list (#cc-options, D-56), as a line's are
     parts = page.split('<template id="part-template">', 1)[1].split("</template>", 1)[0]
-    options = dict(re.findall(r'<option value="([^"]*)">([^<]*)</option>', parts.split('name="part_cc"', 1)[1]))
+    assert 'name="part_cc"' in parts and 'data-options="cc-options"' in parts
+    options = dict(json.loads(re.search(r'id="cc-options">(.*?)</script>', page, re.S).group(1)))
     assert options["UNASSIGNED"] == "Needs a cost center"
     assert options["CC400"].startswith("CC400 · ")
 
@@ -233,8 +242,11 @@ def test_counts_of_one_read_as_sentences(client, store):
     for li in doc["line_items"]:
         li["predicted_cost_center"] = "UNASSIGNED"
     invoice_id = _flagged(store, doc, invoice_number="NW-2")
-    numbers = ", ".join(str(li["line_number"]) for li in doc["line_items"])
-    assert f"Pick a cost center for lines {numbers} to approve" in client.get(f"/review/{invoice_id}").text
+    n = len(doc["line_items"])  # 4 or more are counted, with the way to fill them all (B-667)
+    assert (
+        f"Pick a cost center for {n} lines to approve (or use Apply to all lines…)"
+        in client.get(f"/review/{invoice_id}").text
+    )
 
     warned = re.sub(r"\s+", " ", client.get("/exports?fmt=jde").text)
     assert "1 invoice cannot go to JD Edwards yet and is left out of the batch" in warned

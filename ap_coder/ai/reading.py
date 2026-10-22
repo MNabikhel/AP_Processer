@@ -55,7 +55,8 @@ class ReadingStatus:
     page_reader_ready: bool = False  # found, LM Studio answers, and its self-test passed
     self_test: str = "no model"  # "passed" | "failed" | "running" | "pending" | "no model"
     self_test_detail: str = ""  # plain English: when it passed, what failed, how far along it is
-    queue: int = 0  # invoices waiting for the page reader
+    queue: int = 0  # invoices to review waiting for the page reader
+    queue_closed: int = 0  # approved, rejected or exported invoices it still reads, to score itself (nobody waits)
     eta_minutes: float | None = None  # until the queue is read, when there is a measured page time
     figures_agree: float | None = None  # share of figures it read as the PDF's text layer has them (digital PDFs)
     figures_count: int = 0  # figures behind ``figures_agree``
@@ -236,6 +237,7 @@ def _queue(settings: Any, store: Any, out: ReadingStatus) -> None:
         from .page_worker import figure_totals, wait_seconds
 
         out.queue = int(store.page_reads_waiting(still_open=True))  # the invoices a person waits for (B-509)
+        out.queue_closed = max(int(store.page_reads_waiting()) - out.queue, 0)  # said as such (B-653)
         seconds = wait_seconds(settings, store, out.page_reader_model) if out.page_reader_model else None
         out.eta_minutes = round(seconds / 60, 1) if seconds is not None else None
         same, seen = figure_totals(store).get("digital", (0, 0))

@@ -102,10 +102,13 @@
       <table class="apc-table">
         <tbody>
           {% for keys, what in shortcuts %}
-          <tr><td>{% for k in keys %}{{ ui.kbd(k) }}{% if not loop.last %} + {% endif %}{% endfor %}</td><td class="w">{{ what }}</td></tr>
+          <tr><td>{% for part in keys %}{% if part.key %}{{ ui.kbd(part.text) }}{% else %}{{ part.text }}{% endif %}{% if not loop.last %} {% endif %}{% endfor %}</td><td class="w">{{ what }}</td></tr>
           {% endfor %}
         </tbody>
       </table>
+      <p class="muted small">On the review screen, right-click an invoice detail's name, a line, a tax line or the page
+        for more options; in a detail's box, press Shift+F10 (a right-click in a detail's box, or in a line's box you
+        are typing in, is the browser's, with Paste). Undo puts back the last change.</p>
     </section>
     <section class="card">
       <h4>Where your data is</h4>

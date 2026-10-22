@@ -28,12 +28,12 @@ _EOM = re.compile(r"\b(eom|end of (the )?month|fin de mois)\b", re.I)
 # must look like a discount, so "Due 10/15 net 45" stays a date), 2% 10 net 30, 2% discount if paid within 10 days,
 # "Net 30, 2% 10" (the word "days" may be left out).
 _SLASH = re.compile(
-    r"(?<![\d/.,])(\d(?:[.,]\d+)?)\s*%?\s*/\s*(\d+)\s*(?:days?)?\s*(?:eom\b)?\s*[,;]?\s*(?:n(?:et)?\s*/?\s*(\d+)|(?<=eom))",
+    r"(?<![\d/.,])(\d(?:[.,]\d+)?)\s*%?\s*/\s*(\d+)\s*(?:days?)?\s*(?:eom\b)?\s*[,;]?\s*(?:n(?:et)?\s*[:/\-–]?\s*(\d+)|(?<=eom))",
     re.I,
 )
 _DISCOUNT = [
     _SLASH,
-    re.compile(r"(?<![\d/.,])(\d+(?:[.,]\d+)?)\s*%\s*(\d+)\s*[,;]?\s*n(?:et)?\s*/?\s*(\d+)", re.I),
+    re.compile(r"(?<![\d/.,])(\d+(?:[.,]\d+)?)\s*%\s*(\d+)\s*[,;]?\s*n(?:et)?\s*[:/\-–]?\s*(\d+)", re.I),
     re.compile(
         r"(?<![\d/.,])(\d+(?:[.,]\d+)?)\s*%\s*(?:discount|escompte)?\s*(?:if paid|si pay[ée]e?)?"
         r"\s*(?:within|in|dans les|sous)?\s*(\d+)\b(?!\s*%|[.,]\d)"
@@ -85,9 +85,13 @@ EOM_NET_AFTER_DISCOUNT = 20
 _MONTHS = r"(?:months?|mois)\b"
 _WEEKS = r"(?:weeks?|wks?|semaines?)\b"
 # (pattern, days in each unit it counts). "Net 1 month", "Net 2 weeks" and "Net 10 prox" are not 1, 2 or 10 days.
+# "Net 45", "Net: 45", "Net - 45", "NET-45", "N45"; then "30 EOM" and "EOM 30" (days after the end of the month: the
+# EOM itself is read by ``_eom``, D-62), days, "45 net" and weeks.
 _NET = [
-    (re.compile(r"\bn(?:et)?\s*/?\s*(\d{1,3})\b(?!\s*(?:" + _MONTHS + "|" + _WEEKS + r"|prox))", re.I), 1),
+    (re.compile(r"\bn(?:et)?\s*[:/\-–]?\s*(\d{1,3})\b(?!\s*(?:" + _MONTHS + "|" + _WEEKS + r"|prox|%))", re.I), 1),
+    (re.compile(r"(?<![\d/.,%])\b(\d{1,3})\s*(?:days?\s*)?eom\b|\beom\s*[:\-–]?\s*(\d{1,3})\b(?!\s*(?:%|/))", re.I), 1),
     (re.compile(r"(\d{1,3})\s*(?:days?|jours?)\b", re.I), 1),
+    (re.compile(r"(?<![\d/.,%])\b(\d{1,3})\s*net\b", re.I), 1),
     (re.compile(r"(\d{1,2})\s*" + _WEEKS, re.I), 7),
 ]
 # "Net 10 prox" (proximo): due on the 10th of the month after the invoice's. Not a discount's day ("2/10th prox").
@@ -127,8 +131,9 @@ def _net_days(text: str, *, outside_interest: bool = False) -> int | None:
         for m in pattern.finditer(text):
             if outside_interest and pattern is not _NET[0][0] and _INTEREST.search(_clause(text, m.start(), m.end())):
                 continue
-            if 0 <= int(m.group(1)) * unit <= 180:
-                return int(m.group(1)) * unit
+            n = int(next(g for g in m.groups() if g is not None))
+            if 0 <= n * unit <= 180:
+                return n * unit
     return None
 
 
@@ -192,6 +197,8 @@ def parse_terms(text: str | None) -> Terms:
     if not text:
         return Terms()
     eom = _eom(text)
+    # "30 fin de mois", "end of month 30": read as "30 EOM" and "EOM 30" (B-674, D-62).
+    text = _EOM.sub("EOM", text)
     text = _FRACTION_PCT.sub(
         lambda m: f"{int(m.group(1)) / int(m.group(2)):g}%" if int(m.group(2)) else m.group(0), text
     )
@@ -350,6 +357,11 @@ def payment_findings(
              f"{p.terms.discount_pct:g}% early-payment discount (about {p.discount_amount:,.2f}) if paid by "
              f"{p.discount_by:%b} {p.discount_by.day}")
         )  # fmt: skip
+    if p.source == "default" and float(coding.get("grand_total") or 0) > 0:  # never silent (B-663)
+        printed = (coding.get("payment_terms") or "").strip()
+        what = f"Payment terms “{printed}” not understood" if printed else "Payment terms not found"
+        findings.append((INFO, "TERMS_NOT_FOUND", f"{what}: the due date assumes {default_days} days (Settings → "
+                         "Review, Days to pay). Check the invoice."))  # fmt: skip
     left = p.days_left(today)
     if left is not None and left < 0 and float(coding.get("grand_total") or 0) > 0:
         ago = f"overdue since {overdue_since(p.due)}" if left < -LONG_OVERDUE_DAYS else f"{-left} days ago"

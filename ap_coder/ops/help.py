@@ -218,6 +218,12 @@ CHECKS: dict[str, CheckHelp] = {
         "“Check date”. Not raised for a credit note.",
         "Check the date against the document; if it is right, ask why the bill comes so late.",
     ),
+    "TERMS_NOT_FOUND": CheckHelp(
+        PAYMENT, "Payment terms not found",
+        "Information only: no due date and no payment terms AP Coder understands were read, and the vendor master has "
+        "none, so the due date is the invoice date plus the days to pay in Settings → Review.",
+        "Check the terms on the invoice; type them in Payment terms (e.g. Net 45), or the due date if it is printed.",
+    ),
     "DUE_BEFORE_INVOICE": CheckHelp(
         PAYMENT, "Due before it was issued",
         "The due date is earlier than the invoice date, so one of the two dates was probably misread.",
@@ -257,7 +263,8 @@ CHECKS: dict[str, CheckHelp] = {
     "MISSING_VENDOR": CheckHelp(TOTALS, "No vendor", "The vendor name is empty.", "Type the vendor name."),
     "MISSING_INVOICE_NUMBER": CheckHelp(
         TOTALS, "No invoice number", "The invoice number is empty, so duplicates cannot be detected.",
-        "Type the invoice number from the document.",
+        "Type the invoice number from the document. A utility bill or statement that prints none: type its account "
+        "number and the bill's month, e.g. 1234567-2026-09, so each month's bill has its own number.",
     ),
     "CURRENCY_FORMAT": CheckHelp(
         TOTALS, "Unusual currency", "The currency is not a three-letter code such as CAD or USD.",

@@ -20,8 +20,10 @@ The province whose tax applies is the **place of supply**:
 
 How AP Coder decides, in this order:
 
-1. The ship-to printed on the invoice (or set by you on the review screen).
-2. With none printed: the province of the cost center the lines are coded to (Settings → Review, "Sites in other
+1. The ship-to printed on the invoice; with no ship-to, the address printed under "Bill to", "Sold to", "Client" or
+   "Facturé à" (yours, as the customer); or the province you set on the review screen. Never the vendor's own
+   address (decision D-61).
+2. With neither printed: the province of the cost center the lines are coded to (Settings → Review, "Sites in other
    provinces, by cost center", e.g. `CC400=BC`), when every line goes to one site.
 3. Else your province (Settings → Review, "Your province").
 4. Only when none is known: the vendor's province, shown on the review screen as a guess to confirm.

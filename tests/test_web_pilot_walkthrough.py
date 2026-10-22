@@ -217,7 +217,9 @@ def test_one_invoice_read_is_waiting_not_they_are(tmp_path):
     assert client.post("/process/upload", files=files, headers=PAGE).json()["ok"]
     assert app.state.jobs.get("process").wait(180)
     texts = [m["text"] for m in client.get("/process/status").json()["result"]["messages"]]
-    assert any(t.startswith("1 invoice read and coded. It's waiting in the review queue.") for t in texts), texts
+    assert any(t.startswith("1 invoice read and coded. It's ready to review in the review queue.") for t in texts), (
+        texts
+    )
 
 
 # --- Master data and learning ------------------------------------------------------------------------------------
@@ -329,11 +331,11 @@ def test_in_a_browser_approve_stays_at_the_right_while_a_line_needs_an_account(b
     assert approve["x"] + approve["width"] > bar["x"] + bar["width"] - 60, (approve, bar)
     # the hint takes you to the line, and so does G
     page.click(".inv-pick")
-    assert page.evaluate("document.activeElement.name") == "line_gl"
+    assert page.evaluate("document.activeElement.dataset.pickerName") == "line_gl"
     page.locator("body").focus()
     page.evaluate("document.activeElement.blur()")
     page.keyboard.press("g")
-    assert page.evaluate("document.activeElement.name") == "line_gl"
+    assert page.evaluate("document.activeElement.dataset.pickerName") == "line_gl"
     assert errors == []
 
 
@@ -476,7 +478,7 @@ def test_in_a_browser_a_line_in_the_checks_takes_you_to_it(browser, store):
     page.select_option("select[name=line_gl] >> nth=0", UNASSIGNED)
     page.wait_for_selector("[data-goto-line]")
     page.click("[data-goto-line] >> nth=0")
-    assert page.evaluate("document.activeElement.name") == "line_gl"
+    assert page.evaluate("document.activeElement.dataset.pickerName") == "line_gl"
     assert errors == []
 
 
@@ -522,7 +524,7 @@ def test_in_a_browser_tab_follows_the_line_grid_as_it_shows_and_the_page_view_en
     for _ in range(12):
         box = page.evaluate(
             "(() => { const e = document.activeElement; const r = e.closest('td').getBoundingClientRect();"
-            " return [e.name || e.getAttribute('aria-label') || e.tagName, r.top, r.left,"
+            " return [e.dataset.pickerName || e.name || e.getAttribute('aria-label') || e.tagName, r.top, r.left,"
             " e.closest('tr') === document.querySelector('[data-grid=lines] tr')]; })()"
         )
         if not box[3]:
@@ -642,7 +644,7 @@ def test_supplier_learning_and_automation_use_the_same_plain_words(tmp_path, gro
     for old in ("go touchless", "goes touchless", "Goes touchless", "gone touchless", "touchless invoice",
                 "clean in a row", "clean invoice", "yet again"):  # fmt: skip
         assert old not in text, old
-    assert "more invoices approved without a correction before this vendor can skip review" in text
+    assert re.search(r"\d+ of about \d+ clean approvals toward skipping review", text)  # B-666
 
 
 def test_in_a_browser_a_slow_link_reads_as_before_when_the_page_does_not_come(browser, store):

@@ -22,6 +22,7 @@ from typing import Any
 
 from ..coding.vendors import norm_invoice_number
 from ..core.csvio import parse_date
+from ..core.headers import header_key
 from ..core.safe import csv_row, parse_amount
 
 MATCHED, DIFFERS, NOT_RECEIVED, NOT_ON_STATEMENT, PAYMENT = (
@@ -52,7 +53,7 @@ TYPE_HEADERS = {"type", "doctype", "documenttype", "transactiontype"}  # a colum
 
 
 def _norm(value: Any) -> str:
-    return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
+    return header_key(value)  # accents folded first: "Reçu", "Numéro" (B-657)
 
 
 def map_columns(headers: list[str]) -> dict[str, str]:

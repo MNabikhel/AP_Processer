@@ -245,12 +245,18 @@ def _learning_section(store: Store, include_codes: bool) -> list[str]:
         return out + ["- no approved invoices yet"]
     approved = m["invoices_by_status"].get("approved", 0)
     out += [
-        f"- lines reviewed: {m['lines_reviewed']}; AI coding accepted as-is: {m['line_accuracy']:.1%}",
+        f"- lines reviewed: {m['lines_reviewed']}; AI coding accepted as-is: "
+        + (f"{m['line_accuracy']:.1%}" if m["line_accuracy"] is not None else "nothing proposed yet"),
         f"- corrections taught: {m['lines_corrected']}",
         f"- invoices approved without any edit: {m['invoices_approved_without_edits']} of {approved}",
+        f"- invoices with lines AP coded where the AI left them blank: {m.get('invoices_coded_by_hand', 0)}",
         f"- vendors in memory: {len(m['by_vendor'])}",
         "- weekly accuracy: "
-        + ", ".join(f"{w['week']} {w['accepted'] / (w['accepted'] + w['corrected']):.0%}" for w in m["weekly"]),
+        + ", ".join(
+            f"{w['week']} {w['accepted'] / (w['accepted'] + w['corrected']):.0%}"
+            for w in m["weekly"]
+            if w["accepted"] + w["corrected"]
+        ),
     ]
     if include_codes and m["top_corrections"]:
         out.append("- GL corrections (AI suggested -> reviewer chose x count):")

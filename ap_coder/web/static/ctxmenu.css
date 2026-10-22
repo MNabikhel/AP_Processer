@@ -1,0 +1,22 @@
+/* The right-click menu (static/js/ctxmenu.js, D-60): a card at the pointer, one row per action. */
+.cm {position: fixed; z-index: 80; min-width: 230px; max-width: min(360px, calc(100vw - 16px)); overflow-y: auto;
+  padding: 4px; background: var(--lg-surface); border: 1px solid var(--lg-border); border-radius: var(--lg-r);
+  box-shadow: 0 10px 30px rgba(16, 24, 40, .18); font-size: 13.5px; color: var(--lg-text); outline: none;}
+.cm.open {animation: cm-in .09s ease-out both;}
+@keyframes cm-in {from {opacity: 0; transform: translateY(-2px);} to {opacity: 1; transform: none;}}
+@media (prefers-reduced-motion: reduce) {.cm.open {animation: none;}}
+.cm-item {display: flex; align-items: center; gap: 10px; min-height: 30px; padding: 4px 10px 4px 8px;
+  border-radius: var(--lg-r-sm); cursor: pointer; user-select: none; outline: none; white-space: nowrap;}
+.cm-item .ms {font-size: 17px; width: 18px; color: var(--lg-muted); flex: none;}
+.cm-label {flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;}
+.cm-hint {flex: none; margin-left: 12px; font-size: 11.5px; color: var(--lg-subtle);}
+.cm-more {margin-left: 8px; margin-right: -4px;}
+.cm-item:focus, .cm-item:hover, .cm-item[aria-expanded="true"] {background: var(--lg-accent-weak);}
+.cm-item:focus .ms, .cm-item:hover .ms {color: var(--lg-accent);}
+.cm-item:focus-visible {box-shadow: inset 0 0 0 2px var(--lg-accent-line);}
+.cm-item.danger .ms, .cm-item.danger .cm-label {color: var(--lg-danger);}
+.cm-item[aria-disabled="true"] {cursor: default; color: var(--lg-subtle);}
+.cm-item[aria-disabled="true"] .ms {color: #c3c8d1;}
+.cm-item[aria-disabled="true"]:hover, .cm-item[aria-disabled="true"]:focus {background: var(--lg-hover);}
+.cm-sep {height: 1px; margin: 4px 6px; background: var(--lg-hairline);}
+

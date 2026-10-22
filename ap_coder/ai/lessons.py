@@ -101,7 +101,7 @@ def outcomes(proposed: dict[str, Any], final: dict[str, Any]) -> list[dict[str, 
             continue
         out.append({"key": situation(vendor, kind, LINE_GL, pattern), "vendor": vendor, "kind": kind,
                     "field": LINE_GL, "pattern": pattern, "proposed": was, "value": now,
-                    "corrected": bool(before) and was != now})  # fmt: skip
+                    "corrected": bool(before) and was not in ("", UNASSIGNED) and was != now})  # fmt: skip
     return out
 
 

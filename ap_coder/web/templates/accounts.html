@@ -58,6 +58,7 @@
   {% endif %}
   <form method="post" action="/accounts/{{ a.table }}/save" class="stack" data-busy="Saving…" id="accounts-form"
         data-noun="{{ a.noun }}">
+    <input type="hidden" name="version" value="{{ a.version }}">
     <div class="table-wrap">
       <table class="apc-table edit">
         <thead><tr><th>Code</th><th>Description</th><th>Category</th><th>Delete</th></tr></thead>
@@ -158,6 +159,7 @@
   <div class="flash warn"><span class="ms" aria-hidden="true">warning</span><div>GL account {{ unknown | join(", ") }} is not in your GL list any more: change these rules.</div></div>
   {% endif %}
   <form method="post" action="/accounts/rules" class="stack" data-busy="Saving…">
+    <input type="hidden" name="version" value="{{ rules_version }}">
     <div class="table-wrap">
       <table class="apc-table edit">
         <thead><tr><th>Vendor (optional)</th><th>Line contains (optional)</th><th>GL account</th><th>Cost center</th></tr></thead>
@@ -194,12 +196,12 @@
 <tr{% if not r %} class="new"{% endif %}>
   <td><input type="text" name="vendor" value="{{ r.vendor if r else '' }}" aria-label="Vendor" title="Part of the name is enough"></td>
   <td><input type="text" name="contains" value="{{ r.contains if r else '' }}" aria-label="Line contains" title="Not case-sensitive"></td>
-  <td><select name="gl_code" aria-label="GL account">
+  <td><select name="gl_code" aria-label="GL account" data-picker data-picker-noun="account">
     <option value="">(choose)</option>
     {% if r and r.gl_code and r.gl_code not in gl_names %}<option value="{{ r.gl_code }}" selected>{{ r.gl_code }} (not in the GL list)</option>{% endif %}
     {% for code, label in gl_names.items() %}<option value="{{ code }}"{% if r and code == r.gl_code %} selected{% endif %}>{{ label }}</option>{% endfor %}
   </select></td>
-  <td>{% if cc_codes %}<select name="cost_center" aria-label="Cost center">
+  <td>{% if cc_codes %}<select name="cost_center" aria-label="Cost center" data-picker data-picker-noun="cost center">
     <option value=""></option>
     {% for code in cc_codes %}<option value="{{ code }}"{% if r and code == r.cost_center %} selected{% endif %}>{{ code }}</option>{% endfor %}
   </select>{% else %}<input type="hidden" name="cost_center" value="{{ r.cost_center if r else '' }}"><span class="muted">—</span>{% endif %}</td>

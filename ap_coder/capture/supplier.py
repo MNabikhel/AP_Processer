@@ -1406,13 +1406,17 @@ def clean_invoices_to_go(stats: SupplierStats, policy: AutonomyPolicy = DEFAULT_
     return max(need_invoices, need_streak, need_bound)
 
 
-def to_go_text(to_go: int | None) -> str:
+def to_go_text(to_go: int | None, done: int | None = None) -> str:
     """ "about 6 more invoices approved without a correction before this vendor can skip review" (plain English for
-    ``clean_invoices_to_go``: the tester sees it after each approval, where "touchless" was explained nowhere)."""
+    ``clean_invoices_to_go``: the tester sees it after each approval, where "touchless" was explained nowhere). With
+    ``done`` (the clean approvals in a row so far), the progress: "3 of about 20 clean approvals toward skipping
+    review" ("about 97 more" read as a wall, B-666)."""
     if to_go is None:
         return "too many corrections in its recent invoices to skip review yet"
     if to_go == 0:
         return "approved often enough without a correction to skip review"
+    if done is not None:
+        return f"{done:,} of about {done + to_go:,} clean approvals toward skipping review"
     more = "more invoice" if to_go == 1 else "more invoices"
     return f"about {to_go:,} {more} approved without a correction before this vendor can skip review"
 

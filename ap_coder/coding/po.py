@@ -28,6 +28,7 @@ from difflib import SequenceMatcher
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
+from ..core.headers import header_key
 from ..core.memory import vendor_key
 from ..core.safe import parse_amount
 
@@ -76,7 +77,7 @@ def po_key(value: Any) -> str:
 
 
 def _norm_header(value: Any) -> str:
-    return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
+    return header_key(value)  # accents folded first: "Reçu", "Numéro" (B-657)
 
 
 def map_columns(headers: list[str]) -> dict[str, str]:

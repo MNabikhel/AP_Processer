@@ -21,7 +21,7 @@ from ap_coder.core import ui
 from ap_coder.core.audit import ACTIONS, describe
 from ap_coder.core.safe import csv_row
 from ap_coder.erp import controls, dupaudit, insights
-from ap_coder.web.core import get_store, render
+from ap_coder.web.core import clamp_day, get_store, render
 
 router = APIRouter()
 
@@ -115,7 +115,7 @@ def events_csv(events: list[dict[str, Any]]) -> bytes:
 
 def _date(text: str | None, default: dt.date) -> dt.date:
     try:
-        return dt.date.fromisoformat(str(text or "")[:10])
+        return clamp_day(dt.date.fromisoformat(str(text or "")[:10]))  # not past the calendar's ends (B-659)
     except ValueError:
         return default
 

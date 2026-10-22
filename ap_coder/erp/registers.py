@@ -7,9 +7,9 @@ ERP: DUPLICATE_IN_ERP.
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
+from ..core.headers import header_key
 from ..core.safe import parse_amount
 from .statements import day_first_order, read_date
 
@@ -26,7 +26,7 @@ REQUIRED = ("vendor_name", "invoice_number", "total")
 
 
 def _norm(value: Any) -> str:
-    return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
+    return header_key(value)  # accents folded first: "Reçu", "Numéro" (B-657)
 
 
 def map_columns(headers: list[str]) -> dict[str, str]:

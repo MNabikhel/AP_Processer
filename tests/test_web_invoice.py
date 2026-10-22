@@ -130,6 +130,26 @@ def test_the_review_screen_shows_the_document_the_form_the_grids_and_the_actions
     assert 'data-nav="next"' in text and 'data-nav="prev"' in text
 
 
+def test_an_invoice_of_more_than_three_lines_gets_the_tighter_line_grid(client, store):
+    """D-59: each line of the grid took about 150 px, so two lines showed at 1366 x 768; from four lines the grid is
+    the tighter one (captions on the first line only), about 105 px a line."""
+    import copy
+    import json
+
+    for inv in store.list_invoices(REVIEW):
+        lines = len(store.get_invoice(inv["id"])["ai_output"]["line_items"])
+        table = re.search(r'<table class="([^"]*)" id="lines">', client.get(f"/review/{inv['id']}").text).group(1)
+        assert ("compact" in table.split()) == (lines > 3), (inv["id"], lines, table)
+    inv = store.get_invoice(store.list_invoices(REVIEW)[0]["id"])
+    output = copy.deepcopy(inv["ai_output"])
+    for count, compact in ((3, False), (4, True)):
+        output["line_items"] = [{**copy.deepcopy(output["line_items"][0]), "line_number": i + 1} for i in range(count)]
+        with store._conn() as conn:
+            conn.execute("UPDATE invoices SET ai_output = ? WHERE id = ?", (json.dumps(output), inv["id"]))
+        table = re.search(r'<table class="([^"]*)" id="lines">', client.get(f"/review/{inv['id']}").text).group(1)
+        assert ("compact" in table.split()) == compact, count
+
+
 def test_every_demo_invoice_opens_whatever_its_state(client, store):
     for inv in store.list_invoices():
         assert client.get(f"/review/{inv['id']}").status_code == 200
@@ -526,7 +546,8 @@ def test_the_vendor_is_picked_from_the_vendor_list_or_added_as_a_new_vendor(clie
 
     cascade = next(i for i in store.list_invoices(REVIEW) if "Cascade" in (i["vendor_name"] or ""))
     page = client.get(f"/review/{cascade['id']}").text
-    assert 'list="vendor-list"' in page and "Add new vendor" in page
+    # picked from the vendor list (#vendor-data) with the picker, typed freely (D-56)
+    assert re.search(r'id="vendor-name"[^>]*data-picker="free"', page) and "Add new vendor" in page
     data = json.loads(re.search(r'<script type="application/json" id="vendor-data">(.*?)</script>', page, re.S)
                       .group(1))  # fmt: skip
     assert data["enforced"] and any(v["id"] == "V10023" for v in data["list"])
@@ -1073,3 +1094,30 @@ def test_in_a_browser_ten_files_chosen_to_import_are_listed_clear_of_the_process
         box = names.nth(i).bounding_box()
         assert box["y"] + box["height"] <= button["y"] + 0.5, (i, box, button)
     assert page.errors == []
+
+
+def test_in_a_browser_the_unit_price_of_a_quantity_1_line_follows_its_amount_only_when_it_was_the_amount(
+    browser, store
+):
+    """B-671: on a quantity-1 line the unit price follows a changed amount on screen, only when it was blank or 0 or
+    the same number as the amount; a price read right ("Chair (10% off)": 100.00, amount 9.00 -> 90.00) stays."""
+    page, errors = _open_review(browser, store, "Cascade", viewport={"width": 1400, "height": 1000})
+    row = page.locator('[data-grid="lines"] tr').first
+    qty, price, amount = (row.locator(f"[name={n}]") for n in ("line_quantity", "line_unit_price", "line_amount"))
+    qty.fill("1")
+    price.fill("40")
+    amount.fill("40")
+    amount.blur()
+    amount.fill("45")
+    amount.blur()
+    assert price.input_value() == "45"
+    price.fill("100")
+    amount.fill("9")
+    amount.blur()
+    amount.fill("90")
+    amount.blur()
+    assert price.input_value() == "100"
+    price.fill("")
+    amount.fill("12.5")
+    amount.blur()
+    assert price.input_value() == "12.5" and errors == []

@@ -63,7 +63,11 @@ SOFT_CHECKS = {"LINES_ADD_UP", "TAX_RATE", "DUE_AFTER_INVOICE", "DUE_MATCHES_TER
 # Checks that only show a value is reasonable, not that it is the printed one: passing them confirms nothing.
 # "BN_CHECK_DIGIT": a business number printed without its RT program account passes its check digit; nine digits
 # pass one time in ten by chance, so it confirms nothing (D-47) though a failure marks it down.
-WEAK_CHECKS = {"DATE_PLAUSIBLE", "DUE_AFTER_INVOICE", "BN_CHECK_DIGIT"}
+WEAK_CHECKS = {"DATE_PLAUSIBLE", "DUE_AFTER_INVOICE", "BN_CHECK_DIGIT", "DATE_RECENT"}
+# Checks whose failure only asks for a look: the value is marked "check" (amber), never "failed" (red). An invoice
+# dated more than 3 years ago is often right (a late bill, an old statement): "check the year" (B-664).
+LOOK_CHECKS = {"DATE_RECENT"}
+LOOK_CAP = 0.8
 LIKELY_AT = 0.85
 UNMEASURED_CAP = 0.8  # a value read only by wording the benchmark never prints (``UNMEASURED``), no check confirming
 REGISTRATION_FIELDS = ("gst_hst_registration_number", "qst_registration_number", "pst_registration_number")
@@ -228,8 +232,12 @@ def run_checks(values: dict[str, Any], line_items: list[LineReading], vendor: di
     today = today or dt.date.today()
     inv = _date(values.get("invoice_date"))
     if inv:
-        ok = today - dt.timedelta(days=3 * 365) <= inv <= today + dt.timedelta(days=60)
+        ok = inv <= today + dt.timedelta(days=60)  # far ahead: misread
         checks.append({"code": "DATE_PLAUSIBLE", "ok": ok, "fields": ["invoice_date"], "detail": f"invoice date {inv}"})
+        if ok:  # long ago: often right, a look (LOOK_CHECKS)
+            recent = today - dt.timedelta(days=3 * 365) <= inv
+            checks.append({"code": "DATE_RECENT", "ok": recent, "fields": ["invoice_date"],
+                           "detail": "dated more than 3 years ago: check the year"})  # fmt: skip
     due = _date(values.get("due_date"))
     if inv and due:
         ok = inv <= due <= inv + dt.timedelta(days=400)
@@ -458,10 +466,13 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
     confirmed: dict[str, int] = {}
     failed: dict[str, list[str]] = {}
     soft: dict[str, list[str]] = {}
+    look: dict[str, list[str]] = {}
     for c in checks:
         for f in c["fields"]:
             if not c["ok"] and c["code"] in SOFT_CHECKS:
                 soft.setdefault(f, []).append(c["detail"])
+            elif not c["ok"] and c["code"] in LOOK_CHECKS:
+                look.setdefault(f, []).append(c["detail"])
             elif c["ok"]:
                 if c["code"] not in WEAK_CHECKS:
                     confirmed[f] = confirmed.get(f, 0) + (
@@ -511,6 +522,9 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
         if field in soft:
             raw = min(raw, 0.97)
             reasons += [f"note: {d}" for d in soft[field]]
+        if field in look:
+            raw = min(raw, LOOK_CAP)
+            reasons += [f"check: {d}" for d in look[field]]
         best = g.best()
         if best.method.endswith(UNSETTLED) and vouched != sources:
             best = max((r for _, r in g.readings if UNSETTLED not in r.method), key=lambda r: (bool(r.boxes), r.score))
@@ -670,7 +684,7 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
         if readers_differ:
             vlm_reading, other, other_reading = readers_differ
             reasons.append(f"the page reader read {vlm_reading.value}, {other} read {other_reading.value}")
-        if field in failed or coding_differs or readers_differ or speck:
+        if field in failed or field in look or coding_differs or readers_differ or speck:
             status = CHECK
         elif conf >= VERIFIED_AT and best.boxes:
             status = VERIFIED

@@ -56,6 +56,8 @@
 .t-check { --tone: var(--check); --tone-ink: var(--check-ink); --tone-bg: var(--check-bg); --paper: var(--p-check); }
 .t-failed { --tone: var(--failed); --tone-ink: var(--failed-ink); --tone-bg: var(--failed-bg); --paper: var(--p-failed); }
 .t-missing { --tone: var(--missing); --tone-ink: var(--missing-ink); --tone-bg: var(--missing-bg); --paper: var(--p-line); }
+/* A field changed on the form (D-60): the violet of a person's own edit */
+.t-edited { --tone: #5b4bc4; --tone-ink: #5b4bc4; --tone-bg: #f3f1fd; --paper: var(--p-line); }
 
 /* ---- Layout: fields on the left, the page on the right; fields on top on a narrow screen ---- */
 .iv {
@@ -70,8 +72,10 @@
 .iv.fixed { grid-template-rows: minmax(0, 1fr); }
 
 .iv-panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--line); }
-.iv-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 16px 8px; }
-.iv-panel-head h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--ink); }
+.iv-panel-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 16px 8px; }
+/* The colour key and "To check only": on a line of their own under "Fields" beside the page, on its line above it */
+.iv-panel-tools { order: 3; flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; min-width: 0; }
+.iv-panel-head h2 { flex: none; margin: 0; font-size: 13px; font-weight: 600; color: var(--ink); }
 .iv-summary { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; margin-left: auto; }
 .iv-fold {
   display: none; align-items: center; height: 24px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 6px;
@@ -139,10 +143,10 @@ details.iv-group > summary:focus-visible { outline: 2px solid var(--brand); outl
 .iv-row.t-verified .iv-badge { color: var(--muted); }
 .iv-row.t-missing .iv-badge { background: transparent; color: var(--faint); }
 
-/* ---- Toolbar, legend ---- */
+/* ---- Toolbar (one row: zoom, fit, Hand, Rotate, Next to check, pages), legend ---- */
 .iv-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .iv-toolbar {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px 6px;
   padding: 8px 16px; border-bottom: 1px solid var(--line); background: var(--card);
 }
 .iv-segs { display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--neutral); }
@@ -152,7 +156,26 @@ details.iv-group > summary:focus-visible { outline: 2px solid var(--brand); outl
 }
 .iv-seg:hover { color: var(--ink); }
 .iv-seg[aria-pressed="true"] { background: var(--card); color: var(--ink); box-shadow: 0 0 0 1px var(--line-strong); }
-.iv-seg:focus-visible, .iv-icon-btn:focus-visible, .iv-btn:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+.iv-seg:focus-visible, .iv-icon-btn:focus-visible, .iv-btn:focus-visible, .iv-zbtn:focus-visible, .iv-zpct:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+/* The view tools: zoom (- 100% +), Fit width / Fit page, the Hand, Rotate, then Next to check, and the pages at the
+   end of the row (the view tools' box takes no room of its own: they line up with Next to check) */
+.iv-view { display: contents; }
+.iv-view > * { flex: none; }
+.iv-view .iv-pager { order: 2; margin-left: auto; }
+.iv-where { white-space: nowrap; }
+.iv-zbtn, .iv-zpct {
+  display: grid; place-items: center; height: 26px; padding: 0; border: 0; border-radius: 6px; background: transparent;
+  color: var(--muted); cursor: pointer;
+}
+.iv-zbtn { width: 26px; }
+.iv-zpct { min-width: 46px; padding: 0 4px; font-size: 12.5px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink); }
+.iv-zbtn:hover:not(:disabled), .iv-zpct:hover { color: var(--ink); background: var(--card); }
+.iv-zbtn:disabled { opacity: .4; cursor: default; }
+.iv-zbtn[aria-pressed="true"] { background: var(--card); color: var(--ink); box-shadow: 0 0 0 1px var(--line-strong); }
+.iv-tool { width: 30px; height: 30px; color: var(--muted); }
+.iv-tool:hover:not(:disabled) { color: var(--ink); }
+.iv-tool[aria-pressed="true"] { background: var(--brand-50); border-color: var(--brand); color: var(--brand-600); }
+.iv.turned .iv-rotate { color: var(--brand-600); border-color: var(--brand); } /* the page shown turned */
 .iv-pager { display: inline-flex; align-items: center; gap: 2px; }
 .iv-where { min-width: 86px; text-align: center; font-size: 12.5px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
 .iv-icon-btn {
@@ -161,7 +184,7 @@ details.iv-group > summary:focus-visible { outline: 2px solid var(--brand); outl
 }
 .iv-icon-btn:hover:not(:disabled) { background: var(--hover); border-color: var(--line-strong); }
 .iv-icon-btn:disabled { opacity: .4; cursor: default; }
-.iv-check { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; }
+.iv-check { order: 1; display: inline-flex; align-items: center; gap: 8px; margin-left: 6px; }
 .iv-count { font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .iv-btn {
   display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px;
@@ -180,7 +203,7 @@ details.iv-group > summary:focus-visible { outline: 2px solid var(--brand); outl
   border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; background: var(--card);
 }
 
-.iv-switch { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); cursor: pointer; user-select: none; }
+.iv-switch { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; font-size: 12.5px; color: var(--muted); cursor: pointer; user-select: none; }
 .iv-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
 .iv-track { position: relative; flex: none; width: 30px; height: 18px; border-radius: 999px; background: var(--line-strong); transition: background .15s ease; }
 .iv-track::after {
@@ -218,11 +241,22 @@ details.iv-group > summary:focus-visible { outline: 2px solid var(--brand); outl
 @keyframes iv-rise { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 
 /* ---- The page ---- */
+.iv-stage-wrap { position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .iv-stage { position: relative; flex: 1 1 auto; min-height: 0; padding: 16px; background: var(--well); overflow-x: auto; outline: none; }
-.iv.fixed .iv-stage { overflow: auto; overscroll-behavior: contain; }
-.iv-stage.zoomed .iv-sheet { margin: 0 auto; }
+/* The Hand on, the page turned: said in the page's corner, never in the way of a drag */
+.iv-mode { position: absolute; left: 12px; bottom: 16px; z-index: 3; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; pointer-events: none; }
+.iv-mode:empty { display: none; }
+.iv-mode-tag {
+  padding: 4px 9px; border-radius: 6px; background: rgba(15, 23, 42, .84); color: #fff;
+  font-size: 12px; font-weight: 500; line-height: 1.3; box-shadow: 0 1px 3px rgba(15, 23, 42, .25); white-space: nowrap;
+}
+/* the scroll bar's room is kept, so fitting the page never makes it come and go */
+.iv.fixed .iv-stage { overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+/* The room the page takes on screen (sized by the viewer for the zoom and the rotation); the sheet in it is the page
+   upright, turned with a transform when rotated, so the boxes over it turn with it. */
+.iv-frame { position: relative; margin: 0 auto; flex: none; }
 .iv-sheet {
-  position: relative; width: 100%; margin: 0 auto; background: #fff; line-height: 0;
+  position: absolute; left: 0; top: 0; transform-origin: 0 0; background: #fff; line-height: 0;
   border-radius: 2px; box-shadow: var(--paper-shadow);
 }
 .iv-sheet.loading { background: linear-gradient(100deg, #fff 30%, #f2f4f8 50%, #fff 70%) 0 0 / 200% 100%; animation: iv-shine 1.2s linear infinite; }
@@ -307,15 +341,26 @@ details.iv-group > summary:focus-visible { outline: 2px solid var(--brand); outl
 .iv-agree.no { color: var(--failed-ink); }
 .iv-tip-foot { margin: 6px 0 0; color: var(--faint); font-size: 11.5px; }
 
+/* Short of room for "3 to check" beside Next to check: the tools keep to one row (the field list says it) */
+@container iv (max-width: 999px) {
+  .iv-count { display: none; }
+}
+
 /* ---- Narrower (the viewer in a column beside the form): the fields go above the page, in a short grid ---- */
 @container iv (max-width: 859px) {
   .iv { grid-template-columns: minmax(0, 1fr); }
   .iv.fixed { grid-template-rows: auto minmax(0, 1fr); }
   .iv-panel { border-right: 0; border-bottom: 1px solid var(--line); }
-  .iv-panel-head { padding: 10px 14px 6px; }
+  .iv-panel-head { padding: 8px 10px 6px 14px; flex-wrap: nowrap; }
+  /* One line: "Fields", the colour key (a swatch and its count, the word on hover), To check only, Show. The counts
+     in words stay for a screen reader. */
+  .iv-summary { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .iv-panel-tools { order: 0; flex: 1 1 auto; flex-wrap: nowrap; justify-content: flex-end; gap: 12px; }
+  .iv-panel-head .iv-key { font-size: 0; gap: 3px; }
+  .iv-panel-head .iv-key b { font-size: 12px; }
   .iv-meter { margin: 0 14px 6px; }
   .iv:not(.fields-open) .iv-list, .iv:not(.fields-open) .iv-meter { display: none; }
-  .iv:not(.fields-open) .iv-panel-head { padding-bottom: 10px; }
+  .iv:not(.fields-open) .iv-panel-head { padding-bottom: 8px; }
   .iv-fold { display: inline-flex; }
   .iv-count { display: none; }
   .iv-list { max-height: 176px; overflow-y: auto; overscroll-behavior: contain; padding: 0 8px 8px; gap: 2px; scrollbar-width: thin;
@@ -326,22 +371,39 @@ details.iv-group > summary:focus-visible { outline: 2px solid var(--brand); outl
   .iv-group-head { padding: 4px 10px 2px; }
   .iv-row { padding: 5px 8px; gap: 8px; }
   .iv-toolbar { padding: 8px 10px; gap: 8px 10px; }
-  .iv-check { margin-left: 0; }
   .iv-step kbd { display: none; }
-  .iv-legend { padding: 0; gap: 4px 8px; margin-left: auto; }
-  /* the key in the tools' row: a swatch and its count, the word on hover (and for a screen reader) */
-  .iv-toolbar .iv-key { font-size: 0; gap: 3px; }
-  .iv-toolbar .iv-key b { font-size: 12px; }
-  .iv-toolbar { padding: 6px 10px; gap: 6px 8px; }
+  .iv-legend { padding: 0; gap: 4px 8px; flex-wrap: nowrap; }
+  /* the tools in one row: the view tools, Next to check, the pages at the end */
+  .iv-toolbar { padding: 6px 10px; gap: 6px 4px; }
+  .iv-check { margin-left: 2px; }
+  .iv-step { padding: 0 9px; gap: 5px; }
   .iv-seg { padding: 0 8px; }
-  .iv-where { min-width: 64px; }
+  .iv-where { min-width: 44px; }
+  .iv-where-word { font-size: 0; }
   .iv-stage { padding: 10px; }
-  .iv-teach { padding: 10px; }
+  .iv-teach { padding: 6px 10px; gap: 8px; }
+  .iv-teach-ic { width: 24px; height: 24px; border-radius: 6px; }
+  .iv-mode { left: 8px; bottom: 12px; }
 }
 @container iv (max-width: 520px) {
   .iv-teach-actions { margin-left: 0; width: 100%; justify-content: flex-end; }
 }
+/* A phone: the key and To check only under "Fields" */
+@container iv (max-width: 439px) {
+  .iv-panel-head { flex-wrap: wrap; }
+  .iv-panel-tools { order: 3; flex-basis: 100%; justify-content: flex-start; flex-wrap: wrap; }
+}
 
+/* The teach bar beside the form: its buttons on the line of "Teach: …", the words to click under both (one row less) */
+@container iv (min-width: 420px) and (max-width: 859px) {
+  .iv-teach { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 2px 8px; }
+  .iv-teach-ic { grid-row: 1 / span 3; align-self: start; }
+  .iv-teach-text { display: contents; }
+  .iv-teach-text > * { grid-column: 2 / 4; }
+  .iv-teach-text > b { grid-column: 2; grid-row: 1; }
+  .iv-teach-actions { grid-column: 3; grid-row: 1; margin-left: 0; width: auto; }
+  .iv-teach-actions .iv-btn { height: 28px; }
+}
 @media (prefers-reduced-motion: reduce) {
   .iv *, .iv *::before, .iv *::after { animation: none !important; transition: none !important; }
   .iv-f.flash .iv-halo { stroke-opacity: .55; stroke-width: 10; }
@@ -350,6 +412,9 @@ details.iv-group > summary:focus-visible { outline: 2px solid var(--brand); outl
 /* A box dragged across the page to pick the words in it (outside teach mode: then the page asks what they are). */
 .iv-sheet { cursor: crosshair; }
 .iv.dragging .iv-sheet, .iv.dragging .iv-f { cursor: crosshair; }
+/* The Hand (its button, H, Space held): a drag moves the page */
+.iv.hand .iv-stage, .iv.hand .iv-stage * { cursor: grab !important; }
+.iv.panning .iv-stage, .iv.panning .iv-stage * { cursor: grabbing !important; user-select: none; }
 .iv-sel { pointer-events: none; }
 .iv-drag { fill: var(--p-pick); fill-opacity: .08; stroke: var(--p-pick); stroke-width: 1.5; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
 .iv-drag.done { fill-opacity: .12; stroke-dasharray: none; }
