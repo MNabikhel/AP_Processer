@@ -4897,3 +4897,308 @@ were approved, parked and exported and a backup was made every 2 seconds (no loc
 - **N-171** · Capture's findings (B-458, B-459) are added after the confidence is worked out: a warning about the page
   keeps an invoice from bulk approval, but does not by itself flag it in the queue
   (Ready means Approve is open, which a warning does not close).
+
+### Before testing: review screen and coding
+
+A product review before the pilot tester's first week, on the set-up they will use: LM Studio chosen as the chat
+model (and often not running yet), English vendor PDFs, no cost centers, Excel/CSV exports. Fifteen of the English
+PDFs imported into a scratch data folder with the sample GL accounts and screenshot at 1366×768.
+
+#### B-463 · With LM Studio chosen but not running, an account's name was put in the line as if learned · high
+- **Where:** `ap_coder/ai/pipeline.py` (`_process`, `_local_accounts`), `ap_coder/ai/offline_coder.py`
+  (`code_from_capture`), `ap_coder/core/store.py` (`approve_invoice`), `ap_coder/web/invoice_view.py`
+- **Symptom:** Google → 6320 Meals, AWS → 6110 Consulting, an IT consultancy → 6100 Legal, a $281k Microsoft bill →
+  1500 Computer Equipment: an account whose name shares a word with the line was filled in the GL dropdown, looked
+  like a learned code, left Approve open, and counted as "coded as suggested" in coding accuracy; Month-end accrued
+  on it. README and `offline_coder`'s own docstring say such a weak match is left blank and only suggested.
+- **Cause:** the pipeline coded with `assign_weak=provider == "local"`, and the provider is always "local" in this
+  offline build, whether or not LM Studio answers; the chat model was then asked only about lines with no
+  suggestion at all. The approval counted any account the AI put in a line as its proposal.
+- **Reproduce:** sample GL accounts, LM Studio at an address nothing answers, import `ca_ubc_google.pdf`,
+  `ca_oc_aws_10002100.pdf`: lines coded `WEAK_MATCH`, Approve open, "all as suggested".
+- **Reproduced:** yes (9 of 15 invoices had a weak match put in a line)
+- **Fix:** a weak match is never put in a line: it stays blank with "Not sure enough to code it (maybe 6110 …)" and
+  the review screen's suggestion, and is kept as a hint (`CodingResult.hints`). The chat model, when it answers, is
+  asked about these lines too; its account says whether the account's name agrees or pointed elsewhere. An account
+  no approval backs (the model's, or an older version's weak match: `offline_coder.guessed`) is marked on the review
+  screen ("A guess, not learned yet: check it"), the approve bar says "1 guessed account to check" instead of "all
+  as suggested", and when the reviewer keeps it, it counts as the reviewer's coding (`store.proposed_coding`: as if
+  left blank), never as "coded as suggested" in accuracy or the lessons (D-51).
+- **Test:** `tests/test_trust_review.py::test_with_lm_studio_chosen_but_not_answering_a_weak_match_is_left_blank`,
+  `::test_the_chat_models_answer_is_a_guess_and_says_how_it_compares_with_the_weak_match`,
+  `::test_a_kept_guess_is_the_reviewers_coding_not_coded_as_suggested`,
+  `::test_the_review_screen_marks_a_guess_and_does_not_call_it_as_suggested`
+- **Lesson:** "Is the model configured?" is not "did the model answer?": decide per invoice, from what happened.
+
+#### B-466 · Month-end accrued guesses, mixed CAD and USD rows, and said "already in the ERP" with nothing imported · medium
+- **Where:** `ap_coder/erp/accruals.py`, `ap_coder/web/pages/month_end.py`, `ap_coder/web/templates/month_end.html`
+- **Symptom:** invoices nobody had approved were accrued on their weak-match accounts with nothing to say so; the
+  by-account table listed one account twice (once in CAD, once in USD); an invoice dated 2012 was accrued without a
+  word; with no invoice and no register at all the page said "Everything incurred … is already in the ERP".
+- **Cause:** the accrual read any account in the coding; `by_gl` keyed on (account, currency); no date check; one
+  empty-state sentence for every case.
+- **Reproduce:** the 15 PDFs above, Month-end at the default period end; a fresh data folder's Month-end.
+- **Reproduced:** yes
+- **Fix:** an invoice in review or parked is accrued as "proposed: not approved yet" (a "Proposed" tag on screen,
+  the note in the CSV), on the accounts it was really given (a guessed account counts as none: "Needs an account");
+  the by-account table has one row per account and a column per currency; an invoice dated more than a year before
+  the period end was left out and listed (since B-474: accrued, flagged "Check date");
+  the empty state says what is true (nothing imported yet, or everything dated by then exported).
+- **Test:** `tests/test_trust_review.py::test_month_end_accrues_an_unapproved_invoice_as_proposed_and_never_on_a_guess`,
+  `::test_month_end_lists_an_invoice_dated_over_a_year_back_instead_of_accruing_it`,
+  `::test_month_end_groups_an_account_in_two_currencies_on_one_row`, `::test_month_end_with_nothing_imported_says_so`
+- **Lesson:** An empty state is a claim too: check it against an empty database.
+
+#### B-464 · The checks spoke the code's language: "invoice_number is empty", VENDOR_NEW, UNASSIGNED · medium
+- **Where:** `ap_coder/coding/validation.py`, `ap_coder/coding/tax.py`, `ap_coder/core/ui.py` (`check`),
+  `ap_coder/ai/lessons.py`, `ap_coder/web/templates/learning.html`, `ap_coder/core/audit.py`,
+  `ap_coder/capture/line_items.py` (`sources_line`)
+- **Symptom:** the review screen said "Invoice_number is empty", "Vendor_name is empty", "GL code '9999' is not in
+  the GL accounts", "line items sum to … but subtotal = …", "prebuilt-invoice InvoiceTotal = …, model grand_total =
+  …"; "Details and what to do" showed VENDOR_NEW, CC_UNASSIGNED beside each title; Learning → Lessons said "read as
+  UNASSIGNED" and Activity "UNASSIGNED → 6110"; the document card said "Line items read by one reader only (1 from
+  the PDF's table): not yet compared with a second reader."
+- **Cause:** the messages were written for developers; `readable()` only replaced a few field names.
+- **Reproduce:** the 15 PDFs; an invoice with no number; Details and what to do.
+- **Reproduced:** yes
+- **Fix:** plain sentences that say what to do ("No invoice number: type it from the page", "GL account 9999 is not
+  in your GL accounts: pick one from the list", "the lines add up to … but the subtotal is …", "Azure read the total
+  as …, AP Coder as …", "the scan is hard to read (62% sure of its words): check the values against the page"); a
+  check's code is its hover (`title`) and stays in the problem report; a blank account reads "left blank" / "blank";
+  the one-reader note is gone (nothing to act on; the queue says when OvisOCR2 has not read an invoice).
+- **Test:** `tests/test_trust_review.py::test_the_checks_say_what_is_missing_in_plain_words_and_keep_their_codes_for_a_hover`,
+  `::test_a_lesson_on_a_blank_account_reads_left_blank_not_unassigned`; `tests/test_table_reading.py` (the note)
+- **Lesson:** Read every message as the pilot tester would: a field name with an underscore is a bug.
+
+#### B-465 · What kept Approve closed was "Worth a look", not counted in "N must be fixed" · medium
+- **Where:** `ap_coder/web/invoice_view.py` (`checks_summary`, `checks_details`), `ap_coder/web/templates/_invoice_live.html`
+- **Symptom:** "2 must be fixed · 3 to look at", with "Line 1: no GL account yet: pick one" among the three to look
+  at, though it is what disabled Approve; Details called it "Worth a look".
+- **Cause:** the summary grouped by severity, and a line without an account is a warning (it lowers the confidence
+  less than an error), while the approve bar blocks on it.
+- **Reproduce:** BDO's invoice in the 15 PDFs.
+- **Reproduced:** yes
+- **Fix:** three groups, each under its heading: "Before you can approve (N)" (an account or cost center to pick:
+  each a link to its box, "Press G to go to the first one"), "Must be fixed (N)", "Check before approving (N)"
+  (the warnings: an assumed invoice date, INVOICE_DATE_NOT_FOUND, sits there plainly). Details uses the same words.
+- **Test:** `tests/test_trust_review.py::test_what_keeps_approve_closed_is_its_own_group_before_the_errors_and_warnings`
+- **Lesson:** Group by what the person can do next, not by the code's severity.
+
+#### B-467 · At 1366 × 768 the review screen showed 150–200 px of the invoice and the lines 1,200 px down · high
+- **Where:** `ap_coder/web/templates/invoice.html`, `_invoice_lines.html`, `ap_coder/web/static/invoice.css`,
+  `invoice_viewer.css`, `js/invoice_viewer.js`, `js/invoice.js`, `ap_coder/web/pages/invoice.py`
+- **Symptom:** breadcrumb, a navigation row, the LM Studio banner and the summary pushed the document card down;
+  in it the field list, a toolbar on two rows and the legend left 150–200 px of the page on screen; the line grid
+  came after the invoice details, about 1,200 px down, and Qty / Unit price scrolled sideways.
+- **Cause:** a layout made for a wide screen; the banner (B-444) stood in for two notes but cost a row.
+- **Reproduce:** any invoice of the 15 PDFs at 1366 × 768 (`shots/before/review_*_vp.png`).
+- **Reproduced:** yes
+- **Fix:** one row at the top (Queue · Reviewing 3 of 15 · a short "LM Studio isn't running" note · Shortcuts ·
+  Previous · Next), no banner on this page (the queue has it); the document and the column beside it half and half,
+  the document sticky and taller (the viewer is the window less 190 px); the viewer's legend is in its toolbar, as
+  swatches with counts; the line grid sits right under the checks, each line on two rows (description, which wraps,
+  and taxes; then GL account, cost center, qty, unit price, amount), nothing scrolls sideways; the invoice details
+  follow. Ctrl+Enter, G, N, Alt+arrows work as before; Enter in a description adds no line break.
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_in_a_browser_at_1366_the_page_and_the_line_grid_show_together`,
+  `::test_with_lm_studio_off_the_review_screen_says_it_once`
+- **Lesson:** Check the screen at the pilot tester's resolution, not the developer's.
+
+#### B-468 · Demo invoices mixed into the real numbers · medium
+- **Where:** `ap_coder/web/pages/process.py`, `ap_coder/web/templates/process.html`
+- **Symptom:** after trying the demo and importing real invoices, "Demo reviewer" was among Activity's people, the
+  demo's lessons counted in coding accuracy and the demo's vendors were listed with the real ones.
+- **Cause:** nothing asked to remove the demo before the first real import (the demo card sits lower on the page).
+- **Reproduce:** load the demo, import a PDF: no word about the demo.
+- **Reproduced:** yes
+- **Fix:** the simpler safe one: while the demo is loaded and no invoice of your own is, Import invoices says
+  "Remove the demo invoices before you import your own" with the button that removes them (as the demo card does).
+  Nothing is removed without the click.
+- **Test:** `tests/test_trust_review.py::test_the_import_page_asks_to_remove_the_demo_before_the_first_real_invoice`
+- **Lesson:** Practice data needs a clear way out at the moment real data comes in.
+
+#### B-469 · "Overdue 5042 days", and an invoice dated years back said nothing · medium
+- **Where:** `ap_coder/coding/terms.py` (`describe`, `payment_findings`), `ap_coder/web/pages/review.py` (`due_note`),
+  `ap_coder/ops/help.py`
+- **Symptom:** the queue and the review screen counted days for a bill due in 2012; an invoice dated 2017 (a misread
+  date, or a very late bill) raised no warning.
+- **Cause:** days were the only unit; no check on the invoice date's age.
+- **Reproduce:** `ca_uoft_ex3_gst.pdf` (dated 2017) among the 15 PDFs.
+- **Reproduced:** yes
+- **Fix:** past 60 days, "Overdue since Dec 2012" (queue, review screen, the overdue note); a new warning,
+  OLD_INVOICE_DATE ("dated 2017-10-05, more than a year ago: check the date on the page"), in "Check before
+  approving", with its Help entry; Month-end flags such invoices (B-466, B-474). Since B-476 it is information only.
+- **Test:** `tests/test_trust_review.py::test_a_long_overdue_bill_says_since_when_and_an_old_invoice_date_is_flagged`
+- **Lesson:** A number nobody can picture ("5042 days") is a sign the value itself needs a check.
+
+#### B-470 · The Excel export's dates were text · low
+- **Where:** `ap_coder/erp/exports.py` (`_sheet`)
+- **Symptom:** Invoice date, Due date and Approved at were text cells: Excel would not sort or filter them as dates.
+- **Cause:** the ISO strings were written as they are.
+- **Reproduce:** export the approved invoices as Excel, open the Invoices sheet.
+- **Reproduced:** yes
+- **Fix:** in the workbook they are dates (yyyy-mm-dd; Approved at with the time); the CSV keeps YYYY-MM-DD text.
+- **Test:** `tests/test_trust_review.py::test_the_excel_export_writes_real_dates`
+- **Lesson:** A spreadsheet is for people: give it typed values.
+
+#### B-471 · The queue showed the file's name as the vendor, and a doubtful name as read · medium
+- **Where:** `ap_coder/web/pages/review.py` (`queue_rows`), `ap_coder/web/templates/review.html`,
+  `ap_coder/core/store.py` (`vendor_name_checks`), `ap_coder/web/templates/vendors.html`
+- **Symptom:** an invoice with no vendor name read was listed under its file name ("scan_0042.pdf") as the vendor;
+  "SOMETHING JOHN" (read with 32%) looked like any vendor; Vendors listed it with the real ones.
+- **Cause:** `vendor_name or file_name`; the capture's confidence was not looked at.
+- **Reproduce:** `ca_owensound_water.pdf` among the 15 PDFs.
+- **Reproduced:** yes
+- **Fix:** "No vendor name" in place of a missing one, a name the readers marked to check in italics with "?" and
+  "Vendor name: check it" under it (the file's name on hover); on Vendors, a vendor with no approved invoice and no
+  record is tagged "Not approved yet". No vendor record is created at import (only on approval, an import of the
+  vendor list, or "Add new vendor"): checked, nothing to change there.
+- **Test:** `tests/test_trust_review.py::test_the_queue_says_no_vendor_name_and_marks_a_name_to_check`
+- **Lesson:** A fallback value must not look like the real one.
+
+#### B-472 · "Every header field was read right" after approving an invoice nobody corrected · low
+- **Where:** `ap_coder/capture/workflow.py` (`taught_message`)
+- **Symptom:** approving an invoice whose vendor was wrong but not edited said every header field was read right.
+- **Cause:** "no correction" was worded as "all correct".
+- **Reproduce:** approve an untouched invoice.
+- **Reproduced:** yes
+- **Fix:** "You changed no header field."
+- **Test:** `tests/test_touchless.py`, `tests/test_touchless_pages.py` (the message)
+- **Lesson:** Say what is known (nothing changed), not what is hoped (all right).
+
+#### B-473 · "Teaches from 1 line · all as suggested" on a line with no GL account yet · medium
+- **Where:** `ap_coder/web/invoice_view.py` (`learn_text`), `ap_coder/web/templates/_invoice_live.html` (the approve bar)
+- **Symptom:** BDO's only line had no GL account yet (nothing proposed, Approve closed) and the approve bar said
+  "Teaches from 1 line · all as suggested"; once the reviewer picked the account it still said "all as suggested".
+- **Cause:** the bar had two words only: "you changed N of its codes", else "all as suggested"; a line still to code,
+  or filled by the reviewer where nothing was proposed, fell under "all as suggested" (filling a blank is no change,
+  D-39, but it is not a suggestion kept either).
+- **Reproduce:** `ca_oc_bdo.pdf` among the 15 PDFs (`shots/after/review_4_vp.png`).
+- **Reproduced:** yes
+- **Fix:** the bar says what approving teaches, line by line, as the approval counts it: "1 line to code" (no GL
+  account, or no cost center where they are used: nothing taught from it yet), then "Teaches from N lines:" with
+  "1 you coded" (nothing proposed, or only a guess, and the reviewer picked the account), "1 you changed", "1 as
+  suggested" (an account proposed and kept), "1 guessed account to check" (B-463).
+- **Test:** `tests/test_trust_review.py::test_the_approve_bar_says_lines_to_code_coded_by_you_or_kept_as_suggested`;
+  `tests/test_dashboard_sweep_fixes.py`, `tests/test_web_invoice.py` (the bar's words)
+- **Lesson:** A default phrase ("all as suggested") must be earned by the data, not reached by falling through.
+
+#### B-474 · Month-end listed an invoice with no date as "invoice dated None", and left old ones out silently · medium
+- **Where:** `ap_coder/erp/accruals.py` (`_not_in_erp`, `undated`), `ap_coder/web/pages/month_end.py`,
+  `ap_coder/web/templates/month_end.html`
+- **Symptom:** found by the review of this branch. An invoice with no date went to B-466's "dated more than a year
+  before" list as "invoice dated None"; and an invoice dated more than a year back was left out of the accruals and
+  the CSV, though AP may well need to accrue it.
+- **Cause:** a missing date compared as "" (before every date); B-466 chose to exclude old invoices.
+- **Reproduce:** the review's `check2.py` (dates "", None, this month, last year).
+- **Reproduced:** yes
+- **Fix:** an invoice with no date is listed apart, "No invoice date: can't be accrued until it has one"; one dated
+  more than a year before the period end is accrued, flagged "Check date" on screen and "dated over a year ago:
+  check" in the CSV, with how many and how much at the top of the page: AP decides.
+- **Test:** `tests/test_trust_review.py::test_month_end_flags_an_invoice_dated_over_a_year_back_and_lists_one_with_no_date`
+- **Lesson:** Test a date check with no date at all.
+
+#### B-475 · A coding rule over a guess, or the reviewer's own account, still read as the model's guess · high
+- **Where:** `ap_coder/coding/rules.py` (`apply`), `ap_coder/core/store.py` (`approve_invoice`, `line_guessed`,
+  `metrics`), `ap_coder/web/invoice_view.py` (`grid`, `learn_text`), `ap_coder/ai/lessons.py` (`outcomes`),
+  `ap_coder/core/audit.py`, `ap_coder/web/pages/invoice.py` (the approval message), `ap_coder/web/templates/learning.html`
+- **Symptom:** found by the review of this branch. A fixed coding rule applied after the chat model kept the model's
+  reasoning: the line was marked a guess, the bar said "1 guessed account to check", and the approval recorded the
+  model's guess as the AI's proposal, corrected (6010 → 6000). The same after "Use PO coding". An account the
+  reviewer picked was marked a guess again whenever the server drew the grid (the hidden reasoning is the model's;
+  only the page's script took the mark away). A kept guess counted as corrected (D-51 at first), a changed guess was a
+  lesson "read as 6010", and the audit trail said "all as the AI suggested".
+- **Cause:** "a guess" was read from the line's reasoning text, which the rule and the screen do not change.
+- **Reproduce:** the review's `rule.py`; pick another account on a guessed line, then add a line.
+- **Reproduced:** yes
+- **Fix:** a rule that codes a line says so in its reasoning ("Coded by the coding rule …") and records whether it
+  replaced a guess (`from_guess`); a row is marked only while its account is still the one the AI guessed for its line
+  (compared with the invoice as read, not by the text). What the reviewer approves on a guessed line is their own
+  coding: a new outcome, "coded", learned from but out of coding accuracy, the top corrections, the vendor accuracy and
+  the lessons; the approval says "1 you coded", the audit trail "coded by the reviewer (the AI only guessed)", the bar
+  "1 by a coding rule" for a rule's line (D-51 updated).
+- **Test:** `tests/test_trust_review.py::test_a_coding_rule_over_a_guess_is_the_rules_coding_not_a_guess_and_not_a_correction`,
+  `::test_an_account_the_reviewer_picked_over_a_guess_is_never_marked_again`,
+  `::test_the_approval_message_says_you_coded_for_a_kept_guess`,
+  `::test_a_kept_guess_is_the_reviewers_coding_not_coded_as_suggested`
+- **Lesson:** Decide a state from the values (the account the AI guessed, the account now), not from a label that
+  other steps don't update.
+
+#### B-476 · OLD_INVOICE_DATE held invoices back as a warning, and fired on credit notes · medium
+- **Where:** `ap_coder/coding/terms.py` (`payment_findings`), `ap_coder/ai/pipeline.py` (`finalise_coding`),
+  `ap_coder/web/invoice_view.py`, `ap_coder/coding/bulk.py`, `ap_coder/ops/help.py`
+- **Symptom:** found by the review of this branch. B-469's check was a warning (it lowered the confidence, kept
+  invoices from bulk approval and touchless) measured against today, so an invoice in the queue for a while became
+  "old", and a credit note (often old on purpose) was flagged.
+- **Cause:** a new check given a warning's weight.
+- **Reproduce:** an invoice dated 13 months back; a credit note of the same date.
+- **Reproduced:** yes
+- **Fix:** information only ("Good to know"), measured from the day AP Coder read the invoice (`received`, its import
+  day on the review screen and in bulk approval), not raised for a credit note; Help says so.
+- **Test:** `tests/test_trust_review.py::test_an_old_invoice_date_is_a_note_measured_from_the_day_it_came_in_and_not_for_a_credit_note`,
+  `::test_a_long_overdue_bill_says_since_when_and_an_old_invoice_date_is_flagged`
+- **Lesson:** Give a new check the weight of what it costs the person, not of what it found.
+
+#### B-477 · Bulk approval said why an invoice was left with the check's code ("VENDOR_ON_HOLD: …") · low
+- **Where:** `ap_coder/coding/bulk.py`
+- **Symptom:** found by the review of this branch: the "not approved" details read "VENDOR_BANK_CHANGED: the bank
+  account to pay into changed".
+- **Cause:** `f"{code}: {message}"`.
+- **Reproduce:** bulk-approve an invoice with a stored warning that needs a person.
+- **Reproduced:** yes
+- **Fix:** the message alone, capitalised (the check's Help title when it has none); the code stays in the problem
+  report.
+- **Test:** `tests/test_trust_review.py::test_bulk_approval_says_why_an_invoice_was_left_without_the_check_code`
+- **Lesson:** B-464 again: search for every place that prints a code.
+
+#### B-478 · The line grid's Tab order crossed its rows, the page view sat under the approve bar, amounts were cut · medium
+- **Where:** `ap_coder/web/templates/_invoice_lines.html`, `ap_coder/web/templates/invoice.html`,
+  `ap_coder/web/static/invoice.css`, `ap_coder/web/static/js/invoice_viewer.js`
+- **Symptom:** found by the review of this branch. In B-467's two-row lines Tab went description → amount → GL →
+  taxes → qty → unit price, up and down across the rows; in Fit mode at 1366 × 768 the bottom 80–170 px of the page
+  view was under the approve bar; "-199.98" was cut in its box and the GL account's name had little room.
+- **Cause:** the cells kept the old table order; the viewer's height was the window less a fixed 190 px.
+- **Reproduce:** the review's `keys.py` and `shots.py` at 1366 × 768.
+- **Reproduced:** yes
+- **Fix:** three rows a line, the cells in the order they show and Tab follows: # · description · delete; GL account
+  (wide: no cost centers in the pilot) · amount; taxes · qty · unit price. The viewer ends above the approve bar
+  wherever the Document card is (it grows as the card rises to its sticky place). On a screen 1700 px wide or more
+  the document gets three fifths of the width.
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_in_a_browser_tab_follows_the_line_grid_as_it_shows_and_the_page_view_ends_above_the_bar`
+- **Lesson:** A visual reorder in CSS needs the DOM order to match, or the keyboard tells a different story.
+
+#### B-479 · A replaced guess was "no changes", and the lines AP coded were missing from "Lines reviewed" · medium
+- **Where:** `ap_coder/core/store.py` (`approve_invoice`, `metrics`), `ap_coder/web/pages/learning.py`,
+  `ap_coder/web/templates/invoice.html`, `ap_coder/web/static/invoice.css`
+- **Symptom:** found by the re-review of this branch. A reviewer who put another account in place of the model's
+  guess was recorded as no edit: the approved screen said there were no changes to the suggested coding and it counted
+  as approved without edits, while the audit showed "line 1 GL: 6000 → 1500". "Lessons learned" (queue) and "Lines
+  reviewed" (Learning) left out the lines AP coded over a guess (B-475), though AP Coder learns from them. A 25-line
+  invoice's grid was about 4,600 px tall at 1366 × 768.
+- **Cause:** B-475 skipped guessed lines when counting the reviewer's changes, and took the "coded" lines out of the
+  reviewed total along with the accuracy.
+- **Reproduce:** approve an invoice after picking another account on a guessed line; the re-review's `add25.py`.
+- **Reproduced:** yes
+- **Fix:** a guess kept is no edit, another account in its place is; `lines_reviewed` counts every line AP reviewed
+  (the coded ones too, `lines_coded`), the accuracy only what the AI proposed (`lines_measured`). An invoice of more
+  than 10 lines gets a tighter grid (captions on the first line only, one-line description boxes, the taxes on one
+  line): the same rows and Tab order, about 3,200 px for 25 lines.
+- **Test:** `tests/test_trust_review.py::test_replacing_a_guessed_account_is_an_edit_and_coded_lines_count_as_reviewed`
+- **Lesson:** Leaving a line out of one figure (accuracy) is not leaving it out of all of them.
+
+#### Looked at and left (review screen and coding)
+
+- **N-172** · After Approve, the address bar was said to stay on the approved invoice's address. Not reproduced:
+  the answer's address is opened (`location.assign`) and `location.href` is the next invoice's (`/review/8` after
+  approving `/review/14`, five runs); Playwright's `page.url` read straight after the click can still show the old
+  one, which is likely what was seen. Nothing changed.
+- **N-173** · Vendors still lists a name read off an invoice not approved yet ("Inc."), tagged "Not approved yet":
+  hiding it would hide its bank-account and GST/HST history (a fraud signal) and "Ask the vendor" for its invoices
+  in the queue.
+- **N-174** · Fixed (B-473).
+- **N-175** · B-468 asks before the first real import; a demo kept after real invoices are imported still counts in
+  the figures until removed (excluding it everywhere is a larger change across Activity, Learning, Insights and
+  Vendors).
+- **N-176** · With the chat model answering, its account for a line with a weak match is kept even when the name
+  match pointed elsewhere (marked as a guess either way); on the samples the name match was right more often than a
+  small model (21 vs 11 of 41), so which one to show first, when they disagree, is worth measuring on the pilot's
+  invoices.

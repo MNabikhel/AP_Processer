@@ -21,6 +21,7 @@ The xlsx workbook is opened by people, so its formula-looking text is stored as 
 from __future__ import annotations
 
 import csv
+import datetime as dt
 import io
 from collections import defaultdict
 from typing import Any
@@ -59,6 +60,19 @@ LINE_COLUMNS = [
     ("amount", "Amount"),
 ]  # fmt: skip
 MONEY_HEADERS = {"Subtotal", "Tax", "Total", "Net", "Non-recoverable tax", "Amount"}
+# Real dates in the workbook (Excel sorts and filters them as dates), not text (B-470); the CSV keeps YYYY-MM-DD.
+DATE_HEADERS = {"Invoice date": "yyyy-mm-dd", "Due date": "yyyy-mm-dd", "Approved at": "yyyy-mm-dd hh:mm"}
+
+
+def _excel_date(value: Any) -> Any:
+    """'2026-10-01' -> date, '2026-10-01 14:05:09' -> datetime (seconds kept); anything else as it is."""
+    if not isinstance(value, str) or not value.strip():
+        return value
+    text = value.strip().replace("T", " ")
+    try:
+        return dt.datetime.fromisoformat(text).replace(tzinfo=None) if " " in text else dt.date.fromisoformat(text)
+    except ValueError:
+        return value
 
 
 def _vendor_id(final: dict[str, Any], vendor_ids: dict[str, str]) -> str:
@@ -174,8 +188,9 @@ def build_xlsx(
 def _sheet(ws: Any, title: str, columns: list[tuple[str, str]], rows: list[dict[str, Any]]) -> None:
     ws.title = title
     ws.append([label for _, label in columns])
+    dated = {key for key, label in columns if label in DATE_HEADERS}
     for r in rows:
-        ws.append(xlsx_row([r.get(key) for key, _ in columns]))
+        ws.append(xlsx_row([_excel_date(r.get(key)) if key in dated else r.get(key) for key, _ in columns]))
     header_fill = PatternFill("solid", fgColor="E9EEF6")
     for cell in ws[1]:
         cell.font, cell.fill, cell.alignment = Font(bold=True), header_fill, Alignment(vertical="center")
@@ -185,6 +200,10 @@ def _sheet(ws: Any, title: str, columns: list[tuple[str, str]], rows: list[dict[
         if label in MONEY_HEADERS:
             for row in ws.iter_rows(min_row=2, min_col=i, max_col=i):
                 row[0].number_format = "#,##0.00"
+        if label in DATE_HEADERS:
+            for row in ws.iter_rows(min_row=2, min_col=i, max_col=i):
+                if isinstance(row[0].value, (dt.date, dt.datetime)):
+                    row[0].number_format = DATE_HEADERS[label]
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = ws.dimensions
     neutralise_sheet(ws)  # vendor names and descriptions come from documents: never formulas

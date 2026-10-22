@@ -166,10 +166,7 @@ def test_edits_are_checked_kept_and_counted_on_the_approve_bar(client, store):
         return rows
 
     answer = check(client, inv_id, form_of(store, inv_id, recode))
-    assert (
-        'data-change-count="1"' in answer["sections"]["bar"]
-        and "you changed 1 of its codes" in answer["sections"]["bar"]
-    )
+    assert 'data-change-count="1"' in answer["sections"]["bar"] and "1 you changed" in answer["sections"]["bar"]
     assert "6800" in answer["sections"]["posting"] or "6020" in answer["sections"]["posting"]
     # The draft survives leaving the screen; Start over drops it.
     assert 'data-change-count="1"' in client.get(f"/review/{inv_id}").text

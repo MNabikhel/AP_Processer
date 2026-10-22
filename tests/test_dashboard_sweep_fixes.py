@@ -96,7 +96,7 @@ def test_the_approve_bar_counts_changes_as_the_approval_does(client, store):
     assert (
         re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", bar.split("Teaches from", 1)[1]))
         .strip()
-        .startswith(f"{n} lines · you changed 1 of its codes")
+        .startswith(f"{n} lines: 1 you changed, {n - 1} as suggested")
     )
     page = follow(client, post(client, f"/review/{invoice_id}/approve", data))
     assert f"{n - 1} of {n} lines coded as suggested" in page

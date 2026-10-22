@@ -13,22 +13,25 @@
 {%- if value is none or value == "" %}{% elif value is number %}{{ "%.2f" | format(value) }}{% else %}{{ value }}{% endif -%}
 {%- endmacro %}
 
+{# The cells in the order they show (B-478): #, description, delete; GL account (cost center), amount; taxes, qty,
+   unit price. The grid's CSS puts them on those three rows; Tab goes through them in the same order. #}
 {% macro line_row(row, g, key) -%}
 <tr data-row="{{ key }}">
   <td class="c-no"><input type="hidden" name="line_key" value="{{ key }}" form="inv">
     <input type="hidden" name="line_reason" value="{{ row.reasoning_justification or '' }}" form="inv">
     {% if not g.has_cc %}<input type="hidden" name="line_cc" value="{{ row.predicted_cost_center or '' }}" form="inv">{% endif %}
     <input type="number" name="line_number" value="{{ num(row.line_number) }}" step="1" min="0" form="inv" aria-label="Line number"></td>
-  <td class="c-desc"><input type="text" name="line_description" value="{{ row.description or '' }}" form="inv" aria-label="Description"></td>
-  <td class="c-amt"><input type="number" name="line_amount" value="{{ cents(row.amount) }}" step="0.01" form="inv" aria-label="Amount"></td>
-  <td class="c-gl"><select name="line_gl" form="inv" aria-label="GL account" data-gl>{{ opts(g.gl_options, row.predicted_gl_code or "UNASSIGNED") }}</select></td>
-  {% if g.has_cc %}<td class="c-cc"><select name="line_cc" form="inv" aria-label="Cost center">{{ opts(g.cc_options, row.predicted_cost_center or "UNASSIGNED") }}</select></td>{% endif %}
-  <td class="c-tax"><div class="inv-taxes" role="group" aria-label="Taxes on this line">
+  <td class="c-desc"><textarea name="line_description" rows="1" form="inv" aria-label="Description" data-one-line>{{ (row.description or '') | replace('\r', ' ') | replace('\n', ' ') }}</textarea></td>
+  <td class="c-del"><button type="button" class="icon-btn" data-del-row title="Delete this line" aria-label="Delete this line"><span class="ms" aria-hidden="true">delete</span></button></td>
+  <td data-label="GL account" class="c-gl{% if row.guessed %} is-guess{% endif %}"><select name="line_gl" form="inv" aria-label="GL account" data-gl>{{ opts(g.gl_options, row.predicted_gl_code or "UNASSIGNED") }}</select>
+    {%- if row.guessed %}<span class="inv-guess" title="{{ row.reasoning_justification }}"><span class="ms" aria-hidden="true">help</span>A guess, not learned yet: check it</span>{% endif %}</td>
+  {% if g.has_cc %}<td class="c-cc" data-label="Cost center"><select name="line_cc" form="inv" aria-label="Cost center">{{ opts(g.cc_options, row.predicted_cost_center or "UNASSIGNED") }}</select></td>{% endif %}
+  <td class="c-amt" data-label="Amount"><input type="number" name="line_amount" value="{{ cents(row.amount) }}" step="0.01" form="inv" aria-label="Amount"></td>
+  <td class="c-tax" data-label="Taxes"><div class="inv-taxes" role="group" aria-label="Taxes on this line">
     {% for t in g.tax_types %}<label title="{{ g.tax_labels[t] }}"><input type="checkbox" name="line_tax_{{ key }}" value="{{ t }}" form="inv"{% if t in (row.taxes_applied or []) %} checked{% endif %}><span>{{ g.tax_labels[t] }}</span></label>{% endfor %}
   </div></td>
-  <td class="c-qty"><input type="number" name="line_quantity" value="{{ num(row.quantity) }}" step="any" form="inv" aria-label="Quantity"></td>
-  <td class="c-price"><input type="number" name="line_unit_price" value="{{ num(row.unit_price) }}" step="any" form="inv" aria-label="Unit price"></td>
-  <td class="c-del"><button type="button" class="icon-btn" data-del-row title="Delete this line" aria-label="Delete this line"><span class="ms" aria-hidden="true">delete</span></button></td>
+  <td class="c-qty" data-label="Qty"><input type="number" name="line_quantity" value="{{ num(row.quantity) }}" step="any" form="inv" aria-label="Quantity"></td>
+  <td class="c-price" data-label="Unit price"><input type="number" name="line_unit_price" value="{{ num(row.unit_price) }}" step="any" form="inv" aria-label="Unit price"></td>
 </tr>
 {%- endmacro %}
 

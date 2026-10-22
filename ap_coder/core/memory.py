@@ -30,6 +30,9 @@ from functools import cached_property, lru_cache
 from typing import Any
 
 ACCEPTED, CORRECTED = "accepted", "corrected"
+# A line whose account the AI only guessed (``offline_coder.guessed``): what the reviewer approved is their own coding,
+# learned from like any other, but neither confirmed nor corrected: coding accuracy leaves it out (B-475).
+CODED = "coded"
 
 # Legal-form words dropped from the END of a vendor name ("Mueller GmbH & Co. KG" -> "mueller"), in English and
 # French ("Limitée", "Incorporée", "s.e.c." for a société en commandite).

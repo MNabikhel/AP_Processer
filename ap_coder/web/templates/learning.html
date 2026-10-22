@@ -83,6 +83,8 @@
           {% if r.outcome == "corrected" %}
           <b>{{ r.reviewer }}</b> corrected <b>{{ r.short }}</b>
           {% if r.suggested_gl == unassigned %}<i>no account</i>{% elif r.suggested_gl %}<span class="apc-strike apc-mono">{{ r.suggested_gl }}</span>{% else %}<i>new line</i>{% endif %}<span class="apc-arrow">→</span><b class="apc-mono">{{ r.final_gl }}</b>
+          {% elif r.outcome == "coded" %}
+          <b>{{ r.reviewer }}</b> coded <b>{{ r.short }}</b> <span class="apc-arrow">→</span><b class="apc-mono">{{ r.final_gl }}</b> <span class="apc-muted">(the AI only guessed)</span>
           {% else %}
           <b>{{ r.reviewer }}</b> confirmed <b>{{ r.short }}</b> <span class="apc-arrow">→</span><b class="apc-mono">{{ r.final_gl }}</b>
           {% endif %}
@@ -212,7 +214,7 @@
     <thead><tr><th>Vendor</th><th>What</th><th>AP's value</th><th class="r">Corrected</th><th class="r">Since the reason</th><th class="r">Right since</th><th>AP's reason</th><th></th></tr></thead>
     <tbody>{% for l in lessons %}
       <tr{% if l.retired %} class="muted"{% endif %}><td>{{ l.vendor_name }} <span class="muted small">{{ l.kind }}</span></td>
-        <td>{{ l.what }}</td><td>{{ l.value }}{% if l.proposed %}<div class="muted small">read as {{ l.proposed }}</div>{% endif %}</td>
+        <td>{{ l.what }}</td><td>{{ l.value }}{% if l.proposed == "UNASSIGNED" %}<div class="muted small">left blank</div>{% elif l.proposed %}<div class="muted small">read as {{ l.proposed }}</div>{% endif %}</td>
         <td class="r">{{ l.corrected }}</td><td class="r">{{ l.since_why }}</td><td class="r">{{ l.confirmed }}</td>
         <td class="w"><form method="post" action="/learning/lessons/explain" class="row" data-busy="Saving…">
           <input type="hidden" name="situation" value="{{ l.situation }}">

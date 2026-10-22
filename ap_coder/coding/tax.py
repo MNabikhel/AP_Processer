@@ -370,7 +370,7 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
         add(
             ERROR,
             "TAX_LINES_TOTAL_MISMATCH",
-            f"tax lines sum to {lines_total:.2f} but tax_total = {coding.tax_total:.2f}",
+            f"the tax lines add up to {lines_total:.2f} but the tax total is {coding.tax_total:.2f}",
         )
 
     # Tax is worked out once on the taxable amount (a cent of rounding), or line by line and added up (each line
@@ -499,9 +499,14 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
     for tax_type in sorted(posted):
         t = setup.treatment(tax_type)
         if t.needs_gl and not t.gl_code:
-            add(ERROR, "TAX_GL_UNMAPPED", f"no GL account mapped for {tax_type}; set it in Tax setup")
+            add(ERROR, "TAX_GL_UNMAPPED", f"no GL account is set for {tax_type}: set it in GL accounts & tax")
         elif t.needs_gl and known_gl_codes is not None and t.gl_code not in known_gl_codes:
-            add(ERROR, "TAX_GL_UNKNOWN", f"{tax_type} is mapped to GL {t.gl_code}, which is not in the GL accounts")
+            add(
+                ERROR,
+                "TAX_GL_UNKNOWN",
+                f"{tax_type} posts to GL account {t.gl_code}, which is not in your GL accounts: fix it in "
+                "GL accounts & tax",
+            )
     return findings
 
 

@@ -483,18 +483,14 @@ def test_a_line_only_the_local_model_coded_is_never_approved_without_a_person(to
 
 
 def test_a_line_coded_from_a_weak_match_is_never_approved_without_a_person(touchless, path, tmp_path):
-    """Sweep: with the chat model loaded, a weak match (an account's name, the vendor's default) codes the line
-    (``assign_weak``) and nothing held the invoice back: looser than with no model at all."""
-    from ap_coder.ai.offline_coder import WEAK_MATCH, code_from_capture
-    from ap_coder.capture.types import LineReading
-    from ap_coder.core.store import load_sample_setup
+    """Sweep: with the chat model loaded, an older version coded a line from a weak match (an account's name, the
+    vendor's default) and nothing held the invoice back. Such an invoice may still be in the queue (B-463 no longer
+    codes one)."""
+    from ap_coder.ai.offline_coder import WEAK_MATCH
 
-    store = Store(tmp_path / "w.db")
-    load_sample_setup(store)
-    capture = CaptureResult(fields={}, line_items=[LineReading("Copy paper", 1.0, 1000.0, 1000.0)])
-    (line,) = code_from_capture(capture, store.reference_data(), [], store, assign_weak=True).coding.line_items
-    assert line.predicted_gl_code == "6000" and line.reasoning_justification.startswith(WEAK_MATCH)
-    output = {"grand_total": 1050.0, "currency": "CAD", "line_items": [line.model_dump()]}
+    line = {"line_number": 1, "description": "Copy paper", "amount": 1000.0, "predicted_gl_code": "6000",
+            "reasoning_justification": f"{WEAK_MATCH}: account description mentions paper"}  # fmt: skip
+    output = {"grand_total": 1050.0, "currency": "CAD", "line_items": [line]}
     decision = _decide(touchless, path, output=output)
     assert not decision["auto"] and "weak match" in decision["reason"]
 
@@ -549,7 +545,7 @@ def test_taught_message_says_what_was_learned(tmp_path, ground_truth):
         store.record_outcomes(key, 100 + i, _outcomes(), at=_at(i, "2099-01-02"))
     second = store.add_invoice(tmp_path / "b.pdf", ground_truth, {"requires_review": False})
     message = taught_message(store, learn_from_approval(store, second, ground_truth, actor="Ann"))
-    assert message.startswith(f"Every header field was read right. {name}: 16 invoices reviewed, about ")
+    assert message.startswith(f"You changed no header field. {name}: 16 invoices reviewed, about ")
     assert message.endswith("more invoices approved without a correction before this vendor can skip review.")
     assert taught_message(store, {"supplier": ""}) == ""
 

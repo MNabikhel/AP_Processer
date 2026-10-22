@@ -35,13 +35,25 @@
 {% endif %}
 {%- endmacro %}
 
-{% macro status_block(tone, icon, title, items, sub="") -%}
+{% macro check_item(i) -%}
+<li class="{{ i.kind or ('err' if i.bad else 'warn') }}" title="{{ i.text }}"><span class="m" aria-hidden="true">{{ '!' if i.kind == 'warn' or not i.bad else '✕' }}</span>
+    {%- if i.goto %}<button type="button" class="rvw-goto" data-goto-line="{{ i.goto.box }}" data-line="{{ i.goto.line }}" title="Go to line {{ i.goto.line }} (G)"><span class="t">{{ i.text }}</span></button>
+    {%- else %}<span class="t">{{ i.text }}</span>{% endif %}</li>
+{%- endmacro %}
+
+{% macro status_block(tone, icon, title, items, sub="", groups=none) -%}
 <div class="rvw-status {{ tone }}" role="status">
+  {% if groups %}{# B-465: what keeps Approve closed, what must be fixed, what to check: each under its own heading #}
+  {% for g in groups %}<div class="rvw-status-group {{ g.kind }}">
+    <div class="rvw-status-title"><span class="ms" aria-hidden="true">{{ {'block': 'block', 'err': 'error', 'warn': 'visibility'}[g.kind] }}</span><span>{{ g.title }}</span>
+      {%- if g.kind == 'block' and sub %}<span class="rvw-status-key">{{ sub }}</span>{% endif %}</div>
+    <ul>{% for i in g["items"] %}{{ check_item(i) }}{% endfor %}</ul>
+  </div>{% endfor %}
+  {% else %}
   <div class="rvw-status-title"><span class="ms" aria-hidden="true">{{ icon }}</span><span>{{ title }}</span></div>
-  {% if items %}<ul>{% for i in items %}<li class="{{ 'err' if i.bad else 'warn' }}" title="{{ i.text }}"><span class="m" aria-hidden="true">{{ '✕' if i.bad else '!' }}</span><span class="rvw-sr">{{ 'Must fix' if i.bad else 'Worth a look' }}: </span>
-    {%- if i.goto %}<button type="button" class="rvw-goto" data-goto-line="{{ i.goto.box }}" data-line="{{ i.goto.line }}" title="Go to line {{ i.goto.line }}"><span class="t">{{ i.text }}</span></button>
-    {%- else %}<span class="t">{{ i.text }}</span>{% endif %}</li>{% endfor %}</ul>
+  {% if items %}<ul>{% for i in items %}{{ check_item(i) }}{% endfor %}</ul>
   {% elif sub %}<div class="rvw-status-sub">{{ sub }}</div>{% endif %}
+  {% endif %}
 </div>
 {%- endmacro %}
 
@@ -51,7 +63,7 @@
 {% for p in live.problems %}{{ ui.check("error", "Fix this field", p) }}{% endfor %}
 {% else %}
 {% set c = live.checks %}
-{{ status_block(c.tone, c.icon, c.title, c["items"], c.sub) }}
+{{ status_block(c.tone, c.icon, c.title, c["items"], c.sub, c.groups) }}
 <details class="inv-more">
   <summary><span class="ms" aria-hidden="true">checklist</span>Details and what to do</summary>
   <div class="inv-more-body">
@@ -227,8 +239,8 @@
 <div class="rvw-post">
   <div class="rvw-post-amount">Post <b>{{ b.amount }}</b> {{ b.currency }}
     {% if live.math %}<span class="rvw-math {{ 'ok' if live.math.ok else 'bad' }}" title="{% for r in live.math.rows %}{{ '✓' if r.ok else '✕' }} {{ r.what }}: {{ r.detail }}&#10;{% endfor %}"><span class="ms" aria-hidden="true">{{ 'check' if live.math.ok else 'calculate' }}</span>Math: {{ live.math.text }}</span>{% endif %}</div>
-  <div class="rvw-post-sub" title="Approving teaches AP Coder from {{ b.lines | plural('line') }}: {{ b.learn }}."><span class="ms" aria-hidden="true">school</span>
-    Teaches from {{ b.lines | plural("line") }} · <span data-change-count="{{ b.changed }}">{{ b.learn }}</span></div>
+  <div class="rvw-post-sub" title="What approving teaches AP Coder: {{ b.learn }}."><span class="ms" aria-hidden="true">school</span>
+    <span data-change-count="{{ b.changed }}">{{ b.learn }}</span></div>
 </div>
 {% if b.pick %}{# a button to the first line that needs an account or a cost center (B-434; G does the same) #}
 <button type="button" class="apc-pill warn inv-pick" data-goto-pick aria-keyshortcuts="G" title="Go to the line (G)">{{ b.pick }}<span class="ms" aria-hidden="true">arrow_downward</span></button>

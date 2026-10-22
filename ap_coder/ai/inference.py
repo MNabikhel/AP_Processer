@@ -66,6 +66,9 @@ class CodingResult:
     usage: dict[str, Any] = field(default_factory=dict)
     attempts: int = 1
     images_attached: int = 0
+    # The local reader's weak match for each line it left blank: the line's place on the invoice (from 1) -> account
+    # (``offline_coder.code_from_capture``). Never put in the line; compared with the chat model's answer.
+    hints: dict[int, str] = field(default_factory=dict)
 
 
 def build_openai_client(settings: Settings) -> Any:

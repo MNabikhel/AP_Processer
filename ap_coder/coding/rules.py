@@ -74,6 +74,9 @@ def rule_for(rules: list[Rule], vendor: str, description: str) -> Rule | None:
     return min(candidates, key=Rule.rank) if candidates else None
 
 
+RULE_REASON = "Coded by the coding rule"
+
+
 def apply(coding: InvoiceCoding, rules: list[Rule]) -> tuple[InvoiceCoding, list[dict[str, Any]]]:
     """The coding with the rules applied, and what each rule changed:
     [{line_number, rule, gl_from, gl_to, cc_from, cc_to}]."""
@@ -89,6 +92,8 @@ def apply(coding: InvoiceCoding, rules: list[Rule]) -> tuple[InvoiceCoding, list
         gl = rule.gl_code.strip()
         cc = rule.cost_center.strip() or li.predicted_cost_center
         if gl != li.predicted_gl_code or cc != li.predicted_cost_center:
+            from ..ai.offline_coder import guessed
+
             changes.append(
                 {
                     "line_number": li.line_number,
@@ -97,9 +102,13 @@ def apply(coding: InvoiceCoding, rules: list[Rule]) -> tuple[InvoiceCoding, list
                     "gl_to": gl,
                     "cc_from": li.predicted_cost_center,
                     "cc_to": cc,
+                    # the AI's answer the rule replaced was only a guess: no measure of its accuracy (B-475)
+                    "from_guess": guessed(li.reasoning_justification),
                 }  # fmt: skip
             )
-            li = li.model_copy(update={"predicted_gl_code": gl, "predicted_cost_center": cc})
+            # The rule's coding, said so: no longer the chat model's guess on the review screen (B-475).
+            li = li.model_copy(update={"predicted_gl_code": gl, "predicted_cost_center": cc,
+                                       "reasoning_justification": f"{RULE_REASON} “{rule.label}”"})  # fmt: skip
         lines.append(li)
     if not changes:
         return coding, []

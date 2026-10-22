@@ -28,10 +28,12 @@ GL accounts*: one click picks one. When two accounts both have strong evidence, 
 its usual account, which wins over other vendors' lines; at the same level, a person decides. Fixed coding rules
 still apply after this, as before.
 
-With the local chat model loaded, a weak suggestion is still used, as before (on the sample invoices an account
-name match beat a small model), and the model is asked only about lines with no suggestion at all. A line coded
-this way says so ("A weak match, for a person to confirm") and, like a line the model coded, never lets its
-invoice be approved without a person, however trusted its supplier.
+A weak suggestion is never put in the line on its own, whether or not the local chat model is running (B-463):
+the line stays blank, and the chat model, when it answers, is asked about it. The model's account says so
+("Suggested by the local model", and whether the account name agrees), is marked on the review screen ("A guess,
+not learned yet: check it"), never lets its invoice be approved without a person, however trusted its supplier,
+and when the reviewer keeps it, it counts as the reviewer's own coding, not "coded as suggested": coding accuracy
+measures only what was learned from AP's approvals. A line the model gives no account stays blank.
 
 ### Lines worded differently
 

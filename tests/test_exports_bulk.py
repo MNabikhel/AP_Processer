@@ -71,7 +71,7 @@ def test_bulk_approve_only_takes_invoices_that_are_still_clean(demo_store):
     victim = candidates[0]
     store.save_vendor(vendor_key(victim["vendor_name"]), victim["vendor_name"], "on_hold")
     result = bulk_approve(store, store.reference_data(), Settings(), [c["id"] for c in candidates], "jane")
-    assert result["skipped"] and result["skipped"][0][0] == victim["id"] and "VENDOR_ON_HOLD" in result["skipped"][0][1]
+    assert result["skipped"] and result["skipped"][0][0] == victim["id"] and "on hold" in result["skipped"][0][1]
     assert len(result["approved"]) == len(candidates) - 1
     for invoice_id in result["approved"]:
         assert store.get_invoice(invoice_id)["status"] == APPROVED
@@ -112,7 +112,7 @@ def test_bulk_approve_skips_an_invoice_flagged_after_the_page_listed_it(demo_sto
     issue = {"severity": "warning", "code": "AZURE_DI_DISAGREES", "message": "Azure read the total as 1,234.00"}
     assert store.update_after_azure_check(victim, None, issue, "AZURE_DI_DISAGREES")
     result = bulk_approve(store, store.reference_data(), Settings(), ids, "jane")
-    assert [i for i, _ in result["skipped"]] == [victim] and "AZURE_DI_DISAGREES" in result["skipped"][0][1]
+    assert [i for i, _ in result["skipped"]] == [victim] and "Azure read" in result["skipped"][0][1]
     assert store.get_invoice(victim)["status"] == REVIEW
 
 
@@ -139,7 +139,7 @@ def test_bulk_approve_never_takes_a_check_that_always_needs_a_person(tmp_path):
     invoice_id = store.add_invoice(tmp_path / "b.pdf", out, report.to_dict())
     assert invoice_id not in [c["id"] for c in clean_candidates(store)]
     result = bulk_approve(store, ref, Settings(), [invoice_id], "jane")
-    assert result["approved"] == [] and "VENDOR_NEW" in result["skipped"][0][1]
+    assert result["approved"] == [] and "First invoice from this vendor" in result["skipped"][0][1]
     assert store.get_invoice(invoice_id)["status"] == REVIEW
 
 

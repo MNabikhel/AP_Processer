@@ -390,6 +390,9 @@ kbd.apc-kbd {font-family: inherit; font-size: 11.5px; font-weight: 500; color: v
 .rq-row .c-num {color: var(--rv-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
 .rq-row .c-date, .rq-row .c-prov {color: var(--rv-muted); white-space: nowrap;}
 .rq-row .c-tax {display: flex; gap: 4px; flex-wrap: nowrap; overflow: hidden;}
+/* A vendor name the readers are not sure of, or none: never passed off as read (B-471). */
+.rq-unsure {color: var(--lg-muted); font-style: italic;}
+
 .rq-row .c-status .why {font-size: 11.5px; line-height: 1.3; color: var(--rv-subtle); margin: 2px 0 4px; overflow: hidden;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;}
 .rq-row .c-amt {text-align: right; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums;}

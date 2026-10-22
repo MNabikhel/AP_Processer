@@ -9,6 +9,7 @@ Everything else is skipped with the reason, and still needs a person.
 
 from __future__ import annotations
 
+import datetime as dt
 from typing import Any
 
 from ..ai.pipeline import finalise_coding
@@ -18,6 +19,26 @@ from ..core.config import Settings
 from ..core.reference_data import ReferenceData
 from ..core.schema import InvoiceCoding
 from ..core.store import REVIEW, Store
+
+
+def _received_on(inv: dict[str, Any]) -> dt.date | None:
+    """The day the invoice came in (its ``created_at``), None when it can't be read."""
+    try:
+        return dt.date.fromisoformat(str(inv.get("created_at") or "")[:10])
+    except ValueError:
+        return None
+
+
+def _plain(message: Any, code: Any) -> str:
+    """Why an invoice was not approved, as the reviewer reads it: the check's message (its code only when it has none:
+    the code is for the problem report, B-477)."""
+    text = str(message or "").strip()
+    if not text:
+        from ..ops.help import help_for
+
+        about = help_for(str(code or ""))
+        text = about.title if about else str(code or "a check needs a person")
+    return text[:1].upper() + text[1:]
 
 
 def _needs_a_person(severity: Any, code: Any) -> bool:
@@ -78,7 +99,7 @@ def bulk_approve(
             if _needs_a_person(i.get("severity"), i.get("code"))
         ]
         if stored:
-            skipped.append((invoice_id, f"{stored[0].get('code')}: {stored[0].get('message')}"))
+            skipped.append((invoice_id, _plain(stored[0].get("message"), stored[0].get("code"))))
             continue
         coded = inv.get("final_output") or inv["ai_output"]
         coded = {k: v for k, v in coded.items() if k != "gl_distribution"}
@@ -90,10 +111,11 @@ def bulk_approve(
         if _credit_note(bool((store.get_capture(invoice_id) or {}).get("credit_note")), coding.grand_total):
             skipped.append((invoice_id, "it is a credit note: a credit is always applied by a person"))
             continue
-        output, report = finalise_coding(coding, reference, settings, store=store, exclude_invoice_id=invoice_id)
+        output, report = finalise_coding(coding, reference, settings, store=store, exclude_invoice_id=invoice_id,
+                                         received=_received_on(inv))  # fmt: skip
         blocking = [i for i in report.issues if _needs_a_person(i.severity, i.code)]
         if blocking:
-            skipped.append((invoice_id, f"{blocking[0].code}: {blocking[0].message}"))
+            skipped.append((invoice_id, _plain(blocking[0].message, blocking[0].code)))
             continue
         if report.requires_review:
             skipped.append((invoice_id, f"confidence {report.adjusted_confidence:.0%} is below the threshold"))

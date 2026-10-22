@@ -26,7 +26,7 @@ const SMALL_SHEET = 560; // px: a page drawn narrower than this shows a label ta
 const ZOOM_KEY = "apc-invoice-viewer-zoom";
 const FIELDS_KEY = "apc-invoice-viewer-fields"; // the field list shown or folded, when it sits above the page
 const FOLD_BELOW = 640; // px: a viewer shorter than this starts with the field list folded (above the page only)
-const VIEWPORT_MARGIN = 230; // px of the browser window kept for the card around the viewer and the action bar
+const VIEWPORT_MARGIN = 190; // px of the browser window kept for the card around the viewer and the action bar
 const MIN_FIT_HEIGHT = 360;
 // The field list, grouped as an AP clerk reads an invoice; fields not found go last, folded away.
 const GROUPS = [
@@ -221,16 +221,18 @@ export class InvoiceViewer {
     );
     this.count = h("span", { class: "iv-count", "aria-live": "polite" });
     this.onlyInput = h("input", { type: "checkbox", role: "switch", onchange: () => this.setOnlyCheck(this.onlyInput.checked) });
-    const only = h("label", { class: "iv-switch" }, this.onlyInput, h("span", { class: "iv-track", "aria-hidden": "true" }), h("span", null, "Only what needs checking"));
+    const only = h("label", { class: "iv-switch" }, this.onlyInput, h("span", { class: "iv-track", "aria-hidden": "true" }), h("span", null, "To check only"));
+    only.title = "Show only the fields that need checking";
     this.toolbar = h(
       "div",
       { class: "iv-toolbar", role: "toolbar", "aria-label": "Page tools" },
       h("div", { class: "iv-segs", role: "group", "aria-label": "Zoom" }, this.zoomButtons),
       this.pager,
       h("div", { class: "iv-check" }, this.stepBtn, this.count),
-      only
+      only,
+      // The key to the boxes' colours, in the same bar: one row of tools above the page (B-467).
+      (this.legend = h("div", { class: "iv-legend", role: "note", "aria-label": "Colours of the boxes" }))
     );
-    this.legend = h("div", { class: "iv-legend" });
 
     this.teachText = h("div", { class: "iv-teach-text" });
     this.useBtn = h("button", { type: "button", class: "iv-btn primary", disabled: true, onclick: () => this.assign() }, icon("check", 15), "Use these words");
@@ -258,7 +260,7 @@ export class InvoiceViewer {
     this.sheet = h("div", { class: "iv-sheet loading" }, this.img, this.svg, this.tags);
     this.empty = h("p", { class: "iv-empty", hidden: true }, "No page to show.");
     this.stage = h("div", { class: "iv-stage", tabindex: "-1" }, this.sheet, this.empty);
-    this.main = h("section", { class: "iv-main", "aria-label": "Invoice page" }, this.toolbar, this.legend, this.teachBar, this.stage);
+    this.main = h("section", { class: "iv-main", "aria-label": "Invoice page" }, this.toolbar, this.teachBar, this.stage);
     this.tip = h("div", { class: "iv-tip", role: "tooltip", id: "iv-tip", hidden: true });
     replace(this.root, this.panel, this.main);
     document.body.append(this.tip); // on <body>: the card around the viewer would hold a fixed card in
@@ -320,6 +322,14 @@ export class InvoiceViewer {
     }).observe(this.root);
     new ResizeObserver(() => this.layoutTags()).observe(this.sheet);
     window.addEventListener("resize", () => this.applyHeight());
+    if (this.root.closest(".inv-doc")) {  // the review screen: the card rises to its sticky place as the page scrolls
+      let queued = false;
+      window.addEventListener("scroll", () => {
+        if (queued) return;
+        queued = true;
+        requestAnimationFrame(() => { queued = false; this.applyHeight(); });
+      }, { passive: true });
+    }
   }
 
   /* ----- New arguments from Python ----- */
@@ -387,7 +397,18 @@ export class InvoiceViewer {
       return;
     }
     const vh = window.innerHeight;
-    const height = vh ? Math.min(this.maxHeight, Math.max(MIN_FIT_HEIGHT, vh - VIEWPORT_MARGIN)) : this.maxHeight;
+    // On the review screen the Document card sticks 8 px from the top over a bar fixed at the window's foot: the
+    // viewer ends above that bar wherever the card is (it grows as the card rises to its sticky place, B-478), so
+    // the whole page view shows. Elsewhere a fixed margin.
+    const bar = document.querySelector(".inv-actionbar");
+    const card = this.root.closest(".inv-doc");
+    let margin = VIEWPORT_MARGIN;
+    if (bar && card) {
+      const top = this.root.getBoundingClientRect().top;
+      const stuck = 8 + (top - card.getBoundingClientRect().top);
+      margin = bar.offsetHeight + Math.max(top, stuck) + 10;
+    }
+    const height = vh ? Math.min(this.maxHeight, Math.max(MIN_FIT_HEIGHT, vh - margin)) : this.maxHeight;
     this.root.style.height = `${height}px`;
   }
 

@@ -11,7 +11,7 @@ import pytest
 
 from ap_coder.coding import taxreturn
 from ap_coder.coding.tax import check_taxes, gst_check_digit_ok
-from ap_coder.core.memory import ACCEPTED, CORRECTED
+from ap_coder.core.memory import ACCEPTED, CODED, CORRECTED
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import APPROVED, PENDING, Store, load_sample_setup
 from ap_coder.erp import stamp
@@ -106,7 +106,7 @@ def test_filling_in_a_blank_cost_center_confirms_the_ai(tmp_path):
     final["line_items"][0]["predicted_gl_code"] = "6020"  # a real correction
     invoice_id = store.add_invoice(tmp_path / "a.pdf", ai, {})
     counts = store.approve_invoice(invoice_id, final, "Jane")
-    assert counts == {ACCEPTED: 4, CORRECTED: 1}
+    assert counts == {ACCEPTED: 4, CORRECTED: 1, CODED: 0}
     assert store.metrics()["line_accuracy"] == pytest.approx(0.8)
 
 

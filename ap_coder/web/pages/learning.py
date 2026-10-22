@@ -74,7 +74,12 @@ FEED = 4  # recent lessons beside the chart
 VENDORS_SHOWN = 12
 MEMORY_READ = 2000  # lessons the memory list works on (newest first)
 MEMORY_SHOWN = 300
-OUTCOMES = {"accepted": "✓ confirmed", "corrected": "✎ corrected", "history": "⟲ ERP history"}
+OUTCOMES = {
+    "accepted": "✓ confirmed",
+    "corrected": "✎ corrected",
+    "coded": "✎ coded by AP (the AI only guessed)",
+    "history": "⟲ ERP history",
+}
 
 
 # --- Small helpers --------------------------------------------------------------------------------------------------
@@ -228,7 +233,7 @@ def coding_context(store: Store, mem_q: str, settings: Any = None) -> dict[str, 
         lines = w["accepted"] + w["corrected"]
         weekly.append({**w, "lines": lines, "accuracy": w["accepted"] / lines if lines else None})
     good = accuracy >= TARGET_ACCURACY
-    note, compared = accuracy_note(settings, m["lines_reviewed"]) if settings is not None else ("", True)
+    note, compared = accuracy_note(settings, m["lines_measured"]) if settings is not None else ("", True)
     distance = f"{(accuracy - TARGET_ACCURACY) * 100:+.1f} pts vs 90% target"  # early on: a plain note (B-442)
     tiles = [
         ui.tile("Coding accuracy", f"{accuracy:.1%}", "", "green" if good else "violet",

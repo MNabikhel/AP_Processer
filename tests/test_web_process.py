@@ -161,8 +161,10 @@ def test_the_reading_banner_shows_on_process_and_review_only(client):
 
 
 def test_the_import_list_says_ready_only_for_an_invoice_the_queue_calls_ready(store):
-    """With the sample setup (no cost centers picked by the coder) and LM Studio not answering (weak matches coded),
-    a sample whose checks found no error is still one whose lines need a cost center: not "ready"."""
+    """With the sample setup (no cost centers picked by the coder) and LM Studio not answering, a sample whose checks
+    found no error is still one whose lines need a cost center: not "ready". (Weak matches were coded then, so some
+    invoices passed the checks; since B-463 they are left blank, and the import list must still say what the queue
+    says.)"""
     from ap_coder.web.pages.review import attention
 
     s = Settings()
@@ -173,7 +175,7 @@ def test_the_import_list_says_ready_only_for_an_invoice_the_queue_calls_ready(st
     snap = finished(app, client)
     pending = store.list_invoices(REVIEW)
     reasons = attention(store, store.reference_data(), pending)
-    assert any(not i["requires_review"] for i in pending if i["id"] in reasons)  # the case the import list missed
+    assert reasons  # lines to code: the queue flags them
     lines = [line["text"] for line in snap["lines"]]
     for inv in pending:
         said = [t for t in lines if t.startswith(f"{inv['vendor_name']}:")]

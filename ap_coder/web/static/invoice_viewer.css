@@ -194,7 +194,7 @@ details.iv-group > summary:focus-visible { outline: 2px solid var(--brand); outl
 
 .iv-legend {
   display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px;
-  padding: 6px 16px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted);
+  font-size: 12px; color: var(--muted);
 }
 .iv-key { display: inline-flex; align-items: center; gap: 6px; }
 .iv-key b { font-weight: 650; color: var(--ink); font-variant-numeric: tabular-nums; }
@@ -328,7 +328,13 @@ details.iv-group > summary:focus-visible { outline: 2px solid var(--brand); outl
   .iv-toolbar { padding: 8px 10px; gap: 8px 10px; }
   .iv-check { margin-left: 0; }
   .iv-step kbd { display: none; }
-  .iv-legend { padding: 6px 10px; gap: 4px 10px; }
+  .iv-legend { padding: 0; gap: 4px 8px; margin-left: auto; }
+  /* the key in the tools' row: a swatch and its count, the word on hover (and for a screen reader) */
+  .iv-toolbar .iv-key { font-size: 0; gap: 3px; }
+  .iv-toolbar .iv-key b { font-size: 12px; }
+  .iv-toolbar { padding: 6px 10px; gap: 6px 8px; }
+  .iv-seg { padding: 0 8px; }
+  .iv-where { min-width: 64px; }
   .iv-stage { padding: 10px; }
   .iv-teach { padding: 10px; }
 }

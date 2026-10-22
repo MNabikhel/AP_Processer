@@ -124,4 +124,5 @@ def sources_line(items: list[LineReading], checks: list[dict[str, Any]] | None =
     if agreed:
         both = {source_name(s) for li in items for s in [li.source, *li.agreed] if s}
         return f"Line items: {agreed} of {len(items)} read the same by {' and '.join(sorted(both))}."
-    return f"Line items read by one reader only ({', '.join(parts)}): not yet compared with a second reader."
+    # Read by one reader only: nothing the reviewer can act on (the queue says when OvisOCR2 has not read it), B-464.
+    return ""
