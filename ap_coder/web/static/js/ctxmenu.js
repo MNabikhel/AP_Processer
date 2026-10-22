@@ -93,7 +93,8 @@ function build(items, label) {
     const words = document.createElement("span");
     words.className = "cm-label";
     words.textContent = it.label;
-    row.append(icon(it.icon), words);
+    if (it.icon) row.append(icon(it.icon)); // a list of names (a submenu of fields) has none
+    row.append(words);
     if (it.items) {
       row.setAttribute("aria-haspopup", "menu");
       row.setAttribute("aria-expanded", "false");
