@@ -6891,3 +6891,18 @@ reproduced with a script first, then given a failing test and fixed.
   part (ETA s.165): ask for a corrected invoice." Same in the Help entry and the guide.
 - **Test:** `tests/test_line_tax_review3.py::test_hst_not_charged_cites_the_recipients_liability_under_s165_b721`
 - **Lesson:** Cite the section that makes the person liable, and give the fix that removes the problem.
+
+#### B-722 · The Self-assessment report did not say which PST JD Edwards accrues itself · low
+- **Where:** `ap_coder/coding/taxreturn.py` (`self_assessment`, its CSV), `ap_coder/web/templates/sales_tax.html`,
+  `ap_coder/erp/jde.py` (`accrues_use_tax`)
+- **Symptom:** an invoice exported to JD Edwards with the self-assessed code (B), where E1 accrues the PST, was
+  listed in the report like any other: booked from it, the PST was accrued twice. Only the dry run warned (B-716).
+- **Cause:** the report did not look at how the invoice was exported.
+- **Reproduce:** a BC invoice charging GST only, approved and exported in a JD Edwards batch: Month-end →
+  Self-assessment.
+- **Reproduced:** yes (found by the CPA's final check)
+- **Fix:** an invoice in a JD Edwards batch (not undone) whose code is B carries the note "JD Edwards accrues this one
+  (code B): don't book it again from this report" on the page and in the CSV (Note column); the page counts them.
+  The code comes from the same function as the export's.
+- **Test:** `tests/test_line_tax_review3.py::test_the_self_assessment_report_marks_invoices_jd_edwards_accrues_with_code_b_b722`
+- **Lesson:** A warning belongs where the action it prevents is taken, not only where it is caused.

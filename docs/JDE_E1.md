@@ -102,7 +102,8 @@ line's VNEXR1 when the distribution's tax columns are on. The other lines keep t
 **Self-assessed PST** (a PST due and not charged by the vendor) is not in the voucher: book it from AP Coder's
 **Self-assessment** report (Month-end) by journal entry. An invoice whose explanation code already has E1 accrue the
 use tax (B, the self-assessed code) must not be booked again from that report, or the PST is accrued twice: the dry
-run says so on such a voucher.
+run says so on such a voucher, and once exported the Self-assessment report marks it "JD Edwards accrues this one
+(code B): don't book it again from this report".
 
 ### Why the distribution balances (and when it does not)
 

@@ -221,6 +221,21 @@ class SelfAssessment:
     rate: float
     estimate: float
     currency: str
+    note: str = ""  # e.g. JD Edwards accrues it itself (code B): not to book again (B-722)
+
+
+JDE_ACCRUES = "JD Edwards accrues this one (code B): don't book it again from this report"
+
+
+def _jde_accruing(store: Store) -> Any:
+    """A test of a coded invoice: exported to JD Edwards (in a batch not undone) with the self-assessed code (B)."""
+    from ..erp import jde
+
+    batches = {b["id"] for b in store.export_batches() if b.get("format") == jde.FORMAT and not b.get("undone_at")}
+    if not batches:
+        return lambda batch, doc: False
+    settings = jde.load(store)
+    return lambda batch, doc: batch in batches and jde.accrues_use_tax(doc, settings)
 
 
 def self_assessment(
@@ -233,7 +248,8 @@ def self_assessment(
     setup = supply_setup(store, rates)
     first, last = start.isoformat(), end.isoformat()
     out = []
-    for r in store.invoice_columns(("id", "final_output"), APPROVED):
+    accrued = _jde_accruing(store)
+    for r in store.invoice_columns(("id", "final_output", "export_batch"), APPROVED):
         doc = r["final_output"] or {}
         date = str(doc.get("invoice_date") or "")
         if not (first <= date <= last):
@@ -265,6 +281,7 @@ def self_assessment(
                     rate,
                     round(base * rate, 2),
                     str(doc.get("currency") or "CAD").upper(),
+                    JDE_ACCRUES if tax_type == "PST" and accrued(r["export_batch"], doc) else "",
                 )  # fmt: skip
             )
     return sorted(out, key=lambda s: (s.province, s.invoice_date, s.invoice_id))
@@ -296,10 +313,11 @@ def self_assessment_csv(items: list[SelfAssessment], start: dt.date, end: dt.dat
     w = csv.writer(out)
     w.writerow([f"PST / QST possibly to self-assess, invoices dated {start.isoformat()} to {end.isoformat()}"])
     w.writerow(["Province", "Tax", "Rate", "Subtotal", "Estimate", "Currency", "Vendor", "Invoice", "Invoice date",
-                "AP Coder #"])  # fmt: skip
+                "AP Coder #", "Note"])  # fmt: skip
     for s in items:
         w.writerow(csv_row([s.province, s.tax_type, f"{s.rate * 100:g}%", f"{s.base:.2f}", f"{s.estimate:.2f}",
-                            s.currency, s.vendor, s.invoice_number, s.invoice_date, s.invoice_id]))  # fmt: skip
+                            s.currency, s.vendor, s.invoice_number, s.invoice_date, s.invoice_id,
+                            s.note]))  # fmt: skip
     return ("\ufeff" + out.getvalue()).encode("utf-8")
 
 

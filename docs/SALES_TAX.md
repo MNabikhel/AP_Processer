@@ -109,7 +109,8 @@ What the checks say about the codes:
 - Every check says the same of a credit note as of its invoice (a credit reverses it line for line, ETA s.232).
 - The **Self-assessment** report works line by line: the lines a PST or QST is due on and not charged, at the official
   rate. It is booked from the report by journal entry; an invoice exported to JD Edwards with a code that has E1 accrue
-  the use tax (B) must not be booked again from it (the JD Edwards dry run warns).
+  the use tax (B) must not be booked again from it: the dry run warns, and the report marks each such invoice "JD
+  Edwards accrues this one (code B): don't book it again from this report" (also in its CSV, Note column).
 - *The Tax check doesn't add up*: a line is named when its amount is the difference; when another choice of lines
   would make the tax, "pick which lines carry PST"; only when no choice of lines can, "the vendor's tax looks wrong"
   ("tax charged in error can't be claimed" is said of GST, HST and QST only: PST is never claimed). While some lines

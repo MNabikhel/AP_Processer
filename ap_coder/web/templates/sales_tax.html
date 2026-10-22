@@ -90,7 +90,7 @@
       <tbody>
         {% for s in self_items %}
         <tr>
-          <td class="w"><b>{{ s.vendor }}</b><div class="muted">{{ s.invoice_number }}</div></td>
+          <td class="w"><b>{{ s.vendor }}</b><div class="muted">{{ s.invoice_number }}</div>{% if s.note %}<div class="small" data-sa-note>{{ s.note }}</div>{% endif %}</td>
           <td>{{ s.invoice_date }}</td>
           <td>{{ s.tax_type }} {{ s.province }} {{ "%g" | format(s.rate * 100) }}%</td>
           <td class="r">{{ s.base | money }}</td>
@@ -102,7 +102,8 @@
   </div>
   <p class="muted small">These approved invoices are for a supply in a province with PST or QST, and the vendor charged none
     (often an out-of-province vendor). Your company may have to self-assess it on its provincial return. The estimate
-    applies the official rate to the whole subtotal: exempt goods and services owe nothing, so check each one.</p>
+    applies the official rate to the whole subtotal: exempt goods and services owe nothing, so check each one.
+    {% set accrued = self_items | selectattr("note") | list | length %}{% if accrued %}JD Edwards accrues {{ accrued }} of them itself (code B): don't book those again from this report.{% endif %}</p>
   {% endif %}
 </section>
 {% endif %}
