@@ -1,20 +1,24 @@
-"""Which sales tax each invoice line carries: the line's tax code (decision D-64).
+"""Which sales tax each invoice line carries, tax by tax: the line's tax code (decision D-64).
 
-A line's taxes are kept as they always were, ``LineItem.taxes_applied`` (GST, HST, PST, QST, OTHER), so old invoices,
-every reader and every check keep working. A line with no tax also says why, when known: ``LineItem.tax_status`` is
-"exempt", "zero_rated" or "out_of_scope" (only with no taxes). The review screen shows the two as one choice, the
-line's **tax code**:
+For each tax that applies where the invoice is supplied (the place of supply, D-61), a line is in one of three states:
 
-* "GST+PST", "GST", "PST", "HST", "GST+QST", "QST", "OTHER", "GST+OTHER"... the taxes charged on the line;
-* "EXEMPT" (an exempt supply: no tax, no input tax credit), "ZERO" (zero-rated: taxable at 0%), "OUT" (out of scope:
-  not a supply, e.g. a deposit or a government fee);
-* "NONE": no tax charged on the line, and nothing said why (a taxable line the vendor did not tax: PST may have to be
-  self-assessed).
+* **charged**: the vendor charged it on the line (``LineItem.taxes_applied``, as always: old invoices, every reader,
+  check and export keep working);
+* **not due**: the line is exempt or zero-rated from it (``LineItem.tax_exempt``, tax by tax: "GST only · PST
+  exempt"), or the whole line says why it carries no tax (``LineItem.tax_status``: exempt from every tax,
+  zero-rated, out of scope);
+* **due, not charged**: neither: the tax is owed and the vendor did not collect it (an out-of-province or unregistered
+  vendor, or a line it missed): a provincial tax is then self-assessed (BC PSTA s.49, the SK and MB acts alike; QST:
+  the QST Act).
 
-``options`` lists the codes that make sense where the invoice is supplied (the place of supply, D-61); ``prefill``
-works out each line's code when an invoice is read: from the codes printed beside the lines ("G", "GP", "G R", "E",
-"*"), read through the invoice's own legend when it prints one ("Tax codes: G = GST 5%, R = Manitoba RST 7%"), else
-by finding which lines make each tax charged add up (an exact subset sum of the line amounts, in cents).
+An invoice stored before ``tax_exempt`` existed (``None``) is read as the vendor meant it: a tax it charges on other
+lines and not on this one is not due on it (the vendor collects it and chose not to: exempt); a tax it charges on no
+line is due (``fill_exempt``).
+
+The review screen shows a line's states as one choice, the **tax code**: "GST+PST"; "GST~PST" (GST charged, PST
+exempt); "GST" (GST charged; where PST applies, PST due and not charged: self-assess); "PST~GST"; "EXEMPT", "ZERO",
+"OUT"; "NONE" (nothing charged, nothing said). ``options`` lists the codes that make sense where the invoice is
+supplied, in plain words ("GST only · PST exempt"); ``prefill`` works them out when an invoice is read.
 """
 
 from __future__ import annotations
@@ -25,7 +29,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from .tax import CANADIAN_TAX_TYPES, REGIME, TAX_TYPES
+from .tax import CANADIAN_TAX_TYPES, LAWFUL_OTHER_RATES, REGIME, TAX_TYPES
 
 EXEMPT, ZERO_RATED, OUT_OF_SCOPE = "exempt", "zero_rated", "out_of_scope"
 TAX_STATUSES = ("", EXEMPT, ZERO_RATED, OUT_OF_SCOPE)
@@ -35,15 +39,19 @@ CODE_STATUSES = {code: status for status, code in STATUS_CODES.items()}
 NO_TAX_CODES = (CODE_EXEMPT, CODE_ZERO, CODE_OUT, CODE_NONE)
 # Lines that carry no tax because they say so (exempt, zero-rated, out of scope): never in a self-assessment base.
 STATED = frozenset(STATUS_CODES)
+CHARGED, NOT_DUE, DUE = "charged", "not_due", "due"  # a tax's state on a line
+PROVINCIAL = ("PST", "QST")  # taxes the buyer self-assesses when the vendor does not collect them
+EXEMPT_MARK = "~"  # in a code: the taxes charged, then those the line is exempt from ("GST~PST")
 
-# A line's code worked out from the tax charged when several sets of lines would make it add up: marked on the review
-# screen for a person to look at (``tax_guessed``), like an account no approval backs (B-463).
+# A line's code worked out from the tax charged when another set of lines could make it add up, or a line left out
+# that does not read as untaxed: marked on the review screen for a person to look at (``tax_guessed``) until they
+# pick or confirm the code (B-713).
 GUESS_NOTE = "Tax code worked out from the tax charged: check it."
 
 PST_NAMES = {"MB": "RST"}  # Manitoba calls its PST the retail sales tax
 
 
-# --- The code of a line ---------------------------------------------------------------------------------------------
+# --- The states of a line -------------------------------------------------------------------------------------------
 
 
 def _get(line: Any, name: str, default: Any = None) -> Any:
@@ -56,43 +64,104 @@ def ordered(taxes: Iterable[str]) -> list[str]:
     return [t for t in TAX_TYPES if t in got]
 
 
-def code_for(taxes: Iterable[str], status: str = "") -> str:
-    """The tax code of (taxes, status): "GST+PST", "HST", "EXEMPT", "ZERO", "OUT" or "NONE"."""
+def legacy_basis(lines: Iterable[Any], tax_lines: Iterable[Any]) -> list[str]:
+    """The taxes a line stored before ``tax_exempt`` is read against: those the invoice charges and that some line is
+    marked with (the vendor collects them on those lines)."""
+    marked = {t for li in lines for t in (_get(li, "taxes_applied") or [])}
+    return [t for t in charged_types(tax_lines) if t in marked]
+
+
+def legacy_exempt(line: Any, charged: Iterable[str]) -> list[str]:
+    """The taxes a line stored before ``tax_exempt`` is not due: of ``charged`` (``legacy_basis``: charged by the
+    invoice on other lines), the Canadian ones not on it (the vendor collects them and chose not to here). [] when
+    the line says why it carries no tax."""
+    taxes = set(ordered(_get(line, "taxes_applied") or []))
+    if _get(line, "tax_status"):
+        return []
+    return [t for t in ordered(charged) if t in CANADIAN_TAX_TYPES and t not in taxes]
+
+
+def exempt_of(line: Any, charged: Iterable[str] = ()) -> list[str]:
+    """The taxes a line is exempt or zero-rated from, tax by tax (``tax_exempt``; a line stored before it: read as
+    ``legacy_exempt``)."""
+    stored = _get(line, "tax_exempt")
+    if stored is None:
+        return legacy_exempt(line, charged)
+    return [t for t in ordered(stored) if t not in ordered(_get(line, "taxes_applied") or [])]
+
+
+def tax_state(line: Any, tax_type: str, charged: Iterable[str] = ()) -> str:
+    """CHARGED, NOT_DUE or DUE: a tax on a line (``charged``: the taxes the invoice charges, for a line stored before
+    ``tax_exempt``)."""
+    if tax_type in (_get(line, "taxes_applied") or []):
+        return CHARGED
+    if _get(line, "tax_status") in STATUS_CODES:
+        return NOT_DUE
+    return NOT_DUE if tax_type in exempt_of(line, charged) else DUE
+
+
+def fill_exempt(lines: Sequence[Any], tax_lines: Iterable[Any]) -> list[Any]:
+    """``lines`` with ``tax_exempt`` set where it is not (an invoice stored before it): ``legacy_exempt``."""
+    charged = legacy_basis(lines, tax_lines)
+    out = []
+    for li in lines:
+        if _get(li, "tax_exempt") is None:
+            update: dict[str, Any] = {"tax_exempt": legacy_exempt(li, charged)}
+            if update["tax_exempt"] and not (_get(li, "taxes_applied") or []):
+                update = {"tax_exempt": [], "tax_status": EXEMPT}  # nothing charged on it, all charged elsewhere
+            li = {**li, **update} if isinstance(li, dict) else li.model_copy(update=update)
+        out.append(li)
+    return out
+
+
+# --- The code of a line ---------------------------------------------------------------------------------------------
+
+
+def code_for(taxes: Iterable[str], status: str = "", exempt: Iterable[str] = ()) -> str:
+    """The tax code of (taxes, status, exempt): "GST+PST", "GST~PST", "HST", "EXEMPT", "ZERO", "OUT" or "NONE"."""
     types = ordered(taxes)
-    if types:
-        return "+".join(types)
-    return STATUS_CODES.get(str(status or "").strip().lower(), CODE_NONE)
+    status = str(status or "").strip().lower()
+    if not types and status in STATUS_CODES:
+        return STATUS_CODES[status]
+    free = [t for t in ordered(exempt) if t not in types]
+    main = "+".join(types) or CODE_NONE
+    return f"{main}{EXEMPT_MARK}{'+'.join(free)}" if free else main
 
 
-def tax_code_of(line: Any) -> str:
-    """A line's tax code (a ``LineItem`` or a line as a dict)."""
-    return code_for(_get(line, "taxes_applied") or [], _get(line, "tax_status") or "")
+def tax_code_of(line: Any, charged: Iterable[str] = ()) -> str:
+    """A line's tax code (a ``LineItem`` or a line as a dict; ``charged`` for a line stored before ``tax_exempt``)."""
+    return code_for(_get(line, "taxes_applied") or [], _get(line, "tax_status") or "", exempt_of(line, charged))
 
 
-def parse_code(code: str) -> tuple[list[str], str] | None:
-    """(taxes_applied, tax_status) of a tax code; None when it is not one ("GST+FOO", "")."""
+def parse_code(code: str) -> tuple[list[str], list[str], str] | None:
+    """(taxes_applied, tax_exempt, tax_status) of a tax code; None when it is not one ("GST+FOO", "")."""
     text = str(code or "").strip().upper().replace(" ", "")
     if text in CODE_STATUSES:
-        return [], CODE_STATUSES[text]
-    if text == CODE_NONE:
-        return [], ""
-    parts = [p for p in re.split(r"[+/,]", text) if p]
-    if not parts or any(p not in TAX_TYPES for p in parts):
+        return [], [], CODE_STATUSES[text]
+    main, _, free = text.partition(EXEMPT_MARK)
+
+    def types(part: str) -> list[str] | None:
+        parts = [p for p in re.split(r"[+/,]", part) if p]
+        return ordered(parts) if all(p in TAX_TYPES for p in parts) else None
+
+    charged = [] if main == CODE_NONE else types(main)
+    exempt = types(free) if free else []
+    if charged is None or exempt is None or (not main):
         return None
-    return ordered(parts), ""
+    return charged, [t for t in exempt if t not in charged], ""
 
 
 def apply_tax_code(line: Any, code: str) -> Any:
-    """``line`` with the taxes and status of ``code`` (a dict is changed in place, a ``LineItem`` copied). An unknown
-    code changes nothing."""
+    """``line`` with the taxes, exemptions and status of ``code`` (a dict is changed in place, a ``LineItem``
+    copied). An unknown code changes nothing."""
     parsed = parse_code(code)
     if parsed is None:
         return line
-    taxes, status = parsed
+    taxes, exempt, status = parsed
     if isinstance(line, dict):
-        line["taxes_applied"], line["tax_status"] = taxes, status
+        line.update(taxes_applied=taxes, tax_exempt=exempt, tax_status=status)
         return line
-    return line.model_copy(update={"taxes_applied": taxes, "tax_status": status})
+    return line.model_copy(update={"taxes_applied": taxes, "tax_exempt": exempt, "tax_status": status})
 
 
 def types_of(code: str) -> list[str]:
@@ -112,58 +181,72 @@ def tax_name(tax_type: str, province: str = "") -> str:
     return tax_type
 
 
+def _regime(province: str) -> list[str]:
+    return ordered(REGIME.get(province, frozenset()))
+
+
 def code_label(code: str, province: str = "") -> str:
-    """ "GST + RST", "GST only", "HST", "Exempt", "No tax charged"... for the line's dropdown."""
-    fixed = {CODE_EXEMPT: "Exempt", CODE_ZERO: "Zero-rated", CODE_OUT: "No tax (out of scope)",
-             CODE_NONE: "No tax charged"}  # fmt: skip
-    if code in fixed:
-        return fixed[code]
-    types = types_of(code)
-    if not types:
+    """The plain words of a code where the invoice is supplied: "GST + PST", "GST only · PST exempt", "GST only · PST
+    not charged (self-assess)", "PST only · GST exempt", "Exempt from both", "Zero-rated", "No tax (out of scope)"."""
+    regime = _regime(province)
+    if code == CODE_EXEMPT:
+        return "Exempt from both" if len(regime) == 2 else "Exempt"
+    if code == CODE_ZERO:
+        return "Zero-rated"
+    if code == CODE_OUT:
+        return "No tax (out of scope)"
+    parsed = parse_code(code)
+    if parsed is None:
         return code
-    names = [tax_name(t, province) for t in types]
-    if len(names) == 1:
-        # "GST only" where it is one of the province's two taxes, so it reads as a choice; "HST", "GST" alone where
-        # it is the province's only tax, and a tax the province does not use ("Foreign tax") by its name.
-        usual = REGIME.get(province, frozenset())
-        choice = (types[0] in usual and len(usual) > 1) or (types[0] == "GST" and usual == {"HST"})
-        return f"{names[0]} only" if choice else names[0]
-    return " + ".join(names)
+    charged, exempt, _ = parsed
+    names = [tax_name(t, province) for t in charged]
+    due = [t for t in regime if t in PROVINCIAL and t not in charged and t not in exempt and "HST" not in charged]
+    if charged:
+        main = " + ".join(names)
+        # "GST only" where it is one of the province's two taxes (or GST where HST applies), so it reads as a choice
+        partial = (len(regime) > 1 and set(charged) < set(regime)) or (charged == ["GST"] and regime == ["HST"])
+        main += " only" if partial and len(charged) == 1 else ""
+    else:
+        main = "No tax charged"
+    parts = [f"{tax_name(t, province)} exempt" for t in exempt]
+    parts += [f"{tax_name(t, province)} not charged (self-assess)" for t in due]
+    if not charged and not exempt and due:
+        return f"No tax charged (self-assess {' and '.join(tax_name(t, province) for t in due)})"
+    return " · ".join([main, *parts])
 
 
 def options(province: str, charged: Iterable[str] = (), current: Iterable[str] = ()) -> list[tuple[str, str]]:
     """The (code, label) choices of a line's dropdown for an invoice supplied in ``province``, in order.
 
-    * HST provinces: HST; BC, SK, MB: GST + PST (RST in Manitoba), GST only, PST only; Quebec: GST + QST, GST only,
-      QST only; Alberta and the territories: GST.
-    * GST only too when GST is charged in an HST province: a vendor that is not registered for the HST of the
-      province (or that wrongly charges GST) prints GST alone, and the line must be able to say what was charged.
-      The tax check then flags the regime (TAX_REGIME_MISMATCH).
-    * Any tax charged that the province does not use (HST charged in BC) as a choice of its own, so the line can
-      carry what the invoice charges; "Foreign tax" (and GST + foreign tax) when a non-Canadian tax is charged.
-    * Always: Exempt, Zero-rated, No tax (out of scope), No tax charged.
-    * ``current``: each line's own code, kept even when it is unusual for the province.
-    Unknown province: every Canadian combination (the place of supply decides, and it is not known)."""
+    * HST provinces: HST, Exempt, Zero-rated, No tax (out of scope); GST only too when GST is charged there (a
+      vendor not registered for the HST charges GST alone: the line says what was charged, and ITC_AT_RISK says only
+      the tax properly payable is claimable).
+    * BC, SK, MB: GST + PST, GST only · PST exempt, GST only · PST not charged (self-assess), PST only · GST exempt,
+      Exempt from both, Zero-rated, No tax (out of scope); RST in Manitoba. Quebec: the same with QST (QST mostly
+      follows the GST's exemptions).
+    * Alberta and the territories: GST, Exempt, Zero-rated, No tax (out of scope).
+    * Any tax charged that the province does not use (HST charged in BC), "Foreign tax" (and GST + foreign tax) when a
+      non-Canadian tax is charged, and each line's own code (``current``), whatever it is.
+    Unknown province: the Canadian combinations."""
     charged = set(ordered(charged))
     usual = REGIME.get(province)
     codes: list[str] = []
 
-    def add(*types: str) -> None:
-        code = "+".join(ordered(types))
+    def add(code: str) -> None:
         if code and code not in codes:
             codes.append(code)
 
     if usual is None:
-        for combo in (("HST",), ("GST", "PST"), ("GST", "QST"), ("GST",), ("PST",), ("QST",)):
-            add(*combo)
+        for code in ("HST", "GST+PST", "GST+QST", "GST"):
+            add(code)
     elif usual == {"HST"}:
         add("HST")
         if "GST" in charged:
             add("GST")
-    elif "PST" in usual:
-        add("GST", "PST"), add("GST"), add("PST")
-    elif "QST" in usual:
-        add("GST", "QST"), add("GST"), add("QST")
+    elif len(usual) == 2:
+        prov = "PST" if "PST" in usual else "QST"
+        for code in (f"GST+{prov}", f"GST~{prov}", "GST", f"{prov}~GST"):
+            add(code)
     else:
         add("GST")
     for t in ordered(charged - set(usual or ()) - {"OTHER"}):
@@ -171,33 +254,35 @@ def options(province: str, charged: Iterable[str] = (), current: Iterable[str] =
     if "OTHER" in charged:
         add("OTHER")
         if charged & {"GST", "HST"}:
-            add(*(charged & {"GST", "HST"}), "OTHER")
-    codes += [CODE_EXEMPT, CODE_ZERO, CODE_OUT, CODE_NONE]
+            add("+".join(ordered([*(charged & {"GST", "HST"}), "OTHER"])))
+    for code in (CODE_EXEMPT, CODE_ZERO, CODE_OUT):
+        add(code)
     for code in current:
-        code = code_for(*parse_code(code)) if parse_code(code) else ""
-        if code and code not in codes:
-            codes.append(code)
+        parsed = parse_code(code)
+        add(code_for(parsed[0], parsed[2], parsed[1]) if parsed else "")
     return [(c, code_label(c, province)) for c in codes]
 
 
-EXPORT_WORDS = {CODE_EXEMPT: "Exempt", CODE_ZERO: "Zero-rated", CODE_OUT: "Out of scope", CODE_NONE: "No tax"}
-
-
-def export_code(line: Any) -> str:
-    """A line's tax code as an export file says it: "GST+PST", "HST", "Exempt", "Zero-rated", "Out of scope",
-    "No tax"."""
-    code = tax_code_of(line)
-    return EXPORT_WORDS.get(code, code)
+def export_code(line: Any, province: str = "", charged: Iterable[str] = ()) -> str:
+    """A line's tax code as an export file says it, in the words of the screen: "GST + PST", "GST only · PST exempt",
+    "Exempt", "Zero-rated"."""
+    return code_label(tax_code_of(line, charged), province)
 
 
 def all_labels(province: str = "") -> dict[str, str]:
-    """A label for every code there is (every combination of taxes and the no-tax codes), for a line's own unusual
-    code the dropdown keeps."""
+    """A label for every code there is (every combination of taxes charged, of the Canadian taxes exempt, and the
+    no-tax codes), for a line's own unusual code the dropdown keeps."""
     out = {}
-    for n in range(1, len(TAX_TYPES) + 1):
-        for combo in itertools.combinations(TAX_TYPES, n):
-            code = "+".join(combo)
-            out[code] = code_label(code, province)
+    mains = [""] + ["+".join(c) for n in range(1, len(TAX_TYPES) + 1) for c in itertools.combinations(TAX_TYPES, n)]
+    for main in mains:
+        for n in range(0, 3):
+            for free in itertools.combinations(CANADIAN_TAX_TYPES, n):
+                if set(free) & set(main.split("+")):
+                    continue
+                parsed = parse_code(f"{main or CODE_NONE}{EXEMPT_MARK + '+'.join(free) if free else ''}")
+                if parsed is not None:
+                    code = code_for(parsed[0], parsed[2], parsed[1])
+                    out[code] = code_label(code, province)
     for code in NO_TAX_CODES:
         out[code] = code_label(code, province)
     return out
@@ -324,11 +409,18 @@ def read_flags(cell: str, legend: dict[str, Meaning] | None, charged: Iterable[s
 # --- Which lines make the tax charged add up -----------------------------------------------------------------------
 
 MAX_SOLVER_LINES = 40
-MAX_SOLUTIONS = 2000  # beyond this many ways, the most plausible is looked for among the fewest lines left out
-# A line one expects to be left out of a tax: freight, delivery, a deposit, something said to be exempt.
+# More ways than this for the lines to make a tax, or several ways among more than ``MAX_DOUBTFUL_LINES`` lines: the
+# amounts can't say which lines carry it, and a pick would be noise presented as a reading (B-706).
+MAX_WAYS = 20
+MAX_DOUBTFUL_LINES = 20
+# A line one expects to carry no tax: a deposit, a gift card, a tip, interest or a late payment charge (not
+# consideration for a supply: ETA s.161), or one the invoice says is exempt or zero-rated. Not freight, delivery,
+# shipping or an environmental fee: charged by the vendor they follow the goods for GST/HST (one supply, CRA
+# P-077R2), are part of the taxable price for BC, SK and MB PST, and an eco fee is part of the consideration (B-711).
 LIKELY_UNTAXED = re.compile(
-    r"(?i)\b(?:freight|delivery|deliveries|shipping|shipment|cartage|courier|postage|deposit|exempt|"
-    r"livraison|transport|port|d[ée]p[ôo]t|consign|bottle|recycl|eco[- ]?fee|environmental)\w*"
+    r"(?i)\b(?:deposits?|d[ée]p[ôo]ts?|gift\s*cards?|cartes?[- ]cadeaux?|tips?|gratuit(?:y|ies)|pourboires?|"
+    r"interest|int[ée]r[êe]ts?|late\s+(?:payment\s+)?(?:fees?|charges?)|frais\s+de\s+retard|exempt\w*|"
+    r"zero[- ]?rated|non[- ]?taxable|tax[- ]?exempt|bottle\s+deposit|container\s+deposit)\b"
 )
 
 
@@ -350,8 +442,10 @@ class Solution:
 
 @dataclass
 class Solved:
-    """What the solver found for one tax: ``kind`` "all" (every line), "unique", "several" or "none"; ``lines`` the
-    positions it assigns; ``doubt`` the positions in some of the ways and not in others (when several)."""
+    """What the solver found for one tax: ``kind`` "all" (every line), "unique", "several", "none" (no set of lines
+    makes it: every line, the check says it does not add up) or "unsure" (too many ways: every line, nothing picked);
+    ``lines`` the positions it assigns; ``doubt`` the positions to check: in some of the ways and not in others, or
+    left out while their description does not read as untaxed."""
 
     kind: str
     lines: frozenset[int]
@@ -371,9 +465,7 @@ def _sums(values: Sequence[int]) -> tuple[Any, Any]:
     return sums, masks
 
 
-def subset_solutions(
-    amounts: Sequence[int], target: int, tol: int, cap: int = MAX_SOLUTIONS
-) -> tuple[list[Solution], int]:
+def subset_solutions(amounts: Sequence[int], target: int, tol: int, cap: int = 2000) -> tuple[list[Solution], int]:
     """(up to ``cap`` subsets of ``amounts`` (cents) whose sum is within ``tol`` of ``target``, how many there are in
     all), by meeting in the middle: the sums of each half, sorted, matched. Exact: every subset is counted. Negative
     amounts (a discount, a credit line) are lines like any other."""
@@ -401,42 +493,58 @@ def subset_solutions(
 
 
 def _plausibility(solution: Solution, n: int, descriptions: Sequence[str]) -> tuple[int, int, int]:
-    """Lower is likelier: lines left out that don't read as freight, delivery, a deposit or exempt; then the fewest
-    lines left out; then the closest to the target."""
+    """Lower is likelier: lines left out that don't read as untaxed (``LIKELY_UNTAXED``); then the fewest lines left
+    out; then the closest to the target."""
     out = [k for k in range(n) if k not in solution.lines]
     unlikely = sum(1 for k in out if not LIKELY_UNTAXED.search(descriptions[k] or ""))
     return unlikely, len(out), solution.off
 
 
 def solve(amounts: Sequence[float], target: float, rate: float, descriptions: Sequence[str] | None = None) -> Solved:
-    """Which lines (by position) a tax whose base is ``target`` was charged on: every line when they add up to it;
-    else the one set of lines that does (an exact subset sum in cents, within ``tolerance_cents``); of several, the
-    likeliest (``_plausibility``), its doubtful lines in ``doubt``; none: every line (the check then says the tax
-    does not add up). More than ``MAX_SOLVER_LINES`` lines: every line, not solved."""
+    """Which lines (by position) a tax whose base is ``target`` was charged on.
+
+    * Every line when they add up to it.
+    * A credit note (its lines add up to less than nothing) is solved in the size of its amounts: it reverses an
+      invoice line for line (ETA s.232).
+    * A line below zero (a trade discount, a credit) is never left out on its own: it lowers the taxable price of
+      what it discounts (ETA s.165; only an early-payment discount is not, s.161), so it carries the tax with the
+      others (B-707).
+    * Else the sets of lines that do (an exact subset sum in cents, within ``tolerance_cents``, counted exactly by
+      meeting in the middle, without listing them all): one set, its lines left out to check unless they read as
+      untaxed (``LIKELY_UNTAXED``); a few (``MAX_WAYS`` among at most ``MAX_DOUBTFUL_LINES`` lines), the likeliest,
+      the lines in some and not others to check; more: "unsure", every line, nothing picked (B-706); none: every line.
+    More than ``MAX_SOLVER_LINES`` lines: every line, not solved."""
     n = len(amounts)
     descriptions = list(descriptions or [""] * n)
     everything = frozenset(range(n))
-    cents = [round(a * 100) for a in amounts]
-    goal = round(target * 100)
+    sign = -1 if sum(amounts) < 0 else 1
+    cents = [sign * round(a * 100) for a in amounts]
+    goal = sign * round(target * 100)
     tol = tolerance_cents(n, rate)
     if abs(sum(cents) - goal) <= tol:
         return Solved("all", everything, count=1)
     if abs(goal) <= tol:  # nothing left to carry it (the lines printed with it carry it all): none of these
         return Solved("unique", frozenset(), count=1)
-    # Lines of no amount change no sum: left out of the search, and carry the tax with the lines (taxable as usual).
-    live = [k for k in range(n) if cents[k] != 0]
+    # Lines of no amount change no sum, and lines below zero always go with the others: both are left out of the
+    # search and carry the tax.
+    forced = frozenset(k for k in range(n) if cents[k] <= 0)
+    live = [k for k in range(n) if cents[k] > 0]
+    goal -= sum(cents[k] for k in forced)
     if not live or len(live) > MAX_SOLVER_LINES:
         return Solved("none", everything)
-    found, total = subset_solutions([cents[k] for k in live], goal, tol)
-    zeros = frozenset(k for k in range(n) if cents[k] == 0)
-    ways = [Solution(frozenset(live[k] for k in s.lines) | zeros, s.off) for s in found if s.lines]
+    found, total = subset_solutions([cents[k] for k in live], goal, tol, cap=MAX_WAYS + 1)
+    ways = [Solution(frozenset(live[k] for k in s.lines) | forced, s.off) for s in found if s.lines]
+    total -= sum(1 for s in found if not s.lines)
     if not ways:
         return Solved("none", everything)
+    if total > MAX_WAYS or (total > 1 and len(live) > MAX_DOUBTFUL_LINES):
+        return Solved("unsure", everything, count=total)
     ways.sort(key=lambda s: _plausibility(s, n, descriptions))
     best = ways[0]
+    left_out = frozenset(k for k in everything - best.lines if not LIKELY_UNTAXED.search(descriptions[k] or ""))
     if total == 1:
-        return Solved("unique", best.lines, count=1)
-    doubt = frozenset(k for s in ways[1:] for k in best.lines ^ s.lines)
+        return Solved("unique", best.lines, left_out, count=1)
+    doubt = frozenset(k for s in ways[1:] for k in best.lines ^ s.lines) | left_out
     return Solved("several", best.lines, doubt, total)
 
 
@@ -520,9 +628,11 @@ def prefill(
         province = str(_get(taxes[0], "province") or "")
         rate = None
         one_rate = len({round(float(_get(t, "rate") or 0), 6) for t in taxes}) == 1
-        if rate_for is not None and tax_type != "OTHER" and one_rate:
+        printed_rate = round(float(_get(taxes[0], "rate") or 0), 6)
+        lawful = printed_rate in LAWFUL_OTHER_RATES.get((tax_type, province), ())  # BC PST 10% on liquor
+        if rate_for is not None and tax_type != "OTHER" and one_rate and not lawful:
             rate = rate_for(tax_type, province)
-        rate = rate or float(_get(taxes[0], "rate") or 0)
+        rate = rate or printed_rate
         base = sum(_tax_base(t, rate if len(taxes) == 1 else float(_get(t, "rate") or 0)) for t in taxes)
         if not rate and tax:
             base = sum(float(_get(t, "taxable_amount") or 0) for t in taxes)
@@ -533,18 +643,35 @@ def prefill(
         solved = solve([amounts[k] for k in free], target, rate or 0.05, [descriptions[k] for k in free])
         for j in solved.lines:
             assigned[free[j]].add(tax_type)
-        if solved.kind == "several":
-            check |= {free[j] for j in solved.doubt}
+        check |= {free[j] for j in solved.doubt}
+        # A taxable amount printed that says otherwise (the subtotal, while the tax is on less): the lines left out
+        # are what the vendor's figures disagree on, to check (B-707).
+        printed_taxable = sum(float(_get(t, "taxable_amount") or 0) for t in taxes)
+        if printed_taxable and abs(printed_taxable - base) > tolerance_cents(len(free), rate or 0.05) / 100:
+            check |= {free[j] for j in range(len(free)) if j not in solved.lines}
         solved_any = solved_any or solved.kind in ("unique", "several")
     for k in free:
         codes[k] = (ordered(assigned[k]), "")
         how[k] = ("solver" if solved_any else "all") if charged else "none"
+    canadian = [t for t in charged if t in CANADIAN_TAX_TYPES]
     for k in range(n):
         taxes, status = codes[k] or ([], "")
-        if isinstance(items[k], dict):
-            items[k]["taxes_applied"], items[k]["tax_status"] = taxes, status
+        if k in keep:
+            exempt = exempt_of(items[k], charged)
+        elif status:
+            exempt = []
         else:
-            items[k] = items[k].model_copy(update={"taxes_applied": taxes, "tax_status": status})
+            # A tax the vendor charges on other lines and not on this one is not due on it (it collects it and chose
+            # not to: exempt); a tax charged on no line stays due (D-64). Nothing charged on a line while the vendor
+            # charges tax on others: an exempt line.
+            exempt = [t for t in canadian if t not in taxes]
+            if not taxes and canadian:
+                status, exempt = EXEMPT, []
+        update = {"taxes_applied": taxes, "tax_status": status, "tax_exempt": exempt}
+        if isinstance(items[k], dict):
+            items[k].update(update)
+        else:
+            items[k] = items[k].model_copy(update=update)
         if k in check:
             reason = str(_get(items[k], "reasoning_justification") or "")
             note = f"{reason} {GUESS_NOTE}".strip() if GUESS_NOTE not in reason else reason
@@ -559,6 +686,20 @@ def model_gave_no_taxes(lines: Sequence[Any]) -> bool:
     """Whether a coding says nothing of its lines' taxes (no line has a tax or a status): the chat model left them
     out, and they are worked out (``prefill``)."""
     return all(not (_get(li, "taxes_applied") or []) and not (_get(li, "tax_status") or "") for li in lines)
+
+
+def without_guess_note(text: str) -> str:
+    """A line's reasoning without the "check it" note (``GUESS_NOTE``): the person confirmed the code."""
+    return " ".join(str(text or "").replace(GUESS_NOTE, " ").split())
+
+
+def confirm_codes(output: dict[str, Any]) -> dict[str, Any]:
+    """An approved coding (``finalise_coding``'s output): approving confirms every line's tax code, so no line keeps
+    the note that it was to check (B-713)."""
+    for li in output.get("line_items") or []:
+        if GUESS_NOTE in str(li.get("reasoning_justification") or ""):
+            li["reasoning_justification"] = without_guess_note(li["reasoning_justification"])
+    return output
 
 
 def tax_guessed(line: Any) -> bool:

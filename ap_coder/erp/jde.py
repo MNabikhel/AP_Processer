@@ -45,6 +45,7 @@ from dataclasses import asdict, dataclass, field
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
+from ..coding.line_tax import exempt_of, legacy_basis
 from ..coding.tax import CANADIAN_TAX_TYPES, OUTSIDE_CANADA, PLACE_OF_SUPPLY, PROVINCES, ZERO_DECIMAL_CURRENCIES
 from ..coding.vendors import norm_invoice_number
 from ..core.headers import header_key
@@ -626,7 +627,11 @@ def voucher_rows(
     # Each distribution line's own explanation code (D-64): a line marked exempt or zero-rated, on an invoice whose
     # code handles tax, is the exempt code when nothing of the tax is put on it; the others keep the invoice's.
     items = final.get("line_items") or []
-    stated = [li is not None and not (li.get("taxes_applied") or []) and li.get("tax_status") in EXEMPT_STATUSES
+    kinds = sorted({t["tax_type"] for t in v.charged})
+    basis = legacy_basis(items, final.get("tax_lines") or [])
+    stated = [li is not None and not (li.get("taxes_applied") or [])
+              and (li.get("tax_status") in EXEMPT_STATUSES
+                   or (bool(kinds) and not li.get("tax_status") and set(kinds) <= set(exempt_of(li, basis))))
               for li in _entry_lines(v.entries, items)]  # fmt: skip
     line_codes = [exempt if no_tax and v.tax_code not in ("", exempt) else v.tax_code for no_tax in stated]
     if v.po_matched:

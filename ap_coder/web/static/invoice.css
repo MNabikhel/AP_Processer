@@ -333,6 +333,8 @@ button.inv-pick .ms {font-size: 14px;}
 .inv-taxcheck .tc-check {display: inline-block; padding: 0 6px; border-radius: 999px; font-size: 11px; font-weight: 600;
   line-height: 18px; color: #92400e; background: #fef3c7; border: 1px solid #fcd34d;}
 .inv-taxcheck .tc-diff {color: #92400e;}
+.inv-taxcheck .tc-self-pill {display: inline-block; padding: 0 6px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  line-height: 18px; color: #1e3a8a; background: #dbeafe; border: 1px solid #93c5fd;}
 .inv-taxcheck .tc-named {font-size: 11.5px; color: var(--lg-warning); white-space: normal;}
 .inv-taxcheck tr.tc-why td {padding-top: 0; font-size: 12px; color: #92400e; white-space: normal;}
 .inv-taxcheck tr.tc-why .ms {font-size: 15px; vertical-align: -3px;}

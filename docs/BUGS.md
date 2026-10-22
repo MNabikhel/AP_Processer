@@ -6652,3 +6652,137 @@ reproduced with a script first, then given a failing test and fixed.
   invoice's legend, else the lines that make each tax add up (D-64). 41 of 41 demo lines right, all ten add up.
 - **Test:** `tests/test_line_tax_capture.py::test_offline_reading_codes_each_line_with_the_taxes_it_carries_b702`
 - **Lesson:** A default that is right on most invoices is still a guess: when the amounts can say, ask them.
+
+#### B-703 · The Tax check blamed a line's tax code for the vendor's wrong tax · medium
+- **Where:** `ap_coder/coding/taxmath.py` (`math_check`), `ap_coder/coding/tax.py` (`TAX_CALC_MISMATCH`)
+- **Symptom:** one line of 1,000.00 with HST 140.00 charged: "Line 1 may carry HST too", and the line drawn yellow.
+- **Cause:** with no line whose amount is the difference, every line marked was taken as the suspect.
+- **Reproduce:** `cpareview/scripts/one.py`.
+- **Reproduced:** yes (found by the CPA review)
+- **Fix:** a line is named only when exactly one line's amount explains the difference. Otherwise: "The HST charged
+  (140.00) isn't 13% of the lines marked HST (1,000.00 → 130.00): the vendor's tax looks wrong, ask for a corrected
+  invoice" (tax charged in error is not claimable, ETA s.165/s.169); no line is marked.
+- **Test:** `tests/test_line_tax_review.py::test_a_vendors_wrong_tax_is_said_as_such_not_blamed_on_a_line_b703`
+- **Lesson:** Point at a line only when the numbers point at it.
+
+#### B-704 · On a credit note the wrong line was named and an exempt line taxed went unsaid · medium-low
+- **Where:** `ap_coder/coding/tax.py` (`check_taxes`), `ap_coder/coding/taxmath.py`, `ap_coder/coding/line_tax.py`
+- **Symptom:** a credit of -1,000.00 (HST) and -200.00 (exempt) with HST -156.00: line 1 named, "200.00 more on the
+  lines", no EXEMPT_LINE_TAXED.
+- **Cause:** the difference's sign was never turned for negative amounts.
+- **Reproduce:** `cpareview/scripts/cn.py`.
+- **Reproduced:** yes (found by the CPA review)
+- **Fix:** a credit note is worked in the size of its amounts (it reverses an invoice line for line, ETA s.232):
+  every finding and the solver say the same of a credit note as of its invoice.
+- **Test:** `tests/test_line_tax_review.py::test_every_line_finding_is_the_same_on_a_credit_note_b704`
+- **Lesson:** Test every check on the invoice and on its credit note.
+
+#### B-705 · The general rate overrode a lawful other one (BC PST 10% on liquor) · medium
+- **Where:** `ap_coder/coding/taxmath.py`, `ap_coder/coding/tax.py` (`LAWFUL_OTHER_RATES`), `line_tax.prefill`
+- **Symptom:** a BC catering invoice, PST 7% on the food and 10% on the wine: the Tax check said PST 9.00 off and
+  the rate check called 10% non-standard; a liquor-only invoice at 10% likewise.
+- **Cause:** the official rate was used before the printed one, and a tax at two rates was skipped.
+- **Reproduce:** `cpareview/scripts/adv.py` (case 4).
+- **Reproduced:** yes (found by the CPA review; a regression of D-64)
+- **Fix:** the Tax check works the rate printed (each tax line at its own rate when a tax is printed at two), its
+  base against the lines marked; whether the rate is the official one is the rate check's alone, which knows BC PST
+  10% on liquor. NS 15% before 2025-04-01 was already in the rate table.
+- **Test:** `tests/test_line_tax_review.py::test_bc_pst_on_liquor_at_10_percent_adds_up_b705`
+- **Lesson:** A check compares with what is printed; whether what is printed is lawful is another check.
+
+#### B-706 · With millions of ways for the lines to add up, a pick was shown as a reading · medium
+- **Where:** `ap_coder/coding/line_tax.py` (`solve`)
+- **Symptom:** 40 lines, 245 million sets of lines within the tolerance: the solver stopped at 2,000, picked one,
+  and lines 11 to 19 were left untaxed without a mark.
+- **Cause:** the doubtful lines were worked out from the first 2,000 ways only.
+- **Reproduce:** `cpareview/scripts/solver.py`.
+- **Reproduced:** yes (found by the CPA review)
+- **Fix:** the ways are counted exactly (meeting in the middle, without listing them); more than 20, or several among
+  more than 20 lines: "unsure", every line carries the tax, nothing is picked, and the Tax check speaks.
+- **Test:** `tests/test_line_tax_review.py::test_forty_lines_with_millions_of_ways_are_not_guessed_b706`
+- **Lesson:** When the data can't say, say nothing rather than a guess that looks like a reading.
+
+#### B-707 · A unique set of lines could hide a vendor's error · medium
+- **Where:** `ap_coder/coding/line_tax.py` (`solve`, `prefill`)
+- **Symptom:** GST charged before a 10% volume discount: the discount line was left untaxed and the Tax check said ✓;
+  GST under-charged by 4.44, the courier (88.88) quietly left out.
+- **Cause:** a negative line could be left out alone, and any line the one set left out was taken as untaxed.
+- **Reproduce:** `cpareview/scripts/adv2.py`.
+- **Reproduced:** yes (found by the CPA review)
+- **Fix:** a discount or credit line always goes with the others (a trade discount lowers the taxable price, ETA
+  s.165; only an early-payment discount does not, s.161); a line left out that does not read as untaxed, or that a
+  printed taxable amount says is taxed, is marked to check.
+- **Test:** `tests/test_line_tax_review.py::test_a_discount_is_never_left_out_of_the_tax_b707`
+- **Lesson:** An exact fit is not proof: a fit that needs an unlikely exclusion still needs a person.
+
+#### B-708 · "Mark it exempt" took a PST that is due out of the self-assessment · medium
+- **Where:** `ap_coder/coding/tax.py` (`LINE_TAX_NOT_CHARGED`)
+- **Symptom:** a BC laptop from an Alberta vendor charging no PST: the advice was "mark it exempt", which made the
+  self-assessment base 0; an old invoice printing "PST 0.00" gave one warning a line.
+- **Cause:** one status for every tax could not say "PST due, not charged".
+- **Reproduce:** `cpareview/scripts/old.py`.
+- **Reproduced:** yes (found by the CPA review)
+- **Fix:** once per tax, the lines listed: "if they are taxable, the PST is due: choose “GST only · PST not charged
+  (self-assess)” and self-assess it (BC PSTA s.49, Bulletin PST 400); if they are exempt, choose “GST only · PST
+  exempt”". A tax printed at 0.00 is no arithmetic error.
+- **Test:** `tests/test_line_tax_review.py::test_an_alberta_vendor_not_charging_pst_in_bc_is_self_assessed_b708`
+- **Lesson:** Advice must not cost the client: say which choice keeps the liability.
+
+#### B-709 · PST missed on one line was never self-assessed when it was charged on the others · medium
+- **Where:** `ap_coder/coding/taxreturn.py` (`self_assessment`, `self_assessed_base`)
+- **Symptom:** an invoice charging PST on the laptop and not on the monitor: nothing to self-assess.
+- **Cause:** an invoice that charged the PST at all was skipped.
+- **Reproduce:** a BC invoice, PST on line 1 only, line 2 "GST only · PST not charged".
+- **Reproduced:** yes (found by the CPA review)
+- **Fix:** line by line: the base is the lines the tax is due on and not charged, whatever the other lines; the
+  check says "no PST charged on line 2 (300.00): it is due, self-assess it".
+- **Test:** `tests/test_line_tax_review.py::test_a_pst_missed_on_one_line_is_self_assessed_for_that_line_b709`
+- **Lesson:** A tax is owed line by line.
+
+#### B-710 · One status for all taxes could not say "GST taxable, PST exempt" · medium (design)
+- **Where:** `ap_coder/core/schema.py` (`LineItem.tax_exempt`), `ap_coder/coding/line_tax.py`, the review screen
+- **Symptom:** a BC bookkeeping service (GST, PST exempt) and the same service from a vendor that forgot the PST
+  were both "GST only"; "Exempt" hid PST that was due.
+- **Cause:** `tax_status` covered every tax at once.
+- **Reproduce:** the cases above.
+- **Reproduced:** yes (found by the CPA review)
+- **Fix:** each tax of the place of supply is charged, not due (`tax_exempt`, tax by tax, or a whole-line status) or
+  due and not charged; codes "GST~PST" (PST exempt) and "GST" (PST not charged: self-assess) with plain labels per
+  province; invoices stored before read as the vendor meant them (D-64). The Tax check, PST expensing,
+  self-assessment, JD Edwards and the exports follow the state of each tax.
+- **Test:** `tests/test_line_tax_review.py::test_a_line_says_its_state_for_each_tax_b710`
+- **Lesson:** Model what the law distinguishes.
+
+#### B-711 · Freight and eco fees were taken as likely untaxed · low
+- **Where:** `ap_coder/coding/line_tax.py` (`LIKELY_UNTAXED`)
+- **Symptom:** a tie between a delivery charge and a design consultation: the delivery was left out of the RST.
+- **Cause:** freight, delivery, shipping and environmental fees were in the "likely untaxed" words.
+- **Reproduce:** `cpareview/scripts/frt.py`.
+- **Reproduced:** yes (found by the CPA review)
+- **Fix:** vendor-charged freight follows the goods for GST/HST (one supply, CRA P-077R2) and is in the taxable price
+  for BC, SK and MB PST; an eco fee is part of the consideration. Only deposits, gift cards, tips, interest, late
+  payment charges and lines printed exempt or zero-rated read as untaxed.
+- **Test:** `tests/test_line_tax_review.py::test_delivery_and_an_eco_fee_are_not_preferred_untaxed_b711`
+- **Lesson:** A heuristic is a rule of law in disguise: check it against the law.
+
+#### B-712 · HST charged where GST applies (or GST where HST applies) was not said to put the ITC at risk · medium-low
+- **Where:** `ap_coder/coding/tax.py` (`ITC_AT_RISK`)
+- **Symptom:** only TAX_REGIME_MISMATCH, which asks the vendor, never what it means for the claim.
+- **Cause:** not checked.
+- **Reproduce:** a BC supply charged Ontario HST.
+- **Reproduced:** yes (found by the CPA review)
+- **Fix:** ITC_AT_RISK: only the tax properly payable is claimable (ETA s.169); the booking is not changed.
+- **Test:** `tests/test_line_tax_review.py::test_hst_charged_where_gst_applies_and_gst_where_hst_applies_put_the_itc_at_risk_b712`
+- **Lesson:** Say what a finding costs.
+
+#### B-713 · A tax code worked out "to check" kept its note in the approved coding · low
+- **Where:** `ap_coder/coding/line_tax.py` (`confirm_codes`), `ap_coder/web/static/js/invoice.js`
+- **Symptom:** the "Tax code worked out from the tax charged: check it." note stayed in the line's reasoning after
+  approval, and there was no way to say the code was right without changing it.
+- **Cause:** nothing removed it.
+- **Reproduce:** approve an invoice whose codes were worked out from several sets of lines.
+- **Reproduced:** yes (found by the CPA review)
+- **Fix:** picking the code, or "Confirm the tax code" in the line's menu, clears the mark and the note; approving
+  confirms the codes.
+- **Test:** `tests/test_line_tax_review.py::test_approving_confirms_the_tax_codes_and_drops_the_note_b713`
+- **Lesson:** A mark a person must clear needs a way to clear it.

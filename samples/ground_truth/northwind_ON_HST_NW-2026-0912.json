@@ -38,6 +38,7 @@
       "taxes_applied": [
         "HST"
       ],
+      "tax_exempt": [],
       "tax_status": "",
       "reasoning_justification": "Below 2,500 per unit."
     },
@@ -52,6 +53,7 @@
       "taxes_applied": [
         "HST"
       ],
+      "tax_exempt": [],
       "tax_status": "",
       "reasoning_justification": "Above threshold."
     },
@@ -66,6 +68,7 @@
       "taxes_applied": [
         "HST"
       ],
+      "tax_exempt": [],
       "tax_status": "",
       "reasoning_justification": "Monthly SaaS."
     },
@@ -80,6 +83,7 @@
       "taxes_applied": [
         "HST"
       ],
+      "tax_exempt": [],
       "tax_status": "",
       "reasoning_justification": "Consulting."
     },
@@ -94,6 +98,7 @@
       "taxes_applied": [
         "HST"
       ],
+      "tax_exempt": [],
       "tax_status": "",
       "reasoning_justification": "Delivery on non-inventory goods."
     }

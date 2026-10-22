@@ -67,6 +67,7 @@ def coding_from_inputs(
                 else list(taxes_applied),
                 # why a line with no tax carries none (D-64); a grid without the column says nothing
                 "tax_status": text("tax_status") if "tax_status" in row else "",
+                "tax_exempt": list(row["tax_exempt"]) if isinstance(row.get("tax_exempt"), list | tuple) else None,
                 "reasoning_justification": text("reasoning_justification"),
             }
         )

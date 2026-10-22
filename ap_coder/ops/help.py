@@ -345,8 +345,10 @@ CHECKS: dict[str, CheckHelp] = {
     ),
     "PROVINCIAL_TAX_NOT_CHARGED": CheckHelp(
         TAX, "Provincial tax not charged",
-        "GST was charged but not the provincial sales tax of the place of supply.",
-        "If the item is taxable, PST may have to be self-assessed and remitted; check with tax.",
+        "Lines on which the provincial sales tax (PST, RST, QST) is due were not charged it: an out-of-province or "
+        "unregistered vendor, or a line the vendor missed.",
+        "The tax is self-assessed and remitted by you (BC PSTA s.49; the SK, MB and QST acts alike): the "
+        "Self-assessment report lists it. If the lines are exempt, pick “GST only · PST exempt”.",
     ),
     "TAX_NOT_ALLOCATED": CheckHelp(
         TAX, "Tax on no line", "A tax is charged but no line's tax code carries it.",
@@ -359,11 +361,17 @@ CHECKS: dict[str, CheckHelp] = {
         "Fix the tax code of the lines (e.g. a delivery or a service exempt from PST is \"GST only\"); the Tax check "
         "shows each tax adding up. If the vendor taxed the wrong lines, ask for a corrected invoice.",
     ),
+    "ITC_AT_RISK": CheckHelp(
+        TAX, "Input tax credit at risk",
+        "HST charged on a supply where only GST applies, or GST alone where HST applies. Only the tax properly "
+        "payable can be claimed as an input tax credit (ETA s.169).",
+        "Ask the vendor for a corrected invoice; until then, check with your tax team what can be claimed.",
+    ),
     "LINE_TAX_NOT_CHARGED": CheckHelp(
         TAX, "Line marked with a tax that isn't charged",
         "A line's tax code says it carries a tax (e.g. PST) that the invoice does not charge at all.",
-        "If the line is exempt, pick Exempt or No tax charged. If it is taxable and the vendor did not charge the "
-        "provincial tax, it may have to be self-assessed (the Sales tax report lists it).",
+        "If the lines are taxable, pick “GST only · PST not charged (self-assess)”: the PST is due and is "
+        "self-assessed (the Self-assessment report lists it). If they are exempt, pick “GST only · PST exempt”.",
     ),
     "EXEMPT_LINE_TAXED": CheckHelp(
         TAX, "Exempt line seems taxed",

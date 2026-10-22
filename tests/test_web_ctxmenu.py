@@ -596,7 +596,7 @@ def test_in_a_browser_a_tax_lines_taxable_follows_the_lines_ticked_with_it_b610(
     rows = _lines(page)
     amounts = [float(rows.nth(i).locator("[name=line_amount]").input_value()) for i in range(rows.count())]
     codes = [rows.nth(i).locator("select[data-tax-code]").input_value() for i in range(rows.count())]
-    ticked = [kind in code.split("+") for code in codes]
+    ticked = [kind in code.split("~")[0].split("+") for code in codes]  # "GST~PST": GST charged, PST exempt
     assert (
         ticked[0]
         and abs(float(_taxable(page, kind)) - sum(a for a, t in zip(amounts, ticked, strict=True) if t)) < 0.01

@@ -124,9 +124,10 @@ def diff_coding(ai: dict[str, Any], final: dict[str, Any]) -> list[dict[str, str
         for field, label in LINE_LABELS.items():
             before, after = original.get(field), line.get(field)
             if field == "taxes_applied":  # the line's tax code: its taxes, or why it carries none (D-64)
-                from ..coding.line_tax import code_label, tax_code_of
+                from ..coding.line_tax import code_label, legacy_basis, tax_code_of
 
-                before, after = code_label(tax_code_of(original)), code_label(tax_code_of(line))
+                before = code_label(tax_code_of(original, legacy_basis(ai_lines, ai.get("tax_lines") or [])))
+                after = code_label(tax_code_of(line, legacy_basis(final_lines, final.get("tax_lines") or [])))
             if _fmt(before) != _fmt(after):
                 changes.append({"what": f"line {n} {label}", "before": _fmt(before), "after": _fmt(after)})
     for original in ai_lines:

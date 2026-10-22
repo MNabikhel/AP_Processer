@@ -56,18 +56,19 @@ def _codes(findings) -> set[str]:
 
 
 @pytest.mark.parametrize(
-    ("taxes", "status", "code"),
+    ("taxes", "exempt", "status", "code"),
     [
-        (["PST", "GST"], "", "GST+PST"), (["HST"], "", "HST"), (["QST", "GST"], "", "GST+QST"),
-        (["OTHER"], "", "OTHER"),
-        (["GST", "OTHER"], "", "GST+OTHER"), ([], "exempt", "EXEMPT"), ([], "zero_rated", "ZERO"),
-        ([], "out_of_scope", "OUT"), ([], "", "NONE"),
+        (["PST", "GST"], [], "", "GST+PST"), (["HST"], [], "", "HST"), (["QST", "GST"], [], "", "GST+QST"),
+        (["OTHER"], [], "", "OTHER"), (["GST", "OTHER"], [], "", "GST+OTHER"), (["GST"], ["PST"], "", "GST~PST"),
+        (["PST"], ["GST"], "", "PST~GST"), (["GST"], [], "", "GST"), ([], ["PST"], "", "NONE~PST"),
+        ([], [], "exempt", "EXEMPT"), ([], [], "zero_rated", "ZERO"), ([], [], "out_of_scope", "OUT"),
+        ([], [], "", "NONE"),
     ],
 )  # fmt: skip
-def test_a_code_is_the_taxes_or_why_none(taxes, status, code):
-    line = _line(1, 10, taxes, status)
-    assert tax_code_of(line) == code == code_for(taxes, status)
-    assert parse_code(code) == (sorted(taxes, key=line_tax.TAX_TYPES.index), status)
+def test_a_code_is_the_taxes_charged_and_those_not_due(taxes, exempt, status, code):
+    line = _line(1, 10, taxes, status).model_copy(update={"tax_exempt": exempt})
+    assert tax_code_of(line) == code == code_for(taxes, status, exempt)
+    assert parse_code(code) == (sorted(taxes, key=line_tax.TAX_TYPES.index), exempt, status)
     assert tax_code_of(apply_tax_code(_line(1, 10, ["HST"]), code)) == code
     assert tax_code_of(apply_tax_code({"taxes_applied": ["GST"]}, code)) == code
 
@@ -109,36 +110,47 @@ def _enums(node):
 def test_an_invoice_stored_before_has_no_status_and_reads_as_before():
     stored = json.loads((SAMPLES / "ground_truth" / "redriver_MB_GST_RST_RRO-55821.json").read_text("utf-8"))
     for li in stored["line_items"]:
-        li.pop("tax_status")
+        li.pop("tax_status"), li.pop("tax_exempt")
     coding = InvoiceCoding.model_validate(stored)
-    assert [tax_code_of(li) for li in coding.line_items] == ["GST+PST", "GST+PST", "GST", "GST+PST"]
+    # the design service: RST charged on the other lines and not on it: exempt from RST, not RST to self-assess
+    assert [tax_code_of(li) for li in coding.line_items] == ["GST+PST", "GST+PST", "GST~PST", "GST+PST"]
+    # a tax charged on no line at all is due: the PST an Alberta vendor did not charge in BC is self-assessed
+    gst_only = [{**li, "taxes_applied": ["GST"]} for li in stored["line_items"]]
+    alberta = InvoiceCoding.model_validate({**stored, "tax_lines": stored["tax_lines"][:1], "line_items": gst_only})
+    assert [tax_code_of(li) for li in alberta.line_items] == ["GST", "GST", "GST", "GST"]
 
 
 # --- The choices where the invoice is supplied ------------------------------------------------------------------------
 
 
-NO_TAX = ["Exempt", "Zero-rated", "No tax (out of scope)", "No tax charged"]
+NO_TAX = ["Zero-rated", "No tax (out of scope)"]
+TWO = ["{p} + {q}", "{p} only · {q} exempt", "{p} only · {q} not charged (self-assess)", "{q} only · {p} exempt",
+       "Exempt from both"]  # fmt: skip
+
+
+def _two(q: str) -> list[str]:
+    return [label.format(p="GST", q=q) for label in TWO]
 
 
 @pytest.mark.parametrize(
     ("province", "charged", "labels"),
     [
-        ("ON", ["HST"], ["HST"]),
-        ("NS", ["HST"], ["HST"]),
-        ("BC", ["GST", "PST"], ["GST + PST", "GST only", "PST only"]),
-        ("SK", ["GST", "PST"], ["GST + PST", "GST only", "PST only"]),
-        ("MB", ["GST", "PST"], ["GST + RST", "GST only", "RST only"]),
-        ("QC", ["GST", "QST"], ["GST + QST", "GST only", "QST only"]),
-        ("AB", ["GST"], ["GST"]),
-        ("YT", ["GST"], ["GST"]),
-        ("NT", [], ["GST"]),
-        ("NU", ["GST"], ["GST"]),
+        ("ON", ["HST"], ["HST", "Exempt"]),
+        ("NS", ["HST"], ["HST", "Exempt"]),
+        ("BC", ["GST", "PST"], _two("PST")),
+        ("SK", ["GST", "PST"], _two("PST")),
+        ("MB", ["GST", "PST"], _two("RST")),
+        ("QC", ["GST", "QST"], _two("QST")),
+        ("AB", ["GST"], ["GST", "Exempt"]),
+        ("YT", ["GST"], ["GST", "Exempt"]),
+        ("NT", [], ["GST", "Exempt"]),
+        ("NU", ["GST"], ["GST", "Exempt"]),
         # an out-of-province vendor that charges GST where HST applies: the line can say what was charged
-        ("ON", ["GST"], ["HST", "GST only"]),
+        ("ON", ["GST"], ["HST", "GST only", "Exempt"]),
         # a foreign tax charged: its own choice
-        ("AB", ["GST", "OTHER"], ["GST", "Foreign tax", "GST + Foreign tax"]),
+        ("AB", ["GST", "OTHER"], ["GST", "Foreign tax", "GST + Foreign tax", "Exempt"]),
         # HST charged in BC (the vendor's province): listed so the line can carry it; the regime check flags it
-        ("BC", ["HST"], ["GST + PST", "GST only", "PST only", "HST"]),
+        ("BC", ["HST"], [*_two("PST")[:4], "HST", "Exempt from both"]),
     ],
 )
 def test_each_province_offers_its_own_codes(province, charged, labels):
@@ -148,10 +160,11 @@ def test_each_province_offers_its_own_codes(province, charged, labels):
 def test_a_lines_own_code_is_always_offered():
     got = options("ON", ["HST"], current=["GST+PST", "HST", "EXEMPT"])
     assert got[-1] == ("GST+PST", "GST + PST") and [c for c, _ in got].count("HST") == 1
+    assert options("BC", ["GST"], current=["NONE"])[-1] == ("NONE", "No tax charged (self-assess PST)")
 
 
 def test_an_unknown_province_offers_every_canadian_combination():
-    assert [c for c, _ in options("", [])][:6] == ["HST", "GST+PST", "GST+QST", "GST", "PST", "QST"]
+    assert [c for c, _ in options("", [])][:4] == ["HST", "GST+PST", "GST+QST", "GST"]
 
 
 # --- Codes printed beside the lines, and the invoice's legend ---------------------------------------------------------
@@ -223,7 +236,7 @@ def test_one_set_of_lines_makes_the_tax_add_up():
 
 def test_several_sets_the_likeliest_and_its_doubtful_lines():
     # 100 + 50 or 150 alone: leaving the freight out is the likelier
-    got = solve([100.0, 50.0, 150.0, 50.0], 300.0, 0.07, ["Chairs", "Desk", "Shelf", "Freight"])
+    got = solve([100.0, 50.0, 150.0, 50.0], 300.0, 0.07, ["Chairs", "Desk", "Shelf", "Bottle deposit"])
     assert got.kind == "several" and got.lines == {0, 1, 2} and got.doubt == {1, 3}
     # two lines of the same amount: either could be the exempt one, both are to check
     same = solve([100.0, 100.0, 50.0], 150.0, 0.07)
@@ -250,7 +263,9 @@ def test_forty_lines_are_solved_quickly_and_more_are_not_searched():
     started = time.perf_counter()
     got = solve(amounts, base, 0.07)
     assert time.perf_counter() - started < 5
-    assert got.kind in ("unique", "several") and abs(sum(amounts[k] for k in got.lines) - base) <= 0.5
+    # more than a few ways among 40 lines: no pick presented as a reading, every line carries it (B-706)
+    assert got.kind in ("unique", "unsure") and (got.kind == "unique" or got.lines == set(range(40)))
+    assert got.kind == "unique" or not got.doubt
     many = solve([10.0] * 41 + [5.0], 410.0, 0.05)
     assert many.kind == "none" and len(many.lines) == 42
 
@@ -279,7 +294,8 @@ def test_prefill_reads_the_printed_codes_with_the_legend():
     lines, taxes = _red_river()
     legend = parse_legend("Tax codes: G = GST 5%, R = Manitoba RST 7%")
     got = prefill(lines, taxes, ["G R", "G R", "G", "G R"], legend)
-    assert [tax_code_of(li) for li in got.lines] == ["GST+PST", "GST+PST", "GST", "GST+PST"]
+    # the design service: RST charged on the others, "G" only on it: exempt from RST (not RST to self-assess)
+    assert [tax_code_of(li) for li in got.lines] == ["GST+PST", "GST+PST", "GST~PST", "GST+PST"]
     assert got.how == ["printed"] * 4 and not got.check
     assert [li.taxes_applied for li in lines] == [[], [], [], []]  # the lines given are left as they were
 
@@ -287,8 +303,9 @@ def test_prefill_reads_the_printed_codes_with_the_legend():
 def test_prefill_without_codes_finds_the_lines_that_add_up():
     lines, taxes = _red_river()
     got = prefill(lines, taxes)
-    assert [tax_code_of(li) for li in got.lines] == ["GST+PST", "GST+PST", "GST", "GST+PST"]
-    assert got.how == ["solver"] * 4 and not got.check
+    assert [tax_code_of(li) for li in got.lines] == ["GST+PST", "GST+PST", "GST~PST", "GST+PST"]
+    # one set of lines, leaving out a line that does not read as untaxed: to check (B-707)
+    assert got.how == ["solver"] * 4 and got.check == {2}
     one = prefill([_line(1, 100), _line(2, 50)], [_tax("HST", 0.13, 150)])
     assert one.how == ["all", "all"] and [tax_code_of(li) for li in one.lines] == ["HST", "HST"]
 
@@ -299,7 +316,7 @@ def test_prefill_uses_the_official_rate_where_it_is_supplied():
     lines, taxes = _red_river()
     taxes[1] = _tax("PST", 0.0643, 14645, 941.15, "MB")
     got = prefill(lines, taxes, rate_for=lambda kind, province: 0.07 if kind == "PST" else 0.05)
-    assert [tax_code_of(li) for li in got.lines] == ["GST+PST", "GST+PST", "GST", "GST+PST"]
+    assert [tax_code_of(li) for li in got.lines] == ["GST+PST", "GST+PST", "GST~PST", "GST+PST"]
 
 
 def test_prefill_marks_doubtful_lines_to_check():
@@ -323,7 +340,8 @@ def test_prefill_never_overwrites_a_clerks_choice():
 def test_prefill_lines_in_no_tax_charged_and_exempt_only_when_printed():
     lines = [_line(1, 100), _line(2, 40, description="Deposit")]
     got = prefill(lines, [_tax("GST", 0.05, 100)])
-    assert [tax_code_of(li) for li in got.lines] == ["GST", "NONE"]
+    # the vendor charges GST and not on the deposit: the deposit is exempt (not GST to collect)
+    assert [tax_code_of(li) for li in got.lines] == ["GST", "EXEMPT"] and not got.check
     printed = prefill(lines, [_tax("GST", 0.05, 100)], ["G", "E"])
     assert [tax_code_of(li) for li in printed.lines] == ["GST", "EXEMPT"]
     nothing = prefill(lines, [])
@@ -334,7 +352,7 @@ def test_prefill_some_codes_printed_the_rest_solved():
     lines = [_line(1, 1000), _line(2, 300, description="Installation"), _line(3, 200, description="Freight")]
     taxes = [_tax("GST", 0.05, 1500), _tax("PST", 0.07, 1000, 70.00, "BC")]
     got = prefill(lines, taxes, ["GP", "", ""])
-    assert [tax_code_of(li) for li in got.lines] == ["GST+PST", "GST", "GST"]
+    assert [tax_code_of(li) for li in got.lines] == ["GST+PST", "GST~PST", "GST~PST"]
 
 
 def test_prefill_a_foreign_tax():
@@ -352,11 +370,17 @@ def test_a_base_that_does_not_add_up_names_the_line_that_is_the_difference(refer
     coding = _coding(lines, [_tax("GST", 0.05, 14645), _tax("PST", 0.07, 13160, 921.20, "MB")], "MB")
     found = [f for f in check_taxes(coding, reference.tax) if f.code == "TAX_BASE_MISMATCH"]
     assert len(found) == 1 and "line 4 (Delivery charge, 285.00) may be exempt from RST" in found[0].message
-    # and a line left out whose amount is the difference: it may carry the tax too
-    lines[2] = _line(3, 1200, ["GST"], description="Design")
+    # a line left out (RST due, not exempt) whose amount is the difference: it may carry the tax too
+    lines[2] = _line(3, 1200, ["GST"], description="Design").model_copy(update={"tax_exempt": []})
     coding = _coding(lines, [_tax("GST", 0.05, 14645), _tax("PST", 0.07, 14645, 1025.15, "MB")], "MB")
     found = [f for f in check_taxes(coding, reference.tax) if f.code == "TAX_BASE_MISMATCH"]
     assert "line 3 (Design, 1,200.00) may carry RST too" in found[0].message
+    # the same line marked exempt from RST: the RST charged needs it (EXEMPT_LINE_TAXED), said once
+    lines[2] = lines[2].model_copy(update={"tax_exempt": ["PST"]})
+    coding = _coding(lines, [_tax("GST", 0.05, 14645), _tax("PST", 0.07, 14645, 1025.15, "MB")], "MB")
+    found = check_taxes(coding, reference.tax)
+    assert [f.line_number for f in found if f.code == "EXEMPT_LINE_TAXED"] == [3]
+    assert "TAX_BASE_MISMATCH" not in _codes(found)
 
 
 def test_a_tax_on_no_line(reference):
@@ -369,8 +393,11 @@ def test_lines_marked_with_a_tax_not_charged(reference):
     lines = [_line(1, 100, ["GST"]), _line(2, 50, ["GST", "PST"]), _line(3, 50, ["GST", "PST"])]
     coding = _coding(lines, [_tax("GST", 0.05, 200)])
     found = [f for f in check_taxes(coding, reference.tax) if f.code == "LINE_TAX_NOT_CHARGED"]
-    assert [f.line_number for f in found] == [2, 3]
-    assert "marked PST, but no PST is charged: mark it exempt" in found[0].message and "self-assess" in found[0].message
+    # once, the lines listed (an invoice of before printing "PST 0.00" is one finding, not one a line: B-708)
+    assert len(found) == 1 and found[0].message.startswith("lines 2, 3 marked PST, but no PST is charged")
+    # the advice keeps the PST in the self-assessment: "not charged (self-assess)", never "exempt" for taxable lines
+    assert "choose “GST only · PST not charged (self-assess)” and self-assess it (BC PSTA s.49" in found[0].message
+    assert "if they are exempt, choose “GST only · PST exempt”" in found[0].message
     # said once: the province's own "no PST charged" is not said again
     assert "PROVINCIAL_TAX_NOT_CHARGED" not in _codes(check_taxes(coding, reference.tax))
     unmarked = _coding([_line(1, 200, ["GST"])], [_tax("GST", 0.05, 200)])
@@ -432,8 +459,10 @@ def test_the_tax_check_rate_is_the_one_in_force_on_the_invoice_date(reference):
     coding = _coding([_line(1, 1000, ["HST"])], [_tax("HST", 0.15, 1000, province="NS")], "NS", date="2025-03-15")
     assert math_check(coding, reference.tax)["ok"]
     later = _coding([_line(1, 1000, ["HST"])], [_tax("HST", 0.15, 1000, province="NS")], "NS", date="2025-06-15")
+    # the Tax check works the rate printed (B-705); the rate check says it is not the official one
     row = next(r for r in math_check(later, reference.tax)["rows"] if r.get("tax_type") == "HST")
-    assert not row["ok"] and row["rate"] == "14%"
+    assert row["ok"] and row["rate"] == "15%"
+    assert "TAX_RATE_NONSTANDARD" in _codes(check_taxes(later, reference.tax))
 
 
 def test_the_tax_check_qst_is_on_the_price_before_gst(reference):
@@ -464,12 +493,21 @@ def test_pst_expensed_onto_the_lines_that_carry_it_never_an_exempt_one(reference
 def test_the_self_assessed_base_is_the_lines_marked_taxable_but_not_charged():
     from ap_coder.coding.taxreturn import self_assessed_base
 
-    doc = {"subtotal": 1300.0}
+    doc = {"subtotal": 1300.0, "tax_lines": [{"tax_type": "GST", "tax_amount": 65.0}]}
+    # line by line: marked PST on an invoice charging none, and a line PST is due on (neither charged nor exempt)
     marked = [{"amount": 1000, "taxes_applied": ["GST", "PST"]}, {"amount": 300, "taxes_applied": ["GST"]}]
-    assert self_assessed_base(doc, marked, "PST") == 1000.0
+    assert self_assessed_base(doc, marked, "PST") == 1300.0
+    exempt = [{"amount": 1000, "taxes_applied": ["GST"], "tax_exempt": []},
+              {"amount": 300, "taxes_applied": ["GST"], "tax_exempt": ["PST"]}]  # fmt: skip
+    assert self_assessed_base(doc, exempt, "PST") == 1000.0
     stated = [{"amount": 1000, "taxes_applied": ["GST"]}, {"amount": 300, "taxes_applied": [], "tax_status": "exempt"}]
     assert self_assessed_base(doc, stated, "PST") == 1000.0
     assert self_assessed_base(doc, [], "PST") == 1300.0
+    # PST charged on the other lines and missed on one (marked due): that one line is owed (B-709)
+    charged = {"subtotal": 1300.0, "tax_lines": [{"tax_type": "PST", "tax_amount": 70.0}]}
+    missed = [{"amount": 1000, "taxes_applied": ["GST", "PST"], "tax_exempt": []},
+              {"amount": 300, "taxes_applied": ["GST"], "tax_exempt": []}]  # fmt: skip
+    assert self_assessed_base(charged, missed, "PST") == 300.0
 
 
 def test_the_exports_have_a_tax_code_column():
@@ -478,11 +516,13 @@ def test_the_exports_have_a_tax_code_column():
     final = json.loads((SAMPLES / "ground_truth" / "redriver_MB_GST_RST_RRO-55821.json").read_text("utf-8"))
     final["line_items"][3]["taxes_applied"], final["line_items"][3]["tax_status"] = [], "exempt"
     rows = exports.line_rows([{"id": 1, "final_output": final}])
-    assert [r["tax_code"] for r in rows if r["kind"] == "Expense"] == ["GST+PST", "GST+PST", "GST", "Exempt"]
+    assert [r["tax_code"] for r in rows if r["kind"] == "Expense"] == [
+        "GST + RST", "GST + RST", "GST only · RST exempt", "Exempt from both"
+    ]  # fmt: skip
     assert all(r["tax_code"] == "" for r in rows if r["kind"] != "Expense")
     assert ("tax_code", "Tax code") in exports.LINE_COLUMNS and "tax_code" in export_layout.FIELDS
     csv_text = exports.build_csv([{"id": 1, "final_output": final}]).decode("utf-8-sig")
-    assert "Tax code" in csv_text.splitlines()[0] and ",Exempt," in csv_text
+    assert "Tax code" in csv_text.splitlines()[0] and ",Exempt from both," in csv_text
 
 
 # --- The chat model's lines, the audit trail --------------------------------------------------------------------------
@@ -495,10 +535,11 @@ def test_the_chat_models_lines_without_taxes_are_worked_out_and_its_own_kept():
              _line(3, 1200, description="Design"), _line(4, 285, description="Delivery")]  # fmt: skip
     coding = _coding(lines, [_tax("GST", 0.05, 14645), _tax("PST", 0.07, 13445, 941.15, "MB")], "MB")
     _model_line_taxes(coding, "")
-    assert [tax_code_of(li) for li in coding.line_items] == ["GST+PST", "GST+PST", "GST", "GST+PST"]
+    assert [tax_code_of(li) for li in coding.line_items] == ["GST+PST", "GST+PST", "GST~PST", "GST+PST"]
     said = _coding([_line(1, 100, ["GST"]), _line(2, 50)], [_tax("GST", 0.05, 100)], "AB")
     _model_line_taxes(said, "")
-    assert [tax_code_of(li) for li in said.line_items] == ["GST", "NONE"]  # the model said something: kept
+    # the model said something: kept, the line it left out read as the vendor meant it (exempt)
+    assert [tax_code_of(li) for li in said.line_items] == ["GST", "EXEMPT"]
 
 
 def test_the_audit_trail_says_a_lines_tax_code_changed():

@@ -30,7 +30,14 @@ from ap_coder.ai.suggest import suggest_gl
 from ap_coder.capture.normalize import parse_amount, parse_date
 from ap_coder.capture.types import MISSING, Box, CaptureResult
 from ap_coder.coding import rules, vendor_mail
-from ap_coder.coding.line_tax import all_labels, charged_types, parse_code, tax_code_of, tax_guessed
+from ap_coder.coding.line_tax import (
+    all_labels,
+    fill_exempt,
+    legacy_basis,
+    parse_code,
+    tax_code_of,
+    tax_guessed,
+)
 from ap_coder.coding.line_tax import options as tax_code_options
 from ap_coder.coding.po import match_invoice, po_label
 from ap_coder.coding.review import (
@@ -82,7 +89,8 @@ FIELD_LABELS = {
     "tax_total": "Tax total", "grand_total": "Total",
 }  # fmt: skip
 LINE_COLUMNS = ("line_number", "description", "quantity", "unit_price", "amount", "predicted_gl_code",
-                "predicted_cost_center", "taxes_applied", "tax_status", "reasoning_justification")  # fmt: skip
+                "predicted_cost_center", "taxes_applied", "tax_exempt", "tax_status",
+                "reasoning_justification")  # fmt: skip
 LINE_TAX_CODE = "line_tax_code"  # a line's tax code, one dropdown a row (D-64)
 TAX_COLUMNS = ("tax_type", "province", "rate_pct", "taxable_amount", "tax_amount")
 # The posted names of a grid row's cells (repeated once per row, in order).
@@ -194,6 +202,8 @@ class Draft:
         for li in lines:
             li["taxes_applied"] = list(li.get("taxes_applied") or [])
             li["tax_status"] = str(li.get("tax_status") or "")
+        # an invoice stored before a line said which taxes it is exempt from: read as the vendor meant it (D-64)
+        lines = fill_exempt(lines, start.get("tax_lines") or [])
         taxes = []
         for t in start.get("tax_lines") or []:
             try:
@@ -226,10 +236,10 @@ class Draft:
                 code = codes[i] if i < len(codes) else None
                 parsed = parse_code(code) if code is not None else None
                 if parsed is not None:
-                    row["taxes_applied"], row["tax_status"] = parsed
+                    row["taxes_applied"], row["tax_exempt"], row["tax_status"] = parsed
                 else:
                     row["taxes_applied"] = [t for t in form.getlist(f"line_tax_{key}") if t in TAX_TYPES]
-                    row["tax_status"] = ""
+                    row["tax_exempt"], row["tax_status"] = None, ""  # read as the vendor meant it
                 lines.append(row)
             tcols = {c: form.getlist(name) for c, name in TAX_INPUTS.items()}
             taxes = [{c: (tcols[c][i] if i < len(tcols[c]) else "") for c in TAX_INPUTS}
@@ -358,6 +368,8 @@ def lines_frame(lines: list[dict[str, Any]]) -> pd.DataFrame:
         row["line_number"] = _line_number(row["line_number"])
         row["taxes_applied"] = list(row.get("taxes_applied") or [])
         row["tax_status"] = str(row.get("tax_status") or "")
+        exempt = row.get("tax_exempt")
+        row["tax_exempt"] = list(exempt) if isinstance(exempt, list | tuple) else None
     frame = pd.DataFrame(rows, columns=list(LINE_COLUMNS))
     frame["line_number"] = frame["line_number"].astype(object)
     return frame
@@ -374,6 +386,8 @@ def lines_records(frame: pd.DataFrame) -> list[dict[str, Any]]:
                 row[c] = list(value) if isinstance(value, list | tuple) else []
             elif c == "tax_status":
                 row[c] = "" if is_blank(value) else str(value)
+            elif c == "tax_exempt":
+                row[c] = list(value) if isinstance(value, list | tuple) else None
             elif c == "line_number":
                 row[c] = _line_number(value)
             else:
@@ -534,8 +548,12 @@ def grid(reference: ReferenceData, draft: Draft, ai: dict[str, Any] | None = Non
         if before and row and line_guessed(before) and row.get("predicted_gl_code") == before.get("predicted_gl_code")
     }
     # A tax code worked out from several possible sets of lines, still as it was worked out: to check (D-64).
-    tax_guesses = {id(row) for before, row in paired
-                   if before and row and tax_guessed(before) and tax_code_of(row) == tax_code_of(before)}  # fmt: skip
+    charged = _charged(draft)
+    tax_guesses = {
+        id(row)
+        for before, row in paired
+        if before and row and tax_guessed(row) and tax_code_of(row, charged) == tax_code_of(before, charged)
+    }
     codes = tax_choices(draft, reference.tax)
     return {  # "guessed": an account no approval backs, marked for the reviewer to check (B-463)
         "lines": [
@@ -543,14 +561,14 @@ def grid(reference: ReferenceData, draft: Draft, ai: dict[str, Any] | None = Non
                 **row,
                 "key": f"r{i}",
                 "guessed": id(row) in guesses and row.get("predicted_gl_code") not in (None, "", UNASSIGNED),
-                "tax_code": tax_code_of(row),
+                "tax_code": tax_code_of(row, charged),
                 "tax_guess": id(row) in tax_guesses,
             }
             for i, row in enumerate(draft.lines)
         ],
         "tax_codes": codes["options"],
         # a line added on screen: the code most lines have, else the province's usual taxes
-        "tax_default": max((c for c, _ in codes["options"]), key=[tax_code_of(r) for r in draft.lines].count)
+        "tax_default": max((c for c, _ in codes["options"]), key=[tax_code_of(r, charged) for r in draft.lines].count)
         if draft.lines
         else codes["options"][0][0],
         "tax_code_labels": codes["labels"],
@@ -573,11 +591,17 @@ def tax_choices(draft: Draft, setup: Any = None) -> dict[str, Any]:
     [(code, label)], labels: {code: label} for every code, province}. The lines' own codes are always among them."""
     header, lines = getattr(draft, "header", None) or {}, list(getattr(draft, "lines", None) or [])
     province = supply_line(header, lines, setup)["province"]
-    charged = charged_types([{"tax_type": t.get("tax_type"), "tax_amount": _number(t.get("tax_amount"))}
-                             for t in getattr(draft, "taxes", None) or []])  # fmt: skip
-    current = [tax_code_of(row) for row in lines]
+    charged = _charged(draft)
+    current = [tax_code_of(row, charged) for row in lines]
     return {"options": tax_code_options(province, charged, current), "labels": all_labels(province),
             "province": province}  # fmt: skip
+
+
+def _charged(draft: Any) -> list[str]:
+    """The taxes the tax grid on screen charges and some line is marked with (``line_tax.legacy_basis``)."""
+    return legacy_basis(getattr(draft, "lines", None) or [],
+                        [{"tax_type": t.get("tax_type"), "tax_amount": _number(t.get("tax_amount"))}
+                         for t in getattr(draft, "taxes", None) or []])  # fmt: skip
 
 
 def _number(value: Any) -> float:

@@ -132,7 +132,7 @@ def line_rows(
     for inv in invoices:
         final = inv.get("final_output") or {}
         dist = distribution(final, tax_treatments)
-        codes = line_tax_codes(dist, final.get("line_items") or [])
+        codes = line_tax_codes(dist, final.get("line_items") or [], final)
         for e, code in zip(dist, codes, strict=True):
             rows.append(
                 {
@@ -160,11 +160,20 @@ def line_rows(
     return rows
 
 
-def line_tax_codes(dist: list[dict[str, Any]], items: list[dict[str, Any]]) -> list[str]:
+def line_tax_codes(dist: list[dict[str, Any]], items: list[dict[str, Any]],
+                   final: dict[str, Any] | None = None) -> list[str]:  # fmt: skip
     """The tax code of the invoice line behind each posting line ("GST+PST", "Exempt", D-64), "" for a tax line: the
     expense lines follow the invoice lines in order (``build_gl_distribution``); matched by line number when the
     counts differ."""
-    from ..coding.line_tax import export_code
+    from ..coding.line_tax import export_code as words
+    from ..coding.line_tax import legacy_basis
+    from ..coding.tax import stored_supply
+
+    final = final or {}
+    province, charged = stored_supply(final), legacy_basis(items, final.get("tax_lines") or [])
+
+    def export_code(li: dict[str, Any]) -> str:
+        return words(li, province, charged)
 
     expenses = [e for e in dist if e.get("kind") == "expense"]
     if len(expenses) == len(items):

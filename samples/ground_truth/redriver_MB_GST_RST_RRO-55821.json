@@ -46,6 +46,7 @@
         "GST",
         "PST"
       ],
+      "tax_exempt": [],
       "tax_status": "",
       "reasoning_justification": "Office furniture for the branch fit-out is capitalised; GST and RST charged."
     },
@@ -61,6 +62,7 @@
         "GST",
         "PST"
       ],
+      "tax_exempt": [],
       "tax_status": "",
       "reasoning_justification": "Office furniture for the branch fit-out is capitalised; GST and RST charged."
     },
@@ -74,6 +76,9 @@
       "predicted_cost_center": "CC700",
       "taxes_applied": [
         "GST"
+      ],
+      "tax_exempt": [
+        "PST"
       ],
       "tax_status": "",
       "reasoning_justification": "Design consulting; GST only, the service is not subject to RST."
@@ -90,6 +95,7 @@
         "GST",
         "PST"
       ],
+      "tax_exempt": [],
       "tax_status": "",
       "reasoning_justification": "Delivery on a non-inventory purchase; GST and RST charged."
     }

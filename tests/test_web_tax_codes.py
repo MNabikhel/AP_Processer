@@ -29,10 +29,11 @@ def _invoice(store, name: str) -> int:
 def test_the_dropdown_offers_the_codes_of_the_place_of_supply(client, store):
     page = client.get(f"/review/{_invoice(store, RED_RIVER)}").text
     assert page.count('name="line_tax_code"') == 4 + 1  # each line, and the template of a new one
-    for label in ("GST + RST", "GST only", "RST only", "Exempt", "Zero-rated", "No tax (out of scope)",
-                  "No tax charged"):  # fmt: skip
+    for label in ("GST + RST", "GST only · RST exempt", "GST only · RST not charged (self-assess)",
+                  "RST only · GST exempt", "Exempt from both", "Zero-rated", "No tax (out of scope)"):  # fmt: skip
         assert f">{label}</option>" in page, label
-    assert '<option value="GST" selected>GST only</option>' in page  # the design service: no RST
+    # the design service: RST charged on the other lines, not on it: exempt from RST
+    assert '<option value="GST~PST" selected>GST only · RST exempt</option>' in page
     assert "Tax check" in page and "Lines × rate = expected" in page
 
 
@@ -98,7 +99,7 @@ def test_in_a_browser_a_lines_tax_code_moves_the_taxable_never_the_tax_charged_b
     """B-700: changing a line's taxes recalculated the tax line's amount too, so what the invoice charges changed with
     the clerk's marking and the check could never disagree."""
     page, errors = _review(browser, _invoice(store, RED_RIVER))
-    assert _codes(page) == ["GST+PST", "GST+PST", "GST", "GST+PST"]
+    assert _codes(page) == ["GST+PST", "GST+PST", "GST~PST", "GST+PST"]
     assert _taxable(page, "PST") == "13445.00" and _amount(page, "PST") == "941.15"
     select = page.locator("[data-grid=lines] select[data-tax-code]").nth(2)
     with page.expect_response(lambda r: r.url.endswith("/check")):
@@ -118,7 +119,7 @@ def test_in_a_browser_the_tax_check_follows_the_codes_and_undo_puts_a_code_back(
     page, errors = _review(browser, _invoice(store, RED_RIVER))
     options = page.eval_on_selector_all("[data-grid=lines] select[data-tax-code] >> nth=0 >> option",
                                         "o => o.map(x => x.textContent)")  # fmt: skip
-    assert options[:3] == ["GST + RST", "GST only", "RST only"] and "Exempt" in options
+    assert options[:3] == ["GST + RST", "GST only · RST exempt", "GST only · RST not charged (self-assess)"]
     assert "all adds up" in page.locator("[data-live=taxcheck]").inner_text().lower()
     line = page.locator("[data-grid=lines] > tr").nth(3)
     _menu(page, line.locator("[name=line_description]"))
