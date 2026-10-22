@@ -269,3 +269,295 @@ def test_in_a_browser_right_click_a_detail_clear_it_and_undo_puts_it_back(browse
     page.keyboard.press("Control+z")
     assert box.input_value() == before
     assert errors == []
+
+
+def test_in_a_browser_not_on_this_invoice_leaves_it_blank_with_a_note_and_nothing_asks_for_it(browser, store):
+    invoice_id = _with_gst(store)
+    page, errors = _review(browser, invoice_id)
+    box = page.locator('.inv-details input[name="gst_hst_registration_number"]')
+    before = box.input_value()
+    _menu(page, box)
+    with _checked(page) as sent:
+        _item(page, "absent").click()
+    assert '["gst_hst_registration_number"]' in (sent.value.post_data or "")
+    page.wait_for_load_state("networkidle")
+    assert box.input_value() == ""
+    label = page.locator('.inv-details [data-field="gst_hst_registration_number"]')
+    assert label.locator(".inv-absent").is_visible() and "Not on this invoice" in label.inner_text()
+    assert "GST/HST registration number not found" not in page.inner_text("[data-live=checks]")
+    row = page.locator('.iv-row[data-field="gst_hst_registration_number"]')
+    if row.count():  # the Fields list beside the page follows the form
+        assert "Not on this invoice" in row.inner_text() and "t-edited" in row.get_attribute("class")
+    # marked already: the item says so; a value typed in unmarks it
+    _menu(page, box)
+    assert _item(page, "absent").get_attribute("aria-disabled") == "true"
+    page.keyboard.press("Escape")
+    assert page.locator(MENU).count() == 0
+    page.locator("#toasts .flash-act").click()  # Undo
+    assert box.input_value() == before and label.locator(".inv-absent").is_hidden()
+    assert errors == []
+
+
+def test_in_a_browser_a_fields_row_and_a_box_on_the_page_have_the_fields_menu(browser, store):
+    invoice_id = store.list_invoices(REVIEW)[0]["id"]
+    page, errors = _review(browser, invoice_id)
+    if "fields-open" not in (page.locator("#iv").get_attribute("class") or ""):
+        page.locator(".iv-fold").click()  # the field list, folded away on a laptop's screen
+    row = page.locator(".iv-row[data-field]").first
+    _menu(page, row)
+    assert _item(page, "edit").count() == 1 and _item(page, "clear").count() == 1
+    page.keyboard.press("Escape")
+    shown = page.locator(".iv-f[data-field]").first
+    name = shown.get_attribute("data-field")
+    _menu(page, shown.locator("rect.iv-box").first, force=True)
+    assert _item(page, "show").get_attribute("aria-disabled") is None
+    _item(page, "show").click()
+    page.wait_for_function("n => document.querySelector(`.iv-f[data-field=\"${n}\"]`).classList.contains('selected')", arg=name)
+    assert errors == []
+
+
+def _lines(page):
+    return page.locator("[data-grid=lines] > tr")
+
+
+def _gl(page, i):
+    return page.eval_on_selector_all("[data-grid=lines] select[name=line_gl]", "(s, i) => s[i].value", i)
+
+
+def test_in_a_browser_delete_a_line_and_undo_brings_it_back_with_its_picker_working(browser, store):
+    invoice_id = store.list_invoices(REVIEW)[0]["id"]
+    page, errors = _review(browser, invoice_id)
+    n = _lines(page).count()
+    first = _lines(page).first.locator("textarea[name=line_description]").input_value()
+    gl = _gl(page, 0)
+    _menu(page, _lines(page).first.locator("td.c-no"))
+    labels = page.locator(f"{MENU} [role=menuitem]").all_inner_texts()
+    for want in ("Delete line", "Duplicate line", "Insert a line below", "Split this line", "Clear GL account"):
+        assert any(want in t for t in labels), (want, labels)
+    assert _item(page, "above").get_attribute("aria-disabled") == "true"  # the first line has none above
+    with _checked(page):
+        _item(page, "delete").click()
+    assert _lines(page).count() == n - 1
+    with _checked(page):
+        page.locator("#toasts .flash-act").click()
+    assert _lines(page).count() == n
+    assert _lines(page).first.locator("textarea[name=line_description]").input_value() == first and _gl(page, 0) == gl
+    # its account picker works
+    picker = _lines(page).first.locator(".pk-input")
+    picker.click()
+    options = page.locator(".pk-layer:not([hidden]) [role=option]")
+    assert options.count() > 3
+    options.nth(2).click()
+    assert _gl(page, 0) != "" and picker.input_value().startswith(_gl(page, 0))
+    assert errors == []
+
+
+def test_in_a_browser_duplicate_insert_copy_from_above_and_clear_a_lines_account(browser, store):
+    invoice_id = store.list_invoices(REVIEW)[0]["id"]
+    page, errors = _review(browser, invoice_id)
+    n = _lines(page).count()
+    description = _lines(page).first.locator("textarea[name=line_description]").input_value()
+    _menu(page, _lines(page).first.locator("td.c-no"))
+    _item(page, "duplicate").click()
+    assert _lines(page).count() == n + 1
+    assert _lines(page).nth(1).locator("textarea[name=line_description]").input_value() == description
+    numbers = page.eval_on_selector_all("[data-grid=lines] [name=line_number]", "s => s.map(x => x.value)")
+    assert numbers == [str(i + 1) for i in range(n + 1)] or len(set(numbers)) == n + 1, numbers
+    _menu(page, _lines(page).first.locator("td.c-no"))
+    _item(page, "insert").click()
+    assert _lines(page).count() == n + 2
+    assert _lines(page).nth(1).locator("textarea[name=line_description]").input_value() == ""
+    assert _gl(page, 1) == "UNASSIGNED"
+    # the new line: its account from the line above, then cleared again
+    _menu(page, _lines(page).nth(1).locator("td.c-no"))
+    _item(page, "above").click()
+    assert _gl(page, 1) == _gl(page, 0) != "UNASSIGNED"
+    assert _lines(page).nth(1).locator(".pk-input").input_value().startswith(_gl(page, 0))
+    _menu(page, _lines(page).nth(1).locator("td.c-no"))
+    with _checked(page):
+        _item(page, "clear-gl").click()
+    assert _gl(page, 1) == "UNASSIGNED"
+    page.keyboard.press("Control+z")
+    assert _gl(page, 1) == _gl(page, 0)
+    assert errors == []
+
+
+def test_in_a_browser_a_tax_lines_amount_is_recalculated_from_its_rate(browser, store):
+    invoice_id = _with_gst(store)
+    page, errors = _review(browser, invoice_id)
+    row = page.locator("[data-grid=taxes] > tr").first
+    row.locator("[name=tax_rate_pct]").fill("13")
+    row.locator("[name=tax_taxable]").fill("250.00")
+    row.locator("[name=tax_amount]").fill("1.00")
+    _menu(page, row.locator("td").first)
+    with _checked(page):
+        _item(page, "recalc").click()
+    assert row.locator("[name=tax_amount]").input_value() == "32.50"
+    n = page.locator("[data-grid=taxes] > tr").count()
+    _menu(page, row.locator("td").first)
+    _item(page, "delete").click()
+    assert page.locator("[data-grid=taxes] > tr").count() == n - 1
+    page.locator("#toasts .flash-act").click()
+    assert page.locator("[data-grid=taxes] > tr").count() == n
+    assert page.locator("[data-grid=taxes] > tr").first.locator("[name=tax_amount]").input_value() == "32.50"
+    assert errors == []
+
+
+def _blank_spot(page):
+    """A point of the page with no box on it (the bottom right corner of what shows of it)."""
+    box = page.locator(".iv-stage").bounding_box()
+    return {"x": box["width"] - 30, "y": box["height"] - 30}
+
+
+def test_in_a_browser_the_page_menu_zooms_in_where_it_was_clicked_and_turns_the_page(browser, store):
+    invoice_id = store.list_invoices(REVIEW)[0]["id"]
+    page, errors = _review(browser, invoice_id)
+    viewer = page.locator("#iv")
+    before = viewer.get_attribute("data-zoom")
+    _menu(page, page.locator(".iv-stage"), position=_blank_spot(page))
+    labels = page.locator(f"{MENU} [role=menuitem]").all_inner_texts()
+    assert any("Zoom in here" in t for t in labels) and any("Teach a field here" in t for t in labels), labels
+    _item(page, "zoom-in").click()
+    page.wait_for_function("b => document.getElementById('iv').dataset.zoom !== b", arg=before)
+    _menu(page, page.locator(".iv-stage"), position=_blank_spot(page))
+    _item(page, "rotate").click()
+    assert "turned" in viewer.get_attribute("class")
+    # the submenu: Teach a field here → a field starts teach mode
+    _menu(page, page.locator(".iv-stage"), position=_blank_spot(page))
+    _item(page, "teach").hover()
+    page.wait_for_selector(".cm.cm-sub")
+    page.locator(".cm.cm-sub [role=menuitem]").first.click()
+    page.wait_for_selector(".iv-teach:not([hidden])")
+    assert errors == []
+
+
+def test_in_a_browser_the_menu_works_from_the_keyboard(browser, store):
+    invoice_id = store.list_invoices(REVIEW)[0]["id"]
+    page, errors = _review(browser, invoice_id)
+    box = page.locator('.inv-details input[name="po_number"]')
+    box.fill("PO-1234")
+    box.focus()
+    page.keyboard.press("Shift+F10")
+    page.wait_for_selector(MENU)
+    assert page.evaluate("document.activeElement.dataset.cm") == "clear"  # the first item has the focus
+    page.keyboard.press("Escape")
+    assert page.locator(MENU).count() == 0 and page.evaluate("document.activeElement.name") == "po_number"
+    page.keyboard.press("Shift+F10")
+    page.wait_for_selector(MENU)
+    page.keyboard.press("ArrowDown")
+    assert page.evaluate("document.activeElement.dataset.cm") == "absent"
+    page.keyboard.press("End")
+    page.keyboard.press("Home")
+    with _checked(page):
+        page.keyboard.press("Enter")
+    assert box.input_value() == "" and page.locator(MENU).count() == 0
+    # keys pressed in the menu stay in it: R does not turn the page, Esc closes only the menu
+    page.locator('.inv-details input[name="invoice_number"]').focus()
+    page.keyboard.press("Shift+F10")
+    page.wait_for_selector(MENU)
+    page.keyboard.press("r")
+    assert "turned" not in (page.locator("#iv").get_attribute("class") or "")
+    page.keyboard.press("Escape")
+    assert page.locator(MENU).count() == 0
+    assert errors == []
+
+
+def test_in_a_browser_shift_right_click_gives_the_browsers_own_menu(browser, store):
+    invoice_id = store.list_invoices(REVIEW)[0]["id"]
+    page, errors = _review(browser, invoice_id)
+    box = page.locator('.inv-details input[name="invoice_number"]')
+    box.click(button="right", modifiers=["Shift"])
+    page.wait_for_timeout(200)
+    assert page.locator(MENU).count() == 0
+    # a right-click on text selected in the box: the browser's (copy) too
+    box.click()
+    box.press("Control+a")
+    box.click(button="right")
+    page.wait_for_timeout(200)
+    assert page.locator(MENU).count() == 0
+    assert errors == []
+
+
+def test_in_a_browser_a_word_double_clicked_on_the_page_fills_the_detail_focused_last(browser, store):
+    invoice_id = store.list_invoices(REVIEW)[0]["id"]
+    page, errors = _review(browser, invoice_id)
+    words = page.evaluate(f"fetch('/review/{invoice_id}/words').then(r => r.json()).then(a => a.words[0])")
+    word = min((w for w in words if re.fullmatch(r"[A-Za-z]{4,}", w["t"])), key=lambda w: w["b"][1])
+    box = page.locator('.inv-details input[name="po_number"]')
+    box.focus()
+    frame = page.locator(".iv-frame").bounding_box()
+    x = frame["x"] + (word["b"][0] + word["b"][2]) / 2 * frame["width"]
+    y = frame["y"] + (word["b"][1] + word["b"][3]) / 2 * frame["height"]
+    with page.expect_response(lambda r: r.url.endswith("/teach")):
+        page.mouse.dblclick(x, y)
+    page.wait_for_function("t => document.querySelector('.inv-details input[name=po_number]').value === t", arg=word["t"])
+    taught = json.loads(page.eval_on_selector("[data-taught]", "t => t.value"))
+    assert taught["po_number"][0][0] == 1
+    assert page.locator("#toasts .flash-act").is_visible()  # Undo
+    assert errors == []
+
+
+def test_in_a_browser_enter_goes_to_the_next_detail_and_shift_enter_back(browser, store):
+    invoice_id = store.list_invoices(REVIEW)[0]["id"]
+    page, errors = _review(browser, invoice_id)
+    page.locator('.inv-details input[name="invoice_number"]').focus()
+    page.keyboard.press("Enter")
+    assert page.evaluate("document.activeElement.name") == "invoice_date"
+    page.keyboard.press("Enter")
+    assert page.evaluate("document.activeElement.name") == "po_number"
+    page.keyboard.press("Shift+Enter")
+    assert page.evaluate("document.activeElement.name") == "invoice_date"
+    assert store.get_invoice(invoice_id)["status"] == REVIEW  # Enter approved nothing
+    assert errors == []
+
+
+def test_in_a_browser_p_opens_park_and_x_opens_reject_without_rejecting(browser, store):
+    invoice_id = store.list_invoices(REVIEW)[0]["id"]
+    page, errors = _review(browser, invoice_id)
+    page.locator("body").click(position={"x": 5, "y": 5})
+    page.keyboard.press("p")
+    assert page.locator("details[data-park]").get_attribute("open") is not None
+    assert page.evaluate("document.activeElement.name") == "reason"
+    page.keyboard.press("Escape")
+    page.locator("body").click(position={"x": 5, "y": 5})
+    page.keyboard.press("x")
+    assert page.locator("details[data-reject]").get_attribute("open") is not None
+    page.wait_for_timeout(200)
+    assert store.get_invoice(invoice_id)["status"] == REVIEW
+    assert errors == []
+
+
+def test_in_a_browser_a_note_is_added_without_leaving_the_page(browser, store):
+    invoice_id = store.list_invoices(REVIEW)[0]["id"]
+    page, errors = _review(browser, invoice_id)
+    page.evaluate("window.__stayed = 1")
+    page.locator('.inv-details input[name="po_number"]').fill("PO-777")  # an edit, kept as it is
+    notes = page.locator(".inv-notes details")
+    if notes.get_attribute("open") is None:
+        notes.locator("summary").click()
+    page.locator(".inv-note-form input[name=text]").fill("Asked Sam about the PO")
+    page.locator(".inv-note-form button[type=submit]").click()
+    page.wait_for_selector("[data-notes] .ev")
+    assert "Asked Sam about the PO" in page.inner_text("[data-notes]")
+    assert page.evaluate("window.__stayed") == 1 and page.inner_text("[data-notes-count]").strip() == "· 1"
+    assert page.locator('.inv-details input[name="po_number"]').input_value() == "PO-777"
+    assert page.locator(".inv-note-form input[name=text]").input_value() == ""
+    assert errors == []
+
+
+def test_in_a_browser_the_queue_remembers_its_filter_and_where_it_was_scrolled(browser, store):
+    chromium, base = browser
+    page = chromium.new_page(viewport={"width": 1366, "height": 420})
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(base + "/review?show=all&sort=amount")
+    page.evaluate("window.scrollTo(0, 260)")
+    y = page.evaluate("window.scrollY")
+    assert y > 100
+    page.eval_on_selector(".rq-list li:last-child a.rq-row", "a => a.click()")  # as it is: no scrolling to it first
+    page.wait_for_selector(".iv-sheet:not(.loading)")
+    page.locator("[data-nav=queue]").click()  # the queue's address without its filter
+    page.wait_for_url(re.compile(r"/review\?show=all&sort=amount$"))
+    page.wait_for_load_state("networkidle")
+    page.wait_for_function("y => Math.abs(window.scrollY - y) < 40", arg=y)
+    assert errors == []

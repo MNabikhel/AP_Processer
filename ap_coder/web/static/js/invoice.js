@@ -13,7 +13,7 @@
      invoice detail it goes to the next one (Shift+Enter the one before). P opens Park, X opens Reject (only opens).
    * Right-click (or Shift+F10) a field, a line, a tax line or the page: a menu of what to do with it (ctxmenu.js,
      D-60). Deleting, clearing, splitting and the like can be undone: the message says Undo, and Ctrl+Z (not in a
-     text box) does the same. Only the last change is kept to undo, and only until something else is edited.
+     text box of another form) does the same. Only the last change is kept to undo, until something else is edited.
 
    Everything from the server is either HTML it escaped (the sections, the rows) or set as text here.
 */
@@ -1005,7 +1005,7 @@ window.addEventListener("pagehide", () => {
 let undoState = null; // {snap, note}: the screen before the last change, and the message offering to undo it
 
 function headerElements() {
-  return [...document.querySelectorAll('[form="inv"][name]')].filter(
+  return [...document.querySelectorAll('#inv [name], [form="inv"][name]')].filter(
     (el) => !el.closest("[data-grid]") && !["checkbox", "radio", "submit"].includes(el.type) &&
       (el.type !== "hidden" || el.name === "taught" || el.name === "absent"),
   );
@@ -1475,12 +1475,15 @@ if (form) {
 /* ---------- Ctrl+Z, P (Park), X (Reject) ---------- */
 
 document.addEventListener("keydown", (e) => {
-  if (e.defaultPrevented || e.altKey || typing(e.target) || e.target.closest?.("dialog, [role=dialog]")) return;
+  if (e.defaultPrevented || e.altKey || e.target.closest?.("dialog, [role=dialog]")) return;
   if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === "z" || e.key === "Z")) {
+    // Not in a text box, where Ctrl+Z is the box's own; but in a box of the review form nothing was typed in since
+    // the change (typing there drops the Undo), as after a right-click in it: there the change is what to undo.
+    if (typing(e.target) && e.target.form !== form) return;
     if (undo()) e.preventDefault();
     return;
   }
-  if (e.ctrlKey || e.metaKey || e.shiftKey) return;
+  if (e.ctrlKey || e.metaKey || e.shiftKey || typing(e.target)) return;
   const pop = { p: "[data-park]", P: "[data-park]", x: "[data-reject]", X: "[data-reject]" }[e.key];
   const details = pop && document.querySelector(pop);
   if (!details) return;
