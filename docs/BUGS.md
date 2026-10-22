@@ -5984,3 +5984,16 @@ reproduced with a script first, then given a failing test and fixed.
 - **Test:** `tests/test_sweep_pilot_fixes.py::test_amounts_without_a_leading_zero`,
   `::test_a_receipt_with_amounts_without_a_leading_zero_reads_them`
 - **Lesson:** Test the printed forms of an amount the till prints, not only the ones a spreadsheet does.
+
+#### B-653 · Settings → Reading said OvisOCR2 had read every invoice while 26 still waited · low
+- **Where:** `ap_coder/web/pages/settings_reading.py` (`queue_text`), `ap_coder/ai/reading.py` (`_queue`)
+- **Symptom:** *Nothing waiting for OvisOCR2: it has read every invoice processed so far*, with 26 page reads
+  waiting (24 approved invoices, 2 rejected).
+- **Cause:** the count is of the invoices a person waits for (B-509); the words said it was all of them.
+- **Reproduce:** queue a page read, approve the invoice, open Settings → Reading.
+- **Reproduced:** yes (the sweep's database)
+- **Fix:** with none to review waiting, the tab says *No invoice to review waits for OvisOCR2. It still has 26
+  approved or rejected invoices to read, to check its reading against what AP approved: nothing waits for you*;
+  with none at all, *Nothing waiting for OvisOCR2.*
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_the_reading_tab_says_what_still_waits_for_ovisocr2`
+- **Lesson:** A count narrowed for one reason must not be described as the whole.

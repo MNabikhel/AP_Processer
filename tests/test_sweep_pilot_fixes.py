@@ -146,3 +146,30 @@ def test_a_receipt_with_amounts_without_a_leading_zero_reads_them(tmp_path):
     r = analyze(str(path))
     assert r.fields["subtotal"].value == 0.99 and r.fields["hst_amount"].value == 0.13
     assert r.fields["grand_total"].value == 1.12 and r.fields["subtotal"].status == "verified"
+
+
+# --- B-653: Settings → Reading said OvisOCR2 had read everything while invoices still waited -----------------------
+
+
+def test_the_reading_tab_says_what_still_waits_for_ovisocr2(tmp_path):
+    from types import SimpleNamespace
+
+    from ap_coder.ai.reading import _queue
+    from ap_coder.web.pages.settings_reading import queue_text
+
+    store = Store(tmp_path / "ap.db")
+    iid = store.add_invoice(tmp_path / "x.pdf", _blank_invoice(), {"requires_review": True})
+    store.queue_page_read(iid, "test")
+    final = copy.deepcopy(_blank_invoice())
+    final["line_items"][0]["predicted_gl_code"] = "6110"
+    store.approve_invoice(iid, final, "pat")
+    status = SimpleNamespace(page_reader_model="", queue=0, queue_closed=0, eta_minutes=None, figures_count=0,
+                             figures_agree=None)  # fmt: skip
+    _queue(None, store, status)
+    assert (status.queue, status.queue_closed) == (0, 1)
+    bold, rest = queue_text(status)
+    assert "read every invoice" not in bold + rest
+    assert bold + rest == ("No invoice to review waits for OvisOCR2. It still has 1 approved or rejected invoice to "
+                           "read, to check its reading against what AP approved: nothing waits for you.")  # fmt: skip
+    status.queue_closed = 0
+    assert queue_text(status) == ("", "Nothing waiting for OvisOCR2.")

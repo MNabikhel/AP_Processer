@@ -100,9 +100,15 @@ def self_test_pill(status: Any, lm_studio_running: bool = True) -> tuple[str, st
 
 
 def queue_text(status: Any) -> tuple[str, str]:
-    """(in bold, the rest): the invoices waiting for OvisOCR2 and how long they take, or that nothing waits."""
+    """(in bold, the rest): the invoices waiting for OvisOCR2 and how long they take, or that nothing waits (and
+    the approved or rejected invoices it still reads to check itself, which nobody waits for: B-653)."""
     if not status.queue:
-        return "", "Nothing waiting for OvisOCR2: it has read every invoice processed so far."
+        closed = getattr(status, "queue_closed", 0) or 0
+        if closed:
+            still = ui.plural(closed, "approved or rejected invoice")
+            return "", (f"No invoice to review waits for OvisOCR2. It still has {still} to read, to check its "
+                        "reading against what AP approved: nothing waits for you.")  # fmt: skip
+        return "", "Nothing waiting for OvisOCR2."
     eta = f" · {page_reader.duration(status.eta_minutes * 60)} to read them" if status.eta_minutes else ""
     return f"{ui.plural(status.queue, 'invoice')} waiting", f" for OvisOCR2{eta}."
 
