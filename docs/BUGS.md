@@ -6631,3 +6631,22 @@ Found while building the pilot tester's requests on the review screen's invoice 
   its invoices).
 - **Test:** `tests/test_vendors.py::test_without_a_vendor_master_the_vendor_list_keeps_the_numbers_ap_gave_a_vendor`
 - **Lesson:** A list built from two sources carries what both know.
+
+#### B-681 · Tax numbers filled from the vendor list were learned as the reviewer's corrections · medium-high
+- **Where:** `ap_coder/capture/workflow.py` (`learn_from_approval`), `ap_coder/core/store.py` (`approve_invoice`
+  edits), `ap_coder/web/pages/invoice.py` (`approve`, the "why" question), `ap_coder/core/ui.py` (`FIELD_WORDS`)
+- **Symptom:** an invoice whose GST/HST and PST numbers were not read, filled in from the vendor list (D-65), then
+  approved said "Learned from your 2 corrections (GST/HST number, pst registration number)"; the supplier's accuracy
+  counted two wrong fields, the readers were scored against the vendor list's numbers, lessons recorded corrections
+  and the approval's edits listed both numbers.
+- **Cause:** learning compared what was read with the approved coding and never read
+  `tax_numbers_from_vendor_list`; the words of the message had two copies, and one had no PST number.
+- **Reproduce:** blank invoice 5's GST/HST and PST in its reading, open it (both fill from the vendor list), approve.
+- **Reproduced:** yes (found by the review of the header side)
+- **Fix:** `schema.as_read` puts each number filled from the vendor list (and left as filled) back as it was read
+  before the lessons, the reader and supplier outcomes, the supplier template, the "why" question and the edits
+  count see the approval; the approved coding keeps the number. The field words are one dict in `core/ui.py`
+  (`FIELD_WORDS`), with every header field (a test checks), used by the learning message and the lessons.
+- **Test:** `tests/test_header_details.py::test_numbers_filled_from_the_vendor_list_are_not_corrections`,
+  `::test_every_header_field_has_a_word_for_the_learning_message`
+- **Lesson:** A value AP Coder put in itself is neither a reading nor a correction: every learner must know which.

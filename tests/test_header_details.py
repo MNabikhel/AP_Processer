@@ -320,3 +320,64 @@ def test_in_a_browser_pay_from_is_a_list_that_follows_the_currency(browser, stor
     page.wait_for_timeout(600)
     assert select.input_value() == "CAD-PAY"
     assert errors == []
+
+
+# --- Review findings (B-681 to B-687) --------------------------------------------------------------------------------
+
+
+def _blank_reading(store: Store, invoice_id: int, *fields: str) -> None:
+    """As if ``fields`` had not been read on the invoice (its coding and its capture)."""
+    import sqlite3
+
+    path = ", ".join(f"'$.{f}', ''" for f in fields)
+    with sqlite3.connect(store.path) as conn:
+        conn.execute(f"UPDATE invoices SET ai_output = json_set(ai_output, {path}) WHERE id = ?", (invoice_id,))
+        row = conn.execute("SELECT capture_json FROM invoice_capture WHERE invoice_id = ?", (invoice_id,)).fetchone()
+        if row:
+            capture = json.loads(row[0])
+            for f in fields:
+                (capture.get("fields") or {}).pop(f, None)
+            conn.execute("UPDATE invoice_capture SET capture_json = ? WHERE invoice_id = ?",
+                         (json.dumps(capture), invoice_id))  # fmt: skip
+
+
+def test_numbers_filled_from_the_vendor_list_are_not_corrections(client, store):
+    """B-681: approving an invoice whose GST/HST and PST numbers the vendor list filled in said "Learned from your 2
+    corrections (GST/HST number, pst registration number)", counted them against the supplier and its readers, and
+    as the reviewer's edits."""
+    invoice_id = _red_river(store)
+    store.save_vendor(store.get_invoice(invoice_id)["vendor_key"], "Red River Office Interiors",
+                      expected_gst="741852966 RT0001", pst_number="160482-7")  # fmt: skip
+    _blank_reading(store, invoice_id, GST, PST)
+    page = client.get(f"/review/{invoice_id}").text
+    state = json.loads(html.unescape(page.split('name="from_vendor" value="', 1)[1].split('"', 1)[0]))
+    assert set(state["fields"]) == {GST, PST}
+    data = _approvable(client, invoice_id, form_of(store, invoice_id, **{GST: state["fields"][GST],
+                                                                         PST: state["fields"][PST]}))  # fmt: skip
+    data["from_vendor"] = json.dumps(state)
+    answer = client.post(f"/review/{invoice_id}/approve", data=data, headers=PAGE).json()
+    said = json.dumps(answer)
+    assert "correction" not in said and "registration number" not in said, said
+    inv = store.get_invoice(invoice_id)
+    assert inv["status"] == APPROVED and inv["final_output"][GST] == "741852966 RT0001"
+    assert GST not in inv["edits"] and PST not in inv["edits"]
+    outcomes = {r["field"]: r["correct"] for r in store.supplier_outcomes(store.supplier_key_for(
+        inv["final_output"]["vendor_name"], inv["final_output"][GST])) if r["invoice_id"] == invoice_id}  # fmt: skip
+    assert outcomes.get(GST, 1) == 1 and outcomes.get(PST, 1) == 1
+    import sqlite3
+
+    with sqlite3.connect(store.path) as conn:
+        scored = conn.execute("SELECT COUNT(*) FROM reader_outcomes WHERE invoice_id = ? AND field IN (?, ?)",
+                              (invoice_id, GST, PST)).fetchone()[0]  # fmt: skip
+        lessons = conn.execute("SELECT COUNT(*) FROM lessons WHERE field IN (?, ?) AND corrected > 0",
+                               (GST, PST)).fetchone()[0]  # fmt: skip
+    assert scored == 0 and lessons == 0
+
+
+def test_every_header_field_has_a_word_for_the_learning_message():
+    from ap_coder.capture.workflow import FIELD_WORDS
+    from ap_coder.core.schema import InvoiceCoding
+
+    headers = [f for f in InvoiceCoding.model_fields if f not in ("line_items", "tax_lines", "confidence_score")]
+    missing = [f for f in headers if f not in FIELD_WORDS]
+    assert missing == [] and FIELD_WORDS[PST] == "PST number"

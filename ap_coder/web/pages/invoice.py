@@ -631,8 +631,10 @@ async def approve(request: Request, invoice_id: int) -> JSONResponse:
     # The same correction again and again: before saving, AP is asked once why (lessons.py). Skipping is fine: the
     # question comes back next time.
     from ap_coder.ai import lessons
+    from ap_coder.core.schema import as_read
 
-    asked = lessons.due_for_why(store, inv.get("ai_output") or {}, analysis.output)
+    ai = inv.get("ai_output") or {}
+    asked = lessons.due_for_why(store, ai, as_read(analysis.output, ai))  # a vendor-list number: no "why" (B-681)
     if asked and not form.get("why_done"):
         return JSONResponse({"ok": False, "ask_why": {"fields": asked, "threshold": lessons.why_after(store)}})
     after = next_url(store, invoice_id, query, form.get("next_id"))

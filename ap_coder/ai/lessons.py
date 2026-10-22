@@ -22,6 +22,7 @@ from typing import Any
 
 from ..core.memory import pair_lines, vendor_key
 from ..core.reference_data import UNASSIGNED
+from ..core.ui import FIELD_WORDS as _WORDS
 
 SETTING = "why_after"  # corrections of one situation since its last reason before the "why" question
 DEFAULT_WHY_AFTER = 3
@@ -29,14 +30,7 @@ LINE_GL = "line_gl"  # the field of a line-coding lesson
 INVOICE, CREDIT_NOTE = "invoice", "credit note"
 MAX_PROMPT_LINES = 8
 
-FIELD_WORDS = {
-    "vendor_name": "vendor", "invoice_number": "invoice number", "invoice_date": "invoice date",
-    "due_date": "due date", "po_number": "PO number", "currency": "currency",
-    "gst_hst_registration_number": "GST/HST number", "qst_registration_number": "QST number",
-    "pst_registration_number": "PST number", "subtotal": "subtotal", "gst_amount": "GST", "hst_amount": "HST",
-    "pst_amount": "PST", "qst_amount": "QST", "tax_total": "total tax", "grand_total": "total",
-    "payment_terms": "payment terms", LINE_GL: "GL account",
-}  # fmt: skip
+FIELD_WORDS = {**_WORDS, LINE_GL: _WORDS["line_gl"]}  # one place for these words: core/ui.py
 
 
 def kind_of(output: dict[str, Any]) -> str:
