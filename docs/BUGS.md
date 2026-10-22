@@ -6867,3 +6867,14 @@ reproduced with a script first, then given a failing test and fixed.
   invoice): a missing number counts only when no PST is charged anywhere; otherwise the exemption is asked (B-715).
 - **Test:** `tests/test_line_tax_review3.py::test_a_missing_pst_number_does_not_make_a_line_due_when_pst_is_charged_b719`
 - **Lesson:** Weigh the evidence on the page over a field that is merely missing.
+
+#### B-720 · The Tax check still called QST not charged "self-assess" · low
+- **Where:** `ap_coder/coding/taxmath.py` (the "selfassess" row), `ap_coder/web/templates/_invoice_live.html` (its pill)
+- **Symptom:** a Quebec invoice with QST due and not charged showed a "self-assess" pill and "self-assess $149.75",
+  though the finding (B-718) says a registrant generally owes nothing net.
+- **Cause:** B-718 changed the finding and the labels, not the Tax check row.
+- **Reproduce:** `math_check` on a QC invoice charging GST only.
+- **Reproduced:** yes (found by the CPA's final check)
+- **Fix:** the row carries its pill: "QST not charged" with the B-718 note for QST, "self-assess" for PST.
+- **Test:** `tests/test_line_tax_review3.py::test_the_tax_check_says_qst_not_charged_without_self_assess_b720`
+- **Lesson:** A wording rule lives in one constant; every place that says it reads that constant.
