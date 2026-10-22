@@ -340,7 +340,9 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
         )
     # Which taxes each line carries: the codes printed beside the lines, else the lines that make each tax charged
     # add up (not every tax on every line: a delivery or a service is often exempt from the provincial tax).
-    lines = tax_codes(lines, tax_lines, flags, text, ship_to_province or ours or supplier_province, invoice_on)
+    lines = tax_codes(lines, tax_lines, flags, text, ship_to_province or ours or supplier_province, invoice_on,
+                      supplier_province=supplier_province,
+                      pst_number=str(values.get("pst_registration_number") or ""))  # fmt: skip
 
     found = [r.confidence for f, r in capture.fields.items() if r.value not in (None, "")]
     gl_known = sum(1 for li in lines if li.predicted_gl_code != UNASSIGNED) / len(lines)
@@ -375,7 +377,8 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
 
 
 def tax_codes(lines: list[LineItem], tax_lines: list[TaxLine], flags: list[str], text: str, province: str,
-              invoice_on: str = "", keep: list[int] | None = None) -> list[LineItem]:  # fmt: skip
+              invoice_on: str = "", keep: list[int] | None = None, *, supplier_province: str | None = None,
+              pst_number: str | None = None) -> list[LineItem]:  # fmt: skip
     """The lines with their tax codes (``line_tax.prefill``): ``flags`` the tax-code cell read on each line, ``text``
     the page text (its legend: "Tax codes: G = GST 5%, R = Manitoba RST 7%"), the official rates in force on the
     invoice's date where it is supplied."""
@@ -393,7 +396,12 @@ def tax_codes(lines: list[LineItem], tax_lines: list[TaxLine], flags: list[str],
             return None
         return table.rate_for(tax_type, where if where != OUTSIDE_CANADA else "", on)
 
-    return prefill(lines, tax_lines, flags, parse_legend(text), keep=keep or [], rate_for=rate_for).lines
+    # A vendor out of the province of supply, or without a PST number, that does not charge the PST on a line: the
+    # PST is due on it (self-assess), not taken as exempt (B-715).
+    away = bool(supplier_province) and supplier_province != province
+    no_number = pst_number is not None and not str(pst_number).strip()
+    return prefill(lines, tax_lines, flags, parse_legend(text), keep=keep or [], rate_for=rate_for,
+                   vendor_collects=not (away or no_number)).lines  # fmt: skip
 
 
 def _iso_or_empty(value: Any) -> str:

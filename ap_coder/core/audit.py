@@ -130,6 +130,14 @@ def diff_coding(ai: dict[str, Any], final: dict[str, Any]) -> list[dict[str, str
                 after = code_label(tax_code_of(line, legacy_basis(final_lines, final.get("tax_lines") or [])))
             if _fmt(before) != _fmt(after):
                 changes.append({"what": f"line {n} {label}", "before": _fmt(before), "after": _fmt(after)})
+        # A PST exemption inferred when the invoice was read, confirmed by the reviewer (who and when: the approval's
+        # own event, B-715).
+        from ..coding.line_tax import exemption_to_confirm
+
+        inferred = exemption_to_confirm(original)
+        if inferred and "exemption confirmed on review" in str(line.get("reasoning_justification") or ""):
+            changes.append({"what": f"line {n} {inferred} exemption", "before": "inferred",
+                            "after": "confirmed on review"})  # fmt: skip
     for original in ai_lines:
         if id(original) not in matched:
             changes.append(

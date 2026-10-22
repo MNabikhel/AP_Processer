@@ -32,6 +32,7 @@ from ap_coder.capture.types import MISSING, Box, CaptureResult
 from ap_coder.coding import rules, vendor_mail
 from ap_coder.coding.line_tax import (
     all_labels,
+    charged_types,
     fill_exempt,
     legacy_basis,
     parse_code,
@@ -849,7 +850,7 @@ def grouped(issues: list[Any]) -> list[tuple[bool, str]]:
 
 
 # A finding about a line's account or cost center: its item in the checks is a button to that box (B-443).
-GOTO_BOX = {"GL_UNASSIGNED": "line_gl", "CC_UNASSIGNED": "line_cc"}
+GOTO_BOX = {"GL_UNASSIGNED": "line_gl", "CC_UNASSIGNED": "line_cc", "PST_EXEMPTION_TO_CONFIRM": "line_tax_code"}
 
 
 def confidence_pct(value: float, threshold: float) -> str:
@@ -1191,7 +1192,7 @@ def tax_check(coding: InvoiceCoding, reference: ReferenceData) -> list[dict[str,
 
 
 # Findings about a line's tax code: the line is drawn yellow in the grid, with the finding as its note.
-TAX_LINE_FINDINGS = ("EXEMPT_LINE_TAXED", "LINE_TAX_NOT_CHARGED", "TAX_BASE_MISMATCH")
+TAX_LINE_FINDINGS = ("EXEMPT_LINE_TAXED", "LINE_TAX_NOT_CHARGED", "TAX_BASE_MISMATCH", "PST_EXEMPTION_TO_CONFIRM")
 
 
 def tax_marks(math: dict[str, Any], issues: list[Any]) -> dict[int, str]:
@@ -1204,6 +1205,23 @@ def tax_marks(math: dict[str, Any], issues: list[Any]) -> dict[int, str]:
     for number, why in (math.get("marks") or {}).items():
         marks.setdefault(number, why)
     return marks
+
+
+def posting_note(coding: InvoiceCoding, reference: ReferenceData) -> str:
+    """A word over the GL posting preview when a non-recoverable tax (PST) is spread over the lines marked with it
+    while some lines' tax codes are still to check: the spread may be on the wrong lines (B-714)."""
+    from ap_coder.coding.line_tax import exemption_to_confirm
+    from ap_coder.coding.tax import EXPENSE_TO_LINE
+
+    spread = [t for t in charged_types(coding.tax_lines) if reference.tax.treatment(t).treatment == EXPENSE_TO_LINE]
+    open_lines = [li.line_number for li in coding.line_items if tax_guessed(li) or exemption_to_confirm(li)]
+    if not spread or not open_lines:
+        return ""
+    numbers = ", ".join(str(n) for n in open_lines[:8]) + ("…" if len(open_lines) > 8 else "")
+    return (
+        f"The {' and '.join(spread)} is spread over the lines marked with it, and the tax codes of line"
+        f"{'s' if len(open_lines) > 1 else ''} {numbers} are still to check: confirm them before approving."
+    )
 
 
 def spend_split(output: dict[str, Any], reference: ReferenceData) -> list[dict[str, Any]]:
@@ -1389,7 +1407,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
         "math": (math := math_check(coding, reference.tax)),
         "tax_marks": tax_marks(math, report.issues),
         "split": spend_split(output, reference),
-        "posting": distribution(output, reference),
+        "posting": {**distribution(output, reference), "note": posting_note(coding, reference)},
         "bar": {
             "amount": money(coding.grand_total), "currency": coding.currency, "lines": lines_n, "changed": changed,
             "learn": learn_text(coding, ai, uses_cost_centers(reference), meta.get("rules_applied")),

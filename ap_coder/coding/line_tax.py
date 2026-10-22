@@ -47,6 +47,35 @@ EXEMPT_MARK = "~"  # in a code: the taxes charged, then those the line is exempt
 # that does not read as untaxed: marked on the review screen for a person to look at (``tax_guessed``) until they
 # pick or confirm the code (B-713).
 GUESS_NOTE = "Tax code worked out from the tax charged: check it."
+# A BC, SK or MB PST (RST) exemption inferred from the vendor charging it on other lines and not this one: exempt, or
+# missed and to self-assess? A person says which: approval waits until they pick or confirm it (B-715), and the
+# confirmation stays in the approved coding (with the audit trail's who and when).
+_INFERRED = re.compile(r"\b(PST|RST) exemption inferred \(charged on the other lines, not this one\): confirm it\.")
+_CONFIRMED = "{name} exemption confirmed on review."
+
+
+def inferred_note(name: str) -> str:
+    return f"{name} exemption inferred (charged on the other lines, not this one): confirm it."
+
+
+def exemption_to_confirm(line: Any) -> str:
+    """The provincial tax (its name: "PST", "RST") whose exemption on this line was inferred and not yet confirmed by
+    a person, else ""."""
+    m = _INFERRED.search(str(_get(line, "reasoning_justification") or ""))
+    return m.group(1) if m else ""
+
+
+def confirm_line(reason: str, code: str) -> str:
+    """A line's reasoning once a person picked or confirmed its tax ``code``: the "check it" note goes; an inferred
+    exemption still in the code is recorded as confirmed, and goes if the code no longer exempts it."""
+    text = str(reason or "").replace(GUESS_NOTE, " ")
+    m = _INFERRED.search(text)
+    if m:
+        parsed = parse_code(code)
+        still = parsed is not None and "PST" in parsed[1]
+        text = text.replace(m.group(0), _CONFIRMED.format(name=m.group(1)) if still else " ")
+    return " ".join(text.split())
+
 
 PST_NAMES = {"MB": "RST"}  # Manitoba calls its PST the retail sales tax
 
@@ -209,9 +238,13 @@ def code_label(code: str, province: str = "") -> str:
     else:
         main = "No tax charged"
     parts = [f"{tax_name(t, province)} exempt" for t in exempt]
-    parts += [f"{tax_name(t, province)} not charged (self-assess)" for t in due]
+    # A PST due and not charged is self-assessed (BC PSTA s.49...); a QST is too in law, but a registrant buying for
+    # its commercial activities claims it back and generally owes nothing net: said without "self-assess" (B-718).
+    parts += [f"{tax_name(t, province)} not charged" + (" (self-assess)" if t == "PST" else "") for t in due]
     if not charged and not exempt and due:
-        return f"No tax charged (self-assess {' and '.join(tax_name(t, province) for t in due)})"
+        if "PST" in due:
+            return f"No tax charged (self-assess {' and '.join(tax_name(t, province) for t in due)})"
+        return f"No tax charged · {' and '.join(tax_name(t, province) for t in due)} not charged"
     return " · ".join([main, *parts])
 
 
@@ -538,7 +571,8 @@ def solve(amounts: Sequence[float], target: float, rate: float, descriptions: Se
     if not ways:
         return Solved("none", everything)
     if total > MAX_WAYS or (total > 1 and len(live) > MAX_DOUBTFUL_LINES):
-        return Solved("unsure", everything, count=total)
+        # every line carries it and every line is to check: the amounts can't say which carry it (B-714)
+        return Solved("unsure", everything, everything, count=total)
     ways.sort(key=lambda s: _plausibility(s, n, descriptions))
     best = ways[0]
     left_out = frozenset(k for k in everything - best.lines if not LIKELY_UNTAXED.search(descriptions[k] or ""))
@@ -585,6 +619,7 @@ def prefill(
     *,
     keep: Iterable[int] = (),
     rate_for: Callable[[str, str], float | None] | None = None,
+    vendor_collects: bool = True,
 ) -> Prefill:
     """Each line's tax code, worked out (``LineItem``s or dicts; new ones returned, the given ones untouched):
 
@@ -597,7 +632,8 @@ def prefill(
        printed so.
 
     ``rate_for(tax_type, province)``: the official rate (effective-dated, for the place of supply), else the tax
-    line's own rate is used."""
+    line's own rate is used. ``vendor_collects``: False for a vendor out of the province of supply or without a PST
+    number: a PST it charges on other lines and not on a line is then due on it (self-assess), not exempt (B-715)."""
     items = [dict(li) if isinstance(li, dict) else li.model_copy() for li in lines]
     n = len(items)
     printed = list(printed or [""] * n) + [""] * max(0, n - len(printed or []))
@@ -654,6 +690,9 @@ def prefill(
         codes[k] = (ordered(assigned[k]), "")
         how[k] = ("solver" if solved_any else "all") if charged else "none"
     canadian = [t for t in charged if t in CANADIAN_TAX_TYPES]
+    pst_name = tax_name(
+        "PST", next((str(_get(t, "province") or "") for t in tax_lines if _get(t, "tax_type") == "PST"), "")
+    )
     for k in range(n):
         taxes, status = codes[k] or ([], "")
         if k in keep:
@@ -665,8 +704,20 @@ def prefill(
             # not to: exempt); a tax charged on no line stays due (D-64). Nothing charged on a line while the vendor
             # charges tax on others: an exempt line.
             exempt = [t for t in canadian if t not in taxes]
-            if not taxes and canadian:
+            if "PST" in exempt and not vendor_collects:  # out of province, or no PST number: due, not exempt
+                exempt.remove("PST")
+            if not taxes and canadian and set(exempt) == set(canadian):
                 status, exempt = EXEMPT, []
+            # A PST exemption inferred, not printed: a person confirms it (exempt, or missed and to self-assess).
+            if "PST" in canadian and "PST" not in taxes and vendor_collects and how[k] != "printed":
+                reason = str(_get(items[k], "reasoning_justification") or "")
+                note = inferred_note(pst_name)
+                if note not in reason:
+                    reason = f"{reason} {note}".strip()
+                if isinstance(items[k], dict):
+                    items[k]["reasoning_justification"] = reason
+                else:
+                    items[k] = items[k].model_copy(update={"reasoning_justification": reason})
         update = {"taxes_applied": taxes, "tax_status": status, "tax_exempt": exempt}
         if isinstance(items[k], dict):
             items[k].update(update)
@@ -680,6 +731,17 @@ def prefill(
             else:
                 items[k] = items[k].model_copy(update={"reasoning_justification": note})
     return Prefill(items, how, check)
+
+
+def can_explain(amounts: Sequence[float], tax: float, rate: float) -> bool | None:
+    """Whether some set of the lines (discounts always with them) makes ``tax`` at ``rate`` (to a cent a line and the
+    tax's rounding): True, a choice of lines can explain it; False, no set of lines can (the vendor's arithmetic);
+    None when there are too many lines to tell."""
+    if rate <= 0 or not amounts:
+        return None
+    if sum(1 for a in amounts if abs(a) > 0.004) > MAX_SOLVER_LINES:
+        return None
+    return solve(list(amounts), round(tax / rate, 2), rate).kind != "none"
 
 
 def model_gave_no_taxes(lines: Sequence[Any]) -> bool:

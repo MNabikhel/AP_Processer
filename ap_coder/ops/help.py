@@ -361,10 +361,24 @@ CHECKS: dict[str, CheckHelp] = {
         "Fix the tax code of the lines (e.g. a delivery or a service exempt from PST is \"GST only\"); the Tax check "
         "shows each tax adding up. If the vendor taxed the wrong lines, ask for a corrected invoice.",
     ),
+    "HST_NOT_CHARGED": CheckHelp(
+        TAX, "GST charged where HST applies",
+        "The vendor charged GST alone on a supply in an HST province: it should have charged HST. The GST charged is "
+        "claimable.",
+        "Ask the vendor to charge HST. If you can't claim full input tax credits, the provincial part may have to be "
+        "self-assessed (ETA s.218.1): check with your tax team.",
+    ),
+    "PST_EXEMPTION_TO_CONFIRM": CheckHelp(
+        TAX, "PST exemption to confirm",
+        "The vendor charged PST (RST in Manitoba) on other lines and not on this one, so AP Coder took the line as "
+        "exempt from it. It may also be a line the vendor missed, whose PST is then yours to self-assess.",
+        "Confirm the line's tax code (right-click the line → Confirm the tax code) if it is exempt, or pick “GST only "
+        "· PST not charged (self-assess)”. Approval waits until you do.",
+    ),
     "ITC_AT_RISK": CheckHelp(
         TAX, "Input tax credit at risk",
-        "HST charged on a supply where only GST applies, or GST alone where HST applies. Only the tax properly "
-        "payable can be claimed as an input tax credit (ETA s.169).",
+        "HST charged on a supply where only GST applies. Only the tax properly payable can be claimed as an input tax "
+        "credit (ETA s.169).",
         "Ask the vendor for a corrected invoice; until then, check with your tax team what can be claimed.",
     ),
     "LINE_TAX_NOT_CHARGED": CheckHelp(

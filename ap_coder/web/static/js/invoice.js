@@ -1565,6 +1565,7 @@ function showTaxMarks(marks) {
 }
 
 const GUESS_NOTE = "Tax code worked out from the tax charged: check it."; // line_tax.GUESS_NOTE
+const INFERRED = /\b(PST|RST) exemption inferred \(charged on the other lines, not this one\): confirm it\./; // line_tax._INFERRED
 
 /** The clerk picked or confirmed a line's tax code: no longer marked to check, and its note goes from the line's
     reasoning (posted with it), so the approved coding does not keep it (B-713). */
@@ -1573,7 +1574,15 @@ function confirmTaxCode(tr) {
   if (!cell) return;
   delete cell.dataset.taxGuess;
   const reason = tr.querySelector('[name="line_reason"]');
-  if (reason && reason.value.includes(GUESS_NOTE)) reason.value = reason.value.replace(GUESS_NOTE, "").replace(/\s+/g, " ").trim();
+  if (reason) {
+    // line_tax.confirm_line: the "check it" note goes; a PST exemption inferred and still in the code is recorded as
+    // confirmed on review (B-715), and goes when the code no longer exempts it.
+    let text = reason.value.replace(GUESS_NOTE, " ");
+    const code = tr.querySelector("select[data-tax-code]")?.value || "";
+    const exempt = (code.split("~")[1] || "").split("+");
+    text = text.replace(INFERRED, (_m, name) => (exempt.includes("PST") ? `${name} exemption confirmed on review.` : " "));
+    reason.value = text.replace(/\s+/g, " ").trim();
+  }
   showTaxMarks(taxMarks);
 }
 
@@ -1589,7 +1598,8 @@ function taxCodeItems(tr, above, others) {
     setTaxCode(row.querySelector("select[data-tax-code]"), value);
     confirmTaxCode(row); // the clerk's choice now
   };
-  const guessed = Boolean(tr.querySelector(".c-tax")?.dataset.taxGuess);
+  const guessed = Boolean(tr.querySelector(".c-tax")?.dataset.taxGuess) ||
+    INFERRED.test(tr.querySelector('[name="line_reason"]')?.value || "");
   return [
     guessed ? { icon: "task_alt", label: `Confirm the tax code (${label})`, id: "tax-confirm",
       run: () => undoable(`${lineName(tr)}: tax code confirmed.`, () => {

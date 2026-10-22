@@ -66,10 +66,16 @@ A foreign tax charged adds "Foreign tax"; a line's own code is always kept, even
     delivery and environmental fees are never assumed untaxed: charged by the vendor they follow the goods (CRA
     P-077R2; part of the taxable price for BC, SK and MB PST).
   - Several ways: the likeliest is taken and the lines in doubt marked to check. More than 20 ways (or several among
-    more than 20 lines): the amounts can't say, so every line carries the tax and the Tax check shows the difference.
-  - A tax the vendor charges on other lines and not on this one is "not due" on it (it collects the tax and chose
-    not to); a tax charged on no line is "due, not charged". Invoices approved before the per-tax states are read the
-    same way.
+    more than 20 lines): the amounts can't say, so every line carries the tax, every line is marked to check, and the
+    Tax check asks which lines carry it (a total right for some lines is no supplier error: PST is charged only on
+    taxable items).
+  - A tax the vendor charges on other lines and not on this one is taken as "not due" on it (it collects the tax and
+    chose not to); a tax charged on no line is "due, not charged". For BC, SK and MB PST this is a question, not an
+    answer: approval waits until you confirm the exemption or pick "not charged (self-assess)" ("Confirm the PST on
+    lines 4, 7: exempt, or not charged (self-assess)?"); the confirmation is kept in the approved coding and the audit
+    trail. A vendor out of the province of supply, or with no PST number, is taken as not having charged the PST (due,
+    self-assess). Codes printed beside the lines need no confirmation. Invoices approved before the per-tax states are
+    read as the vendor charged them.
   - Your choice always wins: AP Coder never changes a code you picked. Picking a code, or "Confirm the tax code" in
     the line's menu, clears the yellow mark; approving confirms the codes.
 - **Since October 1, 2026**, BC PST also applies to some services that were exempt (the BC 2026 budget: accounting
@@ -94,11 +100,20 @@ What the checks say about the codes:
 - *Provincial tax not charged*: the lines the PST or QST is due on and not charged (this vendor charges it elsewhere
   or not), with their total: self-assess it.
 - *Exempt line seems taxed*: a line marked exempt or zero-rated (from that tax) whose amount the tax charged needs.
-- *Input tax credit at risk*: HST charged where GST applies, or GST alone where HST applies. Only the tax properly
-  payable is claimable (ETA s.169); the booking is not changed by AP Coder.
+- *Input tax credit at risk*: HST charged where GST applies. Only the tax properly payable is claimable (ETA s.169); the
+  booking is not changed by AP Coder.
+- *GST charged where HST applies*: the vendor should have charged HST; the GST is claimable. If you can't claim full
+  input tax credits, the provincial part may have to be self-assessed (ETA s.218.1).
+- *QST not charged*: a QST registrant buying for its commercial activities generally owes nothing net (it would claim
+  the QST back); otherwise it is self-assessed. The code says "GST only · QST not charged", without "self-assess".
 - Every check says the same of a credit note as of its invoice (a credit reverses it line for line, ETA s.232).
 - The **Self-assessment** report works line by line: the lines a PST or QST is due on and not charged, at the official
-  rate.
+  rate. It is booked from the report by journal entry; an invoice exported to JD Edwards with a code that has E1 accrue
+  the use tax (B) must not be booked again from it (the JD Edwards dry run warns).
+- *The Tax check doesn't add up*: a line is named when its amount is the difference; when another choice of lines
+  would make the tax, "pick which lines carry PST"; only when no choice of lines can, "the vendor's tax looks wrong"
+  ("tax charged in error can't be claimed" is said of GST, HST and QST only: PST is never claimed). While some lines
+  are still to check, the GL posting preview says the PST is spread over lines that may be the wrong ones.
 - Non-recoverable PST is added to the GL lines it is charged on, never to a line not due it.
 
 ## The Tax check, line by line

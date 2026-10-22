@@ -135,7 +135,8 @@ def test_forty_lines_with_millions_of_ways_are_not_guessed_b706():
     rng = random.Random(3)
     amounts = [round(rng.uniform(10, 500), 2) for _ in range(40)]
     got = solve(amounts, round(sum(amounts[:25]), 2), 0.07, [f"Item {i}" for i in range(40)])
-    assert got.kind == "unsure" and got.count > 1_000_000 and got.lines == set(range(40)) and not got.doubt
+    assert got.kind == "unsure" and got.count > 1_000_000 and got.lines == set(range(40))
+    assert got.doubt == set(range(40))  # every line to check (B-714)
 
 
 def test_a_few_ways_among_many_lines_are_not_guessed_either_b706():
@@ -277,7 +278,7 @@ def test_hst_charged_where_gst_applies_and_gst_where_hst_applies_put_the_itc_at_
     bc = _invoice("BC", [("Software", 1000.0)], [("HST", "ON", 0.13, 1000.0, 130.0)], supplier="ON")
     assert "ETA s.169" in _found(bc, reference, "ITC_AT_RISK")[0].message
     on = _invoice("ON", [("Software", 1000.0)], [("GST", "", 0.05, 1000.0, 50.0)], supplier="AB")
-    assert _found(on, reference, "ITC_AT_RISK")
+    assert not _found(on, reference, "ITC_AT_RISK")  # the GST charged is claimable: HST_NOT_CHARGED (B-717)
     fine = _invoice("ON", [("Software", 1000.0)], [("HST", "ON", 0.13, 1000.0, 130.0)])
     assert not _found(fine, reference, "ITC_AT_RISK")
 

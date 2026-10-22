@@ -140,7 +140,8 @@ def _two(q: str) -> list[str]:
         ("BC", ["GST", "PST"], _two("PST")),
         ("SK", ["GST", "PST"], _two("PST")),
         ("MB", ["GST", "PST"], _two("RST")),
-        ("QC", ["GST", "QST"], _two("QST")),
+        # QST not charged is not "self-assess": a registrant generally owes nothing net (B-718)
+        ("QC", ["GST", "QST"], [x.replace("QST not charged (self-assess)", "QST not charged") for x in _two("QST")]),
         ("AB", ["GST"], ["GST", "Exempt"]),
         ("YT", ["GST"], ["GST", "Exempt"]),
         ("NT", [], ["GST", "Exempt"]),
@@ -263,9 +264,9 @@ def test_forty_lines_are_solved_quickly_and_more_are_not_searched():
     started = time.perf_counter()
     got = solve(amounts, base, 0.07)
     assert time.perf_counter() - started < 5
-    # more than a few ways among 40 lines: no pick presented as a reading, every line carries it (B-706)
+    # more than a few ways among 40 lines: no pick presented as a reading, every line carries it and is to check
     assert got.kind in ("unique", "unsure") and (got.kind == "unique" or got.lines == set(range(40)))
-    assert got.kind == "unique" or not got.doubt
+    assert got.kind == "unique" or got.doubt == set(range(40))  # (B-706, B-714)
     many = solve([10.0] * 41 + [5.0], 410.0, 0.05)
     assert many.kind == "none" and len(many.lines) == 42
 
@@ -534,6 +535,7 @@ def test_the_chat_models_lines_without_taxes_are_worked_out_and_its_own_kept():
     lines = [_line(1, 9200, description="Desk"), _line(2, 3960, description="Chair"),
              _line(3, 1200, description="Design"), _line(4, 285, description="Delivery")]  # fmt: skip
     coding = _coding(lines, [_tax("GST", 0.05, 14645), _tax("PST", 0.07, 13445, 941.15, "MB")], "MB")
+    coding.pst_registration_number = "160482-7"  # a vendor that collects the RST (B-715)
     _model_line_taxes(coding, "")
     assert [tax_code_of(li) for li in coding.line_items] == ["GST+PST", "GST+PST", "GST~PST", "GST+PST"]
     said = _coding([_line(1, 100, ["GST"]), _line(2, 50)], [_tax("GST", 0.05, 100)], "AB")

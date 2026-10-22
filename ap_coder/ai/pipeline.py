@@ -201,7 +201,8 @@ def _model_line_taxes(coding: InvoiceCoding, text: str) -> None:
         return
     province = coding.ship_to_province or coding.supplier_province
     coding.line_items = tax_codes(list(coding.line_items), list(coding.tax_lines), [], text, province,
-                                  coding.invoice_date)  # fmt: skip
+                                  coding.invoice_date, supplier_province=coding.supplier_province,
+                                  pst_number=coding.pst_registration_number)  # fmt: skip
 
 
 DAMAGED_PICTURE = ("UnidentifiedImageError",)

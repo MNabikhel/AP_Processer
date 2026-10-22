@@ -134,11 +134,22 @@ def math_check(coding: InvoiceCoding, setup: Any = None) -> dict[str, Any]:
                 row["named"] = f"Line {li.line_number} ({_short(li.description)}, {money(li.amount)})"
                 row["why"] = (f"may not carry {label}: the {label} charged adds up without it." if base_gap < 0
                               else f"may carry {label} too: the {label} charged adds up with it.")  # fmt: skip
-            elif abs(charged) >= 0.005:  # no one line explains it: the vendor's arithmetic (B-703)
+            elif abs(charged) >= 0.005:
                 suspects = []
-                row["why"] = (f"The {label} charged ({money(charged)}) isn't {rate * 100:.4g}% of the lines marked "
-                              f"{label} ({money(base)} → {money(expected)}): the vendor's tax looks wrong, ask for a "
-                              "corrected invoice (tax charged in error can't be claimed).")  # fmt: skip
+                from .line_tax import can_explain
+
+                explained = can_explain([li.amount for li in items], charged, rate)
+                if explained:  # a choice of the lines makes it: the marking, not the vendor (B-714)
+                    row["why"] = (f"The lines marked don't make the {label} charged ({money(charged)}): pick which "
+                                  f"lines carry {label}.")  # fmt: skip
+                elif explained is None:
+                    row["why"] = (f"The lines marked don't make the {label} charged ({money(charged)}): check which "
+                                  f"lines carry {label}, or the vendor's {label}.")  # fmt: skip
+                else:  # no set of lines makes it: the vendor's arithmetic (B-703)
+                    claim = " (tax charged in error can't be claimed)" if tax_type in ("GST", "HST", "QST") else ""
+                    row["why"] = (f"The {label} charged ({money(charged)}) isn't {rate * 100:.4g}% of the lines "
+                                  f"marked {label} ({money(base)} → {money(expected)}): the vendor's tax looks wrong, "
+                                  f"ask for a corrected invoice{claim}.")  # fmt: skip
             row["lines"] = [li.line_number for li in suspects]
             for li in suspects:
                 marks.setdefault(li.line_number, why)

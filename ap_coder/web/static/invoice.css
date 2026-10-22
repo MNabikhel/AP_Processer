@@ -323,6 +323,8 @@ button.inv-pick .ms {font-size: 14px;}
 
 /* The Tax check under the line items (D-64): each tax, the lines marked × the official rate against what is charged. */
 .inv-taxcheck-wrap {margin-top: 14px;}
+.rvw-posting-note {display: flex; gap: 4px; align-items: flex-start; color: var(--lg-warning); margin: 0 0 8px;}
+.rvw-posting-note .ms {font-size: 15px;}
 .inv-taxcheck {font-size: 12.5px;}
 .inv-taxcheck th, .inv-taxcheck td {padding: 5px 6px; white-space: nowrap;}
 .inv-taxcheck th {font-size: 11.5px;}

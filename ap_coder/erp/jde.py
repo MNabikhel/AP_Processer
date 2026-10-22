@@ -1053,6 +1053,14 @@ def dry_run(
                     for d in dists
                 ],
                 "matches": len(matches),
+                # The self-assessed PST is booked from the Self-assessment report by journal entry; a code that has
+                # E1 accrue the use tax itself (B) would accrue it a second time (B-716).
+                "warnings": [
+                    f"code {v.tax_code} has JD Edwards accrue the PST (use tax): do not also book it from AP Coder's "
+                    "Self-assessment report, or the PST is accrued twice"
+                ]
+                if v.tax_code and v.tax_code == settings.self_assessed_code.strip().upper()
+                else [],
                 "balance": (
                     f"distribution {_shown(dist_total, settings, v.decimals)} = gross {v.gross / 100:,.2f} "
                     f"- tax E1 posts {posted:,.2f} (code {v.tax_code or 'none'})"
@@ -1103,6 +1111,7 @@ def dry_run_text(report: dict[str, Any]) -> str:
             lines.append(f"  F0911Z1 line {d['line']}: {d['account']}  {d['amount']}  {d['text']}")
         if v["matches"]:
             lines.append(f"  F0411Z1T: {v['matches']} PO match line(s)")
+        lines += [f"  WARNING: {w}" for w in v.get("warnings") or []]
         lines.append(f"  {v['balance']}")
         lines.append("")
     for h in report["held"]:

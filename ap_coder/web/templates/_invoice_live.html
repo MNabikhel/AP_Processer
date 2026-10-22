@@ -246,6 +246,7 @@
   <div class="legend">{% for s in live.split %}<span><i class="s{{ loop.index0 }}"></i>{{ s.label }} <b>{{ s.amount }}</b> <em>{{ s.pct }}</em></span>{% endfor %}</div>
 </div>
 {% endif %}
+{% if live.posting.note %}<p class="rvw-posting-note small"><span class="ms" aria-hidden="true">error</span>{{ live.posting.note }}</p>{% endif %}
 {{ posting_table(live.posting) }}
 {% endif %}
 {%- endmacro %}

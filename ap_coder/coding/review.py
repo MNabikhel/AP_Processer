@@ -129,10 +129,21 @@ def codes_to_pick(lines: Any, cost_centers: bool, hint: bool = True) -> str:
     parts = ([f"a GL account for {which(uncoded)}"] if uncoded else []) + (
         [f"a cost center for {which(no_cc)}"] if no_cc else []
     )
+    # A PST exemption inferred from the other lines: a person says whether it is exempt or missed (B-715).
+    from .line_tax import exemption_to_confirm
+
+    inferred = [(code(li, "line_number"), exemption_to_confirm(li)) for li in lines]
+    inferred = [(n, name) for n, name in inferred if name]
+    confirm = ""
+    if inferred:
+        name = inferred[0][1]
+        confirm = (f"Confirm the {name} on {which([n for n, _ in inferred])}: exempt, or not charged "
+                   "(self-assess)?")  # fmt: skip
     if not parts:
-        return ""
+        return confirm
     many = hint and max(len(uncoded), len(no_cc)) >= MANY_LINES
-    return f"Pick {' and '.join(parts)} to approve" + (" (or use Apply to all lines…)" if many else "")
+    picked = f"Pick {' and '.join(parts)} to approve" + (" (or use Apply to all lines…)" if many else "")
+    return f"{picked}. {confirm}" if confirm else picked
 
 
 def split_line(lines: pd.DataFrame, line_number: int, parts: list[tuple[str, str, float]]) -> pd.DataFrame:

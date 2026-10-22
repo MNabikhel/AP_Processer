@@ -1503,6 +1503,7 @@ HEADER_PROVEN_SOFT = {"LINES_ADD_UP"}
 # Findings that always send an invoice to a person, whatever its supplier's record: fraud and duplicate signals.
 ALWAYS_A_PERSON: dict[str, str] = {
     "VENDOR_BANK_CHANGED": "the bank account to pay into changed",
+    "PST_EXEMPTION_TO_CONFIRM": "a PST exemption was inferred from the other lines, for a person to confirm",
     "VENDOR_TAX_NUMBER_CHANGED": "the GST/HST number changed",
     "VENDOR_QST_CHANGED": "the QST number changed",
     "VENDOR_PST_CHANGED": "the PST number changed",

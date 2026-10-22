@@ -413,8 +413,9 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
             if suspect is not None:
                 said = f"line {suspect.line_number} ({_short(suspect.description)}, {suspect.amount:,.2f})"
                 hint = f": {said} may be exempt from {name}" if gap < 0 else f": {said} may carry {name} too"
-            else:  # no line explains it: the vendor's arithmetic (tax charged in error is not claimable, ETA s.169)
-                hint = f": the {name} charged looks wrong, ask the vendor for a corrected invoice"
+            else:
+                hint, explained = _unexplained(coding.line_items, tl.tax_type, tl.tax_amount, tl.rate, name)
+                suspect = suspect if not explained else True  # a choice of lines makes it: a warning, no error
             add(
                 WARNING if _close(expected, tl.tax_amount, rounding) or suspect is not None else ERROR,
                 "TAX_CALC_MISMATCH",
@@ -489,7 +490,11 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
                 said = f"line {suspect.line_number} ({_short(suspect.description)}, {suspect.amount:,.2f})"
                 hint = f": {said} may be exempt from {name}" if gap < 0 else f": {said} may carry {name} too"
             else:
-                hint = f": no one line explains it, check the lines' tax codes or the {name} the vendor charged"
+                charged_amount = round(sum(t.tax_amount for t in tax_lines if t.tax_type == tax_type), 2)
+                rates = {round(t.rate, 6) for t in tax_lines if t.tax_type == tax_type}
+                hint = (_unexplained(coding.line_items, tax_type, charged_amount, rates.pop(), name)[0]
+                        if len(rates) == 1
+                        else f": check the lines' tax codes, or the {name} the vendor charged")  # fmt: skip
             add(
                 WARNING,
                 "TAX_BASE_MISMATCH",
@@ -508,10 +513,13 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
             continue
         not_charged.add(tax_type)
         name = tax_name(tax_type, prov)
-        if tax_type in ("PST", "QST"):
+        if tax_type == "PST":
             todo = (f"if they are taxable, the {name} is due: choose “{_other_only(tax_type, prov)} · {name} not "
                     f"charged (self-assess)” and self-assess it ({SELF_ASSESS_LAW.get(prov, 'the provincial act')}); "
                     f"if they are exempt, choose “{_other_only(tax_type, prov)} · {name} exempt”")  # fmt: skip
+        elif tax_type == "QST":
+            todo = (f"choose “GST only · QST not charged” if they are taxable ({QST_NOT_CHARGED}), or “GST only · "
+                    "QST exempt” if they are exempt")  # fmt: skip
         else:
             todo = "choose the code of what was charged, or ask the vendor"
         add(WARNING, "LINE_TAX_NOT_CHARGED",
@@ -556,28 +564,42 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
                 if due and not all_stated:
                     base = round(sum(li.amount for li in due), 2)
                     pname = tax_name(provincial, prov)
-                    add(
-                        WARNING,
-                        "PROVINCIAL_TAX_NOT_CHARGED",
-                        f"no {pname} charged on {_which_lines(due, all_of=coding.line_items)} ({base:,.2f}) of a "
-                        f"supply in {name}: it is due, self-assess it "
-                        f"({SELF_ASSESS_LAW.get(prov, 'the provincial act')}), or mark the lines exempt from {pname} "
-                        "if they are",
-                    )
+                    where = f"{_which_lines(due, all_of=coding.line_items)} ({base:,.2f}) of a supply in {name}"
+                    if provincial == "QST":  # B-718: a registrant generally owes nothing net
+                        message = (f"no QST charged on {where}: {QST_NOT_CHARGED}; mark the lines exempt from QST "
+                                   "if they are")  # fmt: skip
+                    else:
+                        message = (f"no {pname} charged on {where}: it is due, self-assess it "
+                                   f"({SELF_ASSESS_LAW.get(prov, 'the provincial act')}), or mark the lines exempt "
+                                   f"from {pname} if they are")  # fmt: skip
+                    add(WARNING, "PROVINCIAL_TAX_NOT_CHARGED", message)
             for missing in sorted(expected_types - charged):
                 if missing == "HST" and "GST" not in charged:
                     add(WARNING, "TAX_REGIME_MISMATCH", f"{name} is an HST province but no HST was charged")
             # Only the tax properly payable is claimable as an input tax credit (ETA s.169): HST charged where GST
-            # applies, or GST alone where HST applies, is a risk to the claim, said apart (never booked otherwise).
+            # applies is a risk to the claim, said apart (never booked otherwise).
             if "HST" in charged and "HST" not in expected_types:
                 add(WARNING, "ITC_AT_RISK",
                     f"HST charged on a supply in {name}, where it is not payable: only the tax properly payable is "
                     "claimable (ETA s.169), so claim the GST part only or get a corrected invoice")  # fmt: skip
+            # GST alone where HST applies is no risk to the claim: the GST charged is claimable (B-717).
             if "GST" in charged and expected_types == {"HST"}:
-                add(WARNING, "ITC_AT_RISK",
-                    f"GST charged on a supply in {name}, where HST applies: the provincial part was not charged, "
-                    "and the claim is only the tax properly charged (ETA s.169): ask the vendor to charge "
-                    "HST")  # fmt: skip
+                hst = setup.rates.rate_for("HST", prov, on)
+                rate = f" ({prov} {hst * 100:.4g}%)" if hst else ""
+                add(WARNING, "HST_NOT_CHARGED",
+                    f"the vendor should have charged HST{rate} on a supply in {name}; the GST is claimable. If you "
+                    "can't claim full input tax credits, you may need to self-assess the provincial part (ETA "
+                    "s.218.1)")  # fmt: skip
+
+    # A PST exemption inferred from the vendor charging the PST on other lines: a person confirms it (B-715).
+    from .line_tax import exemption_to_confirm
+
+    for li in coding.line_items:
+        inferred = exemption_to_confirm(li)
+        if inferred:
+            add(WARNING, "PST_EXEMPTION_TO_CONFIRM",
+                f"{inferred} exemption inferred (charged on the other lines, not this one): confirm it is exempt, or "
+                f"pick “not charged (self-assess)”", li.line_number)  # fmt: skip
 
     # Registration numbers needed to claim input tax credits.
     if charged & {"GST", "HST"}:
@@ -623,8 +645,29 @@ def _gap_line(lines: list[Any], gap: float, tol: float, sign: int = 1) -> Any:
 # Where a provincial tax not collected by the vendor is self-assessed.
 SELF_ASSESS_LAW = {"BC": "BC PSTA s.49, Bulletin PST 400", "SK": "The Provincial Sales Tax Act (SK)",
                    "MB": "The Retail Sales Tax Act (MB)", "QC": "the QST Act"}  # fmt: skip
+# QST due and not charged: in law the buyer self-assesses it, but a registrant buying for its commercial activities
+# claims it back as an input tax refund and generally owes nothing net (B-718).
+QST_NOT_CHARGED = (
+    "a QST registrant buying for its commercial activities generally owes nothing net; otherwise self-assess it "
+    "(the QST Act)"
+)
 # Rates a province lawfully charges besides its general one: BC PST on liquor is 10%.
 LAWFUL_OTHER_RATES = {("PST", "BC"): (0.1,)}
+
+
+def _unexplained(lines: list[Any], tax_type: str, tax: float, rate: float, name: str) -> tuple[str, bool]:
+    """(what to say, explained) of a tax no single line explains: a choice of the lines can make it (the lines
+    marked are wrong, not the vendor: B-714), or none can (the vendor's arithmetic; a recoverable tax charged in error
+    can't be claimed, ETA s.169: never said of PST, which is not recoverable)."""
+    from .line_tax import can_explain
+
+    explained = can_explain([li.amount for li in lines], tax, rate)
+    if explained:
+        return f": the lines marked don't make the {name} charged ({tax:,.2f}), pick which lines carry {name}", True
+    if explained is None:
+        return f": check which lines carry {name}, or the {name} the vendor charged", True
+    claim = " (tax charged in error can't be claimed)" if tax_type in ("GST", "HST", "QST") else ""
+    return f": the {name} charged looks wrong, ask the vendor for a corrected invoice{claim}", False
 
 
 def _which_lines(lines: list[Any], all_of: list[Any] | None = None) -> str:

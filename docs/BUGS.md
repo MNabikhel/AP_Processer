@@ -6786,3 +6786,72 @@ reproduced with a script first, then given a failing test and fixed.
   confirms the codes.
 - **Test:** `tests/test_line_tax_review.py::test_approving_confirms_the_tax_codes_and_drops_the_note_b713`
 - **Lesson:** A mark a person must clear needs a way to clear it.
+
+#### B-714 · When the lines could not say which carried the PST, a correct vendor was told its tax was wrong · medium
+- **Where:** `ap_coder/coding/line_tax.py` (`solve`, `can_explain`), `ap_coder/coding/taxmath.py`, `ap_coder/coding/tax.py`
+- **Symptom:** 22 BC lines, PST rightly charged on the 15 goods: every line "GST + PST" without a mark, and the Tax
+  check said "the vendor's tax looks wrong, ask for a corrected invoice (tax charged in error can't be claimed)"; with
+  the taxable printed as the subtotal, a TAX_CALC_MISMATCH error.
+- **Cause:** "unsure" (B-706) put the tax on every line without marking them, and any difference no single line
+  explained was taken as the vendor's.
+- **Reproduce:** `cpareview/scripts/r3.py`.
+- **Reproduced:** yes (found by the CPA's second review)
+- **Fix:** unsure: every line to check. A difference some set of lines can explain says "The lines marked don't make
+  the PST charged (323.49): pick which lines carry PST" (a warning); "the vendor's tax looks wrong" only when no set of
+  lines can make it, and "can't be claimed" only of GST, HST and QST (PST is not recoverable). The GL posting preview
+  says when the PST is spread over lines still to check.
+- **Test:** `tests/test_line_tax_review2.py::test_a_correct_vendor_is_not_blamed_when_the_lines_can_make_its_tax_b714`
+- **Lesson:** PST is charged only on taxable items: a total right for some lines is not a supplier error.
+
+#### B-715 · An inferred PST exemption was confirmed silently by approving · medium
+- **Where:** `ap_coder/coding/line_tax.py` (`prefill`, `exemption_to_confirm`, `confirm_line`), `ap_coder/coding/review.py`
+  (`codes_to_pick`), `ap_coder/coding/tax.py` (PST_EXEMPTION_TO_CONFIRM), `ap_coder/core/audit.py`
+- **Symptom:** a BC, SK or MB line without the PST the vendor charged on the other lines was taken as exempt, and
+  approving confirmed it with the other worked-out codes (B-713): a line the vendor missed was never self-assessed;
+  an out-of-province vendor's lines were taken as exempt too.
+- **Cause:** the inference was a default, not a question.
+- **Reproduce:** a BC invoice, PST on the laptop, none on the bookkeeping setup.
+- **Reproduced:** yes (found by the CPA's second review)
+- **Fix:** the inference stays, as a check a person resolves: the approve bar asks "Confirm the PST on line 2: exempt,
+  or not charged (self-assess)?" (as for a GL account to pick; never approved without a person), cleared by picking
+  the code or "Confirm the tax code"; the line's reasoning then says "PST exemption confirmed on review" and the audit
+  trail records it with the approval's who and when. A vendor out of the province of supply, or without a PST
+  number, is taken as not having charged the PST (due, self-assess). Old invoices are read as before.
+- **Test:** `tests/test_line_tax_review2.py::test_an_inferred_pst_exemption_must_be_confirmed_before_approval_b715`
+- **Lesson:** An inference that moves a liability needs a person's yes.
+
+#### B-716 · The JD Edwards dry run did not warn that a use-tax code and the self-assessment could accrue the PST twice · low
+- **Where:** `ap_coder/erp/jde.py` (`dry_run`, `dry_run_text`), docs/JDE_E1.md
+- **Symptom:** an invoice with explanation code B (E1 accrues the PST) also appears in the Self-assessment report,
+  which is booked by journal entry: the PST would be accrued twice, with no word of it.
+- **Cause:** not said.
+- **Reproduce:** a Saskatchewan invoice without PST, exported in a dry run.
+- **Reproduced:** yes (found by the CPA's second review)
+- **Fix:** the dry run says, on such a voucher, not to book it again from the Self-assessment report; the guides say
+  the self-assessment is booked from that report by journal entry.
+- **Test:** `tests/test_line_tax_review2.py::test_the_dry_run_warns_that_a_use_tax_code_and_the_self_assessment_could_accrue_twice_b716`
+- **Lesson:** Two ways to book one liability need a warning where both meet.
+
+#### B-717 · GST charged where HST applies was called an ITC risk · low-medium
+- **Where:** `ap_coder/coding/tax.py` (HST_NOT_CHARGED)
+- **Symptom:** "ITC at risk" for GST charged on an Ontario supply, where the GST is claimable.
+- **Cause:** both regime errors were said alike.
+- **Reproduce:** an Ontario supply charged GST only.
+- **Reproduced:** yes (found by the CPA's second review)
+- **Fix:** HST_NOT_CHARGED: "the vendor should have charged HST (ON 13%); the GST is claimable. If you can't claim full
+  input tax credits, you may need to self-assess the provincial part (ETA s.218.1)". ITC_AT_RISK is kept for HST
+  charged where GST applies.
+- **Test:** `tests/test_line_tax_review2.py::test_gst_charged_where_hst_applies_is_hst_not_charged_not_an_itc_risk_b717`
+- **Lesson:** Say the consequence that applies, not the one of a similar case.
+
+#### B-718 · QST not charged was "self-assess", which overstates it for a registrant · low
+- **Where:** `ap_coder/coding/line_tax.py` (`code_label`), `ap_coder/coding/tax.py`
+- **Symptom:** "GST only · QST not charged (self-assess)" and "it is due, self-assess it".
+- **Cause:** QST was worded like PST.
+- **Reproduce:** a Quebec supply charged GST only.
+- **Reproduced:** yes (found by the CPA's second review)
+- **Fix:** "GST only · QST not charged"; the finding says a registrant buying for its commercial activities
+  generally owes nothing net, otherwise self-assess it. The Self-assessment report keeps QST as it always listed it
+  (an estimate to look at), now line by line.
+- **Test:** `tests/test_line_tax_review2.py::test_qst_not_charged_is_said_without_self_assess_b718`
+- **Lesson:** Two taxes alike in form can differ in what they cost.
