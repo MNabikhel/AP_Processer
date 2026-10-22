@@ -308,6 +308,11 @@ def learn_from_approval(store: Any, invoice_id: int, final: dict[str, Any], *, a
     source = "audit" if ((inv.get("meta") or {}).get("capture") or {}).get("audit") else "review"
     rows = outcome_rows(inv.get("ai_output") or {}, final)
     learned.update(fields=len(rows), corrected=[r["field"] for r in rows if not r["correct"]])
+    # Written otherwise but the same to AP Coder ("BDO Canada" -> "BDO Canada LLP"): no correction, but said (B-666).
+    learned["reworded"] = [(r["field"], str(r["ai_value"] or ""), str(r["final_value"] or "")) for r in rows
+                           if r["correct"] and r["field"] in ("vendor_name", "invoice_number", "po_number")
+                           and " ".join(str(r["ai_value"] or "").split()).casefold()
+                           != " ".join(str(r["final_value"] or "").split()).casefold()]  # fmt: skip
     if not bulk or learned["corrected"]:
         try:
             store.record_outcomes(key, invoice_id, rows, source=source, display_name=name)
@@ -358,8 +363,9 @@ def supplier_progress(store: Any, key: str) -> tuple[str, int, str]:
             "" if on else ", once touchless processing is turned on (Settings → Automation)"
         )
     else:
-        to_go = clean_invoices_to_go(judged_stats(stats, stored, profile.get("suspended_at")), policy)
-        where = to_go_text(to_go) + (" again" if state == SUSPENDED and to_go else "")
+        judged = judged_stats(stats, stored, profile.get("suspended_at"))
+        to_go = clean_invoices_to_go(judged, policy)
+        where = to_go_text(to_go, done=judged.clean_streak) + (" again" if state == SUSPENDED and to_go else "")
         if state == LEARNING and not stats.invoices:
             where = "nothing reviewed yet"
     return state, stats.invoices, where
@@ -375,8 +381,13 @@ def taught_message(store: Any, learned: dict[str, Any]) -> str:
     if not key:
         return ""
     corrected = [FIELD_WORDS.get(f, f.replace("_", " ")) for f in learned.get("corrected") or []]
+    reworded = learned.get("reworded") or []
     if corrected:
         head = f"Learned from your {plural(len(corrected), 'correction')} ({', '.join(corrected)})."
+    elif reworded:
+        said = ", ".join(f"the {FIELD_WORDS.get(f, f.replace('_', ' '))} (“{a}” to “{b}”)" for f, a, b in reworded)
+        same = "the same vendor" if [f for f, _, _ in reworded] == ["vendor_name"] else "the same"
+        head = f"You changed {said}: {same} to AP Coder, so not a correction."
     elif learned.get("fields"):
         head = "You changed no header field."  # what is known: not that each was read right (B-472)
     else:

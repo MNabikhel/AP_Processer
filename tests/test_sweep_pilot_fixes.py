@@ -491,3 +491,23 @@ def test_no_invoice_number_help_suggests_the_account_number_and_month():
 
     action = CHECKS["MISSING_INVOICE_NUMBER"].action
     assert "account number" in action and "1234567-2026-09" in action
+
+
+# --- B-666: the approval message after a vendor rename, and the progress towards skipping review ----------------------
+
+
+def test_the_approval_message_names_a_renamed_vendor_and_states_progress_plainly(tmp_path):
+    from ap_coder.capture.supplier import to_go_text
+    from ap_coder.capture.workflow import learn_from_approval, taught_message
+
+    assert to_go_text(17, done=3) == "3 of about 20 clean approvals toward skipping review"
+    assert to_go_text(0, done=20) == "approved often enough without a correction to skip review"
+    store = Store(tmp_path / "ap.db")
+    read = {**_blank_invoice(), "vendor_name": "BDO Canada", "gst_hst_registration_number": "123456782RT0001"}
+    iid = store.add_invoice(tmp_path / "x.pdf", read, {"requires_review": True})
+    final = {**read, "vendor_name": "BDO Canada LLP"}
+    message = taught_message(store, learn_from_approval(store, iid, final, actor="Ann"))
+    assert "You changed no header field" not in message
+    assert message.startswith("You changed the vendor (“BDO Canada” to “BDO Canada LLP”): the same vendor to AP Coder, "
+                              "so not a correction. BDO Canada LLP: 1 invoice reviewed, ")  # fmt: skip
+    assert "clean approvals toward skipping review" in message and "more invoices approved" not in message

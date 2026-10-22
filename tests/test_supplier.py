@@ -627,7 +627,7 @@ def test_learning_page_is_a_training_view_with_keep_supervised(client, tmp_path,
     assert "Northwind" in text and "Ready" in text and "Chinook" in text and "Learning" in text
     assert "12 invoices reviewed · 1 correction in the last 12" in text
     # One number, said once (B-508): not the bar's parts again under it.
-    assert "About 32 more invoices approved without a correction before this vendor can skip review" in text
+    assert re.search(r"\d+ of about \d+ clean approvals toward skipping review", text)  # B-666
     assert "accuracy at least" not in text
     chinook = text.split("Chinook", 1)[1].split("Keep supervised", 1)[0]
     assert "more in a row without a correction needed" not in chinook

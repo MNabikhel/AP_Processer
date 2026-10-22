@@ -6162,3 +6162,19 @@ reproduced with a script first, then given a failing test and fixed.
   out: the account number is not read as a field of its own yet.)
 - **Test:** `tests/test_sweep_pilot_fixes.py::test_no_invoice_number_help_suggests_the_account_number_and_month`
 - **Lesson:** An error says what to do, also when the usual answer is not on the page.
+
+#### B-666 · "You changed no header field" after the vendor was changed, and "about 97 more invoices" · low
+- **Where:** `ap_coder/capture/workflow.py` (`learn_from_approval`, `taught_message`, `supplier_progress`),
+  `ap_coder/capture/supplier.py` (`to_go_text`), `ap_coder/web/pages/learning.py`
+- **Symptom:** the clerk changed "BDO Canada" to "BDO Canada LLP" and the approval said *You changed no header
+  field*; and *about 97 more invoices approved without a correction before this vendor can skip review* read as a
+  wall, with no sign of progress.
+- **Cause:** the two names are one vendor to AP Coder (`vendor_key`), so no field counted as corrected, and the
+  message said nothing else; the progress was said only as what was left.
+- **Reproduce:** approve an invoice with the vendor's legal form added.
+- **Reproduced:** yes (the real-invoice run)
+- **Fix:** *You changed the vendor (“BDO Canada” to “BDO Canada LLP”): the same vendor to AP Coder, so not a
+  correction* (also for an invoice or PO number written otherwise); the progress reads *3 of about 20 clean
+  approvals toward skipping review*, after an approval and on Learning → Suppliers.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_the_approval_message_names_a_renamed_vendor_and_states_progress_plainly`
+- **Lesson:** A message after an action acknowledges the action, then says how far along things are.

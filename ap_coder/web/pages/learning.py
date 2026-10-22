@@ -338,13 +338,15 @@ def suppliers_context(store: Store) -> dict[str, Any]:
         name = p["display_name"] or p["key"]
         recent = stats.history[:RECENT]
         corrected = sum(1 for h in recent if h["corrections"])
-        to_go = clean_invoices_to_go(judged_stats(stats, stored, p.get("suspended_at")), policy)
+        judged = judged_stats(stats, stored, p.get("suspended_at"))
+        to_go = clean_invoices_to_go(judged, policy)
         parts = [
             ui.plural(stats.invoices, "invoice") + " reviewed",
             f"{ui.plural(corrected, 'correction')} in the last {len(recent)}" if recent else "no corrections yet",
         ]
         if state in ("learning", "supervised"):  # one number, said once (B-508): not the bar's parts again
-            why = to_go_text(to_go)[:1].upper() + to_go_text(to_go)[1:] + "."
+            said = to_go_text(to_go, done=judged.clean_streak)
+            why = said[:1].upper() + said[1:] + "."
         why = re.sub(r", accuracy at least [\d.]+%", "", why)  # a statistic the tester can't act on (B-508)
         fields = [
             {"label": FIELD_LABELS.get(f, f), "n": fs.n, "corrected": fs.n - fs.correct,
