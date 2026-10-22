@@ -514,8 +514,10 @@ def check(before: dict, new: Path, port: int, old_ports: list[int], old_pids: li
     for key, value in ENV_VALUES.items():
         c.that(f"{key}={value}" in env_text.splitlines(), f".env: {key}={value} in the data folder's .env")
     if before.get("retired"):
-        note = f"# no longer used (AP Coder 0.2): {before['retired']}"
-        c.that(note in env_text.splitlines(), f".env: {before['retired']} commented out, with a note")
+        # The note names the version that did it (``launch.retire_settings``): any version, not one this check knows.
+        note = re.compile(rf"# no longer used \(AP Coder \d+\.\d+\): {re.escape(before['retired'])}")
+        c.that(any(note.fullmatch(line) for line in env_text.splitlines()),
+               f".env: {before['retired']} commented out, with a note")  # fmt: skip
 
     say("The new web app:")
     status, _type, body = _get(port, "/healthz")
