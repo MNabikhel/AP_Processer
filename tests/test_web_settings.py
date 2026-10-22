@@ -351,6 +351,23 @@ def test_jde_general_settings_are_saved_and_checked(client, store):
     assert post(client, "/settings/jde", general_form(amount_mode="both")).status_code == 400
 
 
+def test_jde_lists_every_bank_account_with_its_g_l_bank_account(client, store):
+    """B-684: the VLGLBA mapping was one line of CODE=value pairs, where an account could be missed or typed in the
+    wrong case; each active bank account now has its own box."""
+    from ap_coder.coding import banks
+
+    rows, _ = banks.clean_rows([{"code": "CAD-OP", "name": "Operating", "currency": "CAD"},
+                                {"code": "USD-OP", "name": "US", "currency": "USD"}])  # fmt: skip
+    store.save_bank_accounts(rows)
+    text = client.get("/settings/jde").text
+    assert 'name="bank_code" value="CAD-OP"' in text and 'name="bank_code" value="USD-OP"' in text
+    form = general_form(bank_code=["CAD-OP", "USD-OP"], bank_glba=["00012345", ""])
+    follow(client, post(client, "/settings/jde", form))
+    assert jde.load(store).bank_glba == {"CAD-OP": "00012345"}
+    follow(client, post(client, "/settings/jde", general_form(company="7")))  # a form without the boxes keeps them
+    assert jde.load(store).bank_glba == {"CAD-OP": "00012345"}
+
+
 def test_jde_gl_mapping_tax_areas_and_address_numbers(client, store):
     rows = {"gl_code": ["6100", "", "6200"], "cost_center": ["", "", "OPS"], "bu": ["100", "", "200"],
             "obj": ["6100", "", ""], "sub": ["", "", ""], "sbl": ["", "", ""], "sblt": ["", "", ""]}  # fmt: skip

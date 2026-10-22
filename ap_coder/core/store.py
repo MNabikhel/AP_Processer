@@ -40,6 +40,7 @@ from .audit import diff_coding
 from .memory import ACCEPTED, CODED, CORRECTED, VENDOR_KEY_RULES, pair_lines, refresh_vendor_key, vendor_key
 from .paths import PROJECT_DIR, default_db_path, find_moved_file, private_dir  # noqa: F401  (re-exported)
 from .reference_data import UNASSIGNED, ReferenceData, ReferenceTable, parse_policy_notes
+from .schema import as_read
 
 # 10: erp_invoices, 11: coding_rules (by _SCHEMA), 12: currency, 13: credit notes not due,
 # 14: invoice_capture, supplier_profiles, supplier_outcomes (by _SCHEMA), 15: reader_outcomes, page_reads (by _SCHEMA),
@@ -936,6 +937,16 @@ class Store:
                     "codes": sorted(r["code"] for r in rows if before.get(r["code"]) != r)[:50]})  # fmt: skip
         return {"added": added, "updated": updated}
 
+    def approvals_stamp(self) -> tuple[Any, ...]:
+        """(approvals, the latest) of invoices approved or waiting for a second approval: changes when one is, so what
+        depends on past approvals (a vendor's last Pay from account) is worked out again (the queue, B-690)."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*), MAX(reviewed_at), MAX(id) FROM invoices "
+                "WHERE status IN ('approved', 'pending_approval')"
+            ).fetchone()
+        return tuple(row)
+
     def last_pay_from(self, key: str) -> str:
         """The bank account this vendor's last approved invoice was paid from ("" when none recorded)."""
         if not key:
@@ -1642,7 +1653,8 @@ class Store:
                     now,
                 )  # fmt: skip
             )
-        edits = [f for f in _HEADER_FIELDS if str(ai.get(f, "")) != str(final_output.get(f, ""))]
+        read = as_read(final_output, ai)  # a tax number filled from the vendor list is no edit (B-681)
+        edits = [f for f in _HEADER_FIELDS if str(ai.get(f, "")) != str(read.get(f, ""))]
         if _tax_signature(ai) != _tax_signature(final_output):
             edits.append("tax_lines")
         if reviewer_changed:  # what the reviewer changed (a rule's coding kept is not a change)

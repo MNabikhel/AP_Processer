@@ -83,6 +83,9 @@ AMOUNT_FIELDS = ("subtotal", "tax_total", "grand_total")
 # pay_from_account: our bank account the invoice is paid from (coding/banks.py).
 FORM_FIELDS = (*TEACHABLE, "supplier_province", "ship_to_province", "remit_bank_account", "original_invoice_number",
                "pay_from_account")  # fmt: skip
+# Kept as read whatever is posted: the vendor's printed bank details are evidence for the fraud check, shown read-only
+# and never taught on the page (not in TEACHABLE) (D-66, B-686).
+READ_ONLY = frozenset({"remit_bank_account"})
 FIELD_LABELS = {
     "vendor_name": "Vendor", "gst_hst_registration_number": "GST/HST #", "qst_registration_number": "QST #",
     "pst_registration_number": "PST #", "supplier_province": "Supplier province",
@@ -254,8 +257,8 @@ class Draft:
     def from_form(cls, form: Any, base: Draft) -> Draft:
         """The screen as posted. A header field missing from the form keeps ``base``'s value; the grids are taken
         from the form when it says it has them (``grids``), so deleting the last row is an edit too."""
-        header = {name: str(form.get(name)) if form.get(name) is not None else base.header.get(name, "")
-                  for name in FORM_FIELDS}  # fmt: skip
+        header = {name: str(form.get(name)) if form.get(name) is not None and name not in READ_ONLY
+                  else base.header.get(name, "") for name in FORM_FIELDS}  # fmt: skip
         lines, taxes = base.lines, base.taxes
         if form.get("grids"):
             keys = form.getlist("line_key")
@@ -313,20 +316,37 @@ def parse_from_vendor(raw: Any) -> dict[str, Any]:
 
 
 def fill_from_vendor(
-    header: dict[str, str], state: dict[str, Any], absent: list[str], vendor: dict[str, Any] | None
+    header: dict[str, str],
+    state: dict[str, Any],
+    absent: list[str],
+    vendor: dict[str, Any] | None,
+    unread: set[str] | None = None,
 ) -> tuple[dict[str, Any], dict[str, str]]:
     """The tax numbers a vendor of the vendor list gives a draft (D-65): (the new ``Draft.from_vendor``, {field: value}
     changed in ``header``, which is updated). When the vendor is new to the draft (picked, typed, or the screen just
     opened), each blank GST/HST, QST and PST number takes the vendor list's, and a number filled from the vendor before
     follows the new one (replaced, or cleared when it has none). A number read from the invoice or typed is never
     touched, nor a field marked not on this invoice; a filled number the reviewer changed or cleared since is theirs.
-    ``vendor``: the vendor's row (``Store.get_vendor``), None when it is not in the list."""
+    ``vendor``: the vendor's row (``Store.get_vendor``), None when it is not in the list; ``unread``: the fields the
+    reading left blank (not printed), the only ones filled (None: any blank one). A number read and cleared by the
+    reviewer is the reviewer's to type: filled from the vendor list, the change would be learned as no correction
+    (B-688)."""
     key = vendor_key(header.get("vendor_name") or "")
     fields = {n: v for n, v in (state.get("fields") or {}).items()
               if n in TAX_NUMBER_FIELDS and v and str(header.get(n) or "").strip() == v}  # fmt: skip
-    if state.get("vendor") == key and "vendor" in state:
-        return {"vendor": key, "fields": fields}, {}
     changed: dict[str, str] = {}
+    if state.get("vendor") == key and "vendor" in state:
+        # A number marked as the vendor list's is this vendor's own, or it follows it (B-682: an Undo that kept the
+        # vendor and put back another one's numbers must not leave them labelled as this vendor's).
+        for name in list(fields):
+            number = str((vendor or {}).get(TAX_NUMBER_FIELDS[name]) or "").strip()
+            if number != fields[name]:
+                header[name] = changed[name] = number
+                if number:
+                    fields[name] = number
+                else:
+                    fields.pop(name)
+        return {"vendor": key, "fields": fields}, changed
     for name, column in TAX_NUMBER_FIELDS.items():
         number = str((vendor or {}).get(column) or "").strip()
         current = str(header.get(name) or "").strip()
@@ -337,12 +357,19 @@ def fill_from_vendor(
                 fields[name] = number
             else:
                 fields.pop(name)
-        elif not current and number and name not in absent:
+        elif not current and number and name not in absent and (unread is None or name in unread):
             header[name] = changed[name] = fields[name] = number
     return {"vendor": key, "fields": fields}, changed
 
 
-def settle_header(store: Store, draft: Draft) -> dict[str, str]:
+def unread_numbers(read: dict[str, Any] | None) -> set[str] | None:
+    """The tax number fields the reading (``ai_output``) left blank: the ones the vendor list may fill (B-688)."""
+    if read is None:
+        return None
+    return {n for n in TAX_NUMBER_FIELDS if not str(read.get(n) or "").strip()}
+
+
+def settle_header(store: Store, draft: Draft, read: dict[str, Any] | None = None) -> dict[str, str]:
     """What the server fills in the invoice details before they are checked: the vendor list's tax numbers (D-65) and
     the default Pay from account (D-66). Returns {field: value} changed, for the screen to show."""
     from ap_coder.coding import banks
@@ -350,14 +377,15 @@ def settle_header(store: Store, draft: Draft) -> dict[str, str]:
     header = draft.header
     key = vendor_key(header.get("vendor_name") or "")
     vendor = store.get_vendor(key) if key else None
-    draft.from_vendor, changed = fill_from_vendor(header, draft.from_vendor, draft.absent, vendor)
+    draft.from_vendor, changed = fill_from_vendor(header, draft.from_vendor, draft.absent, vendor, unread_numbers(read))
     currency = (header.get("currency") or "CAD").strip().upper() or "CAD"
     if draft.pay_from_for and draft.pay_from_for != currency:
         draft.pay_from_for = ""  # picked for another currency: the default follows the invoice's currency
     if not draft.pay_from_for or not header.get("pay_from_account"):
         draft.pay_from_for = ""
         accounts = store.bank_accounts()
-        chosen = banks.choose(accounts, currency, store.last_pay_from(key)) if accounts else ""
+        last = store.last_pay_from(key) if accounts else ""
+        chosen = banks.opening_choice({"currency": currency}, False, accounts, last)
         if chosen != (header.get("pay_from_account") or ""):
             header["pay_from_account"] = changed["pay_from_account"] = chosen
     return changed
@@ -1422,7 +1450,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     ai = inv["ai_output"] or {}
     start = inv.get("final_output") or ai
     has_cc = reference.cost_centers is not None
-    filled = settle_header(store, draft)  # the vendor list's tax numbers, the default Pay from account
+    filled = settle_header(store, draft, ai)  # the vendor list's tax numbers, the default Pay from account
     header, problems = header_values(draft.header)
     coding = None
     if not problems:
@@ -1487,10 +1515,12 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     # The approve bar: never post to UNASSIGNED; where cost centers are used, a line without one isn't posted either.
     # The queue asks the same question (pages/review.py attention), so its Ready means Approve is open here.
     pick = codes_to_pick(coding.line_items, uses_cost_centers(reference))
-    if accounts and not coding.pay_from_account:  # never approved without the account it is paid from (D-66)
-        from ap_coder.coding.banks import PICK
+    from ap_coder.coding.banks import blocking
 
-        pick = f"{pick}; {PICK[0].lower()}{PICK[1:]}" if pick else PICK
+    # never approved without one of our accounts in use to pay from, whatever is ticked (D-66, B-683)
+    bank = blocking(coding.pay_from_account, store.bank_accounts())
+    if bank:
+        pick = f"{pick}; {bank[0].lower()}{bank[1:]}" if pick else bank
     key = override_key(errors) if errors else ""
     allow = not pick and (not errors or draft.override == key)
     changed = ai_changes(coding, ai, uses_cost_centers(reference))
@@ -1550,7 +1580,7 @@ def pay_from_choices(store: Store, header: dict[str, str]) -> dict[str, Any]:
     chosen = header.get("pay_from_account") or ""
     accounts = [a for a in store.bank_accounts() if a["active"] or a["code"] == chosen]
     return {
-        "options": [(a["code"], banks.label(a) + ("" if a["active"] else " (not in use)"), a["currency"])
+        "options": [(a["code"], banks.label(a) + ("" if a["active"] else " (not in use — pick another)"), a["currency"])
                     for a in accounts],
         "value": chosen,
         "any": any(a["active"] for a in accounts),

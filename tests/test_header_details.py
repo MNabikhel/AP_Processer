@@ -181,6 +181,7 @@ def _pick_vendor(page, typed: str, name: str) -> None:
 
 
 def test_in_a_browser_picking_a_vendor_fills_its_numbers_and_follows_it(browser, store):  # noqa: F811
+    _red_river(store, printed=False)  # no GST/HST number read: the vendor list fills it (B-688)
     page, errors = _open_review(browser, store, "Red River", viewport=LAPTOP)
     if True:
         gst, qst = page.locator(f"[name={GST}]"), page.locator(f"[name={QST}]")
@@ -198,12 +199,14 @@ def test_in_a_browser_picking_a_vendor_fills_its_numbers_and_follows_it(browser,
         _pick_vendor(page, "Prairie Network", "Prairie Network Supply")
         page.wait_for_function(f"document.querySelector('[name={GST}]').value === '609274188 RT0001'")
         assert qst.input_value() == "1111111111 TQ0001"
-        # Ctrl+Z puts the number back as it was, the vendor stays
+        # Ctrl+Z puts back the vendor with its numbers (B-682)
         page.keyboard.press("Control+z")
         page.wait_for_function(f"document.querySelector('[name={GST}]').value === '555666775 RT0001'")
-        assert "Prairie" in vendor.input_value()
+        assert "Pacific" in vendor.input_value()
         page.wait_for_timeout(900)  # checked again: the server does not fill it again
         assert gst.input_value() == "555666775 RT0001"
+        _pick_vendor(page, "Prairie Network", "Prairie Network Supply")
+        page.wait_for_function(f"document.querySelector('[name={GST}]').value === '609274188 RT0001'")
         # a printed number that differs from the vendor list: amber, with the list's number under it
         gst.fill("123456782 RT0001")
         page.wait_for_selector(f'[data-field="{GST}"].is-flagged')
@@ -320,3 +323,239 @@ def test_in_a_browser_pay_from_is_a_list_that_follows_the_currency(browser, stor
     page.wait_for_timeout(600)
     assert select.input_value() == "CAD-PAY"
     assert errors == []
+
+
+# --- Review findings (B-681 to B-687) --------------------------------------------------------------------------------
+
+
+def _approval_message(client, invoice_id: int, data: dict) -> str:
+    """The message shown after Approve & teach (on the page it opens next)."""
+    answer = client.post(f"/review/{invoice_id}/approve", data=data, headers=PAGE).json()
+    assert answer.get("ok"), answer
+    import re
+
+    page = html.unescape(client.get(answer["redirect"]).text)
+    return re.search(r"<div><div>(Approved [^<]*)</div>", page).group(1)
+
+
+def _blank_reading(store: Store, invoice_id: int, *fields: str) -> None:
+    """As if ``fields`` had not been read on the invoice (its coding and its capture)."""
+    import sqlite3
+
+    path = ", ".join(f"'$.{f}', ''" for f in fields)
+    with sqlite3.connect(store.path) as conn:
+        conn.execute(f"UPDATE invoices SET ai_output = json_set(ai_output, {path}) WHERE id = ?", (invoice_id,))
+        row = conn.execute("SELECT capture_json FROM invoice_capture WHERE invoice_id = ?", (invoice_id,)).fetchone()
+        if row:
+            capture = json.loads(row[0])
+            for f in fields:
+                (capture.get("fields") or {}).pop(f, None)
+            conn.execute("UPDATE invoice_capture SET capture_json = ? WHERE invoice_id = ?",
+                         (json.dumps(capture), invoice_id))  # fmt: skip
+
+
+def test_numbers_filled_from_the_vendor_list_are_not_corrections(client, store):
+    """B-681: approving an invoice whose GST/HST and PST numbers the vendor list filled in said "Learned from your 2
+    corrections (GST/HST number, pst registration number)", counted them against the supplier and its readers, and
+    as the reviewer's edits."""
+    invoice_id = _red_river(store)
+    store.save_vendor(store.get_invoice(invoice_id)["vendor_key"], "Red River Office Interiors",
+                      expected_gst="741852966 RT0001", pst_number="160482-7")  # fmt: skip
+    _blank_reading(store, invoice_id, GST, PST)
+    page = client.get(f"/review/{invoice_id}").text
+    state = json.loads(html.unescape(page.split('name="from_vendor" value="', 1)[1].split('"', 1)[0]))
+    assert set(state["fields"]) == {GST, PST}
+    data = _approvable(client, invoice_id, form_of(store, invoice_id, **{GST: state["fields"][GST],
+                                                                         PST: state["fields"][PST]}))  # fmt: skip
+    data["from_vendor"] = json.dumps(state)
+    said = _approval_message(client, invoice_id, data)
+    assert "Approved" in said and "correction" not in said and "registration number" not in said, said
+    inv = store.get_invoice(invoice_id)
+    assert inv["status"] == APPROVED and inv["final_output"][GST] == "741852966 RT0001"
+    assert GST not in inv["edits"] and PST not in inv["edits"]
+    outcomes = {r["field"]: r["correct"] for r in store.supplier_outcomes(store.supplier_key_for(
+        inv["final_output"]["vendor_name"], inv["final_output"][GST])) if r["invoice_id"] == invoice_id}  # fmt: skip
+    assert outcomes.get(GST, 1) == 1 and outcomes.get(PST, 1) == 1
+    import sqlite3
+
+    with sqlite3.connect(store.path) as conn:
+        scored = conn.execute("SELECT COUNT(*) FROM reader_outcomes WHERE invoice_id = ? AND field IN (?, ?)",
+                              (invoice_id, GST, PST)).fetchone()[0]  # fmt: skip
+        lessons = conn.execute("SELECT COUNT(*) FROM lessons WHERE field IN (?, ?) AND corrected > 0",
+                               (GST, PST)).fetchone()[0]  # fmt: skip
+    assert scored == 0 and lessons == 0
+
+
+def test_every_header_field_has_a_word_for_the_learning_message():
+    from ap_coder.capture.workflow import FIELD_WORDS
+    from ap_coder.core.schema import InvoiceCoding
+
+    headers = [f for f in InvoiceCoding.model_fields if f not in ("line_items", "tax_lines", "confidence_score")]
+    missing = [f for f in headers if f not in FIELD_WORDS]
+    assert missing == [] and FIELD_WORDS[PST] == "PST number"
+
+
+def test_numbers_marked_from_the_vendor_list_are_always_this_vendors():
+    """B-682 (the server's backstop): a number marked as filled from the vendor list that is not the vendor's own
+    (an Undo that kept the vendor but put back another one's numbers) follows the vendor now in the field."""
+    header = _header("Other Co", **{GST: "123456782 RT0001", QST: "1234567890 TQ0001"})
+    state = {"vendor": "other", "fields": {GST: "123456782 RT0001", QST: "1234567890 TQ0001"}}
+    state, changed = view.fill_from_vendor(header, state, [], OTHER)
+    assert changed == {GST: "741852966 RT0001", QST: ""}
+    assert state == {"vendor": "other", "fields": {GST: "741852966 RT0001"}}
+
+
+def test_in_a_browser_undo_after_a_vendor_change_puts_back_the_vendor_with_its_numbers(browser, store):
+    """B-682: Ctrl+Z after picking a second vendor kept that vendor but put back the first one's numbers, still
+    marked as from the vendor list."""
+    _red_river(store, printed=False)
+    page, errors = _open_review(browser, store, "Red River", viewport=LAPTOP)
+    gst = page.locator(f"[name={GST}]")
+    gst.fill("")
+    page.wait_for_timeout(600)
+    _pick_vendor(page, "Pacific Office", "Pacific Office Supply")
+    page.wait_for_function(f"document.querySelector('[name={GST}]').value === '555666775 RT0001'")
+    _pick_vendor(page, "Prairie Network", "Prairie Network Supply")
+    page.wait_for_function(f"document.querySelector('[name={GST}]').value === '609274188 RT0001'")
+    page.keyboard.press("Control+z")
+    page.wait_for_function(f"document.querySelector('[name={GST}]').value === '555666775 RT0001'")
+    assert "Pacific" in page.locator("#vendor-name").input_value()  # the vendor and its numbers, together
+    page.wait_for_timeout(900)  # checked again: nothing moves
+    assert "Pacific" in page.locator("#vendor-name").input_value() and gst.input_value() == "555666775 RT0001"
+    state = json.loads(page.locator("input[data-from-vendor]").input_value())
+    assert state["vendor"] == "pacific office supply" and state["fields"][GST] == "555666775 RT0001"
+    assert errors == []
+
+
+def test_pay_from_an_unknown_or_closed_account_is_never_approved(client, store):
+    """B-683: PAY_FROM_UNKNOWN was an error "Approve anyway" let through: a made-up code was stored, and an account
+    set "not in use" after it was chosen could still pay."""
+    _banks(store)
+    invoice_id = _red_river(store)
+    bogus = form_of(store, invoice_id, pay_from_account="BOGUS", pay_from_for="CAD")
+    answer = check(client, invoice_id, bogus)
+    assert not answer["allow"] and "BOGUS is not one of your bank accounts in use" in html.unescape(
+        answer["sections"]["bar"])  # fmt: skip
+    refused = client.post(f"/review/{invoice_id}/approve", data=_approvable(client, invoice_id, bogus), headers=PAGE)
+    assert refused.status_code == 400 and store.get_invoice(invoice_id)["status"] == REVIEW
+    # chosen, then closed: shown as such, and blocks
+    rows, _ = banks.clean_rows([dict(BANKS[1], active="no")])
+    store.save_bank_accounts(rows)
+    closed = form_of(store, invoice_id, pay_from_account="CAD-PAY", pay_from_for="CAD")
+    assert not check(client, invoice_id, closed)["allow"]
+    refused = client.post(f"/review/{invoice_id}/approve", data=_approvable(client, invoice_id, closed), headers=PAGE)
+    assert refused.status_code == 400 and store.get_invoice(invoice_id)["status"] == REVIEW
+    page = client.get(f"/review/{invoice_id}").text
+    assert "(not in use — pick another)" in page
+
+
+def test_the_queue_is_ready_only_when_the_pay_from_rule_lets_approve(client, store):
+    """B-685: the queue's Ready ignored Pay from: with bank accounts set up after an invoice was read, Ready showed
+    for an invoice whose review screen would not open Approve (no account in its currency)."""
+    from ap_coder.coding.bulk import bulk_approve
+    from ap_coder.web.pages.review import attention
+
+    pending = store.list_invoices(REVIEW)
+    ready_before = {i["id"] for i in pending} - set(attention(store, None, pending))
+    assert ready_before  # the demo has invoices Ready
+    rows, _ = banks.clean_rows([{"code": "USD-OP", "name": "US", "currency": "USD", "is_default": "yes"}])
+    store.save_bank_accounts(rows)
+    pending = store.list_invoices(REVIEW)
+    why = attention(store, None, pending)
+    cad = [i for i in pending if i["id"] in ready_before and (i["currency"] or "CAD") == "CAD"]
+    assert cad and all("Pick the bank account to pay this invoice from" in why[i["id"]] for i in cad)
+    for inv in cad:  # the review screen agrees: Approve is not open
+        assert not check(client, inv["id"], form_of(store, inv["id"]))["allow"]
+    # bulk approval: no CAD account to pay from, so it is left, and says why
+    from ap_coder.core.config import Settings
+
+    result = bulk_approve(store, store.reference_data(), Settings(), [cad[0]["id"]], "Pat")
+    assert result["approved"] == [] and "Pick the bank account to pay this invoice from" in str(result["skipped"])
+    # a CAD default: Ready again, and bulk approval pays from it
+    rows, _ = banks.clean_rows([{"code": "CAD-OP", "name": "Operating", "currency": "CAD", "is_default": "yes"}])
+    store.save_bank_accounts(rows)
+    for inv in cad:  # (the screen's checks above flagged them in the queue: opened again, they are clean)
+        assert check(client, inv["id"], form_of(store, inv["id"]))["allow"]
+    assert not {i["id"] for i in cad} & set(attention(store, None, store.list_invoices(REVIEW)))
+
+
+def test_a_posted_vendor_bank_detail_is_ignored(client, store):
+    """B-686: the vendor's printed bank details are read-only on the screen, but a crafted post still changed them
+    (and with them what the fraud check compares)."""
+    import sqlite3
+
+    invoice_id = _red_river(store)
+    printed = "Transit 12345, Institution 004, Account 7654321"
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE invoices SET ai_output = json_set(ai_output, '$.remit_bank_account', ?) WHERE id = ?",
+                     (printed, invoice_id))  # fmt: skip
+    base = view.Draft.stored(store.get_invoice(invoice_id)["ai_output"])
+    assert view.Draft.from_form({"remit_bank_account": "Account 999"}, base).header["remit_bank_account"] == printed
+    data = _approvable(client, invoice_id, form_of(store, invoice_id, remit_bank_account="Account 999"))
+    client.post(f"/review/{invoice_id}/approve", data=data, headers=PAGE)
+    assert store.get_invoice(invoice_id)["final_output"]["remit_bank_account"] == printed
+
+
+# --- Re-review (B-688 to B-690) --------------------------------------------------------------------------------------
+
+
+def test_only_a_number_not_read_is_filled_from_the_vendor_list_and_not_a_correction(client, store):
+    """B-688: a GST/HST number read wrong (999999998 RT0001), cleared by the clerk, then filled from the vendor list
+    was taken back to the wrong reading for learning: "You changed no header field", and the reading scored right."""
+    from ap_coder.core.schema import as_read
+
+    # the rules: only a field the reading left blank is filled and marked; the clerk's clearing is the clerk's edit
+    header = _header()
+    state, changed = view.fill_from_vendor(header, {}, [], ACME, unread={QST, PST})
+    assert GST not in changed and header[GST] == "" and state["fields"] == {QST: "1234567890 TQ0001"}
+    final = {GST: "123456782 RT0001", QST: "1234567890 TQ0001", FROM_VENDOR_LIST: [GST, QST]}
+    assert as_read(final, {GST: "999999998 RT0001", QST: ""}) == {**final, QST: ""}  # a reading kept is no fill
+    # on the screen
+    invoice_id = next(i["id"] for i in store.list_invoices(REVIEW) if i["vendor_name"].startswith("Agence"))
+    import sqlite3
+
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE invoices SET ai_output = json_set(ai_output, '$.gst_hst_registration_number', "
+                     "'999999998 RT0001') WHERE id = ?", (invoice_id,))  # fmt: skip
+    data = form_of(store, invoice_id, **{GST: ""})
+    data["from_vendor"] = json.dumps({"vendor": "prairie network supply", "fields": {}})  # another vendor picked
+    answer = check(client, invoice_id, data)
+    assert GST not in answer["header"]["values"] and GST not in answer["header"]["from_vendor"]["fields"]
+    data = _approvable(client, invoice_id, {**data, GST: "812345676 RT0001",
+                                            "from_vendor": json.dumps(answer["header"]["from_vendor"])})  # fmt: skip
+    said = _approval_message(client, invoice_id, data)
+    assert "correction (GST/HST number)" in said, said
+    inv = store.get_invoice(invoice_id)
+    assert GST in inv["edits"] and FROM_VENDOR_LIST not in inv["final_output"]
+
+
+def test_in_a_browser_a_number_read_and_cleared_is_not_filled_from_the_vendor_list(browser, store):
+    """B-688: the clerk cleared a GST/HST number that was read: picking a vendor leaves it for the clerk to type."""
+    page, errors = _open_review(browser, store, "Red River", viewport=LAPTOP)
+    gst = page.locator(f"[name={GST}]")
+    gst.fill("")
+    page.wait_for_timeout(600)
+    _pick_vendor(page, "Pacific Office", "Pacific Office Supply")
+    page.wait_for_timeout(1200)
+    assert gst.input_value() == ""
+    assert errors == []
+
+
+def test_the_queue_does_not_decode_every_invoice_again_for_pay_from(store, monkeypatch):
+    """B-690: since B-685 the queue decoded every waiting invoice's coding on each load once bank accounts existed
+    (0.17 s instead of 0.05 s at 5,000 invoices). The answer is remembered until the invoice, the bank accounts or the
+    approvals change."""
+    from ap_coder.web.pages import review
+
+    rows, _ = banks.clean_rows([{"code": "USD-OP", "name": "US", "currency": "USD", "is_default": "yes"}])
+    store.save_bank_accounts(rows)
+    pending = store.list_invoices(REVIEW)
+    first = review.attention(store, None, pending)
+    calls = []
+    real = review.json.loads
+    monkeypatch.setattr(review.json, "loads", lambda *a, **k: calls.append(1) or real(*a, **k))
+    assert review.attention(store, None, pending) == first and calls == []
+    rows, _ = banks.clean_rows([{"code": "CAD-OP", "name": "Operating", "currency": "CAD", "is_default": "yes"}])
+    store.save_bank_accounts(rows)  # the bank accounts changed: asked again
+    again = review.attention(store, None, pending)
+    assert calls and again != first

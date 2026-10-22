@@ -6874,3 +6874,153 @@ Found while building the pilot tester's requests on the review screen's invoice 
   (an estimate to look at), now line by line.
 - **Test:** `tests/test_line_tax_review2.py::test_qst_not_charged_is_said_without_self_assess_b718`
 - **Lesson:** Two taxes alike in form can differ in what they cost.
+#### B-681 · Tax numbers filled from the vendor list were learned as the reviewer's corrections · medium-high
+- **Where:** `ap_coder/capture/workflow.py` (`learn_from_approval`), `ap_coder/core/store.py` (`approve_invoice`
+  edits), `ap_coder/web/pages/invoice.py` (`approve`, the "why" question), `ap_coder/core/ui.py` (`FIELD_WORDS`)
+- **Symptom:** an invoice whose GST/HST and PST numbers were not read, filled in from the vendor list (D-65), then
+  approved said "Learned from your 2 corrections (GST/HST number, pst registration number)"; the supplier's accuracy
+  counted two wrong fields, the readers were scored against the vendor list's numbers, lessons recorded corrections
+  and the approval's edits listed both numbers.
+- **Cause:** learning compared what was read with the approved coding and never read
+  `tax_numbers_from_vendor_list`; the words of the message had two copies, and one had no PST number.
+- **Reproduce:** blank invoice 5's GST/HST and PST in its reading, open it (both fill from the vendor list), approve.
+- **Reproduced:** yes (found by the review of the header side)
+- **Fix:** `schema.as_read` puts each number filled from the vendor list (and left as filled) back as it was read
+  before the lessons, the reader and supplier outcomes, the supplier template, the "why" question and the edits
+  count see the approval; the approved coding keeps the number. The field words are one dict in `core/ui.py`
+  (`FIELD_WORDS`), with every header field (a test checks), used by the learning message and the lessons.
+- **Test:** `tests/test_header_details.py::test_numbers_filled_from_the_vendor_list_are_not_corrections`,
+  `::test_every_header_field_has_a_word_for_the_learning_message`
+- **Lesson:** A value AP Coder put in itself is neither a reading nor a correction: every learner must know which.
+
+#### B-682 · Undo after a vendor change kept the new vendor with the old vendor's numbers · medium
+- **Where:** `ap_coder/web/static/js/invoice.js` (`vendorChanged`), `ap_coder/web/invoice_view.py`
+  (`fill_from_vendor`)
+- **Symptom:** on an invoice with no GST/HST or PST number, picking Red River then Prairie and pressing Ctrl+Z left
+  Prairie as the vendor with Red River's numbers in the fields, still said to be "From the vendor list".
+- **Cause:** Undo put back the numbers but kept the vendor, and rewrote the draft's record to say the old numbers
+  were the new vendor's; the server trusted that record.
+- **Reproduce:** /review/3: clear GST/HST and PST, pick Red River, pick Prairie, Ctrl+Z.
+- **Reproduced:** yes (found by the review of the header side)
+- **Fix:** the Undo of a vendor change is one snapshot taken before the vendor changed: the vendor, its numbers and
+  the record of what was filled come back together. On the server, a number marked as the vendor list's that is not
+  the current vendor's own follows the vendor (replaced, or cleared when it has none).
+- **Test:** `tests/test_header_details.py::test_in_a_browser_undo_after_a_vendor_change_puts_back_the_vendor_with_its_numbers`,
+  `::test_numbers_marked_from_the_vendor_list_are_always_this_vendors`
+- **Lesson:** What is undone together was done together: one snapshot, from before the first of its changes.
+
+#### B-683 · "Approve anyway" approved a Pay from account that is unknown or no longer in use · medium
+- **Where:** `ap_coder/coding/banks.py` (`blocking`), `ap_coder/web/invoice_view.py` (`analyse`, `pay_from_choices`)
+- **Symptom:** a posted `pay_from_account=BOGUS` was stored once "Approve anyway" was ticked; an account set not in
+  use after it was chosen stayed listed as "(not in use)" and paid the invoice the same way.
+- **Cause:** PAY_FROM_UNKNOWN was an ordinary error, which the override lets through; only a missing account
+  blocked approval.
+- **Reproduce:** post `pay_from_account=BOGUS` to /review/<id>/check, tick Approve anyway, approve.
+- **Reproduced:** yes (found by the review of the header side)
+- **Fix:** once an account is in use, approval needs one of the accounts in use, never overridable (`banks.blocking`,
+  asked by the approve bar and the approval); an account no longer in use that is still chosen is listed "(not in
+  use — pick another)" and blocks.
+- **Test:** `tests/test_header_details.py::test_pay_from_an_unknown_or_closed_account_is_never_approved`
+- **Lesson:** An override is for a judgement call; paying from an account that does not exist is not one.
+
+#### B-684 · A Pay from account not mapped exactly got a blank VLGLBA, with nothing said · medium
+- **Where:** `ap_coder/erp/jde.py` (`voucher_rows`, `glba`, `bank_notes`, `dry_run`, `readme`),
+  `ap_coder/web/pages/settings_jde.py`, `templates/settings_jde.html`
+- **Symptom:** with only CAD-OP mapped, a USD invoice's VLGLBA was blank and E1 paid it from its default bank (AAI
+  PB) without a word; a key typed "cad-op" mapped nothing at all; the mapping was one line of CODE=value pairs where
+  an account was easily missed.
+- **Cause:** an exact-case lookup, no check of the invoices against the mapping, and a free-text setting.
+- **Reproduce:** map only CAD-OP (or "cad-op"), export a USD invoice paid from USD-OP.
+- **Reproduced:** yes (found by the review of the header side)
+- **Fix:** codes match whatever their case; once the mapping is in use, the dry run and the batch's README list each
+  invoice whose Pay from account has no VLGLBA (a note, not a hold); Settings → JD Edwards E1 lists every bank
+  account in use with its own box. The cash GL is not used as a default (a BU.Object.Subsidiary, not the short
+  account ID GLBA holds; docs/JDE_E1.md).
+- **Test:** `tests/test_jde.py::test_an_unmapped_pay_from_account_is_said_and_codes_match_whatever_their_case`,
+  `tests/test_web_settings.py::test_jde_lists_every_bank_account_with_its_g_l_bank_account`
+- **Lesson:** A mapping that falls back silently needs someone told when it falls back.
+
+#### B-685 · The queue's Ready ignored the Pay from requirement · low-medium
+- **Where:** `ap_coder/web/pages/review.py` (`attention`), `ap_coder/coding/banks.py` (`opening_choice`,
+  `blocking`), `ap_coder/web/invoice_view.py` (`settle_header`, `analyse`)
+- **Symptom:** with bank accounts set up after invoices were read, the queue said Ready for an invoice whose review
+  screen kept Approve closed (no account in its currency to pay from).
+- **Cause:** Ready read the checks stored when the invoice was read; the review screen's Pay from rule was its own.
+- **Reproduce:** load the demo, add only a USD default bank account: the CAD invoices stay Ready, their Approve is
+  closed.
+- **Reproduced:** yes (found by the review of the header side)
+- **Fix:** the queue asks the review screen's question: the account the screen would open with
+  (`banks.opening_choice`), then what stops approval (`banks.blocking`), one pair of functions for the screen, the
+  approval and the queue. Bulk approval already chose the currency's default (or this vendor's last account) and
+  leaves an invoice with none, saying "Pick the bank account to pay this invoice from"; a test now holds it to that.
+- **Test:** `tests/test_header_details.py::test_the_queue_is_ready_only_when_the_pay_from_rule_lets_approve`
+- **Lesson:** Two pages that answer the same question must call the same function.
+
+#### B-686 · A crafted post could change the vendor's printed bank details · low
+- **Where:** `ap_coder/web/invoice_view.py` (`Draft.from_form`, `READ_ONLY`)
+- **Symptom:** the vendor's bank details are a read-only line on the review screen (D-66), but posting
+  `remit_bank_account` to /check or /approve replaced them, and with them what VENDOR_BANK_CHANGED compares.
+- **Cause:** the form still took every field of `FORM_FIELDS` from the post.
+- **Reproduce:** post `remit_bank_account=Account 999` with an approval.
+- **Reproduced:** yes (found by the review of the header side)
+- **Fix:** a read-only field (`READ_ONLY`: the vendor's bank details) keeps the stored value whatever is posted. It is
+  not in `TEACHABLE`, so no other way changes it on the review screen.
+- **Test:** `tests/test_header_details.py::test_a_posted_vendor_bank_detail_is_ignored`
+- **Lesson:** Read-only on the page means read-only on the server.
+
+#### B-687 · The Bank accounts page's version stamp was a hash of the full account numbers · low
+- **Where:** `ap_coder/web/pages/accounts.py` (`bank_context`, `bank_save`, `bank_version`)
+- **Symptom:** the grid's version stamp (B-655) was `page_version` of the accounts, an unkeyed SHA-1 of every
+  column, the full account numbers included: from the page alone (masked to the last 4 digits), a short number could
+  be found again by trying every one.
+- **Cause:** the stamp was made like the other grids', whose rows hold nothing secret.
+- **Reproduce:** hash candidate numbers with the page's other values until the stamp matches.
+- **Reproduced:** yes (found by the review of the header side)
+- **Fix:** the stamp is an HMAC-SHA256 of the accounts with a secret made once per database (a setting, shown
+  nowhere), so it says nothing about the numbers, and any change still gives a new stamp.
+- **Test:** `tests/test_web_masterdata.py::test_the_bank_accounts_version_stamp_holds_no_account_number`
+- **Lesson:** A hash of a secret with little entropy is the secret.
+
+#### B-688 · A GST/HST number read wrong, replaced from the vendor list, was learned as read right · medium
+- **Where:** `ap_coder/web/invoice_view.py` (`fill_from_vendor`, `settle_header`, `unread_numbers`),
+  `ap_coder/core/schema.py` (`as_read`), `ap_coder/web/static/js/invoice.js` (`vendorChanged`)
+- **Symptom:** invoice 6 read as GST/HST 999999998 RT0001: the clerk cleared it, picked a vendor, the vendor list
+  filled 812345676 RT0001, and the approval said "You changed no header field"; the supplier and the readers were
+  scored right for 999999998.
+- **Cause:** B-681's `as_read` put back the reading for every number marked as filled from the vendor list, and any
+  blank number was filled and marked, also one the clerk had just cleared.
+- **Reproduce:** read 999999998 RT0001 on invoice 6, clear it, pick Prairie then Agence, approve.
+- **Reproduced:** yes (found by the re-review of B-681 to B-687)
+- **Fix:** only a number the reading left blank (not printed) is filled from the vendor list and marked, in the
+  browser and on the server; a number read and cleared is the clerk's to type, a correction like any other.
+  `as_read` puts back only a number the reading had blank.
+- **Test:** `tests/test_header_details.py::test_only_a_number_not_read_is_filled_from_the_vendor_list_and_not_a_correction`,
+  `::test_in_a_browser_a_number_read_and_cleared_is_not_filled_from_the_vendor_list`
+- **Lesson:** "Not a correction" holds only where there was nothing to correct.
+
+#### B-689 · The JD Edwards README's note on an unmapped bank account was garbled · low
+- **Where:** `ap_coder/erp/jde.py` (`bank_notes`, `readme`)
+- **Symptom:** an invoice with no Pay from account was listed as "AP Coder #1: no G/L bank account (VLGLBA) is
+  mapped for it has no Pay from account and: …".
+- **Cause:** one sentence was patched together for both cases (B-684).
+- **Reproduce:** map one bank account's VLGLBA, export an invoice with no Pay from account.
+- **Reproduced:** yes (found by the re-review of B-681 to B-687)
+- **Fix:** one whole sentence per case ("AP Coder #1 has no Pay from account: E1 pays it from its default bank (AAI
+  PB)."; "AP Coder #4 is paid from USD-OP, which has no G/L bank account (VLGLBA) mapped: …"), listed as they are,
+  then where to map them.
+- **Test:** `tests/test_jde.py::test_an_unmapped_pay_from_account_is_said_and_codes_match_whatever_their_case`
+- **Lesson:** Two cases, two sentences.
+
+#### B-690 · The queue decoded every waiting invoice again on each load once bank accounts existed · low
+- **Where:** `ap_coder/web/pages/review.py` (`attention`, `_PAY_FROM`), `ap_coder/core/store.py` (`approvals_stamp`)
+- **Symptom:** since B-685 the queue took 0.174 s instead of 0.053 s at 5,000 waiting invoices once bank accounts
+  were set up: each load decoded every invoice's coding for the Pay from rule.
+- **Cause:** the Pay from answer was worked out afresh each time, where the rest of `attention` is remembered
+  (`_TO_FIX`).
+- **Reproduce:** time the queue at 5,000 waiting invoices with and without a bank account.
+- **Reproduced:** yes (found by the re-review of B-681 to B-687)
+- **Fix:** the answer is remembered per invoice with what it depends on: the invoice's coding text, the bank
+  accounts, and the approvals (a vendor's last Pay from account; `Store.approvals_stamp`), so a change to any of
+  them asks again.
+- **Test:** `tests/test_header_details.py::test_the_queue_does_not_decode_every_invoice_again_for_pay_from`
+- **Lesson:** A new question in a remembered answer is remembered with it.

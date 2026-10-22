@@ -442,6 +442,7 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         today=dt.date.today().isoformat(), taught_json=draft.taught, vendors=vendor_options(store),
         absent_ok=list(view.ABSENT_FIELDS), from_vendor_note=view.FROM_VENDOR_NOTE,
         tax_fields=list(view.TAX_NUMBER_FIELDS), pay_from=view.pay_from_choices(store, draft.header),
+        unread_numbers=sorted(view.unread_numbers(inv.get("ai_output") or {}) or []),
         bank_shown=mask_account(bank) if (bank := draft.header.get("remit_bank_account")) else "",
         supply=view.supply_line(draft.header, draft.lines, reference.tax),
         usual_cc=view.usual_cost_center(store, reference, draft.header.get("vendor_name") or ""),
@@ -636,8 +637,10 @@ async def approve(request: Request, invoice_id: int) -> JSONResponse:
     # The same correction again and again: before saving, AP is asked once why (lessons.py). Skipping is fine: the
     # question comes back next time.
     from ap_coder.ai import lessons
+    from ap_coder.core.schema import as_read
 
-    asked = lessons.due_for_why(store, inv.get("ai_output") or {}, analysis.output)
+    ai = inv.get("ai_output") or {}
+    asked = lessons.due_for_why(store, ai, as_read(analysis.output, ai))  # a vendor-list number: no "why" (B-681)
     if asked and not form.get("why_done"):
         return JSONResponse({"ok": False, "ask_why": {"fields": asked, "threshold": lessons.why_after(store)}})
     after = next_url(store, invoice_id, query, form.get("next_id"))

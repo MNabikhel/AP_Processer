@@ -93,8 +93,7 @@ def jde_context(store: Store) -> dict[str, Any]:
         "gl_dates": jde.GL_DATES,
         "currencies": ", ".join(js.currencies),
         "extras": ", ".join(f"{k}={v}" for k, v in js.po_extra_columns.items()),
-        "bank_glba": ", ".join(f"{k}={v}" for k, v in js.bank_glba.items()),
-        "bank_codes": ", ".join(a["code"] for a in store.bank_accounts(active_only=True)),
+        "bank_rows": bank_rows(store, js),
         "gl_columns": GL_COLUMNS,
         "gl_rows": [vars(m) for m in js.gl_map],
         "tax_rows": [
@@ -107,6 +106,17 @@ def jde_context(store: Store) -> dict[str, Any]:
         "checklist": minimd.render(CHECKLIST),
         "worksheet_labels": {q.id: q.question for q in jde_worksheet.QUESTIONS},
     }
+
+
+def bank_rows(store: Store, js: jde.JdeSettings) -> list[dict[str, str]]:
+    """Each bank account in use, with its G/L bank account (VLGLBA), then any code mapped that is no longer one."""
+    from ap_coder.coding import banks
+
+    mapped = {k.upper(): v for k, v in js.bank_glba.items()}
+    rows = [{"code": a["code"], "label": banks.label(a), "glba": mapped.pop(a["code"].upper(), "")}
+            for a in store.bank_accounts(active_only=True)]  # fmt: skip
+    rows += [{"code": c, "label": f"{c} (not one of your bank accounts in use)", "glba": v} for c, v in mapped.items()]
+    return rows
 
 
 def copy(js: jde.JdeSettings) -> jde.JdeSettings:
@@ -142,12 +152,11 @@ async def save_general(request: Request) -> JSONResponse:
         if name.strip():
             pairs[name.strip().upper()] = value.strip()
     new.po_extra_columns = pairs
-    banks = {}
-    for part in text("bank_glba").split(","):
-        name, _, value = part.partition("=")
-        if name.strip():
-            banks[name.strip()] = value.strip()
-    new.bank_glba = banks
+    if form.getlist("bank_code"):  # one box per bank account (B-684); a form without them keeps the mapping
+        codes, values = form.getlist("bank_code"), form.getlist("bank_glba")
+        new.bank_glba = {str(c).strip().upper(): str(values[i] if i < len(values) else "").strip()
+                         for i, c in enumerate(codes)
+                         if str(c).strip() and str(values[i] if i < len(values) else "").strip()}  # fmt: skip
     problems = jde.settings_problems(new)
     if problems:
         return refuse(" ".join(problems))
