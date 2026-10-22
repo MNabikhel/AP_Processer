@@ -154,6 +154,56 @@ def test_single_unconfirmed_approval_is_not_a_pattern(ground_truth):
     assert compare_with_history(InvoiceCoding.model_validate(ground_truth), rows) == []
 
 
+LAPTOP = "Dell Latitude 7450 laptop, 32GB RAM"  # line 1 of the ground truth
+
+
+def _laptop_coded(ground_truth, gl):
+    coding = copy.deepcopy(ground_truth)
+    coding["line_items"][0]["predicted_gl_code"] = gl
+    return InvoiceCoding.model_validate(coding)
+
+
+def _laptop(rows, ground_truth, gl):
+    return next(h for h in compare_with_history(_laptop_coded(ground_truth, gl), rows) if h["line_number"] == 1)
+
+
+def test_no_history_conflict_once_ap_has_confirmed_a_recode(ground_truth):
+    """AP moved the laptops to fixed assets after twelve approvals to 6010, and confirmed it on the next invoice:
+    1500 is no conflict any more (the twelve older votes are superseded, B-601), and the old account is one."""
+    rows = [_row("Northwind IT Solutions Inc.", LAPTOP, "1500"),
+            _row("Northwind IT Solutions Inc.", LAPTOP, "1500", outcome=CORRECTED, suggested="6010")]  # fmt: skip
+    rows += [_row("Northwind IT Solutions Inc.", LAPTOP, "6010") for _ in range(12)]
+    assert _laptop(rows, ground_truth, "1500")["status"] == "match"
+    old = _laptop(rows, ground_truth, "6010")
+    assert old["status"] == "conflict" and old["history_gl"] == "1500"
+
+
+def test_a_single_correction_or_a_kept_guess_still_warns(ground_truth):
+    """A single correction against twelve approvals may be a slip (it looks the same as a change of mind until the
+    next decision), and a guess kept on another account changes nothing: the old account still stands."""
+    old = [_row("Northwind IT Solutions Inc.", LAPTOP, "6010") for _ in range(12)]
+    for latest in (_row("Northwind IT Solutions Inc.", LAPTOP, "6000", outcome=CORRECTED, suggested="6010"),
+                   _row("Northwind IT Solutions Inc.", LAPTOP, "6000", outcome=CODED)):  # fmt: skip
+        slip = _laptop([latest, *old], ground_truth, "6000")
+        assert slip["status"] == "conflict" and slip["history_gl"] == "6010"
+    fixed = [_row("Northwind IT Solutions Inc.", LAPTOP, "6010", outcome=CORRECTED, suggested="6000"),
+             _row("Northwind IT Solutions Inc.", LAPTOP, "6000", outcome=CORRECTED, suggested="6010")]  # fmt: skip
+    fixed += old
+    assert _laptop(fixed, ground_truth, "6000")["status"] == "conflict"  # the slip, put right
+    assert _laptop(fixed, ground_truth, "6010")["status"] == "match"
+
+
+def test_examples_leave_out_coding_ap_has_moved_away_from():
+    """The chat model is shown the laptops' new account once AP confirmed it, not the approvals it replaced."""
+    rows = [_row("Northwind IT Solutions Inc.", LAPTOP, "1500"),
+            _row("Northwind IT Solutions Inc.", LAPTOP, "1500", outcome=CORRECTED, suggested="6010")]  # fmt: skip
+    rows += [_row("Northwind IT Solutions Inc.", LAPTOP, "6010") for _ in range(5)]
+    examples = select_examples(rows, "Northwind IT Solutions Inc. invoice")
+    assert [(e.gl_code, e.decisions) for e in examples] == [("1500", 2)]
+    once = select_examples(rows[1:], "Northwind IT Solutions Inc. invoice")  # not confirmed yet: both shown
+    assert sorted(e.gl_code for e in once) == ["1500", "6010"]
+
+
 # --- Store ---------------------------------------------------------------------------------------
 
 

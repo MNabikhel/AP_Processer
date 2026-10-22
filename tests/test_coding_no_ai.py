@@ -86,6 +86,39 @@ def test_other_vendors_code_a_line_only_when_they_agree(reference):
     assert not found[0].auto and {s.gl_code for s in found} >= {"5000", "6220"}  # both shown, a person picks
 
 
+def test_several_other_vendors_agreeing_outvote_one_that_differs(reference):
+    """A new vendor's line: four other vendors coded it to repairs, one to materials. Four in five agree (weighted
+    by how alike each vendor's closest line is): the line is coded; one against two is still a person's pick."""
+    agree = [("Beta", "6220", "Hydraulic hose assembly 1/2 in."), ("Gamma", "6220", "HOSE ASSY HYDRAULIC"),
+             ("Epsilon", "6220", "Hydraulic hose assembly"), ("Zeta", "6220", "Hydraulic hose assy 1/2")]  # fmt: skip
+    feedback = _history(("Delta", "5000", "Hydraulic hose assembly"), *agree)
+    top = suggest_gl("Hydraulic hose assy", "Newco", feedback, reference)[0]
+    assert (top.gl_code, top.source, top.auto) == ("6220", "others", True)
+    assert "4 other vendors" in top.reasons[0]
+    close = _history(("Delta", "5000", "Hydraulic hose assembly"), *agree[:2])
+    assert not suggest_gl("Hydraulic hose assy", "Newco", close, reference)[0].auto
+
+
+def test_a_correction_against_several_approvals_is_shown_until_confirmed(reference):
+    """AP changed a line coded five times to repairs: the next one is suggested, not coded, with the new account
+    (a slip looks the same as a change of mind at first); once confirmed, it is coded. A change against four older
+    approvals is coded at once."""
+
+    def rows(*decisions: tuple[str, str]) -> list[dict]:
+        out = _history(*[("Acme", gl, "Bearing 6205-2RS") for gl, _ in decisions])
+        for row, (_, outcome) in zip(out, decisions, strict=True):
+            row["outcome"] = outcome
+        return out
+
+    recoded = rows(("5000", "corrected"), *[("6220", "accepted")] * 5)
+    top = suggest_gl("Bearing 6205-2RS", "Acme", recoded, reference)[0]
+    assert (top.gl_code, top.auto) == ("5000", False)
+    confirmed = rows(("5000", "accepted"), ("5000", "corrected"), *[("6220", "accepted")] * 5)
+    assert suggest_gl("Bearing 6205-2RS", "Acme", confirmed, reference)[0].auto
+    once = rows(("5000", "corrected"), *[("6220", "accepted")] * 4)
+    assert suggest_gl("Bearing 6205-2RS", "Acme", once, reference)[0].auto
+
+
 def test_the_latest_decision_wins_and_a_recode_elsewhere_holds_old_codes_back(reference):
     feedback = _history(
         ("Acme", "5000", "Bearing 6205-2RS"),  # newest: AP now codes spare parts to materials

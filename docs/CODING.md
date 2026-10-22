@@ -18,7 +18,9 @@ A line gets an account only when the evidence is strong:
 
 - a line of this vendor at least 40% alike, and no line of this vendor nearly as alike (or coded more recently)
   that went to another account;
-- a line of another vendor at least 60% alike, and no other vendor's similar line coded to another account;
+- a line of another vendor at least 60% alike, and no other vendor's similar line coded to another account, or
+  at least two other vendors agreeing on it with three quarters of the evidence (each vendor counts once, by how
+  alike its closest line is);
 - the vendor's usual account, once AP has coded at least 4 different lines of it, all to that account.
 
 The vendor master's default account and account names are never used on their own. On the benchmark the default
@@ -60,6 +62,20 @@ A line of the same vendor that is as alike and was coded more recently replaces 
 moved similar lines away from an account (for any vendor), that account is not filled in by itself any more: it
 may be out of date. It is still suggested.
 
+A correction that goes against 5 or more approvals in a row of the same line is not filled in by itself on the
+next invoice: it is suggested, and filled in once AP has confirmed it on one more invoice. A slip (the wrong
+account picked once) and a change of mind look the same until then, and a slip filled in again on every later
+invoice is the most common wrong account on the realistic benchmark.
+
+The check *reviewers coded similar lines from this vendor to GL ...* and the examples of AP's coding shown to the
+local chat model follow the same rule (`memory.current`): once a correction is confirmed by one more decision, the
+older decisions for another account no longer count (B-601). Before, they counted forever: after twelve approvals,
+a recode warned on about fifty more lines. A single correction still counts as one vote among the older ones, so
+a slip still warns.
+
+A guess of the local chat model that the reviewer kept is learned like any approval. Making such lines wait for
+a second decision was tried and left out: it cost more right accounts than it saved wrong ones (D-58).
+
 ## The benchmark
 
 ```
@@ -82,6 +98,19 @@ It simulates one company, the same for a given seed (`ap_coder/bench/coding.py`)
 - **Time.** Each vendor starts at some point in the first half of the period and sends its invoices from then
   on. Halfway through, AP starts coding spare parts (bearings, hose assemblies) to materials instead of repairs.
 
+`--realistic` adds what the default run leaves out (each can be set alone: `--mistakes 0.02`, `--history 0.4`,
+`--guesses`, `--split`; `coding.Realism`):
+
+- **Reviewer mistakes**: 2% of lines are approved with a wrong account (a plausible one); the vendor's later
+  invoices get the right one again.
+- **ERP history**: for 4 vendors in 10, their past coding is imported before their first invoice
+  (`Store.import_history`): each item one to four times, in their wording, at the account it had then, 2% of the
+  rows on a wrong account.
+- **Kept chat-model guesses**: every line left blank gets a guess, right 7 times in 10, marked as the local
+  model's; the reviewer keeps a right guess, and a wrong one 1 time in 4 (outcome *coded*).
+- **A split account**: the maintenance contract goes to prepaid expenses when billed for more than 3 months, to
+  repairs otherwise. Its words cannot tell which.
+
 Each invoice goes through the code the app runs: `offline_coder.code_from_capture` with `Store.feedback_rows()`,
 the reference data in `data/` and the vendor master, then the fixed coding rules. The review screen's suggestions
 are recorded for the lines left without an account. Then AP approves the true account of every line
@@ -94,7 +123,9 @@ The report (`report.md`, `report.json`, and every line in `lines.jsonl`) gives:
 - **coverage**: the share of lines given an account rather than left UNASSIGNED;
 - the same split by the first invoice from a vendor or later ones, by whether AP coded the item before (for this
   vendor in the same words, in other words, only for other vendors, never), by language, by vendor, and by where
-  the account came from.
+  the account came from;
+- the *reviewers coded similar lines ... to GL* warning (HISTORY_CONFLICT) on the lines that had an account (the
+  proposal, or the chat model's guess): false alarms on a right account, and the wrong accounts it caught.
 
 A 30 × 30 run takes about two minutes on a laptop.
 
@@ -154,6 +185,45 @@ What changed most:
 On the 10 sample invoices in `samples/` with no history, the account names alone used to fill in 25 of 41
 lines, 21 of them right. Now none is filled in, and the right account is among the suggestions for 24 lines.
 
+## Learning from AP: before and after (D-58)
+
+*Before*: commit eeef5b1. *After*: the cross-vendor majority, the unconfirmed reversal and the shared recency
+rule above. Thresholds were set on seeds 1 to 4 and are reported on seeds 31 to 34 (30 vendors × 30 invoices),
+the default run and `--realistic`.
+
+| run | lines | accuracy | precision | coverage | wrong |
+|---|---:|---:|---:|---:|---:|
+| default, seed 31 | 2,191 | 96.4% → **96.4%** | 99.7% → **99.7%** | 96.6% → **96.6%** | 6 → 6 |
+| default, seed 32 | 2,273 | 95.8% → **95.7%** | 99.5% → **99.5%** | 96.3% → **96.2%** | 11 → 11 |
+| default, seed 33 | 2,235 | 96.1% → **95.9%** | 99.7% → **99.7%** | 96.4% → **96.2%** | 6 → 6 |
+| default, seed 34 | 2,199 | 95.7% → **95.7%** | 99.8% → **99.8%** | 95.9% → **95.9%** | 5 → 5 |
+| realistic, seed 31 | 2,191 | 92.9% → **93.1%** | 96.5% → **97.3%** | 96.3% → **95.6%** | 73 → 56 |
+| realistic, seed 32 | 2,273 | 92.7% → **92.9%** | 96.6% → **97.4%** | 96.0% → **95.3%** | 75 → 56 |
+| realistic, seed 33 | 2,235 | 93.3% → **94.0%** | 97.5% → **98.3%** | 95.8% → **95.6%** | 54 → 36 |
+| realistic, seed 34 | 2,199 | 90.0% → **91.8%** | 95.7% → **96.8%** | 94.1% → **94.8%** | 90 → 66 |
+
+The four fresh runs together (8,898 lines each way), split:
+
+| lines | default: accuracy | default: wrong | realistic: count | realistic: accuracy | realistic: precision | realistic: wrong |
+|---|---:|---:|---:|---:|---:|---:|
+| all | 96.0% → **95.9%** | 28 → 28 | 8,898 | 92.2% → **92.9%** | 96.6% → **97.5%** | 292 → 214 |
+| first invoice from a vendor | 44.6% → **44.6%** | 5 → 5 | 296 | 74.0% → **74.3%** | 93.6% → **93.6%** | 15 → 15 |
+| later invoices | 97.8% → **97.7%** | 23 → 23 | 8,602 | 92.9% → **93.6%** | 96.7% → **97.6%** | 277 → 199 |
+| this vendor, same words | 99.3% → **99.2%** | 16 → 16 | 7,253 | 93.5% → **94.2%** | 96.5% → **97.4%** | 249 → 181 |
+| other vendors only | 66.3% → **66.3%** | 8 → 8 | 308 | 63.6% → **65.9%** | 94.2% → **94.4%** | 12 → 12 |
+| spare parts after AP recoded them | 83.9% → **82.3%** | 21 → 21 | 378 | 78.8% → **78.6%** | 90.8% → **91.7%** | 30 → 27 |
+| the split maintenance contract | - | - | 236 | 37.3% → **36.9%** | 48.6% → **48.6%** | 93 → 92 |
+
+The warning *reviewers coded similar lines ... to GL*: false alarms on a right account 20 → 13 (default, all after
+the spare parts' recode) and 49 → 51 (realistic). On the realistic run it caught 139 of 405 wrong accounts before
+and 79 of 333 after: most of the ones it caught were a slip filled in again, which is now left for AP instead.
+
+What the realistic run shows: a quarter fewer wrong accounts filled in (292 → 214), with accuracy up 0.7 points.
+On the default run, which has no mistakes, nothing changes but the first spare part after AP recoded it, now
+checked once by a person (accuracy 0.1 point lower, no wrong account more). Of the wrong accounts left on the
+realistic run, most are the split maintenance contract (92: about half its lines; the words cannot tell) and
+slips confirmed by nobody yet.
+
 ## Speed with a long history
 
 Coding reads the whole learning memory for every invoice: up to 50,000 rows, with years of ERP history
@@ -178,6 +248,10 @@ After an approval, the first invoice reads the rows and builds the index again: 
   checked on seeds 31 to 34. The real measure is the pilot: *Learning & accuracy* shows how often what AP Coder
   proposed was kept.
 - Most of the remaining wrong accounts are the first line of an item after AP changed how it codes it, from a
-  vendor whose own history still says the old account. Nothing in the history can know yet.
+  vendor whose own history still says the old account. Nothing in the history can know yet. With reviewer
+  mistakes, a slip is filled in again until AP puts it right, unless it went against 5 approvals or more.
+- An item coded to two accounts by something its words don't show (the amount, the months covered) is filled in
+  with the latest one, right about half the time. Leaving such lines blank was tried: fewer wrong accounts, but
+  fewer right ones too (D-58).
 - A new item, or an item another vendor sold in the other language, has no suggestion from history. AP codes it
   once; the vendor's next invoice has it.

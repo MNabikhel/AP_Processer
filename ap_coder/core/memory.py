@@ -14,6 +14,11 @@ After coding:
   established pattern for that vendor. Agreement is shown as reinforcement in
   the dashboard; disagreement is flagged for review.
 
+Both follow AP when it changes its mind (``current``): once a correction to a
+new account is confirmed by one more decision, the older decisions for another
+account no longer count. A single correction is not enough on its own: it may
+be a slip, and then it still shows as a conflict with what AP did before.
+
 Accepted lines count as approvals, so patterns the AI gets right grow
 stronger over time; a reviewer can delete any bad record.
 """
@@ -130,6 +135,9 @@ class Pattern:
     approvals: int = 0
     corrections: int = 0
     last_seen: str = ""
+    newest: int = 1 << 62  # place of its latest decision in the rows (newest first): 0 for the newest of all
+    corrected_at: int | None = None  # place of its latest correction, None if never corrected
+    since_fix: int = 0  # its decisions from its latest correction on, that one included
 
     @property
     def decisions(self) -> int:
@@ -192,7 +200,7 @@ def aggregate(rows: list[dict[str, Any]]) -> list[Pattern]:
 
 def _aggregate(rows: list[dict[str, Any]]) -> list[Pattern]:
     groups: dict[tuple[str, str, str, str], Pattern] = {}
-    for r in rows:
+    for rank, r in enumerate(rows):  # newest first (``Store.feedback_rows``)
         key = (r["vendor_key"], _normalise(r["description"]), r["final_gl"], r.get("final_cc") or "")
         p = groups.get(key)
         if p is None:
@@ -201,10 +209,40 @@ def _aggregate(rows: list[dict[str, Any]]) -> list[Pattern]:
             )
         if r["outcome"] == CORRECTED:
             p.corrections += 1
+            if p.corrected_at is None:
+                p.corrected_at, p.since_fix = rank, p.decisions
         else:
             p.approvals += 1
+        p.newest = min(p.newest, rank)
         p.last_seen = max(p.last_seen, r.get("created_at") or "")
     return list(groups.values())
+
+
+# A correction counts against older decisions once AP has confirmed it this many times (the correction included).
+CONFIRMED_FIX = 2
+
+
+def current(patterns: list[Pattern]) -> list[Pattern]:
+    """``patterns`` (of one line, or of similar lines) without what AP has moved away from: the patterns of another
+    account whose decisions are all older than the latest correction, once that correction is confirmed
+    (``CONFIRMED_FIX``). Until then they all count: a single correction may be a slip."""
+    fixes = [p for p in patterns if p.corrected_at is not None]
+    if not fixes:
+        return patterns
+    latest = min(fixes, key=lambda p: p.corrected_at or 0)
+    if latest.since_fix < CONFIRMED_FIX:
+        return patterns
+    return [p for p in patterns if p.gl_code == latest.gl_code or p.newest < (latest.corrected_at or 0)]
+
+
+def _current_lines(patterns: list[Pattern]) -> list[Pattern]:
+    by_line: dict[tuple[str, str], list[Pattern]] = defaultdict(list)
+    for p in patterns:
+        by_line[(p.vendor_key, _normalise(p.description))].append(p)
+    return [p for same in by_line.values() for p in current(same)]
+
+
+_CURRENT = RowsCache()
 
 
 def detect_vendors(patterns: list[Pattern], document_text: str, vendor_hint: str | None = None) -> set[str]:
@@ -223,7 +261,7 @@ def select_examples(
     max_vendor: int = 25,
     max_similar: int = 15,
 ) -> list[Pattern]:
-    patterns = aggregate(rows)
+    patterns = _CURRENT.get(rows, None, lambda: _current_lines(aggregate(rows)))  # AP moved away: no example
     if not patterns:
         return []
     vendors = detect_vendors(patterns, document_text, vendor_hint)
@@ -303,7 +341,7 @@ def compare_with_history(coding: Any, rows: list[dict[str, Any]]) -> list[dict[s
     results = []
     for li in coding.line_items:
         line_tokens = tokens(li.description)
-        similar = [p for p in patterns if similarity(line_tokens, p.tokens) >= VENDOR_LINE_SIMILARITY]
+        similar = current([p for p in patterns if similarity(line_tokens, p.tokens) >= VENDOR_LINE_SIMILARITY])
         if not similar:
             continue
         votes: dict[str, int] = defaultdict(int)

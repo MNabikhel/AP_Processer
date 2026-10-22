@@ -14,8 +14,11 @@ account are allowed for. The best suggestion says whether it is strong enough to
 it first (``auto``):
 
 * a line of this vendor this alike, and none of its lines nearly as alike (or more recent) coded otherwise;
-* a line of another vendor this alike, and no other vendor's similar line coded otherwise;
+* a line of another vendor this alike, and no other vendor's similar line coded otherwise, or at least two other
+  vendors agreeing on it with three quarters of the evidence (similarity of each vendor's closest line);
 * the vendor's usual account once AP has coded enough different lines of it, all to that account;
+* never a line AP just recoded against several older approvals, until a second decision confirms it: a slip
+  looks the same as a change of mind at first;
 * never the vendor master's default or an account's name alone (right 65% and 82% of the time on the benchmark);
 * never an account AP recently moved similar lines away from (it may be out of date);
 * when two accounts both have strong evidence, this vendor's own lines win over its usual account, which wins
@@ -32,7 +35,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..core.memory import RowsCache, _normalise, tokens, vendor_key
+from ..core.memory import CORRECTED, RowsCache, _normalise, tokens, vendor_key
 from ..core.reference_data import UNASSIGNED, ReferenceData
 from .line_match import Index, keys
 
@@ -43,8 +46,13 @@ KEYWORD_MIN_OVERLAP = 1
 VENDOR_AUTO_SIMILARITY = 0.4  # this vendor's line this alike...
 VENDOR_AUTO_MARGIN = 0.15  # ...and no line of it coded to another account nearly as alike
 OTHERS_AUTO_SIMILARITY = 0.6  # another vendor's line this alike, and none coded to another account
+OTHERS_AUTO_VENDORS = 2  # ...or this many other vendors coded similar lines to it...
+OTHERS_AUTO_SHARE = 0.75  # ...with this share of the other vendors' evidence (each vendor's closest line)
 USUAL_MIN_LINES = 2  # different lines AP coded for this vendor, all to one account: suggested
 USUAL_AUTO_LINES = 4  # ...and coded with it
+# A correction that reverses this many approvals in a row of the same line is suggested, not coded with, until
+# AP confirms it once: a slip and a deliberate change of account look the same until the next decision.
+UNCONFIRMED_REVERSAL = 5
 PRIORITY = {"vendor": 3, "usual": 2, "master": 1, "others": 1, "words": 0}
 
 
@@ -70,6 +78,13 @@ class _Pattern:
     rank: int  # how recent its latest decision is: 0 for the newest of all
     decisions: int = 1  # approvals of ``gl_code`` since the description was last coded otherwise
     was: str = ""  # the account AP coded it to before (AP changed it), "" if never changed
+    reversed: int = 0  # decisions in a row for ``was`` before AP changed it
+    corrected: bool = False  # the latest decision changed the account proposed (or filled in a blank)
+
+    @property
+    def unconfirmed(self) -> bool:
+        """AP has just changed this line's account against several older decisions, and not confirmed it yet."""
+        return self.decisions == 1 and self.corrected and self.reversed >= UNCONFIRMED_REVERSAL
 
 
 @dataclass
@@ -91,24 +106,21 @@ def _memory(feedback: list[dict[str, Any]], valid: frozenset[str]) -> _Memory:
 
 
 def _build_memory(feedback: list[dict[str, Any]], valid: frozenset[str]) -> _Memory:
-    groups: dict[tuple[str, str], _Pattern] = {}
-    closed: set[tuple[str, str]] = set()  # older decisions for another account: superseded
+    decisions: dict[tuple[str, str], list[tuple[int, dict[str, Any]]]] = {}  # each line's decisions, newest first
     for rank, r in enumerate(feedback):
-        gl = r.get("final_gl")
-        if gl not in valid:
-            continue
-        key = (r["vendor_key"], _normalise(r["description"]))
-        p = groups.get(key)
-        if p is None:
-            groups[key] = _Pattern(r["vendor_key"], r["description"], keys(r["description"]), gl,
-                                   r.get("final_cc") or "", rank)  # fmt: skip
-        elif key in closed:
-            continue
-        elif p.gl_code == gl:
-            p.decisions += 1
-        else:
-            p.was = gl
-            closed.add(key)
+        if r.get("final_gl") in valid:
+            decisions.setdefault((r["vendor_key"], _normalise(r["description"])), []).append((rank, r))
+    groups: dict[tuple[str, str], _Pattern] = {}
+    for key, seq in decisions.items():
+        rank, r = seq[0]
+        gl = r["final_gl"]
+        run = next((i for i, (_, x) in enumerate(seq) if x["final_gl"] != gl), len(seq))
+        p = _Pattern(r["vendor_key"], r["description"], keys(r["description"]), gl, r.get("final_cc") or "", rank,
+                     run, corrected=r.get("outcome") == CORRECTED)  # fmt: skip
+        if run < len(seq):  # older decisions for another account: superseded
+            p.was = seq[run][1]["final_gl"]
+            p.reversed = next((i for i, (_, x) in enumerate(seq[run:]) if x["final_gl"] != p.was), len(seq) - run)
+        groups[key] = p
     patterns = [p for p in groups.values() if p.keys]
     usual: dict[str, Counter[str]] = defaultdict(Counter)
     newest: dict[str, int] = {}
@@ -226,18 +238,24 @@ def suggest_gl(
         # A similar line of this vendor coded to another account more recently: AP may have changed its mind.
         newer = any(s >= VENDOR_AUTO_SIMILARITY and p.rank < newest for g, (s, p) in best_of.items() if g != gl)
         auto = (best_sim >= VENDOR_AUTO_SIMILARITY and best_sim - rival >= VENDOR_AUTO_MARGIN and not newer
-                and not stale(gl, newest))  # fmt: skip
+                and not stale(gl, newest) and not best.unconfirmed)  # fmt: skip
         add(gl, 0.6 + 0.3 * best_sim + 0.02 * min(decisions, 5),
             f"coded this way {_plural(decisions, 'time')} for similar lines from this vendor", "vendor", auto,
             best.cost_center)  # fmt: skip
 
-    others_best = {gl: max(s for s, _ in hits) for gl, hits in others.items()}
+    # Each other vendor's evidence for an account: its closest line coded to it.
+    weight = {gl: sum(max(s for s, p in hits if p.vendor_key == k) for k in {p.vendor_key for _, p in hits})
+              for gl, hits in others.items()}  # fmt: skip
     for gl, hits in others.items():
         decisions = sum(p.decisions for _, p in hits)
         vendors = len({p.vendor_key for _, p in hits})
         best_sim, best = max(hits, key=lambda h: (h[0], h[1].decisions))
-        disagree = any(g != gl for g in others_best)  # other vendors coded similar lines to another account
-        auto = best_sim >= OTHERS_AUTO_SIMILARITY and not disagree and not stale(gl, min(p.rank for _, p in hits))
+        # No other vendor coded similar lines to another account, or several agree on this one by far.
+        agreed = len(weight) == 1 or (
+            vendors >= OTHERS_AUTO_VENDORS and weight[gl] >= OTHERS_AUTO_SHARE * sum(weight.values())
+        )  # fmt: skip
+        auto = (best_sim >= OTHERS_AUTO_SIMILARITY and agreed and not stale(gl, min(p.rank for _, p in hits))
+                and not best.unconfirmed)  # fmt: skip
         add(gl, 0.35 + 0.3 * best_sim + 0.02 * min(decisions, 5),
             f"used for similar lines from {_plural(vendors, 'other vendor')}", "others", auto,
             best.cost_center)  # fmt: skip

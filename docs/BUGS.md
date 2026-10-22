@@ -5815,6 +5815,22 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
 - **Test:** `tests/test_offline_coding.py::test_the_local_models_examples_have_the_vendor_the_local_reader_found`
 - **Lesson:** Work that depends on a value must run after the step that finds it, not on an earlier stand-in.
 
+#### B-601 · After AP recoded a line, "reviewers coded similar lines to GL ..." kept warning against the new account · low
+- **Where:** `ap_coder/core/memory.py` (`compare_with_history`, `select_examples`)
+- **Symptom:** twelve approvals of a laptop to 6010, then AP moved it to 1500 and confirmed it: every later invoice
+  coded 1500 warned *reviewers coded similar lines from this vendor to GL 6010*, until 1500 had 80% of all the votes
+  (about fifty more lines); the chat model's examples still showed the twelve approvals to 6010.
+- **Cause:** the check and the examples counted every decision ever made, while GL coding (`suggest`) follows the
+  latest one.
+- **Reproduce:** rows newest first: 1500 accepted, 1500 corrected, twelve 6010 accepted; compare a line coded 1500.
+- **Reproduced:** yes
+- **Fix:** once a correction is confirmed by one more decision, the older decisions for another account on that line
+  (and on similar lines of the vendor) no longer count (`memory.current`). A single correction is not enough: it may
+  be a slip, which still warns (D-58).
+- **Test:** `tests/test_memory_store.py::test_no_history_conflict_once_ap_has_confirmed_a_recode`,
+  `::test_a_single_correction_or_a_kept_guess_still_warns`, `::test_examples_leave_out_coding_ap_has_moved_away_from`
+- **Lesson:** Two memories of the same decisions must agree on which decision is the latest word.
+
 #### Looked at and left (install, launcher and updates)
 
 - **N-251** · A GitHub ZIP unzipped over an older one leaves the files the newer one no longer has (the offline
