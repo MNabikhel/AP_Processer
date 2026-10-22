@@ -233,6 +233,8 @@ def _unlisted_charge(text: str, amount: float) -> str:
 
 def not_sure(top: Any) -> str:
     """Why a line with a suggestion was left without an account."""
+    if getattr(top, "check", ""):
+        return f"{top.check}."
     return f"Not sure enough to code it (maybe {top.gl_code}: {'; '.join(top.reasons[:2])}): pick the account."
 
 

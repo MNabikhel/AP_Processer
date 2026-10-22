@@ -2,7 +2,7 @@
 python -m ap_coder.bench calibrate RUN_DIR [RUN_DIR ...]
 python -m ap_coder.bench learn --suppliers 30 --invoices 40 [--scanned 0.0]
 python -m ap_coder.bench speed --n 20 --scanned 0.5 [--history 30000]
-python -m ap_coder.bench coding --vendors 30 --invoices 30 --seed 1 [--out bench_coding]"""
+python -m ap_coder.bench coding --vendors 30 --invoices 30 --seed 1 [--out bench_coding] [--realistic]"""
 
 from __future__ import annotations
 
@@ -66,6 +66,15 @@ def main(argv: list[str] | None = None) -> int:
     cp.add_argument("--invoices", type=int, default=30, help="invoices per vendor (default 30)")
     cp.add_argument("--seed", type=int, default=1, help="random seed; the same seed gives the same company")
     cp.add_argument("--out", default="bench_coding", help="output folder (default bench_coding)")
+    cp.add_argument(
+        "--realistic",
+        action="store_true",
+        help="all of the four below: 2%% mistakes, history for 40%% of vendors, guesses, a split account",
+    )
+    cp.add_argument("--mistakes", type=float, default=None, help="share of lines AP approves with a wrong account")
+    cp.add_argument("--history", type=float, default=None, help="share of vendors with ERP history imported first")
+    cp.add_argument("--guesses", action="store_true", help="kept chat-model guesses on the lines left blank")
+    cp.add_argument("--split", action="store_true", help="one item coded to two accounts by its quantity")
     tp = sub.add_parser("triage", help="email triage: made-up emails of every kind sorted as the dashboard does")
     tp.add_argument("--n", type=int, default=300, help="number of emails (default 300)")
     tp.add_argument("--seed", type=int, default=1, help="random seed; the same seed gives the same emails")
@@ -95,9 +104,17 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if a.cmd == "coding":
-        from ap_coder.bench.coding import run_coding
+        import dataclasses
 
-        report = run_coding(a.vendors, a.invoices, a.seed, a.out)
+        from ap_coder.bench.coding import REALISTIC, Realism, run_coding
+
+        realism = REALISTIC if a.realistic else Realism()
+        changes = {"mistakes": a.mistakes, "history": a.history, "guesses": a.guesses or None,
+                   "split": a.split or None}  # fmt: skip
+        realism = dataclasses.replace(realism, **{k: v for k, v in changes.items() if v is not None})
+        if realism.history and not realism.history_noise and not a.realistic:
+            realism = dataclasses.replace(realism, history_noise=REALISTIC.history_noise)
+        report = run_coding(a.vendors, a.invoices, a.seed, a.out, realism)
         s = report["summary"]
         o, first = s["overall"], s["first_or_later"]
 
