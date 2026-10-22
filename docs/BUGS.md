@@ -6149,3 +6149,16 @@ reproduced with a script first, then given a failing test and fixed.
   on its own.
 - **Test:** `tests/test_sweep_pilot_fixes.py::test_an_old_date_is_a_check_not_a_failed_check`
 - **Lesson:** Red is for what is wrong; amber for what is unusual.
+
+#### B-665 · A utility bill with no invoice number: the error did not say what to type · low
+- **Where:** `ap_coder/ops/help.py` (`MISSING_INVOICE_NUMBER`)
+- **Symptom:** a hydro bill prints an account number and a statement date, no invoice number: *No invoice number:
+  type it from the page*, and nothing on the page to type.
+- **Cause:** the help assumed every bill has an invoice number.
+- **Reproduce:** read a utility bill.
+- **Reproduced:** yes (the real-invoice run)
+- **Fix:** the help under the error adds *A utility bill or statement that prints none: type its account number
+  and the bill's month, e.g. 1234567-2026-09, so each month's bill has its own number.* (Prefilling it was left
+  out: the account number is not read as a field of its own yet.)
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_no_invoice_number_help_suggests_the_account_number_and_month`
+- **Lesson:** An error says what to do, also when the usual answer is not on the page.

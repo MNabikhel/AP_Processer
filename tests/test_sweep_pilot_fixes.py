@@ -481,3 +481,13 @@ def test_an_old_date_is_a_check_not_a_failed_check(tmp_path):
     assert badge["status"] == "check" and badge["tone"] == "warn"
     future = analyze(str(path), today=dt.date(2020, 1, 1)).fields["invoice_date"]
     assert any(x.startswith("check failed") for x in future.reasons)  # a date far ahead still fails
+
+
+# --- B-665: a utility bill with no invoice number: the help says what to type -----------------------------------------
+
+
+def test_no_invoice_number_help_suggests_the_account_number_and_month():
+    from ap_coder.ops.help import CHECKS
+
+    action = CHECKS["MISSING_INVOICE_NUMBER"].action
+    assert "account number" in action and "1234567-2026-09" in action
