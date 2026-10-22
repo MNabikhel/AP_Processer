@@ -36,6 +36,11 @@
           <tr><td>{{ ui.kbd("H") }} or hold {{ ui.kbd("Space") }}</td><td>Drag to move the page</td></tr>
           <tr><td>{{ ui.kbd("R") }}</td><td>Turn the page (on screen only)</td></tr>
           <tr><td>{{ ui.kbd("PgUp") }} {{ ui.kbd("PgDn") }}</td><td>Previous or next page</td></tr>
+          <tr><td>{{ ui.kbd("Shift") }} + {{ ui.kbd("F10") }}</td><td>More options for a field, a line or the page (or right-click)</td></tr>
+          <tr><td>{{ ui.kbd("Ctrl") }} + {{ ui.kbd("Z") }}</td><td>Undo the last change (a line deleted, a value cleared)</td></tr>
+          <tr><td>{{ ui.kbd("P") }}</td><td>Park: opens Park, to say what it waits for</td></tr>
+          <tr><td>{{ ui.kbd("X") }}</td><td>Reject: opens Reject, to say why (nothing is rejected until you press it)</td></tr>
+          <tr><td>{{ ui.kbd("Enter") }} / {{ ui.kbd("Shift") }} + {{ ui.kbd("Enter") }}</td><td>Next or previous invoice detail</td></tr>
         </tbody></table>
       </div>
     </details>
@@ -59,6 +64,8 @@
   <input type="hidden" name="grids" value="1">
   <input type="hidden" name="reader_at" value="{{ draft.reader_at }}">
   <input type="hidden" name="taught" value="{{ taught_json | tojson | forceescape }}" data-taught>
+  {# The fields marked "Not on this invoice" (the right-click menu of a field, D-60): a JSON list. #}
+  <input type="hidden" name="absent" value="{{ draft.absent | tojson | forceescape }}" data-absent>
   {% for k, v in query.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
   {% if nav.next_id %}<input type="hidden" name="next_id" value="{{ nav.next_id }}">{% endif %}
 </form>
@@ -140,10 +147,11 @@
       {{ live_ui.head("Invoice details") }}
       {% macro field(name, cls="", type="text", placeholder="", hint="", step="", choices="") -%}
       {% set s = sure.get(name) %}
-      <label class="field {{ cls }}" data-field="{{ name }}">
+      <label class="field {{ cls }}" data-field="{{ name }}"{% if name in absent_ok %} data-absent-ok{% endif %}{% if name in draft.absent %} data-absent{% endif %}>
         <span class="lbl">{{ labels[name] }}{% if s %} <span class="inv-sure {{ s.tone }}" title="{{ s.help }}"><span class="ms" aria-hidden="true">{{ s.icon }}</span>{{ s.text }}</span>{% endif %}
           {% if hint %}<span class="rvw-hint" title="{{ hint }}"><span class="ms" aria-hidden="true">info</span></span>{% endif %}</span>
         <input type="{{ type }}" name="{{ name }}" value="{{ draft.header[name] }}" form="inv"{% if placeholder %} placeholder="{{ placeholder }}"{% endif %}{% if step %} step="{{ step }}"{% endif %}{% if hint %} title="{{ hint }}"{% endif %}{% if choices %} data-picker="free" data-picker-noun="{{ name }}" data-choices="{{ choices }}" autocomplete="off"{% endif %}>
+        <span class="inv-absent small muted"{% if name not in draft.absent %} hidden{% endif %}><span class="ms" aria-hidden="true">do_not_disturb_on</span>Not on this invoice</span>
       </label>
       {%- endmacro %}
       {% macro province(name, hint="") -%}
@@ -236,8 +244,8 @@
   <div class="inv-actionbar-left" data-live="bar">{{ live_ui.bar(live, inv.id) }}</div>
   <div class="inv-actionbar-right">
     <span class="inv-checking small muted" data-checking role="status" aria-live="polite"></span>
-    <details class="pop up">
-      <summary class="btn" title="Set it aside while waiting for information"><span class="ms" aria-hidden="true">pause_circle</span>Park</summary>
+    <details class="pop up" data-park>
+      <summary class="btn" title="Set it aside while waiting for information (P)" aria-keyshortcuts="p"><span class="ms" aria-hidden="true">pause_circle</span>Park</summary>
       <form class="pop-body stack" method="post" action="/review/{{ inv.id }}/park">
         <p class="muted">Set it aside while waiting for information.</p>
         <label class="field">Waiting for<input type="text" name="reason" required placeholder="e.g. buyer to confirm the price"></label>
@@ -247,8 +255,8 @@
         <button class="btn" type="submit"><span class="ms" aria-hidden="true">pause_circle</span>Park</button>
       </form>
     </details>
-    <details class="pop up">
-      <summary class="btn" title="Not ours, or not to be paid"><span class="ms" aria-hidden="true">block</span>Reject</summary>
+    <details class="pop up" data-reject>
+      <summary class="btn" title="Not ours, or not to be paid (X opens this)" aria-keyshortcuts="x"><span class="ms" aria-hidden="true">block</span>Reject</summary>
       <form class="pop-body stack" method="post" action="/review/{{ inv.id }}/reject">
         <p class="muted">Not ours, or not to be paid. It can be reopened later.</p>
         <label class="field">Reason<input type="text" name="reason" placeholder="e.g. not our invoice"></label>

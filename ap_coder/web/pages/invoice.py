@@ -152,7 +152,8 @@ def current_draft(request: Request, inv: dict[str, Any]) -> tuple[view.Draft, bo
     if saved is None:
         return view.Draft.stored(_start(inv), _reader_at(inv)), False
     draft = view.Draft(header=dict(saved["header"]), lines=list(saved["lines"]), taxes=list(saved["taxes"]),
-                       taught=dict(saved.get("taught") or {}), reader_at=saved.get("reader_at", ""))  # fmt: skip
+                       taught=dict(saved.get("taught") or {}), reader_at=saved.get("reader_at", ""),
+                       absent=list(saved.get("absent") or []))  # fmt: skip
     return draft, draft.reader_at != _reader_at(inv)
 
 
@@ -436,6 +437,7 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         due_placeholder=f"{computed.isoformat()} (from terms)" if computed else "YYYY-MM-DD",
         sent_back=_sent_back(store, invoice_id), poll_seconds=PAGE_READER_POLL_SECONDS,
         today=dt.date.today().isoformat(), taught_json=draft.taught, vendors=vendor_options(store),
+        absent_ok=list(view.ABSENT_FIELDS),
         supply=view.supply_line(draft.header, draft.lines, reference.tax),
         usual_cc=view.usual_cost_center(store, reference, draft.header.get("vendor_name") or ""),
     )  # fmt: skip
@@ -721,12 +723,17 @@ def reject(request: Request, invoice_id: int, reason: str = Form(""), show: str 
 
 
 @router.post("/review/{invoice_id:int}/note")
-def note(request: Request, invoice_id: int, text: str = Form(""), back: str = Form("")) -> JSONResponse:
+def note(request: Request, invoice_id: int, text: str = Form(""), back: str = Form(""),
+         inline: str = Form("")) -> JSONResponse:  # fmt: skip
     store = get_store(request)
     _invoice(store, invoice_id)
     if not text.strip():
         return refuse("Write the note first.")
     store.add_note(invoice_id, reviewer(), text)
+    if inline:  # added from the review screen without leaving it: the notes as they are now (D-60)
+        notes = history([e for e in store.events(invoice_id) if e["action"] in NOTE_ACTIONS])
+        return JSONResponse({"ok": True, "html": ui.timeline(notes), "count": len(notes),
+                             "toast": {"text": "Note added.", "tone": "ok", "icon": "add_comment"}})  # fmt: skip
     return done(request, back or f"/review/{invoice_id}", flash_message("Note added.", "ok", icon="add_comment"))
 
 

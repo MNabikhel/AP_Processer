@@ -101,6 +101,23 @@ EDIT_LABELS = {
     "original_invoice_number": "invoice credited", "remit_bank_account": "bank account", "subtotal": "subtotal",
     "tax_total": "tax total", "grand_total": "total",
 }  # fmt: skip
+# Fields the reviewer can mark "Not on this invoice" (the review screen's right-click menu, D-60): optional fields
+# that an invoice may simply not print. The check that would ask for one is then said once, as information, or not at
+# all (None). The vendor, the invoice number, the date, the currency and the amounts are needed: never absent.
+ABSENT_FIELDS = {
+    "gst_hst_registration_number": {"GST_HST_NUMBER_MISSING": (
+        "GST_HST_NUMBER_ABSENT", "you marked the GST/HST number as not on this invoice: no input tax credit can be "
+        "claimed without it")},
+    "qst_registration_number": {"QST_NUMBER_MISSING": (
+        "QST_NUMBER_ABSENT", "you marked the QST number as not on this invoice: no input tax refund can be claimed "
+        "without it")},
+    "pst_registration_number": {},
+    "po_number": {"PO_NOT_QUOTED": None},
+    "payment_terms": {},
+    "due_date": {},
+    "remit_bank_account": {},
+    "original_invoice_number": {},
+}  # fmt: skip
 # How sure the capture is of a field, beside its label in the form: (tone, icon).
 CAPTURE_BADGES = {"verified": ("ok", "check_circle"), "likely": ("info", "check"), "check": ("warn", "error"),
                   "failed": ("err", "cancel")}  # fmt: skip
@@ -160,6 +177,7 @@ class Draft:
     override: str = ""  # "approve anyway, despite the errors", ticked for these errors
     reader_at: str = ""  # when OvisOCR2's reading came in, as the screen was drawn ("" before it)
     mail_lang: str = ""
+    absent: list[str] = field(default_factory=list)  # fields marked "Not on this invoice" (ABSENT_FIELDS), blank
 
     @classmethod
     def stored(cls, start: dict[str, Any], reader_at: str = "") -> Draft:
@@ -204,13 +222,44 @@ class Draft:
                      for i in range(len(tcols["tax_type"]))]  # fmt: skip
             for t in taxes:
                 t.update({c: _number_cell(t[c]) for c in NUMBER_CELLS if c in t})
+        absent = parse_absent(form.get("absent"), header) if form.get("absent") is not None else base.absent
         return cls(header=header, lines=lines, taxes=taxes, taught=parse_taught(form.get("taught")),
                    override=str(form.get("override") or ""), reader_at=str(form.get("reader_at") or base.reader_at),
-                   mail_lang=str(form.get("mail_lang") or ""))  # fmt: skip
+                   mail_lang=str(form.get("mail_lang") or ""), absent=absent)  # fmt: skip
 
     def to_dict(self) -> dict[str, Any]:
         return {"header": self.header, "lines": self.lines, "taxes": self.taxes, "taught": self.taught,
-                "reader_at": self.reader_at}  # fmt: skip
+                "reader_at": self.reader_at, "absent": self.absent}  # fmt: skip
+
+
+def parse_absent(raw: Any, header: dict[str, str]) -> list[str]:
+    """The fields marked "Not on this invoice" (the form's ``absent`` JSON list): only the ones that may be absent
+    (ABSENT_FIELDS), and only while they are blank (a value typed in since says it is on the invoice after all)."""
+    try:
+        data = json.loads(raw) if isinstance(raw, str) and raw.strip() else []
+    except ValueError:
+        return []
+    if not isinstance(data, list):
+        return []
+    return [n for n in dict.fromkeys(str(x) for x in data) if n in ABSENT_FIELDS and not str(header.get(n) or "").strip()]
+
+
+def settle_absent(issues: list[Any], absent: list[str]) -> list[Any]:
+    """The checks once the reviewer said a field is not on the invoice: what asked for it is said as information
+    (what it costs), or left out (ABSENT_FIELDS). Errors are never touched."""
+    from ap_coder.coding.validation import INFO, Issue
+
+    swap: dict[str, Any] = {}
+    for name in absent:
+        swap.update(ABSENT_FIELDS.get(name) or {})
+    out = []
+    for issue in issues:
+        if issue.code not in swap or issue.severity == "error":
+            out.append(issue)
+        elif swap[issue.code] is not None:
+            code, message = swap[issue.code]
+            out.append(Issue(INFO, code, message, issue.line_number))
+    return out
 
 
 def parse_taught(raw: Any) -> dict[str, list[list[float]]]:
@@ -745,7 +794,10 @@ def checks_summary(report: Any, errors: list[Any], warnings: list[Any]) -> dict[
     for bad, text, code, lines in grouped_issues(errors + warnings):
         kind = BLOCK if code in GOTO_BOX else FIX if bad else LOOK
         goto = {"box": GOTO_BOX[code], "line": lines[0]} if code in GOTO_BOX and lines else None
-        items.append({"bad": kind != LOOK, "kind": kind, "text": text, "goto": goto})
+        # A possible duplicate: a link to each invoice it may duplicate, to compare them (D-60).
+        links = ([{"href": f"/review/{n}", "text": f"Open #{n}"} for n in re.findall(r"#(\d+)", text)]
+                 if code == "DUPLICATE_INVOICE" else [])  # fmt: skip
+        items.append({"bad": kind != LOOK, "kind": kind, "text": text, "goto": goto, "links": links})
     if low:
         items.append({"bad": False, "kind": LOOK, "text": f"Confidence {confidence_pct(report.adjusted_confidence, report.review_threshold)} "  # noqa: E501
                       f"is below the {report.review_threshold:.0%} threshold."})  # fmt: skip
@@ -903,6 +955,7 @@ def summary(coding: InvoiceCoding, report: Any, errors: list[Any], warnings: lis
     value = max(0.0, min(1.0, report.adjusted_confidence or 0.0))
     return {
         "vendor": coding.vendor_name or "Unknown vendor",
+        "number": coding.invoice_number,
         "status": status,
         "confidence": value,
         "confidence_text": confidence_pct(value, report.review_threshold),
@@ -1167,6 +1220,8 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
         for severity, code, message in review_issues(capture, coding.currency, assumed_date=assumed):
             if code != "CAPTURE_CHECK_FIELDS":  # the fields to check are highlighted in amber: no need to list them
                 report.issues.append(Issue(severity, code, message))
+    if draft.absent:  # fields the reviewer said are not on this invoice: nothing asks for them (D-60)
+        report.issues = settle_absent(report.issues, draft.absent)
     errors = [i for i in report.issues if i.severity == "error"]
     warnings = [i for i in report.issues if i.severity == "warning"]
     default_days = store.default_terms_days()
