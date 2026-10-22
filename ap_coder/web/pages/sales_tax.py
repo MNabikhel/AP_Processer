@@ -21,6 +21,8 @@ ISSUE_TONES = {
     taxreturn.NO_GST_NUMBER: "err",
     taxreturn.NO_QST_NUMBER: "err",
     taxreturn.GST_CHECK_DIGIT: "err",
+    taxreturn.GST_NOT_PRINTED: "warn",
+    taxreturn.QST_NOT_PRINTED: "warn",
     taxreturn.FOREIGN: "warn",
     taxreturn.NOT_EXPORTED: "info",
 }

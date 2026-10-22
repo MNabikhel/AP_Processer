@@ -24,6 +24,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from ..core.safe import csv_row
+from ..core.schema import FROM_VENDOR_LIST
 from ..core.store import APPROVED, PARKED, PENDING, REVIEW, Store
 from .tax import (
     DEFAULT_TREATMENTS,
@@ -42,7 +43,10 @@ ITC, ITR = "GST/HST input tax credits (ITCs)", "QST input tax refunds (ITRs)"
 GROUPS = {"GST": ITC, "HST": ITC, "QST": ITR}
 # Below this total, no registration number is required on the invoice: $100 for invoices dated from 2021-04-21, $30
 # before (Input Tax Credit Information (GST/HST) Regulations, amended by Budget 2021 with effect from April 21, 2021;
-# Quebec's QST rules follow the same amounts).
+# Quebec's QST rules follow the same amounts). From $500 ($150 before) more is required (the recipient's name, the terms
+# of payment, a description of each supply), which this report does not check. Source: CRA, "Input tax credits –
+# Documents required" (GST/HST Memorandum 8.4, "Documentary Requirements for Claiming Input Tax Credits"), checked
+# 2026-10.
 DOCUMENT_THRESHOLD = 100.0
 DOCUMENT_THRESHOLD_BEFORE_2021 = 30.0
 DOCUMENT_THRESHOLD_FROM = "2021-04-21"
@@ -54,11 +58,13 @@ def document_threshold(invoice_date: str) -> float:
 
 
 NO_GST_NUMBER = "No valid GST/HST number"
+GST_NOT_PRINTED = "GST/HST number not printed on the invoice (from the vendor list)"
+QST_NOT_PRINTED = "QST number not printed on the invoice (from the vendor list)"
 NO_QST_NUMBER = "No valid QST number"
 GST_CHECK_DIGIT = "GST/HST number fails the CRA check digit"
 FOREIGN = "Foreign currency: convert to CAD"
 NOT_EXPORTED = "Not exported yet"
-RISKS = {NO_GST_NUMBER, NO_QST_NUMBER, GST_CHECK_DIGIT, FOREIGN}
+RISKS = {NO_GST_NUMBER, NO_QST_NUMBER, GST_CHECK_DIGIT, GST_NOT_PRINTED, QST_NOT_PRINTED, FOREIGN}
 
 
 @dataclass
@@ -109,14 +115,20 @@ class Report:
 
 
 def _registration_issue(tax_type: str, doc: dict[str, Any]) -> tuple[str, str]:
-    """(the number on the invoice, the issue when it is missing or invalid)."""
+    """(the number on the invoice, the issue when it is missing or invalid). A number the review screen filled from
+    the vendor list is not on the invoice (D-65): the claim needs it printed there."""
+    filled = set(doc.get(FROM_VENDOR_LIST) or [])
     if tax_type == "QST":
         number = str(doc.get("qst_registration_number") or "")
+        if valid_qst_number(number) and "qst_registration_number" in filled:
+            return number, QST_NOT_PRINTED
         return number, "" if valid_qst_number(number) else NO_QST_NUMBER
     number = str(doc.get("gst_hst_registration_number") or "")
     if not valid_gst_number(number):
         return number, NO_GST_NUMBER
-    return number, "" if gst_check_digit_ok(number) else GST_CHECK_DIGIT
+    if not gst_check_digit_ok(number):
+        return number, GST_CHECK_DIGIT
+    return number, GST_NOT_PRINTED if "gst_hst_registration_number" in filled else ""
 
 
 def supply_setup(store: Store, rates: TaxRateTable | None = None) -> TaxSetup:

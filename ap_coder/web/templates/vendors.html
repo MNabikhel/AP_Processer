@@ -4,7 +4,7 @@
 {% block head %}<link rel="stylesheet" href="/static/data.css?v={{ static_version }}">{% endblock %}
 {% macro spend(v) %}{% for cur, t in spend_items(v) %}{{ t | money }} <span class="muted">{{ cur }}</span>{% if not loop.last %} · {% endif %}{% else %}<span class="muted">—</span>{% endfor %}{% endmacro %}
 {% macro accuracy(value) %}{% if value is none %}<span class="muted">—</span>{% else %}<b class="{{ 'ok' if value >= target else 'warn-text' }}">{{ value | pct }}</b>{% endif %}{% endmacro %}
-{% macro status_pills(v) %}{{ ui.pill("On hold", "warn", "front_hand") if v.status == on_hold else ui.pill("Active", "ok") }}{% if v.added_here %} {{ ui.pill("Added here: set up in JD Edwards", "warn", "person_add") }}{% elif has_master and not v.in_master %} {{ ui.pill("Not in master", "warn", "gpp_maybe") }}{% endif %}{% endmacro %}
+{% macro status_pills(v) %}{{ ui.pill("On hold", "warn", "front_hand") if v.status == on_hold else ui.pill("Active", "ok") }}{% if number_problems(v) %} {{ ui.pill("Tax number to check", "warn", "warning") }}{% endif %}{% if v.added_here %} {{ ui.pill("Added here: set up in JD Edwards", "warn", "person_add") }}{% elif has_master and not v.in_master %} {{ ui.pill("Not in master", "warn", "gpp_maybe") }}{% endif %}{% endmacro %}
 {% block content %}
 <details class="card expander" id="import"{% if master or master_error %} open{% endif %}>
   <summary><span class="ms" aria-hidden="true">upload</span>Vendor master from the ERP{% if has_master %} (imported){% endif %}</summary>
@@ -133,6 +133,10 @@
   </div>
 
   <h5>Controls</h5>
+  {% for problem in detail.number_problems %}
+  <div class="flash warn"><span class="ms" aria-hidden="true">warning</span><div>{{ problem }}. The review screen fills
+    this number in on invoices that print none: correct it here, or in the vendor master and import it again.</div></div>
+  {% endfor %}
   <form method="post" action="/vendors/save" class="stack controls" data-busy="Saving…">
     <input type="hidden" name="key" value="{{ v.vendor_key }}">
     <div class="row">

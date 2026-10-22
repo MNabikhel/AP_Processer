@@ -277,6 +277,25 @@ def tax_number_findings(
     return out
 
 
+def vendor_number_problems(vendor: dict[str, Any]) -> list[str]:
+    """What is wrong with the tax numbers the vendor list holds for a vendor (the Vendors page warns, D-65): a GST/HST
+    number not in the format 123456789 RT0001 (a 9-digit Business Number alone is fine) or failing the CRA's check
+    digit, a QST number not in the format 1234567890 TQ0001. The review screen fills these numbers in."""
+    from .tax import gst_check_digit_ok, normalise_registration, valid_gst_number, valid_qst_number
+
+    out = []
+    gst = str(vendor.get("expected_gst") or "").strip()
+    if gst:
+        if not (valid_gst_number(gst) or re.fullmatch(r"\d{9}", normalise_registration(gst))):
+            out.append(f"GST/HST number {gst} is not in the format 123456789 RT0001")
+        elif not gst_check_digit_ok(gst):
+            out.append(f"GST/HST number {gst} fails the CRA check digit: mistyped, or not a real number")
+    qst = str(vendor.get("qst_number") or "").strip()
+    if qst and not valid_qst_number(qst):
+        out.append(f"QST number {qst} is not in the format 1234567890 TQ0001")
+    return out
+
+
 def expected_tax_numbers(coding: InvoiceCoding, store: Store, exclude_invoice_id: int | None = None) -> dict[str, str]:
     """{invoice field: what it is compared with} for the tax numbers ``tax_number_findings`` checks, in a few words
     for the note under the field on the review screen (D-65): "Vendor list: 123456789 RT0001", else "Usual for this

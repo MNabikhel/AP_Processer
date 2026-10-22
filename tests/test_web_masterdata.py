@@ -166,6 +166,24 @@ def test_a_vendor_is_given_its_qst_and_pst_numbers_and_province(client, busy):
     assert bad.status_code == 400
 
 
+def test_a_vendor_list_number_that_fails_the_cra_check_is_warned_about(client, busy):
+    """D-65: the review screen fills the vendor list's numbers in, so a wrong one there is said on the Vendors page."""
+    from ap_coder.coding.vendors import vendor_number_problems
+
+    v = busy.vendor_summaries()[0]
+    data = {"key": v["vendor_key"], "status": "active", "expected_gst": "123456789 RT0001", "qst_number": "12345TQ"}
+    follow(client, client.post("/vendors/save", data=data, headers=PAGE))
+    detail = client.get("/vendors?" + urlencode({"open": v["vendor_key"]})).text
+    assert "GST/HST number 123456789 RT0001 fails the CRA check digit" in detail
+    assert "QST number 12345TQ is not in the format 1234567890 TQ0001" in detail
+    assert "Tax number to check" in client.get("/vendors").text
+    assert vendor_number_problems({"expected_gst": "123456782"}) == []  # the Business Number alone is fine
+    assert vendor_number_problems({"expected_gst": "12345"}) == [
+        "GST/HST number 12345 is not in the format 123456789 RT0001"
+    ]
+    assert vendor_number_problems({"expected_gst": "123456782 RT0001", "qst_number": "1234567890 TQ0001"}) == []
+
+
 def test_bank_and_tax_number_history_is_masked(client, store, tmp_path):
     for n, (bank, gst) in enumerate(
         [("Account 004-55555-9994567", "123456789RT0001"), ("Account 004-12345-7654321", "987654321RT0001")]

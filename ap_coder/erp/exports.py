@@ -263,7 +263,11 @@ def build(
     if fmt == "jde":  # needs its settings and checks: see ap_coder.erp.jde.build_zip
         raise ValueError("JD Edwards files are built with ap_coder.erp.jde.build_zip")
     if fmt == "csv":
-        return build_csv(invoices, gl_names, batch, vendor_ids, tax_treatments, bank_accounts), f"{name}.csv", "text/csv"
+        return (
+            build_csv(invoices, gl_names, batch, vendor_ids, tax_treatments, bank_accounts),
+            f"{name}.csv",
+            "text/csv",
+        )
     if fmt == "custom":
         from . import export_layout
 
