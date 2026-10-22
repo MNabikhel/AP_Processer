@@ -36,6 +36,7 @@ from ap_coder.web import identity
 from ap_coder.web.core import (
     DEVELOPER_TOOLS,
     SHOW_JDE,
+    STALE_PAGE,
     data_dir,
     developer_env_on,
     developer_tools,
@@ -46,6 +47,7 @@ from ap_coder.web.core import (
     jde_shown,
     message,
     open_folder,
+    page_version,
     posted_form,
     refuse,
     render,
@@ -143,7 +145,13 @@ def settings_tab(request: Request, tab: str) -> HTMLResponse:
 # --- Review --------------------------------------------------------------------------------------------------------
 
 
-def review_context(request: Request) -> dict[str, Any]:
+def review_version(request: Request) -> str:
+    """The stamp of the values the Review tab shows (B-655)."""
+    shown = review_context(request, stamped=False)
+    return page_version({k: v for k, v in shown.items() if k not in ("provinces", "uses_cost_centers")})
+
+
+def review_context(request: Request, stamped: bool = True) -> dict[str, Any]:
     settings, store = get_settings(request), get_store(request)
     env = read_env(env_path())
     name = paths.read_user_settings().get("reviewer") or env.get("AP_REVIEWER") or os.environ.get("AP_REVIEWER", "")
@@ -161,6 +169,7 @@ def review_context(request: Request) -> dict[str, Any]:
         "site_provinces": store.get_setting("site_provinces"),
         "uses_cost_centers": bool(store.list_accounts("cost_centers")),
         "provinces": PROVINCE_NAMES,
+        **({"version": review_version(request)} if stamped else {}),
     }
 
 
@@ -171,6 +180,8 @@ async def save_review(request: Request) -> JSONResponse:
     is left as it is (read from the raw form: a field posted blank, a name cleared, is not one left out); the message
     says what was saved."""
     form = await posted_form(request)
+    if form.get("version") is not None and str(form.get("version")) != review_version(request):
+        return refuse(STALE_PAGE, 409)  # an old tab would save its old values over newer ones (B-655)
 
     def field(name: str) -> str | None:
         value = form.get(name)

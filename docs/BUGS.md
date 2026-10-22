@@ -4887,7 +4887,7 @@ were approved, parked and exported and a backup was made every 2 seconds (no loc
   folder first; the command line is for developers.
 - **N-167** · Two approvals of the same supplier at the same moment (two computers on the office network) each read,
   update and save the supplier's template: one of the two lessons can be lost. Not reproduced (one pilot tester).
-- **N-168** · A GL account the coder left blank and AP filled in counts as a correction for the lessons, so the
+- **N-168** · (Fixed by B-650.) A GL account the coder left blank and AP filled in counts as a correction for the lessons, so the
   "why" question comes after 3 invoices of a vendor imported together before any was approved (GCstrategies on the
   English PDFs), where D-39 counts filling a blank as no change. The lesson is also what tells the AI the account,
   so whether a filled blank asks "why" is a design question: left.
@@ -6246,3 +6246,288 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
   comes from the old window's own code (B-545).
 - **N-253** · The `windows-github-zip` CI job (B-549) was written without a Windows computer to run it on; its first
   runs may need a fix of the job itself (the steps it checks were run on Linux with the same ZIPs).
+
+### Pilot sweeps: counts, stale pages, terms and reading
+
+Two sweeps over the pilot set-up (LM Studio off, English and French vendor PDFs, Excel/CSV exports), each finding
+reproduced with a script first, then given a failing test and fixed.
+
+#### B-650 · Filling in a GL account the coder left blank counted as a correction · medium
+- **Where:** `ap_coder/core/store.py` (`approve_invoice`, `nothing_proposed`), `ap_coder/web/invoice_view.py`
+  (`ai_changes`), `ap_coder/ai/lessons.py` (`outcomes`), `ap_coder/core/memory.py` (`changed_account`)
+- **Symptom:** with LM Studio off, the queue and Learning showed 28.1% coding accuracy and "46 corrections" while
+  no proposal was wrong; the approval said "0 of 1 line coded as suggested" though the bar had said "1 you coded".
+- **Cause:** `suggestion_kept` is False when nothing was proposed, and the approval took that as a correction; the
+  review screen's change count and the lessons did the same (N-168).
+- **Reproduce:** add an invoice whose line reads UNASSIGNED; approve it with 6110; `metrics()`.
+- **Reproduced:** yes (`sweep/repro/r1_blank_counts_corrected.py`)
+- **Fix:** a line the AI left with no account and no cost center is recorded as coded, as D-39 says: out of the
+  accuracy, the per-vendor accuracy and the lessons' corrections, and no "line_coding" edit. Rows an older version
+  recorded so are recounted when the database opens. The learning memory still learns the account from it and still
+  reads it as a change of account (a recode confirmed by filling in a blank, B-605).
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_filling_in_a_blank_gl_account_is_coded_not_corrected` and the
+  two tests after it
+- **Lesson:** One rule for "corrected", in one function, used by every count.
+
+#### B-651 · An invoice with no ship-to took the vendor's own province as its ship-to · medium
+- **Where:** `ap_coder/ai/offline_coder.py` (`provinces`), `ap_coder/coding/tax.py` (`check_taxes`),
+  `ap_coder/web/invoice_view.py` (`supply_line`)
+- **Symptom:** an Alberta print shop's invoice to an Ontario company, with no ship-to or bill-to printed, was
+  checked as an Alberta supply (GST only: no warning), and the review screen said the province came from "the ship-to
+  on the invoice"; Settings → Review's own province was never used, against D-23.
+- **Cause:** `provinces` returned `ship_to or bill_to or supplier`: the vendor's province was stored as if printed.
+- **Reproduce:** `provinces()` of the Prairie Print text (Calgary letterhead, no customer address), then
+  `supply_source` with our province ON.
+- **Reproduced:** yes (`sweep/repro/r3_vendor_province_as_ship_to.py`)
+- **Fix:** only a printed ship-to, else a labelled bill-to (ours, as the customer: D-61), is read as the ship-to;
+  with neither the place of supply is our province, and the tax warnings say it was assumed ("your province in
+  Settings: no ship-to or bill-to printed"). The review screen says "the invoice's ship-to, else its bill-to".
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_the_vendors_province_is_never_the_ship_to` and the two tests
+  after it
+- **Lesson:** A fallback stored in the field it falls back from stops being a fallback: it looks read.
+
+#### B-652 · Amounts printed without a leading zero were read a hundred times too large · low
+- **Where:** `ap_coder/capture/normalize.py` (`_AMOUNT`, `_number`, `looks_like_money`)
+- **Symptom:** "$.99" was read as 99.00, "HST 13% $.65" as 65.00 and "-.50" as +50.00: the totals failed their check.
+- **Cause:** the amount pattern needs a digit before the point; the cents alone were taken as a whole number and the
+  minus sign was not seen before a point.
+- **Reproduce:** `parse_amount("$.65")`, `parse_amount("-.50")`; read `sweep/repro/docs/leading_point2.txt`.
+- **Reproduced:** yes (`sweep/repro/r2_leading_point.py`)
+- **Fix:** a point followed by two digits, not after a letter, a digit or another point ("No.12" stays 12), is
+  cents; a minus or an opening parenthesis before it makes it negative.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_amounts_without_a_leading_zero`,
+  `::test_a_receipt_with_amounts_without_a_leading_zero_reads_them`
+- **Lesson:** Test the printed forms of an amount the till prints, not only the ones a spreadsheet does.
+
+#### B-653 · Settings → Reading said OvisOCR2 had read every invoice while 26 still waited · low
+- **Where:** `ap_coder/web/pages/settings_reading.py` (`queue_text`), `ap_coder/ai/reading.py` (`_queue`)
+- **Symptom:** *Nothing waiting for OvisOCR2: it has read every invoice processed so far*, with 26 page reads
+  waiting (24 approved invoices, 2 rejected).
+- **Cause:** the count is of the invoices a person waits for (B-509); the words said it was all of them.
+- **Reproduce:** queue a page read, approve the invoice, open Settings → Reading.
+- **Reproduced:** yes (the sweep's database)
+- **Fix:** with none to review waiting, the tab says *No invoice to review waits for OvisOCR2. It still has 26
+  approved or rejected invoices to read, to check its reading against what AP approved: nothing waits for you*;
+  with none at all, *Nothing waiting for OvisOCR2.*
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_the_reading_tab_says_what_still_waits_for_ovisocr2`
+- **Lesson:** A count narrowed for one reason must not be described as the whole.
+
+#### B-654 · A final approval clicked on a stale page approved a version the approver never saw · medium
+- **Where:** `ap_coder/core/store.py` (`final_approve`), `ap_coder/web/pages/review.py` (`review_final_approve`),
+  `templates/review.html`, `templates/invoice.html`
+- **Symptom:** Bob opened the Second approval tab; meanwhile Anne had the invoice sent back, changed the bank account
+  and the GL accounts, and approved it again; Bob's click on the page he had loaded gave the final approval to the
+  new version, bank account included.
+- **Cause:** `final_approve` compared the first approval with a row it had just read itself; the form posted nothing
+  saying which approval the page showed.
+- **Reproduce:** `sweep2/s12.py`.
+- **Reproduced:** yes
+- **Fix:** both Final approval buttons post the first approval they show (its audit event); approved again since, the
+  approval is refused (*Not done: this invoice was sent back and approved again by Anne since you opened this page
+  … Reload to see the latest version, then give the final approval*). The check and the approval are one
+  transaction. A post without it (an older page) is approved as before.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_a_final_approval_from_a_stale_page_is_refused`
+- **Lesson:** An action on what a page shows must say what it showed.
+
+#### B-655 · A tab left open saved its old values over newer ones · medium
+- **Where:** `ap_coder/web/pages/settings.py` (`save_review`), `ap_coder/web/pages/accounts.py` (`accounts_save`,
+  `save_rules`), `ap_coder/web/core.py` (`page_version`, `stale_page`)
+- **Symptom:** an old Settings → Review tab, saved to change the days to pay, put the approval limit back to 0
+  (second approvals off) after a colleague had set it to 5,000; an old GL accounts grid saved after an import
+  deleted the account just imported; an old Rules tab dropped the rule added from a suggestion meanwhile.
+- **Cause:** each of these forms saves the whole page; nothing said which version of it the page showed.
+- **Reproduce:** `sweep2/s18.py`, `sweep2/s10.py`, `sweep2/s17.py`.
+- **Reproduced:** yes
+- **Fix:** the three forms post a stamp of what they showed (`version`); changed since, the save is refused and the
+  page stays as typed: *This page was changed elsewhere since you opened it: reload to see the latest, then make
+  your change again.* A post without a stamp (a script, a single field) is saved as before.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_a_stale_settings_tab_does_not_reset_the_approval_limit`,
+  `::test_a_stale_gl_grid_does_not_delete_an_account_imported_meanwhile`,
+  `::test_a_stale_rules_tab_does_not_drop_a_rule_added_meanwhile`
+- **Lesson:** A form that saves a whole list replaces what it did not show: make it say what it showed.
+
+#### B-656 · "30 EOM" was due at the end of the month, and "Net: 45" was not read · medium
+- **Where:** `ap_coder/coding/terms.py` (`_NET`, `_SLASH`, `_DISCOUNT`)
+- **Symptom:** with an invoice of January 15, "30 EOM", "10 EOM" and "EOM 30" were all due January 31; "Net: 45",
+  "Net - 45", "NET-45" and "45 net" were not read, so the due date fell back to the default 30 days.
+- **Cause:** the net days were read only after "Net" (with at most a slash) or before "days"; EOM with a number
+  beside it gave the end of the month itself.
+- **Reproduce:** `payment({"invoice_date": "2026-01-15", "payment_terms": "30 EOM", ...})`.
+- **Reproduced:** yes
+- **Fix:** the days beside EOM, before or after it, are the days after the end of the month (D-62): "30 EOM" and
+  "EOM 30" are due March 2, "10 EOM" February 10; "Net" takes a colon or a dash before its days, and "45 net" is
+  net 45.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_payment_terms_written_other_ways`
+- **Lesson:** Terms are typed by people: read each way they are written, not only the textbook one.
+
+#### B-657 · French column headers with accents were not recognised · low-medium
+- **Where:** `ap_coder/erp/statements.py`, `ap_coder/coding/po.py`, `ap_coder/coding/vendors.py`,
+  `ap_coder/erp/registers.py`, `ap_coder/erp/jde.py` (header matching); `ap_coder/core/headers.py` (new)
+- **Symptom:** a PO file's "Reçu" column, a vendor master's "Numéro", "Numéro TPS" and "Numéro TVQ", a statement's
+  "Crédit" were not matched, though their aliases ("recu", "numero", "numerotps", "numerotvq", "credit") are listed.
+- **Cause:** each header was cleaned with `re.sub(r"[^a-z0-9]", "", …)`, which deleted the accented letter
+  ("Reçu" -> "rcu").
+- **Reproduce:** `po.map_columns(["Bon de commande", "Reçu"])`.
+- **Reproduced:** yes
+- **Fix:** one shared `header_key` folds accents (NFKD, with œ, æ, ß and "N°") before cleaning; the five places use it.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_french_headers_with_accents_are_recognised`
+- **Lesson:** Fold accents before deleting what is not a letter.
+
+#### B-658 · A coding rule applied on the review screen could drop the AI reviewer's notes · low
+- **Where:** `ap_coder/core/store.py` (`add_rules_applied`)
+- **Symptom:** the AI reviewer's check, saved by the background thread while the reviewer applied a coding rule on
+  the screen, was gone from the invoice afterwards.
+- **Cause:** `add_rules_applied` read the invoice's notes, changed them and wrote them back without the write lock,
+  so a write in between was overwritten (`update_after_check` takes the lock first).
+- **Reproduce:** `sweep2/s11.py` (the screen's write paused between its read and its write).
+- **Reproduced:** yes
+- **Fix:** the write lock is taken before the read (`BEGIN IMMEDIATE`), as `update_after_check` does.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_rules_applied_on_screen_never_drop_a_background_check`
+- **Lesson:** Every read-modify-write of a shared row takes the lock before it reads.
+
+#### B-659 · A date at the calendar's ends in the address gave a server error · low
+- **Where:** `ap_coder/web/pages/month_end.py` (`day`), `ap_coder/web/pages/activity.py` (`_date`),
+  `ap_coder/web/core.py` (`clamp_day`)
+- **Symptom:** `/month-end?end=0001-01-01`, its `accruals.csv`, and `/activity/controls-report?start=9999-12-31`
+  answered "Internal Server Error" (OverflowError).
+- **Cause:** the accruals count a year back from the period end (`erp/accruals.py`), the controls report a day past
+  its last day (`erp/controls.py`): both ran past the first or last day Python knows.
+- **Reproduce:** open those addresses.
+- **Reproduced:** yes
+- **Fix:** a date read from the address is kept between 1900-01-01 and 2999-12-31.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_extreme_dates_in_the_address_are_clamped`
+- **Lesson:** A date from outside is checked for range as well as for form.
+
+#### B-660 · The automatic backup ran only when the dashboard started · low
+- **Where:** `ap_coder/web/app.py` (`DailyBackup`, `BackupCheck`)
+- **Symptom:** a dashboard left running for a week (the pilot laptop is rarely restarted) made one backup, on the
+  day it started.
+- **Cause:** `Store.auto_backup` was called only in the app's start-up.
+- **Reproduce:** start the dashboard, keep it running past a day: Settings → Data lists one automatic backup.
+- **Reproduced:** yes (by reading the code; the start-up call is the only one)
+- **Fix:** each request lets the dashboard check, at most once an hour, whether the day's backup is due; the backup
+  runs on its own thread, so no page waits. `auto_backup` keeps its rules (once a day, the newest 14).
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_the_daily_backup_also_runs_while_the_dashboard_keeps_running`
+- **Lesson:** "Once a day" in a program that runs for days needs a clock, not a start.
+
+#### B-661 · After an import, "they wait for OvisOCR2" contradicted "waiting in the review queue" · low
+- **Where:** `ap_coder/web/pages/process.py` (`queued_note`, the message after processing)
+- **Symptom:** *20 invoices read and coded. They're waiting in the review queue. 20 invoices queued for OvisOCR2,
+  which isn't running: they wait for it*: the pilot tester could not tell whether to review them now.
+- **Cause:** the note described the page reader's queue as if the invoices waited in it.
+- **Reproduce:** import invoices with LM Studio off.
+- **Reproduced:** yes (the real-invoice run)
+- **Fix:** *20 invoices read and coded. They're ready to review in the review queue. OvisOCR2 will double-check
+  them when LM Studio runs (Settings → Reading)* (or *once it is loaded in LM Studio*, *once it passes* its
+  self-test, or *double-checks them in the background* when it runs).
+- **Test:** `tests/test_dashboard_sweep_fixes.py::test_the_queued_note_reads_as_a_sentence` and the test after it,
+  `tests/test_web_pilot_walkthrough.py::test_one_invoice_read_is_waiting_not_they_are`
+- **Lesson:** Say what the person can do now before what a background part will do later.
+
+#### B-662 · "As printed … ≠ 45.00" stayed after the clerk fixed the amounts, and so did "quantity × price" · low
+- **Where:** `ap_coder/web/invoice_view.py` (`analyse`, `totals_settled`, `price_follows_amount`)
+- **Symptom:** on PJ's receipt the clerk typed the amounts from the page and they added up, but *as printed,
+  subtotal 40.00 + tax 0.00 ≠ total 45.00* stayed on screen; on BDO's quantity-1 line the clerk changed the amount
+  and *quantity × unit price = 0.00 but the amount is …* appeared.
+- **Cause:** the warning is capture's, about the page as first read, and was shown whatever the screen held now; the
+  unit price stayed as read when only the amount was changed.
+- **Reproduce:** a read that fails the totals check; change the line and the subtotal so that they add up.
+- **Reproduced:** yes (the real-invoice run)
+- **Fix:** once the amounts on screen differ from those read and add up (subtotal + tax = total, the tax lines =
+  the tax), the "as printed" warning is left out; the coding's own checks still say if they don't. On a quantity-1
+  line whose amount was changed (its unit price as read), or that has no unit price, the unit price is the amount
+  (in the check and in what is approved).
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_fixed_values_drop_the_as_printed_warning_and_the_unit_price_follows`
+- **Lesson:** A warning about how a value was read ends when a person replaces the value.
+
+#### B-663 · Payment terms not found were silent: the due date quietly assumed 30 days · low
+- **Where:** `ap_coder/coding/terms.py` (`payment_findings`), `ap_coder/ops/help.py`
+- **Symptom:** an invoice whose terms were missed showed a due date 30 days out with nothing saying it was assumed.
+- **Cause:** the default from Settings → Review was applied without a finding.
+- **Reproduce:** an invoice with no terms, no due date and no vendor master terms.
+- **Reproduced:** yes
+- **Fix:** an information line, *Payment terms not found: the due date assumes 30 days (Settings → Review, Days to
+  pay). Check the invoice.* (or *Payment terms “As agreed” not understood: …*); not for a credit note. It holds
+  nothing back.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_terms_not_found_say_the_due_date_is_assumed`
+- **Lesson:** A default put in for a person says so.
+
+#### B-664 · A correct invoice date older than 3 years showed a red "Failed check 13%" · low
+- **Where:** `ap_coder/capture/confidence.py` (`run_checks`, `LOOK_CHECKS`)
+- **Symptom:** an old statement correctly dated 2021 had its date in red, *Failed check 13%*, as if misread.
+- **Cause:** one check (`DATE_PLAUSIBLE`) failed both a date far ahead (misread) and one long ago (often right).
+- **Reproduce:** read an invoice dated more than 3 years before today.
+- **Reproduced:** yes
+- **Fix:** a date more than 3 years back is its own check (`DATE_RECENT`): amber *Check*, *dated more than 3 years
+  ago: check the year*; a date more than 60 days ahead still fails. Both still keep the invoice from going through
+  on its own.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_an_old_date_is_a_check_not_a_failed_check`
+- **Lesson:** Red is for what is wrong; amber for what is unusual.
+
+#### B-665 · A utility bill with no invoice number: the error did not say what to type · low
+- **Where:** `ap_coder/ops/help.py` (`MISSING_INVOICE_NUMBER`)
+- **Symptom:** a hydro bill prints an account number and a statement date, no invoice number: *No invoice number:
+  type it from the page*, and nothing on the page to type.
+- **Cause:** the help assumed every bill has an invoice number.
+- **Reproduce:** read a utility bill.
+- **Reproduced:** yes (the real-invoice run)
+- **Fix:** the help under the error adds *A utility bill or statement that prints none: type its account number
+  and the bill's month, e.g. 1234567-2026-09, so each month's bill has its own number.* (Prefilling it was left
+  out: the account number is not read as a field of its own yet.)
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_no_invoice_number_help_suggests_the_account_number_and_month`
+- **Lesson:** An error says what to do, also when the usual answer is not on the page.
+
+#### B-666 · "You changed no header field" after the vendor was changed, and "about 97 more invoices" · low
+- **Where:** `ap_coder/capture/workflow.py` (`learn_from_approval`, `taught_message`, `supplier_progress`),
+  `ap_coder/capture/supplier.py` (`to_go_text`), `ap_coder/web/pages/learning.py`
+- **Symptom:** the clerk changed "BDO Canada" to "BDO Canada LLP" and the approval said *You changed no header
+  field*; and *about 97 more invoices approved without a correction before this vendor can skip review* read as a
+  wall, with no sign of progress.
+- **Cause:** the two names are one vendor to AP Coder (`vendor_key`), so no field counted as corrected, and the
+  message said nothing else; the progress was said only as what was left.
+- **Reproduce:** approve an invoice with the vendor's legal form added.
+- **Reproduced:** yes (the real-invoice run)
+- **Fix:** *You changed the vendor (“BDO Canada” to “BDO Canada LLP”): the same vendor to AP Coder, so not a
+  correction* (also for an invoice or PO number written otherwise); the progress reads *3 of about 20 clean
+  approvals toward skipping review*, after an approval and on Learning → Suppliers.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_the_approval_message_names_a_renamed_vendor_and_states_progress_plainly`
+- **Lesson:** A message after an action acknowledges the action, then says how far along things are.
+
+#### B-667 · "Pick a GL account for lines 1, 2, 3, … 15" on a receipt of 15 lines · low
+- **Where:** `ap_coder/coding/review.py` (`codes_to_pick`), `ap_coder/web/pages/review.py`
+- **Symptom:** the Approve bar listed all fifteen line numbers, and did not point to *Apply to all lines…*, the one
+  action that fills them.
+- **Cause:** the line numbers were always listed.
+- **Reproduce:** a receipt read with 15 lines and no GL account.
+- **Reproduced:** yes (the real-invoice run)
+- **Fix:** 4 lines or more are counted: *Pick a GL account for 15 lines to approve (or use Apply to all lines…)*;
+  the queue, which has no such button, says *Pick a GL account for 15 lines*.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_many_blank_lines_point_to_apply_to_all_lines`,
+  `tests/test_dashboard_sweep_fixes.py::test_counts_of_one_read_as_sentences`
+- **Lesson:** Past a few items, count them and point to the action that handles them all.
+
+#### B-668 · The standard Custom CSV layout had an empty VendorID and no vendor name · low
+- **Where:** `ap_coder/erp/export_layout.py` (`default_columns`)
+- **Symptom:** without a vendor master (the pilot's set-up), every row of the Custom CSV export began with an empty
+  VendorID, and nothing in the file said whom each bill was from.
+- **Cause:** the standard layout had the ERP's vendor ID only.
+- **Reproduce:** export a batch as Custom CSV without a vendor master.
+- **Reproduced:** yes (`sweep/exp/custom.csv`)
+- **Fix:** the standard layout has *VendorName* after *VendorID*. A layout already saved on the Exports page is kept
+  as it is.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_the_standard_custom_csv_layout_names_the_vendor`
+- **Lesson:** A default export must make sense with the default set-up.
+
+#### B-669 · A vendor read as "Inc.", one word in capitals or the bill-to's name could show as verified · low
+- **Where:** `ap_coder/capture/__init__.py` (`doubtful_vendor`, `_mark_doubtful_vendor`)
+- **Symptom:** in the real-invoice run the vendor came out as *Inc.*, as *POSTES* (of POSTES CANADA), or as the
+  customer's own name from the bill-to block, and the field was not marked for a look.
+- **Cause:** nothing judged whether the name chosen looked like a vendor's name.
+- **Reproduce:** a reading whose vendor is one of these.
+- **Reproduced:** yes (the real-invoice run)
+- **Fix:** a vendor name that is only a legal form, one word in capitals, or a line of the bill-to block is
+  *check* (confidence at most 60%), with the reason; never when the vendor master confirms the name. The capture
+  benchmark (200 invoices, seed 7) is unchanged.
+- **Test:** `tests/test_sweep_pilot_fixes.py::test_a_doubtful_vendor_name_is_marked_check`,
+  `::test_a_vendor_read_from_the_bill_to_is_check`
+- **Lesson:** A value can be read right and still not be the field's: check that it looks like one.

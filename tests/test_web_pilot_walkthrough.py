@@ -217,7 +217,9 @@ def test_one_invoice_read_is_waiting_not_they_are(tmp_path):
     assert client.post("/process/upload", files=files, headers=PAGE).json()["ok"]
     assert app.state.jobs.get("process").wait(180)
     texts = [m["text"] for m in client.get("/process/status").json()["result"]["messages"]]
-    assert any(t.startswith("1 invoice read and coded. It's waiting in the review queue.") for t in texts), texts
+    assert any(t.startswith("1 invoice read and coded. It's ready to review in the review queue.") for t in texts), (
+        texts
+    )
 
 
 # --- Master data and learning ------------------------------------------------------------------------------------
@@ -642,7 +644,7 @@ def test_supplier_learning_and_automation_use_the_same_plain_words(tmp_path, gro
     for old in ("go touchless", "goes touchless", "Goes touchless", "gone touchless", "touchless invoice",
                 "clean in a row", "clean invoice", "yet again"):  # fmt: skip
         assert old not in text, old
-    assert "more invoices approved without a correction before this vendor can skip review" in text
+    assert re.search(r"\d+ of about \d+ clean approvals toward skipping review", text)  # B-666
 
 
 def test_in_a_browser_a_slow_link_reads_as_before_when_the_page_does_not_come(browser, store):

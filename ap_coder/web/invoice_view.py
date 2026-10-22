@@ -55,7 +55,7 @@ from ap_coder.core.config import Settings
 from ap_coder.core.memory import ACCEPTED, CODED, CORRECTED, pair_lines, vendor_key
 from ap_coder.core.reference_data import UNASSIGNED, ReferenceData, short_name
 from ap_coder.core.schema import PROVINCE_VALUES, InvoiceCoding
-from ap_coder.core.store import Store, suggestion_kept
+from ap_coder.core.store import Store, nothing_proposed, suggestion_kept
 from ap_coder.core.ui import TAX_LABELS, money, plural
 from ap_coder.ops.help import help_for
 from ap_coder.web.document import clean_boxes
@@ -465,9 +465,10 @@ def supply_line(header: dict[str, Any], lines: list[dict[str, Any]], setup: Any)
         return {"province": OUTSIDE_CANADA, "label": "Outside Canada", "why": "delivered outside Canada: no Canadian "
                 "sales tax", "open": False}  # fmt: skip
     why = {  # the ship-to field holds only what is printed or set by the reviewer (pipeline.finalise_coding)
-        SUPPLY_PRINTED: "the ship-to on the invoice",
+        # A bill-to read under a customer label is ours, used when no ship-to is printed (D-61): said as either.
+        SUPPLY_PRINTED: "the invoice's ship-to, else its bill-to (or as you set it)",
         SUPPLY_SITE: "the province of the cost center the lines are coded to",
-        SUPPLY_OURS: "your province (Settings): no ship-to printed",
+        SUPPLY_OURS: "your province (Settings): no ship-to or bill-to printed",
         SUPPLY_VENDOR: "only the vendor's province: set where it is delivered to you",
     }.get(source, "unknown: choose where it is delivered to you")
     label = f"{province} · {PROVINCE_NAMES[province]}" if province in PROVINCE_NAMES else "Not known"
@@ -862,6 +863,8 @@ def ai_changes(coding: InvoiceCoding, ai: dict[str, Any], cost_centers: bool = T
             continue
         s_gl = before.get("predicted_gl_code") if before else None
         s_cc = (before.get("predicted_cost_center", "") if cost_centers else "") if before else None
+        if nothing_proposed(s_gl, s_cc):
+            continue  # the reviewer's coding, not a change (B-650)
         if not suggestion_kept(s_gl, s_cc, li.predicted_gl_code, li.predicted_cost_center):
             changed += 1
     return changed
@@ -893,7 +896,7 @@ def learn_text(coding: InvoiceCoding, ai: dict[str, Any], cost_centers: bool = F
                 guesses += 1
             else:
                 coded += 1
-        elif s_gl in (None, "", UNASSIGNED) and (s_cc or "") in ("", UNASSIGNED):  # nothing proposed: theirs
+        elif s_gl is None or nothing_proposed(s_gl, s_cc):  # nothing proposed: theirs
             coded += 1
         elif suggestion_kept(s_gl, s_cc, gl, cc):
             kept += 1
@@ -1174,6 +1177,41 @@ class Analysis:
     live: dict[str, Any] = field(default_factory=dict)
 
 
+_TOTALS = ("subtotal", "tax_total", "grand_total")
+
+
+def totals_settled(coding: InvoiceCoding, ai: dict[str, Any]) -> bool:
+    """Whether the reviewer changed the amounts as read and they now add up (subtotal + tax = total, the tax lines
+    = the tax): capture's "as printed, … ≠ total" no longer says anything about the invoice on screen (B-662)."""
+
+    def cents(value: Any) -> int:
+        try:
+            return round(float(value or 0) * 100)
+        except (TypeError, ValueError):
+            return 0
+
+    changed = any(cents(ai.get(f)) != cents(getattr(coding, f)) for f in _TOTALS)
+    changed = changed or sorted(cents(t.get("tax_amount")) for t in ai.get("tax_lines") or []) != sorted(
+        cents(t.tax_amount) for t in coding.tax_lines
+    )
+    adds_up = abs(cents(coding.subtotal) + cents(coding.tax_total) - cents(coding.grand_total)) <= 1
+    taxes = abs(sum(cents(t.tax_amount) for t in coding.tax_lines) - cents(coding.tax_total)) <= 1
+    return changed and adds_up and (taxes or not coding.tax_lines)
+
+
+def price_follows_amount(coding: InvoiceCoding, ai: dict[str, Any]) -> None:
+    """On a line of quantity 1 whose amount the reviewer changed (its unit price left as read) or that has no unit
+    price, the unit price is the amount: "quantity × price = 40.00 but the amount is 45.00" would only repeat the old
+    reading (B-662)."""
+    for before, li in pair_lines(ai.get("line_items") or [], list(coding.line_items)):
+        if li.quantity != 1 or abs(li.unit_price - li.amount) < 0.005:
+            continue
+        price_as_read = before is not None and abs(float(before.get("unit_price") or 0) - li.unit_price) < 0.005
+        amount_changed = before is not None and abs(float(before.get("amount") or 0) - li.amount) >= 0.005
+        if (price_as_read and amount_changed) or not li.unit_price:
+            li.unit_price = li.amount
+
+
 def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dict[str, Any], draft: Draft,
             signature: str = "") -> Analysis:  # fmt: skip
     """The screen's coding, checked as approval checks it. ``signature``: the reviewer's name, for the email to the
@@ -1186,6 +1224,8 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     if not problems:
         coding, problems = coding_from_inputs(header, lines_frame(draft.lines), tax_frame(draft.taxes), ai,
                                               UNASSIGNED if has_cc else "")  # fmt: skip
+    if coding is not None:
+        price_follows_amount(coding, ai)
     if coding is None:
         live = {"ok": False, "problems": problems, "amount_line": _amount_line(header),
                 "fallback": stored_summary(inv, start)}  # fmt: skip
@@ -1219,9 +1259,13 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
         # showed it on the page.
         confirmed = bool(inv.get("final_output")) or "invoice_date" in draft.taught
         assumed = coding.invoice_date if coding.invoice_date == ai.get("invoice_date") and not confirmed else None
+        settled = totals_settled(coding, ai)
         for severity, code, message in review_issues(capture, coding.currency, assumed_date=assumed):
-            if code != "CAPTURE_CHECK_FIELDS":  # the fields to check are highlighted in amber: no need to list them
-                report.issues.append(Issue(severity, code, message))
+            if code == "CAPTURE_CHECK_FIELDS":  # the fields to check are highlighted in amber: no need to list them
+                continue
+            if code == "CAPTURE_TOTALS" and settled:  # the reviewer fixed the amounts and they add up now (B-662)
+                continue
+            report.issues.append(Issue(severity, code, message))
     if draft.absent:  # fields the reviewer said are not on this invoice: nothing asks for them (D-60)
         report.issues = settle_absent(report.issues, draft.absent)
     errors = [i for i in report.issues if i.severity == "error"]

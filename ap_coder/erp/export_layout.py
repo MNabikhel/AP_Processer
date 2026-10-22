@@ -80,8 +80,11 @@ class Layout:
 
 
 def default_columns() -> list[Column]:
+    """The standard layout. The vendor's name beside its ERP ID: without a vendor master the ID is blank, and a file
+    without the name said nothing of whom each bill is from (B-668)."""
     return [
-        Column("VendorID", "vendor_id"), Column("InvoiceNo", "invoice_number"), Column("InvoiceDate", "invoice_date"),
+        Column("VendorID", "vendor_id"), Column("VendorName", "vendor_name"), Column("InvoiceNo", "invoice_number"),
+        Column("InvoiceDate", "invoice_date"),
         Column("DueDate", "due_date"), Column("Currency", "currency"), Column("GLAccount", "gl_code"),
         Column("CostCenter", "cost_center"), Column("Description", "description"), Column("Amount", "amount"),
         Column("InvoiceTotal", "grand_total"),

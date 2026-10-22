@@ -147,7 +147,7 @@ def _to_fix(invoice_id: int, final: str | None, ai: str | None, validation: str 
     coded = (json.loads(final) if final else None) or (json.loads(ai) if ai else None) or {}
     issues = ((json.loads(validation) if validation else None) or {}).get("issues") or []
     answer = (
-        codes_to_pick(coded.get("line_items"), cost_centers).removesuffix(" to approve"),
+        codes_to_pick(coded.get("line_items"), cost_centers, hint=False).removesuffix(" to approve"),
         sum(1 for i in issues if i.get("severity") == "error"),
     )
     _TO_FIX[invoice_id] = (asked, answer)
@@ -395,7 +395,7 @@ def _second(inv: dict[str, Any], first: dict[str, Any] | None, me: str, my_login
     same = (me or "").strip().casefold() == (inv["reviewer"] or "").strip().casefold() or (
         bool(my_login) and my_login.casefold() == first_login.casefold()
     )
-    return {**inv, "same": same}
+    return {**inv, "same": same, "approval": (first or {}).get("id") or ""}
 
 
 def _getting_started(request: Request, store: Store, invoices: list[dict[str, Any]]) -> HTMLResponse:
@@ -552,13 +552,23 @@ def review_unpark(request: Request, invoice_id: int) -> JSONResponse:
 
 
 @router.post("/review/{invoice_id}/final-approve")
-def review_final_approve(request: Request, invoice_id: int) -> JSONResponse:
+def review_final_approve(request: Request, invoice_id: int, approval: str | None = Form(None)) -> JSONResponse:
+    """``approval``: the first approval the page showed (B-654); a page that posts none is not checked."""
+    from ap_coder.core.store import ApprovedAgain
+
     store = get_store(request)
     inv = store.get_invoice(invoice_id) or {}
     try:
-        store.final_approve(invoice_id, reviewer(), login=login())
+        store.final_approve(invoice_id, reviewer(), login=login(), shown=approval)
     except PermissionError as exc:  # the first approver (or their login): nobody changed anything meanwhile
         return done(request, "/review?tab=second", f"Not done: {exc}.", tone="warn")
+    except ApprovedAgain:
+        now = store.get_invoice(invoice_id) or {}
+        by = f" by {now['reviewer']}" if now.get("reviewer") else ""
+        return done(request, "/review?tab=second",
+                    f"Not done: this invoice was sent back and approved again{by} since you opened this page, so "
+                    "what waits now is not what you looked at. Reload to see the latest version, then give the "
+                    "final approval.", tone="warn")  # fmt: skip
     except ValueError as exc:
         return changed_meanwhile(request, exc, "/review?tab=second")
     return done(request, "/review?tab=second",

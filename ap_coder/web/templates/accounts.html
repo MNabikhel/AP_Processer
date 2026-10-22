@@ -58,6 +58,7 @@
   {% endif %}
   <form method="post" action="/accounts/{{ a.table }}/save" class="stack" data-busy="Saving…" id="accounts-form"
         data-noun="{{ a.noun }}">
+    <input type="hidden" name="version" value="{{ a.version }}">
     <div class="table-wrap">
       <table class="apc-table edit">
         <thead><tr><th>Code</th><th>Description</th><th>Category</th><th>Delete</th></tr></thead>
@@ -158,6 +159,7 @@
   <div class="flash warn"><span class="ms" aria-hidden="true">warning</span><div>GL account {{ unknown | join(", ") }} is not in your GL list any more: change these rules.</div></div>
   {% endif %}
   <form method="post" action="/accounts/rules" class="stack" data-busy="Saving…">
+    <input type="hidden" name="version" value="{{ rules_version }}">
     <div class="table-wrap">
       <table class="apc-table edit">
         <thead><tr><th>Vendor (optional)</th><th>Line contains (optional)</th><th>GL account</th><th>Cost center</th></tr></thead>

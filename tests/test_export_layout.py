@@ -48,7 +48,9 @@ def test_layout_round_trip_and_bad_settings():
 def test_default_layout_without_header():
     layout = el.Layout(el.default_columns(), header_row=False)
     text = exports.build("custom", [_invoice()], {}, 1, {}, layout)[0].decode("utf-8-sig")
-    assert text.splitlines()[0].startswith(",NW-2026-0912,2026-09-14,2026-10-14,CAD,6010,CC400")
+    assert text.splitlines()[0].startswith(
+        ",Northwind IT Solutions Inc.,NW-2026-0912,2026-09-14,2026-10-14,CAD,6010,CC400"
+    )
 
 
 def test_yen_amounts_have_no_decimals():

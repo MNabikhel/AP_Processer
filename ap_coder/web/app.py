@@ -17,8 +17,11 @@ import contextlib
 import getpass
 import hmac
 import importlib
+import logging
 import os
 import secrets
+import threading
+import time
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
@@ -62,6 +65,46 @@ class CheckedStaticFiles(StaticFiles):
         return response
 
 
+class DailyBackup:
+    """The automatic backup while the dashboard keeps running (B-660): the start makes the day's backup
+    (``Store.auto_backup``, in the lifespan); after that, a request at least ``every`` seconds after the last check
+    checks again on a thread of its own, so no page waits for it. ``auto_backup`` keeps its rules: once a day, the
+    newest 14 kept."""
+
+    def __init__(self, store: Store, every: float = 3600) -> None:
+        self.store, self.every = store, every
+        self.last = time.monotonic()  # the start's own backup is the lifespan's
+        self.thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+
+    def check(self) -> None:
+        now = time.monotonic()
+        with self._lock:
+            if now - self.last < self.every or (self.thread is not None and self.thread.is_alive()):
+                return
+            self.last = now
+            self.thread = threading.Thread(target=self._run, name="ap-coder-daily-backup", daemon=True)
+            self.thread.start()
+
+    def _run(self) -> None:
+        try:
+            self.store.auto_backup()
+        except Exception:  # noqa: BLE001 - a backup problem must never reach a page
+            logging.getLogger(__name__).warning("the daily backup was not made", exc_info=True)
+
+
+class BackupCheck:
+    """ASGI middleware: each HTTP request lets ``DailyBackup`` check whether a day has passed (it returns at once)."""
+
+    def __init__(self, app: Any, backup: DailyBackup) -> None:
+        self.app, self.backup = app, backup
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] == "http":
+            self.backup.check()
+        await self.app(scope, receive, send)
+
+
 def default_store() -> Store:
     """The database the dashboard uses: AP_DB_PATH, else the data folder's ap_coder.db."""
     return Store(paths.env_path("AP_DB_PATH") or default_db_path())
@@ -81,7 +124,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         try:
-            store.auto_backup()  # once a day, when the dashboard starts; the newest 14 are kept
+            store.auto_backup()  # once a day, when the dashboard starts (then DailyBackup); the newest 14 are kept
         except OSError:
             pass  # a backup problem must never stop the dashboard from opening
         if start_reader:
@@ -111,7 +154,9 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     app.state.server = None  # the uvicorn.Server, set by server.serve
     # A colleague on the office network says who they are once (web/identity.py); LocalOnly, added last, runs first.
     app.state.identity_secret = secrets.token_bytes(32)  # made at each start: a cookie from another start is refused
-    app.add_middleware(FriendlyErrors)  # innermost: an error no page expected is drawn as a page, with the menu
+    app.state.daily_backup = DailyBackup(store)
+    app.add_middleware(BackupCheck, backup=app.state.daily_backup)  # after the security checks: only for pages served
+    app.add_middleware(FriendlyErrors)  # an error no page expected is drawn as a page, with the menu
     app.add_middleware(Identity, secret=app.state.identity_secret, address=address)
     app.add_middleware(LocalOnly, address=address)
     app.mount("/static", CheckedStaticFiles(directory=str(core.STATIC_DIR)), name="static")

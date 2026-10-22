@@ -273,6 +273,13 @@ def _norm_number(value: str) -> str:
     return norm_invoice_number(value)
 
 
+def nothing_proposed(s_gl: str | None, s_cc: str | None) -> bool:
+    """Whether the AI left a line it read with no GL account and no cost center (``s_gl`` None: a line the reviewer
+    added, which is not this). The reviewer who codes it codes it, as a guess replaced or kept: no correction, out of
+    the coding accuracy (D-39, B-650)."""
+    return s_gl is not None and s_gl in ("", UNASSIGNED) and (s_cc or "") in ("", UNASSIGNED)
+
+
 def suggestion_kept(s_gl: str | None, s_cc: str | None, f_gl: str, f_cc: str | None) -> bool:
     """Whether the reviewer kept the GL account and cost center proposed for a line (``s_gl`` None: no line was
     proposed). A GL or cost center left blank ("UNASSIGNED", or a cost center still to pick) was not proposed:
@@ -320,6 +327,10 @@ def fold_text(value: Any) -> Any:
         return text.lower()
     decomposed = unicodedata.normalize("NFKD", text)
     return "".join(c for c in decomposed if not unicodedata.combining(c)).casefold()
+
+
+class ApprovedAgain(ValueError):
+    """A second approval given on a page drawn before the invoice was sent back and approved again (B-654)."""
 
 
 class DatabaseTooNew(RuntimeError):
@@ -517,6 +528,13 @@ class Store:
         from ..capture.workflow import AUTONOMOUS_REVIEWER
 
         conn.execute("DELETE FROM feedback WHERE reviewer = ?", (AUTONOMOUS_REVIEWER,))
+        # Older versions recorded a GL account filled in where the AI proposed none as a correction: it is the
+        # reviewer's coding (B-650), recounted whatever the version (the learning memory reads both alike).
+        conn.execute(
+            "UPDATE feedback SET outcome = ? WHERE outcome = ? AND suggested_gl IN ('', ?) "
+            "AND COALESCE(suggested_cc, '') IN ('', ?)",
+            (CODED, CORRECTED, UNASSIGNED, UNASSIGNED),
+        )
         if version < SCHEMA_VERSION:
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
@@ -1509,14 +1527,23 @@ class Store:
             guess = line_guessed(suggestion, rule)
             kept_rule = rule is not None and rule.get("gl_to") == f_gl and (rule.get("cc_to") or "") == (f_cc or "")
             # A kept guess is no edit; another account in its place is (B-479), as any change to what was proposed.
-            replaced = (f_gl != s_gl or (f_cc or "") != (s_cc or "")) if guess else not kept(s_gl, s_cc, f_gl, f_cc)
+            blank = nothing_proposed(s_gl, s_cc)
+            replaced = (
+                (f_gl != s_gl or (f_cc or "") != (s_cc or ""))
+                if guess
+                else not blank and not kept(s_gl, s_cc, f_gl, f_cc)
+            )
             if not kept_rule and replaced:
                 reviewer_changed += 1
             if rule is not None:  # the AI's own answer, as first recorded (not a rule's)
                 s_gl, s_cc = rule.get("gl_from"), rule.get("cc_from", "")
             # Accuracy measures what the AI proposed: the blanks it left are not counted against it. A line whose
-            # account it only guessed is the reviewer's own coding: neither confirmed nor corrected (B-475).
-            outcome = CODED if guess else ACCEPTED if kept(s_gl, s_cc, f_gl, f_cc) else CORRECTED
+            # account it only guessed, or left blank, is the reviewer's own coding: neither confirmed nor corrected
+            # (B-475, B-650). (The rule's own answer decides: a rule that filled a blank leaves the line coded.)
+            outcome = (
+                CODED if guess or nothing_proposed(s_gl, s_cc) else ACCEPTED if kept(s_gl, s_cc, f_gl, f_cc)
+                else CORRECTED
+            )  # fmt: skip
             counts[outcome] += 1
             feedback_rows.append(
                 (
@@ -1624,9 +1651,11 @@ class Store:
         """Does this invoice need a second approver (``second_approval_reason``)?"""
         return bool(self.second_approval_reason(coding, limit, unknown_rate=unknown_rate))
 
-    def final_approve(self, invoice_id: int, approver: str, login: str = "") -> None:
+    def final_approve(self, invoice_id: int, approver: str, login: str = "", shown: str | None = None) -> None:
         """The second approval: by someone other than the first approver (another name and, when the
-        dashboard records it, another computer login). The invoice can then be exported."""
+        dashboard records it, another computer login). The invoice can then be exported. ``shown``: the first
+        approval the page showed (its ``approved`` event's id, as the page posts it): approved again since, it is
+        refused (``ApprovedAgain``), as the version now waiting is not the one the approver looked at (B-654)."""
         inv = self.get_invoice(invoice_id)
         if inv is None or inv["status"] != PENDING:
             raise ValueError(f"invoice {invoice_id} is not waiting for a second approval")
@@ -1637,6 +1666,12 @@ class Store:
         if login and first_login and login.casefold() == first_login.casefold():
             raise PermissionError("the second approval must come from another computer login than the first")
         with self._conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")  # checked and approved in one go: no new first approval in between
+            latest = conn.execute(
+                "SELECT MAX(id) FROM events WHERE invoice_id = ? AND action = 'approved'", (invoice_id,)
+            ).fetchone()[0]
+            if shown is not None and str(shown).strip() != str(latest or ""):
+                raise ApprovedAgain(f"invoice {invoice_id} was approved again since the page was opened")
             cur = conn.execute(
                 # Same first approval as checked above: it may have been sent back and re-approved meanwhile.
                 "UPDATE invoices SET status = ?, second_reviewer = ?, second_reviewed_at = ? "
@@ -1962,6 +1997,8 @@ class Store:
         """Remember lines a fixed coding rule set on the review screen (as rules applied at processing are), so
         the AI's accuracy is measured on its own answer for them."""
         with self._conn() as conn:
+            # The write lock from the read to the write: a background check's notes saved in between are kept (B-658).
+            conn.execute("BEGIN IMMEDIATE")
             row = conn.execute("SELECT meta FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
             if row is None:
                 return

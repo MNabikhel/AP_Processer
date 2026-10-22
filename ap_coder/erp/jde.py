@@ -47,6 +47,7 @@ from typing import Any
 
 from ..coding.tax import CANADIAN_TAX_TYPES, OUTSIDE_CANADA, PLACE_OF_SUPPLY, PROVINCES, ZERO_DECIMAL_CURRENCIES
 from ..coding.vendors import norm_invoice_number
+from ..core.headers import header_key
 from ..core.memory import refresh_vendor_key, vendor_key
 
 SETTING_KEY = "jde_e1"
@@ -1108,10 +1109,10 @@ def gl_map_from_records(records: list[dict[str, Any]]) -> list[GlMap]:
     Object, Subsidiary"); rows without a GL code are skipped."""
     if not records:
         return []
-    headers = {re.sub(r"[^a-z0-9]", "", str(h).lower()): h for h in records[0]}
+    headers = {header_key(h): h for h in records[0]}
     columns = {}
     for target, aliases in GL_MAP_ALIASES.items():
-        for alias in (re.sub(r"[^a-z0-9]", "", target), *aliases):
+        for alias in (header_key(target), *aliases):
             if alias in headers and headers[alias] not in columns.values():
                 columns[target] = headers[alias]
                 break
