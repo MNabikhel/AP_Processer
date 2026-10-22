@@ -5802,6 +5802,19 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
 - **Test:** `tests/test_trust_review.py::test_queue_accuracy_note_counts_measured_lines_not_guesses`
 - **Lesson:** Two screens showing one figure must take it from the same count.
 
+#### B-600 · The local chat model was shown no examples of the vendor's coding when the vendor's name was not on the page as stored · medium
+- **Where:** `ap_coder/ai/pipeline.py` (`_process`)
+- **Symptom:** "Chinook Courier & Office Services Ltd.", with AP's history: the local chat model was asked about its
+  blank lines with none of the vendor's past coding in its prompt (`history_examples` 0).
+- **Cause:** the examples were picked before the local reader read the vendor (`vendor_hint` comes from Azure's
+  reading, empty offline), so they relied on finding the vendor's stored name in the page text; "&" is stored as
+  "and", and past the memory's cap the vendor's own lessons were not read either.
+- **Reproduce:** import a history row for Chinook, process its sample PDF with the local chat model on.
+- **Reproduced:** yes
+- **Fix:** once the local reader has the vendor, its lessons are read and the examples picked again with its name.
+- **Test:** `tests/test_offline_coding.py::test_the_local_models_examples_have_the_vendor_the_local_reader_found`
+- **Lesson:** Work that depends on a value must run after the step that finds it, not on an earlier stand-in.
+
 #### Looked at and left (install, launcher and updates)
 
 - **N-251** · A GitHub ZIP unzipped over an older one leaves the files the newer one no longer has (the offline

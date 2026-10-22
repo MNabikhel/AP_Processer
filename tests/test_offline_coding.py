@@ -101,3 +101,22 @@ def test_queue_card_confidence_follows_the_review_screen(tmp_path, reference):
     assert store.refresh_confidence(result.invoice_id, 0.42, True)
     assert store.get_invoice(result.invoice_id)["adjusted_confidence"] == 0.42
     assert not store.refresh_confidence(result.invoice_id, 0.42, True)  # unchanged: nothing written
+
+
+def test_the_local_models_examples_have_the_vendor_the_local_reader_found(tmp_path, reference, monkeypatch):
+    """The chat model's examples of AP's coding (``select_examples``) are picked once the local reader has the vendor:
+    "Chinook Courier & Office Services Ltd." is not found in its own page by name ("&" against "and"), and its
+    lessons were left out of the prompt (B-600)."""
+    store = Store(tmp_path / "ap.db")
+    store.import_history([{"vendor_name": "Chinook Courier & Office Services Ltd.", "description": "Pallet storage",
+                           "gl_code": "6200", "cost_center": "", "amount": 10.0, "date": "2026-01-05"}])  # fmt: skip
+    s = Settings()
+    seen = {}
+    monkeypatch.setattr(InvoicePipeline, "_local_accounts", lambda self, result, history: seen.update(history=history))
+    pipe = InvoicePipeline(replace(s, llm=replace(s.llm, provider="local")), reference, store=store)
+    result = pipe.process(SAMPLES / "chinook_AB_GST_CCO-26-10418.pdf")
+
+    assert result.ok, result.error
+    assert result.coding.coding.vendor_name.startswith("Chinook Courier & Office")
+    assert "Pallet storage" in seen["history"]
+    assert result.history_examples >= 1
