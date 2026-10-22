@@ -5802,6 +5802,25 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
 - **Test:** `tests/test_trust_review.py::test_queue_accuracy_note_counts_measured_lines_not_guesses`
 - **Lesson:** Two screens showing one figure must take it from the same count.
 
+#### B-580 · The review screen's page could not be zoomed like a document: blurry close up, Ctrl + wheel zoomed the dashboard · medium
+- **Where:** `ap_coder/web/static/js/invoice_viewer.js` (zoom, `sizeSheet`, `pointAt`), `ap_coder/web/document.py`
+  (`page_png`), `ap_coder/web/pages/invoice.py` (`page_picture`)
+- **Symptom:** the pilot tester said zoom on the document viewer is lacking: only Fit, 100% and 150%; at 150% the page
+  was soft (a 120 dpi picture stretched); Ctrl + wheel or a pinch zoomed the whole dashboard; no way to drag the page
+  about or to turn a page scanned sideways to read it.
+- **Cause:** the viewer had three fixed zooms and one picture per page at 120 dpi; the wheel and the keys were left to
+  the browser.
+- **Reproduce:** open an invoice on the review screen at 1366 x 768, choose 150%, hold Ctrl and turn the wheel.
+- **Reproduced:** yes
+- **Fix:** zoom from 50% to 400% (- / % / +, Fit width, Fit page, Ctrl + wheel and pinch around the pointer, the keys
+  + - 0 9), the Hand (its button, H, Space held, the middle button) to drag the page, Rotate (on screen only), Page Up
+  / Page Down; the page is asked for at `?scale=2` or `3` (240 or 360 dpi, capped at 4,800 and 6,000 px, a scan never
+  enlarged) when zoomed in, loaded aside and swapped in (D-57).
+- **Test:** `tests/test_web_viewer.py`, `tests/test_web_document.py::test_a_pdf_page_is_drawn_two_and_three_times_as_sharp`
+  and the tests after it
+- **Lesson:** A document viewer is judged against the PDF reader on the same laptop: zoom where the pointer is, a sharp
+  page at any zoom, and the keys and wheel people already use.
+
 #### Looked at and left (install, launcher and updates)
 
 - **N-251** · A GitHub ZIP unzipped over an older one leaves the files the newer one no longer has (the offline

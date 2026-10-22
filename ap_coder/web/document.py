@@ -5,7 +5,8 @@ over it; boxes and words are fractions of the page (0..1, origin top-left), page
 ``ap_coder.capture.types``. A page's ``width`` / ``height`` are its printed size in points (1/72 inch), so the
 viewer's 100% is the page's real size whatever resolution the picture was drawn at.
 
-Pictures are cached on the file's path, size and time: a page is drawn once however often it is asked for.
+Pictures are cached on the file's path, size and time (and the scale asked for): a page is drawn once however often it
+is asked for. A page zoomed in is asked for at scale 2 or 3 (240 or 360 dpi, B-580), so it stays sharp.
 """
 
 from __future__ import annotations
@@ -24,7 +25,9 @@ IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".gif", ".we
 VIEWABLE = {PDF, *IMAGE_SUFFIXES}
 MAX_PAGES = 20  # pages shown; a longer file still shows its first pages
 DPI = 120  # sharp on a laptop screen at "Fit", still small
-MAX_SIDE = 2400  # pixels: a page is never drawn bigger than this, whatever the dpi
+MAX_SIDE = 2400  # pixels: a page is never drawn bigger than this at scale 1, whatever the dpi
+SCALES = (1, 2, 3)  # the picture at 1x, 2x or 3x the dpi: the viewer asks for a sharper one when zoomed in
+SCALE_SIDES = {1: 1.0, 2: 2.0, 3: 2.5}  # the cap at each scale, as a multiple of MAX_SIDE: 2,400, 4,800, 6,000 px
 SCREEN_DPI = 96
 
 # The order of the field list: as an invoice reads, header first, then the money, then the terms.
@@ -73,18 +76,34 @@ def _sizes_cached(path: str, _mtime: int, _size: int) -> tuple[tuple[float, floa
     return tuple((w, h) for w, h, _ in _image_pages(path, sizes_only=True))
 
 
-def page_png(path: str | Path, number: int) -> bytes:
-    """Page ``number`` (from 1) as PNG bytes. IndexError for a page the file doesn't have."""
+def clean_scale(value: Any) -> int:
+    """1, 2 or 3 from what the address said; anything else is 1 (an old or mistyped address still shows the page)."""
+    try:
+        scale = int(str(value).strip())
+    except (TypeError, ValueError):
+        return 1
+    return scale if scale in SCALES else 1
+
+
+def max_side(scale: int) -> int:
+    """The longest side, in pixels, a page is drawn at for this scale."""
+    return round(MAX_SIDE * SCALE_SIDES[clean_scale(scale)])
+
+
+def page_png(path: str | Path, number: int, scale: int = 1) -> bytes:
+    """Page ``number`` (from 1) as PNG bytes, at ``scale`` times ``DPI`` (1, 2 or 3; a scan is never enlarged beyond
+    its own resolution). IndexError for a page the file doesn't have."""
     p = Path(path)
     if p.suffix.lower() not in VIEWABLE:
         raise IndexError(number)
     if not 1 <= number <= MAX_PAGES:
         raise IndexError(number)
-    return _png_cached(*_stamp(p), int(number))
+    return _png_cached(*_stamp(p), int(number), clean_scale(scale))
 
 
 @functools.lru_cache(maxsize=32)
-def _png_cached(path: str, _mtime: int, _size: int, number: int) -> bytes:
+def _png_cached(path: str, _mtime: int, _size: int, number: int, scale: int = 1) -> bytes:
+    dpi, cap = DPI * scale, max_side(scale)
     if Path(path).suffix.lower() == PDF:
         import pymupdf
 
@@ -93,15 +112,15 @@ def _png_cached(path: str, _mtime: int, _size: int, number: int) -> bytes:
                 raise IndexError(number)
             page = doc[number - 1]
             rect = page.rect  # points, after the page's own rotation
-            scale = min(DPI / 72, MAX_SIDE / max(rect.width, rect.height, 1))
-            return page.get_pixmap(matrix=pymupdf.Matrix(scale, scale), alpha=False).tobytes("png")
-    for index, (_, _, png) in enumerate(_image_pages(path), start=1):
+            zoom = min(dpi / 72, cap / max(rect.width, rect.height, 1))
+            return page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False).tobytes("png")
+    for index, (_, _, png) in enumerate(_image_pages(path, dpi=dpi, cap=cap), start=1):
         if index == number:
             return png
     raise IndexError(number)
 
 
-def _image_pages(path: str, sizes_only: bool = False) -> list[tuple[float, float, bytes]]:
+def _image_pages(path: str, sizes_only: bool = False, dpi: float = 0, cap: int = 0) -> list[tuple[float, float, bytes]]:
     """(width pt, height pt, PNG) per frame of a picture (a TIFF can hold several pages)."""
     from PIL import Image, ImageOps, ImageSequence
 
@@ -126,7 +145,8 @@ def _image_pages(path: str, sizes_only: bool = False) -> list[tuple[float, float
                 pic = paper
             else:
                 pic = pic.convert("RGB")
-            scale = min(1.0, DPI / source_dpi, MAX_SIDE / max(pic.width, pic.height, 1))
+            # Only ever brought down: a scan has no more detail than it was scanned with.
+            scale = min(1.0, (dpi or DPI) / source_dpi, (cap or MAX_SIDE) / max(pic.width, pic.height, 1))
             if scale < 1:
                 pic = pic.resize((max(1, round(pic.width * scale)), max(1, round(pic.height * scale))),
                                  Image.Resampling.LANCZOS)  # fmt: skip
