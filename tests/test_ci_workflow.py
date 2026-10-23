@@ -130,3 +130,19 @@ def test_ci_runs_github_zip_as_the_pilot_tester_does():
     for needed in ("git archive", "Expand-Archive", "Zone.Identifier", "Pilot tester Ré", "APProcessor.bat",
                    "Updated AP Coder from", "A newer AP Coder took over", "kept.pdf"):  # fmt: skip
         assert needed in text, needed
+
+
+def test_the_update_check_finds_the_schema_the_new_version_writes():
+    """old_versions.py reads the new version's SCHEMA_VERSION from its source: the store became a package (D-69) and
+    the check read a file that is no longer there (B-831)."""
+    scripts = Path(__file__).resolve().parents[1] / "scripts" / "ci"
+    if not (scripts / "old_versions.py").is_file():
+        pytest.skip("scripts/ci is not in this copy (an offline bundle)")
+    sys.path.insert(0, str(scripts))
+    try:
+        import old_versions
+    finally:
+        sys.path.pop(0)
+    from ap_coder.core.store import SCHEMA_VERSION
+
+    assert old_versions.schema_of(Path(__file__).resolve().parents[1]) == str(SCHEMA_VERSION)
