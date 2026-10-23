@@ -87,11 +87,11 @@ def test_getting_started_asks_for_your_province_and_counts_it(tmp_path, monkeypa
     assert "Your province" in started and "Settings → Review" in started
     assert 'href="/settings/review">Your province' in started
     ring = re.search(r"aria-label='(\d+)/(\d+)'", page).groups()
-    assert ring[1] == "8"  # with your bank accounts (optional, D-66)
+    assert ring[1] == "10"  # with your bank accounts (optional, D-66), the vendor master and past coding (D-92)
     fresh.set_setting("our_province", "ON")
     page = client.get("/review").text
     assert "Ontario" in page.split("Getting started", 1)[1]
-    assert re.search(r"aria-label='(\d+)/(\d+)'", page).groups() == (str(int(ring[0]) + 1), "8")
+    assert re.search(r"aria-label='(\d+)/(\d+)'", page).groups() == (str(int(ring[0]) + 1), "10")
     assert "Your province" in client.get("/process").text
 
 

@@ -237,7 +237,53 @@ def setup_steps(store: Store, settings: Settings) -> list[tuple[str, str, str]]:
         ("ok" if gl_count else "todo", "GL accounts", f"{gl_count} imported" if gl_count else "none yet: import them"),
         ("ok" if mapped == len(TAX_TYPES) else "todo", TAX_STEP, f"{mapped} of {len(TAX_TYPES)} set"),
         bank_step(store),
+        *pilot_steps(store),
     ]
+
+
+VENDOR_STEP, JDE_STEP, HISTORY_STEP = "Vendor master", "JD Edwards settings", "Past coding from your ERP"
+HISTORY_WHY = "AP Coder learns your coding from what you posted before"
+
+
+def pilot_steps(store: Store) -> list[tuple[str, str, str]]:
+    """The vendor master, the JD Edwards settings (when JD Edwards is the export) and the ERP's past coding, in the
+    order the shadow pilot needs them after the GL accounts (D-92): each supplier's address number (AN8) comes from
+    the vendor master, the settings map the accounts, and the past coding warm-starts the coding of the first
+    invoices."""
+    from ap_coder.erp import jde
+    from ap_coder.web.core import jde_shown
+
+    shown = jde_shown(store)
+    vendors = store.master_vendors()
+    if not vendors:
+        what = "the ERP's vendor list" + (", with each supplier's address number (AN8)" if shown else "")
+        vendor = ("todo", VENDOR_STEP, f"on Vendors: import {what}")
+    elif shown:
+        an8 = sum(1 for v in vendors if str(v.get("erp_id") or "").strip().isdigit())
+        vendor = (
+            ("ok" if an8 else "todo"),
+            VENDOR_STEP,
+            f"{ui.plural(len(vendors), 'vendor')}, {an8} with an address number (AN8)"
+            if an8
+            else f"{ui.plural(len(vendors), 'vendor')}, but no address number (AN8): import it as the ERP ID",
+        )
+    else:
+        vendor = ("ok", VENDOR_STEP, ui.plural(len(vendors), "vendor"))
+    steps = [vendor]
+    if shown:
+        saved = bool(store.get_setting(jde.SETTING_KEY))
+        problems = jde.settings_problems(jde.load(store)) if saved else []
+        if saved and not problems:
+            settings = jde.load(store)
+            steps.append(("ok", JDE_STEP, f"company {settings.company_code}, "
+                          f"{ui.plural(len(settings.gl_map), 'account')} mapped"))  # fmt: skip
+        else:
+            steps.append(("todo", JDE_STEP, problems[0] if problems else
+                          "company, document type, accounts and tax areas: Settings → JD Edwards E1"))  # fmt: skip
+    taught = store.history_count()
+    steps.append(("ok", HISTORY_STEP, ui.plural(taught, "past line") + " taught") if taught
+                 else ("todo", HISTORY_STEP, HISTORY_WHY))  # fmt: skip
+    return steps
 
 
 BANK_STEP = "Your bank accounts (optional)"
@@ -296,6 +342,9 @@ STEP_LINKS = {
     BANK_STEP: "/accounts?tab=bank",
     "Your name": "/settings/review",
     "Your province": "/settings/review",
+    VENDOR_STEP: "/vendors?setup=1#import",
+    JDE_STEP: "/settings/jde",
+    HISTORY_STEP: "/learning?teach=1#history",
     "Process your first invoices": "/process",
 }
 
@@ -323,6 +372,24 @@ def next_step(steps: list[tuple[str, str, str]]) -> dict[str, Any] | None:
                 "href": STEP_LINKS[TAX_STEP],
                 "text": "GST, HST and QST each need a GL account (PST is added to each expense line, so it needs "
                         "none), so approved invoices can be posted. Then Save tax setup."}  # fmt: skip
+    if JDE_STEP in state:  # the shadow pilot with JD Edwards: the vendor master, its settings, the past coding (D-92)
+        if state[VENDOR_STEP][0] != "ok":
+            return {"title": "Import your vendor master", "icon": "storefront", "href": STEP_LINKS[VENDOR_STEP],
+                    "button": "Import the vendor master",
+                    "text": "The ERP's vendor list, with each supplier's JD Edwards address number (AN8) as its "
+                            "ERP ID: each voucher needs it, and an invoice from a vendor not in the list is "
+                            "flagged."}  # fmt: skip
+        if state[JDE_STEP][0] != "ok":
+            return {"title": "Fill in the JD Edwards settings", "icon": "settings", "href": STEP_LINKS[JDE_STEP],
+                    "button": "JD Edwards settings",
+                    "text": "Company, document type, the GL account → BU.Object.Subsidiary mapping and the tax areas, "
+                            "or download the worksheet for your JDE team and import their answers."}  # fmt: skip
+        if state[HISTORY_STEP][0] != "ok":
+            return {"title": "Teach AP Coder your past coding", "icon": "history_edu",
+                    "href": STEP_LINKS[HISTORY_STEP], "button": "Teach from past coding",
+                    "text": f"{HISTORY_WHY}: import last year's posted AP invoice lines from JD Edwards (vendor, "
+                            "line description, GL account, cost center), so the first invoices are coded "
+                            "already."}  # fmt: skip
     if state["Process your first invoices"][0] != "ok":
         return {"title": "Import your first invoices", "icon": "upload_file", "button": "Import invoices",
                 "href": STEP_LINKS["Process your first invoices"],

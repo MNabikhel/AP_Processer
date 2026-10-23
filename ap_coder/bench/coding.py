@@ -453,17 +453,19 @@ def _history_rows(seed: int, company: list[Vendor], realism: Realism) -> dict[in
 
 
 def simulate(
-    vendors: int = 30, invoices: int = 30, seed: int = 1, realism: Realism | None = None
+    vendors: int = 30, invoices: int = 30, seed: int = 1, realism: Realism | None = None, coder: Any = None
 ) -> list[dict[str, Any]]:
     """Every line of every invoice, in the order they arrived, with what was proposed and the truth. ``realism``:
-    what the default run leaves out (reviewer mistakes, ERP history, kept chat-model guesses, a split account)."""
+    what the default run leaves out (reviewer mistakes, ERP history, kept chat-model guesses, a split account).
+    ``coder``: a local ``InvoiceCoder`` (``--ai``): the real chat model in LM Studio suggests the lines left blank,
+    as ``pipeline._local_accounts`` asks it, with the vendor's approvals as examples (D-92)."""
     from ap_coder.ai import lessons
-    from ap_coder.ai.inference import MODEL_SUGGESTED
+    from ap_coder.ai.inference import MODEL_SUGGESTED, suggest_accounts
     from ap_coder.ai.offline_coder import code_from_capture
     from ap_coder.ai.suggest import suggest_gl
     from ap_coder.coding import rules
     from ap_coder.coding.line_tax import apply_tax_code, confirm_line, tax_code_of, tax_learned
-    from ap_coder.core.memory import _normalise, compare_with_history
+    from ap_coder.core.memory import _normalise, compare_with_history, format_examples, select_examples
     from ap_coder.core.reference_data import UNASSIGNED, load_reference_data
     from ap_coder.core.store import Store
     from ap_coder.web.invoice_view import suggestions
@@ -537,6 +539,21 @@ def simulate(
             # The HISTORY_CONFLICT check on the lines as the reviewer sees them (``pipeline.finalise_coding``).
             warned = {h["line_number"] for h in compare_with_history(coding, feedback) if h["status"] == "conflict"}
 
+            # The real chat model's account for each line left blank (``--ai``), as the pipeline asks it.
+            asked: set[int] = set()
+            model_picks: dict[int, str] = {}
+            if coder is not None:
+                blank = [(pos + 1, li.description, li.amount) for pos, li in enumerate(coding.line_items)
+                         if li.predicted_gl_code == UNASSIGNED]  # fmt: skip
+                if blank:
+                    asked = {n - 1 for n, _, _ in blank}
+                    examples = select_examples(feedback, "\n".join(line.text for line in lines), v.name)
+                    picks = suggest_accounts(coder, v.name, blank, format_examples(examples, with_cost_center=False))
+                    for n, (gl, _cc, reason) in picks.items():
+                        li = coding.line_items[n - 1]
+                        li.predicted_gl_code, li.predicted_cost_center = gl, COST_CENTER.get(gl, "")
+                        li.reasoning_justification = f"{MODEL_SUGGESTED}: {reason}" if reason else MODEL_SUGGESTED
+                        model_picks[n - 1] = gl
             # 2. AP approves the true account of every line: a guess that was wrong is sometimes kept, and a few
             # lines get a wrong account by mistake (right again on a later invoice).
             output = coding.model_dump(mode="json")
@@ -608,6 +625,8 @@ def simulate(
                     "tax_printed": printer,
                     "lesson": hints[pos][1],  # the lesson's account the AI reads for the line ("" when none)
                     "lesson_screen": hints[pos][0],  # the lesson's account the reviewer sees as a hint
+                    "model_asked": pos in asked,  # --ai: the chat model was asked about this line
+                    "model": model_picks.get(pos, ""),  # --ai: its account ("" when it gave none)
                 }
                 if realism.any:
                     row["approved"] = approved[pos]
@@ -719,6 +738,21 @@ def lesson_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "screen": len(screen), "screen_wrong": screen_wrong}  # fmt: skip
 
 
+def model_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """``--ai``: the real chat model's accounts for the lines nothing else coded: asked, answered, right; and on the
+    first invoice from a vendor (its cold start) apart."""
+
+    def stats(part: list[dict[str, Any]]) -> dict[str, Any]:
+        asked = [r for r in part if r.get("model_asked")]
+        answered = [r for r in asked if r.get("model")]
+        right = sum(r["model"] == r["truth"] for r in answered)
+        return {"asked": len(asked), "answered": len(answered), "right": right,
+                "precision": _ratio(right, len(answered)), "coverage": _ratio(len(answered), len(asked))}  # fmt: skip
+
+    return {**stats(rows), "first invoice": stats([r for r in rows if r["position"] == 1]),
+            "later invoices": stats([r for r in rows if r["position"] > 1])}  # fmt: skip
+
+
 def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
     wrong = Counter((r["truth"], r["proposed"], r["source"]) for r in rows if r["assigned"] and not r["correct"])
     return {
@@ -749,6 +783,7 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "tax_codes": tax_stats(rows),
         "tax_codes_by_column": _tax_split(rows),
         "lessons": lesson_stats(rows),
+        "chat_model": model_stats(rows),
         "top_errors": [{"truth": t, "proposed": p, "source": s, "lines": n} for (t, p, s), n in wrong.most_common(12)],
     }
 
@@ -852,6 +887,16 @@ def render_markdown(report: dict[str, Any]) -> str:
             f"account than the line's true one (noise {_pct(ls['noise'])}). Hints on the review screen (from the "
             f"first correction): on {ls['screen']} lines, {ls['screen_wrong']} wrong.\n"
         )
+    cm = s.get("chat_model") or {}
+    if cm.get("asked"):
+        out.append("## The chat model (--ai)\n")
+        model = cfg.get("model") or "found on its own"
+        out.append(f"The model loaded in LM Studio ({model}) was asked about the lines nothing else coded, as the "
+                   "app asks it; each was then approved with its true account.\n")  # fmt: skip
+        out.append(_table(["lines", "asked", "answered", "right", "precision", "coverage"],
+                          [[k, m["asked"], m["answered"], m["right"], _pct(m["precision"]), _pct(m["coverage"])]
+                           for k, m in (("all", cm), ("first invoice", cm["first invoice"]),
+                                        ("later invoices", cm["later invoices"]))]))  # fmt: skip
     if s["top_errors"]:
         out.append("## Most frequent wrong accounts\n")
         out.append(_table(["true", "proposed", "source", "lines"],
@@ -861,20 +906,40 @@ def render_markdown(report: dict[str, Any]) -> str:
     return "\n".join(out)
 
 
+def ai_coder(settings: Any = None) -> Any:
+    """``--ai``: the chat model in LM Studio, as the app finds it (AP_LLM_BASE_URL, AP_LLM_MODEL). Raises
+    ``CodingError`` when it isn't answering, with what to do."""
+    from ap_coder.ai.inference import InvoiceCoder
+    from ap_coder.core.config import Settings
+    from ap_coder.core.reference_data import load_reference_data
+
+    reference = load_reference_data(
+        DATA / "chart_of_accounts.csv", DATA / "cost_centers.csv", DATA / "tax_gl_mapping.csv",
+        DATA / "coding_policy.md",
+    )  # fmt: skip
+    coder = InvoiceCoder(settings or Settings.from_env(), reference, provider="local")
+    coder._prepare_local()
+    return coder
+
+
 def run_coding(
     vendors: int = 30,
     invoices: int = 30,
     seed: int = 1,
     out: str | Path = "bench_coding",
     realism: Realism | None = None,
+    coder: Any = None,
 ) -> dict[str, Any]:
-    """Simulate the company, then write report.json, report.md and lines.jsonl into ``out``."""
+    """Simulate the company, then write report.json, report.md and lines.jsonl into ``out``. ``coder``: ``--ai``'s
+    local chat model (``ai_coder``)."""
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     t0 = time.perf_counter()
-    rows = simulate(vendors, invoices, seed, realism)
+    rows = simulate(vendors, invoices, seed, realism, coder)
     seconds = time.perf_counter() - t0
     config: dict[str, Any] = {"vendors": vendors, "invoices": invoices, "seed": seed}
+    if coder is not None:
+        config["model"] = getattr(coder, "_local_model", "") or ""
     if realism is not None and realism.any:
         config["realism"] = {k: v for k, v in vars(realism).items() if v}
     report = {

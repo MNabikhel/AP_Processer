@@ -889,7 +889,9 @@ QUICK_START: list[tuple[str, str, str]] = [  # numbered 0 to 6, as docs/QUICK_ST
      "goods are delivered to you.", "/settings/review"),
     ("Your GL accounts and sales tax", "Import your GL accounts (or use the sample ones to try AP Coder), then pick "
      "a GL account for GST, HST and QST on the Sales tax accounts tab. Optional: your company's bank accounts on the "
-     "Bank accounts tab, to say which one pays each invoice.", "/accounts"),
+     "Bank accounts tab, to say which one pays each invoice. Then the vendor master (Vendors; for JD Edwards each "
+     "supplier's address number), the JD Edwards settings when you export to it, and Teach from past coding "
+     "(Learning & accuracy): AP Coder learns your coding from what you posted before.", "/accounts"),
     ("Your first invoices", "Upload PDFs, scans, photos or saved emails. Each is read, coded and checked.",
      "/process"),
     ("Review", "Open an invoice and fix what the checks point to.", "/review"),

@@ -2,7 +2,7 @@
 python -m ap_coder.bench calibrate RUN_DIR [RUN_DIR ...]
 python -m ap_coder.bench learn --suppliers 30 --invoices 40 [--scanned 0.0]
 python -m ap_coder.bench speed --n 20 --scanned 0.5 [--history 30000]
-python -m ap_coder.bench coding --vendors 30 --invoices 30 --seed 1 [--out bench_coding] [--realistic]"""
+python -m ap_coder.bench coding --vendors 30 --invoices 30 --seed 1 [--out bench_coding] [--realistic] [--ai]"""
 
 from __future__ import annotations
 
@@ -82,6 +82,11 @@ def main(argv: list[str] | None = None) -> int:
     cp.add_argument("--history", type=float, default=None, help="share of vendors with ERP history imported first")
     cp.add_argument("--guesses", action="store_true", help="kept chat-model guesses on the lines left blank")
     cp.add_argument("--split", action="store_true", help="one item coded to two accounts by its quantity")
+    cp.add_argument(
+        "--ai",
+        action="store_true",
+        help="the chat model running in LM Studio suggests the lines left blank: its real accuracy",
+    )
     tp = sub.add_parser("triage", help="email triage: made-up emails of every kind sorted as the dashboard does")
     tp.add_argument("--n", type=int, default=300, help="number of emails (default 300)")
     tp.add_argument("--seed", type=int, default=1, help="random seed; the same seed gives the same emails")
@@ -121,7 +126,17 @@ def main(argv: list[str] | None = None) -> int:
         realism = dataclasses.replace(realism, **{k: v for k, v in changes.items() if v is not None})
         if realism.history and not realism.history_noise and not a.realistic:
             realism = dataclasses.replace(realism, history_noise=REALISTIC.history_noise)
-        report = run_coding(a.vendors, a.invoices, a.seed, a.out, realism)
+        coder = None
+        if a.ai:
+            from ap_coder.ai.inference import CodingError
+            from ap_coder.bench.coding import ai_coder
+
+            try:
+                coder = ai_coder()
+            except CodingError as exc:
+                print(f"--ai needs the chat model running in LM Studio: {exc}", file=sys.stderr)
+                return 1
+        report = run_coding(a.vendors, a.invoices, a.seed, a.out, realism, coder)
         s = report["summary"]
         o, first = s["overall"], s["first_or_later"]
 
@@ -139,6 +154,11 @@ def main(argv: list[str] | None = None) -> int:
               f"{pc(tc.get('coverage'))}, {tc.get('learned', 0)} learned; line lessons the AI reads on "
               f"{ls.get('shown', 0)} lines ({ls.get('wrong', 0)} wrong), screen hints on {ls.get('screen', 0)} "
               f"lines ({ls.get('screen_wrong', 0)} wrong)")  # fmt: skip
+        cm = s.get("chat_model") or {}
+        if cm.get("asked"):
+            print(f"chat model {report['config'].get('model', '')}: {cm['right']} right of {cm['answered']} answered "
+                  f"({cm['asked']} lines asked), precision {pc(cm['precision'])}; on a vendor's first invoice "
+                  f"{pc(cm['first invoice']['precision'])}")  # fmt: skip
         print(f"report: {Path(a.out) / 'report.md'}")
         return 0
 

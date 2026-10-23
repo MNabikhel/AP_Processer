@@ -6,7 +6,7 @@
 {% macro accuracy(value) %}{% if value is none %}<span class="muted">—</span>{% else %}<b class="{{ 'ok' if value >= target else 'warn-text' }}">{{ value | pct }}</b>{% endif %}{% endmacro %}
 {% macro status_pills(v) %}{{ ui.pill("On hold", "warn", "front_hand") if v.status == on_hold else ui.pill("Active", "ok") }}{% if number_problems(v) %} {{ ui.pill("Tax number to check", "warn", "warning") }}{% endif %}{% if v.added_here %} {{ ui.pill("Added here: set up in JD Edwards", "warn", "person_add") }}{% elif has_master and not v.in_master %} {{ ui.pill("Not in master", "warn", "gpp_maybe") }}{% endif %}{% endmacro %}
 {% block content %}
-<details class="card expander" id="import"{% if master or master_error %} open{% endif %}>
+<details class="card expander" id="import"{% if master or master_error or setup %} open{% endif %}>
   <summary><span class="ms" aria-hidden="true">upload</span>Vendor master from the ERP{% if has_master %} (imported){% endif %}</summary>
   <p class="muted">Import the ERP's vendor list (CSV or Excel). Exports then carry each vendor's ERP ID, invoices from a
     vendor that is not in the list are flagged, the vendor's payment terms set the due date when the invoice shows none,
