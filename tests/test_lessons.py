@@ -201,6 +201,9 @@ def test_a_lesson_reaches_the_ai_after_two_agreeing_corrections_or_one_with_a_re
     key = lessons.situation(vendor, lessons.INVOICE, "invoice_number")
     corrected(1, "1-2026")
     assert store.lesson(key)["corrected"] == 1 and not lessons.reaches_ai(store.lesson(key)) and shown() == []
+    # The reviewer sees it at once (a person decides), said as a single correction.
+    screen = lessons.prompt_lines(store, vendor, screen=True)
+    assert any(line.startswith(lessons.SEEN_ONCE) and "invoice number" in line for line in screen)
     corrected(2, "2-2026")  # a second correction, to another value: the two don't agree
     assert store.lesson(key)["agreeing"] == 1 and shown() == []
     corrected(3, "2-2026")  # the same value again: two agree
@@ -210,6 +213,7 @@ def test_a_lesson_reaches_the_ai_after_two_agreeing_corrections_or_one_with_a_re
     assert shown() == []  # withdrawn: one correction to that value is left
     store.explain_lesson(key, "account number then year", "Jane")
     assert shown() and "AP's reason" in shown()[0]  # one correction and the clerk's reason
+    assert not any(line.startswith(lessons.SEEN_ONCE) for line in lessons.prompt_lines(store, vendor, screen=True))
 
 
 def test_cost_center_corrections_are_lessons_too(tmp_path, ground_truth):

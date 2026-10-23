@@ -136,8 +136,9 @@ def main(argv: list[str] | None = None) -> int:
         )
         tc, ls = s.get("tax_codes") or {}, s.get("lessons") or {}
         print(f"tax codes: precision {pc(tc.get('precision'))} ({tc.get('wrong', 0)} wrong), coverage "
-              f"{pc(tc.get('coverage'))}, {tc.get('learned', 0)} learned; line lessons shown on {ls.get('shown', 0)} "
-              f"lines, {ls.get('wrong', 0)} for a wrong account")  # fmt: skip
+              f"{pc(tc.get('coverage'))}, {tc.get('learned', 0)} learned; line lessons the AI reads on "
+              f"{ls.get('shown', 0)} lines ({ls.get('wrong', 0)} wrong), screen hints on {ls.get('screen', 0)} "
+              f"lines ({ls.get('screen_wrong', 0)} wrong)")  # fmt: skip
         print(f"report: {Path(a.out) / 'report.md'}")
         return 0
 

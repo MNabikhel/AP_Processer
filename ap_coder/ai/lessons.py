@@ -172,19 +172,31 @@ def reaches_ai(lesson: dict[str, Any]) -> bool:
     return agreeing >= AGREEING or bool(str(lesson.get("explanation") or "").strip())
 
 
+def on_screen(lesson: dict[str, Any]) -> bool:
+    """Whether a lesson is shown to the reviewer as a hint: corrected at least once, not retired. A person decides
+    what to do with it, so it needs no second correction (``reaches_ai`` does: the AI acts on it, D-72)."""
+    return bool(lesson.get("corrected")) and not lesson.get("retired")
+
+
+SEEN_ONCE = "Corrected once before: "  # a hint from a single correction, not yet one the AI reads
+
+
 def prompt_lines(store: Any, vendor: str, kind: str | None = None, *, fields: str = "all",
-                 gl_names: dict[str, str] | None = None, limit: int = MAX_PROMPT_LINES) -> list[str]:  # fmt: skip
+                 gl_names: dict[str, str] | None = None, limit: int = MAX_PROMPT_LINES,
+                 screen: bool = False) -> list[str]:  # fmt: skip
     """The lessons for a vendor (of a kind of document), newest first, as sentences: ``fields`` "all", "header" or
-    "lines". Only lessons that reach the AI (``reaches_ai``), never retired ones."""
+    "lines". For the AI, only lessons that reach it (``reaches_ai``); with ``screen``, the reviewer's hints
+    (``on_screen``): a lesson from a single correction too, said as such (``SEEN_ONCE``). Never retired ones."""
     if store is None or not vendor_key(vendor or ""):
         return []
     try:
         rows = store.lessons_for(vendor_key(vendor), kind)
     except Exception:  # noqa: BLE001 - an older store: no lessons
         return []
-    rows = [r for r in rows if reaches_ai(r)
+    shown = on_screen if screen else reaches_ai
+    rows = [r for r in rows if shown(r)
             and (fields == "all" or (fields == "lines") == (r.get("field") in LINE_FIELDS))]  # fmt: skip
-    return [sentence(r, gl_names) for r in rows[:limit]]
+    return [("" if reaches_ai(r) else SEEN_ONCE) + sentence(r, gl_names) for r in rows[:limit]]
 
 
 # --- Does a lesson help? (the Lessons tab, D-74) ---------------------------------------------------------------------

@@ -273,7 +273,9 @@ def _lesson_hints(store: Store, inv: dict[str, Any]) -> list[str]:
     from ap_coder.ai import lessons
 
     output = inv.get("final_output") or inv.get("ai_output") or {}
-    return lessons.prompt_lines(store, output.get("vendor_name") or "", lessons.kind_of(output), limit=5)
+    return lessons.prompt_lines(
+        store, output.get("vendor_name") or "", lessons.kind_of(output), limit=5, screen=True
+    )  # a person decides: shown from the first correction (D-72)
 
 
 def viewer_data(inv: dict[str, Any], capture: Any, sizes: list[tuple[float, float]]) -> dict[str, Any]:

@@ -346,5 +346,5 @@ def test_the_coding_benchmark_scores_line_tax_codes_and_lessons(tmp_path):
     tc = report["summary"]["tax_codes"]
     assert tc["lines"] == report["summary"]["overall"]["lines"] and 0 < tc["sure"] <= tc["lines"]
     assert tc["precision"] is not None and tc["coverage"] is not None
-    assert set(report["summary"]["lessons"]) == {"lines", "shown", "wrong", "noise"}
+    assert set(report["summary"]["lessons"]) == {"lines", "shown", "wrong", "noise", "screen", "screen_wrong"}
     assert "## Line tax codes" in (tmp_path / "tax" / "report.md").read_text(encoding="utf-8")

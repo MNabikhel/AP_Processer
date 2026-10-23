@@ -508,7 +508,12 @@ def simulate(
             for line in lines:
                 lesson = store.lesson(lessons.situation(v.name, lessons.INVOICE, lessons.LINE_GL,
                                                         lessons.line_pattern(line.text)))  # fmt: skip
-                hints.append(lesson["value"] if lesson and lessons.reaches_ai(lesson) else "")
+                hints.append(
+                    (
+                        lesson["value"] if lesson and lessons.on_screen(lesson) else "",
+                        lesson["value"] if lesson and lessons.reaches_ai(lesson) else "",
+                    )
+                )
 
             # 1. What the app proposes with no AI model (pipeline.process: code from capture, then the rules).
             feedback = store.feedback_rows()
@@ -601,7 +606,8 @@ def simulate(
                     "tax_sure": tax_proposed[pos][1],
                     "tax_learned": tax_proposed[pos][2],
                     "tax_printed": printer,
-                    "lesson": hints[pos],  # the lesson's account shown for the line ("" when none)
+                    "lesson": hints[pos][1],  # the lesson's account the AI reads for the line ("" when none)
+                    "lesson_screen": hints[pos][0],  # the lesson's account the reviewer sees as a hint
                 }
                 if realism.any:
                     row["approved"] = approved[pos]
@@ -698,11 +704,15 @@ def tax_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def lesson_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """The line lessons shown to the AI and on the review screen (``lessons.reaches_ai``): how many lines had one,
-    and how many said an account other than the line's true one (noise, from a clerk's slip)."""
+    """The line lessons the AI reads (``lessons.reaches_ai``, "shown") and the reviewer's hints
+    (``lessons.on_screen``, "screen"): how many lines had one, how many said an account other than the line's true
+    one (noise, from a clerk's slip)."""
     shown = [r for r in rows if r.get("lesson")]
     wrong = sum(r["lesson"] != r["truth"] for r in shown)
-    return {"lines": len(rows), "shown": len(shown), "wrong": wrong, "noise": _ratio(wrong, len(shown))}
+    screen = [r for r in rows if r.get("lesson_screen")]
+    screen_wrong = sum(r["lesson_screen"] != r["truth"] for r in screen)
+    return {"lines": len(rows), "shown": len(shown), "wrong": wrong, "noise": _ratio(wrong, len(shown)),
+            "screen": len(screen), "screen_wrong": screen_wrong}  # fmt: skip
 
 
 def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -834,8 +844,9 @@ def render_markdown(report: dict[str, Any]) -> str:
     ls = s.get("lessons") or {}
     if ls.get("lines"):
         out.append(
-            f"Line lessons shown to the AI and on the review screen: on {ls['shown']} of {ls['lines']} lines, "
-            f"{ls['wrong']} of them for another account than the line's true one (noise {_pct(ls['noise'])}).\n"
+            f"Line lessons the AI reads: on {ls['shown']} of {ls['lines']} lines, {ls['wrong']} of them for another "
+            f"account than the line's true one (noise {_pct(ls['noise'])}). Hints on the review screen (from the "
+            f"first correction): on {ls['screen']} lines, {ls['screen_wrong']} wrong.\n"
         )
     if s["top_errors"]:
         out.append("## Most frequent wrong accounts\n")
