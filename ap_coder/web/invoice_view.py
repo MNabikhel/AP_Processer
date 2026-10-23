@@ -39,6 +39,7 @@ from ap_coder.coding.line_tax import (
     parse_code,
     tax_code_of,
     tax_guessed,
+    tax_learned,
 )
 from ap_coder.coding.line_tax import options as tax_code_options
 from ap_coder.coding.po import match_invoice, po_label
@@ -701,6 +702,7 @@ def grid(reference: ReferenceData, draft: Draft, ai: dict[str, Any] | None = Non
                 "guessed": id(row) in guesses and row.get("predicted_gl_code") not in (None, "", UNASSIGNED),
                 "tax_code": tax_code_of(row, charged),
                 "tax_guess": id(row) in tax_guesses,
+                "tax_learned": tax_learned(row),  # taken from what AP approved on the vendor's similar lines (D-70)
                 "tax_inferred": inferred.get(id(row), ""),
             }
             for i, row in enumerate(draft.lines)

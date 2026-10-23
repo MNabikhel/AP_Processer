@@ -194,7 +194,7 @@ def finalise_coding(
     return output, report
 
 
-def _model_line_taxes(coding: InvoiceCoding, text: str) -> None:
+def _model_line_taxes(coding: InvoiceCoding, text: str, feedback: list[dict[str, Any]] | None = None) -> None:
     """The chat model's lines with their taxes worked out when it said nothing of them (no line has a tax or a
     status) and a tax is charged: the codes printed on the page are not there to read, so the lines that make each
     tax add up (``line_tax.prefill``, D-64). What the model said is kept."""
@@ -214,7 +214,8 @@ def _model_line_taxes(coding: InvoiceCoding, text: str) -> None:
     province = coding.ship_to_province or coding.supplier_province
     coding.line_items = tax_codes(list(coding.line_items), list(coding.tax_lines), [], text, province,
                                   coding.invoice_date, supplier_province=coding.supplier_province,
-                                  pst_number=coding.pst_registration_number)  # fmt: skip
+                                  pst_number=coding.pst_registration_number, feedback=feedback,
+                                  vendor=coding.vendor_name)  # fmt: skip
 
 
 DAMAGED_PICTURE = ("UnidentifiedImageError",)
@@ -517,7 +518,8 @@ class InvoicePipeline:
                     self._local_accounts(result.coding, history_text)
             else:
                 result.coding = self.coder.code(result.extraction, self._images(path), history_text)
-                _model_line_taxes(result.coding.coding, result.extraction.content if result.extraction else "")
+                _model_line_taxes(result.coding.coding, result.extraction.content if result.extraction else "",
+                                  feedback)  # fmt: skip
             result.timings["inference"] = time.perf_counter() - t1
             if self.store is not None:  # fixed coding rules set by AP win over the AI
                 coded, result.rules_applied = apply_rules(result.coding.coding, self.store.coding_rules())

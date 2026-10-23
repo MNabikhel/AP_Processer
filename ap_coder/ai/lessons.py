@@ -154,6 +154,12 @@ def sentence(lesson: dict[str, Any], gl_names: dict[str, str] | None = None) -> 
     return text + "."
 
 
+def reaches_ai(lesson: dict[str, Any]) -> bool:
+    """Whether a lesson goes to the AI and to the review screen's "Learned" hints: corrected at least once, and not
+    retired."""
+    return bool(lesson.get("corrected")) and not lesson.get("retired")
+
+
 def prompt_lines(store: Any, vendor: str, kind: str | None = None, *, fields: str = "all",
                  gl_names: dict[str, str] | None = None, limit: int = MAX_PROMPT_LINES) -> list[str]:  # fmt: skip
     """The lessons for a vendor (of a kind of document), newest first, as sentences: ``fields`` "all", "header" or
@@ -164,6 +170,6 @@ def prompt_lines(store: Any, vendor: str, kind: str | None = None, *, fields: st
         rows = store.lessons_for(vendor_key(vendor), kind)
     except Exception:  # noqa: BLE001 - an older store: no lessons
         return []
-    rows = [r for r in rows if r.get("corrected") and not r.get("retired")
+    rows = [r for r in rows if reaches_ai(r)
             and (fields == "all" or (fields == "lines") == (r.get("field") == LINE_GL))]  # fmt: skip
     return [sentence(r, gl_names) for r in rows[:limit]]

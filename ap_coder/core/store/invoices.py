@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from ...coding.line_tax import approved_code
 from ...coding.po import po_key
 from ...coding.terms import DEFAULT_TERMS_DAYS
 from ..audit import diff_coding
@@ -616,7 +617,8 @@ class InvoicesMixin:
         # coding memory is not part of what it proposed (B-562).
         cost_centers = bool(self.list_accounts("cost_centers"))
 
-        for suggestion, li in pair_lines(ai.get("line_items", []), final_output.get("line_items", [])):
+        final_lines = final_output.get("line_items", [])
+        for suggestion, li in pair_lines(ai.get("line_items", []), final_lines):
             s_gl = suggestion.get("predicted_gl_code") if suggestion else None
             s_cc = (suggestion.get("predicted_cost_center", "") if cost_centers else "") if suggestion else None
             f_gl, f_cc = li["predicted_gl_code"], li.get("predicted_cost_center", "")
@@ -661,6 +663,7 @@ class InvoicesMixin:
                     outcome,
                     reviewer,
                     now,
+                    approved_code(li, final_lines, final_output.get("tax_lines") or []),
                 )  # fmt: skip
             )
         read = as_read(final_output, ai)  # a tax number filled from the vendor list is no edit (B-681)
@@ -713,8 +716,8 @@ class InvoicesMixin:
             })  # fmt: skip
             conn.executemany(
                 """INSERT INTO feedback (invoice_id, line_number, vendor_key, vendor_name, description, amount,
-                   suggested_gl, final_gl, suggested_cc, final_cc, outcome, reviewer, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   suggested_gl, final_gl, suggested_cc, final_cc, outcome, reviewer, created_at, final_tax_code)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 feedback_rows,
             )
         return counts

@@ -342,7 +342,8 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
     # add up (not every tax on every line: a delivery or a service is often exempt from the provincial tax).
     lines = tax_codes(lines, tax_lines, flags, text, ship_to_province or ours or supplier_province, invoice_on,
                       supplier_province=supplier_province,
-                      pst_number=str(values.get("pst_registration_number") or ""))  # fmt: skip
+                      pst_number=str(values.get("pst_registration_number") or ""), feedback=feedback,
+                      vendor=vendor)  # fmt: skip
 
     found = [r.confidence for f, r in capture.fields.items() if r.value not in (None, "")]
     gl_known = sum(1 for li in lines if li.predicted_gl_code != UNASSIGNED) / len(lines)
@@ -378,11 +379,13 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
 
 def tax_codes(lines: list[LineItem], tax_lines: list[TaxLine], flags: list[str], text: str, province: str,
               invoice_on: str = "", keep: list[int] | None = None, *, supplier_province: str | None = None,
-              pst_number: str | None = None) -> list[LineItem]:  # fmt: skip
+              pst_number: str | None = None, feedback: list[dict[str, Any]] | None = None,
+              vendor: str = "") -> list[LineItem]:  # fmt: skip
     """The lines with their tax codes (``line_tax.prefill``): ``flags`` the tax-code cell read on each line, ``text``
     the page text (its legend: "Tax codes: G = GST 5%, R = Manitoba RST 7%"), the official rates in force on the
-    invoice's date where it is supplied."""
-    from ..coding.line_tax import parse_legend, prefill
+    invoice's date where it is supplied; ``feedback`` (the learning memory) and ``vendor``: the codes AP approved on
+    the vendor's similar lines before (``line_tax.learned_codes``, D-70)."""
+    from ..coding.line_tax import learned_codes, parse_legend, prefill
 
     table = _rate_table()
     try:
@@ -402,8 +405,9 @@ def tax_codes(lines: list[LineItem], tax_lines: list[TaxLine], flags: list[str],
     away = bool(supplier_province) and supplier_province != province
     pst_charged = any(t.tax_type == "PST" and abs(t.tax_amount) > 0.004 for t in tax_lines)
     no_number = pst_number is not None and not str(pst_number).strip() and not pst_charged
+    learned = learned_codes(lines, feedback, vendor) if feedback and vendor else None
     return prefill(lines, tax_lines, flags, parse_legend(text), keep=keep or [], rate_for=rate_for,
-                   vendor_collects=not (away or no_number)).lines  # fmt: skip
+                   vendor_collects=not (away or no_number), learned=learned).lines  # fmt: skip
 
 
 def _iso_or_empty(value: Any) -> str:

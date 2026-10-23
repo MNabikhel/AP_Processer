@@ -127,6 +127,10 @@ def main(argv: list[str] | None = None) -> int:
             f"from a vendor {pc(first.get('first invoice', {}).get('accuracy'))}, later "
             f"{pc(first.get('later invoices', {}).get('accuracy'))}"
         )
+        tc, ls = s.get("tax_codes") or {}, s.get("lessons") or {}
+        print(f"tax codes: precision {pc(tc.get('precision'))} ({tc.get('wrong', 0)} wrong), coverage "
+              f"{pc(tc.get('coverage'))}, {tc.get('learned', 0)} learned; line lessons shown on {ls.get('shown', 0)} "
+              f"lines, {ls.get('wrong', 0)} for a wrong account")  # fmt: skip
         print(f"report: {Path(a.out) / 'report.md'}")
         return 0
 
