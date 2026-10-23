@@ -533,7 +533,8 @@ private/             git-ignored: default data folder when the installer is not 
 tests/               offline test suite (Azure clients and LM Studio mocked)
 ```
 
-Run the tests with `pytest`; lint with `ruff check . && ruff format --check .`.
+Check a change with `python scripts/check.py`. `pytest` runs all but the slow tests, `pytest -m ""` runs everything
+(as CI does); lint with `ruff check . && ruff format --check .`.
 
 ## Phase 2 hooks (beyond the laptop pilot)
 
