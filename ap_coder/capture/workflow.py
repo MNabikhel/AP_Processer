@@ -339,6 +339,14 @@ def learn_from_approval(store: Any, invoice_id: int, final: dict[str, Any], *, a
         learned["template"] = True
     except Exception as exc:
         log.warning("invoice %s: supplier template not updated (%s)", invoice_id, exc)
+    if taught:  # where AP clicked, kept with what capture read: the training export's boxes (D-73)
+        try:
+            capture = store.get_capture(invoice_id)
+            if capture is not None:
+                capture["taught"] = {f: [b.to_list() for b in boxes] for f, boxes in taught.items() if boxes}
+                store.save_capture(invoice_id, capture)
+        except Exception as exc:  # learning must never block an approval
+            log.warning("invoice %s: taught boxes not kept (%s)", invoice_id, exc)
     return learned
 
 

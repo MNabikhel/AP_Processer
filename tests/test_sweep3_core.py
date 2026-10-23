@@ -35,8 +35,11 @@ def _approve(store, invoice_id, coding):
 
 
 def _laptop_lesson(store):
-    return next(r for r in store.lessons_for("northwind it solutions") if r["pattern"].startswith("dell latitude")
-                and r["field"] == lessons.LINE_GL)
+    return next(
+        r
+        for r in store.lessons_for("northwind it solutions")
+        if r["pattern"].startswith("dell latitude") and r["field"] == lessons.LINE_GL
+    )
 
 
 def test_a_withdrawn_approval_no_longer_teaches_its_lessons(tmp_path, ground_truth):
