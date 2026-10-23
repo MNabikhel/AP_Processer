@@ -1078,7 +1078,8 @@ def test_in_a_browser_a_message_after_apply_to_all_lines_leaves_the_approve_bar_
 def test_in_a_browser_not_in_the_vendor_list_is_said_only_once_a_vendor_master_is_imported(browser, store):
     """Without a vendor master, the vendors to pick from are the ones approved before: a new vendor is no mistake,
     so the screen doesn't ask to pick one or add it."""
-    first, second = store.list_invoices(REVIEW)[:2]
+    queue = {i["vendor_name"].split()[0]: i for i in store.list_invoices(REVIEW)}
+    first, second = queue["Cascade"], queue["Red"]  # one approved below, one opened (not the queue's order: D-89)
     no_number = "[form=inv][name=gst_hst_registration_number]"  # a printed number names a vendor of the list
     with_master = _open(browser, second["id"])
     with_master.fill(no_number, "")

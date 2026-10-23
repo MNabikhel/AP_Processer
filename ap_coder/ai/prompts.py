@@ -85,10 +85,11 @@ spend; a "corrected-to" entry is an explicit reviewer override and outranks your
 judgement. Mention it in the justification ("as approved previously").
 
 ## confidence_score (0.0 - 1.0)
-Your calibrated probability that the entire output is correct and could be posted \
-without human review. Lower it for: poor OCR quality, totals or taxes that do not \
-reconcile, ambiguous or missing header fields, any {unassigned} code, or lines whose \
-coding required a judgement call. Use >= 0.9 only when every field is unambiguous.
+Your calibrated probability that the header is read right: vendor, invoice number, dates, \
+amounts, taxes and tax numbers. Lower it for: poor OCR quality, totals or taxes that do not \
+reconcile, ambiguous or missing header fields. The lines' coding is scored separately from \
+the codes themselves (an {unassigned} code counts there). Use >= 0.9 only when every header \
+field is unambiguous.
 
 Respond only with the JSON object required by the response schema.
 """

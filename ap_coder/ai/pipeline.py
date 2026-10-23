@@ -68,6 +68,8 @@ class PipelineResult:
             row.update(
                 model_confidence=self.report.model_confidence,
                 adjusted_confidence=self.report.adjusted_confidence,
+                reading_confidence=self.report.reading_confidence,
+                coding_confidence=self.report.coding_confidence,
                 requires_review=self.report.requires_review,
                 errors=len(self.report.errors),
                 warnings=len(self.report.warnings),

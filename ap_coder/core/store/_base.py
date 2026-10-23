@@ -643,12 +643,43 @@ class StoreCore:
             conn.execute(f"ALTER TABLE feedback ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
         if missing:
             self._fill_tax_codes(conn)
+        self._reading_as_d89(conn)
         if version < SCHEMA_VERSION:
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (str(SCHEMA_VERSION),),
             )
+
+    @staticmethod
+    def _reading_as_d89(conn: sqlite3.Connection) -> None:
+        """Once per database (``settings.reading_d89``): the invoices still to approve that the local readers read
+        before D-89 had a confidence multiplied by the share of lines coded; their ``confidence_score`` becomes the
+        Reading of their stored capture, as it is read now (the Coding is worked out from the lines on each check)."""
+        if conn.execute("SELECT 1 FROM settings WHERE key = 'reading_d89'").fetchone():
+            return
+        from ...ai.offline_coder import MODEL_NAME
+        from ...capture.confidence import reading_confidence
+        from ...capture.types import FieldResult
+
+        rows = conn.execute(
+            """SELECT i.id, i.ai_output, i.meta, c.capture_json FROM invoices i JOIN invoice_capture c
+               ON c.invoice_id = i.id WHERE i.status IN (?, ?) AND i.ai_output IS NOT NULL""",
+            (REVIEW, PARKED),
+        ).fetchall()
+        for r in rows:
+            try:
+                if (json.loads(r["meta"] or "{}").get("inference") or {}).get("model") != MODEL_NAME:
+                    continue  # read by a chat model or the demo: its own confidence
+                fields = (json.loads(r["capture_json"]) or {}).get("fields") or {}
+                reading = reading_confidence({k: FieldResult.from_dict(v) for k, v in fields.items()})
+                output = json.loads(r["ai_output"])
+            except (ValueError, TypeError, KeyError, AttributeError):
+                continue
+            output["confidence_score"] = reading
+            conn.execute("UPDATE invoices SET ai_output = ?, model_confidence = ? WHERE id = ?",
+                         (json.dumps(output), reading, r["id"]))  # fmt: skip
+        conn.execute("INSERT INTO settings (key, value) VALUES ('reading_d89', '1') ON CONFLICT(key) DO NOTHING")
 
     @staticmethod
     def _fill_tax_codes(conn: sqlite3.Connection) -> None:

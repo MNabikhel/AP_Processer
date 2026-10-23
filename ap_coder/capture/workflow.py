@@ -25,6 +25,7 @@ from ..core.schema import as_read
 from ..core.ui import FIELD_WORDS
 from . import analyze, build_layout
 from .bridge import ai_values, vendor_record
+from .confidence import apply_supplier_record
 from .supplier import (
     AUTONOMOUS,
     READY,
@@ -67,6 +68,20 @@ def local_evidence(store: Any) -> dict[str, tuple[int, int]] | None:
         return None
 
 
+def supplier_record(store: Any, key: str) -> dict[str, tuple[int, int]] | None:
+    """{field: (cases, right)}: how often each header field of this supplier was read right on its invoices AP
+    reviewed (``SupplierStats`` over the autonomy policy's window), for ``confidence.apply_supplier_record`` (D-89).
+    None without a store or a supplier."""
+    if store is None or not key:
+        return None
+    try:
+        stats = store.supplier_stats(key, store.autonomy_policy().window)
+    except Exception as exc:  # the readers' own confidence stands
+        log.warning("supplier record not used (%s)", exc)
+        return None
+    return {name: (f.n, f.correct) for name, f in stats.fields.items()}
+
+
 def capture_invoice(path: str | Path, output: dict[str, Any] | None, *, store: Any = None,
                     di_raw: dict[str, Any] | None = None,
                     page_text: list[str] | None = None) -> tuple[CaptureResult | None, str, dict[str, Any] | None]:  # fmt: skip
@@ -82,6 +97,8 @@ def capture_invoice(path: str | Path, output: dict[str, Any] | None, *, store: A
         # Processed the day it arrives: that date also settles a 03/04/2026 the page leaves open.
         capture = analyze(path, di_raw=di_raw, ai_values=ai_values(output), template=template, vendor=vendor,
                           today=dt.date.today(), page_text=page_text, local_evidence=local_evidence(store))  # fmt: skip
+        if template:
+            apply_supplier_record(capture.fields, supplier_record(store, key))
     except Exception as exc:  # capture is an extra check: never lose an invoice over it
         log.warning("%s: capture failed (%s)", path.name, exc)
         return None, key, profile

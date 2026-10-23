@@ -28,6 +28,11 @@ LAPTOP = {"width": 1366, "height": 768}
 SHOTS = None  # set by the screenshot test: where the pictures of each menu go
 
 
+def _cascade(store) -> int:
+    """The demo's Cascade Cloudworks invoice (once the queue's first; the queue's order is D-89's since)."""
+    return next(i["id"] for i in store.list_invoices(REVIEW) if i["vendor_name"].startswith("Cascade"))
+
+
 @pytest.fixture(scope="module")
 def demo_db(tmp_path_factory):
     path = tmp_path_factory.mktemp("demo") / "private" / "ap_coder.db"
@@ -496,7 +501,7 @@ def test_in_a_browser_shift_right_click_gives_the_browsers_own_menu(browser, sto
 
 
 def test_in_a_browser_a_word_double_clicked_on_the_page_fills_the_detail_being_typed_in(browser, store):
-    invoice_id = store.list_invoices(REVIEW)[0]["id"]
+    invoice_id = _cascade(store)
     page, errors = _review(browser, invoice_id)
     name = "qst_registration_number"  # blank on this invoice: nothing to replace, nothing verified
     box = page.locator(f'.inv-details input[name="{name}"]')
@@ -827,7 +832,7 @@ def test_in_a_browser_the_queue_restores_only_the_view_an_invoice_was_opened_fro
 def test_in_a_browser_a_detail_left_long_ago_is_not_filled_by_a_double_click_b627(browser, store):
     """B-627: the double-click's own first click took the focus from the detail, and that moment counted as "just
     left": a detail clicked in long before (nothing typed) was filled by a double-clicked word."""
-    invoice_id = store.list_invoices(REVIEW)[0]["id"]
+    invoice_id = _cascade(store)
     page, errors = _review(browser, invoice_id)
     page.evaluate("window.AP_ARMED_MS = 400")  # the window, shortened for the test (5 s in use)
     teaches: list[str] = []

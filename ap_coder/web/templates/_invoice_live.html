@@ -1,9 +1,10 @@
 {# The review screen's sections that follow the edits (pages/invoice.py draws them in the page, and again for each
    POST /review/<id>/check). Each macro takes ``live`` (invoice_view.analyse(...).live) and the invoice id. #}
 
-{% macro conf(value, text, ok, threshold) -%}
-<span class="rq-conf {{ 'ok' if ok else 'warn' }}" title="How sure AP Coder is of its reading and coding; {{ threshold | pct }} or more needs no second look">
-  <span class="rq-conf-label">Confidence</span><span class="bar" aria-hidden="true"><i style="width: {{ (value * 100) | round | int }}%"></i></span><b>{{ text }}</b></span>
+{% macro conf(meters, threshold) -%}
+{# D-89: Reading (the header) and Coding (the lines), each its own small bar; the invoice's confidence is the lower. #}
+<span class="rvw-confs">{% for m in meters %}<span class="rq-conf {{ 'ok' if m.ok else 'warn' }}" title="{{ m.about }} {{ threshold | pct }} or more needs no second look.">
+  <span class="rq-conf-label">{{ m.name }}</span><span class="bar" aria-hidden="true"><i style="width: {{ (m.value * 100) | round | int }}%"></i></span><b>{{ m.text }}</b></span>{% endfor %}</span>
 {%- endmacro %}
 
 {% macro head(title, hint="", aside="") -%}
@@ -26,7 +27,7 @@
 {% set s = live.summary %}
 <div class="rvw-head">
   <div class="rvw-head-main">
-    <div class="rvw-head-title"><span class="rvw-vendor" title="{{ s.vendor }}">{{ s.vendor }}</span>{{ ui.pill(s.status[0], s.status[1]) }}{{ conf(s.confidence, s.confidence_text, s.confidence_ok, s.threshold) }}</div>
+    <div class="rvw-head-title"><span class="rvw-vendor" title="{{ s.vendor }}">{{ s.vendor }}</span>{{ ui.pill(s.status[0], s.status[1]) }}{{ conf(s.meters, s.threshold) }}</div>
     <div class="rvw-head-meta">{% for text, about in s.meta %}<span class="m" title="{{ about }}">{{ text }}
       {%- if about == "Invoice number" and s.number %}<button type="button" class="rvw-copy" data-copy-text="{{ s.number }}" title="Copy the invoice number" aria-label="Copy the invoice number"><span class="ms" aria-hidden="true">content_copy</span></button>{% endif %}</span>{% endfor %}
       <span class="chips">{% for t in s.taxes %}<span class="rq-tax">{{ t }}</span>{% endfor %}{% if s.learned %}{{ ui.pill("Learned pattern", "gray") }}{% endif %}</span></div>

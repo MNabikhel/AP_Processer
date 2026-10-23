@@ -120,6 +120,7 @@ def simulate_supplier(job: Job) -> dict[str, Any]:
 
 def _simulate(job: Job) -> dict[str, Any]:
     from ap_coder.capture import analyze, build_layout
+    from ap_coder.capture.confidence import apply_supplier_record, reading_confidence
     from ap_coder.capture.supplier import (
         AUTONOMOUS,
         SUPERVISED,
@@ -178,6 +179,8 @@ def _simulate(job: Job) -> dict[str, Any]:
             template = profile.get("template") or None
             capture = analyze(case.path, template=template, vendor=vendor, layout=layout, today=today)
             plain = analyze(case.path, vendor=vendor, layout=layout, today=today) if template else capture
+            if template:  # as offline_coder.read_invoice does: the supplier's record of each field (D-89)
+                apply_supplier_record(capture.fields, {n: (f.n, f.correct) for n, f in stats.fields.items()})
             recs = score_case(truth, capture)
             evidence.extend(
                 {"case": case.id, "scanned": case.scanned, "field": r["field"], "evidence": r["evidence"],
@@ -233,6 +236,8 @@ def _simulate(job: Job) -> dict[str, Any]:
                     **{k: got[k] for k in ("fields", "correct", "verified", "spurious", "fully_correct")},
                     "wrong_fields": got["wrong_fields"],
                     "accuracy": round(got["correct"] / got["fields"], 4) if got["fields"] else None,
+                    "reading": reading_confidence(capture.fields),  # the Reading shown (before the checks, D-89)
+                    "baseline_reading": reading_confidence(plain.fields),
                     "baseline_correct": base["correct"],
                     "baseline_verified": base["verified"],
                     "baseline_fully_correct": base["fully_correct"],
@@ -290,6 +295,33 @@ def wrong_approval(rows: list[dict[str, Any]], at: int) -> dict[str, Any]:
             "invoice_number_wrong": sum(WRONG_FIELD in r["wrong_fields"] for r in part),
         }
     return out
+
+
+CALIBRATION_BUCKETS = ((1, 1), (2, 5), (6, 20), (21, 10**9))
+
+
+def calibration(rows: list[dict[str, Any]], said: str, right: str, position: str = "index",
+                weight: str = "") -> dict[str, dict[str, Any]]:  # fmt: skip
+    """Per invoice-position bucket (1, 2-5, 6-20, 21+): the mean confidence the invoices were given (``said``) against
+    the share actually right (``right``: a share per invoice; ``weight``: what it is a share of, e.g. its fields, so the
+    share is over all of them), to check the confidence is honest (D-89). ``gap``: said minus right, in points."""
+    out = {}
+    for lo, hi in CALIBRATION_BUCKETS:
+        part = [r for r in rows if lo <= r[position] <= hi and r.get(said) is not None and r.get(right) is not None]
+        if not part:
+            continue
+        w = [float(r[weight]) if weight else 1.0 for r in part]
+        mean_said = sum(r[said] for r in part) / len(part)
+        share = sum(r[right] * x for r, x in zip(part, w, strict=True)) / (sum(w) or 1.0)
+        out[bucket_name(lo, hi)] = {"invoices": len(part), "said": round(mean_said, 4), "right": round(share, 4),
+                                    "gap": round(100 * (mean_said - share), 1)}  # fmt: skip
+    return out
+
+
+def calibration_table(calib: dict[str, dict[str, Any]], said: str = "mean Reading", right: str = "share right") -> str:
+    return _table(["invoice #", "invoices", said, right, "gap (points)"],
+                  [[b, m["invoices"], _pct(m["said"]), _pct(m["right"]), f"{m['gap']:+.1f}"]
+                   for b, m in calib.items()])  # fmt: skip
 
 
 def summarize_learning(rows: list[dict[str, Any]], wrong_at: int = 0) -> dict[str, Any]:
@@ -367,6 +399,17 @@ def summarize_learning(rows: list[dict[str, Any]], wrong_at: int = 0) -> dict[st
             for lay, ss in sorted(by_layout.items())
         },
         "wrong_approval": wrong_approval(rows, wrong_at) if wrong_at else None,
+        # Is the Reading honest? Its mean against the share of the printed fields read right (D-89); and the same
+        # invoices read without the template (a first-time supplier's Reading). The Coding: see the coding bench.
+        "calibration": {
+            "reading": calibration(rows, "reading", "accuracy", weight="fields"),
+            "reading_without_template": calibration(
+                [{**r, "accuracy": _ratio(r["baseline_correct"], r["fields"])} for r in rows],
+                "baseline_reading",
+                "accuracy",
+                weight="fields",
+            ),
+        },
         "why_not_touchless": _reasons([r for r in after_all if not r["auto"]], "reason"),
         "why_not_eligible": _reasons([r for r in rows if r["index"] > 1 and not r["eligible"]], "eligible_reason"),
     }
@@ -451,6 +494,14 @@ def render_markdown(report: dict[str, Any]) -> str:
                 for b, m in s["buckets"].items()
             ],
         ),
+        "## Calibration of the Reading\n",
+        "The Reading the review screen shows (before its checks take anything off: D-89), the mean over the invoices "
+        "of each position, against the share of their printed header fields actually read right. The Coding is "
+        "measured by the coding bench (this one reads headers only).\n",
+        calibration_table((s.get("calibration") or {}).get("reading") or {}),
+        "\nThe same invoices read without the supplier's template (as a first-time supplier's):\n",
+        calibration_table((s.get("calibration") or {}).get("reading_without_template") or {}),
+        "",
         "## Autonomy\n",
         f"- Suppliers that reached the policy: **{a['suppliers_ready']} of {s['suppliers']}**"
         + (
