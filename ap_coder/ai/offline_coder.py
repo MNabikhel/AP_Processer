@@ -414,7 +414,7 @@ def tax_codes(lines: list[LineItem], tax_lines: list[TaxLine], flags: list[str],
     regime = REGIME.get(province, frozenset())
     vendor_collects = {"PST": collects("PST", pst_number) if "PST" in regime or not regime else True,
                        "QST": collects("QST", qst_number) if "QST" in regime else True}  # fmt: skip
-    learned = learned_codes(lines, feedback, vendor) if feedback and vendor else None
+    learned = learned_codes(lines, feedback, vendor, province) if feedback and vendor else None
     return prefill(lines, tax_lines, flags, parse_legend(text), keep=keep or [], rate_for=rate_for,
                    vendor_collects=vendor_collects, learned=learned).lines  # fmt: skip
 

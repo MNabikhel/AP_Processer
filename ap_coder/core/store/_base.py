@@ -45,8 +45,8 @@ from ..schema import as_read
 
 # 10: erp_invoices, 11: coding_rules (by _SCHEMA), 12: currency, 13: credit notes not due,
 # 14: invoice_capture, supplier_profiles, supplier_outcomes (by _SCHEMA), 15: reader_outcomes, page_reads (by _SCHEMA),
-# 16: bank_accounts, our company's bank accounts (by _SCHEMA, D-66), 17: feedback.final_tax_code (filled from the
-# approved invoices) and template_snapshots (by _SCHEMA), D-70
+# 16: bank_accounts, our company's bank accounts (by _SCHEMA, D-66), 17: feedback.final_tax_code, tax_source and
+# tax_province (filled from the approved invoices, D-70, D-80) and template_snapshots (by _SCHEMA)
 SCHEMA_VERSION = 17
 # The one-off clean-ups of the learning memory ``_migrate`` has run on a database (settings.feedback_cleanup): a new
 # clean-up added there changes it, so it runs once on every database.
@@ -129,7 +129,8 @@ CREATE TABLE IF NOT EXISTS feedback (
     invoice_id INTEGER, line_number INTEGER,
     vendor_key TEXT NOT NULL, vendor_name TEXT NOT NULL, description TEXT NOT NULL, amount REAL,
     suggested_gl TEXT, final_gl TEXT NOT NULL, suggested_cc TEXT, final_cc TEXT,
-    outcome TEXT NOT NULL, reviewer TEXT, created_at TEXT NOT NULL, final_tax_code TEXT NOT NULL DEFAULT '');
+    outcome TEXT NOT NULL, reviewer TEXT, created_at TEXT NOT NULL, final_tax_code TEXT NOT NULL DEFAULT '',
+    tax_source TEXT NOT NULL DEFAULT '', tax_province TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS feedback_vendor ON feedback (vendor_key);
 CREATE INDEX IF NOT EXISTS invoices_status ON invoices (status);
 CREATE TABLE IF NOT EXISTS events (
@@ -604,9 +605,13 @@ class StoreCore:
             )
         # Each approved line remembers its tax code, learned from like its GL account (D-70): filled in from the
         # approved invoices (looked for whatever the version, like the columns above).
+        # Who decided it and where the invoice was supplied (D-80) came later in schema 17: a database already at 17
+        # without them gets them, and every code filled again (a kept learned code or a guess is no vote).
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(feedback)")}
-        if "final_tax_code" not in columns:
-            conn.execute("ALTER TABLE feedback ADD COLUMN final_tax_code TEXT NOT NULL DEFAULT ''")
+        missing = [c for c in ("final_tax_code", "tax_source", "tax_province") if c not in columns]
+        for column in missing:
+            conn.execute(f"ALTER TABLE feedback ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
+        if missing:
             self._fill_tax_codes(conn)
         if version < SCHEMA_VERSION:
             conn.execute(
@@ -617,23 +622,37 @@ class StoreCore:
 
     @staticmethod
     def _fill_tax_codes(conn: sqlite3.Connection) -> None:
-        """The tax code of each approved line's feedback row, from its invoice's approved coding (schema 17)."""
-        from ...coding.line_tax import approved_code
+        """The tax code of each approved line's feedback row, who decided it and where the invoice was supplied, from
+        its invoice's approved coding and what was proposed (schema 17, ``line_tax.tax_vote``). A line approved before
+        ``tax_exempt`` existed keeps its exemption only as a contradiction, never a vote (``LEGACY``, B-765)."""
+        from ...coding.line_tax import supply_province, tax_vote
 
+        found = conn.execute("SELECT value FROM settings WHERE key = 'our_province'").fetchone()
+        ours = str(found[0] if found else "").strip().upper()
+        bulk = {r[0] for r in conn.execute("SELECT invoice_id FROM events WHERE action = 'approved' AND "
+                                           "detail LIKE '%\"bulk\": true%'")}  # fmt: skip
         rows = conn.execute(
-            "SELECT DISTINCT i.id, i.final_output FROM invoices i JOIN feedback f ON f.invoice_id = i.id "
+            "SELECT DISTINCT i.id, i.final_output, i.ai_output FROM invoices i JOIN feedback f ON f.invoice_id = i.id "
             "WHERE i.final_output IS NOT NULL"
         ).fetchall()
         for r in rows:
             try:
                 final = json.loads(r["final_output"]) or {}
+                ai = json.loads(r["ai_output"] or "null") or {}
             except ValueError:
                 continue
             lines = [li for li in final.get("line_items") or [] if isinstance(li, dict)]
-            codes = {li.get("line_number"): approved_code(li, lines, final.get("tax_lines") or []) for li in lines}
+            proposed = [li for li in ai.get("line_items") or [] if isinstance(li, dict)]
+            province = supply_province(final, ours)
+            votes = {
+                li.get("line_number"): tax_vote(was, li, proposed, ai.get("tax_lines") or [], lines,
+                                                final.get("tax_lines") or [], bulk=r["id"] in bulk)
+                for was, li in pair_lines(proposed, lines)
+            }  # fmt: skip
             conn.executemany(
-                "UPDATE feedback SET final_tax_code = ? WHERE invoice_id = ? AND line_number = ?",
-                [(code, r["id"], number) for number, code in codes.items() if code],
+                "UPDATE feedback SET final_tax_code = ?, tax_source = ?, tax_province = ? "
+                "WHERE invoice_id = ? AND line_number = ?",
+                [(code, source, province, r["id"], number) for number, (code, source) in votes.items()],
             )
 
     @staticmethod

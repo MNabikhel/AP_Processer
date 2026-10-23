@@ -33,20 +33,21 @@ def _row(invoice_id: int, description: str, code: str, vendor: str = VENDOR) -> 
 
     return {"id": invoice_id, "invoice_id": invoice_id, "vendor_key": vendor_key(vendor), "vendor_name": vendor,
             "description": description, "final_gl": "6220", "final_cc": "", "outcome": "accepted",
-            "final_tax_code": code, "created_at": f"2026-01-{invoice_id:02d}"}  # fmt: skip
+            "final_tax_code": code, "tax_province": "BC", "tax_source": "approved",
+            "created_at": f"2026-01-{invoice_id:02d}"}  # fmt: skip
 
 
 def test_two_agreeing_approvals_teach_a_lines_code_one_does_not_and_a_contradiction_stops_it():
     lines = [_line(1, 400.0, "Electrician - labour, 4 h"), _line(2, 120.0, "LED panel 2x4 ft")]
     one = [_row(1, "Electrician - labour", "GST~PST")]
-    assert learned_codes(lines, one, VENDOR) == ["", ""]
+    assert learned_codes(lines, one, VENDOR, "BC") == ["", ""]
     two = [*one, _row(2, "ELECTRICIAN - LABOUR 2 h", "GST~PST")]
-    assert learned_codes(lines, two, VENDOR) == ["GST~PST", ""]
-    assert learned_codes(lines, two, "Another Vendor Inc.") == ["", ""]  # another vendor's history says nothing
+    assert learned_codes(lines, two, VENDOR, "BC") == ["GST~PST", ""]
+    assert learned_codes(lines, two, "Another Vendor Inc.", "BC") == ["", ""]  # another vendor's history says nothing
     contradicted = [*two, _row(3, "Electrician labour", "GST+PST")]
-    assert learned_codes(lines, contradicted, VENDOR) == ["", ""]
+    assert learned_codes(lines, contradicted, VENDOR, "BC") == ["", ""]
     # The same invoice approved twice (reopened, approved again) is one approval, not two.
-    assert learned_codes(lines, [one[0], {**one[0], "id": 9}], VENDOR) == ["", ""]
+    assert learned_codes(lines, [one[0], {**one[0], "id": 9}], VENDOR, "BC") == ["", ""]
 
 
 def test_a_learned_code_comes_before_the_subset_sum_guess_and_is_marked():
@@ -107,7 +108,8 @@ def test_a_learned_code_never_hides_a_tax_mismatch():
     assert not pst["ok"]
 
 
-def _approved(store: Store, path: Path, description: str, code: str) -> int:
+def _approved(store: Store, path: Path, description: str, code: str, proposed: str = "GST") -> int:
+    """An invoice proposed with the code ``proposed`` and approved with ``code`` (a person picked it, D-80)."""
     parsed = line_tax.parse_code(code)
     assert parsed is not None
     line = {"line_number": 1, "description": description, "quantity": 1, "unit_price": 400.0, "amount": 400.0,
@@ -116,8 +118,11 @@ def _approved(store: Store, path: Path, description: str, code: str) -> int:
     output = {"vendor_name": VENDOR, "invoice_number": path.stem, "invoice_date": "2026-08-21", "currency": "CAD",
               "subtotal": 400.0, "tax_lines": [{"tax_type": "GST", "province": "", "rate": 0.05,
                                                 "taxable_amount": 400.0, "tax_amount": 20.0}],
-              "tax_total": 20.0, "grand_total": 420.0, "line_items": [line]}  # fmt: skip
-    invoice_id = store.add_invoice(path, output, None)
+              "tax_total": 20.0, "grand_total": 420.0, "line_items": [line], "ship_to_province": "BC"}  # fmt: skip
+    was = line_tax.parse_code(proposed)
+    assert was is not None
+    ai = {**output, "line_items": [{**line, "taxes_applied": was[0], "tax_exempt": was[1], "tax_status": was[2]}]}
+    invoice_id = store.add_invoice(path, ai, None)
     store.approve_invoice(invoice_id, json.loads(json.dumps(output)), "Clerk")
     return invoice_id
 
