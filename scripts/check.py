@@ -78,7 +78,7 @@ def tests_for(files: list[str]) -> list[str] | None:
         elif path.parts[:1] == ("scripts",) and path.suffix == ".py":
             users = script_users(path.stem, test_texts)
         picked |= own | (set(users) if len(users) <= WIDE else set())
-    return sorted(str(p.relative_to(ROOT)) for p in picked)
+    return sorted(p.relative_to(ROOT).as_posix() for p in picked)  # tests/x.py on Windows too
 
 
 def pytest(args: list[str]) -> subprocess.CompletedProcess:
