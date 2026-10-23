@@ -765,3 +765,10 @@ def test_a_po_number_longer_than_jde_holds_is_kept_here_and_not_sent():
     assert "longer than 8" in jde.validate([inv], matched, AN8)[1][0]
     (finding,) = [f for f in jde.voucher_findings(inv["final_output"], matched, "10023") if f[1] == "JDE_PO_LONG"]
     assert finding[0] == "error"
+
+
+def test_a_line_with_no_gl_account_yet_has_no_e1_account():
+    """An uncoded line (UNASSIGNED) is not an object account: the review screen showed "CC400.UNASSIGN" (B-830)."""
+    settings = jde.JdeSettings(default_bu="CC400")
+    assert jde.account_for("UNASSIGNED", "", settings) is None and jde.account_text("UNASSIGNED", "", settings) == ""
+    assert jde.account_text("6010", "", settings) == "CC400.6010"

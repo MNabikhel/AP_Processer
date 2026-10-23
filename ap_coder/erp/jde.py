@@ -50,6 +50,7 @@ from ..coding.tax import CANADIAN_TAX_TYPES, OUTSIDE_CANADA, PLACE_OF_SUPPLY, PR
 from ..coding.vendors import norm_invoice_number
 from ..core.headers import header_key
 from ..core.memory import refresh_vendor_key, vendor_key
+from ..core.reference_data import UNASSIGNED
 
 SETTING_KEY = "jde_e1"
 FORMAT = "jde"
@@ -372,7 +373,7 @@ def resolve_an8(final: dict[str, Any], vendor_lookup: VendorLookup, settings: Jd
 def account_for(gl_code: str, cost_center: str, settings: JdeSettings) -> GlMap | None:
     """The E1 account of an AP Coder GL code (+ cost center), or None when it is not mapped."""
     gl, cc = _norm(gl_code), _norm(cost_center)
-    if not gl:
+    if not gl or gl == UNASSIGNED:  # a line still to code has no object account (B-830)
         return None
     exact = next((m for m in settings.gl_map if _norm(m.gl_code) == gl and _norm(m.cost_center) == cc), None)
     row = exact or next((m for m in settings.gl_map if _norm(m.gl_code) == gl and not _norm(m.cost_center)), None)
