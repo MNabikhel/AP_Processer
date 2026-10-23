@@ -166,6 +166,22 @@ def finalise_coding(
                 accounts, coding.currency, store.last_pay_from(vendor_key(coding.vendor_name))
             )
         bank_findings = banks.findings(coding.pay_from_account, coding.currency, accounts)
+    output = coding.to_output()
+    if not coding.ship_to_province:  # no ship-to printed: where it is delivered to us (tax.supply_source)
+        place, source = supply_source(coding, reference.tax)
+        # Stored beside the printed ship-to, never in it, so that recoding the lines moves it (worked out again
+        # each time); never the vendor's province: it stays a guess.
+        if source in (SUPPLY_SITE, SUPPLY_OURS):
+            output[PLACE_OF_SUPPLY] = place
+    output["gl_distribution"] = build_gl_distribution(coding, reference.tax)
+    # JD Edwards in use: what its batch would hold back, asked before approval (D-75).
+    erp_findings: list[tuple[str, str, str, int | None]] = []
+    if store is not None:
+        from ..erp import jde
+
+        if jde.in_use(store):
+            js = jde.load(store)
+            erp_findings = jde.voucher_findings(output, js, jde.resolve_an8(output, store.vendor_ids(), js))
     report = validate_coding(
         coding,
         reference,
@@ -182,15 +198,8 @@ def finalise_coding(
             received=received,
         ),
         po_findings=po_findings(coding, store, exclude_invoice_id) if store is not None else None,
+        erp_findings=erp_findings,
     )
-    output = coding.to_output()
-    if not coding.ship_to_province:  # no ship-to printed: where it is delivered to us (tax.supply_source)
-        place, source = supply_source(coding, reference.tax)
-        # Stored beside the printed ship-to, never in it, so that recoding the lines moves it (worked out again
-        # each time); never the vendor's province: it stays a guess.
-        if source in (SUPPLY_SITE, SUPPLY_OURS):
-            output[PLACE_OF_SUPPLY] = place
-    output["gl_distribution"] = build_gl_distribution(coding, reference.tax)
     return output, report
 
 

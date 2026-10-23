@@ -89,6 +89,7 @@
           <div><div>{{ f.text }}</div>
             {% if f.details %}<ul>{% for d in f.details %}<li>{{ d }}</li>{% endfor %}</ul>{% endif %}
           </div>
+          {% if f.undo %}<form method="post" action="{{ f.undo }}" class="flash-undo"><button type="submit" class="flash-act" title="Put it back in the review queue as it was"><span class="ms" aria-hidden="true">undo</span>Undo</button></form>{% endif %}
           <button type="button" class="flash-close" data-dismiss aria-label="Dismiss"><span class="ms" aria-hidden="true">close</span></button>
         </div>
         {% endfor %}

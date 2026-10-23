@@ -2,8 +2,8 @@
    POST /review/<id>/check). Each macro takes ``live`` (invoice_view.analyse(...).live) and the invoice id. #}
 
 {% macro conf(value, text, ok, threshold) -%}
-<span class="rq-conf {{ 'ok' if ok else 'warn' }}" title="Confidence; {{ threshold | pct }} or more needs no second look">
-  <span class="bar" aria-hidden="true"><i style="width: {{ (value * 100) | round | int }}%"></i></span><b>{{ text }}</b></span>
+<span class="rq-conf {{ 'ok' if ok else 'warn' }}" title="How sure AP Coder is of its reading and coding; {{ threshold | pct }} or more needs no second look">
+  <span class="rq-conf-label">Confidence</span><span class="bar" aria-hidden="true"><i style="width: {{ (value * 100) | round | int }}%"></i></span><b>{{ text }}</b></span>
 {%- endmacro %}
 
 {% macro head(title, hint="", aside="") -%}
@@ -49,7 +49,13 @@
   {% for g in groups %}<div class="rvw-status-group {{ g.kind }}">
     <div class="rvw-status-title"><span class="ms" aria-hidden="true">{{ {'block': 'block', 'err': 'error', 'warn': 'visibility'}[g.kind] }}</span><span>{{ g.title }}</span>
       {%- if g.kind == 'block' and sub %}<span class="rvw-status-key">{{ sub }}</span>{% endif %}</div>
+    {% if g.kind == 'warn' and g["items"] | length > 3 %}{# many to check: the first three, the rest folded (#14's five PO warnings) #}
+    <ul>{% for i in g["items"][:3] %}{{ check_item(i) }}{% endfor %}</ul>
+    <details class="rvw-status-more"><summary>{{ g["items"] | length - 3 }} more to check</summary>
+      <ul>{% for i in g["items"][3:] %}{{ check_item(i) }}{% endfor %}</ul></details>
+    {% else %}
     <ul>{% for i in g["items"] %}{{ check_item(i) }}{% endfor %}</ul>
+    {% endif %}
   </div>{% endfor %}
   {% else %}
   <div class="rvw-status-title"><span class="ms" aria-hidden="true">{{ icon }}</span><span>{{ title }}</span></div>
@@ -224,14 +230,16 @@
 {% macro posting_table(p) -%}
 {% set show_cc = p.rows | selectattr("cc") | list %}{# no cost center on any row (no list: D-53): no empty column #}
 <div class="rvw-gl table-wrap"><table class="apc-table">
-  <thead><tr><th></th><th>GL account</th>{% if show_cc %}<th>Cost center</th>{% endif %}<th>Description</th><th class="r">Net</th><th class="r">Non-rec. tax</th><th class="r">Amount</th></tr></thead>
+  <thead><tr><th></th><th>GL account</th>{% if show_cc %}<th>Cost center</th>{% endif %}{% if p.jde %}<th title="The JD Edwards account the line posts to: business unit . object . subsidiary">JDE account</th>{% endif %}<th class="c-desc">Description</th><th class="r c-net">Net</th><th class="r c-net">Non-rec. tax</th><th class="r">Amount</th></tr></thead>
   <tbody>{% for r in p.rows %}
     <tr><td><span class="rvw-kind">{{ r.kind }}</span></td>
       <td><div class="gl{{ ' todo' if r.todo else '' }}">{{ r.gl }}<small>{{ r.gl_name }}</small></div></td>
-      {% if show_cc %}<td>{{ r.cc }}</td>{% endif %}<td class="w">{{ r.description }}</td>
-      <td class="r">{{ r.net }}</td><td class="r">{{ r.nonrec }}</td><td class="r"><b>{{ r.amount }}</b></td></tr>
+      {% if show_cc %}<td>{{ r.cc }}</td>{% endif %}
+      {% if p.jde %}<td class="rvw-ani{{ ' bad' if r.account == 'not mapped' else ' muted' if r.account == 'posted by JD Edwards' else '' }}" data-ani>{{ r.account }}</td>{% endif %}
+      <td class="w c-desc">{{ r.description }}</td>
+      <td class="r c-net">{{ r.net }}</td><td class="r c-net">{{ r.nonrec }}</td><td class="r"><b>{{ r.amount }}</b></td></tr>
   {% endfor %}</tbody>
-  <tfoot><tr><td></td><td>{{ ui.pill("Balanced", "ok") if p.balanced else ui.pill("Off by " ~ p.off, "err") }}</td>{% if show_cc %}<td></td>{% endif %}<td>Total</td><td></td><td></td>
+  <tfoot><tr><td></td><td>{{ ui.pill("Balanced", "ok") if p.balanced else ui.pill("Off by " ~ p.off, "err") }}</td>{% if show_cc %}<td></td>{% endif %}{% if p.jde %}<td></td>{% endif %}<td class="c-desc">Total</td><td class="c-net"></td><td class="c-net"></td>
     <td class="r">{{ p.total }} <span class="rq-cur">{{ p.currency }}</span></td></tr></tfoot>
 </table></div>
 {%- endmacro %}
@@ -256,7 +264,7 @@
 <div class="rvw-post-sub">Fix the highlighted field to see the checks and approve.</div>
 {% else %}
 {% set b = live.bar %}
-<div class="rvw-post">
+<div class="rvw-post" data-not-ready="{% if b.pick %}{{ b.pick }}{% elif b.hard %}{{ b.hard[0] }}{% elif b.errors and not b.allow %}Tick “Approve anyway” and say why{% endif %}" data-credit="{{ '1' if b.credit else '' }}">
   <div class="rvw-post-amount">Post <b>{{ b.amount }}</b> {{ b.currency }}
     {% if live.math %}<span class="rvw-math {{ 'ok' if live.math.ok else 'bad' }}" title="{% for r in live.math.rows %}{{ '✓' if r.ok else '✕' }} {{ r.what }}: {{ r.detail }}&#10;{% endfor %}"><span class="ms" aria-hidden="true">{{ 'check' if live.math.ok else 'calculate' }}</span>Math: {{ live.math.text }}</span>{% endif %}</div>
   <div class="rvw-post-sub" title="What approving teaches AP Coder: {{ b.learn }}."><span class="ms" aria-hidden="true">school</span>
@@ -264,8 +272,10 @@
 </div>
 {% if b.pick %}{# a button to the first line that needs an account or a cost center (B-434; G does the same) #}
 <button type="button" class="apc-pill warn inv-pick" data-goto-pick aria-keyshortcuts="G" title="Go to the line (G)">{{ b.pick }}<span class="ms" aria-hidden="true">arrow_downward</span></button>
+{% elif b.hard %}{# never approved anyway: what makes the voucher invalid (D-75) #}
+<span class="apc-pill err inv-hard" role="note" title="{{ b.hard | join('; ') }}"><span class="ms" aria-hidden="true">block</span><span class="t">Not ready: {{ b.hard[0] }}</span>{% if b.hard | length > 1 %}<span class="more">+{{ b.hard | length - 1 }}</span>{% endif %}</span>
 {% elif b.errors %}
-<label class="check inv-override"><input type="checkbox" name="override" value="{{ b.override_key }}" form="inv"{% if b.override %} checked{% endif %}>
+<label class="check inv-override" title="Errors only: what makes the voucher invalid can never be approved anyway"><input type="checkbox" name="override" value="{{ b.override_key }}" form="inv"{% if b.override %} checked{% endif %}>
   Approve anyway, despite {{ b.errors | plural("error") }}</label>
 {% endif %}
 {% endif %}
@@ -277,5 +287,20 @@
 <form method="post" action="/review/{{ invoice_id }}/read-pages" class="inv-inline">
   <button type="submit" class="btn sm ghost"><span class="ms" aria-hidden="true">playlist_add</span>Add it to OvisOCR2's queue</button>
 </form>
+{% endif %}
+{%- endmacro %}
+
+{# The voucher as JD Edwards gets it (D-75): its header in E1's order, each value from the invoice or the settings. #}
+{% macro jde(live, invoice_id) -%}
+{% set j = live.jde %}
+{% if j %}
+<div class="inv-jde" aria-label="JD Edwards voucher">
+  <div class="inv-jde-head"><span class="rvw-group">JD Edwards voucher</span>
+    <a class="link small" href="{{ j.settings_url }}" title="The values marked “settings” come from Settings → JD Edwards E1 (for the pilot tester)">Change the settings<span class="ms" aria-hidden="true">settings</span></a></div>
+  <dl class="inv-jde-grid">
+    {% for r in j.rows %}<div class="inv-jde-row{{ ' from-settings' if r.source == 'settings' else '' }}" data-jde="{{ r.column }}">
+      <dt title="{{ r.column }}">{{ r.label }}</dt><dd>{{ r.value }}{% if r.source == 'settings' %} <span class="inv-jde-src" title="From Settings → JD Edwards E1: read-only here">settings</span>{% endif %}</dd></div>{% endfor %}
+  </dl>
+</div>
 {% endif %}
 {%- endmacro %}

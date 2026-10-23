@@ -82,15 +82,20 @@
 .inv-split {display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: start;}
 /* The page stays in view while the checks, lines and details beside it scroll (B-467). */
 .inv-split > .inv-doc {position: sticky; top: 8px; z-index: 2;}
-/* A wide screen gives the page more room (B-478). */
-@media (min-width: 1700px) {.inv-split {grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);}}
+/* A laptop (1366): the page a little wider than the form; a wide screen: the form wider, so the lines are one row
+   each (D-75). */
+@media (min-width: 1101px) and (max-width: 1699px) {.inv-split {grid-template-columns: minmax(0, 11fr) minmax(0, 9fr);}}
+@media (min-width: 1700px) {.inv-split {grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);}}
 .inv-split > .col > * + * {margin-top: 12px;}
 .inv-split .card {padding: 14px 16px;}
 .inv-split .card.flush {padding: 0;}
 @media (max-width: 1100px) {.inv-split {grid-template-columns: minmax(0, 1fr);} .inv-split > .inv-doc {position: static;}}
 
 .inv-doc > * + * {margin-top: 0;}
-.inv-doc-head {display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px 8px;}
+.inv-doc-head {display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px 6px 16px;}
+.inv-doc-tools {display: flex; align-items: center; gap: 4px; flex: none;}
+.inv-doc-more-body {width: min(420px, 90vw);}
+.inv-dot {display: inline-block; width: 7px; height: 7px; margin-left: 4px; border-radius: 50%; background: var(--apc-warn-dot, #f59e0b);}
 .inv-doc-notes {padding: 0 16px 8px; display: flex; flex-direction: column; gap: 4px;}
 .inv-doc-notes:empty {display: none;}
 .inv-doc > .inv-more {border-top: 1px solid var(--lg-hairline); padding: 0 16px;}
@@ -386,3 +391,159 @@ button.inv-pick .ms {font-size: 14px;}
 .inv-bank-printed[hidden] {display: none;}
 .inv-pay-none {display: block; padding: 8px 0;}
 .inv-details .inv-sure[hidden] {display: none;}
+
+/* ---- D-75: the review screen for a clerk entering a JD Edwards voucher ------------------------------------------ */
+/* Nothing focused hides under the approve bar (or the top of the window): Tab and focus() scroll past them (B-742). */
+html:has(.inv-actionbar) {scroll-padding-bottom: 104px; scroll-padding-top: 12px;}
+.rq-conf-label {font-size: 11.5px; color: var(--rv-subtle); margin-right: 6px; font-weight: 500;}
+.inv-summary {padding: 8px 18px;}
+.flash-undo {display: inline-flex; margin: 0;}
+
+/* A name with a menu says so: ⋮ beside it on hover or while its box has the focus. */
+.inv-menu-hint {display: inline-grid; place-items: center; width: 18px; height: 18px; margin-left: auto; padding: 0; border: 0;
+  border-radius: 4px; background: transparent; color: var(--lg-subtle); cursor: pointer; opacity: 0; transition: opacity .1s;}
+.inv-menu-hint .ms {font-size: 16px;}
+[data-field]:hover .inv-menu-hint, [data-field]:focus-within .inv-menu-hint {opacity: 1;}
+.inv-menu-hint:hover, .inv-menu-hint:focus-visible {background: var(--lg-neutral); color: var(--lg-text); opacity: 1;}
+.field .lbl {width: 100%;}
+
+/* A note with a one-click fix under a field: which date, an open PO, a value boxed on the page (D-75). */
+.inv-help {display: flex; align-items: center; flex-wrap: wrap; gap: 2px 6px; margin-top: 3px; font-size: 12px;
+  line-height: 16px; color: var(--lg-muted);}
+.inv-help[hidden] {display: none;}
+.inv-help > .ms {font-size: 14px; color: var(--lg-accent);}
+.inv-help .btn.sm {height: 22px; padding: 0 8px; font-size: 12px; color: var(--lg-accent); border: 1px solid var(--lg-accent-line);
+  background: var(--lg-accent-weak);}
+.inv-field-note {display: flex; align-items: center; gap: 4px; margin-top: 3px; font-size: 11.5px;}
+.inv-field-note .ms {font-size: 13px;}
+.inv-pay-note {display: flex; align-items: center; gap: 6px; margin: 4px 0 0;}
+.inv-pay-note .ms {font-size: 15px; color: var(--lg-subtle);}
+
+/* The JD Edwards voucher: its header in E1's order; what comes from the settings is marked so (read-only here). */
+.inv-jde {margin-top: 10px;}
+.inv-jde-head {display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding-top: 12px; border-top: 1px solid var(--rv-hairline);}
+.inv-jde-head .rvw-group {border: 0; padding: 0;}
+.inv-jde-head .link {display: inline-flex; align-items: center; gap: 3px;}
+.inv-jde-head .link .ms {font-size: 14px;}
+.inv-jde-grid {display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 2px 14px; margin: 6px 0 0;
+  font-size: 12.5px;}
+.inv-jde-row {display: flex; gap: 8px; align-items: baseline; padding: 3px 0; border-bottom: 1px dashed var(--lg-hairline); min-width: 0;}
+.inv-jde-row dt {flex: none; width: 92px; color: var(--rv-muted);}
+.inv-jde-row dd {margin: 0; min-width: 0; color: var(--rv-text); font-variant-numeric: tabular-nums; overflow-wrap: anywhere;}
+.inv-jde-src {font-size: 10.5px; color: var(--rv-subtle); border: 1px solid var(--lg-hairline); border-radius: 4px; padding: 0 4px;}
+.inv-jde-row.from-settings dd {color: var(--rv-muted);}
+
+/* The posting preview's JD Edwards account (BU.Object.Subsidiary). */
+.rvw-ani {font-family: var(--lg-mono, ui-monospace, monospace); font-size: 12px; white-space: nowrap;}
+.rvw-ani.bad {color: var(--lg-danger); font-family: inherit; font-weight: 600;}
+.rvw-ani.muted {color: var(--rv-subtle); font-family: inherit; white-space: normal;}
+.inv-posting, .inv-tax {container: card / inline-size;}
+@container card (max-width: 620px) {.rvw-gl .c-net {display: none;} .rvw-gl td.c-desc {max-width: 160px; white-space: normal;}
+  .rvw-gl th, .rvw-gl td {padding-left: 6px; padding-right: 6px;}}
+/* The tax lines beside the page (1366): two rows each, Tax · Province · Rate, then Taxable · Amount. */
+@container card (max-width: 560px) {
+  .inv-tax thead {position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0);}
+  .inv-tax tbody, .inv-tax table {display: block;}
+  .inv-tax tr[data-row] {display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 70px 28px;
+    grid-template-areas: "type prov rate del" "taxable taxable amount amount"; gap: 4px 6px; padding: 6px 0;
+    border-bottom: 1px solid var(--lg-hairline);}
+  .inv-tax tr[data-row] > td {display: block; padding: 0; width: auto !important; min-width: 0 !important; border: 0;}
+  .inv-tax tr[data-row] > td input {min-width: 0 !important;}
+  .inv-tax tr[data-row] > td:nth-child(1) {grid-area: type;} .inv-tax tr[data-row] > td:nth-child(2) {grid-area: prov;}
+  .inv-tax tr[data-row] > td:nth-child(3) {grid-area: rate;} .inv-tax tr[data-row] > td:nth-child(4) {grid-area: taxable;}
+  .inv-tax tr[data-row] > td:nth-child(5) {grid-area: amount;} .inv-tax tr[data-row] > td:nth-child(6) {grid-area: del;}
+  .inv-tax tr[data-row] > td:nth-child(4)::before {content: "Taxable"; font-size: 10.5px; color: var(--lg-subtle);}
+  .inv-tax tr[data-row] > td:nth-child(5)::before {content: "Amount"; font-size: 10.5px; color: var(--lg-subtle);}
+}
+@container card (max-width: 480px) {.rvw-gl .c-desc {display: none;}}
+
+/* The approve bar: what keeps a voucher from being approved, even anyway; "Approve anyway" with its reason. */
+.inv-actionbar-live {display: flex; align-items: center; gap: 16px; flex-wrap: wrap; min-width: 0;}
+.inv-hard {display: inline-flex; align-items: center; gap: 4px; max-width: min(460px, 100%);}
+@media (max-width: 1500px) {.inv-hard {max-width: min(330px, 100%);}}
+.inv-hard .t {overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;}
+.inv-hard .more {flex: none; font-weight: 600;}
+.inv-override-why {height: 30px; width: 260px; max-width: 100%; font-size: 13px; padding: 0 8px;}
+.inv-override-why[hidden] {display: none;}
+
+/* The # of a line fits 2 or 3 digits: no spinner arrows eating its room. */
+.inv-grid-table .c-no input {padding: 0 2px; -moz-appearance: textfield; appearance: textfield;}
+.inv-grid-table .c-no input::-webkit-inner-spin-button, .inv-grid-table .c-no input::-webkit-outer-spin-button {
+  -webkit-appearance: none; margin: 0;}
+.inv-lines-grid .c-no input {min-width: 0;}
+.inv-lines-head {display: flex; align-items: center; justify-content: space-between; gap: 8px;}
+.inv-qty-toggle {display: none; color: var(--rv-muted); gap: 4px; align-items: center;}
+
+/* JD Edwards keeps 30 characters of a line's description (VNEXA): the count while typing, a warning past it. */
+.inv-remark {display: block; margin-top: 1px; font-size: 11px; line-height: 13px; color: var(--rv-subtle); text-align: right;}
+.inv-remark[hidden] {display: none;}
+.inv-remark.over {color: var(--lg-warning);}
+.inv-lines-grid td.c-desc {position: relative;}
+/* past the limit, not being typed in: a small count in the box's corner, no extra row */
+.inv-remark.over:not(.typing) {position: absolute; right: 6px; bottom: -5px; padding: 0 4px; border-radius: 4px;
+  font-size: 10px; line-height: 12px; background: var(--lg-warning-weak); border: 1px solid var(--lg-warning); cursor: help;}
+.inv-lines-grid td.c-desc:has(.inv-remark.over) textarea {border-color: var(--lg-warning);}
+
+/* ---- Lines as a real grid when there is room: one row a line (# · description · GL · cost center · amount · tax
+   code · qty · unit price · delete), with the column names once above; the card of three rows when narrow (D-75). */
+.inv-lines {container: lines / inline-size;}
+@container lines (min-width: 640px) {
+  .inv-qty-toggle {display: inline-flex;}
+  .inv-lines-grid {--cols: 40px minmax(140px, 1fr) minmax(130px, 190px) 96px 128px 30px;
+    --areas: "no desc gl amt tax del";}
+  .inv-lines-grid.has-cc {--cols: 40px minmax(130px, 1fr) minmax(120px, 170px) minmax(96px, 130px) 96px 120px 30px;
+    --areas: "no desc gl cc amt tax del";}
+  .inv-lines-grid thead {position: static; width: auto; height: auto; overflow: visible; clip: auto; display: block;}
+  .inv-lines-grid thead tr {display: grid; grid-template-columns: var(--cols); grid-template-areas: var(--areas);
+    gap: 0 4px; border-bottom: 1px solid var(--lg-border);}
+  .inv-lines-grid thead th {display: block; padding: 4px 0; font-size: 11px; border: 0; white-space: nowrap; min-width: 0 !important;
+    width: auto !important; overflow: hidden; text-overflow: ellipsis; background: none;}
+  .inv-lines-grid input, .inv-lines-grid .pk-input {padding: 0 6px;}
+  .inv-lines-grid thead .c-del {visibility: hidden;}
+  .inv-lines-grid tr[data-row], .inv-lines-grid:has(.c-cc) tr[data-row] {grid-template-columns: var(--cols);
+    grid-template-areas: var(--areas); align-items: start; padding: 4px 0; gap: 0 4px;}
+  .inv-lines-grid td[data-label]::before {display: none;}
+  .inv-lines-grid .c-qty, .inv-lines-grid .c-price {display: none;}
+  .inv-lines-grid textarea {min-height: 28px; padding: 4px 8px;}
+  .inv-lines-grid input, .inv-lines-grid select, .inv-lines-grid .pk-input {height: 28px;}
+}
+@container lines (min-width: 720px) {
+  .inv-lines-grid.show-qty {--cols: 36px minmax(140px, 1fr) minmax(120px, 150px) 88px 104px 44px 82px 28px;
+    --areas: "no desc gl amt tax qty price del";}
+  .inv-lines-grid.show-qty .c-qty, .inv-lines-grid.show-qty .c-price {display: block;}
+}
+@container lines (min-width: 740px) {
+  .inv-lines-grid.has-cc.show-qty {--cols: 36px minmax(120px, 1fr) minmax(110px, 150px) minmax(86px, 110px) 86px 100px 44px 74px 26px;
+    --areas: "no desc gl cc amt tax qty price del";}
+}
+/* Between the widths: a line with qty and price shown keeps the card (the row would not hold them). */
+@container lines (min-width: 640px) and (max-width: 719px) {
+  .inv-lines-grid.show-qty thead {position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0);}
+  .inv-lines-grid.show-qty tr[data-row] {grid-template-columns: 44px minmax(0, 1fr) 64px 108px 92px 28px;
+    grid-template-areas: "no desc desc desc desc del" "gl gl gl gl amt amt" "tax tax tax qty price .";}
+  .inv-lines-grid.show-qty.has-cc tr[data-row] {grid-template-areas: "no desc desc desc desc del" "gl gl gl cc amt amt"
+    "tax tax tax qty price .";}
+  .inv-lines-grid.show-qty .c-qty, .inv-lines-grid.show-qty .c-price {display: block;}
+  .inv-lines-grid.show-qty td[data-label]::before {display: block;}
+  .inv-lines-grid.show-qty.compact tr[data-row]:not(:first-child) td[data-label]::before {display: none;}
+}
+@container lines (min-width: 720px) and (max-width: 739px) {
+  .inv-lines-grid.show-qty.has-cc thead {position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0);}
+  .inv-lines-grid.show-qty.has-cc tr[data-row] {grid-template-columns: 44px minmax(0, 1fr) 64px 108px 92px 28px;
+    grid-template-areas: "no desc desc desc desc del" "gl gl gl cc amt amt" "tax tax tax qty price .";}
+  .inv-lines-grid.show-qty.has-cc .c-qty, .inv-lines-grid.show-qty.has-cc .c-price {display: block;}
+  .inv-lines-grid.show-qty.has-cc td[data-label]::before {display: block;}
+  .inv-lines-grid.show-qty.has-cc.compact tr[data-row]:not(:first-child) td[data-label]::before {display: none;}
+}
+
+/* The Tax check fits beside the page at 1366: its Difference column shows (B-744). */
+@container lines (max-width: 560px) {
+  .inv-taxcheck th, .inv-taxcheck td {padding-left: 3px; padding-right: 3px;}
+  .inv-taxcheck td:nth-child(3), .inv-taxcheck th {white-space: normal;}
+  .inv-taxcheck {font-size: 12px;}
+}
+
+/* What must be fixed is never cut off with "…"; many things to check fold after the first three. */
+.rvw-status-group.err li .t, .rvw-status-group.block li .t {-webkit-line-clamp: unset; display: block;}
+.rvw-status-more > summary {cursor: pointer; margin: 4px 0 0 26px; font-size: 12px; color: var(--rv-muted);}

@@ -97,7 +97,7 @@ def test_the_shortcuts_list_has_the_page_viewers_keys_worded_as_on_the_review_sc
         review.get(f"/review/{inv['id']}").text.split("Shortcuts", 1)[1].split("</table>", 1)[0]
     )
     viewer = SHORTCUT_ROWS[4:]  # after the four invoice keys: the viewer's, then the menus, Undo, Park, Reject
-    assert len(viewer) == 9
+    assert len(viewer) == 13  # with Alt+PgUp/PgDn and the line keys (D-76)
     for spec, what in viewer:
         for rows in (help_rows, review_rows):
             assert what in rows, (what, rows)

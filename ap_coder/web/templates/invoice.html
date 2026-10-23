@@ -18,7 +18,6 @@
     {% if nav.position is not none %}
     <span class="rvw-pos">Reviewing <b class="n">{{ nav.position + 1 }}</b> of {{ nav.count }}<span class="rvw-pos-bar" aria-hidden="true"><i style="width: {{ nav.done_pct }}%"></i></span></span>
     {% endif %}
-    {% if lm_off %}<span class="apc-pill warn rvw-lm" title="{{ lm_off }}" role="note"><span class="ms" aria-hidden="true">visibility_off</span>LM Studio isn't running: a person approves it</span>{% endif %}
     <span class="spacer"></span>
     {% if mode == "review" %}
     <details class="pop">
@@ -36,9 +35,13 @@
           <tr><td>{{ ui.kbd("Ctrl") }} + wheel</td><td>Zoom where the pointer is (or pinch)</td></tr>
           <tr><td>{{ ui.kbd("H") }} or hold {{ ui.kbd("Space") }}</td><td>Drag to move the page</td></tr>
           <tr><td>{{ ui.kbd("R") }}</td><td>Turn the page (on screen only)</td></tr>
-          <tr><td>{{ ui.kbd("PgUp") }} {{ ui.kbd("PgDn") }}</td><td>Previous or next page</td></tr>
+          <tr><td>{{ ui.kbd("PgUp") }} {{ ui.kbd("PgDn") }}</td><td>Previous or next page of the invoice (outside a text box)</td></tr>
+          <tr><td>{{ ui.kbd("Alt") }} + {{ ui.kbd("PgUp") }} {{ ui.kbd("PgDn") }}</td><td>Previous or next page of the invoice, from anywhere</td></tr>
           <tr><td>{{ ui.kbd("Shift") }} + {{ ui.kbd("F10") }}</td><td>More options for a field, a line or the page (or right-click)</td></tr>
           <tr><td>{{ ui.kbd("Ctrl") }} + {{ ui.kbd("Z") }}</td><td>Undo the last change (a line deleted, a value cleared)</td></tr>
+          <tr><td>{{ ui.kbd("Ctrl") }} + {{ ui.kbd("D") }}</td><td>In a line: copy the coding of the line above</td></tr>
+          <tr><td>{{ ui.kbd("Alt") }} + {{ ui.kbd("Enter") }}</td><td>In a line: insert a line below</td></tr>
+          <tr><td>{{ ui.kbd("Alt") }} + {{ ui.kbd("Delete") }}</td><td>In a line: delete it (Ctrl+Z puts it back)</td></tr>
           <tr><td>{{ ui.kbd("P") }}</td><td>Park: opens Park, to say what it waits for</td></tr>
           <tr><td>{{ ui.kbd("X") }}</td><td>Reject: opens Reject, to say why (nothing is rejected until you press it)</td></tr>
           <tr><td>{{ ui.kbd("Enter") }} / {{ ui.kbd("Shift") }} + {{ ui.kbd("Enter") }}</td><td>Next or previous invoice detail</td></tr>
@@ -93,15 +96,19 @@
     <section class="card inv-details">
       {{ live_ui.head("Invoice details") }}
       {% set flags = live.flags or {} %}{% set filled = (draft.from_vendor.fields or {}) %}
+      {% macro menu_hint(label) -%}<button type="button" class="inv-menu-hint" data-menu-hint tabindex="-1" title="More options (right-click, or Shift+F10 in the box)" aria-label="More options for {{ label }}"><span class="ms" aria-hidden="true">more_vert</span></button>{%- endmacro %}
+      {% macro help_slot(name) -%}{% set h = (live.help or {}).get(name) %}<span class="inv-help small" data-help{% if not h %} hidden{% endif %}><span class="ms" aria-hidden="true">lightbulb</span><span data-help-text>{{ h.text if h else "" }}</span>{% for a in (h.actions if h else []) %}<button type="button" class="btn sm ghost" data-help-use="{{ a.value }}">{{ a.label }}</button>{% endfor %}</span>{%- endmacro %}
       {% macro field(name, cls="", type="text", placeholder="", hint="", step="", choices="") -%}
       {% set s = sure.get(name) %}{% set flags = live.flags or {} %}{% set filled = draft.from_vendor.fields or {} %}
       <label class="field {{ cls }}{% if name in flags %} is-flagged{% endif %}" data-field="{{ name }}"{% if name in absent_ok %} data-absent-ok{% endif %}{% if name in draft.absent %} data-absent{% endif %}>
-        <span class="lbl">{{ labels[name] }}{% if s %} <span class="inv-sure {{ s.tone }}" title="{{ s.help }}"{% if name in filled %} hidden{% endif %}><span class="ms" aria-hidden="true">{{ s.icon }}</span>{{ s.text }}</span>{% endif %}
-          {% if hint %}<span class="rvw-hint" title="{{ hint }}"><span class="ms" aria-hidden="true">info</span></span>{% endif %}</span>
+        <span class="lbl">{{ labels[name] }}{% if s %} <span class="inv-sure {{ s.tone }}" title="{{ s.help }}"{% if name in filled or name in flags %} hidden{% endif %}><span class="ms" aria-hidden="true">{{ s.icon }}</span>{{ s.text }}</span>{% endif %}
+          {% if hint %}<span class="rvw-hint" title="{{ hint }}"><span class="ms" aria-hidden="true">info</span></span>{% endif %}{{ menu_hint(labels[name]) }}</span>
         <input type="{{ type }}" name="{{ name }}" value="{{ draft.header[name] }}" form="inv"{% if placeholder %} placeholder="{{ placeholder }}"{% endif %}{% if step %} step="{{ step }}"{% endif %}{% if hint %} title="{{ hint }}"{% endif %}{% if choices %} data-picker="free" data-picker-noun="{{ name }}" data-choices="{{ choices }}" autocomplete="off"{% endif %}>
         <span class="inv-absent small muted"{% if name not in draft.absent %} hidden{% endif %}><span class="ms" aria-hidden="true">do_not_disturb_on</span>Not on this invoice</span>
         {% if name in tax_fields %}<span class="inv-from-vendor small muted" data-from-vendor-note{% if name not in filled %} hidden{% endif %}><span class="ms" aria-hidden="true">menu_book</span>{{ from_vendor_note }}</span>{% endif %}
         <span class="inv-flag small" data-flag{% if name not in flags %} hidden{% endif %}><span class="ms" aria-hidden="true">error</span><span data-flag-text>{{ flags.get(name, "") }}</span></span>
+        {{ help_slot(name) }}
+        {% if name == "payment_terms" and live.jde %}<span class="inv-field-note small muted" data-terms-note><span class="ms" aria-hidden="true">info</span>{% if live.jde.terms_sent %}JD Edwards gets the terms code from the settings, not these words{% else %}Not sent to JD Edwards: it uses the supplier's own terms{% endif %}</span>{% endif %}
       </label>
       {%- endmacro %}
       {% macro province(name, hint="") -%}
@@ -112,12 +119,13 @@
       <div class="inv-grid">
         {% set s = sure.get("vendor_name") %}
         <div class="field wide inv-vendor" data-field="vendor_name">
-          <label for="vendor-name"><span class="lbl">{{ labels["vendor_name"] }}{% if s %} <span class="inv-sure {{ s.tone }}" title="{{ s.help }}"><span class="ms" aria-hidden="true">{{ s.icon }}</span>{{ s.text }}</span>{% endif %}
-            <span class="rvw-hint" title="Pick the vendor from the vendor list: start typing its name. A vendor that is not in it can be added as a new vendor."><span class="ms" aria-hidden="true">info</span></span></span></label>
+          <label for="vendor-name"><span class="lbl">{{ labels["vendor_name"] }}{% if s %} <span class="inv-sure {{ s.tone }}" title="{{ s.help }}"{% if "vendor_name" in flags %} hidden{% endif %}><span class="ms" aria-hidden="true">{{ s.icon }}</span>{{ s.text }}</span>{% endif %}
+            <span class="rvw-hint" title="Pick the vendor from the vendor list: start typing its name. A vendor that is not in it can be added as a new vendor."><span class="ms" aria-hidden="true">info</span></span>{{ menu_hint(labels["vendor_name"]) }}</span></label>
           {# The vendor list to pick from: the picker (static/js/picker.js), with the vendors of #vendor-data (D-56). #}
           <input id="vendor-name" type="text" name="vendor_name" value="{{ draft.header["vendor_name"] }}" form="inv" data-picker="free" data-picker-noun="vendor" autocomplete="off"
-                 placeholder="Start typing to pick from the vendor list" aria-describedby="vendor-match">
-          <div class="inv-vendor-match small" id="vendor-match" data-vendor-match aria-live="polite"></div>
+                 placeholder="Start typing to pick from the vendor list" aria-describedby="vendor-match" title="{{ draft.header["vendor_name"] }}">
+          <div class="inv-vendor-match small" id="vendor-match" data-vendor-match aria-live="polite"{% if live.an8 is not none %} data-an8="{{ live.an8 }}"{% endif %}></div>
+          <span class="inv-flag small" data-flag{% if "vendor_name" not in flags %} hidden{% endif %}><span class="ms" aria-hidden="true">error</span><span data-flag-text>{{ flags.get("vendor_name", "") }}</span></span>
           <details class="pop inv-vendor-add" data-vendor-add>
             <summary class="btn sm ghost"><span class="ms" aria-hidden="true">person_add</span>Add new vendor…</summary>
             <div class="pop-body stack">
@@ -164,7 +172,7 @@
             {% for code, label, currency in pay_from.options %}<option value="{{ code }}" data-currency="{{ currency }}"{% if code == pay_from.value %} selected{% endif %}>{{ label }}</option>{% endfor %}
           </select>
           {% else %}
-          <span class="small muted inv-pay-none"><a class="link" href="/accounts?tab=bank">Add your bank accounts</a> on GL accounts &amp; tax to choose which account pays</span>
+          <span class="small muted inv-pay-none">None set up yet: see the note under Amounts</span>
           {% endif %}
           <span class="inv-flag small" data-flag{% if 'pay_from_account' not in flags %} hidden{% endif %}><span class="ms" aria-hidden="true">error</span><span data-flag-text>{{ flags.get("pay_from_account", "") }}</span></span>
         </label>
@@ -184,15 +192,18 @@
         {{ field("grand_total", type="number", step="0.01") }}
       </div>
       <div data-live="amounts">{{ live_ui.amounts(live, inv.id) }}</div>
+      {% if not pay_from.any %}<p class="small muted inv-pay-note"><span class="ms" aria-hidden="true">account_balance</span>To choose which of your bank accounts pays (Pay from), <a class="link" href="/accounts?tab=bank">add your bank accounts</a> on GL accounts &amp; tax.</p>{% endif %}
+      <div data-live="jde">{{ live_ui.jde(live, inv.id) }}</div>
     </section>
 
 
     <section class="card inv-lines">
-      {{ live_ui.head("Line items", "Change a GL account or cost center in its cell; add or delete lines below the grid.") }}
+      <div class="inv-lines-head">{{ live_ui.head("Line items", "Change a GL account or cost center in its cell; add or delete lines below the grid. Right-click a line for more.") }}
+        <label class="check small inv-qty-toggle" title="Show each line's quantity and unit price"><input type="checkbox" data-show-qty{% if grid.show_qty %} checked{% endif %}> Qty and price</label></div>
       <div class="table-wrap">
-        <table class="apc-table inv-grid-table inv-lines-grid{% if grid.lines | length > 3 %} compact{% endif %}" id="lines">
-          <thead><tr><th>#</th><th>Description</th><th><span class="rvw-sr">Delete</span></th><th>GL account</th>{% if grid.has_cc %}<th>Cost center</th>{% endif %}
-            <th class="r">Amount</th><th>Tax code</th><th class="r">Qty</th><th class="r">Unit price</th></tr></thead>
+        <table class="apc-table inv-grid-table inv-lines-grid{% if grid.lines | length > 3 %} compact{% endif %}{% if grid.has_cc %} has-cc{% endif %}{% if grid.show_qty %} show-qty{% endif %}" id="lines"{% if live.jde %} data-remark-limit="30"{% endif %}>
+          <thead><tr><th class="c-no">#</th><th class="c-desc">Description</th><th class="c-del"><span class="rvw-sr">Delete</span></th><th class="c-gl">GL account</th>{% if grid.has_cc %}<th class="c-cc">Cost center</th>{% endif %}
+            <th class="r c-amt">Amount</th><th class="c-tax">Tax code</th><th class="r c-qty">Qty</th><th class="r c-price">Unit price</th></tr></thead>
           <tbody data-grid="lines">{{ grids.line_rows(grid) }}</tbody>
         </table>
       </div>
@@ -246,13 +257,6 @@
       <div data-live="reasons">{{ live_ui.reasons(live, inv.id) }}</div>
     </section>
 
-    <div data-live="po" class="inv-live">{{ live_ui.po(live, inv.id) }}</div>
-    <div data-live="suggest" class="inv-live">{{ live_ui.suggest(live, inv.id) }}</div>
-
-    {% include "_invoice_notes.html" %}
-  </div>
-</div>
-
 <section class="card inv-tax">
   {{ live_ui.head("Tax lines, as printed on the invoice", "The taxes the invoice charges. A tax line's taxable amount follows the lines whose tax code carries it, unless you typed it; its amount is what the invoice charges.") }}
   <div class="table-wrap">
@@ -266,12 +270,23 @@
 </section>
 
 <section class="card inv-posting">
-  {{ live_ui.head("GL posting preview", "The journal lines approval sends to the ERP.") }}
+  {{ live_ui.head("GL posting preview", "The journal lines approval sends to the ERP" ~ (", with each line's JD Edwards account (BU.Object.Subsidiary)." if live.jde else ".")) }}
   <div data-live="posting">{{ live_ui.posting(live, inv.id) }}</div>
 </section>
 
-<div class="inv-actionbar" role="region" aria-label="Approve">
-  <div class="inv-actionbar-left" data-live="bar">{{ live_ui.bar(live, inv.id) }}</div>
+    <div data-live="po" class="inv-live">{{ live_ui.po(live, inv.id) }}</div>
+    <div data-live="suggest" class="inv-live">{{ live_ui.suggest(live, inv.id) }}</div>
+
+    {% include "_invoice_notes.html" %}
+  </div>
+</div>
+
+<div class="inv-actionbar" role="region" aria-label="Approve" data-menu-floor>
+  <div class="inv-actionbar-left"><div class="inv-actionbar-live" data-live="bar">{{ live_ui.bar(live, inv.id) }}</div>
+    {# Why "Approve anyway": kept with the approval (D-75); shown while the box is ticked. Outside the bar drawn again
+       after each check, so what is typed stays. #}
+    <input type="text" name="override_reason" form="inv" class="inv-override-why" data-override-reason maxlength="300"
+           value="{{ draft.override_reason }}" placeholder="Why approve anyway? (kept with the approval)" aria-label="Why approve anyway"{% if not live.bar or not live.bar.override %} hidden{% endif %}></div>
   <div class="inv-actionbar-right">
     <span class="inv-checking small muted" data-checking role="status" aria-live="polite"></span>
     <details class="pop up" data-park>
@@ -305,7 +320,7 @@
       </form>
     </details>
     <button class="btn primary" type="submit" form="inv" data-approve aria-keyshortcuts="Control+Enter" title="Approve & teach (Ctrl+Enter)"{% if not live.ok or not live.bar.allow %} disabled{% endif %}>
-      <span class="ms" aria-hidden="true">check</span>Approve &amp; teach</button>
+      <span class="ms" aria-hidden="true">check</span><span data-approve-label>{{ "Approve credit note" if live.bar and live.bar.credit else "Approve &amp; teach" | safe }}</span></button>
   </div>
 </div>
 

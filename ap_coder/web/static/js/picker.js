@@ -216,6 +216,7 @@ class Picker {
     this.name();
     this.sync();
     input.addEventListener("focus", () => {  // the list stays closed: Tab through a grid is quiet (D-56)
+      this.before = input.value; // a free box's value before typing: Esc puts it back
       this.name();
       if (!this.free) this.input.select(); // typing replaces the choice shown (focused by a script too: G, a finding)
     });
@@ -475,6 +476,7 @@ class Picker {
     }
     if (this.free) {
       this.close(false);
+      this.before = it.value;
       if (this.input.value !== it.value) {
         this.input.value = it.value;
         fire(this.input);
@@ -532,6 +534,11 @@ class Picker {
       e.preventDefault();
       e.stopPropagation(); // only the list closes, not the popover it is in, nor teaching a field
       this.close();
+      // A free box (the vendor): what was typed since it was focused goes, the value as it was comes back.
+      if (this.free && this.typed && this.before !== undefined && this.input.value !== this.before) {
+        this.input.value = this.before;
+        this.input.dispatchEvent(new Event("input", { bubbles: true }));
+      }
     } else if (k === "Tab") {
       const i = this.tabChoice();
       if (i >= 0) this.pick(i);

@@ -77,6 +77,7 @@ def validate_coding(
     duplicate_of: list[int] | None = None,
     vendor_findings: list[tuple[str, str, str]] | None = None,
     po_findings: list[tuple[str, str, str, int | None]] | None = None,
+    erp_findings: list[tuple[str, str, str, int | None]] | None = None,
 ) -> ValidationReport:
     """``history`` is ``memory.compare_with_history`` output; ``duplicate_of`` lists stored invoice ids
     with the same vendor and invoice number."""
@@ -91,6 +92,8 @@ def validate_coding(
     for severity, code, message in vendor_findings or []:  # vendor master / fraud signals (vendors.py)
         add(severity, code, message)
     for severity, code, message, line in po_findings or []:  # purchase order match (po.py)
+        add(severity, code, message, line)
+    for severity, code, message, line in erp_findings or []:  # what the ERP's batch would refuse (erp/jde.py)
         add(severity, code, message, line)
 
     # --- Header -----------------------------------------------------------

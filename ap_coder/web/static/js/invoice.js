@@ -19,7 +19,7 @@
 */
 
 import { HEADERS, follow, post, toast } from "./app.js";
-import { register } from "./ctxmenu.js";
+import { openFor, register } from "./ctxmenu.js";
 import { InvoiceViewer } from "./invoice_viewer.js";
 import { enhance, fold, registerGroups, setAction, setSource, setValue } from "./picker.js";
 
@@ -80,6 +80,7 @@ function applySections(answer, posted = null) {
     }
   }
   if (approveButton) approveButton.disabled = !answer.allow;
+  showBarState();
   // the lines' tax codes where the invoice is supplied now, and the lines the Tax check points at (D-64)
   if (Array.isArray(answer.tax_codes)) setTaxCodeOptions(answer.tax_codes, answer.tax_code_labels);
   if (answer.tax_marks && typeof answer.tax_marks === "object") showTaxMarks(answer.tax_marks);
@@ -107,15 +108,27 @@ async function check() {
     } while (queued);
   })();
   if (checking) checking.textContent = "Checking…";
+  let saved = false;
   try {
     await running;
+    saved = true;
   } finally {
     running = null;
-    if (checking) checking.textContent = "";
+    // Every edit is kept as a draft on the server as it is checked: say so, so leaving the page is no worry.
+    if (checking) checking.textContent = saved && edited ? `Draft saved ${clock()}` : "";
+    if (checking) checking.title = saved && edited ? "Your edits are kept: leave and come back, they are still here. Approving records them." : "";
   }
 }
 
+let edited = false; // an edit made on this page (the opening check keeps nothing new)
+
+function clock() {
+  const d = new Date();
+  return `${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
 function soon(ms = 450) {
+  edited = true;
   followTicks(); // every edit comes here: a tax line's taxable follows the lines whose tax code carries it (B-610)
   clearTimeout(timer);
   timer = setTimeout(check, ms);
@@ -216,7 +229,9 @@ document.addEventListener("click", (e) => {
     const html = tpl.innerHTML.replaceAll("__KEY__", newKey());
     body.insertAdjacentHTML("beforeend", html);
     enhance(body.lastElementChild);
-    body.lastElementChild?.querySelector("input:not([type=hidden]), select")?.focus();
+    // a new line: its description, where it starts (B-742); a tax line: its tax
+    const fresh = body.lastElementChild;
+    (fresh?.querySelector('[name="line_description"]') || fresh?.querySelector("input:not([type=hidden]), select"))?.focus();
     if (which === "lines") fillSplitLines();
     soon(0);
     return;
@@ -446,6 +461,12 @@ export function vendorKey(name) {
   return words.join(" ");
 }
 
+/** "Red River Office Interiors’" and "Pacific Office Supply Ltd.’s": never "Interiors's" (B-740). */
+export function possessive(name) {
+  const text = String(name || "").trim();
+  return /s$/i.test(text) ? `${text}’` : `${text}’s`;
+}
+
 function businessNumber(value) {
   const digits = (value || "").replace(/\D/g, "");
   return digits.length >= 9 ? digits.slice(0, 9) : "";
@@ -475,8 +496,15 @@ function showVendorMatch() {
   if (!vendorInput || !vendorMatch) return;
   const typed = vendorKey(vendorInput.value);
   const found = typed ? vendors.list.find((v) => (v.key ?? vendorKey(v.name)) === typed) : null;
+  const sure = vendorInput.closest("[data-field]")?.querySelector(".lbl .inv-sure");
+  const flagged = vendorInput.closest("[data-field]")?.classList.contains("is-flagged");
+  if (sure) sure.hidden = sure.dataset.dropped === "1" || flagged || (!found && vendors.enforced && vendors.list.length > 0);
   if (found) {
-    const id = found.id ? ` · ${found.id}` : "";
+    const an8 = vendorMatch.dataset.an8;
+    // JD Edwards in use: the supplier number it gets (AN8), said as such
+    const valid = /^\d{1,8}$/.test(an8 || "");
+    const id = an8 !== undefined ? (valid ? ` · AN8 ${an8}` : an8 ? ` · ${an8}, not an AN8` : " · no AN8")
+      : found.id ? ` · ${found.id}` : "";
     if (found.added) vendorLine("person_add", "warn", `Added here, not in JD Edwards yet${id}`);
     else if (!vendors.enforced) vendorLine("history", "ok", "Approved before"); // no vendor master: a past vendor
     else vendorLine("verified", "ok", `In the vendor list${id}`);
@@ -487,7 +515,7 @@ function showVendorMatch() {
   const bn = filled ? "" : businessNumber(input("gst_hst_registration_number")?.value);
   const byNumber = bn ? vendors.list.find((v) => businessNumber(v.gst) === bn) : null;
   if (byNumber) {
-    vendorLine("info", "warn", `The GST/HST number printed is ${byNumber.name}'s.`, {
+    vendorLine("info", "warn", `The GST/HST number printed is ${possessive(byNumber.name)}.`, {
       label: `Use ${byNumber.name}`,
       run: () => setVendor(byNumber.name),
     });
@@ -620,13 +648,66 @@ function applyHeader(header, posted) {
   }
   showFromVendor();
   if (header.flags) showFlags(header.flags);
+  if (header.help) showHelp(header.help);
+  if (vendorMatch && "an8" in header) {
+    if (header.an8 === null || header.an8 === undefined) delete vendorMatch.dataset.an8;
+    else vendorMatch.dataset.an8 = header.an8;
+    showVendorMatch();
+  }
 }
+
+/** A note with a one-click fix under a field (which of two dates, an open PO, a value boxed on the page), from the
+    server's ``help``: {field: {text, actions: [{label, value}]}}. */
+function showHelp(help) {
+  document.querySelectorAll(".inv-details [data-field]").forEach((field) => {
+    const box = field.querySelector(":scope > [data-help]");
+    if (!box) return;
+    const h = help[field.dataset.field];
+    box.hidden = !h;
+    box.querySelectorAll("[data-help-use]").forEach((b) => b.remove());
+    const text = box.querySelector("[data-help-text]");
+    if (text) text.textContent = h ? h.text : "";
+    for (const a of (h && h.actions) || []) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "btn sm ghost";
+      b.dataset.helpUse = a.value;
+      b.textContent = a.label;
+      box.append(b);
+    }
+  });
+}
+
+/* A help note's button puts its value in the field (with Undo), and the focus stays in that field. */
+document.addEventListener("click", (e) => {
+  const use = e.target.closest?.("[data-help-use]");
+  if (!use) return;
+  e.preventDefault(); // a button inside the field's <label>: not a click on the box
+  const field = use.closest("[data-field]");
+  const name = field?.dataset.field;
+  const el = name && input(name);
+  if (!el) return;
+  const value = use.dataset.helpUse;
+  undoable(`${fieldName(name)}: ${value} put in.`, () => {
+    el.value = value;
+    setAbsent(name, false);
+    headerEdited(el);
+    viewer?.setEdited(name, value, false);
+    use.closest("[data-help]").hidden = true;
+    if (name === "vendor_name") showVendorMatch();
+    soon(0);
+  });
+  el.focus();
+});
 
 /** The invoice details a check is about: amber, with its note under it (the checks list them too). */
 function showFlags(flags) {
   document.querySelectorAll(".inv-details [data-field]").forEach((field) => {
     const note = flags[field.dataset.field] || "";
     field.classList.toggle("is-flagged", Boolean(note));
+    // "Verified" never sits beside what a check says is wrong with the field (B-740)
+    const sure = field.querySelector(".lbl .inv-sure");
+    if (sure && note) sure.hidden = true;
     const box = field.querySelector(":scope > [data-flag]");
     if (!box) return;
     box.hidden = !note;
@@ -1145,7 +1226,7 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     flush().then(() => {
       if (!approveButton.disabled) form.requestSubmit(approveButton);
-      else toast({ text: "Not ready to approve yet: see the bar at the bottom.", tone: "warn" });
+      else toast({ text: `Not ready to approve: ${notReady()}`, tone: "warn" }); // the reason, not "see the bar" (B-743)
     });
     return;
   }
@@ -1203,7 +1284,33 @@ function snapshot() {
     lines: grid("lines"),
     taxes: grid("taxes"),
     edits: viewer?.editsNow(),
+    focus: focusKey(document.activeElement),
   };
+}
+
+/** Where the focus is, so Undo can put it back there: a box of the form by name (and its row). */
+function focusKey(el) {
+  if (!el || el === document.body || el.tagName === "MAIN") return null;
+  const tr = el.closest?.("[data-grid] > tr");
+  const box = el.closest?.(".pk")?.querySelector("select") || el;
+  const name = box.name || (tr ? "line_description" : "");
+  if (!name) return null;
+  return { row: tr?.dataset.row || "", grid: tr?.closest("[data-grid]")?.dataset.grid || "", name };
+}
+
+function focusBack(key) {
+  if (!key) return false;
+  let scope = document;
+  if (key.grid) {
+    scope = [...document.querySelectorAll(`[data-grid="${key.grid}"] > tr`)].find((tr) => tr.dataset.row === key.row);
+    if (!scope) return false;
+  }
+  const el = key.grid ? scope.querySelector(`[name="${CSS.escape(key.name)}"]`) : input(key.name);
+  const target = el?.classList.contains("pk-native") ? el.closest(".pk")?.querySelector(".pk-input") : el;
+  if (!target || !target.getClientRects().length) return false;
+  target.focus({ preventScroll: true });
+  target.scrollIntoView({ block: "nearest" });
+  return document.activeElement === target;
 }
 
 /** A row of a grid from its template, with the values of ``state`` (rowState), put after ``after`` or at the end. */
@@ -1277,6 +1384,7 @@ function undo() {
   const { snap } = undoState;
   dropUndo();
   restore(snap);
+  focusBack(snap.focus) || focusFirstToCheck(true); // the focus where it was before the change (B-742)
   toast({ text: "Put back as it was.", tone: "ok", icon: "undo" }, 2500);
   check();
   return true;
@@ -1345,6 +1453,12 @@ function headerEdited(el) {
   const label = el.closest?.(".inv-details [data-field]");
   if (!label || el.name !== label.dataset.field) return;
   if (el.value.trim() && absentList().includes(el.name)) setAbsent(el.name, false);
+  // The reading's "Verified" / "Likely 97%" vouched for what was read, not for this: it goes (B-740).
+  const sure = label.querySelector(".lbl .inv-sure");
+  if (sure) {
+    sure.hidden = true;
+    sure.dataset.dropped = "1";
+  }
   if (el.name in TAX_FIELDS) setFromVendor({ ...fromVendor(), fields: stillFilled(fromVendor()) }); // typed over: theirs
   viewer?.setEdited(el.name, el.value.trim(), absentList().includes(el.name));
 }
@@ -1513,7 +1627,11 @@ function deleteRow(tr) {
     const next = tr.nextElementSibling || tr.previousElementSibling;
     tr.remove();
     if (which === "lines") fillSplitLines();
-    next?.querySelector("input:not([type=hidden]), textarea, select")?.focus({ preventScroll: true });
+    // the focus to the line that took its place (its description), else the button that adds one (B-742)
+    const to = next?.querySelector('[name="line_description"]') || next?.querySelector("input:not([type=hidden]), textarea, select") ||
+      document.querySelector(`[data-add-row="${which}"]`);
+    to?.focus({ preventScroll: true });
+    to?.scrollIntoView({ block: "nearest" });
     soon(0);
   });
 }
@@ -1541,6 +1659,32 @@ function openSplit(tr) {
   setTimeout(() => split.querySelector('[name="part_pct"]')?.focus(), 50);
 }
 
+function copyAbove(tr) {
+  const rows = gridRows();
+  const above = rows[rows.indexOf(tr) - 1];
+  if (!above || blank(above.querySelector('[name="line_gl"]'))) {
+    toast({ text: above ? "The line above has no GL account yet." : "It is the first line: there is none above.", tone: "info" }, 3000);
+    return;
+  }
+  const what = tr.querySelector('[name="line_cc"]') ? "GL account and cost center" : "GL account";
+  undoable(`${lineName(tr)}: ${what} copied from the line above.`, () => {
+    setGl(tr, above.querySelector('[name="line_gl"]').value, above.querySelector('[name="line_cc"]')?.value);
+    soon(0);
+  });
+}
+
+function insertBelow(tr) {
+  return undoable("Line added.", () => {
+    const row = makeRow("lines", { key: newKey(), values: {}, taxes: [] }, tr);
+    numberNew(row);
+    fillSplitLines();
+    row.querySelector('[name="line_description"]')?.focus();
+    soon(0);
+  });
+}
+
+/** A line's menu (B-741): grouped (its coding, its tax code, the line itself), what can't be done left out rather than
+    greyed, and Delete last, apart, with its key. */
 function lineMenu(tr) {
   const rows = gridRows();
   const i = rows.indexOf(tr);
@@ -1551,55 +1695,57 @@ function lineMenu(tr) {
   const without = others.filter((r) => blank(r.querySelector('[name="line_gl"]')));
   const n = lineNo(tr);
   const suggested = n ? document.querySelector(`[data-live="suggest"] .inv-sugg[data-line="${CSS.escape(n)}"] [data-gl]`) : null;
-  const what = cc ? "GL account and cost center" : "GL account";
+  const what = cc ? "coding" : "GL account";
+  const taxItems = taxCodeItems(tr, above, others).filter((it) => it && !it.disabled);
+  const confirm = taxItems.find((it) => it.id === "tax-confirm");
+  const moreTax = taxItems.filter((it) => it !== confirm);
   return [
-    { icon: "delete", label: "Delete line", id: "delete", hint: "", run: () => deleteRow(tr) },
+    suggested ? { icon: "add_task", label: `Use the suggested account (${suggested.dataset.gl})`, id: "suggested", run: () => suggested.click() } : null,
+    above && !blank(above.querySelector('[name="line_gl"]')) ? { icon: "vertical_align_top", label: `Copy the ${what} from the line above`, hint: "Ctrl+D", id: "above", run: () => copyAbove(tr) } : null,
+    !blank(gl) && without.length ? { icon: "playlist_add_check", label: `Use GL ${gl.value} on the ${without.length === 1 ? "line" : `${without.length} lines`} without one`, id: "fill",
+      run: () => undoable(`GL ${gl.value} put on ${without.length === 1 ? "1 line" : `${without.length} lines`}.`, () => {
+        without.forEach((r) => setGl(r, gl.value));
+        soon(0);
+      }) } : null,
+    !blank(gl) ? { icon: "backspace", label: "Clear GL account", id: "clear-gl",
+      run: () => undoable(`${lineName(tr)}: GL account cleared.`, () => {
+        setGl(tr, "UNASSIGNED");
+        soon(0);
+      }) } : null,
+    "-",
+    confirm || null,
+    moreTax.length ? { icon: "percent", label: "Tax code", id: "tax", items: moreTax } : null,
+    "-",
+    { icon: "add_row_below", label: "Insert a line below", hint: "Alt+Enter", id: "insert", run: () => insertBelow(tr) },
     { icon: "control_point_duplicate", label: "Duplicate line", id: "duplicate", run: () => undoable(`${lineName(tr)} duplicated.`, () => {
       const copy = makeRow("lines", { ...rowState(tr), key: newKey() }, tr);
       numberNew(copy);
       fillSplitLines();
+      copy.querySelector('[name="line_description"]')?.focus();
       soon(0);
     }) },
-    { icon: "add_row_below", label: "Insert a line below", id: "insert", run: () => undoable("Line added.", () => {
-      const row = makeRow("lines", { key: newKey(), values: {}, taxes: [] }, tr);
-      numberNew(row);
-      fillSplitLines();
-      row.querySelector('[name="line_description"]')?.focus();
-      soon(0);
-    }) },
+    n ? { icon: "call_split", label: "Split this line…", id: "split", run: () => openSplit(tr) } : null,
     "-",
-    { icon: "call_split", label: "Split this line…", id: "split", disabled: n ? false : "Give the line a number first", run: () => openSplit(tr) },
-    suggested ? { icon: "add_task", label: `Use the suggested account (${suggested.dataset.gl})`, id: "suggested", run: () => suggested.click() } : null,
-    { icon: "vertical_align_top", label: `Copy the ${what} from the line above`, id: "above",
-      disabled: !above ? "It is the first line" : blank(above.querySelector('[name="line_gl"]')) ? "The line above has no GL account yet" : false,
-      run: () => undoable(`${lineName(tr)}: ${what} copied from the line above.`, () => {
-        setGl(tr, above.querySelector('[name="line_gl"]').value, above.querySelector('[name="line_cc"]')?.value);
-        soon(0);
-      }) },
-    { icon: "backspace", label: "Clear GL account", id: "clear-gl", disabled: blank(gl) ? "It has none yet" : false,
-      run: () => undoable(`${lineName(tr)}: GL account cleared.`, () => {
-        setGl(tr, "UNASSIGNED");
-        soon(0);
-      }) },
-    "-",
-    ...taxCodeItems(tr, above, others),
-    "-",
-    { icon: "playlist_add_check", label: "Use this GL account on the lines without one", id: "fill",
-      disabled: blank(gl) ? "Pick this line's GL account first" : !without.length ? "Every other line has a GL account" : false,
-      run: () => undoable(`GL ${gl.value} put on ${without.length === 1 ? "1 line" : `${without.length} lines`}.`, () => {
-        without.forEach((r) => setGl(r, gl.value));
-        soon(0);
-      }) },
-    { icon: "done_all", label: "…on every line", id: "fill-all", disabled: blank(gl) ? "Pick this line's GL account first" : !others.length ? "It is the only line" : false,
-      run: () => {
-        if (!confirm(`Put GL account ${gl.value} on every line (${rows.length} lines), replacing the accounts they have?`)) return;
-        return undoable(`GL ${gl.value} put on every line.`, () => {
-          others.forEach((r) => setGl(r, gl.value));
-          soon(0);
-        });
-      } },
+    { icon: "delete", label: "Delete line", hint: "Alt+Del", id: "delete", danger: true, run: () => deleteRow(tr) },
   ];
 }
+
+/* A line's keys, in any of its boxes: Ctrl+D the coding of the line above (as Excel fills down), Alt+Enter a line
+   below, Alt+Delete deletes it (Ctrl+Z puts it back). */
+document.addEventListener("keydown", (e) => {
+  const tr = e.target.closest?.('[data-grid="lines"] > tr');
+  if (!tr || e.defaultPrevented || e.metaKey) return;
+  if (e.ctrlKey && !e.altKey && !e.shiftKey && (e.key === "d" || e.key === "D")) {
+    e.preventDefault(); // never the browser's bookmark
+    copyAbove(tr);
+  } else if (e.altKey && !e.ctrlKey && !e.shiftKey && e.key === "Enter") {
+    e.preventDefault();
+    insertBelow(tr);
+  } else if (e.altKey && !e.ctrlKey && !e.shiftKey && e.key === "Delete") {
+    e.preventDefault();
+    deleteRow(tr);
+  }
+});
 
 /* ---------- The tax lines ---------- */
 
@@ -1900,7 +2046,16 @@ document.addEventListener("keydown", (e) => {
     // Not in a text box, where Ctrl+Z is the box's own; but in a box of the review form nothing was typed in since
     // the change (typing there drops the Undo), as after a right-click in it: there the change is what to undo.
     if (typing(e.target) && e.target.form !== form) return;
-    if (undo()) e.preventDefault();
+    if (undo()) {
+      e.preventDefault();
+      return;
+    }
+    // Outside a text box the browser's own undo would take a character off the last box typed in, maybe off the
+    // screen, and that would be kept (B-739): never. In a box of the form, its own typing is the browser's to undo.
+    if (!(typing(e.target) && e.target.tagName !== "SELECT")) {
+      e.preventDefault();
+      toast({ text: "Nothing to undo.", tone: "info", icon: "undo" }, 2500);
+    }
     return;
   }
   if (e.ctrlKey || e.metaKey || e.shiftKey || typing(e.target)) return;
@@ -1949,6 +2104,126 @@ async function sendNote() {
   noteForm.querySelector("input[type=text]")?.focus();
 }
 
+/* ---------- The approve bar: why it is closed, "Approve anyway" with a reason, a credit note ---------- */
+
+const overrideWhy = document.querySelector("[data-override-reason]");
+
+/** Why Approve is closed, in a few words (the bar's own). */
+function notReady() {
+  const why = document.querySelector("[data-live=bar] [data-not-ready]")?.dataset.notReady || "";
+  if (why) return `${why.replace(/\.$/, "")}.`;
+  const box = document.querySelector("[name=override]");
+  if (box && !box.checked) return "tick “Approve anyway” and say why.";
+  if (box && overrideWhy && !overrideWhy.value.trim()) return "say why you approve it anyway.";
+  return "see the bar at the bottom.";
+}
+
+/** Nothing focused hides under the approve bar, however tall it is (B-742): the page's scroll padding is its height. */
+function padForBar() {
+  const bar = document.querySelector(".inv-actionbar");
+  if (bar) document.documentElement.style.scrollPaddingBottom = `${Math.round(bar.getBoundingClientRect().height) + 16}px`;
+}
+window.addEventListener("resize", padForBar);
+
+function showBarState() {
+  padForBar();
+  const box = document.querySelector("[data-live=bar] [name=override]");
+  if (overrideWhy) {
+    const was = overrideWhy.hidden;
+    overrideWhy.hidden = !(box && box.checked);
+    overrideWhy.disabled = overrideWhy.hidden; // not sent while hidden
+    if (was && !overrideWhy.hidden && document.activeElement === box) overrideWhy.focus();
+  }
+  const credit = document.querySelector("[data-live=bar] [data-credit]")?.dataset.credit === "1";
+  const label = approveButton?.querySelector("[data-approve-label]");
+  if (label) label.textContent = credit ? "Approve credit note" : "Approve & teach";
+}
+
+document.addEventListener("change", (e) => {
+  if (e.target.name === "override" && e.target.checked && overrideWhy) {
+    overrideWhy.hidden = false;
+    overrideWhy.disabled = false;
+    overrideWhy.focus();
+  }
+});
+
+/* ---------- The ⋮ beside a name with a menu, a line's remark, Qty and price ---------- */
+
+document.addEventListener("click", (e) => {
+  const hint = e.target.closest?.("[data-menu-hint]");
+  if (!hint) return;
+  e.preventDefault();
+  const field = hint.closest("[data-field]");
+  const box = field && input(field.dataset.field);
+  box?.focus({ preventScroll: true }); // Esc gives the focus back to the box
+  openFor(field, hint);
+});
+
+const remarkLimit = Number(document.getElementById("lines")?.dataset.remarkLimit || 0);
+
+/** JD Edwards keeps 30 characters of a line's description (VNEXA): the count while typing, a warning past it. */
+function showRemark(textarea, typingNow) {
+  const note = textarea?.closest("td")?.querySelector("[data-remark]");
+  if (!note || !remarkLimit) return;
+  const n = textarea.value.trim().length;
+  const over = n > remarkLimit;
+  note.hidden = !(over || typingNow);
+  note.classList.toggle("over", over);
+  note.classList.toggle("typing", Boolean(typingNow));
+  // past the limit: the count, and while typing what JD Edwards keeps (its title says it too)
+  note.textContent = over && typingNow
+    ? `${n}/${remarkLimit}: JD Edwards keeps “${textarea.value.trim().slice(0, remarkLimit)}”`
+    : `${n}/${remarkLimit}`;
+  note.title = over ? `JD Edwards keeps the first ${remarkLimit} characters: “${textarea.value.trim().slice(0, remarkLimit)}”` : "";
+}
+
+document.addEventListener("focusin", (e) => {
+  if (e.target.name === "line_description") showRemark(e.target, true);
+});
+document.addEventListener("focusout", (e) => {
+  if (e.target.name === "line_description") showRemark(e.target, false);
+});
+document.addEventListener("input", (e) => {
+  if (e.target.name === "line_description") showRemark(e.target, true);
+});
+
+document.querySelector("[data-show-qty]")?.addEventListener("change", (e) => {
+  document.getElementById("lines")?.classList.toggle("show-qty", e.target.checked);
+});
+
+/* ---------- Alt+PgDn / Alt+PgUp: the invoice's next or previous page from anywhere ---------- */
+
+document.addEventListener("keydown", (e) => {
+  if (!viewer || !e.altKey || e.ctrlKey || e.metaKey || (e.key !== "PageDown" && e.key !== "PageUp")) return;
+  if (!viewer.pages || viewer.pages.length < 2) return;
+  e.preventDefault();
+  viewer.showPage(viewer.page + (e.key === "PageDown" ? 1 : -1));
+});
+
+/* ---------- The focus on opening: the first thing to check (B-742) ---------- */
+
+/** The first invoice detail a check is about (flagged, a note to act on, a reading to check), else the first line
+    still to code, else the vendor. ``always``: even when something else has the focus. */
+function focusFirstToCheck(always = false) {
+  const active = document.activeElement;
+  if (!always && active && active !== document.body && active.tagName !== "MAIN") return false;
+  const fields = [...document.querySelectorAll(".inv-details [data-field]")].filter((f) => f.getClientRects().length);
+  const wanted = fields.find((f) => f.classList.contains("is-flagged")) ||
+    fields.find((f) => f.querySelector(":scope > [data-help]:not([hidden])")) ||
+    fields.find((f) => f.querySelector(".lbl .inv-sure.warn:not([hidden]), .lbl .inv-sure.err:not([hidden])"));
+  let box = wanted ? input(wanted.dataset.field) : null;
+  if (!box) {
+    const pick = [...document.querySelectorAll('select[form="inv"][name="line_gl"], select[form="inv"][name="line_cc"]')]
+      .find((b) => blank(b));
+    box = pick ? pick.closest(".pk")?.querySelector(".pk-input") || pick : null;
+  }
+  box = box || vendorInput;
+  if (!box || !box.getClientRects().length) return false;
+  box.focus({ preventScroll: true });
+  box.scrollIntoView({ block: "nearest" });
+  return true;
+}
+
 /* ---------- Start ---------- */
 
 showMailLanguage();
@@ -1956,5 +2231,8 @@ fillSplitLines();
 showVendorMatch();
 for (const name of absentList()) viewer?.setEdited(name, "", true); // marked before: the Fields list says so
 lastSums = tickedSums(); // what the tax lines follow from now on (B-610)
-// The queue shows what this screen shows: check once on opening (today's checks, and any draft kept).
-if (form) check();
+showBarState();
+document.querySelectorAll('[data-grid="lines"] textarea[name="line_description"]').forEach((t) => showRemark(t, false));
+// The queue shows what this screen shows: check once on opening (today's checks, and any draft kept); then the
+// focus goes to the first thing to check, unless the clerk is somewhere already.
+if (form) check().then(() => focusFirstToCheck());
