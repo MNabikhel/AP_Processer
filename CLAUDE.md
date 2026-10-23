@@ -9,17 +9,39 @@ reports, `intake` pictures and emails, `ops` command line and doctor, `capture` 
 `bench` the accuracy benchmark). `scripts/`: launcher, installer, update, offline bundle. `tests/`: pytest. `docs/`:
 guides, the bug log (BUGS.md) and decisions (decisions.md). Search the code to find things; the code is the reference.
 
+## Where things live
+- One invoice, start to end: `ai/pipeline.py` (`finalise_coding`); reading: `capture/reader.py`; the schema:
+  `core/schema.py`.
+- The database (`Store`): `core/store.py` (approvals `approve_invoice`/`final_approve`, `events`, `SCHEMA_VERSION`).
+  Who the reviewer is: `web/identity.py`.
+- Checks (findings with a code): `coding/validation.py` (`validate_coding` gathers them), payment terms
+  `coding/terms.py`, tax `coding/tax.py` (`check_taxes`, `place_of_supply`), the Tax check `coding/taxmath.py`, line
+  tax codes `coding/line_tax.py`, ITCs and self-assessment `coding/taxreturn.py`, vendors `coding/vendors.py`. Every
+  check code needs a `CheckHelp` in `ops/help.py` (`tests/test_help.py` enforces it).
+- Exports: `erp/exports.py` (Excel/CSV), `erp/jde.py` (JD Edwards). Reports: the rest of `erp/`.
+- The review screen: routes `web/pages/invoice.py`, view `web/invoice_view.py`, `web/templates/invoice.html`,
+  `web/static/js/invoice.js`. Other pages: `web/pages/<page>.py` + `web/templates/<page>.html`.
+- Tests: `tests/test_<module>.py` for most modules; fixtures `tests/conftest.py` (`reference`, `ground_truth`), web
+  helpers `tests/webclient.py` (`client_for`, `add_clean`).
+
 ## Rules
 - Fully offline at run time: nothing connects to the internet unless `AP_ALLOW_INTERNET=1` (developers, the bundle
   builder). The Azure check is opt-in, off by default.
 - No company data in the repo: the data folder (`private/` or `~/APCoder`) and `.env` are git-ignored.
 - User-facing wording: "pilot tester" for the person running the pilot, never "manager". Plain English.
-- A bug fix starts with a failing test, then the fix, then an entry in docs/BUGS.md. Significant choices go in
-  docs/decisions.md (next D-NN).
-- Old flat module paths (`ap_coder/store.py` and the like) are aliases of the moved modules: edit the real module.
+- A bug fix starts with a failing test, then the fix, then one line at the end of docs/BUGS.md (format at its top).
+  Significant choices go in docs/decisions.md (next D-NN).
+
+## Working here in few steps
+Every step re-reads the whole conversation, so fewer, fuller steps cost less:
+- Put independent lookups in one command (several `grep -n` / `sed -n A,Bp` joined with `;`), and read the lines
+  around a match rather than whole files: `core/store.py` and `capture/reader.py` are ~4,000 lines each.
+- Make the change, then check once with `python scripts/check.py`; don't wait on the whole suite (CI runs it).
 
 ## Run and test
 - Set up: `python -m venv .venv`, activate it, `pip install -e ".[ocr,dev]"` (or double-click `APProcessor.bat` / `APProcessor.command`).
 - Run: `python -m ap_coder serve` (http://127.0.0.1:8501); `python -m ap_coder doctor`; `python scripts/pilot_check.py`.
-- Test: `python -m pytest -q tests` (serially, no xdist). Run the tests of what you changed first; the full suite takes ~9 minutes.
+- Check a change: `python scripts/check.py` (ruff on the changed files, then their tests; a minute or two).
+- Test: `python -m pytest -q` runs all but the slow tests (a few minutes; serially, no xdist). The whole suite with the
+  browser tests, `python -m pytest -q -m ""`, takes ~25 minutes: CI runs it on every push, so leave it to CI.
 - Lint: `ruff check ap_coder tests scripts` and `ruff format --check ap_coder tests scripts`.
