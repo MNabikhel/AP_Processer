@@ -174,7 +174,8 @@ def test_replace_proposal_updates_an_invoice_nobody_has_worked_on(store, ground_
     report = SimpleNamespace(to_dict=lambda: _report(0.97))  # a ValidationReport, or its dict
     assert store.replace_proposal(invoice_id, better, report, capture, meta)
     inv = store.get_invoice(invoice_id)
-    assert inv["status"] == REVIEW and inv["ai_output"] == better and inv["validation"] == _report(0.97)
+    assert inv["status"] == REVIEW and inv["ai_output"] == better
+    assert inv["validation"] == {**_report(0.97), "checks_stamp": store.checks_stamp()}  # B-815
     assert (inv["model_confidence"], inv["adjusted_confidence"], inv["requires_review"]) == (0.97, 0.97, 0)
     assert (inv["invoice_number"], inv["grand_total"], inv["currency"]) == ("NW-2026-0913", 18018.85, "USD")
     assert (inv["po_key"], inv["due_date"]) == (po_key("PO-1"), "2026-10-14")
