@@ -10,8 +10,9 @@ reports, `intake` pictures and emails, `ops` command line and doctor, `capture` 
 guides, the bug log (BUGS.md) and decisions (decisions.md). Search the code to find things; the code is the reference.
 
 ## Where things live
-- One invoice, start to end: `ai/pipeline.py` (`finalise_coding`); reading: `capture/reader.py`; the schema:
-  `core/schema.py`.
+- One invoice, start to end: `ai/pipeline.py` (`finalise_coding`); the schema: `core/schema.py`. Reading: the rule
+  reader `capture/reader/` (parts: labels, values, spatial, patterns, totals, line_items, entry: `read_fields`); the
+  vision model `ai/page_reader.py`; their merged result `ai/reading.py`; the plain text `capture/transcript.py`.
 - The database (`Store`): the package `core/store/`, one part per subject (list in its `__init__.py`): `invoices.py`
   (approvals `approve_invoice`/`final_approve`), `_base.py` (schema, `SCHEMA_VERSION`), `accounts.py` (`events`).
   Who the reviewer is: `web/identity.py`.
@@ -36,7 +37,7 @@ guides, the bug log (BUGS.md) and decisions (decisions.md). Search the code to f
 ## Working here in few steps
 Every step re-reads the whole conversation, so fewer, fuller steps cost less:
 - Put independent lookups in one command (several `grep -n` / `sed -n A,Bp` joined with `;`), and read the lines
-  around a match rather than whole files: `capture/reader.py` is ~3,900 lines.
+  around a match rather than whole files.
 - Make the change, then check once with `python scripts/check.py`; don't wait on the whole suite (CI runs it).
 
 ## Run and test
