@@ -56,6 +56,7 @@ from ap_coder.coding.tax import (
     PLACE_OF_SUPPLY,
     PROVINCE_NAMES,
     TAX_TYPES,
+    meals_note,
     place_of_supply,
     province_label,
     stored_supply,
@@ -738,6 +739,9 @@ def grid(reference: ReferenceData, draft: Draft, ai: dict[str, Any] | None = Non
         "tax_labels": {t: TAX_LABELS.get(t, t) for t in TAX_TYPES},
         "tax_provinces": tax_province_options(),
         "has_cc": reference.cost_centers is not None,
+        # The GL accounts marked meals and entertainment, and the note on a line coded to one (D-90).
+        "meals_gls": " ".join(sorted(getattr(reference.tax, "meals_gl_codes", ()) or ())),
+        "meals_note": meals_note(codes["province"]),
     }
 
 
@@ -1066,6 +1070,40 @@ def confidence_pct(value: float, threshold: float) -> str:
     return pct(value, threshold)
 
 
+METER_ABOUT = {
+    "Reading": (
+        "How sure AP Coder is of what it read: the supplier, number, dates, amounts and tax numbers. It rises as AP "
+        "approves this supplier's invoices."
+    ),
+    "Coding": (
+        "How sure AP Coder is of the lines' GL accounts, cost centers and tax codes. A line still to code counts as "
+        "nothing."
+    ),
+}
+
+
+def confidences(report: Any) -> list[tuple[str, float]]:
+    """[("Reading", 0.97), ("Coding", 0.75)]: the two numbers of D-89 (a report without them: its one Confidence)."""
+    reading = getattr(report, "reading_confidence", None)
+    coding = getattr(report, "coding_confidence", None)
+    if reading is None or coding is None:
+        return [("Confidence", report.adjusted_confidence or 0.0)]
+    return [("Reading", reading), ("Coding", coding)]
+
+
+def low_confidence(report: Any) -> list[str]:
+    """What is below the review threshold, as the checks say it ("Reading 80% is below the 85% threshold."). The
+    Coding is not said when a line still to code (or an account or cost center to pick) is why: that finding says it
+    (D-89)."""
+    from ap_coder.coding.validation import COUNTED_IN_CODING
+
+    picks = any(i.code in COUNTED_IN_CODING for i in report.issues)
+    return [f"{name} {confidence_pct(value, report.review_threshold)} is below the {report.review_threshold:.0%} "
+            "threshold."
+            for name, value in confidences(report)
+            if value < report.review_threshold and not (name == "Coding" and picks)]  # fmt: skip
+
+
 # The groups of the checks, in order: what keeps Approve closed (a GL account or cost center to pick: G goes to the
 # first), the errors (to fix, or to approve anyway), and the warnings to check (B-465).
 BLOCK, FIX, LOOK = "block", "err", "warn"
@@ -1075,7 +1113,7 @@ GROUP_TITLES = {BLOCK: "Before you can approve", FIX: "Must be fixed", LOOK: "Ch
 def checks_summary(report: Any, errors: list[Any], warnings: list[Any]) -> dict[str, Any]:
     """All the checks as one status: passed, or what needs attention (one line each; details below), grouped:
     before you can approve (what keeps Approve closed), must be fixed, check before approving."""
-    low = report.requires_review and not errors
+    low = low_confidence(report) if not errors else []
     items: list[dict[str, Any]] = []
     for bad, text, code, lines in grouped_issues(errors + warnings):
         kind = BLOCK if code in GOTO_BOX else FIX if bad else LOOK
@@ -1086,9 +1124,8 @@ def checks_summary(report: Any, errors: list[Any], warnings: list[Any]) -> dict[
         field = "" if lines else CODE_FIELDS.get(code) or FIELD_FLAGS.get(code, ("", None))[0]
         items.append({"bad": kind != LOOK, "kind": kind, "text": text, "goto": goto, "links": links, "code": code,
                       "field": field})  # fmt: skip
-    if low:
-        items.append({"bad": False, "kind": LOOK, "text": f"Confidence {confidence_pct(report.adjusted_confidence, report.review_threshold)} "  # noqa: E501
-                      f"is below the {report.review_threshold:.0%} threshold."})  # fmt: skip
+    for text in low:
+        items.append({"bad": False, "kind": LOOK, "text": text})
     if not items:
         return {"tone": "ok", "icon": "check_circle", "title": "All checks passed", "items": [], "groups": [],
                 "sub": "Totals reconcile, taxes verified, all codes valid."}  # fmt: skip
@@ -1115,11 +1152,9 @@ def checks_details(report: Any) -> list[dict[str, str]]:
                       "code": issue.code,
                       "hint": "" if kind == "info" else hint})  # fmt: skip
     errors = [i for i in report.issues if i.severity == "error"]
-    if report.requires_review and not errors:
+    for text in low_confidence(report) if not errors else []:
         items.append({"kind": "warning", "title": "Low confidence", "code": "", "hint": "",
-                      "message": f"Confidence {confidence_pct(report.adjusted_confidence, report.review_threshold)} "
-                                 f"is below the {report.review_threshold:.0%} threshold, so a person should look it "
-                                 "over."})  # fmt: skip
+                      "message": text.rstrip(".") + ", so a person should look it over."})  # fmt: skip
     matches = [h for h in report.checks.get("history") or [] if h["status"] == "match"]
     if matches:
         numbers = ", ".join(str(h["line_number"]) for h in matches)
@@ -1265,7 +1300,7 @@ def summary(coding: InvoiceCoding, report: Any, errors: list[Any], warnings: lis
         (f"GST/HST {coding.gst_hst_registration_number}" if coding.gst_hst_registration_number else "",
          "Supplier's GST/HST number"),
     ]  # fmt: skip
-    look = len(warnings) + (1 if report.requires_review and not errors else 0)
+    look = len(warnings) + (len(low_confidence(report)) if not errors else 0)
     status = ((f"{len(errors)} to fix", "err") if errors else ("Needs attention", "warn") if look
               else ("Ready to approve", "ok"))  # fmt: skip
     value = max(0.0, min(1.0, report.adjusted_confidence or 0.0))
@@ -1276,6 +1311,17 @@ def summary(coding: InvoiceCoding, report: Any, errors: list[Any], warnings: lis
         "confidence": value,
         "confidence_text": confidence_pct(value, report.review_threshold),
         "confidence_ok": value >= report.review_threshold,
+        # Reading and Coding (D-89): each with its share, as shown, and whether it is up to the threshold.
+        "meters": [
+            {
+                "name": name,
+                "value": max(0.0, min(1.0, v or 0.0)),
+                "text": confidence_pct(max(0.0, min(1.0, v or 0.0)), report.review_threshold),
+                "ok": (v or 0.0) >= report.review_threshold,
+                "about": METER_ABOUT.get(name, ""),
+            }
+            for name, v in confidences(report)
+        ],
         "threshold": report.review_threshold,
         "meta": [(t, about) for t, about in meta if t],
         "taxes": [TAX_LABELS.get(t, t) for t in dict.fromkeys(t.tax_type for t in coding.tax_lines)],

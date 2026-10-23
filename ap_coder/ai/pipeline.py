@@ -32,7 +32,7 @@ from ..core.schema import InvoiceCoding
 from . import azure_check, verifier
 from .extraction import SUPPORTED_EXTENSIONS, TEXT_EXTENSIONS, DocumentExtractor, ExtractionResult
 from .imaging import render_page_images
-from .inference import MODEL_SUGGESTED, CodingError, CodingResult, InvoiceCoder
+from .inference import CHAT_SUGGESTED, MODEL_SUGGESTED, CodingError, CodingResult, InvoiceCoder
 
 if TYPE_CHECKING:
     from ..core.store import Store
@@ -68,6 +68,8 @@ class PipelineResult:
             row.update(
                 model_confidence=self.report.model_confidence,
                 adjusted_confidence=self.report.adjusted_confidence,
+                reading_confidence=self.report.reading_confidence,
+                coding_confidence=self.report.coding_confidence,
                 requires_review=self.report.requires_review,
                 errors=len(self.report.errors),
                 warnings=len(self.report.warnings),
@@ -201,6 +203,20 @@ def finalise_coding(
         erp_findings=erp_findings,
     )
     return output, report
+
+
+def _mark_chat_accounts(coding: InvoiceCoding) -> None:
+    """Each line's account the chat model chose, coding the whole invoice (Azure OpenAI), marked a guess
+    (``CHAT_SUGGESTED``), as the local model's are: its ``confidence_score`` is about the header (D-89), so without
+    the mark the Coding took every known account as sure (B-894)."""
+    from ..core.reference_data import UNASSIGNED
+    from .offline_coder import unsure
+
+    for li in coding.line_items:
+        if li.predicted_gl_code in ("", UNASSIGNED) or unsure(li.reasoning_justification):
+            continue
+        reason = str(li.reasoning_justification or "").strip()
+        li.reasoning_justification = f"{CHAT_SUGGESTED}: {reason}" if reason else CHAT_SUGGESTED
 
 
 def _model_line_taxes(coding: InvoiceCoding, text: str, feedback: list[dict[str, Any]] | None = None) -> None:
@@ -527,6 +543,7 @@ class InvoicePipeline:
                     self._local_accounts(result.coding, history_text)
             else:
                 result.coding = self.coder.code(result.extraction, self._images(path), history_text)
+                _mark_chat_accounts(result.coding.coding)
                 _model_line_taxes(result.coding.coding, result.extraction.content if result.extraction else "",
                                   feedback)  # fmt: skip
             result.timings["inference"] = time.perf_counter() - t1

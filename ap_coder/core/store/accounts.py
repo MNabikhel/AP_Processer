@@ -11,7 +11,7 @@ from typing import Any
 from ...coding import tax as _tax
 from ...coding.tax import DEFAULT_TREATMENTS, TAX_TYPES, TREATMENTS, TaxRateTable, TaxSetup, TaxTreatment
 from ..paths import PROJECT_DIR, default_db_path, find_moved_file, private_dir  # noqa: F401  (re-exported)
-from ..reference_data import ReferenceData, ReferenceTable, parse_policy_notes
+from ..reference_data import ReferenceData, ReferenceTable, marks_meals, parse_policy_notes
 from ._base import (
     ACCOUNT_TABLES,
     EVENT_ORIGIN,
@@ -25,7 +25,7 @@ _REFERENCE: dict[str, tuple[tuple[Any, ...], ReferenceData]] = {}
 _REFERENCE_LOCK = threading.Lock()
 # Everything ``reference_data`` is built from, in one query: compared, it says whether the one kept still holds.
 _REFERENCE_STAMP = """SELECT
-    (SELECT group_concat(code || '|' || description || '|' || category, char(10))
+    (SELECT group_concat(code || '|' || description || '|' || category || '|' || meals, char(10))
      FROM (SELECT * FROM gl_accounts ORDER BY code)),
     (SELECT group_concat(code || '|' || description || '|' || category, char(10))
      FROM (SELECT * FROM cost_centers ORDER BY code)),
@@ -35,11 +35,26 @@ _REFERENCE_STAMP = """SELECT
      FROM (SELECT * FROM settings WHERE key IN ('our_province', 'site_provinces', 'policy_notes') ORDER BY key))"""
 
 # What the checks read besides the reference data, as the queue's re-check compares them (``Store.checks_stamp``,
-# B-815): JD Edwards' settings, whether it is in use (its switch, or a batch made), and the days to pay.
+# B-815): JD Edwards' settings, whether it is in use (its switch, or a batch made), the days to pay, and the count of
+# changes to the vendor master and the POs (``masters_version``, B-842).
 _CHECKS_STAMP = """SELECT
     (SELECT group_concat(key || '=' || value, char(10))
-     FROM (SELECT * FROM settings WHERE key IN ('jde_e1', 'show_jde_settings', 'default_terms_days') ORDER BY key)),
+     FROM (SELECT * FROM settings WHERE key IN ('jde_e1', 'show_jde_settings', 'default_terms_days', 'masters_version')
+           ORDER BY key)),
     (SELECT COUNT(*) FROM export_batches WHERE format = 'jde')"""
+
+# The audit events of a change to the vendor master or the POs: each one counts (``count_masters_change``).
+MASTERS_CHANGES = frozenset({"vendor_updated", "vendors_imported", "vendor_added", "vendors_deleted", "pos_imported",
+                             "po_status", "pos_deleted"})  # fmt: skip
+
+
+def count_masters_change(conn: sqlite3.Connection) -> None:
+    """One more change to the vendor master or the POs (``masters_version``): the queue's checks read them, and
+    ``Store.checks_stamp`` names this count rather than reading every vendor and PO line (B-842)."""
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES ('masters_version', '1') "
+        "ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1"
+    )
 
 
 class AccountsMixin:
@@ -59,6 +74,8 @@ class AccountsMixin:
             "INSERT INTO events (invoice_id, action, actor, detail, created_at) VALUES (?, ?, ?, ?, ?)",
             (invoice_id, action, actor, json.dumps(detail or {}, default=str), _now()),
         )
+        if action in MASTERS_CHANGES:
+            count_masters_change(conn)
 
     def log_event(
         self, action: str, invoice_id: int | None = None, actor: str | None = None,
@@ -115,12 +132,16 @@ class AccountsMixin:
         replace_all: bool = False,
         actor: str | None = None,
         log: bool = True,
+        meals_column: str | None = None,
     ) -> dict[str, int]:
         """Import rows using the columns the user picked.
 
-        Existing codes are updated, but only in the columns picked: importing codes without a
-        category column keeps the categories already typed in. ``replace_all`` with rows none of which has a code
-        (the wrong column picked) is refused, nothing deleted: it would leave no account to code to.
+        Existing codes are updated, but only in the columns picked: importing codes without a category column keeps
+        the categories already typed in. ``meals_column`` (GL accounts only): the column that marks the meals and
+        entertainment accounts (D-90), "yes", "x", "M&E", "50%"..., blank or "no" for the others; without it (or in
+        a row without that column) each code keeps its tick, even through ``replace_all`` (B-890). ``replace_all``
+        with rows none of which has a code (the wrong column picked) is refused, nothing deleted: it would leave no
+        account to code to.
         """
         if table not in ACCOUNT_TABLES:
             raise ValueError(f"unknown table {table!r}")
@@ -130,7 +151,11 @@ class AccountsMixin:
                 "holds the codes and import again."
             )
         added = updated = skipped = 0
+        gl = table == "gl_accounts"
         with self._conn() as conn:
+            # The meals ticks are usually set only here, not in the ERP: a replace whose file doesn't say (no meals
+            # column, or a row without it) keeps the tick of each code still in the list (B-890).
+            ticked = {r["code"] for r in conn.execute("SELECT code FROM gl_accounts WHERE meals = 1")} if gl else set()
             if replace_all:
                 conn.execute(f"DELETE FROM {table}")
             existing = {r["code"] for r in conn.execute(f"SELECT code FROM {table}")}
@@ -143,14 +168,25 @@ class AccountsMixin:
                 seen.add(code)
                 description = _clean_code(row.get(description_column)) if description_column else ""
                 category = _clean_code(row.get(category_column)) if category_column else ""
+                says_meals = bool(gl and meals_column and meals_column in row)
+                meals = int(marks_meals(row.get(meals_column))) if says_meals else int(code in ticked)
                 if code in existing:
-                    changes = {"description": description} if description_column else {}
+                    changes: dict[str, Any] = {"description": description} if description_column else {}
                     if category_column:
                         changes["category"] = category
+                    if says_meals:
+                        changes["meals"] = meals
                     if changes:
                         sets = ", ".join(f"{column} = ?" for column in changes)
                         conn.execute(f"UPDATE {table} SET {sets} WHERE code = ?", (*changes.values(), code))
                     updated += 1
+                elif gl:
+                    conn.execute(
+                        "INSERT INTO gl_accounts (code, description, category, created_at, meals) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (code, description, category, _now(), meals),
+                    )
+                    added += 1
                 else:
                     conn.execute(
                         f"INSERT INTO {table} (code, description, category, created_at) VALUES (?, ?, ?, ?)",
@@ -168,12 +204,17 @@ class AccountsMixin:
         if table not in ACCOUNT_TABLES:
             raise ValueError(f"unknown table {table!r}")
         with self._conn() as conn:
+            if table == "gl_accounts":  # with the meals and entertainment flag (D-90)
+                rows = conn.execute("SELECT code, description, category, meals FROM gl_accounts ORDER BY code")
+                return [{**dict(r), "meals": bool(r["meals"])} for r in rows]
             return [dict(r) for r in conn.execute(f"SELECT code, description, category FROM {table} ORDER BY code")]
 
     def save_accounts(self, table: str, rows: list[dict[str, Any]], actor: str | None = None) -> None:
         """Replace the table with ``rows`` (used by the dashboard's editable grid)."""
         before = {r["code"]: r for r in self.list_accounts(table)}
-        self.import_accounts(table, rows, "code", "description", "category", replace_all=True, log=False)
+        meals = "meals" if table == "gl_accounts" else None
+        self.import_accounts(table, rows, "code", "description", "category", replace_all=True, log=False,
+                             meals_column=meals)  # fmt: skip
         after = {r["code"]: r for r in self.list_accounts(table)}
         changed = sorted(c for c in before.keys() | after.keys() if before.get(c) != after.get(c))
         if changed:
@@ -335,8 +376,9 @@ class AccountsMixin:
 
     def checks_stamp(self) -> str:
         """A short fingerprint of everything an invoice's checks read that a person changes in Settings: the GL
-        accounts, cost centers, tax setup and rate file, our province and sites, the policy notes, JD Edwards and
-        the days to pay. A validation stored with another one may say what today's checks would not (B-815)."""
+        accounts, cost centers, tax setup and rate file, our province and sites, the policy notes, JD Edwards, the
+        days to pay, and any change to the vendor master or the POs. A validation stored with another one may say
+        what today's checks would not (B-815)."""
         path = _tax.rates_path()
         try:
             seen = path.stat()
@@ -367,6 +409,7 @@ class AccountsMixin:
                 self.tax_treatments(),
                 our_province=self.our_province(),
                 site_provinces=self.site_provinces(),
+                meals_gl_codes=frozenset(r["code"] for r in gl if r.get("meals")),
             ),
             notes=parse_policy_notes(self.get_setting("policy_notes")),
         )

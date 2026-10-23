@@ -240,6 +240,39 @@ def parse_terms(text: str | None) -> Terms:
     return Terms(net_days=0, eom=True) if eom else Terms()
 
 
+def _ordinal(day: int) -> str:
+    return f"{day}{'th' if 10 <= day % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(day % 10, 'th')}"
+
+
+def terms_label(t: Terms) -> str:
+    """What terms mean, in one standard wording ("Net 30", "2/10 Net 30", "Net 30 EOM", "Due on receipt", "Net 10th
+    prox"...), "" when nothing was understood. It reads back as the same terms (``parse_terms``), so it is the key of
+    the JD Edwards payment terms table (D-91): "Net 30", "30 days" and "N30" are one row."""
+    if t.on_receipt:
+        return "Due on receipt"
+    if t.net_days is None:
+        return ""
+    eom = " EOM" if t.eom else ""
+    if t.discount_pct and t.discount_prox_day:
+        net = f"Net {_ordinal(t.prox_day)} prox" if t.prox_day else f"Net {t.net_days}"
+        return f"{t.discount_pct:g}/{_ordinal(t.discount_prox_day)} prox {net}"
+    if t.discount_pct and t.discount_days is not None:
+        net = f"Net {t.net_months} month{'s' if t.net_months > 1 else ''}" if t.net_months else f"Net {t.net_days}"
+        return f"{t.discount_pct:g}/{t.discount_days}{eom} {net}"
+    if t.prox_day:
+        return f"Net {_ordinal(t.prox_day)} prox"
+    if t.net_months:
+        return f"Net {t.net_months} month{'s' if t.net_months > 1 else ''}{eom}"
+    if t.eom and not t.net_days:
+        return "Due end of month"
+    return f"Net {t.net_days}{eom}"
+
+
+def terms_key(text: str | None) -> str:
+    """The standard wording of printed terms (``terms_label``), "" when they are not understood."""
+    return terms_label(parse_terms(text))
+
+
 def _date(value: Any) -> dt.date | None:
     try:
         return dt.date.fromisoformat(str(value or "")[:10]) if value else None

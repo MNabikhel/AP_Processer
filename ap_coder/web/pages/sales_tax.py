@@ -25,6 +25,7 @@ ISSUE_TONES = {
     taxreturn.QST_NOT_PRINTED: "warn",
     taxreturn.FOREIGN: "warn",
     taxreturn.NOT_EXPORTED: "info",
+    taxreturn.MEALS: "info",
 }
 
 

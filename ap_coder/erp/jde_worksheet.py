@@ -196,7 +196,7 @@ QUESTIONS = [
     Question(
         "payment_terms_code",
         "Payment",
-        "Payment terms code to send (blank: E1 takes the supplier's terms)?",
+        "Payment terms code for terms not in AP Coder's terms table (blank: E1 takes the supplier's terms)?",
         "VLPTC",
         width=3,
     ),

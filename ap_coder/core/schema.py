@@ -209,7 +209,7 @@ def build_json_schema(reference: ReferenceData | None = None, *, constrain_codes
         "grand_total": {"type": "number", "description": "Amount due including tax."},
         "confidence_score": {
             "type": "number",
-            "description": "Overall confidence 0.0-1.0 in extraction accuracy and GL coding.",
+            "description": "Confidence 0.0-1.0 that the header fields are read right.",
         },
         "line_items": {
             "type": "array",

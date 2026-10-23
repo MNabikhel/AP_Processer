@@ -87,11 +87,11 @@ def test_getting_started_asks_for_your_province_and_counts_it(tmp_path, monkeypa
     assert "Your province" in started and "Settings → Review" in started
     assert 'href="/settings/review">Your province' in started
     ring = re.search(r"aria-label='(\d+)/(\d+)'", page).groups()
-    assert ring[1] == "8"  # with your bank accounts (optional, D-66)
+    assert ring[1] == "10"  # with your bank accounts (optional, D-66), the vendor master and past coding (D-92)
     fresh.set_setting("our_province", "ON")
     page = client.get("/review").text
     assert "Ontario" in page.split("Getting started", 1)[1]
-    assert re.search(r"aria-label='(\d+)/(\d+)'", page).groups() == (str(int(ring[0]) + 1), "8")
+    assert re.search(r"aria-label='(\d+)/(\d+)'", page).groups() == (str(int(ring[0]) + 1), "10")
     assert "Your province" in client.get("/process").text
 
 
@@ -123,7 +123,12 @@ def test_approve_also_opens_the_invoice_that_followed_on_screen(client, store):
     from .test_web_invoice import form_of
 
     ids = [i["id"] for i in store.list_invoices(REVIEW)]
-    ready = [i for i in ids if invoice_view.Draft.stored(store.get_invoice(i)["ai_output"]).lines]
+    ready = [
+        i
+        for i in ids
+        if (lines := invoice_view.Draft.stored(store.get_invoice(i)["ai_output"]).lines)
+        and all(li.get("predicted_gl_code") != UNASSIGNED for li in lines)
+    ]  # every line coded (D-89's order)
     current = ready[0]
     following = ids[ids.index(current) + 1]
     assert _next_id(client.get(f"/review/{current}").text) == following
@@ -196,7 +201,11 @@ def test_the_pick_hint_is_a_button_to_the_line_that_needs_it(client, store):
     down the page (57 presses of Tab from the top on a 1366 x 768 laptop)."""
     from .test_web_invoice import form_of
 
-    inv = store.list_invoices(REVIEW)[0]
+    inv = next(
+        i
+        for i in store.list_invoices(REVIEW)  # one whose lines are all coded (the queue's order: D-89)
+        if all(li["predicted_gl_code"] != UNASSIGNED for li in store.get_invoice(i["id"])["ai_output"]["line_items"])
+    )
 
     def unassign(rows):
         rows[0]["predicted_gl_code"] = UNASSIGNED

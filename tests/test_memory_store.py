@@ -258,7 +258,12 @@ def _store(tmp_path):
 def test_import_view_delete_accounts(tmp_path):
     store = _store(tmp_path)
     assert [a["code"] for a in store.list_accounts("gl_accounts")] == ["2310", "6010", "6020"]
-    assert store.list_accounts("gl_accounts")[2] == {"code": "6020", "description": "Software", "category": "Opex"}
+    assert store.list_accounts("gl_accounts")[2] == {
+        "code": "6020",
+        "description": "Software",
+        "category": "Opex",
+        "meals": False,
+    }  # D-90
     assert store.delete_accounts("gl_accounts", ["6020"]) == 1
     assert [a["code"] for a in store.list_accounts("gl_accounts")] == ["2310", "6010"]
     again = store.import_accounts("gl_accounts", [{"c": "6010", "d": "Hardware (renamed)"}], "c", "d")

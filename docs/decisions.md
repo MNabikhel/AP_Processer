@@ -687,8 +687,141 @@ that is reversed keeps its line, marked "replaced by D-NN".
   result beside the stored checks (`validation.recheck`: its stamp and findings), so once per change of settings,
   about 5 ms an invoice; the findings made after processing (the Azure check, the AI reviewer, the page's own:
   `bulk.AFTER_PROCESSING`, and any code no check describes) are kept from the stored ones. Bulk approval drops the
-  stale stored findings the same way, so what the queue offers is what it approves. Not in the stamp: the vendor
-  master, the POs and the passing days (duplicates, overdue): bulk approval still checks those at approval. Why:
+  stale stored findings the same way, so what the queue offers is what it approves. Not in the stamp: the passing
+  days (duplicates, overdue): bulk approval still checks those at approval (the vendor master and the POs are in it
+  since B-842, as a count of their changes). Why:
   re-checking on every page load costs ~5 ms an invoice; re-checking on each settings save would be slow on the save
   and miss changes made elsewhere. (`coding/bulk.py` `issues_today`, `sort_for_bulk`, `bulk_approve`;
   `web/pages/review.py` `attention`; `core/store` `checks_stamp`, `check_stamps`, `save_recheck`)
+- **D-89** · Confidence is two numbers: the **Reading** (how sure the header is: supplier, number, dates, amounts, tax
+  numbers) and the **Coding** (how sure the lines' GL accounts, cost centers and tax codes are), side by side in the
+  review screen's header where the one Confidence bar was. Where one number is needed (the queue's order and its bar,
+  the review threshold, bulk approval, `adjusted_confidence` stored on the invoice, the exports and reports), it is the
+  lower of the two; `confidence_score` on the coding keeps its name and now means the Reading. (1) The Reading is the
+  mean confidence of the values read (`capture.confidence.reading_confidence`), no longer multiplied by the share of
+  lines coded. A verified value the supplier's template vouched for gets the supplier's record of that field added as
+  evidence (`apply_supplier_record`: (right + 2 × confidence) / (cases + 2), its approvals over the autonomy policy's
+  window): 98.5% → 99.3% after two right, 99.96% after forty; a first-time supplier, a value to check or one the
+  template did not read keep the readers' own confidence; it never lowers and never changes a status, so nothing goes
+  touchless that would not have. (2) The Coding is the mean over the lines of: the account (none, unknown or a tax
+  account 0; a guess, the chat model's or a weak match, 0.5), the cost center where they are used (none or unknown 0),
+  and, when a tax is charged, the tax code (worked out from several possible sets of lines, an exemption to confirm, or
+  none: 0.5), multiplied (`validation.coding_confidence`). (3) A line to code is counted once: GL_UNASSIGNED,
+  CC_UNASSIGNED, GL_UNKNOWN, CC_UNKNOWN, GL_IS_TAX_ACCOUNT and PST_EXEMPTION_TO_CONFIRM (`COUNTED_IN_CODING`) keep
+  Approve closed, touchless off and the invoice in Needs attention, but take nothing more off (as D-86's setup
+  findings); so do the business findings (`BUSINESS_CODES`, `PO_*`, `DUPLICATE_*`: not in the vendor master, on hold,
+  bank details changed, a possible duplicate, an unusual amount: every value can be read right and still be one), which
+  stay errors or warnings as they were and keep the invoice in Needs attention; findings about the lines' coding
+  (HISTORY_CONFLICT, the tax-code mismatches: `ABOUT_CODING`) take their share off the Coding, every other finding off
+  the Reading; "Coding … is below the threshold" is not said when a line to code is why. (4) The benches report each
+  number against the share actually right by the invoice's position in its supplier's stream (1, 2-5, 6-20, 21+): `bench
+  learn` the Reading (with and without the template), `bench coding` the Coding. On `learn --suppliers 20 --invoices
+  40`: Reading 98.1% / 99.2% / 99.4% / 99.4% against 100% / 99.5% / 100% / 99.9% read right (without the template a flat
+  98.1-98.2%); readiness and touchless unchanged (14 of 20, median 37; 51 of 67). On `coding` (30 × 30): Coding 54.4% /
+  86.6% / 98.2% / 98.6% against 50.7% / 85.1% / 96.4% / 98.2% of lines right, within 2 points after the first invoice.
+  Replaying one supplier offline (`e2e_r2` stream s7-v006, approving each): Reading 98.3% → 97.8% → 99.7% → 99.7% →
+  99.8%, Coding 0% → 100% once its lines are learned. Why: an end-to-end run showed ~23% on invoices read 100% right
+  through the template, because one number mixed the reading with the lines still to code and counted those twice; two
+  numbers say what to look at. The invoices still to approve that the local readers read before get the Reading of their
+  stored capture once, when this version opens the database. (`capture/confidence.py`, `capture/workflow.py`
+  `supplier_record`, `ai/offline_coder.py`, `coding/validation.py`, `web/invoice_view.py`, `_invoice_live.html`,
+  `bench/learning.py`, `bench/coding.py`, `core/store` `_reading_as_d89`; `tests/test_reading_and_coding.py`)
+- **D-90** · Meals and entertainment: 50% of the GST/HST and QST is claimable. Income Tax Act s.67.1 limits meals and
+  entertainment to 50%, and Excise Tax Act s.236 claws back half the input tax credits on them; Quebec does the same
+  for the QST input tax refunds (the QST Act's counterpart of s.236, and Taxation Act s.421.1 for income tax: verify the
+  section with Revenu Québec). PST is never recoverable, so it is untouched. **Quebec, large businesses:** a large
+  business may be denied the QST refund on meals and entertainment entirely, not half: check its current status with
+  Revenu Québec; AP Coder claims half. **Setting:** a GL account attribute, *Meals & entertainment (50% tax credit)*: a
+  tick box on GL accounts & tax → GL accounts, an optional column at import ("Meals", "M&E": yes, x, 1, M&E, 50% mark
+  it; blank, no, 0, 100% don't), a `meals` column in a chart-of-accounts file (the sample's 6320 has it), a `meals`
+  column in the database (added whatever the schema version, no new SCHEMA_VERSION). **Effect:** on a line coded to such
+  an account, each recoverable GST, HST or QST line's share of tax for that line (`tax.tax_shares`: spread as PST is,
+  over the lines that carry it, a tip line left out: a voluntary tip is not taxed) is halved; the claim is that half cut
+  to the cent, so never more than half (HST 11.37 on a dinner: 5.68 claimed, 5.69 expensed), and the rest moves to the
+  line's `non_recoverable_tax` and amount (`meals_tax` on the line and on the tax entry, with `tax_line`, its tax line).
+  The tax printed on the invoice is halved, never a rate times the line, so only the tax actually charged on the meal
+  is affected. When no line is marked with the tax and a meals line shares it with other unmarked lines (a catered
+  lunch and zero-rated groceries), the share is a guess: MEALS_TAX_LINES (a warning) asks which lines carry it (B-868).
+  It flows from `gl_distribution` to the Excel/CSV lines (the tax line reads "recoverable, less 50% on meals"), JD
+  Edwards (the expense line carries the half; VLSTAM and the recoverable tax E1 posts are the claimable part only,
+  VLATXN takes the rest, so gross = taxable + non-taxable + tax and the F0911Z1 lines = gross − claimable tax; one pay
+  item per line takes the distribution's own shares, B-867) and the sales-tax report (the claim is the tax less the
+  half, tagged "Meals & entertainment: 50% of the tax claimable"; the page and CSV give the amount by currency and the
+  law). **JD Edwards cases held back** (errors, never "approve anyway", B-865, B-866): with the **gross amount only**
+  (the default) E1 works out the tax itself and would claim the full ITC while the expense line already holds half: the
+  GL and the ITC report would disagree, so JDE_MEALS_GROSS asks to switch to sending tax amounts; a **PO-matched**
+  voucher gets its G/L lines from the receipts, so the half can't be expensed: JDE_MEALS_PO. Forcing tax amounts for
+  those vouchers alone was not chosen: one batch would mix the two amount layouts, which E1 refuses. **To confirm with
+  the JDE team:** that R04110ZA accepts a VLSTAM below the tax area's rate times VLATXA (VLATXA is unchanged while
+  VLSTAM is halved): the tax-tolerance check (P0022 processing options) and the F0018 tax lines it writes; how VLSTAM is
+  split under explanation code C (GST + PST) with a meals line; and whether a separate tax area or explanation code for
+  meals (a 50%-recoverable rate area) would suit the company better than tax amounts. An invoice approved before keeps
+  what it posted (its stored distribution). **Timing:** in law, the 50% is added back to net tax in the return for the
+  last period of the fiscal year (ETA s.236(1)); claiming half as each invoice is approved gives the same net tax for
+  the year (a little less claimed earlier) and is common practice: confirm with your accountant. **For the year-end
+  accountant:** the ITCs AP Coder reports are already net of the 50% (line 106 as is): there is **no s.236 add-back on
+  line 104** for these meals, or it would be clawed back twice. **Where 100% is allowed** (ITA s.67.1(2), followed by
+  s.236): meals billed to a client and shown on the bill; a business that sells meals; meals that are a taxable benefit
+  to the employee; up to six events a year open to all staff at a place of business (e.g. the holiday party: **count
+  them**, the seventh is back to 50%); fundraising events of a registered charity. AP Coder has no per-line switch (it
+  would need a new line field, its learning and the exports): set up a second GL account without the tick (e.g. "Meals
+  billed to clients", "Staff events") and code those lines to it; the line's note says so. **Out of scope:** long-haul
+  truck drivers' meals are 80% (ITA s.67.1(1.1), ETA s.236(1.1)): code them to an account without the tick and adjust
+  by hand. Club dues and recreational facilities get no ITC at all (ETA s.170): not this flag either. **Review
+  screen:** a line coded to a meals account says "Meals: 50% of the GST/HST is claimable. Billed to a client or a
+  staff event? Use the other account." ("GST and QST" in Quebec), following the GL account as it is changed.
+  (`coding/tax.py` `tax_shares`, `meals_parts`, `meals_unsure`, `build_gl_distribution`; `core/store/accounts.py`,
+  `core/reference_data.py`; `web/pages/accounts.py`; `erp/jde.py` `_prepare`, `voucher_rows`, `_claimed_shares`,
+  `voucher_findings`; `coding/taxreturn.py`; `tests/test_meals.py`) **Keeping the ticks:** the flag is usually set
+  only in AP Coder, not in the ERP's chart, so an import without a meals column (*Replace the list* too) keeps each
+  code's tick (B-890). **Going back to an older version loses the meals ticks; re-tick after:** a version before this
+  one drops them on its *Replace the list* import or grid save, and it can't be changed (docs/UPGRADING.md).
+- **D-91** · Payment terms → JD Edwards payment terms code (VLPTC). Before, VLPTC was one code for every voucher or
+  blank, while the clerk sees the printed terms. Now Settings → JD Edwards E1 has a small table: the terms' meaning →
+  the company's code, keyed by `terms.terms_key` (the standard wording of what `parse_terms` reads: "Net 30",
+  "2/10 Net 30", "Net 30 EOM", "Due on receipt", "Net 10th prox"; it reads back as the same terms), so "Net 30",
+  "30 days" and "N30" are one row and the pilot tester can type any of them; two rows that mean the same, and terms
+  AP Coder can't read, are refused. The old single code becomes the default for terms not in the table. The voucher
+  gets the table's code, else the default, else blank (E1 takes the supplier's terms). Example rows (Net 30 → N30,
+  2/10 Net 30 → 210…) are shown pre-filled and marked as examples to check against P0014, but are **not used until the
+  table is saved**: an existing pilot's next batch does not suddenly carry codes nobody checked (an unknown PTC fails
+  R04110ZA). The check JDE_TERMS_NO_CODE (a warning, not a blocker; no confidence penalty, as every JDE_ setup finding,
+  D-86) fires only **once the table has rows** and no default is set: with no table, a blank VLPTC is the intended
+  set-up, not a gap; terms not understood are TERMS_NOT_FOUND's. Only the printed terms are looked up, not the vendor
+  master's: E1 has the supplier's own terms already. (`coding/terms.py` `terms_label`, `terms_key`; `erp/jde.py`
+  `terms_code`, `terms_unmapped`, `voucher_rows`, `voucher_findings`, `voucher_view`, `dry_run`;
+  `web/pages/settings_jde.py` `save_terms`; `docs/JDE_E1.md`; `tests/test_jde_terms.py`) **Later (B-896):**
+  JDE_TERMS_NO_CODE is a note (info), not a warning: a blank VLPTC is a benign fallback (E1 takes the supplier's own
+  terms), so it holds back no bulk approval; it is still shown. **Credit memos** are sent with a blank VLPTC, as
+  their due date is not sent: a terms code can carry a discount (2/10 Net 30) that E1 would work out on the credit.
+  The safe choice; **to confirm with the JDE administrator** whether the company's credit memos should carry the
+  terms code (R04110ZA, P0014) instead.
+- **D-92** · The shadow-pilot kit. (1) **Scoring against JD Edwards**: `python -m ap_coder pilot-score --vouchers
+  F0411 [--distribution F0911]` compares what AP Coder approved with what AP posted, from an E1 export the pilot
+  tester gets (CSV or Excel; E1's column names, the data dictionary's or plain English through `match_columns`; Julian
+  dates; `--implied-decimals`). Invoices are matched by supplier (AN8, else `vendor_key`), `norm_invoice_number` and
+  amount, then by supplier and amount, so a number typed differently is still found and reported. It reports each
+  header field (the benchmark's comparators), the coding line by line (BU.Obj.Sub through the JDE mapping, else the
+  GL against the object; recoverable GST/HST/QST and the AP offset left out) both as approved and as AP Coder proposed
+  it, each supplier's first invoice against its later ones, the would-be touchless invoices (the supplier met the bar
+  when processed) that AP posted differently, and what has no match; `pilot_score.md`, a CSV of the differences and
+  the figures for Insights go to the data folder's `pilot_score`. Why: the pilot's question is whether AP Coder
+  agrees with what AP really posts, and the vouchers are the only truth that needs no extra labelling; it runs the
+  same on synthetic data now and real exports later. (`ops/pilot_score.py`, `tests/test_pilot_score.py`) (2) **The JDE
+  test-import checklist** for the pilot tester's IT is its own section of `docs/JDE_E1.md`: load the Z-file batch in
+  a test environment, R04110ZA proof then final with the options to check, what to compare, how to report back;
+  what varies by company says "confirm with your JDE administrator". (3) **Getting started in the pilot's order**: GL
+  accounts → vendor master (with the AN8s) → JD Edwards settings → the ERP's past coding ("AP Coder learns your coding
+  from what you posted before") → first invoices; the Next step card walks through them when JD Edwards is the
+  export, and the rows show for everyone (`web/pages/process.py` `pilot_steps`). Measured cold start, first invoice
+  from new vendors with no AI model: through the pipeline on generated invoices 0 of 285 lines coded without history,
+  285 of 285 with the vendors' past coding imported (exact wording; `tests/test_first_steps_order.py`); in the coding
+  benchmark (each vendor's own wording) 35.2% → 91.5% of first-invoice lines (30 vendors, `--history 1.0`). (4) **The
+  AI-on paths** (the AI coder end to end, the page reader with its self-test, the AI reviewer) run against a scripted
+  fake LM Studio over HTTP (`tests/test_ai_paths.py`); they passed after the round-2 changes with nothing to fix. The
+  coding benchmark gained `--ai`: the chat model in LM Studio codes the lines nothing else coded, scored against the
+  truth. **Still owed: a real-model accuracy run on the pilot laptop** (LM Studio is on no build computer), with LM
+  Studio's server started and its chat model and OvisOCR2 loaded: `python -m ap_coder read-pages --test` (OvisOCR2's
+  self-test), then `python -m ap_coder.bench coding --vendors 20 --invoices 5 --ai --out bench_ai` (the chat model's
+  precision, first invoice apart; report in `bench_ai/report.md`), and, once AP has posted the pilot's invoices,
+  `python -m ap_coder pilot-score` on the JDE export.

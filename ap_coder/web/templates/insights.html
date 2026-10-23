@@ -3,6 +3,15 @@
 {% block aside %}{% if not early %}<a class="btn" href="/insights/business-case" download title="Totals only: no vendor names, amounts of individual invoices or file names.">
   <span class="ms" aria-hidden="true">download</span>Business case (one page)</a>{% endif %}{% endblock %}
 {% block content %}
+{% if pilot %}
+<section class="card" aria-labelledby="pilot-title">
+  <h4 id="pilot-title">Shadow pilot: AP Coder against JD Edwards</h4>
+  <div class="table-wrap"><table class="apc-table"><tbody>
+    {% for label, value in pilot.rows %}<tr><td>{{ label }}</td><td class="r"><b>{{ value }}</b></td></tr>{% endfor %}
+  </tbody></table></div>
+  <p class="muted">From the last <code>python -m ap_coder pilot-score</code>{% if pilot.made %} ({{ pilot.made }}){% endif %}: its report and the differences are in the data folder, <code>pilot_score</code>.</p>
+</section>
+{% endif %}
 {% if early %}
 <section class="card">{{ ui.empty_state("Insights come after " ~ min_approvals ~ " approvals", "How much goes straight through, the time it saves and how the queue moves, once " ~ min_approvals ~ " invoices are approved: fewer would be guesswork. " ~ (fully | plural("invoice")) ~ " approved so far.") }}</section>
 {% else %}

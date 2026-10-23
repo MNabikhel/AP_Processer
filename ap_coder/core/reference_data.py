@@ -56,6 +56,26 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 
+# The column of a chart of accounts that marks the meals and entertainment accounts (D-90): half the GST/HST and QST on
+# them is not claimable. Its value: "yes", "x", "1", "M&E", "meals", "50%"...; blank, "no", "0" for the others.
+MEALS_HEADERS = ("meals", "m_e", "me", "meals_entertainment", "meals_and_entertainment", "meals_50", "itc_50")
+_NOT_MEALS = {"", "0", "false", "no", "n", "none", "-", "nan", "100", "100%"}
+
+
+def marks_meals(value: object) -> bool:
+    """Whether a meals column's cell marks the account as meals and entertainment (50% tax credit)."""
+    if value is None or isinstance(value, float) and value != value:  # a blank Excel cell (NaN)
+        return False
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() not in _NOT_MEALS
+
+
+def meals_column(headers: list[str]) -> str:
+    """The header of a meals and entertainment column ("Meals", "M&E", "Meals & entertainment"), or ""."""
+    return next((h for h in headers if _norm_header(h) in MEALS_HEADERS), "")
+
+
 def _norm_header(name: str) -> str:
     return re.sub(r"[^0-9a-z]+", "_", name.strip().lower()).strip("_")
 
@@ -170,8 +190,11 @@ def load_table(path: str | Path, kind: str, key_column: str) -> ReferenceTable:
             f"{path}: missing required column {key_column!r}. Found columns: {', '.join(headers)}. "
             f"Rename your code column to {key_column!r} (accepted aliases: {', '.join(COLUMN_ALIASES[key_column])})"
         )
+    meals_header = meals_column(headers)
     for i, raw in enumerate(raw_rows, start=1):
-        row = {rename.get(k, k.strip()): (v or "").strip() for k, v in raw.items() if k is not None}
+        row = {
+            rename.get(k, k.strip()): (v or "").strip() for k, v in raw.items() if k is not None and k != meals_header
+        }
         if not any(row.values()):  # a blank row (Excel saves the empty rows under a list as ",,")
             continue
         code = row[key_column]
@@ -188,6 +211,18 @@ def load_table(path: str | Path, kind: str, key_column: str) -> ReferenceTable:
     if not rows:
         raise ValueError(f"{path}: no active {kind} rows found")
     return ReferenceTable(kind=kind, key_column=key_column, rows=rows)
+
+
+def meals_codes(path: str | Path, key_column: str = "gl_code") -> frozenset[str]:
+    """The codes a chart of accounts file marks as meals and entertainment (its "meals" / "M&E" column, D-90)."""
+    raw_rows = _read_rows(Path(path))
+    headers = [k for k in (raw_rows[0].keys() if raw_rows else []) if k is not None]
+    header = meals_column(headers)
+    if not header:
+        return frozenset()
+    rename = {v: k for k, v in _canonical_headers(headers).items()}
+    code = rename.get(key_column, key_column)
+    return frozenset(str(r.get(code) or "").strip() for r in raw_rows if marks_meals(r.get(header))) - {""}
 
 
 def parse_policy_notes(text: str) -> list[str]:
@@ -213,6 +248,6 @@ def load_reference_data(
     return ReferenceData(
         chart_of_accounts=load_table(chart_of_accounts, "GL account", "gl_code"),
         cost_centers=load_table(cost_centers, "cost center", "cost_center") if cost_centers else None,
-        tax=TaxSetup(rates, treatments),
+        tax=TaxSetup(rates, treatments, meals_gl_codes=meals_codes(chart_of_accounts)),
         notes=notes,
     )

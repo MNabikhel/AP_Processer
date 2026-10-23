@@ -1,27 +1,27 @@
-gl_code,description,category
-1500,Computer Equipment - capitalisable IT hardware at or above the capitalisation threshold (servers; laptops/workstations over threshold),Fixed Assets
-1510,Furniture & Fixtures - capitalisable office furniture and fit-out,Fixed Assets
-1550,Prepaid Expenses - annual or multi-period prepayments covering more than 3 months (support contracts; insurance),Prepaids
-2310,GST/HST Recoverable - input tax credits (ITC) on GST and HST paid,Sales Tax
-2320,QST Recoverable - input tax refunds (ITR) on Quebec QST paid,Sales Tax
-5000,Cost of Goods Sold - Materials - raw materials and components consumed in production,Cost of Sales
-5100,Freight Inbound - shipping and freight on purchased inventory/materials,Cost of Sales
-6000,Office Supplies - paper; toner; stationery; printer ink,Operating Expenses
-6010,IT Hardware - Non-Capital - monitors; keyboards; docking stations; cables; laptops below threshold,Operating Expenses
-6020,Software Subscriptions - SaaS and software licences expensed in the period,Operating Expenses
-6030,Cloud Hosting & Infrastructure - Azure/AWS consumption and hosting,Operating Expenses
-6040,Telecommunications - phone; mobile; internet,Operating Expenses
-6100,Professional Fees - Legal - external legal counsel,Professional Fees
-6110,Professional Fees - Consulting - management and technical consulting; implementation services,Professional Fees
-6120,Professional Fees - Audit & Accounting - audit; tax advisory; bookkeeping,Professional Fees
-6200,Rent & Occupancy - office and warehouse rent; common area costs,Facilities
-6210,Utilities - electricity; gas; water,Facilities
-6220,Repairs & Maintenance - building and equipment repairs; HVAC; plumbing,Facilities
-6230,Cleaning & Facilities Services - janitorial; waste removal; pest control,Facilities
-6300,Travel - Airfare,Travel
-6310,Travel - Lodging - hotels and accommodation,Travel
-6320,Meals & Entertainment - business meals; catering; client entertainment,Travel
-6400,Marketing & Advertising - campaigns; printing of brochures; sponsorship,Sales & Marketing
-6500,Training & Development - courses; conferences; certifications,People
-6800,Postage & Courier - outbound postage; delivery on non-inventory purchases,Operating Expenses
-6900,Miscellaneous Expense - use sparingly,Operating Expenses
+gl_code,description,category,meals
+1500,Computer Equipment - capitalisable IT hardware at or above the capitalisation threshold (servers; laptops/workstations over threshold),Fixed Assets,
+1510,Furniture & Fixtures - capitalisable office furniture and fit-out,Fixed Assets,
+1550,Prepaid Expenses - annual or multi-period prepayments covering more than 3 months (support contracts; insurance),Prepaids,
+2310,GST/HST Recoverable - input tax credits (ITC) on GST and HST paid,Sales Tax,
+2320,QST Recoverable - input tax refunds (ITR) on Quebec QST paid,Sales Tax,
+5000,Cost of Goods Sold - Materials - raw materials and components consumed in production,Cost of Sales,
+5100,Freight Inbound - shipping and freight on purchased inventory/materials,Cost of Sales,
+6000,Office Supplies - paper; toner; stationery; printer ink,Operating Expenses,
+6010,IT Hardware - Non-Capital - monitors; keyboards; docking stations; cables; laptops below threshold,Operating Expenses,
+6020,Software Subscriptions - SaaS and software licences expensed in the period,Operating Expenses,
+6030,Cloud Hosting & Infrastructure - Azure/AWS consumption and hosting,Operating Expenses,
+6040,Telecommunications - phone; mobile; internet,Operating Expenses,
+6100,Professional Fees - Legal - external legal counsel,Professional Fees,
+6110,Professional Fees - Consulting - management and technical consulting; implementation services,Professional Fees,
+6120,Professional Fees - Audit & Accounting - audit; tax advisory; bookkeeping,Professional Fees,
+6200,Rent & Occupancy - office and warehouse rent; common area costs,Facilities,
+6210,Utilities - electricity; gas; water,Facilities,
+6220,Repairs & Maintenance - building and equipment repairs; HVAC; plumbing,Facilities,
+6230,Cleaning & Facilities Services - janitorial; waste removal; pest control,Facilities,
+6300,Travel - Airfare,Travel,
+6310,Travel - Lodging - hotels and accommodation,Travel,
+6320,Meals & Entertainment - business meals; catering; client entertainment,Travel,yes
+6400,Marketing & Advertising - campaigns; printing of brochures; sponsorship,Sales & Marketing,
+6500,Training & Development - courses; conferences; certifications,People,
+6800,Postage & Courier - outbound postage; delivery on non-inventory purchases,Operating Expenses,
+6900,Miscellaneous Expense - use sparingly,Operating Expenses,

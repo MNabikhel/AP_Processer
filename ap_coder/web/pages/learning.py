@@ -470,7 +470,13 @@ def learning_page(request: Request) -> HTMLResponse:
     developer = developer_tools(store)
     tabs = {k: v for k, v in TABS.items() if k != "readers" or developer}
     tab = q.get("tab") if q.get("tab") in TABS else "coding"
-    context: dict[str, Any] = {"tab": tab, "tabs": tabs, "url": _url, "developer": developer}
+    context: dict[str, Any] = {
+        "tab": tab,
+        "tabs": tabs,
+        "url": _url,
+        "developer": developer,
+        "teach": bool(q.get("teach")),
+    }  # from Getting started: Teach from past coding open
     if tab == "coding":
         context.update(_history_context(store, q.get("history"), q.get("sheet")))
         context.update(coding_context(store, q.get("mem_q") or "", get_settings(request)))

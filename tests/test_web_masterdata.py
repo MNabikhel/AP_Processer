@@ -385,7 +385,8 @@ def test_gl_accounts_are_imported_from_excel_edited_and_downloaded(client, store
     assert (
         data.headers["content-type"].startswith("text/csv") and "gl_accounts.csv" in data.headers["content-disposition"]
     )
-    expected = pd.DataFrame(store.list_accounts("gl_accounts")).map(csv_cell).to_csv(index=False).encode("utf-8-sig")
+    rows = [{**a, "meals": "yes" if a["meals"] else ""} for a in store.list_accounts("gl_accounts")]  # (D-90)
+    expected = pd.DataFrame(rows).map(csv_cell).to_csv(index=False).encode("utf-8-sig")
     assert data.content == expected
     # edit: rename one, delete one (ticked), add one in a blank row
     current = store.list_accounts("gl_accounts")

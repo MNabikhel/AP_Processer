@@ -73,6 +73,38 @@ CHECKS: dict[str, CheckHelp] = {
         "Nothing to do for a reference. For a PO-matched voucher, type the PO number as JD Edwards has it (its order "
         "number, 8 characters or fewer).",
     ),
+    "JDE_TERMS_NO_CODE": CheckHelp(
+        ERP, "Payment terms with no JD Edwards code",
+        "The invoice's payment terms (as AP Coder reads them: \"30 days\" and \"N30\" are Net 30) are not in the "
+        "payment terms table of Settings → JD Edwards E1, and there is no default code, so the voucher goes without a "
+        "terms code and JD Edwards uses the supplier's terms. A note: it holds nothing back, not even bulk approval.",
+        "Check the terms on the page. Then add them, with your JD Edwards code, to Settings → JD Edwards E1 → Payment "
+        "terms (or ask the pilot tester), or set a default code there.",
+    ),
+    "MEALS_TAX_LINES": CheckHelp(
+        TAX, "Meals: which lines carry the tax?",
+        "Half the GST/HST and QST on a meals line is not claimable and is expensed with it (D-90). No line is marked "
+        "with that tax, so it is spread over every line not marked as carrying none, other lines included: a line that "
+        "carries no tax (groceries, a deposit) would take part of it, and too little would be expensed.",
+        "Pick each line's tax code (e.g. Exempt or Zero-rated on the lines that carry no tax).",
+    ),
+    "JDE_MEALS_GROSS": CheckHelp(
+        ERP, "JD Edwards would claim all the tax on meals",
+        "Only half the GST/HST and QST on meals and entertainment is claimable; AP Coder puts the other half in the "
+        "meal's expense line (D-90). With the gross amount only, JD Edwards works out the tax itself and would claim "
+        "the full ITC, while the expense line already holds half of it: the GL and the ITC report would disagree. So "
+        "the invoice can't be approved or exported to JD Edwards this way.",
+        "Ask the pilot tester to switch to sending tax amounts in Settings → JD Edwards E1 (Amounts: taxable / "
+        "non-taxable / tax amounts). If the meal is billed to a client or a staff event, code it to the other account.",
+    ),
+    "JDE_MEALS_PO": CheckHelp(
+        ERP, "Meals on a PO-matched JD Edwards voucher",
+        "A PO-matched voucher gets its G/L lines from the receipts in JD Edwards, not from AP Coder, so the half of "
+        "the tax on meals that is not claimable (D-90) can't be put in the meal's expense line: JD Edwards would claim "
+        "the full ITC. The invoice can't be approved or exported to JD Edwards this way.",
+        "Send this invoice without the PO match (remove the PO number if it is only a reference), or ask the pilot "
+        "tester to post the half by hand in JD Edwards.",
+    ),
     "JDE_DATE_RANGE": CheckHelp(
         ERP, "Date JD Edwards can't hold",
         "JD Edwards dates run from 1900 to 2899: this date is outside them (usually a typo in the year).",
@@ -873,7 +905,9 @@ QUICK_START: list[tuple[str, str, str]] = [  # numbered 0 to 6, as docs/QUICK_ST
      "goods are delivered to you.", "/settings/review"),
     ("Your GL accounts and sales tax", "Import your GL accounts (or use the sample ones to try AP Coder), then pick "
      "a GL account for GST, HST and QST on the Sales tax accounts tab. Optional: your company's bank accounts on the "
-     "Bank accounts tab, to say which one pays each invoice.", "/accounts"),
+     "Bank accounts tab, to say which one pays each invoice. Then the vendor master (Vendors; for JD Edwards each "
+     "supplier's address number), the JD Edwards settings when you export to it, and Teach from past coding "
+     "(Learning & accuracy): AP Coder learns your coding from what you posted before.", "/accounts"),
     ("Your first invoices", "Upload PDFs, scans, photos or saved emails. Each is read, coded and checked.",
      "/process"),
     ("Review", "Open an invoice and fix what the checks point to.", "/review"),

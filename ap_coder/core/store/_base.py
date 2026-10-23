@@ -122,7 +122,7 @@ _SNAPSHOTS_SCHEMA = (
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS gl_accounts (
     code TEXT PRIMARY KEY, description TEXT NOT NULL DEFAULT '', category TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL);
+    created_at TEXT NOT NULL, meals INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS cost_centers (
     code TEXT PRIMARY KEY, description TEXT NOT NULL DEFAULT '', category TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL);
@@ -350,6 +350,33 @@ def suggestion_kept(s_gl: str | None, s_cc: str | None, f_gl: str, f_cc: str | N
     if s_gl is None or (gl_blank and cc_blank):
         return False
     return (gl_blank or s_gl == f_gl) and (cc_blank or s_cc == (f_cc or ""))
+
+
+def _rescored(output: dict[str, Any], stored: str | None, reading: float) -> dict[str, Any] | None:
+    """The stored checks ``stored`` (JSON) of an invoice coded ``output``, scored again with ``reading`` as its
+    Reading (``Store._reading_as_d89``): its findings as they were, the Coding from its lines without the accounts'
+    lists (a line to an unknown account has its finding, which keeps it for a person anyway), and no checks stamp, so
+    the queue checks it again. None when there are none, or they can't be read."""
+    from ...coding.validation import line_coding_confidence, score
+    from ...core.schema import InvoiceCoding
+
+    try:
+        validation = json.loads(stored) if stored else None
+        if not isinstance(validation, dict):
+            return None
+        coding = InvoiceCoding.model_validate({k: v for k, v in output.items() if k != "gl_distribution"})
+        findings = [(str(i.get("severity") or ""), str(i.get("code") or "")) for i in validation.get("issues") or []]
+        threshold = float(validation.get("review_threshold") or 0.85)
+    except (ValueError, TypeError, AttributeError):
+        return None
+    taxed = any(t.tax_amount for t in coding.tax_lines)
+    sure = [line_coding_confidence(li, False, taxed) for li in coding.line_items]
+    coded = round(sum(sure) / len(sure), 4) if sure else 0.0
+    read, coded, adjusted, review = score(reading, coded, findings, threshold)
+    validation.pop(CHECKS_STAMP_KEY, None)
+    validation.pop("recheck", None)
+    return {**validation, "model_confidence": reading, "reading_confidence": read, "coding_confidence": coded,
+            "adjusted_confidence": adjusted, "requires_review": review}  # fmt: skip
 
 
 def line_guessed(suggestion: dict[str, Any] | None, rule: dict[str, Any] | None = None) -> bool:
@@ -633,6 +660,10 @@ class StoreCore:
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (FEEDBACK_CLEANUP,),
             )
+        # A GL account can be marked "Meals & entertainment (50% tax credit)" (D-90; looked for whatever the version).
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(gl_accounts)")}
+        if columns and "meals" not in columns:
+            conn.execute("ALTER TABLE gl_accounts ADD COLUMN meals INTEGER NOT NULL DEFAULT 0")
         # Each approved line remembers its tax code, learned from like its GL account (D-70): filled in from the
         # approved invoices (looked for whatever the version, like the columns above).
         # Who decided it and where the invoice was supplied (D-80) came later in schema 17: a database already at 17
@@ -643,12 +674,51 @@ class StoreCore:
             conn.execute(f"ALTER TABLE feedback ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
         if missing:
             self._fill_tax_codes(conn)
+        self._reading_as_d89(conn)
         if version < SCHEMA_VERSION:
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (str(SCHEMA_VERSION),),
             )
+
+    @staticmethod
+    def _reading_as_d89(conn: sqlite3.Connection) -> None:
+        """Once per database (``settings.reading_d89``): the invoices still to approve that the local readers read
+        before D-89 had a confidence multiplied by the share of lines coded; their ``confidence_score`` becomes the
+        Reading of their stored capture, as it is read now. The queue's confidence and review flag follow, from their
+        stored findings and a Coding worked out from their lines (``validation.score``; the accounts' lists are
+        checked again in the queue: their checks stamp is cleared, so ``bulk.issues_today`` checks them again, D-88),
+        so the queue is sorted and flagged by the new figures at once (B-895)."""
+        if conn.execute("SELECT 1 FROM settings WHERE key = 'reading_d89'").fetchone():
+            return
+        from ...ai.offline_coder import MODEL_NAME
+        from ...capture.confidence import reading_confidence
+        from ...capture.types import FieldResult
+
+        rows = conn.execute(
+            """SELECT i.id, i.ai_output, i.meta, i.validation, c.capture_json FROM invoices i JOIN invoice_capture c
+               ON c.invoice_id = i.id WHERE i.status IN (?, ?) AND i.ai_output IS NOT NULL""",
+            (REVIEW, PARKED),
+        ).fetchall()
+        for r in rows:
+            try:
+                if (json.loads(r["meta"] or "{}").get("inference") or {}).get("model") != MODEL_NAME:
+                    continue  # read by a chat model or the demo: its own confidence
+                fields = (json.loads(r["capture_json"]) or {}).get("fields") or {}
+                reading = reading_confidence({k: FieldResult.from_dict(v) for k, v in fields.items()})
+                output = json.loads(r["ai_output"])
+            except (ValueError, TypeError, KeyError, AttributeError):
+                continue
+            output["confidence_score"] = reading
+            conn.execute("UPDATE invoices SET ai_output = ?, model_confidence = ? WHERE id = ?",
+                         (json.dumps(output), reading, r["id"]))  # fmt: skip
+            validation = _rescored(output, r["validation"], reading)
+            if validation is not None:
+                conn.execute("UPDATE invoices SET validation = ?, adjusted_confidence = ?, requires_review = ? "
+                             "WHERE id = ?", (json.dumps(validation, default=str), validation["adjusted_confidence"],
+                                              int(validation["requires_review"]), r["id"]))  # fmt: skip
+        conn.execute("INSERT INTO settings (key, value) VALUES ('reading_d89', '1') ON CONFLICT(key) DO NOTHING")
 
     @staticmethod
     def _fill_tax_codes(conn: sqlite3.Connection) -> None:
@@ -810,6 +880,9 @@ class StoreCore:
         conn.execute(f"UPDATE vendors SET {assignments}, updated_at = ? WHERE vendor_key = ?",
                      (*values.values(), _now(), key))  # fmt: skip
         conn.execute("DELETE FROM vendors WHERE vendor_key = ?", (old,))
+        from .accounts import count_masters_change
+
+        count_masters_change(conn)
 
     @contextmanager
     def session(self) -> Iterator[None]:

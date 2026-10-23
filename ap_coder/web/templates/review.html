@@ -93,7 +93,7 @@
         <div class="c-tax">{% for t in r.taxes %}<span class="rq-tax">{{ "Other tax" if t == "OTHER" else t }}</span>{% endfor %}</div>
         <div class="c-status"{% if r.reason %} title="{{ r.reason }}"{% endif %}>{{ ui.pill("Needs attention", "warn") if r.flagged else ui.pill("Ready", "ok") }}
           {% if r.reason %}<div class="why">{{ r.reason }}</div>{% endif %}</div>
-        <div class="c-conf"><span class="rq-conf {{ 'ok' if r.confidence_ok else 'warn' }}" title="Confidence; {{ threshold | pct }} or more needs no second look">
+        <div class="c-conf"><span class="rq-conf {{ 'ok' if r.confidence_ok else 'warn' }}" title="Confidence: the lower of Reading (the header) and Coding (the lines); {{ threshold | pct }} or more needs no second look">
           <span class="bar" aria-hidden="true"><i style="width: {{ (r.confidence * 100) | round | int }}%"></i></span><b>{{ r.confidence_text }}</b></span></div>
         <div class="c-amt">{{ r.amount }}<small>{{ r.currency }}</small></div>
         <div class="c-chev"><span class="ms" aria-hidden="true">chevron_right</span></div>

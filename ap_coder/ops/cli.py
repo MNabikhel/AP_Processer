@@ -216,6 +216,20 @@ def build_parser() -> argparse.ArgumentParser:
     )  # fmt: skip
     p.add_argument("--since", default=None, help="Only invoices approved on or after this date (YYYY-MM-DD)")
 
+    p = sub.add_parser(
+        "pilot-score", help="Shadow pilot: compare what AP Coder approved with what AP posted in JD Edwards"
+    )
+    p.add_argument("--vouchers", required=True, help="The F0411 voucher export from JD Edwards (CSV or Excel)")
+    p.add_argument("--distribution", default=None, help="The F0911 G/L distribution export (optional: the coding)")
+    p.add_argument("-o", "--out", default=None, help="Folder for the report (default: pilot_score in the data folder)")
+    p.add_argument("--implied-decimals", action="store_true", help="Amounts without a decimal point (550 = 5.50)")
+    p.add_argument("--from", dest="start", default="", help="Only invoices dated on or after this day (YYYY-MM-DD)")
+    p.add_argument("--to", dest="end", default="", help="Only invoices dated on or before this day (YYYY-MM-DD)")
+    p.add_argument(
+        "--all", dest="every_voucher", action="store_true",
+        help="Keep every voucher of the export (default: those dated like the invoices approved here)",
+    )  # fmt: skip
+
     p = sub.add_parser("demo", help="Load the sample invoices into the review queue (no Azure needed)")
     p.add_argument("--remove", action="store_true", help="Remove the demo invoices and their lessons instead")
 
@@ -585,7 +599,7 @@ def _test_page_reader(settings: Settings, store: Store) -> int:
 
 def _print_summary(rows: list[dict]) -> None:
     print(
-        f"\n{'file':<40} {'status':<7} {'lines':>5} {'total':>12} {'conf':>5} {'adj':>5} {'review':<6} err/warn",
+        f"\n{'file':<40} {'status':<7} {'lines':>5} {'total':>12} {'read':>5} {'code':>5} {'review':<6} err/warn",
         file=sys.stderr,
     )
     for r in rows:
@@ -594,7 +608,8 @@ def _print_summary(rows: list[dict]) -> None:
             continue
         print(
             f"{r['file'][:40]:<40} {'ok':<7} {r['line_items']:>5} {r['grand_total']:>12,.2f} "
-            f"{r['model_confidence']:>5.2f} {r['adjusted_confidence']:>5.2f} "
+            f"{r.get('reading_confidence', r['model_confidence']):>5.2f} "
+            f"{r.get('coding_confidence', r['adjusted_confidence']):>5.2f} "
             f"{'YES' if r['requires_review'] else 'no':<6} {r['errors']}/{r['warnings']}",
             file=sys.stderr,
         )
@@ -720,6 +735,28 @@ def cmd_export_training(args: argparse.Namespace) -> int:
     return 0 if counts["invoices"] else 1
 
 
+def cmd_pilot_score(args: argparse.Namespace) -> int:
+    from .pilot_score import ExportError, run
+
+    try:
+        report, folder = run(Store(args.db), args.vouchers, args.distribution, args.out,
+                             implied_decimals=args.implied_decimals, start=args.start, end=args.end,
+                             every_voucher=args.every_voucher)  # fmt: skip
+    except ExportError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    inv, coding = report["invoices"], report["coding"]
+    fields = sum(h["n"] for h in report["header"].values())
+    right = sum(h["right"] for h in report["header"].values())
+    print(f"{inv['matched']} of {inv['ap_coder']} invoices approved in AP Coder matched a JD Edwards voucher "
+          f"({inv['jd_edwards_only']} posted only in JD Edwards).")  # fmt: skip
+    print(f"Header fields right: {right} of {fields}. Lines coded as posted: {coding['gl_right']} of "
+          f"{coding['compared']} (as AP Coder proposed them: {coding['proposed_right']}).")  # fmt: skip
+    print(f"{len(report['differences'])} differences. Report: {folder / 'pilot_score.md'}")
+    print(f"Differences, one per row: {folder / 'pilot_score_differences.csv'}")
+    return 0
+
+
 def cmd_demo(args: argparse.Namespace, settings: Settings) -> int:
     from .demo import load_demo, remove_demo
 
@@ -780,6 +817,7 @@ def main(argv: list[str] | None = None) -> int:
         "evaluate": lambda: cmd_evaluate(args),
         "share-report": lambda: cmd_share_report(args),
         "export-training": lambda: cmd_export_training(args),
+        "pilot-score": lambda: cmd_pilot_score(args),
         "demo": lambda: cmd_demo(args, settings),
         "schema": lambda: cmd_schema(args),
     }

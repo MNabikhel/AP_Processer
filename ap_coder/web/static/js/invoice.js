@@ -964,6 +964,14 @@ linesGrid?.addEventListener("change", (e) => {
   }
 });
 
+/* ---------- A line coded to a meals account: half its GST/HST is claimable (D-90) ---------- */
+
+linesGrid?.addEventListener("change", (e) => {
+  if (!e.target.matches("[data-gl]")) return;
+  const note = e.target.closest("td")?.querySelector("[data-meals-note]");
+  if (note) note.hidden = !(note.dataset.meals || "").split(" ").includes(e.target.value);
+});
+
 /* ---------- Words picked on the page by dragging a box: what are they? ---------- */
 
 const LINE_COLUMNS = [
@@ -2406,7 +2414,44 @@ function focusFirstToCheck(always = false) {
   // view (above the approve bar).
   box.focus({ preventScroll: true });
   if (always) box.scrollIntoView({ block: "nearest" }); // after an Undo: where the work is
+  else reachApprovalUndo(box);
   return true;
+}
+
+/** The banner of the approval just made: its Undo one Shift+Tab back from ``box`` (where the page opened), and Tab
+    from it back to ``box``, until the focus goes elsewhere; and said once to a screen reader, as a status shown with
+    the page is not read out (B-841). Ctrl+Z undoes it from anywhere outside a text box. */
+function reachApprovalUndo(box) {
+  const undo = document.querySelector("#flashes form.flash-undo button");
+  if (!undo) return;
+  const plain = (e) => e.key === "Tab" && !e.ctrlKey && !e.altKey && !e.metaKey;
+  const back = (e) => {
+    if (!plain(e) || !e.shiftKey) return;
+    e.preventDefault();
+    undo.focus();
+  };
+  const forth = (e) => {
+    if (!plain(e) || e.shiftKey || !box.isConnected) return;
+    e.preventDefault();
+    box.focus({ preventScroll: true });
+  };
+  const away = (e) => {
+    if (e.relatedTarget === box || e.relatedTarget === undo) return;
+    box.removeEventListener("keydown", back);
+    undo.removeEventListener("keydown", forth);
+    box.removeEventListener("focusout", away);
+    undo.removeEventListener("focusout", away);
+  };
+  box.addEventListener("keydown", back);
+  undo.addEventListener("keydown", forth);
+  box.addEventListener("focusout", away);
+  undo.addEventListener("focusout", away);
+  const said = document.createElement("div");
+  said.className = "rvw-sr";
+  said.setAttribute("aria-live", "polite");
+  document.body.append(said);
+  const text = undo.closest(".flash")?.querySelector(".flash-text")?.textContent.trim() || "Approved";
+  setTimeout(() => (said.textContent = `${text}. To undo it: Ctrl+Z, or Shift+Tab to its Undo button.`), 400);
 }
 
 /* ---------- Start ---------- */

@@ -47,6 +47,7 @@ from typing import Any
 
 from ..coding.line_tax import exempt_of, legacy_basis
 from ..coding.tax import CANADIAN_TAX_TYPES, OUTSIDE_CANADA, PLACE_OF_SUPPLY, PROVINCES, ZERO_DECIMAL_CURRENCIES
+from ..coding.terms import terms_key
 from ..coding.vendors import norm_invoice_number
 from ..core.headers import header_key
 from ..core.memory import refresh_vendor_key, vendor_key
@@ -151,6 +152,17 @@ def default_tax_map() -> dict[str, TaxArea]:
     return out
 
 
+# Payment terms → JD Edwards payment terms code (VLPTC, D-91): example rows, offered pre-filled in Settings → JD Edwards
+# E1 until the pilot tester saves the table, each to check against the company's own codes (P0014 / F0014).
+EXAMPLE_TERMS_CODES = {
+    "Due on receipt": "Z", "Net 10": "N10", "Net 15": "N15", "Net 30": "N30", "Net 45": "N45", "Net 60": "N60",
+    "Net 90": "N90", "1/10 Net 30": "110", "2/10 Net 30": "210", "Net 30 EOM": "E30",
+}  # fmt: skip
+# Where a voucher's terms code comes from (``terms_code``); a credit memo is sent without one (B-896).
+TERMS_TABLE, TERMS_DEFAULT, TERMS_CREDIT = "table", "default", "credit"
+PTC_WIDTH = 3  # VLPTC
+
+
 @dataclass
 class GlMap:
     """AP Coder GL code (+ cost center, blank = any) → E1 business unit / object / subsidiary. A blank
@@ -185,7 +197,9 @@ class JdeSettings:
     currencies: list[str] = field(default_factory=lambda: ["CAD", "USD"])
     header_bu: str = ""
     pay_status: str = "A"
-    payment_terms_code: str = ""  # blank: E1 takes the supplier's terms
+    payment_terms_code: str = ""  # the code for terms not in ``terms_codes``; blank: E1 takes the supplier's terms
+    # The meaning of the printed terms (``terms.terms_key``: "Net 30", "2/10 Net 30"...) → the company's code (D-91).
+    terms_codes: dict[str, str] = field(default_factory=dict)
     send_due_date: bool = True
     gl_date: str = GL_DATE_INVOICE
     default_bu: str = ""
@@ -235,6 +249,10 @@ class JdeSettings:
             out.bank_glba = {}
         out.bank_glba = {str(k).strip().upper(): str(v).strip() for k, v in out.bank_glba.items()
                          if str(k).strip() and str(v).strip()}  # fmt: skip
+        if not isinstance(out.terms_codes, dict):
+            out.terms_codes = {}
+        out.terms_codes = {str(k): str(v).strip().upper() for k, v in out.terms_codes.items()
+                           if str(k).strip() and str(v).strip()}  # fmt: skip
         if not isinstance(out.an8_overrides, dict):
             out.an8_overrides = {}
         # Vendor keys saved under older vendor-matching rules, as today's rules give them ("energir sec" -> "energir").
@@ -415,6 +433,8 @@ class _Voucher:
     recoverable_types: frozenset[str] = frozenset()
     entries: list[dict[str, Any]] = field(default_factory=list)  # distribution lines (cents in "cents")
     po_matched: bool = False
+    # The GST/HST/QST on meals not claimable (D-90): in the expense lines, so E1 must not post it as recoverable.
+    meals: int = 0
 
 
 def _place_of_supply(final: dict[str, Any]) -> str:
@@ -437,6 +457,28 @@ def _distribution(final: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _is_recoverable_entry(e: dict[str, Any]) -> bool:
     return e.get("kind") == "tax" and abs(float(e.get("non_recoverable_tax") or 0)) < 0.005
+
+
+def terms_code(final: dict[str, Any], settings: JdeSettings) -> tuple[str, str, str]:
+    """(VLPTC, the meaning of the printed terms, where the code comes from) of a voucher (D-91): the code of the
+    printed terms' meaning in the table ("30 days" and "N30" are "Net 30"), else the default code, else blank (E1
+    takes the supplier's own terms). A credit memo: blank, as its due date is not sent: a code can carry a discount
+    (2/10 Net 30) that E1 would work out on the credit (B-896; to confirm with the JDE team, D-91)."""
+    key = terms_key(str(final.get("payment_terms") or ""))
+    if _negative(final.get("grand_total")):
+        return "", key, TERMS_CREDIT
+    code = settings.terms_codes.get(key, "").strip() if key else ""
+    if code:
+        return code, key, TERMS_TABLE
+    default = settings.payment_terms_code.strip()
+    return (default, key, TERMS_DEFAULT) if default else ("", key, "")
+
+
+def terms_unmapped(final: dict[str, Any], settings: JdeSettings) -> str:
+    """The meaning of the printed terms when the terms table is in use and has no code for them, nor a default: ""
+    otherwise (no table: E1 takes the supplier's own terms, as before D-91; terms not understood: TERMS_NOT_FOUND)."""
+    code, key, source = terms_code(final, settings)
+    return key if settings.terms_codes and key and not code and source != TERMS_CREDIT else ""
 
 
 def an8_problem(reason: str) -> bool:
@@ -479,6 +521,18 @@ def po_not_sent(final: dict[str, Any], settings: JdeSettings) -> bool:
     8 characters, sent as a reference only (not a PO-matched voucher, where it holds the voucher back)."""
     po = str(final.get("po_number") or "").strip()
     return len(po) > PO_WIDTH and settings.send_po_reference and not settings.po_matched
+
+
+# Why a voucher with meals on it is held back (D-90): E1 would claim the full ITC on them while AP Coder expenses half
+# of it, so the GL and the ITC report would disagree.
+MEALS_GROSS = (
+    "meals and entertainment: with the gross amount only, JD Edwards works out the tax itself and would claim all of "
+    "it, not half: switch to sending tax amounts in Settings → JD Edwards E1 (Amounts)"
+)
+MEALS_PO = (
+    "meals and entertainment on a PO-matched voucher: JD Edwards distributes it from the receipts and would claim all "
+    "the tax on the meals, not half: send it without the PO match, or post the half by hand in JD Edwards"
+)
 
 
 def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
@@ -539,7 +593,18 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
     recoverable = [t for t in charged if t["tax_type"] in v.recoverable_types]
     v.recoverable = sum(_units(t.get("tax_amount"), v.decimals) for t in recoverable)
 
+    # Meals (D-90): half the tax on a meals line is not claimable, and is in its expense line, not E1's to post.
+    dist = _distribution(final)
+    meals = sum(_units(e.get("meals_tax"), v.decimals) for e in dist if e.get("kind") == "expense")
+    if v.recoverable_types and meals:
+        v.meals = meals
+        v.recoverable -= meals
+        v.stam -= meals
     v.po_matched = bool(settings.po_matched and po)
+    if meals and v.po_matched:  # no G/L lines of ours: E1 distributes from the receipts (B-865)
+        add(MEALS_PO, "JDE_MEALS_PO")
+    elif meals and settings.amount_mode == AMOUNT_GROSS:  # E1 works out the tax and claims all of it (B-866)
+        add(MEALS_GROSS, "JDE_MEALS_GROSS")
     if v.po_matched:
         items = final.get("line_items") or []
         lines = sum(_cents(li.get("amount")) for li in items)
@@ -552,7 +617,6 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
             )
         return v
 
-    dist = _distribution(final)
     if not dist:
         add("no GL distribution to post", "NO_LINE_ITEMS")
     total = sum(_cents(e.get("amount")) for e in dist)
@@ -667,7 +731,7 @@ def voucher_rows(
         "VLAN8": str(vendor_an8 or "").strip(), "VLVINV": str(final.get("invoice_number") or "").strip()[:25],
         "VLDIVJ": julian(invoice_date), "VLDGJ": julian(gl_date), "VLDSVJ": julian(invoice_date),
         "VLTXA1": v.tax_area, "VLEXR1": v.tax_code, "VLCRRM": "F" if v.foreign else "D", "VLCRCD": v.currency,
-        "VLCRR": _plain(rate, 7) if rate else "", "VLPTC": settings.payment_terms_code.strip(),
+        "VLCRR": _plain(rate, 7) if rate else "", "VLPTC": terms_code(final, settings)[0][:PTC_WIDTH],
         # A due date E1 cannot hold is left blank, not an error: a batch downloaded again is not checked again (B-21),
         # and ``validate`` lists it for the README's "check before loading".
         "VLDDJ": julian(due) if settings.send_due_date and due.year in E1_YEARS else "",
@@ -761,7 +825,15 @@ def voucher_rows(
         widest = max(v.charged, key=lambda t: abs(_units(t.get("taxable_amount"), v.decimals)), default=None)
         base = carrying(widest["tax_type"]) if widest else weights  # the tax whose taxable amount is VLATXA
         atxas = _split(v.atxa, base, unit)
-        stams = [s + _units(e.get("non_recoverable_tax"), v.decimals) for e, s in zip(v.entries, shares, strict=True)]
+        # Half the tax on a meals line is in its expense amount (D-90): not E1's to post, so neither in its share
+        # of the recoverable tax nor in its tax.
+        meals = [_units(e.get("meals_tax"), v.decimals) if v.meals else 0 for e in v.entries]
+        shares = [s - m for s, m in zip(shares, meals, strict=True)]
+        own = _claimed_shares(v) if v.meals else None
+        if own is not None:  # the distribution's own shares, not split again with other cents (B-867)
+            shares = own
+        stams = [s + _units(e.get("non_recoverable_tax"), v.decimals) - m
+                 for e, s, m in zip(v.entries, shares, meals, strict=True)]  # fmt: skip
         stams[max(range(len(base)), key=lambda i: abs(base[i]))] += v.stam - sum(stams)
         grosses = [e["cents"] + s for e, s in zip(v.entries, shares, strict=True)]
         # An exempt line's pay item says so (its own VLEXR1) only when no tax is put on it.
@@ -773,6 +845,36 @@ def voucher_rows(
         return headers, [dist_row(n, e) for n, e in enumerate(v.entries, 1)], []
     header = {**common, "VLEDLN": 1, **amounts(v.gross, v.stam, v.atxa), **extras}
     return [header], [dist_row(n, e) for n, e in enumerate(v.entries, 1)], []
+
+
+def _claimed_shares(v: _Voucher) -> list[int] | None:
+    """Each distribution line's claimable share of the recoverable taxes E1 posts, as the GL distribution has them
+    (``tax.tax_shares``, half of a meals line's share: D-90), in the currency's units; None when the invoice's lines
+    can't be read back or don't match the distribution lines (then the pay items split the tax themselves)."""
+    from ..coding.tax import half_down, is_meals, tax_shares
+    from ..core.schema import InvoiceCoding
+
+    try:
+        coding = InvoiceCoding.model_validate({k: x for k, x in v.final.items() if k != "gl_distribution"})
+    except ValueError:
+        return None
+    items = v.final.get("line_items") or []
+    behind = _entry_lines(v.entries, items)
+    position = {id(li): i for i, li in enumerate(items)}
+    lines = [position.get(id(li)) if li is not None else None for li in behind]
+    if len(coding.line_items) != len(items):
+        return None
+    meals_codes = {str(e.get("gl_code") or "").strip() for e in v.entries if e.get("meals_tax")}
+    places = v.decimals
+    per_line = [0] * len(items)
+    for tl in coding.tax_lines:
+        if tl.tax_type not in v.recoverable_types or abs(tl.tax_amount) < 0.005:
+            continue
+        for idx, share in tax_shares(coding.line_items, tl, places):
+            meal = is_meals(coding.line_items[idx].predicted_gl_code, meals_codes)
+            per_line[idx] += _units(half_down(share, places) if meal else share, v.decimals)
+    shares = [per_line[i] if i is not None else 0 for i in lines]
+    return shares if sum(shares) == v.recoverable else None
 
 
 def _entry_lines(entries: list[dict[str, Any]], items: list[dict[str, Any]]) -> list[dict[str, Any] | None]:
@@ -891,7 +993,7 @@ def validate(
 
 # --- Before approval: the review screen ---------------------------------------------------------------------------
 
-ERROR, WARNING = "error", "warning"  # a finding's severity (coding.validation.ERROR, WARNING)
+ERROR, WARNING, INFO = "error", "warning", "info"  # a finding's severity (coding.validation.ERROR, WARNING, INFO)
 SHOW_SETTING = "show_jde_settings"  # web.core.SHOW_JDE: "1" when JD Edwards is the export in use
 SETTINGS_URL = "/settings/jde"
 # What the review screen's own checks already say (no second message): the invoice number, the date, a line without a
@@ -952,10 +1054,18 @@ def voucher_findings(output: dict[str, Any], settings: JdeSettings, an8: str) ->
             out.append((ERROR, "JDE_TAX_AREA", f"JD Edwards: {problem}", None))
         elif code == "JDE_NO_ACCOUNT":  # said once for all the lines below
             unmapped.setdefault(problem.split(" has no JDE account")[0].split(": JDE account")[0], []).append(line)
+        elif code == "JDE_MEALS_GROSS":
+            out.append((ERROR, "JDE_MEALS_GROSS", f"JD Edwards: {problem}, or ask the pilot tester", None))
+        elif code == "JDE_MEALS_PO":
+            out.append((ERROR, "JDE_MEALS_PO", f"JD Edwards: {problem}", None))
         elif code == "JDE_UNBALANCED":
             out.append((ERROR, "JDE_UNBALANCED", f"JD Edwards: {problem}", None))
         else:
             out.append((ERROR, "JDE_VOUCHER", f"JD Edwards: {problem}", line))
+    no_code = terms_unmapped(output, settings)
+    if no_code:  # a note: a blank VLPTC has E1 take the supplier's own terms, no reason to hold anything (B-896)
+        out.append((INFO, "JDE_TERMS_NO_CODE", f"Payment terms {no_code} have no JD Edwards code: add it in "
+                    "Settings → JD Edwards E1 (or ask the pilot tester)", None))  # fmt: skip
     if po_not_sent(output, settings):
         out.append((WARNING, "JDE_PO_LONG", "JD Edwards' PO field holds 8 characters: this PO number is kept in AP "
                     "Coder and not sent", None))  # fmt: skip
@@ -992,11 +1102,22 @@ def voucher_view(
     gl_date = today if settings.gl_date == GL_DATE_EXPORT else invoice_date
     due = _date(final.get("due_date"))
     credit = v.gross < 0
-    code = settings.payment_terms_code.strip()
-    if code:
-        terms_text = f"{code} (terms code from the settings)"
+    code, key, source = terms_code(final, settings)
+    if source == TERMS_TABLE:
+        terms_text = f"{code} ({key})"
+        terms_note = f"Sent to JD Edwards as code {code}"
+    elif source == TERMS_DEFAULT:
+        terms_text = f"{code} (the default for terms not in the table)"
+        terms_note = f"Sent to JD Edwards as code {code}, the default for terms not in the table"
+    elif source == TERMS_CREDIT:
+        terms_text = "Not sent (a credit): JD Edwards takes no terms code on a credit memo"
+        terms_note = "Not sent to JD Edwards: a credit memo goes without a terms code"
+    elif settings.terms_codes and key:
+        terms_text = f"Not sent: no code for {key}, JD Edwards uses the supplier's own terms"
+        terms_note = f"No JD Edwards code for {key}: it uses the supplier's own terms"
     else:  # the invoice's words are under its Payment terms box
         terms_text = "Not sent: JD Edwards uses the supplier's own terms"
+        terms_note = "Not sent to JD Edwards: it uses the supplier's own terms"
 
     def money(cents: int) -> str:
         return f"{cents / 100:,.{v.decimals}f}" if v.decimals else f"{cents // 100:,}"
@@ -1021,7 +1142,8 @@ def voucher_view(
         ("Pay status", "VLPST", settings.pay_status.strip() or "—", "settings"),
     ]  # fmt: skip
     return {"rows": [{"label": a, "column": b, "value": c, "source": d} for a, b, c, d in rows],
-            "settings_url": SETTINGS_URL, "terms_sent": bool(code)}  # fmt: skip
+            "settings_url": SETTINGS_URL, "terms_sent": bool(code), "terms_code": code,
+            "terms_note": terms_note}  # fmt: skip
 
 
 # --- Files -------------------------------------------------------------------------------------------------------
@@ -1300,12 +1422,20 @@ def dry_run(
                 "matches": len(matches),
                 # The self-assessed PST is booked from the Self-assessment report by journal entry; a code that has
                 # E1 accrue the use tax itself (B) would accrue it a second time (B-716).
-                "warnings": [
-                    f"code {v.tax_code} has JD Edwards accrue the PST (use tax): do not also book it from AP Coder's "
-                    "Self-assessment report, or the PST is accrued twice"
-                ]
-                if v.tax_code and v.tax_code == settings.self_assessed_code.strip().upper()
-                else [],
+                "warnings": (
+                    [
+                        f"code {v.tax_code} has JD Edwards accrue the PST (use tax): do not also book it from AP "
+                        "Coder's Self-assessment report, or the PST is accrued twice"
+                    ]
+                    if v.tax_code and v.tax_code == settings.self_assessed_code.strip().upper()
+                    else []
+                )
+                + (
+                    [f"payment terms {unmapped} have no JD Edwards code: add it in Settings -> JD Edwards E1"]
+                    if (unmapped := terms_unmapped(final, settings))
+                    else []
+                ),
+                "terms": _terms_shown(final, settings),
                 "notes": notes.get(inv_id, []),
                 "balance": (
                     f"distribution {_shown(dist_total, settings, v.decimals)} = gross {v.gross / 100:,.2f} "
@@ -1321,6 +1451,21 @@ def dry_run(
         cur = who["currency"]
         out["totals"][cur] = round(out["totals"].get(cur, 0.0) + float(final.get("grand_total") or 0), 2)
     return out
+
+
+def _terms_shown(final: dict[str, Any], settings: JdeSettings) -> str:
+    """The dry run's line about the voucher's payment terms code (VLPTC), "" when there is nothing to say."""
+    code, key, source = terms_code(final, settings)
+    if not code and not key:
+        return ""
+    printed = key or "none printed"
+    if source == TERMS_CREDIT:
+        return f"payment terms {printed} -> none (a credit memo is sent without a terms code)"
+    if source == TERMS_DEFAULT:
+        return f"payment terms {printed} -> {code} (the default code)"
+    if code:
+        return f"payment terms {printed} -> {code}"
+    return f"payment terms {printed} -> none (no code: JD Edwards uses the supplier's own terms)"
 
 
 def dry_run_text(report: dict[str, Any]) -> str:
@@ -1355,6 +1500,8 @@ def dry_run_text(report: dict[str, Any]) -> str:
             )
         for d in v["lines"]:
             lines.append(f"  F0911Z1 line {d['line']}: {d['account']}  {d['amount']}  {d['text']}")
+        if v.get("terms"):
+            lines.append(f"  {v['terms']}")
         if v["matches"]:
             lines.append(f"  F0411Z1T: {v['matches']} PO match line(s)")
         lines += [f"  WARNING: {w}" for w in v.get("warnings") or []]

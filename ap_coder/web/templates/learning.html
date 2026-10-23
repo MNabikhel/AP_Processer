@@ -9,7 +9,7 @@
 
 {% if tab == "coding" %}
 {# --- Teach from past coding --------------------------------------------------------------------------- #}
-<details class="card an-expander" id="history"{% if upload or upload_gone %} open{% endif %}>
+<details class="card an-expander" id="history"{% if upload or upload_gone or teach %} open{% endif %}>
   <summary><span class="ms" aria-hidden="true">history_edu</span>Teach from past coding{% if history_count %} ({{ history_count | plural("past line") }} taught){% endif %}</summary>
   <p class="muted">Export last year's posted AP invoice lines from the ERP (vendor, line description, GL account, cost
     center) and import them here: the AI then sees how each vendor was coded before, from the first invoice. Past lines

@@ -22,6 +22,15 @@
   page if your company claims it.</p>
 {% endif %}
 
+{% set meals = report.meals_totals() %}
+{% if meals %}
+<p class="muted small"><span class="ms" aria-hidden="true">restaurant</span> Not claimed on meals and entertainment:
+  {% for tax, by in meals.items() %}{{ tax }} {% for cur, amount in by.items() %}{{ amount | money }} {{ cur }}{{ ", " if not loop.last }}{% endfor %}{{ "; " if not loop.last }}{% endfor %}.
+  Only 50% of the GST/HST and QST paid on meals and entertainment is claimable (Income Tax Act s.67.1, Excise Tax Act
+  s.236, and Quebec's QST Act alike): the other 50% was expensed with the meal when the invoice was approved. The totals
+  to claim here are already net of it (line 106 of the GST/HST return as is; no add-back for these meals on line 104).</p>
+{% endif %}
+
 {% if not report.claims %}
 <section class="card">{{ ui.empty_state("Nothing to claim", "No approved invoice dated " ~ start ~ " to " ~ end ~ " has recoverable GST/HST or QST.") }}</section>
 {% else %}
@@ -37,6 +46,10 @@
   </div>
   <p class="muted small">Compare the ITC total with the balance of your GST/HST receivable account in the ERP for the same
     period; invoices approved but not exported yet explain part of any difference.</p>
+  <p class="muted small">Meals and entertainment: this report claims half the tax on them. A voucher JD Edwards took with
+    the gross amount only (it works out the tax itself) holds the full tax in the receivable, so the account can be
+    higher than this report by the half not claimable; AP Coder no longer sends such vouchers (Settings → JD Edwards E1
+    → Amounts: tax amounts).</p>
 </section>
 
 <section class="card" id="claims">

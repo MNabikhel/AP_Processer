@@ -113,7 +113,7 @@
         {% if name in tax_fields %}<span class="inv-from-vendor small muted" data-from-vendor-note{% if name not in filled %} hidden{% endif %}><span class="ms" aria-hidden="true">menu_book</span>{{ from_vendor_note }}</span>{% endif %}
         <span class="inv-flag small" data-flag{% if name not in flags %} hidden{% endif %}><span class="ms" aria-hidden="true">error</span><span data-flag-text>{{ flags.get(name, "") }}</span></span>
         {{ help_slot(name) }}
-        {% if name == "payment_terms" and live.jde %}<span class="inv-field-note small muted" data-terms-note><span class="ms" aria-hidden="true">info</span>{% if live.jde.terms_sent %}JD Edwards gets the terms code from the settings, not these words{% else %}Not sent to JD Edwards: it uses the supplier's own terms{% endif %}</span>{% endif %}
+        {% if name == "payment_terms" and live.jde %}<span class="inv-field-note small muted" data-terms-note><span class="ms" aria-hidden="true">info</span>{{ live.jde.terms_note }}</span>{% endif %}
       </label>
       {%- endmacro %}
       {% macro province(name, hint="") -%}
