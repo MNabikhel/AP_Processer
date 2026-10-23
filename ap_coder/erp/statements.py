@@ -22,7 +22,7 @@ from typing import Any
 
 from ..coding.vendors import norm_invoice_number
 from ..core.csvio import parse_date
-from ..core.headers import header_key
+from ..core.headers import header_key, match_columns
 from ..core.safe import csv_row, parse_amount
 
 MATCHED, DIFFERS, NOT_RECEIVED, NOT_ON_STATEMENT, PAYMENT = (
@@ -57,14 +57,7 @@ def _norm(value: Any) -> str:
 
 
 def map_columns(headers: list[str]) -> dict[str, str]:
-    found: dict[str, str] = {}
-    normalised = {_norm(h): h for h in headers}
-    for target, aliases in COLUMN_ALIASES.items():
-        for alias in (target, *aliases):
-            if alias in normalised and normalised[alias] not in found.values():
-                found[target] = normalised[alias]
-                break
-    return found
+    return match_columns(headers, COLUMN_ALIASES)
 
 
 def _number(value: Any) -> float | None:

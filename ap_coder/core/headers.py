@@ -17,3 +17,17 @@ def header_key(value: Any) -> str:
     text = unicodedata.normalize("NFKD", str(value or "").translate(_SPELLED))
     text = "".join(c for c in text if not unicodedata.combining(c)).lower()
     return re.sub(r"[^a-z0-9]", "", text)
+
+
+def match_columns(headers: list[str], aliases: dict[str, Any]) -> dict[str, str]:
+    """{field: the file's column} for each field whose name or an alias is one of ``headers`` (compared as
+    ``header_key``); a column is used for one field only, the first field listed that names it."""
+    found: dict[str, str] = {}
+    keyed = {header_key(h): h for h in headers}
+    for target, names in aliases.items():
+        for alias in (target, *names):
+            column = keyed.get(header_key(alias))
+            if column is not None and column not in found.values():
+                found[target] = column
+                break
+    return found

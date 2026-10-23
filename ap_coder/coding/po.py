@@ -28,7 +28,7 @@ from difflib import SequenceMatcher
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
-from ..core.headers import header_key
+from ..core.headers import match_columns
 from ..core.memory import vendor_key
 from ..core.safe import parse_amount
 
@@ -76,20 +76,9 @@ def po_key(value: Any) -> str:
     return text.lstrip("0") or text
 
 
-def _norm_header(value: Any) -> str:
-    return header_key(value)  # accents folded first: "Reçu", "Numéro" (B-657)
-
-
 def map_columns(headers: list[str]) -> dict[str, str]:
     """{canonical field: column in the file} for the columns that could be recognised."""
-    found: dict[str, str] = {}
-    normalised = {_norm_header(h): h for h in headers}
-    for target, aliases in COLUMN_ALIASES.items():
-        for alias in (_norm_header(target), *aliases):
-            if alias in normalised and normalised[alias] not in found.values():
-                found[target] = normalised[alias]
-                break
-    return found
+    return match_columns(headers, COLUMN_ALIASES)
 
 
 def _blank(value: Any) -> bool:

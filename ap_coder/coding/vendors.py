@@ -30,7 +30,7 @@ import re
 import statistics
 from typing import TYPE_CHECKING, Any
 
-from ..core.headers import header_key
+from ..core.headers import header_key, match_columns
 from ..core.memory import vendor_key
 
 if TYPE_CHECKING:
@@ -476,14 +476,7 @@ def _norm_header(value: Any) -> str:
 
 
 def master_columns(headers: list[str]) -> dict[str, str]:
-    found: dict[str, str] = {}
-    normalised = {_norm_header(h): h for h in headers}
-    for target, aliases in MASTER_ALIASES.items():
-        for alias in (_norm_header(target), *aliases):
-            if alias in normalised and normalised[alias] not in found.values():
-                found[target] = normalised[alias]
-                break
-    return found
+    return match_columns(headers, MASTER_ALIASES)
 
 
 def master_rows(records: list[dict[str, Any]], columns: dict[str, str]) -> list[dict[str, Any]]:
