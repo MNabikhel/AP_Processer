@@ -357,3 +357,11 @@ def test_the_line_note_points_to_the_other_account():
 
     assert meals_note("ON") == ("Meals: 50% of the GST/HST is claimable. Billed to a client or a staff event? Use the "
                                 "other account.")  # fmt: skip
+
+
+def test_a_meals_invoice_whose_tax_lines_are_a_guess_never_goes_touchless():
+    """MEALS_TAX_LINES: the half expensed rests on which lines carry the tax, a guess; a person confirms it (B-891)."""
+    from ap_coder.capture.supplier import ALWAYS_A_PERSON_RULES, touchless_gates
+
+    assert touchless_gates([{"code": "MEALS_TAX_LINES", "severity": "warning"}], grand_total=100)
+    assert "meals" in dict(ALWAYS_A_PERSON_RULES)["Tax to look at"]
