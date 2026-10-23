@@ -365,6 +365,43 @@ def calibrate(raw: float, evidence: str = "", local: dict[str, tuple[int, int]] 
     return raw
 
 
+# ---------------------------------------------------------------- the supplier's record (D-89)
+
+# How many of the supplier's approvals the readers' own confidence counts as, when its record is added to it: two, so a
+# first approval moves a verified field from 98.5% to 99%, ten to 99.7%, and a record with corrections lifts nothing.
+LEARNED_PRIOR = 2.0
+
+
+def template_vouched(result: FieldResult) -> bool:
+    """Whether the supplier's template is one of the readers behind the value, where it vouches for it (the readers
+    of its evidence pattern: ``evidence_key`` leaves out the template's readings it does not vouch for)."""
+    parts = result.evidence.split("|")
+    return len(parts) > 1 and "template" in parts[1].split("+")
+
+
+def apply_supplier_record(fields: dict[str, FieldResult], record: dict[str, Any] | None) -> None:
+    """In place: each verified value the supplier's template vouched for, with how often this supplier's value of the
+    field was read right (``record``: {field: (cases, right)}, its approvals as ``SupplierStats`` counts them) added to
+    the readers' confidence, as ``LEARNED_PRIOR`` cases of it: (right + 2 × confidence) / (cases + 2). It only ever
+    lifts (a record with corrections leaves the readers' confidence as it is), and never a value the template did not
+    read, nor one to check: a first-time supplier's values keep the readers' own confidence. The status is unchanged
+    (a verified value stays verified), so nothing goes touchless that would not have."""
+    for name, result in fields.items():
+        cases, right = _counts((record or {}).get(name))
+        if not cases or result.status != VERIFIED or not template_vouched(result):
+            continue
+        lifted = round((right + LEARNED_PRIOR * result.confidence) / (cases + LEARNED_PRIOR), 4)
+        if lifted > result.confidence:
+            result.confidence = lifted
+            result.reasons.append(f"read right on {right} of this supplier's last {cases} invoices")
+
+
+def reading_confidence(fields: dict[str, FieldResult]) -> float:
+    """How sure the reading of the invoice is: the mean confidence of the values found (D-89's Reading)."""
+    found = [r.confidence for r in fields.values() if r.value not in (None, "")]
+    return round(min(sum(found) / len(found), 1.0), 3) if found else 0.0
+
+
 def _counts(seen: Any) -> tuple[int, int]:
     """(cases, right) from a store's count, made safe: whole numbers, 0 <= right <= cases."""
     try:

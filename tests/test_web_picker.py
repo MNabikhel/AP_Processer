@@ -353,7 +353,7 @@ def test_in_a_browser_the_split_popover_closes_on_escape_and_gives_back_the_focu
 
 
 def test_in_a_browser_the_vendor_is_typed_or_picked_from_the_vendor_list(browser, store):
-    invoice_id = store.list_invoices(REVIEW)[0]["id"]
+    invoice_id = next(i["id"] for i in store.list_invoices(REVIEW) if i["vendor_name"].startswith("Cascade"))
     page, errors = _review(browser, invoice_id)
     vendors = json.loads(page.inner_text("#vendor-data"))
     target = vendors["list"][-1]

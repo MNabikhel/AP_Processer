@@ -26,6 +26,25 @@ _WARNING_PENALTY = 0.9
 # What the setup or a choice still to make holds back (JD Edwards not set up for it, the bank account that pays), not
 # a doubt about the reading or the coding: a blocker, never lower confidence (D-86).
 SETUP_PREFIXES = ("JDE_", "PAY_FROM_")
+# Confidence is two numbers (D-89): the Reading (how sure the header is: the coding's ``confidence_score``) and the
+# Coding (how sure the lines' accounts, cost centers and tax codes are: ``coding_confidence``); the invoice's is the
+# lower. A line to code, or coded to an account or cost center not in the lists, already counts 0 in the Coding: its
+# finding keeps Approve closed but takes nothing more off (as setup findings, D-86).
+COUNTED_IN_CODING = frozenset({"GL_UNASSIGNED", "CC_UNASSIGNED", "GL_UNKNOWN", "CC_UNKNOWN", "GL_IS_TAX_ACCOUNT",
+                               "PST_EXEMPTION_TO_CONFIRM"})  # fmt: skip
+# Findings about the business, not about how the invoice was read or coded (the vendor master, a purchase order, a
+# possible duplicate, an unusual amount): like setup findings they keep Approve closed (an error), go to a person and
+# are said, but take nothing off the Reading or the Coding: every value can be read right and still not be in the
+# vendor master (D-89).
+BUSINESS_PREFIXES = ("PO_", "DUPLICATE_")
+BUSINESS_CODES = frozenset({"VENDOR_NOT_IN_MASTER", "VENDOR_ON_HOLD", "VENDOR_ADDED_HERE", "VENDOR_BANK_CHANGED",
+                            "POSSIBLE_DUPLICATE_AMOUNT", "AMOUNT_UNUSUAL"})  # fmt: skip
+# Findings that doubt the lines' coding rather than the reading: they take their share off the Coding.
+ABOUT_CODING = frozenset({"HISTORY_CONFLICT", "TAX_EXEMPTION_LEARNED", "EXEMPT_LINE_TAXED", "TAX_NOT_ALLOCATED",
+                          "LINE_TAX_NOT_CHARGED", "TAX_BASE_MISMATCH", "MEALS_TAX_LINES"})  # fmt: skip
+# A line's account the chat model chose or a weak match (``offline_coder.GUESSED``), and a tax code worked out from
+# several possible sets of lines or an exemption to confirm: about one chance in two (the coding bench measures it).
+GUESS_SURE = 0.5
 _LOW_OCR_CONFIDENCE = 0.90
 
 
@@ -41,11 +60,13 @@ class Issue:
 class ValidationReport:
     source: str
     model_confidence: float
-    adjusted_confidence: float
+    adjusted_confidence: float  # the lower of the two below: what the queue sorts on and the threshold is held to
     review_threshold: float
     requires_review: bool
     issues: list[Issue] = field(default_factory=list)
     checks: dict[str, Any] = field(default_factory=dict)
+    reading_confidence: float = 0.0  # how sure the header is (D-89)
+    coding_confidence: float = 0.0  # how sure the lines' accounts, cost centers and tax codes are (D-89)
 
     @property
     def errors(self) -> list[Issue]:
@@ -213,13 +234,21 @@ def validate_coding(
         _cross_check(coding, extraction, add, checks)
 
     model_conf = coding.confidence_score
-    adjusted = model_conf
-    # Each kind of finding counts once: eight lines without an account are one thing to do, not eight.
-    for severity, _ in {(i.severity, i.code) for i in issues
-                        if i.severity != INFO and not i.code.startswith(SETUP_PREFIXES)}:  # fmt: skip
-        adjusted *= _ERROR_PENALTY if severity == ERROR else _WARNING_PENALTY
-    adjusted = round(adjusted, 4)
-    requires_review = adjusted < review_threshold or any(i.severity == ERROR for i in issues)
+    reading, coded = model_conf, coding_confidence(coding, reference)
+    # Each kind of finding counts once: eight lines without an account are one thing to do, not eight. Setup and
+    # business findings (D-86) and what the Coding already counts take nothing off (``doubtless``).
+    for severity, code in {(i.severity, i.code) for i in issues if i.severity != INFO and not doubtless(i.code)}:
+        penalty = _ERROR_PENALTY if severity == ERROR else _WARNING_PENALTY
+        if code in ABOUT_CODING:
+            coded *= penalty
+        else:
+            reading *= penalty
+    reading, coded = round(reading, 4), round(coded, 4)
+    adjusted = min(reading, coded)
+    # A line to code, and a business finding (a person looks at it, whatever the numbers), keep it for a person.
+    requires_review = (adjusted < review_threshold or any(i.severity == ERROR for i in issues)
+                       or any(i.code in COUNTED_IN_CODING or (i.severity != INFO and business(i.code))
+                              for i in issues))  # fmt: skip
 
     return ValidationReport(
         source=extraction.source if extraction else "",
@@ -227,9 +256,58 @@ def validate_coding(
         adjusted_confidence=adjusted,
         review_threshold=review_threshold,
         requires_review=requires_review,
+        reading_confidence=reading,
+        coding_confidence=coded,
         issues=issues,
         checks=checks,
     )
+
+
+def business(code: str) -> bool:
+    """Whether a finding is about the business (the vendor master, a PO, a possible duplicate, an unusual amount)."""
+    return code.startswith(BUSINESS_PREFIXES) or code in BUSINESS_CODES
+
+
+def doubtless(code: str) -> bool:
+    """Whether a finding takes nothing off the Reading or the Coding (D-86, D-89): a setup finding, one about the
+    business (``BUSINESS_CODES``), or a line to code, already counted in the Coding (``COUNTED_IN_CODING``)."""
+    return code.startswith(SETUP_PREFIXES) or business(code) or code in COUNTED_IN_CODING
+
+
+def line_coding_confidence(line: Any, cost_centers: bool, taxed: bool, known: Any = None, cc_known: Any = None,
+                           tax_gls: Any = ()) -> float:  # fmt: skip
+    """How sure one line's coding is: its account (none, or one not in the GL accounts or a tax account: 0; a guess:
+    ``GUESS_SURE``; else sure), its cost center where they are used (none or unknown: 0), and its tax code when the
+    invoice charges a tax (worked out from several possible sets of lines, an exemption to confirm, or none:
+    ``GUESS_SURE``), multiplied. ``known``/``cc_known``: the GL accounts and cost centers (a ``ReferenceTable``)."""
+    from ..ai.offline_coder import guessed
+    from .line_tax import CODE_NONE, exemption_to_confirm, tax_code_of, tax_guessed
+
+    gl = str(line.predicted_gl_code or "")
+    if gl in ("", UNASSIGNED) or (known is not None and known.get(gl) is None) or gl in tax_gls:
+        return 0.0
+    sure = GUESS_SURE if guessed(line.reasoning_justification) else 1.0
+    if cost_centers:
+        cc = str(line.predicted_cost_center or "")
+        if cc in ("", UNASSIGNED) or (cc_known is not None and cc_known.get(cc) is None):
+            return 0.0
+    if taxed and (tax_code_of(line) == CODE_NONE or tax_guessed(line) or exemption_to_confirm(line)):
+        sure *= GUESS_SURE
+    return sure
+
+
+def coding_confidence(coding: InvoiceCoding, reference: ReferenceData) -> float:
+    """The Coding (D-89): how sure the lines' coding is, the mean of ``line_coding_confidence`` over the lines (no line:
+    0). A line to code counts 0, so three lines of four coded is 75%, never less: the finding that asks for the
+    account is a blocker, not a second penalty."""
+    if not coding.line_items:
+        return 0.0
+    taxed = any(t.tax_amount for t in coding.tax_lines)
+    tax_gls = reference.tax.tax_gl_codes()
+    ccs = reference.cost_centers
+    sure = [line_coding_confidence(li, ccs is not None, taxed, reference.chart_of_accounts, ccs, tax_gls)
+            for li in coding.line_items]  # fmt: skip
+    return round(sum(sure) / len(sure), 4)
 
 
 def off_text(posted: float, total: float) -> str:

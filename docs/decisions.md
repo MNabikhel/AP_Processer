@@ -687,11 +687,45 @@ that is reversed keeps its line, marked "replaced by D-NN".
   result beside the stored checks (`validation.recheck`: its stamp and findings), so once per change of settings,
   about 5 ms an invoice; the findings made after processing (the Azure check, the AI reviewer, the page's own:
   `bulk.AFTER_PROCESSING`, and any code no check describes) are kept from the stored ones. Bulk approval drops the
-  stale stored findings the same way, so what the queue offers is what it approves. Not in the stamp: the vendor
-  master, the POs and the passing days (duplicates, overdue): bulk approval still checks those at approval. Why:
+  stale stored findings the same way, so what the queue offers is what it approves. Not in the stamp: the passing
+  days (duplicates, overdue): bulk approval still checks those at approval (the vendor master and the POs are in it
+  since B-842, as a count of their changes). Why:
   re-checking on every page load costs ~5 ms an invoice; re-checking on each settings save would be slow on the save
   and miss changes made elsewhere. (`coding/bulk.py` `issues_today`, `sort_for_bulk`, `bulk_approve`;
   `web/pages/review.py` `attention`; `core/store` `checks_stamp`, `check_stamps`, `save_recheck`)
+- **D-89** · Confidence is two numbers: the **Reading** (how sure the header is: supplier, number, dates, amounts, tax
+  numbers) and the **Coding** (how sure the lines' GL accounts, cost centers and tax codes are), side by side in the
+  review screen's header where the one Confidence bar was. Where one number is needed (the queue's order and its bar,
+  the review threshold, bulk approval, `adjusted_confidence` stored on the invoice, the exports and reports), it is the
+  lower of the two; `confidence_score` on the coding keeps its name and now means the Reading. (1) The Reading is the
+  mean confidence of the values read (`capture.confidence.reading_confidence`), no longer multiplied by the share of
+  lines coded. A verified value the supplier's template vouched for gets the supplier's record of that field added as
+  evidence (`apply_supplier_record`: (right + 2 × confidence) / (cases + 2), its approvals over the autonomy policy's
+  window): 98.5% → 99.3% after two right, 99.96% after forty; a first-time supplier, a value to check or one the
+  template did not read keep the readers' own confidence; it never lowers and never changes a status, so nothing goes
+  touchless that would not have. (2) The Coding is the mean over the lines of: the account (none, unknown or a tax
+  account 0; a guess, the chat model's or a weak match, 0.5), the cost center where they are used (none or unknown 0),
+  and, when a tax is charged, the tax code (worked out from several possible sets of lines, an exemption to confirm, or
+  none: 0.5), multiplied (`validation.coding_confidence`). (3) A line to code is counted once: GL_UNASSIGNED,
+  CC_UNASSIGNED, GL_UNKNOWN, CC_UNKNOWN, GL_IS_TAX_ACCOUNT and PST_EXEMPTION_TO_CONFIRM (`COUNTED_IN_CODING`) keep
+  Approve closed, touchless off and the invoice in Needs attention, but take nothing more off (as D-86's setup
+  findings); so do the business findings (`BUSINESS_CODES`, `PO_*`, `DUPLICATE_*`: not in the vendor master, on hold,
+  bank details changed, a possible duplicate, an unusual amount: every value can be read right and still be one), which
+  stay errors or warnings as they were and keep the invoice in Needs attention; findings about the lines' coding
+  (HISTORY_CONFLICT, the tax-code mismatches: `ABOUT_CODING`) take their share off the Coding, every other finding off
+  the Reading; "Coding … is below the threshold" is not said when a line to code is why. (4) The benches report each
+  number against the share actually right by the invoice's position in its supplier's stream (1, 2-5, 6-20, 21+): `bench
+  learn` the Reading (with and without the template), `bench coding` the Coding. On `learn --suppliers 20 --invoices
+  40`: Reading 98.1% / 99.2% / 99.4% / 99.4% against 100% / 99.5% / 100% / 99.9% read right (without the template a flat
+  98.1-98.2%); readiness and touchless unchanged (14 of 20, median 37; 51 of 67). On `coding` (30 × 30): Coding 54.4% /
+  86.6% / 98.2% / 98.6% against 50.7% / 85.1% / 96.4% / 98.2% of lines right, within 2 points after the first invoice.
+  Replaying one supplier offline (`e2e_r2` stream s7-v006, approving each): Reading 98.3% → 97.8% → 99.7% → 99.7% →
+  99.8%, Coding 0% → 100% once its lines are learned. Why: an end-to-end run showed ~23% on invoices read 100% right
+  through the template, because one number mixed the reading with the lines still to code and counted those twice; two
+  numbers say what to look at. The invoices still to approve that the local readers read before get the Reading of their
+  stored capture once, when this version opens the database. (`capture/confidence.py`, `capture/workflow.py`
+  `supplier_record`, `ai/offline_coder.py`, `coding/validation.py`, `web/invoice_view.py`, `_invoice_live.html`,
+  `bench/learning.py`, `bench/coding.py`, `core/store` `_reading_as_d89`; `tests/test_reading_and_coding.py`)
 - **D-90** · Meals and entertainment: 50% of the GST/HST and QST is claimable. Income Tax Act s.67.1 limits meals and
   entertainment to 50%, and Excise Tax Act s.236 claws back half the input tax credits on them; Quebec does the same
   for the QST input tax refunds (the QST Act's counterpart of s.236, and Taxation Act s.421.1 for income tax: verify the

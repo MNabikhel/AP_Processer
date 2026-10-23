@@ -465,6 +465,7 @@ def simulate(
     from ap_coder.ai.suggest import suggest_gl
     from ap_coder.coding import rules
     from ap_coder.coding.line_tax import apply_tax_code, confirm_line, tax_code_of, tax_learned
+    from ap_coder.coding.validation import coding_confidence, line_coding_confidence
     from ap_coder.core.memory import _normalise, compare_with_history, format_examples, select_examples
     from ap_coder.core.reference_data import UNASSIGNED, load_reference_data
     from ap_coder.core.store import Store
@@ -536,6 +537,12 @@ def simulate(
                         )  # fmt: skip
                         li.predicted_cost_center = COST_CENTER[li.predicted_gl_code]
                         li.reasoning_justification = f"{MODEL_SUGGESTED}: a line like the ones it was shown"
+            # The Coding the review screen shows for these lines, each line's share of it (D-89).
+            coded = coding_confidence(coding, reference)
+            taxed = any(t.tax_amount for t in coding.tax_lines)
+            sure = [line_coding_confidence(li, reference.cost_centers is not None, taxed, reference.chart_of_accounts,
+                                           reference.cost_centers, reference.tax.tax_gl_codes())
+                    for li in coding.line_items]  # fmt: skip
             # The HISTORY_CONFLICT check on the lines as the reviewer sees them (``pipeline.finalise_coding``).
             warned = {h["line_number"] for h in compare_with_history(coding, feedback) if h["status"] == "conflict"}
 
@@ -627,6 +634,12 @@ def simulate(
                     "lesson_screen": hints[pos][0],  # the lesson's account the reviewer sees as a hint
                     "model_asked": pos in asked,  # --ai: the chat model was asked about this line
                     "model": model_picks.get(pos, ""),  # --ai: its account ("" when it gave none)
+                    "coding": coded,  # the invoice's Coding (D-89)
+                    "line_sure": sure[pos],
+                    # the line's account, cost center and tax code all right, as the reviewer saw them
+                    "line_right": li.predicted_gl_code == truth
+                    and tax_proposed[pos][0] == tax_truths[pos]
+                    and (reference.cost_centers is None or li.predicted_cost_center == COST_CENTER[truth]),
                 }
                 if realism.any:
                     row["approved"] = approved[pos]
@@ -785,7 +798,25 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "lessons": lesson_stats(rows),
         "chat_model": model_stats(rows),
         "top_errors": [{"truth": t, "proposed": p, "source": s, "lines": n} for (t, p, s), n in wrong.most_common(12)],
+        "calibration": coding_calibration(rows),
     }
+
+
+def coding_calibration(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Is the Coding honest (D-89)? Per vendor-invoice position (1, 2-5, 6-20, 21+), the mean Coding of the invoices
+    against the share of their lines whose account, cost center and tax code were all right as proposed."""
+    from ap_coder.bench.learning import calibration
+
+    invoices: dict[int, dict[str, Any]] = {}
+    for r in rows:
+        if "coding" not in r:
+            continue
+        inv = invoices.setdefault(r["invoice"], {"position": r["position"], "coding": r["coding"], "lines": 0,
+                                                 "right": 0})  # fmt: skip
+        inv["lines"] += 1
+        inv["right"] += bool(r["line_right"])
+    per = [{**i, "share": i["right"] / i["lines"]} for i in invoices.values()]
+    return calibration(per, "coding", "share", position="position", weight="lines")
 
 
 def _tax_split(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -901,6 +932,16 @@ def render_markdown(report: dict[str, Any]) -> str:
         out.append("## Most frequent wrong accounts\n")
         out.append(_table(["true", "proposed", "source", "lines"],
                           [[e["truth"], e["proposed"], e["source"], e["lines"]] for e in s["top_errors"]]))  # fmt: skip
+    if s.get("calibration"):
+        from ap_coder.bench.learning import calibration_table
+
+        out.append("## Calibration of the Coding\n")
+        out.append(
+            "The Coding the review screen shows (before its checks take anything off: D-89), the mean over the "
+            "invoices of each position in their vendor's stream, against the share of their lines whose "
+            "account, cost center and tax code were all right as proposed (a line left to code is not).\n"
+        )
+        out.append(calibration_table(s["calibration"], "mean Coding", "lines right"))
     t = report["timing"]
     out.append(f"\nTime: {t['seconds']} s ({t['ms_per_line']} ms per line).\n")
     return "\n".join(out)

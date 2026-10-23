@@ -20,9 +20,10 @@ from typing import Any
 
 from ..capture import analyze, build_layout
 from ..capture.bridge import vendor_record
+from ..capture.confidence import apply_supplier_record, reading_confidence
 from ..capture.reader import us_address
 from ..capture.types import LIKELY, VERIFIED, CaptureResult, DocLayout
-from ..capture.workflow import local_evidence, supplier_for
+from ..capture.workflow import local_evidence, supplier_for, supplier_record
 from ..coding.tax import OUTSIDE_CANADA, TaxRateTable
 from ..coding.vendors import bank_digit_count, cut_bank_details
 from ..core.memory import vendor_key
@@ -94,6 +95,8 @@ def read_invoice(path: str | Path, store: Any = None, layout: DocLayout | None =
     if template or vendor:
         capture = analyze(path, layout=layout, template=template, vendor=vendor, today=today, page_text=page_text,
                           local_evidence=local, ai_values=ai_values or None)  # fmt: skip
+    if template:  # a verified value its template read: as sure as this supplier's record of it (D-89)
+        apply_supplier_record(capture.fields, supplier_record(store, key))
     return capture, key, profile
 
 
@@ -351,9 +354,9 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
                       pst_number=str(values.get("pst_registration_number") or ""), feedback=feedback,
                       vendor=vendor, qst_number=str(values.get("qst_registration_number") or ""))  # fmt: skip
 
-    found = [r.confidence for f, r in capture.fields.items() if r.value not in (None, "")]
-    gl_known = sum(1 for li in lines if li.predicted_gl_code != UNASSIGNED) / len(lines)
-    confidence = round(min(sum(found) / len(found) if found else 0.0, 1.0) * (0.5 + 0.5 * gl_known), 3)
+    # The coding's confidence_score is the Reading (D-89): how sure the header is. How sure the lines' accounts and
+    # tax codes are is the Coding, worked out from the lines by the checks (``validation.coding_confidence``).
+    confidence = reading_confidence(capture.fields)
     invoice_date = str(values.get("invoice_date") or "")
     try:
         dt.date.fromisoformat(invoice_date)

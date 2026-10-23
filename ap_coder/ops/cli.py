@@ -599,7 +599,7 @@ def _test_page_reader(settings: Settings, store: Store) -> int:
 
 def _print_summary(rows: list[dict]) -> None:
     print(
-        f"\n{'file':<40} {'status':<7} {'lines':>5} {'total':>12} {'conf':>5} {'adj':>5} {'review':<6} err/warn",
+        f"\n{'file':<40} {'status':<7} {'lines':>5} {'total':>12} {'read':>5} {'code':>5} {'review':<6} err/warn",
         file=sys.stderr,
     )
     for r in rows:
@@ -608,7 +608,8 @@ def _print_summary(rows: list[dict]) -> None:
             continue
         print(
             f"{r['file'][:40]:<40} {'ok':<7} {r['line_items']:>5} {r['grand_total']:>12,.2f} "
-            f"{r['model_confidence']:>5.2f} {r['adjusted_confidence']:>5.2f} "
+            f"{r.get('reading_confidence', r['model_confidence']):>5.2f} "
+            f"{r.get('coding_confidence', r['adjusted_confidence']):>5.2f} "
             f"{'YES' if r['requires_review'] else 'no':<6} {r['errors']}/{r['warnings']}",
             file=sys.stderr,
         )
