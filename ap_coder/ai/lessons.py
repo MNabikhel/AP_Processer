@@ -185,3 +185,50 @@ def prompt_lines(store: Any, vendor: str, kind: str | None = None, *, fields: st
     rows = [r for r in rows if reaches_ai(r)
             and (fields == "all" or (fields == "lines") == (r.get("field") in LINE_FIELDS))]  # fmt: skip
     return [sentence(r, gl_names) for r in rows[:limit]]
+
+
+# --- Does a lesson help? (the Lessons tab, D-74) ---------------------------------------------------------------------
+
+WORKING, NOT_WORKING, TOO_EARLY = "working", "not_working", "too_early"
+MIN_AFTER = 3  # invoices of the vendor seen since a lesson reached the AI before saying whether it helps
+
+
+def _rate(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    corrected = sum(1 for r in rows if r.get("corrected"))
+    return {"invoices": len(rows), "corrected": corrected,
+            "rate": round(corrected / len(rows), 2) if rows else None}  # fmt: skip
+
+
+def effect(history: list[dict[str, Any]], lesson: dict[str, Any] | None) -> dict[str, Any]:
+    """Corrections per invoice of a lesson's vendor and field before the lesson reached the AI (``reaches_ai``: the
+    second correction to its value, or the first with the clerk's reason) and after: {"reached", "since", "before",
+    "after", "verdict"}. ``history``: the approvals that saw the situation, oldest first (``Store.lesson_history``). The
+    verdict is ``WORKING`` (fewer corrections since), ``NOT_WORKING`` (as many or more, over ``MIN_AFTER`` invoices or
+    more: to suggest retiring it, never done on its own) or ``TOO_EARLY``."""
+    lesson = lesson or {}
+    value, explained = str(lesson.get("value") or ""), str(lesson.get("explained_at") or "")
+    reached, agreeing = None, 0  # the approval (its place in ``history``) with which the lesson reached the AI
+    for n, r in enumerate(history):
+        if not r.get("corrected"):
+            continue
+        agreeing += 1 if str(r.get("value") or "") == value else 0
+        if agreeing >= AGREEING or (explained and str(r["at"]) >= explained):
+            reached = n
+            break
+    if reached is None and explained and any(r.get("corrected") for r in history):
+        # The reason was given after the corrections: from the last approval before it.
+        reached = max((n for n, r in enumerate(history) if str(r["at"]) <= explained), default=len(history) - 1)
+    since = str(history[reached]["at"]) if reached is not None else ""
+    before = history[: reached + 1] if reached is not None else list(history)
+    after = history[reached + 1 :] if reached is not None else []
+    out = {
+        "reached": reached is not None,
+        "since": since,
+        "before": _rate(before),
+        "after": _rate(after),
+        "verdict": TOO_EARLY,
+    }
+    if reached is not None and len(after) >= MIN_AFTER:
+        better = out["after"]["rate"] < (out["before"]["rate"] or 0)
+        out["verdict"] = WORKING if better else NOT_WORKING
+    return out

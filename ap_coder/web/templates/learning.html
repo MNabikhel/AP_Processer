@@ -216,7 +216,8 @@
   reason (the coding memory, on the Coding accuracy tab, keeps every line AP approved). The AI reviewer
   and the GL suggestions read them with each vendor's invoices, and the review screen shows them. When the same correction
   comes back {{ why_after }} times, AP Coder asks why before saving (Settings → Review). A lesson reaches the AI once AP
-  has made the same correction twice, or given a reason: a single correction may be a slip. Edit a reason, or retire a
+  has made the same correction twice, or given a reason: a single correction may be a slip. Corrections per invoice
+  shows whether it helped; one that did not is suggested for retiring (only you retire it). Edit a reason, or retire a
   lesson that is no longer true.</p>
 {% if not lessons %}
 <section class="card">{{ ui.empty_state("No lessons yet", "A lesson appears once AP corrects a field (or a line's GL account) on the review screen. Nothing to set up.") }}</section>
@@ -224,11 +225,15 @@
 <section class="card" aria-labelledby="lessons-title">
   <h4 id="lessons-title">Lessons <span class="muted small">{{ lessons | length }}</span></h4>
   <div class="table-wrap"><table class="apc-table">
-    <thead><tr><th>Vendor</th><th>What</th><th>AP's value</th><th class="r">Corrected</th><th class="r">Since the reason</th><th class="r">Right since</th><th>AP's reason</th><th></th></tr></thead>
+    <thead><tr><th>Vendor</th><th>What</th><th>AP's value</th><th class="r">Corrected</th><th class="r">Since the reason</th><th class="r">Right since</th><th>Corrections per invoice</th><th>AP's reason</th><th></th></tr></thead>
     <tbody>{% for l in lessons %}
       <tr{% if l.retired %} class="muted"{% endif %}><td>{{ l.vendor_name }} <span class="muted small">{{ l.kind }}</span></td>
         <td>{{ l.what }}</td><td>{{ l.value }}{% if l.proposed == "UNASSIGNED" %}<div class="muted small">left blank</div>{% elif l.proposed %}<div class="muted small">read as {{ l.proposed }}</div>{% endif %}{% if not l.retired and not l.reaches %}<div class="muted small">Not shown to the AI yet: once more to this value, or a reason</div>{% endif %}</td>
         <td class="r">{{ l.corrected }}</td><td class="r">{{ l.since_why }}</td><td class="r">{{ l.confirmed }}</td>
+        {% set e = l.effect %}<td>{% if e.reached %}{{ "%.2f" | format(e.before.rate or 0) }} before → {% if e.after.invoices %}{{ "%.2f" | format(e.after.rate) }} since{% else %}none yet{% endif %}
+          <div class="muted small">{{ e.before.invoices }} invoice{{ "" if e.before.invoices == 1 else "s" }} before, {{ e.after.invoices }} since it reached the AI</div>
+          {% if e.verdict == "not_working" and not l.retired %}{{ ui.pill("Still corrected as often: consider retiring it", "warn") }}{% elif e.verdict == "working" %}{{ ui.pill("Fewer corrections since", "ok") }}{% endif %}
+          {% else %}<span class="muted small">Not shown to the AI yet</span>{% endif %}</td>
         <td class="w"><form method="post" action="/learning/lessons/explain" class="row" data-busy="Saving…">
           <input type="hidden" name="situation" value="{{ l.situation }}">
           <input type="text" name="explanation" value="{{ l.explanation }}" placeholder="Why AP chooses this value" aria-label="AP's reason">

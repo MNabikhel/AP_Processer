@@ -487,12 +487,15 @@ def lessons_context(store: Store) -> dict[str, Any]:
     from ap_coder.ai import lessons
 
     rows = []
-    for lesson in store.list_lessons(include_retired=True):
+    listed = store.list_lessons(include_retired=True)
+    history = store.lesson_history([lesson["situation"] for lesson in listed])
+    for lesson in listed:
         what = lessons.FIELD_WORDS.get(lesson["field"], lesson["field"])
         if lesson["field"] in lessons.LINE_FIELDS:
             noun = "Cost center" if lesson["field"] == lessons.LINE_CC else "GL account"
             what = f"{noun} of lines like “{lesson['pattern']}”"
-        rows.append({**lesson, "what": what[:1].upper() + what[1:], "reaches": lessons.reaches_ai(lesson)})
+        rows.append({**lesson, "what": what[:1].upper() + what[1:], "reaches": lessons.reaches_ai(lesson),
+                     "effect": lessons.effect(history.get(lesson["situation"]) or [], lesson)})  # fmt: skip
     return {"lessons": rows, "why_after": lessons.why_after(store)}
 
 

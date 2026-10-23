@@ -233,3 +233,29 @@ def test_cost_center_corrections_are_lessons_too(tmp_path, ground_truth):
     blank["line_items"][0]["predicted_cost_center"] = "UNASSIGNED"
     filled = [r for r in lessons.outcomes(blank, final) if r["field"] == lessons.LINE_CC and r["value"] == "CC200"]
     assert filled and not filled[0]["corrected"]  # filled in where none was proposed: no correction
+
+
+def test_lesson_effectiveness_before_and_after_and_a_suggestion_never_a_retirement(tmp_path, ground_truth):
+    """On the Lessons tab, each lesson's corrections per invoice of that vendor and field before it reached the AI
+    and after; one still corrected as often after a few invoices is suggested for retiring, never retired (D-74)."""
+    store = Store(tmp_path / "a.db")
+    vendor = ground_truth["vendor_name"]
+    proposed = _doc(ground_truth, "ACCT 1")
+    key = lessons.situation(vendor, lessons.INVOICE, "invoice_number")
+    for n in (1, 2):  # corrected twice the same way: it reaches the AI after the second
+        lessons.record(store, n, proposed, _doc(ground_truth, "1-2026"))
+    effect = lessons.effect(store.lesson_history([key])[key], store.lesson(key))
+    assert effect["before"] == {"invoices": 2, "corrected": 2, "rate": 1.0} and effect["after"]["invoices"] == 0
+    assert effect["verdict"] == lessons.TOO_EARLY
+    history = store.lesson_history([key])[key]
+    right = [{**history[0], "corrected": 0, "invoice_id": n} for n in (3, 4, 5)]  # read right since
+    effect = lessons.effect(history + right, store.lesson(key))
+    assert effect["after"] == {"invoices": 3, "corrected": 0, "rate": 0.0} and effect["verdict"] == lessons.WORKING
+    for n in (6, 7, 8):  # corrected again and again since: the lesson does not help
+        lessons.record(store, n, proposed, _doc(ground_truth, "1-2026"))
+    effect = lessons.effect(store.lesson_history([key])[key], store.lesson(key))
+    assert effect["after"]["rate"] == 1.0 and effect["verdict"] == lessons.NOT_WORKING
+    assert not store.lesson(key)["retired"]  # suggested, never retired on its own
+    rows = {r["situation"]: r for r in __import__("ap_coder.web.pages.learning", fromlist=["x"]).lessons_context(
+        store)["lessons"]}  # fmt: skip
+    assert rows[key]["effect"]["verdict"] == lessons.NOT_WORKING

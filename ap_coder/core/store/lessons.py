@@ -119,6 +119,20 @@ class LessonsMixin:
                                 (key, kind) if kind else (key,)).fetchall()  # fmt: skip
         return [dict(r) for r in rows]
 
+    def lesson_history(self, situations: list[str]) -> dict[str, list[dict[str, Any]]]:
+        """{situation: the approvals still standing that saw it, oldest first ({invoice_id, corrected, value, at})}:
+        what ``lessons.effect`` measures a lesson with."""
+        out: dict[str, list[dict[str, Any]]] = {s: [] for s in situations}
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT situation, invoice_id, corrected, value, at FROM lesson_approvals WHERE "
+                "situation IN (SELECT value FROM json_each(?)) ORDER BY at, rowid",
+                (json.dumps(list(situations)),),
+            ).fetchall()
+        for r in rows:
+            out[r["situation"]].append(dict(r))
+        return out
+
     def list_lessons(self, *, include_retired: bool = False, limit: int = 500) -> list[dict[str, Any]]:
         """Every lesson AP corrected at least once, the most corrected since its last reason first."""
         where = "corrected > 0" + ("" if include_retired else " AND retired = 0")
