@@ -42,7 +42,7 @@ BUSINESS_CODES = frozenset({"VENDOR_NOT_IN_MASTER", "VENDOR_ON_HOLD", "VENDOR_AD
 # Findings that doubt the lines' coding rather than the reading: they take their share off the Coding.
 ABOUT_CODING = frozenset({"HISTORY_CONFLICT", "TAX_EXEMPTION_LEARNED", "EXEMPT_LINE_TAXED", "TAX_NOT_ALLOCATED",
                           "LINE_TAX_NOT_CHARGED", "TAX_BASE_MISMATCH", "MEALS_TAX_LINES"})  # fmt: skip
-# A line's account the chat model chose or a weak match (``offline_coder.GUESSED``), and a tax code worked out from
+# A line's account the chat model chose or a weak match (``offline_coder.unsure``), and a tax code worked out from
 # several possible sets of lines or an exemption to confirm: about one chance in two (the coding bench measures it).
 GUESS_SURE = 0.5
 _LOW_OCR_CONFIDENCE = 0.90
@@ -283,13 +283,13 @@ def line_coding_confidence(line: Any, cost_centers: bool, taxed: bool, known: An
     ``GUESS_SURE``; else sure), its cost center where they are used (none or unknown: 0), and its tax code when the
     invoice charges a tax (worked out from several possible sets of lines, an exemption to confirm, or none:
     ``GUESS_SURE``), multiplied. ``known``/``cc_known``: the GL accounts and cost centers (a ``ReferenceTable``)."""
-    from ..ai.offline_coder import guessed
+    from ..ai.offline_coder import unsure
     from .line_tax import CODE_NONE, exemption_to_confirm, tax_code_of, tax_guessed
 
     gl = str(line.predicted_gl_code or "")
     if gl in ("", UNASSIGNED) or (known is not None and known.get(gl) is None) or gl in tax_gls:
         return 0.0
-    sure = GUESS_SURE if guessed(line.reasoning_justification) else 1.0
+    sure = GUESS_SURE if unsure(line.reasoning_justification) else 1.0
     if cost_centers:
         cc = str(line.predicted_cost_center or "")
         if cc in ("", UNASSIGNED) or (cc_known is not None and cc_known.get(cc) is None):

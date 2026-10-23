@@ -20,14 +20,17 @@ def test_end_to_end_from_markdown(tmp_path, settings, reference, ground_truth, s
     result = pipe.process(sample_markdown_path)
 
     assert result.ok, result.error
-    assert result.report.requires_review is False
+    assert result.report.requires_review is True  # the chat model's accounts are guesses, for a person (B-894)
     written = write_outputs(result, tmp_path)
     names = sorted(p.name for p in written)
     assert names == [f"{SAMPLE_STEM}.json", f"{SAMPLE_STEM}.validation.json"]
 
     out = json.loads((tmp_path / f"{SAMPLE_STEM}.json").read_text())
     distribution = out.pop("gl_distribution")
-    assert out == ground_truth  # target schema fields exactly as coded
+    # Target schema fields exactly as coded, each line's account marked the chat model's (B-894).
+    assert all(li.pop("reasoning_justification").startswith("Suggested by the chat model") for li in out["line_items"])
+    assert out == {**ground_truth, "line_items": [{k: v for k, v in li.items() if k != "reasoning_justification"}
+                                                  for li in ground_truth["line_items"]]}  # fmt: skip
     assert round(sum(e["amount"] for e in distribution), 2) == ground_truth["grand_total"]
     assert {e["gl_code"] for e in distribution if e["kind"] == "tax"} == {"2310"}
 
@@ -150,3 +153,16 @@ def test_a_password_protected_pdf_is_said_plainly(tmp_path, settings, reference)
         doc.save(str(tmp_path / "locked.pdf"), encryption=pymupdf.PDF_ENCRYPT_AES_256, user_pw="u", owner_pw="o")
     error = InvoicePipeline(settings, reference).process(tmp_path / "locked.pdf").error
     assert error and "password" in error and "ValueError" not in error, error
+
+
+def test_the_chat_models_accounts_are_a_guess_in_the_coding(settings, reference, ground_truth, sample_markdown_path):
+    """Coded by the chat model (Azure OpenAI): its ``confidence_score`` is about the header only (D-89), so each line's
+    account it chose is a guess in the Coding, as the local model's are (B-894). A reviewer changing one still corrects
+    AP Coder's suggestion, for the learning (tests/test_memory_store.py::test_learning_applies_to_the_next_invoice)."""
+    from ap_coder.coding.validation import GUESS_SURE
+
+    result = _pipeline(settings, reference, make_completion(json.dumps(ground_truth))).process(sample_markdown_path)
+    assert result.ok, result.error
+    lines = result.coding.coding.line_items
+    assert lines and all(li.reasoning_justification.startswith("Suggested by the chat model") for li in lines)
+    assert result.report.coding_confidence <= GUESS_SURE and result.report.requires_review is True
