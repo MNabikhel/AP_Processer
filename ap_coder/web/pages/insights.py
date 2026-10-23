@@ -136,7 +136,7 @@ def insights_page(request: Request) -> HTMLResponse:
     fully = len(store.list_invoices(APPROVED))  # fully approved (a second approval waiting doesn't count yet)
     if fully < MIN_APPROVALS:
         return render(request, "insights.html", "insights", s=s, fields=assumption_fields(a), early=True,
-                      min_approvals=MIN_APPROVALS, fully=fully)  # fmt: skip
+                      min_approvals=MIN_APPROVALS, fully=fully, pilot=pilot_card(store))  # fmt: skip
     cloud = internet_allowed()
     ops = operations(store)
     biggest_age = max(ops["ageing"].values()) or 1
@@ -171,7 +171,28 @@ def insights_page(request: Request) -> HTMLResponse:
         stopped=stopped,
         chart=weekly_chart(s["weekly"]) if s["weekly"] and s["approved"] else None,
         fields=assumption_fields(a),
+        pilot=pilot_card(store),
     )
+
+
+def pilot_card(store: Any) -> dict[str, Any] | None:
+    """The last shadow-pilot score (``python -m ap_coder pilot-score``, D-92) as shares, or None before the first."""
+    from ap_coder.ops.pilot_score import last_figures
+
+    f = last_figures(store)
+    if not f:
+        return None
+
+    def share(a: Any, b: Any) -> str:
+        return f"{a / b:.0%}" if b else "—"
+
+    return {**f, "rows": [
+        ("Invoices matched in JD Edwards", f"{f.get('matched', 0)} of {f.get('ap_coder', 0)}"),
+        ("Header fields as posted", share(f.get("fields_right", 0), f.get("fields", 0))),
+        ("Lines coded as posted (approved)", share(f.get("lines_right", 0), f.get("lines", 0))),
+        ("Lines coded as posted (as AP Coder proposed)", share(f.get("proposed_right", 0), f.get("lines", 0))),
+        ("Would-be touchless invoices, wrong", f"{f.get('touchless_wrong', 0)} of {f.get('touchless', 0)}"),
+    ]}  # fmt: skip
 
 
 @router.get("/insights/business-case")
