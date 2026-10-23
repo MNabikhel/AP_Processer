@@ -687,3 +687,4 @@ details.tech summary {cursor: pointer; font-size: 13px; color: var(--lg-muted); 
   text-underline-offset: 2px;}
 .flash-more > summary:hover {opacity: 1;}
 .flash-more > div {margin-top: 4px; color: var(--lg-text);}
+.flash .flash-act .flash-key {margin-left: 6px; font: inherit; font-size: 11px; opacity: .7;}

@@ -230,6 +230,14 @@ def test_in_a_browser_alt_up_to_the_queue_focuses_the_invoice_left(browser, stor
     page.wait_for_timeout(300)
     assert page.evaluate("document.activeElement.getAttribute('href')") == f"/review/{invoice_id}"
     assert page.errors == []
+    store.approve_invoice(invoice_id, store.get_invoice(invoice_id)["ai_output"], "Jordan Lee")
+    page.goto(page.url.split("/review")[0] + f"/review/{invoice_id}")  # approved since: its view, then the queue
+    page.wait_for_load_state("networkidle")
+    page.keyboard.press("Alt+ArrowUp")
+    page.wait_for_url(re.compile(r"/review(\?|$)"))
+    page.wait_for_load_state("networkidle")
+    page.wait_for_timeout(300)
+    assert page.evaluate("document.activeElement.matches('.rq-list a.rq-row')")  # no longer listed: the first row
 
 
 def test_a_bad_dates_example_never_breaks_across_lines(client, store):

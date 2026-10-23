@@ -63,7 +63,9 @@ document.addEventListener("click", (e) => {
 // Back from an invoice (Alt+↑, Queue): the focus on that invoice's row, so the keyboard goes on from where it was.
 if (fromInvoice()) {
   const left = new URL(document.referrer).pathname.match(/^\/review\/(\d+)/)?.[1];
-  const row = left && document.querySelector(`.rq-list a.rq-row[href="/review/${left}"]`);
+  // that invoice's row; approved or set aside since, the first row
+  const row = (left && document.querySelector(`.rq-list a.rq-row[href="/review/${left}"]`)) ||
+    document.querySelector(".rq-list a.rq-row");
   const active = document.activeElement;
   if (row && (!active || active === document.body || active.tagName === "MAIN")) {
     requestAnimationFrame(() => row.focus({ preventScroll: Boolean(back && mark.y > 0) }));
