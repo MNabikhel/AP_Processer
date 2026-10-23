@@ -692,3 +692,32 @@ that is reversed keeps its line, marked "replaced by D-NN".
   re-checking on every page load costs ~5 ms an invoice; re-checking on each settings save would be slow on the save
   and miss changes made elsewhere. (`coding/bulk.py` `issues_today`, `sort_for_bulk`, `bulk_approve`;
   `web/pages/review.py` `attention`; `core/store` `checks_stamp`, `check_stamps`, `save_recheck`)
+- **D-92** · The shadow-pilot kit. (1) **Scoring against JD Edwards**: `python -m ap_coder pilot-score --vouchers
+  F0411 [--distribution F0911]` compares what AP Coder approved with what AP posted, from an E1 export the pilot
+  tester gets (CSV or Excel; E1's column names, the data dictionary's or plain English through `match_columns`; Julian
+  dates; `--implied-decimals`). Invoices are matched by supplier (AN8, else `vendor_key`), `norm_invoice_number` and
+  amount, then by supplier and amount, so a number typed differently is still found and reported. It reports each
+  header field (the benchmark's comparators), the coding line by line (BU.Obj.Sub through the JDE mapping, else the
+  GL against the object; recoverable GST/HST/QST and the AP offset left out) both as approved and as AP Coder proposed
+  it, each supplier's first invoice against its later ones, the would-be touchless invoices (the supplier met the bar
+  when processed) that AP posted differently, and what has no match; `pilot_score.md`, a CSV of the differences and
+  the figures for Insights go to the data folder's `pilot_score`. Why: the pilot's question is whether AP Coder
+  agrees with what AP really posts, and the vouchers are the only truth that needs no extra labelling; it runs the
+  same on synthetic data now and real exports later. (`ops/pilot_score.py`, `tests/test_pilot_score.py`) (2) **The JDE
+  test-import checklist** for the pilot tester's IT is its own section of `docs/JDE_E1.md`: load the Z-file batch in
+  a test environment, R04110ZA proof then final with the options to check, what to compare, how to report back;
+  what varies by company says "confirm with your JDE administrator". (3) **Getting started in the pilot's order**: GL
+  accounts → vendor master (with the AN8s) → JD Edwards settings → the ERP's past coding ("AP Coder learns your coding
+  from what you posted before") → first invoices; the Next step card walks through them when JD Edwards is the
+  export, and the rows show for everyone (`web/pages/process.py` `pilot_steps`). Measured cold start, first invoice
+  from new vendors with no AI model: through the pipeline on generated invoices 0 of 285 lines coded without history,
+  285 of 285 with the vendors' past coding imported (exact wording; `tests/test_first_steps_order.py`); in the coding
+  benchmark (each vendor's own wording) 35.2% → 91.5% of first-invoice lines (30 vendors, `--history 1.0`). (4) **The
+  AI-on paths** (the AI coder end to end, the page reader with its self-test, the AI reviewer) run against a scripted
+  fake LM Studio over HTTP (`tests/test_ai_paths.py`); they passed after the round-2 changes with nothing to fix. The
+  coding benchmark gained `--ai`: the chat model in LM Studio codes the lines nothing else coded, scored against the
+  truth. **Still owed: a real-model accuracy run on the pilot laptop** (LM Studio is on no build computer), with LM
+  Studio's server started and its chat model and OvisOCR2 loaded: `python -m ap_coder read-pages --test` (OvisOCR2's
+  self-test), then `python -m ap_coder.bench coding --vendors 20 --invoices 5 --ai --out bench_ai` (the chat model's
+  precision, first invoice apart; report in `bench_ai/report.md`), and, once AP has posted the pilot's invoices,
+  `python -m ap_coder pilot-score` on the JDE export.
