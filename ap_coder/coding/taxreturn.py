@@ -69,7 +69,9 @@ NOT_EXPORTED = "Not exported yet"
 MEALS = "Meals & entertainment: 50% of the tax claimable"
 MEALS_WHY = (
     "Only 50% of the GST/HST and QST paid on meals and entertainment is claimable (Income Tax Act s.67.1, Excise Tax "
-    "Act s.236, and Quebec's QST Act alike): the other 50% was expensed with the meal when the invoice was approved."
+    "Act s.236, and Quebec's QST Act alike): the other 50% was expensed with the meal when the invoice was approved. "
+    "The ITC total above is already net of it: report it as is on line 106 of the GST/HST return, with no add-back "
+    "for these meals on line 104 at year end."
 )
 RISKS = {NO_GST_NUMBER, NO_QST_NUMBER, GST_CHECK_DIGIT, GST_NOT_PRINTED, QST_NOT_PRINTED, FOREIGN}
 
@@ -117,14 +119,14 @@ class Report:
             totals[(c.tax_type, c.province, c.rate, c.currency)] += c.amount
         return [(t, p, r, cur, round(v, 2)) for (t, p, r, cur), v in sorted(totals.items())]
 
-    def meals_totals(self) -> dict[str, float]:
-        """{"GST/HST": …, "QST": …}: the tax on meals and entertainment not claimed (CAD and other currencies alike,
-        as the claims list them), only the taxes that have some."""
-        out: dict[str, float] = {}
+    def meals_totals(self) -> dict[str, dict[str, float]]:
+        """{"GST/HST" / "QST": {currency: the tax on meals and entertainment not claimed}}, only the taxes that have
+        some, each currency apart (B-870), as ``totals``."""
+        out: dict[str, dict[str, float]] = {}
         for c in self.claims:
             if c.meals:
-                key = "QST" if c.tax_type == "QST" else "GST/HST"
-                out[key] = round(out.get(key, 0.0) + c.meals, 2)
+                by = out.setdefault("QST" if c.tax_type == "QST" else "GST/HST", {})
+                by[c.currency] = round(by.get(c.currency, 0.0) + c.meals, 2)
         return out
 
     def at_risk(self) -> list[Claim]:

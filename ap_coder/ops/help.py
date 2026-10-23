@@ -81,13 +81,29 @@ CHECKS: dict[str, CheckHelp] = {
         "Check the terms on the page. Then add them, with your JD Edwards code, to Settings → JD Edwards E1 → Payment "
         "terms (or ask the pilot tester), or set a default code there.",
     ),
+    "MEALS_TAX_LINES": CheckHelp(
+        TAX, "Meals: which lines carry the tax?",
+        "Half the GST/HST and QST on a meals line is not claimable and is expensed with it (D-90). No line is marked "
+        "with that tax, so it is spread over every line not marked as carrying none, other lines included: a line that "
+        "carries no tax (groceries, a deposit) would take part of it, and too little would be expensed.",
+        "Pick each line's tax code (e.g. Exempt or Zero-rated on the lines that carry no tax).",
+    ),
     "JDE_MEALS_GROSS": CheckHelp(
         ERP, "JD Edwards would claim all the tax on meals",
         "Only half the GST/HST and QST on meals and entertainment is claimable; AP Coder puts the other half in the "
-        "meal's expense line (D-90). With gross amounts only, JD Edwards works out the tax itself and would claim all "
-        "of it, so the voucher would not balance in JD Edwards. A warning: the invoice can be approved.",
-        "Ask the pilot tester to send the taxable and tax amounts (Settings → JD Edwards E1 → Amounts), or to post "
-        "the half by hand in JD Edwards.",
+        "meal's expense line (D-90). With the gross amount only, JD Edwards works out the tax itself and would claim "
+        "the full ITC, while the expense line already holds half of it: the GL and the ITC report would disagree. So "
+        "the invoice can't be approved or exported to JD Edwards this way.",
+        "Ask the pilot tester to switch to sending tax amounts in Settings → JD Edwards E1 (Amounts: taxable / "
+        "non-taxable / tax amounts). If the meal is billed to a client or a staff event, code it to the other account.",
+    ),
+    "JDE_MEALS_PO": CheckHelp(
+        ERP, "Meals on a PO-matched JD Edwards voucher",
+        "A PO-matched voucher gets its G/L lines from the receipts in JD Edwards, not from AP Coder, so the half of "
+        "the tax on meals that is not claimable (D-90) can't be put in the meal's expense line: JD Edwards would claim "
+        "the full ITC. The invoice can't be approved or exported to JD Edwards this way.",
+        "Send this invoice without the PO match (remove the PO number if it is only a reference), or ask the pilot "
+        "tester to post the half by hand in JD Edwards.",
     ),
     "JDE_DATE_RANGE": CheckHelp(
         ERP, "Date JD Edwards can't hold",

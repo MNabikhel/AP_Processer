@@ -659,6 +659,15 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
                 f"{tax_type} posts to GL account {t.gl_code}, which is not in your GL accounts: fix it in "
                 "GL accounts & tax",
             )
+    # Meals (D-90): half the tax on a meals line is expensed, so which lines carry the tax decides how much (B-868).
+    for tax_type in sorted(posted & set(MEALS_RESTRICTED)):
+        if setup.treatment(tax_type).treatment != RECOVERABLE:
+            continue
+        for number in meals_unsure(coding.line_items, tax_type, setup.meals_gl_codes):
+            add(WARNING, "MEALS_TAX_LINES",
+                f"meals line: the {tax_name(tax_type, prov)} is spread over lines not marked with it, so the "
+                "half not claimable is a guess. Confirm which lines carry the tax (each line's tax code)",
+                number)  # fmt: skip
     return findings
 
 
@@ -826,9 +835,9 @@ def build_gl_distribution(coding: Any, setup: TaxSetup) -> list[dict[str, Any]]:
 # ITA s.67.1 limits meals and entertainment to 50%, and ETA s.236 claws back half the GST/HST input tax credits on
 # them (Quebec's QST Act does the same for the QST input tax refunds). PST is never recoverable: nothing to halve.
 MEALS_RESTRICTED = ("GST", "HST", "QST")
-MEALS_NOTE = "Meals: 50% of the {taxes} is claimable"
+MEALS_NOTE = "Meals: 50% of the {taxes} is claimable. Billed to a client or a staff event? Use the other account."
 # A tip or gratuity line: a voluntary tip is not taxed, so none of the tax printed is on it.
-_TIP = re.compile(r"\b(tips?|gratuit(?:y|ies|[ée]s?)|pourboires?)\b", re.I)
+_TIP = re.compile(r"\b(tips?|gratuit(?:y|ies|[ée]s?)|pourboires?|thank\s*you|merci)\b", re.I)
 
 
 def meals_note(province: str) -> str:
@@ -840,7 +849,7 @@ def is_meals(gl_code: Any, meals_gl_codes: Any) -> bool:
     return bool(meals_gl_codes) and str(gl_code or "").strip() in meals_gl_codes
 
 
-def _half_down(amount: float, places: int = 2) -> float:
+def half_down(amount: float, places: int = 2) -> float:
     """Half of ``amount``, cut (toward zero) to the cent: the claim is never more than half the tax."""
     from decimal import ROUND_DOWN, Decimal
 
@@ -848,12 +857,10 @@ def _half_down(amount: float, places: int = 2) -> float:
     return float((Decimal(str(amount)) / 2).quantize(unit, rounding=ROUND_DOWN))
 
 
-def meals_parts(lines: list[Any], tax_line: Any, meals_gl_codes: Any, places: int = 2) -> list[tuple[int, float]]:
-    """(line position, the tax not claimable) of each meals line for one recoverable tax line: the tax is shared over
-    the lines that carry it (as PST is spread, ``build_gl_distribution``), tip lines left out (they are not taxed),
-    and half of each meals line's share, rounded so the claim is never more than half, is not claimable."""
-    if not any(is_meals(getattr(li, "predicted_gl_code", ""), meals_gl_codes) for li in lines):
-        return []
+def tax_shares(lines: list[Any], tax_line: Any, places: int = 2) -> list[tuple[int, float]]:
+    """(line position, its share of ``tax_line``'s tax): spread over the lines that carry it (as PST is spread,
+    ``build_gl_distribution``), tip lines left out (a voluntary tip is not taxed), in cents. The JD Edwards pay items
+    take the same shares (B-867)."""
     items = list(enumerate(lines))
     tax_type = tax_line.tax_type
     targets = (
@@ -861,11 +868,37 @@ def meals_parts(lines: list[Any], tax_line: Any, meals_gl_codes: Any, places: in
         or [(i, li) for i, li in items if tax_state(li, tax_type) != NOT_DUE]
         or items
     )
-    untipped = [(i, li) for i, li in targets if not _TIP.search(str(getattr(li, "description", "") or ""))]
+    untipped = [(i, li) for i, li in targets if not is_tip(li)]
     targets = untipped or targets
     shares = _allocate(tax_line.tax_amount, [li.amount for _, li in targets], places)
+    return [(idx, share) for (idx, _li), share in zip(targets, shares, strict=True)]
+
+
+def is_tip(line: Any) -> bool:
+    return bool(_TIP.search(str(getattr(line, "description", "") or "")))
+
+
+def meals_parts(lines: list[Any], tax_line: Any, meals_gl_codes: Any, places: int = 2) -> list[tuple[int, float]]:
+    """(line position, the tax not claimable) of each meals line for one recoverable tax line: half of each meals
+    line's share (``tax_shares``), rounded so the claim is never more than half, is not claimable."""
+    if not any(is_meals(getattr(li, "predicted_gl_code", ""), meals_gl_codes) for li in lines):
+        return []
     out = []
-    for (idx, li), share in zip(targets, shares, strict=True):
-        if is_meals(li.predicted_gl_code, meals_gl_codes) and abs(share) > 0.004:
-            out.append((idx, round(share - _half_down(share, places), 2)))
+    for idx, share in tax_shares(lines, tax_line, places):
+        if is_meals(lines[idx].predicted_gl_code, meals_gl_codes) and abs(share) > 0.004:
+            out.append((idx, round(share - half_down(share, places), 2)))
     return out
+
+
+def meals_unsure(lines: list[Any], tax_type: str, meals_gl_codes: Any) -> list[int]:
+    """The meals lines' numbers whose share of ``tax_type`` is a guess (B-868): no line is marked with that tax, so it
+    is spread over every line not marked as carrying none, and other lines (not meals, not a tip) are among them. A
+    zero-rated line left unmarked (groceries) would take part of the tax, and less of it would be expensed."""
+    if not any(is_meals(getattr(li, "predicted_gl_code", ""), meals_gl_codes) for li in lines):
+        return []
+    if any(tax_type in li.taxes_applied for li in lines):
+        return []
+    open_lines = [li for li in lines if tax_state(li, tax_type) != NOT_DUE and not is_tip(li)]
+    meals = [li for li in open_lines if is_meals(li.predicted_gl_code, meals_gl_codes)]
+    others = [li for li in open_lines if not is_meals(li.predicted_gl_code, meals_gl_codes)]
+    return [li.line_number for li in meals] if meals and others else []

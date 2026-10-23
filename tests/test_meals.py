@@ -192,15 +192,83 @@ def test_the_jde_voucher_balances_with_the_meals_half_in_the_expense_line(number
     assert meal["VNAA"] == "2740.93"
 
 
-def test_in_gross_mode_jde_is_warned_it_would_claim_all_the_tax_on_meals():
-    """Gross amounts only: E1 works out the tax itself and would claim all of it. Said before approval, not held."""
+def test_in_gross_mode_a_meals_voucher_is_held_back():
+    """B-866: with gross amounts only, E1 works out the tax itself and claims the full ITC while AP Coder expenses half
+    of it: the GL and the ITC report disagree. It was a warning; it is now a blocker, before approval and at export."""
     inv = _jde_invoice()
     settings = jde.JdeSettings(an8_overrides={})
     findings = jde.voucher_findings(inv["final_output"], settings, "10023")
     meals = [f for f in findings if f[1] == "JDE_MEALS_GROSS"]
-    assert meals and meals[0][0] == "warning" and "Settings → JD Edwards E1" in meals[0][2]
+    assert meals and meals[0][0] == "error" and "Settings → JD Edwards E1" in meals[0][2]
+    assert "tax amounts" in meals[0][2]
+    assert 1 in jde.validate([inv], settings, lambda f: "10023")  # held back from the batch
     tax_mode = jde.JdeSettings(amount_mode=jde.AMOUNT_TAX)
     assert not [f for f in jde.voucher_findings(inv["final_output"], tax_mode, "10023") if f[1] == "JDE_MEALS_GROSS"]
+    from ap_coder.ops.help import help_for
+
+    assert "would not balance" not in help_for("JDE_MEALS_GROSS").meaning
+    assert "full ITC" in help_for("JDE_MEALS_GROSS").meaning
+
+
+def _dinner_and_paper(**changes):
+    """An Ontario invoice: an 87.43 client dinner (meals) and 100.00 of paper, HST 24.37."""
+    doc = _on([(87.43, MEALS, "Client dinner"), (100.0, "6000", "Paper")], 24.37)
+    doc.update(changes)
+    doc["gl_distribution"] = _dist(doc)
+    return {"id": 1, "final_output": doc}
+
+
+@pytest.mark.parametrize("mode", [jde.AMOUNT_TAX, jde.AMOUNT_GROSS])
+def test_a_po_matched_meals_voucher_is_held_back(mode):
+    """B-865: a PO-matched voucher has no G/L lines of ours (E1 distributes from the receipts), so the half of the HST
+    on the dinner that is not claimable could not be expensed: VLSTAM went out at the full 24.37, with no finding."""
+    inv = _dinner_and_paper(po_number="4500012")
+    settings = jde.JdeSettings(an8_overrides={}, po_matched=True, amount_mode=mode)
+    findings = [f for f in jde.voucher_findings(inv["final_output"], settings, "10023") if f[1] == "JDE_MEALS_PO"]
+    assert findings and findings[0][0] == "error" and "PO" in findings[0][2]
+    assert 1 in jde.validate([inv], settings, lambda f: "10023")
+    plain = _dinner_and_paper(po_number="4500012")
+    doc = {k: v for k, v in plain["final_output"].items() if k != "gl_distribution"}
+    plain["final_output"]["gl_distribution"] = _dist(doc, _setup(meals=()))
+    assert not [f for f in jde.voucher_findings(plain["final_output"], settings, "10023") if f[1] == "JDE_MEALS_PO"]
+
+
+def test_one_pay_item_per_line_takes_the_tax_of_the_distribution():
+    """B-867: with one pay item per line, the tax was split again by JD Edwards' own rounding: the dinner got 5.67 and
+    the paper 13.01, while the GL distribution has 5.68 claimable on the dinner and 13.00 on the paper."""
+    inv = _dinner_and_paper()
+    settings = jde.JdeSettings(amount_mode=jde.AMOUNT_TAX, decimals=jde.POINT, line_numbering=jde.MATCH_HEADER)
+    headers, dists, _ = jde.voucher_rows(inv, "10023", settings)
+    assert [h["VLSTAM"] for h in headers] == ["5.68", "13.00"]
+    assert [d["VNAA"] for d in dists] == ["93.12", "100.00"]
+    gross = [round(float(h["VLATXA"]) + float(h["VLATXN"]) + float(h["VLSTAM"]), 2) for h in headers]
+    assert gross == [98.80, 113.00]
+
+
+def test_a_meal_sharing_the_tax_with_unmarked_lines_is_to_confirm():
+    """B-868: a 100.00 catered lunch and 100.00 of groceries (zero-rated), HST 13.00, no line marked: the tax was
+    spread over both, so only 3.25 was expensed instead of 6.50. A finding asks which lines carry the tax."""
+    from ap_coder.coding.tax import check_taxes
+
+    doc = _on([(100.0, MEALS, "Catered lunch"), (100.0, "6000", "Coffee beans")], 13.0)
+    for li in doc["line_items"]:
+        li["taxes_applied"] = []
+    codes = {(f.code, f.line_number) for f in check_taxes(InvoiceCoding.model_validate(doc), _setup())}
+    assert ("MEALS_TAX_LINES", 1) in codes
+    doc["line_items"][1]["tax_status"] = "zero_rated"  # marked: the tax is all on the lunch
+    assert not {
+        c
+        for c, _ in {(f.code, f.line_number) for f in check_taxes(InvoiceCoding.model_validate(doc), _setup())}
+        if c == "MEALS_TAX_LINES"
+    }
+    expense, _ = _split(_dist(doc))
+    assert expense[0][1] == 6.50
+
+
+def test_a_tip_written_another_way_carries_no_tax():
+    """B-869: "Server - thank you" is a tip too."""
+    dist = _dist(_on([(100.0, MEALS, "Dinner for 4"), (15.0, "6900", "Server - thank you")], 13.0))
+    assert _split(dist)[0] == [(MEALS, 6.50, 106.50), ("6900", 0.0, 15.0)]
 
 
 def test_the_excel_and_csv_lines_carry_the_meals_half():
@@ -225,7 +293,7 @@ def test_the_sales_tax_report_claims_half_and_says_why(tmp_path):
     assert claims["GST"].amount == 874.65 and claims["QST"].amount == 1744.93
     assert claims["GST"].meals == 63.75 and claims["QST"].meals == 127.18
     assert taxreturn.MEALS in claims["GST"].issues and report.at_risk() == []  # a reason, not a risk
-    assert report.meals_totals() == {"GST/HST": 63.75, "QST": 127.18}
+    assert report.meals_totals() == {"GST/HST": {"CAD": 63.75}, "QST": {"CAD": 127.18}}
     text = taxreturn.to_csv(report).decode("utf-8-sig")
     assert "Not claimed: meals & entertainment (50%)" in text and "63.75" in text and "874.65" in text
     from .webclient import client_for
@@ -246,3 +314,26 @@ def test_the_review_screen_notes_a_meals_line(tmp_path):
     assert len(notes) == len(_gt(QC)["line_items"]) + 1  # each line, and the template of a new one
     shown = [n for n in notes if " hidden" not in n.split(">")[0]]
     assert len(shown) == 1 and "Meals: 50% of the GST and QST is claimable" in shown[0]
+
+
+def test_the_meals_totals_keep_each_currency_apart(tmp_path):
+    """B-870: a USD invoice's meals tax was added to the CAD one."""
+    store = Store(tmp_path / "t.db")
+    load_sample_setup(store)
+    for n, currency in enumerate(("CAD", "USD")):
+        doc = {**_gt(QC), "currency": currency, "invoice_number": f"M-{n}"}
+        output, _ = finalise_coding(InvoiceCoding.model_validate(doc), store.reference_data(), Settings(), store=store)
+        store.approve_invoice(store.add_invoice(tmp_path / f"{n}.pdf", output, {}), output, "Jane")
+    totals = taxreturn.build(store, *YEAR).meals_totals()
+    assert totals == {"GST/HST": {"CAD": 63.75, "USD": 63.75}, "QST": {"CAD": 127.18, "USD": 127.18}}
+
+
+def test_the_report_says_the_claim_is_already_net():
+    assert "no add-back" in taxreturn.MEALS_WHY and "line 106" in taxreturn.MEALS_WHY
+
+
+def test_the_line_note_points_to_the_other_account():
+    from ap_coder.coding.tax import meals_note
+
+    assert meals_note("ON") == ("Meals: 50% of the GST/HST is claimable. Billed to a client or a staff event? Use the "
+                                "other account.")  # fmt: skip

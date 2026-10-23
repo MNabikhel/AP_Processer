@@ -519,6 +519,18 @@ def po_not_sent(final: dict[str, Any], settings: JdeSettings) -> bool:
     return len(po) > PO_WIDTH and settings.send_po_reference and not settings.po_matched
 
 
+# Why a voucher with meals on it is held back (D-90): E1 would claim the full ITC on them while AP Coder expenses half
+# of it, so the GL and the ITC report would disagree.
+MEALS_GROSS = (
+    "meals and entertainment: with the gross amount only, JD Edwards works out the tax itself and would claim all of "
+    "it, not half: switch to sending tax amounts in Settings → JD Edwards E1 (Amounts)"
+)
+MEALS_PO = (
+    "meals and entertainment on a PO-matched voucher: JD Edwards distributes it from the receipts and would claim all "
+    "the tax on the meals, not half: send it without the PO match, or post the half by hand in JD Edwards"
+)
+
+
 def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
     final = inv.get("final_output") or {}
     v = _Voucher(int(inv.get("id") or 0), final, [])
@@ -577,7 +589,18 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
     recoverable = [t for t in charged if t["tax_type"] in v.recoverable_types]
     v.recoverable = sum(_units(t.get("tax_amount"), v.decimals) for t in recoverable)
 
+    # Meals (D-90): half the tax on a meals line is not claimable, and is in its expense line, not E1's to post.
+    dist = _distribution(final)
+    meals = sum(_units(e.get("meals_tax"), v.decimals) for e in dist if e.get("kind") == "expense")
+    if v.recoverable_types and meals:
+        v.meals = meals
+        v.recoverable -= meals
+        v.stam -= meals
     v.po_matched = bool(settings.po_matched and po)
+    if meals and v.po_matched:  # no G/L lines of ours: E1 distributes from the receipts (B-865)
+        add(MEALS_PO, "JDE_MEALS_PO")
+    elif meals and settings.amount_mode == AMOUNT_GROSS:  # E1 works out the tax and claims all of it (B-866)
+        add(MEALS_GROSS, "JDE_MEALS_GROSS")
     if v.po_matched:
         items = final.get("line_items") or []
         lines = sum(_cents(li.get("amount")) for li in items)
@@ -590,13 +613,8 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
             )
         return v
 
-    dist = _distribution(final)
     if not dist:
         add("no GL distribution to post", "NO_LINE_ITEMS")
-    if v.recoverable_types:  # half the tax on meals is in the expense lines, not E1's to post (D-90)
-        v.meals = sum(_units(e.get("meals_tax"), v.decimals) for e in dist if e.get("kind") == "expense")
-        v.recoverable -= v.meals
-        v.stam -= v.meals
     total = sum(_cents(e.get("amount")) for e in dist)
     gross_cents = _cents(final.get("grand_total"))
     if dist and total != gross_cents:
@@ -807,6 +825,9 @@ def voucher_rows(
         # of the recoverable tax nor in its tax.
         meals = [_units(e.get("meals_tax"), v.decimals) if v.meals else 0 for e in v.entries]
         shares = [s - m for s, m in zip(shares, meals, strict=True)]
+        own = _claimed_shares(v) if v.meals else None
+        if own is not None:  # the distribution's own shares, not split again with other cents (B-867)
+            shares = own
         stams = [s + _units(e.get("non_recoverable_tax"), v.decimals) - m
                  for e, s, m in zip(v.entries, shares, meals, strict=True)]  # fmt: skip
         stams[max(range(len(base)), key=lambda i: abs(base[i]))] += v.stam - sum(stams)
@@ -820,6 +841,36 @@ def voucher_rows(
         return headers, [dist_row(n, e) for n, e in enumerate(v.entries, 1)], []
     header = {**common, "VLEDLN": 1, **amounts(v.gross, v.stam, v.atxa), **extras}
     return [header], [dist_row(n, e) for n, e in enumerate(v.entries, 1)], []
+
+
+def _claimed_shares(v: _Voucher) -> list[int] | None:
+    """Each distribution line's claimable share of the recoverable taxes E1 posts, as the GL distribution has them
+    (``tax.tax_shares``, half of a meals line's share: D-90), in the currency's units; None when the invoice's lines
+    can't be read back or don't match the distribution lines (then the pay items split the tax themselves)."""
+    from ..coding.tax import half_down, is_meals, tax_shares
+    from ..core.schema import InvoiceCoding
+
+    try:
+        coding = InvoiceCoding.model_validate({k: x for k, x in v.final.items() if k != "gl_distribution"})
+    except ValueError:
+        return None
+    items = v.final.get("line_items") or []
+    behind = _entry_lines(v.entries, items)
+    position = {id(li): i for i, li in enumerate(items)}
+    lines = [position.get(id(li)) if li is not None else None for li in behind]
+    if len(coding.line_items) != len(items):
+        return None
+    meals_codes = {str(e.get("gl_code") or "").strip() for e in v.entries if e.get("meals_tax")}
+    places = v.decimals
+    per_line = [0] * len(items)
+    for tl in coding.tax_lines:
+        if tl.tax_type not in v.recoverable_types or abs(tl.tax_amount) < 0.005:
+            continue
+        for idx, share in tax_shares(coding.line_items, tl, places):
+            meal = is_meals(coding.line_items[idx].predicted_gl_code, meals_codes)
+            per_line[idx] += _units(half_down(share, places) if meal else share, v.decimals)
+    shares = [per_line[i] if i is not None else 0 for i in lines]
+    return shares if sum(shares) == v.recoverable else None
 
 
 def _entry_lines(entries: list[dict[str, Any]], items: list[dict[str, Any]]) -> list[dict[str, Any] | None]:
@@ -999,6 +1050,10 @@ def voucher_findings(output: dict[str, Any], settings: JdeSettings, an8: str) ->
             out.append((ERROR, "JDE_TAX_AREA", f"JD Edwards: {problem}", None))
         elif code == "JDE_NO_ACCOUNT":  # said once for all the lines below
             unmapped.setdefault(problem.split(" has no JDE account")[0].split(": JDE account")[0], []).append(line)
+        elif code == "JDE_MEALS_GROSS":
+            out.append((ERROR, "JDE_MEALS_GROSS", f"JD Edwards: {problem}, or ask the pilot tester", None))
+        elif code == "JDE_MEALS_PO":
+            out.append((ERROR, "JDE_MEALS_PO", f"JD Edwards: {problem}", None))
         elif code == "JDE_UNBALANCED":
             out.append((ERROR, "JDE_UNBALANCED", f"JD Edwards: {problem}", None))
         else:
@@ -1007,10 +1062,6 @@ def voucher_findings(output: dict[str, Any], settings: JdeSettings, an8: str) ->
     if no_code:
         out.append((WARNING, "JDE_TERMS_NO_CODE", f"Payment terms {no_code} have no JD Edwards code: add it in "
                     "Settings → JD Edwards E1 (or ask the pilot tester)", None))  # fmt: skip
-    if v.meals and not v.po_matched and settings.amount_mode == AMOUNT_GROSS:
-        out.append((WARNING, "JDE_MEALS_GROSS", "JD Edwards gets the gross amount only and works out the tax itself, "
-                    "so it would claim all the tax on the meals, not half: the pilot tester can send the taxable and "
-                    "tax amounts instead (Settings → JD Edwards E1 → Amounts)", None))  # fmt: skip
     if po_not_sent(output, settings):
         out.append((WARNING, "JDE_PO_LONG", "JD Edwards' PO field holds 8 characters: this PO number is kept in AP "
                     "Coder and not sent", None))  # fmt: skip
@@ -1370,15 +1421,6 @@ def dry_run(
                         "Coder's Self-assessment report, or the PST is accrued twice"
                     ]
                     if v.tax_code and v.tax_code == settings.self_assessed_code.strip().upper()
-                    else []
-                )
-                + (
-                    [
-                        f"meals: {v.meals / 100:,.2f} of the tax is not claimable and is in the expense lines, but "
-                        "with gross amounts only JD Edwards works out the tax itself and would claim all of it: send "
-                        "the taxable and tax amounts (Settings -> JD Edwards E1 -> Amounts)"
-                    ]
-                    if v.meals and not v.po_matched and settings.amount_mode == AMOUNT_GROSS
                     else []
                 )
                 + (
