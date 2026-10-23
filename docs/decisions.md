@@ -772,7 +772,10 @@ that is reversed keeps its line, marked "replaced by D-NN".
   staff event? Use the other account." ("GST and QST" in Quebec), following the GL account as it is changed.
   (`coding/tax.py` `tax_shares`, `meals_parts`, `meals_unsure`, `build_gl_distribution`; `core/store/accounts.py`,
   `core/reference_data.py`; `web/pages/accounts.py`; `erp/jde.py` `_prepare`, `voucher_rows`, `_claimed_shares`,
-  `voucher_findings`; `coding/taxreturn.py`; `tests/test_meals.py`)
+  `voucher_findings`; `coding/taxreturn.py`; `tests/test_meals.py`) **Keeping the ticks:** the flag is usually set
+  only in AP Coder, not in the ERP's chart, so an import without a meals column (*Replace the list* too) keeps each
+  code's tick (B-890). **Going back to an older version loses the meals ticks; re-tick after:** a version before this
+  one drops them on its *Replace the list* import or grid save, and it can't be changed (docs/UPGRADING.md).
 - **D-91** · Payment terms → JD Edwards payment terms code (VLPTC). Before, VLPTC was one code for every voucher or
   blank, while the clerk sees the printed terms. Now Settings → JD Edwards E1 has a small table: the terms' meaning →
   the company's code, keyed by `terms.terms_key` (the standard wording of what `parse_terms` reads: "Net 30",

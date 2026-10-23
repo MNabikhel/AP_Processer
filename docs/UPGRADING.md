@@ -102,6 +102,10 @@ connects to the internet (ONNX Runtime's own usage reports to Microsoft included
 - **Python 3.10.** PR #1 and #2 ran on Python 3.10; the new version needs 3.11 or newer (3.12 is best). A `.venv`
   made with 3.10 is made again with the newer Python when one is installed; with only 3.10 the double-click says
   so (*Python 3.10 is installed, but AP Coder needs Python 3.11 or newer*).
+- **Going back to an older version loses the meals ticks.** A version from before the *Meals & entertainment (50% tax
+  credit)* tick on GL accounts (D-90) does not know it: its *Replace the list* import or a save of its GL accounts
+  grid clears every tick in the database. Back on this version, tick the meals accounts again (GL accounts & tax →
+  GL accounts) before approving meals invoices, or their full tax credit is claimed.
 
 ## How this is checked
 
