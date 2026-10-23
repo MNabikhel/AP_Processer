@@ -194,7 +194,7 @@ def current_draft(request: Request, inv: dict[str, Any]) -> tuple[view.Draft, bo
 
 def _keep_draft(request: Request, invoice_id: int, draft: view.Draft, keep: bool) -> None:
     if keep:
-        kept = draft.to_dict()
+        kept = {**draft.to_dict(), "saved_at": dt.datetime.now().isoformat(timespec="minutes")}
         _drafts(request)[invoice_id] = kept
         get_store(request).save_invoice_draft(invoice_id, _person(_my_key()), kept)
     elif invoice_id in _drafts(request):
@@ -397,10 +397,15 @@ def _same(state: dict[str, Any]) -> dict[str, Any]:
     return state
 
 
+UNDONE = "undone right after approving"  # the reason an approval undone from its banner is reopened with
+
+
 def _sent_back(store: Store, invoice_id: int) -> dict[str, str] | None:
     back = next((e for e in store.events(invoice_id)
                  if e["action"] in ("sent_back", "reopened", "approved", "rejected")), None)  # fmt: skip
     if not back or back["action"] not in ("sent_back", "reopened"):
+        return None
+    if (back["detail"] or {}).get("reason") == UNDONE:  # the banner's Undo says it already (B-828)
         return None
     return {"verb": "Sent back" if back["action"] == "sent_back" else "Reopened", "actor": back["actor"] or "?",
             "reason": (back["detail"] or {}).get("reason") or "no reason given"}  # fmt: skip
@@ -462,6 +467,7 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
             context["banner"] = ""
         return render(request, "invoice.html", "review", mode=mode, **context,
                       **_closed(store, reference, inv))  # fmt: skip
+    saved_at = str((_drafts(request).get(invoice_id) or {}).get("saved_at") or "")  # edits kept from before
     draft, kept = current_draft(request, inv)
     analysis = view.analyse(store, settings, reference, inv, draft, reviewer())
     capture = view.capture_of(store, invoice_id)
@@ -495,7 +501,18 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         bank_shown=mask_account(bank) if (bank := draft.header.get("remit_bank_account")) else "",
         supply=view.supply_line(draft.header, draft.lines, reference.tax),
         usual_cc=view.usual_cost_center(store, reference, draft.header.get("vendor_name") or ""),
+        draft_from=_when(saved_at),
     )  # fmt: skip
+
+
+def _when(iso: str) -> str:
+    """When a draft was kept, as the screen says it: "4:23" today, "Oct 21, 4:23" before (B-826)."""
+    try:
+        at = dt.datetime.fromisoformat(iso)
+    except ValueError:
+        return ""
+    clock = f"{at.hour}:{at.minute:02d}"
+    return clock if at.date() == dt.date.today() else f"{at:%b} {at.day}, {clock}"
 
 
 def vendor_options(store: Store) -> dict[str, Any]:
@@ -661,7 +678,8 @@ def _check(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     analysis = view.analyse(store, settings, reference, inv, draft, reviewer())
     if analysis.report is not None:
         store.refresh_confidence(invoice_id, analysis.report.adjusted_confidence, analysis.report.requires_review)
-    _keep_draft(request, invoice_id, draft, analysis.coding is None or analysis.changed or bool(draft.taught))
+    kept = analysis.coding is None or analysis.changed or bool(draft.taught)
+    _keep_draft(request, invoice_id, draft, kept)
     # the account lists' "Used for this vendor", for the vendor now in the vendor field (B-596)
     listed = {code for code, _ in view.gl_options(reference, draft.lines)}
     used = [c for c in view.vendor_accounts(store, draft.header.get("vendor_name") or "") if c in listed]
@@ -675,7 +693,7 @@ def _check(request: Request, invoice_id: int, form: Any) -> JSONResponse:
         header["flag_errors"] = analysis.live.get("flag_errors") or []  # red, as an error (B-796)
         header["help"] = analysis.live.get("help") or {}  # a note with a one-click fix under a field (D-75)
         header["an8"] = analysis.live.get("an8")  # the supplier's JD Edwards number, when it is the export in use
-    return JSONResponse({"ok": True, "valid": analysis.coding is not None, "allow": analysis.allow,
+    return JSONResponse({"ok": True, "valid": analysis.coding is not None, "allow": analysis.allow, "draft": kept,
                          "problems": analysis.problems, "vendor_accounts": used, "header": header,
                          "tax_codes": codes["options"], "tax_code_labels": codes["labels"],
                          "tax_marks": {str(k): v for k, v in (analysis.live.get("tax_marks") or {}).items()},
@@ -804,10 +822,10 @@ def undo_approve(request: Request, invoice_id: int) -> JSONResponse:
         return refuse(f"There is no approval to undo: {now}. Open it to see where it stands.")
     me = reviewer()
     try:
-        store.reopen(invoice_id, me, "undone right after approving")
+        store.reopen(invoice_id, me, UNDONE)
     except ValueError as exc:
         return changed_meanwhile(request, invoice_id, exc)
-    on_reopen(store, invoice_id, me, "undone right after approving", before=inv)
+    on_reopen(store, invoice_id, me, UNDONE, before=inv)
     return done(
         request,
         f"/review/{invoice_id}",

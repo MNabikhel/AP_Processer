@@ -105,6 +105,7 @@ async function check() {
       const body = formData();
       const answer = await post(`${base}/check`, body);
       lastCheckOk = Boolean(answer.ok);
+      lastDraft = Boolean(answer.draft); // kept as a draft (an edit of the coding), not a tick of "Approve anyway"
       if (answer.ok) applySections(answer, body);
       else if (answer.error) toast({ text: answer.error, tone: "err" }, 9000);
     } while (queued);
@@ -113,13 +114,15 @@ async function check() {
   let saved = false;
   try {
     await running;
-    saved = lastCheckOk;
+    saved = lastCheckOk && lastDraft;
   } finally {
     running = null;
     keepFocusInView(); // the sections drawn again may have moved the box being worked in under the approve bar
-    // Every edit is kept as a draft on the server as it is checked: say so, so leaving the page is no worry.
+    // Every edit is kept as a draft on the server as it is checked: say so, so leaving the page is no worry (only
+    // when one is kept, B-825).
     if (checking) checking.textContent = saved && edited ? `Draft saved ${clock()}` : "";
     if (checking) checking.title = saved && edited ? "Your edits are kept: leave and come back, they are still here. Approving records them." : "";
+    checking?.classList.toggle("saved", saved && edited); // gives way to "Not ready" on the bar (B-820)
   }
 }
 
@@ -133,6 +136,7 @@ function keepFocusInView() {
 }
 
 let lastCheckOk = false; // the last check answered (its edits are kept as a draft)
+let lastDraft = false; // the last check kept the edits as a draft
 let edited = false; // an edit made on this page (the opening check keeps nothing new)
 
 function clock() {
@@ -155,7 +159,8 @@ async function flush() {
 
 /* A line's description wraps in its box (a textarea) but is one line: Enter adds no line break (B-467). */
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.ctrlKey && !e.metaKey && e.target.matches?.("textarea[data-one-line]")) e.preventDefault();
+  // (Alt+Enter is the line's own key, "insert a line below": left to it, B-822)
+  if (e.key === "Enter" && !e.ctrlKey && !e.metaKey && !e.altKey && e.target.matches?.("textarea[data-one-line]")) e.preventDefault();
 });
 document.addEventListener("input", (e) => {
   if (e.target.matches?.("textarea[data-one-line]") && /[\r\n]/.test(e.target.value)) {
@@ -520,6 +525,8 @@ function showVendorMatch() {
       : found.id ? ` · ${found.id}` : "";
     if (found.added) vendorLine("person_add", "warn", `Added here, not in JD Edwards yet${id}`);
     else if (!vendors.enforced) vendorLine("history", "ok", "Approved before"); // no vendor master: a past vendor
+    // in the list, but its number is no AN8 (JD Edwards not set up for it): plain, the error under it says why (B-827)
+    else if (an8 !== undefined && !valid) vendorLine("info", "", `In the vendor list${id}`);
     else vendorLine("verified", "ok", `In the vendor list${id}`);
     return;
   }
@@ -528,7 +535,8 @@ function showVendorMatch() {
   const bn = filled ? "" : businessNumber(input("gst_hst_registration_number")?.value);
   const byNumber = bn ? vendors.list.find((v) => businessNumber(v.gst) === bn) : null;
   if (byNumber) {
-    vendorLine("info", "warn", `The GST/HST number printed is ${possessive(byNumber.name)}.`, {
+    // good to know (as the checks say it), not a warning (B-827)
+    vendorLine("info", "info", `The GST/HST number printed is ${possessive(byNumber.name)}.`, {
       label: `Use ${byNumber.name}`,
       run: () => setVendor(byNumber.name),
     });
@@ -2019,7 +2027,7 @@ async function pageMenu(_stage, ctx) {
   if (!viewer) return null;
   const at = ctx.keyboard ? null : { x: ctx.x, y: ctx.y };
   let word = null;
-  if (at && !viewer.teach) {
+  if (at && !viewer.teach && form) {
     try {
       viewer.setWords(await loadWords());
       word = viewer.wordAt(at.x, at.y);
@@ -2028,7 +2036,10 @@ async function pageMenu(_stage, ctx) {
     }
   }
   const fields = headerTargets();
-  const teach = viewer.teach
+  // an invoice not being reviewed (approved, rejected…): the page's own items only, nothing to teach (B-829)
+  const teach = !form
+    ? []
+    : viewer.teach
     ? [{ icon: "close", label: "Stop teaching", hint: "Esc", id: "stop", run: () => viewer.cancelTeach() }]
     : [
         word ? { icon: "input", label: `Use “${short(word.t)}” for…`, id: "use",
@@ -2153,6 +2164,8 @@ if (form) {
   register('[data-live="posting"] tbody tr', (tr) => postingMenu(tr), { keepFocus: true });
   register("[data-tax-check] tr[data-tax-row]", (tr) => taxCheckMenu(tr), { keepFocus: true });
   register("[data-live=checks] .rvw-status li", (li) => checkMenu(li), { keepFocus: true });
+} else {
+  register(".iv-stage", pageMenu); // the page's zoom and turn on a read-only invoice too
 }
 
 /* ---------- Ctrl+Z, P (Park), X (Reject) ---------- */
@@ -2171,7 +2184,10 @@ document.addEventListener("keydown", (e) => {
     // screen, and that would be kept (B-739): never. In a box of the form, its own typing is the browser's to undo.
     if (!(typing(e.target) && e.target.tagName !== "SELECT")) {
       e.preventDefault();
-      toast({ text: "Nothing to undo.", tone: "info", icon: "undo" }, 2500);
+      // nothing edited here since: the approval just made, as the banner's Undo (B-823)
+      const banner = document.querySelector("#flashes form.flash-undo");
+      if (banner) banner.requestSubmit();
+      else toast({ text: "Nothing to undo.", tone: "info", icon: "undo" }, 2500);
     }
     return;
   }

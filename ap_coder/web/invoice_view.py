@@ -1874,13 +1874,13 @@ def settle_dates(header: dict[str, Any], fallback: dict[str, Any]) -> DateCheck:
             note = f"“{text}” can be {_long_date(a)} or {_long_date(b)}: which is it?"
             out.issues.append(Issue(ERROR, "DATE_AMBIGUOUS", f"{label}: {note}"))
         elif not text:
-            note = "No invoice date: type it from the page, e.g. 2026-10-05"
+            note = "No invoice date: type it from the page, e.g. 2026‑10‑05"
             out.issues.append(Issue(ERROR, "INVOICE_DATE_INVALID", note))
         elif name == "invoice_date":
-            note = f"“{text}” is not a date: type it as on the page, e.g. 2026-10-05"
+            note = f"“{text}” is not a date: type it as on the page, e.g. 2026‑10‑05"
             out.issues.append(Issue(ERROR, "INVOICE_DATE_INVALID", f"{label}: {note}"))
         else:
-            note = f"“{text}” is not a date: type it as on the page (e.g. 2026-11-04), or leave it blank"
+            note = f"“{text}” is not a date: type it as on the page (e.g. 2026‑11‑04), or leave it blank"
             out.issues.append(Issue(ERROR, "DUE_DATE_INVALID", f"{label}: {note}"))
         out.notes[name] = note
         # the checks meanwhile: the date as read (or, never read, a placeholder no approval can keep)

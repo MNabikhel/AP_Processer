@@ -151,7 +151,7 @@ def test_a_bad_date_is_said_at_its_field_and_keeps_every_other_check(client, sto
     assert answer["valid"] and "Value error" not in json.dumps(answer)
     assert (
         answer["header"]["flags"]["invoice_date"]
-        == "“2026-13-45” is not a date: type it as on the page, e.g. 2026-10-05"
+        == "“2026-13-45” is not a date: type it as on the page, e.g. 2026\u201110\u201105"  # B-829: never broken
     )
     assert "Subtotal + tax" in answer["sections"]["checks"]  # the other checks stay
     assert "grand_total" in answer["header"]["flags"]  # the total is marked at its box too

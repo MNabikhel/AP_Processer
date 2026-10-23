@@ -419,3 +419,5 @@ details.iv-group > summary:focus-visible { outline: 2px solid var(--brand); outl
 .iv-drag { fill: var(--p-pick); fill-opacity: .08; stroke: var(--p-pick); stroke-width: 1.5; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
 .iv-drag.done { fill-opacity: .12; stroke-dasharray: none; }
 .iv-lg.hot .iv-line { stroke: var(--p-pick); stroke-opacity: 1; stroke-width: 2; stroke-dasharray: none; fill: var(--p-pick); fill-opacity: .1; }
+/* The page focused from the keyboard (Esc on its menu, Tab) shows it (B-829). */
+.iv-stage:focus-visible { outline: 2px solid var(--lg-accent, #2563eb); outline-offset: -2px; }

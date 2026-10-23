@@ -616,3 +616,51 @@ html:has(.inv-actionbar) {scroll-padding-bottom: 104px; scroll-padding-top: 12px
 .inv-jde-settings {display: inline-flex; align-items: center; gap: 3px; margin-top: 6px;}
 .inv-jde-settings .ms {font-size: 14px;}
 .inv-vendor .inv-vendor-match:empty {min-height: 0;}
+
+/* ---- Third UI sign-off (B-820 on) ------------------------------------------------------------------------------- */
+/* The approve bar never overlaps at 1280 and up (B-820): while it is not ready, the reason takes a row of its own under
+   the amount, in full, and "Draft saved" gives way to it ("Checking…" stays). */
+.inv-actionbar:has([data-live=bar] .inv-hard, [data-live=bar] .inv-pick) .inv-checking.saved {display: none;}
+@media (min-width: 1101px) {
+  .inv-actionbar-left:has(.inv-hard, .inv-pick) {flex-direction: column; align-items: flex-start; gap: 4px;}
+  .inv-actionbar-left:has(.inv-hard, .inv-pick) .apc-pill.inv-hard,
+  .inv-actionbar-left:has(.inv-hard, .inv-pick) .apc-pill.inv-pick {max-width: 100%; min-width: 0;}
+}
+
+/* The GL posting preview fits its card (B-821): fixed columns, the account's name cut with "…" (its title says it
+   all), and the secondary columns left out as the card narrows: the description first (the lines above say it),
+   then Net and non-recoverable tax, then the JDE account and cost center; Amount and the Total always show. */
+.rvw-gl table {table-layout: fixed; width: 100%;}
+.rvw-gl th, .rvw-gl td {box-sizing: border-box; padding-left: 8px; padding-right: 8px; overflow: hidden;}
+.rvw-gl .c-kind {width: 56px;}
+.rvw-gl .c-gl {width: 24%;}
+.rvw-gl .c-cc {width: 92px;}
+.rvw-gl .c-jde {width: 108px;}
+.rvw-gl .c-net {width: 86px;}
+.rvw-gl .c-amt {width: 128px; white-space: nowrap;}
+.rvw-gl th.c-gl, .rvw-gl th.c-jde, .rvw-gl th.c-net {white-space: nowrap; text-overflow: ellipsis;}
+.rvw-gl .gl, .rvw-gl .gl small {white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
+.rvw-gl td.c-desc {white-space: normal; overflow-wrap: anywhere; max-width: none;}
+.rvw-gl .c-foot {overflow: visible;}
+@container card (max-width: 840px) {.rvw-gl .c-desc {display: none;} .rvw-gl .c-gl {width: auto;}}
+@container card (max-width: 600px) {.rvw-gl .c-net {display: none;}}
+@container card (max-width: 420px) {.rvw-gl .c-kind {width: 46px;} .rvw-gl .c-amt {width: 112px;}
+  .rvw-gl .c-jde {width: 100px;} .rvw-gl th, .rvw-gl td {padding-left: 6px; padding-right: 6px;}}
+@container card (max-width: 340px) {.rvw-gl .c-jde, .rvw-gl .c-cc {display: none;}}
+/* The lines at 1920: the description the widest column, the GL account next (its title says it in full) (B-824). */
+@container lines (min-width: 640px) {
+  .inv-lines-grid {--cols: 40px minmax(150px, 1.3fr) minmax(150px, 1fr) 90px 116px 30px;}
+  .inv-lines-grid.has-cc {--cols: 40px minmax(140px, 1.3fr) minmax(130px, 1fr) minmax(96px, .7fr) 92px 116px 30px;}
+}
+@container lines (min-width: 720px) {
+  .inv-lines-grid.show-qty {--cols: 36px minmax(140px, 1.25fr) minmax(136px, 1fr) 86px 112px 44px 78px 28px;}
+}
+@container lines (min-width: 740px) {
+  .inv-lines-grid.has-cc.show-qty {--cols: 36px minmax(120px, 1.2fr) minmax(120px, 1fr) minmax(86px, .6fr) 82px 108px 44px 76px 26px;}
+}
+/* Edits kept from before (B-826): a quiet line under the invoice's header, with Discard. */
+.inv-draft-note {display: flex; align-items: center; gap: 6px; color: var(--rv-muted);}
+.inv-draft-note .ms {font-size: 15px; color: var(--rv-subtle);}
+.inv-linkbtn {border: 0; padding: 0; background: none; font: inherit; color: var(--lg-accent); cursor: pointer;
+  text-decoration: underline; text-underline-offset: 2px;}
+.inv-vendor .inv-vendor-match.info .ms {color: var(--lg-accent);}

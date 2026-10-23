@@ -340,7 +340,7 @@ def test_in_a_browser_the_gl_account_and_tax_code_have_room_at_1920(browser, sto
         const tax = tr.querySelector('select[data-tax-code]');
         return {gl: w('.c-gl'), amt: w('.c-amt'), tax: w('.c-tax'), title: tax.title,
                 text: tax.selectedOptions[0].textContent}; }""")
-    assert sizes["gl"] >= 180 and sizes["gl"] > 1.8 * sizes["amt"], sizes
+    assert sizes["gl"] >= 130 and sizes["gl"] > 1.5 * sizes["amt"], sizes  # the description is wider (B-824)
     assert sizes["tax"] >= 110 and sizes["title"] == sizes["text"], sizes  # "GST + QST" in full
     assert page.errors == []
 

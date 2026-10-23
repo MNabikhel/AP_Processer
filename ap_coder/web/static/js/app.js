@@ -263,3 +263,15 @@ if (new URLSearchParams(location.search).has("flash")) {
   url.searchParams.delete("flash");
   history.replaceState(null, "", url.pathname + url.search + url.hash);
 }
+
+/* Ctrl+Z outside a text box, with a message that offers Undo (an approval just made, B-823): that Undo. The review
+   screen's own Ctrl+Z comes first (it undoes the last edit there, and says so); on the other pages, this. */
+window.addEventListener("keydown", (e) => {
+  if (e.defaultPrevented || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || (e.key !== "z" && e.key !== "Z")) return;
+  const t = e.target;
+  if (t.isContentEditable || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || (t.tagName === "INPUT" && !["checkbox", "radio", "button", "submit"].includes(t.type))) return;
+  const undo = document.querySelector("#flashes form.flash-undo");
+  if (!undo) return;
+  e.preventDefault();
+  undo.requestSubmit();
+});
