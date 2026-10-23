@@ -76,11 +76,15 @@ class _MovedModules:
         import importlib
 
         name = spec.name.partition(".")[2]
-        return importlib.import_module(f"{__name__}.{_MOVED[name]}.{name}")
+        module = importlib.import_module(f"{__name__}.{_MOVED[name]}.{name}")
+        spec.loader_state = module.__spec__  # the import system sets the old name's spec on it next (B-724)
+        return module
 
     @staticmethod
     def exec_module(module):
-        pass  # the moved module ran when it was imported
+        # The moved module ran when it was imported: only its own spec goes back, so its relative imports and
+        # importlib.reload still follow its real name.
+        module.__spec__ = module.__spec__.loader_state
 
 
 def _install_moved_modules() -> None:

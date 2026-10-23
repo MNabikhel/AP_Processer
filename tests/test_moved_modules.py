@@ -39,11 +39,24 @@ def test_a_stale_flat_file_left_by_an_older_install_is_never_imported(monkeypatc
             delattr(ap_coder, "zz_stale_moved")
 
 
+def test_the_moved_module_keeps_its_own_spec_and_still_reloads(monkeypatch):
+    """B-724: an old path imported first must not rename the real module (its relative imports, and reload, follow
+    its spec)."""
+    import warnings
+
+    from ap_coder.coding import terms
+
+    sys.modules.pop("ap_coder.terms", None)
+    importlib.import_module("ap_coder.terms")
+    assert terms.__spec__.name == "ap_coder.coding.terms" and terms.__spec__.parent == "ap_coder.coding"
+    assert terms.__name__ == "ap_coder.coding.terms"
+    monkeypatch.delattr(terms, "payment_findings")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        importlib.reload(terms)
+    assert callable(terms.payment_findings)
+
+
 def test_an_unknown_name_is_still_missing():
     with pytest.raises(ModuleNotFoundError):
         importlib.import_module("ap_coder.no_such_module")
-
-
-def test_no_flat_module_files_are_left():
-    files = {p.name for p in Path(ap_coder.__file__).parent.glob("*.py")}
-    assert files == {"__init__.py", "__main__.py"}

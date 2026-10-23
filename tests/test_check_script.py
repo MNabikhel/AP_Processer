@@ -27,9 +27,28 @@ def test_a_changed_test_runs_itself_and_a_page_script_its_page_tests():
     assert "tests/test_web_invoice.py" in check.tests_for(["ap_coder/web/static/js/invoice.js"])
 
 
+def test_a_script_the_package_and_the_shared_test_files_bring_their_tests():
+    assert "tests/test_update.py" in check.tests_for(["scripts/upgrade.py"])
+    assert check.tests_for(["ap_coder/__init__.py"]) == ["tests/test_moved_modules.py"]
+    assert check.tests_for(["tests/conftest.py"]) is None  # the whole default run
+    assert check.tests_for(["pyproject.toml", "ap_coder/coding/tax.py"]) is None
+
+
+def test_outside_a_git_checkout_it_asks_for_the_files(monkeypatch, capsys):
+    monkeypatch.setattr(check, "changed_files", lambda: None)
+    assert check.main([]) == 2
+    assert "name the files" in capsys.readouterr().out
+
+
 def test_every_slow_test_listed_still_exists():
-    files = {entry.split("::", 1)[0] for entry in _SLOW}
-    assert all((ROOT / f).is_file() for f in files), sorted(f for f in files if not (ROOT / f).is_file())
+    """A test renamed or removed would leave its slow twin in the default run unnoticed."""
+    missing = []
+    for entry in sorted(_SLOW):
+        path, *_, name = entry.split("::")
+        text = (ROOT / path).read_text(encoding="utf-8") if (ROOT / path).is_file() else ""
+        if f"def {name}(" not in text:
+            missing.append(entry)
+    assert not missing, missing
 
 
 def test_the_default_run_leaves_out_browser_and_listed_tests():

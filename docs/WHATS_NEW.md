@@ -17,8 +17,8 @@ approval of an invoice someone else approved first. On the computer running AP C
 
 ## This release: a bug sweep (72 bugs fixed)
 
-A review of every part of AP Coder, section by section, each finding reproduced, given a test, then fixed. The full log,
-with how to reproduce each one and the lesson, is [docs/BUGS.md](BUGS.md). What you may notice:
+A review of every part of AP Coder, section by section, each finding reproduced, given a test, then fixed. The log, one line
+per bug with the test that keeps it fixed, is [docs/BUGS.md](BUGS.md). What you may notice:
 
 - **Nothing is approved without a person when it shouldn't be:** the AI reviewer must agree with every field and line
   (not only the last one it was asked about), its draft thinking is never taken as its answer, and its hold and the Azure

@@ -851,3 +851,8 @@ the last B- line (`grep -o "B-[0-9]*" docs/BUGS.md | tail -1`).
 - **B-721** · GST charged where HST applies cited s.218.1 · low · tests/test_line_tax_review3.py::test_hst_not_charged_cites_the_recipients_liability_under_s165_b721
 - **B-722** · The Self-assessment report did not say which PST JD Edwards accrues itself · low · tests/test_line_tax_review3.py::test_the_self_assessment_report_marks_invoices_jd_edwards_accrues_with_code_b_b722
 - **B-723** · An inferred exemption picked again after another code was not recorded as confirmed · minor · tests/test_line_tax_review3.py::test_picking_the_inferred_exemption_again_records_it_as_confirmed_b723, tests/test_web_tax_codes.py::test_in_a_browser_picking_the_inferred_exemption_again_confirms_it_b723
+
+### Leaner codebase (token-cost study)
+
+- **B-724** · An old flat path imported first gave the real module the old name's spec (relative imports warned, reload did nothing) · medium · tests/test_moved_modules.py::test_the_moved_module_keeps_its_own_spec_and_still_reloads
+- **B-725** · scripts/check.py said OK with no tests run for a changed script, the package, a shared test file or a deleted module · medium · tests/test_check_script.py::test_a_script_the_package_and_the_shared_test_files_bring_their_tests, ::test_outside_a_git_checkout_it_asks_for_the_files
