@@ -469,6 +469,17 @@ def accrues_use_tax(final: dict[str, Any], settings: JdeSettings) -> bool:
     return bool(code) and code == settings.self_assessed_code.strip().upper()
 
 
+PO_WIDTH = 8  # VLPO
+REMARK_WIDTH = 30  # VLRMK
+
+
+def po_not_sent(final: dict[str, Any], settings: JdeSettings) -> bool:
+    """Whether the PO number is left out of the voucher's PO reference because VLPO can't hold it (D-87): longer than
+    8 characters, sent as a reference only (not a PO-matched voucher, where it holds the voucher back)."""
+    po = str(final.get("po_number") or "").strip()
+    return len(po) > PO_WIDTH and settings.send_po_reference and not settings.po_matched
+
+
 def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
     final = inv.get("final_output") or {}
     v = _Voucher(int(inv.get("id") or 0), final, [])
@@ -487,7 +498,9 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
     elif len(number) > 25:
         add(f"invoice number {number!r} is longer than 25 characters (VLVINV)", "JDE_INVOICE_NUMBER_LONG")
     po = str(final.get("po_number") or "").strip()
-    if po and len(po) > 8 and (settings.send_po_reference or settings.po_matched):
+    # A PO-matched voucher is matched to E1's order by its number: one longer than VLPO holds can't be. As a reference
+    # only, it is left out of VLPO and kept in AP Coder (``po_not_sent``, D-87).
+    if po and len(po) > PO_WIDTH and settings.po_matched:
         add(f"PO number {po!r} is longer than 8 characters (VLPO)", "JDE_PO_LONG")
     invoice_date = _date(final.get("invoice_date"))
     if invoice_date is None:
@@ -642,7 +655,11 @@ def voucher_rows(
         due = invoice_date  # a credit note is not "due"; E1 needs a date
     doc_type = _doc_type(v, settings)
     po = str(final.get("po_number") or "").strip()
-    send_po = bool(po) and (settings.send_po_reference or v.po_matched)  # VLPO, VLPDCT and VLPKCO go together (B-457)
+    # VLPO, VLPDCT and VLPKCO go together (B-457); a PO longer than VLPO is not sent, only kept in the remark (D-87).
+    send_po = bool(po) and (v.po_matched or (settings.send_po_reference and len(po) <= PO_WIDTH))
+    remark = f"AP Coder #{v.inv_id}"
+    if po_not_sent(final, settings) and len(f"{remark} PO {po}") <= REMARK_WIDTH:
+        remark = f"{remark} PO {po}"
     rate = _rate(fx_rates, v.currency, settings.domestic_currency) if v.foreign else None
     common = {
         **keys, "VLDCT": doc_type, "VLCO": settings.company_code, "VLMCU": settings.header_bu.strip(),
@@ -654,11 +671,11 @@ def voucher_rows(
         # and ``validate`` lists it for the README's "check before loading".
         "VLDDJ": julian(due) if settings.send_due_date and due.year in E1_YEARS else "",
         "VLPST": settings.pay_status.strip(),
-        "VLPO": po[:8] if send_po else "",
+        "VLPO": po[:PO_WIDTH] if send_po else "",
         "VLPDCT": settings.po_document_type.strip() if send_po else "",
         "VLPKCO": (settings.po_company.strip().zfill(5) if settings.po_company.strip().isdigit()
                    else settings.po_company.strip() or settings.company_code) if send_po else "",
-        "VLRMK": f"AP Coder #{v.inv_id}"[:30],
+        "VLRMK": remark[:REMARK_WIDTH],
     }  # fmt: skip
     if settings.bank_glba:  # the G/L bank account of the Pay from account (D-66); blank: E1's AAI PB
         common["VLGLBA"] = glba(final, settings)
@@ -873,7 +890,7 @@ def validate(
 
 # --- Before approval: the review screen ---------------------------------------------------------------------------
 
-ERROR = "error"  # a finding's severity (coding.validation.ERROR)
+ERROR, WARNING = "error", "warning"  # a finding's severity (coding.validation.ERROR, WARNING)
 SHOW_SETTING = "show_jde_settings"  # web.core.SHOW_JDE: "1" when JD Edwards is the export in use
 SETTINGS_URL = "/settings/jde"
 # What the review screen's own checks already say (no second message): the invoice number, the date, a line without a
@@ -938,6 +955,9 @@ def voucher_findings(output: dict[str, Any], settings: JdeSettings, an8: str) ->
             out.append((ERROR, "JDE_UNBALANCED", f"JD Edwards: {problem}", None))
         else:
             out.append((ERROR, "JDE_VOUCHER", f"JD Edwards: {problem}", line))
+    if po_not_sent(output, settings):
+        out.append((WARNING, "JDE_PO_LONG", "JD Edwards' PO field holds 8 characters: this PO number is kept in AP "
+                    "Coder and not sent", None))  # fmt: skip
     if unmapped:  # one finding: "GL 6400 (lines 1, 2), 6500 (line 7) have no JDE account…", not one per account
 
         def where(account: str, lines: list[int | None]) -> str:

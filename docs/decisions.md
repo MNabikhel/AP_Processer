@@ -657,3 +657,11 @@ that is reversed keeps its line, marked "replaced by D-NN".
   learning (`forget_if_withdrawn`). Why: bulk approval writes many snapshots in one second, and a withdrawal must
   never leave a wrong box behind. (`core/store/capture.py` `save_supplier_profile`, `core/store/invoices.py`
   `_withdraw_template`; `tests/test_template_rollback.py`)
+- **D-87** · A PO number longer than JD Edwards' PO field (VLPO, 8 characters) no longer blocks approval when the PO
+  is sent as a reference: the voucher goes out with VLPO, VLPDCT and VLPKCO blank, the PO kept in AP Coder and in the
+  remark (`AP Coder #<id> PO <number>`) when that fits in VLRMK's 30 characters, with a warning on the review screen
+  (JDE_PO_LONG, now a warning). With PO-matched vouchers on, the PO is E1's order number the voucher is matched to, so
+  a longer one still holds the invoice back. Why: vendor-printed POs like "4500078813" or "MNT-2026-028" are common,
+  and blocking made the clerk change what is printed; cutting it to 8 characters would send a wrong reference.
+  (`erp/jde.py` `po_not_sent`, `_prepare`, `voucher_rows`, `voucher_findings`; `docs/JDE_E1.md`;
+  `tests/test_jde.py::test_a_po_number_longer_than_jde_holds_is_kept_here_and_not_sent`)

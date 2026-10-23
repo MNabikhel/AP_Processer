@@ -176,12 +176,23 @@ match. **Both the extra columns and the match file are unconfirmed**: E1's stand
 match receipts by itself, so the JDE team must say how they want PO invoices (a custom match program, P4314
 by hand, or an orchestration; see below). Invoices without a PO still get their G/L lines.
 
+### PO numbers longer than 8 characters
+
+VLPO holds 8 characters, and vendors often print longer POs (`4500078813`, `MNT-2026-028`). Sent as a
+reference (*Send the PO number as a reference*, not PO-matched), such a PO does not hold the invoice back
+and the clerk does not change what is printed: the voucher goes out with VLPO, VLPDCT and VLPKCO blank, the
+PO is kept in AP Coder (the invoice, its exports and reports), and VLRMK reads `AP Coder #<id> PO <number>`
+when that fits in its 30 characters. The review screen warns: "JD Edwards' PO field holds 8 characters: this
+PO number is kept in AP Coder and not sent". With *PO-matched vouchers* on, the PO is E1's order number the
+voucher is matched to, so one longer than 8 still holds the invoice back (D-87).
+
 ## Checks before export (`jde.validate`)
 
 Blocking problems, per invoice:
 
 * no supplier address number (AN8), or one that is not digits (up to 8);
-* invoice number missing or longer than 25 characters; PO number longer than 8;
+* invoice number missing or longer than 25 characters; with *PO-matched vouchers* on, a PO number longer
+  than 8 (E1's order number can't be one; see *PO numbers longer than 8 characters*);
 * no invoice date;
 * a distribution line whose GL code (+ cost center) has no JDE account, or an account too long (BU 12,
   object 6, subsidiary 8);
@@ -231,10 +242,10 @@ document type that is not 2 characters, a domestic currency that is not a 3-lett
 | VLPTC | Payment terms code (setting) | blank: the supplier's terms |
 | VLDDJ | Due date (Julian): printed or worked out; the invoice date for a credit | setting can leave it blank |
 | VLPST | Pay status (default `A`) | |
-| VLPO | PO number (≤8) | as a reference, or for PO-matched vouchers |
+| VLPO | PO number (≤8) | as a reference, or for PO-matched vouchers; blank when the PO is longer (D-87) |
 | VLPDCT | PO document type (default `OP`) | with VLPO |
 | VLPKCO | PO company (default: the company) | with VLPO |
-| VLRMK | `AP Coder #<id>` | remark |
+| VLRMK | `AP Coder #<id>`, plus `PO <number>` for a PO too long for VLPO when it fits in 30 characters | remark |
 | VLGLBA | G/L bank account of the invoice's *Pay from* account | **unconfirmed**; only when mapped (below) |
 | *extra* | e.g. VLATFLG, VLPSTE | **unconfirmed**; only in PO-matched mode |
 

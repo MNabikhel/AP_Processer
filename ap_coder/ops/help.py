@@ -67,8 +67,11 @@ CHECKS: dict[str, CheckHelp] = {
     ),
     "JDE_PO_LONG": CheckHelp(
         ERP, "PO number too long for JD Edwards",
-        "JD Edwards keeps 8 characters of the PO number (VLPO).",
-        "Type the PO number as JD Edwards has it (its order number, 8 characters or fewer).",
+        "JD Edwards' PO field (VLPO) holds 8 characters. Sent as a reference, a longer PO is kept in AP Coder (and in "
+        "the voucher's remark when it fits) and not sent: a warning, the invoice can be approved. With PO-matched "
+        "vouchers on, the PO must be JD Edwards' order number, so it holds the invoice back.",
+        "Nothing to do for a reference. For a PO-matched voucher, type the PO number as JD Edwards has it (its order "
+        "number, 8 characters or fewer).",
     ),
     "JDE_DATE_RANGE": CheckHelp(
         ERP, "Date JD Edwards can't hold",
