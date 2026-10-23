@@ -77,7 +77,7 @@ CHECKS: dict[str, CheckHelp] = {
         ERP, "Payment terms with no JD Edwards code",
         "The invoice's payment terms (as AP Coder reads them: \"30 days\" and \"N30\" are Net 30) are not in the "
         "payment terms table of Settings → JD Edwards E1, and there is no default code, so the voucher goes without a "
-        "terms code and JD Edwards uses the supplier's own terms. A warning: the invoice can be approved.",
+        "terms code and JD Edwards uses the supplier's terms. A note: it holds nothing back, not even bulk approval.",
         "Check the terms on the page. Then add them, with your JD Edwards code, to Settings → JD Edwards E1 → Payment "
         "terms (or ask the pilot tester), or set a default code there.",
     ),

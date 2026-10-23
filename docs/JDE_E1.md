@@ -239,7 +239,7 @@ document type that is not 2 characters, a domestic currency that is not a 3-lett
 | VLCTXA | Foreign taxable amount | *tax amounts* mode, foreign |
 | VLCTXN | Foreign non-taxable amount | *tax amounts* mode, foreign |
 | VLCTAM | Foreign tax amount | *tax amounts* mode, foreign |
-| VLPTC | Payment terms code: the printed terms' code in the payment terms table, else the default code | blank: the supplier's terms (D-91) |
+| VLPTC | Payment terms code: the printed terms' code in the payment terms table, else the default code (blank on a credit memo) | blank: the supplier's terms (D-91) |
 | VLDDJ | Due date (Julian): printed or worked out; the invoice date for a credit | setting can leave it blank |
 | VLPST | Pay status (default `A`) | |
 | VLPO | PO number (≤8) | as a reference, or for PO-matched vouchers; blank when the PO is longer (D-87) |
@@ -267,8 +267,11 @@ second field gives a default code for terms not in the table. The voucher gets t
 else a blank VLPTC (E1 takes the supplier's own terms from the supplier master, as before). The table opens with
 example rows (Net 30 → N30, 2/10 Net 30 → 210…) that are *not used until the pilot tester saves the table*: check
 each against your JD Edwards codes first. Once the table has rows and no default is set, an invoice whose terms
-have no code gets a warning on the review screen (JDE_TERMS_NO_CODE: "Payment terms 2/10 Net 45 have no JD Edwards
-code…"), not a blocker; terms AP Coder can't read are said by TERMS_NOT_FOUND instead. The review screen's voucher
+have no code gets a note on the review screen (JDE_TERMS_NO_CODE: "Payment terms 2/10 Net 45 have no JD Edwards
+code…"), which holds nothing back, bulk approval included; terms AP Coder can't read are said by TERMS_NOT_FOUND
+instead. A credit memo is sent with a blank VLPTC, as its due date is not sent: a code can carry a discount (2/10
+Net 30) that E1 would work out on the credit. Confirm with the JDE administrator whether your credit memos should
+carry a terms code instead. The review screen's voucher
 block and the note under *Payment terms* show the code sent, and the dry run lists each voucher's
 `payment terms Net 30 -> N30`. Whether VLDDJ (the due date, sent by default) or VLPTC wins when both are given is
 up to R04110ZA's processing options: confirm it with the JDE team.

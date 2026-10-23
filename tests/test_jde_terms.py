@@ -63,10 +63,14 @@ def _terms_findings(final, settings):
     return [f for f in jde.voucher_findings(final, settings, "10023") if f[1] == "JDE_TERMS_NO_CODE"]
 
 
-def test_terms_without_a_code_are_a_warning_once_the_table_is_in_use():
+def test_terms_without_a_code_are_a_note_once_the_table_is_in_use():
+    """A note, not a warning: a blank VLPTC has E1 take the supplier's own terms, so it holds back no bulk approval
+    (B-896)."""
+    from ap_coder.coding.bulk import _needs_a_person
+
     final = _invoice(ON, payment_terms="2/10 Net 45")["final_output"]
     (finding,) = _terms_findings(final, jde.JdeSettings(terms_codes={"Net 30": "N30"}))
-    assert finding[0] == "warning"
+    assert finding[0] == "info" and not _needs_a_person(finding[0], finding[1])
     assert finding[2] == ("Payment terms 2/10 Net 45 have no JD Edwards code: add it in Settings → JD Edwards E1 "
                           "(or ask the pilot tester)")  # fmt: skip
     assert not _terms_findings(final, jde.JdeSettings(terms_codes={"Net 30": "N30"}, payment_terms_code="Z"))
@@ -77,6 +81,24 @@ def test_terms_without_a_code_are_a_warning_once_the_table_is_in_use():
     # not held back from a batch: a warning only
     assert jde.validate([_invoice(ON, payment_terms="2/10 Net 45")], jde.JdeSettings(terms_codes={"Net 30": "N30"}),
                         AN8) == {}  # fmt: skip
+
+
+def test_a_credit_memo_is_sent_without_a_terms_code():
+    """A terms code can carry a discount (2/10 Net 30): on a credit memo E1 would work one out on the credit. VLPTC is
+    left blank on a credit memo, and nothing asks for its code (B-896)."""
+    from .test_jde import CREDIT
+
+    settings = jde.JdeSettings(terms_codes={"Net 30": "N30", "2/10 Net 30": "210"}, payment_terms_code="DFT")
+    inv = _invoice(CREDIT, 3, payment_terms="2/10 Net 30")
+    assert _files([inv], settings)[jde.HEADER_FILE][0]["VLPTC"] == ""
+    assert not _terms_findings(inv["final_output"], jde.JdeSettings(terms_codes={"Net 30": "N30"}))
+    view = jde.voucher_view(inv["final_output"], settings, "10023")
+    assert next(r for r in view["rows"] if r["column"] == "VLPTC")["value"] == (
+        "Not sent (a credit): JD Edwards takes no terms code on a credit memo"
+    )
+    assert "payment terms 2/10 Net 30 -> none (a credit memo is sent without a terms code)" in jde.dry_run_text(
+        jde.dry_run([inv], settings, AN8)
+    )
 
 
 def test_the_voucher_block_shows_the_code_beside_the_terms():

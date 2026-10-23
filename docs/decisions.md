@@ -790,7 +790,12 @@ that is reversed keeps its line, marked "replaced by D-NN".
   set-up, not a gap; terms not understood are TERMS_NOT_FOUND's. Only the printed terms are looked up, not the vendor
   master's: E1 has the supplier's own terms already. (`coding/terms.py` `terms_label`, `terms_key`; `erp/jde.py`
   `terms_code`, `terms_unmapped`, `voucher_rows`, `voucher_findings`, `voucher_view`, `dry_run`;
-  `web/pages/settings_jde.py` `save_terms`; `docs/JDE_E1.md`; `tests/test_jde_terms.py`)
+  `web/pages/settings_jde.py` `save_terms`; `docs/JDE_E1.md`; `tests/test_jde_terms.py`) **Later (B-896):**
+  JDE_TERMS_NO_CODE is a note (info), not a warning: a blank VLPTC is a benign fallback (E1 takes the supplier's own
+  terms), so it holds back no bulk approval; it is still shown. **Credit memos** are sent with a blank VLPTC, as
+  their due date is not sent: a terms code can carry a discount (2/10 Net 30) that E1 would work out on the credit.
+  The safe choice; **to confirm with the JDE administrator** whether the company's credit memos should carry the
+  terms code (R04110ZA, P0014) instead.
 - **D-92** · The shadow-pilot kit. (1) **Scoring against JD Edwards**: `python -m ap_coder pilot-score --vouchers
   F0411 [--distribution F0911]` compares what AP Coder approved with what AP posted, from an E1 export the pilot
   tester gets (CSV or Excel; E1's column names, the data dictionary's or plain English through `match_columns`; Julian
