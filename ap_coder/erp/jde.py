@@ -583,7 +583,10 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
             biggest = max(range(len(v.entries)), key=lambda i: abs(v.entries[i]["cents"]))
             v.entries[biggest]["cents"] += expected - kept
             kept = expected
-    if dist and total == gross_cents and kept != expected:
+    # A line with no GL account, or a province of supply not read, is said by its own finding and holds the voucher
+    # back by itself: the imbalance it causes is no Tax setup problem to send the clerk to (B-812).
+    said = {code for code, _ in v.codes} & {"GL_UNASSIGNED", "JDE_TAX_AREA"}
+    if dist and total == gross_cents and kept != expected and not said:
         add(
             f"unbalanced: the distribution is {kept / 100:,.2f} but gross {v.gross / 100:,.2f} minus recoverable "
             f"tax {v.recoverable / 100:,.2f} (code {v.tax_code or 'blank'}) is {expected / 100:,.2f}: check the Tax "

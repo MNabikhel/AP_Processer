@@ -718,3 +718,20 @@ def test_docs_exist():
     for column in [*jde.HEADER_COLUMNS, *jde.DIST_COLUMNS]:
         assert column in text, column
     assert "R04110ZA" in text and "JP040000" in text and "Orchestrator" in text
+
+
+def test_no_balance_message_while_a_line_has_no_account_or_the_province_is_unknown():
+    """B-812: an uncoded line, or a province of supply not read, has its own finding: "unbalanced … check the Tax
+    setup" beside it misled the clerk. The voucher is still held back, and a real imbalance is still said."""
+    settings = jde.JdeSettings()
+    uncoded = _invoice(ON)
+    uncoded["final_output"]["gl_distribution"][0]["gl_code"] = "UNASSIGNED"
+    nowhere = _invoice(ON, supplier_province="", ship_to_province="")
+    for inv in (uncoded, nowhere):
+        problems = jde.validate([inv], settings, AN8)[1]  # still refused
+        assert problems and not any(p.startswith("unbalanced") for p in problems), problems
+        codes = {c for _, c, _, _ in jde.voucher_findings(inv["final_output"], settings, "10023")}
+        assert "JDE_UNBALANCED" not in codes
+    pst_recoverable = _invoice(BC, setup=_setup(PST=TaxTreatment("PST", RECOVERABLE, "2330")))
+    codes = {c for _, c, _, _ in jde.voucher_findings(pst_recoverable["final_output"], settings, "10023")}
+    assert "JDE_UNBALANCED" in codes
