@@ -22,7 +22,11 @@ guides, the bug log (BUGS.md) and decisions (decisions.md). Search the code to f
   check code needs a `CheckHelp` in `ops/help.py` (`tests/test_help.py` enforces it).
 - Exports: `erp/exports.py` (Excel/CSV), `erp/jde.py` (JD Edwards). Reports: the rest of `erp/`.
 - The review screen: routes `web/pages/invoice.py`, view `web/invoice_view.py`, `web/templates/invoice.html`,
-  `web/static/js/invoice.js`. Other pages: `web/pages/<page>.py` + `web/templates/<page>.html`.
+  `web/static/js/invoice.js` (the form) and `invoice_viewer.js` (the PDF beside it). Other pages:
+  `web/pages/<page>.py` + `web/templates/<page>.html`; the review queue is `web/pages/review.py` (`coding/review.py`
+  is the line grid's edits).
+- Amounts and dates: `capture/normalize.py` for what is read off an invoice, `core/safe.py` / `core/csvio.py` for
+  imported files; column headers: `core/headers.py` (`match_columns`).
 - Tests: `tests/test_<module>.py` for most modules; fixtures `tests/conftest.py` (`reference`, `ground_truth`), web
   helpers `tests/webclient.py` (`client_for`, `add_clean`).
 
