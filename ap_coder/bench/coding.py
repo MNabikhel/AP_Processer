@@ -615,6 +615,10 @@ def simulate(
                     row["split"] = line.item in SPLIT and realism.split
                 rows.append(row)
             store.approve_invoice(invoice_id, final, REVIEWER)
+            # AP approves each invoice the day it arrives: a tax code's votes need different days (D-80).
+            with store._conn() as conn:
+                conn.execute("UPDATE feedback SET created_at = ? WHERE invoice_id = ?",
+                             (f"{on.isoformat()}T12:00:00", invoice_id))  # fmt: skip
             lessons.record(store, invoice_id, output, final, REVIEWER)  # as workflow.learn_from_approval does
             for line in lines:
                 seen_items[vi].add(line.item)

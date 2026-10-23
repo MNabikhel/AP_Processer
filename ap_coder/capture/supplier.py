@@ -1528,6 +1528,12 @@ HEADER_PROVEN_SOFT = {"LINES_ADD_UP"}
 ALWAYS_A_PERSON: dict[str, str] = {
     "VENDOR_BANK_CHANGED": "the vendor's bank details changed",
     "PST_EXEMPTION_TO_CONFIRM": "a PST exemption was inferred from the other lines, for a person to confirm",
+    # A provincial tax's exemption learned from earlier approvals, and a tax that does not reconcile with the lines'
+    # tax codes: a person looks (D-80).
+    "TAX_EXEMPTION_LEARNED": "a PST or QST exemption was learned from earlier approvals, for a person to confirm",
+    "TAX_BASE_MISMATCH": "the tax charged does not add up with the lines' tax codes",
+    "EXEMPT_LINE_TAXED": "the tax charged does not add up with the lines' tax codes",
+    "TAX_NOT_ALLOCATED": "the tax charged does not add up with the lines' tax codes",
     "VENDOR_TAX_NUMBER_CHANGED": "the GST/HST number changed",
     "VENDOR_QST_CHANGED": "the QST number changed",
     "VENDOR_PST_CHANGED": "the PST number changed",
@@ -1575,6 +1581,8 @@ ALWAYS_A_PERSON_RULES: list[tuple[str, str]] = [
     ("A new vendor name", "no invoice under that name approved yet, even with a touchless vendor's GST/HST number"),
     ("Purchase order exception", "the PO is unknown, closed or another vendor's, or billed beyond what was ordered or "
      "received"),
+    ("Tax to look at", "a PST or QST exemption learned from earlier approvals, or a tax charged that the lines' tax "
+     "codes don't add up to"),
     ("File cut off", "a PDF whose end is missing (a download that stopped): part of the invoice may be too"),
     ("Not read by every reader", "the page reader has not read it yet, not every page of it (nor the local readers, "
      "past its first 20 pages), or it is a text file"),

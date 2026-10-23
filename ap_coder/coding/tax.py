@@ -82,7 +82,7 @@ DEFAULT_TREATMENTS = {
 # Currencies with no cents: amounts are whole units (an ERP rejects or rounds 0.50 yen).
 ZERO_DECIMAL_CURRENCIES = frozenset({"JPY", "KRW", "CLP", "ISK"})
 
-ERROR, WARNING = "error", "warning"
+ERROR, WARNING, INFO = "error", "warning", "info"
 EXEMPT, ZERO_RATED = "exempt", "zero_rated"  # a line's tax_status (line_tax.py, D-64)
 _GST_NUMBER = re.compile(r"^\d{9}RT\d{4}$")
 _QST_NUMBER = re.compile(r"^\d{10}TQ\d{4}$")
@@ -592,7 +592,7 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
                     "remain liable for the provincial part (ETA s.165): ask for a corrected invoice")  # fmt: skip
 
     # A PST exemption inferred from the vendor charging the PST on other lines: a person confirms it (B-715).
-    from .line_tax import exemption_to_confirm
+    from .line_tax import PROVINCIAL, STATED, exemption_to_confirm, tax_learned
 
     for li in coding.line_items:
         inferred = exemption_to_confirm(li)
@@ -600,6 +600,18 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
             add(WARNING, "PST_EXEMPTION_TO_CONFIRM",
                 f"{inferred} exemption inferred (charged on the other lines, not this one): confirm it is exempt, or "
                 f"pick “not charged (self-assess)”", li.line_number)  # fmt: skip
+    # A provincial tax's exemption taken from the vendor's history (D-70): it saves typing, and a person still looks:
+    # never approved without one (``supplier.ALWAYS_A_PERSON``, D-80).
+    for li in coding.line_items:
+        if not tax_learned(li):
+            continue
+        free = [t for t in PROVINCIAL if t in REGIME.get(prov, ()) and t not in li.taxes_applied
+                and (li.tax_status in STATED or t in (li.tax_exempt or []))]  # fmt: skip
+        if free:
+            names = " and ".join(tax_name(t, prov) for t in free)
+            add(INFO, "TAX_EXEMPTION_LEARNED",
+                f"{names} exemption learned from earlier approvals of this vendor's lines: confirm it applies to "
+                "this line", li.line_number)  # fmt: skip
 
     # Registration numbers needed to claim input tax credits.
     if charged & {"GST", "HST"}:

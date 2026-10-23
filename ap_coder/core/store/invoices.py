@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ...coding.line_tax import approved_code
+from ...coding.line_tax import invoice_uncollected, supply_province, tax_vote
 from ...coding.po import po_key
 from ...coding.terms import DEFAULT_TERMS_DAYS
 from ..audit import diff_coding
@@ -663,6 +663,10 @@ class InvoicesMixin:
         cost_centers = bool(self.list_accounts("cost_centers"))
 
         final_lines = final_output.get("line_items", [])
+        # Where it is supplied, for the tax code each line is remembered with (D-80).
+        province = supply_province(final_output, self.our_province())
+        # And the provincial taxes the vendor did not collect, as the coder saw the invoice (what it read).
+        missing = "+".join(invoice_uncollected(ai if ai.get("line_items") else final_output, province))
         for suggestion, li in pair_lines(ai.get("line_items", []), final_lines):
             s_gl = suggestion.get("predicted_gl_code") if suggestion else None
             s_cc = (suggestion.get("predicted_cost_center", "") if cost_centers else "") if suggestion else None
@@ -708,7 +712,17 @@ class InvoicesMixin:
                     outcome,
                     reviewer,
                     now,
-                    approved_code(li, final_lines, final_output.get("tax_lines") or []),
+                    *tax_vote(
+                        suggestion,
+                        li,
+                        ai.get("line_items", []),
+                        ai.get("tax_lines") or [],
+                        final_lines,
+                        final_output.get("tax_lines") or [],
+                        bulk=bulk,
+                    ),
+                    province,
+                    missing,
                 )  # fmt: skip
             )
         read = as_read(final_output, ai)  # a tax number filled from the vendor list is no edit (B-681)
@@ -761,8 +775,9 @@ class InvoicesMixin:
             })  # fmt: skip
             conn.executemany(
                 """INSERT INTO feedback (invoice_id, line_number, vendor_key, vendor_name, description, amount,
-                   suggested_gl, final_gl, suggested_cc, final_cc, outcome, reviewer, created_at, final_tax_code)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   suggested_gl, final_gl, suggested_cc, final_cc, outcome, reviewer, created_at, final_tax_code,
+                   tax_source, tax_province, tax_uncollected)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 feedback_rows,
             )
         return counts

@@ -343,7 +343,7 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
     lines = tax_codes(lines, tax_lines, flags, text, ship_to_province or ours or supplier_province, invoice_on,
                       supplier_province=supplier_province,
                       pst_number=str(values.get("pst_registration_number") or ""), feedback=feedback,
-                      vendor=vendor)  # fmt: skip
+                      vendor=vendor, qst_number=str(values.get("qst_registration_number") or ""))  # fmt: skip
 
     found = [r.confidence for f, r in capture.fields.items() if r.value not in (None, "")]
     gl_known = sum(1 for li in lines if li.predicted_gl_code != UNASSIGNED) / len(lines)
@@ -380,7 +380,7 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
 def tax_codes(lines: list[LineItem], tax_lines: list[TaxLine], flags: list[str], text: str, province: str,
               invoice_on: str = "", keep: list[int] | None = None, *, supplier_province: str | None = None,
               pst_number: str | None = None, feedback: list[dict[str, Any]] | None = None,
-              vendor: str = "") -> list[LineItem]:  # fmt: skip
+              vendor: str = "", qst_number: str | None = None) -> list[LineItem]:  # fmt: skip
     """The lines with their tax codes (``line_tax.prefill``): ``flags`` the tax-code cell read on each line, ``text``
     the page text (its legend: "Tax codes: G = GST 5%, R = Manitoba RST 7%"), the official rates in force on the
     invoice's date where it is supplied; ``feedback`` (the learning memory) and ``vendor``: the codes AP approved on
@@ -399,15 +399,16 @@ def tax_codes(lines: list[LineItem], tax_lines: list[TaxLine], flags: list[str],
             return None
         return table.rate_for(tax_type, where if where != OUTSIDE_CANADA else "", on)
 
-    # A vendor out of the province of supply that does not charge the PST on a line: the PST is due on it
-    # (self-assess), not taken as exempt (B-715). A PST number not printed says nothing when the vendor charges PST on
-    # other lines (it collects it; no province requires the number on every invoice): only when it charges none (B-719).
-    away = bool(supplier_province) and supplier_province != province
-    pst_charged = any(t.tax_type == "PST" and abs(t.tax_amount) > 0.004 for t in tax_lines)
-    no_number = pst_number is not None and not str(pst_number).strip() and not pst_charged
-    learned = learned_codes(lines, feedback, vendor) if feedback and vendor else None
+    # A vendor out of the province of supply, or without a PST (QST) number that charges none (B-715, B-719): the
+    # provincial tax it does not charge on a line is due (self-assess). The codes learned are only those approved
+    # where the vendor collected the provincial taxes as it does now (B-760).
+    from ..coding.line_tax import uncollected
+
+    missing = uncollected(province, supplier_province, pst_number, qst_number, tax_lines)
+    learned = learned_codes(lines, feedback, vendor, province, missing) if feedback and vendor else None
     return prefill(lines, tax_lines, flags, parse_legend(text), keep=keep or [], rate_for=rate_for,
-                   vendor_collects=not (away or no_number), learned=learned).lines  # fmt: skip
+                   vendor_collects={t: t not in missing for t in ("PST", "QST")}, learned=learned,
+                   learned_alike=True).lines  # fmt: skip
 
 
 def _iso_or_empty(value: Any) -> str:

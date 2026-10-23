@@ -215,7 +215,7 @@ def _model_line_taxes(coding: InvoiceCoding, text: str, feedback: list[dict[str,
     coding.line_items = tax_codes(list(coding.line_items), list(coding.tax_lines), [], text, province,
                                   coding.invoice_date, supplier_province=coding.supplier_province,
                                   pst_number=coding.pst_registration_number, feedback=feedback,
-                                  vendor=coding.vendor_name)  # fmt: skip
+                                  vendor=coding.vendor_name, qst_number=coding.qst_registration_number)  # fmt: skip
 
 
 DAMAGED_PICTURE = ("UnidentifiedImageError",)

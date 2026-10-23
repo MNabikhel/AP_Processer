@@ -413,6 +413,13 @@ CHECKS: dict[str, CheckHelp] = {
         "If the lines are taxable, pick “GST only · PST not charged (self-assess)”: the PST is due and is "
         "self-assessed (the Self-assessment report lists it). If they are exempt, pick “GST only · PST exempt”.",
     ),
+    "TAX_EXEMPTION_LEARNED": CheckHelp(
+        TAX, "Provincial tax exemption learned",
+        "The line's tax code says it is exempt from the PST (RST in Manitoba) or the QST because AP approved it so on "
+        "this vendor's lines before. The same words can be another supply, and the vendor's history can be wrong.",
+        "Check the line: if it is exempt, leave it. If not, pick “GST only · PST not charged (self-assess)” or the "
+        "code charged. The invoice is never approved without a person.",
+    ),
     "EXEMPT_LINE_TAXED": CheckHelp(
         TAX, "Exempt line seems taxed",
         "A line is marked exempt or zero-rated, but the tax charged only adds up if that line is taxed.",
