@@ -31,6 +31,14 @@ from ._base import (
     _stale_before,
 )
 
+# A lesson with how many of the approvals still standing corrected it to its value (``agreeing``): a lesson recorded
+# without an invoice (none kept beside it) counts its corrections.
+_LESSON = (
+    "SELECT lessons.*, CASE WHEN EXISTS (SELECT 1 FROM lesson_approvals a WHERE a.situation = lessons.situation) "
+    "THEN (SELECT COUNT(*) FROM lesson_approvals a WHERE a.situation = lessons.situation AND a.corrected = 1 "
+    "AND a.value = lessons.value) ELSE lessons.corrected END AS agreeing FROM lessons"
+)
+
 
 class LessonsMixin:
     # --- Lessons: AP's corrections per situation (ap_coder/ai/lessons.py) ---------------------------------------------
@@ -100,12 +108,12 @@ class LessonsMixin:
 
     def lesson(self, situation: str) -> dict[str, Any] | None:
         with self._conn() as conn:
-            row = conn.execute("SELECT * FROM lessons WHERE situation = ?", (situation,)).fetchone()
+            row = conn.execute(f"{_LESSON} WHERE situation = ?", (situation,)).fetchone()
         return dict(row) if row else None
 
     def lessons_for(self, key: str, kind: str | None = None) -> list[dict[str, Any]]:
         """A vendor's lessons (of one kind of document), the ones with a reason first, then the newest."""
-        sql = "SELECT * FROM lessons WHERE vendor_key = ?" + (" AND kind = ?" if kind else "")
+        sql = f"{_LESSON} WHERE vendor_key = ?" + (" AND kind = ?" if kind else "")
         with self._conn() as conn:
             rows = conn.execute(sql + " ORDER BY explanation = '', updated_at DESC, id DESC",
                                 (key, kind) if kind else (key,)).fetchall()  # fmt: skip
@@ -115,7 +123,7 @@ class LessonsMixin:
         """Every lesson AP corrected at least once, the most corrected since its last reason first."""
         where = "corrected > 0" + ("" if include_retired else " AND retired = 0")
         with self._conn() as conn:
-            rows = conn.execute(f"SELECT * FROM lessons WHERE {where} ORDER BY since_why DESC, updated_at DESC "
+            rows = conn.execute(f"{_LESSON} WHERE {where} ORDER BY since_why DESC, updated_at DESC "
                                 "LIMIT ?", (limit,)).fetchall()  # fmt: skip
         return [dict(r) for r in rows]
 
