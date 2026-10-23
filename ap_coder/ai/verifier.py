@@ -524,7 +524,7 @@ def _verify(settings: Any, store: Any, row: dict[str, Any], cfg: ReviewerSetting
         return Outcome(iid, "skipped", "no page to show")
     vendor = store.get_vendor(vendor_key(output.get("vendor_name") or ""))
     try:
-        names = {a["code"]: a["description"] for a in store.list_accounts("gl")}
+        names = {a["code"]: a["description"] for a in store.list_accounts("gl_accounts")}
     except Exception:  # noqa: BLE001
         names = {}
     shown = proposal(output, vendor, names)

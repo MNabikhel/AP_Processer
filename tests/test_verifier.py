@@ -458,3 +458,16 @@ def test_the_background_thread_reviews_when_nothing_is_left_to_read(store, monke
     monkeypatch.setattr(page_worker, "ready", lambda settings, store: ("", "OvisOCR2 isn't running"))
     assert reader._review_one(_settings(), store) == page_worker.IDLE_SECONDS
     assert seen == [{"after_page_reader": False}]  # OvisOCR2 not running: nothing waits for it
+
+
+def test_the_reviewer_is_shown_the_gl_account_names(store, touchless, monkeypatch):  # noqa: F811
+    """It asked the store for the accounts of table "gl", which raises: the error was swallowed and the AI reviewer
+    never saw an account's name, only its code."""
+    _held_for_the_reviewer(store, monkeypatch)
+    shown = []
+    real = verifier.proposal
+    monkeypatch.setattr(verifier, "proposal", lambda output, vendor, names=None: shown.append(names) or real(
+        output, vendor, names))  # fmt: skip
+    verifier.verify_one(_settings(), store, coder=FakeCoder(_answer()))
+    names = {a["code"]: a["description"] for a in store.list_accounts("gl_accounts")}
+    assert names and shown == [names]
