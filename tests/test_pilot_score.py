@@ -254,3 +254,19 @@ def test_insights_shows_the_last_score(pilot, tmp_path):
     assert ("Invoices matched in JD Edwards", "8 of 9") in card["rows"]
     page = client_for(store).get("/insights").text
     assert "Shadow pilot: AP Coder against JD Edwards" in page and "8 of 9" in page
+
+
+def test_the_jde_test_import_checklist_is_its_own_section_and_its_command_runs():
+    from ap_coder.ops import cli
+
+    doc = (Path(__file__).resolve().parent.parent / "docs" / "JDE_E1.md").read_text(encoding="utf-8")
+    section = doc.split("## Test import checklist (for the pilot tester's IT)", 1)[1].split("\n## ", 1)[0]
+    for words in ("F0411Z1", "F0911Z1", "R04110ZA", "proof", "G/L date", "Tax", "batch total", "Work Center",
+                  "Report back", "confirm with your JDE administrator", "test environment"):  # fmt: skip
+        assert words in section, words
+    command = next(line for line in section.splitlines() if line.startswith("python -m ap_coder pilot-score"))
+    args = cli.build_parser().parse_args(command.split()[3:])
+    assert args.command == "pilot-score" and args.vouchers == "F0411.xlsx" and args.distribution == "F0911.xlsx"
+    for column in ("RPAN8", "RPVINV", "RPDIVJ", "RPAG", "RPSTAM", "GLANI", "GLAA", "GLDOC"):  # columns it reads
+        assert column in section and any(column.lower() in names for names in (
+            *pilot_score.VOUCHER_COLUMNS.values(), *pilot_score.DISTRIBUTION_COLUMNS.values())), column  # fmt: skip

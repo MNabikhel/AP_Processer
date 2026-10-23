@@ -288,6 +288,87 @@ invoice's line number, *not* necessarily the PO line; E1 stores line 1 as 1000),
 does not know the item number), DSC1 (description), UORG (quantity) and PRRC (unit price) written with a
 decimal point, AEXP (amount, in the amount format) and CRCD (currency).
 
+## Test import checklist (for the pilot tester's IT)
+
+For the shadow pilot (D-92) the batches go to a **JDE test environment first** (a CRP or test environment with a
+copy of production's setup), never to production. One page for the person at IT who loads them; tick each box and
+send the answers in the last step back to the pilot tester. Where E1 is set up its own way at your company, your
+JDE administrator's word wins over this page.
+
+**Before the first batch**
+
+- [ ] The test environment has the company, the suppliers (address numbers, AN8) and the accounts (BU.Object.Sub)
+      the batch uses. A supplier or account missing there fails the load, not AP Coder.
+- [ ] The pilot tester has filled Settings → JD Edwards E1 with your answers (or imported your worksheet).
+- [ ] You have the batch's ZIP from AP Coder (Exports → *JD Edwards E1*): `F0411Z1.csv`, `F0911Z1.csv`,
+      `README.txt` (batch number VLEDBT, user VLEDUS, voucher count and totals) and `DRY_RUN.txt` (each voucher's
+      pay items and G/L lines, and why any invoice was left out).
+
+**1. Load the Z-file batch**
+
+- [ ] Load `F0411Z1.csv` into **F0411Z1** (voucher pay items) and `F0911Z1.csv` into **F0911Z1** (G/L lines) of the
+      test environment's business data, with a table conversion or your database's import tool. The header row
+      holds the tables' column names; each row is new (VLEDTC/VNEDTC = A), unprocessed (VLEDSP/VNEDSP = 0).
+- [ ] Amounts and line numbers as the README says: implied decimals (5.50 written 550) or a decimal point, and the
+      line numbers VLEDLN/VNEDLN as written (a direct table load may need 1000 for line 1; confirm with your JDE
+      administrator). Business units may need right-justifying in 12 characters on a direct database load.
+- [ ] Count the rows loaded: they must equal the README's counts for F0411Z1 and F0911Z1.
+
+**2. Run the Voucher Batch Processor, R04110ZA**
+
+- [ ] Run **R04110ZA** for the batch's user and batch number (data selection on VLEDUS and VLEDBT), with a version
+      copied for the pilot (for example from ZJDE0001; confirm with your JDE administrator which version to use).
+- [ ] Its processing options to check before running (the tab names differ between releases: confirm with your JDE
+      administrator):
+      - **Mode: proof first.** Run in proof mode, read the report, then run the same version in final mode.
+      - **The G/L date**: AP Coder sends VLDGJ/VNDGJ (the invoice date, or the export day, per Settings → JD
+        Edwards E1); check the version keeps the date it is given, and that the test environment's period for that
+        date is open.
+      - **Tax**: whether the version (and the Voucher Master Business Function version it calls, P0400047) works the
+        tax out again from the tax area and explanation code (VLTXA1, VLEXR1) or keeps the amounts sent. AP Coder
+        sends the gross only, or the taxable and tax amounts, never both (see "Gross amount or tax amounts").
+      - **Duplicate invoice check**: the P0400047 version's duplicate-invoice edit (a warning or an error), so a
+        voucher already entered by AP in the test environment is caught.
+      - **Batch approval and purge**: whether the batch is created approved or pending, and whether processed
+        Z-rows are purged (keep them for the first tests: you compare them below).
+- [ ] Final mode marks each Z-row processed (VLEDSP = 1). A row left at 0 has an error.
+
+**3. Compare after the run**
+
+- [ ] **Vouchers created**: as many as the README says, one per AP Coder invoice; each voucher's supplier (AN8) and
+      invoice number (VINV) as in `DRY_RUN.txt`.
+- [ ] **The batch total**: the voucher batch's total in Review Vouchers / batch review (P0011) equals the README's
+      total for each currency.
+- [ ] **The tax**: each voucher's tax amount, tax area and explanation code against `DRY_RUN.txt`; a difference of
+      a cent or more means E1 worked the tax out differently: say which vouchers.
+- [ ] **The account distribution**: each voucher's G/L lines (account BU.Obj.Sub and amount) against `F0911Z1.csv`;
+      recoverable GST/HST/QST is posted by E1 from its tax rules (AAIs), so those lines are E1's own.
+- [ ] **Error messages**: every message of the R04110ZA report and of the Employee Work Center (P01131) for the
+      batch, and any row still unprocessed in Batch Voucher Revisions (P0411Z1).
+
+**4. Report back to us**
+
+Send the pilot tester (who passes it on; no supplier names or amounts needed for us):
+
+- the batch number, the R04110ZA version and mode, and whether proof and final ran clean;
+- vouchers created against the README's count; the batch total against the README's; the vouchers whose tax or
+  account distribution differed, by AP Coder number (VLEDTN = APC + the AP Coder invoice number);
+- each error message as E1 wrote it (the text, not a screenshot of the whole screen), with its voucher;
+- your answers to anything above marked "confirm with your JDE administrator".
+
+Then, for the shadow pilot's score, export from the test environment (or from production for the invoices AP
+entered by hand) the vouchers of the same days: **F0411** with RPAN8, RPVINV, RPDIVJ, RPAG, RPSTAM, RPCRCD, RPDDJ,
+RPDOC, RPDCT, RPKCO (RPTXA1 and RPEXR1 if you can) and **F0911** with GLDOC, GLDCT, GLKCO, GLANI (or GLMCU, GLOBJ,
+GLSUB), GLAA, GLEXA, GLLT. CSV or Excel; E1's Julian dates and implied decimals are read as they are (add
+`--implied-decimals` for amounts without a decimal point). The pilot tester runs on the pilot laptop:
+
+```
+python -m ap_coder pilot-score --vouchers F0411.xlsx --distribution F0911.xlsx
+```
+
+It writes `pilot_score.md` and `pilot_score_differences.csv` into the data folder's `pilot_score` folder; these
+stay on the laptop. Insights shows the headline figures.
+
 ## Open questions for the JDE team
 
 Every question here is in the worksheet (Settings → JD Edwards E1 → *Download the worksheet*, with *Show JD Edwards
