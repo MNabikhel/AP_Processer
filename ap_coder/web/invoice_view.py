@@ -990,7 +990,12 @@ def grouped(issues: list[Any]) -> list[tuple[bool, str]]:
 
 
 # A finding about a line's account or cost center: its item in the checks is a button to that box (B-443).
-GOTO_BOX = {"GL_UNASSIGNED": "line_gl", "CC_UNASSIGNED": "line_cc", "PST_EXEMPTION_TO_CONFIRM": "line_tax_code"}
+GOTO_BOX = {
+    "GL_UNASSIGNED": "line_gl",
+    "CC_UNASSIGNED": "line_cc",
+    "PST_EXEMPTION_TO_CONFIRM": "line_tax_code",
+    "TAX_EXEMPTION_LEARNED": "line_tax_code",
+}
 
 
 def confidence_pct(value: float, threshold: float) -> str:

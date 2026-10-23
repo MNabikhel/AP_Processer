@@ -120,3 +120,39 @@ def test_a_learned_code_keeps_the_check_it_note_of_an_ambiguous_solve():
     alone = prefill(_lines(("Electrician - labour", 400.0), ("LED panel", 120.0)),
                     [_tax("GST", 0.05, 520.0), _tax("PST", 0.07, 120.0)], learned=["GST~PST", ""]).lines  # fmt: skip
     assert not tax_guessed(alone[0]) and tax_code_of(alone[0]) == "GST~PST"
+
+
+# --- 4. A learned exemption of a provincial tax, and a tax that does not reconcile, go to a person (B-766) -----------
+
+
+def _coding(lines, taxes, province: str = "BC") -> InvoiceCoding:
+    subtotal = round(sum(li.amount for li in lines), 2)
+    tax = round(sum(t.tax_amount for t in taxes), 2)
+    return InvoiceCoding(vendor_name=VENDOR, invoice_number="1", invoice_date="2026-09-01", currency="CAD",
+                         supplier_province=province, ship_to_province=province, subtotal=subtotal, tax_lines=taxes,
+                         tax_total=tax, grand_total=round(subtotal + tax, 2), confidence_score=1.0,
+                         line_items=lines)  # fmt: skip
+
+
+def test_a_learned_provincial_exemption_is_said_and_stops_touchless_approval():
+    from ap_coder.capture.supplier import touchless_gates
+    from ap_coder.coding.tax import TaxSetup, check_taxes
+
+    lines = _lines(("Electrician - labour", 400.0), ("LED panel", 120.0))
+    taxes = [_tax("GST", 0.05, 520.0), _tax("PST", 0.07, 120.0)]
+    done = prefill(lines, taxes, learned=["GST~PST", "GST+PST"]).lines
+    found = [f for f in check_taxes(_coding(done, taxes), TaxSetup.default()) if f.code == "TAX_EXEMPTION_LEARNED"]
+    assert [(f.severity, f.line_number) for f in found] == [("info", 1)]  # the GST+PST line learned: nothing to say
+    assert "learned from earlier approvals" in found[0].message and "confirm" in found[0].message
+    assert touchless_gates([{"code": "TAX_EXEMPTION_LEARNED"}])
+    # Alberta: no provincial tax, nothing to confirm.
+    ab = prefill(_lines(("Milk 4L", 5.0), ("Cups", 5.0)), [_tax("GST", 0.05, 5.0, "AB")], learned=["ZERO", ""]).lines
+    assert not [f for f in check_taxes(_coding(ab, [_tax("GST", 0.05, 5.0, "AB")], "AB"), TaxSetup.default())
+                if f.code == "TAX_EXEMPTION_LEARNED"]  # fmt: skip
+
+
+def test_a_tax_that_does_not_reconcile_never_goes_touchless():
+    from ap_coder.capture.supplier import touchless_gates
+
+    for code in ("TAX_BASE_MISMATCH", "EXEMPT_LINE_TAXED", "TAX_NOT_ALLOCATED"):
+        assert touchless_gates([{"code": code}]), code
