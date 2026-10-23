@@ -1,6 +1,7 @@
 """The old flat module paths (``ap_coder.store``...) still import, as the moved module itself (D-33, D-67)."""
 
 import importlib
+import subprocess
 import sys
 from pathlib import Path
 from unittest import mock
@@ -39,22 +40,26 @@ def test_a_stale_flat_file_left_by_an_older_install_is_never_imported(monkeypatc
             delattr(ap_coder, "zz_stale_moved")
 
 
-def test_the_moved_module_keeps_its_own_spec_and_still_reloads(monkeypatch):
+def test_the_moved_module_keeps_its_own_spec_and_still_reloads():
     """B-724: an old path imported first must not rename the real module (its relative imports, and reload, follow
-    its spec)."""
-    import warnings
-
-    from ap_coder.coding import terms
-
-    sys.modules.pop("ap_coder.terms", None)
-    importlib.import_module("ap_coder.terms")
-    assert terms.__spec__.name == "ap_coder.coding.terms" and terms.__spec__.parent == "ap_coder.coding"
-    assert terms.__name__ == "ap_coder.coding.terms"
-    monkeypatch.delattr(terms, "payment_findings")
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        importlib.reload(terms)
-    assert callable(terms.payment_findings)
+    its spec). In a separate Python: reloading here would swap the module's classes under the other tests."""
+    code = """
+import importlib, warnings
+warnings.simplefilter("error")
+import ap_coder.terms
+from ap_coder.coding import terms
+assert terms.__spec__.name == "ap_coder.coding.terms" and terms.__spec__.parent == "ap_coder.coding", terms.__spec__
+assert terms.__name__ == "ap_coder.coding.terms"
+del terms.payment_findings
+importlib.reload(terms)
+assert callable(terms.payment_findings)
+from ap_coder.core import store
+import ap_coder.store
+store.Store.__init__  # its function-level relative imports run without a warning
+"""
+    done = subprocess.run([sys.executable, "-c", code], cwd=Path(ap_coder.__file__).parent.parent, capture_output=True,
+                          text=True)  # fmt: skip
+    assert done.returncode == 0, done.stderr[-2000:]
 
 
 def test_an_unknown_name_is_still_missing():
