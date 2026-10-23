@@ -857,3 +857,4 @@ the last B- line (`grep -o "B-[0-9]*" docs/BUGS.md | tail -1`).
 - **B-724** · An old flat path imported first gave the real module the old name's spec (relative imports warned, reload did nothing) · medium · tests/test_moved_modules.py::test_the_moved_module_keeps_its_own_spec_and_still_reloads
 - **B-725** · scripts/check.py said OK with no tests run for a changed script, the package, a shared test file or a deleted module · medium · tests/test_check_script.py::test_a_script_the_package_and_the_shared_test_files_bring_their_tests, ::test_outside_a_git_checkout_it_asks_for_the_files
 - **B-726** · scripts/check.py gave Windows paths (tests\\test_tax.py) for the tests it picked · low · tests/test_check_script.py (CI, Windows)
+- **B-727** · A withdrawn approval (reopened, rejected, sent back) kept what it taught the vendor's template: a box taught on the wrong words went on misreading the next invoices · medium · tests/test_template_rollback.py
