@@ -201,7 +201,9 @@ Open **GL accounts & tax**:
 5. **Fixed rules:** lines that must always go to one account (a vendor, words in the line, or both),
    whatever the AI says. Vendors your team always coded the same way are suggested.
 
-Optional, any time later:
+Optional, any time later; for the shadow pilot with JD Edwards, do the vendor master, the JD Edwards settings and
+the past coding before the first invoices, in that order (the welcome page's *Next step* leads you through them):
+AP Coder learns your coding from what you posted before, so the first invoices from each vendor are coded already.
 
 - **Vendor master:** on **Vendors**, import the ERP's vendor list. Exports then carry vendor IDs, and
   an invoice from a vendor that is not in the list is flagged.

@@ -194,6 +194,7 @@ def vendors_page(
     file: str = "",
     sheet: str = "",
     lang: str = "",
+    setup: str = "",
 ) -> HTMLResponse:
     store = get_store(request)
     view = view if view in VIEWS else "all"
@@ -259,6 +260,7 @@ def vendors_page(
         spend_items=spend_items,
         target=TARGET,
         master=master,
+        setup=bool(setup),  # from Getting started: the vendor master's import open
         master_error=master_error,
         detail=vendor_detail(store, chosen_vendor, lang) if chosen_vendor else None,
         statuses={ACTIVE: "Active", ON_HOLD: "On hold"},
