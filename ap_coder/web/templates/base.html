@@ -86,9 +86,11 @@
         {% for f in flashes %}
         <div class="flash {{ f.tone }}" role="status">
           <span class="ms" aria-hidden="true">{{ f.icon }}</span>
-          <div><div>{{ f.text }}</div>
+          <div><div class="flash-text">{{ f.text }}</div>
             {% if f.details %}<ul>{% for d in f.details %}<li>{{ d }}</li>{% endfor %}</ul>{% endif %}
+            {% if f.more %}<details class="flash-more"><summary>{{ f.more_label or "More" }}</summary><div>{{ f.more }}</div></details>{% endif %}
           </div>
+          {% if f.undo %}<form method="post" action="{{ f.undo }}" class="flash-undo"><button type="submit" class="flash-act" title="Put it back in the review queue as it was (Ctrl+Z)" aria-keyshortcuts="Control+Z"><span class="ms" aria-hidden="true">undo</span>Undo<kbd class="flash-key" aria-hidden="true">Ctrl+Z</kbd></button></form>{% endif %}
           <button type="button" class="flash-close" data-dismiss aria-label="Dismiss"><span class="ms" aria-hidden="true">close</span></button>
         </div>
         {% endfor %}

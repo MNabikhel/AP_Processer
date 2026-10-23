@@ -23,12 +23,14 @@ Delete, final approval and send back are the queue's own POSTs (``pages/review.p
 from __future__ import annotations
 
 import datetime as dt
+import json
 import threading
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from markupsafe import Markup
 
@@ -50,6 +52,7 @@ from ap_coder.web.core import (
     get_store,
     login,
     message,
+    one_connection,
     posted_form,
     reading_status_or_none,
     reference_or_none,
@@ -69,33 +72,55 @@ NAV_PARAMS = ("show", "q", "sort")  # the queue's view, carried along so Previou
 
 
 # --- Drafts: edits not approved yet --------------------------------------------------------------------------------
-# Kept in memory for the dashboard's lifetime, per invoice and per person: this computer's in
-# ``app.state.invoice_drafts``, each colleague's on the office network (web/identity.py) in
-# ``app.state.person_drafts[(<their name, case aside>, <their browser's id>)]``, so one person's edits never open on
-# another's screen, even one who gives the same name on another computer, and stay theirs when their computer gets a
-# new address on the office network; a new name on /who takes them along.
+# Per invoice and per person: this computer's in ``app.state.invoice_drafts``, each colleague's on the office network
+# (web/identity.py) in ``app.state.person_drafts[(<their name, case aside>, <their browser's id>)]``, so one person's
+# edits never open on another's screen, even one who gives the same name on another computer, and stay theirs when
+# their computer gets a new address on the office network; a new name on /who takes them along. Each is kept in the
+# store too (``invoice_drafts``, D-86) and read back when AP Coder starts again: "leave and come back, they are still
+# here" holds over a restart.
 
 _drafts_lock = threading.Lock()
+
+
+def _person(key: tuple[str, str] | None) -> str:
+    """The store's name for whose draft it is: "" this computer, else the colleague's key."""
+    return "" if key is None else json.dumps(list(key))
 
 
 def _all_drafts(request: Request) -> list[dict[int, dict[str, Any]]]:
     state = request.app.state
     with _drafts_lock:
-        if not hasattr(state, "invoice_drafts"):
-            state.invoice_drafts = {}
+        if not hasattr(state, "invoice_drafts"):  # AP Coder (re)started: the drafts kept in the store
+            state.invoice_drafts, state.person_drafts = {}, {}
+            try:
+                kept = get_store(request).invoice_drafts()
+            except Exception:  # noqa: BLE001 - no drafts rather than no review screen
+                kept = []
+            for invoice_id, person, draft in kept:
+                try:
+                    key = tuple(json.loads(person)) if person else None
+                except ValueError:
+                    continue
+                target = state.invoice_drafts if key is None else state.person_drafts.setdefault(key, {})
+                target[invoice_id] = draft
         if not hasattr(state, "person_drafts"):
             state.person_drafts = {}
         return [state.invoice_drafts, *state.person_drafts.values()]
 
 
+def _my_key() -> tuple[str, str] | None:
+    found = identity.person()
+    return None if found is None else _draft_key(found)
+
+
 def _drafts(request: Request) -> dict[int, dict[str, Any]]:
     """The edits of the person asking: this computer's, or a colleague's on the office network."""
     _all_drafts(request)
-    found = identity.person()
-    if found is None:
+    key = _my_key()
+    if key is None:
         return request.app.state.invoice_drafts
     with _drafts_lock:
-        return request.app.state.person_drafts.setdefault(_draft_key(found), {})
+        return request.app.state.person_drafts.setdefault(key, {})
 
 
 def _draft_key(found: identity.Person) -> tuple[str, str]:
@@ -111,6 +136,11 @@ def rename_drafts(request: Request, found: identity.Person, now: identity.Person
         kept = everyone.pop(_draft_key(found), None) if _draft_key(found) != _draft_key(now) else None
         if kept:
             everyone.setdefault(_draft_key(now), {}).update(kept)
+    if kept:
+        store = get_store(request)
+        store.drop_invoice_drafts(person=_person(_draft_key(found)))
+        for invoice_id, draft in kept.items():
+            store.save_invoice_draft(invoice_id, _person(_draft_key(now)), draft)
 
 
 def unsaved_edits(request: Request) -> set[int]:
@@ -122,18 +152,21 @@ def unsaved_edits(request: Request) -> set[int]:
 def forget_draft(request: Request, invoice_id: int) -> None:
     """Drop the edits of the person asking (Start over)."""
     _drafts(request).pop(invoice_id, None)
+    get_store(request).drop_invoice_drafts(invoice_id, _person(_my_key()))
 
 
 def forget_everyones_draft(request: Request, invoice_id: int) -> None:
     """Drop everyone's edits of an invoice that was approved, rejected, deleted or reopened: they no longer apply."""
     for drafts in _all_drafts(request):
         drafts.pop(invoice_id, None)
+    get_store(request).drop_invoice_drafts(invoice_id)
 
 
 def forget_all_drafts(request: Request) -> None:
     """After a restore the invoices are the backup's (and their numbers are given again): no edit applies to them."""
     for drafts in _all_drafts(request):
         drafts.clear()
+    get_store(request).drop_invoice_drafts()
 
 
 def _reader_at(inv: dict[str, Any]) -> str:
@@ -161,8 +194,10 @@ def current_draft(request: Request, inv: dict[str, Any]) -> tuple[view.Draft, bo
 
 def _keep_draft(request: Request, invoice_id: int, draft: view.Draft, keep: bool) -> None:
     if keep:
-        _drafts(request)[invoice_id] = draft.to_dict()
-    else:
+        kept = {**draft.to_dict(), "saved_at": dt.datetime.now().isoformat(timespec="minutes")}
+        _drafts(request)[invoice_id] = kept
+        get_store(request).save_invoice_draft(invoice_id, _person(_my_key()), kept)
+    elif invoice_id in _drafts(request):
         forget_draft(request, invoice_id)
 
 
@@ -273,7 +308,9 @@ def _lesson_hints(store: Store, inv: dict[str, Any]) -> list[str]:
     from ap_coder.ai import lessons
 
     output = inv.get("final_output") or inv.get("ai_output") or {}
-    return lessons.prompt_lines(store, output.get("vendor_name") or "", lessons.kind_of(output), limit=5)
+    return lessons.prompt_lines(
+        store, output.get("vendor_name") or "", lessons.kind_of(output), limit=5, screen=True
+    )  # a person decides: shown from the first correction (D-72)
 
 
 def viewer_data(inv: dict[str, Any], capture: Any, sizes: list[tuple[float, float]]) -> dict[str, Any]:
@@ -281,7 +318,13 @@ def viewer_data(inv: dict[str, Any], capture: Any, sizes: list[tuple[float, floa
     v = document.version(inv["source_path"])
     pages = [{"src": f"/review/{inv['id']}/page/{n}.png?v={v}", "width": w, "height": h}
              for n, (w, h) in enumerate(sizes, start=1)]  # fmt: skip
-    fields = document.shape_fields(capture.fields.values(), LABELS) if capture is not None else []
+    from ap_coder.capture.bridge import currency_read
+
+    # A currency the page does not print (the domestic CAD assumed) is nothing to check on the page.
+    shown = [f for f in capture.fields.values()
+             if not (f.field == "currency" and not currency_read(f) and str(f.value or "CAD").upper() == "CAD")
+             ] if capture is not None else []  # fmt: skip
+    fields = document.shape_fields(shown, LABELS) if capture is not None else []
     lines = document.shape_line_items(capture.line_items) if capture is not None else []
     return {"pages": pages, "fields": fields, "line_items": lines, "height": VIEWER_HEIGHT}
 
@@ -354,10 +397,15 @@ def _same(state: dict[str, Any]) -> dict[str, Any]:
     return state
 
 
+UNDONE = "undone right after approving"  # the reason an approval undone from its banner is reopened with
+
+
 def _sent_back(store: Store, invoice_id: int) -> dict[str, str] | None:
     back = next((e for e in store.events(invoice_id)
                  if e["action"] in ("sent_back", "reopened", "approved", "rejected")), None)  # fmt: skip
     if not back or back["action"] not in ("sent_back", "reopened"):
+        return None
+    if (back["detail"] or {}).get("reason") == UNDONE:  # the banner's Undo says it already (B-828)
         return None
     return {"verb": "Sent back" if back["action"] == "sent_back" else "Reopened", "actor": back["actor"] or "?",
             "reason": (back["detail"] or {}).get("reason") or "no reason given"}  # fmt: skip
@@ -366,7 +414,7 @@ def _sent_back(store: Store, invoice_id: int) -> dict[str, str] | None:
 def _render_live(live: dict[str, Any], invoice_id: int) -> dict[str, str]:
     """Every section that follows the edits, drawn again (``_invoice_live.html``)."""
     mod = templates.env.get_template("_invoice_live.html").module
-    names = ("summary", "checks", "amounts", "reasons", "suggest", "po", "taxcheck", "posting", "bar")
+    names = ("summary", "checks", "amounts", "reasons", "suggest", "po", "taxcheck", "posting", "bar", "jde")
     if not live["ok"]:  # a field to fix: the coding can't be built, so the rest keeps its last state
         names = ("checks", "amounts", "taxcheck", "posting", "bar")
     return {name: str(getattr(mod, name)(live, invoice_id)) for name in names}
@@ -394,6 +442,7 @@ def _reference(store: Store) -> ReferenceData:
 
 
 @router.get("/review/{invoice_id:int}", response_class=HTMLResponse)
+@one_connection
 def invoice_page(request: Request, invoice_id: int) -> Any:
     store, settings = get_store(request), get_settings(request)
     inv = _invoice(store, invoice_id)
@@ -413,11 +462,16 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
     editable = inv["status"] == REVIEW and reference is not None
     context["doc"] = _document(store, settings, inv, status, editable)
     if not editable:
-        return render(request, "invoice.html", "review", mode=_mode(inv, reference), **context,
+        mode = _mode(inv, reference)
+        if mode in ("approved", "pending", "rejected", "parked"):  # nothing left to read: no reading tools' warning
+            context["banner"] = ""
+        return render(request, "invoice.html", "review", mode=mode, **context,
                       **_closed(store, reference, inv))  # fmt: skip
+    saved_at = str((_drafts(request).get(invoice_id) or {}).get("saved_at") or "")  # edits kept from before
     draft, kept = current_draft(request, inv)
     analysis = view.analyse(store, settings, reference, inv, draft, reviewer())
-    sure = view.capture_confidence(view.capture_of(store, invoice_id))
+    capture = view.capture_of(store, invoice_id)
+    sure = view.shown_sure(view.capture_confidence(capture), draft.header, inv.get("ai_output") or {}, capture)
     start = _start(inv)
     computed = None
     try:
@@ -437,7 +491,8 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
                           view.vendor_accounts(store, draft.header.get("vendor_name") or "")),
               "tax_marks": analysis.live.get("tax_marks") or {}},
         labels=view.FIELD_LABELS, provinces=view.province_options(),
-        due_placeholder=f"{computed.isoformat()} (from terms)" if computed else "YYYY-MM-DD",
+        due_placeholder=f"{computed.isoformat()} (from terms)" if computed else
+        "None: a credit is not paid" if float(start.get("grand_total") or 0) < 0 else "YYYY-MM-DD",
         sent_back=_sent_back(store, invoice_id), poll_seconds=PAGE_READER_POLL_SECONDS,
         today=dt.date.today().isoformat(), taught_json=draft.taught, vendors=vendor_options(store),
         absent_ok=list(view.ABSENT_FIELDS), from_vendor_note=view.FROM_VENDOR_NOTE,
@@ -446,7 +501,18 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         bank_shown=mask_account(bank) if (bank := draft.header.get("remit_bank_account")) else "",
         supply=view.supply_line(draft.header, draft.lines, reference.tax),
         usual_cc=view.usual_cost_center(store, reference, draft.header.get("vendor_name") or ""),
+        draft_from=_when(saved_at),
     )  # fmt: skip
+
+
+def _when(iso: str) -> str:
+    """When a draft was kept, as the screen says it: "4:23" today, "Oct 21, 4:23" before (B-826)."""
+    try:
+        at = dt.datetime.fromisoformat(iso)
+    except ValueError:
+        return ""
+    clock = f"{at.hour}:{at.minute:02d}"
+    return clock if at.date() == dt.date.today() else f"{at:%b} {at.day}, {clock}"
 
 
 def vendor_options(store: Store) -> dict[str, Any]:
@@ -587,20 +653,33 @@ def approved_pdf(request: Request, invoice_id: int) -> Response:
 # --- Checking the edits ---------------------------------------------------------------------------------------------
 
 
+def _from_form(request: Request, inv: dict[str, Any], form: Any) -> view.Draft:
+    base, _ = current_draft(request, inv)
+    return view.Draft.from_form(form, base)
+
+
 @router.post("/review/{invoice_id:int}/check")
 async def check(request: Request, invoice_id: int) -> JSONResponse:
     """The screen's sections again for what is on it now; the edits are kept as a draft, and the queue shows the
-    confidence this screen shows (edits and today's checks included)."""
+    confidence this screen shows (edits and today's checks included). The form is read here; the checking runs on a
+    threadpool thread, so a check never holds up the dashboard's other requests."""
+    form = await posted_form(request)  # a long invoice posts thousands of fields (B-455)
+    return await run_in_threadpool(_check, request, invoice_id, form)
+
+
+@one_connection
+def _check(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     store, settings = get_store(request), get_settings(request)
     inv = _invoice(store, invoice_id)
     if inv["status"] != REVIEW:
         return refuse("This invoice is no longer in the review queue: reload the page.", 409)
     reference = _reference(store)
-    _, draft = await _posted(request, inv)
+    draft = _from_form(request, inv, form)
     analysis = view.analyse(store, settings, reference, inv, draft, reviewer())
     if analysis.report is not None:
         store.refresh_confidence(invoice_id, analysis.report.adjusted_confidence, analysis.report.requires_review)
-    _keep_draft(request, invoice_id, draft, analysis.coding is None or analysis.changed or bool(draft.taught))
+    kept = analysis.coding is None or analysis.changed or bool(draft.taught)
+    _keep_draft(request, invoice_id, draft, kept)
     # the account lists' "Used for this vendor", for the vendor now in the vendor field (B-596)
     listed = {code for code, _ in view.gl_options(reference, draft.lines)}
     used = [c for c in view.vendor_accounts(store, draft.header.get("vendor_name") or "") if c in listed]
@@ -611,7 +690,10 @@ async def check(request: Request, invoice_id: int) -> JSONResponse:
     header = {"values": analysis.filled, "from_vendor": draft.from_vendor, "pay_from_for": draft.pay_from_for}
     if analysis.coding is not None:
         header["flags"] = analysis.live.get("flags") or {}
-    return JSONResponse({"ok": True, "valid": analysis.coding is not None, "allow": analysis.allow,
+        header["flag_errors"] = analysis.live.get("flag_errors") or []  # red, as an error (B-796)
+        header["help"] = analysis.live.get("help") or {}  # a note with a one-click fix under a field (D-75)
+        header["an8"] = analysis.live.get("an8")  # the supplier's JD Edwards number, when it is the export in use
+    return JSONResponse({"ok": True, "valid": analysis.coding is not None, "allow": analysis.allow, "draft": kept,
                          "problems": analysis.problems, "vendor_accounts": used, "header": header,
                          "tax_codes": codes["options"], "tax_code_labels": codes["labels"],
                          "tax_marks": {str(k): v for k, v in (analysis.live.get("tax_marks") or {}).items()},
@@ -621,19 +703,30 @@ async def check(request: Request, invoice_id: int) -> JSONResponse:
 @router.post("/review/{invoice_id:int}/approve")
 async def approve(request: Request, invoice_id: int) -> JSONResponse:
     """Approve & teach: store the coding on screen, record what was confirmed and corrected, teach the supplier's
-    template where its fields are (and the words the reviewer showed), then open the next invoice."""
+    template where its fields are (and the words the reviewer showed), then open the next invoice. Only the form is
+    read here: the approval and its learning run on a threadpool thread, never holding up the other requests."""
+    form = await posted_form(request)
+    return await run_in_threadpool(_approve, request, invoice_id, form)
+
+
+@one_connection
+def _approve(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     store, settings = get_store(request), get_settings(request)
     inv = _invoice(store, invoice_id)
     reference = _reference(store)
-    form, draft = await _posted(request, inv)
+    draft = _from_form(request, inv, form)
     query = _nav_query(form)
     analysis = view.analyse(store, settings, reference, inv, draft, reviewer())
     if analysis.coding is None:
         return refuse("Fix this field first: " + "; ".join(analysis.problems))
     if not analysis.allow:
         bar = analysis.live["bar"]
-        return refuse(bar["pick"] + "." if bar["pick"] else
-                      f"Tick “Approve anyway” to approve despite {ui.plural(bar['errors'], 'error')}.")  # fmt: skip
+        first = bar["first"]  # the first thing that keeps it closed, in screen order (B-797)
+        if first and first["kind"] != "hard":
+            return refuse(first["text"] + ".")
+        if first:  # never approved anyway (D-75)
+            return refuse("Not ready: " + "; ".join(b["text"] for b in bar["blockers"][:3]) + ".")
+        return refuse(f"Tick “Approve anyway” and say why to approve despite {ui.plural(bar['errors'], 'error')}.")
     # The same correction again and again: before saving, AP is asked once why (lessons.py). Skipping is fine: the
     # question comes back next time.
     from ap_coder.ai import lessons
@@ -644,7 +737,9 @@ async def approve(request: Request, invoice_id: int) -> JSONResponse:
     if asked and not form.get("why_done"):
         return JSONResponse({"ok": False, "ask_why": {"fields": asked, "threshold": lessons.why_after(store)}})
     after = next_url(store, invoice_id, query, form.get("next_id"))
-    open_issues = [{"code": i.code, "severity": i.severity, "line": i.line_number}
+    why = draft.override_reason.strip()  # "Approve anyway": why, kept with each error approved over (D-75)
+    open_issues = [{"code": i.code, "severity": i.severity, "line": i.line_number,
+                    **({"override_reason": why} if why and i.severity == "error" else {})}
                    for i in analysis.errors + analysis.warnings]  # fmt: skip
     me = reviewer()
     from ap_coder.coding.line_tax import confirm_codes
@@ -692,16 +787,50 @@ async def approve(request: Request, invoice_id: int) -> JSONResponse:
         )
         + "."
     )
-    messages.append(flash_message(
-        ("" if waits else f"Approved {vendor}. ") + (f"{taught} {lines}" if taught else learned_from),
-        "ok", icon="school"))  # fmt: skip
+    # One line and Undo; what it learned folded under "What it learned" (B-804).
+    approved = flash_message("Its coding is kept for the second approver." if waits else f"Approved {vendor}.",
+                             "ok", icon="school")  # fmt: skip
+    approved["more"] = f"{taught} {lines}" if taught else learned_from
+    approved["more_label"] = "What it learned"
+    approved["undo"] = f"/review/{invoice_id}/undo-approve"  # the banner's Undo: back in the queue as it was
+    messages.append(approved)
     if explained:
         messages.append(flash_message(f"Thanks: {ui.plural(explained, 'reason')} kept. The AI reads "
                                       f"{'it' if explained == 1 else 'them'} with this vendor's next invoices.", "ok",
                                       icon="psychology"))  # fmt: skip
-    if not store.list_invoices(REVIEW):
+    left = store.list_invoices(REVIEW)
+    if not left:
         messages.append(flash_message("Your queue is clear: every invoice has been reviewed.", "ok", icon="task_alt"))
+    elif not form.get("next_id"):  # the last one of the list as shown: the rest are ones passed over
+        messages.append(flash_message(f"That was the last one in the list. {ui.plural(len(left), 'invoice')} still "
+                                      "to review: back to the first of them.", "info", icon="replay"))  # fmt: skip
     return done(request, after, *messages)
+
+
+@router.post("/review/{invoice_id:int}/undo-approve")
+def undo_approve(request: Request, invoice_id: int) -> JSONResponse:
+    """The approval banner's Undo: an invoice just approved (not exported) back in the review queue, its coding kept
+    and what its approval taught withdrawn, as Reopen for correction does."""
+    store = get_store(request)
+    inv = _invoice(store, invoice_id)
+    if inv.get("export_batch"):
+        return refuse(f"It can't be undone now: it was exported in batch {inv['export_batch']}. To correct it, undo "
+                      "the batch on the Exports page first.")  # fmt: skip
+    if inv["status"] not in (APPROVED, PENDING):  # the real reason (B-803): rejected, parked, back in the queue
+        now = {REVIEW: "it is back in the review queue already", REJECTED: "it was rejected since",
+               PARKED: "it was parked since"}.get(inv["status"], "it is no longer approved")  # fmt: skip
+        return refuse(f"There is no approval to undo: {now}. Open it to see where it stands.")
+    me = reviewer()
+    try:
+        store.reopen(invoice_id, me, UNDONE)
+    except ValueError as exc:
+        return changed_meanwhile(request, invoice_id, exc)
+    on_reopen(store, invoice_id, me, UNDONE, before=inv)
+    return done(
+        request,
+        f"/review/{invoice_id}",
+        flash_message("Approval undone: it is back in the review queue.", "ok", icon="undo"),
+    )
 
 
 # --- Park, reject, notes --------------------------------------------------------------------------------------------

@@ -35,7 +35,7 @@ GROUPS = {
               "files_moved", "file_found", "directory_preset_saved", "directory_preset_deleted"],
     "Learning": ["lessons_forgotten", "lesson_explained", "lesson_retired", "lesson_restored", "history_imported",
                  "autonomy_on", "autonomy_off", "autonomy_suspended", "autonomy_held", "autonomy_allowed",
-                 "touchless_on", "touchless_off", "page_reader_tested"],
+                 "layout_reset", "touchless_on", "touchless_off", "page_reader_tested"],
     "Emails": ["email_sorted", "email_bank_change", "email_triage_done", "email_attachment_to_queue"],
     "Backups": ["backup_made", "backup_restored"],
 }  # fmt: skip

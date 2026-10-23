@@ -23,6 +23,7 @@ import secrets
 import threading
 import time
 from collections.abc import AsyncIterator, Callable
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
@@ -110,6 +111,34 @@ def default_store() -> Store:
     return Store(paths.env_path("AP_DB_PATH") or default_db_path())
 
 
+class EnvSettings:
+    """The settings from the .env and the environment, read again only when either changed (the .env's time and
+    size, the environment's values): every request asks for them, and the Settings page saves to the .env."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._kept: tuple[Any, Settings] | None = None
+
+    @staticmethod
+    def _stamp() -> tuple[Any, ...]:
+        chosen = os.environ.get("AP_ENV_FILE")
+        path = Path(chosen) if chosen else paths.env_file()
+        try:
+            seen = path.stat() if path is not None else None
+        except OSError:
+            seen = None
+        file = (str(path), seen.st_mtime_ns, seen.st_size) if seen is not None else (str(path), None, None)
+        return (*file, frozenset(os.environ.items()))
+
+    def __call__(self) -> Settings:
+        with self._lock:
+            if self._kept is not None and self._kept[0] == self._stamp():
+                return self._kept[1]
+            read = Settings.from_env(os.environ.get("AP_ENV_FILE"))
+            self._kept = (self._stamp(), read)  # after reading: the .env's values are in the environment now
+            return read
+
+
 def create_app(settings: Settings | None = None, store: Store | None = None, *, address: str = "127.0.0.1",
                start_reader: bool = True) -> FastAPI:  # fmt: skip
     """The dashboard. ``settings``: fixed settings (tests); by default the .env is read again for every page, so a
@@ -117,9 +146,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     what the server listens on (the Host check allows it). ``start_reader``: start the page reader's background
     thread (OvisOCR2) when the app starts (tests replace ``page_worker.start_background`` with a no-op)."""
     store = store or default_store()
-    settings_factory: Callable[[], Settings] = (
-        (lambda: settings) if settings is not None else (lambda: Settings.from_env(os.environ.get("AP_ENV_FILE")))
-    )
+    settings_factory: Callable[[], Settings] = (lambda: settings) if settings is not None else EnvSettings()
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -131,12 +158,12 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
             from ap_coder.ai import page_worker
 
             app.state.reader = page_worker.start_background(
-                settings_factory, lambda: Store(store.path), cache_dir=core.cache_dir(store)
+                settings_factory, lambda: store, cache_dir=core.cache_dir(store)
             )
             from ap_coder.ai import azure_check
 
             # The optional Azure check (Settings → Reading): it does nothing while it is off, the default.
-            app.state.azure_checker = azure_check.start_background(settings_factory, lambda: Store(store.path))
+            app.state.azure_checker = azure_check.start_background(settings_factory, lambda: store)
         yield
         for name in ("reader", "azure_checker"):
             worker = getattr(app.state, name, None)

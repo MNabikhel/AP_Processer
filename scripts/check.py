@@ -75,6 +75,10 @@ def tests_for(files: list[str]) -> list[str] | None:
         if path.parts[:1] == ("ap_coder",) and path.suffix == ".py" and path.name != "__main__.py":
             parts = path.parent.parts if path.name == "__init__.py" else path.with_suffix("").parts
             users = importers(".".join(parts), test_texts)
+            if not users and path.name != "__init__.py" and (path.parent / "__init__.py").is_file():
+                # A part of a package that re-exports it (core/store/invoices.py): tests import the package.
+                users = importers(".".join(path.parent.parts), test_texts)
+                own |= set(TESTS.glob(f"test_{path.parent.name}*.py"))
         elif path.parts[:1] == ("scripts",) and path.suffix == ".py":
             users = script_users(path.stem, test_texts)
         picked |= own | (set(users) if len(users) <= WIDE else set())

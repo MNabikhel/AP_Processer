@@ -54,7 +54,13 @@ _TAXES = (("gst_amount", "GST"), ("hst_amount", "HST"), ("pst_amount", "PST"), (
 # the province a rate names when only one has it (HST 13% Ontario, 14% Nova Scotia from April 2025; PST 6% SK).
 _OFFICIAL = {"GST": (0.05,), "HST": (0.13, 0.14, 0.15), "QST": (0.09975,), "PST": (0.06, 0.07, 0.08)}
 _RATE_PROVINCE = {("HST", 0.13): "ON", ("HST", 0.14): "NS", ("QST", 0.09975): "QC", ("PST", 0.06): "SK"}
-_PROVINCE_AT = re.compile(r"(?:\(|\b)(ON|QC|BC|AB|MB|SK|NS|NB|NL|PE|YT|NT|NU)(?:\)|\b)\s*,?\s*[A-Z]\d[A-Z]\s?\d[A-Z]\d")
+# A province code, then its postal code: "Calgary, AB T2P 1J9", "(ON) M5V 2T6", and as OCR glues them, "Calgary,AB"
+# and "Steinbach,MBR6X5X0" (the postal code straight after the code, standing alone after it) (B-810).
+_POSTAL = r"[A-Z]\d[A-Z]\s?\d[A-Z]\d"
+_PROVINCE_AT = re.compile(
+    r"(?:\(|\b)(ON|QC|BC|AB|MB|SK|NS|NB|NL|PE|YT|NT|NU)"
+    rf"(?:(?:\)|\b)\s*,?\s*{_POSTAL}|(?={_POSTAL}(?![A-Za-z0-9])){_POSTAL})"
+)
 # Labels, not any line with the word: "FACTURE" (a French invoice's title), "Customer service" or
 # "Date de livraison" in the letterhead are not the customer's address.
 _SHIP_LABEL = re.compile(
@@ -342,7 +348,8 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
     # add up (not every tax on every line: a delivery or a service is often exempt from the provincial tax).
     lines = tax_codes(lines, tax_lines, flags, text, ship_to_province or ours or supplier_province, invoice_on,
                       supplier_province=supplier_province,
-                      pst_number=str(values.get("pst_registration_number") or ""))  # fmt: skip
+                      pst_number=str(values.get("pst_registration_number") or ""), feedback=feedback,
+                      vendor=vendor, qst_number=str(values.get("qst_registration_number") or ""))  # fmt: skip
 
     found = [r.confidence for f, r in capture.fields.items() if r.value not in (None, "")]
     gl_known = sum(1 for li in lines if li.predicted_gl_code != UNASSIGNED) / len(lines)
@@ -378,11 +385,13 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
 
 def tax_codes(lines: list[LineItem], tax_lines: list[TaxLine], flags: list[str], text: str, province: str,
               invoice_on: str = "", keep: list[int] | None = None, *, supplier_province: str | None = None,
-              pst_number: str | None = None) -> list[LineItem]:  # fmt: skip
+              pst_number: str | None = None, feedback: list[dict[str, Any]] | None = None,
+              vendor: str = "", qst_number: str | None = None) -> list[LineItem]:  # fmt: skip
     """The lines with their tax codes (``line_tax.prefill``): ``flags`` the tax-code cell read on each line, ``text``
     the page text (its legend: "Tax codes: G = GST 5%, R = Manitoba RST 7%"), the official rates in force on the
-    invoice's date where it is supplied."""
-    from ..coding.line_tax import parse_legend, prefill
+    invoice's date where it is supplied; ``feedback`` (the learning memory) and ``vendor``: the codes AP approved on
+    the vendor's similar lines before (``line_tax.learned_codes``, D-70)."""
+    from ..coding.line_tax import learned_codes, parse_legend, prefill
 
     table = _rate_table()
     try:
@@ -396,14 +405,16 @@ def tax_codes(lines: list[LineItem], tax_lines: list[TaxLine], flags: list[str],
             return None
         return table.rate_for(tax_type, where if where != OUTSIDE_CANADA else "", on)
 
-    # A vendor out of the province of supply that does not charge the PST on a line: the PST is due on it
-    # (self-assess), not taken as exempt (B-715). A PST number not printed says nothing when the vendor charges PST on
-    # other lines (it collects it; no province requires the number on every invoice): only when it charges none (B-719).
-    away = bool(supplier_province) and supplier_province != province
-    pst_charged = any(t.tax_type == "PST" and abs(t.tax_amount) > 0.004 for t in tax_lines)
-    no_number = pst_number is not None and not str(pst_number).strip() and not pst_charged
+    # A vendor out of the province of supply, or without a PST (QST) number that charges none (B-715, B-719): the
+    # provincial tax it does not charge on a line is due (self-assess). The codes learned are only those approved
+    # where the vendor collected the provincial taxes as it does now (B-760).
+    from ..coding.line_tax import uncollected
+
+    missing = uncollected(province, supplier_province, pst_number, qst_number, tax_lines)
+    learned = learned_codes(lines, feedback, vendor, province, missing) if feedback and vendor else None
     return prefill(lines, tax_lines, flags, parse_legend(text), keep=keep or [], rate_for=rate_for,
-                   vendor_collects=not (away or no_number)).lines  # fmt: skip
+                   vendor_collects={t: t not in missing for t in ("PST", "QST")}, learned=learned,
+                   learned_alike=True).lines  # fmt: skip
 
 
 def _iso_or_empty(value: Any) -> str:

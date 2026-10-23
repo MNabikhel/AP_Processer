@@ -69,6 +69,7 @@ def test_blanks_an_older_version_recorded_as_corrections_are_recounted(tmp_path)
     store.approve_invoice(iid, final, "pat")
     with sqlite3.connect(path) as conn:  # as an older version recorded it
         conn.execute("UPDATE feedback SET outcome = 'corrected'")
+        conn.execute("DELETE FROM settings WHERE key = 'feedback_cleanup'")
     assert Store(path).metrics()["lines_corrected"] == 0
 
 
@@ -358,7 +359,7 @@ def test_rules_applied_on_screen_never_drop_a_background_check(tmp_path, monkeyp
                 go.wait(1)
             return _json.dumps(obj, *a, **k)
 
-    monkeypatch.setattr(store_module, "json", SlowJson())
+    monkeypatch.setattr(store_module.purchasing, "json", SlowJson())  # add_rules_applied
     change = {"line_number": 1, "rule": "r", "gl_from": "6000", "gl_to": "6010", "cc_from": "", "cc_to": ""}
     screen = threading.Thread(target=store.add_rules_applied, args=(iid, [change]), name="screen")
     screen.start()
@@ -511,6 +512,7 @@ def test_the_approval_message_names_a_renamed_vendor_and_states_progress_plainly
     read = {**_blank_invoice(), "vendor_name": "BDO Canada", "gst_hst_registration_number": "123456782RT0001"}
     iid = store.add_invoice(tmp_path / "x.pdf", read, {"requires_review": True})
     final = {**read, "vendor_name": "BDO Canada LLP"}
+    store.approve_invoice(iid, final, "Ann")
     message = taught_message(store, learn_from_approval(store, iid, final, actor="Ann"))
     assert "You changed no header field" not in message
     assert message.startswith("You changed the vendor (“BDO Canada” to “BDO Canada LLP”): the same vendor to AP Coder, "

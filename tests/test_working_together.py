@@ -282,3 +282,13 @@ def test_cli_labels_refuses_to_overwrite(tmp_path, ground_truth, capsys):
     assert cli.main(args) == 2
     assert dest.read_text() == "corrected by AP team"
     assert cli.main([*args, "--force"]) == 0
+
+
+def test_one_column_matcher_for_every_import():
+    """The ERP history, PO, register, statement and vendor-master imports share core.headers.match_columns: aliases
+    compared with accents folded, and a column used for one field only."""
+    from ap_coder.core.headers import match_columns
+
+    aliases = {"invoice_number": ("numerodefacture", "Invoice No"), "number": ("invoice no",)}
+    assert match_columns(["Numéro de facture", "Total"], aliases) == {"invoice_number": "Numéro de facture"}
+    assert match_columns(["Invoice No."], aliases) == {"invoice_number": "Invoice No."}  # not reused for "number"

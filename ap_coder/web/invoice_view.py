@@ -39,6 +39,7 @@ from ap_coder.coding.line_tax import (
     parse_code,
     tax_code_of,
     tax_guessed,
+    tax_learned,
 )
 from ap_coder.coding.line_tax import options as tax_code_options
 from ap_coder.coding.po import match_invoice, po_label
@@ -67,7 +68,7 @@ from ap_coder.core.memory import ACCEPTED, CODED, CORRECTED, pair_lines, vendor_
 from ap_coder.core.reference_data import UNASSIGNED, ReferenceData, short_name
 from ap_coder.core.schema import FROM_VENDOR_LIST, PROVINCE_VALUES, InvoiceCoding
 from ap_coder.core.store import Store, nothing_proposed, suggestion_kept
-from ap_coder.core.ui import TAX_LABELS, money, plural
+from ap_coder.core.ui import TAX_LABELS, plural
 from ap_coder.ops.help import help_for
 from ap_coder.web.document import clean_boxes
 
@@ -169,6 +170,16 @@ CAPTURE_HELP = {
 }
 
 
+def signed(value: Any) -> str:
+    """An amount as the review screen shows it, a credit with a minus sign as its boxes show it: -2,050.00 (the other
+    pages' (2,050.00) beside a box holding -2050.00 read as two different amounts)."""
+    try:
+        amount = float(value)
+    except (TypeError, ValueError):
+        return "—"
+    return f"-{-amount:,.2f}" if amount < -0.004 else f"{abs(amount) if amount > -0.005 else 0.0:,.2f}"
+
+
 def _text(value: Any) -> str:
     return "" if is_blank(value) else str(value)
 
@@ -213,6 +224,7 @@ class Draft:
     taxes: list[dict[str, Any]]
     taught: dict[str, list[list[float]]] = field(default_factory=dict)  # {field: [[page, x0, y0, x1, y1], ...]}
     override: str = ""  # "approve anyway, despite the errors", ticked for these errors
+    override_reason: str = ""  # why, typed with it (D-75)
     reader_at: str = ""  # when OvisOCR2's reading came in, as the screen was drawn ("" before it)
     mail_lang: str = ""
     absent: list[str] = field(default_factory=list)  # fields marked "Not on this invoice" (ABSENT_FIELDS), blank
@@ -293,7 +305,9 @@ class Draft:
             str(form.get("pay_from_for") or "") if form.get("pay_from_for") is not None else base.pay_from_for
         )
         return cls(header=header, lines=lines, taxes=taxes, taught=parse_taught(form.get("taught")),
-                   override=str(form.get("override") or ""), reader_at=str(form.get("reader_at") or base.reader_at),
+                   override=str(form.get("override") or ""),
+                   override_reason=" ".join(str(form.get("override_reason") or "").split())[:300],
+                   reader_at=str(form.get("reader_at") or base.reader_at),
                    mail_lang=str(form.get("mail_lang") or ""), absent=absent, from_vendor=from_vendor,
                    pay_from_for=pay_from_for.strip().upper()[:3])  # fmt: skip
 
@@ -701,6 +715,7 @@ def grid(reference: ReferenceData, draft: Draft, ai: dict[str, Any] | None = Non
                 "guessed": id(row) in guesses and row.get("predicted_gl_code") not in (None, "", UNASSIGNED),
                 "tax_code": tax_code_of(row, charged),
                 "tax_guess": id(row) in tax_guesses,
+                "tax_learned": tax_learned(row),  # taken from what AP approved on the vendor's similar lines (D-70)
                 "tax_inferred": inferred.get(id(row), ""),
             }
             for i, row in enumerate(draft.lines)
@@ -712,6 +727,7 @@ def grid(reference: ReferenceData, draft: Draft, ai: dict[str, Any] | None = Non
         else codes["options"][0][0],
         "tax_code_labels": codes["labels"],
         "tax_marks": {},  # {line number: why}: the lines the Tax check points at (``analyse``), drawn yellow
+        "show_qty": shows_quantities(draft.lines),
         "taxes": draft.taxes,
         "gl_options": (gls := gl_options(reference, draft.lines)),
         "cc_options": (ccs := cc_options(reference, draft.lines)),
@@ -723,6 +739,25 @@ def grid(reference: ReferenceData, draft: Draft, ai: dict[str, Any] | None = Non
         "tax_provinces": tax_province_options(),
         "has_cc": reference.cost_centers is not None,
     }
+
+
+def shows_quantities(lines: list[dict[str, Any]]) -> bool:
+    """Whether the line grid shows Qty and Unit price as columns: a line with a quantity other than 1, or a unit price
+    other than its amount (otherwise they say nothing the amount does not, and the toggle shows them)."""
+
+    def num(value: Any) -> float | None:
+        try:
+            return float(value) if value not in (None, "") else None
+        except (TypeError, ValueError):
+            return None
+
+    for li in lines:
+        qty, price, amount = num(li.get("quantity")), num(li.get("unit_price")), num(li.get("amount"))
+        if (qty is not None and abs(qty - 1) > 1e-9) or (
+            price is not None and amount is not None and abs(price - amount) > 0.005
+        ):
+            return True
+    return False
 
 
 def tax_choices(draft: Draft, setup: Any = None) -> dict[str, Any]:
@@ -800,6 +835,35 @@ def capture_confidence(capture: CaptureResult | None) -> dict[str, dict[str, str
         words = CAPTURE_WORDS[status] + (f" {sure}" if status in ("likely", "check") else "")
         out[name] = {"tone": tone, "icon": icon_name, "text": words, "status": status,
                      "help": f"{CAPTURE_HELP[status]} How sure: {sure}."}  # fmt: skip
+    return out
+
+
+def shown_sure(sure: dict[str, dict[str, str]], header: dict[str, str], read: dict[str, Any],
+               capture: CaptureResult | None) -> dict[str, dict[str, str]]:  # fmt: skip
+    """The reading's badges the form shows: only beside a value that is still the one read (an empty field, or one
+    the reviewer changed, has none: the badge would vouch for what is not there), and none for a currency the page
+    does not print (the domestic CAD assumed: "Check" on almost every invoice said nothing)."""
+    from ap_coder.capture.bridge import currency_read
+
+    def same(name: str) -> bool:
+        now, was = str(header.get(name) or "").strip(), read.get(name)
+        if not now:
+            return False
+        if name in AMOUNT_FIELDS:
+            try:
+                return abs(float(now) - float(was or 0)) < 0.005
+            except (TypeError, ValueError):
+                return False
+        return now.casefold() == str(was or "").strip().casefold()
+
+    out = {}
+    for name, badge in sure.items():
+        if not same(name):
+            continue
+        fr = capture.fields.get(name) if capture is not None else None
+        if name == "currency" and fr is not None and not currency_read(fr) and header.get("currency") == "CAD":
+            continue
+        out[name] = badge
     return out
 
 
@@ -988,7 +1052,12 @@ def grouped(issues: list[Any]) -> list[tuple[bool, str]]:
 
 
 # A finding about a line's account or cost center: its item in the checks is a button to that box (B-443).
-GOTO_BOX = {"GL_UNASSIGNED": "line_gl", "CC_UNASSIGNED": "line_cc", "PST_EXEMPTION_TO_CONFIRM": "line_tax_code"}
+GOTO_BOX = {
+    "GL_UNASSIGNED": "line_gl",
+    "CC_UNASSIGNED": "line_cc",
+    "PST_EXEMPTION_TO_CONFIRM": "line_tax_code",
+    "TAX_EXEMPTION_LEARNED": "line_tax_code",
+}
 
 
 def confidence_pct(value: float, threshold: float) -> str:
@@ -1014,7 +1083,9 @@ def checks_summary(report: Any, errors: list[Any], warnings: list[Any]) -> dict[
         # A possible duplicate: a link to each invoice it may duplicate, to compare them (D-60).
         links = ([{"href": f"/review/{n}", "text": f"Open #{n}"} for n in re.findall(r"#(\d+)", text)]
                  if code == "DUPLICATE_INVOICE" else [])  # fmt: skip
-        items.append({"bad": kind != LOOK, "kind": kind, "text": text, "goto": goto, "links": links})
+        field = "" if lines else CODE_FIELDS.get(code) or FIELD_FLAGS.get(code, ("", None))[0]
+        items.append({"bad": kind != LOOK, "kind": kind, "text": text, "goto": goto, "links": links, "code": code,
+                      "field": field})  # fmt: skip
     if low:
         items.append({"bad": False, "kind": LOOK, "text": f"Confidence {confidence_pct(report.adjusted_confidence, report.review_threshold)} "  # noqa: E501
                       f"is below the {report.review_threshold:.0%} threshold."})  # fmt: skip
@@ -1125,16 +1196,40 @@ def learn_text(coding: InvoiceCoding, ai: dict[str, Any], cost_centers: bool = F
     return " · ".join(s for s in said if s)
 
 
-def differs_from_stored(coding: InvoiceCoding, stored: dict[str, Any]) -> bool:
-    """Whether the coding on screen is not the one stored for the invoice (the reviewer changed something)."""
+def differs_from_stored(
+    coding: InvoiceCoding,
+    stored: dict[str, Any],
+    *,
+    cost_centers: bool = True,
+    filled: frozenset[str] | set[str] = frozenset(),
+) -> bool:
+    """Whether the coding on screen is not the one stored for the invoice (the reviewer changed something). Not an
+    edit (B-801): an account or cost center blank either way ("" / "UNASSIGNED"), a cost center where none are in use
+    (the screen has no box for it), and ``filled``, the details the screen fills itself on every check (the default
+    Pay from account, the vendor list's tax numbers) while the invoice stored has none."""
     try:
         before = InvoiceCoding.model_validate({k: v for k, v in stored.items() if k != "gl_distribution"})
     except ValueError:
         return True
-    ignore = {"confidence_score"}
-    return {k: v for k, v in coding.to_output().items() if k not in ignore} != {
-        k: v for k, v in before.to_output().items() if k not in ignore
-    }
+    ignore = {"confidence_score"} | {k for k in filled if not stored.get(k)}
+    shown, kept = coding.to_output(), before.to_output()
+    return _comparable(shown, ignore, cost_centers) != _comparable(kept, ignore, cost_centers)
+
+
+# A line's account or cost center not given, however it is written: the screen posts "UNASSIGNED" for a cost center
+# stored blank, and that is no edit (B-801).
+_BLANK_CODES = {None, "", UNASSIGNED}
+
+
+def _comparable(output: dict[str, Any], ignore: set[str], cost_centers: bool = True) -> dict[str, Any]:
+    out = {k: v for k, v in output.items() if k not in ignore}
+    blank = ("predicted_gl_code", "predicted_cost_center")
+    out["line_items"] = [
+        {k: ("" if k in blank and (v in _BLANK_CODES or (k == blank[1] and not cost_centers)) else v)
+         for k, v in li.items()}
+        for li in out.get("line_items") or []
+    ]  # fmt: skip
+    return out
 
 
 def override_key(errors: list[Any]) -> str:
@@ -1160,10 +1255,12 @@ def summary(coding: InvoiceCoding, report: Any, errors: list[Any], warnings: lis
     supply = place_of_supply(coding, setup)
     if not supply and coding.ship_to_province == OUTSIDE_CANADA:  # as Place of supply says it (supply_line, B-441)
         supply = OUTSIDE_CANADA
+    credit = coding.grand_total < 0
     meta = [
-        (f"Invoice {coding.invoice_number}", "Invoice number"),
+        (f"{'Credit note' if credit else 'Invoice'} {coding.invoice_number}", "Invoice number"),
         (f"Issued {coding.invoice_date}" if coding.invoice_date else "", "Invoice date"),
-        (due_text(coding.to_output(), default_days, vendor_terms) if coding.grand_total > 0 else "", "Payment due"),
+        (due_text(coding.to_output(), default_days, vendor_terms) if coding.grand_total > 0 else
+         "Nothing to pay: a credit" if credit else "", "Payment due"),
         (province_label(supply), "Place of supply"),
         (f"GST/HST {coding.gst_hst_registration_number}" if coding.gst_hst_registration_number else "",
          "Supplier's GST/HST number"),
@@ -1184,7 +1281,7 @@ def summary(coding: InvoiceCoding, report: Any, errors: list[Any], warnings: lis
         "taxes": [TAX_LABELS.get(t, t) for t in dict.fromkeys(t.tax_type for t in coding.tax_lines)],
         "learned": any(h["status"] == "match" for h in report.checks.get("history") or []),
         "total_label": "Credit" if coding.grand_total < 0 else "Total due",
-        "total": money(coding.grand_total),
+        "total": signed(coding.grand_total),
         "currency": coding.currency,
     }
 
@@ -1193,7 +1290,11 @@ def stored_summary(inv: dict[str, Any], doc: dict[str, Any]) -> dict[str, Any]:
     """The header of an invoice that is not being reviewed (approved, parked, rejected...): as stored."""
     supply = stored_supply(doc)
     meta = [
-        (f"Invoice {doc.get('invoice_number') or inv.get('invoice_number') or '—'}", "Invoice number"),
+        (
+            f"{'Credit note' if float(doc.get('grand_total', inv.get('grand_total')) or 0) < 0 else 'Invoice'} "
+            f"{doc.get('invoice_number') or inv.get('invoice_number') or '—'}",
+            "Invoice number",
+        ),
         (f"Issued {doc['invoice_date']}" if doc.get("invoice_date") else "", "Invoice date"),
         (f"Due {inv['due_date']}" if inv.get("due_date") else "", "Payment due"),
         (province_label(supply) if supply else "", "Place of supply"),
@@ -1206,7 +1307,7 @@ def stored_summary(inv: dict[str, Any], doc: dict[str, Any]) -> dict[str, Any]:
             TAX_LABELS.get(t, t) for t in dict.fromkeys(t.get("tax_type", "") for t in doc.get("tax_lines") or []) if t
         ],  # fmt: skip
         "total_label": "Credit" if (total or 0) < 0 else "Total",
-        "total": money(total),
+        "total": signed(total),
         "currency": doc.get("currency") or inv.get("currency") or "",
     }
 
@@ -1283,18 +1384,18 @@ def po_section(store: Store, coding: InvoiceCoding, invoice_id: int) -> dict[str
                          "price": "", "price_po": "", "pills": [("Not on PO", "warn")]})  # fmt: skip
             continue
         if m.amount_only:  # a PO line with only an amount: compare amounts
-            qty = f"{money(m.billed_before_amount + m.amount)} / {money(m.po_amount)}"
+            qty = f"{signed(m.billed_before_amount + m.amount)} / {signed(m.po_amount)}"
         else:
             qty = f"{_fmt_qty(m.billed_before + m.quantity)} / {_fmt_qty(m.po_quantity)}"
             if received:
                 qty += f" / {_fmt_qty(m.received)}"
         pills = [(flags[p], "info" if p == "coding" else "warn") for p in m.problems if p in flags] or [("OK", "ok")]
         rows.append({"line": m.invoice_line, "description": m.description,
-                     "po_line": f"{m.po_line} · {m.po_description}", "qty": qty, "price": money(m.unit_price),
-                     "price_po": money(m.po_unit_price) if "price" in m.problems else "", "pills": pills})  # fmt: skip
-    notes = [f"PO total {money(po.get('total'))}"]
+                     "po_line": f"{m.po_line} · {m.po_description}", "qty": qty, "price": signed(m.unit_price),
+                     "price_po": signed(m.po_unit_price) if "price" in m.problems else "", "pills": pills})  # fmt: skip
+    notes = [f"PO total {signed(po.get('total'))}"]
     if match.other_invoices:
-        notes.append(f"{money(match.billed_before)} already invoiced on "
+        notes.append(f"{signed(match.billed_before)} already invoiced on "
                      + ", ".join(f"#{o['id']}" for o in match.other_invoices[:5]))  # fmt: skip
     notes.append(f"{'closed' if po.get('status') == 'closed' else 'open'}, for "
                  f"{(po.get('vendor_name') or '?').rstrip('.')}")  # fmt: skip
@@ -1324,7 +1425,7 @@ def tax_check(coding: InvoiceCoding, reference: ReferenceData) -> list[dict[str,
             "rate_ok": official is not None and abs(official - t.rate) < 1e-6, "rate": f"{t.rate * 100:.3f}%",
             "official": "not levied" if official is None else f"{official * 100:.3f}%",
             "math_ok": abs(expected - t.tax_amount) <= 0.01 * max(1, len(coding.line_items)) + 0.01,
-            "amount": money(t.tax_amount), "posts_to": gl or "⚠ not mapped",
+            "amount": signed(t.tax_amount), "posts_to": gl or "⚠ not mapped",
         })  # fmt: skip
     return rows
 
@@ -1380,29 +1481,43 @@ def spend_split(output: dict[str, Any], reference: ReferenceData) -> list[dict[s
     if len(segments) > 6:
         segments = [*segments[:5], ("Other", sum(v for _, v in segments[5:]))]
     total = sum(v for _, v in segments)
-    return [{"label": label, "amount": money(amount), "share": amount / total,
+    return [{"label": label, "amount": signed(amount), "share": amount / total,
              "pct": f"{amount / total:.0%}"} for label, amount in segments]  # fmt: skip
 
 
-def distribution(output: dict[str, Any], reference: ReferenceData | None) -> dict[str, Any]:
-    """The journal lines approval sends to the ERP, their total and whether it balances with the invoice."""
+def distribution(output: dict[str, Any], reference: ReferenceData | None, js: Any = None) -> dict[str, Any]:
+    """The journal lines approval sends to the ERP, their total and whether it balances with the invoice; ``js``: the
+    JD Edwards settings when it is the export in use, for each line's E1 account (BU.Object.Subsidiary)."""
+    from ap_coder.erp import jde
+
     rows = []
     for e in output.get("gl_distribution") or []:
+        account = None
+        if js is not None:  # a recoverable tax line is posted by E1 itself (its tax AAIs): no account of ours
+            recoverable = e["kind"] == "tax" and abs(float(e.get("non_recoverable_tax") or 0)) < 0.005
+            mapped = jde.account_text(e["gl_code"] or "", e.get("cost_center") or "", js)
+            account = "posted by JD Edwards" if recoverable else mapped or "not mapped"
         rows.append({
+            "account": account,
             "kind": "Tax" if e["kind"] == "tax" else f"Line {e['line_number']}",
             "gl": gl_display(e["gl_code"]) if e["gl_code"] else "⚠ not mapped",
             "gl_name": gl_name(reference, e["gl_code"]) if reference is not None else "",
             "todo": e["gl_code"] in (UNASSIGNED, ""),
             "cc": cc_display(e.get("cost_center")),
             "description": e.get("description") or "",
-            "net": money(e["net_amount"]) if e["kind"] == "expense" else "",
-            "nonrec": money(e["non_recoverable_tax"]) if e.get("non_recoverable_tax") else "",
-            "amount": money(e["amount"]),
+            "net": signed(e["net_amount"]) if e["kind"] == "expense" else "",
+            "nonrec": signed(e["non_recoverable_tax"]) if e.get("non_recoverable_tax") else "",
+            "amount": signed(e["amount"]),
+            "line": e.get("line_number") if e["kind"] != "tax" else "", "gl_code": e["gl_code"] or "",
         })  # fmt: skip
     total = round(sum(e["amount"] for e in output.get("gl_distribution") or []), 2)
     diff = round(total - (output.get("grand_total") or 0), 2)
-    return {"rows": rows, "total": money(total), "balanced": abs(diff) < 0.005, "off": money(diff),
-            "currency": output.get("currency") or ""}  # fmt: skip
+    from ap_coder.coding.validation import off_text
+
+    off = off_text(total, output.get("grand_total") or 0)
+    return {"rows": rows, "total": signed(total), "balanced": abs(diff) < 0.005, "off": signed(diff),
+            "off_text": off[:1].upper() + off[1:],
+            "jde": js is not None, "currency": output.get("currency") or ""}  # fmt: skip
 
 
 # --- The analysis --------------------------------------------------------------------------------------------------
@@ -1455,15 +1570,24 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     has_cc = reference.cost_centers is not None
     filled = settle_header(store, draft, ai)  # the vendor list's tax numbers, the default Pay from account
     header, problems = header_values(draft.header)
+    # A date typed another way, unclear or not a date: said at its field, the checks meanwhile on the date as read.
+    dates = settle_dates(header, {**ai, **{k: v for k, v in start.items() if k in DATE_FIELDS}})
+    header = dates.header
+    filled.update(dates.filled)
     coding = None
     if not problems:
         coding, problems = coding_from_inputs(header, lines_frame(draft.lines), tax_frame(draft.taxes), ai,
                                               UNASSIGNED if has_cc else "")  # fmt: skip
+    problems = [plain_problem(p) for p in problems]
     if coding is None:
         live = {"ok": False, "problems": problems, "amount_line": _amount_line(header),
                 "fallback": stored_summary(inv, start)}  # fmt: skip
         return Analysis(coding=None, problems=problems, live=live, filled=filled)
 
+    # What the screen fills itself on every check (not an edit, B-801): the default Pay from account (none picked for
+    # this currency) and the tax numbers the vendor list filled, while they are as filled.
+    auto = {"pay_from_account"} if not draft.pay_from_for else set()
+    auto |= {n for n, v in (draft.from_vendor.get("fields") or {}).items() if draft.header.get(n) == v}
     meta = inv.get("meta") or {}
     extraction = ExtractionResult(
         source=inv["source_path"],
@@ -1503,6 +1627,10 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
         report.issues = settle_absent(report.issues, draft.absent)
     from_list = sorted((draft.from_vendor.get("fields") or {}).keys())
     report.issues += not_printed(coding, from_list)
+    typed = dates.issues + currency_issues(coding.currency)  # the dates and the currency as typed (D-75)
+    if typed:
+        report.issues = typed + report.issues
+        report.requires_review = True
     if from_list:
         output[FROM_VENDOR_LIST] = from_list  # kept with the coding: the tax return's claims at risk read it
     accounts = store.bank_accounts(active_only=True)
@@ -1517,15 +1645,20 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
 
     # The approve bar: never post to UNASSIGNED; where cost centers are used, a line without one isn't posted either.
     # The queue asks the same question (pages/review.py attention), so its Ready means Approve is open here.
-    pick = codes_to_pick(coding.line_items, uses_cost_centers(reference))
+    line_pick = pick = codes_to_pick(coding.line_items, uses_cost_centers(reference))
     from ap_coder.coding.banks import blocking
 
     # never approved without one of our accounts in use to pay from, whatever is ticked (D-66, B-683)
     bank = blocking(coding.pay_from_account, store.bank_accounts())
     if bank:
         pick = f"{pick}; {bank[0].lower()}{bank[1:]}" if pick else bank
-    key = override_key(errors) if errors else ""
-    allow = not pick and (not errors or draft.override == key)
+    # What makes the voucher invalid is never approved anyway; the rest of the errors only with a reason (D-75).
+    hard = [i for i in errors if is_hard(i)]
+    soft = [i for i in errors if not is_hard(i)]
+    blockers = ordered_blockers(line_pick, bank, hard)
+    key = override_key(soft) if soft else ""
+    reason = draft.override_reason.strip()
+    allow = not pick and not hard and (not soft or (draft.override == key and bool(reason)))
     changed = ai_changes(coding, ai, uses_cost_centers(reference))
     lines_n = len(coding.line_items)
     _, rule_changes = rules.apply(coding, store.coding_rules())
@@ -1541,6 +1674,10 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
             drafts.append({"lang": lang, "name": name, "subject": m.subject, "body": m.body, "mailto": m.mailto()})
         mail = {"chosen": chosen, "drafts": drafts}
 
+    from ap_coder.erp import jde
+
+    js = jde.load(store) if jde.in_use(store) else None  # JD Edwards is the export in use (D-75)
+    an8 = jde.resolve_an8(output, store.vendor_ids(), js) if js is not None else ""
     live = {
         "ok": True,
         "problems": [],
@@ -1561,18 +1698,26 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
         "math": (math := math_check(coding, reference.tax)),
         "tax_marks": tax_marks(math, report.issues),
         "split": spend_split(output, reference),
-        "posting": {**distribution(output, reference), "note": posting_note(coding, reference)},
-        "flags": field_flags(report.issues, store, coding, inv["id"]),
+        "posting": {**distribution(output, reference, js), "note": posting_note(coding, reference)},
+        "flags": merge_flags(field_flags(report.issues, store, coding, inv["id"]), code_flags(report.issues),
+                             dates.notes),
+        "flag_errors": flag_errors(errors, dates.notes),
+        "help": field_help(store, coding, draft, capture, dates, report.issues),
+        "jde": jde.voucher_view(output, js, an8) if js is not None else None,
+        "an8": an8 if js is not None else None,
         "from_vendor": from_list,
         "bar": {
-            "amount": money(coding.grand_total), "currency": coding.currency, "lines": lines_n, "changed": changed,
+            "amount": signed(coding.grand_total), "currency": coding.currency, "lines": lines_n, "changed": changed,
             "learn": learn_text(coding, ai, uses_cost_centers(reference), meta.get("rules_applied")),
-            "pick": pick, "errors": len(errors), "override_key": key, "override": bool(key) and draft.override == key,
-            "allow": allow,
+            "pick": pick, "errors": len(soft), "override_key": key, "override": bool(key) and draft.override == key,
+            "override_reason": draft.override_reason if bool(key) and draft.override == key else "",
+            "hard": hard_reasons(hard), "allow": allow, "credit": coding.grand_total < 0,
+            "first": blockers[0] if blockers else None, "blockers": blockers,
         },
     }  # fmt: skip
     return Analysis(coding=coding, problems=[], output=output, report=report, errors=errors, warnings=warnings,
-                    allow=allow, changed=differs_from_stored(coding, start), live=live, filled=filled)  # fmt: skip
+                    allow=allow, changed=differs_from_stored(coding, start, cost_centers=has_cc, filled=auto),
+                    live=live, filled=filled)  # fmt: skip
 
 
 def pay_from_choices(store: Store, header: dict[str, str]) -> dict[str, Any]:
@@ -1649,14 +1794,265 @@ def field_flags(
     return {name: " · ".join(notes) for name, notes in flags.items()}
 
 
+# --- Dates, currency and what can never be approved anyway -----------------------------------------------------------
+
+# The currency codes in use (ISO 4217, active): a code not in it is a typo, never a voucher (D-75).
+ISO_CURRENCIES = frozenset(
+    """
+AED AFN ALL AMD ANG AOA ARS AUD AWG AZN BAM BBD BDT BGN BHD BIF BMD BND BOB BRL BSD BTN BWP BYN BZD CAD CDF CHF CLP
+CNY COP CRC CUP CVE CZK DJF DKK DOP DZD EGP ERN ETB EUR FJD FKP GBP GEL GHS GIP GMD GNF GTQ GYD HKD HNL HTG HUF IDR
+ILS INR IQD IRR ISK JMD JOD JPY KES KGS KHR KMF KPW KRW KWD KYD KZT LAK LBP LKR LRD LSL LYD MAD MDL MGA MKD MMK MNT
+MOP MRU MUR MVR MWK MXN MYR MZN NAD NGN NIO NOK NPR NZD OMR PAB PEN PGK PHP PKR PLN PYG QAR RON RSD RUB RWF SAR SBD
+SCR SDG SEK SGD SHP SLE SOS SRD SSP STN SVC SYP SZL THB TJS TMT TND TOP TRY TTD TWD TZS UAH UGX USD UYU UZS VES VND
+VUV WST XAF XCD XOF XPF YER ZAR ZMW ZWL
+""".split()
+)
+
+# The findings that make a voucher invalid: "Approve anyway" never covers them (D-75). Every JD Edwards finding
+# (JDE_..., erp/jde.voucher_findings) is one too: the batch would hold the voucher back.
+HARD_CODES = frozenset({
+    "MISSING_VENDOR", "MISSING_INVOICE_NUMBER", "NO_LINE_ITEMS", "SUBTOTAL_MISMATCH", "TOTAL_MISMATCH",
+    "POSTING_UNBALANCED", "INVOICE_DATE_INVALID", "DUE_DATE_INVALID", "DATE_AMBIGUOUS", "CURRENCY_UNKNOWN",
+})  # fmt: skip
+
+
+def is_hard(issue: Any) -> bool:
+    """An error "Approve anyway" never covers (``HARD_CODES``, and every JD Edwards finding)."""
+    return issue.severity == "error" and (issue.code in HARD_CODES or issue.code.startswith("JDE_"))
+
+
+DATE_FIELDS = ("invoice_date", "due_date")
+
+
+def _iso(text: str) -> bool:
+    try:
+        dt.date.fromisoformat(text)
+    except ValueError:
+        return False
+    return len(text) == 10
+
+
+def _long_date(d: dt.date) -> str:
+    return f"{d.day} {d:%B %Y}"
+
+
+@dataclass
+class DateCheck:
+    """The dates typed on the screen, settled before the coding is built: the values the checks use (a date that can't
+    be read is never the one approved: its finding is one "Approve anyway" never covers), the findings, a date typed
+    another way put as YYYY-MM-DD (``filled``), and the two readings of an ambiguous one (``choices``)."""
+
+    header: dict[str, Any]
+    issues: list[Any] = field(default_factory=list)
+    filled: dict[str, str] = field(default_factory=dict)
+    choices: dict[str, list[dict[str, str]]] = field(default_factory=dict)
+    notes: dict[str, str] = field(default_factory=dict)  # {field: the note under it}
+
+
+def settle_dates(header: dict[str, Any], fallback: dict[str, Any]) -> DateCheck:
+    """The invoice and due dates as typed: YYYY-MM-DD as is; another way of writing one date (Oct 5, 2026; 2026/10/05;
+    25/10/2026) put as YYYY-MM-DD; 12/06/2026 (6 December or 12 June) asked; anything else said plainly at the field.
+    Meanwhile the checks run on the date as read (``fallback``), so a typo never wipes them."""
+    from ap_coder.capture.normalize import parse_dates
+    from ap_coder.coding.validation import ERROR, Issue
+
+    out = DateCheck(header=dict(header))
+    for name in DATE_FIELDS:
+        text = str(header.get(name) or "").strip()
+        label = FIELD_LABELS[name]
+        if _iso(text) or (name == "due_date" and not text):
+            continue
+        found = parse_dates(text) if text else []
+        whole = [f for f in found if f[1] == 0 and f[2] >= len(text.rstrip(". "))]
+        if whole and not whole[0][3]:
+            out.filled[name] = out.header[name] = whole[0][0].isoformat()
+            continue
+        if whole:  # day or month first: both are dates
+            a = parse_dates(text, prefer_day_first=True)[0][0]
+            b = parse_dates(text, prefer_day_first=False)[0][0]
+            out.choices[name] = [{"value": d.isoformat(), "label": _long_date(d)} for d in (a, b)]
+            note = f"“{text}” can be {_long_date(a)} or {_long_date(b)}: which is it?"
+            out.issues.append(Issue(ERROR, "DATE_AMBIGUOUS", f"{label}: {note}"))
+        elif not text:
+            note = "No invoice date: type it from the page, e.g. 2026‑10‑05"
+            out.issues.append(Issue(ERROR, "INVOICE_DATE_INVALID", note))
+        elif name == "invoice_date":
+            note = f"“{text}” is not a date: type it as on the page, e.g. 2026‑10‑05"
+            out.issues.append(Issue(ERROR, "INVOICE_DATE_INVALID", f"{label}: {note}"))
+        else:
+            note = f"“{text}” is not a date: type it as on the page (e.g. 2026‑11‑04), or leave it blank"
+            out.issues.append(Issue(ERROR, "DUE_DATE_INVALID", f"{label}: {note}"))
+        out.notes[name] = note
+        # the checks meanwhile: the date as read (or, never read, a placeholder no approval can keep)
+        was = str(fallback.get(name) or "").strip()
+        out.header[name] = was if _iso(was) else (dt.date.today().isoformat() if name == "invoice_date" else "")
+    return out
+
+
+def currency_issues(currency: str) -> list[Any]:
+    """A three-letter currency that is no currency in use (XYZ): flagged, never a voucher (D-75). Not three letters is
+    validation's own CURRENCY_FORMAT."""
+    from ap_coder.coding.validation import ERROR, Issue
+
+    code = (currency or "").strip().upper()
+    if re.fullmatch(r"[A-Z]{3}", code) and code not in ISO_CURRENCIES:
+        return [Issue(ERROR, "CURRENCY_UNKNOWN", f"“{code}” is not a currency code in use: type it as on the page, "
+                      "e.g. CAD, USD or EUR")]  # fmt: skip
+    return []
+
+
+# The checks shown under the field they are about (their own words), besides FIELD_FLAGS' notes: {code: field}.
+CODE_FIELDS = {
+    "MISSING_VENDOR": "vendor_name", "VENDOR_NOT_IN_MASTER": "vendor_name", "VENDOR_ADDED_HERE": "vendor_name",
+    "VENDOR_ON_HOLD": "vendor_name", "JDE_NO_AN8": "vendor_name", "JDE_BAD_AN8": "vendor_name",
+    "MISSING_INVOICE_NUMBER": "invoice_number", "JDE_INVOICE_NUMBER_LONG": "invoice_number",
+    "DUPLICATE_INVOICE": "invoice_number", "DUPLICATE_IN_ERP": "invoice_number",
+    "INVOICE_DATE_NOT_FOUND": "invoice_date", "OLD_INVOICE_DATE": "invoice_date", "FUTURE_INVOICE_DATE": "invoice_date",
+    "DUE_BEFORE_INVOICE": "due_date", "JDE_DATE_RANGE": "invoice_date",
+    "CURRENCY_UNKNOWN": "currency", "CURRENCY_FORMAT": "currency", "JDE_CURRENCY": "currency",
+    "PO_UNKNOWN": "po_number", "PO_CLOSED": "po_number", "PO_VENDOR_MISMATCH": "po_number", "JDE_PO_LONG": "po_number",
+    "SUBTOTAL_MISMATCH": "subtotal", "TOTAL_MISMATCH": "grand_total", "TAX_LINES_TOTAL_MISMATCH": "tax_total",
+    "JDE_TAX_AREA": "ship_to_province",
+}  # fmt: skip
+# What the note under a field says for a check whose own message names the field already.
+_FIELD_PREFIX = re.compile(r"^(?:JD Edwards: )?(?:Invoice date|Due date|Currency): ")
+
+
+def code_flags(issues: list[Any]) -> dict[str, str]:
+    """{field: note}: the checks about one invoice detail (``CODE_FIELDS``), in their own words, for under the field."""
+    flags: dict[str, list[str]] = {}
+    for issue in issues:
+        name = CODE_FIELDS.get(issue.code)
+        if not name or issue.severity == "info" or issue.line_number:
+            continue
+        note = _FIELD_PREFIX.sub("", readable(issue.message))
+        note = note[:1].upper() + note[1:]
+        if note not in flags.setdefault(name, []):
+            flags[name].append(note)
+    return {name: " · ".join(notes) for name, notes in flags.items()}
+
+
+_LOCATIONS = {**FIELD_LABELS, "line_items": "Line", "tax_lines": "Tax line"}
+
+
+def plain_problem(problem: str) -> str:
+    """A field the coding can't be built from, in plain words: "Line 2 amount: …", never the model's "Value error"
+    or "line_items.1.amount"."""
+    where, _, what = problem.partition(": ")
+    if not what:
+        return problem
+    what = re.sub(r"^(?:Value|Assertion) error,\s*", "", what)
+    what = re.sub(r"^Input should be a valid (\w+).*", r"should be a \1", what)
+    parts = where.split(".")
+    if parts[0] in ("line_items", "tax_lines") and len(parts) >= 2 and parts[1].isdigit():
+        rest = " ".join(p.replace("_", " ") for p in parts[2:])
+        where = f"{_LOCATIONS[parts[0]]} {int(parts[1]) + 1}" + (f" {rest}" if rest else "")
+    else:
+        where = _LOCATIONS.get(parts[0], parts[0].replace("_", " ").capitalize())
+    return f"{where}: {what}"
+
+
+def flag_errors(errors: list[Any], date_notes: dict[str, str]) -> list[str]:
+    """The invoice details whose note under them is an error: red there as in "Must be fixed", not amber (B-796)."""
+    out = set(date_notes)
+    for issue in errors:
+        if issue.line_number:
+            continue
+        name = CODE_FIELDS.get(issue.code) or FIELD_FLAGS.get(issue.code, (None, None))[0]
+        if name:
+            out.add(name)
+    return sorted(out)
+
+
+def merge_flags(*sets: dict[str, str]) -> dict[str, str]:
+    """The notes under each field, from several sources, each said once."""
+    out: dict[str, list[str]] = {}
+    for flags in sets:
+        for name, note in flags.items():
+            for part in note.split(" · "):
+                if part and part not in out.setdefault(name, []):
+                    out[name].append(part)
+    return {name: " · ".join(notes) for name, notes in out.items() if notes}
+
+
+def _short_reason(text: str) -> str:
+    # the first sentence ("e.g. CAD" is no sentence's end)
+    return re.split(r"(?<=[a-z0-9)])(?<!e\.g)\. (?=[A-Z])|: (?=ask the pilot tester)", text, maxsplit=1)[0].rstrip(".")
+
+
+def hard_reasons(hard: list[Any]) -> list[str]:
+    """What keeps a voucher from being approved, even anyway: one short line each (D-75)."""
+    return [_short_reason(text) for _bad, text in grouped(hard)]
+
+
+# The review screen from top to bottom (B-797): the invoice details in the form's order, then the JD Edwards block,
+# the lines, the tax lines and the posting. The approve bar says the first thing that keeps it closed, as the clerk
+# meets it: a currency typed wrong before the bank account that follows it.
+SCREEN_ORDER = (
+    "vendor_name", "gst_hst_registration_number", "qst_registration_number", "pst_registration_number",
+    "supplier_province", "remit_bank_account", "invoice_number", "invoice_date", "po_number", "payment_terms",
+    "due_date", "currency", "pay_from_account", "ship_to_province", "original_invoice_number", "subtotal", "tax_total",
+    "grand_total", "jde", "lines", "tax_lines", "posting",
+)  # fmt: skip
+_CODE_PLACES = {"NO_LINE_ITEMS": "lines", "POSTING_UNBALANCED": "posting"}
+
+
+def ordered_blockers(line_pick: str, bank: str, hard: list[Any]) -> list[dict[str, str]]:
+    """Everything that keeps Approve closed, in the order of the screen: {"text", "kind"} (``pick``: a line's account
+    or cost center, a button to it; ``bank``: the Pay from account; ``hard``: what makes the voucher invalid)."""
+    place = {name: i for i, name in enumerate(SCREEN_ORDER)}
+    found: list[tuple[int, int, dict[str, str]]] = []
+    for n, (_bad, text, code, lines) in enumerate(grouped_issues(hard)):
+        where = "lines" if lines else CODE_FIELDS.get(code) or _CODE_PLACES.get(code) or "posting"
+        found.append((place.get(where, len(place)), n, {"text": _short_reason(text), "kind": "hard"}))
+    if line_pick:
+        found.append((place["lines"], -1, {"text": line_pick, "kind": "pick"}))
+    if bank:
+        found.append((place["pay_from_account"], -1, {"text": bank, "kind": "bank"}))
+    return [b for _, _, b in sorted(found, key=lambda f: (f[0], f[1]))]
+
+
+def field_help(store: Store, coding: InvoiceCoding, draft: Draft, capture: CaptureResult | None, dates: DateCheck,
+               issues: list[Any]) -> dict[str, dict[str, Any]]:  # fmt: skip
+    """A note under an empty or unclear field with a one-click fix: which of two dates, a PO this vendor has open
+    ("Use PO-89904"), a value boxed on the page while the field is empty ("Use BC-4410 from the page")."""
+    from ap_coder.coding.po import po_label
+
+    out: dict[str, dict[str, Any]] = {}
+    for name, choices in dates.choices.items():
+        out[name] = {"text": "Which date is it?",
+                     "actions": [{"label": c["label"], "value": c["value"]} for c in choices]}  # fmt: skip
+    header = draft.header
+    if not str(header.get("po_number") or "").strip() and any(i.code == "PO_NOT_QUOTED" for i in issues):
+        numbers = store.open_pos_for_vendor(vendor_key(coding.vendor_name))[:3]
+        if numbers:
+            out["po_number"] = {
+                "text": "No PO on the invoice. This vendor has "
+                + ("an open PO:" if len(numbers) == 1 else "open POs:"),
+                "actions": [{"label": f"Use {po_label(n)}", "value": n} for n in numbers],
+            }
+    if capture is not None:
+        for name in TEACHABLE:
+            if name in out or name in draft.absent or str(header.get(name) or "").strip():
+                continue
+            fr = capture.fields.get(name)
+            value = str(fr.value if fr is not None and fr.value is not None else "").strip()
+            if not value or fr.status == MISSING or not fr.boxes:
+                continue
+            short = value if len(value) <= 24 else f"{value[:23]}…"
+            out[name] = {"text": "Boxed on the page, but the field is empty.",
+                         "actions": [{"label": f"Use {short} from the page", "value": value}]}  # fmt: skip
+    return out
+
+
 def _amount_line(header: dict[str, Any]) -> dict[str, Any] | None:
     """ "1,000.00 + 130.00 tax = 1,130.00 CAD", and whether it adds up (the inputs can't show separators)."""
     try:
         sub, tax, total = (float(header.get(f) or 0) for f in AMOUNT_FIELDS)
     except (TypeError, ValueError):
         return None
-    return {"subtotal": money(sub), "tax": money(tax), "total": money(total), "currency": header.get("currency") or "",
-            "adds_up": abs(sub + tax - total) < 0.015}  # fmt: skip
+    return {"subtotal": signed(sub), "tax": signed(tax), "total": signed(total),
+            "currency": header.get("currency") or "", "adds_up": abs(sub + tax - total) < 0.015}  # fmt: skip
 
 
 # --- Grid actions ------------------------------------------------------------------------------------------------

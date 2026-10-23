@@ -438,6 +438,18 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def schema_of(folder: Path) -> str:
+    """The SCHEMA_VERSION a version's own source sets: ``core/store/_base.py`` since the store is a package (D-69),
+    ``core/store.py`` before; "?" when neither says."""
+    for part in ("store/_base.py", "store.py"):
+        path = folder / "ap_coder" / "core" / part
+        text = path.read_text(encoding="utf-8") if path.is_file() else ""
+        found = re.search(r"^SCHEMA_VERSION = (\d+)", text, re.M)
+        if found:
+            return found.group(1)
+    return "?"
+
+
 def check(before: dict, new: Path, port: int, old_ports: list[int], old_pids: list[int], old_gone: bool,
           launch_log: Path | None, home: Path) -> list[str]:  # fmt: skip
     c = Checks()
@@ -479,8 +491,7 @@ def check(before: dict, new: Path, port: int, old_ports: list[int], old_pids: li
     after = snapshot(db) if db.is_file() else {"invoices": [], "settings": {}, "vendors": [], "rules": []}
     if before.get("schema_version") is not None:
         # The schema the new version's own store writes (not a number this check would have to be kept in step with).
-        found = re.search(r"^SCHEMA_VERSION = (\d+)", (new / "ap_coder" / "core" / "store.py").read_text(), re.M)
-        want = found.group(1) if found else "?"
+        want = schema_of(new)
         c.that(after["settings"].get("schema_version") == want, f"database brought to schema {want} "
                f"(was {before['schema_version']})")  # fmt: skip
     rows = {r["id"]: r for r in after["invoices"]}

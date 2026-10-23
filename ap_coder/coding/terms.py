@@ -315,6 +315,9 @@ def payment(coding: dict[str, Any], default_days: int = DEFAULT_TERMS_DAYS, vend
 
 
 LONG_OVERDUE_DAYS = 60  # past this, "Overdue since Dec 2012", not "Overdue by 5042 days" (B-469)
+# An invoice dated after the day it is checked: a misread date, or a bill sent ahead; JD Edwards would get a G/L date in
+# the future. A warning, and a person sees it (touchless_gates), B-811.
+FUTURE_INVOICE_DAYS = 0
 OLD_INVOICE_DAYS = 365  # an invoice dated more than this before today is flagged: a misread date, or a very late bill
 
 
@@ -344,7 +347,8 @@ def payment_findings(
 ) -> list[tuple[str, str, str]]:  # fmt: skip
     """(severity, code, message) for ``validate_coding``: discounts on offer, due dates passed or odd.
     ``received``: the day AP Coder read the invoice (default ``today``): an invoice dated more than a year before it
-    is noted (OLD_INVOICE_DATE, information only, B-476)."""
+    is noted (OLD_INVOICE_DATE, information only, B-476); one dated after ``today`` is a warning
+    (FUTURE_INVOICE_DATE, B-811)."""
     today = today or dt.date.today()
     p = payment(coding, default_days, vendor_terms)
     findings: list[tuple[str, str, str]] = []
@@ -366,6 +370,10 @@ def payment_findings(
     if left is not None and left < 0 and float(coding.get("grand_total") or 0) > 0:
         ago = f"overdue since {overdue_since(p.due)}" if left < -LONG_OVERDUE_DAYS else f"{-left} days ago"
         findings.append((INFO, "PAYMENT_OVERDUE", f"due {p.due} ({ago}): late fees may apply"))
+    if invoice_date and (invoice_date - today).days > FUTURE_INVOICE_DAYS:
+        findings.append((WARNING, "FUTURE_INVOICE_DATE",
+                         f"dated {invoice_date}, after today: check the date on the page; the G/L date would be in "
+                         "the future"))  # fmt: skip
     # Information only: it blocks no approval, bulk or touchless; a credit note is often old on purpose (B-476).
     received = received or today
     if invoice_date and (received - invoice_date).days > OLD_INVOICE_DAYS and float(coding.get("grand_total") or 0) > 0:

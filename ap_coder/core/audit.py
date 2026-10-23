@@ -80,6 +80,7 @@ ACTIONS = {
     "autonomy_off": ("pan_tool", "gray", "Autonomy turned off"),
     "autonomy_suspended": ("gpp_maybe", "err", "Autonomy suspended"),
     "autonomy_held": ("pan_tool", "warn", "Vendor kept supervised"),
+    "layout_reset": ("restart_alt", "warn", "Vendor's layout reset"),
     "autonomy_allowed": ("bolt", "info", "Vendor allowed to go touchless again"),
     "touchless_on": ("bolt", "ok", "Touchless processing turned on"),
     "touchless_off": ("pan_tool", "gray", "Touchless processing turned off"),
@@ -198,7 +199,9 @@ def describe(event: dict[str, Any]) -> str:
             prefix += "over the approval limit (second approval needed); "
         return prefix + _approved_text(d)
     if action == "rejected":
-        return f"reason: {d.get('reason') or 'none given'}"
+        return f"reason: {d.get('reason') or 'none given'}" + (
+            f" · vendor's layout {d['layout']}" if d.get("layout") else ""
+        )
     if action == "deleted":
         return f"{d.get('vendor') or d.get('file', '')} {d.get('invoice_number') or ''}".strip()
     if action == "exported":
@@ -265,7 +268,8 @@ def describe(event: dict[str, Any]) -> str:
     if action == "final_approved":
         return f"approved after {d.get('first_approver') or '?'} (over the approval limit)"
     if action in ("sent_back", "reopened"):
-        return f"back to the review queue · reason: {d.get('reason') or 'none given'}"
+        layout = f" · vendor's layout {d['layout']}" if d.get("layout") else ""  # what it taught, taken back (D-71)
+        return f"back to the review queue · reason: {d.get('reason') or 'none given'}{layout}"
     if action == "erp_register_imported":
         return (
             "cleared" if d.get("cleared") else f"{d.get('rows', 0)} row(s) read; {d.get('total', 0)} invoice(s) known"
@@ -288,6 +292,8 @@ def describe(event: dict[str, Any]) -> str:
         return (
             f"for every vendor; largest invoice without a person {float(limit):,.2f}" if limit else "for every vendor"
         )
+    if action == "layout_reset":
+        return f"{d.get('vendor') or d.get('key') or ''}: read as a new vendor until approvals teach its layout again"
     if action in ("autonomy_on", "autonomy_off", "autonomy_suspended", "autonomy_held", "autonomy_allowed"):
         text = str(d.get("supplier") or d.get("key") or "")
         if action == "autonomy_on" and d.get("audit_rate") is not None:

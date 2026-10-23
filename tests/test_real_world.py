@@ -253,3 +253,28 @@ def test_a_new_attempt_replaces_failed_attempts_at_the_same_file(tmp_path, groun
     assert len(store.list_invoices()) == 1
     store.add_invoice(f, ground_truth, {})
     assert [i["status"] for i in store.list_invoices()] == ["review"]
+
+
+def test_a_us_vendor_charging_its_own_tax_on_a_supply_in_canada_is_one_finding(ground_truth, reference):
+    """B-814: a US vendor shipping to Nova Scotia charged US sales tax and no Canadian tax. Not two findings that
+    contradict each other ("non-Canadian tax charged" and "no sales tax charged … confirm it is exempt"): one, the
+    foreign tax not recoverable, and the HST that may still be owed (at the border on goods, self-assessed on
+    services). A Canadian supply with no tax and no foreign tax still asks if it is exempt."""
+    doc = copy.deepcopy(ground_truth)
+    doc.update(supplier_province="OUTSIDE_CANADA", ship_to_province="NS", currency="USD",
+               gst_hst_registration_number="")  # fmt: skip
+    doc["tax_lines"] = [{"tax_type": "OTHER", "province": "", "rate": 0.0625, "taxable_amount": 500.8,
+                         "tax_amount": 31.30}]  # fmt: skip
+    doc["line_items"] = [{**doc["line_items"][0], "amount": 500.8, "quantity": 1, "unit_price": 500.8,
+                          "taxes_applied": ["OTHER"]}]  # fmt: skip
+    doc["subtotal"], doc["tax_total"], doc["grand_total"] = 500.8, 31.30, 532.10
+    findings = [f for f in check_taxes(InvoiceCoding.model_validate(doc), reference.tax, None)
+                if f.code in ("TAX_NON_CANADIAN", "NO_TAX_CHARGED")]  # fmt: skip
+    assert [f.code for f in findings] == ["TAX_NON_CANADIAN"]
+    message = findings[0].message
+    assert "31.30" in message and "Nova Scotia" in message and "HST" in message and "self-assess" in message
+    assert "exempt" not in message
+    plain = copy.deepcopy(doc)
+    plain["tax_lines"], plain["tax_total"], plain["grand_total"] = [], 0.0, 500.8
+    plain["line_items"][0]["taxes_applied"] = []
+    assert "NO_TAX_CHARGED" in _codes(plain, reference)

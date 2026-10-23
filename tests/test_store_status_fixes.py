@@ -46,10 +46,10 @@ def test_two_people_exporting_at_once_never_export_an_invoice_twice(tmp_path, mo
             time.sleep(0.5)  # Bob's export runs now, if nothing holds it back
         return real_now()
 
-    monkeypatch.setattr(store_module, "_now", now_while_ann_exports)
+    monkeypatch.setattr(store_module.purchasing, "_now", now_while_ann_exports)  # export batches
     batch = ann.create_export_batch([invoice_id], "csv", actor="Ann")
     thread.join(10)
-    monkeypatch.setattr(store_module, "_now", real_now)
+    monkeypatch.setattr(store_module.purchasing, "_now", real_now)
     assert len(bob_saw) == 1 and isinstance(bob_saw[0], ValueError)  # Bob waited, then found nothing to export
     assert [(b["id"], b["invoices"]) for b in ann.export_batches()] == [(batch, 1)]
     assert ann.get_invoice(invoice_id)["export_batch"] == batch
@@ -148,6 +148,7 @@ def test_approvals_nobody_checked_teach_nothing_and_count_for_no_accuracy(tmp_pa
             "outcome, reviewer, created_at) VALUES (?, 1, 'acme', 'Acme Ltd', 'Widgets', '6000', 'accepted', ?, ?)",
             (auto, AUTONOMOUS_REVIEWER, "2026-01-01T00:00:00"),
         )
+        conn.execute("DELETE FROM settings WHERE key = 'feedback_cleanup'")  # as an older version left it
     assert [r["reviewer"] for r in Store(store.path).feedback_rows()] == ["Ann"]
 
 

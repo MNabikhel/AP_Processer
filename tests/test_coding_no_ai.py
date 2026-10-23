@@ -325,3 +325,26 @@ def test_the_realistic_coding_benchmark_adds_what_the_default_leaves_out(tmp_pat
     assert "split" in rows[0] and "history_warnings" in report["summary"]
     plain = simulate(8, 4, 3)
     assert "approved" not in plain[0] and len(plain) == len(rows)
+
+
+def test_the_coding_benchmark_scores_line_tax_codes_and_lessons(tmp_path):
+    """Each line has a true tax code (BC: goods GST and PST, services GST only, utilities their own), the invoice
+    charges its taxes on those lines, and the report scores the codes proposed for sure (precision and coverage) and
+    the line lessons shown."""
+    from ap_coder.bench.coding import invoice_taxes, run_coding, true_tax
+
+    assert true_tax("Electrician - labour", "supply") == "GST~PST"
+    assert true_tax("Copy paper 8.5x11, case of 10", "supply") == "GST+PST"
+    assert true_tax("Basic monthly charge", "water") == "EXEMPT"
+
+    class L:
+        def __init__(self, amount):
+            self.amount = amount
+
+    assert invoice_taxes([L(100.0), L(50.0)], ["GST+PST", "GST~PST"]) == {"gst_amount": 7.5, "pst_amount": 7.0}
+    report = run_coding(5, 4, 2, tmp_path / "tax")
+    tc = report["summary"]["tax_codes"]
+    assert tc["lines"] == report["summary"]["overall"]["lines"] and 0 < tc["sure"] <= tc["lines"]
+    assert tc["precision"] is not None and tc["coverage"] is not None
+    assert set(report["summary"]["lessons"]) == {"lines", "shown", "wrong", "noise", "screen", "screen_wrong"}
+    assert "## Line tax codes" in (tmp_path / "tax" / "report.md").read_text(encoding="utf-8")

@@ -31,7 +31,7 @@
   {% if not pending %}
   <section class="card">
     {{ ui.empty_note("All caught up", " Every invoice has been reviewed.", "task_alt") }}
-    <a class="link" href="/process">Process new invoices <span class="ms" aria-hidden="true">arrow_forward</span></a>
+    <a class="link" href="/process" autofocus>Process new invoices <span class="ms" aria-hidden="true">arrow_forward</span></a>
   </section>
   {% else %}
   <section class="card flush rq-queue">

@@ -289,8 +289,10 @@ def learn_from_approval(store: Any, invoice_id: int, final: dict[str, Any], *, a
     [fields], "counted", "template"}), for ``taught_message``."""
     learned: dict[str, Any] = {"supplier": "", "name": "", "fields": 0, "corrected": [], "counted": False,
                                "template": False}  # fmt: skip
+    from ..core.store import APPROVED, PENDING
+
     inv = store.get_invoice(invoice_id)
-    if inv is None:
+    if inv is None or inv.get("status") not in (APPROVED, PENDING):  # withdrawn meanwhile: nothing to learn (B-782)
         return learned
     from ..ai.lessons import record as record_lessons
 
@@ -333,11 +335,40 @@ def learn_from_approval(store: Any, invoice_id: int, final: dict[str, Any], *, a
         profile = store.get_supplier_profile(key) or {}
         template = learn(profile.get("template") or None, layout, confirmed_values(final, taught),
                          document=str(inv.get("file_sha256") or ""))  # fmt: skip
-        store.save_supplier_profile(key, display_name=name, template=template, actor=actor or None)
-        learned["template"] = True
+        # Put back if this approval is withdrawn (D-71); refused if it was withdrawn meanwhile (B-782).
+        learned["template"] = store.save_supplier_profile(
+            key, display_name=name, template=template, actor=actor or None, invoice_id=invoice_id
+        )
     except Exception as exc:
         log.warning("invoice %s: supplier template not updated (%s)", invoice_id, exc)
+    try:  # where AP clicked, kept with what capture read: the training export's boxes (D-73)
+        _keep_taught(store, invoice_id, approved, taught)
+    except Exception as exc:  # learning must never block an approval
+        log.warning("invoice %s: taught boxes not kept (%s)", invoice_id, exc)
+    if store.forget_if_withdrawn(invoice_id):  # withdrawn while it was learned from: taken back (B-782)
+        learned.update(counted=False, template=False)
     return learned
+
+
+def _keep_taught(store: Any, invoice_id: int, approved: dict[str, Any], taught: dict[str, list[Box]] | None) -> None:
+    """The boxes AP clicked at this approval, kept with what capture read (``taught``) beside the value each was
+    clicked for (``taught_values``). A box clicked at an earlier approval of the invoice stays only while its field
+    was approved with the same value (B-784): reopened and changed, the old box is not where the new value is."""
+    from .normalize import same_value
+
+    capture = store.get_capture(invoice_id)
+    if capture is None:
+        return
+    old, old_values = capture.get("taught") or {}, capture.get("taught_values") or {}
+    boxes = {f: [b.to_list() for b in bs] for f, bs in (taught or {}).items() if bs}
+    values = {f: approved.get(f) for f in boxes}
+    for f, kept in old.items():
+        was, now = old_values.get(f), approved.get(f)
+        if f not in boxes and was not in (None, "") and now not in (None, "") and same_value(f, was, now):
+            boxes[f], values[f] = kept, was
+    if (boxes, values) != (old, old_values):
+        capture["taught"], capture["taught_values"] = boxes, values
+        store.save_capture(invoice_id, capture)
 
 
 def supplier_progress(store: Any, key: str) -> tuple[str, int, str]:

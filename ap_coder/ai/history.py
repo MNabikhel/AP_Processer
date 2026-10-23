@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from ..core.headers import match_columns
 from ..core.safe import parse_amount
 from ..erp.statements import day_first_order, read_date
 
@@ -26,19 +27,8 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
 REQUIRED = ("vendor_name", "description", "gl_code")
 
 
-def _norm(value: Any) -> str:
-    return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
-
-
 def map_columns(headers: list[str]) -> dict[str, str]:
-    found: dict[str, str] = {}
-    normalised = {_norm(h): h for h in headers}
-    for target, aliases in COLUMN_ALIASES.items():
-        for alias in (_norm(target), *(_norm(a) for a in aliases)):
-            if alias in normalised and normalised[alias] not in found.values():
-                found[target] = normalised[alias]
-                break
-    return found
+    return match_columns(headers, COLUMN_ALIASES)
 
 
 def rows_from_records(records: list[dict[str, Any]], columns: dict[str, str]) -> tuple[list[dict[str, Any]], int]:

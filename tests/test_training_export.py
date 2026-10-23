@@ -14,7 +14,13 @@ import pymupdf
 import pytest
 from PIL import Image
 
-from ap_coder.ai.training_export import INSTRUCTION, approved_values, export_training_set, training_invoices
+from ap_coder.ai.training_export import (
+    INSTRUCTION,
+    approved_values,
+    export_training_set,
+    holdout_split,
+    training_invoices,
+)
 from ap_coder.capture.confidence import MIN_EVIDENCE
 from ap_coder.capture.types import Box, CaptureResult, FieldResult
 from ap_coder.capture.workflow import AUTONOMOUS_REVIEWER, capture_invoice, learn_from_approval
@@ -84,7 +90,7 @@ def test_export_training_set(approved, tmp_path, ground_truth):
     with zipfile.ZipFile(out) as zf:
         names = set(zf.namelist())
         images = sorted(n for n in names if n.startswith("images/"))
-        assert names == {*images, "fields.jsonl", "chat.jsonl", "README.txt"}
+        assert names == {*images, "fields.jsonl", "chat.jsonl", "chat_holdout.jsonl", "coding.jsonl", "README.txt"}
         assert images == sorted([*(f"images/{ids['pdf']}-p{n}.png" for n in range(1, pdf_pages + 1)),
                                  f"images/{ids['photo']}-p1.png"])  # fmt: skip
         assert all(zf.read(name).startswith(PNG) for name in images)
@@ -248,3 +254,96 @@ def test_readers_tab_with_approvals(client, store, ground_truth):
     with zipfile.ZipFile(io.BytesIO(response.content)) as z:
         fields = [json.loads(line) for line in z.read("fields.jsonl").decode().splitlines() if line.strip()]
     assert len({f["invoice_id"] for f in fields}) == 2  # one row per approved invoice
+
+
+def test_export_v2_adds_corrections_boxes_a_holdout_split_and_coding_rows(tmp_path, ground_truth):
+    """Format 2 is additive (old readers keep working): each field says whether AP corrected it and, when known, its
+    box (taught by click, or found by the supplier's template); each invoice is in "train" or "holdout" by a hash of
+    its id (the same every time); coding.jsonl has one row per line: its words, then its GL account, cost center and
+    tax code."""
+    store = Store(tmp_path / "ap.db")
+    capture, _, _ = capture_invoice(PDF, ground_truth, store=store)
+    final = copy.deepcopy(ground_truth) | {"invoice_number": "NW-FIXED-1"}
+    invoice_id = store.add_invoice(PDF, ground_truth, {"requires_review": False})
+    store.save_capture(invoice_id, capture.to_dict())
+    store.approve_invoice(invoice_id, final, "Ann")
+    learn_from_approval(store, invoice_id, final, actor="Ann", taught={"invoice_number": [Box(0, 0.6, 0.1, 0.8, 0.12)]})
+    buf = io.BytesIO()
+    export_training_set(store, buf)
+    with zipfile.ZipFile(buf) as zf:
+        row = json.loads(zf.read("fields.jsonl").decode("utf-8").splitlines()[0])
+        coding = [json.loads(line) for line in zf.read("coding.jsonl").decode("utf-8").splitlines()]
+        readme = " ".join(zf.read("README.txt").decode("utf-8").split())
+    assert row["format"] == 2 and row["split"] == holdout_split(invoice_id) in ("train", "holdout")
+    assert row["corrected"]["invoice_number"] is True and row["corrected"]["vendor_name"] is False
+    assert row["boxes"]["invoice_number"] == {"box": [0, 0.6, 0.1, 0.8, 0.12], "from": "taught"}
+    assert row["fields"]["invoice_number"] == "NW-FIXED-1"  # the v1 keys are all still there
+    assert len(coding) == len(final["line_items"]) and coding[0]["invoice_id"] == invoice_id
+    first = coding[0]
+    assert (
+        first["text"] == final["line_items"][0]["description"]
+        and first["gl"] == final["line_items"][0]["predicted_gl_code"]
+    )
+    assert {"cost_center", "tax_code", "split", "vendor", "amount", "corrected"} <= set(first)
+    assert first["tax_code"] == "HST" and first["split"] == row["split"]
+    assert [holdout_split(i) for i in range(1, 400)].count("holdout") in range(20, 61)  # about one in ten
+    assert holdout_split(invoice_id) == holdout_split(invoice_id)
+    for text in ("coding.jsonl", "holdout", "corrected", "taught"):
+        assert text in readme, text
+
+
+def test_the_holdout_invoices_are_kept_out_of_the_chat_rows(approved, monkeypatch):
+    """chat.jsonl, the file fine-tuning tools train on, held the holdout invoices too, with nothing to tell them
+    apart (B-783): they now go to chat_holdout.jsonl, and each chat row says its split."""
+    from ap_coder.ai import training_export
+
+    store, ids = approved
+    monkeypatch.setattr(training_export, "holdout_split", lambda i: "holdout" if i == ids["photo"] else "train")
+    buf = io.BytesIO()
+    export_training_set(store, buf)
+    with zipfile.ZipFile(buf) as zf:
+        train = [json.loads(line) for line in zf.read("chat.jsonl").decode("utf-8").splitlines()]
+        holdout = [json.loads(line) for line in zf.read("chat_holdout.jsonl").decode("utf-8").splitlines()]
+        readme = " ".join(zf.read("README.txt").decode("utf-8").split())
+    assert [r["split"] for r in train] == ["train"] and [r["split"] for r in holdout] == ["holdout"]
+    assert holdout[0]["messages"][0]["content"][0]["path"] == f"images/{ids['photo']}-p1.png"
+    assert all(ids["photo"] != int(c["path"].split("/")[1].split("-")[0])
+               for r in train for c in r["messages"][0]["content"] if c["type"] == "image")  # fmt: skip
+    assert "chat_holdout.jsonl" in readme and "never in chat.jsonl" in readme
+
+
+def test_boxes_clicked_at_an_earlier_approval_are_not_kept_for_a_changed_value(tmp_path, ground_truth):
+    """Approved with the invoice number clicked on the page, reopened, the number changed and approved again
+    without a click: the first click's box stayed and the export gave it as where the new number is (B-784)."""
+    store = Store(tmp_path / "ap.db")
+    capture, _, _ = capture_invoice(PDF, ground_truth, store=store)
+    invoice_id = store.add_invoice(PDF, ground_truth, {"requires_review": False})
+    store.save_capture(invoice_id, capture.to_dict())
+    first = copy.deepcopy(ground_truth) | {"invoice_number": "NW-FIXED-1"}
+    clicked = {"invoice_number": [Box(0, 0.6, 0.1, 0.8, 0.12)], "po_number": [Box(0, 0.6, 0.2, 0.8, 0.22)]}
+    store.approve_invoice(invoice_id, first, "Ann")
+    learn_from_approval(store, invoice_id, first, actor="Ann", taught=clicked)
+    store.reopen(invoice_id, "Ann", "wrong number")
+    second = copy.deepcopy(first) | {"invoice_number": "NW-FIXED-2"}
+    store.approve_invoice(invoice_id, second, "Ann")
+    learn_from_approval(store, invoice_id, second, actor="Ann")
+    buf = io.BytesIO()
+    export_training_set(store, buf)
+    with zipfile.ZipFile(buf) as zf:
+        row = json.loads(zf.read("fields.jsonl").decode("utf-8").splitlines()[0])
+    assert (row["boxes"].get("invoice_number") or {}).get("from") != "taught"
+    assert row["boxes"]["po_number"] == {"box": [0, 0.6, 0.2, 0.8, 0.22], "from": "taught"}  # the same value: kept
+
+
+def test_learning_from_an_approval_withdrawn_meanwhile_teaches_nothing(tmp_path, ground_truth):
+    """Learning runs after the approval is saved: reopened in between (another reviewer), it still taught the
+    template and recorded its outcomes (B-782)."""
+    store = Store(tmp_path / "ap.db")
+    invoice_id = store.add_invoice(PDF, ground_truth, {"requires_review": False})
+    store.approve_invoice(invoice_id, ground_truth, "Ann")
+    store.reopen(invoice_id, "Bob", "not this one")
+    learned = learn_from_approval(store, invoice_id, ground_truth, actor="Ann")
+    assert not learned["template"] and not learned["counted"]
+    with store._conn() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM template_snapshots").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM supplier_outcomes").fetchone()[0] == 0

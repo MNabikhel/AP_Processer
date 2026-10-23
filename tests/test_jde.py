@@ -427,7 +427,10 @@ def test_validation_failures():
     assert "no JDE supplier number" in jde.validate([_invoice(ON)], settings, lambda f: "")[1][0]
     assert "not a JDE address number" in jde.validate([_invoice(ON)], settings, lambda f: "V10023")[1][0]
     assert "longer than 25" in jde.validate([_invoice(ON, invoice_number="X" * 26)], settings, AN8)[1][0]
-    assert "longer than 8" in jde.validate([_invoice(ON, po_number="PO-882139")], settings, AN8)[1][0]
+    assert (
+        "longer than 8"
+        in jde.validate([_invoice(ON, po_number="PO-882139")], jde.JdeSettings(po_matched=True), AN8)[1][0]
+    )
     unmapped = jde.validate([_invoice(ON)], jde.JdeSettings(use_default_rule=False), AN8)[1]
     assert len(unmapped) == 5 and "GL 6010 / CC400 has no JDE account" in unmapped[0]
     no_bu = jde.validate([_invoice(ON)], jde.JdeSettings(bu_from_cost_center=False), AN8)[1]
@@ -718,3 +721,54 @@ def test_docs_exist():
     for column in [*jde.HEADER_COLUMNS, *jde.DIST_COLUMNS]:
         assert column in text, column
     assert "R04110ZA" in text and "JP040000" in text and "Orchestrator" in text
+
+
+def test_no_balance_message_while_a_line_has_no_account_or_the_province_is_unknown():
+    """B-812: an uncoded line, or a province of supply not read, has its own finding: "unbalanced … check the Tax
+    setup" beside it misled the clerk. The voucher is still held back, and a real imbalance is still said."""
+    settings = jde.JdeSettings()
+    uncoded = _invoice(ON)
+    uncoded["final_output"]["gl_distribution"][0]["gl_code"] = "UNASSIGNED"
+    nowhere = _invoice(ON, supplier_province="", ship_to_province="")
+    for inv in (uncoded, nowhere):
+        problems = jde.validate([inv], settings, AN8)[1]  # still refused
+        assert problems and not any(p.startswith("unbalanced") for p in problems), problems
+        codes = {c for _, c, _, _ in jde.voucher_findings(inv["final_output"], settings, "10023")}
+        assert "JDE_UNBALANCED" not in codes
+    pst_recoverable = _invoice(BC, setup=_setup(PST=TaxTreatment("PST", RECOVERABLE, "2330")))
+    codes = {c for _, c, _, _ in jde.voucher_findings(pst_recoverable["final_output"], settings, "10023")}
+    assert "JDE_UNBALANCED" in codes
+
+
+def test_a_po_number_longer_than_jde_holds_is_kept_here_and_not_sent():
+    """D-87 (B-813): vendors print POs like "4500078813" or "MNT-2026-028", longer than VLPO's 8 characters. The
+    clerk is not made to change what is printed: the voucher goes out without a PO reference (VLPO, VLPDCT, VLPKCO
+    blank), the PO kept in AP Coder and in the remark when it fits, with a warning. A PO-matched voucher needs its
+    PO in E1's order number: still held back."""
+    settings = jde.JdeSettings()
+    for po in ("4500078813", "MNT-2026-028"):
+        inv = _invoice(ON, po_number=po)
+        assert jde.validate([inv], settings, AN8) == {}
+        (finding,) = [f for f in jde.voucher_findings(inv["final_output"], settings, "10023") if f[1] == "JDE_PO_LONG"]
+        assert finding[0] == "warning"
+        assert finding[2] == ("JD Edwards' PO field holds 8 characters: this PO number is kept in AP Coder and not "
+                              "sent")  # fmt: skip
+        header = _files([inv])[jde.HEADER_FILE][0]
+        assert (header["VLPO"], header["VLPDCT"], header["VLPKCO"]) == ("", "", "")
+        assert header["VLRMK"] == f"AP Coder #1 PO {po}"
+    short = _files([_invoice(ON, po_number="PO77120")])[jde.HEADER_FILE][0]
+    assert (short["VLPO"], short["VLRMK"]) == ("PO77120", "AP Coder #1")
+    too_long = _files([_invoice(ON, po_number="P" * 20)])[jde.HEADER_FILE][0]
+    assert too_long["VLRMK"] == "AP Coder #1"  # no room in the remark's 30 characters
+    matched = jde.JdeSettings(po_matched=True)
+    inv = _invoice(ON, po_number="4500078813")
+    assert "longer than 8" in jde.validate([inv], matched, AN8)[1][0]
+    (finding,) = [f for f in jde.voucher_findings(inv["final_output"], matched, "10023") if f[1] == "JDE_PO_LONG"]
+    assert finding[0] == "error"
+
+
+def test_a_line_with_no_gl_account_yet_has_no_e1_account():
+    """An uncoded line (UNASSIGNED) is not an object account: the review screen showed "CC400.UNASSIGN" (B-830)."""
+    settings = jde.JdeSettings(default_bu="CC400")
+    assert jde.account_for("UNASSIGNED", "", settings) is None and jde.account_text("UNASSIGNED", "", settings) == ""
+    assert jde.account_text("6010", "", settings) == "CC400.6010"

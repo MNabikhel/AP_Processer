@@ -458,3 +458,58 @@ def test_the_background_thread_reviews_when_nothing_is_left_to_read(store, monke
     monkeypatch.setattr(page_worker, "ready", lambda settings, store: ("", "OvisOCR2 isn't running"))
     assert reader._review_one(_settings(), store) == page_worker.IDLE_SECONDS
     assert seen == [{"after_page_reader": False}]  # OvisOCR2 not running: nothing waits for it
+
+
+def test_the_reviewer_is_shown_the_gl_account_names(store, touchless, monkeypatch):  # noqa: F811
+    """It asked the store for the accounts of table "gl", which raises: the error was swallowed and the AI reviewer
+    never saw an account's name, only its code."""
+    _held_for_the_reviewer(store, monkeypatch)
+    shown = []
+    real = verifier.proposal
+    monkeypatch.setattr(verifier, "proposal", lambda output, vendor, names=None: shown.append(names) or real(
+        output, vendor, names))  # fmt: skip
+    verifier.verify_one(_settings(), store, coder=FakeCoder(_answer()))
+    names = {a["code"]: a["description"] for a in store.list_accounts("gl_accounts")}
+    assert names and shown == [names]
+
+
+def test_a_review_cut_short_is_put_back_in_line_at_once(tmp_path):
+    """A review interrupted (the dashboard closed during it) stayed "verifying" for two hours, and a review that
+    ended after its invoice was put back in line still wrote its end over it. Like the page reader's queue, each
+    review now names the process doing it, and the end of one no longer under way changes nothing."""
+    import sqlite3
+
+    from ap_coder.core.store import Store
+
+    s = Store(tmp_path / "a.db")
+    for invoice_id in (5, 6):
+        s.queue_verification(invoice_id)
+    gone = "999999999:dead:"  # a process that no longer runs
+    assert s.next_verification(after_page_reader=False, reader=gone)["reader"] == gone
+    assert s.next_verification(after_page_reader=False, reader=page_worker.READER_ID)["invoice_id"] == 6
+    assert s.release_verifications(lambda reader: reader != gone) == 1
+    assert s.verification(5)["status"] == "waiting" and s.verification(6)["status"] == "verifying"
+    assert not s.finish_verification(5, "done", result={"status": "agreed"})  # no longer under way: left in line
+    assert s.verification(5)["status"] == "waiting" and s.verification(5)["result"] is None
+    assert s.finish_verification(6, "done", result={"status": "agreed"})
+    assert s.next_verification(after_page_reader=False, reader=gone)["invoice_id"] == 5
+    assert page_worker.release_interrupted(s) == 1 and s.verification(5)["status"] == "waiting"
+    with sqlite3.connect(s.path) as conn:  # a database of an older version, without the column
+        conn.execute("ALTER TABLE verifications DROP COLUMN reader")
+    assert Store(s.path).next_verification(after_page_reader=False)["reader"] == ""
+
+
+def test_a_review_taken_over_by_another_process_is_not_ended_by_the_first(tmp_path):
+    """A review put back in line and taken by another process could still be ended by the process that started it
+    first: its result went over the second one's review under way (B-787). Only the process doing it ends it."""
+    from ap_coder.core.store import Store
+
+    s = Store(tmp_path / "a.db")
+    s.queue_verification(5)
+    first, second = "999999999:dead:", page_worker.READER_ID
+    assert s.next_verification(after_page_reader=False, reader=first)["reader"] == first
+    assert s.release_verifications(lambda reader: reader != first) == 1
+    assert s.next_verification(after_page_reader=False, reader=second)["reader"] == second
+    assert not s.finish_verification(5, "done", result={"status": "agreed"}, reader=first)
+    assert s.verification(5)["status"] == "verifying" and s.verification(5)["result"] is None
+    assert s.finish_verification(5, "done", result={"status": "agreed"}, reader=second)

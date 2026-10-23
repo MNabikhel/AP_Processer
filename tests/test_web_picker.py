@@ -378,7 +378,8 @@ def test_in_a_browser_the_vendor_is_typed_or_picked_from_the_vendor_list(browser
     page.keyboard.press("Tab")
     assert vendor.input_value() == "Zebra Unknown Supplies"
     if vendors["enforced"]:
-        assert "Not in the vendor list" in page.inner_text("[data-vendor-match]")
+        # said once under the field: AP Coder's line, or the check's own note once checked (B-796)
+        assert "not in the vendor list" in page.inner_text(".inv-details [data-field=vendor_name]").lower()
     # the currency: picked, or typed
     currency = page.locator("[name=currency][form=inv]")
     currency.fill("")
@@ -446,7 +447,8 @@ def test_in_a_browser_checking_shows_while_a_check_runs_and_goes_after_even_when
     page.route("**/check", slow)
     page.fill("[name=invoice_number][form=inv]", "A-1")
     page.wait_for_function("() => document.querySelector('[data-checking]').textContent === 'Checking…'")
-    page.wait_for_function("() => document.querySelector('[data-checking]').textContent === ''")
+    # checked and kept: "Draft saved" and the time (D-76)
+    page.wait_for_function("() => document.querySelector('[data-checking]').textContent.startsWith('Draft saved')")
     page.unroute("**/check")
 
     def failed(route):  # AP Coder not answering

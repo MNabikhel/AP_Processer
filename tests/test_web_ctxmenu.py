@@ -264,9 +264,8 @@ def test_in_a_browser_right_click_a_details_name_clear_it_and_undo_puts_it_back(
     labels = menu.locator("[role=menuitem]").all_inner_texts()
     assert any("Clear this value" in t for t in labels) and any("Copy value" in t for t in labels), labels
     assert any("Teach where it is" in t for t in labels) and any("Show on page" in t for t in labels), labels
-    # the invoice number is needed: "Not on this invoice" is there, greyed, with why
-    absent = _item(page, "absent")
-    assert absent.get_attribute("aria-disabled") == "true" and "can't be left out" in absent.get_attribute("title")
+    # the invoice number is needed: "Not on this invoice" is left out, never greyed (B-798)
+    assert _item(page, "absent").count() == 0 and page.locator(".cm [aria-disabled=true]").count() == 0
     with _checked(page) as sent:
         _item(page, "clear").click()
     assert re.search(r'name="invoice_number"\r\n\r\n\r\n', sent.value.post_data or "")
@@ -304,9 +303,9 @@ def test_in_a_browser_not_on_this_invoice_leaves_it_blank_with_a_note_and_nothin
     row = page.locator('.iv-row[data-field="gst_hst_registration_number"]')
     if row.count():  # the Fields list beside the page follows the form
         assert "Not on this invoice" in row.inner_text() and "t-edited" in row.get_attribute("class")
-    # marked already: the item says so; a value typed in unmarks it
+    # marked already: the item is left out (B-798); a value typed in unmarks it
     _menu(page, _name(page, "gst_hst_registration_number"))
-    assert _item(page, "absent").get_attribute("aria-disabled") == "true"
+    assert _item(page, "absent").count() == 0
     page.keyboard.press("Escape")
     assert page.locator(MENU).count() == 0
     page.locator("#toasts .flash-act").click()  # Undo
@@ -326,7 +325,7 @@ def test_in_a_browser_a_fields_row_and_a_box_on_the_page_have_the_fields_menu(br
     shown = page.locator(".iv-f[data-field]").first
     name = shown.get_attribute("data-field")
     _menu(page, shown.locator("rect.iv-box").first, force=True)
-    assert _item(page, "show").get_attribute("aria-disabled") is None
+    assert _item(page, "show").count() == 1 and _item(page, "show").get_attribute("aria-disabled") is None
     _item(page, "show").click()
     page.wait_for_function(
         "n => document.querySelector(`.iv-f[data-field=\"${n}\"]`).classList.contains('selected')", arg=name
@@ -352,7 +351,7 @@ def test_in_a_browser_delete_a_line_and_undo_brings_it_back_with_its_picker_work
     labels = page.locator(f"{MENU} [role=menuitem]").all_inner_texts()
     for want in ("Delete line", "Duplicate line", "Insert a line below", "Split this line", "Clear GL account"):
         assert any(want in t for t in labels), (want, labels)
-    assert _item(page, "above").get_attribute("aria-disabled") == "true"  # the first line has none above
+    assert _item(page, "above").count() == 0  # the first line has none above: left out, not greyed (B-741)
     with _checked(page):
         _item(page, "delete").click()
     assert _lines(page).count() == n - 1

@@ -7,8 +7,15 @@ tools start from:
 * ``images/<invoice id>-p<page>.png``: the pages (up to five), as a page reader sees them;
 * ``fields.jsonl``: one row per invoice: its images, the header fields, tax lines and line items AP
   approved, and which of AP Coder's readers read each approved value;
-* ``chat.jsonl``: the same as chat fine-tuning rows (the pages and an instruction, then the approved JSON);
+* ``chat.jsonl``: the same as chat fine-tuning rows (the pages and an instruction, then the approved JSON), the
+  "train" invoices only; ``chat_holdout.jsonl``: the "holdout" invoices' (never to train on);
+* ``coding.jsonl``: one row per invoice line: its words, then the GL account, cost center and tax code AP approved;
 * ``README.txt``: what each file is and how it can be used.
+
+Format 2 (``FORMAT``) only adds to format 1, so a reader of format 1 keeps working: per field, whether AP corrected
+it and its box on the page when known (taught by click, or found by the supplier's template); each invoice's
+``split``, "train" or "holdout", by a hash of its id (``holdout_split``: the same invoice is always on the same side,
+whatever else is exported with it); and ``coding.jsonl``.
 
 Only invoices a person checked go in: never a demo invoice (made up), one approved without a person, or one
 bulk-approved unchanged without anyone opening it (nobody checked its values on the page). The ZIP is
@@ -18,6 +25,7 @@ written where it is asked to be and goes nowhere else.
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import io
 import json
 import logging
@@ -33,6 +41,8 @@ log = logging.getLogger(__name__)
 MAX_PAGES = 5
 MAX_SIDE = 2048  # the long side of a page image at most, in pixels (what page readers read at)
 INSTRUCTION = "Read this invoice's header fields, tax lines and line items as JSON."
+FORMAT = 2  # fields.jsonl's rows: 2 adds corrected, boxes and split to 1's keys (and coding.jsonl)
+HOLDOUT_SHARE = 10  # one invoice in this many is kept aside ("holdout"), never to train on
 # The header fields a page reader learns to read: printed on the invoice (the provinces AP Coder works out,
 # and the bank account, are left out).
 HEADER_FIELDS = (
@@ -60,7 +70,17 @@ def training_invoices(store: Store, since: str | dt.date | None = None) -> dict[
 
     start = _since(since)
     rows = store.invoice_columns(
-        ("id", "file_name", "source_path", "reviewer", "reviewed_at", "second_reviewed_at", "final_output", "meta"),
+        (
+            "id",
+            "file_name",
+            "source_path",
+            "reviewer",
+            "reviewed_at",
+            "second_reviewed_at",
+            "final_output",
+            "meta",
+            "ai_output",
+        ),
         status=APPROVED,
     )
     # The latest approval of each invoice (events come newest first): a bulk approval took the AI's values as
@@ -147,9 +167,87 @@ def readers_by_field(capture: dict[str, Any] | None, final: dict[str, Any]) -> d
     return out
 
 
-def chat_row(images: list[str], values: dict[str, Any]) -> dict[str, Any]:
-    """One chat fine-tuning example: the pages and the instruction, then the approved values as JSON."""
+def holdout_split(invoice_id: int) -> str:
+    """ "holdout" for about one invoice in ``HOLDOUT_SHARE`` (by a hash of its id, so always the same), else "train"."""
+    digest = hashlib.sha256(f"ap-coder-holdout:{int(invoice_id)}".encode()).hexdigest()
+    return "holdout" if int(digest[:8], 16) % HOLDOUT_SHARE == 0 else "train"
+
+
+def corrected_fields(proposed: dict[str, Any] | None, final: dict[str, Any]) -> dict[str, bool]:
+    """{header field: whether AP changed what AP Coder proposed} (a field AP Coder left blank and AP filled in
+    counts as corrected)."""
+    from ..capture.normalize import same_value
+
+    proposed = proposed or {}
+    out = {}
+    for f in HEADER_FIELDS:
+        was, now = proposed.get(f), final.get(f)
+        if was in (None, "") and now in (None, ""):
+            out[f] = False
+        elif was in (None, "") or now in (None, ""):
+            out[f] = True
+        else:
+            out[f] = not same_value(f, was, now)
+    return out
+
+
+def field_boxes(capture: dict[str, Any] | None, final: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """{field: {"box": [page, x0, y0, x1, y1] as fractions of the page, "from": "taught" or "template"}}: where the
+    approved value is printed, when known: the words AP clicked to teach it, else the supplier's template found it
+    there and it was the value approved."""
+    from ..capture.normalize import same_value
+    from ..capture.types import Box, union_all
+
+    out: dict[str, dict[str, Any]] = {}
+    clicked_for = (capture or {}).get("taught_values") or {}
+    for f, boxes in ((capture or {}).get("taught") or {}).items():
+        box = union_all([Box.from_list(b) for b in boxes or []])
+        if f in clicked_for and not same_value(f, clicked_for[f], final.get(f)):
+            continue  # clicked for another value than the one approved (B-784)
+        if f in HEADER_FIELDS and box is not None:
+            out[f] = {"box": box.to_list(), "from": "taught"}
+    for f, fr in ((capture or {}).get("fields") or {}).items():
+        if f in out or f not in HEADER_FIELDS or "template" not in (fr.get("sources") or {}):
+            continue
+        box = union_all([Box.from_list(b) for b in fr.get("boxes") or []])
+        if box is not None and final.get(f) not in (None, "") and same_value(f, fr.get("value"), final.get(f)):
+            out[f] = {"box": box.to_list(), "from": "template"}
+    return out
+
+
+def coding_rows(invoice_id: int, final: dict[str, Any], proposed: dict[str, Any] | None, split: str) -> list[str]:
+    """coding.jsonl's rows of one invoice: per line, its words and amount, then what AP approved (GL account, cost
+    center, tax code) and which of the three AP changed from what AP Coder proposed."""
+    from ..coding.line_tax import approved_code
+    from ..core.memory import pair_lines
+
+    lines = final.get("line_items") or []
+    taxes = final.get("tax_lines") or []
+    out = []
+    for before, li in pair_lines((proposed or {}).get("line_items") or [], lines):
+        code = approved_code(li, lines, taxes)
+        was = before or {}
+        out.append(json.dumps({
+            "invoice_id": invoice_id, "split": split, "vendor": final.get("vendor_name") or "",
+            "line_number": li.get("line_number"), "text": li.get("description") or "", "amount": li.get("amount"),
+            "gl": li.get("predicted_gl_code") or "", "cost_center": li.get("predicted_cost_center") or "",
+            "tax_code": code,
+            "corrected": {
+                "gl": bool(before) and was.get("predicted_gl_code") != li.get("predicted_gl_code"),
+                "cost_center": bool(before)
+                and (was.get("predicted_cost_center") or "") != (li.get("predicted_cost_center") or ""),
+                "tax_code": bool(before) and approved_code(was, (proposed or {}).get("line_items") or [],
+                                                           (proposed or {}).get("tax_lines") or []) != code,
+            },
+        }, ensure_ascii=False))  # fmt: skip
+    return out
+
+
+def chat_row(images: list[str], values: dict[str, Any], split: str = "train") -> dict[str, Any]:
+    """One chat fine-tuning example: the pages and the instruction, then the approved values as JSON (``split``: the
+    invoice's, "train" or "holdout")."""
     return {
+        "split": split,
         "messages": [
             {"role": "user",
              "content": [*({"type": "image", "path": p} for p in images), {"type": "text", "text": INSTRUCTION}]},
@@ -172,7 +270,8 @@ def export_training_set(
     if isinstance(dest, (str, Path)):
         Path(dest).parent.mkdir(parents=True, exist_ok=True)
     fields_rows: list[str] = []
-    chat_rows: list[str] = []
+    chat_rows: dict[str, list[str]] = {"train": [], "holdout": []}
+    coding: list[str] = []
     with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zf:
         for inv in picked["invoices"]:
             path = store.invoice_file(inv) or Path(inv["source_path"] or "")  # (a file an update moved: found)
@@ -194,17 +293,24 @@ def export_training_set(
             final = inv["final_output"]
             values = approved_values(final)
             capture = store.get_capture(inv["id"])
+            split = holdout_split(inv["id"])
             fields_rows.append(json.dumps({
                 "invoice_id": inv["id"], "file": inv["file_name"], "approved_at": inv["approved_at"],
                 "layout": (capture or {}).get("layout_source") or "", "images": images,
                 "fields": {f: values[f] for f in HEADER_FIELDS}, "tax_lines": values["tax_lines"],
                 "line_items": values["line_items"], "readers": readers_by_field(capture, final),
+                "format": FORMAT, "split": split, "corrected": corrected_fields(inv.get("ai_output"), final),
+                "boxes": field_boxes(capture, final),
             }, ensure_ascii=False))  # fmt: skip
-            chat_rows.append(json.dumps(chat_row(images, values), ensure_ascii=False))
+            coding += coding_rows(inv["id"], final, inv.get("ai_output"), split)
+            # The holdout is kept out of chat.jsonl, the file a tuning tool trains on (B-783).
+            chat_rows[split].append(json.dumps(chat_row(images, values, split), ensure_ascii=False))
             counts["invoices"] += 1
             counts["pages"] += len(images)
         zf.writestr("fields.jsonl", "".join(row + "\n" for row in fields_rows))
-        zf.writestr("chat.jsonl", "".join(row + "\n" for row in chat_rows))
+        zf.writestr("chat.jsonl", "".join(row + "\n" for row in chat_rows["train"]))
+        zf.writestr("chat_holdout.jsonl", "".join(row + "\n" for row in chat_rows["holdout"]))
+        zf.writestr("coding.jsonl", "".join(row + "\n" for row in coding))
         zf.writestr("README.txt", readme(counts, _since(since)))
     return counts
 
@@ -245,14 +351,31 @@ fields.jsonl
     number, dates, PO, terms, currency, GST/HST and QST numbers, subtotal, tax, total), the tax lines and
     the line items, and, per field, which of AP Coder's readers read the approved value ("agreed") and
     which read something else ("disagreed"), with the status AP saw (verified / likely / check).
+    Added in format 2 ("format": 2; every key above is unchanged): "corrected", per field, true when AP
+    changed what AP Coder proposed (the mistakes worth learning from); "boxes", per field when known,
+    where the approved value is printed ([page, x0, y0, x1, y1] as fractions of the page, from the top
+    left), "from" "taught" (the words AP clicked) or "template" (found by the supplier's learned layout);
+    and "split": "train", or "holdout" for about one invoice in {HOLDOUT_SHARE}, kept aside to measure a tuned
+    model on pages it never saw. The split goes by the invoice's number, so an invoice stays on the same side
+    in every export.
     Readers: rules = OCR or the PDF's text read by AP Coder's rules, ocr / ocr2 = a second OCR read,
     vlm = the page reader, template = the supplier's learned layout, ai = the AI model,
     di = Azure Document Intelligence.
 
 chat.jsonl
-    The same invoices as chat fine-tuning examples, one per line: the user turn holds the page images
+    The "train" invoices as chat fine-tuning examples, one per line: the user turn holds the page images
     ({{"type": "image", "path": "images/..."}}) and the instruction "{INSTRUCTION}"; the assistant turn
-    is the JSON AP approved (header fields, tax lines, line items).
+    is the JSON AP approved (header fields, tax lines, line items). Each line also says its "split".
+
+chat_holdout.jsonl
+    The "holdout" invoices, in the same layout as chat.jsonl and never in chat.jsonl: to measure a tuned
+    model on pages it never saw, not to train on.
+
+coding.jsonl
+    One line per invoice line: its words ("text") and amount, then the GL account, cost center and tax code
+    AP approved ("gl", "cost_center", "tax_code", e.g. "GST+PST", or "GST~PST" for GST charged and PST
+    exempt), which of the three AP corrected, and the invoice's "split". For training or testing a model
+    that codes lines from their words.
 
 README.txt
     This file.
@@ -263,7 +386,7 @@ AP Coder made this file on your computer and sends it nowhere: it leaves the com
 copies it. It holds your suppliers' real invoices and amounts, so keep and share it as you would the
 invoices themselves. The page images show anything printed on the invoices, including bank account
 and remittance details when a supplier prints them: share it only with people who may see those. The
-GL coding is not in it.
+GL coding is in coding.jsonl only.
 
 What it is for
 --------------
@@ -271,6 +394,6 @@ Fine-tuning a vision model that reads invoice pages, such as OvisOCR2 (the page 
 recommends) or Qwen 3.5, so it learns your suppliers' layouts and the mistakes to avoid. Fine-tuning
 tools for vision models (LLaMA-Factory, ms-swift, Unsloth and others) take chat rows like these with a
 small conversion: each {{"type": "image", "path": ...}} becomes the image file it names, in the tool's own
-layout. Keep a few invoices aside, never trained on, to measure the tuned model on pages it never saw,
-and use the tuned model only once it reads them at least as well as the one it replaces.
+layout. Train on chat.jsonl only; keep chat_holdout.jsonl aside, never trained on, to measure the tuned
+model on pages it never saw, and use the tuned model only once it reads them at least as well as the one it replaces.
 """

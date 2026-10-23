@@ -681,3 +681,10 @@ details.tech summary {cursor: pointer; font-size: 13px; color: var(--lg-muted); 
 .card.next-step h4 {font-size: 15px;}
 .apc-step > a {white-space: nowrap; display: inline-flex; align-items: center;}
 .apc-step > a .ms {font-size: 18px;}
+/* A message's detail, folded under one line (the approval's "What it learned", B-804). */
+.flash-more {margin-top: 2px; font-size: 12.5px;}
+.flash-more > summary {cursor: pointer; width: max-content; opacity: .85; text-decoration: underline;
+  text-underline-offset: 2px;}
+.flash-more > summary:hover {opacity: 1;}
+.flash-more > div {margin-top: 4px; color: var(--lg-text);}
+.flash .flash-act .flash-key {margin-left: 6px; font: inherit; font-size: 11px; opacity: .7;}

@@ -26,11 +26,13 @@ from ..core.ui import FIELD_WORDS as _WORDS
 
 SETTING = "why_after"  # corrections of one situation since its last reason before the "why" question
 DEFAULT_WHY_AFTER = 3
-LINE_GL = "line_gl"  # the field of a line-coding lesson
+LINE_GL = "line_gl"  # the field of a line-coding lesson (its GL account)
+LINE_CC = "line_cc"  # the field of a line's cost center lesson
+LINE_FIELDS = (LINE_GL, LINE_CC)
 INVOICE, CREDIT_NOTE = "invoice", "credit note"
 MAX_PROMPT_LINES = 8
 
-FIELD_WORDS = {**_WORDS, LINE_GL: _WORDS["line_gl"]}  # one place for these words: core/ui.py
+FIELD_WORDS = {**_WORDS, LINE_GL: _WORDS["line_gl"], LINE_CC: "cost center"}  # one place for these words: core/ui.py
 
 
 def kind_of(output: dict[str, Any]) -> str:
@@ -66,8 +68,8 @@ def _shown(value: Any) -> str:
 
 def outcomes(proposed: dict[str, Any], final: dict[str, Any]) -> list[dict[str, Any]]:
     """What an approval says about each situation: {key, vendor, kind, field, pattern, proposed, value, corrected}
-    for each header field AP Coder proposed or AP filled in, and for each line whose GL account AP changed or
-    confirmed."""
+    for each header field AP Coder proposed or AP filled in, and for each line whose GL account or cost center AP
+    changed or confirmed (``LINE_GL``, ``LINE_CC``)."""
     from ..capture.supplier import outcome_rows
 
     vendor = str(final.get("vendor_name") or "")
@@ -89,13 +91,14 @@ def outcomes(proposed: dict[str, Any], final: dict[str, Any]) -> list[dict[str, 
         if before and guessed(before.get("reasoning_justification")):
             continue  # the AI only guessed: keeping it confirms nothing, changing it corrects nothing (B-475)
         seen.add(pattern)
-        was = str((before or {}).get("predicted_gl_code") or "")
-        now = str(after.get("predicted_gl_code") or "")
-        if not now:
-            continue
-        out.append({"key": situation(vendor, kind, LINE_GL, pattern), "vendor": vendor, "kind": kind,
-                    "field": LINE_GL, "pattern": pattern, "proposed": was, "value": now,
-                    "corrected": bool(before) and was not in ("", UNASSIGNED) and was != now})  # fmt: skip
+        for field, column in ((LINE_GL, "predicted_gl_code"), (LINE_CC, "predicted_cost_center")):
+            was = str((before or {}).get(column) or "")
+            now = str(after.get(column) or "")
+            if not now or (field == LINE_CC and now == UNASSIGNED):  # no cost center chosen: nothing to learn
+                continue
+            out.append({"key": situation(vendor, kind, field, pattern), "vendor": vendor, "kind": kind,
+                        "field": field, "pattern": pattern, "proposed": was, "value": now,
+                        "corrected": bool(before) and was not in ("", UNASSIGNED) and was != now})  # fmt: skip
     return out
 
 
@@ -127,7 +130,7 @@ def due_for_why(store: Any, proposed: dict[str, Any], final: dict[str, Any]) -> 
         if lesson and not lesson.get("retired") and times >= threshold:
             label = FIELD_WORDS.get(row["field"], row["field"])
             if row["pattern"]:
-                label = f"GL account of lines like “{row['pattern']}”"
+                label = f"{'Cost center' if row['field'] == LINE_CC else 'GL account'} of lines like “{row['pattern']}”"
             asked.append({"key": row["key"], "field": row["field"], "label": label, "pattern": row["pattern"],
                           "proposed": row["proposed"], "value": row["value"], "times": times,
                           "explanation": lesson.get("explanation") or ""})  # fmt: skip
@@ -141,6 +144,8 @@ def sentence(lesson: dict[str, Any], gl_names: dict[str, str] | None = None) -> 
     if lesson.get("field") == LINE_GL:
         name = (gl_names or {}).get(value, "")
         text = f"{vendor}: lines like “{lesson.get('pattern')}” are coded to GL {value}{' ' + name if name else ''}"
+    elif lesson.get("field") == LINE_CC:
+        text = f"{vendor}: lines like “{lesson.get('pattern')}” go to cost center {value}"
     else:
         word = FIELD_WORDS.get(lesson.get("field") or "", lesson.get("field") or "")
         text = f"{vendor} {kind}s: AP corrects the {word}"
@@ -154,16 +159,88 @@ def sentence(lesson: dict[str, Any], gl_names: dict[str, str] | None = None) -> 
     return text + "."
 
 
+AGREEING = 2  # corrections to the same value before a lesson with no reason reaches the AI (D-72)
+
+
+def reaches_ai(lesson: dict[str, Any]) -> bool:
+    """Whether a lesson goes to the AI and to the review screen's "Learned" hints: not retired, and corrected
+    ``AGREEING`` times to its value (``agreeing``, from the store), or corrected once with the clerk's reason. A single
+    correction may be a slip: it is counted, and waits (D-72)."""
+    if not lesson.get("corrected") or lesson.get("retired"):
+        return False
+    agreeing = lesson.get("agreeing", lesson.get("corrected")) or 0
+    return agreeing >= AGREEING or bool(str(lesson.get("explanation") or "").strip())
+
+
+def on_screen(lesson: dict[str, Any]) -> bool:
+    """Whether a lesson is shown to the reviewer as a hint: corrected at least once, not retired. A person decides
+    what to do with it, so it needs no second correction (``reaches_ai`` does: the AI acts on it, D-72)."""
+    return bool(lesson.get("corrected")) and not lesson.get("retired")
+
+
+SEEN_ONCE = "Corrected once before: "  # a hint from a single correction, not yet one the AI reads
+
+
 def prompt_lines(store: Any, vendor: str, kind: str | None = None, *, fields: str = "all",
-                 gl_names: dict[str, str] | None = None, limit: int = MAX_PROMPT_LINES) -> list[str]:  # fmt: skip
+                 gl_names: dict[str, str] | None = None, limit: int = MAX_PROMPT_LINES,
+                 screen: bool = False) -> list[str]:  # fmt: skip
     """The lessons for a vendor (of a kind of document), newest first, as sentences: ``fields`` "all", "header" or
-    "lines". Only lessons AP corrected at least once, never retired ones."""
+    "lines". For the AI, only lessons that reach it (``reaches_ai``); with ``screen``, the reviewer's hints
+    (``on_screen``): a lesson from a single correction too, said as such (``SEEN_ONCE``). Never retired ones."""
     if store is None or not vendor_key(vendor or ""):
         return []
     try:
         rows = store.lessons_for(vendor_key(vendor), kind)
     except Exception:  # noqa: BLE001 - an older store: no lessons
         return []
-    rows = [r for r in rows if r.get("corrected") and not r.get("retired")
-            and (fields == "all" or (fields == "lines") == (r.get("field") == LINE_GL))]  # fmt: skip
-    return [sentence(r, gl_names) for r in rows[:limit]]
+    shown = on_screen if screen else reaches_ai
+    rows = [r for r in rows if shown(r)
+            and (fields == "all" or (fields == "lines") == (r.get("field") in LINE_FIELDS))]  # fmt: skip
+    return [("" if reaches_ai(r) else SEEN_ONCE) + sentence(r, gl_names) for r in rows[:limit]]
+
+
+# --- Does a lesson help? (the Lessons tab, D-74) ---------------------------------------------------------------------
+
+WORKING, NOT_WORKING, TOO_EARLY = "working", "not_working", "too_early"
+MIN_AFTER = 3  # invoices of the vendor seen since a lesson reached the AI before saying whether it helps
+
+
+def _rate(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    corrected = sum(1 for r in rows if r.get("corrected"))
+    return {"invoices": len(rows), "corrected": corrected,
+            "rate": round(corrected / len(rows), 2) if rows else None}  # fmt: skip
+
+
+def effect(history: list[dict[str, Any]], lesson: dict[str, Any] | None) -> dict[str, Any]:
+    """Corrections per invoice of a lesson's vendor and field before the lesson reached the AI (``reaches_ai``: the
+    second correction to its value, or the first with the clerk's reason) and after: {"reached", "since", "before",
+    "after", "verdict"}. ``history``: the approvals that saw the situation, oldest first (``Store.lesson_history``). The
+    verdict is ``WORKING`` (fewer corrections since), ``NOT_WORKING`` (as many or more, over ``MIN_AFTER`` invoices or
+    more: to suggest retiring it, never done on its own) or ``TOO_EARLY``."""
+    lesson = lesson or {}
+    value, explained = str(lesson.get("value") or ""), str(lesson.get("explained_at") or "")
+    reached, agreeing = None, 0  # the approval (its place in ``history``) with which the lesson reached the AI
+    for n, r in enumerate(history):
+        if not r.get("corrected"):
+            continue
+        agreeing += 1 if str(r.get("value") or "") == value else 0
+        if agreeing >= AGREEING or (explained and str(r["at"]) >= explained):
+            reached = n
+            break
+    if reached is None and explained and any(r.get("corrected") for r in history):
+        # The reason was given after the corrections: from the last approval before it.
+        reached = max((n for n, r in enumerate(history) if str(r["at"]) <= explained), default=len(history) - 1)
+    since = str(history[reached]["at"]) if reached is not None else ""
+    before = history[: reached + 1] if reached is not None else list(history)
+    after = history[reached + 1 :] if reached is not None else []
+    out = {
+        "reached": reached is not None,
+        "since": since,
+        "before": _rate(before),
+        "after": _rate(after),
+        "verdict": TOO_EARLY,
+    }
+    if reached is not None and len(after) >= MIN_AFTER:
+        better = out["after"]["rate"] < (out["before"]["rate"] or 0)
+        out["verdict"] = WORKING if better else NOT_WORKING
+    return out

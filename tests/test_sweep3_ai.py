@@ -57,7 +57,7 @@ def test_a_vendor_imported_first_keeps_its_learning_past_the_memory_read_cap(tmp
                           for n in (1, 2) for d, gl in lines.items()])  # fmt: skip
     store.import_history([{"vendor_name": f"Zenith Freight {i}", "description": f"Freight charge lot {i}",
                            "gl_code": "5100", "amount": 10.0, "date": "2025-06-01"} for i in range(30)])  # fmt: skip
-    monkeypatch.setattr(store_mod, "FEEDBACK_READ", 20)
+    monkeypatch.setattr(store_mod.learning, "FEEDBACK_READ", 20)
     assert len(store.feedback_rows()) == 20  # the cap holds, and Northwind's rows are not in it
     result = _offline_pipeline(reference, store).process(SAMPLES / f"{SAMPLE_STEM}.md", save=False)
     coded = {li["description"]: li["predicted_gl_code"] for li in result.output["line_items"]}

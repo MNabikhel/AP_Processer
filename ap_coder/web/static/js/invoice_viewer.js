@@ -834,6 +834,12 @@ export class InvoiceViewer {
     return typeof this.zoom === "number" ? this.zoom : this.fitPct(this.zoom);
   }
 
+  /** The least zoom: 50%, or the whole page when it fits only smaller (Fit page at 45%: "−" never zooms in, B-829). */
+  minZoom() {
+    const page = this.fitPct(FIT_PAGE);
+    return Number.isFinite(page) && page > 0 ? Math.min(MIN_ZOOM, page) : MIN_ZOOM;
+  }
+
   /** Size the page for the zoom and the rotation: the sheet (upright) is turned inside a frame of the room it takes. */
   sizeSheet() {
     const info = this.pageInfo();
@@ -865,7 +871,7 @@ export class InvoiceViewer {
     const fit = this.zoom === FIT_WIDTH;
     this.zoomText.title = fit ? `Zoom ${words} (the width fits): click for 100%` : `Zoom ${words}: click to fit the width (0)`;
     this.zoomText.setAttribute("aria-label", fit ? `Zoom ${words}, fit width. Show at 100%` : `Zoom ${words}. Fit the width`);
-    this.outBtn.disabled = pct <= MIN_ZOOM + 0.5;
+    this.outBtn.disabled = pct <= this.minZoom() + 0.5;
     this.inBtn.disabled = pct >= MAX_ZOOM - 0.5;
     this.fitWidthBtn.setAttribute("aria-pressed", String(fit));
     this.fitPageBtn.setAttribute("aria-pressed", String(this.zoom === FIT_PAGE));
@@ -875,8 +881,11 @@ export class InvoiceViewer {
   /** "+" or "-": the next step of ZOOM_STEPS up or down from the zoom shown. */
   zoomStep(dir, at = null) {
     const now = this.zoomPct();
-    const next = dir > 0 ? ZOOM_STEPS.find((z) => z > now * 1.01) : [...ZOOM_STEPS].reverse().find((z) => z < now / 1.01);
+    const floor = this.minZoom();
+    const steps = ZOOM_STEPS.filter((z) => z >= floor);
+    const next = dir > 0 ? steps.find((z) => z > now * 1.01) : [...steps].reverse().find((z) => z < now / 1.01);
     if (next !== undefined) this.setZoom(next, at);
+    else if (dir < 0 && floor < now / 1.01) this.setZoom(floor, at); // below 50%: the whole page
   }
 
   /** The page fractions (x, y; 0..1 on the page, not clamped) under a point of the window, the rotation undone. */
@@ -1023,7 +1032,7 @@ export class InvoiceViewer {
       this.wheelQueued = false;
       const factor = this.wheelFactor;
       this.wheelFactor = 1;
-      this.setZoom(clamp(this.zoomPct() * factor, MIN_ZOOM, MAX_ZOOM), this.wheelAt);
+      this.setZoom(clamp(this.zoomPct() * factor, this.minZoom(), MAX_ZOOM), this.wheelAt);
     });
   }
 
@@ -1122,7 +1131,7 @@ export class InvoiceViewer {
     if (value !== FIT_WIDTH && value !== FIT_PAGE) {
       value = Number(value);
       if (!Number.isFinite(value)) return;
-      value = clamp(value, MIN_ZOOM, MAX_ZOOM);
+      value = clamp(value, this.minZoom(), MAX_ZOOM);
     }
     this.hideTip();
     this.keepInPlace(() => {
@@ -1542,7 +1551,9 @@ export class InvoiceViewer {
       } else this.hideTip();
       return;
     }
-    if (isTyping(e.target)) return;
+    // A box the review screen focused on opening, not yet used, keeps no Space from the Hand over the page (D-76).
+    const unused = e.key === " " && e.target.dataset?.autofocused === "1" && this.overStage;
+    if (isTyping(e.target) && !unused) return;
     if ((e.key === "n" || e.key === "N") && !e.shiftKey) {
       e.preventDefault();
       this.nextToCheck();
@@ -1577,7 +1588,9 @@ export class InvoiceViewer {
       // on the page. A box, a button or a link anywhere else keeps Space for itself, the pointer wherever it rests
       // (B-591); with neither, it scrolls the dashboard page as usual.
       const onPage = this.stage.contains(e.target);
-      const nowhere = !e.target || e.target === document.body || e.target === document.documentElement;
+      // (a box the review screen focused on opening, not yet used by the clerk, counts as nowhere: D-76)
+      const nowhere = !e.target || e.target === document.body || e.target === document.documentElement ||
+        e.target.dataset?.autofocused === "1";
       if (!onPage && !(nowhere && this.overStage)) return false;
       e.preventDefault();
       this.spaceTaken = true;

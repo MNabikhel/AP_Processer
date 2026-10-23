@@ -290,19 +290,40 @@ def _terms_key(value: Any) -> str | None:
 
 def _matches(name: str, raw: str, value: Any) -> str | None:
     """Does printed ``raw`` show ``value``? Returns the date order it was read in (or "" for a match)."""
+    return _matches_key(name, raw, compare_key(name, value))
+
+
+def _matches_key(name: str, raw: str, target: Any) -> str | None:
+    """``_matches`` with the value's ``compare_key`` worked out once: learning tries every span of every row."""
+    if target is None:
+        return None
     if name == "payment_terms" and (not _has_letters(raw) or any(t.endswith(":") for t in raw.split())):
         return None  # the terms as printed ("30 days"): not just the number in them, nor with their label
     if name in DATE_FIELDS:
-        target = compare_key(name, value)
-        for iso, order in date_candidates(raw):
+        for iso, order in _printed_dates(raw):
             if iso == target:
                 return order
         return None
     if name in AMOUNT_FIELDS:
-        a, b = parse_amount(raw), compare_key(name, value)
-        return "" if a is not None and b is not None and abs(abs(a) - abs(b)) < 0.005 else None
-    key = compare_key(name, value)
-    return "" if key is not None and compare_key(name, raw) == key else None
+        a = _printed_amount(raw)
+        return "" if a is not None and abs(abs(a) - abs(target)) < 0.005 else None
+    return "" if _printed_key(name, raw) == target else None
+
+
+# The same printed spans are read again for each field and each approval: their readings are kept (pure functions).
+@lru_cache(maxsize=65536)
+def _printed_dates(raw: str) -> tuple[tuple[str, str], ...]:
+    return tuple(date_candidates(raw))
+
+
+@lru_cache(maxsize=65536)
+def _printed_amount(raw: str) -> float | None:
+    return parse_amount(raw)
+
+
+@lru_cache(maxsize=65536)
+def _printed_key(name: str, raw: str) -> Any:
+    return compare_key(name, raw)
 
 
 # --- Value shapes ---------------------------------------------------------------------------------------------
@@ -612,11 +633,14 @@ def _make_anchor(rows: list[list[Word]], value: list[Word]) -> Anchor | None:
 def _find_spans(layout: DocLayout, name: str, value: Any) -> list[tuple[int, list[Word], str]]:
     """Where the confirmed ``value`` is printed: (page number, words, date order), smallest spans only."""
     found: list[tuple[int, list[Word], str]] = []
+    target = compare_key(name, value)
+    if target is None:
+        return found
     for page in layout.pages:
         for row in _rows(page.words):
             for i in range(len(row)):
                 for j in range(i, min(i + 8, len(row))):
-                    order = _matches(name, _join(row[i : j + 1]), value)
+                    order = _matches_key(name, _join(row[i : j + 1]), target)
                     if order is not None:
                         found.append((page.number, row[i : j + 1], order))
 
@@ -1504,6 +1528,12 @@ HEADER_PROVEN_SOFT = {"LINES_ADD_UP"}
 ALWAYS_A_PERSON: dict[str, str] = {
     "VENDOR_BANK_CHANGED": "the vendor's bank details changed",
     "PST_EXEMPTION_TO_CONFIRM": "a PST exemption was inferred from the other lines, for a person to confirm",
+    # A provincial tax's exemption learned from earlier approvals, and a tax that does not reconcile with the lines'
+    # tax codes: a person looks (D-80).
+    "TAX_EXEMPTION_LEARNED": "a PST or QST exemption was learned from earlier approvals, for a person to confirm",
+    "TAX_BASE_MISMATCH": "the tax charged does not add up with the lines' tax codes",
+    "EXEMPT_LINE_TAXED": "the tax charged does not add up with the lines' tax codes",
+    "TAX_NOT_ALLOCATED": "the tax charged does not add up with the lines' tax codes",
     "VENDOR_TAX_NUMBER_CHANGED": "the GST/HST number changed",
     "VENDOR_QST_CHANGED": "the QST number changed",
     "VENDOR_PST_CHANGED": "the PST number changed",
@@ -1515,6 +1545,7 @@ ALWAYS_A_PERSON: dict[str, str] = {
     "AMOUNT_UNUSUAL": "the amount is unusual for this vendor",
     "VENDOR_NOT_IN_MASTER": "the vendor is not in the vendor master",
     "VENDOR_ON_HOLD": "the vendor is on hold",
+    "FUTURE_INVOICE_DATE": "it is dated in the future",  # B-811
     "FILE_CUT_OFF": "the file looks cut off",  # its end is missing: part of the invoice may be (B-266)
     # A name never approved before, or not in the vendor master though its GST/HST number is: the supplier's record
     # (kept by its business number) is not this name's.
@@ -1551,6 +1582,9 @@ ALWAYS_A_PERSON_RULES: list[tuple[str, str]] = [
     ("A new vendor name", "no invoice under that name approved yet, even with a touchless vendor's GST/HST number"),
     ("Purchase order exception", "the PO is unknown, closed or another vendor's, or billed beyond what was ordered or "
      "received"),
+    ("Tax to look at", "a PST or QST exemption learned from earlier approvals, or a tax charged that the lines' tax "
+     "codes don't add up to"),
+    ("Dated in the future", "an invoice date after today: misread, or a bill sent ahead"),
     ("File cut off", "a PDF whose end is missing (a download that stopped): part of the invoice may be too"),
     ("Not read by every reader", "the page reader has not read it yet, not every page of it (nor the local readers, "
      "past its first 20 pages), or it is a text file"),

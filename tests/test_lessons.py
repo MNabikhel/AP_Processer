@@ -73,6 +73,7 @@ def test_the_ai_and_the_reviewer_read_the_lessons(tmp_path, ground_truth):
     proposed, final = _doc(ground_truth, "ACCT 1"), _doc(ground_truth, "1-2026")
     final["line_items"][0]["predicted_gl_code"] = "6999"
     lessons.record(store, 1, proposed, final)
+    lessons.record(store, 2, proposed, final)  # the same correction twice: the line lesson is shown
     key = lessons.situation(final["vendor_name"], lessons.INVOICE, "invoice_number")
     store.explain_lesson(key, "account number then year", "Jane")
     lines = lessons.prompt_lines(store, final["vendor_name"], lessons.INVOICE, gl_names={"6999": "Telecom"})
@@ -182,3 +183,102 @@ def test_the_question_threshold_in_settings(client_store):
     assert client.post("/settings/review/approval", data=data, headers=PAGE).status_code == 200
     assert lessons.why_after(store) == 5
     assert client.post("/settings/review/approval", data={**data, "why_after": "99"}, headers=PAGE).status_code == 400
+
+
+def test_a_lesson_reaches_the_ai_after_two_agreeing_corrections_or_one_with_a_reason(tmp_path, ground_truth):
+    """A single correction may be a slip: it is counted, but the AI and the review screen's hints wait for a second
+    correction to the same value, or for the clerk's reason (D-72)."""
+    store = Store(tmp_path / "a.db")
+    vendor = ground_truth["vendor_name"]
+    proposed = _doc(ground_truth, "ACCT 1")
+
+    def corrected(n: int, number: str) -> None:
+        lessons.record(store, n, proposed, _doc(ground_truth, number))
+
+    def shown() -> list[str]:
+        return [line for line in lessons.prompt_lines(store, vendor) if "invoice number" in line]
+
+    key = lessons.situation(vendor, lessons.INVOICE, "invoice_number")
+    corrected(1, "1-2026")
+    assert store.lesson(key)["corrected"] == 1 and not lessons.reaches_ai(store.lesson(key)) and shown() == []
+    # The reviewer sees it at once (a person decides), said as a single correction.
+    screen = lessons.prompt_lines(store, vendor, screen=True)
+    assert any(line.startswith(lessons.SEEN_ONCE) and "invoice number" in line for line in screen)
+    corrected(2, "2-2026")  # a second correction, to another value: the two don't agree
+    assert store.lesson(key)["agreeing"] == 1 and shown() == []
+    corrected(3, "2-2026")  # the same value again: two agree
+    assert store.lesson(key)["agreeing"] == 2 and shown()
+    with store._conn() as conn:
+        store._withdraw_lessons(conn, 3)
+    assert shown() == []  # withdrawn: one correction to that value is left
+    store.explain_lesson(key, "account number then year", "Jane")
+    assert shown() and "AP's reason" in shown()[0]  # one correction and the clerk's reason
+    assert not any(line.startswith(lessons.SEEN_ONCE) for line in lessons.prompt_lines(store, vendor, screen=True))
+
+
+def test_cost_center_corrections_are_lessons_too(tmp_path, ground_truth):
+    """A line's cost center is a lesson of its own (``line_cc``), beside its GL account: corrected, confirmed, and
+    once it agrees twice, read by the AI as "go to cost center"."""
+    store = Store(tmp_path / "a.db")
+    proposed = _doc(ground_truth, "1")
+    proposed["line_items"][0]["predicted_cost_center"] = "CC100"
+    final = copy.deepcopy(proposed)
+    final["line_items"][0]["predicted_cost_center"] = "CC200"
+    rows = [r for r in lessons.outcomes(proposed, final) if r["field"] == lessons.LINE_CC]
+    first = next(r for r in rows if r["corrected"])
+    assert (first["proposed"], first["value"]) == ("CC100", "CC200") and first["pattern"]
+    gl = [r for r in lessons.outcomes(proposed, final) if r["field"] == lessons.LINE_GL and r["corrected"]]
+    assert gl == []  # the GL account was kept: no GL correction
+    for n in (1, 2):
+        lessons.record(store, n, proposed, final)
+    lines = lessons.prompt_lines(store, final["vendor_name"], fields="lines")
+    assert any("go to cost center CC200" in line for line in lines)
+    blank = copy.deepcopy(proposed)
+    blank["line_items"][0]["predicted_cost_center"] = "UNASSIGNED"
+    filled = [r for r in lessons.outcomes(blank, final) if r["field"] == lessons.LINE_CC and r["value"] == "CC200"]
+    assert filled and not filled[0]["corrected"]  # filled in where none was proposed: no correction
+
+
+def test_lesson_effectiveness_before_and_after_and_a_suggestion_never_a_retirement(tmp_path, ground_truth):
+    """On the Lessons tab, each lesson's corrections per invoice of that vendor and field before it reached the AI
+    and after; one still corrected as often after a few invoices is suggested for retiring, never retired (D-74)."""
+    store = Store(tmp_path / "a.db")
+    vendor = ground_truth["vendor_name"]
+    proposed = _doc(ground_truth, "ACCT 1")
+    key = lessons.situation(vendor, lessons.INVOICE, "invoice_number")
+    for n in (1, 2):  # corrected twice the same way: it reaches the AI after the second
+        lessons.record(store, n, proposed, _doc(ground_truth, "1-2026"))
+    effect = lessons.effect(store.lesson_history([key])[key], store.lesson(key))
+    assert effect["before"] == {"invoices": 2, "corrected": 2, "rate": 1.0} and effect["after"]["invoices"] == 0
+    assert effect["verdict"] == lessons.TOO_EARLY
+    history = store.lesson_history([key])[key]
+    right = [{**history[0], "corrected": 0, "invoice_id": n} for n in (3, 4, 5)]  # read right since
+    effect = lessons.effect(history + right, store.lesson(key))
+    assert effect["after"] == {"invoices": 3, "corrected": 0, "rate": 0.0} and effect["verdict"] == lessons.WORKING
+    for n in (6, 7, 8):  # corrected again and again since: the lesson does not help
+        lessons.record(store, n, proposed, _doc(ground_truth, "1-2026"))
+    effect = lessons.effect(store.lesson_history([key])[key], store.lesson(key))
+    assert effect["after"]["rate"] == 1.0 and effect["verdict"] == lessons.NOT_WORKING
+    assert not store.lesson(key)["retired"]  # suggested, never retired on its own
+    rows = {r["situation"]: r for r in __import__("ap_coder.web.pages.learning", fromlist=["x"]).lessons_context(
+        store)["lessons"]}  # fmt: skip
+    assert rows[key]["effect"]["verdict"] == lessons.NOT_WORKING
+
+
+def test_corrections_from_before_each_approval_was_kept_still_count(tmp_path, ground_truth):
+    """A lesson corrected twice before ``lesson_approvals`` existed, and once since, counted as corrected once: the
+    upgrade took it away from the AI (B-785). The corrections from before still count."""
+    store = Store(tmp_path / "a.db")
+    vendor = ground_truth["vendor_name"]
+    proposed = _doc(ground_truth, "ACCT 1")
+    key = lessons.situation(vendor, lessons.INVOICE, "invoice_number")
+    for n in (1, 2):
+        lessons.record(store, n, proposed, _doc(ground_truth, "2-2026"))
+    with store._conn() as conn:
+        conn.execute("DELETE FROM lesson_approvals")  # as an older version kept them: the counts only
+    assert store.lesson(key)["agreeing"] == 2 and lessons.reaches_ai(store.lesson(key))
+    lessons.record(store, 3, proposed, _doc(ground_truth, "2-2026"))
+    assert store.lesson(key)["agreeing"] == 3 and lessons.reaches_ai(store.lesson(key))
+    with store._conn() as conn:
+        store._withdraw_lessons(conn, 3)
+    assert store.lesson(key)["agreeing"] == 2  # the one since withdrawn: the two from before are left

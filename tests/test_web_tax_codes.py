@@ -123,6 +123,7 @@ def test_in_a_browser_the_tax_check_follows_the_codes_and_undo_puts_a_code_back(
     assert "all adds up" in page.locator("[data-live=taxcheck]").inner_text().lower()
     line = page.locator("[data-grid=lines] > tr").nth(3)
     _menu(page, line.locator("[name=line_description]"))
+    _item(page, "tax").click()  # the line's tax code items, in their submenu (B-741)
     _item(page, "tax-exempt").click()  # the delivery marked exempt: GST and RST no longer add up
     page.wait_for_selector("[data-tax-check] tr.is-check")
     assert _codes(page)[3] == "EXEMPT"

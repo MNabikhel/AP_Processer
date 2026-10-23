@@ -166,6 +166,22 @@ def finalise_coding(
                 accounts, coding.currency, store.last_pay_from(vendor_key(coding.vendor_name))
             )
         bank_findings = banks.findings(coding.pay_from_account, coding.currency, accounts)
+    output = coding.to_output()
+    if not coding.ship_to_province:  # no ship-to printed: where it is delivered to us (tax.supply_source)
+        place, source = supply_source(coding, reference.tax)
+        # Stored beside the printed ship-to, never in it, so that recoding the lines moves it (worked out again
+        # each time); never the vendor's province: it stays a guess.
+        if source in (SUPPLY_SITE, SUPPLY_OURS):
+            output[PLACE_OF_SUPPLY] = place
+    output["gl_distribution"] = build_gl_distribution(coding, reference.tax)
+    # JD Edwards in use: what its batch would hold back, asked before approval (D-75).
+    erp_findings: list[tuple[str, str, str, int | None]] = []
+    if store is not None:
+        from ..erp import jde
+
+        if jde.in_use(store):
+            js = jde.load(store)
+            erp_findings = jde.voucher_findings(output, js, jde.resolve_an8(output, store.vendor_ids(), js))
     report = validate_coding(
         coding,
         reference,
@@ -182,19 +198,12 @@ def finalise_coding(
             received=received,
         ),
         po_findings=po_findings(coding, store, exclude_invoice_id) if store is not None else None,
+        erp_findings=erp_findings,
     )
-    output = coding.to_output()
-    if not coding.ship_to_province:  # no ship-to printed: where it is delivered to us (tax.supply_source)
-        place, source = supply_source(coding, reference.tax)
-        # Stored beside the printed ship-to, never in it, so that recoding the lines moves it (worked out again
-        # each time); never the vendor's province: it stays a guess.
-        if source in (SUPPLY_SITE, SUPPLY_OURS):
-            output[PLACE_OF_SUPPLY] = place
-    output["gl_distribution"] = build_gl_distribution(coding, reference.tax)
     return output, report
 
 
-def _model_line_taxes(coding: InvoiceCoding, text: str) -> None:
+def _model_line_taxes(coding: InvoiceCoding, text: str, feedback: list[dict[str, Any]] | None = None) -> None:
     """The chat model's lines with their taxes worked out when it said nothing of them (no line has a tax or a
     status) and a tax is charged: the codes printed on the page are not there to read, so the lines that make each
     tax add up (``line_tax.prefill``, D-64). What the model said is kept."""
@@ -214,7 +223,8 @@ def _model_line_taxes(coding: InvoiceCoding, text: str) -> None:
     province = coding.ship_to_province or coding.supplier_province
     coding.line_items = tax_codes(list(coding.line_items), list(coding.tax_lines), [], text, province,
                                   coding.invoice_date, supplier_province=coding.supplier_province,
-                                  pst_number=coding.pst_registration_number)  # fmt: skip
+                                  pst_number=coding.pst_registration_number, feedback=feedback,
+                                  vendor=coding.vendor_name, qst_number=coding.qst_registration_number)  # fmt: skip
 
 
 DAMAGED_PICTURE = ("UnidentifiedImageError",)
@@ -517,7 +527,8 @@ class InvoicePipeline:
                     self._local_accounts(result.coding, history_text)
             else:
                 result.coding = self.coder.code(result.extraction, self._images(path), history_text)
-                _model_line_taxes(result.coding.coding, result.extraction.content if result.extraction else "")
+                _model_line_taxes(result.coding.coding, result.extraction.content if result.extraction else "",
+                                  feedback)  # fmt: skip
             result.timings["inference"] = time.perf_counter() - t1
             if self.store is not None:  # fixed coding rules set by AP win over the AI
                 coded, result.rules_applied = apply_rules(result.coding.coding, self.store.coding_rules())

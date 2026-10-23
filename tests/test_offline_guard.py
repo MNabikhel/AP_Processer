@@ -452,7 +452,7 @@ def _approve_one(app, base: str) -> tuple[int | None, list[str]]:
         checked = offline_flow.post_form(base, f"/review/{row['id']}/check", pairs)  # the page checks each edit
         tick = re.search(r'name=\\?"override\\?" value=\\?"(\w+)', checked.text)  # "Approve anyway", ticked
         if tick:
-            pairs.append(("override", tick.group(1)))
+            pairs += [("override", tick.group(1)), ("override_reason", "Checked with the vendor")]  # why (D-75)
         answer = offline_flow.post_form(base, f"/review/{row['id']}/approve", pairs)
         if answer.status == 200 and answer.json().get("ok", True):
             return row["id"], refused

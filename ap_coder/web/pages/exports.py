@@ -28,6 +28,7 @@ from ap_coder.web.core import (
     get_store,
     jde_shown,
     message,
+    one_connection,
     posted_form,
     reference_or_none,
     refuse,
@@ -219,6 +220,7 @@ def layout_from_form(form: Any) -> tuple[export_layout.Layout, list[str], list[s
 
 
 @router.get("/exports", response_class=HTMLResponse)
+@one_connection
 def exports_page(
     request: Request,
     fmt: str = "",
@@ -328,6 +330,11 @@ def exports_page(
 async def create_batch(request: Request) -> JSONResponse:
     """A new batch of the ticked invoices, in the chosen format (JD Edwards: only those that pass its checks)."""
     form = await posted_form(request)  # one field per invoice ticked
+    with get_store(request).session():  # nothing awaited inside: no other request runs on this thread meanwhile
+        return _create_batch(request, form)
+
+
+def _create_batch(request: Request, form: Any) -> JSONResponse:
     store = get_store(request)
     fmt = str(form.get("fmt") or "")
     if fmt not in exports.FORMATS:
@@ -366,6 +373,7 @@ async def create_batch(request: Request) -> JSONResponse:
 
 
 @router.get("/exports/jde/dry-run.txt")
+@one_connection
 def jde_dry_run(request: Request) -> Response:
     """What a JD Edwards batch of the invoices ready to export would load, row by row, and why any invoice is held
     back. Nothing is exported and no batch is made."""
@@ -388,6 +396,7 @@ def live_batch(store: Store, batch: int) -> dict[str, Any]:
 
 
 @router.get("/exports/batches/{batch:int}/download")
+@one_connection
 def download_batch(request: Request, batch: int, fmt: str = "") -> Response:
     """Batch ``batch`` as a file again: in ``fmt``, else in the format it went out in."""
     store = get_store(request)
@@ -403,6 +412,7 @@ def download_batch(request: Request, batch: int, fmt: str = "") -> Response:
 
 
 @router.get("/exports/batches/{batch:int}/approved-pdfs.zip")
+@one_connection
 def approved_pdfs(request: Request, batch: int) -> Response:
     """Each invoice of the batch with its APPROVED stamp and coding page, in one ZIP (to attach in the ERP)."""
     store = get_store(request)
@@ -413,6 +423,7 @@ def approved_pdfs(request: Request, batch: int) -> Response:
 
 
 @router.post("/exports/batches/{batch:int}/undo")
+@one_connection
 def undo_batch(request: Request, batch: int) -> JSONResponse:
     """The ERP import failed: the batch's invoices go back to Ready to export (the batch stays, marked undone)."""
     store = get_store(request)

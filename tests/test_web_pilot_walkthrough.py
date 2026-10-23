@@ -134,7 +134,11 @@ def test_approve_also_opens_the_invoice_that_followed_on_screen(client, store):
         key = invoice_view.analyse(store, Settings(), store.reference_data(), store.get_invoice(current),
                                    invoice_view.Draft.stored(store.get_invoice(current)["ai_output"]),
                                    "Pat Tester").live["bar"]["override_key"]  # fmt: skip
-        answer = client.post(f"/review/{current}/approve", data={**data, "override": key}, headers=PAGE).json()
+        answer = client.post(
+            f"/review/{current}/approve",
+            data={**data, "override": key, "override_reason": "checked with the buyer"},
+            headers=PAGE,
+        ).json()
     assert answer["ok"] and answer["redirect"].split("?")[0] == f"/review/{following}", answer
 
 
@@ -418,7 +422,11 @@ def test_early_coding_accuracy_is_a_plain_note_not_a_red_figure(client, store):
     if not answer.get("ok"):  # a check to tick first: "Approve anyway"
         client.post(f"/review/{inv['id']}/check", data=data, headers=PAGE)
         key = re.search(r'name="override" value="([^"]+)"', client.get(f"/review/{inv['id']}").text).group(1)
-        answer = client.post(f"/review/{inv['id']}/approve", data={**data, "override": key}, headers=PAGE).json()
+        answer = client.post(
+            f"/review/{inv['id']}/approve",
+            data={**data, "override": key, "override_reason": "checked with the buyer"},
+            headers=PAGE,
+        ).json()
     assert answer["ok"], answer
     assert (store.metrics()["line_accuracy"] or 0) < 0.9
     note = "GL suggestions improve as you approve; with the AI model on they start sooner"
@@ -454,7 +462,8 @@ def test_with_lm_studio_off_the_review_screen_says_it_once(client, store):
     page = client.get(f"/review/{inv['id']}").text
     # B-467: no banner on the review screen (the queue has it), one short note in its top row
     assert '<div class="banner' not in page
-    note = html.unescape(page.split('class="apc-pill warn rvw-lm"', 1)[1].split("</span>", 2)[1])
+    # D-76: said once, folded under "Reading" in the Document card (with a dot on it), not in the clerk's way
+    note = html.unescape(page.split("data-doc-more", 1)[1].split("</details>", 1)[0])
     assert "LM Studio isn't running" in note and "a person approves it" in note
     assert "OvisOCR2 isn't running: see Settings" not in page
     assert "checks this invoice against its pages when the chat model is free" not in page
@@ -505,9 +514,10 @@ def test_in_a_browser_at_1366_the_page_and_the_line_grid_show_together(browser, 
     order = page.evaluate(
         "[...document.querySelectorAll('.inv-split > .col > *')].map((e) => e.className + ' ' + (e.dataset.live || ''))"
     )
-    kinds = [next((k for k in ("inv-checks", "inv-details", "inv-lines", "po", "suggest", "inv-notes") if k in c), c)
-             for c in order]  # fmt: skip
-    assert kinds[:5] == ["inv-checks", "inv-details", "inv-lines", "po", "suggest"], order
+    kinds = [next((k for k in ("inv-checks", "inv-details", "inv-lines", "inv-tax", "inv-posting", "po", "suggest",
+                               "inv-notes") if k in c), c) for c in order]  # fmt: skip
+    # D-76: the tax lines and the posting preview right after the lines (and their Tax check)
+    assert kinds[:7] == ["inv-checks", "inv-details", "inv-lines", "inv-tax", "inv-posting", "po", "suggest"], order
     # The lines are a scroll away, and the page stays beside them (sticky)
     page.evaluate("document.querySelector('#lines').scrollIntoView({block: 'start'})")
     page.wait_for_timeout(300)
