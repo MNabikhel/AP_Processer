@@ -718,3 +718,18 @@ def test_a_field_is_never_anchored_to_part_of_a_value_above_it():
     assert variant.anchor is None or not any(c.isdigit() for c in variant.anchor.text)
     readings = apply_template(template, _po_under_a_date("BC-3902", "20", "Apr"))
     assert _top(readings, "po_number").value == "BC-3902"
+
+
+def test_learning_reads_each_printed_span_once(monkeypatch):
+    """Learning tries every span of every row against every field: a span's date/amount parse is worked out once."""
+    import ap_coder.capture.supplier as supplier
+
+    supplier._printed_dates.cache_clear()
+    calls = []
+    real = supplier.date_candidates
+    monkeypatch.setattr(supplier, "date_candidates", lambda text: calls.append(text) or real(text))
+    learn(None, _invoice(), CONFIRMED)
+    first = len(calls)
+    calls.clear()
+    learn(None, _invoice(), CONFIRMED)
+    assert first and len(calls) < first / 10  # the same page again: its spans were parsed already
