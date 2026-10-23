@@ -104,7 +104,7 @@ def test_lines_that_do_not_add_up_to_the_subtotal():
     c = _coding([(100, ["GST"]), (50, ["GST"])], [("GST", 0.05, 150, 7.50)])
     c.subtotal = 160.0
     c.grand_total = 167.5
-    assert _rows(math_check(c))["Lines = subtotal"]["diff"] == "(10.00)"  # accounting style: less than the subtotal
+    assert _rows(math_check(c))["Lines = subtotal"]["diff"] == "-10.00"  # less: a minus (B-805)
 
 
 def test_a_yen_invoice_is_rounded_to_whole_yen_as_the_tax_checks_do():

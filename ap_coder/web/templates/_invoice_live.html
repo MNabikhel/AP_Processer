@@ -37,7 +37,7 @@
 {%- endmacro %}
 
 {% macro check_item(i) -%}
-<li class="{{ i.kind or ('err' if i.bad else 'warn') }}" title="{{ i.text }}"><span class="m" aria-hidden="true">{{ '!' if i.kind == 'warn' or not i.bad else '✕' }}</span>
+<li class="{{ i.kind or ('err' if i.bad else 'warn') }}" title="{{ i.text }}"{% if i.code %} data-code="{{ i.code }}"{% endif %}{% if i.field %} data-field-of="{{ i.field }}"{% endif %}><span class="m" aria-hidden="true">{{ '!' if i.kind == 'warn' or not i.bad else '✕' }}</span>
     {%- if i.goto %}<button type="button" class="rvw-goto" data-goto-line="{{ i.goto.box }}" data-line="{{ i.goto.line }}" title="Go to line {{ i.goto.line }} (G)"><span class="t">{{ i.text }}</span></button>
     {%- else %}<span class="t">{{ i.text }}</span>{% endif %}
     {%- for l in i.links or [] %} <a class="rvw-dup-link" href="{{ l.href }}" target="_blank" rel="noopener" title="Opens in a new tab: this one stays as it is">{{ l.text }}<span class="ms" aria-hidden="true">open_in_new</span></a>{% endfor %}</li>
@@ -191,7 +191,7 @@
   <thead><tr><th>Tax</th><th>Lines marked</th><th class="r">Lines × rate = expected</th><th class="r">Charged</th><th class="r">Difference</th></tr></thead>
   <tbody>
   {% for r in taxes %}
-    <tr class="{{ 'tc-self' if r.kind == 'selfassess' else 'is-ok' if r.ok else 'is-check' }}" data-tax-row="{{ r.tax_type }}{{ '-due' if r.kind == 'selfassess' else '' }}">
+    <tr class="{{ 'tc-self' if r.kind == 'selfassess' else 'is-ok' if r.ok else 'is-check' }}" data-tax-row="{{ r.tax_type }}{{ '-due' if r.kind == 'selfassess' else '' }}" data-tax-type="{{ r.tax_type }}" data-expected="{{ r.expected }}" data-diff="{{ r.diff or '' }}">
       <td>{% if r.kind == "selfassess" %}<span class="tc-self-pill" title="{{ r.detail }}">{{ r.pill }}</span>{% elif r.ok %}<span class="tc-ok" aria-label="Adds up">✓</span>{% else %}<span class="tc-check" title="{{ r.detail }}">check</span>{% endif %} <b>{{ r.what }}</b></td>
       <td>{{ r.which }}</td>
       <td class="r">{{ r.base }} × {{ r.rate or "—" }} = <b>{{ r.expected }}</b></td>
@@ -201,7 +201,7 @@
     <tr><td colspan="5" class="muted">No sales tax charged on this invoice, and no line is marked with one.</td></tr>
   {% endfor %}
   {% for r in m.rows if r.kind in ("lines", "total") %}
-    <tr class="tc-sum {{ 'is-ok' if r.ok else 'is-check' }}" data-tax-row="{{ r.kind }}">
+    <tr class="tc-sum {{ 'is-ok' if r.ok else 'is-check' }}" data-tax-row="{{ r.kind }}" data-diff="{{ r.diff or '' }}">
       <td colspan="2">{% if r.ok %}<span class="tc-ok" aria-label="Adds up">✓</span>{% else %}<span class="tc-check">check</span>{% endif %} <b>{{ r.what }}</b></td>
       <td colspan="2" class="r">{% if r.kind == "lines" %}{{ r.lines_total }} = {{ r.subtotal }}{% else %}{{ r.subtotal }} + {{ r.tax }} = {{ r.computed }}; total {{ r.total }}{% endif %}
         {%- if r.hint %}<div class="tc-named">{{ r.hint }}</div>{% endif %}</td>
@@ -232,14 +232,14 @@
 <div class="rvw-gl table-wrap"><table class="apc-table">
   <thead><tr><th></th><th>GL account</th>{% if show_cc %}<th>Cost center</th>{% endif %}{% if p.jde %}<th title="The JD Edwards account the line posts to: business unit . object . subsidiary">JDE account</th>{% endif %}<th class="c-desc">Description</th><th class="r c-net">Net</th><th class="r c-net">Non-rec. tax</th><th class="r">Amount</th></tr></thead>
   <tbody>{% for r in p.rows %}
-    <tr><td><span class="rvw-kind">{{ r.kind }}</span></td>
+    <tr data-post-line="{{ r.line }}" data-gl="{{ r.gl_code }}" data-amount="{{ r.amount }}"{% if r.account and '.' in r.account %} data-ani="{{ r.account }}"{% endif %}><td><span class="rvw-kind">{{ r.kind }}</span></td>
       <td><div class="gl{{ ' todo' if r.todo else '' }}">{{ r.gl }}<small>{{ r.gl_name }}</small></div></td>
       {% if show_cc %}<td>{{ r.cc }}</td>{% endif %}
       {% if p.jde %}<td class="rvw-ani{{ ' bad' if r.account == 'not mapped' else ' muted' if r.account == 'posted by JD Edwards' else '' }}" data-ani>{{ r.account }}</td>{% endif %}
       <td class="w c-desc">{{ r.description }}</td>
       <td class="r c-net">{{ r.net }}</td><td class="r c-net">{{ r.nonrec }}</td><td class="r"><b>{{ r.amount }}</b></td></tr>
   {% endfor %}</tbody>
-  <tfoot><tr><td></td><td>{{ ui.pill("Balanced", "ok") if p.balanced else ui.pill("Off by " ~ p.off, "err") }}</td>{% if show_cc %}<td></td>{% endif %}{% if p.jde %}<td></td>{% endif %}<td class="c-desc">Total</td><td class="c-net"></td><td class="c-net"></td>
+  <tfoot><tr><td></td><td>{{ ui.pill("Balanced", "ok") if p.balanced else ui.pill(p.off_text, "err") }}</td>{% if show_cc %}<td></td>{% endif %}{% if p.jde %}<td></td>{% endif %}<td class="c-desc">Total</td><td class="c-net"></td><td class="c-net"></td>
     <td class="r">{{ p.total }} <span class="rq-cur">{{ p.currency }}</span></td></tr></tfoot>
 </table></div>
 {%- endmacro %}
@@ -264,16 +264,18 @@
 <div class="rvw-post-sub">Fix the highlighted field to see the checks and approve.</div>
 {% else %}
 {% set b = live.bar %}
-<div class="rvw-post" data-not-ready="{% if b.pick %}{{ b.pick }}{% elif b.hard %}{{ b.hard[0] }}{% elif b.errors and not b.allow %}Tick “Approve anyway” and say why{% endif %}" data-credit="{{ '1' if b.credit else '' }}">
+{# Why Approve is closed: the first blocker in screen order (B-797); "Approve anyway" and its reason are the box's own,
+   said by invoice.js as it stands (ticked or not). #}
+<div class="rvw-post" data-not-ready="{{ b.first.text if b.first else '' }}" data-credit="{{ '1' if b.credit else '' }}">
   <div class="rvw-post-amount">Post <b>{{ b.amount }}</b> {{ b.currency }}
     {% if live.math %}<span class="rvw-math {{ 'ok' if live.math.ok else 'bad' }}" title="{% for r in live.math.rows %}{{ '✓' if r.ok else '✕' }} {{ r.what }}: {{ r.detail }}&#10;{% endfor %}"><span class="ms" aria-hidden="true">{{ 'check' if live.math.ok else 'calculate' }}</span>Math: {{ live.math.text }}</span>{% endif %}</div>
   <div class="rvw-post-sub" title="What approving teaches AP Coder: {{ b.learn }}."><span class="ms" aria-hidden="true">school</span>
     <span data-change-count="{{ b.changed }}">{{ b.learn }}</span></div>
 </div>
-{% if b.pick %}{# a button to the first line that needs an account or a cost center (B-434; G does the same) #}
-<button type="button" class="apc-pill warn inv-pick" data-goto-pick aria-keyshortcuts="G" title="Go to the line (G)">{{ b.pick }}<span class="ms" aria-hidden="true">arrow_downward</span></button>
-{% elif b.hard %}{# never approved anyway: what makes the voucher invalid (D-75) #}
-<span class="apc-pill err inv-hard" role="note" title="{{ b.hard | join('; ') }}"><span class="ms" aria-hidden="true">block</span><span class="t">Not ready: {{ b.hard[0] }}</span>{% if b.hard | length > 1 %}<span class="more">+{{ b.hard | length - 1 }}</span>{% endif %}</span>
+{% if b.first and b.first.kind == "pick" %}{# a button to the first line that needs an account or a cost center (B-434; G does the same) #}
+<button type="button" class="apc-pill warn inv-pick" data-goto-pick aria-keyshortcuts="G" title="Go to the line (G)">{{ b.first.text }}<span class="ms" aria-hidden="true">arrow_downward</span></button>
+{% elif b.first %}{# never approved anyway: what makes the voucher invalid (D-75), the first in screen order #}
+<span class="apc-pill err inv-hard" role="note" title="{{ b.blockers | map(attribute='text') | join('; ') }}"><span class="ms" aria-hidden="true">block</span><span class="t">Not ready: {{ b.first.text }}</span>{% if b.blockers | length > 1 %}<span class="more">+{{ b.blockers | length - 1 }}</span>{% endif %}</span>
 {% elif b.errors %}
 <label class="check inv-override" title="Errors only: what makes the voucher invalid can never be approved anyway"><input type="checkbox" name="override" value="{{ b.override_key }}" form="inv"{% if b.override %} checked{% endif %}>
   Approve anyway, despite {{ b.errors | plural("error") }}</label>
@@ -295,12 +297,13 @@
 {% set j = live.jde %}
 {% if j %}
 <div class="inv-jde" aria-label="JD Edwards voucher">
-  <div class="inv-jde-head"><span class="rvw-group">JD Edwards voucher</span>
-    <a class="link small" href="{{ j.settings_url }}" title="The values marked “settings” come from Settings → JD Edwards E1 (for the pilot tester)">Change the settings<span class="ms" aria-hidden="true">settings</span></a></div>
+  <div class="inv-jde-head"><span class="rvw-group">JD Edwards voucher</span></div>
   <dl class="inv-jde-grid">
     {% for r in j.rows %}<div class="inv-jde-row{{ ' from-settings' if r.source == 'settings' else '' }}" data-jde="{{ r.column }}">
       <dt title="{{ r.column }}">{{ r.label }}</dt><dd>{{ r.value }}{% if r.source == 'settings' %} <span class="inv-jde-src" title="From Settings → JD Edwards E1: read-only here">settings</span>{% endif %}</dd></div>{% endfor %}
   </dl>
+  {# last, after the voucher's values: not in the middle of the form's Tab order (B-804) #}
+  <a class="link small inv-jde-settings" href="{{ j.settings_url }}" title="The values marked “settings” come from Settings → JD Edwards E1 (for the pilot tester)">Change the settings<span class="ms" aria-hidden="true">settings</span></a>
 </div>
 {% endif %}
 {%- endmacro %}

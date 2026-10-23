@@ -23,6 +23,9 @@ from .vendors import norm_tax_number  # letters and digits, lower case
 ERROR, WARNING, INFO = "error", "warning", "info"  # info: worth knowing, no penalty
 _ERROR_PENALTY = 0.6
 _WARNING_PENALTY = 0.9
+# What the setup or a choice still to make holds back (JD Edwards not set up for it, the bank account that pays), not
+# a doubt about the reading or the coding: a blocker, never lower confidence (D-86).
+SETUP_PREFIXES = ("JDE_", "PAY_FROM_")
 _LOW_OCR_CONFIDENCE = 0.90
 
 
@@ -183,7 +186,7 @@ def validate_coding(
             ERROR,
             "POSTING_UNBALANCED",
             f"the GL posting adds up to {posting_total:.2f} but the invoice total is {coding.grand_total:.2f} "
-            f"(off by {posting_total - coding.grand_total:+.2f}): correct a line amount or a tax line",
+            f"({off_text(posting_total, coding.grand_total)}): correct a line amount or a tax line",
         )
     # --- Canadian sales tax ------------------------------------------------------
     known = set(reference.chart_of_accounts.codes)
@@ -212,7 +215,8 @@ def validate_coding(
     model_conf = coding.confidence_score
     adjusted = model_conf
     # Each kind of finding counts once: eight lines without an account are one thing to do, not eight.
-    for severity, _ in {(i.severity, i.code) for i in issues if i.severity != INFO}:
+    for severity, _ in {(i.severity, i.code) for i in issues
+                        if i.severity != INFO and not i.code.startswith(SETUP_PREFIXES)}:  # fmt: skip
         adjusted *= _ERROR_PENALTY if severity == ERROR else _WARNING_PENALTY
     adjusted = round(adjusted, 4)
     requires_review = adjusted < review_threshold or any(i.severity == ERROR for i in issues)
@@ -226,6 +230,13 @@ def validate_coding(
         issues=issues,
         checks=checks,
     )
+
+
+def off_text(posted: float, total: float) -> str:
+    """How the invoice total differs from what its lines post, in words: "the total is 10.00 more than the lines"
+    (never "off by -10.00", whose sign reads either way, B-805)."""
+    gap = round(total - posted, 2)
+    return f"the total is {abs(gap):,.2f} {'more' if gap > 0 else 'less'} than the lines"
 
 
 _DI_WORDS = {"InvoiceTotal": "total", "SubTotal": "subtotal", "TotalTax": "tax total"}

@@ -1083,7 +1083,9 @@ def checks_summary(report: Any, errors: list[Any], warnings: list[Any]) -> dict[
         # A possible duplicate: a link to each invoice it may duplicate, to compare them (D-60).
         links = ([{"href": f"/review/{n}", "text": f"Open #{n}"} for n in re.findall(r"#(\d+)", text)]
                  if code == "DUPLICATE_INVOICE" else [])  # fmt: skip
-        items.append({"bad": kind != LOOK, "kind": kind, "text": text, "goto": goto, "links": links})
+        field = "" if lines else CODE_FIELDS.get(code) or FIELD_FLAGS.get(code, ("", None))[0]
+        items.append({"bad": kind != LOOK, "kind": kind, "text": text, "goto": goto, "links": links, "code": code,
+                      "field": field})  # fmt: skip
     if low:
         items.append({"bad": False, "kind": LOOK, "text": f"Confidence {confidence_pct(report.adjusted_confidence, report.review_threshold)} "  # noqa: E501
                       f"is below the {report.review_threshold:.0%} threshold."})  # fmt: skip
@@ -1194,16 +1196,40 @@ def learn_text(coding: InvoiceCoding, ai: dict[str, Any], cost_centers: bool = F
     return " · ".join(s for s in said if s)
 
 
-def differs_from_stored(coding: InvoiceCoding, stored: dict[str, Any]) -> bool:
-    """Whether the coding on screen is not the one stored for the invoice (the reviewer changed something)."""
+def differs_from_stored(
+    coding: InvoiceCoding,
+    stored: dict[str, Any],
+    *,
+    cost_centers: bool = True,
+    filled: frozenset[str] | set[str] = frozenset(),
+) -> bool:
+    """Whether the coding on screen is not the one stored for the invoice (the reviewer changed something). Not an
+    edit (B-801): an account or cost center blank either way ("" / "UNASSIGNED"), a cost center where none are in use
+    (the screen has no box for it), and ``filled``, the details the screen fills itself on every check (the default
+    Pay from account, the vendor list's tax numbers) while the invoice stored has none."""
     try:
         before = InvoiceCoding.model_validate({k: v for k, v in stored.items() if k != "gl_distribution"})
     except ValueError:
         return True
-    ignore = {"confidence_score"}
-    return {k: v for k, v in coding.to_output().items() if k not in ignore} != {
-        k: v for k, v in before.to_output().items() if k not in ignore
-    }
+    ignore = {"confidence_score"} | {k for k in filled if not stored.get(k)}
+    shown, kept = coding.to_output(), before.to_output()
+    return _comparable(shown, ignore, cost_centers) != _comparable(kept, ignore, cost_centers)
+
+
+# A line's account or cost center not given, however it is written: the screen posts "UNASSIGNED" for a cost center
+# stored blank, and that is no edit (B-801).
+_BLANK_CODES = {None, "", UNASSIGNED}
+
+
+def _comparable(output: dict[str, Any], ignore: set[str], cost_centers: bool = True) -> dict[str, Any]:
+    out = {k: v for k, v in output.items() if k not in ignore}
+    blank = ("predicted_gl_code", "predicted_cost_center")
+    out["line_items"] = [
+        {k: ("" if k in blank and (v in _BLANK_CODES or (k == blank[1] and not cost_centers)) else v)
+         for k, v in li.items()}
+        for li in out.get("line_items") or []
+    ]  # fmt: skip
+    return out
 
 
 def override_key(errors: list[Any]) -> str:
@@ -1482,10 +1508,15 @@ def distribution(output: dict[str, Any], reference: ReferenceData | None, js: An
             "net": signed(e["net_amount"]) if e["kind"] == "expense" else "",
             "nonrec": signed(e["non_recoverable_tax"]) if e.get("non_recoverable_tax") else "",
             "amount": signed(e["amount"]),
+            "line": e.get("line_number") if e["kind"] != "tax" else "", "gl_code": e["gl_code"] or "",
         })  # fmt: skip
     total = round(sum(e["amount"] for e in output.get("gl_distribution") or []), 2)
     diff = round(total - (output.get("grand_total") or 0), 2)
+    from ap_coder.coding.validation import off_text
+
+    off = off_text(total, output.get("grand_total") or 0)
     return {"rows": rows, "total": signed(total), "balanced": abs(diff) < 0.005, "off": signed(diff),
+            "off_text": off[:1].upper() + off[1:],
             "jde": js is not None, "currency": output.get("currency") or ""}  # fmt: skip
 
 
@@ -1553,6 +1584,10 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
                 "fallback": stored_summary(inv, start)}  # fmt: skip
         return Analysis(coding=None, problems=problems, live=live, filled=filled)
 
+    # What the screen fills itself on every check (not an edit, B-801): the default Pay from account (none picked for
+    # this currency) and the tax numbers the vendor list filled, while they are as filled.
+    auto = {"pay_from_account"} if not draft.pay_from_for else set()
+    auto |= {n for n, v in (draft.from_vendor.get("fields") or {}).items() if draft.header.get(n) == v}
     meta = inv.get("meta") or {}
     extraction = ExtractionResult(
         source=inv["source_path"],
@@ -1610,7 +1645,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
 
     # The approve bar: never post to UNASSIGNED; where cost centers are used, a line without one isn't posted either.
     # The queue asks the same question (pages/review.py attention), so its Ready means Approve is open here.
-    pick = codes_to_pick(coding.line_items, uses_cost_centers(reference))
+    line_pick = pick = codes_to_pick(coding.line_items, uses_cost_centers(reference))
     from ap_coder.coding.banks import blocking
 
     # never approved without one of our accounts in use to pay from, whatever is ticked (D-66, B-683)
@@ -1620,6 +1655,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     # What makes the voucher invalid is never approved anyway; the rest of the errors only with a reason (D-75).
     hard = [i for i in errors if is_hard(i)]
     soft = [i for i in errors if not is_hard(i)]
+    blockers = ordered_blockers(line_pick, bank, hard)
     key = override_key(soft) if soft else ""
     reason = draft.override_reason.strip()
     allow = not pick and not hard and (not soft or (draft.override == key and bool(reason)))
@@ -1665,6 +1701,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
         "posting": {**distribution(output, reference, js), "note": posting_note(coding, reference)},
         "flags": merge_flags(field_flags(report.issues, store, coding, inv["id"]), code_flags(report.issues),
                              dates.notes),
+        "flag_errors": flag_errors(errors, dates.notes),
         "help": field_help(store, coding, draft, capture, dates, report.issues),
         "jde": jde.voucher_view(output, js, an8) if js is not None else None,
         "an8": an8 if js is not None else None,
@@ -1675,10 +1712,12 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
             "pick": pick, "errors": len(soft), "override_key": key, "override": bool(key) and draft.override == key,
             "override_reason": draft.override_reason if bool(key) and draft.override == key else "",
             "hard": hard_reasons(hard), "allow": allow, "credit": coding.grand_total < 0,
+            "first": blockers[0] if blockers else None, "blockers": blockers,
         },
     }  # fmt: skip
     return Analysis(coding=coding, problems=[], output=output, report=report, errors=errors, warnings=warnings,
-                    allow=allow, changed=differs_from_stored(coding, start), live=live, filled=filled)  # fmt: skip
+                    allow=allow, changed=differs_from_stored(coding, start, cost_centers=has_cc, filled=auto),
+                    live=live, filled=filled)  # fmt: skip
 
 
 def pay_from_choices(store: Store, header: dict[str, str]) -> dict[str, Any]:
@@ -1868,7 +1907,7 @@ CODE_FIELDS = {
     "VENDOR_ON_HOLD": "vendor_name", "JDE_NO_AN8": "vendor_name", "JDE_BAD_AN8": "vendor_name",
     "MISSING_INVOICE_NUMBER": "invoice_number", "JDE_INVOICE_NUMBER_LONG": "invoice_number",
     "DUPLICATE_INVOICE": "invoice_number", "DUPLICATE_IN_ERP": "invoice_number",
-    "INVOICE_DATE_NOT_FOUND": "invoice_date", "OLD_INVOICE_DATE": "invoice_date",
+    "INVOICE_DATE_NOT_FOUND": "invoice_date", "OLD_INVOICE_DATE": "invoice_date", "FUTURE_INVOICE_DATE": "invoice_date",
     "DUE_BEFORE_INVOICE": "due_date", "JDE_DATE_RANGE": "invoice_date",
     "CURRENCY_UNKNOWN": "currency", "CURRENCY_FORMAT": "currency", "JDE_CURRENCY": "currency",
     "PO_UNKNOWN": "po_number", "PO_CLOSED": "po_number", "PO_VENDOR_MISMATCH": "po_number", "JDE_PO_LONG": "po_number",
@@ -1913,6 +1952,18 @@ def plain_problem(problem: str) -> str:
     return f"{where}: {what}"
 
 
+def flag_errors(errors: list[Any], date_notes: dict[str, str]) -> list[str]:
+    """The invoice details whose note under them is an error: red there as in "Must be fixed", not amber (B-796)."""
+    out = set(date_notes)
+    for issue in errors:
+        if issue.line_number:
+            continue
+        name = CODE_FIELDS.get(issue.code) or FIELD_FLAGS.get(issue.code, (None, None))[0]
+        if name:
+            out.add(name)
+    return sorted(out)
+
+
 def merge_flags(*sets: dict[str, str]) -> dict[str, str]:
     """The notes under each field, from several sources, each said once."""
     out: dict[str, list[str]] = {}
@@ -1924,13 +1975,41 @@ def merge_flags(*sets: dict[str, str]) -> dict[str, str]:
     return {name: " · ".join(notes) for name, notes in out.items() if notes}
 
 
+def _short_reason(text: str) -> str:
+    # the first sentence ("e.g. CAD" is no sentence's end)
+    return re.split(r"(?<=[a-z0-9)])(?<!e\.g)\. (?=[A-Z])|: (?=ask the pilot tester)", text, maxsplit=1)[0].rstrip(".")
+
+
 def hard_reasons(hard: list[Any]) -> list[str]:
     """What keeps a voucher from being approved, even anyway: one short line each (D-75)."""
-    out = []
-    for _bad, text in grouped(hard):
-        short = re.split(r"(?<=[a-z0-9)])\. (?=[A-Z])|: (?=ask the pilot tester)", text, maxsplit=1)[0]
-        out.append(short.rstrip("."))
-    return out
+    return [_short_reason(text) for _bad, text in grouped(hard)]
+
+
+# The review screen from top to bottom (B-797): the invoice details in the form's order, then the JD Edwards block,
+# the lines, the tax lines and the posting. The approve bar says the first thing that keeps it closed, as the clerk
+# meets it: a currency typed wrong before the bank account that follows it.
+SCREEN_ORDER = (
+    "vendor_name", "gst_hst_registration_number", "qst_registration_number", "pst_registration_number",
+    "supplier_province", "remit_bank_account", "invoice_number", "invoice_date", "po_number", "payment_terms",
+    "due_date", "currency", "pay_from_account", "ship_to_province", "original_invoice_number", "subtotal", "tax_total",
+    "grand_total", "jde", "lines", "tax_lines", "posting",
+)  # fmt: skip
+_CODE_PLACES = {"NO_LINE_ITEMS": "lines", "POSTING_UNBALANCED": "posting"}
+
+
+def ordered_blockers(line_pick: str, bank: str, hard: list[Any]) -> list[dict[str, str]]:
+    """Everything that keeps Approve closed, in the order of the screen: {"text", "kind"} (``pick``: a line's account
+    or cost center, a button to it; ``bank``: the Pay from account; ``hard``: what makes the voucher invalid)."""
+    place = {name: i for i, name in enumerate(SCREEN_ORDER)}
+    found: list[tuple[int, int, dict[str, str]]] = []
+    for n, (_bad, text, code, lines) in enumerate(grouped_issues(hard)):
+        where = "lines" if lines else CODE_FIELDS.get(code) or _CODE_PLACES.get(code) or "posting"
+        found.append((place.get(where, len(place)), n, {"text": _short_reason(text), "kind": "hard"}))
+    if line_pick:
+        found.append((place["lines"], -1, {"text": line_pick, "kind": "pick"}))
+    if bank:
+        found.append((place["pay_from_account"], -1, {"text": bank, "kind": "bank"}))
+    return [b for _, _, b in sorted(found, key=lambda f: (f[0], f[1]))]
 
 
 def field_help(store: Store, coding: InvoiceCoding, draft: Draft, capture: CaptureResult | None, dates: DateCheck,

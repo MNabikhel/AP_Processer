@@ -1,5 +1,5 @@
 /* The right-click menu (static/js/ctxmenu.js, D-60): a card at the pointer, one row per action. */
-.cm {position: fixed; z-index: 80; min-width: 230px; max-width: min(360px, calc(100vw - 16px)); overflow-y: auto;
+.cm {position: fixed; z-index: 80; min-width: 230px; max-width: min(440px, calc(100vw - 16px)); overflow-y: auto;
   padding: 4px; background: var(--lg-surface); border: 1px solid var(--lg-border); border-radius: var(--lg-r);
   box-shadow: 0 10px 30px rgba(16, 24, 40, .18); font-size: 13.5px; color: var(--lg-text); outline: none;}
 .cm.open {animation: cm-in .09s ease-out both;}

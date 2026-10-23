@@ -657,6 +657,20 @@ that is reversed keeps its line, marked "replaced by D-NN".
   learning (`forget_if_withdrawn`). Why: bulk approval writes many snapshots in one second, and a withdrawal must
   never leave a wrong box behind. (`core/store/capture.py` `save_supplier_profile`, `core/store/invoices.py`
   `_withdraw_template`; `tests/test_template_rollback.py`)
+- **D-86** · The review screen after its second UI sign-off. (1) Drafts (edits not approved yet) are kept in the store,
+  `invoice_drafts` (one row per invoice and person: "" this computer, else a colleague's key), read back when AP Coder
+  starts and dropped on approval, rejection, deletion, Start over and a restore; only real edits make one: an account
+  or cost center blank either way, a cost center with no list in use, and what the screen fills itself (the default Pay
+  from account, the vendor list's tax numbers) are not edits. (2) Confidence is the reading's and the coding's: setup
+  findings (`JDE_*`, `PAY_FROM_*`, `validation.SETUP_PREFIXES`) keep Approve closed but take nothing off it. (3) The
+  approve bar's "Not ready" is the first blocker in the screen's order (`invoice_view.SCREEN_ORDER`), and the approval
+  refuses with the same. (4) A right-click menu leaves out what can't be used rather than greying it; the posting, the
+  Tax check and the checks have menus too, and Esc gives the focus back to what had it. (5) Opening an invoice focuses
+  the first thing to check without scrolling: the header, the checks and the approval's banner come first. Why: an
+  independent UI sign-off found phantom drafts holding back bulk approval, drafts lost on a restart while the screen
+  promised them, a 29% confidence that only meant "JD Edwards not set up", and a bar naming the bank account for a
+  currency typo. (`web/pages/invoice.py`, `web/invoice_view.py`, `core/store/invoices.py`, `coding/validation.py`,
+  `static/js/invoice.js`, `static/js/ctxmenu.js`; `tests/test_web_review_signoff.py`)
 - **D-87** · A PO number longer than JD Edwards' PO field (VLPO, 8 characters) no longer blocks approval when the PO
   is sent as a reference: the voucher goes out with VLPO, VLPDCT and VLPKCO blank, the PO kept in AP Coder and in the
   remark (`AP Coder #<id> PO <number>`) when that fits in VLRMK's 30 characters, with a warning on the review screen

@@ -545,6 +545,7 @@ class InvoicesMixin:
                 "page_reads",
                 "azure_checks",
                 "verifications",
+                "invoice_drafts",
             ):
                 conn.execute(f"DELETE FROM {table} WHERE invoice_id = ?", (invoice_id,))
             if row is not None:
@@ -558,6 +559,50 @@ class InvoicesMixin:
                 self._withdraw_template(conn, invoice_id)
             else:
                 conn.execute("DELETE FROM template_snapshots WHERE invoice_id = ?", (invoice_id,))
+
+    # --- The review screen's drafts: edits not approved yet (D-86) ---------------------------------------------------
+    # One row per invoice and person ("" this computer, else a colleague's key on the office network: web/pages/
+    # invoice.py), so the edits outlive a restart, as the screen says. Dropped on approval, rejection, Start over.
+
+    def save_invoice_draft(self, invoice_id: int, person: str, draft: dict[str, Any]) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO invoice_drafts (invoice_id, person, draft, updated_at) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(invoice_id, person) DO UPDATE SET draft = excluded.draft, "
+                "updated_at = excluded.updated_at",
+                (invoice_id, person, json.dumps(draft), _now()),
+            )
+
+    def invoice_drafts(self) -> list[tuple[int, str, dict[str, Any]]]:
+        """(invoice id, person, draft) of every invoice still in the review queue; a draft that can't be read is left
+        out."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT d.invoice_id, d.person, d.draft FROM invoice_drafts d JOIN invoices i ON i.id = d.invoice_id "
+                "WHERE i.status = ? ORDER BY d.updated_at",
+                (REVIEW,),
+            ).fetchall()
+        out = []
+        for r in rows:
+            try:
+                draft = json.loads(r["draft"])
+            except ValueError:
+                continue
+            if isinstance(draft, dict):
+                out.append((r["invoice_id"], r["person"], draft))
+        return out
+
+    def drop_invoice_drafts(self, invoice_id: int | None = None, person: str | None = None) -> None:
+        """Forget drafts: an invoice's (one person's, or everyone's), or every one (``invoice_id`` None)."""
+        where, params = [], []
+        if invoice_id is not None:
+            where.append("invoice_id = ?")
+            params.append(invoice_id)
+        if person is not None:
+            where.append("person = ?")
+            params.append(person)
+        with self._conn() as conn:
+            conn.execute("DELETE FROM invoice_drafts" + (" WHERE " + " AND ".join(where) if where else ""), params)
 
     def list_invoices_full(self) -> list[dict[str, Any]]:
         """Every invoice with its file path, status and metadata (no AI output: kept light)."""

@@ -98,7 +98,7 @@
       {% macro help_slot(name) -%}{% set h = (live.help or {}).get(name) %}<span class="inv-help small" data-help{% if not h %} hidden{% endif %}><span class="ms" aria-hidden="true">lightbulb</span><span data-help-text>{{ h.text if h else "" }}</span>{% for a in (h.actions if h else []) %}<button type="button" class="btn sm ghost" data-help-use="{{ a.value }}">{{ a.label }}</button>{% endfor %}</span>{%- endmacro %}
       {% macro field(name, cls="", type="text", placeholder="", hint="", step="", choices="") -%}
       {% set s = sure.get(name) %}{% set flags = live.flags or {} %}{% set filled = draft.from_vendor.fields or {} %}
-      <label class="field {{ cls }}{% if name in flags %} is-flagged{% endif %}" data-field="{{ name }}"{% if name in absent_ok %} data-absent-ok{% endif %}{% if name in draft.absent %} data-absent{% endif %}>
+      <label class="field {{ cls }}{% if name in flags %} is-flagged{% endif %}{% if name in (live.flag_errors or []) %} is-error{% endif %}" data-field="{{ name }}"{% if name in absent_ok %} data-absent-ok{% endif %}{% if name in draft.absent %} data-absent{% endif %}>
         <span class="lbl">{{ labels[name] }}{% if s %} <span class="inv-sure {{ s.tone }}" title="{{ s.help }}"{% if name in filled or name in flags %} hidden{% endif %}><span class="ms" aria-hidden="true">{{ s.icon }}</span>{{ s.text }}</span>{% endif %}
           {% if hint %}<span class="rvw-hint" title="{{ hint }}"><span class="ms" aria-hidden="true">info</span></span>{% endif %}{{ menu_hint(labels[name]) }}</span>
         <input type="{{ type }}" name="{{ name }}" value="{{ draft.header[name] }}" form="inv"{% if placeholder %} placeholder="{{ placeholder }}"{% endif %}{% if step %} step="{{ step }}"{% endif %}{% if hint %} title="{{ hint }}"{% endif %}{% if choices %} data-picker="free" data-picker-noun="{{ name }}" data-choices="{{ choices }}" autocomplete="off"{% endif %}>
@@ -116,7 +116,7 @@
       <div class="rvw-group">Supplier</div>
       <div class="inv-grid">
         {% set s = sure.get("vendor_name") %}
-        <div class="field wide inv-vendor" data-field="vendor_name">
+        <div class="field wide inv-vendor{% if 'vendor_name' in flags %} is-flagged{% endif %}{% if 'vendor_name' in (live.flag_errors or []) %} is-error{% endif %}" data-field="vendor_name">
           <label for="vendor-name"><span class="lbl">{{ labels["vendor_name"] }}{% if s %} <span class="inv-sure {{ s.tone }}" title="{{ s.help }}"{% if "vendor_name" in flags %} hidden{% endif %}><span class="ms" aria-hidden="true">{{ s.icon }}</span>{{ s.text }}</span>{% endif %}
             <span class="rvw-hint" title="Pick the vendor from the vendor list: start typing its name. A vendor that is not in it can be added as a new vendor."><span class="ms" aria-hidden="true">info</span></span>{{ menu_hint(labels["vendor_name"]) }}</span></label>
           {# The vendor list to pick from: the picker (static/js/picker.js), with the vendors of #vendor-data (D-56). #}
@@ -162,7 +162,7 @@
         {{ field("due_date", placeholder=due_placeholder, hint="Only if printed; otherwise it comes from the terms (shown greyed)") }}
         {{ field("currency", choices="CAD|Canadian dollar,USD|US dollar,EUR|Euro,GBP|British pound") }}
         {# Our bank account it is paid from (D-66): a list only, of the accounts set up on GL accounts & tax. #}
-        <label class="field wide inv-pay-from{% if 'pay_from_account' in flags %} is-flagged{% endif %}" data-field="pay_from_account">
+        <label class="field wide inv-pay-from{% if 'pay_from_account' in flags %} is-flagged{% endif %}{% if 'pay_from_account' in (live.flag_errors or []) %} is-error{% endif %}" data-field="pay_from_account">
           <span class="lbl">{{ labels["pay_from_account"] }} <span class="rvw-hint" title="Your company's bank account that pays this invoice. It follows the invoice's currency (the default account of that currency, or the one this vendor was last paid from)."><span class="ms" aria-hidden="true">info</span></span></span>
           {% if pay_from.any %}
           <select name="pay_from_account" form="inv" data-pay-from>
@@ -422,7 +422,7 @@
   {% include "_invoice_document.html" %}
   <div class="col">
     {% if posting %}
-    <section class="card">{{ live_ui.head("GL posting") }}{{ live_ui.posting_table(posting) }}</section>
+    <section class="card inv-posting">{{ live_ui.head("GL posting") }}{{ live_ui.posting_table(posting) }}</section>
     {% endif %}
     {% include "_invoice_notes.html" %}
   </div>

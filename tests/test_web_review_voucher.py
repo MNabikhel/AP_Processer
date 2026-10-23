@@ -264,12 +264,12 @@ def _focus(page) -> dict:
 
 def test_in_a_browser_the_first_field_to_check_has_the_focus_above_the_approve_bar(browser, store):
     """B-742: on opening, the focus was on the page itself (31 Tabs to the vendor); then it could sit under the
-    approve bar."""
+    approve bar. Tab never leaves it there."""
     page = _page(browser, store, "Prairie")
     page.wait_for_function("document.activeElement && document.activeElement.name")
     first = _focus(page)
     assert first["name"] == "pst_registration_number"  # boxed on the page, the field empty
-    assert first["bottom"] <= first["barTop"]
+    assert page.evaluate("scrollY") == 0  # focused without scrolling: the header and the checks stay in view (B-792)
     for _ in range(12):  # Tab on: never under the bar
         page.keyboard.press("Tab")
         at = _focus(page)

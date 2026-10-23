@@ -83,6 +83,7 @@ function applySections(answer, posted = null) {
   showBarState();
   // the lines' tax codes where the invoice is supplied now, and the lines the Tax check points at (D-64)
   if (Array.isArray(answer.tax_codes)) setTaxCodeOptions(answer.tax_codes, answer.tax_code_labels);
+  titleTaxCodes();
   if (answer.tax_marks && typeof answer.tax_marks === "object") showTaxMarks(answer.tax_marks);
   // the accounts of the vendor now in the vendor field: the account lists' "Used for this vendor" (B-596)
   if (Array.isArray(answer.vendor_accounts)) vendorAccounts = answer.vendor_accounts;
@@ -533,8 +534,10 @@ function showVendorMatch() {
     });
     return;
   }
-  // Without a vendor master the list is only the vendors approved before: a new one is no mistake, so say nothing.
-  if (!vendors.list.length || !vendors.enforced) {
+  // Without a vendor master the list is only the vendors approved before: a new one is no mistake, so say nothing;
+  // and the check's own note under the field says it already (B-796): said once.
+  const note = vendorInput.closest("[data-field]")?.querySelector(":scope > [data-flag]:not([hidden]) [data-flag-text]");
+  if (!vendors.list.length || !vendors.enforced || /vendor list/i.test(note?.textContent || "")) {
     vendorMatch.replaceChildren();
     vendorMatch.className = "inv-vendor-match small";
     return;
@@ -659,7 +662,7 @@ function applyHeader(header, posted) {
     payFromFor.value = header.pay_from_for;
   }
   showFromVendor();
-  if (header.flags) showFlags(header.flags);
+  if (header.flags) showFlags(header.flags, header.flag_errors || []);
   if (header.help) showHelp(header.help);
   if (vendorMatch && "an8" in header) {
     if (header.an8 === null || header.an8 === undefined) delete vendorMatch.dataset.an8;
@@ -712,11 +715,13 @@ document.addEventListener("click", (e) => {
   el.focus();
 });
 
-/** The invoice details a check is about: amber, with its note under it (the checks list them too). */
-function showFlags(flags) {
+/** The invoice details a check is about: amber, with its note under it (the checks list them too); red when the
+    check is an error, as in "Must be fixed" (``errors``: those details, B-796). */
+function showFlags(flags, errors = []) {
   document.querySelectorAll(".inv-details [data-field]").forEach((field) => {
     const note = flags[field.dataset.field] || "";
     field.classList.toggle("is-flagged", Boolean(note));
+    field.classList.toggle("is-error", Boolean(note) && errors.includes(field.dataset.field));
     // "Verified" never sits beside what a check says is wrong with the field (B-740)
     const sure = field.querySelector(".lbl .inv-sure");
     if (sure && note) sure.hidden = true;
@@ -1238,7 +1243,10 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     flush().then(() => {
       if (!approveButton.disabled) form.requestSubmit(approveButton);
-      else toast({ text: `Not ready to approve: ${notReady()}`, tone: "warn" }); // the reason, not "see the bar" (B-743)
+      else {
+        toast({ text: `Not ready to approve: ${notReady()}`, tone: "warn" }); // the reason, not "see the bar" (B-743)
+        focusNotReady();
+      }
     });
     return;
   }
@@ -1713,7 +1721,7 @@ function lineMenu(tr) {
   const moreTax = taxItems.filter((it) => it !== confirm);
   return [
     suggested ? { icon: "add_task", label: `Use the suggested account (${suggested.dataset.gl})`, id: "suggested", run: () => suggested.click() } : null,
-    above && !blank(above.querySelector('[name="line_gl"]')) ? { icon: "vertical_align_top", label: `Copy the ${what} from the line above`, hint: "Ctrl+D", id: "above", run: () => copyAbove(tr) } : null,
+    above && !blank(above.querySelector('[name="line_gl"]')) ? { icon: "vertical_align_top", label: `Copy the ${what} from above`, hint: "Ctrl+D", id: "above", run: () => copyAbove(tr) } : null,
     !blank(gl) && without.length ? { icon: "playlist_add_check", label: `Use GL ${gl.value} on the ${without.length === 1 ? "line" : `${without.length} lines`} without one`, id: "fill",
       run: () => undoable(`GL ${gl.value} put on ${without.length === 1 ? "1 line" : `${without.length} lines`}.`, () => {
         without.forEach((r) => setGl(r, gl.value));
@@ -2040,6 +2048,98 @@ async function pageMenu(_stage, ctx) {
   ];
 }
 
+/* ---------- The posting, the Tax check and the checks: a menu each (B-798) ---------- */
+
+/** "9,200.00" as it pastes into another program: 9200.00 (a credit -2050.00). */
+function plainAmount(text) {
+  return String(text || "").replace(/,/g, "").trim();
+}
+
+/** Focus a line's box (its account picker's text box when it has one), in view. */
+function focusLineBox(tr, name) {
+  const box = tr?.querySelector(`[form="inv"][name="${CSS.escape(name)}"]`);
+  if (!box) return false;
+  const target = box.closest(".pk")?.querySelector(".pk-input") || box;
+  target.scrollIntoView({ block: "center", behavior: "smooth" });
+  target.focus({ preventScroll: true });
+  return true;
+}
+
+function lineRowByNumber(number) {
+  return gridRows().find((tr) => lineNo(tr) === String(number));
+}
+
+/** An invoice detail's box, focused in view. */
+function goToField(name) {
+  const box = input(name);
+  if (!box || !box.getClientRects().length) return false;
+  const target = box.closest(".pk")?.querySelector(".pk-input") || box;
+  target.scrollIntoView({ block: "center", behavior: "smooth" });
+  target.focus({ preventScroll: true });
+  return true;
+}
+
+function postingMenu(tr) {
+  const line = tr.dataset.postLine;
+  const amount = plainAmount(tr.dataset.amount);
+  const gl = tr.dataset.gl;
+  const firstTax = document.querySelector('[data-grid="taxes"] [name="tax_amount"]');
+  return [
+    line ? { icon: "arrow_downward", label: `Go to line ${line}`, id: "goto", run: () => focusLineBox(lineRowByNumber(line), "line_gl") }
+      : firstTax ? { icon: "arrow_downward", label: "Go to the tax lines", id: "goto", run: () => {
+        firstTax.scrollIntoView({ block: "center", behavior: "smooth" });
+        firstTax.focus({ preventScroll: true });
+      } } : null,
+    "-",
+    amount ? { icon: "content_copy", label: `Copy the amount (${amount})`, id: "copy-amount", run: () => copyText(amount) } : null,
+    gl && gl !== "UNASSIGNED" ? { icon: "content_copy", label: `Copy the GL account (${gl})`, id: "copy-gl", run: () => copyText(gl) } : null,
+    tr.dataset.ani ? { icon: "content_copy", label: `Copy the JDE account (${tr.dataset.ani})`, id: "copy-ani", run: () => copyText(tr.dataset.ani) } : null,
+  ];
+}
+
+/** The lines whose tax code carries ``type`` (GST, PST…). */
+function linesMarked(type) {
+  return gridRows().filter((tr) => lineTaxes(tr).includes(type));
+}
+
+function taxCheckMenu(tr) {
+  const row = tr.dataset.taxRow || "";
+  const type = tr.dataset.taxType || "";
+  const diff = plainAmount(tr.dataset.diff);
+  const expected = plainAmount(tr.dataset.expected);
+  const marked = type ? linesMarked(type) : [];
+  const taxLine = type ? [...document.querySelectorAll('[data-grid="taxes"] > tr')]
+    .find((t) => t.querySelector('[name="tax_type"]')?.value === type) : null;
+  const field = row === "lines" ? "subtotal" : row === "total" ? "grand_total" : "";
+  return [
+    marked.length ? { icon: "arrow_downward", label: `Go to the first line marked ${type}`, id: "goto", run: () => focusLineBox(marked[0], "line_tax_code") } : null,
+    taxLine ? { icon: "arrow_downward", label: `Go to the ${type} tax line`, id: "goto-tax", run: () => {
+      const box = taxLine.querySelector('[name="tax_amount"]');
+      box.scrollIntoView({ block: "center", behavior: "smooth" });
+      box.focus({ preventScroll: true });
+    } } : null,
+    field ? { icon: "arrow_upward", label: `Go to ${fieldName(field)}`, id: "goto-field", run: () => goToField(field) } : null,
+    "-",
+    diff ? { icon: "content_copy", label: `Copy the difference (${diff})`, id: "copy-diff", run: () => copyText(diff) } : null,
+    expected ? { icon: "content_copy", label: `Copy the expected amount (${expected})`, id: "copy-expected", run: () => copyText(expected) } : null,
+  ];
+}
+
+function checkMenu(li) {
+  const code = li.dataset.code || "";
+  const field = li.dataset.fieldOf || "";
+  const line = li.querySelector("[data-goto-line]");
+  const text = (li.querySelector(".t")?.textContent || li.title || "").trim();
+  return [
+    line ? { icon: "arrow_downward", label: `Go to line ${line.dataset.line}`, id: "goto-line", run: () => goToLine(line.dataset.gotoLine, line.dataset.line) } : null,
+    field && input(field) ? { icon: "arrow_downward", label: `Go to ${fieldName(field)}`, id: "goto", run: () => goToField(field) } : null,
+    "-",
+    text ? { icon: "content_copy", label: "Copy the message", id: "copy-text", run: () => copyText(text) } : null,
+    code ? { icon: "help", label: "What this check means", hint: "Help", id: "help",
+      run: () => window.open(`/help?q=${encodeURIComponent(code)}#check-${encodeURIComponent(code)}`, "_blank", "noopener") } : null,
+  ];
+}
+
 /* ---------- Which menu: the first that matches (a box on the page is its field's, not the page's) ---------- */
 
 if (form) {
@@ -2050,6 +2150,9 @@ if (form) {
     ctx.target.closest(".inv-vendor-add, .inv-vendor-match, .rvw-hint") ? null : fieldMenu(el.dataset.field, "form"));
   register('[data-grid="lines"] > tr', (tr) => lineMenu(tr));
   register('[data-grid="taxes"] > tr', (tr) => taxMenu(tr));
+  register('[data-live="posting"] tbody tr', (tr) => postingMenu(tr), { keepFocus: true });
+  register("[data-tax-check] tr[data-tax-row]", (tr) => taxCheckMenu(tr), { keepFocus: true });
+  register("[data-live=checks] .rvw-status li", (li) => checkMenu(li), { keepFocus: true });
 }
 
 /* ---------- Ctrl+Z, P (Park), X (Reject) ---------- */
@@ -2126,10 +2229,22 @@ const overrideWhy = document.querySelector("[data-override-reason]");
 function notReady() {
   const why = document.querySelector("[data-live=bar] [data-not-ready]")?.dataset.notReady || "";
   if (why) return `${why.replace(/\.$/, "")}.`;
-  const box = document.querySelector("[name=override]");
-  if (box && !box.checked) return "tick “Approve anyway” and say why.";
-  if (box && overrideWhy && !overrideWhy.value.trim()) return "say why you approve it anyway.";
+  // "Approve anyway" as it stands now, ticked or not (B-790): never "tick it" when it is ticked
+  const box = document.querySelector("[data-live=bar] [name=override]");
+  if (box && !box.checked) return "Tick “Approve anyway” and say why.";
+  if (box && overrideWhy && !overrideWhy.value.trim()) return "Say why you approve anyway.";
   return "see the bar at the bottom.";
+}
+
+/** The box that answers why Approve is closed, when it is the reason for "Approve anyway". */
+function focusNotReady() {
+  const box = document.querySelector("[data-live=bar] [name=override]");
+  if (document.querySelector("[data-live=bar] [data-not-ready]")?.dataset.notReady || !box) return;
+  if (box.checked && overrideWhy && !overrideWhy.value.trim()) {
+    overrideWhy.hidden = false;
+    overrideWhy.disabled = false;
+    overrideWhy.focus();
+  } else if (!box.checked) box.focus();
 }
 
 /** Nothing focused hides under the approve bar, however tall it is (B-742): the page's scroll padding is its height. */
@@ -2201,9 +2316,32 @@ document.addEventListener("input", (e) => {
   if (e.target.name === "line_description") showRemark(e.target, true);
 });
 
+/** A line's tax code says itself in full on hover, as "GST + QST" can be cut off in its box (B-800). */
+function titleTaxCodes() {
+  document.querySelectorAll("select[data-tax-code]").forEach((sel) => {
+    sel.title = sel.selectedOptions[0]?.textContent.trim() || "";
+  });
+}
+document.addEventListener("change", (e) => {
+  if (e.target.matches?.("select[data-tax-code]")) titleTaxCodes();
+});
+
 document.querySelector("[data-show-qty]")?.addEventListener("change", (e) => {
   document.getElementById("lines")?.classList.toggle("show-qty", e.target.checked);
 });
+
+/* ---------- A popover opened: its first text box has the focus (Reopen for correction's reason, B-804) ---------- */
+
+document.addEventListener(
+  "toggle",
+  (e) => {
+    const pop = e.target;
+    if (!pop.matches?.("details.pop") || !pop.open) return;
+    const box = pop.querySelector(":scope > .pop-body input[type=text], :scope > .pop-body textarea");
+    if (box && !pop.querySelector(":scope > .pop-body").contains(document.activeElement)) box.focus();
+  },
+  true,
+);
 
 /* ---------- Alt+PgDn / Alt+PgUp: the invoice's next or previous page from anywhere ---------- */
 
@@ -2217,7 +2355,7 @@ document.addEventListener("keydown", (e) => {
 /* ---------- The focus on opening: the first thing to check (B-742) ---------- */
 
 /** The first invoice detail a check is about (flagged, a note to act on, a reading to check), else the first line
-    still to code, else the vendor. ``always``: even when something else has the focus. */
+    still to code, else the vendor, focused without scrolling. ``always``: even when something else has the focus. */
 let acted = false; // the clerk pressed a key or clicked since the page opened: the focus is theirs to place
 for (const type of ["pointerdown", "keydown"]) document.addEventListener(type, () => (acted = true), { capture: true, once: true });
 
@@ -2247,14 +2385,18 @@ function focusFirstToCheck(always = false) {
     };
     for (const t of ["keydown", "pointerdown", "blur"]) box.addEventListener(t, mine);
   }
+  // The page stays at its top (B-792): the invoice's header, what must be fixed and the message of the approval just
+  // made are what the clerk reads first. The box has the focus all the same: typing in it, Tab or N brings it into
+  // view (above the approve bar).
   box.focus({ preventScroll: true });
-  box.scrollIntoView({ block: "nearest" });
+  if (always) box.scrollIntoView({ block: "nearest" }); // after an Undo: where the work is
   return true;
 }
 
 /* ---------- Start ---------- */
 
 showMailLanguage();
+titleTaxCodes();
 fillSplitLines();
 showVendorMatch();
 for (const name of absentList()) viewer?.setEdited(name, "", true); // marked before: the Fields list says so

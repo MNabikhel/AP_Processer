@@ -7,9 +7,19 @@ import datetime as dt
 from typing import Any
 
 from ..core.schema import InvoiceCoding
-from ..core.ui import money, plural
+from ..core.ui import plural
 from .line_tax import tax_name
 from .tax import PROVINCES, REGIME, TAX_TYPES, currency_places, supply_source
+
+
+def money(value: Any) -> str:
+    """An amount as the review screen's boxes show it: a credit with a minus sign, -2,050.00, never (2,050.00) beside a
+    box holding -2050.00 (B-805)."""
+    try:
+        amount = float(value)
+    except (TypeError, ValueError):
+        return "—"
+    return f"-{-amount:,.2f}" if amount < -0.004 else f"{abs(amount) if amount > -0.005 else 0.0:,.2f}"
 
 
 def _short(text: str, size: int = 28) -> str:

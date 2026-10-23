@@ -89,8 +89,10 @@ def test_approving_says_what_the_vendor_learned(client, store):
     load_sample_setup(store)
     invoice_id = add_clean(store)
     page = follow(client, post(client, f"/review/{invoice_id}/approve", form_of(store, invoice_id)))
-    found = re.search(r"Approved [^<]*coded as suggested\.", html.unescape(page))
+    # one line, and what it learned folded under it (B-804)
+    found = re.search(r"Approved [^<]*</div>.*?What it learned</summary><div>([^<]*coded as suggested\.)",
+                      html.unescape(page), re.S)  # fmt: skip
     assert found, page
-    text = found.group(0)
+    text = found.group(1)
     assert "You changed no header field." in text and ": 1 invoice reviewed, 1 of about " in text
     assert "clean approvals toward skipping review." in text  # B-666
