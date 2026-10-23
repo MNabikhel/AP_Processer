@@ -19,7 +19,7 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
-from ap_coder.coding.bulk import bulk_approve, sort_for_bulk
+from ap_coder.coding.bulk import bulk_approve, issues_today, sort_for_bulk
 from ap_coder.coding.review import codes_to_pick, uses_cost_centers
 from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCE_NAMES, province_label, stored_supply
 from ap_coder.coding.terms import DUE_SOON_DAYS, LONG_OVERDUE_DAYS, overdue_since, payment
@@ -157,11 +157,18 @@ def _to_fix(invoice_id: int, final: str | None, ai: str | None, validation: str 
 
 
 def attention(store: Store, reference: ReferenceData | None, pending: list[dict[str, Any]],
-              threshold: float | None = None) -> dict[int, str]:  # fmt: skip
+              threshold: float | None = None,
+              today: dict[int, list[dict[str, Any]]] | None = None) -> dict[int, str]:  # fmt: skip
     """Why each invoice of ``pending`` (the queue) needs attention, by id; one not listed is Ready: its review
     screen's Approve is open as it stands. The lines' codes are asked as the review screen asks (``codes_to_pick``),
-    then the checks' flag (an error, or confidence under ``threshold``; None: the flag alone, without its words)."""
+    then the checks' flag (an error, or confidence under ``threshold``; None: the flag alone, without its words).
+    The checks are today's (``bulk.issues_today``, or ``today`` when the caller has it): an invoice whose stored
+    checks were made against other settings is checked again (B-815)."""
     from ap_coder.coding import banks
+    from ap_coder.coding.bulk import issues_today
+
+    if today is None:
+        today = issues_today(store, [i["id"] for i in pending if not i.get("requires_review")], reference)
 
     cost_centers = reference is not None and uses_cost_centers(reference)
     accounts = store.bank_accounts()
@@ -178,9 +185,8 @@ def attention(store: Store, reference: ReferenceData | None, pending: list[dict[
     out = {}
     for inv in pending:
         r = stored.get(inv["id"]) or {}
-        to_pick, errors = _to_fix(
-            inv["id"], r.get("final_output"), r.get("ai_output"), r.get("validation"), cost_centers
-        )
+        checked = json.dumps({"issues": today[inv["id"]]}) if inv["id"] in today else r.get("validation")
+        to_pick, errors = _to_fix(inv["id"], r.get("final_output"), r.get("ai_output"), checked, cost_centers)
         low = threshold is not None and (inv.get("adjusted_confidence") or 0.0) < threshold
         bank = ""
         if any(a["active"] for a in accounts):  # the review screen's Pay from rule (B-685): its Approve, its Ready
@@ -347,7 +353,9 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
 
     threshold = settings.engine.review_threshold
     pending = [i for i in invoices if i["status"] == REVIEW]
-    reasons = attention(store, reference, pending, threshold)  # Ready means its Approve is open
+    # The checks as they are now, of the invoices not flagged (a flagged one is never Ready nor offered in bulk).
+    today = issues_today(store, [i["id"] for i in pending if not i["requires_review"]], reference, settings)
+    reasons = attention(store, reference, pending, threshold, today)  # Ready means its Approve is open
     flagged = [i for i in pending if i["id"] in reasons]
     approved = [i for i in invoices if i["status"] == APPROVED]
     awaiting = [i for i in invoices if i["status"] == PENDING]
@@ -378,7 +386,7 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
     if tab == "review":
         shown = {"attention": flagged, "ready": [i for i in pending if i["id"] not in reasons]}.get(show, pending)
         shown = sort_queue(filter_queue(shown, q), sort)
-        candidates, left = sort_for_bulk(store, pending) if show != "attention" else ([], {})
+        candidates, left = sort_for_bulk(store, pending, today) if show != "attention" else ([], {})
         context.update(
             pending=pending,
             counts={"all": len(pending), "attention": len(flagged), "ready": len(pending) - len(flagged)},

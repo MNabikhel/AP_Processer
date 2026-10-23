@@ -1,15 +1,18 @@
 """Bulk approval of clean invoices.
 
-An invoice qualifies only if, re-checked right now (duplicates and history may have changed since it was
-processed), it has no error and no warning, no finding that always goes to a person (``ALWAYS_A_PERSON``: some,
-like a new vendor name, are only info), it is not a credit note (a credit is always applied by a person, as the
-touchless rules say) and the AI's confidence is above the review threshold.
+The queue says which invoices look clean by today's checks: those made against other settings (GL accounts, cost
+centers, tax, JD Edwards) are done again (``issues_today``, B-815). An invoice qualifies only if, re-checked right now
+(duplicates and history may have changed since it was processed), it has no error and no warning, no finding that
+always goes to a person (``ALWAYS_A_PERSON``: some, like a new vendor name, are only info), it is not a credit note (a
+credit is always applied by a person, as the touchless rules say) and the AI's confidence is above the review
+threshold.
 Everything else is skipped with the reason, and still needs a person.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import json
 from typing import Any
 
 from ..ai.pipeline import finalise_coding
@@ -19,6 +22,7 @@ from ..core.config import Settings
 from ..core.reference_data import ReferenceData
 from ..core.schema import InvoiceCoding
 from ..core.store import REVIEW, Store
+from ..core.store._base import CHECKS_STAMP_KEY
 
 
 def _received_on(inv: dict[str, Any]) -> dt.date | None:
@@ -52,6 +56,90 @@ def _credit_note(titled: bool, grand_total: Any) -> bool:
     return bool(touchless_gates(grand_total=grand_total, credit_note=titled))
 
 
+# Findings made after the coding's checks, from the page and the readers: kept from the stored checks as they are, when
+# today's checks are worked out again (``issues_today``); the coding's own checks are re-done. A code no check
+# describes (``ops.help.CHECKS``) is kept too: never dropped unseen.
+AFTER_PROCESSING = frozenset({
+    "FILE_CUT_OFF", "AZURE_DI_DISAGREES", "AZURE_DI_NOT_COMPARED", "VERIFIER_DISAGREES", "VERIFIER_UNSURE",
+    "CAPTURE_TOTALS", "CAPTURE_CHECK_FIELDS", "TEXT_LAYER_MATCHES_PAGE", "LINE_ITEMS_AGREE", "INVOICE_DATE_NOT_FOUND",
+    "PAGES_NOT_READ", "CURRENCY_NOT_FOUND",
+})  # fmt: skip
+
+
+def _kept(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The stored findings today's checks do not make again (``AFTER_PROCESSING``)."""
+    from ..ops.help import CHECKS
+
+    return [i for i in issues if str(i.get("code") or "") in AFTER_PROCESSING or str(i.get("code") or "") not in CHECKS]
+
+
+def _recheck(
+    store: Store, reference: ReferenceData, settings: Settings, row: dict[str, Any]
+) -> list[dict[str, Any]] | None:
+    """The coding's checks of an invoice in the queue as they come out today (what ``bulk_approve`` checks), as
+    stored findings; None when its coding can't be read (the stored checks stand)."""
+    coded = row.get("final_output") or row.get("ai_output")
+    if not coded:
+        return None
+    coded = {k: v for k, v in coded.items() if k != "gl_distribution"}
+    try:
+        coding = InvoiceCoding.model_validate(coded)
+    except ValueError:
+        return None
+    _, report = finalise_coding(coding, reference, settings, store=store, exclude_invoice_id=row["id"],
+                                received=_received_on(row))  # fmt: skip
+    return [{"severity": i.severity, "code": i.code, "message": i.message, "line_number": i.line_number}
+            for i in report.issues]  # fmt: skip
+
+
+def issues_today(
+    store: Store, ids: list[int], reference: ReferenceData | None = None, settings: Settings | None = None
+) -> dict[int, list[dict[str, Any]]]:
+    """{id: its findings by today's checks} for the invoices of ``ids`` whose stored checks were made against other
+    settings than today's (``Store.checks_stamp``: the GL accounts, cost centers, tax setup, JD Edwards...): the
+    coding's checks done again (kept beside the stored ones, so once per change of settings), plus the stored
+    findings made after them (``_kept``). An invoice not listed: its stored checks are today's (B-815). About 5 ms
+    an invoice, once per change of settings: the queue asks it of the invoices not flagged only."""
+    if not ids:
+        return {}
+    with store.session():  # one connection for every invoice checked again
+        return _issues_today(store, ids, reference, settings)
+
+
+def _issues_today(
+    store: Store, ids: list[int], reference: ReferenceData | None, settings: Settings | None
+) -> dict[int, list[dict[str, Any]]]:
+    stamp = store.checks_stamp()
+    stamps = store.check_stamps(ids)
+    stale = [i for i in ids if i in stamps and stamps[i][0] != stamp]
+    if not stale:
+        return {}
+    rows = store.invoice_columns(("id", "validation", "ai_output", "final_output", "created_at"), ids=stale,
+                                 decode=False)  # fmt: skip
+    out: dict[int, list[dict[str, Any]]] = {}
+    for row in rows:
+        seen = row["validation"]
+        validation = json.loads(seen) if seen else {}
+        stored = validation.get("issues") or []
+        recheck = validation.get("recheck") or {}
+        if recheck.get("stamp") == stamp:
+            today = recheck.get("issues") or []
+        else:
+            if reference is None:
+                try:
+                    reference = store.reference_data()
+                except Exception:  # noqa: BLE001 - no reference data yet: the stored checks stand
+                    return out
+            decoded = {**row, "ai_output": json.loads(row["ai_output"]) if row["ai_output"] else None,
+                       "final_output": json.loads(row["final_output"]) if row["final_output"] else None}  # fmt: skip
+            today = _recheck(store, reference, settings or Settings(), decoded)
+            if today is None:
+                continue
+            store.save_recheck(row["id"], stamp, today, seen)
+        out[row["id"]] = today + [i for i in _kept(stored) if i.get("code") not in {t.get("code") for t in today}]
+    return out
+
+
 def clean_candidates(store: Store) -> list[dict[str, Any]]:
     """Invoices in the queue that were clean when processed (no review flag, no errors or warnings, nothing that
     always goes to a person, not a credit note)."""
@@ -59,18 +147,23 @@ def clean_candidates(store: Store) -> list[dict[str, Any]]:
 
 
 def sort_for_bulk(
-    store: Store, queue: list[dict[str, Any]] | None = None
+    store: Store, queue: list[dict[str, Any]] | None = None, today: dict[int, list[dict[str, Any]]] | None = None
 ) -> tuple[list[dict[str, Any]], dict[int, str]]:
     """(``clean_candidates``, why each other invoice of the queue not flagged when processed is left for a person:
     "credit note", or "warning" for an error, a warning or a finding that always goes to a person). ``queue``: the
-    invoices in review as ``store.list_invoices`` gives them, when the caller has them already."""
+    invoices in review as ``store.list_invoices`` gives them, when the caller has them already. ``today``:
+    ``issues_today`` of the queue, when the caller has it already. The checks are today's: an invoice whose stored
+    checks were made against other settings is checked again (B-815)."""
     validations = {r["id"]: r["validation"] or {} for r in store.invoice_columns(("id", "validation"), REVIEW)}
     titled = store.credit_note_ids(REVIEW)
+    queue = store.list_invoices(REVIEW) if queue is None else queue
+    if today is None:
+        today = issues_today(store, [i["id"] for i in queue if not i["requires_review"]])
     candidates, left = [], {}
-    for inv in store.list_invoices(REVIEW) if queue is None else queue:
+    for inv in queue:
         if inv["requires_review"]:
             continue
-        issues = validations.get(inv["id"], {}).get("issues") or []
+        issues = today[inv["id"]] if inv["id"] in today else validations.get(inv["id"], {}).get("issues") or []
         if _credit_note(inv["id"] in titled, inv["grand_total"]):
             left[inv["id"]] = "credit note"
         elif any(_needs_a_person(i.get("severity"), i.get("code")) for i in issues):
@@ -96,6 +189,7 @@ def _bulk_approve(
 ) -> dict[str, Any]:
     approved: list[int] = []
     skipped: list[tuple[int, str]] = []
+    stamp = store.checks_stamp()
     for invoice_id in invoice_ids:
         inv = store.get_invoice(invoice_id)
         if inv is None or inv["status"] != REVIEW or not inv.get("ai_output"):
@@ -103,11 +197,11 @@ def _bulk_approve(
             continue
         # What was found after processing and is kept only with the invoice (the Azure check's disagreement, the page
         # reader's line items or text layer read differently): finalise_coding below does not raise it again.
-        stored = [
-            i
-            for i in (inv.get("validation") or {}).get("issues") or []
-            if _needs_a_person(i.get("severity"), i.get("code"))
-        ]
+        validation = inv.get("validation") or {}
+        found = validation.get("issues") or []
+        if validation.get(CHECKS_STAMP_KEY) != stamp:  # checked against other settings (B-815)
+            found = _kept(found)  # the coding's own checks are done again below, as they come out today
+        stored = [i for i in found if _needs_a_person(i.get("severity"), i.get("code"))]
         if stored:
             skipped.append((invoice_id, _plain(stored[0].get("message"), stored[0].get("code"))))
             continue

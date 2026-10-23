@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import threading
@@ -32,6 +33,13 @@ _REFERENCE_STAMP = """SELECT
      FROM (SELECT * FROM tax_treatments ORDER BY tax_type)),
     (SELECT group_concat(key || '=' || value, char(10))
      FROM (SELECT * FROM settings WHERE key IN ('our_province', 'site_provinces', 'policy_notes') ORDER BY key))"""
+
+# What the checks read besides the reference data, as the queue's re-check compares them (``Store.checks_stamp``,
+# B-815): JD Edwards' settings, whether it is in use (its switch, or a batch made), and the days to pay.
+_CHECKS_STAMP = """SELECT
+    (SELECT group_concat(key || '=' || value, char(10))
+     FROM (SELECT * FROM settings WHERE key IN ('jde_e1', 'show_jde_settings', 'default_terms_days') ORDER BY key)),
+    (SELECT COUNT(*) FROM export_batches WHERE format = 'jde')"""
 
 
 class AccountsMixin:
@@ -324,6 +332,21 @@ class AccountsMixin:
             while len(_REFERENCE) > 8:
                 _REFERENCE.pop(next(iter(_REFERENCE)))
         return built
+
+    def checks_stamp(self) -> str:
+        """A short fingerprint of everything an invoice's checks read that a person changes in Settings: the GL
+        accounts, cost centers, tax setup and rate file, our province and sites, the policy notes, JD Edwards and
+        the days to pay. A validation stored with another one may say what today's checks would not (B-815)."""
+        path = _tax.rates_path()
+        try:
+            seen = path.stat()
+            mtime: tuple[int, int] | None = (seen.st_mtime_ns, seen.st_size)
+        except OSError:
+            mtime = None
+        with self._conn() as conn:
+            parts = (str(path), mtime, *conn.execute(_REFERENCE_STAMP).fetchone(),
+                     *conn.execute(_CHECKS_STAMP).fetchone())  # fmt: skip
+        return hashlib.sha256(repr(parts).encode("utf-8")).hexdigest()[:20]
 
     def _reference_data(self, rates: TaxRateTable) -> ReferenceData:
         gl = self.list_accounts("gl_accounts")

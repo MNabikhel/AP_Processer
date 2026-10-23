@@ -279,3 +279,26 @@ def test_a_list_of_invoices_does_not_look_for_each_file_every_time(tmp_path, mon
     monkeypatch.setattr(Path, "exists", lambda self, *a, **k: looked.append(str(self)) or real(self, *a, **k))
     assert len(store.get_invoices(ids)) == 4
     assert not [p for p in looked if p in files]
+
+
+def test_the_queue_checks_an_invoice_again_once_per_change_of_settings(tmp_path, monkeypatch):
+    """B-815: the queue's re-check against today's settings is done once per change, and kept: loading the queue
+    again checks nothing again."""
+    from ap_coder.coding import bulk
+    from ap_coder.core.store import REVIEW, load_sample_setup
+
+    from .webclient import add_clean
+
+    store = Store(tmp_path / "ap.db")
+    load_sample_setup(store)
+    ids = [add_clean(store, invoice_number=f"N-{i}") for i in range(3)]
+    calls = []
+    real = bulk.finalise_coding
+    monkeypatch.setattr(bulk, "finalise_coding", lambda *a, **k: calls.append(1) or real(*a, **k))
+    assert bulk.issues_today(store, ids) == {} and calls == []  # checked against the settings as they are
+    store.set_setting("default_terms_days", "45")
+    assert set(bulk.issues_today(store, ids)) == set(ids) and len(calls) == 3
+    assert set(bulk.issues_today(store, ids)) == set(ids) and len(calls) == 3  # kept: not checked again
+    queue = [i for i in store.list_invoices() if i["status"] == REVIEW]
+    bulk.sort_for_bulk(store, queue)
+    assert len(calls) == 3

@@ -19,6 +19,7 @@ from ._base import (
     AZURE_FAILED,
     AZURE_SKIPPED,
     AZURE_WAITING,
+    CHECKS_STAMP_KEY,
     PARKED,
     REVIEW,
     VERIFY_DONE,
@@ -381,6 +382,8 @@ class LessonsMixin:
         if not output:
             return False
         validation = report.to_dict() if hasattr(report, "to_dict") else dict(report or {})
+        if validation:  # checked now, against the settings as they are (B-815)
+            validation[CHECKS_STAMP_KEY] = self.checks_stamp()
         if capture is not None and hasattr(capture, "to_dict"):
             capture = capture.to_dict()
         key = vendor_key(output.get("vendor_name", ""))

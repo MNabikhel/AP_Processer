@@ -60,6 +60,10 @@ ACTIVE_STATUSES = (REVIEW, PARKED, PENDING, APPROVED)  # invoices that count (fo
 _ACTIVE_IN = "(" + ", ".join("?" * len(ACTIVE_STATUSES)) + ")"
 
 
+# The key of a stored validation that holds the stamp of what it was checked against (``Store.checks_stamp``, B-815).
+CHECKS_STAMP_KEY = "checks_stamp"
+
+
 def _in_list(column: str) -> str:
     """``column IN`` a list bound as ONE parameter (a JSON array): a list of any length, where one ``?`` per item
     fails past the SQLite build's limit (999 on older builds, 32,766 on newer)."""

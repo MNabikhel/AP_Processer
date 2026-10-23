@@ -24,6 +24,7 @@ from ._base import (
     _LOOK_AGAIN_SECONDS,
     _NOT_FOUND,
     APPROVED,
+    CHECKS_STAMP_KEY,
     FAILED,
     PARKED,
     PENDING,
@@ -61,6 +62,8 @@ class InvoicesMixin:
         source_path = Path(source_path)
         sha = hashlib.sha256(source_path.read_bytes()).hexdigest() if source_path.exists() else None
         out = output or {}
+        if validation:  # what it was checked against: the queue checks it again once that changes (B-815)
+            validation = {CHECKS_STAMP_KEY: self.checks_stamp(), **validation}
         val = validation or {}
         with self._conn() as conn:
             if sha:  # a new attempt replaces earlier failed attempts at the same file
@@ -569,6 +572,30 @@ class InvoicesMixin:
         "id", "status", "requires_review", "created_at", "reviewed_at", "reviewer", "second_reviewer",
         "second_reviewed_at", "invoice_date", "due_date", "export_batch", "source_path", "file_name", *_JSON_COLUMNS
     )  # fmt: skip
+
+    def check_stamps(self, ids: list[int]) -> dict[int, tuple[str, str]]:
+        """{id: (the stamp its stored checks were made against, the stamp of its queue re-check)} ("" for none),
+        read by SQLite without decoding each validation (``Store.checks_stamp``, B-815)."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT id, json_extract(validation, '$.checks_stamp'), json_extract(validation, '$.recheck.stamp') "
+                f"FROM invoices WHERE validation IS NOT NULL AND json_valid(validation) AND {_in_list('id')}",
+                (json.dumps([int(i) for i in ids]),),
+            ).fetchall()
+        return {int(r[0]): (str(r[1] or ""), str(r[2] or "")) for r in rows}
+
+    def save_recheck(self, invoice_id: int, stamp: str, issues: list[dict[str, Any]], seen: str | None) -> bool:
+        """Keep the queue's re-check of an invoice in review (``coding.bulk.issues_today``) with its stored checks,
+        beside them (``recheck``: the stamp and the findings): they stay as they were found. Only while the stored
+        checks are still ``seen`` (their text as read): True when kept."""
+        recheck = json.dumps({"stamp": stamp, "issues": issues}, default=str)
+        with self._conn() as conn:
+            cur = conn.execute(
+                "UPDATE invoices SET validation = json_set(validation, '$.recheck', json(?)) "
+                "WHERE id = ? AND status = ? AND validation = ?",
+                (recheck, int(invoice_id), REVIEW, seen),
+            )
+        return cur.rowcount > 0
 
     def invoice_columns(
         self, columns: tuple[str, ...], status: str | None = None, ids: list[int] | None = None, decode: bool = True

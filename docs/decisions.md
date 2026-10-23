@@ -665,3 +665,16 @@ that is reversed keeps its line, marked "replaced by D-NN".
   and blocking made the clerk change what is printed; cutting it to 8 characters would send a wrong reference.
   (`erp/jde.py` `po_not_sent`, `_prepare`, `voucher_rows`, `voucher_findings`; `docs/JDE_E1.md`;
   `tests/test_jde.py::test_a_po_number_longer_than_jde_holds_is_kept_here_and_not_sent`)
+- **D-88** · The review queue's "look clean" and Ready are today's checks, not the ones stored when the invoice was
+  read (B-815). A stored validation carries `checks_stamp`, a fingerprint of what the checks read that a person
+  changes in Settings (`Store.checks_stamp`: the GL accounts, cost centers, tax setup and rate file, our province and
+  sites, policy notes, JD Edwards' settings and switch, the days to pay). When it differs from today's, the queue does
+  the coding's checks again (`finalise_coding`, as bulk approval does) for the invoices not flagged, and keeps the
+  result beside the stored checks (`validation.recheck`: its stamp and findings), so once per change of settings,
+  about 5 ms an invoice; the findings made after processing (the Azure check, the AI reviewer, the page's own:
+  `bulk.AFTER_PROCESSING`, and any code no check describes) are kept from the stored ones. Bulk approval drops the
+  stale stored findings the same way, so what the queue offers is what it approves. Not in the stamp: the vendor
+  master, the POs and the passing days (duplicates, overdue): bulk approval still checks those at approval. Why:
+  re-checking on every page load costs ~5 ms an invoice; re-checking on each settings save would be slow on the save
+  and miss changes made elsewhere. (`coding/bulk.py` `issues_today`, `sort_for_bulk`, `bulk_approve`;
+  `web/pages/review.py` `attention`; `core/store` `checks_stamp`, `check_stamps`, `save_recheck`)
