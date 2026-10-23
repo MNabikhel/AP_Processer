@@ -830,7 +830,10 @@ def _prefill(
             if "PST" in exempt and not collects_now("PST"):  # out of province, or no PST number: due, not exempt
                 exempt.remove("PST")
             if not taxes and canadian and set(exempt) == set(canadian):
-                status, exempt = EXEMPT, []
+                if all(collects_now(t) for t in PROVINCIAL):
+                    status, exempt = EXEMPT, []
+                else:  # no PST/QST charged says nothing of a tax the vendor never collects: due on it (B-788)
+                    check.add(k)
             # A PST exemption inferred, not printed: a person confirms it (exempt, or missed and to self-assess).
             if "PST" in canadian and "PST" not in taxes and collects_now("PST") and how[k] != "printed":
                 reason = str(_get(items[k], "reasoning_justification") or "")

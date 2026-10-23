@@ -4,7 +4,7 @@ tax that is due and never removes a reason for a person to look. The scenarios a
 from __future__ import annotations
 
 from ap_coder.ai.offline_coder import tax_codes
-from ap_coder.coding.line_tax import learned_codes, prefill, tax_code_of, tax_guessed, tax_learned
+from ap_coder.coding.line_tax import EXEMPT, learned_codes, prefill, tax_code_of, tax_guessed, tax_learned
 from ap_coder.coding.taxreturn import self_assessed_base
 from ap_coder.core.memory import vendor_key
 from ap_coder.core.schema import InvoiceCoding, LineItem, TaxLine
@@ -164,3 +164,16 @@ def test_a_tax_that_does_not_reconcile_never_goes_touchless():
 
     for code in ("TAX_BASE_MISMATCH", "EXEMPT_LINE_TAXED", "TAX_NOT_ALLOCATED"):
         assert touchless_gates([{"code": code}]), code
+
+
+def test_a_line_with_nothing_charged_owes_the_pst_a_vendor_does_not_collect():
+    """No learning at all: a vendor without a PST number charges GST on one line and nothing on the other. That it
+    charges no PST on the second line says nothing of the PST, which it never collects: the line is GST-free, not
+    exempt from every tax, and the PST stays due on it (self-assess), for a person to confirm (B-788)."""
+    lines = _lines(("Safety boots steel toe", 200.0), ("Basic groceries", 100.0))
+    taxes = [_tax("GST", 0.05, 200.0)]
+    done = prefill(lines, taxes, vendor_collects=False).lines
+    assert tax_code_of(done[0]) == "GST" and done[1].tax_status != EXEMPT
+    assert _self_assessed(done, taxes) == 300.0 and tax_guessed(done[1])
+    # A vendor that collects PST and charged none at all: the line with nothing charged is exempt, as before (D-64).
+    assert prefill(lines, taxes).lines[1].tax_status == EXEMPT

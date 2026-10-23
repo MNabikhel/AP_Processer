@@ -1,0 +1,344 @@
+{
+ "config": {
+  "vendors": 30,
+  "invoices": 30,
+  "seed": 1
+ },
+ "summary": {
+  "overall": {
+   "lines": 2309,
+   "assigned": 2226,
+   "correct": 2218,
+   "accuracy": 0.9606,
+   "precision": 0.9964,
+   "coverage": 0.9641,
+   "wrong": 8,
+   "left_with_right_suggestion": 0.5422,
+   "top_suggestion_right": 0.9762
+  },
+  "first_or_later": {
+   "first invoice": {
+    "lines": 71,
+    "assigned": 41,
+    "correct": 39,
+    "accuracy": 0.5493,
+    "precision": 0.9512,
+    "coverage": 0.5775,
+    "wrong": 2,
+    "left_with_right_suggestion": 0.3,
+    "top_suggestion_right": 0.6761
+   },
+   "later invoices": {
+    "lines": 2238,
+    "assigned": 2185,
+    "correct": 2179,
+    "accuracy": 0.9736,
+    "precision": 0.9973,
+    "coverage": 0.9763,
+    "wrong": 6,
+    "left_with_right_suggestion": 0.6792,
+    "top_suggestion_right": 0.9857
+   }
+  },
+  "by_position": {
+   "1": {
+    "lines": 71,
+    "assigned": 41,
+    "correct": 39,
+    "accuracy": 0.5493,
+    "precision": 0.9512,
+    "coverage": 0.5775,
+    "wrong": 2,
+    "left_with_right_suggestion": 0.3,
+    "top_suggestion_right": 0.6761
+   },
+   "2-5": {
+    "lines": 309,
+    "assigned": 276,
+    "correct": 274,
+    "accuracy": 0.8867,
+    "precision": 0.9928,
+    "coverage": 0.8932,
+    "wrong": 2,
+    "left_with_right_suggestion": 0.5758,
+    "top_suggestion_right": 0.9417
+   },
+   "6-10": {
+    "lines": 403,
+    "assigned": 399,
+    "correct": 399,
+    "accuracy": 0.9901,
+    "precision": 1.0,
+    "coverage": 0.9901,
+    "wrong": 0,
+    "left_with_right_suggestion": 0.5,
+    "top_suggestion_right": 0.995
+   },
+   "11-20": {
+    "lines": 749,
+    "assigned": 740,
+    "correct": 737,
+    "accuracy": 0.984,
+    "precision": 0.9959,
+    "coverage": 0.988,
+    "wrong": 3,
+    "left_with_right_suggestion": 0.8889,
+    "top_suggestion_right": 0.988
+   },
+   "21+": {
+    "lines": 777,
+    "assigned": 770,
+    "correct": 769,
+    "accuracy": 0.9897,
+    "precision": 0.9987,
+    "coverage": 0.991,
+    "wrong": 1,
+    "left_with_right_suggestion": 1.0,
+    "top_suggestion_right": 0.9961
+   }
+  },
+  "by_seen": {
+   "vendor, same words": {
+    "lines": 1843,
+    "assigned": 1834,
+    "correct": 1830,
+    "accuracy": 0.9929,
+    "precision": 0.9978,
+    "coverage": 0.9951,
+    "wrong": 4,
+    "left_with_right_suggestion": 1.0,
+    "top_suggestion_right": 0.9951
+   },
+   "vendor, other words": {
+    "lines": 335,
+    "assigned": 322,
+    "correct": 320,
+    "accuracy": 0.9552,
+    "precision": 0.9938,
+    "coverage": 0.9612,
+    "wrong": 2,
+    "left_with_right_suggestion": 0.6923,
+    "top_suggestion_right": 0.9761
+   },
+   "other vendors only": {
+    "lines": 100,
+    "assigned": 70,
+    "correct": 68,
+    "accuracy": 0.68,
+    "precision": 0.9714,
+    "coverage": 0.7,
+    "wrong": 2,
+    "left_with_right_suggestion": 0.3667,
+    "top_suggestion_right": 0.79
+   },
+   "never": {
+    "lines": 31,
+    "assigned": 0,
+    "correct": 0,
+    "accuracy": 0.0,
+    "precision": null,
+    "coverage": 0.0,
+    "wrong": 0,
+    "left_with_right_suggestion": 0.5161,
+    "top_suggestion_right": 0.4516
+   }
+  },
+  "by_language": {
+   "en": {
+    "lines": 1501,
+    "assigned": 1454,
+    "correct": 1449,
+    "accuracy": 0.9654,
+    "precision": 0.9966,
+    "coverage": 0.9687,
+    "wrong": 5,
+    "left_with_right_suggestion": 0.6383,
+    "top_suggestion_right": 0.9813
+   },
+   "fr": {
+    "lines": 724,
+    "assigned": 692,
+    "correct": 690,
+    "accuracy": 0.953,
+    "precision": 0.9971,
+    "coverage": 0.9558,
+    "wrong": 2,
+    "left_with_right_suggestion": 0.375,
+    "top_suggestion_right": 0.9669
+   },
+   "bi": {
+    "lines": 84,
+    "assigned": 80,
+    "correct": 79,
+    "accuracy": 0.9405,
+    "precision": 0.9875,
+    "coverage": 0.9524,
+    "wrong": 1,
+    "left_with_right_suggestion": 0.75,
+    "top_suggestion_right": 0.9643
+   }
+  },
+  "by_vendor_kind": {
+   "supplier": {
+    "lines": 1940,
+    "assigned": 1868,
+    "correct": 1862,
+    "accuracy": 0.9598,
+    "precision": 0.9968,
+    "coverage": 0.9629,
+    "wrong": 6,
+    "left_with_right_suggestion": 0.5417,
+    "top_suggestion_right": 0.9753
+   },
+   "utility": {
+    "lines": 369,
+    "assigned": 358,
+    "correct": 356,
+    "accuracy": 0.9648,
+    "precision": 0.9944,
+    "coverage": 0.9702,
+    "wrong": 2,
+    "left_with_right_suggestion": 0.5455,
+    "top_suggestion_right": 0.981
+   }
+  },
+  "by_default_gl": {
+   "default GL": {
+    "lines": 737,
+    "assigned": 705,
+    "correct": 705,
+    "accuracy": 0.9566,
+    "precision": 1.0,
+    "coverage": 0.9566,
+    "wrong": 0,
+    "left_with_right_suggestion": 0.7812,
+    "top_suggestion_right": 0.9864
+   },
+   "no default GL": {
+    "lines": 1572,
+    "assigned": 1521,
+    "correct": 1513,
+    "accuracy": 0.9625,
+    "precision": 0.9947,
+    "coverage": 0.9676,
+    "wrong": 8,
+    "left_with_right_suggestion": 0.3922,
+    "top_suggestion_right": 0.9714
+   }
+  },
+  "by_source": {
+   "others": {
+    "lines": 82,
+    "assigned": 82,
+    "correct": 80,
+    "accuracy": 0.9756,
+    "precision": 0.9756,
+    "coverage": 1.0,
+    "wrong": 2,
+    "left_with_right_suggestion": null,
+    "top_suggestion_right": 0.9756
+   },
+   "vendor": {
+    "lines": 2144,
+    "assigned": 2144,
+    "correct": 2138,
+    "accuracy": 0.9972,
+    "precision": 0.9972,
+    "coverage": 1.0,
+    "wrong": 6,
+    "left_with_right_suggestion": null,
+    "top_suggestion_right": 0.9972
+   }
+  },
+  "recoded": {
+   "lines": 71,
+   "assigned": 59,
+   "correct": 53,
+   "accuracy": 0.7465,
+   "precision": 0.8983,
+   "coverage": 0.831,
+   "wrong": 6,
+   "left_with_right_suggestion": 1.0,
+   "top_suggestion_right": 0.8169
+  },
+  "split": {
+   "lines": 0,
+   "assigned": 0,
+   "correct": 0,
+   "accuracy": null,
+   "precision": null,
+   "coverage": null,
+   "wrong": 0,
+   "left_with_right_suggestion": null,
+   "top_suggestion_right": null
+  },
+  "history_warnings": {
+   "lines": 2226,
+   "false_alarms": 1,
+   "false_alarms_after_recode": 1,
+   "wrong": 8,
+   "caught": 0
+  },
+  "tax_codes": {
+   "lines": 2309,
+   "sure": 2243,
+   "correct": 2194,
+   "precision": 0.9782,
+   "coverage": 0.9714,
+   "accuracy": 0.9502,
+   "wrong": 49,
+   "learned": 1221,
+   "any_right": 0.9744
+  },
+  "tax_codes_by_column": {
+   "tax column printed": {
+    "lines": 704,
+    "sure": 704,
+    "correct": 684,
+    "precision": 0.9716,
+    "coverage": 1.0,
+    "accuracy": 0.9716,
+    "wrong": 20,
+    "learned": 0,
+    "any_right": 0.9716
+   },
+   "no tax column": {
+    "lines": 1605,
+    "sure": 1539,
+    "correct": 1510,
+    "precision": 0.9812,
+    "coverage": 0.9589,
+    "accuracy": 0.9408,
+    "wrong": 29,
+    "learned": 1221,
+    "any_right": 0.9757
+   }
+  },
+  "lessons": {
+   "lines": 2309,
+   "shown": 0,
+   "wrong": 0,
+   "noise": null,
+   "screen": 80,
+   "screen_wrong": 0
+  },
+  "top_errors": [
+   {
+    "truth": "5000",
+    "proposed": "6220",
+    "source": "vendor",
+    "lines": 6
+   },
+   {
+    "truth": "6210",
+    "proposed": "6040",
+    "source": "others",
+    "lines": 2
+   }
+  ]
+ },
+ "timing": {
+  "seconds": 61.7,
+  "ms_per_line": 26.7
+ }
+}
