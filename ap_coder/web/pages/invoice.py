@@ -284,7 +284,13 @@ def viewer_data(inv: dict[str, Any], capture: Any, sizes: list[tuple[float, floa
     v = document.version(inv["source_path"])
     pages = [{"src": f"/review/{inv['id']}/page/{n}.png?v={v}", "width": w, "height": h}
              for n, (w, h) in enumerate(sizes, start=1)]  # fmt: skip
-    fields = document.shape_fields(capture.fields.values(), LABELS) if capture is not None else []
+    from ap_coder.capture.bridge import currency_read
+
+    # A currency the page does not print (the domestic CAD assumed) is nothing to check on the page.
+    shown = [f for f in capture.fields.values()
+             if not (f.field == "currency" and not currency_read(f) and str(f.value or "CAD").upper() == "CAD")
+             ] if capture is not None else []  # fmt: skip
+    fields = document.shape_fields(shown, LABELS) if capture is not None else []
     lines = document.shape_line_items(capture.line_items) if capture is not None else []
     return {"pages": pages, "fields": fields, "line_items": lines, "height": VIEWER_HEIGHT}
 
@@ -369,7 +375,7 @@ def _sent_back(store: Store, invoice_id: int) -> dict[str, str] | None:
 def _render_live(live: dict[str, Any], invoice_id: int) -> dict[str, str]:
     """Every section that follows the edits, drawn again (``_invoice_live.html``)."""
     mod = templates.env.get_template("_invoice_live.html").module
-    names = ("summary", "checks", "amounts", "reasons", "suggest", "po", "taxcheck", "posting", "bar")
+    names = ("summary", "checks", "amounts", "reasons", "suggest", "po", "taxcheck", "posting", "bar", "jde")
     if not live["ok"]:  # a field to fix: the coding can't be built, so the rest keeps its last state
         names = ("checks", "amounts", "taxcheck", "posting", "bar")
     return {name: str(getattr(mod, name)(live, invoice_id)) for name in names}
@@ -421,7 +427,8 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
                       **_closed(store, reference, inv))  # fmt: skip
     draft, kept = current_draft(request, inv)
     analysis = view.analyse(store, settings, reference, inv, draft, reviewer())
-    sure = view.capture_confidence(view.capture_of(store, invoice_id))
+    capture = view.capture_of(store, invoice_id)
+    sure = view.shown_sure(view.capture_confidence(capture), draft.header, inv.get("ai_output") or {}, capture)
     start = _start(inv)
     computed = None
     try:
@@ -441,7 +448,8 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
                           view.vendor_accounts(store, draft.header.get("vendor_name") or "")),
               "tax_marks": analysis.live.get("tax_marks") or {}},
         labels=view.FIELD_LABELS, provinces=view.province_options(),
-        due_placeholder=f"{computed.isoformat()} (from terms)" if computed else "YYYY-MM-DD",
+        due_placeholder=f"{computed.isoformat()} (from terms)" if computed else
+        "None: a credit is not paid" if float(start.get("grand_total") or 0) < 0 else "YYYY-MM-DD",
         sent_back=_sent_back(store, invoice_id), poll_seconds=PAGE_READER_POLL_SECONDS,
         today=dt.date.today().isoformat(), taught_json=draft.taught, vendors=vendor_options(store),
         absent_ok=list(view.ABSENT_FIELDS), from_vendor_note=view.FROM_VENDOR_NOTE,
@@ -615,6 +623,8 @@ async def check(request: Request, invoice_id: int) -> JSONResponse:
     header = {"values": analysis.filled, "from_vendor": draft.from_vendor, "pay_from_for": draft.pay_from_for}
     if analysis.coding is not None:
         header["flags"] = analysis.live.get("flags") or {}
+        header["help"] = analysis.live.get("help") or {}  # a note with a one-click fix under a field (D-75)
+        header["an8"] = analysis.live.get("an8")  # the supplier's JD Edwards number, when it is the export in use
     return JSONResponse({"ok": True, "valid": analysis.coding is not None, "allow": analysis.allow,
                          "problems": analysis.problems, "vendor_accounts": used, "header": header,
                          "tax_codes": codes["options"], "tax_code_labels": codes["labels"],
@@ -636,8 +646,11 @@ async def approve(request: Request, invoice_id: int) -> JSONResponse:
         return refuse("Fix this field first: " + "; ".join(analysis.problems))
     if not analysis.allow:
         bar = analysis.live["bar"]
-        return refuse(bar["pick"] + "." if bar["pick"] else
-                      f"Tick “Approve anyway” to approve despite {ui.plural(bar['errors'], 'error')}.")  # fmt: skip
+        if bar["pick"]:
+            return refuse(bar["pick"] + ".")
+        if bar["hard"]:  # never approved anyway (D-75)
+            return refuse("Not ready: " + "; ".join(bar["hard"][:3]) + ".")
+        return refuse(f"Tick “Approve anyway” and say why to approve despite {ui.plural(bar['errors'], 'error')}.")
     # The same correction again and again: before saving, AP is asked once why (lessons.py). Skipping is fine: the
     # question comes back next time.
     from ap_coder.ai import lessons
@@ -648,7 +661,9 @@ async def approve(request: Request, invoice_id: int) -> JSONResponse:
     if asked and not form.get("why_done"):
         return JSONResponse({"ok": False, "ask_why": {"fields": asked, "threshold": lessons.why_after(store)}})
     after = next_url(store, invoice_id, query, form.get("next_id"))
-    open_issues = [{"code": i.code, "severity": i.severity, "line": i.line_number}
+    why = draft.override_reason.strip()  # "Approve anyway": why, kept with each error approved over (D-75)
+    open_issues = [{"code": i.code, "severity": i.severity, "line": i.line_number,
+                    **({"override_reason": why} if why and i.severity == "error" else {})}
                    for i in analysis.errors + analysis.warnings]  # fmt: skip
     me = reviewer()
     from ap_coder.coding.line_tax import confirm_codes
@@ -696,16 +711,43 @@ async def approve(request: Request, invoice_id: int) -> JSONResponse:
         )
         + "."
     )
-    messages.append(flash_message(
+    approved = flash_message(
         ("" if waits else f"Approved {vendor}. ") + (f"{taught} {lines}" if taught else learned_from),
-        "ok", icon="school"))  # fmt: skip
+        "ok", icon="school")  # fmt: skip
+    approved["undo"] = f"/review/{invoice_id}/undo-approve"  # the banner's Undo: back in the queue as it was
+    messages.append(approved)
     if explained:
         messages.append(flash_message(f"Thanks: {ui.plural(explained, 'reason')} kept. The AI reads "
                                       f"{'it' if explained == 1 else 'them'} with this vendor's next invoices.", "ok",
                                       icon="psychology"))  # fmt: skip
-    if not store.list_invoices(REVIEW):
+    left = store.list_invoices(REVIEW)
+    if not left:
         messages.append(flash_message("Your queue is clear: every invoice has been reviewed.", "ok", icon="task_alt"))
+    elif not form.get("next_id"):  # the last one of the list as shown: the rest are ones passed over
+        messages.append(flash_message(f"That was the last one in the list. {ui.plural(len(left), 'invoice')} still "
+                                      "to review: back to the first of them.", "info", icon="replay"))  # fmt: skip
     return done(request, after, *messages)
+
+
+@router.post("/review/{invoice_id:int}/undo-approve")
+def undo_approve(request: Request, invoice_id: int) -> JSONResponse:
+    """The approval banner's Undo: an invoice just approved (not exported) back in the review queue, its coding kept
+    and what its approval taught withdrawn, as Reopen for correction does."""
+    store = get_store(request)
+    inv = _invoice(store, invoice_id)
+    if inv["status"] not in (APPROVED, PENDING) or inv.get("export_batch"):
+        return refuse("It can't be undone now: it was exported or changed since. Open it to see where it stands.")
+    me = reviewer()
+    try:
+        store.reopen(invoice_id, me, "undone right after approving")
+    except ValueError as exc:
+        return changed_meanwhile(request, invoice_id, exc)
+    on_reopen(store, invoice_id, me, "undone right after approving", before=inv)
+    return done(
+        request,
+        f"/review/{invoice_id}",
+        flash_message("Approval undone: it is back in the review queue.", "ok", icon="undo"),
+    )
 
 
 # --- Park, reject, notes --------------------------------------------------------------------------------------------

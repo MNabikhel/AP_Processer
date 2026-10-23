@@ -352,7 +352,7 @@ def test_in_a_browser_delete_a_line_and_undo_brings_it_back_with_its_picker_work
     labels = page.locator(f"{MENU} [role=menuitem]").all_inner_texts()
     for want in ("Delete line", "Duplicate line", "Insert a line below", "Split this line", "Clear GL account"):
         assert any(want in t for t in labels), (want, labels)
-    assert _item(page, "above").get_attribute("aria-disabled") == "true"  # the first line has none above
+    assert _item(page, "above").count() == 0  # the first line has none above: left out, not greyed (B-741)
     with _checked(page):
         _item(page, "delete").click()
     assert _lines(page).count() == n - 1

@@ -43,10 +43,15 @@ SHORTCUT_ROWS = [
     ("[Ctrl] + wheel", "Zoom where the pointer is (or pinch)"),
     ("[H] or hold [Space]", "Drag to move the page"),
     ("[R]", "Turn the page (on screen only)"),
-    ("[PgUp] [PgDn]", "Previous or next page"),
+    ("[PgUp] [PgDn]", "Previous or next page of the invoice (outside a text box)"),
+    ("[Alt] + [PgUp] [PgDn]", "Previous or next page of the invoice, from anywhere"),
     # The review screen's menus and its last change (D-60), also in its own Shortcuts list
     ("[Shift] + [F10]", "More options for a field, a line or the page (or right-click)"),
     ("[Ctrl] + [Z]", "Undo the last change (a line deleted, a value cleared)"),
+    (
+        "[Ctrl] + [D] · [Alt] + [Enter] · [Alt] + [Delete]",
+        "In a line: copy the coding above · insert a line below · delete it",
+    ),
     ("[P]", "Park: opens Park, to say what it waits for"),
     ("[X]", "Reject: opens Reject, to say why (nothing is rejected until you press it)"),
 ]

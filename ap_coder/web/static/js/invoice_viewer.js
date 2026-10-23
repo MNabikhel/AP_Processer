@@ -1542,7 +1542,9 @@ export class InvoiceViewer {
       } else this.hideTip();
       return;
     }
-    if (isTyping(e.target)) return;
+    // A box the review screen focused on opening, not yet used, keeps no Space from the Hand over the page (D-76).
+    const unused = e.key === " " && e.target.dataset?.autofocused === "1" && this.overStage;
+    if (isTyping(e.target) && !unused) return;
     if ((e.key === "n" || e.key === "N") && !e.shiftKey) {
       e.preventDefault();
       this.nextToCheck();
@@ -1577,7 +1579,9 @@ export class InvoiceViewer {
       // on the page. A box, a button or a link anywhere else keeps Space for itself, the pointer wherever it rests
       // (B-591); with neither, it scrolls the dashboard page as usual.
       const onPage = this.stage.contains(e.target);
-      const nowhere = !e.target || e.target === document.body || e.target === document.documentElement;
+      // (a box the review screen focused on opening, not yet used by the clerk, counts as nowhere: D-76)
+      const nowhere = !e.target || e.target === document.body || e.target === document.documentElement ||
+        e.target.dataset?.autofocused === "1";
       if (!onPage && !(nowhere && this.overStage)) return false;
       e.preventDefault();
       this.spaceTaken = true;

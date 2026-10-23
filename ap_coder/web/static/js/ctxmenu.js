@@ -145,7 +145,11 @@ function build(items, label) {
 function place(menu, x, y, flipX = null) {
   menu.style.left = "0px";
   menu.style.top = "0px";
-  menu.style.maxHeight = `${Math.max(120, innerHeight - 16)}px`;
+  // Never over the bar fixed at the window's foot (the review screen's approve bar: data-menu-floor).
+  const floorEl = document.querySelector("[data-menu-floor]");
+  const floorTop = floorEl?.getClientRects().length ? floorEl.getBoundingClientRect().top : innerHeight;
+  const bottom = Math.min(innerHeight, floorTop > 120 ? floorTop : innerHeight);
+  menu.style.maxHeight = `${Math.max(120, bottom - 16)}px`;
   const w = menu.offsetWidth;
   const h = menu.offsetHeight;
   const vw = document.documentElement.clientWidth;
@@ -153,7 +157,7 @@ function place(menu, x, y, flipX = null) {
   if (left + w > vw - 8) left = flipX !== null ? flipX - w : x - w;
   left = Math.max(8, Math.min(left, vw - w - 8));
   let top = y;
-  if (top + h > innerHeight - 8) top = Math.max(8, innerHeight - h - 8);
+  if (top + h > bottom - 8) top = Math.max(8, bottom - h - 8);
   menu.style.left = `${Math.round(left)}px`;
   menu.style.top = `${Math.round(Math.max(8, top))}px`;
 }
@@ -171,11 +175,15 @@ function focusRow(menu, i) {
 }
 
 /** Open a menu of ``items`` at (x, y) of the window. */
-export function openMenu(items, { x = 0, y = 0, label = "", keyboard = false } = {}) {
+export function openMenu(items, { x = 0, y = 0, label = "", keyboard = false, opener = null } = {}) {
   closeMenu(false);
   const list = (items || []).filter(Boolean);
   if (!list.some((it) => it !== "-")) return null;
-  back = document.activeElement && document.activeElement !== document.body ? document.activeElement : null;
+  // Esc and a pick give the focus back where it was; opened on something that had none (a field's name, with the focus
+  // nowhere or on the page's <main>), to that thing's own box (``opener``).
+  const active = document.activeElement;
+  const nowhere = !active || active === document.body || active.tagName === "MAIN" || active === document.documentElement;
+  back = nowhere ? opener : active;
   root = build(list, label);
   document.body.append(root);
   place(root, x, y);
@@ -285,7 +293,22 @@ async function show(found, ctx) {
     console.error("menu:", err); // eslint-disable-line no-console
     return;
   }
-  if (items && items.length) openMenu(items, { x: ctx.x, y: ctx.y, label: ctx.label, keyboard: ctx.keyboard });
+  if (items && items.length) openMenu(items, { x: ctx.x, y: ctx.y, label: ctx.label, keyboard: ctx.keyboard, opener: boxOf(found.el) });
+}
+
+/** The box a menu's element stands for: itself when it takes the focus, else its first box (a field's input). */
+function boxOf(el) {
+  if (!el) return null;
+  if (el.matches?.("input, select, textarea, button, [tabindex]")) return el;
+  return el.querySelector?.("input:not([type=hidden]):not(.pk-native), textarea, select:not(.pk-native), .pk-input, [tabindex='0']") || null;
+}
+
+/** Open the menu of ``el`` (a ⋮ button's field, say) under ``anchor``, as Shift+F10 would. */
+export function openFor(el, anchor) {
+  const found = provider(el);
+  if (!found) return;
+  const at = under(anchor || el);
+  show(found, { target: el, x: at.x, y: at.y, keyboard: true });
 }
 
 /** Where a menu opened from the keyboard goes: under the focused element (its first 40 px for a tall one). */

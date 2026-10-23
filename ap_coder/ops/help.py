@@ -17,10 +17,11 @@ class CheckHelp:
     action: str
 
 
-FRAUD, TOTALS, CODING, TAX, PO, PAYMENT, READING = (
+FRAUD, TOTALS, CODING, TAX, PO, PAYMENT, READING, ERP = (
     "Duplicates & fraud", "Totals", "GL coding", "Sales tax", "Purchase orders", "Payment", "Reading the document",
+    "JD Edwards voucher",
 )  # fmt: skip
-AREAS = (FRAUD, PO, PAYMENT, TOTALS, CODING, TAX, READING)
+AREAS = (FRAUD, PO, PAYMENT, TOTALS, CODING, TAX, READING, ERP)
 # The Help page groups the checks by what the tester does about them (B-514), in this order.
 TO_DO = {
     READING: "Compare a value with the page",
@@ -30,6 +31,7 @@ TO_DO = {
     FRAUD: "Before you pay: duplicates and fraud",
     PO: "Check against the purchase order",
     PAYMENT: "Check the payment details",
+    ERP: "Get the voucher ready for JD Edwards",
 }
 # Checks only the optional Azure check (or a cloud build) raises: left out of Help in the offline build unless the
 # Azure check is on.
@@ -38,6 +40,90 @@ CLOUD_CHECKS = frozenset(
 )
 
 CHECKS: dict[str, CheckHelp] = {
+    # --- JD Edwards voucher (erp/jde.py voucher_findings, D-75): what its batch would hold back --------------------
+    "JDE_SETTINGS": CheckHelp(
+        ERP, "JD Edwards settings incomplete",
+        "A setting every JD Edwards voucher needs (company, user ID, batch prefix, document type or currency) is not "
+        "valid, so no voucher can be exported.",
+        "Ask the pilot tester to fix it in Settings → JD Edwards E1.",
+    ),
+    "JDE_NO_AN8": CheckHelp(
+        ERP, "No supplier number (AN8)",
+        "JD Edwards needs the supplier's address number (AN8): this vendor has none in the vendor list or in the "
+        "JD Edwards settings.",
+        "Pick the vendor from the vendor list, or ask the pilot tester to add its AN8.",
+    ),
+    "JDE_BAD_AN8": CheckHelp(
+        ERP, "Supplier number is not an AN8",
+        "The vendor's number is not a JD Edwards address number (digits only, up to 8), so E1 would refuse the "
+        "voucher.",
+        "Ask the pilot tester to set the vendor's AN8 in Settings → JD Edwards E1 → Supplier address numbers.",
+    ),
+    "JDE_INVOICE_NUMBER_LONG": CheckHelp(
+        ERP, "Invoice number too long for JD Edwards",
+        "JD Edwards keeps 25 characters of the invoice number (VLVINV): a longer one would be cut, and its "
+        "duplicate check could miss.",
+        "Type the invoice number as the supplier's statements show it, in 25 characters or fewer.",
+    ),
+    "JDE_PO_LONG": CheckHelp(
+        ERP, "PO number too long for JD Edwards",
+        "JD Edwards keeps 8 characters of the PO number (VLPO).",
+        "Type the PO number as JD Edwards has it (its order number, 8 characters or fewer).",
+    ),
+    "JDE_DATE_RANGE": CheckHelp(
+        ERP, "Date JD Edwards can't hold",
+        "JD Edwards dates run from 1900 to 2899: this date is outside them (usually a typo in the year).",
+        "Correct the date from the page.",
+    ),
+    "JDE_CURRENCY": CheckHelp(
+        ERP, "Currency not set up for JD Edwards",
+        "The invoice's currency is not one of the currencies set up for the JD Edwards export.",
+        "Check the currency on the page; if it is right, ask the pilot tester to add it in Settings → JD Edwards E1.",
+    ),
+    "JDE_TAX_AREA": CheckHelp(
+        ERP, "No JD Edwards tax area",
+        "JD Edwards needs a tax area and explanation code for the province of supply, and there is none for this "
+        "invoice.",
+        "Check the Place of supply; if it is right, ask the pilot tester to set the tax area in Settings → JD "
+        "Edwards E1.",
+    ),
+    "JDE_NO_ACCOUNT": CheckHelp(
+        ERP, "GL account not mapped to JD Edwards",
+        "The line's GL account (and cost center) has no JD Edwards account (business unit . object . subsidiary).",
+        "Check the line's GL account; if it is right, ask the pilot tester to map it in Settings → JD Edwards E1.",
+    ),
+    "JDE_UNBALANCED": CheckHelp(
+        ERP, "Voucher would not balance in JD Edwards",
+        "With the tax explanation code JD Edwards would use, the G/L lines and the gross amount do not balance.",
+        "Check the tax lines and the lines' tax codes; if they are right, ask the pilot tester to check the tax "
+        "setup against the JD Edwards tax explanation codes.",
+    ),
+    "JDE_VOUCHER": CheckHelp(
+        ERP, "JD Edwards would refuse the voucher",
+        "Something JD Edwards needs on the voucher is missing or not valid.",
+        "Read the message, fix it on the invoice, or ask the pilot tester.",
+    ),
+    # --- Dates and currency typed on the review screen (web/invoice_view.py) ---------------------------------------
+    "INVOICE_DATE_INVALID": CheckHelp(
+        TOTALS, "Invoice date to fix",
+        "The invoice date is missing or is not a date AP Coder can read.",
+        "Type the date as on the page, e.g. 2026-10-05.",
+    ),
+    "DUE_DATE_INVALID": CheckHelp(
+        PAYMENT, "Due date to fix",
+        "The due date is not a date AP Coder can read.",
+        "Type the date as on the page (e.g. 2026-11-04), or leave it blank to have it worked out from the terms.",
+    ),
+    "DATE_AMBIGUOUS": CheckHelp(
+        TOTALS, "Which date?",
+        "A date such as 12/06/2026 can be read two ways (6 December or 12 June).",
+        "Pick the one the invoice means: the buttons under the field put it in.",
+    ),
+    "CURRENCY_UNKNOWN": CheckHelp(
+        TOTALS, "Unknown currency",
+        "The currency is not a currency code in use (ISO 4217), such as CAD, USD or EUR.",
+        "Correct the currency from the page.",
+    ),
     # --- Duplicates & fraud ---------------------------------------------------------------------------
     "DUPLICATE_INVOICE": CheckHelp(
         FRAUD, "Possible duplicate",

@@ -446,7 +446,8 @@ def test_in_a_browser_checking_shows_while_a_check_runs_and_goes_after_even_when
     page.route("**/check", slow)
     page.fill("[name=invoice_number][form=inv]", "A-1")
     page.wait_for_function("() => document.querySelector('[data-checking]').textContent === 'Checking…'")
-    page.wait_for_function("() => document.querySelector('[data-checking]').textContent === ''")
+    # checked and kept: "Draft saved" and the time (D-76)
+    page.wait_for_function("() => document.querySelector('[data-checking]').textContent.startsWith('Draft saved')")
     page.unroute("**/check")
 
     def failed(route):  # AP Coder not answering

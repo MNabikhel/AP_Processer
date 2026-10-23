@@ -233,17 +233,33 @@ def test_a_header_amount_that_is_not_a_finite_number_is_refused(client, store, t
     assert store.get_invoice(inv_id)["status"] == REVIEW
 
 
-def test_errors_need_approve_anyway(client, store):
+def test_errors_need_approve_anyway_with_a_reason_but_not_what_makes_the_voucher_invalid(client, store):
+    """D-75: a total that doesn't add up can never be approved anyway; another error (a vendor not in the vendor list)
+    can, ticked with a reason, which is kept with the approval."""
     inv_id = clean_invoice(client, store)
-    data = form_of(store, inv_id, grand_total="1.00")  # the total no longer adds up: an error
+    data = form_of(store, inv_id, grand_total="1.00")  # the total no longer adds up: never approved anyway
     answer = check(client, inv_id, data)
+    assert not answer["allow"] and "Approve anyway" not in answer["sections"]["bar"]
+    assert "Not ready: Subtotal + tax" in answer["sections"]["bar"]
+    refused = client.post(f"/review/{inv_id}/approve", data={**data, "override": "x", "override_reason": "ok"},
+                          headers=PAGE)  # fmt: skip
+    assert refused.status_code == 400 and refused.json()["error"].startswith("Not ready: Subtotal + tax")
+
+    cascade = next(i["id"] for i in store.list_invoices(REVIEW) if "Cascade" in (i["vendor_name"] or ""))
+    data = form_of(store, cascade)
+    answer = check(client, cascade, data)
     assert not answer["allow"] and "Approve anyway, despite" in answer["sections"]["bar"]
     key = re.search(r'name="override" value="([0-9a-f]+)"', answer["sections"]["bar"]).group(1)
-    refused = client.post(f"/review/{inv_id}/approve", data=data, headers=PAGE)
+    refused = client.post(f"/review/{cascade}/approve", data=data, headers=PAGE)
     assert refused.status_code == 400 and "Approve anyway" in refused.json()["error"]
-    assert check(client, inv_id, {**data, "override": key})["allow"]
-    assert client.post(f"/review/{inv_id}/approve", data={**data, "override": key}, headers=PAGE).json()["ok"]
-    assert store.get_invoice(inv_id)["status"] in (APPROVED, PENDING)
+    assert not check(client, cascade, {**data, "override": key})["allow"]  # ticked, but no reason given
+    data = {**data, "override": key, "override_reason": "US supplier, set up next week"}
+    assert check(client, cascade, data)["allow"]
+    assert client.post(f"/review/{cascade}/approve", data={**data, "why_done": "1"}, headers=PAGE).json()["ok"]
+    assert store.get_invoice(cascade)["status"] in (APPROVED, PENDING)
+    approved = next(e for e in store.events(cascade) if e["action"] == "approved")
+    reasons = {i.get("override_reason") for i in approved["detail"]["open_issues"] if i["severity"] == "error"}
+    assert reasons == {"US supplier, set up next week"}
 
 
 # --- Approve & teach ----------------------------------------------------------------------------------------------
@@ -821,7 +837,8 @@ def test_in_a_browser_enter_on_cancel_leaves_the_words_dragged_on_the_page_unuse
 
 
 def test_in_a_browser_the_approve_anyway_box_keeps_the_focus_when_ticked_with_the_keyboard(browser, store):
-    """Ticking "Approve anyway" redraws the approve bar: the focus stays on the box, not back at the top of the page."""
+    """Ticking "Approve anyway" redraws the approve bar: the focus goes on to the box for the reason (D-75), never back
+    at the top of the page."""
     page, errors = _open_review(browser, store, "Cascade", viewport={"width": 1400, "height": 1000})
     page.wait_for_selector("[name=override]")
     page.wait_for_timeout(800)  # the check made on opening the page
@@ -830,7 +847,7 @@ def test_in_a_browser_the_approve_anyway_box_keeps_the_focus_when_ticked_with_th
         page.keyboard.press("Space")
     page.wait_for_timeout(300)
     assert page.is_checked("[name=override]")
-    assert page.evaluate("document.activeElement.name") == "override" and errors == []
+    assert page.evaluate("document.activeElement.name") == "override_reason" and errors == []
 
 
 def test_in_a_browser_os_dark_mode_leaves_the_light_page_readable(browser, store):

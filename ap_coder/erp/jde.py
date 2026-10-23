@@ -399,6 +399,7 @@ class _Voucher:
     inv_id: int
     final: dict[str, Any]
     problems: list[str]
+    codes: list[tuple[str, int | None]] = field(default_factory=list)  # each problem's check code and invoice line
     currency: str = "CAD"
     foreign: bool = False
     decimals: int = 2
@@ -471,47 +472,53 @@ def accrues_use_tax(final: dict[str, Any], settings: JdeSettings) -> bool:
 def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
     final = inv.get("final_output") or {}
     v = _Voucher(int(inv.get("id") or 0), final, [])
-    add = v.problems.append
+
+    def add(problem: str, code: str = "JDE_VOUCHER", line: int | None = None) -> None:
+        v.problems.append(problem)
+        v.codes.append((code, line))
 
     if not an8:
-        add(f"{NO_AN8}: set the vendor's ERP ID in the vendor master, or in Settings → JD Edwards")
+        add(f"{NO_AN8}: set the vendor's ERP ID in the vendor master, or in Settings → JD Edwards", "JDE_NO_AN8")
     elif not an8.isdigit() or len(an8) > 8:
-        add(f"supplier number {an8!r} {BAD_AN8} (digits only, up to 8)")
+        add(f"supplier number {an8!r} {BAD_AN8} (digits only, up to 8)", "JDE_BAD_AN8")
     number = str(final.get("invoice_number") or "").strip()
     if not number:
-        add("no invoice number (VLVINV)")
+        add("no invoice number (VLVINV)", "MISSING_INVOICE_NUMBER")
     elif len(number) > 25:
-        add(f"invoice number {number!r} is longer than 25 characters (VLVINV)")
+        add(f"invoice number {number!r} is longer than 25 characters (VLVINV)", "JDE_INVOICE_NUMBER_LONG")
     po = str(final.get("po_number") or "").strip()
     if po and len(po) > 8 and (settings.send_po_reference or settings.po_matched):
-        add(f"PO number {po!r} is longer than 8 characters (VLPO)")
+        add(f"PO number {po!r} is longer than 8 characters (VLPO)", "JDE_PO_LONG")
     invoice_date = _date(final.get("invoice_date"))
     if invoice_date is None:
-        add("no invoice date")
+        add("no invoice date", "INVOICE_DATE_INVALID")
     elif invoice_date.year not in E1_YEARS:
-        add(f"invoice date {invoice_date} is outside what JD Edwards dates hold (1900 to 2899)")
+        add(f"invoice date {invoice_date} is outside what JD Edwards dates hold (1900 to 2899)", "JDE_DATE_RANGE")
 
     v.currency = _norm(final.get("currency")) or settings.domestic_currency.upper()
     allowed = {_norm(c) for c in settings.currencies} | {_norm(settings.domestic_currency)}
     if v.currency not in allowed:
-        add(f"currency {v.currency} is not set up for JD Edwards (Settings → JD Edwards → currencies)")
+        add(f"currency {v.currency} is not set up for JD Edwards (Settings → JD Edwards → currencies)", "JDE_CURRENCY")
     v.foreign = v.currency != _norm(settings.domestic_currency)
     v.decimals = NO_DECIMAL_CURRENCIES.get(v.currency, 2)
 
     # Tax area and explanation code from the province of supply.
     charged, v.province, v.tax_area, v.tax_code = _tax_area_code(final, settings)
     if charged and v.province in ("", OUTSIDE_CANADA):
-        add("province of supply unknown: no JDE tax area for the Canadian tax charged")
+        add("province of supply unknown: no JDE tax area for the Canadian tax charged", "JDE_TAX_AREA")
     if v.tax_code not in RECOVERABLE_BY_CODE:
-        add(f"tax explanation code {v.tax_code!r} is not one AP Coder can balance (V, C, B, E or blank)")
+        add(
+            f"tax explanation code {v.tax_code!r} is not one AP Coder can balance (V, C, B, E or blank)", "JDE_TAX_AREA"
+        )
     elif charged and v.tax_code in ("V", "C", "B") and not v.tax_area:
-        add(f"no JDE tax area for {v.province} (Settings → JD Edwards → tax areas)")
+        add(f"no JDE tax area for {v.province} (Settings → JD Edwards → tax areas)", "JDE_TAX_AREA")
 
     # In the currency's own units: whole yen are sent as whole yen, so the voucher balances as E1 reads it.
     v.gross = _units(final.get("grand_total"), v.decimals)
     due = _date(final.get("due_date") or inv.get("due_date"))
     if settings.send_due_date and v.gross >= 0 and due is not None and due.year not in E1_YEARS:
-        add(f"due date {due} is outside what JD Edwards dates hold (1900 to 2899)")  # (a credit's is not sent)
+        # (a credit's is not sent)
+        add(f"due date {due} is outside what JD Edwards dates hold (1900 to 2899)", "JDE_DATE_RANGE")
     v.stam = sum(_units(t.get("tax_amount"), v.decimals) for t in charged)
     v.atxa = max((_units(t.get("taxable_amount"), v.decimals) for t in charged), key=abs, default=0)
     v.charged, v.recoverable_types = charged, RECOVERABLE_BY_CODE.get(v.tax_code, frozenset())
@@ -523,30 +530,48 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
         items = final.get("line_items") or []
         lines = sum(_cents(li.get("amount")) for li in items)
         if not items:
-            add("PO-matched voucher without invoice lines to match")
+            add("PO-matched voucher without invoice lines to match", "JDE_UNBALANCED")
         elif abs(lines - _cents(final.get("subtotal"))) > len(items):
-            add(f"the lines add up to {lines / 100:,.2f}, not the subtotal {float(final.get('subtotal') or 0):,.2f}")
+            add(
+                f"the lines add up to {lines / 100:,.2f}, not the subtotal {float(final.get('subtotal') or 0):,.2f}",
+                "SUBTOTAL_MISMATCH",
+            )
         return v
 
     dist = _distribution(final)
     if not dist:
-        add("no GL distribution to post")
+        add("no GL distribution to post", "NO_LINE_ITEMS")
     total = sum(_cents(e.get("amount")) for e in dist)
     gross_cents = _cents(final.get("grand_total"))
     if dist and total != gross_cents:
-        add(f"the GL distribution adds up to {total / 100:,.2f}, not the invoice total {v.gross / 100:,.2f}")
+        add(
+            f"the GL distribution adds up to {total / 100:,.2f}, not the invoice total {v.gross / 100:,.2f}",
+            "POSTING_UNBALANCED",
+        )
     for e in dist:
         if _is_recoverable_entry(e):
             continue  # E1 posts recoverable tax itself (tax AAIs)
         where = f"GL {e.get('gl_code') or '(none)'}" + (f" / {e['cost_center']}" if e.get("cost_center") else "")
         if str(e.get("gl_code") or "").strip().upper() in ("", "UNASSIGNED"):
-            add(f"a line has no GL account ({e.get('description') or 'no description'}): code it in the review screen")
+            add(
+                f"a line has no GL account ({e.get('description') or 'no description'}): code it in the review screen",
+                "GL_UNASSIGNED",
+                e.get("line_number"),
+            )
             continue
         account = account_for(e.get("gl_code") or "", e.get("cost_center") or "", settings)
         if account is None:
-            add(f"{where} has no JDE account (BU.Object.Subsidiary): add it to the account mapping")
+            add(
+                f"{where} has no JDE account (BU.Object.Subsidiary): add it to the account mapping",
+                "JDE_NO_ACCOUNT",
+                e.get("line_number"),
+            )
         elif len(account.bu) > 12 or len(account.obj) > 6 or len(account.sub) > 8:
-            add(f"{where}: JDE account {ani(account)} is too long (BU 12, object 6, subsidiary 8 characters)")
+            add(
+                f"{where}: JDE account {ani(account)} is too long (BU 12, object 6, subsidiary 8 characters)",
+                "JDE_NO_ACCOUNT",
+                e.get("line_number"),
+            )
         v.entries.append({**e, "cents": _units(e.get("amount"), v.decimals), "account": account})
     expected = v.gross - v.recoverable
     kept = sum(e["cents"] for e in v.entries)
@@ -562,7 +587,8 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
         add(
             f"unbalanced: the distribution is {kept / 100:,.2f} but gross {v.gross / 100:,.2f} minus recoverable "
             f"tax {v.recoverable / 100:,.2f} (code {v.tax_code or 'blank'}) is {expected / 100:,.2f}: check the Tax "
-            "setup against the JDE tax explanation code"
+            "setup against the JDE tax explanation code",
+            "JDE_UNBALANCED",
         )
     return v
 
@@ -840,6 +866,138 @@ def validate(
     for inv_id, msgs in duplicate_problems(invoices, settings, vendor_lookup, prior).items():
         out.setdefault(inv_id, []).extend(msgs)
     return out
+
+
+# --- Before approval: the review screen ---------------------------------------------------------------------------
+
+ERROR = "error"  # a finding's severity (coding.validation.ERROR)
+SHOW_SETTING = "show_jde_settings"  # web.core.SHOW_JDE: "1" when JD Edwards is the export in use
+SETTINGS_URL = "/settings/jde"
+# What the review screen's own checks already say (no second message): the invoice number, the date, a line without a
+# GL account, the totals.
+SAID_ELSEWHERE = frozenset({"MISSING_INVOICE_NUMBER", "INVOICE_DATE_INVALID", "GL_UNASSIGNED", "SUBTOTAL_MISMATCH",
+                            "POSTING_UNBALANCED", "NO_LINE_ITEMS"})  # fmt: skip
+
+
+def in_use(store: Any) -> bool:
+    """Whether approved invoices go to JD Edwards: Settings → About's "Show JD Edwards settings" is on, or (never
+    set) the database was set up for it (its settings saved, or a JD Edwards batch made), as ``web.core.jde_shown``
+    reads it. Read only: nothing is stored."""
+    try:
+        value = store.get_setting(SHOW_SETTING, "unset")
+        if value != "unset":
+            return value == "1"
+        return bool(store.get_setting(SETTING_KEY)) or any(b["format"] == FORMAT for b in store.export_batches())
+    except Exception:  # noqa: BLE001 - a setting that can't be read: no JD Edwards checks
+        return False
+
+
+def voucher_findings(output: dict[str, Any], settings: JdeSettings, an8: str) -> list[tuple[str, str, str, int | None]]:
+    """What would hold this invoice back from a JD Edwards batch, as checks for the review screen (severity, code,
+    message in plain words, line): ``validate`` asked before approval, so an approved voucher is never held back at
+    export for something the screen could have said (D-75). The duplicate check is the screen's own."""
+    out: list[tuple[str, str, str, int | None]] = []
+    for problem in settings_problems(settings):
+        out.append((ERROR, "JDE_SETTINGS", f"JD Edwards settings: {problem} Ask the pilot tester to fix it in "
+                    "Settings → JD Edwards E1", None))  # fmt: skip
+    v = _prepare({"id": 0, "final_output": output}, settings, str(an8 or "").strip())
+    seen: set[tuple[str, int | None]] = set()
+    unmapped: dict[str, list[int | None]] = {}  # "GL 6010 / CC400": the lines posting to it with no E1 account
+    for problem, (code, line) in zip(v.problems, v.codes, strict=True):
+        if code in SAID_ELSEWHERE or (code, line) in seen:
+            continue
+        seen.add((code, line))
+        number = str(output.get("invoice_number") or "").strip()
+        po = str(output.get("po_number") or "").strip()
+        if code == "JDE_NO_AN8":
+            out.append((ERROR, "JDE_NO_AN8", "JD Edwards: this vendor has no supplier number (AN8). Pick the vendor "
+                        "from the vendor list, or ask the pilot tester to add its number", None))  # fmt: skip
+        elif code == "JDE_BAD_AN8":
+            out.append((ERROR, "JDE_BAD_AN8", f"JD Edwards: the supplier number {an8} is not an address number (AN8: "
+                        "digits only, up to 8). Ask the pilot tester to set this vendor's AN8 in Settings → JD "
+                        "Edwards E1", None))  # fmt: skip
+        elif code == "JDE_INVOICE_NUMBER_LONG":
+            out.append((ERROR, "JDE_INVOICE_NUMBER_LONG", f"JD Edwards keeps 25 characters of the invoice number: "
+                        f"this one has {len(number)}", None))  # fmt: skip
+        elif code == "JDE_PO_LONG":
+            out.append((ERROR, "JDE_PO_LONG", f"JD Edwards keeps 8 characters of the PO number: “{po}” has "
+                        f"{len(po)}. Type the PO number as JD Edwards has it", None))  # fmt: skip
+        elif code == "JDE_DATE_RANGE":
+            out.append((ERROR, "JDE_DATE_RANGE", f"JD Edwards: the {problem}", None))
+        elif code == "JDE_CURRENCY":
+            out.append((ERROR, "JDE_CURRENCY", f"JD Edwards isn't set up for {v.currency}: check the currency, or ask "
+                        "the pilot tester to add it in Settings → JD Edwards E1", None))  # fmt: skip
+        elif code == "JDE_TAX_AREA":
+            out.append((ERROR, "JDE_TAX_AREA", f"JD Edwards: {problem}", None))
+        elif code == "JDE_NO_ACCOUNT":  # said once for all the lines below
+            unmapped.setdefault(problem.split(" has no JDE account")[0].split(": JDE account")[0], []).append(line)
+        elif code == "JDE_UNBALANCED":
+            out.append((ERROR, "JDE_UNBALANCED", f"JD Edwards: {problem}", None))
+        else:
+            out.append((ERROR, "JDE_VOUCHER", f"JD Edwards: {problem}", line))
+    if unmapped:  # one finding: "GL 6400 (lines 1, 2), 6500 (line 7) have no JDE account…", not one per account
+
+        def where(account: str, lines: list[int | None]) -> str:
+            numbers = [str(n) for n in lines if n]
+            said = f" (line{'s' if len(numbers) > 1 else ''} {', '.join(numbers)})" if numbers else ""
+            return account.removeprefix("GL ") + said
+
+        accounts = [where(a, ls) for a, ls in unmapped.items()]
+        one = len(accounts) == 1
+        out.append((ERROR, "JDE_NO_ACCOUNT", f"JD Edwards: GL {', '.join(accounts)} {'has' if one else 'have'} no JDE "
+                    "account (BU.Object.Subsidiary): ask the pilot tester to map "
+                    f"{'it' if one else 'them'} in Settings → JD Edwards E1", None))  # fmt: skip
+    return out
+
+
+def account_text(gl_code: str, cost_center: str, settings: JdeSettings) -> str:
+    """The E1 account a GL line posts to, BU.Object.Subsidiary ("CC400.6010.01"), or "" when none is mapped."""
+    account = account_for(gl_code, cost_center, settings)
+    return ani(account) if account else ""
+
+
+def voucher_view(
+    output: dict[str, Any], settings: JdeSettings, an8: str, *, on: dt.date | None = None
+) -> dict[str, Any]:
+    """The voucher header as JD Edwards gets it, in its order, for the review screen: each value, where it comes from
+    (the invoice, or the settings: read-only there) and the Z-file column."""
+    final = output
+    v = _prepare({"id": 0, "final_output": final}, settings, str(an8 or "").strip())
+    today = on or dt.date.today()
+    invoice_date = _date(final.get("invoice_date"))
+    gl_date = today if settings.gl_date == GL_DATE_EXPORT else invoice_date
+    due = _date(final.get("due_date"))
+    credit = v.gross < 0
+    code = settings.payment_terms_code.strip()
+    if code:
+        terms_text = f"{code} (terms code from the settings)"
+    else:  # the invoice's words are under its Payment terms box
+        terms_text = "Not sent: JD Edwards uses the supplier's own terms"
+
+    def money(cents: int) -> str:
+        return f"{cents / 100:,.{v.decimals}f}" if v.decimals else f"{cents // 100:,}"
+
+    amounts = money(v.gross)
+    if settings.amount_mode == AMOUNT_TAX:
+        amounts = f"{money(v.gross)} gross · {money(v.atxa)} taxable · {money(v.stam)} tax"
+    rows = [
+        ("Company", "VLCO", settings.company_code, "settings"),
+        ("Supplier (AN8)", "VLAN8", str(an8 or "").strip() or "none", "vendor"),
+        ("Invoice number", "VLVINV", str(final.get("invoice_number") or "").strip()[:25] or "—", "invoice"),
+        ("Invoice date", "VLDIVJ", invoice_date.isoformat() if invoice_date else "—", "invoice"),
+        ("G/L date", "VLDGJ", (gl_date.isoformat() if gl_date else "—") + (
+            " (the day of the export)" if settings.gl_date == GL_DATE_EXPORT else " (the invoice date)"), "settings"),
+        ("Due date", "VLDDJ", ("Not sent (a credit)" if credit else (due.isoformat() if due else "From the terms"))
+         if settings.send_due_date else "Not sent: JD Edwards works it out", "invoice"),
+        ("Payment terms", "VLPTC", terms_text, "settings"),
+        ("Currency", "VLCRCD", v.currency + (" (foreign)" if v.foreign else ""), "invoice"),
+        ("Gross / taxable / tax" if settings.amount_mode == AMOUNT_TAX else "Gross amount",
+         "VLAG" if not v.foreign else "VLACR", amounts, "invoice"),
+        ("Tax area / explanation", "VLTXA1 / VLEXR1", f"{v.tax_area or '—'} / {v.tax_code or 'blank'}", "settings"),
+        ("Pay status", "VLPST", settings.pay_status.strip() or "—", "settings"),
+    ]  # fmt: skip
+    return {"rows": [{"label": a, "column": b, "value": c, "source": d} for a, b, c, d in rows],
+            "settings_url": SETTINGS_URL, "terms_sent": bool(code)}  # fmt: skip
 
 
 # --- Files -------------------------------------------------------------------------------------------------------

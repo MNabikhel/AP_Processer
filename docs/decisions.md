@@ -607,6 +607,29 @@ that is reversed keeps its line, marked "replaced by D-NN".
   (`lesson_approvals`). One still corrected as often after 3 invoices or more is suggested for retiring, never retired
   on its own. Why: a lesson that doesn't help still costs a line of every prompt, and only a person knows whether the
   vendor changed. (`ai/lessons.py` `effect`, `Store.lesson_history`; `tests/test_lessons.py`)
+- **D-75** · Before approval, the review screen asks what an export would refuse, and "Approve anyway" covers only what
+  can be right anyway. With JD Edwards the export in use (Settings → About's switch, `erp/jde.in_use`), every reason
+  its batch would hold a voucher back (`jde.voucher_findings`: the AN8, a GL account with no BU.Object.Subsidiary, the
+  tax area, the currency, the field lengths) is a check, raised in `finalise_coding`, so the review screen, the queue's
+  Ready and bulk approval all ask it. Never approved anyway (`invoice_view.HARD_CODES` and every `JDE_` finding): no
+  vendor or invoice number, no lines, totals or posting that don't balance, a date that is not one or could be two, a
+  currency code not in use, anything JD Edwards would refuse; "Not ready: …" says the first. The other errors (a
+  vendor not in the list, a possible duplicate, a tax difference) can be approved anyway with a reason typed beside the
+  box, kept with each error in the approval's `open_issues`. Why: approved vouchers were held back at export for what
+  the screen could have said (B-737), and the tick cleared a missing invoice number or an unbalanced total. Pilot
+  testers who run JD Edwards unconfigured see every invoice "Not ready" until Settings → JD Edwards E1 is filled: that
+  is the point. (`ap_coder/erp/jde.py`, `ap_coder/web/invoice_view.py`, `tests/test_web_review_voucher.py`)
+- **D-76** · The review screen is laid out for a clerk entering a standard voucher: the reading tools (OvisOCR2's
+  queue, the AI reviewer, LM Studio's state) folded under "Reading" in the Document card; the page a little wider than
+  the form at 1366, both halves equal on a wide screen; a "JD Edwards voucher" block in E1's order (company, AN8,
+  invoice number and date, G/L date, due date and terms, currency, amounts, tax area and code, pay status: what comes
+  from the settings marked so, read-only there) and each posting line's E1 account; the line items one row each when
+  the card is wide enough (a container query), the three-row card when not; the tax lines and the posting preview
+  beside the Tax check; a check about one field said under it, with a one-click fix where there is one (which date,
+  the vendor's open PO, a value boxed on the page); amounts with a minus sign on this screen, as its boxes show them.
+  The invoice's next page from anywhere is Alt+PgDn / Alt+PgUp: plain PgDn keeps scrolling the form outside the
+  Document card (B-592). Undo of an approval is the banner's Undo (`/review/<id>/undo-approve`, as Reopen for
+  correction without a reason, only while not exported).
 - **D-80** · Safety rules of learned line tax codes (D-70): a learned code may save typing, but never silently drops a
   tax that is due and never removes a reason for a person to look. (1) Only votes from the same place of supply
   (`feedback.tax_province`) and the same collection by the vendor (`tax_uncollected`: out of province, or no PST/QST

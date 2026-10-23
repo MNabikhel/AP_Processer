@@ -216,6 +216,7 @@ class Picker {
     this.name();
     this.sync();
     input.addEventListener("focus", () => {  // the list stays closed: Tab through a grid is quiet (D-56)
+      this.before = input.value; // a free box's value before typing: Esc puts it back
       this.name();
       if (!this.free) this.input.select(); // typing replaces the choice shown (focused by a script too: G, a finding)
     });
@@ -475,6 +476,7 @@ class Picker {
     }
     if (this.free) {
       this.close(false);
+      this.before = it.value;
       if (this.input.value !== it.value) {
         this.input.value = it.value;
         fire(this.input);
@@ -531,7 +533,19 @@ class Picker {
     } else if (k === "Escape") {
       e.preventDefault();
       e.stopPropagation(); // only the list closes, not the popover it is in, nor teaching a field
+      // A free box (the vendor) half typed, its list offering names: what was typed since it was focused goes, the
+      // value as it was comes back ("Pac" then Esc lost the vendor). A name in the list, or one the list has nothing
+      // like (a new vendor typed in full), stays: Esc then only closes the list.
+      const typedNow = this.input.value.trim().toLowerCase();
+      const offered = this.view.filter((it) => !it.run);
+      const listed = offered.some((it) => String(it.value).trim().toLowerCase() === typedNow);
+      const revert = this.free && this.typed && offered.length > 0 && !listed && this.before !== undefined &&
+        this.input.value !== this.before;
       this.close();
+      if (revert) {
+        this.input.value = this.before;
+        this.input.dispatchEvent(new Event("input", { bubbles: true }));
+      }
     } else if (k === "Tab") {
       const i = this.tabChoice();
       if (i >= 0) this.pick(i);
