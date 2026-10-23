@@ -314,8 +314,8 @@ class InvoicesMixin:
         with self._conn() as conn:
             rows = conn.execute(
                 "SELECT id, vendor_name, vendor_key, invoice_number FROM invoices "
-                "WHERE ABS(grand_total - ?) <= 0.01 AND status NOT IN (?, ?) AND vendor_key != ?",
-                (grand_total, FAILED, REJECTED, key),
+                "WHERE grand_total BETWEEN ? AND ? AND status NOT IN (?, ?) AND vendor_key != ?",  # by its index
+                (grand_total - 0.010001, grand_total + 0.010001, FAILED, REJECTED, key),  # a cent, as floats
             ).fetchall()
         return [dict(r) for r in rows if r["id"] != exclude_id and _norm_number(r["invoice_number"]) == number]
 

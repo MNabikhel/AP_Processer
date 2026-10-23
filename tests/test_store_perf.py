@@ -87,3 +87,28 @@ def test_the_dashboard_hands_its_own_store_to_the_background_workers(tmp_path, m
     with TestClient(create_app(web_settings(), store, start_reader=True), base_url="http://localhost"):
         pass
     assert len(factories) == 2 and all(f() is store for f in factories)
+
+
+def _plan(store: Store, monkeypatch, call, table: str) -> str:
+    """The query plan of the SELECT on ``table`` that ``call`` runs (the statement traced, then explained)."""
+    seen = _statements(monkeypatch)
+    call()
+    monkeypatch.undo()
+    asked = [s for s in seen if s.lstrip().upper().startswith("SELECT") and f"FROM {table}" in s]
+    assert asked, seen
+    with sqlite3.connect(store.path) as conn:
+        return " | ".join(str(r[-1]) for r in conn.execute("EXPLAIN QUERY PLAN " + asked[-1]))
+
+
+def test_the_lookups_by_file_total_and_event_use_an_index(tmp_path, monkeypatch):
+    """find_by_hash, duplicates_elsewhere and latest_events read the whole invoices or events table."""
+    store = Store(tmp_path / "ap.db")
+    pdf = tmp_path / "a.pdf"
+    pdf.write_bytes(b"%PDF-1.4 a")
+    ids = [store.add_invoice(pdf, {"vendor_name": "Acme", "invoice_number": f"A-{i}", "grand_total": 10.0 + i}, {})
+           for i in range(3)]  # fmt: skip
+    assert "invoices_sha" in _plan(store, monkeypatch, lambda: store.find_by_hash(pdf), "invoices")
+    found = _plan(store, monkeypatch, lambda: store.duplicates_elsewhere("Other", "A-1", 11.0), "invoices")
+    assert "invoices_total" in found
+    assert store.duplicates_elsewhere("Other", "A-1", 11.005) and not store.duplicates_elsewhere("Other", "A-1", 11.02)
+    assert "events_action" in _plan(store, monkeypatch, lambda: store.latest_events("processed", ids), "events")

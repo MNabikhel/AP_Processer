@@ -529,6 +529,11 @@ class StoreCore:
         if "original_sha256" not in columns:
             conn.execute("ALTER TABLE invoices ADD COLUMN original_sha256 TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS invoices_original_sha ON invoices (original_sha256)")
+        # The lookups of every invoice processed and page drawn: the same file (find_by_hash), the same total under
+        # another vendor (duplicates_elsewhere), an invoice's newest event of a kind (latest_events) (B-730).
+        conn.execute("CREATE INDEX IF NOT EXISTS invoices_sha ON invoices (file_sha256)")
+        conn.execute("CREATE INDEX IF NOT EXISTS invoices_total ON invoices (grand_total)")
+        conn.execute("CREATE INDEX IF NOT EXISTS events_action ON events (action, invoice_id)")
         # The ERP register counts a bill entered more than once in the ERP, for the duplicate audit (looked for
         # whatever the version).
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(erp_invoices)")}
