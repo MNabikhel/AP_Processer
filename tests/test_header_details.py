@@ -335,7 +335,10 @@ def _approval_message(client, invoice_id: int, data: dict) -> str:
     import re
 
     page = html.unescape(client.get(answer["redirect"]).text)
-    return re.search(r"<div><div>(Approved [^<]*)</div>", page).group(1)
+    # one line, and what it learned folded under it (B-804)
+    shown = r'<div class="flash-text">(Approved [^<]*)</div>.*?<summary>What it learned</summary><div>([^<]*)<'
+    found = re.search(shown, page, re.S)
+    return f"{found.group(1)} {found.group(2)}"
 
 
 def _blank_reading(store: Store, invoice_id: int, *fields: str) -> None:

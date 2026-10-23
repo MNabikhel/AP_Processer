@@ -46,7 +46,8 @@ from ..schema import as_read
 # 10: erp_invoices, 11: coding_rules (by _SCHEMA), 12: currency, 13: credit notes not due,
 # 14: invoice_capture, supplier_profiles, supplier_outcomes (by _SCHEMA), 15: reader_outcomes, page_reads (by _SCHEMA),
 # 16: bank_accounts, our company's bank accounts (by _SCHEMA, D-66), 17: feedback.final_tax_code, tax_source,
-# tax_province and tax_uncollected (filled from the approved invoices, D-70, D-80), template_snapshots (D-85)
+# tax_province and tax_uncollected (filled from the approved invoices, D-70, D-80), template_snapshots (D-85),
+# invoice_drafts (by _SCHEMA: the review screen's edits not approved yet, kept over a restart, D-86)
 SCHEMA_VERSION = 17
 # The one-off clean-ups of the learning memory ``_migrate`` has run on a database (settings.feedback_cleanup): a new
 # clean-up added there changes it, so it runs once on every database.
@@ -223,6 +224,9 @@ CREATE TABLE IF NOT EXISTS bank_accounts (
     institution TEXT NOT NULL DEFAULT '', transit TEXT NOT NULL DEFAULT '', account_number TEXT NOT NULL DEFAULT '',
     gl_account TEXT NOT NULL DEFAULT '', is_default INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1,
     updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS invoice_drafts (
+    invoice_id INTEGER NOT NULL, person TEXT NOT NULL DEFAULT '', draft TEXT NOT NULL, updated_at TEXT NOT NULL,
+    PRIMARY KEY (invoice_id, person));
 """
 
 # The page reader's queue (``page_reads.status``). A read still "reading" after STALE_READING_HOURS was

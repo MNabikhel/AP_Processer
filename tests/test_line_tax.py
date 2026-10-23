@@ -447,7 +447,7 @@ def test_the_tax_check_at_the_official_rate_with_the_lines_to_look_at(reference)
     coding = _coding(lines, [_tax("GST", 0.05, 14645), _tax("PST", 0.07, 13445, 941.15, "MB")], "MB")
     m = math_check(coding, reference.tax)
     rst = next(r for r in m["rows"] if r.get("tax_type") == "PST")
-    assert rst["what"] == "RST" and not rst["ok"] and rst["expected"] == "1,025.15" and rst["diff"] == "(84.00)"
+    assert rst["what"] == "RST" and not rst["ok"] and rst["expected"] == "1,025.15" and rst["diff"] == "-84.00"
     assert rst["named"] == "Line 3 (Design consultation, 1,200.00)" and list(m["marks"]) == [3]
     gst = next(r for r in m["rows"] if r.get("tax_type") == "GST")
     assert gst["ok"] and gst["which"] == "every line" and gst["rate"] == "5%"

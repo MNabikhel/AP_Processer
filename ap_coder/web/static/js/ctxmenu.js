@@ -30,9 +30,11 @@ let back = null; // the element focused before the menu opened (focused again on
 let openedAt = 0; // a scroll the browser reports just after the menu opened was before it (the click's own)
 let keyOpenedAt = 0; // Shift+F10 / ContextMenu opened it: the contextmenu event the browser may send after is ours
 
-/** A menu for the elements matching ``selector``: ``make(el, ctx)`` gives its items (ctx: {target, x, y, keyboard}). */
-export function register(selector, make) {
-  providers.push({ selector, make });
+/** A menu for the elements matching ``selector``: ``make(el, ctx)`` gives its items (ctx: {target, x, y, keyboard}).
+    ``keepFocus``: Esc gives the focus back to what had it before the right-click (a row of a table, which takes no
+    focus itself), rather than to the element's own box. */
+export function register(selector, make, { keepFocus = false } = {}) {
+  providers.push({ selector, make, keepFocus });
 }
 
 export function isOpen() {
@@ -65,7 +67,7 @@ function nativeWanted(target) {
 function provider(target) {
   for (const p of providers) {
     const el = target.closest?.(p.selector);
-    if (el) return { el, make: p.make };
+    if (el) return { el, make: p.make, keepFocus: p.keepFocus };
   }
   return null;
 }
@@ -92,6 +94,7 @@ function build(items, label) {
       last = "-";
       continue;
     }
+    if (it.disabled) continue; // what can't be used is left out, never greyed (B-798)
     last = it;
     const row = document.createElement("div");
     row.className = "cm-item";
@@ -175,15 +178,15 @@ function focusRow(menu, i) {
 }
 
 /** Open a menu of ``items`` at (x, y) of the window. */
-export function openMenu(items, { x = 0, y = 0, label = "", keyboard = false, opener = null } = {}) {
+export function openMenu(items, { x = 0, y = 0, label = "", keyboard = false, opener = null, before = null } = {}) {
   closeMenu(false);
-  const list = (items || []).filter(Boolean);
+  const list = (items || []).filter((it) => it && !it.disabled);
   if (!list.some((it) => it !== "-")) return null;
   // Esc and a pick give the focus back where it was; opened on something that had none (a field's name, with the focus
   // nowhere or on the page's <main>), to that thing's own box (``opener``).
   const active = document.activeElement;
   const nowhere = !active || active === document.body || active.tagName === "MAIN" || active === document.documentElement;
-  back = nowhere ? opener : active;
+  back = nowhere ? (before?.isConnected && before !== document.body && before.tagName !== "MAIN" ? before : opener) : active;
   root = build(list, label);
   document.body.append(root);
   place(root, x, y);
@@ -293,7 +296,9 @@ async function show(found, ctx) {
     console.error("menu:", err); // eslint-disable-line no-console
     return;
   }
-  if (items && items.length) openMenu(items, { x: ctx.x, y: ctx.y, label: ctx.label, keyboard: ctx.keyboard, opener: boxOf(found.el) });
+  // a row's menu: Esc gives the focus back to what had it before the right-click (B-798)
+  const before = found.keepFocus && !ctx.keyboard ? focusedBefore : null;
+  if (items && items.length) openMenu(items, { x: ctx.x, y: ctx.y, label: ctx.label, keyboard: ctx.keyboard, opener: found.keepFocus ? null : boxOf(found.el), before });
 }
 
 /** The box a menu's element stands for: itself when it takes the focus, else its first box (a field's input). */

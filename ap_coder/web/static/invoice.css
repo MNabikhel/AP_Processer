@@ -563,3 +563,56 @@ html:has(.inv-actionbar) {scroll-padding-bottom: 104px; scroll-padding-top: 12px
 .rvw-nav .pop-body .apc-table td {height: auto; padding: 3px 8px; font-size: 12.5px; line-height: 18px;}
 .rvw-nav .pop-body .apc-table td:first-child {white-space: nowrap;}
 .rvw-nav details.pop > .pop-body {width: min(620px, 92vw); max-width: none;}
+
+/* ---- Second UI sign-off (B-790 on) -------------------------------------------------------------------------------- */
+/* The approve bar's left part: the amount and what approving teaches never shrink under "Approve anyway"; ticked, the
+   box and its reason take a row of their own under them, so nothing overlaps or is cut off at 1366 (B-790). */
+.inv-actionbar-live {display: contents;}
+.inv-actionbar-left .rvw-post {flex: none;}
+.inv-override {white-space: nowrap;}
+.inv-actionbar-left:has(.inv-override input:checked) {display: grid; grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 14px; align-items: center;}
+.inv-actionbar-left:has(.inv-override input:checked) .rvw-post {grid-column: 1 / -1;}
+.inv-actionbar-left:has(.inv-override input:checked) .inv-override-why {width: 100%; max-width: 440px;}
+/* The tax lines beside the page: "Taxable" and "Amount" above their boxes, each box inside the card (B-791). */
+@container card (max-width: 560px) {
+  .inv-tax tr[data-row] {grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 76px 28px;
+    grid-template-areas: "type prov rate del" "taxable taxable amount amount"; align-items: end;}
+  .inv-tax tr[data-row] > td:nth-child(4)::before, .inv-tax tr[data-row] > td:nth-child(5)::before {display: block;
+    line-height: 14px;}
+  .inv-tax tr[data-row] > td input, .inv-tax tr[data-row] > td select {width: 100%;}
+}
+/* The 30-character remark (VNEXA): a quiet grey count in the corner, its title saying what JD Edwards keeps; the
+   warning colour only while the box is typed in (B-794): on nearly every line it would mean nothing. */
+.inv-remark.over {color: var(--rv-subtle);}
+.inv-remark.over:not(.typing) {background: var(--lg-surface); border-color: var(--lg-hairline); color: var(--rv-subtle);}
+.inv-remark.over.typing {color: var(--lg-warning);}
+.inv-lines-grid td.c-desc:has(.inv-remark.over) textarea {border-color: var(--lg-border);}
+.inv-lines-grid td.c-desc:has(.inv-remark.over) textarea:focus {border-color: var(--lg-accent);}
+/* The Shortcuts list inside its panel at 1366: what a key does wraps (B-795). */
+.rvw-nav .pop-body .apc-table td:last-child {white-space: normal; overflow-wrap: anywhere;}
+.rvw-nav details.pop > .pop-body {max-width: calc(100vw - 32px); overflow-x: hidden;}
+/* A detail whose check is an error: red, as under "Must be fixed" at the top; amber stays for what is to check. */
+.inv-details .is-flagged.is-error input, .inv-details .is-flagged.is-error select {border-color: var(--rv-danger);
+  background: var(--rv-danger-weak);}
+.inv-details .is-flagged.is-error > .inv-flag {color: var(--rv-danger);}
+/* The lines in one row a line (1920): the GL account takes its share of the room with the description, the tax code
+   shows "GST + QST", the amount is as wide as an amount (B-800). */
+@container lines (min-width: 640px) {
+  .inv-lines-grid {--cols: 40px minmax(130px, 1fr) minmax(160px, 1.4fr) 90px 116px 30px;}
+  .inv-lines-grid thead .c-amt {padding-right: 8px;}
+  .inv-lines-grid.has-cc {--cols: 40px minmax(120px, 1fr) minmax(140px, 1fr) minmax(96px, .7fr) 92px 120px 30px;}
+}
+@container lines (min-width: 720px) {
+  .inv-lines-grid.show-qty {--cols: 36px minmax(104px, .8fr) minmax(160px, 1.5fr) 82px 112px 46px 80px 28px;}
+}
+@container lines (min-width: 740px) {
+  .inv-lines-grid.has-cc.show-qty {--cols: 36px minmax(110px, 1fr) minmax(130px, 1fr) minmax(86px, .7fr) 84px 116px 44px 72px 26px;}
+}
+/* "Checking…" / "Draft saved 5:22": quiet text in the bar beside its buttons, never a tag floating over the document
+   card's corner (B-804). */
+.inv-actionbar-right .inv-checking {position: static; padding: 0 4px 0 0; border: 0; border-radius: 0; box-shadow: none;
+  background: none; white-space: nowrap;}
+.inv-jde-settings {display: inline-flex; align-items: center; gap: 3px; margin-top: 6px;}
+.inv-jde-settings .ms {font-size: 14px;}
+.inv-vendor .inv-vendor-match:empty {min-height: 0;}
