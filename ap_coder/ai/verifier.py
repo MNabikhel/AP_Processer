@@ -470,7 +470,9 @@ def verify_one(settings: Any, store: Any, *, coder: Any = None, clock: Callable[
     cfg = load_settings(store)
     if not cfg.on:
         return None
-    row = store.next_verification(after_page_reader=after_page_reader)
+    from .page_worker import READER_ID
+
+    row = store.next_verification(after_page_reader=after_page_reader, reader=READER_ID)
     if not row:
         return None
     iid = int(row["invoice_id"])
@@ -524,7 +526,7 @@ def _verify(settings: Any, store: Any, row: dict[str, Any], cfg: ReviewerSetting
         return Outcome(iid, "skipped", "no page to show")
     vendor = store.get_vendor(vendor_key(output.get("vendor_name") or ""))
     try:
-        names = {a["code"]: a["description"] for a in store.list_accounts("gl")}
+        names = {a["code"]: a["description"] for a in store.list_accounts("gl_accounts")}
     except Exception:  # noqa: BLE001
         names = {}
     shown = proposal(output, vendor, names)

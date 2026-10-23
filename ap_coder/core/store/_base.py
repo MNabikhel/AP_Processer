@@ -47,6 +47,9 @@ from ..schema import as_read
 # 14: invoice_capture, supplier_profiles, supplier_outcomes (by _SCHEMA), 15: reader_outcomes, page_reads (by _SCHEMA),
 # 16: bank_accounts, our company's bank accounts (by _SCHEMA, D-66)
 SCHEMA_VERSION = 16
+# The one-off clean-ups of the learning memory ``_migrate`` has run on a database (settings.feedback_cleanup): a new
+# clean-up added there changes it, so it runs once on every database.
+FEEDBACK_CLEANUP = "1"
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
@@ -66,6 +69,8 @@ def _in_list(column: str) -> str:
 # page picture the review screen asks for.
 _LOOK_AGAIN_SECONDS = 30.0
 _NOT_FOUND: dict[tuple[str, int, str], float] = {}
+# Invoice files found where they were recorded, and when: an invoice read is not checked again for this long.
+_FOUND: dict[str, float] = {}
 
 # Databases being restored in this process (``Store.restore_from``): the background workers (page reader, Azure
 # check) start nothing on them meanwhile (``Store.restoring``).
@@ -75,6 +80,20 @@ _RESTORING_LOCK = threading.Lock()
 # The learning memory as last read, per database: (highest lesson id and count, rows) (``Store.feedback_rows``).
 _FEEDBACK: dict[tuple[str, int, str | None], tuple[tuple[Any, ...], list[dict[str, Any]]]] = {}
 _FEEDBACK_LOCK = threading.Lock()
+# The learning memory's part of ``Store.metrics`` as last counted, per database: (its stamp, the counts).
+_METRICS: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {}
+
+
+def _forget_learning(path: Path) -> None:
+    """The learning memory kept for this database (``feedback_rows``, ``metrics``) dropped: an upgrade changed lessons
+    in place, which the stamps (lessons are otherwise only added or removed) don't see."""
+    key = str(path.resolve())
+    with _FEEDBACK_LOCK:
+        for kept in (_FEEDBACK, _METRICS):
+            for k in [k for k in kept if (k[0] if isinstance(k, tuple) else k) == key]:
+                kept.pop(k, None)
+
+
 FEEDBACK_READ = 50_000  # lessons read for the whole memory, at most (newest first); one vendor's are added past it
 
 # Touchless processing (Settings → Automation): one switch for the company, "on" or "off" (off when not set), and
@@ -387,6 +406,7 @@ class _Held:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
         self.depth = 0
+        self.memo: dict[tuple[Any, ...], tuple[tuple[int, int], Any]] = {}  # ``StoreCore._session_memo``
 
 
 _sessions = threading.local()
@@ -498,10 +518,12 @@ class StoreCore:
         for column, kind in (("reader", "TEXT NOT NULL DEFAULT ''"), ("tries", "INTEGER NOT NULL DEFAULT 0")):
             if columns and column not in columns:
                 conn.execute(f"ALTER TABLE page_reads ADD COLUMN {column} {kind}")
-        # The AI reviewer's queue counts reviews the model server cut off before any answer (looked for likewise).
+        # The AI reviewer's queue counts reviews the model server cut off before any answer, and remembers who is
+        # reviewing an invoice, like the page reader's (looked for likewise).
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(verifications)")}
-        if columns and "tries" not in columns:
-            conn.execute("ALTER TABLE verifications ADD COLUMN tries INTEGER NOT NULL DEFAULT 0")
+        for column, kind in (("tries", "INTEGER NOT NULL DEFAULT 0"), ("reader", "TEXT NOT NULL DEFAULT ''")):
+            if columns and column not in columns:
+                conn.execute(f"ALTER TABLE verifications ADD COLUMN {column} {kind}")
         # A suspended supplier remembers when, so it needs a fresh clean streak since then (looked for whatever the
         # version, like the page reader's columns above).
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(supplier_profiles)")}
@@ -526,6 +548,11 @@ class StoreCore:
         if "original_sha256" not in columns:
             conn.execute("ALTER TABLE invoices ADD COLUMN original_sha256 TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS invoices_original_sha ON invoices (original_sha256)")
+        # The lookups of every invoice processed and page drawn: the same file (find_by_hash), the same total under
+        # another vendor (duplicates_elsewhere), an invoice's newest event of a kind (latest_events) (B-730).
+        conn.execute("CREATE INDEX IF NOT EXISTS invoices_sha ON invoices (file_sha256)")
+        conn.execute("CREATE INDEX IF NOT EXISTS invoices_total ON invoices (grand_total)")
+        conn.execute("CREATE INDEX IF NOT EXISTS events_action ON events (action, invoice_id)")
         # The ERP register counts a bill entered more than once in the ERP, for the duplicate audit (looked for
         # whatever the version).
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(erp_invoices)")}
@@ -537,23 +564,35 @@ class StoreCore:
         row = conn.execute("SELECT value FROM settings WHERE key = 'vendor_key_rules'").fetchone()
         if (row["value"] if row else "") != VENDOR_KEY_RULES:
             self._recompute_vendor_keys(conn)
+            _forget_learning(self.path)
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES ('vendor_key_rules', ?) "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (VENDOR_KEY_RULES,),
             )
-        # Older versions recorded AP Coder's own approvals (nobody checked them) as lessons, counted in the
-        # accuracy: withdrawn whatever the version, as nothing is recorded for them any more.
-        from ...capture.workflow import AUTONOMOUS_REVIEWER
+        # One-off clean-ups of the learning memory, whatever the version: each scans the whole feedback table, so
+        # they run once per database (recorded as settings.feedback_cleanup, like vendor_key_rules), not on every
+        # Store() the background workers make (B-727).
+        row = conn.execute("SELECT value FROM settings WHERE key = 'feedback_cleanup'").fetchone()
+        if (row["value"] if row else "") != FEEDBACK_CLEANUP:
+            # Older versions recorded AP Coder's own approvals (nobody checked them) as lessons, counted in the
+            # accuracy: withdrawn, as nothing is recorded for them any more.
+            from ...capture.workflow import AUTONOMOUS_REVIEWER
 
-        conn.execute("DELETE FROM feedback WHERE reviewer = ?", (AUTONOMOUS_REVIEWER,))
-        # Older versions recorded a GL account filled in where the AI proposed none as a correction: it is the
-        # reviewer's coding (B-650), recounted whatever the version (the learning memory reads both alike).
-        conn.execute(
-            "UPDATE feedback SET outcome = ? WHERE outcome = ? AND suggested_gl IN ('', ?) "
-            "AND COALESCE(suggested_cc, '') IN ('', ?)",
-            (CODED, CORRECTED, UNASSIGNED, UNASSIGNED),
-        )
+            conn.execute("DELETE FROM feedback WHERE reviewer = ?", (AUTONOMOUS_REVIEWER,))
+            # Older versions recorded a GL account filled in where the AI proposed none as a correction: it is the
+            # reviewer's coding (B-650), recounted (the learning memory reads both alike).
+            conn.execute(
+                "UPDATE feedback SET outcome = ? WHERE outcome = ? AND suggested_gl IN ('', ?) "
+                "AND COALESCE(suggested_cc, '') IN ('', ?)",
+                (CODED, CORRECTED, UNASSIGNED, UNASSIGNED),
+            )
+            _forget_learning(self.path)
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('feedback_cleanup', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (FEEDBACK_CLEANUP,),
+            )
         if version < SCHEMA_VERSION:
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
@@ -704,6 +743,20 @@ class StoreCore:
             if held.get(key) is not None and held[key].conn is conn:
                 del held[key]
             conn.close()
+
+    def _session_memo(self, key: tuple[Any, ...], compute: Callable[[], list[dict[str, Any]]]) -> list[dict[str, Any]]:
+        """``compute()`` (rows), read once inside a session while the database does not change: a page that asks the
+        same thing twice (the vendor checks and the tax-number notes) reads it once. Any change, on the session's
+        connection (``total_changes``) or another one (``PRAGMA data_version``), reads it again. Outside a session,
+        always ``compute()``. Each caller gets rows of its own."""
+        held = _held_connections().get(str(self.path))
+        if held is None:
+            return compute()
+        stamp = (held.conn.total_changes, held.conn.execute("PRAGMA data_version").fetchone()[0])
+        hit = held.memo.get(key)
+        if hit is None or hit[0] != stamp:
+            hit = held.memo[key] = (stamp, compute())
+        return [dict(r) for r in hit[1]]
 
     def _open(self) -> sqlite3.Connection:
         fresh = not self.path.exists()  # e.g. the file was deleted while the dashboard was running

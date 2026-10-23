@@ -69,6 +69,7 @@ def test_blanks_an_older_version_recorded_as_corrections_are_recounted(tmp_path)
     store.approve_invoice(iid, final, "pat")
     with sqlite3.connect(path) as conn:  # as an older version recorded it
         conn.execute("UPDATE feedback SET outcome = 'corrected'")
+        conn.execute("DELETE FROM settings WHERE key = 'feedback_cleanup'")
     assert Store(path).metrics()["lines_corrected"] == 0
 
 

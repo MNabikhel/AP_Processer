@@ -238,26 +238,35 @@ class VendorsMixin:
         return row[0] if row else ""
 
     def vendor_invoices(self, key: str) -> list[dict[str, Any]]:
-        """This vendor's invoices (newest first) with the GST/HST number and bank account each one carried."""
+        """This vendor's invoices (newest first) with the GST/HST number and bank account each one carried. Read once
+        per page while nothing changes (``_session_memo``): the vendor checks and the tax-number notes both ask."""
+        return self._session_memo(("vendor_invoices", key), lambda: self._vendor_invoices(key))
+
+    def _vendor_invoices(self, key: str) -> list[dict[str, Any]]:
+        # The coding as approved, else as read (a blank one counts as none), by json_extract: no invoice's whole AI
+        # output is parsed for five fields.
+        doc = "COALESCE(NULLIF(NULLIF(final_output, 'null'), '{}'), NULLIF(ai_output, 'null'), '{}')"
+        fields = ", ".join(
+            f"json_extract({doc}, '$.{field}') AS {name}"
+            for field, name in (
+                ("gst_hst_registration_number", "gst_hst_number"), ("qst_registration_number", "qst_number"),
+                ("pst_registration_number", "pst_number"), ("remit_bank_account", "bank_account"),
+                ("original_invoice_number", "original_invoice_number"),
+            )
+        )  # fmt: skip
         with self._conn() as conn:
             rows = [
                 dict(r)
                 for r in conn.execute(
-                    """SELECT id, status, export_batch, vendor_name, invoice_number, invoice_date, currency,
-                              grand_total, adjusted_confidence, requires_review, created_at, reviewed_at,
-                              ai_output, final_output
+                    f"""SELECT id, status, export_batch, vendor_name, invoice_number, invoice_date, currency,
+                              grand_total, adjusted_confidence, requires_review, created_at, reviewed_at, {fields}
                        FROM invoices WHERE vendor_key = ? ORDER BY id DESC""",
                     (key,),
                 )
             ]
         for r in rows:
-            doc = json.loads(r.pop("final_output") or "null") or json.loads(r.pop("ai_output", None) or "null") or {}
-            r.pop("ai_output", None)
-            r["gst_hst_number"] = doc.get("gst_hst_registration_number") or ""
-            r["qst_number"] = doc.get("qst_registration_number") or ""
-            r["pst_number"] = doc.get("pst_registration_number") or ""
-            r["bank_account"] = doc.get("remit_bank_account") or ""
-            r["original_invoice_number"] = doc.get("original_invoice_number") or ""
+            for name in ("gst_hst_number", "qst_number", "pst_number", "bank_account", "original_invoice_number"):
+                r[name] = r[name] or ""
         return rows
 
     def vendor_invoice_dates(self) -> list[dict[str, Any]]:

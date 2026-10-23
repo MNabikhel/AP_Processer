@@ -50,6 +50,7 @@ from ap_coder.web.core import (
     get_store,
     login,
     message,
+    one_connection,
     posted_form,
     reading_status_or_none,
     reference_or_none,
@@ -394,6 +395,7 @@ def _reference(store: Store) -> ReferenceData:
 
 
 @router.get("/review/{invoice_id:int}", response_class=HTMLResponse)
+@one_connection
 def invoice_page(request: Request, invoice_id: int) -> Any:
     store, settings = get_store(request), get_settings(request)
     inv = _invoice(store, invoice_id)

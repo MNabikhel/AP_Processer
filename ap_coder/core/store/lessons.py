@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import sqlite3
+from collections.abc import Callable
 from typing import Any
 
 from ...coding.po import po_key
@@ -164,10 +165,10 @@ class LessonsMixin:
             )
             return cur.rowcount > 0
 
-    def next_verification(self, *, after_page_reader: bool = True) -> dict[str, Any] | None:
-        """The invoice the AI reviewer takes next (the one waiting longest), marked as being reviewed; None when
-        nothing waits. ``after_page_reader``: leave invoices still waiting for the page reader (it reads them first,
-        then the reviewer reviews them as they then stand)."""
+    def next_verification(self, *, after_page_reader: bool = True, reader: str = "") -> dict[str, Any] | None:
+        """The invoice the AI reviewer takes next (the one waiting longest), marked as being reviewed (by ``reader``,
+        the process: ``page_worker.READER_ID``); None when nothing waits. ``after_page_reader``: leave invoices still
+        waiting for the page reader (it reads them first, then the reviewer reviews them as they then stand)."""
         now, stale = _now(), _stale_before()
         later = (
             " AND NOT EXISTS (SELECT 1 FROM page_reads p WHERE p.invoice_id = verifications.invoice_id "
@@ -185,8 +186,9 @@ class LessonsMixin:
             if row is None:
                 return None
             conn.execute(
-                "UPDATE verifications SET status = 'verifying', error = '', updated_at = ? WHERE invoice_id = ?",
-                (now, row[0]),
+                "UPDATE verifications SET status = 'verifying', error = '', reader = ?, updated_at = ? "
+                "WHERE invoice_id = ?",
+                (reader or "", now, row[0]),
             )
             taken = conn.execute("SELECT * FROM verifications WHERE invoice_id = ?", (row[0],)).fetchone()
         return dict(taken)
@@ -197,7 +199,8 @@ class LessonsMixin:
     ) -> bool:  # fmt: skip
         """How a review ended: ``done`` (``result``), ``failed`` / ``skipped`` (``error`` says why) or ``waiting``
         (back in line: the chat model isn't answering now). ``tries``: reviews the model server cut off before any
-        answer (None keeps the count; a review done starts it over)."""
+        answer (None keeps the count; a review done starts it over). Only a review still under way ends: one put
+        back in line meanwhile (``release_verifications``, a new reading) is left there. False when nothing ended."""
         if status not in (VERIFY_WAITING, VERIFY_DONE, VERIFY_FAILED, VERIFY_SKIPPED):
             raise ValueError(f"unknown review status {status!r}")
         if tries is None and status == VERIFY_DONE:
@@ -205,11 +208,28 @@ class LessonsMixin:
         with self._conn() as conn:
             cur = conn.execute(
                 """UPDATE verifications SET status = ?, result_json = COALESCE(?, result_json), rounds = ?,
-                   seconds = ?, error = ?, updated_at = ?, tries = COALESCE(?, tries) WHERE invoice_id = ?""",
+                   seconds = ?, error = ?, updated_at = ?, tries = COALESCE(?, tries), reader = ''
+                   WHERE invoice_id = ? AND status = 'verifying'""",
                 (status, json.dumps(result, default=str) if result is not None else None,
                  int(rounds or 0), round(float(seconds or 0), 1), (error or "")[:2000], _now(), tries, invoice_id),
             )  # fmt: skip
             return cur.rowcount > 0
+
+    def release_verifications(self, alive: Callable[[str], bool], why: str = "") -> int:
+        """Put back in line every invoice marked as being reviewed by a process that isn't reviewing any more
+        (``alive(reader)`` is False: closed or killed part way), at once rather than after STALE_READING_HOURS. How
+        many were put back (``release_page_reads``, for the AI reviewer's queue)."""
+        why = why or "interrupted (AP Coder was closed while it was reviewed): it is reviewed again"
+        with self._conn() as conn:
+            rows = conn.execute("SELECT invoice_id, reader FROM verifications WHERE status = 'verifying'").fetchall()
+            gone = [(r["invoice_id"], r["reader"]) for r in rows if not alive(r["reader"] or "")]
+            for invoice_id, reader in gone:
+                conn.execute(
+                    "UPDATE verifications SET status = 'waiting', reader = '', error = ?, updated_at = ? "
+                    "WHERE invoice_id = ? AND status = 'verifying' AND reader = ?",
+                    (why, _now(), invoice_id, reader),
+                )
+        return len(gone)
 
     def verification(self, invoice_id: int) -> dict[str, Any] | None:
         """The invoice's review: {invoice_id, reason, status, rounds, seconds, result, error, created_at,

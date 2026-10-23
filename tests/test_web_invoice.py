@@ -690,7 +690,8 @@ def test_the_ai_reviewer_on_the_review_screen(client, store):
     assert "OvisOCR2 and the AI reviewer check it once LM Studio runs" in page
     output = store.get_invoice(inv["id"])["ai_output"]
     disputed = {"grand_total": {"value": output["grand_total"], "on_page": "9,999.00", "reason": "the total box"}}
-    store.next_verification(after_page_reader=False)
+    while store.next_verification(after_page_reader=False)["invoice_id"] != inv["id"]:  # this one under review
+        pass
     store.finish_verification(inv["id"], "done", rounds=2, seconds=95.0, result={
         "status": verifier.DISAGREES, "fields": disputed, "lines": {}, "rounds": 2, "seconds": 95.0,
         "summary": "The total printed is 9,999.00."})  # fmt: skip

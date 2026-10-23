@@ -610,12 +610,12 @@ def release_interrupted(store: Any) -> int:
     dashboard stopped, Ctrl+C on read-pages, the computer restarted): they are read again at once, not after
     hours. Called between readings only. Never raises."""
     try:
-        released = store.release_page_reads(reader_alive)
+        released = store.release_page_reads(reader_alive) + store.release_verifications(reader_alive)
     except Exception as exc:  # noqa: BLE001 - a locked database: the stale-read rule still frees them later
         log.info("page reader: interrupted reads not checked (%s)", exc)
         return 0
     if released:
-        log.info("page reader: %d interrupted read(s) put back in line", released)
+        log.info("page reader: %d interrupted read(s) or review(s) put back in line", released)
     return released
 
 
@@ -630,6 +630,7 @@ class BackgroundReader(threading.Thread):
         super().__init__(name="ap-coder-page-reader", daemon=True)
         self._settings_factory = settings_factory
         self._store_factory = store_factory
+        self._store: Any = None  # the store, built at the first round (a Store() runs the schema and its upgrade)
         self._cache_dir = cache_dir
         self._halt = threading.Event()
         self.current: int | None = None  # the invoice being read now
@@ -664,7 +665,7 @@ class BackgroundReader(threading.Thread):
             pause = IDLE_SECONDS
             try:
                 settings = self._settings_factory()
-                store = self._store_factory()
+                store = self._store = self._store or self._store_factory()  # built once, then reused
                 release_interrupted(store)  # between readings: a mark of this process's is left over too
                 if test_under_way(store):
                     pause = IDLE_SECONDS

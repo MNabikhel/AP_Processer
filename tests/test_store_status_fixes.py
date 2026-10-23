@@ -148,6 +148,7 @@ def test_approvals_nobody_checked_teach_nothing_and_count_for_no_accuracy(tmp_pa
             "outcome, reviewer, created_at) VALUES (?, 1, 'acme', 'Acme Ltd', 'Widgets', '6000', 'accepted', ?, ?)",
             (auto, AUTONOMOUS_REVIEWER, "2026-01-01T00:00:00"),
         )
+        conn.execute("DELETE FROM settings WHERE key = 'feedback_cleanup'")  # as an older version left it
     assert [r["reviewer"] for r in Store(store.path).feedback_rows()] == ["Ann"]
 
 

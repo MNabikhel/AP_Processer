@@ -344,3 +344,47 @@ def test_the_vendor_detail_does_not_ask_the_database_once_per_invoice(tmp_path, 
     for i in range(2, 12):
         add_clean(db, invoice_number=f"NW-{i}")
     assert connections() == few
+
+
+def test_the_heavy_pages_ask_the_database_on_one_connection(tmp_path, monkeypatch):
+    """The queue opened 33 connections and the review screen 61 (one per store call): each now shares one
+    (``Store.session``), and a bulk approval opens as many for 10 invoices as for 2."""
+    import sqlite3
+
+    from ap_coder.core import store as store_mod
+    from ap_coder.core.store import load_sample_setup
+
+    from .webclient import PAGE, add_clean, client_for
+
+    monkeypatch.setenv("AP_REVIEWER", "Sam")
+    db = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(db)
+    db.import_vendor_master([{"vendor_name": f"Bulk Supplier {i}", "erp_id": f"B{i}"} for i in range(12)])
+    client = client_for(db)
+    opened: list[str] = []
+    real = sqlite3.connect
+
+    def counting(*args, **kwargs):
+        opened.append(str(args[0]))
+        return real(*args, **kwargs)
+
+    def connections(ask) -> int:
+        monkeypatch.setattr(store_mod.sqlite3, "connect", counting)
+        opened.clear()
+        try:
+            answer = ask()
+        finally:
+            monkeypatch.setattr(store_mod.sqlite3, "connect", real)
+        assert answer.status_code == 200, answer.text
+        return len(opened)
+
+    ids = [add_clean(db, vendor_name=f"Bulk Supplier {i}", invoice_number=f"B-{i}") for i in range(12)]
+    assert connections(lambda: client.get("/review")) <= 3
+    assert connections(lambda: client.get(f"/review/{ids[0]}")) <= 3
+
+    def bulk(chosen):
+        return lambda: client.post("/review/bulk-approve", data={"ids": [str(i) for i in chosen]}, headers=PAGE)
+
+    two, ten = connections(bulk(ids[:2])), connections(bulk(ids[2:12]))
+    assert [db.get_invoice(i)["status"] for i in ids] == [APPROVED] * 12
+    assert ten == two

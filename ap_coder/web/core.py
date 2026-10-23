@@ -18,6 +18,7 @@ an invoice or a file as safe yourself.
 from __future__ import annotations
 
 import datetime as dt
+import functools
 import getpass
 import hashlib
 import json
@@ -132,6 +133,22 @@ templates.env.filters.update(
 def get_store(request: Request) -> Store:
     """The database this dashboard was started with."""
     return request.app.state.store
+
+
+def one_connection(handler: Callable[..., Any]) -> Callable[..., Any]:
+    """A page handler (a plain ``def``: FastAPI runs it on a threadpool thread) whose store calls all share one
+    database connection (``Store.session``, held by that thread for the request): a heavy page makes dozens of
+    store calls, and a connection opened and closed for each costs more than the queries."""
+
+    @functools.wraps(handler)
+    def wrapped(*args: Any, **kwargs: Any) -> Any:
+        request = kwargs.get("request")
+        if request is None:
+            request = next(a for a in args if isinstance(a, Request))
+        with get_store(request).session():
+            return handler(*args, **kwargs)
+
+    return wrapped
 
 
 def get_settings(request: Request) -> Settings:

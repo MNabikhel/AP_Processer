@@ -58,13 +58,16 @@ def clean_candidates(store: Store) -> list[dict[str, Any]]:
     return sort_for_bulk(store)[0]
 
 
-def sort_for_bulk(store: Store) -> tuple[list[dict[str, Any]], dict[int, str]]:
+def sort_for_bulk(
+    store: Store, queue: list[dict[str, Any]] | None = None
+) -> tuple[list[dict[str, Any]], dict[int, str]]:
     """(``clean_candidates``, why each other invoice of the queue not flagged when processed is left for a person:
-    "credit note", or "warning" for an error, a warning or a finding that always goes to a person)."""
+    "credit note", or "warning" for an error, a warning or a finding that always goes to a person). ``queue``: the
+    invoices in review as ``store.list_invoices`` gives them, when the caller has them already."""
     validations = {r["id"]: r["validation"] or {} for r in store.invoice_columns(("id", "validation"), REVIEW)}
     titled = store.credit_note_ids(REVIEW)
     candidates, left = [], {}
-    for inv in store.list_invoices(REVIEW):
+    for inv in store.list_invoices(REVIEW) if queue is None else queue:
         if inv["requires_review"]:
             continue
         issues = validations.get(inv["id"], {}).get("issues") or []
@@ -84,6 +87,13 @@ def bulk_approve(
 
     "As coded" is what the review screen shows: an earlier approver's corrections (a reopened or sent-back
     invoice) when there are some, otherwise the AI's coding."""
+    with store.session():  # one connection for every invoice (a no-op inside the caller's own session)
+        return _bulk_approve(store, reference, settings, invoice_ids, reviewer, login)
+
+
+def _bulk_approve(
+    store: Store, reference: ReferenceData, settings: Settings, invoice_ids: list[int], reviewer: str, login: str
+) -> dict[str, Any]:
     approved: list[int] = []
     skipped: list[tuple[int, str]] = []
     for invoice_id in invoice_ids:

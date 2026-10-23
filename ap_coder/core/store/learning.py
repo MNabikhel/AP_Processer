@@ -9,11 +9,21 @@ from ..paths import PROJECT_DIR, default_db_path, find_moved_file, private_dir  
 from ._base import (
     _FEEDBACK,
     _FEEDBACK_LOCK,
+    _METRICS,
     APPROVED,
     FEEDBACK_READ,
     _clean_code,
     _iso_week,
 )
+
+
+def _feedback_stamp(conn: Any) -> tuple[Any, ...]:
+    """What tells whether the lessons kept are still the ones in the database (``feedback_rows``, ``metrics``)."""
+    return tuple(conn.execute(
+        "SELECT MAX(id), COUNT(*), (SELECT created_at || '|' || COALESCE(vendor_key, '') || '|' || "
+        "COALESCE(description, '') || '|' || COALESCE(final_gl, '') FROM feedback ORDER BY id DESC LIMIT 1) "
+        "FROM feedback"
+    ).fetchone())  # fmt: skip
 
 
 class LearningMixin:
@@ -33,11 +43,7 @@ class LearningMixin:
             # itself tell whether the ones kept are still the ones in the database. (The id alone is not enough: a
             # database restored from a backup, or made again where one was deleted, gives its next lesson an id a
             # lesson it no longer has once had.)
-            stamp = tuple(conn.execute(
-                "SELECT MAX(id), COUNT(*), (SELECT created_at || '|' || COALESCE(vendor_key, '') || '|' || "
-                "COALESCE(description, '') || '|' || COALESCE(final_gl, '') FROM feedback ORDER BY id DESC LIMIT 1) "
-                "FROM feedback"
-            ).fetchone())  # fmt: skip
+            stamp = _feedback_stamp(conn)
             key = (str(self.path.resolve()), limit, vendor_name)
             with _FEEDBACK_LOCK:
                 kept = _FEEDBACK.get(key)
@@ -129,26 +135,20 @@ class LearningMixin:
             return cur.rowcount
 
     def metrics(self) -> dict[str, Any]:
+        """The learning memory's counts (kept until a lesson is added or removed, like ``feedback_rows``: four scans
+        of the whole memory) and the invoices' (counted each time)."""
         with self._conn() as conn:
-            # Imported ERP history is memory, not a reviewer decision: it never counts towards accuracy.
-            lines = conn.execute(
-                "SELECT outcome, COUNT(*) n FROM feedback WHERE outcome != 'history' GROUP BY outcome"
-            ).fetchall()
-            daily = conn.execute(
-                """SELECT substr(created_at, 1, 10) day,
-                          SUM(outcome = 'accepted') accepted, SUM(outcome = 'corrected') corrected
-                   FROM feedback WHERE outcome NOT IN ('history', 'coded') GROUP BY day"""
-            ).fetchall()
-            by_vendor = conn.execute(
-                """SELECT vendor_name, COUNT(*) lines, SUM(outcome = 'accepted') accepted,
-                          SUM(outcome = 'corrected') corrected, MAX(created_at) last_seen
-                   FROM feedback WHERE outcome NOT IN ('history', 'coded') GROUP BY vendor_key ORDER BY lines DESC"""
-            ).fetchall()
-            corrections = conn.execute(
-                """SELECT COALESCE(suggested_gl, '(new line)') suggested_gl, final_gl, COUNT(*) n
-                   FROM feedback WHERE outcome = 'corrected' AND COALESCE(suggested_gl, '') != final_gl
-                   GROUP BY suggested_gl, final_gl ORDER BY n DESC LIMIT 25"""
-            ).fetchall()
+            stamp, key = _feedback_stamp(conn), str(self.path.resolve())
+            with _FEEDBACK_LOCK:
+                kept = _METRICS.get(key)
+            if kept is not None and kept[0] == stamp:
+                learned = kept[1]
+            else:
+                learned = self._learning_metrics(conn)
+                with _FEEDBACK_LOCK:
+                    _METRICS[key] = (stamp, learned)
+                    while len(_METRICS) > 8:
+                        _METRICS.pop(next(iter(_METRICS)))
             statuses = conn.execute("SELECT status, COUNT(*) n FROM invoices GROUP BY status").fetchall()
             untouched = conn.execute(
                 "SELECT COUNT(*) FROM invoices WHERE status = ? AND edits = '[]'", (APPROVED,)
@@ -156,6 +156,37 @@ class LearningMixin:
             coded_by_hand = conn.execute(
                 "SELECT COUNT(*) FROM invoices WHERE status = ? AND edits LIKE '%\"line_coded\"%'", (APPROVED,)
             ).fetchone()[0]
+        return {
+            **{k: v for k, v in learned.items() if k not in ("weekly", "by_vendor", "top_corrections")},
+            "invoices_by_status": {r["status"]: r["n"] for r in statuses},
+            "invoices_approved_without_edits": untouched,
+            "invoices_coded_by_hand": coded_by_hand,
+            "weekly": [dict(w) for w in learned["weekly"]],
+            "by_vendor": [dict(r) for r in learned["by_vendor"]],
+            "top_corrections": [dict(r) for r in learned["top_corrections"]],
+        }
+
+    @staticmethod
+    def _learning_metrics(conn: Any) -> dict[str, Any]:
+        # Imported ERP history is memory, not a reviewer decision: it never counts towards accuracy.
+        lines = conn.execute(
+            "SELECT outcome, COUNT(*) n FROM feedback WHERE outcome != 'history' GROUP BY outcome"
+        ).fetchall()
+        daily = conn.execute(
+            """SELECT substr(created_at, 1, 10) day,
+                      SUM(outcome = 'accepted') accepted, SUM(outcome = 'corrected') corrected
+               FROM feedback WHERE outcome NOT IN ('history', 'coded') GROUP BY day"""
+        ).fetchall()
+        by_vendor = conn.execute(
+            """SELECT vendor_name, COUNT(*) lines, SUM(outcome = 'accepted') accepted,
+                      SUM(outcome = 'corrected') corrected, MAX(created_at) last_seen
+               FROM feedback WHERE outcome NOT IN ('history', 'coded') GROUP BY vendor_key ORDER BY lines DESC"""
+        ).fetchall()
+        corrections = conn.execute(
+            """SELECT COALESCE(suggested_gl, '(new line)') suggested_gl, final_gl, COUNT(*) n
+               FROM feedback WHERE outcome = 'corrected' AND COALESCE(suggested_gl, '') != final_gl
+               GROUP BY suggested_gl, final_gl ORDER BY n DESC LIMIT 25"""
+        ).fetchall()
         # ISO weeks (Monday to Sunday, "2026-W41"), as on the Insights page: SQLite's %W numbers them differently.
         weeks: dict[str, dict[str, Any]] = {}
         for r in daily:
@@ -173,9 +204,6 @@ class LearningMixin:
             "lines_accepted": outcome.get(ACCEPTED, 0),
             "lines_corrected": outcome.get(CORRECTED, 0),
             "line_accuracy": round(outcome.get(ACCEPTED, 0) / measured, 4) if measured else None,
-            "invoices_by_status": {r["status"]: r["n"] for r in statuses},
-            "invoices_approved_without_edits": untouched,
-            "invoices_coded_by_hand": coded_by_hand,
             "weekly": [weeks[w] for w in sorted(weeks)],
             "by_vendor": [dict(r) for r in by_vendor],
             "top_corrections": [dict(r) for r in corrections],
