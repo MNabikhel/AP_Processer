@@ -802,6 +802,7 @@ def build_gl_distribution(coding: Any, setup: TaxSetup) -> list[dict[str, Any]]:
                 e["amount"] = round(e["amount"] + share, 2)
             continue
         moved = 0.0
+        parts: list[tuple[dict[str, Any], float]] = []
         if t.treatment == RECOVERABLE and tl.tax_type in MEALS_RESTRICTED and setup.meals_gl_codes:
             for idx, part in meals_parts(coding.line_items, tl, setup.meals_gl_codes, places):
                 e = entries[idx]
@@ -809,9 +810,15 @@ def build_gl_distribution(coding: Any, setup: TaxSetup) -> list[dict[str, Any]]:
                 e["amount"] = round(e["amount"] + part, 2)
                 e["meals_tax"] = round(e.get("meals_tax", 0.0) + part, 2)
                 moved = round(moved + part, 2)
+                parts.append((e, part))
         claimed = round(tl.tax_amount - moved, 2)
         if moved and abs(claimed) < 0.005:
-            continue  # a cent of tax on a meal: nothing left to claim
+            # A cent of tax on a meal: nothing left to claim, so no tax entry. The meals lines keep which tax line
+            # their part came from, for the sales-tax report (``taxreturn.meals_by_tax_line``, B-893).
+            for e, part in parts:
+                held = e.setdefault("meals_tax_lines", {})
+                held[str(position)] = round(held.get(str(position), 0.0) + part, 2)
+            continue
         entry = {
             "kind": "tax",
             "line_number": None,

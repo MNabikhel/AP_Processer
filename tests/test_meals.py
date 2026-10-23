@@ -365,3 +365,18 @@ def test_a_meals_invoice_whose_tax_lines_are_a_guess_never_goes_touchless():
 
     assert touchless_gates([{"code": "MEALS_TAX_LINES", "severity": "warning"}], grand_total=100)
     assert "meals" in dict(ALWAYS_A_PERSON_RULES)["Tax to look at"]
+
+
+def test_a_cent_of_tax_on_a_meal_is_not_claimed_in_the_tax_report(tmp_path):
+    """HST 0.01 on a meal: the posting expenses the cent and claims nothing, and so does the sales-tax report, which
+    read the meals amount from the tax entry the posting leaves out when nothing is left to claim (B-893)."""
+    doc = _on([(0.08, MEALS, "Mint")], 0.01)
+    dist = _dist(doc)
+    assert _split(dist) == ([(MEALS, 0.01, 0.09)], [])
+    assert taxreturn.meals_by_tax_line({**doc, "gl_distribution": dist}) == {0: 0.01}
+    store = Store(tmp_path / "t.db")
+    load_sample_setup(store)
+    output, _ = finalise_coding(InvoiceCoding.model_validate(doc), store.reference_data(), Settings(), store=store)
+    store.approve_invoice(store.add_invoice(tmp_path / "mint.pdf", output, {}), output, "Jane")
+    claims = taxreturn.build(store, *YEAR).claims
+    assert [(c.amount, c.meals) for c in claims] == [(0.0, 0.01)]
