@@ -470,7 +470,9 @@ def verify_one(settings: Any, store: Any, *, coder: Any = None, clock: Callable[
     cfg = load_settings(store)
     if not cfg.on:
         return None
-    row = store.next_verification(after_page_reader=after_page_reader)
+    from .page_worker import READER_ID
+
+    row = store.next_verification(after_page_reader=after_page_reader, reader=READER_ID)
     if not row:
         return None
     iid = int(row["invoice_id"])

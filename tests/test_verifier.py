@@ -471,3 +471,29 @@ def test_the_reviewer_is_shown_the_gl_account_names(store, touchless, monkeypatc
     verifier.verify_one(_settings(), store, coder=FakeCoder(_answer()))
     names = {a["code"]: a["description"] for a in store.list_accounts("gl_accounts")}
     assert names and shown == [names]
+
+
+def test_a_review_cut_short_is_put_back_in_line_at_once(tmp_path):
+    """A review interrupted (the dashboard closed during it) stayed "verifying" for two hours, and a review that
+    ended after its invoice was put back in line still wrote its end over it. Like the page reader's queue, each
+    review now names the process doing it, and the end of one no longer under way changes nothing."""
+    import sqlite3
+
+    from ap_coder.core.store import Store
+
+    s = Store(tmp_path / "a.db")
+    for invoice_id in (5, 6):
+        s.queue_verification(invoice_id)
+    gone = "999999999:dead:"  # a process that no longer runs
+    assert s.next_verification(after_page_reader=False, reader=gone)["reader"] == gone
+    assert s.next_verification(after_page_reader=False, reader=page_worker.READER_ID)["invoice_id"] == 6
+    assert s.release_verifications(lambda reader: reader != gone) == 1
+    assert s.verification(5)["status"] == "waiting" and s.verification(6)["status"] == "verifying"
+    assert not s.finish_verification(5, "done", result={"status": "agreed"})  # no longer under way: left in line
+    assert s.verification(5)["status"] == "waiting" and s.verification(5)["result"] is None
+    assert s.finish_verification(6, "done", result={"status": "agreed"})
+    assert s.next_verification(after_page_reader=False, reader=gone)["invoice_id"] == 5
+    assert page_worker.release_interrupted(s) == 1 and s.verification(5)["status"] == "waiting"
+    with sqlite3.connect(s.path) as conn:  # a database of an older version, without the column
+        conn.execute("ALTER TABLE verifications DROP COLUMN reader")
+    assert Store(s.path).next_verification(after_page_reader=False)["reader"] == ""

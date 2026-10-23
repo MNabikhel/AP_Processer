@@ -516,10 +516,12 @@ class StoreCore:
         for column, kind in (("reader", "TEXT NOT NULL DEFAULT ''"), ("tries", "INTEGER NOT NULL DEFAULT 0")):
             if columns and column not in columns:
                 conn.execute(f"ALTER TABLE page_reads ADD COLUMN {column} {kind}")
-        # The AI reviewer's queue counts reviews the model server cut off before any answer (looked for likewise).
+        # The AI reviewer's queue counts reviews the model server cut off before any answer, and remembers who is
+        # reviewing an invoice, like the page reader's (looked for likewise).
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(verifications)")}
-        if columns and "tries" not in columns:
-            conn.execute("ALTER TABLE verifications ADD COLUMN tries INTEGER NOT NULL DEFAULT 0")
+        for column, kind in (("tries", "INTEGER NOT NULL DEFAULT 0"), ("reader", "TEXT NOT NULL DEFAULT ''")):
+            if columns and column not in columns:
+                conn.execute(f"ALTER TABLE verifications ADD COLUMN {column} {kind}")
         # A suspended supplier remembers when, so it needs a fresh clean streak since then (looked for whatever the
         # version, like the page reader's columns above).
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(supplier_profiles)")}
