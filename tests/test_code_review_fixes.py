@@ -1,5 +1,5 @@
-"""Bugs found by the code review of the dashboard and the launcher (docs/CODE_REVIEW_WEB_AND_LAUNCHER.md), each
-reproduced here first."""
+"""Bugs found by the code review of the dashboard and the launcher (its notes: git history,
+docs/CODE_REVIEW_WEB_AND_LAUNCHER.md at 968cf9d), each reproduced here first."""
 
 from __future__ import annotations
 

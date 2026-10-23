@@ -9,6 +9,21 @@ reports, `intake` pictures and emails, `ops` command line and doctor, `capture` 
 `bench` the accuracy benchmark). `scripts/`: launcher, installer, update, offline bundle. `tests/`: pytest. `docs/`:
 guides, the bug log (BUGS.md) and decisions (decisions.md). Search the code to find things; the code is the reference.
 
+## Where things live
+- One invoice, start to end: `ai/pipeline.py` (`finalise_coding`); reading: `capture/reader.py`; the schema:
+  `core/schema.py`.
+- The database (`Store`): `core/store.py` (approvals `approve_invoice`/`final_approve`, `events`, `SCHEMA_VERSION`).
+  Who the reviewer is: `web/identity.py`.
+- Checks (findings with a code): `coding/validation.py` (`validate_coding` gathers them), payment terms
+  `coding/terms.py`, tax `coding/tax.py` (`check_taxes`, `place_of_supply`), the Tax check `coding/taxmath.py`, line
+  tax codes `coding/line_tax.py`, ITCs and self-assessment `coding/taxreturn.py`, vendors `coding/vendors.py`. Every
+  check code needs a `CheckHelp` in `ops/help.py` (`tests/test_help.py` enforces it).
+- Exports: `erp/exports.py` (Excel/CSV), `erp/jde.py` (JD Edwards). Reports: the rest of `erp/`.
+- The review screen: routes `web/pages/invoice.py`, view `web/invoice_view.py`, `web/templates/invoice.html`,
+  `web/static/js/invoice.js`. Other pages: `web/pages/<page>.py` + `web/templates/<page>.html`.
+- Tests: `tests/test_<module>.py` for most modules; fixtures `tests/conftest.py` (`reference`, `ground_truth`), web
+  helpers `tests/webclient.py` (`client_for`, `add_clean`).
+
 ## Rules
 - Fully offline at run time: nothing connects to the internet unless `AP_ALLOW_INTERNET=1` (developers, the bundle
   builder). The Azure check is opt-in, off by default.
