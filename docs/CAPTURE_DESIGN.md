@@ -338,7 +338,7 @@ invoices (seed 9961) into harder pictures and read them with OCR only (values sc
   The page is found (OpenCV, which comes with the OCR), cut out of the desk and squared up, which undoes its tilt
   and the keystone of a photo taken at an angle. The paper in the light is grown out to the page's sharp edge
   (a watershed from the paper and from the picture's border), so a shadow across the page, as dark as the desk but
-  with a soft edge, does not cut the page short (B-300). It happens when the photo is made a PDF (`intake.py`), so the page
+  with a soft edge, does not cut the page short (B-300). It happens when the photo is made a PDF (`intake/pictures.py`), so the page
   is read, shown and highlighted flattened; the photo as taken is kept in `originals/`. The desk must show on all
   four sides: a scan (it fills its picture, even one with a dark band across its header), a fax and a page on a
   white desk are left as they are, and a scanner's dark bed keeps the resolution it was scanned at. On the
