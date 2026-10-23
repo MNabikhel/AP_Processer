@@ -372,8 +372,12 @@ Send the pilot tester (who passes it on; no supplier names or amounts needed for
 
 Then, for the shadow pilot's score, export from the test environment (or from production for the invoices AP
 entered by hand) the vouchers of the same days: **F0411** with RPAN8, RPVINV, RPDIVJ, RPAG, RPSTAM, RPCRCD, RPDDJ,
-RPDOC, RPDCT, RPKCO (RPTXA1 and RPEXR1 if you can) and **F0911** with GLDOC, GLDCT, GLKCO, GLANI (or GLMCU, GLOBJ,
-GLSUB), GLAA, GLEXA, GLLT. CSV or Excel; E1's Julian dates and implied decimals are read as they are (add
+RPDOC, RPDCT, RPKCO, RPSFX (RPTXA1 and RPEXR1 if you can; RPACR and RPCTAM when there are foreign-currency vouchers)
+and **F0911** with GLDOC, GLDCT, GLKCO, GLANI (or GLMCU, GLOBJ, GLSUB), GLAA, GLEXA, GLLT (GLACR for foreign
+currency). Keep RPDOC and RPSFX: without them a voucher entered twice, or a credit memo with the invoice's number,
+can only be told apart by its date and sign, and the report says so. Without RPACR and RPCTAM a foreign voucher's
+gross and tax are in CAD and are not compared. CSV or Excel (a large export as CSV: an Excel file over 20 MB once
+unzipped is not opened); E1's Julian dates (0 for no date) and implied decimals are read as they are (add
 `--implied-decimals` for amounts without a decimal point). The pilot tester runs on the pilot laptop:
 
 ```

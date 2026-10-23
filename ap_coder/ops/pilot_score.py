@@ -58,6 +58,7 @@ VOUCHER_COLUMNS: dict[str, tuple[str, ...]] = {
     "currency": ("rpcrcd", "crcd", "currencycode", "currency"),
     "due_date": ("rpddj", "ddj", "duedate", "netduedate"),
     "document": ("rpdoc", "doc", "documentnumber", "voucher", "vouchernumber", "documentno"),
+    "pay_item": ("rpsfx", "sfx", "payitem", "payitemnumber"),
     "doc_type": ("rpdct", "dct", "doctype", "documenttype"),
     "company": ("rpkco", "kco", "documentcompany", "company"),
     "tax_area": ("rptxa1", "txa1", "taxarea", "taxratearea", "taxrate/area"),
@@ -86,6 +87,7 @@ REQUIRED = ("invoice_number", "gross")  # and an8 or vendor_name
 HEADER_FIELDS = {"invoice_number": "Invoice number", "invoice_date": "Invoice date", "grand_total": "Gross amount",
                  "tax_total": "Tax", "currency": "Currency", "due_date": "Due date"}  # fmt: skip
 CENT = 0.005
+TOO_LARGE = "This Excel file is too large to open safely; export it as CSV instead."
 Account = tuple[str, str, str]  # (business unit, object, subsidiary)
 
 
@@ -98,11 +100,15 @@ class ExportError(ValueError):
 
 def read_table(path: str | Path, sheet: str | None = None) -> tuple[list[dict[str, str]], list[str]]:
     """(rows as text, the workbook's sheet names) of a CSV or Excel file."""
+    from ..intake import triage
     from ..web.files import SheetError, read_sheet
 
     path = Path(path)
     try:
-        df, names = read_sheet(path.name, path.read_bytes(), sheet)
+        content = path.read_bytes()
+        if path.suffix.lower() == ".xlsx" and triage.sheet_unzips_too_big(content):  # a large export, said plainly
+            raise ExportError(f"{path}: {TOO_LARGE}")
+        df, names = read_sheet(path.name, content, sheet)
     except (OSError, SheetError) as exc:
         raise ExportError(f"{path}: {exc}") from exc
     return [{str(k): str(v) for k, v in rec.items()} for rec in df.to_dict("records")], names
@@ -111,6 +117,8 @@ def read_table(path: str | Path, sheet: str | None = None) -> tuple[list[dict[st
 def julian_or_date(text: str, day_first: bool | None = None) -> str:
     """YYYY-MM-DD of an E1 Julian date (CYYDDD: 126282 is 2026-10-09) or of a date as people write it."""
     text = str(text or "").strip()
+    if re.fullmatch(r"0+(\.0*)?", text):
+        return ""  # E1 writes a blank date as 0
     if re.fullmatch(r"\d{5,6}(\.0)?", text):
         n = int(float(text))
         year, day = 1900 + n // 1000, n % 1000
@@ -153,10 +161,15 @@ class Posted:
     tax_code: str = ""
     lines: list[dict[str, Any]] = field(default_factory=list)
     has_lines: bool = False
+    not_compared: set[str] = field(default_factory=set)  # a foreign voucher's amounts the export has only in CAD
 
     @property
     def vkey(self) -> str:
         return vendor_key(self.vendor_name) if self.vendor_name else ""
+
+
+def _sign(value: float | None) -> int:
+    return 0 if not value else (1 if value > 0 else -1)
 
 
 def _getter(rec: dict[str, Any], columns: dict[str, str]) -> Any:
@@ -203,19 +216,39 @@ def posted_vouchers(
         for c in ("invoice_date", "due_date")
         if c in columns
     }
+    if "document" not in columns:
+        notes.append("The voucher export (F0411) has no document number (RPDOC) or pay item (RPSFX): rows with the "
+                     "same supplier and invoice number are taken as one voucher only when their date and sign agree, "
+                     "and a row repeated as it is counts as a second voucher. Add RPDOC, RPDCT, RPKCO and RPSFX to "
+                     "the export for an exact count.")  # fmt: skip
     found: dict[str, Posted] = {}
+    seen: dict[str, set[Any]] = defaultdict(set)  # without RPDOC: the pay items (or whole rows) of each voucher
+    groups: dict[str, list[str]] = defaultdict(list)  # without RPDOC: the vouchers of a supplier and invoice number
+    domestic_only: dict[str, int] = {"grand_total": 0, "tax_total": 0}
     for rec in vouchers:
         get = _getter(rec, columns)
         if not get("invoice_number") and not get("gross"):
             continue
         who = _an8(get("an8")) or vendor_key(get("vendor_name"))
-        key = _doc_key(get) or f"{who}|{norm_invoice_number(get('invoice_number'))}"
         currency = get("currency").upper()
         foreign = bool(currency) and currency != domestic.upper()
         gross = _amount(get("foreign_gross"), implied_decimals) if foreign and get("foreign_gross") else None
+        in_domestic = {"grand_total"} if foreign and gross is None else set()
         gross = gross if gross is not None else _amount(get("gross"), implied_decimals)
         tax = _amount(get("foreign_tax"), implied_decimals) if foreign and get("foreign_tax") else None
+        in_domestic |= {"tax_total"} if foreign and tax is None and "tax" in columns else set()
         tax = tax if tax is not None else (_amount(get("tax"), implied_decimals) if "tax" in columns else None)
+        key = _doc_key(get)
+        if not key:  # pay items of one voucher share its date and sign; a repeated pay item is another voucher
+            base = f"{who}|{norm_invoice_number(get('invoice_number'))}"
+            date = julian_or_date(get("invoice_date"), order_of.get("invoice_date"))
+            item = get("pay_item").lstrip("0") if "pay_item" in columns else tuple(sorted(rec.items()))
+            key = next((k for k in groups[base] if found[k].invoice_date == date and item not in seen[k]
+                        and _sign(found[k].gross) * _sign(gross) >= 0), "")  # fmt: skip
+            if not key:
+                key = base if not groups[base] else f"{base}|{len(groups[base]) + 1}"
+                groups[base].append(key)
+            seen[key].add(item)
         p = found.get(key)
         if p is None:
             p = found[key] = Posted(
@@ -226,11 +259,19 @@ def posted_vouchers(
             )  # fmt: skip
         else:  # another pay item of the same voucher
             p.tax_area, p.tax_code = p.tax_area or get("tax_area"), p.tax_code or get("tax_code").upper()
+        for name in in_domestic - p.not_compared:
+            domestic_only[name] += 1
+        p.not_compared |= in_domestic
         if gross is not None:
             p.gross = round((p.gross or 0.0) + gross, 2)
         if tax is not None:
             p.tax = round((p.tax or 0.0) + tax, 2)
     out = list(found.values())
+    for name, what, column in (("grand_total", "gross", "RPACR"), ("tax_total", "tax", "RPCTAM")):
+        if domestic_only[name]:
+            notes.append(f"{domestic_only[name]} foreign-currency vouchers have no foreign {what} amount ({column}) in "
+                         f"the export: their {what} is in {domestic.upper()}, so it is not compared. Add {column} to "
+                         "the export to compare it.")  # fmt: skip
     if distribution:
         notes += _attach_lines(out, distribution, implied_decimals, domestic)
     return out, notes
@@ -251,6 +292,7 @@ def _attach_lines(vouchers: list[Posted], rows: list[dict[str, Any]], implied: b
         return ["The G/L export (F0911) has neither the document number (GLDOC) nor the supplier and invoice number "
                 "(GLAN8, GLVINV): its lines can't be tied to the vouchers, so coding is not compared."]  # fmt: skip
     unlinked = 0
+    found: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for rec in rows:
         get = _getter(rec, columns)
         if "ledger" in columns and get("ledger").upper() not in ("", "AA"):
@@ -266,18 +308,37 @@ def _attach_lines(vouchers: list[Posted], rows: list[dict[str, Any]], implied: b
         amount = amount if amount is not None else _amount(get("amount"), implied)
         if amount is None:
             continue
-        if p.gross and amount * p.gross < 0:
-            continue  # the AP trade account's offset: the other side of the voucher
         if "account" in columns and get("account"):
             bu, obj, sub = split_account(get("account"))
         else:
             bu, obj, sub = get("bu").upper(), get("obj").upper(), get("sub").upper()
         p.has_lines = True
-        p.lines.append({"bu": bu, "obj": obj, "sub": sub, "amount": amount, "explanation": get("explanation"),
-                        "tax_area": get("tax_area"), "tax_code": get("tax_code").upper()})  # fmt: skip
+        found[p.key].append({"bu": bu, "obj": obj, "sub": sub, "amount": amount, "explanation": get("explanation"),
+                             "tax_area": get("tax_area"), "tax_code": get("tax_code").upper()})  # fmt: skip
         p.tax_area = p.tax_area or get("tax_area")
         p.tax_code = p.tax_code or get("tax_code").upper()
+    _drop_ap_offsets(by_doc, found)
     return [f"{unlinked} G/L lines (F0911) belong to no voucher in the F0411 export: left out."] if unlinked else []
+
+
+def _drop_ap_offsets(by_key: dict[str, Posted], found: dict[str, list[dict[str, Any]]]) -> None:
+    """Each voucher's G/L lines without the AP trade account's offset (the other side of the voucher): the line of
+    minus its gross, and on a voucher with none (an offset per pay item), the opposite-sign lines on an account that
+    is the offset of another voucher. A discount or credit line of the distribution is coding: it stays."""
+    offsets: dict[str, dict[str, Any]] = {}
+    for key, lines in found.items():
+        gross = by_key[key].gross
+        if gross:
+            offsets[key] = next((t for t in reversed(lines) if _close(t["amount"], -gross)), {})
+    ap_accounts = {_posted_account(t) for t in offsets.values() if t}
+    for key, lines in found.items():
+        p, offset = by_key[key], offsets.get(key)
+        if offset:
+            lines.remove(offset)
+        else:
+            lines = [t for t in lines if not (_posted_account(t) in ap_accounts
+                                              and _sign(t["amount"]) * _sign(p.gross) <= 0)]  # fmt: skip
+        p.lines += lines
 
 
 # --- What AP Coder approved -----------------------------------------------------------------------------------------
@@ -432,6 +493,10 @@ def header_right(name: str, ours: Any, posted: Any) -> bool:
 
 
 def _posted_value(p: Posted, name: str) -> Any:
+    """The voucher's value of a header field; None for what is not compared (a foreign voucher's gross and tax in
+    the domestic currency)."""
+    if name in p.not_compared:
+        return None
     return {"invoice_number": p.invoice_number, "invoice_date": p.invoice_date, "grand_total": p.gross,
             "tax_total": p.tax, "currency": p.currency, "due_date": p.due_date}[name]  # fmt: skip
 

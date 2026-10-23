@@ -270,3 +270,115 @@ def test_the_jde_test_import_checklist_is_its_own_section_and_its_command_runs()
     for column in ("RPAN8", "RPVINV", "RPDIVJ", "RPAG", "RPSTAM", "GLANI", "GLAA", "GLDOC"):  # columns it reads
         assert column in section and any(column.lower() in names for names in (
             *pilot_score.VOUCHER_COLUMNS.values(), *pilot_score.DISTRIBUTION_COLUMNS.values())), column  # fmt: skip
+
+
+# --- Review fixes (B-910 to B-914) -----------------------------------------------------------------------------------
+
+F0411_HEADER = ["RPAN8", "RPALPH", "RPVINV", "RPDIVJ", "RPAG", "RPSTAM", "RPCRCD", "RPDDJ"]
+
+
+def _f0411(*values) -> dict[str, str]:
+    return dict(zip(F0411_HEADER, [str(v) for v in values], strict=True))
+
+
+def _ours(i, number, total, date="2026-09-01", currency="CAD", due="", tax=None):
+    return pilot_score.Ours(id=i, vendor_name="Acme", an8="1002", invoice_number=number, invoice_date=date,
+                            grand_total=total, tax_total=tax, currency=currency, due_date=due)  # fmt: skip
+
+
+def _found(report):
+    return sorted((d["kind"], d["field"]) for d in report["differences"])
+
+
+def test_a_julian_date_of_zero_is_no_date():
+    assert pilot_score.julian_or_date("0") == pilot_score.julian_or_date("0.0") == ""
+    posted, _ = pilot_score.posted_vouchers([_f0411(1002, "Acme", "INV-1", 126244, "50.00", "0", "CAD", 0)])
+    assert posted[0].due_date == ""
+    report = pilot_score.score([_ours(1, "INV-1", 50.0, due="2026-10-01")], posted)
+    assert report["header"]["due_date"]["n"] == 0 and "Due date" not in {d["field"] for d in report["differences"]}
+
+
+def test_without_the_document_number_a_voucher_entered_twice_stays_two_vouchers():
+    rows = [_f0411(1002, "Acme", "INV-300", 126244, "200.00", "0", "CAD", 0)] * 2
+    posted, notes = pilot_score.posted_vouchers(rows)
+    assert [p.gross for p in posted] == [200.0, 200.0]
+    assert any("RPDOC" in n and "RPSFX" in n for n in notes)
+    report = pilot_score.score([_ours(1, "INV-300", 200.0, tax=0.0)], posted, notes)
+    assert _found(report) == [("not in AP Coder", "Voucher")]
+    assert "RPDOC" in pilot_score.render_markdown(report)
+
+
+def test_without_the_document_number_a_credit_memo_with_the_same_number_is_its_own_voucher():
+    rows = [_f0411(1002, "Acme", "INV-100", 126244, "113.00", "13.00", "CAD", 126274),
+            _f0411(1002, "Acme", "INV-100", 126250, "-113.00", "-13.00", "CAD", 126274),
+            _f0411("", "", "", "", "", "", "", "")]  # fmt: skip
+    posted, _ = pilot_score.posted_vouchers(rows)
+    assert sorted(p.gross for p in posted) == [-113.0, 113.0]
+    ours = [
+        _ours(1, "INV-100", 113.0, due="2026-10-01", tax=13.0),
+        _ours(2, "INV-100", -113.0, "2026-09-07", due="2026-10-01", tax=-13.0),
+    ]
+    report = pilot_score.score(ours, posted)
+    assert report["invoices"]["matched"] == 2 and _found(report) == []
+
+
+def test_without_the_document_number_pay_items_of_one_voucher_are_still_added_up():
+    rows = [_f0411(1002, "Acme", "INV-400", 126244, "60.00", "0", "CAD", 126274),
+            _f0411(1002, "Acme", "INV-400", 126244, "40.00", "0", "CAD", 126305)]  # fmt: skip
+    posted, _ = pilot_score.posted_vouchers(rows)
+    assert [p.gross for p in posted] == [100.0]
+    with_items = [{**r, "RPSFX": sfx} for r, sfx in zip(rows * 2, ("001", "002", "001", "002"), strict=True)]
+    posted, notes = pilot_score.posted_vouchers(with_items)  # the same two pay items exported again: a second voucher
+    assert [p.gross for p in posted] == [100.0, 100.0] and any("RPDOC" in n for n in notes)
+
+
+def _voucher_with_lines(gross, *lines):
+    v = [{"RPDOC": "5001", "RPDCT": "PV", "RPKCO": "00001", "RPAN8": "1002", "RPVINV": "D-1", "RPAG": gross}]
+    dist = [{"GLDOC": "5001", "GLDCT": "PV", "GLKCO": "00001", "GLANI": account, "GLAA": amount}
+            for account, amount in lines]  # fmt: skip
+    return pilot_score.posted_vouchers(v, dist)[0][0]
+
+
+def test_a_discount_or_credit_line_of_the_distribution_is_kept_and_the_ap_offset_left_out():
+    p = _voucher_with_lines("90.00", ("CC100.6000", "100.00"), ("CC100.4900", "-10.00"), ("CC100.2000", "-90.00"))
+    assert [(line["obj"], line["amount"]) for line in p.lines] == [("6000", 100.0), ("4900", -10.0)]
+    p = _voucher_with_lines("-50.00", ("CC100.6000", "-60.00"), ("CC100.6010", "10.00"), ("CC100.2000", "50.00"))
+    assert [(line["obj"], line["amount"]) for line in p.lines] == [("6000", -60.0), ("6010", 10.0)]
+
+
+def test_an_ap_offset_per_pay_item_is_left_out_by_its_account():
+    v = [{"RPDOC": d, "RPDCT": "PV", "RPKCO": "00001", "RPAN8": "1002", "RPVINV": f"D-{d}", "RPAG": g, "RPSFX": s}
+         for d, g, s in (("1", "100.00", "001"), ("2", "60.00", "001"), ("2", "40.00", "002"))]  # fmt: skip
+    dist = [{"GLDOC": d, "GLDCT": "PV", "GLKCO": "00001", "GLANI": a, "GLAA": x} for d, a, x in (
+        ("1", "CC100.6000", "100.00"), ("1", "CC100.2000", "-100.00"),
+        ("2", "CC100.6000", "100.00"), ("2", "CC100.2000", "-60.00"), ("2", "CC100.2000", "-40.00"))]  # fmt: skip
+    posted, _ = pilot_score.posted_vouchers(v, dist)
+    assert [[(line["obj"], line["amount"]) for line in p.lines] for p in posted] == [[("6000", 100.0)]] * 2
+
+
+def test_a_foreign_voucher_without_its_foreign_amounts_is_not_compared_on_gross_and_tax():
+    posted, notes = pilot_score.posted_vouchers([_f0411(1002, "Acme", "US-1", 126244, "137.00", "4.00", "USD", 0)])
+    assert any("RPACR" in n for n in notes) and any("RPCTAM" in n for n in notes)
+    o = _ours(1, "US-1", 100.0, currency="USD")
+    o.tax_total = 0.0
+    report = pilot_score.score([o], posted, notes)
+    assert _found(report) == []
+    assert report["header"]["grand_total"]["n"] == report["header"]["tax_total"]["n"] == 0
+    assert "RPACR" in pilot_score.render_markdown(report)
+    with_foreign = [{**_f0411(1002, "Acme", "US-1", 126244, "137.00", "4.00", "USD", 0), "RPACR": "100.00"}]
+    posted, notes = pilot_score.posted_vouchers(with_foreign)  # the gross in USD, the tax still in CAD
+    assert posted[0].gross == 100.0 and not any("RPACR" in n for n in notes) and any("RPCTAM" in n for n in notes)
+    header = pilot_score.score([o], posted)["header"]
+    assert header["grand_total"] == {"n": 1, "right": 1} and header["tax_total"]["n"] == 0
+
+
+def test_a_large_excel_export_is_asked_for_as_csv(tmp_path):
+    import zipfile
+
+    path = tmp_path / "F0911.xlsx"
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("xl/worksheets/sheet1.xml", b"0" * 21_000_000)
+    with pytest.raises(pilot_score.ExportError) as err:
+        pilot_score.read_table(path)
+    assert "This Excel file is too large to open safely; export it as CSV instead" in str(err.value)
+    assert "damaged" not in str(err.value)
