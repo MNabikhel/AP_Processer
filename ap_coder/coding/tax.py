@@ -372,6 +372,7 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
     charged = {tl.tax_type for tl in tax_lines if abs(tl.tax_amount) > 0.004 and tl.tax_type != "OTHER"}
     n_items = max(1, len(coding.line_items))
     tol = 0.01 * n_items + 0.01  # per-line rounding on the vendor's side
+    foreign = 0.0  # non-Canadian tax charged (OTHER): US sales tax
 
     # Tax lines add up to the tax total.
     lines_total = round(sum(tl.tax_amount for tl in tax_lines), 2)
@@ -424,13 +425,7 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
             )
 
         if tl.tax_type == "OTHER":
-            if abs(tl.tax_amount) > 0.004:
-                add(
-                    WARNING,
-                    "TAX_NON_CANADIAN",
-                    f"non-Canadian tax of {tl.tax_amount:.2f} charged (e.g. US sales tax); it is not recoverable "
-                    "here and is added to the expense lines. Confirm it should have been charged",
-                )
+            foreign += tl.tax_amount if abs(tl.tax_amount) > 0.004 else 0.0  # said once, below (B-814)
             continue
         if abs(tl.tax_amount) <= 0.004:
             continue  # "GST 0.00" / "exempt" printed: nothing charged, nothing to allocate or verify
@@ -541,7 +536,19 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
         name = PROVINCE_NAMES[prov] + assumed
         # Every line says why it carries no tax (exempt, zero-rated, out of scope): no provincial tax was due either.
         all_stated = bool(coding.line_items) and all(not li.taxes_applied and li.tax_status for li in coding.line_items)
-        if not charged:
+        if not charged and abs(foreign) > 0.004:
+            # A foreign vendor's own tax, none of Canada's: one finding, not "no sales tax charged" beside it (B-814).
+            owed = " and ".join(tax_name(t, prov) for t in sorted(expected_types))
+            add(
+                WARNING,
+                "TAX_NON_CANADIAN",
+                f"non-Canadian tax of {foreign:.2f} charged (e.g. US sales tax) and no Canadian tax, on a supply in "
+                f"{name}: the foreign tax is not recoverable here and is added to the expense lines, so confirm the "
+                f"vendor should have charged it. {owed or 'Canadian tax'} may still be due: on goods it is paid at "
+                "the border (the customs entry); on services, check whether you must self-assess it",
+            )
+            foreign = 0.0
+        elif not charged:
             add(
                 WARNING,
                 "NO_TAX_CHARGED",
@@ -590,6 +597,11 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
                 add(WARNING, "HST_NOT_CHARGED",
                     f"the vendor should have charged HST{rate} on a supply in {name}; the GST is claimable. You "
                     "remain liable for the provincial part (ETA s.165): ask for a corrected invoice")  # fmt: skip
+
+    if abs(foreign) > 0.004:
+        add(WARNING, "TAX_NON_CANADIAN",
+            f"non-Canadian tax of {foreign:.2f} charged (e.g. US sales tax); it is not recoverable here and is added "
+            "to the expense lines. Confirm it should have been charged")  # fmt: skip
 
     # A PST exemption inferred from the vendor charging the PST on other lines: a person confirms it (B-715).
     from .line_tax import PROVINCIAL, STATED, exemption_to_confirm, tax_learned

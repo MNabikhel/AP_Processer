@@ -531,8 +531,10 @@ CHECKS: dict[str, CheckHelp] = {
     "TAX_NON_CANADIAN": CheckHelp(
         TAX, "Foreign tax",
         "A non-Canadian tax (e.g. US sales tax) was charged. It cannot be recovered and is added to the cost of "
-        "the lines.",
-        "Confirm it should have been charged; a US vendor may not need to charge it on an export.",
+        "the lines. When no Canadian tax is charged on a supply in Canada, the GST/HST (and PST or QST) may still be "
+        "due: on goods it is paid at the border, on the customs entry; on services you may have to self-assess it.",
+        "Confirm it should have been charged; a US vendor may not need to charge it on an export. For goods, match "
+        "the customs entry; for services, ask whoever files the tax returns whether to self-assess.",
     ),
     "GST_HST_NUMBER_MISSING": CheckHelp(
         TAX, "No GST/HST number",
