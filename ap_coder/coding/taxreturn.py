@@ -242,15 +242,22 @@ def build(store: Store, start: dt.date, end: dt.date, treatments: dict[str, TaxT
 
 def meals_by_tax_line(doc: dict[str, Any]) -> dict[int, float]:
     """{tax line position: the tax on meals not claimed} as posted when the invoice was approved (its stored GL
-    distribution, D-90): an invoice approved before, or with no meals line, has none."""
+    distribution, D-90): an invoice approved before, or with no meals line, has none. A tax line wholly on meals with
+    nothing left to claim (a cent) has no tax entry: its meals lines say it (``meals_tax_lines``, B-893)."""
     out: dict[int, float] = {}
+    held: dict[int, float] = {}
     for e in doc.get("gl_distribution") or []:
-        if isinstance(e, dict) and e.get("kind") == "tax" and e.get("meals_tax") and e.get("tax_line") is not None:
-            try:
+        if not isinstance(e, dict):
+            continue
+        try:
+            if e.get("kind") == "tax" and e.get("meals_tax") and e.get("tax_line") is not None:
                 out[int(e["tax_line"])] = round(out.get(int(e["tax_line"]), 0.0) + float(e["meals_tax"]), 2)
-            except (TypeError, ValueError):
-                continue
-    return out
+            elif e.get("kind") == "expense" and isinstance(e.get("meals_tax_lines"), dict):
+                for position, part in e["meals_tax_lines"].items():
+                    held[int(position)] = round(held.get(int(position), 0.0) + float(part), 2)
+        except (TypeError, ValueError):
+            continue
+    return {**held, **out}
 
 
 def _charged(tax_line: dict[str, Any]) -> bool:

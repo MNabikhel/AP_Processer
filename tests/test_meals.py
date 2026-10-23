@@ -151,6 +151,26 @@ def test_the_sample_meals_account_has_the_flag_and_the_import_reads_a_column(tmp
     assert store.reference_data().tax.meals_gl_codes == frozenset({"7100"})
 
 
+def test_replacing_the_list_without_a_meals_column_keeps_the_meals_ticks(tmp_path):
+    store = Store(tmp_path / "t.db")
+    store.import_accounts("gl_accounts", [{"code": "6000", "description": "Office"},
+                                          {"code": MEALS, "description": "Meals", "M&E": "yes"}],
+                          "code", "description", meals_column="M&E")  # fmt: skip
+    # The monthly chart from the ERP, "Replace the list" ticked: it has no meals column.
+    store.import_accounts("gl_accounts", [{"code": "6000", "description": "Office"},
+                                          {"code": MEALS, "description": "Meals & ent."},
+                                          {"code": "6400", "description": "Rent"}],
+                          "code", "description", replace_all=True)  # fmt: skip
+    flags = {a["code"]: a["meals"] for a in store.list_accounts("gl_accounts")}
+    assert flags == {"6000": False, MEALS: True, "6400": False}
+    # A save whose rows don't say (a list kept from before the flag) keeps it too; a row that says is followed.
+    store.save_accounts("gl_accounts", [{"code": "6000", "description": "Office", "category": ""},
+                                        {"code": MEALS, "description": "Meals", "category": ""}])  # fmt: skip
+    assert store.reference_data().tax.meals_gl_codes == frozenset({MEALS})
+    store.save_accounts("gl_accounts", [{"code": MEALS, "description": "Meals", "category": "", "meals": False}])
+    assert store.reference_data().tax.meals_gl_codes == frozenset()
+
+
 def test_the_accounts_page_ticks_and_saves_the_meals_flag(tmp_path):
     from .webclient import client_for, follow, post
 
@@ -337,3 +357,26 @@ def test_the_line_note_points_to_the_other_account():
 
     assert meals_note("ON") == ("Meals: 50% of the GST/HST is claimable. Billed to a client or a staff event? Use the "
                                 "other account.")  # fmt: skip
+
+
+def test_a_meals_invoice_whose_tax_lines_are_a_guess_never_goes_touchless():
+    """MEALS_TAX_LINES: the half expensed rests on which lines carry the tax, a guess; a person confirms it (B-891)."""
+    from ap_coder.capture.supplier import ALWAYS_A_PERSON_RULES, touchless_gates
+
+    assert touchless_gates([{"code": "MEALS_TAX_LINES", "severity": "warning"}], grand_total=100)
+    assert "meals" in dict(ALWAYS_A_PERSON_RULES)["Tax to look at"]
+
+
+def test_a_cent_of_tax_on_a_meal_is_not_claimed_in_the_tax_report(tmp_path):
+    """HST 0.01 on a meal: the posting expenses the cent and claims nothing, and so does the sales-tax report, which
+    read the meals amount from the tax entry the posting leaves out when nothing is left to claim (B-893)."""
+    doc = _on([(0.08, MEALS, "Mint")], 0.01)
+    dist = _dist(doc)
+    assert _split(dist) == ([(MEALS, 0.01, 0.09)], [])
+    assert taxreturn.meals_by_tax_line({**doc, "gl_distribution": dist}) == {0: 0.01}
+    store = Store(tmp_path / "t.db")
+    load_sample_setup(store)
+    output, _ = finalise_coding(InvoiceCoding.model_validate(doc), store.reference_data(), Settings(), store=store)
+    store.approve_invoice(store.add_invoice(tmp_path / "mint.pdf", output, {}), output, "Jane")
+    claims = taxreturn.build(store, *YEAR).claims
+    assert [(c.amount, c.meals) for c in claims] == [(0.0, 0.01)]

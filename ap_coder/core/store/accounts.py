@@ -138,9 +138,10 @@ class AccountsMixin:
 
         Existing codes are updated, but only in the columns picked: importing codes without a category column keeps
         the categories already typed in. ``meals_column`` (GL accounts only): the column that marks the meals and
-        entertainment accounts (D-90), "yes", "x", "M&E", "50%"..., blank or "no" for the others. ``replace_all`` with
-        rows none of which has a code (the wrong column picked) is refused, nothing deleted: it would leave no account
-        to code to.
+        entertainment accounts (D-90), "yes", "x", "M&E", "50%"..., blank or "no" for the others; without it (or in
+        a row without that column) each code keeps its tick, even through ``replace_all`` (B-890). ``replace_all``
+        with rows none of which has a code (the wrong column picked) is refused, nothing deleted: it would leave no
+        account to code to.
         """
         if table not in ACCOUNT_TABLES:
             raise ValueError(f"unknown table {table!r}")
@@ -150,7 +151,11 @@ class AccountsMixin:
                 "holds the codes and import again."
             )
         added = updated = skipped = 0
+        gl = table == "gl_accounts"
         with self._conn() as conn:
+            # The meals ticks are usually set only here, not in the ERP: a replace whose file doesn't say (no meals
+            # column, or a row without it) keeps the tick of each code still in the list (B-890).
+            ticked = {r["code"] for r in conn.execute("SELECT code FROM gl_accounts WHERE meals = 1")} if gl else set()
             if replace_all:
                 conn.execute(f"DELETE FROM {table}")
             existing = {r["code"] for r in conn.execute(f"SELECT code FROM {table}")}
@@ -163,18 +168,19 @@ class AccountsMixin:
                 seen.add(code)
                 description = _clean_code(row.get(description_column)) if description_column else ""
                 category = _clean_code(row.get(category_column)) if category_column else ""
-                meals = int(marks_meals(row.get(meals_column))) if meals_column and table == "gl_accounts" else 0
+                says_meals = bool(gl and meals_column and meals_column in row)
+                meals = int(marks_meals(row.get(meals_column))) if says_meals else int(code in ticked)
                 if code in existing:
                     changes: dict[str, Any] = {"description": description} if description_column else {}
                     if category_column:
                         changes["category"] = category
-                    if meals_column and table == "gl_accounts":
+                    if says_meals:
                         changes["meals"] = meals
                     if changes:
                         sets = ", ".join(f"{column} = ?" for column in changes)
                         conn.execute(f"UPDATE {table} SET {sets} WHERE code = ?", (*changes.values(), code))
                     updated += 1
-                elif table == "gl_accounts":
+                elif gl:
                     conn.execute(
                         "INSERT INTO gl_accounts (code, description, category, created_at, meals) "
                         "VALUES (?, ?, ?, ?, ?)",

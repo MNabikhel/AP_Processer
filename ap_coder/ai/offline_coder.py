@@ -30,7 +30,7 @@ from ..core.memory import vendor_key
 from ..core.reference_data import UNASSIGNED, ReferenceData
 from ..core.schema import PROVINCE_VALUES, InvoiceCoding, LineItem, TaxLine
 from .extraction import ExtractionResult
-from .inference import MODEL_SUGGESTED, CodingResult
+from .inference import CHAT_SUGGESTED, MODEL_SUGGESTED, CodingResult
 from .suggest import suggest_gl
 
 log = logging.getLogger(__name__)
@@ -48,6 +48,13 @@ GUESSED = (MODEL_SUGGESTED, WEAK_MATCH)
 def guessed(reason: Any) -> bool:
     """Whether a line's reasoning says its account is a guess (``GUESSED``), not learned from AP's approvals."""
     return str(reason or "").startswith(GUESSED)
+
+
+def unsure(reason: Any) -> bool:
+    """Whether a line's account counts as a guess in the Coding (``validation.GUESS_SURE``): a guess (``guessed``),
+    or the account the chat model chose coding the whole invoice (Azure OpenAI, ``CHAT_SUGGESTED``, B-894). That one
+    stays AP Coder's suggestion for the learning: a reviewer changing it corrects it."""
+    return guessed(reason) or str(reason or "").startswith(CHAT_SUGGESTED)
 
 
 _TAXES = (("gst_amount", "GST"), ("hst_amount", "HST"), ("pst_amount", "PST"), ("qst_amount", "QST"))

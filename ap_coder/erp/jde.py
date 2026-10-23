@@ -158,7 +158,8 @@ EXAMPLE_TERMS_CODES = {
     "Due on receipt": "Z", "Net 10": "N10", "Net 15": "N15", "Net 30": "N30", "Net 45": "N45", "Net 60": "N60",
     "Net 90": "N90", "1/10 Net 30": "110", "2/10 Net 30": "210", "Net 30 EOM": "E30",
 }  # fmt: skip
-TERMS_TABLE, TERMS_DEFAULT = "table", "default"  # where a voucher's terms code comes from (``terms_code``)
+# Where a voucher's terms code comes from (``terms_code``); a credit memo is sent without one (B-896).
+TERMS_TABLE, TERMS_DEFAULT, TERMS_CREDIT = "table", "default", "credit"
 PTC_WIDTH = 3  # VLPTC
 
 
@@ -461,8 +462,11 @@ def _is_recoverable_entry(e: dict[str, Any]) -> bool:
 def terms_code(final: dict[str, Any], settings: JdeSettings) -> tuple[str, str, str]:
     """(VLPTC, the meaning of the printed terms, where the code comes from) of a voucher (D-91): the code of the
     printed terms' meaning in the table ("30 days" and "N30" are "Net 30"), else the default code, else blank (E1
-    takes the supplier's own terms)."""
+    takes the supplier's own terms). A credit memo: blank, as its due date is not sent: a code can carry a discount
+    (2/10 Net 30) that E1 would work out on the credit (B-896; to confirm with the JDE team, D-91)."""
     key = terms_key(str(final.get("payment_terms") or ""))
+    if _negative(final.get("grand_total")):
+        return "", key, TERMS_CREDIT
     code = settings.terms_codes.get(key, "").strip() if key else ""
     if code:
         return code, key, TERMS_TABLE
@@ -473,8 +477,8 @@ def terms_code(final: dict[str, Any], settings: JdeSettings) -> tuple[str, str, 
 def terms_unmapped(final: dict[str, Any], settings: JdeSettings) -> str:
     """The meaning of the printed terms when the terms table is in use and has no code for them, nor a default: ""
     otherwise (no table: E1 takes the supplier's own terms, as before D-91; terms not understood: TERMS_NOT_FOUND)."""
-    code, key, _ = terms_code(final, settings)
-    return key if settings.terms_codes and key and not code else ""
+    code, key, source = terms_code(final, settings)
+    return key if settings.terms_codes and key and not code and source != TERMS_CREDIT else ""
 
 
 def an8_problem(reason: str) -> bool:
@@ -989,7 +993,7 @@ def validate(
 
 # --- Before approval: the review screen ---------------------------------------------------------------------------
 
-ERROR, WARNING = "error", "warning"  # a finding's severity (coding.validation.ERROR, WARNING)
+ERROR, WARNING, INFO = "error", "warning", "info"  # a finding's severity (coding.validation.ERROR, WARNING, INFO)
 SHOW_SETTING = "show_jde_settings"  # web.core.SHOW_JDE: "1" when JD Edwards is the export in use
 SETTINGS_URL = "/settings/jde"
 # What the review screen's own checks already say (no second message): the invoice number, the date, a line without a
@@ -1059,8 +1063,8 @@ def voucher_findings(output: dict[str, Any], settings: JdeSettings, an8: str) ->
         else:
             out.append((ERROR, "JDE_VOUCHER", f"JD Edwards: {problem}", line))
     no_code = terms_unmapped(output, settings)
-    if no_code:
-        out.append((WARNING, "JDE_TERMS_NO_CODE", f"Payment terms {no_code} have no JD Edwards code: add it in "
+    if no_code:  # a note: a blank VLPTC has E1 take the supplier's own terms, no reason to hold anything (B-896)
+        out.append((INFO, "JDE_TERMS_NO_CODE", f"Payment terms {no_code} have no JD Edwards code: add it in "
                     "Settings → JD Edwards E1 (or ask the pilot tester)", None))  # fmt: skip
     if po_not_sent(output, settings):
         out.append((WARNING, "JDE_PO_LONG", "JD Edwards' PO field holds 8 characters: this PO number is kept in AP "
@@ -1105,6 +1109,9 @@ def voucher_view(
     elif source == TERMS_DEFAULT:
         terms_text = f"{code} (the default for terms not in the table)"
         terms_note = f"Sent to JD Edwards as code {code}, the default for terms not in the table"
+    elif source == TERMS_CREDIT:
+        terms_text = "Not sent (a credit): JD Edwards takes no terms code on a credit memo"
+        terms_note = "Not sent to JD Edwards: a credit memo goes without a terms code"
     elif settings.terms_codes and key:
         terms_text = f"Not sent: no code for {key}, JD Edwards uses the supplier's own terms"
         terms_note = f"No JD Edwards code for {key}: it uses the supplier's own terms"
@@ -1452,6 +1459,8 @@ def _terms_shown(final: dict[str, Any], settings: JdeSettings) -> str:
     if not code and not key:
         return ""
     printed = key or "none printed"
+    if source == TERMS_CREDIT:
+        return f"payment terms {printed} -> none (a credit memo is sent without a terms code)"
     if source == TERMS_DEFAULT:
         return f"payment terms {printed} -> {code} (the default code)"
     if code:
