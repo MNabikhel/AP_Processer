@@ -221,3 +221,61 @@ def test_bulk_sorting_reuses_the_queue_the_page_read(tmp_path, monkeypatch):
     seen = _statements(monkeypatch)
     assert sort_for_bulk(store, queue) == expected
     assert not [s for s in seen if s.startswith("SELECT id, file_name, status")]
+
+
+def test_month_end_asks_only_whether_there_is_an_invoice(tmp_path, monkeypatch):
+    """Month-end read the id of every invoice to tell whether there was any, and every PO with its lines."""
+    from ap_coder.core.store import load_sample_setup
+
+    from .webclient import add_clean, client_for
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(store)
+    add_clean(store)
+    client = client_for(store)
+    seen = _statements(monkeypatch)
+    page = client.get("/month-end")
+    assert page.status_code == 200 and "Nothing to accrue yet" not in page.text
+    assert not [s for s in seen if s.startswith("SELECT id FROM invoices ORDER BY id")]
+    assert store.has_invoices() and not Store(tmp_path / "empty.db").has_invoices()
+
+
+def test_the_settings_are_read_again_only_when_the_env_file_changes(tmp_path, monkeypatch):
+    """Every request read and parsed the .env again."""
+    import os
+
+    from ap_coder.core import envfile
+    from ap_coder.web.app import create_app
+
+    env = tmp_path / ".env"
+    env.write_text("AP_REVIEW_THRESHOLD=0.8\n", encoding="utf-8")
+    monkeypatch.setenv("AP_ENV_FILE", str(env))
+    reads: list[object] = []
+    real = envfile.read_text
+    monkeypatch.setattr(envfile, "read_text", lambda path, *a, **k: reads.append(path) or real(path, *a, **k))
+    app = create_app(None, Store(tmp_path / "ap.db"), start_reader=False)
+    first = app.state.settings_factory()
+    assert app.state.settings_factory() is first and len(reads) == 1
+    stamp = env.stat().st_mtime_ns + 5_000_000_000
+    os.utime(env, ns=(stamp, stamp))  # saved again (the Settings page)
+    app.state.settings_factory()
+    assert len(reads) == 2
+    monkeypatch.setenv("AP_REVIEWER", "Someone else")  # the environment changed: read again too
+    app.state.settings_factory()
+    assert len(reads) == 3
+
+
+def test_a_list_of_invoices_does_not_look_for_each_file_every_time(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from .webclient import add_clean
+
+    store = Store(tmp_path / "ap.db")
+    ids = [add_clean(store, invoice_number=f"N-{i}") for i in range(4)]
+    store.get_invoices(ids)
+    files = {str(Path(i["source_path"])) for i in store.get_invoices(ids)}
+    looked: list[str] = []
+    real = Path.exists
+    monkeypatch.setattr(Path, "exists", lambda self, *a, **k: looked.append(str(self)) or real(self, *a, **k))
+    assert len(store.get_invoices(ids)) == 4
+    assert not [p for p in looked if p in files]

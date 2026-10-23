@@ -69,6 +69,8 @@ def _in_list(column: str) -> str:
 # page picture the review screen asks for.
 _LOOK_AGAIN_SECONDS = 30.0
 _NOT_FOUND: dict[tuple[str, int, str], float] = {}
+# Invoice files found where they were recorded, and when: an invoice read is not checked again for this long.
+_FOUND: dict[str, float] = {}
 
 # Databases being restored in this process (``Store.restore_from``): the background workers (page reader, Azure
 # check) start nothing on them meanwhile (``Store.restoring``).

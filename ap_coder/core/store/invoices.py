@@ -18,6 +18,7 @@ from ..paths import PROJECT_DIR, default_db_path, find_moved_file, private_dir  
 from ..reference_data import UNASSIGNED
 from ..schema import as_read
 from ._base import (
+    _FOUND,
     _HEADER_FIELDS,
     _LOOK_AGAIN_SECONDS,
     _NOT_FOUND,
@@ -334,6 +335,11 @@ class InvoicesMixin:
         with self._conn() as conn:
             return [dict(r) for r in conn.execute(sql, args)]
 
+    def has_invoices(self) -> bool:
+        """Whether there is any invoice at all (of any status)."""
+        with self._conn() as conn:
+            return conn.execute("SELECT 1 FROM invoices LIMIT 1").fetchone() is not None
+
     def get_invoice(self, invoice_id: int) -> dict[str, Any] | None:
         with self._conn() as conn:
             row = conn.execute("SELECT * FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
@@ -351,14 +357,23 @@ class InvoicesMixin:
                 r["id"]: r
                 for r in conn.execute(f"SELECT * FROM invoices WHERE {_in_list('id')}", (json.dumps(unique),))
             }
-        return [self._full_invoice(found[i]) for i in ids if i in found]
+        return [self._full_invoice(found[i], listed=True) for i in ids if i in found]
 
-    def _full_invoice(self, row: sqlite3.Row) -> dict[str, Any]:
+    def _full_invoice(self, row: sqlite3.Row, listed: bool = False) -> dict[str, Any]:
+        """The invoice of ``row``, its file looked for where it was recorded (found again elsewhere when it moved).
+        ``listed``: one of a list (``get_invoices``), whose file found a moment ago is not looked for again."""
         inv = dict(row)
         for key in ("ai_output", "final_output", "validation", "meta", "edits"):
             inv[key] = json.loads(inv[key]) if inv[key] else None
-        if inv["source_path"] and not Path(inv["source_path"]).exists():
-            self.invoice_file(inv)  # moved (an update): found again, and ``inv`` points there
+        stored = inv["source_path"]
+        recent = listed and time.monotonic() - _FOUND.get(stored or "", -_LOOK_AGAIN_SECONDS) < _LOOK_AGAIN_SECONDS
+        if stored and not recent:
+            if Path(stored).exists():
+                _FOUND[stored] = time.monotonic()
+                if len(_FOUND) > 50_000:
+                    _FOUND.clear()
+            else:
+                self.invoice_file(inv)  # moved (an update): found again, and ``inv`` points there
         return inv
 
     def invoice_file(self, inv: dict[str, Any]) -> Path | None:

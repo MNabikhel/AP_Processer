@@ -101,7 +101,7 @@ def month_end_page(request: Request, end: str = "") -> HTMLResponse:
         "Nothing to accrue yet",
         "No invoices or purchase orders yet. Invoices you import show here until they are exported to the ERP.",
     )
-    if store.invoice_columns(("id",)) or store.purchase_orders():
+    if store.has_invoices() or store.has_purchase_orders():
         empty = ("Nothing to accrue",
                  f"Every invoice dated by {period_end.isoformat()} has been exported, no goods received wait for an "
                  "invoice, and no regular bill is overdue.")  # fmt: skip
