@@ -55,6 +55,13 @@ def main(argv: list[str] | None = None) -> int:
         metavar="CODE",
         help="what-if: a failed check with this code (e.g. LINES_ADD_UP) does not hold an invoice back",
     )
+    lp.add_argument(
+        "--wrong-approval",
+        type=int,
+        default=0,
+        metavar="N",
+        help="on each supplier's invoice N the clerk teaches the wrong words, then it is withdrawn",
+    )
     sp = sub.add_parser("speed", help="seconds per invoice through the app's pipeline on this computer")
     sp.add_argument("--n", type=int, default=20, help="number of invoices (default 20)")
     sp.add_argument("--seed", type=int, default=1, help="random seed; the same seed gives the same invoices")
@@ -154,6 +161,7 @@ def main(argv: list[str] | None = None) -> int:
             a.workers,
             vendor_master=not a.no_vendor_master,
             ignore_checks=tuple(a.ignore_check),
+            wrong_at=a.wrong_approval,
         )
         au, b = report["summary"]["autonomy"], report["summary"]["buckets"]
         first, last = next(iter(b.values())), list(b.values())[-1]
@@ -164,6 +172,11 @@ def main(argv: list[str] | None = None) -> int:
             f"(median before #{au['ready_at_median']}); "
             f"after that {au['touchless']}/{au['invoices_after_ready']} touchless with {au['touchless_errors']} errors"
         )
+        wrong = report["summary"].get("wrong_approval")
+        if wrong:
+            print("after the wrong approval on #{}: {}".format(wrong["at"], "; ".join(
+                f"{k} {100 * (v['accuracy'] or 0):.1f}% ({v['invoice_number_wrong']} invoice numbers wrong)"
+                for k, v in wrong.items() if isinstance(v, dict))))  # fmt: skip
         print(f"report: {Path(a.out) / 'report.md'}")
         return 0
     if a.cmd == "generate":

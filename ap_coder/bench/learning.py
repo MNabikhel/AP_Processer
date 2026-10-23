@@ -82,7 +82,23 @@ def _field_counts(recs: list[dict[str, Any]]) -> dict[str, int]:
     }
 
 
-Job = tuple[str, int, int, int, float, dict[str, Any] | None, bool, tuple[str, ...]]
+Job = tuple[str, int, int, int, float, dict[str, Any] | None, bool, tuple[str, ...], int]
+# ``--wrong-approval N``: on each supplier's invoice N the clerk teaches the invoice number on the wrong words (the
+# invoice date's, clicked by mistake) and approves; the approval is then withdrawn (reopened: a second look caught it)
+# before the next invoice arrives. How the next invoices read is in the report's "wrong_approval".
+WRONG_FIELD, CLICKED_FIELD = "invoice_number", "invoice_date"
+
+
+def _wrong_click(layout: Any, truth: dict[str, Any]) -> tuple[str, list[Any]] | None:
+    """(the text, the boxes) of the words a clerk clicks by mistake for the invoice number: the invoice date's."""
+    from ap_coder.capture.supplier import _find_spans
+
+    value = ((truth.get("fields") or {}).get(CLICKED_FIELD) or {}).get("value")
+    spans = _find_spans(layout, CLICKED_FIELD, value) if value else []
+    if not spans or not spans[0][1]:
+        return None
+    words = spans[0][1]
+    return " ".join(w.text for w in words), [w.box for w in words]
 
 
 def simulate_supplier(job: Job) -> dict[str, Any]:
@@ -119,7 +135,8 @@ def _simulate(job: Job) -> dict[str, Any]:
     )
     from ap_coder.core.store import Store
 
-    out_dir, seed, supplier, invoices, scanned_fraction, policy_d, vendor_master, ignore = job
+    out_dir, seed, supplier, invoices, scanned_fraction, policy_d, vendor_master, ignore, *more = job
+    wrong_at = int(more[0]) if more else 0
     policy = AutonomyPolicy.from_dict(policy_d)
     sid = supplier_id(seed, supplier)
     cases_dir = Path(out_dir) / "cases" / sid
@@ -179,15 +196,29 @@ def _simulate(job: Job) -> dict[str, Any]:
             touchless = auto and not audit
 
             final = approved_values(truth, capture)
+            taught = None
+            invoice_id = 100_000 + i + 1  # the store's own ids stay free for an invoice approved in it (``wrong_at``)
+            clicked = _wrong_click(layout, truth) if i + 1 == wrong_at else None
+            if clicked is not None:  # the clerk's slip: the wrong words taught for the invoice number
+                final = {**final, WRONG_FIELD: clicked[0]}
+                taught = {WRONG_FIELD: clicked[1]}
+                invoice_id = store.add_invoice(case.path, {"vendor_name": name, "line_items": []}, None)
+                store.approve_invoice(invoice_id, {"vendor_name": name, "line_items": [], "grand_total": 0.0},
+                                      "AP clerk (benchmark)")  # fmt: skip
             outcomes = outcome_rows(capture, final)
             corrections = [r["field"] for r in outcomes if not r["correct"]]
             if not touchless:  # a person saw it: record what was corrected, and learn from the approval
-                store.record_outcomes(key, i + 1, outcomes, source="audit" if audit else "review",
+                store.record_outcomes(key, invoice_id, outcomes, source="audit" if audit else "review",
                                       display_name=name, at=at)  # fmt: skip
                 if corrections and stored == AUTONOMOUS:
                     stored, suspended_at = SUSPENDED, at  # one correction suspends autonomy
-                learned = learn(template, layout, confirmed_values(final))
-                store.save_supplier_profile(key, display_name=name, template=learned)
+                learned = learn(template, layout, confirmed_values(final, taught))
+                if clicked is not None:
+                    store.save_supplier_profile(key, display_name=name, template=learned, invoice_id=invoice_id)
+                    # A second look caught it: the approval is withdrawn before the next invoice arrives.
+                    store.reopen(invoice_id, "AP clerk (benchmark)", "the wrong words were taught")
+                else:
+                    store.save_supplier_profile(key, display_name=name, template=learned)
 
             rows.append(
                 {
@@ -243,7 +274,25 @@ def _bucket_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def summarize_learning(rows: list[dict[str, Any]]) -> dict[str, Any]:
+WRONG_SPANS = (("the wrong approval's next invoice", 1, 1), ("2-5 invoices after", 2, 5),
+               ("6+ invoices after", 6, 10**9))  # fmt: skip
+
+
+def wrong_approval(rows: list[dict[str, Any]], at: int) -> dict[str, Any]:
+    """Accuracy after a wrong approval on invoice ``at`` (withdrawn before the next invoice arrives), on the invoices
+    after it, and how many of them had the invoice number (the field taught wrong) wrong."""
+    out: dict[str, Any] = {"at": at}
+    for label, lo, hi in WRONG_SPANS:
+        part = [r for r in rows if at + lo <= r["index"] <= at + hi]
+        out[label] = {
+            "invoices": len(part),
+            "accuracy": _ratio(sum(r["correct"] for r in part), sum(r["fields"] for r in part)),
+            "invoice_number_wrong": sum(WRONG_FIELD in r["wrong_fields"] for r in part),
+        }
+    return out
+
+
+def summarize_learning(rows: list[dict[str, Any]], wrong_at: int = 0) -> dict[str, Any]:
     by_supplier: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for r in rows:
         by_supplier[r["supplier"]].append(r)
@@ -317,6 +366,7 @@ def summarize_learning(rows: list[dict[str, Any]]) -> dict[str, Any]:
             }
             for lay, ss in sorted(by_layout.items())
         },
+        "wrong_approval": wrong_approval(rows, wrong_at) if wrong_at else None,
         "why_not_touchless": _reasons([r for r in after_all if not r["auto"]], "reason"),
         "why_not_eligible": _reasons([r for r in rows if r["index"] > 1 and not r["eligible"]], "eligible_reason"),
     }
@@ -327,6 +377,24 @@ def _reasons(rows: list[dict[str, Any]], key: str) -> dict[str, int]:
     for r in rows:
         out[r[key]] += 1
     return dict(sorted(out.items(), key=lambda kv: -kv[1])[:12])
+
+
+def _wrong_section(w: dict[str, Any] | None) -> list[str]:
+    if not w:
+        return []
+    return [
+        "## A wrong approval, then its withdrawal\n",
+        f"On each supplier's invoice {w['at']} the clerk taught the invoice number on the invoice date's words and "
+        "approved; the approval was withdrawn (reopened) before the next invoice arrived.\n",
+        _table(
+            ["invoices", "count", "accuracy", "invoice numbers wrong"],
+            [
+                [k, v["invoices"], _pct(v["accuracy"]), v["invoice_number_wrong"]]
+                for k, v in w.items()
+                if isinstance(v, dict)
+            ],
+        ),  # fmt: skip
+    ]
 
 
 def render_markdown(report: dict[str, Any]) -> str:
@@ -350,6 +418,7 @@ def render_markdown(report: dict[str, Any]) -> str:
             if cfg["ignore_checks"]
             else "\n"
         ),
+        *_wrong_section(s.get("wrong_approval")),
         "## Learning curve\n",
         "Accuracy over the printed header fields, by the invoice's position in its supplier's stream; "
         "*without template* reads the same invoices with the rule reader only. *No correction*: AP changed "
@@ -463,7 +532,9 @@ def run_learning(
     policy: dict[str, Any] | None = None,
     vendor_master: bool = True,
     ignore_checks: tuple[str, ...] = (),
+    wrong_at: int = 0,
 ) -> dict[str, Any]:
+    """``wrong_at``: the invoice of each supplier approved with the wrong words taught, then withdrawn (0: none)."""
     from ap_coder.capture.supplier import AutonomyPolicy
 
     out = Path(out)
@@ -471,7 +542,7 @@ def run_learning(
     pol = AutonomyPolicy.from_dict(policy)
     t0 = time.perf_counter()
     jobs = [
-        (str(out), seed, s, invoices, scanned, pol.to_dict(), vendor_master, tuple(ignore_checks))
+        (str(out), seed, s, invoices, scanned, pol.to_dict(), vendor_master, tuple(ignore_checks), wrong_at)
         for s in range(suppliers)
     ]
     results = _map(simulate_supplier, jobs, workers, "suppliers")
@@ -488,9 +559,10 @@ def run_learning(
             "policy": pol.to_dict(),
             "vendor_master": vendor_master,
             "ignore_checks": list(ignore_checks),
+            **({"wrong_approval_at": wrong_at} if wrong_at else {}),
             "layouts": {supplier_id(seed, s): supplier_archetype(seed, s) for s in range(suppliers)},
         },
-        "summary": summarize_learning(rows),
+        "summary": summarize_learning(rows, wrong_at),
         "timing": {"seconds": round(seconds, 1), "per_invoice_s": round(seconds * workers / max(1, len(rows)), 2)},
     }
     (out / "report.json").write_text(json.dumps(report, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")

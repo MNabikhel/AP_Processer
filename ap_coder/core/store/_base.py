@@ -80,6 +80,10 @@ FEEDBACK_READ = 50_000  # lessons read for the whole memory, at most (newest fir
 
 # Touchless processing (Settings → Automation): one switch for the company, "on" or "off" (off when not set), and
 # the largest invoice total approved without a person, in CAD.
+# A supplier's template as it was before each of its last few approvals taught it (``template_snapshots``): put back
+# when that approval is withdrawn and nothing has changed the template since (D-71).
+KEEP_SNAPSHOTS = 5
+
 TOUCHLESS_SETTING, TOUCHLESS_LIMIT_SETTING = "touchless_processing", "touchless_limit"
 DEFAULT_TOUCHLESS_LIMIT = 5000.0
 

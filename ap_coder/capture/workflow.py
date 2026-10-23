@@ -333,7 +333,9 @@ def learn_from_approval(store: Any, invoice_id: int, final: dict[str, Any], *, a
         profile = store.get_supplier_profile(key) or {}
         template = learn(profile.get("template") or None, layout, confirmed_values(final, taught),
                          document=str(inv.get("file_sha256") or ""))  # fmt: skip
-        store.save_supplier_profile(key, display_name=name, template=template, actor=actor or None)
+        store.save_supplier_profile(
+            key, display_name=name, template=template, actor=actor or None, invoice_id=invoice_id
+        )  # put back if this approval is withdrawn (D-71)
         learned["template"] = True
     except Exception as exc:
         log.warning("invoice %s: supplier template not updated (%s)", invoice_id, exc)

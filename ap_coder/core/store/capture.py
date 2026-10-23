@@ -18,6 +18,7 @@ from ._base import (
     AZURE_SKIPPED,
     AZURE_WAITING,
     DEFAULT_TOUCHLESS_LIMIT,
+    KEEP_SNAPSHOTS,
     PAGE_DONE,
     PAGE_FAILED,
     PAGE_READING,
@@ -107,16 +108,51 @@ class CaptureMixin:
 
     def save_supplier_profile(
         self, key: str, display_name: str | None = None, vendor_id: str | None = None, template: Any = None,
-        actor: str | None = None,
+        actor: str | None = None, invoice_id: int | None = None,
     ) -> None:  # fmt: skip
         """Create or update a supplier's profile; only what is given changes (``template``: a ``Template``
-        or its dict). The autonomy state is changed with ``set_supplier_state`` only."""
+        or its dict). The autonomy state is changed with ``set_supplier_state`` only. ``invoice_id``: the approval
+        the template learned from; the template as it was before is kept (``template_snapshots``, the last
+        ``KEEP_SNAPSHOTS`` of the supplier), to be put back if that approval is withdrawn (D-71)."""
         if not key:
             raise ValueError("a supplier profile needs a key")
         if template is not None and hasattr(template, "to_dict"):
             template = template.to_dict()
         with self._conn() as conn:
+            before = None
+            if invoice_id is not None and template is not None:
+                row = conn.execute("SELECT template_json FROM supplier_profiles WHERE key = ?", (key,)).fetchone()
+                before = row["template_json"] if row else None
             self._save_profile(conn, key, display_name, vendor_id, template, actor)
+            if invoice_id is not None and template is not None:
+                after = conn.execute("SELECT template_json FROM supplier_profiles WHERE key = ?", (key,)).fetchone()
+                conn.execute(
+                    "INSERT OR REPLACE INTO template_snapshots (invoice_id, supplier_key, before_json, after_json, at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (invoice_id, key, before, after["template_json"], _now()),
+                )
+                conn.execute(
+                    "DELETE FROM template_snapshots WHERE supplier_key = ? AND invoice_id NOT IN (SELECT invoice_id "
+                    "FROM template_snapshots WHERE supplier_key = ? ORDER BY at DESC, rowid DESC LIMIT ?)",
+                    (key, key, KEEP_SNAPSHOTS),
+                )
+
+    def reset_supplier_layout(self, key: str, actor: str | None = None) -> bool:
+        """Forget what a supplier's template learned of its layout (the Learning page's "Reset layout"): its next
+        invoices are read as a new vendor's, and the template learns again from the next approvals. Logged
+        (``layout_reset``). False when there is no such supplier."""
+        with self._conn() as conn:
+            row = conn.execute("SELECT display_name, template_json FROM supplier_profiles WHERE key = ?",
+                               (key,)).fetchone()  # fmt: skip
+            if row is None:
+                return False
+            conn.execute("UPDATE supplier_profiles SET template_json = NULL, updated_at = ?, updated_by = ? "
+                         "WHERE key = ?", (_now(), actor, key))  # fmt: skip
+            conn.execute("DELETE FROM template_snapshots WHERE supplier_key = ?", (key,))
+            self._log(conn, "layout_reset", actor=actor, detail={
+                "key": key, "vendor": row["display_name"] or key, "had_layout": row["template_json"] is not None,
+            })  # fmt: skip
+        return True
 
     @staticmethod
     def _save_profile(
