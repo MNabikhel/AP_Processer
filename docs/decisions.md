@@ -723,3 +723,18 @@ that is reversed keeps its line, marked "replaced by D-NN".
   ("GST and QST" in Quebec), following the GL account as it is changed. (`coding/tax.py` `meals_parts`,
   `build_gl_distribution`; `core/store/accounts.py`, `core/reference_data.py`; `web/pages/accounts.py`;
   `erp/jde.py` `_prepare`, `voucher_rows`, `voucher_findings`; `coding/taxreturn.py`; `tests/test_meals.py`)
+- **D-91** · Payment terms → JD Edwards payment terms code (VLPTC). Before, VLPTC was one code for every voucher or
+  blank, while the clerk sees the printed terms. Now Settings → JD Edwards E1 has a small table: the terms' meaning →
+  the company's code, keyed by `terms.terms_key` (the standard wording of what `parse_terms` reads: "Net 30",
+  "2/10 Net 30", "Net 30 EOM", "Due on receipt", "Net 10th prox"; it reads back as the same terms), so "Net 30",
+  "30 days" and "N30" are one row and the pilot tester can type any of them; two rows that mean the same, and terms
+  AP Coder can't read, are refused. The old single code becomes the default for terms not in the table. The voucher
+  gets the table's code, else the default, else blank (E1 takes the supplier's terms). Example rows (Net 30 → N30,
+  2/10 Net 30 → 210…) are shown pre-filled and marked as examples to check against P0014, but are **not used until the
+  table is saved**: an existing pilot's next batch does not suddenly carry codes nobody checked (an unknown PTC fails
+  R04110ZA). The check JDE_TERMS_NO_CODE (a warning, not a blocker; no confidence penalty, as every JDE_ setup finding,
+  D-86) fires only **once the table has rows** and no default is set: with no table, a blank VLPTC is the intended
+  set-up, not a gap; terms not understood are TERMS_NOT_FOUND's. Only the printed terms are looked up, not the vendor
+  master's: E1 has the supplier's own terms already. (`coding/terms.py` `terms_label`, `terms_key`; `erp/jde.py`
+  `terms_code`, `terms_unmapped`, `voucher_rows`, `voucher_findings`, `voucher_view`, `dry_run`;
+  `web/pages/settings_jde.py` `save_terms`; `docs/JDE_E1.md`; `tests/test_jde_terms.py`)

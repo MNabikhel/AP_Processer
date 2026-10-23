@@ -239,7 +239,7 @@ document type that is not 2 characters, a domestic currency that is not a 3-lett
 | VLCTXA | Foreign taxable amount | *tax amounts* mode, foreign |
 | VLCTXN | Foreign non-taxable amount | *tax amounts* mode, foreign |
 | VLCTAM | Foreign tax amount | *tax amounts* mode, foreign |
-| VLPTC | Payment terms code (setting) | blank: the supplier's terms |
+| VLPTC | Payment terms code: the printed terms' code in the payment terms table, else the default code | blank: the supplier's terms (D-91) |
 | VLDDJ | Due date (Julian): printed or worked out; the invoice date for a credit | setting can leave it blank |
 | VLPST | Pay status (default `A`) | |
 | VLPO | PO number (≤8) | as a reference, or for PO-matched vouchers; blank when the PO is longer (D-87) |
@@ -258,6 +258,20 @@ voucher whose account has none gets a blank VLGLBA, and the dry run and the batc
 loading (B-684). The bank account's own cash GL is *not* used as a default: it maps to BU.Object.Subsidiary (as the
 distribution lines are written), which is not the short account ID GLBA holds, and a wrong bank is worse than E1's
 default. Confirm with the JDE team whether R04110ZA keeps a VLGLBA it is given.
+
+**VLPTC (payment terms).** Settings → JD Edwards E1 → *Payment terms → JD Edwards code* maps the terms printed on an
+invoice to the company's payment terms code (P0014 / F0014, up to 3 characters), by what the terms mean, as AP Coder
+reads them (`coding/terms.py`): "Net 30", "30 days", "N30" and "Payable dans les 30 jours" are all *Net 30*;
+"2/10 Net 30" and "2% 10 days, net 30" are *2/10 Net 30*; EOM, prox and "Due on receipt" have rows of their own. A
+second field gives a default code for terms not in the table. The voucher gets the table's code, else the default,
+else a blank VLPTC (E1 takes the supplier's own terms from the supplier master, as before). The table opens with
+example rows (Net 30 → N30, 2/10 Net 30 → 210…) that are *not used until the pilot tester saves the table*: check
+each against your JD Edwards codes first. Once the table has rows and no default is set, an invoice whose terms
+have no code gets a warning on the review screen (JDE_TERMS_NO_CODE: "Payment terms 2/10 Net 45 have no JD Edwards
+code…"), not a blocker; terms AP Coder can't read are said by TERMS_NOT_FOUND instead. The review screen's voucher
+block and the note under *Payment terms* show the code sent, and the dry run lists each voucher's
+`payment terms Net 30 -> N30`. Whether VLDDJ (the due date, sent by default) or VLPTC wins when both are given is
+up to R04110ZA's processing options: confirm it with the JDE team.
 
 ## F0911Z1: G/L distribution lines
 

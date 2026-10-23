@@ -1,5 +1,6 @@
 """Settings → JD Edwards E1: company, batch, amount and account formats, the GL → BU.Object.Subsidiary mapping, the
-province → tax area table, PO-matched vouchers and supplier address numbers. Saved with ``ap_coder.erp.jde.save``
+province → tax area table, the payment terms → terms code table (D-91), PO-matched vouchers and supplier address
+numbers. Saved with ``ap_coder.erp.jde.save``
 (logged), checked with ``jde.settings_problems``.
 
 The editable tables (GL mapping, address numbers) are rows of inputs posted as lists (``gl_code``, ``bu``... one value
@@ -16,6 +17,7 @@ from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 
 from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCES, province_label
+from ap_coder.coding.terms import terms_key
 from ap_coder.core import ui
 from ap_coder.core.memory import vendor_key
 from ap_coder.core.store import Store
@@ -56,7 +58,6 @@ HEADER_FIELDS = [
 ]
 MORE_FIELDS = [
     ("pay_status", "Pay status (VLPST)", 1, ""),
-    ("payment_terms_code", "Payment terms code (VLPTC)", 3, "Blank: E1 takes the supplier's terms."),
     ("header_bu", "Header business unit (VLMCU)", 12, ""),
     ("credit_document_type", "Credit note document type", 2, "Blank: the document type above, with negative amounts."),
     ("po_document_type", "PO document type (VLPDCT)", 2, ""),
@@ -103,6 +104,9 @@ def jde_context(store: Store) -> dict[str, Any]:
         ],
         "tax_codes": TAX_CODES,
         "an8_rows": [{"vendor": names.get(k, k), "an8": a} for k, a in js.an8_overrides.items()],
+        # The payment terms table (D-91): the examples, pre-filled and not in use, until the pilot tester saves it.
+        "terms_examples": not js.terms_codes,
+        "terms_rows": [{"terms": k, "code": c} for k, c in (js.terms_codes or jde.EXAMPLE_TERMS_CODES).items()],
         "checklist": minimd.render(CHECKLIST),
         "worksheet_labels": {q.id: q.question for q in jde_worksheet.QUESTIONS},
     }
@@ -252,6 +256,40 @@ async def save_tax_map(request: Request) -> JSONResponse:
         new.tax_map[province] = jde.TaxArea(area[:10], code)
     changed = jde.save(store, new, actor=reviewer())
     return done(request, URL + "#tax-map", "Tax areas saved." if changed else "Nothing changed.")
+
+
+@router.post("/settings/jde/terms")
+async def save_terms(request: Request) -> JSONResponse:
+    """The payment terms table (D-91): each row's terms are kept by what they mean ("30 days" and "N30" are "Net 30"),
+    so two rows meaning the same are refused, as are terms AP Coder can't read; a row without terms or a code is
+    dropped. ``default_terms_code``: the code for terms not in the table (blank: E1 takes the supplier's own)."""
+    store = get_store(request)
+    form = await posted_form(request)
+    terms = [str(t).strip() for t in form.getlist("terms")]
+    codes = [str(c).strip().upper() for c in form.getlist("terms_code")]
+    if len(terms) != len(codes):
+        return refuse("The payment terms table arrived incomplete: reload the page and try again.")
+    table: dict[str, str] = {}
+    for printed, code in zip(terms, codes, strict=True):
+        if not printed or not code:
+            continue
+        key = terms_key(printed)
+        if not key:
+            return refuse(f"“{printed}” are not payment terms AP Coder reads: type them as on an invoice, e.g. Net 30 "
+                          "or 2/10 Net 30.")  # fmt: skip
+        if key in table:
+            return refuse(f"Two rows mean {key}: keep one.")
+        if len(code) > jde.PTC_WIDTH:
+            return refuse(f"The code for {key} must be {jde.PTC_WIDTH} characters or fewer (VLPTC).")
+        table[key] = code
+    default = str(form.get("default_terms_code") or "").strip().upper()
+    if len(default) > jde.PTC_WIDTH:
+        return refuse(f"The default code must be {jde.PTC_WIDTH} characters or fewer (VLPTC).")
+    new = copy(jde.load(store))
+    new.terms_codes, new.payment_terms_code = table, default
+    changed = jde.save(store, new, actor=reviewer())
+    return done(request, URL + "#terms",
+                f"{ui.plural(len(table), 'payment terms row')} saved." if changed else "Nothing changed.")  # fmt: skip
 
 
 @router.post("/settings/jde/an8")

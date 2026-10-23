@@ -150,6 +150,38 @@
   </form>
 </section>
 
+<section class="card" id="terms">
+  <h4>Payment terms → JD Edwards code</h4>
+  <p class="muted">The code JD Edwards gets in VLPTC for the terms printed on an invoice. Terms are matched by what they mean:
+    “Net 30”, “30 days” and “N30” are one row. Type the terms as on an invoice and your JD Edwards payment terms code
+    (P0014, up to 3 characters). A row with no terms or no code is removed when you save. With no rows, JD Edwards uses
+    each supplier's own terms.</p>
+  {% if terms_examples %}<div class="flash warn"><span class="ms" aria-hidden="true">info</span><div>
+    Examples: check each code against your JD Edwards payment terms (P0014) and change them to yours. Nothing is sent until you save this table.</div></div>{% endif %}
+  <form method="post" action="/settings/jde/terms" class="stack" data-busy="Saving…">
+    <div class="table-wrap">
+      <table class="apc-table st-edit" data-rows>
+        <thead><tr><th>Payment terms</th><th>JD Edwards code (VLPTC)</th><th><span class="sr">Remove</span></th></tr></thead>
+        <tbody>
+          {% for row in terms_rows + [{}] %}
+          <tr><td><input type="text" name="terms" value="{{ row.get('terms', '') }}" aria-label="Payment terms" placeholder="e.g. 2/10 Net 30"></td>
+            <td><input type="text" name="terms_code" value="{{ row.get('code', '') }}" maxlength="3" aria-label="JD Edwards code for {{ row.get('terms', 'these terms') }}"></td>
+            <td><button class="btn sm icon" type="button" data-remove-row title="Remove this row" aria-label="Remove this row"><span class="ms" aria-hidden="true">close</span></button></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <label class="field">Code for terms not in the table (optional)
+      <input type="text" name="default_terms_code" value="{{ js.payment_terms_code }}" maxlength="3" aria-label="Code for terms not in the table">
+      <small class="muted">Blank: no code is sent for them and JD Edwards uses the supplier's own terms; the review screen
+        then warns when an invoice's terms are not in the table.</small></label>
+    <div class="row">
+      <button class="btn" type="button" data-add-row><span class="ms" aria-hidden="true">add</span>Add a row</button>
+      <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save the payment terms</button>
+    </div>
+  </form>
+</section>
+
 <section class="card" id="an8">
   <h4>Supplier address numbers (AN8)</h4>
   <p class="muted">Taken from the vendor master's ERP ID (Vendors page). Add a vendor here only when its ERP ID is not its JDE

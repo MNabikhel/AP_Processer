@@ -73,6 +73,14 @@ CHECKS: dict[str, CheckHelp] = {
         "Nothing to do for a reference. For a PO-matched voucher, type the PO number as JD Edwards has it (its order "
         "number, 8 characters or fewer).",
     ),
+    "JDE_TERMS_NO_CODE": CheckHelp(
+        ERP, "Payment terms with no JD Edwards code",
+        "The invoice's payment terms (as AP Coder reads them: \"30 days\" and \"N30\" are Net 30) are not in the "
+        "payment terms table of Settings → JD Edwards E1, and there is no default code, so the voucher goes without a "
+        "terms code and JD Edwards uses the supplier's own terms. A warning: the invoice can be approved.",
+        "Check the terms on the page. Then add them, with your JD Edwards code, to Settings → JD Edwards E1 → Payment "
+        "terms (or ask the pilot tester), or set a default code there.",
+    ),
     "JDE_MEALS_GROSS": CheckHelp(
         ERP, "JD Edwards would claim all the tax on meals",
         "Only half the GST/HST and QST on meals and entertainment is claimable; AP Coder puts the other half in the "
