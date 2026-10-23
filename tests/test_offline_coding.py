@@ -120,3 +120,23 @@ def test_the_local_models_examples_have_the_vendor_the_local_reader_found(tmp_pa
     assert result.coding.coding.vendor_name.startswith("Chinook Courier & Office")
     assert "Pallet storage" in seen["history"]
     assert result.history_examples >= 1
+
+
+def test_a_province_with_the_postal_code_glued_on_is_read():
+    """OCR often drops the spaces: "Steinbach,MBR6X5X0" and "Calgary,ABT7Z6L6" name Manitoba and Alberta. Ordinary
+    words that start with a province's letters, or a province code with no postal code after it, are not read."""
+    from ap_coder.ai.offline_coder import addresses
+
+    assert addresses("Prairie Supply\n12 Main St\nSteinbach,MBR6X5X0")[0] == "MB"
+    assert addresses("Foothills Ltd\nCalgary,ABT7Z6L6")[0] == "AB"
+    assert addresses("Foothills Ltd\nCalgary,AB T7Z 6L6")[0] == "AB"
+    assert addresses("Foothills Ltd\nCalgary AB,T7Z6L6")[0] == "AB"
+    for text in (
+        "ABOUT US\nONLINE ORDERS",
+        "Order NSF1234",
+        "Ref ONTARIO",
+        "Code BCA1B",
+        "SKU ABA1B2C3D",
+        "Part NO. X4R1A3B2",
+    ):
+        assert addresses(text) == ("", "", ""), text

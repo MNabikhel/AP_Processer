@@ -54,7 +54,13 @@ _TAXES = (("gst_amount", "GST"), ("hst_amount", "HST"), ("pst_amount", "PST"), (
 # the province a rate names when only one has it (HST 13% Ontario, 14% Nova Scotia from April 2025; PST 6% SK).
 _OFFICIAL = {"GST": (0.05,), "HST": (0.13, 0.14, 0.15), "QST": (0.09975,), "PST": (0.06, 0.07, 0.08)}
 _RATE_PROVINCE = {("HST", 0.13): "ON", ("HST", 0.14): "NS", ("QST", 0.09975): "QC", ("PST", 0.06): "SK"}
-_PROVINCE_AT = re.compile(r"(?:\(|\b)(ON|QC|BC|AB|MB|SK|NS|NB|NL|PE|YT|NT|NU)(?:\)|\b)\s*,?\s*[A-Z]\d[A-Z]\s?\d[A-Z]\d")
+# A province code, then its postal code: "Calgary, AB T2P 1J9", "(ON) M5V 2T6", and as OCR glues them, "Calgary,AB"
+# and "Steinbach,MBR6X5X0" (the postal code straight after the code, standing alone after it) (B-810).
+_POSTAL = r"[A-Z]\d[A-Z]\s?\d[A-Z]\d"
+_PROVINCE_AT = re.compile(
+    r"(?:\(|\b)(ON|QC|BC|AB|MB|SK|NS|NB|NL|PE|YT|NT|NU)"
+    rf"(?:(?:\)|\b)\s*,?\s*{_POSTAL}|(?={_POSTAL}(?![A-Za-z0-9])){_POSTAL})"
+)
 # Labels, not any line with the word: "FACTURE" (a French invoice's title), "Customer service" or
 # "Date de livraison" in the letterhead are not the customer's address.
 _SHIP_LABEL = re.compile(
