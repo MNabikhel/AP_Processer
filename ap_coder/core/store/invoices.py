@@ -505,6 +505,10 @@ class InvoicesMixin:
         if now is None:
             return {}
         if now["template_json"] != snap["after_json"]:
+            # The later approval's snapshot started from what this one taught: it now starts from what was there
+            # before this one, so withdrawing it too takes back both (B-781).
+            conn.execute("UPDATE template_snapshots SET before_json = ? WHERE supplier_key = ? AND before_json IS ?",
+                         (snap["before_json"], snap["supplier_key"], snap["after_json"]))  # fmt: skip
             return {"layout": "kept: a later approval changed the vendor's layout since, so it was not put back"}
         conn.execute("UPDATE supplier_profiles SET template_json = ?, updated_at = ? WHERE key = ?",
                      (snap["before_json"], _now(), snap["supplier_key"]))  # fmt: skip

@@ -106,6 +106,14 @@ KEEP_SNAPSHOTS = 5
 TOUCHLESS_SETTING, TOUCHLESS_LIMIT_SETTING = "touchless_processing", "touchless_limit"
 DEFAULT_TOUCHLESS_LIMIT = 5000.0
 
+# In the order of approval (``seq``), whatever the clock says (B-780).
+_SNAPSHOTS_SCHEMA = (
+    "CREATE TABLE IF NOT EXISTS template_snapshots (seq INTEGER PRIMARY KEY AUTOINCREMENT, "
+    "invoice_id INTEGER NOT NULL UNIQUE, supplier_key TEXT NOT NULL, before_json TEXT, after_json TEXT, "
+    "at TEXT NOT NULL)",
+    "CREATE INDEX IF NOT EXISTS template_snapshots_supplier ON template_snapshots (supplier_key, seq)",
+)
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS gl_accounts (
     code TEXT PRIMARY KEY, description TEXT NOT NULL DEFAULT '', category TEXT NOT NULL DEFAULT '',
@@ -208,10 +216,6 @@ CREATE TABLE IF NOT EXISTS lesson_approvals (
     confirmed INTEGER NOT NULL DEFAULT 0, value TEXT NOT NULL DEFAULT '', proposed TEXT NOT NULL DEFAULT '',
     at TEXT NOT NULL, PRIMARY KEY (invoice_id, situation));
 CREATE INDEX IF NOT EXISTS lesson_approvals_situation ON lesson_approvals (situation);
-CREATE TABLE IF NOT EXISTS template_snapshots (
-    invoice_id INTEGER PRIMARY KEY, supplier_key TEXT NOT NULL, before_json TEXT, after_json TEXT,
-    at TEXT NOT NULL);
-CREATE INDEX IF NOT EXISTS template_snapshots_supplier ON template_snapshots (supplier_key, at);
 CREATE TABLE IF NOT EXISTS bank_accounts (
     code TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', currency TEXT NOT NULL DEFAULT 'CAD',
     institution TEXT NOT NULL DEFAULT '', transit TEXT NOT NULL DEFAULT '', account_number TEXT NOT NULL DEFAULT '',
@@ -567,6 +571,23 @@ class StoreCore:
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(erp_invoices)")}
         if columns and "copies" not in columns:
             conn.execute("ALTER TABLE erp_invoices ADD COLUMN copies INTEGER NOT NULL DEFAULT 1")
+        # Template snapshots go by the order of approval (``seq``), not by a time to the second (B-780): a table made
+        # before it (this version, unreleased) is rebuilt, its snapshots kept in the order they were taken.
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(template_snapshots)")}
+        if not columns:
+            for sql in _SNAPSHOTS_SCHEMA:
+                conn.execute(sql)
+        elif "seq" not in columns:
+            conn.execute("ALTER TABLE template_snapshots RENAME TO template_snapshots_old")
+            conn.execute("DROP INDEX IF EXISTS template_snapshots_supplier")
+            for sql in _SNAPSHOTS_SCHEMA:
+                conn.execute(sql)
+            conn.execute(
+                "INSERT INTO template_snapshots (invoice_id, supplier_key, before_json, after_json, at) "
+                "SELECT invoice_id, supplier_key, before_json, after_json, at FROM template_snapshots_old "
+                "ORDER BY at, rowid"
+            )
+            conn.execute("DROP TABLE template_snapshots_old")
         # Vendor keys stored under older vendor-matching rules (e.g. before "Limitée" and "s.e.c." were ignored) are
         # recomputed, so the vendor's invoices, lessons, master record and POs still match (looked for whatever the
         # version: the rules are recorded on their own).
@@ -675,7 +696,8 @@ class StoreCore:
                     conn.execute("UPDATE OR IGNORE lesson_approvals SET situation = ? WHERE situation = ?",
                                  (situation, r["situation"]))  # fmt: skip
                     conn.execute("DELETE FROM lesson_approvals WHERE situation = ?", (r["situation"],))
-        for table, column in (("supplier_profiles", "key"), ("supplier_outcomes", "supplier_key")):
+        for table, column in (("supplier_profiles", "key"), ("supplier_outcomes", "supplier_key"),
+                              ("template_snapshots", "supplier_key")):  # fmt: skip
             rows = conn.execute(f"SELECT rowid AS rid, {column} AS k FROM {table} WHERE {column} LIKE 'name:%'")
             for r in rows.fetchall():
                 key = "name:" + refresh_vendor_key(r["k"][5:])

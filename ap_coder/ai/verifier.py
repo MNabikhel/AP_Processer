@@ -480,8 +480,14 @@ def verify_one(settings: Any, store: Any, *, coder: Any = None, clock: Callable[
         return _verify(settings, store, row, cfg, coder, clock)
     except Exception as exc:  # noqa: BLE001 - one invoice must never stop the queue
         log.warning("%s: invoice %s failed (%s)", NAME, iid, exc)
-        store.finish_verification(iid, "failed", error=f"{type(exc).__name__}: {str(exc)[:300]}")
+        _end(store, row, "failed", error=f"{type(exc).__name__}: {str(exc)[:300]}")
         return Outcome(iid, "failed", str(exc)[:300])
+
+
+def _end(store: Any, row: dict[str, Any], status: str, **how: Any) -> bool:
+    """End the review ``row`` (from ``next_verification``) as this process took it: one another process has taken
+    since is left to that one (B-787)."""
+    return store.finish_verification(int(row["invoice_id"]), status, reader=row.get("reader"), **how)
 
 
 def _coder(settings: Any, store: Any) -> Any:
@@ -503,14 +509,14 @@ def _verify(settings: Any, store: Any, row: dict[str, Any], cfg: ReviewerSetting
     identity = store.row_identity(iid)
     path = Path((inv or {}).get("source_path") or "")
     if inv is None or not path.is_file():
-        store.finish_verification(iid, "skipped", error="the invoice or its file is gone")
+        _end(store, row, "skipped", error="the invoice or its file is gone")
         return Outcome(iid, "skipped", "the invoice or its file is gone")
     if inv.get("status") not in (REVIEW, PARKED):
-        store.finish_verification(iid, "skipped", error="already dealt with")
+        _end(store, row, "skipped", error="already dealt with")
         return Outcome(iid, "skipped", "already dealt with")
     output = inv.get("final_output") or inv.get("ai_output") or {}
     if not output:
-        store.finish_verification(iid, "skipped", error="nothing proposed to review")
+        _end(store, row, "skipped", error="nothing proposed to review")
         return Outcome(iid, "skipped", "nothing proposed to review")
     try:
         coder = coder or _coder(settings, store)
@@ -519,10 +525,10 @@ def _verify(settings: Any, store: Any, row: dict[str, Any], cfg: ReviewerSetting
             raise CodingError(f"{model} can't see pages: load a model that can (Gemma 4 12B)")
         images = render_page_images(path, MAX_PAGES)
     except CodingError as exc:  # not loaded, can't see: it waits in line
-        store.finish_verification(iid, "waiting", error=str(exc)[:300])
+        _end(store, row, "waiting", error=str(exc)[:300])
         return Outcome(iid, "postponed", str(exc)[:300])
     if not images:
-        store.finish_verification(iid, "skipped", error="no page to show (a text file)")
+        _end(store, row, "skipped", error="no page to show (a text file)")
         return Outcome(iid, "skipped", "no page to show")
     vendor = store.get_vendor(vendor_key(output.get("vendor_name") or ""))
     try:
@@ -550,7 +556,7 @@ def _verify(settings: Any, store: Any, row: dict[str, Any], cfg: ReviewerSetting
               "at": dt.datetime.now().isoformat(timespec="seconds")}  # fmt: skip
     if store.restoring() or store.row_identity(iid) != identity:
         return Outcome(iid, "skipped", "not applied: a backup was restored meanwhile")
-    store.finish_verification(iid, "done", result=result, rounds=found.rounds, seconds=found.seconds)
+    _end(store, row, "done", result=result, rounds=found.rounds, seconds=found.seconds)
     approved = _fold_in(store, inv, result, expect=identity)
     store.log_event("verified", iid, actor="AP Coder", detail={
         "status": found.status, "rounds": found.rounds, "seconds": found.seconds, "fields": sorted(found.fields),
@@ -566,10 +572,10 @@ def _postpone_or_fail(store: Any, row: dict[str, Any], problem: str) -> Outcome:
     if tries >= MAX_TRIES:
         message = (f"the chat model didn't answer {tries} times ({problem}); have it check again from the review "
                    "screen once LM Studio is running with the model loaded")  # fmt: skip
-        store.finish_verification(iid, "failed", error=message, tries=tries)
+        _end(store, row, "failed", error=message, tries=tries)
         return Outcome(iid, "failed", message)
     message = f"{problem}: reviewed again later (try {tries} of {MAX_TRIES})"
-    store.finish_verification(iid, "waiting", error=message, tries=tries)
+    _end(store, row, "waiting", error=message, tries=tries)
     return Outcome(iid, "postponed", message)
 
 

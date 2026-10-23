@@ -508,11 +508,13 @@ def test_several_gates_are_all_named():
 def test_bulk_approvals_teach_but_only_a_correction_counts(tmp_path, ground_truth):
     store = Store(tmp_path / "s.db")
     clean = store.add_invoice(tmp_path / "a.pdf", ground_truth, {"requires_review": False})
+    store.approve_invoice(clean, ground_truth, "Ann", bulk=True)  # learned from only once approved (B-782)
     learned = learn_from_approval(store, clean, ground_truth, actor="Ann", bulk=True)
     assert learned["supplier"] and not learned["counted"] and learned["corrected"] == []
     assert store.supplier_stats(learned["supplier"]).invoices == 0
     fixed = {**ground_truth, "invoice_number": "NW-2026-0999"}
     other = store.add_invoice(tmp_path / "b.pdf", ground_truth, {"requires_review": False})
+    store.approve_invoice(other, fixed, "Ann", bulk=True)
     learned = learn_from_approval(store, other, fixed, actor="Ann", bulk=True)
     assert learned["counted"] and learned["corrected"] == ["invoice_number"]
     stats = store.supplier_stats(learned["supplier"])
@@ -523,6 +525,7 @@ def test_an_audited_invoice_is_recorded_as_an_audit(tmp_path, ground_truth):
     store = Store(tmp_path / "s.db")
     invoice_id = store.add_invoice(tmp_path / "a.pdf", ground_truth, {"requires_review": False},
                                    meta={"capture": {"audit": True}})  # fmt: skip
+    store.approve_invoice(invoice_id, {**ground_truth, "due_date": "2099-01-01"}, "Ann")
     learn_from_approval(store, invoice_id, {**ground_truth, "due_date": "2099-01-01"}, actor="Ann")
     rows = store.supplier_outcomes(store.supplier_key_for(ground_truth["vendor_name"],
                                                           ground_truth["gst_hst_registration_number"]))  # fmt: skip
@@ -534,6 +537,7 @@ def test_taught_message_says_what_was_learned(tmp_path, ground_truth):
     store = Store(tmp_path / "s.db")
     invoice_id = store.add_invoice(tmp_path / "a.pdf", ground_truth, {"requires_review": False})
     final = {**ground_truth, "invoice_number": "NW-X", "due_date": "2099-01-01"}
+    store.approve_invoice(invoice_id, final, "Ann")
     message = taught_message(store, learn_from_approval(store, invoice_id, final, actor="Ann"))
     name = ground_truth["vendor_name"].rstrip(".")
     assert message == (
@@ -544,6 +548,7 @@ def test_taught_message_says_what_was_learned(tmp_path, ground_truth):
     for i in range(14):
         store.record_outcomes(key, 100 + i, _outcomes(), at=_at(i, "2099-01-02"))
     second = store.add_invoice(tmp_path / "b.pdf", ground_truth, {"requires_review": False})
+    store.approve_invoice(second, ground_truth, "Ann")
     message = taught_message(store, learn_from_approval(store, second, ground_truth, actor="Ann"))
     assert message.startswith(f"You changed no header field. {name}: 16 invoices reviewed, ")
     assert message.endswith("clean approvals toward skipping review.")  # B-666

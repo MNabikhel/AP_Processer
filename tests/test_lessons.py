@@ -263,3 +263,22 @@ def test_lesson_effectiveness_before_and_after_and_a_suggestion_never_a_retireme
     rows = {r["situation"]: r for r in __import__("ap_coder.web.pages.learning", fromlist=["x"]).lessons_context(
         store)["lessons"]}  # fmt: skip
     assert rows[key]["effect"]["verdict"] == lessons.NOT_WORKING
+
+
+def test_corrections_from_before_each_approval_was_kept_still_count(tmp_path, ground_truth):
+    """A lesson corrected twice before ``lesson_approvals`` existed, and once since, counted as corrected once: the
+    upgrade took it away from the AI (B-785). The corrections from before still count."""
+    store = Store(tmp_path / "a.db")
+    vendor = ground_truth["vendor_name"]
+    proposed = _doc(ground_truth, "ACCT 1")
+    key = lessons.situation(vendor, lessons.INVOICE, "invoice_number")
+    for n in (1, 2):
+        lessons.record(store, n, proposed, _doc(ground_truth, "2-2026"))
+    with store._conn() as conn:
+        conn.execute("DELETE FROM lesson_approvals")  # as an older version kept them: the counts only
+    assert store.lesson(key)["agreeing"] == 2 and lessons.reaches_ai(store.lesson(key))
+    lessons.record(store, 3, proposed, _doc(ground_truth, "2-2026"))
+    assert store.lesson(key)["agreeing"] == 3 and lessons.reaches_ai(store.lesson(key))
+    with store._conn() as conn:
+        store._withdraw_lessons(conn, 3)
+    assert store.lesson(key)["agreeing"] == 2  # the one since withdrawn: the two from before are left

@@ -96,3 +96,17 @@ def test_restore_clears_the_second_backup_folder(tmp_path):
     (event,) = [e for e in store.events() if e["action"] == "backup_restored"]
     assert "second backup folder cleared" in describe(event)
     assert store.backup_now("manual") and store.get_setting("backup_copy_status") == ""  # copied nowhere
+
+
+def test_a_restore_forgets_the_learning_counts_kept_for_the_database(tmp_path):
+    """A restore dropped the lessons kept for the database as it was, not the learning counts (``metrics``): the
+    Learning page could show the counts of the database before the restore (B-786)."""
+    from ap_coder.core.store import _base
+
+    store = Store(tmp_path / "ap.db")
+    backup = store.backup_now("manual")
+    store.metrics()
+    mine = str(store.path.resolve())
+    assert mine in _base._METRICS
+    store.restore_from(backup)
+    assert mine not in _base._METRICS

@@ -512,6 +512,7 @@ def test_the_approval_message_names_a_renamed_vendor_and_states_progress_plainly
     read = {**_blank_invoice(), "vendor_name": "BDO Canada", "gst_hst_registration_number": "123456782RT0001"}
     iid = store.add_invoice(tmp_path / "x.pdf", read, {"requires_review": True})
     final = {**read, "vendor_name": "BDO Canada LLP"}
+    store.approve_invoice(iid, final, "Ann")
     message = taught_message(store, learn_from_approval(store, iid, final, actor="Ann"))
     assert "You changed no header field" not in message
     assert message.startswith("You changed the vendor (“BDO Canada” to “BDO Canada LLP”): the same vendor to AP Coder, "

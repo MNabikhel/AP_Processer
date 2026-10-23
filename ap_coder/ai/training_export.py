@@ -7,7 +7,8 @@ tools start from:
 * ``images/<invoice id>-p<page>.png``: the pages (up to five), as a page reader sees them;
 * ``fields.jsonl``: one row per invoice: its images, the header fields, tax lines and line items AP
   approved, and which of AP Coder's readers read each approved value;
-* ``chat.jsonl``: the same as chat fine-tuning rows (the pages and an instruction, then the approved JSON);
+* ``chat.jsonl``: the same as chat fine-tuning rows (the pages and an instruction, then the approved JSON), the
+  "train" invoices only; ``chat_holdout.jsonl``: the "holdout" invoices' (never to train on);
 * ``coding.jsonl``: one row per invoice line: its words, then the GL account, cost center and tax code AP approved;
 * ``README.txt``: what each file is and how it can be used.
 
@@ -198,8 +199,11 @@ def field_boxes(capture: dict[str, Any] | None, final: dict[str, Any]) -> dict[s
     from ..capture.types import Box, union_all
 
     out: dict[str, dict[str, Any]] = {}
+    clicked_for = (capture or {}).get("taught_values") or {}
     for f, boxes in ((capture or {}).get("taught") or {}).items():
         box = union_all([Box.from_list(b) for b in boxes or []])
+        if f in clicked_for and not same_value(f, clicked_for[f], final.get(f)):
+            continue  # clicked for another value than the one approved (B-784)
         if f in HEADER_FIELDS and box is not None:
             out[f] = {"box": box.to_list(), "from": "taught"}
     for f, fr in ((capture or {}).get("fields") or {}).items():
@@ -239,9 +243,11 @@ def coding_rows(invoice_id: int, final: dict[str, Any], proposed: dict[str, Any]
     return out
 
 
-def chat_row(images: list[str], values: dict[str, Any]) -> dict[str, Any]:
-    """One chat fine-tuning example: the pages and the instruction, then the approved values as JSON."""
+def chat_row(images: list[str], values: dict[str, Any], split: str = "train") -> dict[str, Any]:
+    """One chat fine-tuning example: the pages and the instruction, then the approved values as JSON (``split``: the
+    invoice's, "train" or "holdout")."""
     return {
+        "split": split,
         "messages": [
             {"role": "user",
              "content": [*({"type": "image", "path": p} for p in images), {"type": "text", "text": INSTRUCTION}]},
@@ -264,7 +270,7 @@ def export_training_set(
     if isinstance(dest, (str, Path)):
         Path(dest).parent.mkdir(parents=True, exist_ok=True)
     fields_rows: list[str] = []
-    chat_rows: list[str] = []
+    chat_rows: dict[str, list[str]] = {"train": [], "holdout": []}
     coding: list[str] = []
     with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zf:
         for inv in picked["invoices"]:
@@ -297,11 +303,13 @@ def export_training_set(
                 "boxes": field_boxes(capture, final),
             }, ensure_ascii=False))  # fmt: skip
             coding += coding_rows(inv["id"], final, inv.get("ai_output"), split)
-            chat_rows.append(json.dumps(chat_row(images, values), ensure_ascii=False))
+            # The holdout is kept out of chat.jsonl, the file a tuning tool trains on (B-783).
+            chat_rows[split].append(json.dumps(chat_row(images, values, split), ensure_ascii=False))
             counts["invoices"] += 1
             counts["pages"] += len(images)
         zf.writestr("fields.jsonl", "".join(row + "\n" for row in fields_rows))
-        zf.writestr("chat.jsonl", "".join(row + "\n" for row in chat_rows))
+        zf.writestr("chat.jsonl", "".join(row + "\n" for row in chat_rows["train"]))
+        zf.writestr("chat_holdout.jsonl", "".join(row + "\n" for row in chat_rows["holdout"]))
         zf.writestr("coding.jsonl", "".join(row + "\n" for row in coding))
         zf.writestr("README.txt", readme(counts, _since(since)))
     return counts
@@ -355,9 +363,13 @@ fields.jsonl
     di = Azure Document Intelligence.
 
 chat.jsonl
-    The same invoices as chat fine-tuning examples, one per line: the user turn holds the page images
+    The "train" invoices as chat fine-tuning examples, one per line: the user turn holds the page images
     ({{"type": "image", "path": "images/..."}}) and the instruction "{INSTRUCTION}"; the assistant turn
-    is the JSON AP approved (header fields, tax lines, line items).
+    is the JSON AP approved (header fields, tax lines, line items). Each line also says its "split".
+
+chat_holdout.jsonl
+    The "holdout" invoices, in the same layout as chat.jsonl and never in chat.jsonl: to measure a tuned
+    model on pages it never saw, not to train on.
 
 coding.jsonl
     One line per invoice line: its words ("text") and amount, then the GL account, cost center and tax code
@@ -382,6 +394,6 @@ Fine-tuning a vision model that reads invoice pages, such as OvisOCR2 (the page 
 recommends) or Qwen 3.5, so it learns your suppliers' layouts and the mistakes to avoid. Fine-tuning
 tools for vision models (LLaMA-Factory, ms-swift, Unsloth and others) take chat rows like these with a
 small conversion: each {{"type": "image", "path": ...}} becomes the image file it names, in the tool's own
-layout. Keep the "holdout" invoices aside, never trained on, to measure the tuned model on pages it never
-saw, and use the tuned model only once it reads them at least as well as the one it replaces.
+layout. Train on chat.jsonl only; keep chat_holdout.jsonl aside, never trained on, to measure the tuned
+model on pages it never saw, and use the tuned model only once it reads them at least as well as the one it replaces.
 """

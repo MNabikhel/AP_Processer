@@ -13,12 +13,11 @@ from typing import Any
 
 from ..paths import PROJECT_DIR, default_db_path, find_moved_file, private_dir  # noqa: F401  (re-exported)
 from ._base import (
-    _FEEDBACK,
-    _FEEDBACK_LOCK,
     _RESTORING,
     _RESTORING_LOCK,
     _SCHEMA,
     SCHEMA_VERSION,
+    _forget_learning,
     _now,
     _store_class,
 )
@@ -238,8 +237,5 @@ class BackupsMixin:
             if copy_dir or (restored_dir and str(restored_dir[0]).strip()):
                 detail["note"] = "second backup folder cleared: set it again in Settings (Data & backups)"
             self._log(conn, "backup_restored", detail=detail)
-        mine = str(self.path.resolve())
-        with _FEEDBACK_LOCK:  # the lessons kept for the database as it was
-            for key in [k for k in _FEEDBACK if k[0] == mine]:
-                _FEEDBACK.pop(key, None)
+        _forget_learning(self.path)  # the lessons and learning counts kept for the database as it was (B-786)
         return safety

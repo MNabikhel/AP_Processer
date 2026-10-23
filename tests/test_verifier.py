@@ -497,3 +497,19 @@ def test_a_review_cut_short_is_put_back_in_line_at_once(tmp_path):
     with sqlite3.connect(s.path) as conn:  # a database of an older version, without the column
         conn.execute("ALTER TABLE verifications DROP COLUMN reader")
     assert Store(s.path).next_verification(after_page_reader=False)["reader"] == ""
+
+
+def test_a_review_taken_over_by_another_process_is_not_ended_by_the_first(tmp_path):
+    """A review put back in line and taken by another process could still be ended by the process that started it
+    first: its result went over the second one's review under way (B-787). Only the process doing it ends it."""
+    from ap_coder.core.store import Store
+
+    s = Store(tmp_path / "a.db")
+    s.queue_verification(5)
+    first, second = "999999999:dead:", page_worker.READER_ID
+    assert s.next_verification(after_page_reader=False, reader=first)["reader"] == first
+    assert s.release_verifications(lambda reader: reader != first) == 1
+    assert s.next_verification(after_page_reader=False, reader=second)["reader"] == second
+    assert not s.finish_verification(5, "done", result={"status": "agreed"}, reader=first)
+    assert s.verification(5)["status"] == "verifying" and s.verification(5)["result"] is None
+    assert s.finish_verification(5, "done", result={"status": "agreed"}, reader=second)

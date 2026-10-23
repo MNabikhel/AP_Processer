@@ -607,3 +607,12 @@ that is reversed keeps its line, marked "replaced by D-NN".
   (`lesson_approvals`). One still corrected as often after 3 invoices or more is suggested for retiring, never retired
   on its own. Why: a lesson that doesn't help still costs a line of every prompt, and only a person knows whether the
   vendor changed. (`ai/lessons.py` `effect`, `Store.lesson_history`; `tests/test_lessons.py`)
+- **D-85** · Template snapshots keep the order of approval (`template_snapshots.seq`, AUTOINCREMENT), not a time to the
+  second; the newest 5 per vendor are kept, never the one just written. A withdrawal whose template a later approval
+  changed since keeps it (D-71), and the later approval's snapshot now starts from what was there before the withdrawn
+  one: withdrawing that later one too takes back both. Known limit: while a later approval stands, what the withdrawn
+  one taught stays in the template (a template can't be split by approval); withdraw the later ones too, or "Reset
+  layout". Learning re-checks that the invoice is still approved, in the template's transaction and once more after
+  learning (`forget_if_withdrawn`). Why: bulk approval writes many snapshots in one second, and a withdrawal must
+  never leave a wrong box behind. (`core/store/capture.py` `save_supplier_profile`, `core/store/invoices.py`
+  `_withdraw_template`; `tests/test_template_rollback.py`)

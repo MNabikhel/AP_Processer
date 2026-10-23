@@ -12,6 +12,7 @@ from ..paths import PROJECT_DIR, default_db_path, find_moved_file, private_dir  
 from ._base import (
     _AZURE_IN_LINE,
     _IN_LINE,
+    APPROVED,
     AZURE_CHECKING,
     AZURE_DONE,
     AZURE_FAILED,
@@ -109,33 +110,53 @@ class CaptureMixin:
     def save_supplier_profile(
         self, key: str, display_name: str | None = None, vendor_id: str | None = None, template: Any = None,
         actor: str | None = None, invoice_id: int | None = None,
-    ) -> None:  # fmt: skip
+    ) -> bool:  # fmt: skip
         """Create or update a supplier's profile; only what is given changes (``template``: a ``Template``
         or its dict). The autonomy state is changed with ``set_supplier_state`` only. ``invoice_id``: the approval
         the template learned from; the template as it was before is kept (``template_snapshots``, the last
-        ``KEEP_SNAPSHOTS`` of the supplier), to be put back if that approval is withdrawn (D-71)."""
+        ``KEEP_SNAPSHOTS`` of the supplier, in the order of approval), to be put back if that approval is withdrawn
+        (D-71). False, with nothing changed, when that invoice is no longer approved (withdrawn since: B-782)."""
         if not key:
             raise ValueError("a supplier profile needs a key")
         if template is not None and hasattr(template, "to_dict"):
             template = template.to_dict()
+        snapshot = invoice_id is not None and template is not None
         with self._conn() as conn:
             before = None
-            if invoice_id is not None and template is not None:
+            if snapshot:
+                conn.execute("BEGIN IMMEDIATE")  # checked and saved in one go: a withdrawal cannot slip in between
+                status = conn.execute("SELECT status FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
+                if status is None or status["status"] not in (APPROVED, PENDING):
+                    return False
                 row = conn.execute("SELECT template_json FROM supplier_profiles WHERE key = ?", (key,)).fetchone()
                 before = row["template_json"] if row else None
             self._save_profile(conn, key, display_name, vendor_id, template, actor)
-            if invoice_id is not None and template is not None:
+            if snapshot:
                 after = conn.execute("SELECT template_json FROM supplier_profiles WHERE key = ?", (key,)).fetchone()
                 conn.execute(
                     "INSERT OR REPLACE INTO template_snapshots (invoice_id, supplier_key, before_json, after_json, at) "
                     "VALUES (?, ?, ?, ?, ?)",
                     (invoice_id, key, before, after["template_json"], _now()),
                 )
+                # The newest by the order of approval (``seq``: the time is to the second), never the one just made.
                 conn.execute(
-                    "DELETE FROM template_snapshots WHERE supplier_key = ? AND invoice_id NOT IN (SELECT invoice_id "
-                    "FROM template_snapshots WHERE supplier_key = ? ORDER BY at DESC, rowid DESC LIMIT ?)",
-                    (key, key, KEEP_SNAPSHOTS),
+                    "DELETE FROM template_snapshots WHERE supplier_key = ? AND invoice_id != ? AND seq NOT IN "
+                    "(SELECT seq FROM template_snapshots WHERE supplier_key = ? ORDER BY seq DESC LIMIT ?)",
+                    (key, invoice_id, key, KEEP_SNAPSHOTS),
                 )
+        return True
+
+    def forget_if_withdrawn(self, invoice_id: int) -> bool:
+        """After learning from an approval: if the invoice is no longer approved (withdrawn while it was learned
+        from), what was learned is taken back (``_forget_learning``), in the same transaction as the check (B-782).
+        True when it was. A deleted invoice is left to ``delete_invoice``."""
+        with self._conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT status FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
+            if row is None or row["status"] in (APPROVED, PENDING):
+                return False
+            self._forget_learning(conn, invoice_id)
+        return True
 
     def reset_supplier_layout(self, key: str, actor: str | None = None) -> bool:
         """Forget what a supplier's template learned of its layout (the Learning page's "Reset layout"): its next

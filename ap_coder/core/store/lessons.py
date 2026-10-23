@@ -34,10 +34,13 @@ from ._base import (
 
 # A lesson with how many of the approvals still standing corrected it to its value (``agreeing``): a lesson recorded
 # without an invoice (none kept beside it) counts its corrections.
+# The corrections to the lesson's value, over the approvals still standing (``lesson_approvals``), plus those counted
+# before each approval's part was kept (the lesson's count less the approvals'), taken as agreeing as they were before:
+# an upgrade never demotes a lesson (B-785).
 _LESSON = (
-    "SELECT lessons.*, CASE WHEN EXISTS (SELECT 1 FROM lesson_approvals a WHERE a.situation = lessons.situation) "
-    "THEN (SELECT COUNT(*) FROM lesson_approvals a WHERE a.situation = lessons.situation AND a.corrected = 1 "
-    "AND a.value = lessons.value) ELSE lessons.corrected END AS agreeing FROM lessons"
+    "SELECT lessons.*, (SELECT COUNT(*) FROM lesson_approvals a WHERE a.situation = lessons.situation "
+    "AND a.corrected = 1 AND a.value = lessons.value) + MAX(lessons.corrected - (SELECT COUNT(*) FROM "
+    "lesson_approvals a WHERE a.situation = lessons.situation AND a.corrected = 1), 0) AS agreeing FROM lessons"
 )
 
 
@@ -217,12 +220,14 @@ class LessonsMixin:
 
     def finish_verification(
         self, invoice_id: int, status: str, *, result: dict[str, Any] | None = None, rounds: int = 0,
-        seconds: float = 0.0, error: str = "", tries: int | None = None,
+        seconds: float = 0.0, error: str = "", tries: int | None = None, reader: str | None = None,
     ) -> bool:  # fmt: skip
         """How a review ended: ``done`` (``result``), ``failed`` / ``skipped`` (``error`` says why) or ``waiting``
         (back in line: the chat model isn't answering now). ``tries``: reviews the model server cut off before any
         answer (None keeps the count; a review done starts it over). Only a review still under way ends: one put
-        back in line meanwhile (``release_verifications``, a new reading) is left there. False when nothing ended."""
+        back in line meanwhile (``release_verifications``, a new reading) is left there, and with ``reader`` (the
+        process that took it, ``next_verification``) one another process has taken since too (B-787). False when
+        nothing ended."""
         if status not in (VERIFY_WAITING, VERIFY_DONE, VERIFY_FAILED, VERIFY_SKIPPED):
             raise ValueError(f"unknown review status {status!r}")
         if tries is None and status == VERIFY_DONE:
@@ -231,9 +236,10 @@ class LessonsMixin:
             cur = conn.execute(
                 """UPDATE verifications SET status = ?, result_json = COALESCE(?, result_json), rounds = ?,
                    seconds = ?, error = ?, updated_at = ?, tries = COALESCE(?, tries), reader = ''
-                   WHERE invoice_id = ? AND status = 'verifying'""",
+                   WHERE invoice_id = ? AND status = 'verifying'""" + (" AND reader = ?" if reader is not None else ""),
                 (status, json.dumps(result, default=str) if result is not None else None,
-                 int(rounds or 0), round(float(seconds or 0), 1), (error or "")[:2000], _now(), tries, invoice_id),
+                 int(rounds or 0), round(float(seconds or 0), 1), (error or "")[:2000], _now(), tries, invoice_id,
+                 *(() if reader is None else (reader,))),
             )  # fmt: skip
             return cur.rowcount > 0
 
