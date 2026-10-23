@@ -810,6 +810,9 @@ class StoreCore:
         conn.execute(f"UPDATE vendors SET {assignments}, updated_at = ? WHERE vendor_key = ?",
                      (*values.values(), _now(), key))  # fmt: skip
         conn.execute("DELETE FROM vendors WHERE vendor_key = ?", (old,))
+        from .accounts import count_masters_change
+
+        count_masters_change(conn)
 
     @contextmanager
     def session(self) -> Iterator[None]:

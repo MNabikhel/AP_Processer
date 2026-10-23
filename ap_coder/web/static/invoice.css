@@ -542,6 +542,9 @@ html:has(.inv-actionbar) {scroll-padding-bottom: 104px; scroll-padding-top: 12px
 @container lines (max-width: 560px) {
   .inv-taxcheck th, .inv-taxcheck td {padding-left: 3px; padding-right: 3px;}
   .inv-taxcheck td:nth-child(3), .inv-taxcheck th {white-space: normal;}
+  /* A sum to check ("check Subtotal + tax = total") and the right-aligned headings wrap too, or the table ran 12 px
+     past its card (B-840). */
+  .inv-taxcheck thead th.r, .inv-taxcheck tr.tc-sum td:first-child {white-space: normal;}
   .inv-taxcheck {font-size: 12px;}
 }
 

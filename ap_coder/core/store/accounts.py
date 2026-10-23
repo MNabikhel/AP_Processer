@@ -35,11 +35,26 @@ _REFERENCE_STAMP = """SELECT
      FROM (SELECT * FROM settings WHERE key IN ('our_province', 'site_provinces', 'policy_notes') ORDER BY key))"""
 
 # What the checks read besides the reference data, as the queue's re-check compares them (``Store.checks_stamp``,
-# B-815): JD Edwards' settings, whether it is in use (its switch, or a batch made), and the days to pay.
+# B-815): JD Edwards' settings, whether it is in use (its switch, or a batch made), the days to pay, and the count of
+# changes to the vendor master and the POs (``masters_version``, B-842).
 _CHECKS_STAMP = """SELECT
     (SELECT group_concat(key || '=' || value, char(10))
-     FROM (SELECT * FROM settings WHERE key IN ('jde_e1', 'show_jde_settings', 'default_terms_days') ORDER BY key)),
+     FROM (SELECT * FROM settings WHERE key IN ('jde_e1', 'show_jde_settings', 'default_terms_days', 'masters_version')
+           ORDER BY key)),
     (SELECT COUNT(*) FROM export_batches WHERE format = 'jde')"""
+
+# The audit events of a change to the vendor master or the POs: each one counts (``count_masters_change``).
+MASTERS_CHANGES = frozenset({"vendor_updated", "vendors_imported", "vendor_added", "vendors_deleted", "pos_imported",
+                             "po_status", "pos_deleted"})  # fmt: skip
+
+
+def count_masters_change(conn: sqlite3.Connection) -> None:
+    """One more change to the vendor master or the POs (``masters_version``): the queue's checks read them, and
+    ``Store.checks_stamp`` names this count rather than reading every vendor and PO line (B-842)."""
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES ('masters_version', '1') "
+        "ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1"
+    )
 
 
 class AccountsMixin:
@@ -59,6 +74,8 @@ class AccountsMixin:
             "INSERT INTO events (invoice_id, action, actor, detail, created_at) VALUES (?, ?, ?, ?, ?)",
             (invoice_id, action, actor, json.dumps(detail or {}, default=str), _now()),
         )
+        if action in MASTERS_CHANGES:
+            count_masters_change(conn)
 
     def log_event(
         self, action: str, invoice_id: int | None = None, actor: str | None = None,
@@ -335,8 +352,9 @@ class AccountsMixin:
 
     def checks_stamp(self) -> str:
         """A short fingerprint of everything an invoice's checks read that a person changes in Settings: the GL
-        accounts, cost centers, tax setup and rate file, our province and sites, the policy notes, JD Edwards and
-        the days to pay. A validation stored with another one may say what today's checks would not (B-815)."""
+        accounts, cost centers, tax setup and rate file, our province and sites, the policy notes, JD Edwards, the
+        days to pay, and any change to the vendor master or the POs. A validation stored with another one may say
+        what today's checks would not (B-815)."""
         path = _tax.rates_path()
         try:
             seen = path.stat()
