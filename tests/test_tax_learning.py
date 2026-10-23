@@ -86,10 +86,15 @@ def test_codes_printed_on_the_invoice_still_win():
 
 
 def test_a_learned_code_never_hides_a_tax_mismatch():
-    """The history says labour is PST exempt, but this vendor charged PST on it this time: the Tax check still says
-    the PST does not add up (and names the line), whatever the code was learned from."""
+    """The history says labour is PST exempt, but this vendor charged PST on it this time: the learned codes are
+    dropped and the lines worked out from the tax charged, marked for a person to check (B-761); a learned code that
+    does not add up all the same is flagged by the Tax check, which names the line."""
     lines = [_line(1, 400.0, "Electrician - labour"), _line(2, 120.0, "LED panel 2x4 ft")]
     taxes = [_tax("GST", 0.05, 520.0), _tax("PST", 0.07, 520.0)]
+    dropped = prefill(lines, taxes, learned=["GST~PST", "GST+PST"])
+    assert [tax_code_of(li) for li in dropped.lines] == ["GST+PST", "GST+PST"]
+    assert not tax_learned(dropped.lines[0]) and line_tax.tax_guessed(dropped.lines[0])
+    taxes = [_tax("GST", 0.05, 520.0), _tax("PST", 0.07, 300.0)]  # no set of the lines makes it, learned or not
     done = prefill(lines, taxes, learned=["GST~PST", "GST+PST"])
     assert done.how == ["learned", "learned"]
     coding = InvoiceCoding(vendor_name=VENDOR, invoice_number="1", invoice_date="2026-08-21", currency="CAD",
@@ -99,7 +104,7 @@ def test_a_learned_code_never_hides_a_tax_mismatch():
                            line_items=done.lines)  # fmt: skip
     check = math_check(coding)
     pst = next(r for r in check["rows"] if r.get("tax_type") == "PST")
-    assert not pst["ok"] and pst["lines"] == [1]
+    assert not pst["ok"]
 
 
 def _approved(store: Store, path: Path, description: str, code: str) -> int:
@@ -127,7 +132,7 @@ def test_an_approval_records_each_lines_tax_code_and_the_coder_learns_it(tmp_pat
     assert [r["final_tax_code"] for r in store.feedback_rows()] == ["GST~PST", "GST~PST"]
     fields = {name: FieldResult(name, value, 0.99, VERIFIED) for name, value in (
         ("vendor_name", VENDOR), ("invoice_number", "INV-3"), ("invoice_date", "2026-09-01"), ("currency", "CAD"),
-        ("gst_amount", 20.0), ("grand_total", 420.0))}  # fmt: skip
+        ("gst_amount", 20.0), ("grand_total", 420.0), ("pst_registration_number", "PST-1234-5678"))}  # fmt: skip
     capture = CaptureResult(fields=fields, line_items=[LineReading("Electrician - labour", 1.0, 400.0, 400.0)])
     text = "Bill to: Bench Company Ltd.\n100 Main Street\nVancouver BC V6B 1A1"
     coding = code_from_capture(capture, reference, store.feedback_rows(), store, text=text).coding

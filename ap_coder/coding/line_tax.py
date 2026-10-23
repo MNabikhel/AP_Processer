@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import itertools
 import re
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -604,6 +604,10 @@ class Prefill:
     lines: list[Any]
     how: list[str] = field(default_factory=list)
     check: set[int] = field(default_factory=set)
+    # The taxes charged that no set of the lines left to work out could carry, and the positions the amounts could
+    # not decide between (several ways, or too many): what ``prefill`` compares with and without the learned codes.
+    unallocated: set[str] = field(default_factory=set)
+    ambiguous: set[int] = field(default_factory=set)
 
 
 def _tax_base(tl: Any, rate: float) -> float:
@@ -630,7 +634,52 @@ def prefill(
     *,
     keep: Iterable[int] = (),
     rate_for: Callable[[str, str], float | None] | None = None,
-    vendor_collects: bool = True,
+    vendor_collects: bool | Mapping[str, bool] = True,
+    learned: Sequence[str] | None = None,
+) -> Prefill:
+    """Each line's tax code (``_prefill``), with what AP approved before (``learned``) used only where it is safe
+    (D-80): a learned code that leaves a tax charged on no set of the other lines (the vendor charged it on this
+    line this time) is dropped and the lines worked out again; and a line the amounts alone could not decide on keeps
+    its "check it" note (``GUESS_NOTE``), learned code or not: the history may say which lines, a person confirms."""
+    args = dict(printed=printed, legend=legend, keep=keep, rate_for=rate_for, vendor_collects=vendor_collects)
+    if not any(learned or ()):
+        return _prefill(lines, tax_lines, **args)
+    alone = _prefill(lines, tax_lines, **args)
+    done = _prefill(lines, tax_lines, **args, learned=learned)
+    if done.unallocated - alone.unallocated:
+        dropped = {k for k, how in enumerate(done.how) if how == "learned"}
+        learned = [code if k not in dropped else "" for k, code in enumerate(learned)]
+        done = _prefill(lines, tax_lines, **args, learned=learned)
+        for k in sorted(dropped):  # the history and this invoice's tax disagree on these lines: a person looks
+            if done.how[k] != "kept":
+                done.lines[k] = _with_note(done.lines[k], GUESS_NOTE)
+                done.check.add(k)
+    for k in sorted(alone.ambiguous):
+        if done.how[k] in ("learned", "solver", "all") and not tax_guessed(done.lines[k]):
+            done.lines[k] = _with_note(done.lines[k], GUESS_NOTE)
+            done.check.add(k)
+    return done
+
+
+def _with_note(line: Any, note: str) -> Any:
+    """``line`` with ``note`` added to its reasoning (once): a dict changed in place, a ``LineItem`` copied."""
+    reason = str(_get(line, "reasoning_justification") or "")
+    reason = reason if note in reason else f"{reason} {note}".strip()
+    if isinstance(line, dict):
+        line["reasoning_justification"] = reason
+        return line
+    return line.model_copy(update={"reasoning_justification": reason})
+
+
+def _prefill(
+    lines: Sequence[Any],
+    tax_lines: Sequence[Any],
+    printed: Sequence[str] | None = None,
+    legend: dict[str, Meaning] | None = None,
+    *,
+    keep: Iterable[int] = (),
+    rate_for: Callable[[str, str], float | None] | None = None,
+    vendor_collects: bool | Mapping[str, bool] = True,
     learned: Sequence[str] | None = None,
 ) -> Prefill:
     """Each line's tax code, worked out (``LineItem``s or dicts; new ones returned, the given ones untouched):
@@ -652,7 +701,15 @@ def prefill(
 
     ``rate_for(tax_type, province)``: the official rate (effective-dated, for the place of supply), else the tax
     line's own rate is used. ``vendor_collects``: False for a vendor out of the province of supply or without a PST
-    number: a PST it charges on other lines and not on a line is then due on it (self-assess), not exempt (B-715)."""
+    number: a PST it charges on other lines and not on a line is then due on it (self-assess), not exempt (B-715);
+    nor is an exemption of it learned from the history used (B-760). Tax by tax ({"PST": False}), or one for both
+    provincial taxes."""
+
+    def collects(tax_type: str) -> bool:
+        if isinstance(vendor_collects, Mapping):
+            return bool(vendor_collects.get(tax_type, True))
+        return bool(vendor_collects)
+
     items = [dict(li) if isinstance(li, dict) else li.model_copy() for li in lines]
     n = len(items)
     printed = list(printed or [""] * n) + [""] * max(0, n - len(printed or []))
@@ -676,6 +733,11 @@ def prefill(
         if parsed is None or not set(parsed[0]) <= set(charged):
             continue
         taxes, exempt, status = parsed
+        # A vendor that does not collect a provincial tax: it is due where it is not charged (B-715), whatever was
+        # approved on the vendor's lines before, when it did (or seemed to): the exemption of it is not used (B-760).
+        if status in (EXEMPT, ZERO_RATED) and not all(collects(t) for t in PROVINCIAL):
+            continue
+        exempt = [t for t in exempt if t not in PROVINCIAL or collects(t)]
         if codes[k] is None:
             codes[k], how[k] = (taxes, status), "learned"
             learned_exempt[k] = exempt
@@ -687,6 +749,8 @@ def prefill(
     free = [k for k in range(n) if codes[k] is None]
     assigned: dict[int, set[str]] = {k: set() for k in free}
     solved_any = False
+    unallocated: set[str] = set()
+    ambiguous: set[int] = set()
     for tax_type in charged:
         taxes = [
             t for t in tax_lines if _get(t, "tax_type") == tax_type and abs(float(_get(t, "tax_amount") or 0)) > 0.004
@@ -704,10 +768,16 @@ def prefill(
         if not rate and tax:
             base = sum(float(_get(t, "taxable_amount") or 0) for t in taxes)
         carried = sum(amounts[k] for k in range(n) if codes[k] is not None and tax_type in codes[k][0])
-        if not free:
-            continue
         target = round(base - carried, 2)
+        if not free:
+            if abs(target) * 100 > tolerance_cents(n, rate or 0.05):
+                unallocated.add(tax_type)
+            continue
         solved = solve([amounts[k] for k in free], target, rate or 0.05, [descriptions[k] for k in free])
+        if solved.kind == "none":
+            unallocated.add(tax_type)
+        elif solved.kind in ("several", "unsure"):
+            ambiguous |= {free[j] for j in solved.doubt}
         for j in solved.lines:
             assigned[free[j]].add(tax_type)
         check |= {free[j] for j in solved.doubt}
@@ -744,12 +814,12 @@ def prefill(
             # not to: exempt); a tax charged on no line stays due (D-64). Nothing charged on a line while the vendor
             # charges tax on others: an exempt line.
             exempt = [t for t in canadian if t not in taxes]
-            if "PST" in exempt and not vendor_collects:  # out of province, or no PST number: due, not exempt
+            if "PST" in exempt and not collects("PST"):  # out of province, or no PST number: due, not exempt
                 exempt.remove("PST")
             if not taxes and canadian and set(exempt) == set(canadian):
                 status, exempt = EXEMPT, []
             # A PST exemption inferred, not printed: a person confirms it (exempt, or missed and to self-assess).
-            if "PST" in canadian and "PST" not in taxes and vendor_collects and how[k] != "printed":
+            if "PST" in canadian and "PST" not in taxes and collects("PST") and how[k] != "printed":
                 reason = str(_get(items[k], "reasoning_justification") or "")
                 note = inferred_note(pst_name)
                 if note not in reason:
@@ -770,7 +840,7 @@ def prefill(
                 items[k]["reasoning_justification"] = note
             else:
                 items[k] = items[k].model_copy(update={"reasoning_justification": note})
-    return Prefill(items, how, check)
+    return Prefill(items, how, check, unallocated, ambiguous)
 
 
 def can_explain(amounts: Sequence[float], tax: float, rate: float) -> bool | None:
