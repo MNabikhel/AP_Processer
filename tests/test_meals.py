@@ -151,6 +151,26 @@ def test_the_sample_meals_account_has_the_flag_and_the_import_reads_a_column(tmp
     assert store.reference_data().tax.meals_gl_codes == frozenset({"7100"})
 
 
+def test_replacing_the_list_without_a_meals_column_keeps_the_meals_ticks(tmp_path):
+    store = Store(tmp_path / "t.db")
+    store.import_accounts("gl_accounts", [{"code": "6000", "description": "Office"},
+                                          {"code": MEALS, "description": "Meals", "M&E": "yes"}],
+                          "code", "description", meals_column="M&E")  # fmt: skip
+    # The monthly chart from the ERP, "Replace the list" ticked: it has no meals column.
+    store.import_accounts("gl_accounts", [{"code": "6000", "description": "Office"},
+                                          {"code": MEALS, "description": "Meals & ent."},
+                                          {"code": "6400", "description": "Rent"}],
+                          "code", "description", replace_all=True)  # fmt: skip
+    flags = {a["code"]: a["meals"] for a in store.list_accounts("gl_accounts")}
+    assert flags == {"6000": False, MEALS: True, "6400": False}
+    # A save whose rows don't say (a list kept from before the flag) keeps it too; a row that says is followed.
+    store.save_accounts("gl_accounts", [{"code": "6000", "description": "Office", "category": ""},
+                                        {"code": MEALS, "description": "Meals", "category": ""}])  # fmt: skip
+    assert store.reference_data().tax.meals_gl_codes == frozenset({MEALS})
+    store.save_accounts("gl_accounts", [{"code": MEALS, "description": "Meals", "category": "", "meals": False}])
+    assert store.reference_data().tax.meals_gl_codes == frozenset()
+
+
 def test_the_accounts_page_ticks_and_saves_the_meals_flag(tmp_path):
     from .webclient import client_for, follow, post
 
