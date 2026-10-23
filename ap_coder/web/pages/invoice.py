@@ -446,7 +446,8 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
                           view.vendor_accounts(store, draft.header.get("vendor_name") or "")),
               "tax_marks": analysis.live.get("tax_marks") or {}},
         labels=view.FIELD_LABELS, provinces=view.province_options(),
-        due_placeholder=f"{computed.isoformat()} (from terms)" if computed else "YYYY-MM-DD",
+        due_placeholder=f"{computed.isoformat()} (from terms)" if computed else
+        "None: a credit is not paid" if float(start.get("grand_total") or 0) < 0 else "YYYY-MM-DD",
         sent_back=_sent_back(store, invoice_id), poll_seconds=PAGE_READER_POLL_SECONDS,
         today=dt.date.today().isoformat(), taught_json=draft.taught, vendors=vendor_options(store),
         absent_ok=list(view.ABSENT_FIELDS), from_vendor_note=view.FROM_VENDOR_NOTE,

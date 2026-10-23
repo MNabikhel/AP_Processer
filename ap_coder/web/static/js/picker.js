@@ -533,9 +533,16 @@ class Picker {
     } else if (k === "Escape") {
       e.preventDefault();
       e.stopPropagation(); // only the list closes, not the popover it is in, nor teaching a field
+      // A free box (the vendor) half typed, its list offering names: what was typed since it was focused goes, the
+      // value as it was comes back ("Pac" then Esc lost the vendor). A name in the list, or one the list has nothing
+      // like (a new vendor typed in full), stays: Esc then only closes the list.
+      const typedNow = this.input.value.trim().toLowerCase();
+      const offered = this.view.filter((it) => !it.run);
+      const listed = offered.some((it) => String(it.value).trim().toLowerCase() === typedNow);
+      const revert = this.free && this.typed && offered.length > 0 && !listed && this.before !== undefined &&
+        this.input.value !== this.before;
       this.close();
-      // A free box (the vendor): what was typed since it was focused goes, the value as it was comes back.
-      if (this.free && this.typed && this.before !== undefined && this.input.value !== this.before) {
+      if (revert) {
         this.input.value = this.before;
         this.input.dispatchEvent(new Event("input", { bubbles: true }));
       }

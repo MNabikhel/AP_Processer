@@ -26,7 +26,7 @@
 {% set s = live.summary %}
 <div class="rvw-head">
   <div class="rvw-head-main">
-    <div class="rvw-head-title"><span class="rvw-vendor">{{ s.vendor }}</span>{{ ui.pill(s.status[0], s.status[1]) }}{{ conf(s.confidence, s.confidence_text, s.confidence_ok, s.threshold) }}</div>
+    <div class="rvw-head-title"><span class="rvw-vendor" title="{{ s.vendor }}">{{ s.vendor }}</span>{{ ui.pill(s.status[0], s.status[1]) }}{{ conf(s.confidence, s.confidence_text, s.confidence_ok, s.threshold) }}</div>
     <div class="rvw-head-meta">{% for text, about in s.meta %}<span class="m" title="{{ about }}">{{ text }}
       {%- if about == "Invoice number" and s.number %}<button type="button" class="rvw-copy" data-copy-text="{{ s.number }}" title="Copy the invoice number" aria-label="Copy the invoice number"><span class="ms" aria-hidden="true">content_copy</span></button>{% endif %}</span>{% endfor %}
       <span class="chips">{% for t in s.taxes %}<span class="rq-tax">{{ t }}</span>{% endfor %}{% if s.learned %}{{ ui.pill("Learned pattern", "gray") }}{% endif %}</span></div>

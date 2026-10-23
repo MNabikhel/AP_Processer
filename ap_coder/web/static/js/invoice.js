@@ -103,6 +103,7 @@ async function check() {
       queued = false;
       const body = formData();
       const answer = await post(`${base}/check`, body);
+      lastCheckOk = Boolean(answer.ok);
       if (answer.ok) applySections(answer, body);
       else if (answer.error) toast({ text: answer.error, tone: "err" }, 9000);
     } while (queued);
@@ -111,7 +112,7 @@ async function check() {
   let saved = false;
   try {
     await running;
-    saved = true;
+    saved = lastCheckOk;
   } finally {
     running = null;
     keepFocusInView(); // the sections drawn again may have moved the box being worked in under the approve bar
@@ -130,6 +131,7 @@ function keepFocusInView() {
   if (r.bottom > bar || r.top < 0) el.scrollIntoView({ block: "nearest" });
 }
 
+let lastCheckOk = false; // the last check answered (its edits are kept as a draft)
 let edited = false; // an edit made on this page (the opening check keeps nothing new)
 
 function clock() {
@@ -2214,9 +2216,12 @@ document.addEventListener("keydown", (e) => {
 
 /** The first invoice detail a check is about (flagged, a note to act on, a reading to check), else the first line
     still to code, else the vendor. ``always``: even when something else has the focus. */
+let acted = false; // the clerk pressed a key or clicked since the page opened: the focus is theirs to place
+for (const type of ["pointerdown", "keydown"]) document.addEventListener(type, () => (acted = true), { capture: true, once: true });
+
 function focusFirstToCheck(always = false) {
   const active = document.activeElement;
-  if (!always && active && active !== document.body && active.tagName !== "MAIN") return false;
+  if (!always && (acted || (active && active !== document.body && active.tagName !== "MAIN"))) return false;
   const fields = [...document.querySelectorAll(".inv-details [data-field]")].filter((f) => f.getClientRects().length);
   const wanted = fields.find((f) => f.classList.contains("is-flagged")) ||
     fields.find((f) => f.querySelector(":scope > [data-help]:not([hidden])")) ||
@@ -2229,6 +2234,17 @@ function focusFirstToCheck(always = false) {
   }
   box = box || vendorInput;
   if (!box || !box.getClientRects().length) return false;
+  // Focused for the clerk, not by them: Space with the pointer on the page still holds the Hand (B-591) until they
+  // type in it or click it.
+  if (!always) {
+    box.dataset.autofocused = "1";
+    const mine = (e) => {
+      if (e.type === "keydown" && e.key === " ") return;
+      delete box.dataset.autofocused;
+      for (const t of ["keydown", "pointerdown", "blur"]) box.removeEventListener(t, mine);
+    };
+    for (const t of ["keydown", "pointerdown", "blur"]) box.addEventListener(t, mine);
+  }
   box.focus({ preventScroll: true });
   box.scrollIntoView({ block: "nearest" });
   return true;

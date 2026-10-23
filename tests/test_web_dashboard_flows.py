@@ -60,7 +60,8 @@ def test_an_impossible_date_is_said_and_approval_waits_but_reject_stays(client, 
     invoice_id = add_clean(store)
     data = form_of(store, invoice_id, invoice_date="2026-02-30")
     answer = check(client, invoice_id, data)
-    assert not answer["valid"] and not answer["allow"] and "Fix this field" in answer["sections"]["checks"]
+    # said at its field, the other checks kept, never approved (B-738)
+    assert not answer["allow"] and "is not a date" in answer["header"]["flags"]["invoice_date"]
     assert post(client, f"/review/{invoice_id}/approve", data).status_code == 400
     page = client.get(f"/review/{invoice_id}").text
     assert f"/review/{invoice_id}/reject" in page and "Delete" in page  # reject / delete stay available
@@ -133,11 +134,11 @@ def test_approve_anyway_asks_again_when_a_new_error_appears(client, store):
     bar = check(client, invoice_id, data)["sections"]["bar"]
     assert "Approve anyway, despite" in bar and "1 error" in bar
     key = re.search(r'name="override" value="([0-9a-f]+)"', bar).group(1)
-    assert check(client, invoice_id, {**data, "override": key})["allow"]
-    worse = {**data, "override": key, "grand_total": "99999"}  # a second error: the totals differ
+    assert check(client, invoice_id, {**data, "override": key, "override_reason": "CC999 opens next week"})["allow"]
+    # a second error: the totals differ, which is never approved anyway (D-75)
+    worse = {**data, "override": key, "override_reason": "CC999 opens next week", "grand_total": "99999"}
     answer = check(client, invoice_id, worse)
-    assert not answer["allow"] and re.search(r'name="override" value="([0-9a-f]+)"', answer["sections"]["bar"])
-    assert re.search(r'name="override" value="([0-9a-f]+)"', answer["sections"]["bar"]).group(1) != key
+    assert not answer["allow"] and "Not ready: Subtotal + tax" in answer["sections"]["bar"]
     assert post(client, f"/review/{invoice_id}/approve", worse).status_code == 400
 
 

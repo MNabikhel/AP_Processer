@@ -575,7 +575,7 @@ def test_in_a_browser_space_on_a_box_or_button_of_the_form_is_theirs_with_the_mo
     box = page.locator("[data-grid=lines] [name=line_description] >> nth=0")
     before = box.input_value()
     box.focus()
-    page.keyboard.press("End")
+    page.keyboard.press("Control+End")  # the end of the text (a description wrapped on two lines: End is the first's)
     _over_the_page(page)
     page.keyboard.press(" ")
     assert box.input_value() == before + " "
