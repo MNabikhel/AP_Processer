@@ -426,10 +426,10 @@ html:has(.inv-actionbar) {scroll-padding-bottom: 104px; scroll-padding-top: 12px
 .inv-jde-head .rvw-group {border: 0; padding: 0;}
 .inv-jde-head .link {display: inline-flex; align-items: center; gap: 3px;}
 .inv-jde-head .link .ms {font-size: 14px;}
-.inv-jde-grid {display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 2px 14px; margin: 6px 0 0;
-  font-size: 12.5px;}
-.inv-jde-row {display: flex; gap: 8px; align-items: baseline; padding: 3px 0; border-bottom: 1px dashed var(--lg-hairline); min-width: 0;}
-.inv-jde-row dt {flex: none; width: 92px; color: var(--rv-muted);}
+.inv-jde-grid {display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 0 12px; margin: 4px 0 0;
+  font-size: 12px; line-height: 16px;}
+.inv-jde-row {display: flex; gap: 6px; align-items: baseline; padding: 2px 0; border-bottom: 1px dashed var(--lg-hairline); min-width: 0;}
+.inv-jde-row dt {flex: none; width: 78px; color: var(--rv-muted);}
 .inv-jde-row dd {margin: 0; min-width: 0; color: var(--rv-text); font-variant-numeric: tabular-nums; overflow-wrap: anywhere;}
 .inv-jde-src {font-size: 10.5px; color: var(--rv-subtle); border: 1px solid var(--lg-hairline); border-radius: 4px; padding: 0 4px;}
 .inv-jde-row.from-settings dd {color: var(--rv-muted);}
@@ -460,8 +460,9 @@ html:has(.inv-actionbar) {scroll-padding-bottom: 104px; scroll-padding-top: 12px
 
 /* The approve bar: what keeps a voucher from being approved, even anyway; "Approve anyway" with its reason. */
 .inv-actionbar-live {display: flex; align-items: center; gap: 16px; flex-wrap: wrap; min-width: 0;}
-.inv-hard {display: inline-flex; align-items: center; gap: 4px; max-width: min(460px, 100%);}
-@media (max-width: 1500px) {.inv-hard {max-width: min(330px, 100%);}}
+.inv-actionbar-left .apc-pill.inv-hard {display: inline-flex; align-items: center; gap: 4px; max-width: min(460px, 100%);
+  white-space: nowrap;}
+@media (max-width: 1500px) {.inv-actionbar-left .apc-pill.inv-hard {max-width: min(330px, 100%);}}
 .inv-hard .t {overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;}
 .inv-hard .more {flex: none; font-weight: 600;}
 .inv-override-why {height: 30px; width: 260px; max-width: 100%; font-size: 13px; padding: 0 8px;}
@@ -547,3 +548,12 @@ html:has(.inv-actionbar) {scroll-padding-bottom: 104px; scroll-padding-top: 12px
 /* What must be fixed is never cut off with "…"; many things to check fold after the first three. */
 .rvw-status-group.err li .t, .rvw-status-group.block li .t {-webkit-line-clamp: unset; display: block;}
 .rvw-status-more > summary {cursor: pointer; margin: 4px 0 0 26px; font-size: 12px; color: var(--rv-muted);}
+
+/* One row on a laptop too: the "Not ready" note gives way (it ends in …, its title says it all), never the buttons. */
+@media (min-width: 1101px) {
+  .inv-actionbar {flex-wrap: nowrap;}
+  .inv-actionbar-left {flex: 1 1 0; flex-wrap: nowrap;}
+  .inv-actionbar-live {flex-wrap: nowrap; min-width: 0;}
+  .inv-actionbar-right {flex: none; flex-wrap: nowrap;}
+  .inv-actionbar-left .apc-pill.inv-hard {flex: 0 1 auto; min-width: 120px;}
+}

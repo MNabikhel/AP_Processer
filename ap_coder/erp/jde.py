@@ -902,6 +902,7 @@ def voucher_findings(output: dict[str, Any], settings: JdeSettings, an8: str) ->
                     "Settings → JD Edwards E1", None))  # fmt: skip
     v = _prepare({"id": 0, "final_output": output}, settings, str(an8 or "").strip())
     seen: set[tuple[str, int | None]] = set()
+    unmapped: dict[str, list[int | None]] = {}  # "GL 6010 / CC400": the lines posting to it with no E1 account
     for problem, (code, line) in zip(v.problems, v.codes, strict=True):
         if code in SAID_ELSEWHERE or (code, line) in seen:
             continue
@@ -928,13 +929,24 @@ def voucher_findings(output: dict[str, Any], settings: JdeSettings, an8: str) ->
                         "the pilot tester to add it in Settings → JD Edwards E1", None))  # fmt: skip
         elif code == "JDE_TAX_AREA":
             out.append((ERROR, "JDE_TAX_AREA", f"JD Edwards: {problem}", None))
-        elif code == "JDE_NO_ACCOUNT":
-            out.append((ERROR, "JDE_NO_ACCOUNT", f"JD Edwards: {problem.replace('add it to the account mapping', '')}"
-                        "ask the pilot tester to map it in Settings → JD Edwards E1", line))  # fmt: skip
+        elif code == "JDE_NO_ACCOUNT":  # said once for all the lines below
+            unmapped.setdefault(problem.split(" has no JDE account")[0].split(": JDE account")[0], []).append(line)
         elif code == "JDE_UNBALANCED":
             out.append((ERROR, "JDE_UNBALANCED", f"JD Edwards: {problem}", None))
         else:
             out.append((ERROR, "JDE_VOUCHER", f"JD Edwards: {problem}", line))
+    if unmapped:  # one finding: "GL 6400 (lines 1, 2), 6500 (line 7) have no JDE account…", not one per account
+
+        def where(account: str, lines: list[int | None]) -> str:
+            numbers = [str(n) for n in lines if n]
+            said = f" (line{'s' if len(numbers) > 1 else ''} {', '.join(numbers)})" if numbers else ""
+            return account.removeprefix("GL ") + said
+
+        accounts = [where(a, ls) for a, ls in unmapped.items()]
+        one = len(accounts) == 1
+        out.append((ERROR, "JDE_NO_ACCOUNT", f"JD Edwards: GL {', '.join(accounts)} {'has' if one else 'have'} no JDE "
+                    "account (BU.Object.Subsidiary): ask the pilot tester to map "
+                    f"{'it' if one else 'them'} in Settings → JD Edwards E1", None))  # fmt: skip
     return out
 
 
@@ -956,13 +968,10 @@ def voucher_view(
     gl_date = today if settings.gl_date == GL_DATE_EXPORT else invoice_date
     due = _date(final.get("due_date"))
     credit = v.gross < 0
-    terms = str(final.get("payment_terms") or "").strip()
     code = settings.payment_terms_code.strip()
     if code:
         terms_text = f"{code} (terms code from the settings)"
-    elif terms:
-        terms_text = f"Not sent: JD Edwards uses the supplier's own terms (the invoice says “{terms}”)"
-    else:
+    else:  # the invoice's words are under its Payment terms box
         terms_text = "Not sent: JD Edwards uses the supplier's own terms"
 
     def money(cents: int) -> str:

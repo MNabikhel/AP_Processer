@@ -44,7 +44,7 @@ def test_with_jd_edwards_in_use_the_screen_says_what_its_batch_would_hold_back(c
     answer = check(client, invoice_id, form_of(store, invoice_id))
     checks = answer["sections"]["checks"]
     assert "JD Edwards: the supplier number V10104 is not an address number" in checks
-    assert re.search(r"Lines? [\d, ]+: JD Edwards: GL \d+[^<]* has no JDE account", checks)
+    assert re.search(r"JD Edwards: GL \d+[^<]* \(lines? [\d, ]+\)[^<]* ha(s|ve) no JDE account", checks)
     assert "is not an address number" in answer["header"]["flags"]["vendor_name"]  # under the vendor
     assert answer["header"]["an8"] == "V10104"
     assert not answer["allow"] and "Approve anyway" not in answer["sections"]["bar"]  # never approved anyway
