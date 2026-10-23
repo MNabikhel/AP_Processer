@@ -234,24 +234,9 @@ def validate_coding(
         _cross_check(coding, extraction, add, checks)
 
     model_conf = coding.confidence_score
-    reading, coded = model_conf, coding_confidence(coding, reference)
-    # Each kind of finding counts once: eight lines without an account are one thing to do, not eight. Setup and
-    # business findings (D-86) and what the Coding already counts take nothing off (``doubtless``).
-    for severity, code in {(i.severity, i.code) for i in issues if i.severity != INFO and not doubtless(i.code)}:
-        penalty = _ERROR_PENALTY if severity == ERROR else _WARNING_PENALTY
-        if code in ABOUT_CODING:
-            coded *= penalty
-        else:
-            reading *= penalty
-    reading, coded = round(reading, 4), round(coded, 4)
-    adjusted = min(reading, coded)
-    # A line to code, a business finding and a doubt about the coding (a person looks at it, whatever the numbers:
-    # taken off the Coding alone, a warning no longer brings a well-read invoice under the threshold, B-892) keep it
-    # for a person.
-    requires_review = (adjusted < review_threshold or any(i.severity == ERROR for i in issues)
-                       or any(i.code in COUNTED_IN_CODING
-                              or (i.severity != INFO and (business(i.code) or i.code in ABOUT_CODING))
-                              for i in issues))  # fmt: skip
+    reading, coded, adjusted, requires_review = score(
+        model_conf, coding_confidence(coding, reference), [(i.severity, i.code) for i in issues], review_threshold
+    )
 
     return ValidationReport(
         source=extraction.source if extraction else "",
@@ -264,6 +249,31 @@ def validate_coding(
         issues=issues,
         checks=checks,
     )
+
+
+def score(
+    reading: float, coded: float, findings: list[tuple[str, str]], review_threshold: float
+) -> tuple[float, float, float, bool]:
+    """(the Reading, the Coding, the invoice's confidence: the lower, whether it needs a person) from the reading's
+    and the coding's own figures and the findings ``(severity, code)`` (D-89)."""
+    # Each kind of finding counts once: eight lines without an account are one thing to do, not eight. Setup and
+    # business findings (D-86) and what the Coding already counts take nothing off (``doubtless``).
+    for severity, code in {(sev, code) for sev, code in findings if sev != INFO and not doubtless(code)}:
+        penalty = _ERROR_PENALTY if severity == ERROR else _WARNING_PENALTY
+        if code in ABOUT_CODING:
+            coded *= penalty
+        else:
+            reading *= penalty
+    reading, coded = round(reading, 4), round(coded, 4)
+    adjusted = min(reading, coded)
+    # A line to code, a business finding and a doubt about the coding (a person looks at it, whatever the numbers:
+    # taken off the Coding alone, a warning no longer brings a well-read invoice under the threshold, B-892) keep it
+    # for a person.
+    requires_review = (adjusted < review_threshold or any(sev == ERROR for sev, _ in findings)
+                       or any(code in COUNTED_IN_CODING
+                              or (sev != INFO and (business(code) or code in ABOUT_CODING))
+                              for sev, code in findings))  # fmt: skip
+    return reading, coded, adjusted, requires_review
 
 
 def business(code: str) -> bool:

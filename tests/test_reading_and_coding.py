@@ -172,6 +172,41 @@ def test_an_invoice_read_before_gets_its_reading_once(tmp_path):
     assert Store(tmp_path / "ap.db").get_invoice(ids[0])["ai_output"]["confidence_score"] == 0.47  # once only
 
 
+def test_an_invoice_read_before_is_sorted_and_flagged_by_its_new_reading(tmp_path, ground_truth):
+    """The one-time Reading (D-89) refreshed the confidence alone: the queue still sorted and flagged the invoice by
+    its old figure (0.47: needs review) until it was checked again. Its confidence for the queue and its review flag
+    follow too, from its stored findings, and its checks are done again in the queue (B-895)."""
+    import json
+
+    from ap_coder.ai.offline_coder import MODEL_NAME
+    from ap_coder.core.store import Store
+
+    store = Store(tmp_path / "ap.db")
+    coding = dict(copy.deepcopy(ground_truth), confidence_score=0.47)
+    old = {"model_confidence": 0.47, "adjusted_confidence": 0.47, "requires_review": True, "review_threshold": 0.85,
+           "issues": [{"severity": "warning", "code": "HISTORY_CONFLICT", "message": "?", "line_number": 1}],
+           "checks_stamp": "before"}  # fmt: skip
+    clean = {**old, "issues": []}
+    ids = [store.add_invoice(tmp_path / f"{n}.pdf", coding, validation, meta={"inference": {"model": MODEL_NAME}})
+           for n, validation in enumerate((clean, old))]  # fmt: skip
+    for invoice_id in ids:
+        store.save_capture(invoice_id, {"fields": {"vendor_name": _field("vendor_name", 0.98).to_dict(),
+                                                   "invoice_number": _field(confidence=0.96).to_dict()}})  # fmt: skip
+    with store._conn() as conn:
+        conn.execute("DELETE FROM settings WHERE key = 'reading_d89'")
+    store = Store(tmp_path / "ap.db")  # opened by this version
+    rows = {r["id"]: r for r in store.list_invoices("review")}
+    assert (rows[ids[0]]["adjusted_confidence"], bool(rows[ids[0]]["requires_review"])) == (0.97, False)
+    assert (rows[ids[1]]["adjusted_confidence"], bool(rows[ids[1]]["requires_review"])) == (0.9, True)  # B-892
+    validation = store.get_invoice(ids[0])["validation"]
+    assert (validation["adjusted_confidence"], validation["reading_confidence"]) == (0.97, 0.97)
+    assert validation["requires_review"] is False and validation["coding_confidence"] == 1.0
+    assert store.get_invoice(ids[1])["validation"]["reading_confidence"] == 0.97  # the coding doubt is the Coding's
+    assert store.get_invoice(ids[1])["validation"]["coding_confidence"] == 0.9
+    assert all(stamp == "" for stamp, _ in store.check_stamps(ids).values())  # checked again in the queue
+    assert json.loads(json.dumps(validation["issues"])) == []
+
+
 def test_a_business_finding_keeps_the_invoice_back_but_takes_nothing_off(tmp_path, reference, ground_truth):
     """D-89: a vendor not in the vendor master read every value right: an error to fix, not a doubt about the reading
     (it made a supplier's Reading 54% with every field at 99.9%)."""
