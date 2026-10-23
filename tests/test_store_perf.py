@@ -112,3 +112,39 @@ def test_the_lookups_by_file_total_and_event_use_an_index(tmp_path, monkeypatch)
     assert "invoices_total" in found
     assert store.duplicates_elsewhere("Other", "A-1", 11.005) and not store.duplicates_elsewhere("Other", "A-1", 11.02)
     assert "events_action" in _plan(store, monkeypatch, lambda: store.latest_events("processed", ids), "events")
+
+
+def test_one_vendors_history_is_read_once_per_page(tmp_path, monkeypatch):
+    """vendor_findings and expected_tax_numbers each read every invoice of the vendor, with its whole AI output and
+    final coding parsed for five fields: now read once while nothing changes (inside a session), by json_extract."""
+    from ap_coder.coding.vendors import expected_tax_numbers, vendor_findings
+    from ap_coder.core.schema import InvoiceCoding
+
+    from .webclient import add_clean, gt
+
+    store = Store(tmp_path / "ap.db")
+    ids = [add_clean(store, invoice_number=f"N-{i}") for i in range(3)]
+    store.approve_invoice(ids[0], {**gt(), "invoice_number": "N-0", "gst_hst_registration_number": "1"}, "Ann")
+    coding = InvoiceCoding.model_validate({**gt(), "invoice_number": "N-9"})
+    key = store.get_invoice(ids[0])["vendor_key"]
+    expected = store.vendor_invoices(key)
+    assert (
+        expected[-1]["gst_hst_number"] == "1" and expected[0]["gst_hst_number"] == gt()["gst_hst_registration_number"]
+    )
+    seen = _statements(monkeypatch)
+
+    def reads() -> int:
+        return len([s for s in seen if "FROM invoices WHERE vendor_key" in s and "ORDER BY id DESC" in s])
+
+    with store.session():
+        vendor_findings(coding, store)
+        expected_tax_numbers(coding, store)
+        assert reads() == 1
+        assert not [s for s in seen if "ORDER BY id DESC" in s and "ai_output, final_output" in s]
+        store.reject_invoice(ids[1], "Ann", "duplicate")  # a change: read again
+        history = store.vendor_invoices(key)
+        assert reads() == 2 and [h["status"] for h in history] == ["review", "rejected", "approved"]
+        with sqlite3.connect(store.path) as other:  # another connection's change: read again too
+            other.execute("UPDATE invoices SET status = 'parked' WHERE id = ?", (ids[2],))
+        assert store.vendor_invoices(key)[0]["status"] == "parked"
+        assert reads() == 3
