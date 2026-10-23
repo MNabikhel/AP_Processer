@@ -748,7 +748,7 @@ def cmd_pilot_score(args: argparse.Namespace) -> int:
     fields = sum(h["n"] for h in report["header"].values())
     right = sum(h["right"] for h in report["header"].values())
     print(f"{inv['matched']} of {inv['ap_coder']} invoices approved in AP Coder matched a JD Edwards voucher "
-          f"({inv['jd_edwards_only']} vouchers posted only in JD Edwards).")  # fmt: skip
+          f"({inv['jd_edwards_only']} posted only in JD Edwards).")  # fmt: skip
     print(f"Header fields right: {right} of {fields}. Lines coded as posted: {coding['gl_right']} of "
           f"{coding['compared']} (as AP Coder proposed them: {coding['proposed_right']}).")  # fmt: skip
     print(f"{len(report['differences'])} differences. Report: {folder / 'pilot_score.md'}")
