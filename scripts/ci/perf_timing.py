@@ -111,18 +111,17 @@ def main(argv: list[str] | None = None) -> int:
                 ("/review/{id}", *timed(page(f"/review/{one}"), args.repeat)),
                 ("50 find_by_hash", *timed(find, args.repeat)),
             ]
-            approved: list[int] = []
 
             def bulk():
                 answer = client.post("/review/bulk-approve", data={"ids": [str(i) for i in bulk_ids]}, headers=PAGE)
                 assert answer.status_code == 200, answer.text
-                approved.extend(i for i in bulk_ids if (store.get_invoice(i) or {}).get("status") != REVIEW)
 
             rows.append((f"bulk approve {len(bulk_ids)}", *timed(bulk, 1)))
         finally:
             sqlite3.connect = _real_connect
+        approved = [i for i in bulk_ids if (store.get_invoice(i) or {}).get("status") != REVIEW]
         total = len(store.invoice_columns(("id",)))
-        print(f"database: {total} invoices (built in {built:.1f} s); bulk approval approved {len(set(approved))}")
+        print(f"database: {total} invoices (built in {built:.1f} s); bulk approval approved {len(approved)}")
         print(f"{'what':<22} {'seconds':>9} {'connections':>12}")
         for name, seconds, connections in rows:
             print(f"{name:<22} {seconds:>9.3f} {connections:>12}")
