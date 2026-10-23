@@ -32,6 +32,12 @@ guides, the bug log (BUGS.md) and decisions (decisions.md). Search the code to f
 - A bug fix starts with a failing test, then the fix, then one line at the end of docs/BUGS.md (format at its top).
   Significant choices go in docs/decisions.md (next D-NN).
 
+## Working here in few steps
+Every step re-reads the whole conversation, so fewer, fuller steps cost less:
+- Put independent lookups in one command (several `grep -n` / `sed -n A,Bp` joined with `;`), and read the lines
+  around a match rather than whole files: `core/store.py` and `capture/reader.py` are ~4,000 lines each.
+- Make the change, then check once with `python scripts/check.py`; don't wait on the whole suite (CI runs it).
+
 ## Run and test
 - Set up: `python -m venv .venv`, activate it, `pip install -e ".[ocr,dev]"` (or double-click `APProcessor.bat` / `APProcessor.command`).
 - Run: `python -m ap_coder serve` (http://127.0.0.1:8501); `python -m ap_coder doctor`; `python scripts/pilot_check.py`.
