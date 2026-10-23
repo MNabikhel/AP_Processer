@@ -14,8 +14,8 @@ guides, the bug log (BUGS.md) and decisions (decisions.md). Search the code to f
   builder). The Azure check is opt-in, off by default.
 - No company data in the repo: the data folder (`private/` or `~/APCoder`) and `.env` are git-ignored.
 - User-facing wording: "pilot tester" for the person running the pilot, never "manager". Plain English.
-- A bug fix starts with a failing test, then the fix, then an entry in docs/BUGS.md. Significant choices go in
-  docs/decisions.md (next D-NN).
+- A bug fix starts with a failing test, then the fix, then one line at the end of docs/BUGS.md (format at its top).
+  Significant choices go in docs/decisions.md (next D-NN).
 
 ## Run and test
 - Set up: `python -m venv .venv`, activate it, `pip install -e ".[ocr,dev]"` (or double-click `APProcessor.bat` / `APProcessor.command`).
