@@ -118,7 +118,8 @@ def _approved(store: Store, path: Path, description: str, code: str, proposed: s
     output = {"vendor_name": VENDOR, "invoice_number": path.stem, "invoice_date": "2026-08-21", "currency": "CAD",
               "subtotal": 400.0, "tax_lines": [{"tax_type": "GST", "province": "", "rate": 0.05,
                                                 "taxable_amount": 400.0, "tax_amount": 20.0}],
-              "tax_total": 20.0, "grand_total": 420.0, "line_items": [line], "ship_to_province": "BC"}  # fmt: skip
+              "tax_total": 20.0, "grand_total": 420.0, "line_items": [line], "ship_to_province": "BC",
+              "pst_registration_number": "PST-1234-5678"}  # fmt: skip
     was = line_tax.parse_code(proposed)
     assert was is not None
     ai = {**output, "line_items": [{**line, "taxes_applied": was[0], "tax_exempt": was[1], "tax_status": was[2]}]}

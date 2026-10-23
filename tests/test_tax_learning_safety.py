@@ -55,6 +55,7 @@ def test_a_learned_pst_exemption_is_not_used_when_the_vendor_does_not_collect_ps
     taxes = [_tax("GST", 0.05, 300.0)]
     done = prefill(lines, taxes, vendor_collects=False, learned=["GST~PST", ""]).lines
     assert tax_code_of(done[0]) == "GST" and _self_assessed(done, taxes) == 300.0
+    assert tax_guessed(done[0]) and not tax_guessed(done[1])  # the history says exempt: a person looks
     # S9: a printed "G" takes no exemption from the history either.
     printed = prefill(lines, taxes, printed=["G", "G"], vendor_collects=False, learned=["GST~PST", ""]).lines
     assert tax_code_of(printed[0]) == "GST"
@@ -73,6 +74,13 @@ def test_an_out_of_province_vendor_and_a_quebec_vendor_without_a_qst_number_owe_
                    "2026-09-01", supplier_province="QC", qst_number="", feedback=paper,
                    vendor="Fournitures Laval")  # fmt: skip
     assert tax_code_of(qc[0]) == "GST"
+    # A vendor that never collected it (no number, no QST on any invoice approved): its own approvals teach it,
+    # and a person still looks (TAX_EXEMPTION_LEARNED, B-766).
+    never = [{**r, "tax_uncollected": "QST"} for r in paper]
+    alike = tax_codes(_lines(("Papier photocopie", 100.0), ("Toner", 100.0)), [_tax("GST", 0.05, 200.0)], [], "", "QC",
+                      "2026-09-01", supplier_province="QC", qst_number="", feedback=never,
+                      vendor="Fournitures Laval")  # fmt: skip
+    assert tax_code_of(alike[0]) == "GST~QST" and tax_learned(alike[0]) and not tax_guessed(alike[0])
     with_number = tax_codes(_lines(("Papier photocopie", 100.0), ("Toner", 100.0)), [_tax("GST", 0.05, 200.0)], [],
                             "", "QC", "2026-09-01", supplier_province="QC", qst_number="1234567890TQ0001",
                             feedback=paper, vendor="Fournitures Laval")  # fmt: skip

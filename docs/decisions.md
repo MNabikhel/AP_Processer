@@ -607,3 +607,21 @@ that is reversed keeps its line, marked "replaced by D-NN".
   (`lesson_approvals`). One still corrected as often after 3 invoices or more is suggested for retiring, never retired
   on its own. Why: a lesson that doesn't help still costs a line of every prompt, and only a person knows whether the
   vendor changed. (`ai/lessons.py` `effect`, `Store.lesson_history`; `tests/test_lessons.py`)
+- **D-80** · Safety rules of learned line tax codes (D-70): a learned code may save typing, but never silently drops a
+  tax that is due and never removes a reason for a person to look. (1) Only votes from the same place of supply
+  (`feedback.tax_province`) and the same collection by the vendor (`tax_uncollected`: out of province, or no PST/QST
+  number and none charged): an exemption learned while the vendor collected the tax is not used once it does not
+  (B-715 applies: due). (2) An exemption (`~`, Exempt, Zero-rated, Out of scope) is learned only from the same words
+  (numbers and units aside); a taxed code from words alike, never across "non"/"not"/"no"; never from a generic
+  description ("Misc", "Services"). (3) Votes are a person's decisions: a pick on review counts alone; approvals as
+  proposed count from 2 invoices approved on different days; a learned code or a guess kept unchanged, and a bulk
+  approval, record no code; approvals stored before `tax_exempt` existed (`legacy`) never vote. One contradiction still
+  vetoes. (4) A learned code that leaves a charged tax on no set of the other lines is dropped and the lines worked out
+  again, marked to check; a line the amounts alone could not decide on keeps its "check it" note. (5) A learned PST/QST
+  exemption says so on the line (TAX_EXEMPTION_LEARNED) and, with TAX_BASE_MISMATCH, EXEMPT_LINE_TAXED and
+  TAX_NOT_ALLOCATED, always sends the invoice to a person. Why: a CPA review found self-assessed PST/QST lost, a BC
+  exemption used in Manitoba, legacy and bulk approvals teaching exemptions, and learned exemptions going touchless.
+  `bench coding`: default 97.7% precision / 96.9% coverage before, 97.8% / 97.1% after; `--realistic` 95.2% / 96.5%
+  before, 95.2% / 94.3% after. Not done: the 50% ITC on meals. (`coding/line_tax.py` `learned_codes`, `tax_vote`,
+  `uncollected`, `prefill`; `core/store/_base.py` `_fill_tax_codes`; `tests/test_tax_learning_safety.py`,
+  `tests/test_tax_learning_votes.py`)

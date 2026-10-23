@@ -45,8 +45,8 @@ from ..schema import as_read
 
 # 10: erp_invoices, 11: coding_rules (by _SCHEMA), 12: currency, 13: credit notes not due,
 # 14: invoice_capture, supplier_profiles, supplier_outcomes (by _SCHEMA), 15: reader_outcomes, page_reads (by _SCHEMA),
-# 16: bank_accounts, our company's bank accounts (by _SCHEMA, D-66), 17: feedback.final_tax_code, tax_source and
-# tax_province (filled from the approved invoices, D-70, D-80) and template_snapshots (by _SCHEMA)
+# 16: bank_accounts, our company's bank accounts (by _SCHEMA, D-66), 17: feedback.final_tax_code, tax_source,
+# tax_province and tax_uncollected (filled from the approved invoices, D-70, D-80) and template_snapshots (by _SCHEMA)
 SCHEMA_VERSION = 17
 # The one-off clean-ups of the learning memory ``_migrate`` has run on a database (settings.feedback_cleanup): a new
 # clean-up added there changes it, so it runs once on every database.
@@ -130,7 +130,8 @@ CREATE TABLE IF NOT EXISTS feedback (
     vendor_key TEXT NOT NULL, vendor_name TEXT NOT NULL, description TEXT NOT NULL, amount REAL,
     suggested_gl TEXT, final_gl TEXT NOT NULL, suggested_cc TEXT, final_cc TEXT,
     outcome TEXT NOT NULL, reviewer TEXT, created_at TEXT NOT NULL, final_tax_code TEXT NOT NULL DEFAULT '',
-    tax_source TEXT NOT NULL DEFAULT '', tax_province TEXT NOT NULL DEFAULT '');
+    tax_source TEXT NOT NULL DEFAULT '', tax_province TEXT NOT NULL DEFAULT '',
+    tax_uncollected TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS feedback_vendor ON feedback (vendor_key);
 CREATE INDEX IF NOT EXISTS invoices_status ON invoices (status);
 CREATE TABLE IF NOT EXISTS events (
@@ -608,7 +609,7 @@ class StoreCore:
         # Who decided it and where the invoice was supplied (D-80) came later in schema 17: a database already at 17
         # without them gets them, and every code filled again (a kept learned code or a guess is no vote).
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(feedback)")}
-        missing = [c for c in ("final_tax_code", "tax_source", "tax_province") if c not in columns]
+        missing = [c for c in ("final_tax_code", "tax_source", "tax_province", "tax_uncollected") if c not in columns]
         for column in missing:
             conn.execute(f"ALTER TABLE feedback ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
         if missing:
@@ -625,7 +626,7 @@ class StoreCore:
         """The tax code of each approved line's feedback row, who decided it and where the invoice was supplied, from
         its invoice's approved coding and what was proposed (schema 17, ``line_tax.tax_vote``). A line approved before
         ``tax_exempt`` existed keeps its exemption only as a contradiction, never a vote (``LEGACY``, B-765)."""
-        from ...coding.line_tax import supply_province, tax_vote
+        from ...coding.line_tax import invoice_uncollected, supply_province, tax_vote
 
         found = conn.execute("SELECT value FROM settings WHERE key = 'our_province'").fetchone()
         ours = str(found[0] if found else "").strip().upper()
@@ -644,15 +645,16 @@ class StoreCore:
             lines = [li for li in final.get("line_items") or [] if isinstance(li, dict)]
             proposed = [li for li in ai.get("line_items") or [] if isinstance(li, dict)]
             province = supply_province(final, ours)
+            uncollected = "+".join(invoice_uncollected(ai if proposed else final, province))
             votes = {
                 li.get("line_number"): tax_vote(was, li, proposed, ai.get("tax_lines") or [], lines,
                                                 final.get("tax_lines") or [], bulk=r["id"] in bulk)
                 for was, li in pair_lines(proposed, lines)
             }  # fmt: skip
             conn.executemany(
-                "UPDATE feedback SET final_tax_code = ?, tax_source = ?, tax_province = ? "
+                "UPDATE feedback SET final_tax_code = ?, tax_source = ?, tax_province = ?, tax_uncollected = ? "
                 "WHERE invoice_id = ? AND line_number = ?",
-                [(code, source, province, r["id"], number) for number, (code, source) in votes.items()],
+                [(code, source, province, uncollected, r["id"], number) for number, (code, source) in votes.items()],
             )
 
     @staticmethod

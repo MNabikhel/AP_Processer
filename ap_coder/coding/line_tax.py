@@ -636,12 +636,14 @@ def prefill(
     rate_for: Callable[[str, str], float | None] | None = None,
     vendor_collects: bool | Mapping[str, bool] = True,
     learned: Sequence[str] | None = None,
+    learned_alike: bool = False,
 ) -> Prefill:
     """Each line's tax code (``_prefill``), with what AP approved before (``learned``) used only where it is safe
     (D-80): a learned code that leaves a tax charged on no set of the other lines (the vendor charged it on this
     line this time) is dropped and the lines worked out again; and a line the amounts alone could not decide on keeps
     its "check it" note (``GUESS_NOTE``), learned code or not: the history may say which lines, a person confirms."""
-    args = dict(printed=printed, legend=legend, keep=keep, rate_for=rate_for, vendor_collects=vendor_collects)
+    args = dict(printed=printed, legend=legend, keep=keep, rate_for=rate_for, vendor_collects=vendor_collects,
+                learned_alike=learned_alike)  # fmt: skip
     if not any(learned or ()):
         return _prefill(lines, tax_lines, **args)
     alone = _prefill(lines, tax_lines, **args)
@@ -681,6 +683,7 @@ def _prefill(
     rate_for: Callable[[str, str], float | None] | None = None,
     vendor_collects: bool | Mapping[str, bool] = True,
     learned: Sequence[str] | None = None,
+    learned_alike: bool = False,
 ) -> Prefill:
     """Each line's tax code, worked out (``LineItem``s or dicts; new ones returned, the given ones untouched):
 
@@ -703,10 +706,14 @@ def _prefill(
     ``rate_for(tax_type, province)``: the official rate (effective-dated, for the place of supply), else the tax
     line's own rate is used. ``vendor_collects``: False for a vendor out of the province of supply or without a PST
     number: a PST it charges on other lines and not on a line is then due on it (self-assess), not exempt (B-715);
-    nor is an exemption of it learned from the history used (B-760). Tax by tax ({"PST": False}), or one for both
-    provincial taxes."""
+    nor is an exemption of it learned from the history used (B-760), unless ``learned_alike``: the codes were learned
+    from approvals where the vendor did not collect it either (``learned_codes`` with ``uncollected``). Tax by tax
+    ({"PST": False}), or one for both provincial taxes."""
 
     def collects(tax_type: str) -> bool:
+        return learned_alike or collects_now(tax_type)
+
+    def collects_now(tax_type: str) -> bool:
         if isinstance(vendor_collects, Mapping):
             return bool(vendor_collects.get(tax_type, True))
         return bool(vendor_collects)
@@ -729,6 +736,7 @@ def _prefill(
             codes[k], how[k] = read, "printed"
     # What AP approved on the vendor's similar lines, for the lines nothing printed says (D-70).
     learned_exempt: dict[int, list[str]] = {}
+    disputed: set[int] = set()
     for k, code in enumerate(list(learned or [])[:n]):
         parsed = parse_code(code) if code and k not in keep else None
         if parsed is None or not set(parsed[0]) <= set(charged):
@@ -736,15 +744,19 @@ def _prefill(
         taxes, exempt, status = parsed
         # A vendor that does not collect a provincial tax: it is due where it is not charged (B-715), whatever was
         # approved on the vendor's lines before, when it did (or seemed to): the exemption of it is not used (B-760).
+        # The history and that rule disagree: a person looks ("check it").
         if status in (EXEMPT, ZERO_RATED) and not all(collects(t) for t in PROVINCIAL):
+            disputed.add(k)
             continue
+        if any(t in PROVINCIAL and not collects(t) for t in exempt):
+            disputed.add(k)
         exempt = [t for t in exempt if t not in PROVINCIAL or collects(t)]
         if codes[k] is None:
             codes[k], how[k] = (taxes, status), "learned"
             learned_exempt[k] = exempt
         elif how[k] == "printed" and codes[k] == (taxes, status):
             learned_exempt[k] = exempt  # printed "G": the PST not charged is exempt, as AP approved it
-    check: set[int] = set()
+    check: set[int] = set(disputed)
     amounts = [float(_get(li, "amount") or 0) for li in items]
     descriptions = [str(_get(li, "description") or "") for li in items]
     free = [k for k in range(n) if codes[k] is None]
@@ -815,12 +827,12 @@ def _prefill(
             # not to: exempt); a tax charged on no line stays due (D-64). Nothing charged on a line while the vendor
             # charges tax on others: an exempt line.
             exempt = [t for t in canadian if t not in taxes]
-            if "PST" in exempt and not collects("PST"):  # out of province, or no PST number: due, not exempt
+            if "PST" in exempt and not collects_now("PST"):  # out of province, or no PST number: due, not exempt
                 exempt.remove("PST")
             if not taxes and canadian and set(exempt) == set(canadian):
                 status, exempt = EXEMPT, []
             # A PST exemption inferred, not printed: a person confirms it (exempt, or missed and to self-assess).
-            if "PST" in canadian and "PST" not in taxes and collects("PST") and how[k] != "printed":
+            if "PST" in canadian and "PST" not in taxes and collects_now("PST") and how[k] != "printed":
                 reason = str(_get(items[k], "reasoning_justification") or "")
                 note = inferred_note(pst_name)
                 if note not in reason:
@@ -975,11 +987,40 @@ def tax_vote(
     return code, APPROVED
 
 
-def learned_codes(lines: Sequence[Any], feedback: Iterable[dict[str, Any]], vendor: str, province: str) -> list[str]:
+def uncollected(province: str, supplier_province: str | None, pst_number: str | None, qst_number: str | None,
+                tax_lines: Iterable[Any]) -> list[str]:  # fmt: skip
+    """The provincial taxes (of "PST", "QST") a vendor does not collect on an invoice supplied in ``province``: it is
+    out of the province of supply (B-715), or prints no PST (QST) number and charges none of it (B-719: a number not
+    printed says nothing when the vendor charges the tax on other lines). A number ``None``: not known, says nothing.
+    The PST is looked at where the province is not known too."""
+    regime = REGIME.get(province, frozenset())
+    away = bool(supplier_province) and supplier_province != province
+    out = []
+    for tax_type, number in (("PST", pst_number), ("QST", qst_number)):
+        if tax_type not in regime and (regime or tax_type == "QST"):
+            continue
+        charged = any(_get(t, "tax_type") == tax_type and abs(float(_get(t, "tax_amount") or 0)) > 0.004
+                      for t in tax_lines or ())  # fmt: skip
+        if away or (number is not None and not str(number).strip() and not charged):
+            out.append(tax_type)
+    return out
+
+
+def invoice_uncollected(coding: Any, province: str) -> list[str]:
+    """``uncollected`` of an invoice (a dict or an ``InvoiceCoding``) supplied in ``province``."""
+    return uncollected(province, str(_get(coding, "supplier_province") or ""),
+                       str(_get(coding, "pst_registration_number") or ""),
+                       str(_get(coding, "qst_registration_number") or ""), _get(coding, "tax_lines") or [])  # fmt: skip
+
+
+def learned_codes(lines: Sequence[Any], feedback: Iterable[dict[str, Any]], vendor: str, province: str,
+                  uncollected: Iterable[str] = ()) -> list[str]:  # fmt: skip
     """For each line, the tax code the vendor's history agrees on, else "" (D-70, with the safety rules of D-80).
 
     * Only rows of this vendor supplied in the same ``province`` (``tax_province``): a BC exemption says nothing of a
-      Manitoba supply; none at all when the place of supply is unknown.
+      Manitoba supply; none at all when the place of supply is unknown. And only rows where the vendor collected the
+      provincial taxes as it does now (``tax_uncollected``, ``uncollected``): an exemption approved while it charged
+      PST on other lines says nothing once it no longer collects it (B-760).
     * Lines worded alike: the same words (``tax_words``) for a code that says a tax is not due (exempt, zero-rated,
       "GST~PST"); words alike (the coding memory's similarity) for a taxed code, the same negations ("non",
       "not") on both. Never a generic description ("Misc", "Services").
@@ -992,8 +1033,10 @@ def learned_codes(lines: Sequence[Any], feedback: Iterable[dict[str, Any]], vend
 
     key = vendor_key(vendor or "")
     province = str(province or "").strip().upper()
+    context = "+".join(ordered(uncollected))
     past = [r for r in feedback or () if key and province and r.get("vendor_key") == key and r.get("final_tax_code")
             and str(r.get("tax_province") or "").strip().upper() == province
+            and "+".join(ordered(str(r.get("tax_uncollected") or "").split("+"))) == context
             and r.get("tax_source", "") not in (KEPT, GUESSED_KEPT, BULK)]  # fmt: skip
     if not past:
         return [""] * len(lines)

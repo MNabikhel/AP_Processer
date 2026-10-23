@@ -8,7 +8,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-from ap_coder.coding.line_tax import GUESS_NOTE, LEARNED_NOTE, parse_code
+from ap_coder.coding.line_tax import GUESS_NOTE, LEARNED_NOTE, learned_codes, parse_code
 from ap_coder.core.store import SCHEMA_VERSION, Store
 
 from .test_tax_learning_safety import BOOTS, VENDOR, _learn, _lines, _row
@@ -53,6 +53,16 @@ def test_a_code_is_learned_only_from_approvals_of_the_same_place_of_supply():
     assert _learn(boots, BOOTS, province="") == [""]  # the place of supply unknown: nothing learned
     unknown = [{**r, "tax_province": ""} for r in BOOTS]  # a row that does not say where: no vote
     assert _learn(boots, unknown) == [""]
+
+
+def test_a_code_is_learned_only_from_approvals_where_the_vendor_collected_as_it_does_now():
+    """Approved while the vendor charged PST on other lines: says nothing once it no longer collects it (S1c); a
+    vendor that never collected it (a utility with no PST number) learns from its own approvals."""
+    boots = _lines(("Safety boots steel toe", 200.0))
+    assert learned_codes(boots, BOOTS, VENDOR, "BC", ["PST"]) == [""]
+    never = [{**r, "tax_uncollected": "PST"} for r in BOOTS]
+    assert learned_codes(boots, never, VENDOR, "BC", ["PST"]) == ["GST~PST"]
+    assert learned_codes(boots, never, VENDOR, "BC") == [""]
 
 
 # --- 7. Only a person's own decisions are votes (B-764) ---------------------------------------------------------------
@@ -143,7 +153,7 @@ def test_the_backfill_does_not_turn_legacy_approvals_into_learned_exemptions(tmp
                                  "tax_amount": 7.0}], "line_items": lines}  # fmt: skip
         invoice_id = store.add_invoice(tmp_path / f"L{n}.pdf", output, None)
         store.approve_invoice(invoice_id, json.loads(json.dumps(output)), "Clerk")
-    _drop_columns(path, "final_tax_code", "tax_province", "tax_source", version="16")
+    _drop_columns(path, "final_tax_code", "tax_province", "tax_source", "tax_uncollected", version="16")
     rows = sorted(Store(path).feedback_rows(), key=lambda r: r["id"])
     assert [(r["description"], r["final_tax_code"], r["tax_source"], r["tax_province"]) for r in rows] == [
         ("Electrician - labour", "GST~PST", "legacy", "BC"),
@@ -159,7 +169,7 @@ def test_a_database_at_17_without_the_new_columns_gets_them(tmp_path):
     path = tmp_path / "branch.db"
     store = Store(path)
     _approve(store, tmp_path / "A.pdf", "Electrician - labour", "GST", "GST~PST")
-    _drop_columns(path, "tax_province", "tax_source", version="17")
+    _drop_columns(path, "tax_province", "tax_source", "tax_uncollected", version="17")
     upgraded = Store(path)
     assert SCHEMA_VERSION == 17 and upgraded.get_setting("schema_version") == "17"
     assert [(r["final_tax_code"], r["tax_source"], r["tax_province"]) for r in upgraded.feedback_rows()] == [

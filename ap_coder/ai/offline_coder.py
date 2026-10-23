@@ -399,24 +399,16 @@ def tax_codes(lines: list[LineItem], tax_lines: list[TaxLine], flags: list[str],
             return None
         return table.rate_for(tax_type, where if where != OUTSIDE_CANADA else "", on)
 
-    # A vendor out of the province of supply that does not charge the PST on a line: the PST is due on it
-    # (self-assess), not taken as exempt (B-715). A PST number not printed says nothing when the vendor charges PST on
-    # other lines (it collects it; no province requires the number on every invoice): only when it charges none (B-719).
-    # The same for the QST of a Quebec supply: an exemption of it learned from the history is not used either (B-760).
-    away = bool(supplier_province) and supplier_province != province
+    # A vendor out of the province of supply, or without a PST (QST) number that charges none (B-715, B-719): the
+    # provincial tax it does not charge on a line is due (self-assess). The codes learned are only those approved
+    # where the vendor collected the provincial taxes as it does now (B-760).
+    from ..coding.line_tax import uncollected
 
-    def collects(tax_type: str, number: str | None) -> bool:
-        charged = any(t.tax_type == tax_type and abs(t.tax_amount) > 0.004 for t in tax_lines)
-        return not (away or (number is not None and not str(number).strip() and not charged))
-
-    from ..coding.tax import REGIME
-
-    regime = REGIME.get(province, frozenset())
-    vendor_collects = {"PST": collects("PST", pst_number) if "PST" in regime or not regime else True,
-                       "QST": collects("QST", qst_number) if "QST" in regime else True}  # fmt: skip
-    learned = learned_codes(lines, feedback, vendor, province) if feedback and vendor else None
+    missing = uncollected(province, supplier_province, pst_number, qst_number, tax_lines)
+    learned = learned_codes(lines, feedback, vendor, province, missing) if feedback and vendor else None
     return prefill(lines, tax_lines, flags, parse_legend(text), keep=keep or [], rate_for=rate_for,
-                   vendor_collects=vendor_collects, learned=learned).lines  # fmt: skip
+                   vendor_collects={t: t not in missing for t in ("PST", "QST")}, learned=learned,
+                   learned_alike=True).lines  # fmt: skip
 
 
 def _iso_or_empty(value: Any) -> str:
