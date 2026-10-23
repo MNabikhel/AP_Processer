@@ -11,7 +11,7 @@ from typing import Any
 from ...coding import tax as _tax
 from ...coding.tax import DEFAULT_TREATMENTS, TAX_TYPES, TREATMENTS, TaxRateTable, TaxSetup, TaxTreatment
 from ..paths import PROJECT_DIR, default_db_path, find_moved_file, private_dir  # noqa: F401  (re-exported)
-from ..reference_data import ReferenceData, ReferenceTable, parse_policy_notes
+from ..reference_data import ReferenceData, ReferenceTable, marks_meals, parse_policy_notes
 from ._base import (
     ACCOUNT_TABLES,
     EVENT_ORIGIN,
@@ -25,7 +25,7 @@ _REFERENCE: dict[str, tuple[tuple[Any, ...], ReferenceData]] = {}
 _REFERENCE_LOCK = threading.Lock()
 # Everything ``reference_data`` is built from, in one query: compared, it says whether the one kept still holds.
 _REFERENCE_STAMP = """SELECT
-    (SELECT group_concat(code || '|' || description || '|' || category, char(10))
+    (SELECT group_concat(code || '|' || description || '|' || category || '|' || meals, char(10))
      FROM (SELECT * FROM gl_accounts ORDER BY code)),
     (SELECT group_concat(code || '|' || description || '|' || category, char(10))
      FROM (SELECT * FROM cost_centers ORDER BY code)),
@@ -115,12 +115,15 @@ class AccountsMixin:
         replace_all: bool = False,
         actor: str | None = None,
         log: bool = True,
+        meals_column: str | None = None,
     ) -> dict[str, int]:
         """Import rows using the columns the user picked.
 
-        Existing codes are updated, but only in the columns picked: importing codes without a
-        category column keeps the categories already typed in. ``replace_all`` with rows none of which has a code
-        (the wrong column picked) is refused, nothing deleted: it would leave no account to code to.
+        Existing codes are updated, but only in the columns picked: importing codes without a category column keeps
+        the categories already typed in. ``meals_column`` (GL accounts only): the column that marks the meals and
+        entertainment accounts (D-90), "yes", "x", "M&E", "50%"..., blank or "no" for the others. ``replace_all`` with
+        rows none of which has a code (the wrong column picked) is refused, nothing deleted: it would leave no account
+        to code to.
         """
         if table not in ACCOUNT_TABLES:
             raise ValueError(f"unknown table {table!r}")
@@ -143,14 +146,24 @@ class AccountsMixin:
                 seen.add(code)
                 description = _clean_code(row.get(description_column)) if description_column else ""
                 category = _clean_code(row.get(category_column)) if category_column else ""
+                meals = int(marks_meals(row.get(meals_column))) if meals_column and table == "gl_accounts" else 0
                 if code in existing:
-                    changes = {"description": description} if description_column else {}
+                    changes: dict[str, Any] = {"description": description} if description_column else {}
                     if category_column:
                         changes["category"] = category
+                    if meals_column and table == "gl_accounts":
+                        changes["meals"] = meals
                     if changes:
                         sets = ", ".join(f"{column} = ?" for column in changes)
                         conn.execute(f"UPDATE {table} SET {sets} WHERE code = ?", (*changes.values(), code))
                     updated += 1
+                elif table == "gl_accounts":
+                    conn.execute(
+                        "INSERT INTO gl_accounts (code, description, category, created_at, meals) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (code, description, category, _now(), meals),
+                    )
+                    added += 1
                 else:
                     conn.execute(
                         f"INSERT INTO {table} (code, description, category, created_at) VALUES (?, ?, ?, ?)",
@@ -168,12 +181,17 @@ class AccountsMixin:
         if table not in ACCOUNT_TABLES:
             raise ValueError(f"unknown table {table!r}")
         with self._conn() as conn:
+            if table == "gl_accounts":  # with the meals and entertainment flag (D-90)
+                rows = conn.execute("SELECT code, description, category, meals FROM gl_accounts ORDER BY code")
+                return [{**dict(r), "meals": bool(r["meals"])} for r in rows]
             return [dict(r) for r in conn.execute(f"SELECT code, description, category FROM {table} ORDER BY code")]
 
     def save_accounts(self, table: str, rows: list[dict[str, Any]], actor: str | None = None) -> None:
         """Replace the table with ``rows`` (used by the dashboard's editable grid)."""
         before = {r["code"]: r for r in self.list_accounts(table)}
-        self.import_accounts(table, rows, "code", "description", "category", replace_all=True, log=False)
+        meals = "meals" if table == "gl_accounts" else None
+        self.import_accounts(table, rows, "code", "description", "category", replace_all=True, log=False,
+                             meals_column=meals)  # fmt: skip
         after = {r["code"]: r for r in self.list_accounts(table)}
         changed = sorted(c for c in before.keys() | after.keys() if before.get(c) != after.get(c))
         if changed:
@@ -367,6 +385,7 @@ class AccountsMixin:
                 self.tax_treatments(),
                 our_province=self.our_province(),
                 site_provinces=self.site_provinces(),
+                meals_gl_codes=frozenset(r["code"] for r in gl if r.get("meals")),
             ),
             notes=parse_policy_notes(self.get_setting("policy_notes")),
         )

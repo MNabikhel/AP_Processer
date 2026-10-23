@@ -692,3 +692,34 @@ that is reversed keeps its line, marked "replaced by D-NN".
   re-checking on every page load costs ~5 ms an invoice; re-checking on each settings save would be slow on the save
   and miss changes made elsewhere. (`coding/bulk.py` `issues_today`, `sort_for_bulk`, `bulk_approve`;
   `web/pages/review.py` `attention`; `core/store` `checks_stamp`, `check_stamps`, `save_recheck`)
+- **D-90** · Meals and entertainment: 50% of the GST/HST and QST is claimable. Income Tax Act s.67.1 limits meals and
+  entertainment to 50%, and Excise Tax Act s.236 claws back half the input tax credits on them (Quebec's QST Act does
+  the same for the input tax refunds); PST is never recoverable, so it is untouched. **Setting:** a GL account
+  attribute, *Meals & entertainment (50% tax credit)*: a tick box on GL accounts & tax → GL accounts, an optional
+  column at import ("Meals", "M&E": yes, x, 1, M&E, 50% mark it; blank, no, 0, 100% don't), a `meals` column in a
+  chart-of-accounts file (the sample's 6320 has it), a `meals` column in the database (added whatever the schema
+  version, no new SCHEMA_VERSION). **Effect:** on a line coded to such an account, each recoverable GST, HST or QST
+  line's share of tax for that line (spread as PST is, over the lines that carry it, a tip or gratuity line left out:
+  a voluntary tip is not taxed) is halved; the claim is that half cut to the cent, so never more than half (HST 11.37
+  on a dinner: 5.68 claimed, 5.69 expensed), and the rest moves to the line's `non_recoverable_tax` and amount
+  (`meals_tax` on the line and on the tax entry, with `tax_line`, its tax line). The tax amount printed on the invoice
+  is halved, never a rate times the line, so only the tax actually charged on the meal is affected. It flows from
+  `gl_distribution` to the Excel/CSV lines (the tax line reads "recoverable, less 50% on meals"), JD Edwards (the
+  expense line carries the half; VLSTAM and the recoverable tax E1 posts are the claimable part only, VLATXN takes the
+  rest, so gross = taxable + non-taxable + tax and the F0911Z1 lines = gross − claimable tax, pay item by pay item too)
+  and the sales-tax report (the claim is the tax less the half, the claim says "Meals & entertainment: 50% of the tax
+  claimable", the page and CSV give the amount and the law). With **gross amounts only**, E1 works out the tax itself
+  and would claim all of it: a warning (`JDE_MEALS_GROSS`), not a blocker, says to send taxable / tax amounts. How E1
+  splits VLSTAM by explanation code C (GST + PST) with a meals line is to be confirmed with the JDE team. An invoice
+  approved before keeps what it posted (its stored distribution). **Timing:** in law, the 50% is added back to net tax
+  in the return for the last period of the fiscal year (ETA s.236(1)); claiming half as each invoice is approved gives
+  the same net tax for the year (a little less claimed earlier) and is common practice: confirm with your accountant.
+  **Exceptions, where 100% is allowed** (ITA s.67.1(2), mirrored by s.236): meals billed to a client and shown on the
+  bill; a business that sells meals; meals that are a taxable benefit to the employee; up to six events a year open to
+  all staff at a place of business (e.g. the holiday party); fundraising events of a registered charity; long-haul
+  truck drivers get 80%. AP Coder has no per-line switch (it would need a new line field, its learning and the
+  exports): set up a second GL account without the tick (e.g. "Meals billed to clients", "Staff events") and code
+  those lines to it. **Review screen:** a line coded to a meals account says "Meals: 50% of the GST/HST is claimable"
+  ("GST and QST" in Quebec), following the GL account as it is changed. (`coding/tax.py` `meals_parts`,
+  `build_gl_distribution`; `core/store/accounts.py`, `core/reference_data.py`; `web/pages/accounts.py`;
+  `erp/jde.py` `_prepare`, `voucher_rows`, `voucher_findings`; `coding/taxreturn.py`; `tests/test_meals.py`)

@@ -27,7 +27,8 @@ def load_sample_setup(store: Store, data_dir: Path = SAMPLE_DATA_DIR, cost_cente
     for table, filename, code_col in tables:
         with (data_dir / filename).open(encoding="utf-8-sig", newline="") as fh:
             rows = list(csv.DictReader(fh))
-        store.import_accounts(table, rows, code_col, "description", "category")
+        meals = "meals" if table == "gl_accounts" and rows and "meals" in rows[0] else None  # D-90
+        store.import_accounts(table, rows, code_col, "description", "category", meals_column=meals)
     with (data_dir / "tax_gl_mapping.csv").open(encoding="utf-8-sig", newline="") as fh:
         for row in csv.DictReader(fh):
             store.set_tax_treatment(row["tax_type"], row["treatment"], row.get("gl_code") or "")

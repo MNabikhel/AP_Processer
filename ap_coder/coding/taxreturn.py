@@ -10,7 +10,8 @@
   not match)
 
 Credit notes reduce the claim. Invoices still in review or waiting for a second approval are counted
-separately, not claimed.
+separately, not claimed. On meals and entertainment only half the tax is claimed (ITA s.67.1, ETA s.236 and Quebec's
+QST Act alike, D-90): the other half was expensed with the line when the invoice was approved, and the report says so.
 """
 
 from __future__ import annotations
@@ -64,6 +65,12 @@ NO_QST_NUMBER = "No valid QST number"
 GST_CHECK_DIGIT = "GST/HST number fails the CRA check digit"
 FOREIGN = "Foreign currency: convert to CAD"
 NOT_EXPORTED = "Not exported yet"
+# Half the tax on meals and entertainment is not claimable (D-90): a reason the claim is less than the tax, not a risk.
+MEALS = "Meals & entertainment: 50% of the tax claimable"
+MEALS_WHY = (
+    "Only 50% of the GST/HST and QST paid on meals and entertainment is claimable (Income Tax Act s.67.1, Excise Tax "
+    "Act s.236, and Quebec's QST Act alike): the other 50% was expensed with the meal when the invoice was approved."
+)
 RISKS = {NO_GST_NUMBER, NO_QST_NUMBER, GST_CHECK_DIGIT, GST_NOT_PRINTED, QST_NOT_PRINTED, FOREIGN}
 
 
@@ -81,6 +88,7 @@ class Claim:
     amount: float
     registration: str
     issues: list[str] = field(default_factory=list)
+    meals: float = 0.0  # the tax on meals not claimed (D-90): ``amount`` is what is claimed
 
     @property
     def group(self) -> str:
@@ -108,6 +116,16 @@ class Report:
         for c in self.claims:
             totals[(c.tax_type, c.province, c.rate, c.currency)] += c.amount
         return [(t, p, r, cur, round(v, 2)) for (t, p, r, cur), v in sorted(totals.items())]
+
+    def meals_totals(self) -> dict[str, float]:
+        """{"GST/HST": …, "QST": …}: the tax on meals and entertainment not claimed (CAD and other currencies alike,
+        as the claims list them), only the taxes that have some."""
+        out: dict[str, float] = {}
+        for c in self.claims:
+            if c.meals:
+                key = "QST" if c.tax_type == "QST" else "GST/HST"
+                out[key] = round(out.get(key, 0.0) + c.meals, 2)
+        return out
 
     def at_risk(self) -> list[Claim]:
         """Claims to check before filing (not exporting to the ERP yet is only a reconciliation note)."""
@@ -182,13 +200,18 @@ def build(store: Store, start: dt.date, end: dt.date, treatments: dict[str, TaxT
         doc = r["final_output"]
         currency = str(doc.get("currency") or "CAD").upper()
         total = float(doc.get("grand_total") or 0)
-        for tl in doc.get("tax_lines") or []:
+        meals = meals_by_tax_line(doc)
+        for position, tl in enumerate(doc.get("tax_lines") or []):
             tax_type = str(tl.get("tax_type") or "").upper()
             amount = round(float(tl.get("tax_amount") or 0), 2)
             if tax_type not in GROUPS or abs(amount) < 0.005 or not recoverable(tax_type):
                 continue
+            not_claimed = meals.get(position, 0.0)
+            amount = round(amount - not_claimed, 2)
             number, issue = _registration_issue(tax_type, doc)
             issues = [issue] if issue and abs(total) >= document_threshold(date) else []
+            if not_claimed:
+                issues.append(MEALS)
             if currency != "CAD":
                 issues.append(FOREIGN)
             if r["export_batch"] is None:
@@ -207,11 +230,25 @@ def build(store: Store, start: dt.date, end: dt.date, treatments: dict[str, TaxT
                     amount,
                     number,
                     issues,
+                    not_claimed,
                 )  # fmt: skip
             )
     claims.sort(key=lambda c: (c.invoice_date, c.invoice_id))
     not_recoverable = [t for t in GROUPS if not recoverable(t)]
     return Report(start, end, claims, not_approved, not_recoverable)
+
+
+def meals_by_tax_line(doc: dict[str, Any]) -> dict[int, float]:
+    """{tax line position: the tax on meals not claimed} as posted when the invoice was approved (its stored GL
+    distribution, D-90): an invoice approved before, or with no meals line, has none."""
+    out: dict[int, float] = {}
+    for e in doc.get("gl_distribution") or []:
+        if isinstance(e, dict) and e.get("kind") == "tax" and e.get("meals_tax") and e.get("tax_line") is not None:
+            try:
+                out[int(e["tax_line"])] = round(out.get(int(e["tax_line"]), 0.0) + float(e["meals_tax"]), 2)
+            except (TypeError, ValueError):
+                continue
+    return out
 
 
 def _charged(tax_line: dict[str, Any]) -> bool:
@@ -338,7 +375,8 @@ def to_csv(report: Report) -> bytes:
     w = csv.writer(out)
     w.writerow([f"Sales tax to claim, invoices dated {report.start.isoformat()} to {report.end.isoformat()}"])
     w.writerow(["Claim", "Tax", "Province", "Rate", "Tax amount", "Currency", "Vendor", "Invoice", "Invoice date",
-                "Invoice total", "Registration number", "AP Coder #", "To check"])  # fmt: skip
+                "Invoice total", "Registration number", "AP Coder #", "To check",
+                "Not claimed: meals & entertainment (50%)"])  # fmt: skip
     for c in report.claims:
         w.writerow(
             csv_row(
@@ -356,9 +394,13 @@ def to_csv(report: Report) -> bytes:
                     c.registration,
                     c.invoice_id,
                     "; ".join(c.issues),
+                    f"{c.meals:.2f}" if c.meals else "",
                 ]
             )  # fmt: skip
         )
+    if any(c.meals for c in report.claims):
+        w.writerow([])
+        w.writerow([MEALS_WHY])
     return ("﻿" + out.getvalue()).encode("utf-8")
 
 

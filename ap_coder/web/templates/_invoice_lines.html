@@ -36,7 +36,8 @@
     <span class="inv-remark small" data-remark hidden></span></td>
   <td class="c-del"><button type="button" class="icon-btn" data-del-row title="Delete this line" aria-label="Delete this line"><span class="ms" aria-hidden="true">delete</span></button></td>
   <td data-label="GL account" class="c-gl{% if row.guessed %} is-guess{% endif %}"><select name="line_gl" form="inv" aria-label="{{ line_label(row, 'GL account') }}" data-gl data-picker data-picker-noun="account" data-picker-line data-options="gl-options" data-groups="gl">{{ few(g.gl_labels, row.predicted_gl_code or "UNASSIGNED") }}</select>
-    {%- if row.guessed %}<span class="inv-guess" title="{{ row.reasoning_justification }}"><span class="ms" aria-hidden="true">help</span>A guess, not learned yet: check it</span>{% endif %}</td>
+    {%- if row.guessed %}<span class="inv-guess" title="{{ row.reasoning_justification }}"><span class="ms" aria-hidden="true">help</span>A guess, not learned yet: check it</span>{% endif %}
+    {%- if g.meals_gls %}<span class="inv-meals small muted" data-meals-note data-meals="{{ g.meals_gls }}"{% if (row.predicted_gl_code or "") not in g.meals_gls.split() %} hidden{% endif %} title="Meals and entertainment: the other 50% of the tax is expensed with the line (D-90)"><span class="ms" aria-hidden="true">restaurant</span>{{ g.meals_note }}</span>{% endif %}</td>
   {% if g.has_cc %}<td class="c-cc" data-label="Cost center"><select name="line_cc" form="inv" aria-label="{{ line_label(row, 'Cost center') }}" data-picker data-picker-noun="cost center" data-picker-line data-options="cc-options">{{ few(g.cc_labels, row.predicted_cost_center or "UNASSIGNED") }}</select></td>{% endif %}
   <td class="c-amt" data-label="Amount"><input type="number" name="line_amount" value="{{ cents(row.amount) }}" step="0.01" form="inv" aria-label="Amount"></td>
   {# The line's tax code (D-64): one choice of what is charged on it where the invoice is supplied ("GST + PST",

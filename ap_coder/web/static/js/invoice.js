@@ -964,6 +964,14 @@ linesGrid?.addEventListener("change", (e) => {
   }
 });
 
+/* ---------- A line coded to a meals account: half its GST/HST is claimable (D-90) ---------- */
+
+linesGrid?.addEventListener("change", (e) => {
+  if (!e.target.matches("[data-gl]")) return;
+  const note = e.target.closest("td")?.querySelector("[data-meals-note]");
+  if (note) note.hidden = !(note.dataset.meals || "").split(" ").includes(e.target.value);
+});
+
 /* ---------- Words picked on the page by dragging a box: what are they? ---------- */
 
 const LINE_COLUMNS = [

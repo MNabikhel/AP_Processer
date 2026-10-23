@@ -20,7 +20,7 @@ from ap_coder.coding.rules import Rule
 from ap_coder.coding.rules import suggest as suggest_rules
 from ap_coder.coding.tax import DEFAULT_RATES_PATH, RATES_FILE, TAX_TYPES, TREATMENTS, TaxRateTable, rates_path
 from ap_coder.core import ui
-from ap_coder.core.reference_data import short_name
+from ap_coder.core.reference_data import meals_column, short_name
 from ap_coder.core.safe import csv_cell
 from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.web.core import (
@@ -64,6 +64,13 @@ _CODE_HINTS = ("gl", "account", "code", "cost", "centre", "center", "saknr", "ko
 _DESC_HINTS = ("desc", "name", "title", "text")
 _CAT_HINTS = ("categ", "group", "type", "class")
 IMPORT_FIELDS = {"code": "Code column", "description": "Description column", "category": "Category column (optional)"}
+# GL accounts only: the column marking the meals and entertainment accounts (D-90).
+MEALS_FIELD = {"meals": "Meals & entertainment column (optional: yes, x or M&E marks the 50% tax credit)"}
+MEALS_LABEL = "Meals & entertainment (50% tax credit)"
+
+
+def import_fields(table: str) -> dict[str, str]:
+    return {**IMPORT_FIELDS, **MEALS_FIELD} if table == "gl_accounts" else IMPORT_FIELDS
 
 
 def guess(columns: list[str], hints: tuple[str, ...]) -> str:
@@ -79,6 +86,7 @@ def table_for(table: str) -> tuple[str, str]:
 
 def accounts_csv_bytes(rows: list[dict[str, Any]]) -> bytes:
     """The list as a CSV download (cells made safe for Excel, UTF-8 with a BOM)."""
+    rows = [{**r, "meals": "yes" if r["meals"] else ""} if "meals" in r else r for r in rows]  # imported back (D-90)
     df = pd.DataFrame(rows, columns=["code", "description", "category"]) if not rows else pd.DataFrame(rows)
     return df.map(csv_cell).to_csv(index=False).encode("utf-8-sig")
 
@@ -98,7 +106,9 @@ def account_context(store: Store, table: str, file: str, sheet: str) -> dict[str
                 "description": guess(columns, _DESC_HINTS),
                 "category": guess(columns, _CAT_HINTS),
             }
-            imp = sheet_context(file, upload, df, sheets, sheet, IMPORT_FIELDS, guessed, ("code",))
+            if table == "gl_accounts":
+                guessed["meals"] = meals_column([str(c) for c in columns])
+            imp = sheet_context(file, upload, df, sheets, sheet, import_fields(table), guessed, ("code",))
         except SheetError as exc:
             imp_error = str(exc)
     counts = Counter(r["category"] or "Uncategorised" for r in rows)
@@ -109,6 +119,8 @@ def account_context(store: Store, table: str, file: str, sheet: str) -> dict[str
         "version": page_version(rows),  # posted with the grid (B-655)
         "blank": BLANK_ROWS,
         "categories": counts.most_common(),
+        "meals": table == "gl_accounts",  # the meals and entertainment column (D-90)
+        "meals_label": MEALS_LABEL,
         "imp": imp,
         "imp_error": imp_error,
     }
@@ -383,7 +395,7 @@ async def accounts_import(request: Request, table: str) -> JSONResponse:
     if df.empty:
         return refuse("This file has no rows under its header line.")
     columns = list(df.columns)
-    picked = {f: str(form.get(f"col_{f}") or "") for f in IMPORT_FIELDS}
+    picked = {f: str(form.get(f"col_{f}") or "") for f in import_fields(table)}
     picked = {f: c if c in columns else "" for f, c in picked.items()}
     if not picked["code"]:
         return refuse(f"Pick the column with the {noun} code.")
@@ -396,6 +408,7 @@ async def accounts_import(request: Request, table: str) -> JSONResponse:
             picked["category"] or None,
             replace_all=bool(form.get("replace")),
             actor=reviewer(),
+            meals_column=picked.get("meals") or None,
         )
     except ValueError as exc:  # a replace with no code in any row: nothing was changed
         return refuse(str(exc))
@@ -419,6 +432,7 @@ async def accounts_save(request: Request, table: str) -> JSONResponse:
         return stale
     codes, descriptions, categories = form.getlist("code"), form.getlist("description"), form.getlist("category")
     deleted = {str(d) for d in form.getlist("delete")}
+    meals = {str(m) for m in form.getlist("meals")}  # the rows ticked "Meals & entertainment" (D-90)
     keep, removed = [], 0
     for n, code in enumerate(codes):
         code = str(code).strip()
@@ -432,6 +446,7 @@ async def accounts_save(request: Request, table: str) -> JSONResponse:
                 "code": code,
                 "description": str(descriptions[n] if n < len(descriptions) else "").strip(),
                 "category": str(categories[n] if n < len(categories) else "").strip(),
+                **({"meals": str(n) in meals} if table == "gl_accounts" else {}),
             }
         )
     seen = Counter(r["code"] for r in keep)

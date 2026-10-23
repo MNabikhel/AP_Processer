@@ -56,6 +56,7 @@ from ap_coder.coding.tax import (
     PLACE_OF_SUPPLY,
     PROVINCE_NAMES,
     TAX_TYPES,
+    meals_note,
     place_of_supply,
     province_label,
     stored_supply,
@@ -738,6 +739,9 @@ def grid(reference: ReferenceData, draft: Draft, ai: dict[str, Any] | None = Non
         "tax_labels": {t: TAX_LABELS.get(t, t) for t in TAX_TYPES},
         "tax_provinces": tax_province_options(),
         "has_cc": reference.cost_centers is not None,
+        # The GL accounts marked meals and entertainment, and the note on a line coded to one (D-90).
+        "meals_gls": " ".join(sorted(getattr(reference.tax, "meals_gl_codes", ()) or ())),
+        "meals_note": meals_note(codes["province"]),
     }
 
 

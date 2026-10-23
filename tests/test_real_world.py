@@ -238,7 +238,7 @@ def test_import_without_a_category_column_keeps_existing_categories(tmp_path):
     store.import_accounts("gl_accounts", [{"c": "6000", "d": "Office", "k": "Opex"}], "c", "d", "k")
     store.import_accounts("gl_accounts", [{"c": "6000", "d": "Office supplies"}], "c", "d", None)
     assert store.list_accounts("gl_accounts") == [
-        {"code": "6000", "description": "Office supplies", "category": "Opex"}
+        {"code": "6000", "description": "Office supplies", "category": "Opex", "meals": False}  # (D-90)
     ]
 
 

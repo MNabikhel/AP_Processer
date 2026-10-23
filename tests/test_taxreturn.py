@@ -40,6 +40,8 @@ def test_hst_gst_and_qst_with_a_credit_note(tmp_path):
     assert (bc["invoice_number"], "PST") not in tax  # PST is not recoverable
     gst_hst = sum(t["tax_amount"] for d in (nw, cn, bc, qc) for t in d["tax_lines"] if t["tax_type"] in ("GST", "HST"))
     qst = sum(t["tax_amount"] for t in qc["tax_lines"] if t["tax_type"] == "QST")
+    gst_hst -= 63.75  # half the GST and QST on the Montreal client cocktail (6320, meals) is not claimable (D-90)
+    qst -= 127.18
     totals = report.totals()
     assert totals[taxreturn.ITC] == {"CAD": round(gst_hst, 2)}
     assert totals[taxreturn.ITR] == {"CAD": round(qst, 2)} and qst > 0
@@ -69,8 +71,9 @@ def test_claims_to_check(tmp_path):
     report = taxreturn.build(store, *YEAR)
     issues = {(c.invoice_id, c.tax_type): c.issues for c in report.claims}
     assert issues[(a, "GST")] == [taxreturn.NO_GST_NUMBER]
-    assert issues[(b, "QST")] == [taxreturn.NO_QST_NUMBER, taxreturn.NOT_EXPORTED]
-    assert issues[(b, "GST")] == [taxreturn.NOT_EXPORTED]  # not exported alone is not a risk
+    # (its client cocktail is coded to meals: half its tax is not claimed, a reason, not a risk: D-90)
+    assert issues[(b, "QST")] == [taxreturn.NO_QST_NUMBER, taxreturn.MEALS, taxreturn.NOT_EXPORTED]
+    assert issues[(b, "GST")] == [taxreturn.MEALS, taxreturn.NOT_EXPORTED]  # not exported alone is not a risk
     assert {(c.invoice_id, c.tax_type) for c in report.at_risk()} == {(a, "GST"), (b, "QST")}
 
 
@@ -88,7 +91,8 @@ def test_a_number_from_the_vendor_list_is_a_claim_at_risk(tmp_path):
     store.approve_invoice(invoice_id, output, "Jane")
     store.create_export_batch([invoice_id], "csv")
     issues = {c.tax_type: c.issues for c in taxreturn.build(store, *YEAR).claims}
-    assert issues == {"GST": [taxreturn.GST_NOT_PRINTED], "QST": [taxreturn.QST_NOT_PRINTED]}
+    assert issues == {"GST": [taxreturn.GST_NOT_PRINTED, taxreturn.MEALS],
+                      "QST": [taxreturn.QST_NOT_PRINTED, taxreturn.MEALS]}  # fmt: skip
     assert len(taxreturn.build(store, *YEAR).at_risk()) == 2
     assert InvoiceCoding.model_validate({k: v for k, v in output.items() if k != "gl_distribution"})  # still a coding
 

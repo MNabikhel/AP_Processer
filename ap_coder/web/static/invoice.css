@@ -237,6 +237,9 @@
 .inv-grid-table .is-guess select {border-color: var(--lg-warning); background: var(--lg-warning-weak);}
 .inv-guess {display: flex; align-items: center; gap: 3px; margin-top: 2px; font-size: 11px; line-height: 14px; color: var(--lg-warning);}
 .inv-guess .ms {font-size: 13px;}
+.inv-meals {display: flex; align-items: center; gap: 3px; margin-top: 2px; font-size: 11px; line-height: 14px;}
+.inv-meals[hidden] {display: none;}
+.inv-meals .ms {font-size: 13px;}
 .inv-split-pop {width: min(560px, 92vw);}
 .inv-split-pop .field select {width: 100%;}
 .inv-parts td {padding: 4px 6px; height: auto;}

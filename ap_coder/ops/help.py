@@ -73,6 +73,14 @@ CHECKS: dict[str, CheckHelp] = {
         "Nothing to do for a reference. For a PO-matched voucher, type the PO number as JD Edwards has it (its order "
         "number, 8 characters or fewer).",
     ),
+    "JDE_MEALS_GROSS": CheckHelp(
+        ERP, "JD Edwards would claim all the tax on meals",
+        "Only half the GST/HST and QST on meals and entertainment is claimable; AP Coder puts the other half in the "
+        "meal's expense line (D-90). With gross amounts only, JD Edwards works out the tax itself and would claim all "
+        "of it, so the voucher would not balance in JD Edwards. A warning: the invoice can be approved.",
+        "Ask the pilot tester to send the taxable and tax amounts (Settings → JD Edwards E1 → Amounts), or to post "
+        "the half by hand in JD Edwards.",
+    ),
     "JDE_DATE_RANGE": CheckHelp(
         ERP, "Date JD Edwards can't hold",
         "JD Edwards dates run from 1900 to 2899: this date is outside them (usually a typo in the year).",

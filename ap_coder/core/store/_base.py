@@ -122,7 +122,7 @@ _SNAPSHOTS_SCHEMA = (
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS gl_accounts (
     code TEXT PRIMARY KEY, description TEXT NOT NULL DEFAULT '', category TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL);
+    created_at TEXT NOT NULL, meals INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS cost_centers (
     code TEXT PRIMARY KEY, description TEXT NOT NULL DEFAULT '', category TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL);
@@ -633,6 +633,10 @@ class StoreCore:
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (FEEDBACK_CLEANUP,),
             )
+        # A GL account can be marked "Meals & entertainment (50% tax credit)" (D-90; looked for whatever the version).
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(gl_accounts)")}
+        if columns and "meals" not in columns:
+            conn.execute("ALTER TABLE gl_accounts ADD COLUMN meals INTEGER NOT NULL DEFAULT 0")
         # Each approved line remembers its tax code, learned from like its GL account (D-70): filled in from the
         # approved invoices (looked for whatever the version, like the columns above).
         # Who decided it and where the invoice was supplied (D-80) came later in schema 17: a database already at 17

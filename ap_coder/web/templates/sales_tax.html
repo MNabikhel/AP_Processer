@@ -22,6 +22,14 @@
   page if your company claims it.</p>
 {% endif %}
 
+{% set meals = report.meals_totals() %}
+{% if meals %}
+<p class="muted small"><span class="ms" aria-hidden="true">restaurant</span> Not claimed on meals and entertainment:
+  {% for tax, amount in meals.items() %}{{ tax }} {{ amount | money }}{{ "; " if not loop.last }}{% endfor %}. Only 50% of the
+  GST/HST and QST paid on meals and entertainment is claimable (Income Tax Act s.67.1, Excise Tax Act s.236, and Quebec's
+  QST Act alike): the other 50% was expensed with the meal when the invoice was approved.</p>
+{% endif %}
+
 {% if not report.claims %}
 <section class="card">{{ ui.empty_state("Nothing to claim", "No approved invoice dated " ~ start ~ " to " ~ end ~ " has recoverable GST/HST or QST.") }}</section>
 {% else %}
