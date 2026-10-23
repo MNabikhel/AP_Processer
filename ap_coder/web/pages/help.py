@@ -48,9 +48,10 @@ SHORTCUT_ROWS = [
     # The review screen's menus and its last change (D-60), also in its own Shortcuts list
     ("[Shift] + [F10]", "More options for a field, a line or the page (or right-click)"),
     ("[Ctrl] + [Z]", "Undo the last change (a line deleted, a value cleared)"),
-    ("[Ctrl] + [D]", "In a line: copy the coding of the line above"),
-    ("[Alt] + [Enter]", "In a line: insert a line below"),
-    ("[Alt] + [Delete]", "In a line: delete it (Ctrl+Z puts it back)"),
+    (
+        "[Ctrl] + [D] · [Alt] + [Enter] · [Alt] + [Delete]",
+        "In a line: copy the coding above · insert a line below · delete it",
+    ),
     ("[P]", "Park: opens Park, to say what it waits for"),
     ("[X]", "Reject: opens Reject, to say why (nothing is rejected until you press it)"),
 ]

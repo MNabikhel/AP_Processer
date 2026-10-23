@@ -557,3 +557,9 @@ html:has(.inv-actionbar) {scroll-padding-bottom: 104px; scroll-padding-top: 12px
   .inv-actionbar-right {flex: none; flex-wrap: nowrap;}
   .inv-actionbar-left .apc-pill.inv-hard {flex: 0 1 auto; min-width: 120px;}
 }
+
+/* The Shortcuts list fits a 768-high laptop screen. */
+.rvw-nav .pop-body .apc-table {width: 100%;}
+.rvw-nav .pop-body .apc-table td {height: auto; padding: 3px 8px; font-size: 12.5px; line-height: 18px;}
+.rvw-nav .pop-body .apc-table td:first-child {white-space: nowrap;}
+.rvw-nav details.pop > .pop-body {width: min(620px, 92vw); max-width: none;}

@@ -514,9 +514,10 @@ def test_in_a_browser_at_1366_the_page_and_the_line_grid_show_together(browser, 
     order = page.evaluate(
         "[...document.querySelectorAll('.inv-split > .col > *')].map((e) => e.className + ' ' + (e.dataset.live || ''))"
     )
-    kinds = [next((k for k in ("inv-checks", "inv-details", "inv-lines", "po", "suggest", "inv-notes") if k in c), c)
-             for c in order]  # fmt: skip
-    assert kinds[:5] == ["inv-checks", "inv-details", "inv-lines", "po", "suggest"], order
+    kinds = [next((k for k in ("inv-checks", "inv-details", "inv-lines", "inv-tax", "inv-posting", "po", "suggest",
+                               "inv-notes") if k in c), c) for c in order]  # fmt: skip
+    # D-76: the tax lines and the posting preview right after the lines (and their Tax check)
+    assert kinds[:7] == ["inv-checks", "inv-details", "inv-lines", "inv-tax", "inv-posting", "po", "suggest"], order
     # The lines are a scroll away, and the page stays beside them (sticky)
     page.evaluate("document.querySelector('#lines').scrollIntoView({block: 'start'})")
     page.wait_for_timeout(300)
