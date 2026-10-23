@@ -46,10 +46,10 @@ def test_two_people_exporting_at_once_never_export_an_invoice_twice(tmp_path, mo
             time.sleep(0.5)  # Bob's export runs now, if nothing holds it back
         return real_now()
 
-    monkeypatch.setattr(store_module, "_now", now_while_ann_exports)
+    monkeypatch.setattr(store_module.purchasing, "_now", now_while_ann_exports)  # export batches
     batch = ann.create_export_batch([invoice_id], "csv", actor="Ann")
     thread.join(10)
-    monkeypatch.setattr(store_module, "_now", real_now)
+    monkeypatch.setattr(store_module.purchasing, "_now", real_now)
     assert len(bob_saw) == 1 and isinstance(bob_saw[0], ValueError)  # Bob waited, then found nothing to export
     assert [(b["id"], b["invoices"]) for b in ann.export_batches()] == [(batch, 1)]
     assert ann.get_invoice(invoice_id)["export_batch"] == batch

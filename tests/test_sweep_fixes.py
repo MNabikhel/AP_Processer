@@ -321,7 +321,7 @@ def test_undated_history_is_not_taught_twice_on_another_day(tmp_path, monkeypatc
     row = {"vendor_name": "Acme", "description": "Janitorial cleaning", "gl_code": "6230", "cost_center": "",
            "amount": 10.0, "date": ""}  # fmt: skip
     store.import_history([row])
-    monkeypatch.setattr(store_module, "_now", lambda: "2099-01-01T00:00:00")
+    monkeypatch.setattr(store_module._base, "_now", lambda: "2099-01-01T00:00:00")  # the log's clock
     assert store.import_history([row])["added"] == 0
 
 

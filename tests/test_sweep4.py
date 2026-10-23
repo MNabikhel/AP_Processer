@@ -92,7 +92,7 @@ def test_invoices_of_an_old_vendor_and_others_in_turn_share_the_suggestion_index
                            "gl_code": "6010", "amount": 100.0, "date": "2025-01-01"}])  # fmt: skip
     store.import_history([{"vendor_name": f"Zenith Freight {i}", "description": f"Freight charge lot {i}",
                            "gl_code": "5100", "amount": 10.0, "date": "2025-06-01"} for i in range(30)])  # fmt: skip
-    monkeypatch.setattr(store_mod, "FEEDBACK_READ", 20)
+    monkeypatch.setattr(store_mod.learning, "FEEDBACK_READ", 20)
     monkeypatch.setattr(suggest, "_MEMORY", suggest.RowsCache())
     builds = []
     build = suggest._build_memory

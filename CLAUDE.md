@@ -12,7 +12,8 @@ guides, the bug log (BUGS.md) and decisions (decisions.md). Search the code to f
 ## Where things live
 - One invoice, start to end: `ai/pipeline.py` (`finalise_coding`); reading: `capture/reader.py`; the schema:
   `core/schema.py`.
-- The database (`Store`): `core/store.py` (approvals `approve_invoice`/`final_approve`, `events`, `SCHEMA_VERSION`).
+- The database (`Store`): the package `core/store/`, one part per subject (list in its `__init__.py`): `invoices.py`
+  (approvals `approve_invoice`/`final_approve`), `_base.py` (schema, `SCHEMA_VERSION`), `accounts.py` (`events`).
   Who the reviewer is: `web/identity.py`.
 - Checks (findings with a code): `coding/validation.py` (`validate_coding` gathers them), payment terms
   `coding/terms.py`, tax `coding/tax.py` (`check_taxes`, `place_of_supply`), the Tax check `coding/taxmath.py`, line
@@ -35,7 +36,7 @@ guides, the bug log (BUGS.md) and decisions (decisions.md). Search the code to f
 ## Working here in few steps
 Every step re-reads the whole conversation, so fewer, fuller steps cost less:
 - Put independent lookups in one command (several `grep -n` / `sed -n A,Bp` joined with `;`), and read the lines
-  around a match rather than whole files: `core/store.py` and `capture/reader.py` are ~4,000 lines each.
+  around a match rather than whole files: `capture/reader.py` is ~3,900 lines.
 - Make the change, then check once with `python scripts/check.py`; don't wait on the whole suite (CI runs it).
 
 ## Run and test

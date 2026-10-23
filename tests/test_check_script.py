@@ -18,7 +18,7 @@ def test_a_module_brings_its_own_tests_and_those_that_import_it():
 
 
 def test_a_widely_imported_module_brings_only_its_own_tests():
-    picked = check.tests_for(["ap_coder/core/store.py"])
+    picked = check.tests_for(["ap_coder/core/store/invoices.py"])  # a part of the store package
     assert picked and all(p.startswith("tests/test_store") for p in picked)
 
 
