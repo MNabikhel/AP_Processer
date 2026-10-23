@@ -630,6 +630,7 @@ class BackgroundReader(threading.Thread):
         super().__init__(name="ap-coder-page-reader", daemon=True)
         self._settings_factory = settings_factory
         self._store_factory = store_factory
+        self._store: Any = None  # the store, built at the first round (a Store() runs the schema and its upgrade)
         self._cache_dir = cache_dir
         self._halt = threading.Event()
         self.current: int | None = None  # the invoice being read now
@@ -664,7 +665,7 @@ class BackgroundReader(threading.Thread):
             pause = IDLE_SECONDS
             try:
                 settings = self._settings_factory()
-                store = self._store_factory()
+                store = self._store = self._store or self._store_factory()  # built once, then reused
                 release_interrupted(store)  # between readings: a mark of this process's is left over too
                 if test_under_way(store):
                     pause = IDLE_SECONDS

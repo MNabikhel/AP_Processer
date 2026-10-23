@@ -681,6 +681,7 @@ class AzureChecker(threading.Thread):
         super().__init__(name="ap-coder-azure-check", daemon=True)
         self._settings_factory = settings_factory
         self._store_factory = store_factory
+        self._store: Any = None  # the store, built at the first round (a Store() runs the schema and its upgrade)
         self._halt = threading.Event()
         self.last: CheckOutcome | None = None
 
@@ -691,7 +692,7 @@ class AzureChecker(threading.Thread):
         while not self._halt.is_set():
             pause = IDLE_SECONDS
             try:
-                store = self._store_factory()
+                store = self._store = self._store or self._store_factory()  # built once, then reused
                 settings = self._settings_factory()
                 if not usable(load_settings(store, settings)):
                     pause = OFF_SECONDS

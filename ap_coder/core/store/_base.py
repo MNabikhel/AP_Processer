@@ -47,6 +47,9 @@ from ..schema import as_read
 # 14: invoice_capture, supplier_profiles, supplier_outcomes (by _SCHEMA), 15: reader_outcomes, page_reads (by _SCHEMA),
 # 16: bank_accounts, our company's bank accounts (by _SCHEMA, D-66)
 SCHEMA_VERSION = 16
+# The one-off clean-ups of the learning memory ``_migrate`` has run on a database (settings.feedback_cleanup): a new
+# clean-up added there changes it, so it runs once on every database.
+FEEDBACK_CLEANUP = "1"
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
@@ -542,18 +545,28 @@ class StoreCore:
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (VENDOR_KEY_RULES,),
             )
-        # Older versions recorded AP Coder's own approvals (nobody checked them) as lessons, counted in the
-        # accuracy: withdrawn whatever the version, as nothing is recorded for them any more.
-        from ...capture.workflow import AUTONOMOUS_REVIEWER
+        # One-off clean-ups of the learning memory, whatever the version: each scans the whole feedback table, so
+        # they run once per database (recorded as settings.feedback_cleanup, like vendor_key_rules), not on every
+        # Store() the background workers make (B-727).
+        row = conn.execute("SELECT value FROM settings WHERE key = 'feedback_cleanup'").fetchone()
+        if (row["value"] if row else "") != FEEDBACK_CLEANUP:
+            # Older versions recorded AP Coder's own approvals (nobody checked them) as lessons, counted in the
+            # accuracy: withdrawn, as nothing is recorded for them any more.
+            from ...capture.workflow import AUTONOMOUS_REVIEWER
 
-        conn.execute("DELETE FROM feedback WHERE reviewer = ?", (AUTONOMOUS_REVIEWER,))
-        # Older versions recorded a GL account filled in where the AI proposed none as a correction: it is the
-        # reviewer's coding (B-650), recounted whatever the version (the learning memory reads both alike).
-        conn.execute(
-            "UPDATE feedback SET outcome = ? WHERE outcome = ? AND suggested_gl IN ('', ?) "
-            "AND COALESCE(suggested_cc, '') IN ('', ?)",
-            (CODED, CORRECTED, UNASSIGNED, UNASSIGNED),
-        )
+            conn.execute("DELETE FROM feedback WHERE reviewer = ?", (AUTONOMOUS_REVIEWER,))
+            # Older versions recorded a GL account filled in where the AI proposed none as a correction: it is the
+            # reviewer's coding (B-650), recounted (the learning memory reads both alike).
+            conn.execute(
+                "UPDATE feedback SET outcome = ? WHERE outcome = ? AND suggested_gl IN ('', ?) "
+                "AND COALESCE(suggested_cc, '') IN ('', ?)",
+                (CODED, CORRECTED, UNASSIGNED, UNASSIGNED),
+            )
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('feedback_cleanup', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (FEEDBACK_CLEANUP,),
+            )
         if version < SCHEMA_VERSION:
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "

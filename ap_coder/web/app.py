@@ -131,12 +131,12 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
             from ap_coder.ai import page_worker
 
             app.state.reader = page_worker.start_background(
-                settings_factory, lambda: Store(store.path), cache_dir=core.cache_dir(store)
+                settings_factory, lambda: store, cache_dir=core.cache_dir(store)
             )
             from ap_coder.ai import azure_check
 
             # The optional Azure check (Settings → Reading): it does nothing while it is off, the default.
-            app.state.azure_checker = azure_check.start_background(settings_factory, lambda: Store(store.path))
+            app.state.azure_checker = azure_check.start_background(settings_factory, lambda: store)
         yield
         for name in ("reader", "azure_checker"):
             worker = getattr(app.state, name, None)
