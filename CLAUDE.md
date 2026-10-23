@@ -16,7 +16,6 @@ guides, the bug log (BUGS.md) and decisions (decisions.md). Search the code to f
 - User-facing wording: "pilot tester" for the person running the pilot, never "manager". Plain English.
 - A bug fix starts with a failing test, then the fix, then an entry in docs/BUGS.md. Significant choices go in
   docs/decisions.md (next D-NN).
-- Old flat module paths (`ap_coder/store.py` and the like) are aliases of the moved modules: edit the real module.
 
 ## Run and test
 - Set up: `python -m venv .venv`, activate it, `pip install -e ".[ocr,dev]"` (or double-click `APProcessor.bat` / `APProcessor.command`).

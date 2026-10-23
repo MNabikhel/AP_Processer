@@ -64,5 +64,8 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
+[tool.ruff.lint.isort]
+known-first-party = ["ap_coder"]  # also its old flat paths (ap_coder.store...), which have no file of their own (D-67)
+
 [tool.ruff.format]
 exclude = ["*.md"]  # code in the docs is laid out for reading (several fields on a line), not formatted

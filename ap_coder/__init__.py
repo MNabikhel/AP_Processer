@@ -37,3 +37,57 @@ def _version() -> str:
 
 
 __version__ = _version()
+
+
+# The old flat module paths (``ap_coder.store``...), from before the modules moved into folders (D-33), still import:
+# each is the one real module under its old name too, so old imports, outside scripts and monkeypatching through an
+# old path all reach it. A table here rather than a file per old path (D-67); first on ``sys.meta_path``, so a stale
+# flat file an older install left behind is never imported in its place.
+_MOVED = {
+    name: package
+    for package, names in {
+        "core": "audit config csvio envfile memory paths reference_data safe schema store ui",
+        "ai": "azure_check evaluation extraction figures history imaging inference labels lessons line_match "
+        "local_llm offline_coder page_reader page_worker pipeline prompts reading suggest training_export verifier",
+        "coding": "bulk po review rules tax taxmath taxreturn terms validation vendor_mail vendors",
+        "erp": "accruals controls directory dupaudit export_layout exports insights jde jde_worksheet recurring "
+        "registers search spend stamp statements",
+        "intake": "inbox mailbox msgfile triage",
+        "ops": "cli demo doctor help offline share_report",
+    }.items()
+    for name in names.split()
+}
+
+
+class _MovedModules:
+    """Finds ``ap_coder.<old name>`` and loads it as the moved module itself (no second copy)."""
+
+    @staticmethod
+    def find_spec(fullname, path=None, target=None):
+        package, _, name = fullname.partition(".")
+        if package != __name__ or name not in _MOVED:
+            return None
+        import importlib.util
+
+        return importlib.util.spec_from_loader(fullname, _MovedModules)
+
+    @staticmethod
+    def create_module(spec):
+        import importlib
+
+        name = spec.name.partition(".")[2]
+        return importlib.import_module(f"{__name__}.{_MOVED[name]}.{name}")
+
+    @staticmethod
+    def exec_module(module):
+        pass  # the moved module ran when it was imported
+
+
+def _install_moved_modules() -> None:
+    import sys
+
+    if not any(getattr(f, "__name__", "") == "_MovedModules" for f in sys.meta_path):
+        sys.meta_path.insert(0, _MovedModules)
+
+
+_install_moved_modules()

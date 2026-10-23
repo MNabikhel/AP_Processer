@@ -472,7 +472,7 @@ Next to the AI coder, AP Coder reads every invoice itself and shows *where* each
 ## Project layout
 
 ```
-ap_coder/            the package; the old flat paths (ap_coder/store.py...) are aliases for one release
+ap_coder/            the package; old flat imports (ap_coder.store...) still work (a table in __init__.py)
   core/              the foundations
     store.py         local SQLite: accounts, tax setup, invoices, feedback, POs, vendors, exports, audit trail
     schema.py        strict JSON Schema + Pydantic mirror
