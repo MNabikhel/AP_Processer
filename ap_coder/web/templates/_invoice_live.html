@@ -230,7 +230,7 @@
 {% macro posting_table(p) -%}
 {% set show_cc = p.rows | selectattr("cc") | list %}{# no cost center on any row (no list: D-53): no empty column #}
 <div class="rvw-gl table-wrap"><table class="apc-table">
-  <thead><tr><th class="c-kind"></th><th class="c-gl">GL account</th>{% if show_cc %}<th class="c-cc">Cost center</th>{% endif %}{% if p.jde %}<th class="c-jde" title="The JD Edwards account the line posts to: business unit . object . subsidiary">JDE account</th>{% endif %}<th class="c-desc">Description</th><th class="r c-net">Net</th><th class="r c-net">Non-rec. tax</th><th class="r c-amt">Amount</th></tr></thead>
+  <thead><tr><th class="c-kind"></th><th class="c-gl">GL account</th>{% if show_cc %}<th class="c-cc">Cost center</th>{% endif %}{% if p.jde %}<th class="c-jde" title="The JD Edwards account the line posts to: business unit . object . subsidiary">JDE account</th>{% endif %}<th class="c-desc">Description</th><th class="r c-net">Net</th><th class="r c-net" title="Non-recoverable tax: the part of the tax posted with the expense">Non-rec. tax</th><th class="r c-amt">Amount</th></tr></thead>
   <tbody>{% for r in p.rows %}
     <tr data-post-line="{{ r.line }}" data-gl="{{ r.gl_code }}" data-amount="{{ r.amount }}"{% if r.account and '.' in r.account %} data-ani="{{ r.account }}"{% endif %}><td class="c-kind"><span class="rvw-kind">{{ r.kind }}</span></td>
       <td class="c-gl"><div class="gl{{ ' todo' if r.todo else '' }}" title="{{ r.gl }} {{ r.gl_name }}">{{ r.gl }}<small>{{ r.gl_name }}</small></div></td>
