@@ -486,3 +486,27 @@ def test_without_a_cost_center_list_a_cost_center_from_memory_is_no_change(tmp_p
     assert store.approve_invoice(iid, final, "Pat") == {ACCEPTED: 1, CORRECTED: 0, CODED: 0}
     assert "line_coding" not in (store.get_invoice(iid)["edits"] or [])
     assert store.metrics()["line_accuracy"] == 1.0
+
+
+# --- B-811: an invoice dated in the future ----------------------------------------------------------------------------
+
+
+def test_an_invoice_dated_after_today_is_a_warning_that_needs_a_person():
+    """Dated tomorrow: the date was misread, or the bill was sent ahead; JD Edwards would get a G/L date in the
+    future. A warning, and never approved without a person. Today's date is no warning."""
+    from ap_coder.capture.supplier import touchless_gates
+    from ap_coder.coding.terms import payment_findings
+    from ap_coder.ops.help import CHECKS
+
+    today = dt.date(2026, 10, 23)
+    ahead = {"invoice_date": "2026-10-24", "due_date": "2026-11-23", "grand_total": 100.0}
+    found = {c: (s, m) for s, c, m in payment_findings(ahead, today=today)}
+    assert found["FUTURE_INVOICE_DATE"][0] == "warning"
+    assert "2026-10-24" in found["FUTURE_INVOICE_DATE"][1]
+    assert touchless_gates([{"code": "FUTURE_INVOICE_DATE", "severity": "warning"}])
+    assert "FUTURE_INVOICE_DATE" in CHECKS
+    for date in ("2026-10-23", "2026-10-01"):
+        doc = {**ahead, "invoice_date": date}
+        assert "FUTURE_INVOICE_DATE" not in {c for _, c, _ in payment_findings(doc, today=today)}
+    # Read on its day, approved later: measured from the day it is checked, no longer in the future then.
+    assert "FUTURE_INVOICE_DATE" not in {c for _, c, _ in payment_findings(ahead, today=dt.date(2026, 10, 24))}

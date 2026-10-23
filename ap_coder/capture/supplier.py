@@ -1545,6 +1545,7 @@ ALWAYS_A_PERSON: dict[str, str] = {
     "AMOUNT_UNUSUAL": "the amount is unusual for this vendor",
     "VENDOR_NOT_IN_MASTER": "the vendor is not in the vendor master",
     "VENDOR_ON_HOLD": "the vendor is on hold",
+    "FUTURE_INVOICE_DATE": "it is dated in the future",  # B-811
     "FILE_CUT_OFF": "the file looks cut off",  # its end is missing: part of the invoice may be (B-266)
     # A name never approved before, or not in the vendor master though its GST/HST number is: the supplier's record
     # (kept by its business number) is not this name's.
@@ -1583,6 +1584,7 @@ ALWAYS_A_PERSON_RULES: list[tuple[str, str]] = [
      "received"),
     ("Tax to look at", "a PST or QST exemption learned from earlier approvals, or a tax charged that the lines' tax "
      "codes don't add up to"),
+    ("Dated in the future", "an invoice date after today: misread, or a bill sent ahead"),
     ("File cut off", "a PDF whose end is missing (a download that stopped): part of the invoice may be too"),
     ("Not read by every reader", "the page reader has not read it yet, not every page of it (nor the local readers, "
      "past its first 20 pages), or it is a text file"),

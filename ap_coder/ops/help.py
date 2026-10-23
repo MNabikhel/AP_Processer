@@ -324,6 +324,13 @@ CHECKS: dict[str, CheckHelp] = {
         "The due date has passed. Information only: the invoice still needs the usual checks.",
         "Prioritise it, and tell whoever runs payments if late fees or a supplier hold are a risk.",
     ),
+    "FUTURE_INVOICE_DATE": CheckHelp(
+        PAYMENT, "Dated in the future",
+        "The invoice date is after today, so the date may have been read wrong, or the vendor sent the bill ahead. "
+        "Exported as it is, its G/L date would be in the future. It is never approved without a person.",
+        "Check the date against the document and correct it if it was misread; if it is right, approve it on or "
+        "after that day, or ask the vendor.",
+    ),
     "OLD_INVOICE_DATE": CheckHelp(
         PAYMENT, "Dated more than a year before it came in",
         "Information only: the invoice date is more than a year before the day AP Coder read it, so the date may have "
