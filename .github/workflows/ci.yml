@@ -31,7 +31,7 @@ jobs:
       - name: Install
         run: python -m pip install -e ".[dev]"
       - name: Tests
-        run: python -m pytest -q
+        run: python -m pytest -q -m ""
 
   lint:
     # ruff gives the same answer on every OS and Python, so it runs once (it ran in each of the 8 test cells).
@@ -68,7 +68,7 @@ jobs:
       - name: Browser tests
         env:
           AP_REQUIRE_BROWSER: "1"
-        run: python -m pytest -q -k "in_a_browser" tests/test_web_invoice.py tests/test_offline_guard.py
+        run: python -m pytest -q -m "" -k "in_a_browser" tests/test_web_invoice.py tests/test_offline_guard.py
 
   windows-installer:
     # The installer (APProcessor.bat --installer) on a clean Windows machine, then a second run.
@@ -112,7 +112,7 @@ jobs:
           if ($count -ne 1) { throw "expected 1 desktop shortcut, found $count" }
       - name: Self-test inside the installed environment
         shell: cmd
-        run: .venv\Scripts\python.exe -m pytest -q -p no:cacheprovider
+        run: .venv\Scripts\python.exe -m pytest -q -m "" -p no:cacheprovider
       - name: The server starts and says who it is
         shell: pwsh
         run: |
@@ -454,7 +454,7 @@ jobs:
           NO_PROXY: 127.0.0.1,localhost
         run: |
           .venv\Scripts\python.exe -m pip install --no-index --find-links wheelhouse pytest || exit /b 1
-          .venv\Scripts\python.exe -m pytest -q -p no:cacheprovider tests\test_offline_guard.py
+          .venv\Scripts\python.exe -m pytest -q -m "" -p no:cacheprovider tests\test_offline_guard.py
 
   macos-offline-bundle:
     # The tester's Mac: Python 3.14 and nothing else, no internet. Build the offline bundle for it (online),
@@ -551,7 +551,7 @@ jobs:
           # GitHub's env names are case-insensitive, so the lower-case copies (read by curl and some tools) are set here.
           export http_proxy="$HTTP_PROXY" https_proxy="$HTTPS_PROXY" all_proxy="$ALL_PROXY" no_proxy="$NO_PROXY"
           .venv/bin/python -m pip install --no-index --find-links wheelhouse pytest
-          .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_offline_guard.py
+          .venv/bin/python -m pytest -q -m "" -p no:cacheprovider tests/test_offline_guard.py
 
   mac-pilot-update:
     # The pilot tester's Mac, as it was after PR #8 (e1cf61a): only Python 3.14, GitHub's ZIP of main with an older Windows

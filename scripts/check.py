@@ -4,8 +4,9 @@
     python scripts/check.py FILE...      these files instead
 
 The tests picked for a changed module are its own (``tests/test_<module>*.py``) and the test files that import it by
-name; a changed test file runs itself; a changed template, script or stylesheet runs the tests named after it. Slow
-tests are left to CI and ``python -m pytest -m ""`` (pyproject.toml). Exit code 0 when everything passes.
+name; a changed test file runs itself; a changed template, script or stylesheet runs the tests named after it, in a
+browser too. Other slow tests are left to CI and ``python -m pytest -m ""`` (pyproject.toml). Exit code 0 when
+everything passes.
 """
 
 from __future__ import annotations
@@ -74,9 +75,11 @@ def main(argv: list[str]) -> int:
                 print((done.stdout + done.stderr).strip())
     tests = tests_for(files)
     if tests:
+        # A page's script, template or stylesheet is tested in a browser: those tests are slow, so asked for here.
+        every = ["-m", ""] if any(f.endswith((".js", ".html", ".css")) for f in files) else []
         print("Tests:", " ".join(tests), flush=True)
-        done = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *tests], cwd=ROOT,
-                              capture_output=True, text=True)  # fmt: skip
+        done = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *every, *tests],
+                              cwd=ROOT, capture_output=True, text=True)  # fmt: skip
         lines = done.stdout.strip().splitlines()
         failures = [line for line in lines if line.startswith(("FAILED", "ERROR"))]
         print("\n".join(failures[:20] + lines[-1:]))

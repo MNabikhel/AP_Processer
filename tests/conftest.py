@@ -24,6 +24,22 @@ def _import_the_pages() -> None:
 _import_the_pages()
 
 ROOT = Path(__file__).resolve().parent.parent
+_SLOW = {
+    line.strip()
+    for line in (Path(__file__).parent / "slow_tests.txt").read_text(encoding="utf-8").splitlines()
+    if line.strip() and not line.startswith("#")
+}
+
+
+def pytest_collection_modifyitems(config, items):
+    """The slow tests (a browser, or over half a second: tests/slow_tests.txt) are marked ``slow``: the default run
+    leaves them out (pyproject.toml), ``python -m pytest -m ""`` and CI run everything."""
+    for item in items:
+        base = item.nodeid.split("[", 1)[0]
+        if base in _SLOW or "in_a_browser" in item.name:
+            item.add_marker(pytest.mark.slow)
+
+
 DATA = ROOT / "data"
 SAMPLES = ROOT / "samples"
 SAMPLE_STEM = "northwind_ON_HST_NW-2026-0912"

@@ -434,7 +434,7 @@ def run_checks(c: Console, args: argparse.Namespace, env: Path, changed: bool = 
     else:
         c.ok(f"up to date: self-check OK on {last.get('at', '?')}, nothing changed since")
     if getattr(args, "full_tests", False):
-        result = quiet([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"])
+        result = quiet([sys.executable, "-m", "pytest", "-q", "-m", "", "-p", "no:cacheprovider"])
         summary = (result.stdout.strip().splitlines() or ["(no output)"])[-1]
         (c.ok if result.returncode == 0 else c.warn)(f"test suite: {summary}")
     print()

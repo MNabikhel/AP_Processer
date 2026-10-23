@@ -52,8 +52,11 @@ ap_coder = ["BUILD", "assets/*", "static/*", "capture/calibration.json", "web/te
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The default run leaves out the slow tests (tests/slow_tests.txt, and every browser test) to stay at a few minutes;
+# `python -m pytest -m ""` runs everything, as CI does.
+addopts = ["-m", "not slow"]
 markers = [
-    "slow: takes minutes (skipped unless asked for)",
+    "slow: a browser, or over half a second (tests/conftest.py, tests/slow_tests.txt); run with -m \"\"",
     "upgrade: the real update over each older version (AP_UPGRADE_TESTS=1, tests/test_update_from_old_versions.py)",
 ]
 

@@ -35,5 +35,7 @@ guides, the bug log (BUGS.md) and decisions (decisions.md). Search the code to f
 ## Run and test
 - Set up: `python -m venv .venv`, activate it, `pip install -e ".[ocr,dev]"` (or double-click `APProcessor.bat` / `APProcessor.command`).
 - Run: `python -m ap_coder serve` (http://127.0.0.1:8501); `python -m ap_coder doctor`; `python scripts/pilot_check.py`.
-- Test: `python -m pytest -q tests` (serially, no xdist). Run the tests of what you changed first; the full suite takes ~9 minutes.
+- Check a change: `python scripts/check.py` (ruff on the changed files, then their tests; a minute or two).
+- Test: `python -m pytest -q` runs all but the slow tests (a few minutes; serially, no xdist). The whole suite with the
+  browser tests, `python -m pytest -q -m ""`, takes ~25 minutes: CI runs it on every push, so leave it to CI.
 - Lint: `ruff check ap_coder tests scripts` and `ruff format --check ap_coder tests scripts`.
