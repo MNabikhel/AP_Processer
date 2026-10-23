@@ -245,9 +245,12 @@ def validate_coding(
             reading *= penalty
     reading, coded = round(reading, 4), round(coded, 4)
     adjusted = min(reading, coded)
-    # A line to code, and a business finding (a person looks at it, whatever the numbers), keep it for a person.
+    # A line to code, a business finding and a doubt about the coding (a person looks at it, whatever the numbers:
+    # taken off the Coding alone, a warning no longer brings a well-read invoice under the threshold, B-892) keep it
+    # for a person.
     requires_review = (adjusted < review_threshold or any(i.severity == ERROR for i in issues)
-                       or any(i.code in COUNTED_IN_CODING or (i.severity != INFO and business(i.code))
+                       or any(i.code in COUNTED_IN_CODING
+                              or (i.severity != INFO and (business(i.code) or i.code in ABOUT_CODING))
                               for i in issues))  # fmt: skip
 
     return ValidationReport(

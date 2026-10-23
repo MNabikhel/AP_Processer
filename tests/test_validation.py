@@ -96,3 +96,16 @@ def test_posting_checked_as_it_is_posted_line_by_line(reference, ground_truth):
     gt["line_items"][0].update(unit_price=10.01, amount=10.01)
     gt["line_items"][1].update(unit_price=10.00, amount=10.00)
     assert "POSTING_UNBALANCED" not in _codes(validate_coding(InvoiceCoding.model_validate(gt), reference))
+
+
+def test_a_finding_about_the_coding_keeps_the_invoice_for_a_person(reference, ground_truth):
+    """D-89 took a coding finding off the Coding alone (1.0 x 0.9), no longer the Reading: read at 0.94, one past
+    decision against a line's account left the invoice at 0.90, above the review threshold, where the old reckoning
+    gave 0.846. A doubt about the coding now keeps it for a person, as a business finding does (B-892)."""
+    gt = dict(ground_truth, confidence_score=0.94)
+    line = gt["line_items"][0]
+    history = [{"line_number": line["line_number"], "status": "conflict", "history_gl": "6999", "decisions": 3}]
+    report = validate_coding(InvoiceCoding.model_validate(gt), reference, review_threshold=0.85, history=history)
+    assert _codes(report) == {"HISTORY_CONFLICT"}
+    assert report.reading_confidence == 0.94 and report.coding_confidence == 0.9  # counted once, in the Coding
+    assert report.requires_review is True
