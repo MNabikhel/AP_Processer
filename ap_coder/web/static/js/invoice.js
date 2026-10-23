@@ -1704,6 +1704,7 @@ function showTaxMarks(marks) {
 }
 
 const GUESS_NOTE = "Tax code worked out from the tax charged: check it."; // line_tax.GUESS_NOTE
+const LEARNED_NOTE = "Tax code learned from past approvals of this vendor."; // line_tax.LEARNED_NOTE
 const INFERRED = /\b(PST|RST) exemption inferred \(charged on the other lines, not this one\): confirm it\./; // line_tax._INFERRED
 const CONFIRMED = /\b(PST|RST) exemption confirmed on review\./; // line_tax._CONFIRMED_RE
 
@@ -1713,12 +1714,13 @@ function confirmTaxCode(tr) {
   const cell = tr?.querySelector(".c-tax");
   if (!cell) return;
   delete cell.dataset.taxGuess;
+  cell.querySelector("[data-tax-learned]")?.remove(); // the clerk's own pick now, not the history's
   const reason = tr.querySelector('[name="line_reason"]');
   if (reason) {
     // line_tax.confirm_line: the "check it" note goes; a PST exemption inferred and still in the code is recorded as
     // confirmed on review (B-715), and goes when the code no longer exempts it.
     // The inference is kept on the row, so picking the exemption again after another code is still confirmed (B-723).
-    let text = reason.value.replace(GUESS_NOTE, " ");
+    let text = reason.value.replace(GUESS_NOTE, " ").replace(LEARNED_NOTE, " ");
     const code = tr.querySelector("select[data-tax-code]")?.value || "";
     const still = (code.split("~")[1] || "").split("+").includes("PST");
     const found = text.match(INFERRED) || text.match(CONFIRMED);

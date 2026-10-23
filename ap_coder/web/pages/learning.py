@@ -365,6 +365,7 @@ def suppliers_context(store: Store) -> dict[str, Any]:
             "key": p["key"], "name": name, "state": state, "held": p["state"] == HELD, "invoices": stats.invoices,
             "row": built(ui.supplier_row(name, " · ".join(parts), state, progress, why)), "fields": fields,
             "window": ui.plural(stats.window_invoices, "reviewed invoice"), "latest": latest,
+            "has_layout": bool(p.get("template")),
         })  # fmt: skip
     out.sort(key=lambda r: (_STATE_ORDER.get(r["state"], 9), -r["invoices"], r["name"].lower()))
     from ap_coder.web.pages.settings_automation import typical_to_go
@@ -486,11 +487,15 @@ def lessons_context(store: Store) -> dict[str, Any]:
     from ap_coder.ai import lessons
 
     rows = []
-    for lesson in store.list_lessons(include_retired=True):
+    listed = store.list_lessons(include_retired=True)
+    history = store.lesson_history([lesson["situation"] for lesson in listed])
+    for lesson in listed:
         what = lessons.FIELD_WORDS.get(lesson["field"], lesson["field"])
-        if lesson["field"] == lessons.LINE_GL:
-            what = f"GL account of lines like “{lesson['pattern']}”"
-        rows.append({**lesson, "what": what[:1].upper() + what[1:]})
+        if lesson["field"] in lessons.LINE_FIELDS:
+            noun = "Cost center" if lesson["field"] == lessons.LINE_CC else "GL account"
+            what = f"{noun} of lines like “{lesson['pattern']}”"
+        rows.append({**lesson, "what": what[:1].upper() + what[1:], "reaches": lessons.reaches_ai(lesson),
+                     "effect": lessons.effect(history.get(lesson["situation"]) or [], lesson)})  # fmt: skip
     return {"lessons": rows, "why_after": lessons.why_after(store)}
 
 
@@ -539,6 +544,19 @@ def supplier_allow(request: Request, key: str = Form(...)) -> JSONResponse:
     name = profile["display_name"] or key
     store.set_supplier_state(key, SUPERVISED, reviewer(), reason="allowed again on the Learning page")
     return done(request, "/learning?tab=suppliers", f"{name} can skip review again once it meets the bar.")
+
+
+@router.post("/learning/suppliers/reset-layout")
+def supplier_reset_layout(request: Request, key: str = Form(...)) -> JSONResponse:
+    """Forget a vendor's layout (what its template learned): its next invoices are read as a new vendor's (D-71)."""
+    store = get_store(request)
+    profile = store.get_supplier_profile(key)
+    if profile is None or not store.reset_supplier_layout(key, reviewer()):
+        return refuse("That vendor is no longer in AP Coder's supplier learning.", 404)
+    name = profile["display_name"] or key
+    return done(request, "/learning?tab=suppliers",
+                f"{name}'s layout is reset: its next invoices are read as a new vendor's, and approving them teaches "
+                "it again.")  # fmt: skip
 
 
 @router.post("/learning/memory/forget")

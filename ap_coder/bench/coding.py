@@ -116,6 +116,42 @@ VOWELS = set("aeiouyàâäéèêëîïôöùûü")
 VARIANT_RATE = 0.15  # an invoice line worded differently from the supplier's usual wording
 
 
+# The sales tax each item carries, bought in British Columbia (GST 5%, PST 7%): goods and rentals carry both, services
+# GST only (exempt from the PST), as AP approves each line's tax code. Utilities: electricity and natural gas are
+# exempt from the PST, municipal water from both, telephone service carries both.
+SERVICES = {
+    "Electrician - labour", "Technician on site", "Consulting services - September", "Monthly maintenance contract",
+    "Janitorial service - Unit 4", "Calibration of pressure gauges", "Fleet vehicle inspection",
+}  # fmt: skip
+UTILITY_TAX = {"hydro": "GST~PST", "gas": "GST~PST", "water": "EXEMPT", "telecom": "GST+PST"}
+TAX_RATES = {"GST": 0.05, "PST": 0.07}
+PRINTED_FLAGS = {"GST+PST": "G P", "GST~PST": "G", "EXEMPT": "E"}  # the tax column of a vendor that prints one
+TAX_PRINTERS = 0.3  # the share of vendors that print each line's tax code
+PLAUSIBLE_TAX = ["GST+PST", "GST~PST", "GST"]  # a tax code a clerk might pick by mistake
+# Our address, printed on every invoice: the place of supply (BC) for the taxes.
+BILL_TO = "Bill to: Bench Company Ltd.\n100 Main Street\nVancouver BC V6B 1A1"
+
+
+def true_tax(item: str, kind: str) -> str:
+    """The tax code AP approves on a line of ``item`` sold by a vendor of ``kind``."""
+    if kind in UTILITY_TAX:
+        return UTILITY_TAX[kind]
+    return "GST~PST" if item in SERVICES else "GST+PST"
+
+
+def invoice_taxes(lines: list[Any], codes: list[str]) -> dict[str, float]:
+    """The taxes printed at the foot of an invoice whose lines carry ``codes``: each tax at its rate on the lines that
+    carry it ({"gst_amount": ..., "pst_amount": ...}, a tax charged on no line left out)."""
+    from ap_coder.coding.line_tax import types_of
+
+    out = {}
+    for tax, rate in TAX_RATES.items():
+        base = sum(li.amount for li, code in zip(lines, codes, strict=True) if tax in types_of(code))
+        if base:
+            out[f"{tax.lower()}_amount"] = round(base * rate, 2)
+    return out
+
+
 # AP changes its mind: from halfway through, spare parts kept in stock are coded to materials.
 RECODED = {"Bearing 6205-2RS": (0.5, "5000"), "Hydraulic hose assembly 1/2 in.": (0.5, "5000")}
 # One item truly split between two accounts (``Realism.split``): a maintenance contract billed for more than 3 months
@@ -346,19 +382,34 @@ def arrivals(seed: int, vendors: int, invoices: int) -> list[tuple[float, int, i
 # --- playing it through the app ---------------------------------------------------------------------------------
 
 
-def _capture(vendor: str, number: str, on: dt.date, lines: list[Line]) -> Any:
-    """The invoice as the local reader would have read it, every value right (this measures coding, not reading)."""
+def _capture(vendor: str, number: str, on: dt.date, lines: list[Line], taxes: dict[str, float] | None = None,
+             flags: list[str] | None = None) -> Any:  # fmt: skip
+    """The invoice as the local reader would have read it, every value right (this measures coding, not reading):
+    its ``taxes`` at the foot, and the tax column's ``flags`` when the vendor prints one."""
     from ap_coder.capture.types import VERIFIED, CaptureResult, FieldResult, LineReading
 
+    taxes = taxes or {}
+    total = round(sum(li.amount for li in lines) + sum(taxes.values()), 2)
     fields = {
         "vendor_name": FieldResult("vendor_name", vendor, 0.99, VERIFIED),
         "invoice_number": FieldResult("invoice_number", number, 0.99, VERIFIED),
         "invoice_date": FieldResult("invoice_date", on.isoformat(), 0.99, VERIFIED),
         "currency": FieldResult("currency", "CAD", 0.99, VERIFIED),
-        "grand_total": FieldResult("grand_total", round(sum(li.amount for li in lines), 2), 0.99, VERIFIED),
+        "grand_total": FieldResult("grand_total", total, 0.99, VERIFIED),
+        **{name: FieldResult(name, amount, 0.99, VERIFIED) for name, amount in taxes.items()},
     }
-    readings = [LineReading(li.text, li.quantity, li.unit_price, li.amount) for li in lines]
+    flags = flags or [""] * len(lines)
+    readings = [LineReading(li.text, li.quantity, li.unit_price, li.amount, tax_flags=flag)
+                for li, flag in zip(lines, flags, strict=True)]  # fmt: skip
     return CaptureResult(fields=fields, line_items=readings)
+
+
+def tax_sure(line: Any) -> bool:
+    """Whether a line's tax code is proposed for sure: a code (not "NONE"), neither worked out from several possible
+    sets of lines nor an inferred exemption waiting for a person to confirm it."""
+    from ap_coder.coding.line_tax import CODE_NONE, exemption_to_confirm, tax_code_of, tax_guessed
+
+    return tax_code_of(line) != CODE_NONE and not tax_guessed(line) and not exemption_to_confirm(line)
 
 
 def _source(suggestion: Any) -> str:
@@ -406,10 +457,12 @@ def simulate(
 ) -> list[dict[str, Any]]:
     """Every line of every invoice, in the order they arrived, with what was proposed and the truth. ``realism``:
     what the default run leaves out (reviewer mistakes, ERP history, kept chat-model guesses, a split account)."""
+    from ap_coder.ai import lessons
     from ap_coder.ai.inference import MODEL_SUGGESTED
     from ap_coder.ai.offline_coder import code_from_capture
     from ap_coder.ai.suggest import suggest_gl
     from ap_coder.coding import rules
+    from ap_coder.coding.line_tax import apply_tax_code, confirm_line, tax_code_of, tax_learned
     from ap_coder.core.memory import _normalise, compare_with_history
     from ap_coder.core.reference_data import UNASSIGNED, load_reference_data
     from ap_coder.core.store import Store
@@ -447,10 +500,27 @@ def simulate(
             lines = invoice_lines(rng, v, on.month)
             number = f"INV-{vi:03d}-{position + 1:04d}"
             truths = [v.gl(line.item, t, line.quantity, realism.split) for line in lines]
+            tax_truths = [true_tax(line.item, v.kind) for line in lines]
+            printer = random.Random(f"ap-bench-coding:{seed}:{vi}:tax-column").random() < TAX_PRINTERS
+            flags = [PRINTED_FLAGS.get(code, "") for code in tax_truths] if printer else None
+            # The lessons the AI and the review screen are shown for these lines (``lessons.prompt_lines``).
+            hints = []
+            for line in lines:
+                lesson = store.lesson(lessons.situation(v.name, lessons.INVOICE, lessons.LINE_GL,
+                                                        lessons.line_pattern(line.text)))  # fmt: skip
+                hints.append(
+                    (
+                        lesson["value"] if lesson and lessons.on_screen(lesson) else "",
+                        lesson["value"] if lesson and lessons.reaches_ai(lesson) else "",
+                    )
+                )
 
             # 1. What the app proposes with no AI model (pipeline.process: code from capture, then the rules).
             feedback = store.feedback_rows()
-            coding = code_from_capture(_capture(v.name, number, on, lines), reference, feedback, store).coding
+            captured = _capture(v.name, number, on, lines, invoice_taxes(lines, tax_truths), flags)
+            coding = code_from_capture(captured, reference, feedback, store, text=BILL_TO).coding
+            tax_proposed = [(tax_code_of(li), tax_sure(li), tax_learned(li))
+                            for li in coding.line_items]  # fmt: skip
             coding, rule_changes = rules.apply(coding, store.coding_rules())
             shown = {s["position"]: [o["gl"] for o in s["options"]] for s in suggestions(store, reference, coding)}
             proposals = [li.predicted_gl_code for li in coding.line_items]
@@ -484,6 +554,16 @@ def simulate(
                 li["predicted_gl_code"] = gl
                 li["predicted_cost_center"] = COST_CENTER[gl]
                 approved.append(gl)
+            # Each line's tax code as AP approves it (picked or confirmed on the review screen); a few by mistake.
+            taxr = random.Random(f"ap-bench-coding:{seed}:{vi}:{position}:tax")
+            approved_tax = []
+            for li, code in zip(final["line_items"], tax_truths, strict=True):
+                if realism.mistakes and taxr.random() < realism.mistakes:
+                    code = taxr.choice([c for c in PLAUSIBLE_TAX if c != code])
+                apply_tax_code(li, code)
+                li["reasoning_justification"] = confirm_line(li["reasoning_justification"], code,
+                                                             li["reasoning_justification"])  # fmt: skip
+                approved_tax.append(code)
 
             for pos, (li, line) in enumerate(zip(coding.line_items, lines, strict=True)):
                 truth = truths[pos]
@@ -521,12 +601,21 @@ def simulate(
                     "recoded": line.item in RECODED and t >= RECODED[line.item][0],
                     "in_line": li.predicted_gl_code,  # what the reviewer saw: the proposal, or the chat model's guess
                     "warned": li.line_number in warned,  # HISTORY_CONFLICT on the line
+                    "tax_truth": tax_truths[pos],
+                    "tax_proposed": tax_proposed[pos][0],
+                    "tax_sure": tax_proposed[pos][1],
+                    "tax_learned": tax_proposed[pos][2],
+                    "tax_printed": printer,
+                    "lesson": hints[pos][1],  # the lesson's account the AI reads for the line ("" when none)
+                    "lesson_screen": hints[pos][0],  # the lesson's account the reviewer sees as a hint
                 }
                 if realism.any:
                     row["approved"] = approved[pos]
+                    row["approved_tax"] = approved_tax[pos]
                     row["split"] = line.item in SPLIT and realism.split
                 rows.append(row)
             store.approve_invoice(invoice_id, final, REVIEWER)
+            lessons.record(store, invoice_id, output, final, REVIEWER)  # as workflow.learn_from_approval does
             for line in lines:
                 seen_items[vi].add(line.item)
                 seen_texts[vi].add(_normalise(line.text))
@@ -595,6 +684,37 @@ def history_warnings(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def tax_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Line tax codes: *precision*, the codes proposed for sure (``tax_sure``) that were right; *coverage*, the share
+    of lines with a code proposed for sure (the others wait for a person: worked out from several possible sets of
+    lines, an exemption to confirm, or nothing said)."""
+    sure = [r for r in rows if r.get("tax_sure")]
+    right = sum(r["tax_proposed"] == r["tax_truth"] for r in sure)
+    return {
+        "lines": len(rows),
+        "sure": len(sure),
+        "correct": right,
+        "precision": _ratio(right, len(sure)),
+        "coverage": _ratio(len(sure), len(rows)),
+        "accuracy": _ratio(right, len(rows)),
+        "wrong": len(sure) - right,
+        "learned": sum(bool(r.get("tax_learned")) for r in rows),
+        "any_right": _ratio(sum(r["tax_proposed"] == r["tax_truth"] for r in rows), len(rows)),
+    }
+
+
+def lesson_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """The line lessons the AI reads (``lessons.reaches_ai``, "shown") and the reviewer's hints
+    (``lessons.on_screen``, "screen"): how many lines had one, how many said an account other than the line's true
+    one (noise, from a clerk's slip)."""
+    shown = [r for r in rows if r.get("lesson")]
+    wrong = sum(r["lesson"] != r["truth"] for r in shown)
+    screen = [r for r in rows if r.get("lesson_screen")]
+    screen_wrong = sum(r["lesson_screen"] != r["truth"] for r in screen)
+    return {"lines": len(rows), "shown": len(shown), "wrong": wrong, "noise": _ratio(wrong, len(shown)),
+            "screen": len(screen), "screen_wrong": screen_wrong}  # fmt: skip
+
+
 def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
     wrong = Counter((r["truth"], r["proposed"], r["source"]) for r in rows if r["assigned"] and not r["correct"])
     return {
@@ -622,8 +742,17 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "recoded": line_stats([r for r in rows if r["recoded"]]),
         "split": line_stats([r for r in rows if r.get("split")]),
         "history_warnings": history_warnings(rows),
+        "tax_codes": tax_stats(rows),
+        "tax_codes_by_column": _tax_split(rows),
+        "lessons": lesson_stats(rows),
         "top_errors": [{"truth": t, "proposed": p, "source": s, "lines": n} for (t, p, s), n in wrong.most_common(12)],
     }
+
+
+def _tax_split(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    groups = {"tax column printed": [r for r in rows if r.get("tax_printed")],
+              "no tax column": [r for r in rows if not r.get("tax_printed")]}  # fmt: skip
+    return {k: tax_stats(v) for k, v in groups.items() if v}
 
 
 def _stats_table(split: dict[str, Any], label: str) -> str:
@@ -693,6 +822,31 @@ def render_markdown(report: dict[str, Any]) -> str:
             f"that had an account: {hw['false_alarms']} false alarms on a right account "
             f"({hw['false_alarms_after_recode']} of them after AP recoded spare parts); it caught {hw['caught']} "
             f"of the {hw['wrong']} wrong accounts.\n"
+        )
+    tc = s.get("tax_codes") or {}
+    if tc.get("lines"):
+        out.append("## Line tax codes\n")
+        out.append(
+            "Each line's tax code (GST and PST in British Columbia: goods carry both, services GST only), as proposed "
+            "when the invoice is read: *sure* when it is neither worked out from several possible sets of lines nor an "
+            "exemption waiting for a person to confirm it.\n"
+        )
+        out.append(_table(
+            ["lines", "precision", "coverage", "accuracy", "wrong", "learned from past approvals"],
+            [[tc["lines"], _pct(tc["precision"]), _pct(tc["coverage"]), _pct(tc["accuracy"]), tc["wrong"],
+              tc["learned"]]],
+        ))  # fmt: skip
+        out.append(_table(
+            ["invoices", "lines", "precision", "coverage", "accuracy", "wrong"],
+            [[k, m["lines"], _pct(m["precision"]), _pct(m["coverage"]), _pct(m["accuracy"]), m["wrong"]]
+             for k, m in (s.get("tax_codes_by_column") or {}).items()],
+        ))  # fmt: skip
+    ls = s.get("lessons") or {}
+    if ls.get("lines"):
+        out.append(
+            f"Line lessons the AI reads: on {ls['shown']} of {ls['lines']} lines, {ls['wrong']} of them for another "
+            f"account than the line's true one (noise {_pct(ls['noise'])}). Hints on the review screen (from the "
+            f"first correction): on {ls['screen']} lines, {ls['screen_wrong']} wrong.\n"
         )
     if s["top_errors"]:
         out.append("## Most frequent wrong accounts\n")

@@ -45,7 +45,8 @@
   {% set mark = (g.tax_marks or {}).get(row.line_number) or guess %}
   {% set code = row.tax_code if row.tax_code is defined else g.tax_default %}
   <td class="c-tax{% if mark %} is-taxcheck{% endif %}" data-label="Tax code"{% if mark %} title="{{ mark }}"{% endif %}{% if guess %} data-tax-guess="{{ guess }}"{% endif %}><select name="line_tax_code" form="inv" aria-label="{{ line_label(row, 'Tax code') }}" data-tax-code>{{ opts(g.tax_codes, code) }}</select>
-    <span class="inv-taxnote" data-tax-note{% if not mark %} hidden{% endif %}><span class="ms" aria-hidden="true">error</span><span data-tax-note-text>{{ mark }}</span></span></td>
+    <span class="inv-taxnote" data-tax-note{% if not mark %} hidden{% endif %}><span class="ms" aria-hidden="true">error</span><span data-tax-note-text>{{ mark }}</span></span>
+    {%- if row.tax_learned and not mark %}<span class="inv-taxlearned muted small" data-tax-learned title="Approved on this vendor's similar lines before: the Tax check still checks it"><span class="ms" aria-hidden="true">school</span>Learned from past approvals</span>{% endif %}</td>
   <td class="c-qty" data-label="Qty"><input type="number" name="line_quantity" value="{{ num(row.quantity) }}" step="any" form="inv" aria-label="Quantity"></td>
   <td class="c-price" data-label="Unit price"><input type="number" name="line_unit_price" value="{{ num(row.unit_price) }}" step="any" form="inv" aria-label="Unit price"></td>
 </tr>

@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from ...coding.line_tax import approved_code
 from ...coding.po import po_key
 from ...coding.terms import DEFAULT_TERMS_DAYS
 from ..audit import diff_coding
@@ -477,17 +478,40 @@ class InvoicesMixin:
                     f"invoice {invoice_id} cannot be rejected (approved, rejected or deleted meanwhile: only an "
                     "invoice in the review queue or parked can be)"
                 )
-            self._forget_learning(conn, invoice_id)
-            self._log(conn, "rejected", invoice_id, reviewer, {"reason": reason})
+            layout = self._forget_learning(conn, invoice_id)
+            self._log(conn, "rejected", invoice_id, reviewer, {"reason": reason, **layout})
 
     @staticmethod
-    def _forget_learning(conn: sqlite3.Connection, invoice_id: int) -> None:
+    def _forget_learning(conn: sqlite3.Connection, invoice_id: int) -> dict[str, Any]:
         """Withdraw what an invoice's approval taught: its coding memory, its lessons (what the AI is told), its
         supplier outcomes (from a review or an audit sample alike, so none keeps counting towards the supplier's
-        autonomy) and its reader scores."""
+        autonomy), its reader scores and what it taught the supplier's template (``_withdraw_template``). Returns
+        what became of the template, for the event's detail ({} when the approval taught it nothing)."""
         for table in ("feedback", "supplier_outcomes", "reader_outcomes"):
             conn.execute(f"DELETE FROM {table} WHERE invoice_id = ?", (invoice_id,))
         _store_class()._withdraw_lessons(conn, invoice_id)
+        return _store_class()._withdraw_template(conn, invoice_id)
+
+    @staticmethod
+    def _withdraw_template(conn: sqlite3.Connection, invoice_id: int) -> dict[str, Any]:
+        """The supplier's template as it was before ``invoice_id``'s approval taught it (``template_snapshots``),
+        put back, unless a later approval changed it since: that one is kept, and said (D-71)."""
+        snap = conn.execute("SELECT * FROM template_snapshots WHERE invoice_id = ?", (invoice_id,)).fetchone()
+        if snap is None:
+            return {}
+        conn.execute("DELETE FROM template_snapshots WHERE invoice_id = ?", (invoice_id,))
+        now = conn.execute("SELECT template_json FROM supplier_profiles WHERE key = ?",
+                           (snap["supplier_key"],)).fetchone()  # fmt: skip
+        if now is None:
+            return {}
+        if now["template_json"] != snap["after_json"]:
+            return {"layout": "kept: a later approval changed the vendor's layout since, so it was not put back"}
+        conn.execute("UPDATE supplier_profiles SET template_json = ?, updated_at = ? WHERE key = ?",
+                     (snap["before_json"], _now(), snap["supplier_key"]))  # fmt: skip
+        # A later snapshot of this supplier started from what this approval taught: it now starts from what is back.
+        conn.execute("UPDATE template_snapshots SET before_json = ? WHERE supplier_key = ? AND before_json IS ?",
+                     (snap["before_json"], snap["supplier_key"], snap["after_json"]))  # fmt: skip
+        return {"layout": "put back as it was before this approval"}
 
     def delete_invoice(
         self, invoice_id: int, forget_lessons: bool = False, actor: str | None = None, *, keep_approved: bool = False
@@ -524,6 +548,9 @@ class InvoicesMixin:
             if forget_lessons:
                 conn.execute("DELETE FROM feedback WHERE invoice_id = ?", (invoice_id,))
                 self._withdraw_lessons(conn, invoice_id)
+                self._withdraw_template(conn, invoice_id)
+            else:
+                conn.execute("DELETE FROM template_snapshots WHERE invoice_id = ?", (invoice_id,))
 
     def list_invoices_full(self) -> list[dict[str, Any]]:
         """Every invoice with its file path, status and metadata (no AI output: kept light)."""
@@ -631,7 +658,8 @@ class InvoicesMixin:
         # coding memory is not part of what it proposed (B-562).
         cost_centers = bool(self.list_accounts("cost_centers"))
 
-        for suggestion, li in pair_lines(ai.get("line_items", []), final_output.get("line_items", [])):
+        final_lines = final_output.get("line_items", [])
+        for suggestion, li in pair_lines(ai.get("line_items", []), final_lines):
             s_gl = suggestion.get("predicted_gl_code") if suggestion else None
             s_cc = (suggestion.get("predicted_cost_center", "") if cost_centers else "") if suggestion else None
             f_gl, f_cc = li["predicted_gl_code"], li.get("predicted_cost_center", "")
@@ -676,6 +704,7 @@ class InvoicesMixin:
                     outcome,
                     reviewer,
                     now,
+                    approved_code(li, final_lines, final_output.get("tax_lines") or []),
                 )  # fmt: skip
             )
         read = as_read(final_output, ai)  # a tax number filled from the vendor list is no edit (B-681)
@@ -728,8 +757,8 @@ class InvoicesMixin:
             })  # fmt: skip
             conn.executemany(
                 """INSERT INTO feedback (invoice_id, line_number, vendor_key, vendor_name, description, amount,
-                   suggested_gl, final_gl, suggested_cc, final_cc, outcome, reviewer, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   suggested_gl, final_gl, suggested_cc, final_cc, outcome, reviewer, created_at, final_tax_code)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 feedback_rows,
             )
         return counts
@@ -814,8 +843,8 @@ class InvoicesMixin:
             )
             if cur.rowcount == 0:
                 raise ValueError(f"invoice {invoice_id} is not waiting for a second approval")
-            self._forget_learning(conn, invoice_id)
-            self._log(conn, "sent_back", invoice_id, actor, {"reason": reason})
+            layout = self._forget_learning(conn, invoice_id)
+            self._log(conn, "sent_back", invoice_id, actor, {"reason": reason, **layout})
 
     def refresh_confidence(self, invoice_id: int, adjusted: float, requires_review: bool) -> bool:
         """The confidence the review screen just worked out (with the reviewer's edits and today's checks), so
@@ -844,5 +873,5 @@ class InvoicesMixin:
             )
             if cur.rowcount == 0:
                 raise ValueError(f"invoice {invoice_id} cannot be reopened (exported, or not approved or rejected)")
-            self._forget_learning(conn, invoice_id)
-            self._log(conn, "reopened", invoice_id, actor, {"reason": reason})
+            layout = self._forget_learning(conn, invoice_id)
+            self._log(conn, "reopened", invoice_id, actor, {"reason": reason, **layout})

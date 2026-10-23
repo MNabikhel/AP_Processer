@@ -573,3 +573,37 @@ that is reversed keeps its line, marked "replaced by D-NN".
   `tests/test_store_package.py`). `ap_coder/capture/reader.py` (3,900 lines) is the package `ap_coder/capture/reader/`
   the same way: one part per section, each using only the parts before it, all names re-exported. Why: the store was the
   file agents read most, and a 4,000-line read fills a session's context for every later step.
+- **D-70** · A line's tax code is learned from approvals: each approved line keeps its code (`feedback.final_tax_code`,
+  schema 17, filled from the approved invoices), and a code the vendor's history agrees on (lines worded alike, at least
+  2 approvals of different invoices, never another code) is used before the subset-sum guess, marked "Learned from past
+  approvals" on the review screen. Printed codes still win (a printed "G" with the same taxes only takes the exemption
+  from the history); a learned code for a tax the invoice does not charge is not used; one contradiction and the line is
+  worked out again. The Tax check checks a learned code like any other. Why: the solver can't see an exemption on an
+  invoice that charges no PST, and an inferred one waits for a person every time. Measured with `bench coding` (tax code
+  precision and coverage). (`coding/line_tax.py` `learned_codes`, `prefill`; `tests/test_tax_learning.py`)
+- **D-71** · A withdrawn approval takes back what it taught the vendor's layout: before an approval's `learn()` changes
+  the template, the template as it was is kept (`template_snapshots`, keyed by invoice, the last 5 per vendor);
+  reopening, rejecting or sending back that invoice puts it back, unless a later approval changed the template since
+  (then the later one is kept, and the event's detail says so: putting back an older one would undo that approval too).
+  The Learning page's Suppliers tab has "Reset layout" (asks first, logged as `layout_reset`). Why: a box taught on the
+  wrong words is authoritative at once, and the next invoice was read with it. Measured with `bench learn
+  --wrong-approval N`. (`core/store/invoices.py` `_withdraw_template`, `core/store/capture.py`;
+  `tests/test_template_rollback.py`)
+- **D-72** · A lesson reaches the AI (prompts, automatic use) only after 2 corrections to the same value (`agreeing`,
+  counted over the approvals still standing in `lesson_approvals`) or 1 correction with the clerk's reason. The review
+  screen's hints (a person decides) show from the first correction, said as "Corrected once before: …"
+  (`lessons.on_screen`); a single correction is still counted and shown on the Lessons tab as "not shown to the AI yet".
+  A line's cost center is a lesson of its own (`line_cc`) beside its GL account (`line_gl`). Why: one slip (2% of lines
+  in `bench coding --realistic`) was told to the AI at once, and half the line lessons shown were wrong.
+  (`ai/lessons.py` `reaches_ai`, `core/store/lessons.py`; `tests/test_lessons.py`)
+- **D-73** · The training export's format 2 only adds to format 1: per field `corrected` and `boxes` (taught by click,
+  kept with the capture at approval, or found by the supplier's template), each invoice's `split` ("holdout" for one in
+  10 by a SHA-256 of its id, so an invoice is on the same side in every export), and `coding.jsonl` (one row per line:
+  words, then GL, cost center, tax code). Why: a model tuned on it needs the mistakes, the boxes and a fixed set it
+  never trains on, and a reader of format 1 must keep working. (`ai/training_export.py`;
+  `tests/test_training_export.py`)
+- **D-74** · The Lessons tab measures each lesson: corrections per invoice of its vendor and field before it reached the
+  AI (the second agreeing correction, or the first with a reason) and since, over the approvals still standing
+  (`lesson_approvals`). One still corrected as often after 3 invoices or more is suggested for retiring, never retired
+  on its own. Why: a lesson that doesn't help still costs a line of every prompt, and only a person knows whether the
+  vendor changed. (`ai/lessons.py` `effect`, `Store.lesson_history`; `tests/test_lessons.py`)

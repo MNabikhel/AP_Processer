@@ -55,6 +55,13 @@ def main(argv: list[str] | None = None) -> int:
         metavar="CODE",
         help="what-if: a failed check with this code (e.g. LINES_ADD_UP) does not hold an invoice back",
     )
+    lp.add_argument(
+        "--wrong-approval",
+        type=int,
+        default=0,
+        metavar="N",
+        help="on each supplier's invoice N the clerk teaches the wrong words, then it is withdrawn",
+    )
     sp = sub.add_parser("speed", help="seconds per invoice through the app's pipeline on this computer")
     sp.add_argument("--n", type=int, default=20, help="number of invoices (default 20)")
     sp.add_argument("--seed", type=int, default=1, help="random seed; the same seed gives the same invoices")
@@ -127,6 +134,11 @@ def main(argv: list[str] | None = None) -> int:
             f"from a vendor {pc(first.get('first invoice', {}).get('accuracy'))}, later "
             f"{pc(first.get('later invoices', {}).get('accuracy'))}"
         )
+        tc, ls = s.get("tax_codes") or {}, s.get("lessons") or {}
+        print(f"tax codes: precision {pc(tc.get('precision'))} ({tc.get('wrong', 0)} wrong), coverage "
+              f"{pc(tc.get('coverage'))}, {tc.get('learned', 0)} learned; line lessons the AI reads on "
+              f"{ls.get('shown', 0)} lines ({ls.get('wrong', 0)} wrong), screen hints on {ls.get('screen', 0)} "
+              f"lines ({ls.get('screen_wrong', 0)} wrong)")  # fmt: skip
         print(f"report: {Path(a.out) / 'report.md'}")
         return 0
 
@@ -150,6 +162,7 @@ def main(argv: list[str] | None = None) -> int:
             a.workers,
             vendor_master=not a.no_vendor_master,
             ignore_checks=tuple(a.ignore_check),
+            wrong_at=a.wrong_approval,
         )
         au, b = report["summary"]["autonomy"], report["summary"]["buckets"]
         first, last = next(iter(b.values())), list(b.values())[-1]
@@ -160,6 +173,11 @@ def main(argv: list[str] | None = None) -> int:
             f"(median before #{au['ready_at_median']}); "
             f"after that {au['touchless']}/{au['invoices_after_ready']} touchless with {au['touchless_errors']} errors"
         )
+        wrong = report["summary"].get("wrong_approval")
+        if wrong:
+            print("after the wrong approval on #{}: {}".format(wrong["at"], "; ".join(
+                f"{k} {100 * (v['accuracy'] or 0):.1f}% ({v['invoice_number_wrong']} invoice numbers wrong)"
+                for k, v in wrong.items() if isinstance(v, dict))))  # fmt: skip
         print(f"report: {Path(a.out) / 'report.md'}")
         return 0
     if a.cmd == "generate":

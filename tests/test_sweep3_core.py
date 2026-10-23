@@ -35,7 +35,11 @@ def _approve(store, invoice_id, coding):
 
 
 def _laptop_lesson(store):
-    return next(r for r in store.lessons_for("northwind it solutions") if r["pattern"].startswith("dell latitude"))
+    return next(
+        r
+        for r in store.lessons_for("northwind it solutions")
+        if r["pattern"].startswith("dell latitude") and r["field"] == lessons.LINE_GL
+    )
 
 
 def test_a_withdrawn_approval_no_longer_teaches_its_lessons(tmp_path, ground_truth):
@@ -47,6 +51,7 @@ def test_a_withdrawn_approval_no_longer_teaches_its_lessons(tmp_path, ground_tru
     wrong = copy.deepcopy(ground_truth)
     wrong["line_items"][0]["predicted_gl_code"] = "6999"  # a slip, approved
     _approve(store, iid, wrong)
+    store.explain_lesson(_laptop_lesson(store)["situation"], "laptops are equipment")  # shown at once (D-72)
     assert any("GL 6999" in line for line in lessons.prompt_lines(store, wrong["vendor_name"], lessons.INVOICE))
     store.reopen(iid, "Jane", "wrong GL")  # withdrawn: the AI is no longer told 6999
     assert lessons.prompt_lines(store, wrong["vendor_name"], lessons.INVOICE) == []

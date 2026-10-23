@@ -14,7 +14,13 @@ import pymupdf
 import pytest
 from PIL import Image
 
-from ap_coder.ai.training_export import INSTRUCTION, approved_values, export_training_set, training_invoices
+from ap_coder.ai.training_export import (
+    INSTRUCTION,
+    approved_values,
+    export_training_set,
+    holdout_split,
+    training_invoices,
+)
 from ap_coder.capture.confidence import MIN_EVIDENCE
 from ap_coder.capture.types import Box, CaptureResult, FieldResult
 from ap_coder.capture.workflow import AUTONOMOUS_REVIEWER, capture_invoice, learn_from_approval
@@ -84,7 +90,7 @@ def test_export_training_set(approved, tmp_path, ground_truth):
     with zipfile.ZipFile(out) as zf:
         names = set(zf.namelist())
         images = sorted(n for n in names if n.startswith("images/"))
-        assert names == {*images, "fields.jsonl", "chat.jsonl", "README.txt"}
+        assert names == {*images, "fields.jsonl", "chat.jsonl", "coding.jsonl", "README.txt"}
         assert images == sorted([*(f"images/{ids['pdf']}-p{n}.png" for n in range(1, pdf_pages + 1)),
                                  f"images/{ids['photo']}-p1.png"])  # fmt: skip
         assert all(zf.read(name).startswith(PNG) for name in images)
@@ -248,3 +254,39 @@ def test_readers_tab_with_approvals(client, store, ground_truth):
     with zipfile.ZipFile(io.BytesIO(response.content)) as z:
         fields = [json.loads(line) for line in z.read("fields.jsonl").decode().splitlines() if line.strip()]
     assert len({f["invoice_id"] for f in fields}) == 2  # one row per approved invoice
+
+
+def test_export_v2_adds_corrections_boxes_a_holdout_split_and_coding_rows(tmp_path, ground_truth):
+    """Format 2 is additive (old readers keep working): each field says whether AP corrected it and, when known, its
+    box (taught by click, or found by the supplier's template); each invoice is in "train" or "holdout" by a hash of
+    its id (the same every time); coding.jsonl has one row per line: its words, then its GL account, cost center and
+    tax code."""
+    store = Store(tmp_path / "ap.db")
+    capture, _, _ = capture_invoice(PDF, ground_truth, store=store)
+    final = copy.deepcopy(ground_truth) | {"invoice_number": "NW-FIXED-1"}
+    invoice_id = store.add_invoice(PDF, ground_truth, {"requires_review": False})
+    store.save_capture(invoice_id, capture.to_dict())
+    store.approve_invoice(invoice_id, final, "Ann")
+    learn_from_approval(store, invoice_id, final, actor="Ann", taught={"invoice_number": [Box(0, 0.6, 0.1, 0.8, 0.12)]})
+    buf = io.BytesIO()
+    export_training_set(store, buf)
+    with zipfile.ZipFile(buf) as zf:
+        row = json.loads(zf.read("fields.jsonl").decode("utf-8").splitlines()[0])
+        coding = [json.loads(line) for line in zf.read("coding.jsonl").decode("utf-8").splitlines()]
+        readme = " ".join(zf.read("README.txt").decode("utf-8").split())
+    assert row["format"] == 2 and row["split"] == holdout_split(invoice_id) in ("train", "holdout")
+    assert row["corrected"]["invoice_number"] is True and row["corrected"]["vendor_name"] is False
+    assert row["boxes"]["invoice_number"] == {"box": [0, 0.6, 0.1, 0.8, 0.12], "from": "taught"}
+    assert row["fields"]["invoice_number"] == "NW-FIXED-1"  # the v1 keys are all still there
+    assert len(coding) == len(final["line_items"]) and coding[0]["invoice_id"] == invoice_id
+    first = coding[0]
+    assert (
+        first["text"] == final["line_items"][0]["description"]
+        and first["gl"] == final["line_items"][0]["predicted_gl_code"]
+    )
+    assert {"cost_center", "tax_code", "split", "vendor", "amount", "corrected"} <= set(first)
+    assert first["tax_code"] == "HST" and first["split"] == row["split"]
+    assert [holdout_split(i) for i in range(1, 400)].count("holdout") in range(20, 61)  # about one in ten
+    assert holdout_split(invoice_id) == holdout_split(invoice_id)
+    for text in ("coding.jsonl", "holdout", "corrected", "taught"):
+        assert text in readme, text

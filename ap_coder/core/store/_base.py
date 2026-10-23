@@ -45,8 +45,9 @@ from ..schema import as_read
 
 # 10: erp_invoices, 11: coding_rules (by _SCHEMA), 12: currency, 13: credit notes not due,
 # 14: invoice_capture, supplier_profiles, supplier_outcomes (by _SCHEMA), 15: reader_outcomes, page_reads (by _SCHEMA),
-# 16: bank_accounts, our company's bank accounts (by _SCHEMA, D-66)
-SCHEMA_VERSION = 16
+# 16: bank_accounts, our company's bank accounts (by _SCHEMA, D-66), 17: feedback.final_tax_code (filled from the
+# approved invoices) and template_snapshots (by _SCHEMA), D-70
+SCHEMA_VERSION = 17
 # The one-off clean-ups of the learning memory ``_migrate`` has run on a database (settings.feedback_cleanup): a new
 # clean-up added there changes it, so it runs once on every database.
 FEEDBACK_CLEANUP = "1"
@@ -98,6 +99,10 @@ FEEDBACK_READ = 50_000  # lessons read for the whole memory, at most (newest fir
 
 # Touchless processing (Settings → Automation): one switch for the company, "on" or "off" (off when not set), and
 # the largest invoice total approved without a person, in CAD.
+# A supplier's template as it was before each of its last few approvals taught it (``template_snapshots``): put back
+# when that approval is withdrawn and nothing has changed the template since (D-71).
+KEEP_SNAPSHOTS = 5
+
 TOUCHLESS_SETTING, TOUCHLESS_LIMIT_SETTING = "touchless_processing", "touchless_limit"
 DEFAULT_TOUCHLESS_LIMIT = 5000.0
 
@@ -124,7 +129,7 @@ CREATE TABLE IF NOT EXISTS feedback (
     invoice_id INTEGER, line_number INTEGER,
     vendor_key TEXT NOT NULL, vendor_name TEXT NOT NULL, description TEXT NOT NULL, amount REAL,
     suggested_gl TEXT, final_gl TEXT NOT NULL, suggested_cc TEXT, final_cc TEXT,
-    outcome TEXT NOT NULL, reviewer TEXT, created_at TEXT NOT NULL);
+    outcome TEXT NOT NULL, reviewer TEXT, created_at TEXT NOT NULL, final_tax_code TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS feedback_vendor ON feedback (vendor_key);
 CREATE INDEX IF NOT EXISTS invoices_status ON invoices (status);
 CREATE TABLE IF NOT EXISTS events (
@@ -203,6 +208,10 @@ CREATE TABLE IF NOT EXISTS lesson_approvals (
     confirmed INTEGER NOT NULL DEFAULT 0, value TEXT NOT NULL DEFAULT '', proposed TEXT NOT NULL DEFAULT '',
     at TEXT NOT NULL, PRIMARY KEY (invoice_id, situation));
 CREATE INDEX IF NOT EXISTS lesson_approvals_situation ON lesson_approvals (situation);
+CREATE TABLE IF NOT EXISTS template_snapshots (
+    invoice_id INTEGER PRIMARY KEY, supplier_key TEXT NOT NULL, before_json TEXT, after_json TEXT,
+    at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS template_snapshots_supplier ON template_snapshots (supplier_key, at);
 CREATE TABLE IF NOT EXISTS bank_accounts (
     code TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', currency TEXT NOT NULL DEFAULT 'CAD',
     institution TEXT NOT NULL DEFAULT '', transit TEXT NOT NULL DEFAULT '', account_number TEXT NOT NULL DEFAULT '',
@@ -593,11 +602,38 @@ class StoreCore:
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (FEEDBACK_CLEANUP,),
             )
+        # Each approved line remembers its tax code, learned from like its GL account (D-70): filled in from the
+        # approved invoices (looked for whatever the version, like the columns above).
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(feedback)")}
+        if "final_tax_code" not in columns:
+            conn.execute("ALTER TABLE feedback ADD COLUMN final_tax_code TEXT NOT NULL DEFAULT ''")
+            self._fill_tax_codes(conn)
         if version < SCHEMA_VERSION:
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (str(SCHEMA_VERSION),),
+            )
+
+    @staticmethod
+    def _fill_tax_codes(conn: sqlite3.Connection) -> None:
+        """The tax code of each approved line's feedback row, from its invoice's approved coding (schema 17)."""
+        from ...coding.line_tax import approved_code
+
+        rows = conn.execute(
+            "SELECT DISTINCT i.id, i.final_output FROM invoices i JOIN feedback f ON f.invoice_id = i.id "
+            "WHERE i.final_output IS NOT NULL"
+        ).fetchall()
+        for r in rows:
+            try:
+                final = json.loads(r["final_output"]) or {}
+            except ValueError:
+                continue
+            lines = [li for li in final.get("line_items") or [] if isinstance(li, dict)]
+            codes = {li.get("line_number"): approved_code(li, lines, final.get("tax_lines") or []) for li in lines}
+            conn.executemany(
+                "UPDATE feedback SET final_tax_code = ? WHERE invoice_id = ? AND line_number = ?",
+                [(code, r["id"], number) for number, code in codes.items() if code],
             )
 
     @staticmethod
