@@ -114,10 +114,20 @@ async function check() {
     saved = true;
   } finally {
     running = null;
+    keepFocusInView(); // the sections drawn again may have moved the box being worked in under the approve bar
     // Every edit is kept as a draft on the server as it is checked: say so, so leaving the page is no worry.
     if (checking) checking.textContent = saved && edited ? `Draft saved ${clock()}` : "";
     if (checking) checking.title = saved && edited ? "Your edits are kept: leave and come back, they are still here. Approving records them." : "";
   }
+}
+
+/** The box with the focus, moved by sections drawn above it, is brought back into view (above the approve bar). */
+function keepFocusInView() {
+  const el = document.activeElement;
+  if (!el || el === document.body || el.tagName === "MAIN" || !el.closest?.(".main")) return;
+  const r = el.getBoundingClientRect();
+  const bar = document.querySelector(".inv-actionbar")?.getBoundingClientRect().top ?? innerHeight;
+  if (r.bottom > bar || r.top < 0) el.scrollIntoView({ block: "nearest" });
 }
 
 let edited = false; // an edit made on this page (the opening check keeps nothing new)
