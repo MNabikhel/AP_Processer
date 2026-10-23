@@ -53,6 +53,7 @@ from ap_coder.web.core import (
     local_url,
     login,
     money,
+    one_connection,
     posted_form,
     reference_or_none,
     refuse,
@@ -331,6 +332,7 @@ def view_url(**params: Any) -> str:
 
 
 @router.get("/review", response_class=HTMLResponse)
+@one_connection
 def review_page(request: Request, tab: str = "review", show: str = "all", q: str = "", sort: str = "priority",
                 limit: int = QUEUE_PAGE) -> HTMLResponse:  # fmt: skip
     store, settings = get_store(request), get_settings(request)
@@ -463,6 +465,11 @@ async def review_bulk_approve(request: Request) -> JSONResponse:
 
 
 def _bulk_approve(request: Request, ids: list[int]) -> JSONResponse:
+    with get_store(request).session():  # one connection for the whole approval, however many invoices
+        return _bulk_approve_now(request, ids)
+
+
+def _bulk_approve_now(request: Request, ids: list[int]) -> JSONResponse:
     store, settings = get_store(request), get_settings(request)
     reference = reference_or_none(store)
     if reference is None or not ids:

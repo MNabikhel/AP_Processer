@@ -84,6 +84,13 @@ def bulk_approve(
 
     "As coded" is what the review screen shows: an earlier approver's corrections (a reopened or sent-back
     invoice) when there are some, otherwise the AI's coding."""
+    with store.session():  # one connection for every invoice (a no-op inside the caller's own session)
+        return _bulk_approve(store, reference, settings, invoice_ids, reviewer, login)
+
+
+def _bulk_approve(
+    store: Store, reference: ReferenceData, settings: Settings, invoice_ids: list[int], reviewer: str, login: str
+) -> dict[str, Any]:
     approved: list[int] = []
     skipped: list[tuple[int, str]] = []
     for invoice_id in invoice_ids:
