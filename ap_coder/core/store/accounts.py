@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from typing import Any
 
+from ...coding import tax as _tax
 from ...coding.tax import DEFAULT_TREATMENTS, TAX_TYPES, TREATMENTS, TaxRateTable, TaxSetup, TaxTreatment
 from ..paths import PROJECT_DIR, default_db_path, find_moved_file, private_dir  # noqa: F401  (re-exported)
 from ..reference_data import ReferenceData, ReferenceTable, parse_policy_notes
@@ -16,6 +18,20 @@ from ._base import (
     _in_list,
     _now,
 )
+
+# The reference data as last built, per database: (what it was built from, it) (``Store.reference_data``).
+_REFERENCE: dict[str, tuple[tuple[Any, ...], ReferenceData]] = {}
+_REFERENCE_LOCK = threading.Lock()
+# Everything ``reference_data`` is built from, in one query: compared, it says whether the one kept still holds.
+_REFERENCE_STAMP = """SELECT
+    (SELECT group_concat(code || '|' || description || '|' || category, char(10))
+     FROM (SELECT * FROM gl_accounts ORDER BY code)),
+    (SELECT group_concat(code || '|' || description || '|' || category, char(10))
+     FROM (SELECT * FROM cost_centers ORDER BY code)),
+    (SELECT group_concat(tax_type || '|' || treatment || '|' || gl_code, char(10))
+     FROM (SELECT * FROM tax_treatments ORDER BY tax_type)),
+    (SELECT group_concat(key || '=' || value, char(10))
+     FROM (SELECT * FROM settings WHERE key IN ('our_province', 'site_provinces', 'policy_notes') ORDER BY key))"""
 
 
 class AccountsMixin:
@@ -284,6 +300,32 @@ class AccountsMixin:
             return conn.execute("SELECT COUNT(*) FROM gl_accounts").fetchone()[0] > 0
 
     def reference_data(self, rates: TaxRateTable | None = None) -> ReferenceData:
+        """The GL accounts, cost centers, tax setup and policy notes, as the coder and the checks use them. Without
+        ``rates``, kept and shared until one of them, or the tax-rate file, changes: every page and every invoice
+        read asks for it, and the rate file was parsed each time. Read it, don't change it."""
+        if rates is not None:
+            return self._reference_data(rates)
+        path = _tax.rates_path()
+        try:
+            seen = path.stat()
+            mtime: tuple[int, int] | None = (seen.st_mtime_ns, seen.st_size)
+        except OSError:
+            mtime = None
+        with self._conn() as conn:
+            stamp = (str(path), mtime, *conn.execute(_REFERENCE_STAMP).fetchone())
+        key = str(self.path.resolve())
+        with _REFERENCE_LOCK:
+            kept = _REFERENCE.get(key)
+            if kept is not None and kept[0] == stamp:
+                return kept[1]
+        built = self._reference_data(TaxRateTable.load(path))
+        with _REFERENCE_LOCK:
+            _REFERENCE[key] = (stamp, built)
+            while len(_REFERENCE) > 8:
+                _REFERENCE.pop(next(iter(_REFERENCE)))
+        return built
+
+    def _reference_data(self, rates: TaxRateTable) -> ReferenceData:
         gl = self.list_accounts("gl_accounts")
         if not gl:
             raise ValueError("No GL accounts imported yet: add them on the GL Accounts page")
@@ -298,7 +340,7 @@ class AccountsMixin:
             chart_of_accounts=table(gl, "GL account", "gl_code"),
             cost_centers=table(cc, "cost center", "cost_center") if cc else None,
             tax=TaxSetup(
-                rates or TaxRateTable.load(),
+                rates,
                 self.tax_treatments(),
                 our_province=self.our_province(),
                 site_provinces=self.site_provinces(),

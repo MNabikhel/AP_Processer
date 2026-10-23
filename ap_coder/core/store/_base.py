@@ -78,6 +78,20 @@ _RESTORING_LOCK = threading.Lock()
 # The learning memory as last read, per database: (highest lesson id and count, rows) (``Store.feedback_rows``).
 _FEEDBACK: dict[tuple[str, int, str | None], tuple[tuple[Any, ...], list[dict[str, Any]]]] = {}
 _FEEDBACK_LOCK = threading.Lock()
+# The learning memory's part of ``Store.metrics`` as last counted, per database: (its stamp, the counts).
+_METRICS: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {}
+
+
+def _forget_learning(path: Path) -> None:
+    """The learning memory kept for this database (``feedback_rows``, ``metrics``) dropped: an upgrade changed lessons
+    in place, which the stamps (lessons are otherwise only added or removed) don't see."""
+    key = str(path.resolve())
+    with _FEEDBACK_LOCK:
+        for kept in (_FEEDBACK, _METRICS):
+            for k in [k for k in kept if (k[0] if isinstance(k, tuple) else k) == key]:
+                kept.pop(k, None)
+
+
 FEEDBACK_READ = 50_000  # lessons read for the whole memory, at most (newest first); one vendor's are added past it
 
 # Touchless processing (Settings → Automation): one switch for the company, "on" or "off" (off when not set), and
@@ -546,6 +560,7 @@ class StoreCore:
         row = conn.execute("SELECT value FROM settings WHERE key = 'vendor_key_rules'").fetchone()
         if (row["value"] if row else "") != VENDOR_KEY_RULES:
             self._recompute_vendor_keys(conn)
+            _forget_learning(self.path)
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES ('vendor_key_rules', ?) "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -568,6 +583,7 @@ class StoreCore:
                 "AND COALESCE(suggested_cc, '') IN ('', ?)",
                 (CODED, CORRECTED, UNASSIGNED, UNASSIGNED),
             )
+            _forget_learning(self.path)
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES ('feedback_cleanup', ?) "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",

@@ -378,7 +378,7 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
     if tab == "review":
         shown = {"attention": flagged, "ready": [i for i in pending if i["id"] not in reasons]}.get(show, pending)
         shown = sort_queue(filter_queue(shown, q), sort)
-        candidates, left = sort_for_bulk(store) if show != "attention" else ([], {})
+        candidates, left = sort_for_bulk(store, pending) if show != "attention" else ([], {})
         context.update(
             pending=pending,
             counts={"all": len(pending), "attention": len(flagged), "ready": len(pending) - len(flagged)},

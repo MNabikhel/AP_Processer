@@ -148,3 +148,76 @@ def test_one_vendors_history_is_read_once_per_page(tmp_path, monkeypatch):
             other.execute("UPDATE invoices SET status = 'parked' WHERE id = ?", (ids[2],))
         assert store.vendor_invoices(key)[0]["status"] == "parked"
         assert reads() == 3
+
+
+def test_the_reference_data_is_built_again_only_when_it_changes(tmp_path, monkeypatch):
+    """Every page and every invoice read parsed the tax-rate file and built the accounts again."""
+    import os
+    import shutil
+
+    from ap_coder.coding import tax
+    from ap_coder.core.store import load_sample_setup
+
+    rates = tmp_path / "rates.csv"
+    shutil.copy(tax.DEFAULT_RATES_PATH, rates)
+    monkeypatch.setattr(tax, "rates_path", lambda: rates)
+    loads: list[object] = []
+    real = tax.TaxRateTable.load.__func__
+    monkeypatch.setattr(tax.TaxRateTable, "load", classmethod(lambda cls, path=None: loads.append(path) or real(
+        cls, path)))  # fmt: skip
+    store = Store(tmp_path / "ap.db")
+    load_sample_setup(store)
+    first = store.reference_data()
+    assert store.reference_data() is first and Store(store.path).reference_data() is first and len(loads) == 1
+    gl = store.list_accounts("gl_accounts")
+    store.save_accounts("gl_accounts", [{**gl[0], "description": "Renamed"}, *gl[1:]])
+    renamed = store.reference_data()
+    assert renamed is not first and renamed.chart_of_accounts.rows[0]["description"] == "Renamed"
+    store.set_setting("our_province", "QC")
+    assert store.reference_data().tax.our_province == "QC"
+    store.set_tax_treatment("GST", tax.EXPENSE_TO_LINE, "")
+    assert store.reference_data().tax.treatments["GST"].treatment == tax.EXPENSE_TO_LINE
+    before = len(loads)
+    assert store.reference_data() is store.reference_data() and len(loads) == before
+    stamp = rates.stat().st_mtime_ns + 5_000_000_000
+    os.utime(rates, ns=(stamp, stamp))  # the rate table edited: read again
+    store.reference_data()
+    assert len(loads) == before + 1
+    given = tax.TaxRateTable.load()
+    assert store.reference_data(given).tax.rates is given  # rates given: always those
+
+
+def test_the_metrics_read_the_learning_memory_again_only_when_it_changes(tmp_path, monkeypatch):
+    from .webclient import add_clean, gt
+
+    store = Store(tmp_path / "ap.db")
+    ids = [add_clean(store, invoice_number=f"N-{i}") for i in range(3)]
+    store.approve_invoice(ids[0], {**gt(), "invoice_number": "N-0"}, "Ann")
+    seen = _statements(monkeypatch)
+
+    def scans() -> int:
+        return len([s for s in seen if "FROM feedback WHERE outcome" in s])
+
+    first = store.metrics()
+    assert scans() == 4 and first["lines_reviewed"] > 0
+    assert store.metrics() == first and scans() == 4
+    store.reject_invoice(ids[1], "Ann", "duplicate")  # no lesson: the memory is kept, the invoice counts are not
+    assert store.metrics()["invoices_by_status"] == {"approved": 1, "rejected": 1, "review": 1} and scans() == 4
+    store.approve_invoice(ids[2], {**gt(), "invoice_number": "N-2"}, "Ann")
+    assert store.metrics()["lines_reviewed"] == 2 * first["lines_reviewed"] and scans() == 8
+
+
+def test_bulk_sorting_reuses_the_queue_the_page_read(tmp_path, monkeypatch):
+    from ap_coder.coding.bulk import sort_for_bulk
+    from ap_coder.core.store import REVIEW
+
+    from .webclient import add_clean
+
+    store = Store(tmp_path / "ap.db")
+    for i in range(3):
+        add_clean(store, invoice_number=f"N-{i}")
+    queue = [i for i in store.list_invoices() if i["status"] == REVIEW]
+    expected = sort_for_bulk(store)
+    seen = _statements(monkeypatch)
+    assert sort_for_bulk(store, queue) == expected
+    assert not [s for s in seen if s.startswith("SELECT id, file_name, status")]

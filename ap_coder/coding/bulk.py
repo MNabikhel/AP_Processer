@@ -58,13 +58,16 @@ def clean_candidates(store: Store) -> list[dict[str, Any]]:
     return sort_for_bulk(store)[0]
 
 
-def sort_for_bulk(store: Store) -> tuple[list[dict[str, Any]], dict[int, str]]:
+def sort_for_bulk(
+    store: Store, queue: list[dict[str, Any]] | None = None
+) -> tuple[list[dict[str, Any]], dict[int, str]]:
     """(``clean_candidates``, why each other invoice of the queue not flagged when processed is left for a person:
-    "credit note", or "warning" for an error, a warning or a finding that always goes to a person)."""
+    "credit note", or "warning" for an error, a warning or a finding that always goes to a person). ``queue``: the
+    invoices in review as ``store.list_invoices`` gives them, when the caller has them already."""
     validations = {r["id"]: r["validation"] or {} for r in store.invoice_columns(("id", "validation"), REVIEW)}
     titled = store.credit_note_ids(REVIEW)
     candidates, left = [], {}
-    for inv in store.list_invoices(REVIEW):
+    for inv in store.list_invoices(REVIEW) if queue is None else queue:
         if inv["requires_review"]:
             continue
         issues = validations.get(inv["id"], {}).get("issues") or []
