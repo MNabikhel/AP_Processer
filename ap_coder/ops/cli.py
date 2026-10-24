@@ -233,6 +233,24 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("demo", help="Load the sample invoices into the review queue (no Azure needed)")
     p.add_argument("--remove", action="store_true", help="Remove the demo invoices and their lessons instead")
 
+    from ..core.store.users import ROLES
+
+    p = sub.add_parser("users", help="Server mode: the people who log in (add, list, reset, deactivate, role)")
+    users = p.add_subparsers(dest="users_command", required=True)
+    u = users.add_parser("add", help="Add a person (the password is asked for, twice)")
+    u.add_argument("username")
+    u.add_argument("--role", choices=ROLES, default="clerk", help="Default: clerk")
+    u.add_argument("--admin", action="store_true", help="The same as --role admin (the first Admin)")
+    u.add_argument("--name", default="", help="The name on their approvals (default: the username)")
+    users.add_parser("list", help="Everyone who can log in, with their role")
+    u = users.add_parser("reset", help="A new temporary password (asked for, twice); they choose their own at login")
+    u.add_argument("username")
+    u = users.add_parser("deactivate", help="Turn an account off: it can no longer log in")
+    u.add_argument("username")
+    u = users.add_parser("role", help="Change a person's role")
+    u.add_argument("username")
+    u.add_argument("role", choices=ROLES)
+
     p = sub.add_parser("schema", help="Developers: print the coding schema a cloud build sends to Azure OpenAI")
     p.add_argument("--no-constrain-codes", action="store_true", help="Do not embed valid codes as enums")
     _add_reference_args(p)
@@ -773,6 +791,79 @@ def cmd_demo(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+def _new_password(username: str, name: str = "") -> str | None:
+    """A password typed twice at the console (never shown, never an argument: it would stay in the history)."""
+    import getpass
+
+    from ..core.store.users import password_problem
+
+    first = getpass.getpass(f"Password for {username}: ")
+    problem = password_problem(first, username, name)
+    if problem:
+        print(problem, file=sys.stderr)
+        return None
+    if getpass.getpass("The same password again: ") != first:
+        print("The two passwords are not the same: nothing was changed.", file=sys.stderr)
+        return None
+    return first
+
+
+def cmd_users(args: argparse.Namespace) -> int:
+    """The accounts of server mode, from the server's console (D-97): the first Admin is added here."""
+    from ..core.store.users import ADMIN, ROLE_LABELS, USERNAME, fold_username
+
+    store = Store(args.db)
+    actor = "the server console"
+    action = args.users_command
+    if action == "list":
+        found = store.list_users()
+        if not found:
+            print("No accounts yet. Add the first Admin: python -m ap_coder users add <username> --role admin")
+        for u in found:
+            state = "turned off" if not u["active"] else ("temporary password" if u["must_change"] else "active")
+            print(f"{u['username']:<24} {ROLE_LABELS[u['role']]:<10} {u['display_name']:<30} {state}")
+        return 0
+    username = fold_username(args.username)
+    if action == "add":
+        if not USERNAME.fullmatch(username) or store.find_user(username) is not None:
+            taken = f"There is already an account {username}." if store.find_user(username) else ""
+            print(taken or "A username is 1 to 64 letters, digits, dots, dashes, underscores or @ (e.g. ann.lee).",
+                  file=sys.stderr)  # fmt: skip
+            return 1
+        role = ADMIN if args.admin else args.role
+        password = _new_password(username, args.name)
+        if password is None:
+            return 1
+        try:
+            store.add_user(username, password, role=role, display_name=args.name, actor=actor)
+        except ValueError as exc:
+            print(exc, file=sys.stderr)
+            return 1
+        print(f"Added {username} ({ROLE_LABELS[role]}). They choose their own password at their first login.")
+        return 0
+    user = store.find_user(username)
+    if user is None:
+        print(f"There is no account {username} (python -m ap_coder users list shows them).", file=sys.stderr)
+        return 1
+    try:
+        if action == "reset":
+            password = _new_password(username, user["display_name"])
+            if password is None:
+                return 1
+            store.reset_password(user["id"], actor=actor, password=password)
+            print(f"Password of {username} reset: they are logged out everywhere and choose their own at login.")
+        elif action == "deactivate":
+            store.deactivate_user(user["id"], actor=actor)
+            print(f"{username} can no longer log in.")
+        else:
+            store.set_role(user["id"], args.role, actor=actor)
+            print(f"{username} is now {ROLE_LABELS[args.role]}.")
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    return 0
+
+
 def cmd_schema(args: argparse.Namespace) -> int:
     schema = build_json_schema(
         _load_reference(args),
@@ -820,6 +911,7 @@ def main(argv: list[str] | None = None) -> int:
         "pilot-score": lambda: cmd_pilot_score(args),
         "demo": lambda: cmd_demo(args, settings),
         "schema": lambda: cmd_schema(args),
+        "users": lambda: cmd_users(args),
     }
     try:
         return commands[args.command]()
