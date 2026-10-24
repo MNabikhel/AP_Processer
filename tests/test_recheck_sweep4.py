@@ -321,3 +321,33 @@ def test_the_vendor_master_reads_jd_edwards_tax_id_as_the_gst_number():
     columns = master_columns(list(records[0]))
     assert columns["gst"] == "Tax ID"
     assert master_rows(records, columns)[0]["gst"] == LTD
+
+
+# --- 11. On the office network, setup and imports only from this computer -------------------------------------------
+
+SETUP_ROUTES = ["/accounts/sample", "/accounts/gl_accounts/upload", "/accounts/gl_accounts/import",
+                "/accounts/gl_accounts/save", "/accounts/bank/upload", "/accounts/bank/import", "/accounts/bank/save",
+                "/accounts/tax", "/accounts/policy", "/accounts/rules", "/accounts/rules/add",
+                "/vendors/master/upload", "/vendors/master/import", "/settings/jde/gl-map/import"]  # fmt: skip
+
+
+def test_on_the_office_network_a_colleague_cannot_change_the_setup_or_import(tmp_path):
+    """B-1030: only /settings was kept to this computer: a colleague could import or edit the GL accounts, the tax
+    setup and the coding rules, and import the vendor master. Viewing stays open."""
+    from ap_coder.core.store import Store
+    from ap_coder.web.app import create_app
+
+    from .test_sweep4_platform import colleague, local
+    from .webclient import web_settings
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    app = create_app(web_settings(), store, address="0.0.0.0", start_reader=False)
+    ana = colleague(app)
+    for path in SETUP_ROUTES:
+        answer = ana.post(path, headers=PAGE)
+        assert answer.status_code == 403, path
+        assert "computer running AP Coder" in answer.json()["error"], path
+    for path in ("/accounts", "/vendors", "/accounts/gl_accounts.csv"):
+        assert ana.get(path).status_code == 200, path  # viewing stays open
+    here = local(app).post("/accounts/policy", data={"policy_notes": ""}, headers=PAGE)
+    assert here.status_code != 403

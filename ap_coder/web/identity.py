@@ -45,6 +45,13 @@ THIS_COMPUTER = {"127.0.0.1", "localhost", "::1"}
 # Settings (all of it: the approval limit and rates, Data's backups and restore, the Azure check) are changed only on
 # the computer running AP Coder when it is shared on the office network (B-972); logins come later.
 THIS_COMPUTER_ONLY = ("/settings",)
+# The setup and its imports, changed only from this computer too (B-1030): the account lists, the tax setup, the
+# policy notes and coding rules (all under /accounts), and the vendor master's import. Looking at them stays open.
+SETUP_CHANGES_HERE_ONLY = ("/accounts", "/vendors/master")
+SETUP_HERE_ONLY = (
+    "The account lists, the tax setup, the coding rules and the vendor master are changed only on the computer "
+    "running AP Coder. Ask the person at that computer, or the pilot tester."
+)
 SETTINGS_HERE_ONLY = (
     "Settings are changed only on the computer running AP Coder. Ask the person at that computer, or the pilot "
     "tester. To change your own name, use the Who are you? page (/who)."
@@ -191,6 +198,13 @@ class Identity:
                 refusal: Any = HTMLResponse(page + '<p><a href="/">Back</a></p>', 403)
             else:
                 refusal = JSONResponse({"ok": False, "error": SETTINGS_HERE_ONLY}, status_code=403)
+            refusal.headers["Cache-Control"] = "no-store"
+            await refusal(scope, receive, send)
+            return
+        if scope.get("method", "GET") not in ("GET", "HEAD") and any(
+            path == p or path.startswith(p + "/") for p in SETUP_CHANGES_HERE_ONLY
+        ):
+            refusal = JSONResponse({"ok": False, "error": SETUP_HERE_ONLY}, status_code=403)
             refusal.headers["Cache-Control"] = "no-store"
             await refusal(scope, receive, send)
             return
