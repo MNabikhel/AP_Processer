@@ -202,19 +202,20 @@ LM Studio reads the pages and suggests GL accounts (docs/LM_STUDIO.md). On the s
 window, started at boot like AP Coder.
 
 1. **Install LM Studio** (0.4.8 or newer) as the account that will run it. LM Studio installs per user, and keeps its
-   models in that user's `.lmstudio\models` folder. Use `APCoderService`: sign in as it once (Remote Desktop) for the
-   install, or install it as yourself and run its task as yourself.
-2. **Copy the models in** (nothing is downloaded on the server), into `C:\Users\APCoderService\.lmstudio\models`:
+   models in that user's `.lmstudio\models` folder. Use `APCoderService`: sign in as it once by Remote Desktop for the
+   install (add it to *Remote Desktop Users* for that, and take it out after), or install it as yourself and run its
+   task as yourself.
+2. **Copy the models in** (nothing is downloaded on the server), into that account's `%USERPROFILE%\.lmstudio\models`:
    OvisOCR2 (`bartowski\ATH-MaaS_OvisOCR2-GGUF`: `ATH-MaaS_OvisOCR2-Q8_0.gguf` and
    `mmproj-ATH-MaaS_OvisOCR2-f16.gguf`) and one chat model (`lmstudio-community\gemma-4-12B-it-QAT-GGUF`), as in
    docs/PILOT.md and docs/LM_STUDIO.md. Open LM Studio once: *My Models* → the chat model → *Context Length* 16384, GPU
    offload at the maximum; OvisOCR2 → 20480, left unloaded (AP Coder loads it when it reads).
-3. **The command it starts with**: `C:\APCoder\lm-studio-start.cmd`, holding (the model's exact name is the one
-   `lms ls` shows):
+3. **The command it starts with**: `C:\APCoder\lm-studio-start.cmd`, holding (`%USERPROFILE%` is the profile of the
+   account it runs as; the model's exact name is the one `lms ls` shows):
 
    ```bat
-   "C:\Users\APCoderService\.lmstudio\bin\lms.exe" server start --port 1234
-   "C:\Users\APCoderService\.lmstudio\bin\lms.exe" load gemma-4-12b-it-qat --context-length 16384 --gpu max
+   "%USERPROFILE%\.lmstudio\bin\lms.exe" server start --port 1234
+   "%USERPROFILE%\.lmstudio\bin\lms.exe" load gemma-4-12b-it-qat --context-length 16384 --gpu max
    ```
 
 4. **Start it at boot**, as that account (Windows asks for its password):
