@@ -345,3 +345,30 @@ def test_a_msg_whose_fat_list_repeats_one_sector_takes_little_memory():
     finally:
         tracemalloc.stop()
     assert peak < size
+
+
+# --- 5. The Azure check contacts only an Azure Document Intelligence address ----------------------------------------
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    ["https://collector.attacker.example/", "https://cognitiveservices.azure.com.evil.example/",
+     "https://evilcognitiveservices.azure.com/", "https://x.openai.azure.com/"],
+)  # fmt: skip
+def test_the_azure_check_refuses_an_endpoint_that_is_not_azure_document_intelligence(store, endpoint, tmp_path,
+                                                                                       monkeypatch):  # fmt: skip
+    from ap_coder.ai import azure_check
+
+    monkeypatch.setenv("AP_ENV_FILE", str(tmp_path / "test.env"))
+    with pytest.raises(ValueError, match="Azure Document Intelligence"):
+        azure_check.save_settings(store, enabled=True, endpoint=endpoint, api_key="k")
+    assert azure_check.endpoint_host(endpoint) == ""
+
+
+@pytest.mark.parametrize(
+    "endpoint", ["https://ap-test.cognitiveservices.azure.com/", "https://westus2.api.cognitive.microsoft.com/"]
+)
+def test_the_azure_check_takes_an_azure_document_intelligence_endpoint(endpoint):
+    from ap_coder.ai import azure_check
+
+    assert azure_check.endpoint_host(endpoint) == endpoint.split("/")[2]

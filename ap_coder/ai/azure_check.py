@@ -99,15 +99,27 @@ class AzureCheckSettings:
         return f"saved, ending …{self.api_key[-4:]}" if len(self.api_key) >= 16 else "saved"
 
 
+# The hosts of Azure Document Intelligence (a resource's own name, or a region's): the check contacts nothing else,
+# so invoices can't be sent to any https:// address typed in (B-978).
+AZURE_HOSTS = (".cognitiveservices.azure.com", ".api.cognitive.microsoft.com")
+NOT_AZURE = ("The endpoint must be an Azure Document Intelligence https:// address, e.g. "
+             "https://<name>.cognitiveservices.azure.com/ (Keys and Endpoint in the Azure portal).")  # fmt: skip
+
+
 def endpoint_host(url: str) -> str:
-    """The host of an HTTPS endpoint, lower case ("" for anything else: http, no host, user:password@)."""
+    """The host of an Azure Document Intelligence HTTPS endpoint (``AZURE_HOSTS``), lower case ("" for anything else:
+    http, no host, user:password@, another host)."""
     try:
         parts = urlsplit(str(url or "").strip())
     except ValueError:
         return ""
     if parts.scheme.lower() != "https" or not parts.hostname or "@" in parts.netloc:
         return ""
-    return parts.hostname.lower()
+    host = parts.hostname.lower().rstrip(".")
+    label = host.split(".", 1)[0]
+    if not host.endswith(AZURE_HOSTS) or not label or any(host == h[1:] for h in AZURE_HOSTS):
+        return ""
+    return host
 
 
 def _env_value(name: str) -> str:
@@ -158,7 +170,7 @@ def save_settings(store: Any, *, enabled: bool, endpoint: str, api_key: str = ""
 
     endpoint = clean_url(endpoint or "")
     if endpoint and not endpoint_host(endpoint):
-        raise ValueError("The endpoint must be an https:// address, e.g. https://<name>.cognitiveservices.azure.com/")
+        raise ValueError(NOT_AZURE)
     model = (model or DEFAULT_MODEL).strip()
     if not _MODEL_ID.match(model):
         raise ValueError("The model must be a Document Intelligence model id, e.g. prebuilt-invoice.")
@@ -219,7 +231,7 @@ def status(cfg: AzureCheckSettings) -> tuple[str, str]:
     if not cfg.endpoint:
         return NO_ENDPOINT, "No endpoint yet: add the Document Intelligence endpoint from the Azure portal."
     if not cfg.host:
-        return NO_ENDPOINT, "The endpoint isn't an https:// address: nothing is sent."
+        return NO_ENDPOINT, "The endpoint isn't an Azure Document Intelligence https:// address: nothing is sent."
     if not cfg.api_key:
         return NO_KEY, "No key yet: add the Document Intelligence key from the Azure portal (Keys and Endpoint)."
     return READY, f"On: only {cfg.host} is contacted."
