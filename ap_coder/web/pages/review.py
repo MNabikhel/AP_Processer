@@ -218,8 +218,10 @@ def left_out(pending: list[dict[str, Any]], reasons: dict[int, str], left: dict[
     """Why the queue's Ready invoices not offered for bulk approval are left out (``sort_for_bulk``'s ``left``):
     "1 credit note and 2 with a warning left for a person", or "" when none is."""
     ready = [left[i["id"]] for i in pending if i["id"] not in reasons and i["id"] in left]
-    credit, warned = ready.count("credit note"), ready.count("warning")
-    parts = [ui.plural(credit, "credit note") if credit else "", f"{warned} with a warning" if warned else ""]
+    credit, warned, audit = ready.count("credit note"), ready.count("warning"), ready.count("audit")
+    parts = [ui.plural(credit, "credit note") if credit else "",
+             f"{audit} picked for the audit sample" if audit else "",
+             f"{warned} with a warning" if warned else ""]  # fmt: skip
     text = " and ".join(p for p in parts if p)
     return f"{text} left for a person" if text else ""
 
