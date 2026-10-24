@@ -315,3 +315,33 @@ def test_a_picture_over_the_pixel_limit_is_refused_at_intake_in_plain_words(tmp_
     with pytest.raises(CannotRead, match="too large"):
         pictures.to_pdf(path)
     assert path.exists()  # left where it was
+
+
+# --- 4. A crafted .msg file does not take ten times its size in memory -----------------------------------------------
+
+
+def test_a_msg_whose_fat_list_repeats_one_sector_takes_little_memory():
+    import struct
+    import tracemalloc
+
+    from ap_coder.intake import msgfile
+
+    size = 4_000_000
+    header = bytearray(512)
+    header[:8] = msgfile.SIGNATURE
+    struct.pack_into("<HHH", header, 0x1A, 3, 0xFFFE, 9)
+    struct.pack_into("<H", header, 0x20, 6)
+    struct.pack_into("<II", header, 0x2C, 0, 0xFFFFFFFE)  # no FAT count to cut the list; no directory
+    struct.pack_into("<IIIII", header, 0x38, 4096, 0xFFFFFFFE, 0, 0, 0x0FFFFFFF)  # the DIFAT starts at sector 0
+    struct.pack_into("<109I", header, 0x4C, *([1] * 109))  # every FAT sector is sector 1
+    difat = struct.pack("<127I", *([1] * 127)) + struct.pack("<I", 0)  # and the DIFAT points back at itself
+    fat = struct.pack("<128I", *range(0x10000000, 0x10000000 + 128))
+    data = bytes(header) + difat + fat + b"\0" * (size - 512 - len(difat) - len(fat))
+    tracemalloc.start()
+    try:
+        with pytest.raises(msgfile.MsgError):
+            msgfile.read_msg(data)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert peak < size
