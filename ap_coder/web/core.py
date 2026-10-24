@@ -195,8 +195,11 @@ def reference_or_none(store: Store) -> ReferenceData | None:
 
 def login() -> str:
     """The Windows / computer account running the dashboard (recorded with approvals); for a colleague on the
-    office network, their computer's address (web/identity.py)."""
+    office network, their computer's address (web/identity.py); in server mode, their account (``user:<id>``: the
+    second approval needs another one, D-98)."""
     found = identity.person()
+    if found is not None and found.user_id:
+        return f"user:{found.user_id}"
     if found is not None:
         return identity.network_login(found.address)
     try:
@@ -208,7 +211,8 @@ def login() -> str:
 def reviewer() -> str:
     """The person approving: the name this Windows user saved in Settings (kept per user, so two people sharing one
     AP Coder keep their own names), else AP_REVIEWER from the .env, else the computer login. A colleague on the
-    office network is the name they gave on the "Who are you?" page (web/identity.py)."""
+    office network is the name they gave on the "Who are you?" page (web/identity.py); in server mode, the name of
+    the account logged in."""
     found = identity.person()
     if found is not None:
         return found.name
@@ -443,6 +447,41 @@ def rail(store: Store) -> dict[str, list[dict[str, Any]]]:
     }
 
 
+def server_mode(request: Request) -> bool:
+    """Whether this dashboard runs as the company's server: people log in, their role says what they may do (D-97)."""
+    return bool(getattr(request.app.state, "server_mode", False))
+
+
+def can(request: Request, path: str, method: str = "POST") -> bool:
+    """Whether the person asking may use ``path`` (a page hides what they can't; the server refuses it anyway):
+    always on a laptop, their role's say in server mode (web/roles.py)."""
+    if not server_mode(request):
+        return True
+    from ap_coder.web import roles
+
+    found = identity.person()
+    return found is not None and roles.can(request.app, found.role, method, path)
+
+
+def _shown_rail(request: Request, store: Store) -> dict[str, list[dict[str, Any]]]:
+    """The rail; in server mode only the pages the person's role may open."""
+    found = rail(store)
+    if not server_mode(request):
+        return found
+    return {group: [i for i in items if can(request, i["page"].path, "GET")] for group, items in found.items()}
+
+
+def account(request: Request) -> dict[str, Any] | None:
+    """The person logged in, for the rail's foot (server mode only): their name, username and role."""
+    found = identity.person()
+    if not server_mode(request) or found is None or not found.user_id:
+        return None
+    from ap_coder.core.store.users import ROLE_LABELS
+
+    return {"name": found.name, "username": found.username, "role": found.role,
+            "role_label": ROLE_LABELS.get(found.role, found.role)}  # fmt: skip
+
+
 def render(request: Request, template: str, page: str, status_code: int = 200, **context: Any) -> HTMLResponse:
     """Draw ``template`` (which extends base.html) as page ``page`` (a key of ``pages.PAGES``): the rail, the
     reviewer, the messages left by the last action and, on Process and Review, OvisOCR2's warning."""
@@ -460,7 +499,7 @@ def render(request: Request, template: str, page: str, status_code: int = 200, *
         "meta": meta,
         "title": meta.title if meta else context.get("title", "AP Coder"),
         "section": meta.section if meta else "",
-        "rail": rail(store),
+        "rail": _shown_rail(request, store),
         "reviewer": me,
         "approved_today": approved_today(store),
         "demo_count": store.demo_count(),
@@ -469,6 +508,8 @@ def render(request: Request, template: str, page: str, status_code: int = 200, *
         "banner": banner,
         "banner_tone": banner_tone,
         "settings": settings,
+        "account": account(request),
+        "can": functools.partial(can, request),
     }
     base.update(context)
     response = templates.TemplateResponse(request, template, base, status_code=status_code)
