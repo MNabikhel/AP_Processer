@@ -132,6 +132,8 @@
     </table></div>
     {% if approved_total > approved | length %}<p class="muted">The {{ approved | length }} most recent of {{ approved_total }}. Find an older one in the Invoice directory.</p>{% endif %}
     {% endif %}
+    {% if awaiting_count %}<p class="muted">{{ awaiting_count }} more approved, waiting for a second approval: see <a href="{{ view_url(tab='second') }}">Second approval</a>.</p>
+    {% endif %}
   </section>
 
 {% elif tab == "other" %}
@@ -143,7 +145,9 @@
     <div class="rq-li">
       <div class="rq-item"><span class="rq-av" aria-hidden="true">{{ (inv.vendor_name or inv.file_name or "") | initials }}</span>
         <div class="rq-item-body">
-          <div class="rq-item-title"><b>{{ inv.vendor_name or inv.file_name }}</b>{{ ui.pill("Failed", "err") if inv.status == "failed" else ui.pill("Rejected", "gray") }}</div>
+          <div class="rq-item-title">{% if inv.status == "rejected" %}<a href="/review/{{ inv.id }}"><b>{{ inv.vendor_name or inv.file_name }}</b></a>{% else %}<b>{{ inv.vendor_name or inv.file_name }}</b>{% endif %}
+            {% if inv.invoice_number or inv.grand_total is not none %}<span class="rq-num">{{ inv.invoice_number or "—" }}{% if inv.grand_total is not none %} · {{ inv.grand_total | money(inv.currency) }}{% endif %}</span>{% endif %}
+            {{ ui.pill("Failed", "err") if inv.status == "failed" else ui.pill("Rejected", "gray") }}</div>
           <div class="rq-item-sub">{{ inv.first }}</div>
           {% if inv.details %}<details class="tech"><summary>Technical details</summary><pre>{{ inv.details }}</pre></details>{% endif %}
         </div></div>
@@ -173,7 +177,7 @@
             {% if inv.follow_up %}{{ ui.pill("Follow up " ~ inv.follow_up, "err" if inv.late else "gray") }}{% endif %}</div>
           <div class="rq-item-sub">Waiting for: {{ inv.parked_reason }}</div>
         </div></div>
-      <form method="post" action="/review/{{ inv.id }}/unpark"><button class="btn sm" type="submit"><span class="ms" aria-hidden="true">play_circle</span>Back to the queue</button></form>
+      <form method="post" action="/review/{{ inv.id }}/unpark"><button class="btn sm" type="submit"><span class="ms" aria-hidden="true">play_circle</span>Un-park</button></form>
     </div>
     {% endfor %}
   </section>

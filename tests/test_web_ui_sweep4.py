@@ -287,3 +287,168 @@ def test_an_untouched_invoice_records_no_cost_center_change_when_no_list_is_in_u
     approved = next(e for e in store.events(invoice_id) if e["action"] == "approved")
     assert approved["detail"]["changes"] == []
     assert "all as the AI suggested" in client.get("/activity").text
+
+
+# --- 4. The small things ---------------------------------------------------------------------------------------------
+
+
+def _plain(html: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html))
+
+
+def test_the_vendor_master_step_counts_the_supplier_numbers_set_in_jd_edwards_settings(client, store):
+    """B-1002: "no address number (AN8)" while every vendor had one in Settings → JD Edwards → Supplier address
+    numbers."""
+    from ap_coder.erp import jde
+    from ap_coder.web.pages.process import VENDOR_STEP, pilot_steps
+
+    from .test_web_review_signoff import _jde_on
+
+    _jde_on(store)
+    vendors = store.master_vendors()
+    assert vendors
+    with store._conn() as conn:
+        conn.execute("UPDATE vendors SET erp_id = '' WHERE in_master = 1")
+    settings = jde.load(store)
+    settings.an8_overrides = {v["vendor_key"]: str(1000 + n) for n, v in enumerate(vendors)}
+    jde.save(store, settings)
+    state, _, text = next(s for s in pilot_steps(store) if s[1] == VENDOR_STEP)
+    assert state == "ok" and f"{len(vendors)} with an address number (AN8)" in text, text
+
+
+def test_settings_about_says_what_is_shown_as_the_boxes_are(client, store):
+    """B-1003: Settings → About said the JD Edwards settings "are hidden" with "Show JD Edwards settings" ticked."""
+    from .test_web_review_signoff import _jde_on
+
+    hidden = _plain(client.get("/settings/about").text)
+    assert "JD Edwards E1 settings and export" in hidden and "are hidden" in hidden
+    _jde_on(store)
+    shown = _plain(client.get("/settings/about").text)
+    assert "JD Edwards E1 settings and export are hidden" not in shown
+    assert "The JD Edwards E1 settings and export are shown" in shown
+
+
+def test_the_terms_table_says_the_review_screen_notes_terms_not_in_it(client, store):
+    """B-1004: it said "the review screen then warns": it is a note since B-896."""
+    from .test_web_review_signoff import _jde_on
+
+    _jde_on(store)
+    text = _plain(client.get("/settings/jde").text)
+    assert "then warns" not in text and "the review screen then notes it when an invoice's terms" in text
+
+
+def test_the_failed_and_rejected_tab_shows_the_invoice_number_and_amount(client, store):
+    """B-1005: the Failed / rejected tab showed no invoice number or amount."""
+    invoice_id = _id(store, "Prairie")
+    store.reject_invoice(invoice_id, "Dana Clerk", "not ours")
+    inv = store.get_invoice(invoice_id)
+    text = _plain(client.get("/review?tab=other").text)
+    assert inv["invoice_number"] in text and f"{inv['grand_total']:,.2f}" in text
+
+
+def test_approved_today_says_which_are_fully_approved_as_the_approved_tab_lists_them(client, store, me):
+    """B-1006: "Approved today" counted first approvals still waiting for a second while the Approved tab listed
+    fewer, and its line was cut off."""
+    store.set_setting("approval_limit", "1")
+    invoice_id = clean_invoice(client, store)
+    client.post(f"/review/{invoice_id}/approve", data=form_of(store, invoice_id), headers=PAGE)
+    assert store.get_invoice(invoice_id)["status"] == PENDING
+    text = _plain(client.get("/review?tab=approved").text)
+    tile = text[text.index("Approved today") :][:200]
+    assert "1 waits for a second approval" in tile and "0 fully approved" in tile, tile
+    assert "1 more approved, waiting for a second approval" in text
+    page = client.get("/review").text
+    kpi = page[page.index("Approved today") :][:600]
+    assert 'class="s wrap"' in kpi  # wraps rather than being cut off
+
+
+def test_a_parked_invoice_offers_un_park_not_back_to_the_queue(client, store):
+    """B-1007: "Back to the queue" on a parked invoice un-parked it."""
+    invoice_id = _id(store, "Pacific")
+    store.park_invoice(invoice_id, "Dana Clerk", "waiting for the PO")
+    for path in (f"/review/{invoice_id}", "/review?tab=parked"):
+        text = _plain(client.get(path).text)
+        assert "Un-park" in text, path
+        assert "play_circle Back to the queue" not in text, path
+
+
+def test_vendors_says_the_vendor_master_is_imported_before_any_invoice(tmp_path):
+    """B-1008: Vendors said "No vendors yet" after a vendor master import."""
+    from ap_coder.core.store import Store
+
+    from .webclient import client_for
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    store.import_vendor_master([{"vendor_name": "Acme Supply Ltd.", "erp_id": "10001"},
+                                {"vendor_name": "Beta Services Inc.", "erp_id": "10002"}])  # fmt: skip
+    text = _plain(client_for(store).get("/vendors").text)
+    assert "No vendors yet" not in text
+    assert "2 vendors in the vendor master" in text
+
+
+def test_activity_people_lists_everyone_it_counts(client, store):
+    """B-1009: "People 4" listed 3 names."""
+    for name in ("Ann", "Bob", "Cy", "Dee"):
+        store.log_event("note", actor=name, detail={})
+    text = _plain(client.get("/activity").text)
+    tile = text[text.index("People") :][:200]
+    count = int(re.match(r"People (\d+)", tile).group(1))
+    names = tile.split(str(count), 1)[1].split("Deletions", 1)[0].strip()
+    assert count >= 4 and (names.count(",") + 1 == count or f"and {count - 3} more" in names), tile
+
+
+def test_a_place_of_supply_change_is_no_correction_of_the_coding():
+    """B-1010: Insights and Activity counted a place-of-supply change as a correction."""
+    from ap_coder.erp.insights import corrected
+
+    moved = {"detail": {"changes": [{"what": "place of supply", "before": "ON", "after": "MB"}]}}
+    assert not corrected(moved)
+    filled = {"detail": {"changes": [{"what": "line 1 cost center", "before": "(blank)", "after": "CC100"}]}}
+    assert not corrected(filled)  # filling a blank completes the coding (D-39)
+    assert corrected({"detail": {"changes": [{"what": "line 1 GL", "before": "6000", "after": "6400"}]}})
+
+
+def test_in_a_browser_enter_in_the_why_box_approves_anyway(browser, store):
+    """B-1011: Enter in the "Why approve anyway?" box did nothing; Ctrl+Enter approved."""
+    from .test_web_review_signoff import _gst_off
+
+    invoice_id = _id(store, "Red River")
+    _gst_off(store, invoice_id)
+    page = _review(browser, store, "Red River")
+    page.locator("[data-live=bar] [name=override]").check()
+    page.wait_for_selector("[data-override-reason]:not([hidden])")
+    page.locator("[data-override-reason]").fill("Credit promised by email")
+    page.wait_for_timeout(900)
+    page.locator("[data-override-reason]").press("Enter")
+    page.wait_for_url(lambda url: not url.endswith(f"/review/{invoice_id}"), timeout=10000)
+    assert store.get_invoice(invoice_id)["status"] in ("approved", PENDING)
+    assert page.errors == []
+
+
+def test_pilot_score_counts_fully_approved_invoices_only(client, store):
+    """B-1012: the Insights pilot card counted invoices still waiting for a second approval."""
+    from ap_coder.ops.pilot_score import our_invoices
+
+    store.set_setting("approval_limit", "1")
+    invoice_id = clean_invoice(client, store)
+    client.post(f"/review/{invoice_id}/approve", data=form_of(store, invoice_id), headers=PAGE)
+    assert store.get_invoice(invoice_id)["status"] == PENDING
+    assert invoice_id not in [o.id for o in our_invoices(store)]
+
+
+def test_the_insights_pilot_card_shows_the_command_only_as_a_hint_for_the_pilot_tester(client, store, monkeypatch):
+    """B-1012: the card showed "python -m ap_coder pilot-score" to the clerk."""
+    monkeypatch.setattr("ap_coder.ops.pilot_score.last_figures", lambda s: {"matched": 4, "ap_coder": 5,
+                                                                            "made": "2026-10-24 00:39"})  # fmt: skip
+    text = client.get("/insights").text
+    card = text[text.index("pilot-title") : text.index("</section>", text.index("pilot-title"))]
+    lead = card.split("<table", 1)[0] + card.split("</table>", 1)[1].split("pilot-hint", 1)[0]
+    assert "python -m ap_coder" not in lead
+    assert 'class="muted small pilot-hint"' in card and "For the pilot tester" in card
+
+
+def test_the_document_cards_reading_button_is_reading_tools(client, store):
+    """B-1013: "Reading" was both the confidence in the header and the Document card's button."""
+    text = client.get(f"/review/{_id(store, 'Pacific')}").text
+    summary = text[text.index('title="How this invoice was read') :][:400]
+    assert "Reading tools" in summary

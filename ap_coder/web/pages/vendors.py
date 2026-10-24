@@ -257,6 +257,7 @@ def vendors_page(
         keep=keep,
         list_query=urlencode(keep),
         has_master=store.has_vendor_master(),
+        master_count=0 if vendors else len(store.master_vendors()),  # imported, no invoice yet (B-1008)
         spend_items=spend_items,
         target=TARGET,
         master=master,

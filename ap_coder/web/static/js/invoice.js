@@ -1257,7 +1257,9 @@ document.addEventListener("keydown", (e) => {
     if (goToPick()) e.preventDefault();
     return;
   }
-  if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && approveButton && form) {
+  // Enter in "Why approve anyway?" approves, as Ctrl+Enter does: the reason is the last thing typed (B-1011).
+  const why = e.key === "Enter" && !e.shiftKey && !e.altKey && e.target.matches?.("[data-override-reason]");
+  if (((e.ctrlKey || e.metaKey) && e.key === "Enter" || why) && approveButton && form) {
     if (elsewhere(e.target)) return;
     e.preventDefault();
     flush().then(() => {

@@ -375,7 +375,7 @@
   <div class="card-head"><div>
     <h4><span class="ms" aria-hidden="true">pause_circle</span>Parked</h4>
     <p class="muted">Waiting for: {{ inv.parked_reason }}{% if inv.follow_up %} · follow up {{ inv.follow_up }}{% endif %}</p></div>
-    <form method="post" action="/review/{{ inv.id }}/resume"><button class="btn primary" type="submit"><span class="ms" aria-hidden="true">play_circle</span>Back to the queue</button></form>
+    <form method="post" action="/review/{{ inv.id }}/resume"><button class="btn primary" type="submit" title="Back to the review queue, to be approved"><span class="ms" aria-hidden="true">play_circle</span>Un-park</button></form>
   </div>
   {% elif mode == "approved" %}
   <div class="card-head"><div>

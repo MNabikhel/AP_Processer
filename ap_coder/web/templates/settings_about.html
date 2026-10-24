@@ -16,8 +16,10 @@
 
 <section class="card" id="show">
   <h4>What this pilot shows</h4>
-  <p class="muted">The pilot exports to Excel and CSV. The JD Edwards E1 settings and export, and the tools for
-    developers, are hidden; nothing is removed, and they come back here.</p>
+  <p class="muted">{% if show_jde %}The JD Edwards E1 settings and export are shown: a Settings tab, and JD Edwards E1 on
+    Exports.{% else %}The pilot exports to Excel and CSV. The JD Edwards E1 settings and export are hidden.{% endif %}
+    {% if developer_tools or developer_env %}The tools for developers are shown.{% else %}The tools for developers are
+    hidden.{% endif %} Nothing is removed: tick or untick them here.</p>
   <form method="post" action="/settings/about/show" class="stack" data-busy="Saving…">
     <label class="check"><input type="checkbox" name="show_jde" value="1"{% if show_jde %} checked{% endif %}>
       Show JD Edwards settings (a Settings tab, and JD Edwards E1 as an export format)</label>

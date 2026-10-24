@@ -326,13 +326,20 @@ def kpis(store: Store, pending: list[dict[str, Any]], flagged: list[dict[str, An
     note, compared = ("", True)
     if settings is not None and accuracy is not None:
         note, compared = accuracy_note(settings, metrics["lines_measured"])
+    # Of mine today, those still waiting for their second approval: said apart, as the Approved tab lists only the
+    # fully approved (B-1006).
+    me, today = reviewer().strip().casefold(), dt.date.today().isoformat()
+    mine_waiting = sum(
+        1
+        for i in awaiting
+        if (i.get("reviewer") or "").strip().casefold() == me and (i.get("reviewed_at") or "") >= today
+    )
+    waits = f" · {mine_waiting:,} wait{'s' if mine_waiting == 1 else ''} for a second approval" if mine_waiting else ""
     return [
         {"label": "Waiting", "value": f"{len(pending):,}", "sub": f"{len(flagged)} need attention"},
         {"label": "Approved today", "value": f"{done_today:,}",
-         "sub": f"{len(pending):,} still to review"
-                + (f" · {len(awaiting):,} waiting for a second approval" if awaiting else "")
-                + f" · {len(approved):,} approved in total",
-         "bar": done_today / total_today if total_today else 0.0},
+         "sub": f"{max(done_today - mine_waiting, 0):,} fully approved{waits} · {len(pending):,} still to review",
+         "bar": done_today / total_today if total_today else 0.0, "wrap": True},
         {"label": "Coding accuracy", "value": "—" if accuracy is None else f"{accuracy:.1%}",  # as on Learning
          "sub": "after the first approvals" if accuracy is None
                 else ("vs 90% target" + (f" · {note}" if note else "")) if compared else note,
@@ -417,7 +424,8 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
         )  # fmt: skip
     elif tab == "approved":
         recent = sorted(approved, key=lambda i: i["reviewed_at"] or "", reverse=True)[:APPROVED_SHOWN]
-        context.update(approved=recent, approved_total=len(approved), to_export=len(store.unexported_approved()))
+        context.update(approved=recent, approved_total=len(approved), to_export=len(store.unexported_approved()),
+                       awaiting_count=len(awaiting))  # fmt: skip
     elif tab == "other":
         context.update(others=[_other(i) for i in others])
     elif tab == "parked":

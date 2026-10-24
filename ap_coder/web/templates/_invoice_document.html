@@ -9,7 +9,7 @@
     {% if mode == "review" and (lm_off or doc.reader.lines or doc.reader.queue or doc.reviewer.lines or doc.reviewer.again or doc.lines_note) %}
     {# The readers and the AI reviewer, for the person setting up: folded away from the clerk's view (D-75). #}
     <details class="pop inv-doc-more" data-doc-more>
-      <summary class="btn sm ghost" title="How this invoice was read: OvisOCR2, the AI reviewer, LM Studio"><span class="ms" aria-hidden="true">tune</span>Reading{% if lm_off %}<span class="inv-dot warn" aria-label="(LM Studio isn't running)"></span>{% endif %}</summary>
+      <summary class="btn sm ghost" title="How this invoice was read: OvisOCR2, the AI reviewer, LM Studio"><span class="ms" aria-hidden="true">tune</span>Reading tools{% if lm_off %}<span class="inv-dot warn" aria-label="(LM Studio isn't running)"></span>{% endif %}</summary>
       <div class="pop-body stack inv-doc-more-body">
         {% if lm_off %}<div class="inv-note warn"><span class="ms" aria-hidden="true">visibility_off</span><span>{{ lm_off }}</span></div>{% endif %}
         <div data-reader data-state="{{ doc.reader.state }}"{% if doc.reader.poll %} data-poll="{{ poll_seconds }}"{% endif %}>{{ live_ui.reader(doc.reader, inv.id) }}</div>
