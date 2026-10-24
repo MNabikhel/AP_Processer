@@ -362,7 +362,7 @@ def learn_from_approval(store: Any, invoice_id: int, final: dict[str, Any], *, a
     # takes it as it was read (D-65, B-681). The approved coding keeps it.
     approved = final
     final = as_read(final, inv.get("ai_output") or {})
-    record_lessons(store, invoice_id, inv.get("ai_output") or {}, final, actor)  # per situation (never raises)
+    record_lessons(store, invoice_id, inv.get("ai_output") or {}, final, actor, bulk=bulk)  # never raises
     try:
         reader_rows = reader_outcome_rows(store.get_capture(invoice_id), final)
         if bulk:  # nobody checked a value AP kept: scored on the Readers tab, but no proof for the calibration

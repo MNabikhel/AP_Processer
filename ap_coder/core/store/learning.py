@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..memory import ACCEPTED, CODED, CORRECTED, vendor_key
+from ..memory import ACCEPTED, BULK, CODED, CORRECTED, vendor_key
 from ..paths import PROJECT_DIR, default_db_path, find_moved_file, private_dir  # noqa: F401  (re-exported)
 from ._base import (
     _FEEDBACK,
@@ -175,12 +175,13 @@ class LearningMixin:
         daily = conn.execute(
             """SELECT substr(created_at, 1, 10) day,
                       SUM(outcome = 'accepted') accepted, SUM(outcome = 'corrected') corrected
-               FROM feedback WHERE outcome NOT IN ('history', 'coded') GROUP BY day"""
+               FROM feedback WHERE outcome NOT IN ('history', 'coded', 'bulk') GROUP BY day"""
         ).fetchall()
         by_vendor = conn.execute(
             """SELECT vendor_name, COUNT(*) lines, SUM(outcome = 'accepted') accepted,
                       SUM(outcome = 'corrected') corrected, MAX(created_at) last_seen
-               FROM feedback WHERE outcome NOT IN ('history', 'coded') GROUP BY vendor_key ORDER BY lines DESC"""
+               FROM feedback WHERE outcome NOT IN ('history', 'coded', 'bulk') GROUP BY vendor_key
+               ORDER BY lines DESC"""
         ).fetchall()
         corrections = conn.execute(
             """SELECT COALESCE(suggested_gl, '(new line)') suggested_gl, final_gl, COUNT(*) n
@@ -201,6 +202,7 @@ class LearningMixin:
             "lines_reviewed": sum(outcome.values()),
             "lines_measured": measured,
             "lines_coded": outcome.get(CODED, 0),
+            "lines_bulk": outcome.get(BULK, 0),  # approved in bulk as proposed: not measured (B-955)
             "lines_accepted": outcome.get(ACCEPTED, 0),
             "lines_corrected": outcome.get(CORRECTED, 0),
             "line_accuracy": round(outcome.get(ACCEPTED, 0) / measured, 4) if measured else None,

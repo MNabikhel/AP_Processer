@@ -81,6 +81,7 @@ OUTCOMES = {
     "accepted": "✓ confirmed",
     "corrected": "✎ corrected",
     "coded": "✎ coded by AP (the AI only guessed)",
+    "bulk": "✓ approved in bulk, as proposed",
     "history": "⟲ ERP history",
 }
 

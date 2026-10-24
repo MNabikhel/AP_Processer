@@ -14,7 +14,7 @@ from ...coding.line_tax import invoice_uncollected, supply_province, tax_vote
 from ...coding.po import po_key
 from ...coding.terms import DEFAULT_TERMS_DAYS
 from ..audit import diff_coding
-from ..memory import ACCEPTED, CODED, CORRECTED, pair_lines, vendor_key
+from ..memory import ACCEPTED, BULK, CODED, CORRECTED, pair_lines, vendor_key
 from ..paths import PROJECT_DIR, default_db_path, find_moved_file, private_dir  # noqa: F401  (re-exported)
 from ..reference_data import UNASSIGNED
 from ..schema import as_read
@@ -723,7 +723,7 @@ class InvoicesMixin:
         vendor_name = final_output.get("vendor_name", "")
         key = vendor_key(vendor_name)
         now = _now()
-        counts = {ACCEPTED: 0, CORRECTED: 0, CODED: 0}
+        counts = {ACCEPTED: 0, CORRECTED: 0, CODED: 0, **({BULK: 0} if bulk else {})}
         reviewer_changed = reviewer_coded = 0
         # Lines a fixed coding rule set: the AI's own answer is what its accuracy is measured on.
         by_rule = {c["line_number"]: c for c in (inv.get("meta") or {}).get("rules_applied") or []}
@@ -768,6 +768,8 @@ class InvoicesMixin:
                 CODED if guess or nothing_proposed(s_gl, s_cc) else ACCEPTED if kept(s_gl, s_cc, f_gl, f_cc)
                 else CORRECTED
             )  # fmt: skip
+            if bulk and outcome == ACCEPTED:  # kept, but nobody looked at it: no confirmation (B-955)
+                outcome = BULK
             counts[outcome] += 1
             feedback_rows.append(
                 (

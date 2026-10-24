@@ -307,7 +307,7 @@ class VendorsMixin:
             lessons = {
                 r["vendor_key"]: dict(r)
                 for r in conn.execute(
-                    """SELECT vendor_key, COUNT(*) lessons, SUM(outcome NOT IN ('history', 'coded')) lines,
+                    """SELECT vendor_key, COUNT(*) lessons, SUM(outcome NOT IN ('history', 'coded', 'bulk')) lines,
                               SUM(outcome = 'accepted') accepted FROM feedback GROUP BY vendor_key"""
                 )
             }

@@ -65,7 +65,7 @@ from ap_coder.coding.taxmath import math_check  # noqa: F401 - the review screen
 from ap_coder.coding.terms import describe as terms_describe
 from ap_coder.coding.terms import payment
 from ap_coder.core.config import Settings
-from ap_coder.core.memory import ACCEPTED, CODED, CORRECTED, pair_lines, vendor_key
+from ap_coder.core.memory import ACCEPTED, BULK, CODED, CORRECTED, pair_lines, vendor_key
 from ap_coder.core.reference_data import UNASSIGNED, ReferenceData, short_name
 from ap_coder.core.schema import FROM_VENDOR_LIST, PROVINCE_VALUES, InvoiceCoding
 from ap_coder.core.store import Store, nothing_proposed, suggestion_kept
@@ -675,7 +675,7 @@ def vendor_accounts(store: Store, vendor_name: str, limit: int = 6) -> list[str]
     never what the AI proposed; lines left without an account are not counted."""
     if not (vendor_name or "").strip():
         return []
-    decided = {ACCEPTED, CORRECTED, CODED, HISTORY}
+    decided = {ACCEPTED, CORRECTED, CODED, BULK, HISTORY}
     counts: dict[str, int] = {}
     for row in store.feedback_rows(vendor_name=vendor_name):  # newest first: a tie keeps the newest first
         code = _text(row.get("final_gl"))

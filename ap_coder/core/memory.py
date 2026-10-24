@@ -39,6 +39,9 @@ ACCEPTED, CORRECTED = "accepted", "corrected"
 # the reviewer approved is their own coding, learned from like any other, but neither confirmed nor corrected: coding
 # accuracy leaves it out (B-475, B-650).
 CODED = "coded"
+# A line approved in bulk as it was proposed: nobody looked at it, so it is neither confirmed nor corrected, and the
+# accuracy figures leave it out (B-955). Its tax code is no vote either (``line_tax.tax_vote``, B-764).
+BULK = "bulk"
 
 
 def changed_account(row: dict[str, Any]) -> bool:
