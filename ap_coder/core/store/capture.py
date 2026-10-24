@@ -295,8 +295,18 @@ class CaptureMixin:
         if state == AUTONOMOUS and profile["state"] != AUTONOMOUS:
             if not meets_policy(self.supplier_stats(key, policy.window), policy):
                 raise ValueError(f"{profile['display_name'] or key} does not meet the autonomy policy yet")
-        if state == profile["state"] or (state == SUSPENDED and profile["state"] != AUTONOMOUS):
-            return  # nothing to suspend: the supplier is not touchless
+        if state == SUSPENDED and profile["state"] != AUTONOMOUS:
+            # Not touchless now (kept supervised by an AP lead, or suspended already), but one of its touchless
+            # invoices was found wrong: its state stays, its clean streak starts again from now (B-959).
+            with self._conn() as conn:
+                conn.execute("UPDATE supplier_profiles SET suspended_at = ?, updated_at = ?, updated_by = ? "
+                             "WHERE key = ?", (_now(), _now(), by, key))  # fmt: skip
+                self._log(conn, "autonomy_suspended", actor=by, detail={
+                    "supplier": profile["display_name"] or key, "key": key, "from": profile["state"],
+                    "to": profile["state"], **({"reason": reason} if reason else {})})  # fmt: skip
+            return
+        if state == profile["state"]:
+            return
         with self._conn() as conn:
             self._set_state(conn, profile, state, by, reason, audit_rate, policy)
         if state != SUSPENDED:  # "Allow again": it may go touchless straight away

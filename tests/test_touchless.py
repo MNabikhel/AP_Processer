@@ -192,6 +192,27 @@ def test_a_reopened_touchless_invoice_suspends_until_a_fresh_streak(tmp_path, gr
     assert store.get_supplier_profile(KEY)["state"] == AUTONOMOUS
 
 
+def test_a_touchless_invoice_reopened_while_its_vendor_is_held_still_counts(tmp_path, ground_truth):
+    """An AP lead kept the vendor supervised, then a person reopened one of its touchless invoices: nothing was
+    recorded, so once allowed again it went touchless at once on its old clean streak (B-959)."""
+    store = Store(tmp_path / "s.db")
+    _ready(store)
+    store.set_touchless(True, "Mia")
+    ground_truth["gst_hst_registration_number"] = ""
+    store.import_vendor_master([{"vendor_name": ground_truth["vendor_name"], "erp_id": "V1"}])
+    invoice_id = store.add_invoice(tmp_path / "a.pdf", ground_truth, {"requires_review": False})
+    store.approve_invoice(invoice_id, ground_truth, AUTONOMOUS_REVIEWER, login="ap-coder")
+    store.set_supplier_state(KEY, HELD, "Mia", reason="new contract")
+    before = store.get_invoice(invoice_id)
+    store.reopen(invoice_id, "Ann", "wrong PO")
+    on_reopen(store, invoice_id, "Ann", "wrong PO", before=before)
+    profile = store.get_supplier_profile(KEY)
+    assert profile["state"] == HELD and profile["suspended_at"]  # still kept supervised, the reopen recorded
+    assert "reopened" in store.events(actions=["autonomy_suspended"])[0]["detail"]["reason"]
+    store.set_supplier_state(KEY, SUPERVISED, "Mia")  # allowed again: a fresh clean streak first
+    assert store.get_supplier_profile(KEY)["state"] == SUPERVISED
+
+
 def test_keep_supervised_overrides_the_bar_until_allowed_again(tmp_path, path):
     store = Store(tmp_path / "s.db")
     _ready(store)
