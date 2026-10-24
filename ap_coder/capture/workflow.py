@@ -339,7 +339,8 @@ def reader_outcome_rows(capture: CaptureResult | dict[str, Any] | None, final: d
 
 
 def learn_from_approval(store: Any, invoice_id: int, final: dict[str, Any], *, actor: str = "",
-                        taught: dict[str, list[Box]] | None = None, bulk: bool = False) -> dict[str, Any]:  # fmt: skip
+                        taught: dict[str, list[Box]] | None = None, bulk: bool = False,
+                        _again: bool = False) -> dict[str, Any]:  # fmt: skip
     """After a person approves: score each reader against what AP approved (the Learning page's Readers tab and
     the local calibration of confidence), count what was corrected, field by field, towards the supplier's accuracy,
     and teach the supplier's template where each confirmed value sits on the page.
@@ -353,6 +354,7 @@ def learn_from_approval(store: Any, invoice_id: int, final: dict[str, Any], *, a
                                "template": False}  # fmt: skip
     from ..core.store import APPROVED, PENDING
 
+    generation = store.approval_generation(invoice_id)  # the approval learned from (B-960)
     inv = store.get_invoice(invoice_id)
     if inv is None or inv.get("status") not in (APPROVED, PENDING):  # withdrawn meanwhile: nothing to learn (B-782)
         return learned
@@ -407,9 +409,26 @@ def learn_from_approval(store: Any, invoice_id: int, final: dict[str, Any], *, a
         _keep_taught(store, invoice_id, approved, taught)
     except Exception as exc:  # learning must never block an approval
         log.warning("invoice %s: taught boxes not kept (%s)", invoice_id, exc)
-    if store.forget_if_withdrawn(invoice_id):  # withdrawn while it was learned from: taken back (B-782)
+    # Withdrawn while it was learned from: taken back (B-782). Withdrawn and approved again meanwhile: taken back too,
+    # and learned from the approval that stands (B-960).
+    if store.forget_if_withdrawn(invoice_id, generation):
         learned.update(counted=False, template=False)
+        return learned if _again else _learn_again(store, invoice_id, actor)
     return learned
+
+
+def _learn_again(store: Any, invoice_id: int, actor: str) -> dict[str, Any]:
+    """Learning from the approval that stands now, once the one learned from was withdrawn and made again meanwhile
+    (``learn_from_approval``): nothing when it is no longer approved, or was approved by AP Coder on its own."""
+    from ..core.store import APPROVED, PENDING
+
+    inv = store.get_invoice(invoice_id) or {}
+    final = inv.get("final_output")
+    if inv.get("status") not in (APPROVED, PENDING) or not final or inv.get("reviewer") == AUTONOMOUS_REVIEWER:
+        return {"supplier": "", "name": "", "fields": 0, "corrected": [], "counted": False, "template": False}
+    last = store.events(invoice_id=invoice_id, actions=["approved"], limit=1)
+    bulk = bool(last and (last[0].get("detail") or {}).get("bulk"))
+    return learn_from_approval(store, invoice_id, final, actor=inv.get("reviewer") or actor, bulk=bulk, _again=True)
 
 
 def _keep_taught(store: Any, invoice_id: int, approved: dict[str, Any], taught: dict[str, list[Box]] | None) -> None:

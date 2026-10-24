@@ -349,6 +349,35 @@ def test_learning_from_an_approval_withdrawn_meanwhile_teaches_nothing(tmp_path,
         assert conn.execute("SELECT COUNT(*) FROM supplier_outcomes").fetchone()[0] == 0
 
 
+def test_an_approval_withdrawn_and_made_again_while_it_was_learned_from_keeps_only_the_new_one(
+    tmp_path, ground_truth, monkeypatch
+):
+    """Approved, then reopened and approved again with another invoice number while AP Coder was still learning from
+    the first approval: the invoice was approved at the end, so the first approval's learning stayed, with its stale
+    values (B-960). Learning checks the approval it learned from (its generation) and learns from the current one."""
+    store = Store(tmp_path / "ap.db")
+    invoice_id = store.add_invoice(PDF, ground_truth, {"requires_review": False})
+    first = {**ground_truth, "invoice_number": "FIRST-1"}
+    second = {**ground_truth, "invoice_number": "SECOND-2"}
+    store.approve_invoice(invoice_id, first, "Ann")
+    real = store.record_reader_outcomes
+    calls = []
+
+    def meanwhile(*args, **kwargs):  # Bob reopens it and approves it again before Ann's learning is done
+        if not calls:
+            calls.append(1)
+            store.reopen(invoice_id, "Bob", "wrong number")
+            store.approve_invoice(invoice_id, second, "Bob")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(store, "record_reader_outcomes", meanwhile)
+    learn_from_approval(store, invoice_id, first, actor="Ann")
+    with store._conn() as conn:
+        numbers = {r[0] for r in conn.execute("SELECT final_value FROM supplier_outcomes WHERE invoice_id = ? AND "
+                                              "field = 'invoice_number'", (invoice_id,))}  # fmt: skip
+    assert numbers == {'"SECOND-2"'}
+
+
 def test_a_tax_number_from_the_vendor_list_is_not_labelled_as_read(store, ground_truth):
     """A GST/HST number the review screen filled from the vendor list (not printed on the invoice) went into the
     training set as read off the page, and as a correction of the reading (B-954)."""
