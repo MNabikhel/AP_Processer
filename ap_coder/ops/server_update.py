@@ -2,7 +2,8 @@
 
 The steps, in order (``--dry-run`` prints them with the folders and files, and changes nothing):
 
-1. **Check the bundle**: a ZIP holding one AP Coder folder (no path out of it), every file the manifest lists, CRCs
+1. **Check the bundle**, from a copy in a private temporary folder (the file given may be changed once checked; the
+   copy is what is unzipped): a ZIP holding one AP Coder folder (no path out of it), every file the manifest lists, CRCs
    that match, and a newer AP Coder than the one the service runs (``paths.compare``, as the laptop updater judges).
 2. **Stop the service** (``service stop``).
 3. **Back up the database**: ``backups/ap_coder-<time>-before-update-<version>.db`` (``Store.backup_now``).
@@ -15,7 +16,8 @@ The steps, in order (``--dry-run`` prints them with the folders and files, and c
 
 When 5, 6, 7 or 8 fails, the backup is put back, the service switched back to the old folder and started again. The
 previous folder is kept: ``server-update --back`` goes back to it and puts back the pre-update backup (an older
-version refuses a database a newer one has changed). What it does is recorded in server.json (``folder``,
+version refuses a database a newer one has changed). Putting a backup back keeps the user accounts and paused logins
+as they are, and logs everyone out (``put_back``, D-101). What it does is recorded in server.json (``folder``,
 ``previous_folder``, ``pre_update_backup``, ``history``) and in the record of installs (``~/.ap_coder/settings.json``),
 as the laptop updater does.
 """
@@ -26,6 +28,7 @@ import argparse
 import datetime as dt
 import importlib.util
 import os
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -145,6 +148,38 @@ def copy_database(source: Path, dest: Path) -> Path:
     return dest
 
 
+def put_back(backup: Path, db: Path) -> Path:
+    """``backup`` copied over the database (``copy_database``), keeping the user accounts, their passwords and roles,
+    and the paused logins as they are now, and ending every session: a backup must not bring back an account turned
+    off, a password changed since, or a session (D-101). A backup older than the accounts gets their tables, so the
+    server is never left with no account."""
+    from ..core.store.users import carry_accounts, saved_accounts
+
+    saved: dict = {}
+    if db.exists():
+        conn = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True, timeout=30)
+        try:
+            saved = saved_accounts(conn)
+        finally:
+            conn.close()
+    copy_database(backup, db)
+    conn = sqlite3.connect(db, timeout=30)
+    try:
+        with conn:
+            carry_accounts(conn, saved)
+    finally:
+        conn.close()
+    return db
+
+
+def private_copy(bundle: Path, folder: Path) -> Path:
+    """The bundle copied into ``folder`` (a private temporary folder): what is checked is what is unzipped, even
+    when the file given (on a share, in a folder others can write to) is changed meanwhile (D-101)."""
+    copy = folder / bundle.name
+    shutil.copyfile(bundle, copy)
+    return copy
+
+
 def safety_copy(db: Path, label: str) -> Path:
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     dest = db.parent / "backups" / f"ap_coder-{stamp}-{label}.db"
@@ -255,6 +290,23 @@ def _version(folder: Path) -> str:
 
 def update(bundle: Path, data: Path, db: Path, *, server: Server | None = None, dry_run: bool = False,
            force: bool = False, say: Say = print) -> int:  # fmt: skip
+    """Install ``bundle``: checked and unzipped from a copy in a private temporary folder, removed at the end."""
+    bundle = Path(bundle)
+    if not bundle.is_file():
+        print(f"{bundle} is not a ZIP file: give the offline bundle (APProcessor-offline-<version>.zip).",
+              file=sys.stderr)  # fmt: skip
+        return 1
+    with tempfile.TemporaryDirectory(prefix="ap_coder-update-") as folder:  # only this account may open it
+        try:
+            copy = private_copy(bundle, Path(folder))
+        except OSError as exc:
+            print(f"{bundle} could not be copied to check it ({exc}): nothing was changed.", file=sys.stderr)
+            return 1
+        return _update(copy, data, db, server=server, dry_run=dry_run, force=force, say=say)
+
+
+def _update(bundle: Path, data: Path, db: Path, *, server: Server | None, dry_run: bool, force: bool,
+            say: Say) -> int:  # fmt: skip
     def refuse(message: str) -> int:
         print(message, file=sys.stderr)
         return 1
@@ -318,8 +370,9 @@ def update(bundle: Path, data: Path, db: Path, *, server: Server | None = None, 
         if started:
             server.stop()
         if backup is not None:
-            copy_database(backup, db)
-            say(f"The database is back as it was before the update ({backup.name}).")
+            put_back(backup, db)
+            say(f"The database is back as it was before the update ({backup.name}); the user accounts are kept as "
+                "they are, and everyone logs in again.")  # fmt: skip
         switch_to(data, current)
         _record(data, {"from": old_version, "to": new_version, "result": f"rolled back: {reason}",
                        "backup": str(backup or "")})  # fmt: skip
@@ -395,11 +448,13 @@ def go_back(data: Path, db: Path, *, server: Server | None = None, dry_run: bool
     since = saved.get("history", [{}])[-1].get("at", "the update") if saved.get("history") else "the update"
     say(f"Going back from AP Coder {_version(current)} ({current}) to {_version(previous)} ({previous}).")
     say(f"The database goes back to the backup made before the update ({backup.name}): what was done in AP Coder "
-        f"since {since} is not in it. A copy of the database as it is now is kept in backups.")  # fmt: skip
+        f"since {since} is not in it. A copy of the database as it is now is kept in backups. The user accounts, "
+        "their passwords and roles, and paused logins stay as they are now; everyone is logged out and logs in "
+        "again.")  # fmt: skip
     if dry_run:
         say(f'  1. Stop the service "{s.task_name}"')
         say("  2. Copy the database as it is now to backups\\ap_coder-<date>-before-going-back.db")
-        say(f"  3. Put back {backup}")
+        say(f"  3. Put back {backup} (the user accounts kept as they are; everyone logged out)")
         say(f"  4. Start the service from {previous} and wait for the dashboard to answer")
         say("Nothing was changed (dry run).")
         return 0
@@ -419,7 +474,7 @@ def go_back(data: Path, db: Path, *, server: Server | None = None, dry_run: bool
     if db.exists():
         kept = safety_copy(db, "before-going-back")
         say(f"The database as it was is kept in {kept}")
-    copy_database(backup, db)
+    put_back(backup, db)
     switch_to(data, previous)
     _record(
         data,

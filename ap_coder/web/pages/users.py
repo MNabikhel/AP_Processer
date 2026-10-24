@@ -25,6 +25,10 @@ router = APIRouter()
 
 PATH = "/admin/users"
 SHOWN_FOR = 600  # seconds a temporary password waits to be shown
+OWN_RESET = (
+    "This is your own account: change your password on the Your password page (/account/password). A reset here "
+    "would log you out before its temporary password is shown."
+)
 _waiting: dict[str, tuple[float, int, str, str]] = {}  # key -> (when, the Admin's id, username, password)
 _lock = threading.Lock()
 
@@ -70,6 +74,7 @@ def users_page(request: Request, shown: str = "") -> HTMLResponse:
     me = identity.person()
     return render(request, "admin_users.html", "", title="Users", users=get_store(request).list_users(),
                   roles=[(r, ROLE_LABELS[r]) for r in ROLES], temporary=_take(shown),
+                  paused=[{**p, "until": _clock_text(p["until"])} for p in get_store(request).paused_addresses()],
                   me=me.user_id if me else 0)  # fmt: skip
 
 
@@ -94,10 +99,26 @@ def add_user(
 def reset(request: Request, user_id: int) -> JSONResponse:
     _server_only(request)
     found = _user(request, user_id)
+    me = identity.person()
+    if me is not None and me.user_id == found["id"]:  # it would log you out before the password is shown (D-101)
+        return refuse(OWN_RESET)
     password = get_store(request).reset_password(user_id, actor=reviewer())
     key = _keep(found["username"], password)
     said = f"Password of {found['username']} reset: they are logged out everywhere."
     return done(request, f"{PATH}?shown={key}", flash_message(said, "ok"))
+
+
+@router.post(PATH + "/addresses/unlock")
+def unlock_address(request: Request, address: str = Form("")) -> JSONResponse:
+    """Lift the pause of an address (30 tries that didn't match from it: a shared NAT, RDS or proxy address)."""
+    _server_only(request)
+    if not get_store(request).unlock_address(address, actor=reviewer()):
+        return refuse(f"Logins from {address or 'that address'} are not paused.")
+    return done(request, PATH, f"Logins from {address} are no longer paused.")
+
+
+def _clock_text(epoch: float) -> str:
+    return time.strftime("%H:%M", time.localtime(epoch))
 
 
 @router.post(PATH + "/{user_id:int}/role")

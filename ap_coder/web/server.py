@@ -166,7 +166,8 @@ def serve(host: str = "127.0.0.1", port: int = 8501, open_browser: bool = True, 
         print("On plain HTTP (--insecure-http): passwords and invoices cross the network unencrypted. Only for a "
               "first test: give the certificate (--certfile and --keyfile) before AP staff use it.",
               file=sys.stderr)  # fmt: skip
-    app = create_app(store=store, address=host)
+    app = create_app(store=store, address=host, insecure_http=insecure_http)
+    app.state.proxy = proxy or None  # behind a proxy, a loopback address is not the console (pages/login.py)
     token = secrets.token_urlsafe(24)
     config = uvicorn.Config(app, host=host, port=port, log_level="warning", access_log=False, lifespan="on",
                             **uvicorn_options(certfile, keyfile, proxy))  # fmt: skip

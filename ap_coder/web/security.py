@@ -190,11 +190,13 @@ HSTS = "max-age=31536000"  # a year; without includeSubDomains, the company's ot
 
 class SecurityHeaders:
     """ASGI middleware: the headers that tell the browser what a page may do. On the laptop the harmless two (no
-    frames, no guessed file types); on the server also the referrer and content policies, and HSTS over HTTPS."""
+    frames, no guessed file types); on the server also the referrer and content policies, and HSTS (``hsts``: always,
+    unless ``--insecure-http``, whatever scheme a request reports: a proxy in front may end HTTPS, D-101)."""
 
-    def __init__(self, app: Any, server: bool = False) -> None:
+    def __init__(self, app: Any, server: bool = False, hsts: bool | None = None) -> None:
         self.app = app
         self.server = server
+        self.hsts = server if hsts is None else hsts
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         if scope["type"] != "http":
@@ -204,7 +206,7 @@ class SecurityHeaders:
         if self.server:
             added += [(b"referrer-policy", b"same-origin"),
                       (b"content-security-policy", CONTENT_SECURITY_POLICY.encode())]  # fmt: skip
-            if scope.get("scheme") == "https":
+            if self.hsts:
                 added.append((b"strict-transport-security", HSTS.encode()))
 
         async def sending(message: dict[str, Any]) -> None:

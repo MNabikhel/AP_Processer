@@ -73,6 +73,8 @@
         <select name="name" required>{% for b in backups %}<option value="{{ b.name }}">{{ b.name }} · {{ b.made }}</option>{% endfor %}</select></label>
       <p>Replace the current database with this backup? Everything done since that backup (processed invoices, approvals,
         lessons, GL changes) is replaced. The current database is backed up first, so this can be undone.</p>
+      {% if server_mode %}<p>The user accounts, their passwords and roles, and paused logins stay as they are now (not as
+        in the backup). Everyone is logged out, you too: log in again after the restore.</p>{% endif %}
       <label class="field">Type {{ restore_word }} to confirm
         <input type="text" name="confirm" autocomplete="off" required pattern="\s*[Rr][Ee][Ss][Tt][Oo][Rr][Ee]\s*" data-word="{{ restore_word }}"></label>
       <button class="btn danger" type="submit" disabled><span class="ms" aria-hidden="true">restore</span>Restore</button>

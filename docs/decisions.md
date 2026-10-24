@@ -983,3 +983,37 @@ that is reversed keeps its line, marked "replaced by D-NN".
   the rail says "Data stays on this server". Why: staff open the server from their own PCs over the company network, by
   its company name, possibly behind IIS. (`web/server.py`, `web/security.py`, `web/access.py`,
   `core/store/ephemeral.py`, `web/pages/process.py`; `tests/test_server_https.py`, `tests/test_server_ux.py`)
+- **D-101** · Server security review (changes D-97, D-99 and D-100 where they say otherwise). (1) **Lockout**: 5
+  tries that don't match within 15 minutes for one username from one address pause that pair for 15 minutes; 30 from
+  one address, whatever the usernames, pause the address. A person elsewhere is never locked out by someone else's
+  guesses, and a shared NAT, RDS or proxy address is not paused by five people mistyping. The server's own console
+  (a loopback client with no `--proxy`; behind a proxy everyone is loopback) is never paused by address. A reset
+  (Users page or `users reset`) lifts the username's pauses and those of every address the person logged in or tried
+  from; the Users page lists paused addresses with *Lift the pause* (`address_unlocked`). A try is recorded, as one
+  that did not match, in the `BEGIN IMMEDIATE` transaction that checks the pause, before scrypt runs, so guesses in
+  parallel get no more checks than one by one; a match then turns it into a success. (2) **What a failed login
+  keeps**: for an unknown username, "unknown account", and in `login_attempts` a hash, never the text typed (often a
+  password in the wrong box); for an account, its username. Login and account events (Activity → Logins, its CSV)
+  are shown to Admins only. (3) **Restore** (Settings → Data, `server-update --back`, a failed update's rollback):
+  on the server the current `users` and `login_attempts` stay (`users.carry_accounts`), a backup older than the
+  accounts gets their tables, and when there was no account the backup's are kept, so a restore never leaves the
+  server with none; every session ends, everywhere (laptop too), the Admin restoring included, and the confirm texts
+  say so. (4) **Sessions**: two or more `ap_session` cookies are no login (`identity.session_token`, read the same way
+  by the middleware and the pages; the name is kept), and logout then ends what they name and clears the cookie; a
+  password change gives the session a new token and ends all the others; an Admin can't reset their own password on
+  the Users page (it would log them out before the temporary password shows): *Your password* instead. (5) **HTTPS**:
+  on the server the cookie is always Secure and HSTS always sent, unless `--insecure-http`, whatever the scheme a
+  request reports (a proxy may end HTTPS). `/healthz` on the server tells its folder, version, build and pid only to
+  a loopback client (after `--proxy`), not by the address listened on. (6) **Caching**: on the server every response
+  that needs a login is `Cache-Control: no-store` (the Identity middleware, whatever the route said: CSVs, xlsx,
+  reports, page images); /static, /fonts and /assets keep theirs; the laptop is unchanged. (7) **Passwords**: at
+  least 12 characters, and not easy to guess, in one message: not only spaces, one character or a pattern of up to 6
+  repeated (or any repeated 3 times), not the username or the name, not holding a username of 4 or more characters,
+  not one of about 50 common passwords. (8) **`server-update`** copies the bundle into a private temporary folder and
+  checks and unzips that copy. The code folder is locked down (`icacls C:\APCoder /inheritance:r`, Administrators
+  and SYSTEM full control, the service account read and run, docs/SERVER.md step 5); the folders `server-update`
+  makes are inside it and inherit that, so nothing is applied by code. Left for later, by design: a Clerk may release
+  a vendor's hold and reopen another person's approval (separation of duties). Why: a reviewer's walk of the server
+  mode found each of these a way past, or around, D-97's logins. (`core/store/users.py`, `core/store/backups.py`,
+  `ops/server_update.py`, `web/identity.py`, `web/pages/login.py`, `web/pages/users.py`, `web/pages/activity.py`,
+  `web/app.py`, `web/security.py`; `tests/test_server_security.py`, `tests/test_server_update.py`)

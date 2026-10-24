@@ -22,7 +22,7 @@ def store(tmp_path):
     return store
 
 
-def server_client(store: Store, base: str = "http://localhost", client: tuple[str, int] = ("10.0.0.5", 50000)):
+def server_client(store: Store, base: str = "https://localhost", client: tuple[str, int] = ("10.0.0.5", 50000)):
     app = create_app(web_settings(), store, start_reader=False, server=True)
     return TestClient(app, base_url=base, client=client, follow_redirects=False)
 
@@ -89,7 +89,7 @@ def test_login_sets_a_strict_http_only_cookie_and_a_new_token_each_time(store):
                          headers={**PAGE, "Cookie": f"{SESSION_COOKIE}={planted}"})  # fmt: skip
     assert answer.status_code == 200 and answer.json()["redirect"] == "/review"
     cookie = answer.headers["set-cookie"]
-    assert "HttpOnly" in cookie and "SameSite=strict" in cookie.replace("Strict", "strict") and "Secure" not in cookie
+    assert "HttpOnly" in cookie and "SameSite=strict" in cookie.replace("Strict", "strict") and "Secure" in cookie
     token = client.cookies.get(SESSION_COOKIE)
     assert token and token != planted and store.session_user(planted) is None
     page = client.get("/review")
@@ -97,10 +97,13 @@ def test_login_sets_a_strict_http_only_cookie_and_a_new_token_each_time(store):
     assert "Ann Lee" in page.text and "Clerk" in page.text and 'href="/logout"' in page.text
 
 
-def test_over_https_the_cookie_is_secure(store):
+def test_over_https_the_cookie_is_secure_and_over_insecure_http_not(store):
     account(store, "ann", "clerk")
     client = server_client(store, base="https://localhost")
     assert "Secure" in log_in(client, "ann").headers["set-cookie"]
+    app = create_app(web_settings(), store, start_reader=False, server=True, insecure_http=True)
+    plain = TestClient(app, base_url="http://localhost", client=("10.0.0.5", 50000), follow_redirects=False)
+    assert "Secure" not in log_in(plain, "ann").headers["set-cookie"]
 
 
 def test_a_new_account_must_choose_its_own_password_before_anything_else(store):

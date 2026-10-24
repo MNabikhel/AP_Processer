@@ -39,9 +39,13 @@
           <td>{% if not u.active %}{{ ui.pill("Turned off", "gray") }}{% elif u.must_change %}{{ ui.pill("Temporary password", "warn") }}{% else %}{{ (u.last_login or "never") | replace("T", " ") }}{% endif %}</td>
           <td class="r">
             <div class="row end">
+              {% if u.id == me %}
+              <a class="btn" href="/account/password"><span class="ms" aria-hidden="true">key</span>Your password</a>
+              {% else %}
               <form method="post" action="/admin/users/{{ u.id }}/reset" data-confirm="Reset the password of {{ u.username }}? They are logged out everywhere and get a temporary password.">
                 <button class="btn" type="submit"><span class="ms" aria-hidden="true">lock_reset</span>Reset password</button>
               </form>
+              {% endif %}
               {% if u.active %}
               <form method="post" action="/admin/users/{{ u.id }}/deactivate" data-confirm="Turn off {{ u.username }}? They can no longer log in. Their approvals and history stay.">
                 <button class="btn danger" type="submit"><span class="ms" aria-hidden="true">person_off</span>Turn off</button>
@@ -59,6 +63,28 @@
     </table>
   </div>
 </section>
+
+{% if paused %}
+<section class="card" id="paused">
+  <h4><span class="ms" aria-hidden="true">lock_clock</span> Paused addresses</h4>
+  <p class="muted">After 30 tries that didn't match from one address, logins from it pause for 15 minutes. Several
+    people may share an address (an office's internet connection, a remote desktop server): lift it once you know
+    why.</p>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Address</th><th>Paused until</th><th></th></tr></thead>
+      <tbody>
+        {% for p in paused %}
+        <tr><td>{{ p.address }}</td><td>{{ p.until }}</td>
+          <td class="r"><form method="post" action="/admin/users/addresses/unlock" data-confirm="Let logins from {{ p.address }} go on now?">
+            <input type="hidden" name="address" value="{{ p.address }}">
+            <button class="btn" type="submit"><span class="ms" aria-hidden="true">lock_open</span>Lift the pause</button></form></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
 
 <section class="card">
   <h4>Add a person</h4>

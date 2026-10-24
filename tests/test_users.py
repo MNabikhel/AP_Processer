@@ -58,9 +58,9 @@ def test_a_damaged_or_foreign_hash_never_verifies():
     [
         ("short", "at least 12 characters"),
         ("eleven char", "at least 12 characters"),
-        ("pat.tester01", "not your username"),
-        ("PAT.TESTER01", "not your username"),
-        ("Pat Tester Smith", "not your name"),
+        ("pat.tester01", "not your username or your name"),
+        ("PAT.TESTER01", "not your username or your name"),
+        ("Pat Tester Smith", "not your username or your name"),
         (GOOD, ""),
     ],
 )
@@ -102,20 +102,21 @@ def test_login_with_the_right_password_and_refused_with_a_wrong_one_or_an_unknow
     assert actions.count("login_failed") == 2 and "login" in actions
 
 
-def test_five_failures_lock_the_username_for_15_minutes_whatever_the_address(store, clock):
+def test_five_failures_lock_the_username_from_that_address_for_15_minutes(store, clock):
     store.add_user("ann", GOOD)
-    for n in range(4):
+    for _ in range(4):
         with pytest.raises(LoginRefused, match="match"):
-            store.authenticate("ann", "wrong password!", f"10.0.0.{n}")
+            store.authenticate("ann", "wrong password!", "10.0.0.9")
     with pytest.raises(LoginRefused) as refused:
         store.authenticate("ann", "wrong password!", "10.0.0.9")
     assert str(refused.value) == LOCKED
     clock.now += 60
-    with pytest.raises(LoginRefused) as refused:  # the right password too, from anywhere, while locked
-        store.authenticate("ann", GOOD, "10.0.0.77")
+    with pytest.raises(LoginRefused) as refused:  # the right password too, from there, while locked
+        store.authenticate("ann", GOOD, "10.0.0.9")
     assert str(refused.value) == LOCKED
+    assert store.authenticate("ann", GOOD, "10.0.0.77")["username"] == "ann"  # from elsewhere: fine (D-101)
     clock.now += 15 * 60
-    assert store.authenticate("ann", GOOD, "10.0.0.77")["username"] == "ann"
+    assert store.authenticate("ann", GOOD, "10.0.0.9")["username"] == "ann"
     assert store.events(actions=["login_locked"])[0]["detail"]["username"] == "ann"
 
 
@@ -125,14 +126,14 @@ def test_an_unknown_username_locks_the_same_way_so_the_message_says_nothing_abou
     for name in ("ann", "ghost"):
         for _ in range(5):
             with pytest.raises(LoginRefused) as refused:
-                store.authenticate(name, "wrong password!", f"10.1.{len(said)}.1")
+                store.authenticate(name, "wrong password!", "10.1.0.1")
         said[name] = str(refused.value)
     assert said["ann"] == said["ghost"] == LOCKED
 
 
-def test_five_failures_from_one_address_lock_that_address_across_usernames(store, clock):
+def test_thirty_failures_from_one_address_lock_that_address_across_usernames(store, clock):
     store.add_user("ann", GOOD)
-    for n in range(5):
+    for n in range(30):
         with pytest.raises(LoginRefused):
             store.authenticate(f"guess{n}", "wrong password!", "10.0.0.66")
     with pytest.raises(LoginRefused) as refused:
@@ -232,8 +233,9 @@ def test_logout_ends_the_session_and_a_password_change_ends_the_others(store, cl
         store.change_password(uid, "not it at all", "a brand new password", keep=here)
     with pytest.raises(ValueError, match="different"):
         store.change_password(uid, GOOD, GOOD, keep=here)
-    store.change_password(uid, GOOD, "a brand new password", keep=here)
-    assert store.session_user(here) and store.session_user(there) is None
+    fresh = store.change_password(uid, GOOD, "a brand new password", keep=here)
+    assert store.session_user(here) is None and store.session_user(there) is None  # a new token for this one
+    assert fresh and store.session_user(fresh)["id"] == uid
     assert not store.user(uid)["must_change"]
     assert [e["action"] for e in store.events()][:2] == ["password_changed", "logout"]
 

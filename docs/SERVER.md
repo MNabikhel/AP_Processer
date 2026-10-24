@@ -90,12 +90,17 @@ Why these numbers:
    ```
 
 5. **Folder permissions.** The data folder: full control for `APCoderService` and the administrators, nobody else
-   (the database holds every invoice). The code folder: read and run for `APCoderService`.
+   (the database holds every invoice). The code folder: full control for the administrators and SYSTEM, read and run
+   for `APCoderService`, nobody else (whoever can change the code can read every invoice and log in as anyone).
 
    ```bat
    icacls D:\APCoderData /inheritance:r /grant:r "APCoderService:(OI)(CI)F" "Administrators:(OI)(CI)F" "SYSTEM:(OI)(CI)F"
-   icacls C:\APCoder /grant "APCoderService:(OI)(CI)RX"
+   icacls C:\APCoder /inheritance:r /grant:r "Administrators:(OI)(CI)F" "SYSTEM:(OI)(CI)F" "APCoderService:(OI)(CI)RX"
    ```
+
+   `/inheritance:r` drops what `C:\` gives everyone (Users may add files there). The folders `server-update` makes
+   later (`C:\APCoder\APProcessor-<version>`, step 11) are made inside `C:\APCoder`, so they get the same three
+   permissions and nothing else. Check with `icacls C:\APCoder\APProcessor`: only those three lines.
 
 ## 3. The HTTPS certificate
 
@@ -239,8 +244,11 @@ window, started at boot like AP Coder.
   able to write there: a domain account (step 2), with *Modify* on that share folder.
 - **The server's own backup** (Windows Server Backup, Veeam...): include `D:\APCoderData`, but restore from the
   `backups` copies, not from a copy of the open `ap_coder.db` file.
-- **Restoring**: *Settings* → *Data & backups* → restore a backup (an Admin). By hand: `service stop`, copy the backup
-  over `D:\APCoderData\ap_coder.db` (delete `ap_coder.db-wal` and `ap_coder.db-shm` beside it), `service start`.
+- **Restoring**: *Settings* → *Data & backups* → restore a backup (an Admin). The user accounts (passwords, roles,
+  who is turned off) and paused logins stay as they are now, not as in the backup, and everyone is logged out, the
+  Admin too. `server-update --back` and an update that fails do the same. By hand: `service stop`, copy the backup over
+  `D:\APCoderData\ap_coder.db` (delete `ap_coder.db-wal` and `ap_coder.db-shm` beside it), `service start`: that
+  brings back the backup's accounts and sessions, so prefer the page.
 
 ## 10. Users and roles
 
@@ -265,8 +273,14 @@ From the server's console, the same:
 .venv\Scripts\python.exe -m ap_coder users deactivate mlee
 ```
 
-Five wrong passwords in a row lock an account for 15 minutes. Every sign-in, lockout and change to a user is in
-*Activity*.
+Five wrong passwords within 15 minutes for one username from one computer pause that username's logins from that
+computer for 15 minutes; from anywhere else the person can still log in, so nobody can lock someone else out.
+Thirty from one address, whatever the usernames, pause that address (an office's internet connection or a remote
+desktop server is shared: five people mistyping don't pause it). The server's own console (127.0.0.1, no `--proxy`) is
+never paused by address. Resetting a person's password lifts what pauses them, their address too; the *Users* page
+lists paused addresses with *Lift the pause*. Passwords: at least 12 characters, not the username or the name, not a
+common password, not one character or a short pattern repeated. Every sign-in, lockout and change to a user is in
+*Activity*, shown to Admins only.
 
 ## 11. Updating and going back
 
@@ -298,7 +312,8 @@ it again, and says why. The new folder is kept to look at; delete it when done.
 ```
 
 It stops the service, keeps a copy of the database as it is now (`backups\...-before-going-back.db`), puts back the
-backup made before the update, and starts the previous folder again. What was done in AP Coder since the update is
+backup made before the update (keeping the user accounts and paused logins as they are now, and logging everyone
+out), and starts the previous folder again. What was done in AP Coder since the update is
 not in that backup (the older version can't open a database the newer one changed), so go back soon, or not at all.
 It asks first (`--yes` doesn't); `--dry-run` shows what it would do.
 

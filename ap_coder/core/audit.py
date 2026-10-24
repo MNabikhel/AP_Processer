@@ -96,6 +96,7 @@ ACTIONS = {
     "role_changed": ("manage_accounts", "warn", "Role changed"),
     "user_deactivated": ("person_off", "warn", "User turned off"),
     "user_activated": ("person", "info", "User turned back on"),
+    "address_unlocked": ("lock_open", "info", "Address unpaused"),
 }
 
 
@@ -388,9 +389,14 @@ def describe(event: dict[str, Any]) -> str:
         def role(key: Any) -> str:
             return ROLE_LABELS.get(str(key or ""), str(key or "?"))
 
-        by = "from one address" if d.get("by") == "address" else "for this username"
+        by = ("30 tries that didn't match from one address" if d.get("by") == "address"
+              else "5 tries that didn't match for this username from one address")  # fmt: skip
         roles = {"role": role(d.get("role")), "was": role(d.get("from")), "now": role(d.get("to"))}
-        return _ACCOUNT_WORDS[action].format(user=d.get("username") or "?", name=d.get("name") or "", by=by, **roles)
+        if d.get("account") == "unknown":  # the text typed is not kept (D-101)
+            words = _ACCOUNT_WORDS["login_failed_unknown" if action == "login_failed" else action]
+            return words.format(user="an unknown account", name="", by=by, address="?", **roles)
+        return _ACCOUNT_WORDS[action].format(user=d.get("username") or "?", name=d.get("name") or "", by=by,
+                                             address=d.get("unpaused") or "?", **roles)  # fmt: skip
     if action in ("backup_made", "backup_restored"):
         return str(d.get("file", "")) + (f" · {d['note']}" if d.get("note") else "")
     return ""
@@ -399,7 +405,8 @@ def describe(event: dict[str, Any]) -> str:
 _ACCOUNT_WORDS = {  # server mode's accounts (D-97): who, in plain words
     "login": "{user} logged in",
     "login_failed": "a login as {user} didn't match",
-    "login_locked": "5 tries that didn't match {by} ({user}): logging in paused for 15 minutes",
+    "login_failed_unknown": "a login to an unknown account didn't match",
+    "login_locked": "{by} ({user}): logging in paused there for 15 minutes",
     "logout": "{user} logged out",
     "password_changed": "{user} chose a new password (logged out everywhere else)",
     "password_reset": "{user} got a temporary password, to change at the next login (logged out everywhere)",
@@ -407,6 +414,7 @@ _ACCOUNT_WORDS = {  # server mode's accounts (D-97): who, in plain words
     "role_changed": "{user}: {was} → {now}",
     "user_deactivated": "{user} can no longer log in",
     "user_activated": "{user} can log in again",
+    "address_unlocked": "logins from {address} are no longer paused",
 }
 
 

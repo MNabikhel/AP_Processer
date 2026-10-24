@@ -291,8 +291,8 @@ def test_server_mode_sends_the_security_headers(store, server_on):
     assert "'unsafe-inline'" not in csp.split("script-src", 1)[1].split(";", 1)[0]  # no inline scripts run
 
 
-def test_no_hsts_over_plain_http(store, server_on):
-    client = TestClient(create_app(web_settings(), store), base_url="http://localhost")
+def test_no_hsts_with_insecure_http(store, server_on):
+    client = TestClient(create_app(web_settings(), store, insecure_http=True), base_url="http://localhost")
     assert "Strict-Transport-Security" not in client.get("/healthz").headers
 
 

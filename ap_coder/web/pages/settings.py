@@ -505,7 +505,7 @@ def restore_backup(request: Request, name: str = Form(""), confirm: str = Form("
         return refuse("That backup is not in the backups folder any more.", status=404)
     had_copy_dir = bool(store.get_setting("backup_copy_dir").strip())
     try:
-        safety = store.restore_from(path)
+        safety = store.restore_from(path, keep_accounts=server_mode(request))  # (D-101)
     except ValueError as exc:  # not an AP Coder backup: nothing was changed
         return refuse(f"Not restored: {exc}.")
     except OSError as exc:  # the safety copy of the current database could not be made (a full disk): nothing changed
@@ -515,6 +515,9 @@ def restore_backup(request: Request, name: str = Form(""), confirm: str = Form("
     forget_all_drafts(request)  # edits made on the replaced invoices would open on the restored ones
     cleared = " The second backup folder was cleared: set it again below." if had_copy_dir else ""
     said = f"Restored {name}. The previous database was saved as {safety.name}.{cleared}"
+    if server_mode(request):  # every session ended, this one too: the accounts stayed as they were
+        said += " The user accounts are as they were; everyone is logged out: log in again."
+        return done(request, f"/login?next={tab_url('data')}", said)
     return done(request, tab_url("data"), said)
 
 

@@ -196,6 +196,39 @@ def _cookies(headers: list[tuple[bytes, bytes]]) -> dict[str, str]:
     return found
 
 
+def session_tokens(headers: list[tuple[bytes, bytes]]) -> list[str]:
+    """Every ``ap_session`` cookie the request carries, in order."""
+    found = []
+    for key, value in headers:
+        if key.lower() == b"cookie":
+            for part in value.decode("latin-1").split(";"):
+                name, _, kept = part.strip().partition("=")
+                if name == SESSION_COOKIE:
+                    found.append(kept)
+    return found
+
+
+def session_token(headers: list[tuple[bytes, bytes]]) -> str:
+    """The session token of a request, read the same way by the login middleware and the pages: its one
+    ``ap_session`` cookie. Two or more (one planted by another site of the company for a path or a parent domain, or
+    left over) are no login at all, never one of them picked (D-101)."""
+    found = session_tokens(headers)
+    return found[0] if len(found) == 1 else ""
+
+
+def _no_store(send: Any) -> Any:
+    """``send`` with every answer marked ``Cache-Control: no-store`` (whatever the page said): on the server, what
+    needs a login is never kept by the browser or a proxy, the downloads and the invoices' page images too."""
+
+    async def sending(message: dict[str, Any]) -> None:
+        if message["type"] == "http.response.start":
+            kept = [(k, v) for k, v in message.get("headers") or [] if k.lower() not in (b"cache-control", b"pragma")]
+            message["headers"] = [*kept, (b"cache-control", b"no-store")]
+        await send(message)
+
+    return sending
+
+
 class Identity:
     """ASGI middleware: puts the colleague of each request in ``PERSON`` (and their address in the store's
     ``EVENT_ORIGIN``); a browser on another computer that has not said who it is goes to the "Who are you?" page."""
@@ -263,9 +296,9 @@ class Identity:
         path, method = scope.get("path") or "", str(scope.get("method") or "GET").upper()
         need = roles.need_for(scope.get("app"), scope)
         user = None
+        store = getattr(getattr(scope.get("app"), "state", None), "store", None)
         if not path.startswith(OPEN_PREFIXES):
-            token = _cookies(scope.get("headers") or []).get(SESSION_COOKIE)
-            store = getattr(getattr(scope.get("app"), "state", None), "store", None)
+            token = session_token(scope.get("headers") or [])
             if token and store is not None:
                 user = await run_in_threadpool(store.session_user, token)
         page = method in ("GET", "HEAD")
@@ -275,6 +308,11 @@ class Identity:
                 refusal = RedirectResponse(f"{LOGIN_PATH}?next={quote(_wanted(scope), safe='')}", status_code=303)
             else:
                 refusal = JSONResponse({"ok": False, "error": SESSION_ENDED, "redirect": LOGIN_PATH}, status_code=401)
+                if path == "/logout":  # (two cookies, say): the sessions they name end, and the cookie is cleared
+                    for named in session_tokens(scope.get("headers") or []):
+                        if named and store is not None:
+                            await run_in_threadpool(store.end_session, named)
+                    refusal.delete_cookie(SESSION_COOKIE, path="/", httponly=True, samesite="strict")
         elif user is not None and user["must_change"] and need not in (roles.OPEN, roles.SIGNED_IN):
             if page:
                 refusal = RedirectResponse(f"{PASSWORD_PATH}?next={quote(_wanted(scope), safe='')}", status_code=303)
@@ -291,7 +329,7 @@ class Identity:
                 refusal.headers["Cache-Control"] = "no-store"
                 await refusal(scope, receive, send)
                 return
-            await self.app(scope, receive, send)
+            await self.app(scope, receive, send if need == roles.OPEN else _no_store(send))
         finally:
             PERSON.reset(tokens[0])
             EVENT_ORIGIN.reset(tokens[1])

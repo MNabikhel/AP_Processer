@@ -8,6 +8,7 @@ the record kept in server.json.
 from __future__ import annotations
 
 import json
+import sqlite3
 import zipfile
 from pathlib import Path
 
@@ -16,6 +17,8 @@ import pytest
 from ap_coder.core import paths
 from ap_coder.core.store import Store
 from ap_coder.ops import cli, server_update, service
+
+GOOD = "correct horse battery"
 
 
 def _folder(path: Path, version: str) -> Path:
@@ -197,3 +200,79 @@ def test_the_command_line(server, monkeypatch):
     assert seen[0][0] == Path("C:\\b.zip") and seen[0][1]["dry_run"] is True
     assert seen[1][0] == "back" and seen[1][1]["yes"] is True
     assert cli.main(["server-update"]) == 2  # neither a bundle nor --back
+
+
+# --- The security review (D-101) --------------------------------------------------------------------------------------
+
+
+def _accounts(db: Path) -> list[tuple]:
+    with sqlite3.connect(db) as conn:
+        return conn.execute("SELECT username, active, pw_hash FROM users ORDER BY username").fetchall()
+
+
+def test_back_keeps_the_accounts_and_the_lockouts_and_ends_every_session(server, capsys):
+    store = Store(server["db"])
+    boss = store.add_user("boss", GOOD, role="admin")
+    fired = store.add_user("fired", GOOD)
+    assert server_update.update(_bundle(server["tmp"]), server["data"], server["db"], server=FakeServer()) == 0
+    token = store.start_session(fired)
+    store.deactivate_user(fired, actor="boss")
+    store.reset_password(boss, actor="boss", password="brand new secret 1")
+    with sqlite3.connect(server["db"]) as conn:
+        conn.execute("INSERT INTO login_attempts (username, ip, at, ok, user_locked_until) VALUES (?, ?, ?, 0, ?)",
+                     ("boss", "10.3.3.3", 1.0, 9e12))  # fmt: skip
+    kept = _accounts(server["db"])
+    assert server_update.go_back(server["data"], server["db"], server=FakeServer(), yes=True) == 0
+    assert _accounts(server["db"]) == kept and _marker(server["db"]) == "as before the update"
+    with sqlite3.connect(server["db"]) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM login_attempts WHERE user_locked_until > 0").fetchone()[0] == 1
+    assert Store(server["db"]).session_user(token) is None
+    assert "accounts" in capsys.readouterr().out
+
+
+def test_a_backup_without_the_accounts_tables_never_leaves_the_server_with_none(server):
+    store = Store(server["db"])
+    backup = store.backup_now("older")
+    with sqlite3.connect(backup) as conn:  # a version before the accounts
+        conn.executescript("DROP TABLE users; DROP TABLE sessions; DROP TABLE login_attempts;")
+    store.add_user("boss", GOOD, role="admin")
+    store.start_session(store.find_user("boss")["id"])
+    server_update.put_back(backup, server["db"])
+    assert [u[0] for u in _accounts(server["db"])] == ["boss"]
+    with sqlite3.connect(server["db"]) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
+
+
+def test_a_failed_update_puts_the_backup_back_with_the_current_accounts(server):
+    store = Store(server["db"])
+    uid = store.add_user("boss", GOOD, role="admin")
+    token = store.start_session(uid)
+    assert server_update.update(_bundle(server["tmp"]), server["data"], server["db"],
+                                server=FakeServer(check_ok=False)) == 1  # fmt: skip
+    assert Store(server["db"]).session_user(token) is None and Store(server["db"]).find_user("boss")
+
+
+def test_the_bundle_is_checked_and_unzipped_from_a_private_copy(server, monkeypatch):
+    bundle = _bundle(server["tmp"])
+    (server["tmp"] / "other").mkdir()
+    swapped = _bundle(server["tmp"] / "other", extra={"evil.txt": "swapped after the check"})
+    checked, unzipped = [], []
+    real_check, real_unzip = server_update.check_bundle, server_update.unzip
+
+    def check(path: Path) -> dict:
+        checked.append(path)
+        found = real_check(path)
+        bundle.write_bytes(swapped.read_bytes())  # the file given is changed once it was checked
+        return found
+
+    def unzip(path: Path, top: str, dest: Path) -> None:
+        unzipped.append(path)
+        real_unzip(path, top, dest)
+
+    monkeypatch.setattr(server_update, "check_bundle", check)
+    monkeypatch.setattr(server_update, "unzip", unzip)
+    assert server_update.update(bundle, server["data"], server["db"], server=FakeServer()) == 0
+    assert checked == unzipped and checked[0] != bundle
+    assert not (server["current"].parent / "APProcessor-0.4.0" / "evil.txt").exists()
+    assert not checked[0].exists()  # the private copy is removed afterwards

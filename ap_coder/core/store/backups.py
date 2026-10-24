@@ -21,6 +21,7 @@ from ._base import (
     _now,
     _store_class,
 )
+from .users import carry_accounts, saved_accounts
 
 
 class BackupsMixin:
@@ -201,19 +202,21 @@ class BackupsMixin:
         with _RESTORING_LOCK:
             return str(self.path.resolve()) in _RESTORING
 
-    def restore_from(self, backup: str | Path) -> Path:
+    def restore_from(self, backup: str | Path, *, keep_accounts: bool = False) -> Path:
         """``_restore_from`` with the background workers paused meanwhile (``restoring``)."""
         key = str(self.path.resolve())
         with _RESTORING_LOCK:
             _RESTORING.add(key)
         try:
-            return self._restore_from(backup)
+            return self._restore_from(backup, keep_accounts=keep_accounts)
         finally:
             with _RESTORING_LOCK:
                 _RESTORING.discard(key)
 
-    def _restore_from(self, backup: str | Path) -> Path:
-        """Replace the database with a backup. The current one is backed up first (returned).
+    def _restore_from(self, backup: str | Path, *, keep_accounts: bool = False) -> Path:
+        """Replace the database with a backup. The current one is backed up first (returned). Every session ends
+        (everyone logs in again); ``keep_accounts`` (the server, D-101): the accounts and the lockouts stay as they
+        are now, not as the backup has them (``users.carry_accounts``).
         Raises ValueError, with nothing changed, when the file is not an AP Coder backup (``check_backup``).
         The second backup folder is cleared after a restore: a backup file must not choose where later
         backups are copied (set it again in Settings)."""
@@ -221,6 +224,8 @@ class BackupsMixin:
             self._check_backup_file(copy, Path(backup).name)
             copy_dir = self.get_setting("backup_copy_dir").strip()
             safety = self.backup_now("before-restore")
+            with self._conn() as conn:
+                accounts = saved_accounts(conn) if keep_accounts else {}
             source = sqlite3.connect(copy)
             target = sqlite3.connect(self.path)
             try:
@@ -231,6 +236,10 @@ class BackupsMixin:
         with self._conn() as conn:
             conn.executescript(_SCHEMA)  # an older backup may lack newer tables...
             self._migrate(conn)  # ...and columns
+            if keep_accounts:
+                carry_accounts(conn, accounts)
+            else:
+                conn.execute("DELETE FROM sessions")  # no one stays logged in by a session the backup knew
             restored_dir = conn.execute("SELECT value FROM settings WHERE key = 'backup_copy_dir'").fetchone()
             conn.execute("DELETE FROM settings WHERE key IN ('backup_copy_dir', 'backup_copy_status')")
             detail = {"file": Path(backup).name, "safety_copy": safety.name}
