@@ -840,7 +840,7 @@ class InvoicesMixin:
             self._log(conn, "approved", invoice_id, reviewer, {
                 "lines": len(final_output.get("line_items", [])), "corrected": counts[CORRECTED],
                 **({"coded": counts[CODED]} if counts[CODED] else {}),
-                "total": final_output.get("grand_total"), "changes": diff_coding(ai, final_output),
+                "total": final_output.get("grand_total"), "changes": diff_coding(ai, final_output, cost_centers),
                 **({"bulk": True} if bulk else {}),
                 **({"needs_second": True, "second_reason": second_reason} if needs_second else {}),
                 **({"open_issues": open_issues} if open_issues else {}), **({"login": login} if login else {}),

@@ -261,3 +261,29 @@ def test_the_jd_edwards_tax_areas_say_outside_canada_not_its_code(client, store)
     text = client.get("/settings/jde").text
     shown = re.sub(r'value="[^"]*"', "", text)  # the form's own value may keep the code
     assert "OUTSIDE_CANADA" not in shown and "Outside Canada" in shown
+
+
+# --- 3. No phantom changes -------------------------------------------------------------------------------------------
+
+
+def test_an_untouched_invoice_records_no_cost_center_change_when_no_list_is_in_use(client, store):
+    """B-1001: "4 change(s): line 1 cost center CC700 → (blank)…" on an invoice nobody changed: with no cost center
+    list, a cost center the AI copied is not shown and its blank is no edit (D-86)."""
+    import json
+
+    with store._conn() as conn:
+        conn.execute("DELETE FROM cost_centers")
+    invoice_id = clean_invoice(client, store)
+    inv = store.get_invoice(invoice_id)
+    doc = inv["ai_output"]
+    for line in doc["line_items"]:
+        line["predicted_cost_center"] = "CC700"
+    with store._conn() as conn:
+        conn.execute("UPDATE invoices SET ai_output = ? WHERE id = ?", (json.dumps(doc), invoice_id))
+    final = json.loads(json.dumps(doc))
+    for line in final["line_items"]:
+        line["predicted_cost_center"] = ""
+    store.approve_invoice(invoice_id, final, "Dana Clerk")
+    approved = next(e for e in store.events(invoice_id) if e["action"] == "approved")
+    assert approved["detail"]["changes"] == []
+    assert "all as the AI suggested" in client.get("/activity").text

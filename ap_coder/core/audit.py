@@ -106,8 +106,13 @@ def _tax_signature(doc: dict[str, Any]) -> list[tuple]:
     )  # fmt: skip
 
 
-def diff_coding(ai: dict[str, Any], final: dict[str, Any]) -> list[dict[str, str]]:
-    """Every change a reviewer made: header fields, line fields, added/removed lines, tax lines."""
+_ACCOUNTS = ("predicted_gl_code", "predicted_cost_center")
+
+
+def diff_coding(ai: dict[str, Any], final: dict[str, Any], cost_centers: bool = True) -> list[dict[str, str]]:
+    """Every change a reviewer made: header fields, line fields, added/removed lines, tax lines. An account or cost
+    center blank either way is no change, nor is any cost center when no cost center list is in use
+    (``cost_centers`` False): the screen shows none to keep (D-86, B-1001)."""
     changes: list[dict[str, str]] = []
     for field, label in HEADER_LABELS.items():
         before, after = ai.get(field), final.get(field)
@@ -124,7 +129,11 @@ def diff_coding(ai: dict[str, Any], final: dict[str, Any]) -> list[dict[str, str
             continue
         matched.add(id(original))
         for field, label in LINE_LABELS.items():
+            if field == "predicted_cost_center" and not cost_centers:
+                continue
             before, after = original.get(field), line.get(field)
+            if field in _ACCOUNTS:  # "UNASSIGNED" is the code's word for a blank (B-464)
+                before, after = ("" if v in ("UNASSIGNED", None) else v for v in (before, after))
             if field == "taxes_applied":  # the line's tax code: its taxes, or why it carries none (D-64)
                 from ..coding.line_tax import code_label, legacy_basis, tax_code_of
 
