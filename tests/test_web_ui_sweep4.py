@@ -40,7 +40,7 @@ def test_the_second_approval_says_the_stored_reason_and_each_error_approved_over
     invoice_id = _waiting_for_second(store, client)
     for path in (f"/review/{invoice_id}", "/review?tab=second"):
         text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", client.get(path).text))
-        assert "No CAD exchange rate for USD" in text, path
+        assert "No CAD exchange rate for USD is set" in text, path
         assert "Invoices over 15,000.00 CAD need" not in text, path
         assert "Not in the vendor master" in text and "US vendor, set up next week" in text, path
         assert "Tax miscalculated" in text and "Credit promised by email" in text, path
@@ -189,6 +189,14 @@ def test_the_queue_row_says_the_drafts_own_blocker(client, store):
     row = _queue_row(client, invoice_id)
     assert "Pick a GL account for line 4" not in row
     assert "Edits not approved yet" in row, row
+    from ap_coder.web.pages.review import draft_reasons
+
+    class Asked:  # what draft_reasons reads of the request: this person's drafts
+        app = client.app
+
+    client.app.state.invoice_drafts[invoice_id]["check"] = {"why": "JD Edwards: the supplier has no AN8"}
+    with_drafts = draft_reasons(Asked(), store.list_invoices(REVIEW))
+    assert with_drafts[invoice_id] == "Edits not approved yet: JD Edwards: the supplier has no AN8"
 
 
 def test_a_draft_keeps_the_time_it_was_edited_and_says_it_plainly(client, store):

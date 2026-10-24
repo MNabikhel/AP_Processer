@@ -226,7 +226,9 @@ def draft_reasons(request: Request, pending: list[dict[str, Any]]) -> dict[int, 
         if invoice_id not in ids or not isinstance(kept.get("check"), dict):
             continue
         why = str(kept["check"].get("why") or "")
-        out[invoice_id] = "Edits not approved yet: " + (why[:1].lower() + why[1:] if why else "ready to approve")
+        if why[1:2].islower():  # "Pick a GL account…" → "pick a GL account…"; "JD Edwards…" stays
+            why = why[:1].lower() + why[1:]
+        out[invoice_id] = "Edits not approved yet: " + (why or "ready to approve")
     return out
 
 

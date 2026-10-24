@@ -210,7 +210,7 @@ def second_reason(detail: dict[str, Any]) -> str:
     (``second_reason``, ``Store.second_approval_reason``): "over the approval limit of 15,000.00 CAD", or "no CAD
     exchange rate for USD (Settings → Review), so it needs one whatever its amount"."""
     stored = str(detail.get("second_reason") or "").strip()
-    rate = re.match(r"no CAD rate for (\S+)", stored)
+    rate = re.match(r"no CAD rate for ([A-Za-z]+)", stored)
     if rate:
         currency = rate.group(1)
         return f"no CAD exchange rate for {currency} is set (Settings → Review), so it needs one whatever its amount"
