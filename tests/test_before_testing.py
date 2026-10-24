@@ -334,7 +334,7 @@ def test_the_queue_figures_are_plain_and_the_coding_memory_has_one_name(demo_sto
     client = _demo_client(demo_store)
     queue = client.get("/review").text
     assert "fully approved in all" not in queue and "Lessons learned" not in queue
-    assert "still to review" in queue and "approved in total" in queue and "Coding memory" in queue
+    assert "still to review" in queue and "fully approved" in queue and "Coding memory" in queue  # (B-1006)
     learning = client.get("/learning").text
     assert "Recent lessons" not in learning and "Memory: every lesson" not in learning
     assert "Coding memory: every line AP confirmed, corrected or coded" in learning
