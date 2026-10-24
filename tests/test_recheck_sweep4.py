@@ -131,3 +131,33 @@ def test_the_posting_preview_shows_the_tax_account_in_the_gl_tax_mode():
         if e["kind"] == "tax":
             e["gl_code"] = ""
     assert distribution(out, None, gl)["rows"][1]["account"] == "not mapped"
+
+
+# --- 4. pilot-score's tax in the G/L tax mode ----------------------------------------------------------------------
+
+
+def test_pilot_score_compares_the_tax_with_the_tax_account_lines_in_the_gl_tax_mode(tmp_path):
+    """B-1023: with the tax coded to G/L accounts, a voucher's F0411 carries RPSTAM 0 (exempt code E), and pilot-score
+    compared it with the tax on our G/L lines: a false tax difference on every voucher."""
+    from ap_coder.erp import jde
+    from ap_coder.ops import pilot_score
+
+    from .test_jde_gl_mode import doc, line, tl
+    from .test_pilot_score_sweep4 import _store
+
+    store = _store(tmp_path, doc([line(1, 1000.0, taxes=["HST"])], [tl("HST", "ON", 0.13, 1000.0, 130.0)]))
+    (o,) = pilot_score.our_invoices(store, jde.JdeSettings(amount_mode=jde.AMOUNT_GL, default_bu="HQ"))
+    o.an8 = "10023"
+    voucher = {"RPDOC": "7001", "RPDCT": "PV", "RPKCO": "00001", "RPAN8": "10023", "RPVINV": "A-1",
+               "RPDIVJ": str(jde.julian("2026-05-01")), "RPAG": "1130.00", "RPSTAM": "0.00", "RPEXR1": "E"}  # fmt: skip
+    gl = [{"GLDOC": "7001", "GLDCT": "PV", "GLKCO": "00001", "GLANI": "CC100.6010", "GLAA": "1000.00"},
+          {"GLDOC": "7001", "GLDCT": "PV", "GLKCO": "00001", "GLANI": "HQ.2310", "GLAA": "130.00"}]  # fmt: skip
+    posted, notes = pilot_score.posted_vouchers([voucher], gl)
+    report = pilot_score.score([o], posted, notes)
+    assert report["header"]["tax_total"] == {"n": 1, "right": 1}
+    assert not [d for d in report["differences"] if d["field"] == "Tax"]
+    # without the G/L export: the tax is not compared, and the report says why
+    posted, notes = pilot_score.posted_vouchers([voucher])
+    report = pilot_score.score([o], posted, notes)
+    assert report["header"]["tax_total"]["n"] == 0
+    assert any("F0911" in n and "tax" in n for n in report["notes"])

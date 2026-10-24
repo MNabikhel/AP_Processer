@@ -361,6 +361,7 @@ class Ours:
     tax_code: str = ""
     touchless: bool = False
     lines: list[dict[str, Any]] = field(default_factory=list)
+    tax_on_gl: bool = False  # the tax coded to G/L accounts (D-93): the voucher's F0411 carries none
 
     @property
     def vkey(self) -> str:
@@ -419,6 +420,7 @@ def our_invoices(store: Any, settings: jde.JdeSettings | None = None) -> list[Ou
             tax_total=given if given is not None else parse_amount(tax_total),
             currency=str(final.get("currency") or settings.domestic_currency).upper(),
             due_date=due.isoformat() if due else "", touchless=_would_be_touchless(inv),
+            tax_on_gl=settings.tax_on_gl,
         )  # fmt: skip
         try:  # the tax area and explanation code the voucher would carry
             header = jde.voucher_rows(inv, an8 or "0", settings)[0]
@@ -511,6 +513,16 @@ def _posted_value(p: Posted, name: str) -> Any:
             "tax_total": p.tax, "currency": p.currency, "due_date": p.due_date}[name]  # fmt: skip
 
 
+def _tax_on_gl_posted(o: Ours, p: Posted) -> float | None:
+    """With the tax coded to G/L accounts (D-93) the tax JD Edwards has is on the F0911 lines of the tax accounts
+    (the F0411's RPSTAM is 0, exempt code E): their sum, on the accounts our recoverable tax lines go to; None without
+    the G/L export or a tax account to look for (B-1023)."""
+    accounts = {(a[1], a[2]) for line in o.lines if line["recoverable_tax"] and (a := line["account"]) is not None}
+    if not p.has_lines or not accounts:
+        return None
+    return round(sum(t["amount"] for t in p.lines if (t["obj"], t["sub"]) in accounts), 2)
+
+
 def _ours_value(o: Ours, name: str) -> Any:
     return {"invoice_number": o.invoice_number, "invoice_date": o.invoice_date, "grand_total": o.grand_total,
             "tax_total": o.tax_total, "currency": o.currency, "due_date": o.due_date}[name]  # fmt: skip
@@ -593,10 +605,14 @@ def score(ours: list[Ours], posted: list[Posted], notes: list[str] | None = None
             "ap_coder": _shown(mine), "jd_edwards": _shown(theirs), "note": note,
         })  # fmt: skip
 
+    tax_not_compared = 0
     for o, p, how in pairs:
         wrong_fields: list[str] = []
         for name, label in HEADER_FIELDS.items():
             theirs = _posted_value(p, name)
+            if name == "tax_total" and o.tax_on_gl and o.tax_total:  # RPSTAM is 0: the tax accounts' lines (B-1023)
+                theirs = _tax_on_gl_posted(o, p)
+                tax_not_compared += theirs is None
             if theirs in (None, ""):
                 continue  # not in the export
             if name == "due_date" and not o.due_date:
@@ -694,6 +710,11 @@ def score(ours: list[Ours], posted: list[Posted], notes: list[str] | None = None
     for p in posted_only:
         diff(None, p, "not in AP Coder", "Voucher", "", p.gross, "posted in JD Edwards, not approved in AP Coder")
 
+    untaxed = [
+        f"{tax_not_compared} vouchers' tax is not compared: with the tax coded to G/L accounts the voucher (F0411) "
+        "carries no tax, and the G/L export (F0911) was not given or their tax accounts are not in the account "
+        "mapping (Settings → JD Edwards). Give the F0911 export to compare the tax with its tax account lines."
+    ] if tax_not_compared else []  # fmt: skip
     return {
         "invoices": {
             "ap_coder": len(ours),
@@ -708,7 +729,7 @@ def score(ours: list[Ours], posted: list[Posted], notes: list[str] | None = None
         "suppliers": _suppliers(per_invoice),
         "touchless": _touchless(per_invoice),
         "differences": diffs,
-        "notes": list(notes or []),
+        "notes": [*(notes or []), *untaxed],
     }
 
 
