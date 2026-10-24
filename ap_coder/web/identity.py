@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
 
-from starlette.responses import JSONResponse, RedirectResponse
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from ap_coder.core.store import EVENT_ORIGIN
 
@@ -41,6 +41,13 @@ WHO_PATH = "/who"
 OPEN_PATHS = ("/healthz", WHO_PATH)  # answered to a browser that has not said who it is
 OPEN_PREFIXES = ("/static/", "/fonts/", "/assets/")
 THIS_COMPUTER = {"127.0.0.1", "localhost", "::1"}
+# Settings (all of it: the approval limit and rates, Data's backups and restore, the Azure check) are changed only on
+# the computer running AP Coder when it is shared on the office network (B-972); logins come later.
+THIS_COMPUTER_ONLY = ("/settings",)
+SETTINGS_HERE_ONLY = (
+    "Settings are changed only on the computer running AP Coder. Ask the person at that computer, or the pilot "
+    "tester. To change your own name, use the Who are you? page (/who)."
+)
 
 
 @dataclass(frozen=True)
@@ -160,9 +167,18 @@ class Identity:
         if scope["type"] != "http" or not self.network or from_this_computer(scope):
             await self.app(scope, receive, send)
             return
+        path = scope.get("path") or ""
+        if any(path == p or path.startswith(p + "/") for p in THIS_COMPUTER_ONLY):
+            if scope.get("method", "GET") in ("GET", "HEAD"):
+                page = f"<!doctype html><meta charset=utf-8><title>Settings</title><p>{SETTINGS_HERE_ONLY}</p>"
+                refusal: Any = HTMLResponse(page + '<p><a href="/">Back</a></p>', 403)
+            else:
+                refusal = JSONResponse({"ok": False, "error": SETTINGS_HERE_ONLY}, status_code=403)
+            refusal.headers["Cache-Control"] = "no-store"
+            await refusal(scope, receive, send)
+            return
         found = from_cookie(self.secret, _cookies(scope.get("headers") or []).get(COOKIE))
         if found is None:
-            path = scope.get("path") or ""
             if path in OPEN_PATHS or path.startswith(OPEN_PREFIXES):
                 await self.app(scope, receive, send)
                 return
