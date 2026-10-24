@@ -120,6 +120,23 @@ def refuse_internet(url: str) -> bool:
     return _on_this_network(urlparse(url).netloc)
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirect is an answer, never followed: it could point anywhere (an address on the internet), and urllib
+    would send the request there, with its Authorization header (B-973)."""
+
+    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
+def opener(local: bool) -> urllib.request.OpenerDirector:
+    """The urllib opener for a model server: no proxy for one on this computer or network (an office proxy would
+    answer for 127.0.0.1, or hang), and no redirect followed (``_NoRedirect``)."""
+    handlers: list[Any] = [_NoRedirect()]
+    if local:
+        handlers.append(urllib.request.ProxyHandler({}))
+    return urllib.request.build_opener(*handlers)
+
+
 def _fetch_json(url: str, api_key: str, timeout: float) -> Any:
     """GET a JSON document (raises OSError / ValueError when the server is down or answers something else, and
     PermissionError, an OSError, for a server on the internet in the offline build: :func:`refused_address`)."""
@@ -127,10 +144,7 @@ def _fetch_json(url: str, api_key: str, timeout: float) -> Any:
     if refused:
         raise PermissionError(refused)
     request = urllib.request.Request(url, headers={"Authorization": f"Bearer {api_key or 'lm-studio'}"})
-    # A server on this computer or network: no proxy (an office proxy would answer for 127.0.0.1, or hang).
-    local = _on_this_network(urlparse(url).netloc)
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({})) if local else urllib.request.build_opener()
-    with opener.open(request, timeout=timeout) as response:
+    with opener(_on_this_network(urlparse(url).netloc)).open(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8", "replace"))
 
 
@@ -350,11 +364,16 @@ def build_local_client(llm: LocalLLMSettings) -> Any:
 
     options: dict[str, Any] = {}
     refused = refused_address(llm.base_url)
+    # No redirect is followed (the SDK's own client follows them): it could point at the internet (B-973).
     if refused:  # every request fails like a server that is not running (APIConnectionError): nothing is sent
-        options["http_client"] = DefaultHttpxClient(transport=_refusing_transport(DefaultHttpxClient, refused))
+        options["http_client"] = DefaultHttpxClient(
+            transport=_refusing_transport(DefaultHttpxClient, refused), follow_redirects=False
+        )
     elif _on_this_network(urlparse(llm.base_url).netloc):
         # A server on this computer or network: never through an office proxy (it would answer for 127.0.0.1).
-        options["http_client"] = DefaultHttpxClient(trust_env=False)
+        options["http_client"] = DefaultHttpxClient(trust_env=False, follow_redirects=False)
+    else:
+        options["http_client"] = DefaultHttpxClient(follow_redirects=False)
     return OpenAI(
         base_url=llm.base_url,
         api_key=llm.api_key or "lm-studio",

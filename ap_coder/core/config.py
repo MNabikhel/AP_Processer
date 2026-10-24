@@ -7,6 +7,7 @@ import ipaddress
 import logging
 import os
 import re
+import socket
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -101,7 +102,32 @@ def _on_this_network(host: str) -> bool:
     name = name.lower()
     address = _address(name)
     if address is None:
-        return name == "localhost" or name.endswith((".local", ".lan", ".home")) or "." not in name
+        if not (name == "localhost" or name.endswith((".local", ".lan", ".home")) or "." not in name):
+            return False
+        # A name is judged by the addresses it resolves to: "gpu-box" or "x.local" may be an internet address
+        # (a DNS search domain, a spoofed name) (B-974). One that doesn't resolve reaches nothing: judged by name.
+        if name == "localhost":
+            return True
+        found = _resolved(name)
+        return all(_private(a) for a in found) if found else True
+    return _private(address)
+
+
+def _resolved(name: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+    try:
+        infos = socket.getaddrinfo(name, None, proto=socket.IPPROTO_TCP)
+    except (OSError, UnicodeError):
+        return []
+    found = []
+    for info in infos:
+        try:
+            found.append(ipaddress.ip_address(str(info[4][0]).split("%", 1)[0]))
+        except ValueError:
+            continue
+    return found
+
+
+def _private(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     if isinstance(address, ipaddress.IPv6Address):
         if address in _NAT64:
             return False

@@ -458,9 +458,8 @@ def _post_json(url: str, body: dict[str, Any], api_key: str, timeout: float) -> 
         local = local_llm.refuse_internet(url)
     except ConnectionRefusedError as exc:
         raise PageReaderError(str(exc)) from exc
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({})) if local else urllib.request.build_opener()
     try:
-        with opener.open(request, timeout=timeout) as response:
+        with local_llm.opener(local).open(request, timeout=timeout) as response:  # no proxy here, no redirect
             raw = response.read()
     except urllib.error.HTTPError as exc:
         raise PageReaderError(_lm_studio_said(exc)) from exc

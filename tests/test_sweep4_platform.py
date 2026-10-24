@@ -10,12 +10,15 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
+from ap_coder.ai import local_llm
 from ap_coder.core.config import Settings
 from ap_coder.core.store import APPROVED, PENDING, Store
 from ap_coder.ops.demo import load_demo
 from ap_coder.web.app import create_app
 
 from .webclient import PAGE, add_clean, web_settings
+
+REAL_FETCH = local_llm._fetch_json  # conftest replaces it for every test (no real LM Studio)
 
 
 @pytest.fixture(scope="module")
@@ -137,3 +140,109 @@ def test_on_the_office_network_settings_data_and_azure_are_only_from_this_comput
     assert "computer running AP Coder" in answer.text
     if method == "get":
         assert local(app).get(path).status_code in (200, 303, 307, 404)
+
+
+# --- 2. The offline guarantee holds through a redirect, and a name is judged by the address it has ----------------
+
+
+@pytest.fixture
+def redirecting():
+    """A model server on 127.0.0.1 that answers everything with a redirect to another server (also on this computer
+    here, so the test sends nothing out), which counts the requests it gets."""
+    import http.server
+    import threading
+
+    hits = []
+
+    class Target(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def _answer(self):  # pragma: no cover - reached only when a redirect is followed
+            hits.append((self.path, self.headers.get("Authorization")))
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"data": []}')
+
+        do_GET = do_POST = _answer
+
+    target = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Target)
+
+    class Redirect(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def _answer(self):
+            self.rfile.read(int(self.headers.get("content-length") or 0))
+            self.send_response(302)  # followed by urllib for a POST too (as a GET), and by httpx
+            self.send_header("Location", f"http://127.0.0.1:{target.server_address[1]}{self.path}")
+            self.send_header("content-length", "0")
+            self.end_headers()
+
+        do_GET = do_POST = _answer
+
+    source = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Redirect)
+    for server in (target, source):
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{source.server_address[1]}", hits
+    for server in (target, source):
+        server.shutdown()
+        server.server_close()
+
+
+def test_the_model_list_is_not_fetched_from_where_a_redirect_points(redirecting):
+    url, hits = redirecting
+    with pytest.raises(OSError):
+        REAL_FETCH(f"{url}/v1/models", "secret", 3)
+    assert hits == []
+
+
+def test_the_chat_model_client_does_not_follow_a_redirect(redirecting):
+    import openai
+
+    from ap_coder.core.config import LocalLLMSettings
+
+    url, hits = redirecting
+    client = local_llm.build_local_client(LocalLLMSettings(base_url=f"{url}/v1"))
+    with pytest.raises(openai.APIError):
+        client.chat.completions.create(model="m", messages=[{"role": "user", "content": "INVOICE TEXT"}])
+    assert hits == []
+
+
+def test_the_page_reader_does_not_follow_a_redirect(redirecting):
+    from ap_coder.ai import page_reader
+
+    url, hits = redirecting
+    with pytest.raises(page_reader.PageReaderError):
+        page_reader._post_json(f"{url}/api/v0/x", {"a": 1}, "", 3)
+    assert hits == []
+
+
+@pytest.mark.parametrize(
+    "name, address, here",
+    [
+        ("lmstudio.local", "93.184.216.34", False),  # a .local name that DNS gives an internet address
+        ("gpu-box", "8.8.8.8", False),  # a bare name completed by the office DNS to an internet address
+        ("gpu-box", "192.168.1.20", True),
+        ("lmstudio.lan", "10.0.0.7", True),
+    ],
+)
+def test_a_server_name_is_judged_by_the_address_it_resolves_to(monkeypatch, name, address, here):
+    import socket
+
+    from ap_coder.core import config
+
+    monkeypatch.setattr(config.socket, "getaddrinfo",
+                        lambda host, *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, 0))])  # fmt: skip
+    assert config._on_this_network(f"{name}:1234") is here
+
+
+def test_a_name_that_does_not_resolve_is_judged_by_its_name(monkeypatch):
+    from ap_coder.core import config
+
+    def nothing(*args, **kwargs):
+        raise OSError("no such name")
+
+    monkeypatch.setattr(config.socket, "getaddrinfo", nothing)
+    assert config._on_this_network("gpu-box:1234") and not config._on_this_network("example.com")
