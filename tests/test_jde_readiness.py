@@ -19,7 +19,9 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def _sheet(settings=None, accounts=(), vendors=()) -> openpyxl.Workbook:
-    data = jde_worksheet.build(settings or jde.JdeSettings(), list(accounts), list(vendors), lambda name: "")
+    data = jde_worksheet.build(
+        settings or jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS), list(accounts), list(vendors), lambda name: ""
+    )
     return openpyxl.load_workbook(io.BytesIO(data))
 
 
@@ -62,7 +64,7 @@ def test_answers_are_applied_and_bad_ones_reported_never_guessed():
     data = _answer(wb, company="42", document_type="pz", decimals="Decimal point ($5.50 → 5.50)", po_matched="oui",
                    currencies="cad; usd", info__p0400047="ZJDE0001", amount_mode="something else",
                    user="FAR_TOO_LONG_USER", send_due_date="maybe")  # fmt: skip
-    result = jde_worksheet.read(data, jde.JdeSettings())
+    result = jde_worksheet.read(data, jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS))
     s = result.settings
     assert (s.company_code, s.document_type, s.decimals, s.po_matched, s.currencies) == (
         "00042", "PZ", jde.POINT, True, ["CAD", "USD"])  # fmt: skip
@@ -84,7 +86,7 @@ def test_the_drop_down_answer_and_a_mapping_row_round_trip():
     acc["D2"], acc["E2"], acc["F2"] = "100", "6010", "01"
     data = _answer(wb, amount_mode="Taxable / non-taxable / tax amounts (VLATXA; VLATXN; VLSTAM): the tax printed on "
                    "the invoice", line_numbering="Match header")  # fmt: skip
-    s = jde_worksheet.read(data, jde.JdeSettings()).settings
+    s = jde_worksheet.read(data, jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS)).settings
     assert s.amount_mode == jde.AMOUNT_TAX and s.line_numbering == jde.MATCH_HEADER
     assert [jde.ani(m) for m in s.gl_map] == ["100.6010.01"]
 
@@ -101,21 +103,24 @@ def test_the_worksheet_holds_no_formula_from_a_document():
 
 @pytest.mark.parametrize("content", [b"not a workbook", b"PK\x03\x04 broken zip"])
 def test_a_file_that_is_not_the_worksheet_is_refused(content):
-    result = jde_worksheet.read(content, jde.JdeSettings())
+    result = jde_worksheet.read(content, jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS))
     assert result.changes == [] and "could not be opened" in result.problems[0]
     other = openpyxl.Workbook()
     buf = io.BytesIO()
     other.save(buf)
-    assert "not AP Coder's JDE worksheet" in jde_worksheet.read(buf.getvalue(), jde.JdeSettings()).problems[0]
+    assert (
+        "not AP Coder's JDE worksheet"
+        in jde_worksheet.read(buf.getvalue(), jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS)).problems[0]
+    )
 
 
 def test_the_dry_run_says_what_loads_and_why_anything_is_held_back():
     invoices = [_invoice(ON, 1), _invoice(BC, 2), _invoice(QC, 3), _invoice(CREDIT, 4), _invoice(USD, 5)]
     unknown_usd = lambda final: "" if "cascade" in (final.get("vendor_name") or "").lower() else "10023"  # noqa: E731
-    report = jde.dry_run(invoices, jde.JdeSettings(), unknown_usd, batch=12)
+    report = jde.dry_run(invoices, jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS), unknown_usd, batch=12)
     assert [v["id"] for v in report["vouchers"]] == [1, 2, 3, 4] and [h["id"] for h in report["held"]] == [5]
     assert "AN8" in report["held"][0]["reasons"][0]
-    files = jde.export_batch(invoices[:4], jde.JdeSettings(), AN8, batch=12)
+    files = jde.export_batch(invoices[:4], jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS), AN8, batch=12)
     rows = {name: len(data.decode().splitlines()) - 1 for name, data in files.items()}
     assert (
         report["files"][jde.HEADER_FILE] == rows[jde.HEADER_FILE]
@@ -129,7 +134,7 @@ def test_the_dry_run_says_what_loads_and_why_anything_is_held_back():
 
 
 def test_nothing_loads_while_a_setting_stops_every_export():
-    report = jde.dry_run([_invoice(ON, 1)], jde.JdeSettings(company="ABC"), AN8)
+    report = jde.dry_run([_invoice(ON, 1)], jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, company="ABC"), AN8)
     assert report["vouchers"] == [] and report["held"][0]["reasons"] == ["the JD Edwards settings above"]
     assert "NOTHING CAN LOAD" in jde.dry_run_text(report)
 
@@ -137,7 +142,7 @@ def test_nothing_loads_while_a_setting_stops_every_export():
 def test_an_uncoded_line_is_held_back_in_plain_words():
     inv = _invoice(ON, 1)
     inv["final_output"]["gl_distribution"][0]["gl_code"] = "UNASSIGNED"
-    (reasons,) = jde.validate([inv], jde.JdeSettings(), AN8).values()
+    (reasons,) = jde.validate([inv], jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS), AN8).values()
     assert any("has no GL account" in r and "review screen" in r for r in reasons)
     assert not any("too long" in r for r in reasons)
 

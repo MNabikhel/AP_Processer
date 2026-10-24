@@ -31,6 +31,7 @@ of the history, built once (``_memory``): a long history (years of ERP history) 
 
 from __future__ import annotations
 
+import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Any
@@ -54,6 +55,12 @@ USUAL_AUTO_LINES = 4  # ...and coded with it
 # AP confirms it once: a slip and a deliberate change of account look the same until the next decision.
 UNCONFIRMED_REVERSAL = 5
 PRIORITY = {"vendor": 3, "usual": 2, "master": 1, "others": 1, "words": 0}
+# A line that reads as a meal or a drink (B-932): on a weak match it goes to the meals account (50% of the tax
+# claimable, D-90), never to the 100% one ("Staff events & meals billed to clients") for the word "client".
+_MEAL_WORDS = re.compile(
+    r"(?i)\b(?:meals?|dinners?|lunch(?:es|eon)?|breakfasts?|brunch|food|restaurant|catering|banquet|beverages?|drinks?"
+    r"|wine|beer|coffee|repas|d[îi]ners?|d[ée]jeuners?|traiteur|boissons?|vin)\b"
+)
 
 
 @dataclass
@@ -177,6 +184,23 @@ def _stems(words: set[str]) -> dict[str, str]:
 
 def _plural(n: int, word: str) -> str:
     return f"{n} {word}{'' if n == 1 else 's'}"
+
+
+def _meals_first(
+    description: str, ranked: list[Suggestion], reference: ReferenceData, valid: frozenset[str]
+) -> list[Suggestion]:
+    """``ranked`` with a meals account first when the line reads as a meal and the best is a weak suggestion of
+    another account (B-932): a guess, with a note naming the other account. Strong evidence (AP's own coding) stays."""
+    meals = frozenset(getattr(getattr(reference, "tax", None), "meals_gl_codes", None) or ()) & valid
+    if not meals or not ranked or ranked[0].auto or ranked[0].gl_code in meals or not _MEAL_WORDS.search(description):
+        return ranked
+    first = ranked[0]
+    meal = next((x for x in ranked if x.gl_code in meals), None) or Suggestion(sorted(meals)[0], source="words")
+    meal.score = max(meal.score, first.score + 0.001)
+    meal.auto = False
+    meal.reasons.insert(0, f"reads as a meal: the meals account (50% of the tax claimable); {first.gl_code} only if "
+                           "it is billed to a client or is a staff event")  # fmt: skip
+    return [meal, *(x for x in ranked if x is not meal)]
 
 
 def suggest_gl(
@@ -304,6 +328,8 @@ def suggest_gl(
     top = ranked[0]
     level = strong.get(top.gl_code)
     top.auto = held is None and level is not None and not any(strong.get(s.gl_code, -1) >= level for s in ranked[1:])
+    ranked = _meals_first(description, ranked, reference, valid)
+    top = ranked[0]
     if held is not None:
         found[held.gl_code].check = (
             f"AP changed {held_line} from {held.was} (approved {_plural(held.reversed, 'time')}) to {held.gl_code} "

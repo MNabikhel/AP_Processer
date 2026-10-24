@@ -298,6 +298,11 @@ class Draft:
                      for i in range(len(tcols["tax_type"]))]  # fmt: skip
             for t in taxes:
                 t.update({c: _number_cell(t[c]) for c in NUMBER_CELLS if c in t})
+        supply = header.get("ship_to_province", "").strip().upper()
+        if supply != base.header.get("ship_to_province", "").strip().upper():  # tax rows put in the old one follow
+            from ap_coder.coding.tax import follow_supply
+
+            taxes = follow_supply(taxes, supply, _date_or_none(header.get("invoice_date")))
         absent = parse_absent(form.get("absent"), header) if form.get("absent") is not None else base.absent
         from_vendor = (
             parse_from_vendor(form.get("from_vendor")) if form.get("from_vendor") is not None else base.from_vendor
@@ -1859,6 +1864,8 @@ VUV WST XAF XCD XOF XPF YER ZAR ZMW ZWL
 HARD_CODES = frozenset({
     "MISSING_VENDOR", "MISSING_INVOICE_NUMBER", "NO_LINE_ITEMS", "SUBTOTAL_MISMATCH", "TOTAL_MISMATCH",
     "POSTING_UNBALANCED", "INVOICE_DATE_INVALID", "DUE_DATE_INVALID", "DATE_AMBIGUOUS", "CURRENCY_UNKNOWN",
+    # An account that is wrong or missing would post to the wrong (or a blank) GL (B-926).
+    "GL_IS_TAX_ACCOUNT", "GL_UNKNOWN", "CC_UNKNOWN", "TAX_GL_UNMAPPED", "TAX_GL_UNKNOWN",
 })  # fmt: skip
 
 
@@ -1868,6 +1875,13 @@ def is_hard(issue: Any) -> bool:
 
 
 DATE_FIELDS = ("invoice_date", "due_date")
+
+
+def _date_or_none(text: Any) -> dt.date | None:
+    try:
+        return dt.date.fromisoformat(str(text or "").strip()[:10])
+    except ValueError:
+        return None
 
 
 def _iso(text: str) -> bool:

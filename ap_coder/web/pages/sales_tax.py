@@ -26,6 +26,7 @@ ISSUE_TONES = {
     taxreturn.FOREIGN: "warn",
     taxreturn.NOT_EXPORTED: "info",
     taxreturn.MEALS: "info",
+    **dict.fromkeys(taxreturn.CHARGED_IN_ERROR.values(), "err"),  # tax charged in error (B-925)
 }
 
 
@@ -71,11 +72,6 @@ def sales_tax_page(request: Request, start: str = "", end: str = "", show: str =
     ]
     only_risky = (show or ("risky" if at_risk else "all")) == "risky"
     items = taxreturn.self_assessment(store, first, last)
-    sa_totals: dict[tuple[str, str, str], list[float]] = {}
-    for s in items:
-        entry = sa_totals.setdefault((s.province, s.tax_type, s.currency), [0.0, 0])
-        entry[0] += s.estimate
-        entry[1] += 1
     return render(
         request,
         "sales_tax.html",
@@ -89,11 +85,24 @@ def sales_tax_page(request: Request, start: str = "", end: str = "", show: str =
         risky=risky,
         tones=ISSUE_TONES,
         self_items=items,
-        self_tiles=[
-            (f"{tax} {prov}", f"{money(total)} {cur}", ui.plural(int(n), "invoice") + ", estimate")
-            for (prov, tax, cur), (total, n) in sorted(sa_totals.items())
-        ],
+        self_tiles=self_tiles(items),
     )
+
+
+def self_tiles(items: list[taxreturn.SelfAssessment]) -> list[tuple[str, str, str]]:
+    """The Self-assessment tiles: the estimate to book per province, tax and currency. An item with a note (JD Edwards
+    accrues it, or will once exported) is not to book from the report: left out, or it would be booked twice (B-928)."""
+    totals: dict[tuple[str, str, str], list[float]] = {}
+    for s in items:
+        if s.note:
+            continue
+        entry = totals.setdefault((s.province, s.tax_type, s.currency), [0.0, 0])
+        entry[0] += s.estimate
+        entry[1] += 1
+    return [
+        (f"{tax} {prov}", f"{money(total)} {cur}", ui.plural(int(n), "invoice") + ", estimate")
+        for (prov, tax, cur), (total, n) in sorted(totals.items())
+    ]
 
 
 @router.get("/sales-tax/claims.csv")

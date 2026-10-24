@@ -97,6 +97,21 @@ CHECKS: dict[str, CheckHelp] = {
         "Ask the pilot tester to switch to sending tax amounts in Settings → JD Edwards E1 (Amounts: taxable / "
         "non-taxable / tax amounts). If the meal is billed to a client or a staff event, code it to the other account.",
     ),
+    "JDE_GL_PO": CheckHelp(
+        ERP, "Tax on a PO-matched JD Edwards voucher",
+        "With the tax coded to G/L accounts, JD Edwards works out no tax itself, and a PO-matched voucher gets its "
+        "G/L lines from the receipts in JD Edwards, not from AP Coder: the tax line would have nowhere to go.",
+        "Send this invoice without the PO match (remove the PO number if it is only a reference), or ask the pilot "
+        "tester how PO-matched vouchers should carry their tax.",
+    ),
+    "JDE_GROSS_TAX": CheckHelp(
+        ERP, "JD Edwards would work out a different tax",
+        "With the gross amount only, JD Edwards works the tax out itself from the tax area's rate on the whole gross. "
+        "This invoice has a line with no tax on it (exempt or zero-rated), or charges another tax than the area's "
+        "rate, so JD Edwards would post a tax the vendor did not charge.",
+        "Check the tax lines and each line's tax code. If they are right, ask the pilot tester to code the tax to G/L "
+        "accounts, or to send tax amounts (Settings → JD Edwards E1, Amounts).",
+    ),
     "JDE_MEALS_PO": CheckHelp(
         ERP, "Meals on a PO-matched JD Edwards voucher",
         "A PO-matched voucher gets its G/L lines from the receipts in JD Edwards, not from AP Coder, so the half of "

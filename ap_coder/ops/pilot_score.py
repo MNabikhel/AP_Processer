@@ -404,12 +404,21 @@ def our_invoices(store: Any, settings: jde.JdeSettings | None = None) -> list[Ou
         tax_total = final.get("tax_total")
         if tax_total is None and taxes:
             tax_total = round(sum(float(t.get("tax_amount") or 0) for t in taxes), 2)
+        # What the voucher sent (B-933, B-934): its due date (a credit memo's is its invoice date; none when it was
+        # only a guess, E1 then works it out) and the tax E1 was given (the claimable tax, or the tax on its own G/L
+        # lines; with the gross only, the tax charged).
+        due = jde.sent_due(final, inv) if settings.send_due_date else None
+        try:
+            given = jde.sent_tax(inv, settings, an8 or "0")
+        except Exception:  # noqa: BLE001 - an invoice JD Edwards would refuse: the tax as charged
+            given = None
         o = Ours(
             id=inv["id"], vendor_name=str(final.get("vendor_name") or ""), an8=_an8(an8),
             invoice_number=str(final.get("invoice_number") or ""), invoice_date=str(final.get("invoice_date") or ""),
-            grand_total=parse_amount(final.get("grand_total")), tax_total=parse_amount(tax_total),
+            grand_total=parse_amount(final.get("grand_total")),
+            tax_total=given if given is not None else parse_amount(tax_total),
             currency=str(final.get("currency") or settings.domestic_currency).upper(),
-            due_date=str(final.get("due_date") or inv.get("due_date") or ""), touchless=_would_be_touchless(inv),
+            due_date=due.isoformat() if due else "", touchless=_would_be_touchless(inv),
         )  # fmt: skip
         try:  # the tax area and explanation code the voucher would carry
             header = jde.voucher_rows(inv, an8 or "0", settings)[0]
@@ -590,6 +599,8 @@ def score(ours: list[Ours], posted: list[Posted], notes: list[str] | None = None
             theirs = _posted_value(p, name)
             if theirs in (None, ""):
                 continue  # not in the export
+            if name == "due_date" and not o.due_date:
+                continue  # none sent: E1 worked it out from the supplier's terms (B-933)
             header[name]["n"] += 1
             if header_right(name, _ours_value(o, name), theirs):
                 header[name]["right"] += 1

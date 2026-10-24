@@ -39,7 +39,9 @@ if TYPE_CHECKING:
 ERROR, WARNING, INFO = "error", "warning", "info"
 OPEN, CLOSED = "open", "closed"
 PRICE_TOLERANCE = 0.02  # unit price may be 2% above the PO price...
-PRICE_TOLERANCE_ABS = 0.50  # ...or 50 cents, whichever is larger
+PRICE_TOLERANCE_ABS = 0.50  # ...or 50 cents, whichever is larger...
+PRICE_FLOOR_SHARE = 0.10  # ...but the 50 cents never more than 10% of the PO price (a $0.10 bolt: 1 cent, B-927)
+AMOUNT_TOLERANCE_ABS = 1.00  # a line's amount may be 2% or a dollar above its quantity at the PO price
 TOTAL_TOLERANCE = 0.02  # invoices on a PO may total 2% more than the PO (rounding, small freight)
 MATCH_THRESHOLD = 0.45
 
@@ -166,7 +168,18 @@ def similarity(a: str, b: str) -> float:
 
 
 def _same_price(a: float, b: float) -> bool:
-    return abs(abs(a) - abs(b)) <= max(PRICE_TOLERANCE_ABS, abs(b) * PRICE_TOLERANCE)
+    floor = min(PRICE_TOLERANCE_ABS, abs(b) * PRICE_FLOOR_SHARE)
+    return abs(abs(a) - abs(b)) <= max(floor, abs(b) * PRICE_TOLERANCE)
+
+
+def _amount_over(m: LineMatch) -> float | None:
+    """How far a line's amount is above its quantity at the PO price, beyond 2% or a dollar (B-927); None when not."""
+    if m.po_unit_price is None or m.quantity <= 0 or m.amount <= 0:
+        return None
+    at_po = round(m.quantity * abs(m.po_unit_price), 2)
+    if m.amount > at_po * (1 + PRICE_TOLERANCE) + AMOUNT_TOLERANCE_ABS:
+        return m.amount - at_po
+    return None
 
 
 def po_lines_billed(invoice_lines: list[dict[str, Any]], po_lines: list[dict[str, Any]]) -> list[int | None]:
@@ -366,6 +379,14 @@ def _line_findings(m: LineMatch, li: dict[str, Any], result: PoMatch, billed_now
             (WARNING, "PO_PRICE_OVER",
              f"unit price {_money(m.unit_price)} is above the PO price {_money(m.po_unit_price)} (+{over:.1%})",
              m.invoice_line)
+        )  # fmt: skip
+    elif (extra := _amount_over(m)) is not None:  # the unit price within, the line's amount not (B-927)
+        m.problems.append("price")
+        at_po = round(m.quantity * abs(m.po_unit_price), 2)
+        result.findings.append(
+            (WARNING, "PO_PRICE_OVER",
+             f"line amount {_money(m.amount)} is {_money(extra)} above {_qty(m.quantity)} at the PO price "
+             f"{_money(m.po_unit_price)} ({_money(at_po)})", m.invoice_line)
         )  # fmt: skip
     billed_now[m.po_line] = billed_now.get(m.po_line, 0.0) + m.quantity
     billed = m.billed_before + billed_now[m.po_line]
