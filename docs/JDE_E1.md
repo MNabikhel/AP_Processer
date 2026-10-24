@@ -67,13 +67,30 @@ Edwards batch made) has it turned on by itself when it is updated: nothing is ta
   into the table and the invoice number would no longer match). Do not open them in Excel to edit them. Files
   are UTF-8 without a byte-order mark.
 
-### Gross amount or tax amounts (never both)
+### Tax coded to G/L accounts, gross amount or tax amounts (never both)
 
 E1 rejects a pay item that has both a gross amount and taxable / tax amounts that disagree, so the
-setting *Amounts* chooses one:
+setting *Amounts* chooses one of three ways (D-93):
 
-* **Gross only** (default): VLAG (or VLACR in a foreign currency). E1 calculates the tax from the tax area
-  and explanation code.
+* **Tax coded to G/L accounts** (the default for a new setup; a saved setup keeps its mode): AP Coder codes the
+  tax itself, as an AP team that posts GST/HST to a GST receivable account and the other taxes to their own
+  accounts does, and E1 computes none.
+  * **F0911Z1** is AP Coder's stored GL distribution, line for line: the recoverable GST/HST and QST each on its own
+    line to its tax account (GL accounts & tax), mapped to BU.Object.Subsidiary like any account (a tax line has no
+    cost center: its business unit is the mapping's, or the default BU); a non-recoverable tax (seller-charged PST)
+    and the half of the tax on meals not claimable stay in the expense lines. A tax account with no JDE account is
+    held back with the usual *no JDE account* message.
+  * **F0411Z1**: VLAG (VLACR) = the gross, VLATXA / VLATXN / VLSTAM blank, **VLTXA1 blank, VLEXR1 = E** (the code
+    *when no tax is charged*): the voucher balances to the gross. Confirm with your JDE administrator that R04110ZA,
+    with code E and no tax area, posts the G/L lines as sent (or whether VLEXR1 should be blank).
+  * No tax area is asked, nor the meals rule of the gross mode (the claim is the tax line's own amount). In *match
+    header* numbering each G/L line, tax lines included, is its own pay item with its own amount.
+  * A **PO-matched** voucher with tax is held back: E1 takes its G/L lines from the receipts and posts no tax of its
+    own, so the tax would go nowhere. Meals on a PO-matched voucher are held back too, as in the other modes.
+  * **Self-assessed PST** is never accrued by E1 here (no code B): book it from AP Coder's Self-assessment report.
+* **Gross only**: VLAG (or VLACR in a foreign currency). E1 calculates the tax from the tax area
+  and explanation code. An invoice is held back when E1 would work out another tax than the one charged
+  (JDE_GROSS_TAX, B-921): a line exempt or zero-rated, or tax charged at another rate than the area's on the gross.
 * **Taxable / non-taxable / tax**: VLATXA (taxable), VLATXN (non-taxable = gross - taxable - tax) and
   VLSTAM (all Canadian tax charged); VLAG is blank (VLCTXA / VLCTXN / VLCTAM in a foreign currency).
   E1 keeps the tax printed on the invoice.
@@ -90,7 +107,8 @@ F4008 tax areas:
 | QC (GST + QST) | `QC-GSTQST` | V | gross - GST - QST |
 | BC, SK, MB (GST + seller-charged PST) | `BC-GSTPST`, … | C | gross - GST (the PST stays in the expense lines) |
 | AB, NT, NU, YT (GST) | `AB-GST`, … | V | gross - GST |
-| BC, SK, MB with no PST charged | same area | B (self-assessed PST) | gross - GST; E1 accrues the PST |
+| BC, SK, MB with no PST charged, every line owing it | same area | B (self-assessed PST) | gross - GST; E1 accrues the PST |
+| BC, SK, MB with no PST charged, every line PST-exempt | same area | E | gross (the GST on its own G/L line) |
 | No tax charged | same area | E (exempt) | gross |
 | Outside Canada | blank | blank | gross (a US sales tax is part of the expense lines) |
 
@@ -103,7 +121,8 @@ line's VNEXR1 when the distribution's tax columns are on. The other lines keep t
 **Self-assessment** report (Month-end) by journal entry. An invoice whose explanation code already has E1 accrue the
 use tax (B, the self-assessed code) must not be booked again from that report, or the PST is accrued twice: the dry
 run says so on such a voucher, and once exported the Self-assessment report marks it "JD Edwards accrues this one
-(code B): don't book it again from this report".
+(code B): don't book it again from this report". Code B accrues the PST on the whole voucher, so it is used only
+when every line owes the PST: an invoice with some lines PST-exempt and others not is held back (B-922).
 
 ### Why the distribution balances (and when it does not)
 
@@ -330,6 +349,8 @@ JDE administrator's word wins over this page.
       line numbers VLEDLN/VNEDLN as written (a direct table load may need 1000 for line 1; confirm with your JDE
       administrator). Business units may need right-justifying in 12 characters on a direct database load.
 - [ ] Count the rows loaded: they must equal the README's counts for F0411Z1 and F0911Z1.
+- [ ] With the tax coded to G/L accounts (D-93): R04110ZA with code E and no tax area posts our G/L lines as sent
+      (the tax lines to the tax accounts, nothing worked out again): confirm with your JDE administrator.
 
 **2. Run the Voucher Batch Processor, R04110ZA**
 
@@ -359,7 +380,8 @@ JDE administrator's word wins over this page.
 - [ ] **The tax**: each voucher's tax amount, tax area and explanation code against `DRY_RUN.txt`; a difference of
       a cent or more means E1 worked the tax out differently: say which vouchers.
 - [ ] **The account distribution**: each voucher's G/L lines (account BU.Obj.Sub and amount) against `F0911Z1.csv`;
-      recoverable GST/HST/QST is posted by E1 from its tax rules (AAIs), so those lines are E1's own.
+      recoverable GST/HST/QST is posted by E1 from its tax rules (AAIs), so those lines are E1's own (with the tax
+      coded to G/L accounts they are in `F0911Z1.csv` like the others).
 - [ ] **Error messages**: every message of the R04110ZA report and of the Employee Work Center (P01131) for the
       batch, and any row still unprocessed in Batch Voucher Revisions (P0411Z1).
 

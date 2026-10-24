@@ -54,7 +54,9 @@ def _csv(data):
 
 
 def _files(invoices, settings=None, **kw):
-    files = jde.export_batch(invoices, settings or jde.JdeSettings(), kw.pop("lookup", AN8), batch=7, **kw)
+    files = jde.export_batch(
+        invoices, settings or jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS), kw.pop("lookup", AN8), batch=7, **kw
+    )
     return {name: _csv(data) for name, data in files.items()}
 
 
@@ -100,7 +102,7 @@ def test_amounts_and_rounding():
 )
 def test_a_full_invoice_per_province(stem, area, code, gross, distribution):
     inv = _invoice(stem)
-    assert jde.validate([inv], jde.JdeSettings(), AN8) == {}
+    assert jde.validate([inv], jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS), AN8) == {}
     files = _files([inv])
     (head,) = files[jde.HEADER_FILE]
     final = inv["final_output"]
@@ -135,7 +137,7 @@ def test_tax_amount_mode_writes_taxable_and_tax_instead_of_gross():
 
 
 def test_decimal_point_mode():
-    (head,) = _files([_invoice(ON)], jde.JdeSettings(decimals=jde.POINT))[jde.HEADER_FILE]
+    (head,) = _files([_invoice(ON)], jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, decimals=jde.POINT))[jde.HEADER_FILE]
     assert head["VLAG"] == "18017.85"
 
 
@@ -145,15 +147,15 @@ def test_self_assessed_pst_and_exempt_codes():
     inv = _invoice(SK, tax_lines=no_pst, tax_total=504.75, grand_total=10599.75)
     (head,) = _files([inv])[jde.HEADER_FILE]
     assert head["VLEXR1"] == "B" and head["VLTXA1"] == "SK-GSTPST"
-    assert jde.validate([inv], jde.JdeSettings(), AN8) == {}  # distribution = gross - GST
+    assert jde.validate([inv], jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS), AN8) == {}  # distribution = gross - GST
     exempt = _invoice(AB, tax_lines=[], tax_total=0, grand_total=1746.0)
     (head,) = _files([exempt])[jde.HEADER_FILE]
-    assert head["VLEXR1"] == "E" and jde.validate([exempt], jde.JdeSettings(), AN8) == {}
+    assert head["VLEXR1"] == "E" and jde.validate([exempt], jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS), AN8) == {}
 
 
 def test_a_usd_invoice_in_foreign_mode():
     inv = _invoice(USD)
-    assert jde.validate([inv], jde.JdeSettings(), AN8) == {}
+    assert jde.validate([inv], jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS), AN8) == {}
     files = _files([inv], fx_rates={"USD": 1.37})
     (head,) = files[jde.HEADER_FILE]
     assert (head["VLCRRM"], head["VLCRCD"], head["VLACR"], head["VLAG"], head["VLCRR"]) == (
@@ -163,12 +165,14 @@ def test_a_usd_invoice_in_foreign_mode():
     lines = files[jde.DIST_FILE]
     assert {r["VNAA"] for r in lines} == {""} and sum(int(r["VNACR"]) for r in lines) == 757001  # US tax in lines
     assert {r["VNCRCD"] for r in lines} == {"USD"}
-    problems = jde.validate([inv], jde.JdeSettings(currencies=["CAD"]), AN8)
+    problems = jde.validate([inv], jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, currencies=["CAD"]), AN8)
     assert "currency USD is not set up" in problems[1][0]
 
 
 def test_a_po_matched_invoice():
-    settings = jde.JdeSettings(po_matched=True, use_default_rule=False)  # no account needed: matched in E1
+    settings = jde.JdeSettings(
+        amount_mode=jde.AMOUNT_GROSS, po_matched=True, use_default_rule=False
+    )  # no account needed: matched in E1
     inv = _invoice(ON)
     assert jde.validate([inv], settings, AN8) == {}
     raw = jde.export_batch([inv, _invoice(AB, 2)], settings, AN8, batch=7)
@@ -190,7 +194,7 @@ def test_a_po_matched_invoice():
 
 def test_a_credit_note_has_negative_amounts():
     inv = _invoice(CREDIT, 3)
-    settings = jde.JdeSettings(credit_document_type="PD")
+    settings = jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, credit_document_type="PD")
     assert jde.validate([inv], settings, AN8) == {}
     files = _files([inv], settings)
     (head,) = files[jde.HEADER_FILE]
@@ -212,7 +216,9 @@ def test_match_header_numbering_gives_one_pay_item_per_line():
     assert gross == 1801785 and sum(int(h["VLSTAM"]) for h in heads) == 207285
     for h, r in zip(heads, lines, strict=True):  # each pay item = its line + its share of the HST (code V)
         assert int(h["VLATXA"]) + int(h["VLATXN"]) == int(r["VNAA"])
-    gross_mode = _files([_invoice(ON)], jde.JdeSettings(line_numbering=jde.MATCH_HEADER))[jde.HEADER_FILE]
+    gross_mode = _files([_invoice(ON)], jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, line_numbering=jde.MATCH_HEADER))[
+        jde.HEADER_FILE
+    ]
     assert sum(int(h["VLAG"]) for h in gross_mode) == 1801785
 
 
@@ -277,7 +283,9 @@ def test_match_header_an_exempt_or_zero_rated_line_is_its_own_pay_item_with_the_
     one = _files([inv], jde.JdeSettings(amount_mode=jde.AMOUNT_TAX, dist_tax_columns=True))
     assert [h["VLEXR1"] for h in one[jde.HEADER_FILE]] == ["V"]
     # A configured exempt code is used, not "E"
-    custom = _files([inv], jde.JdeSettings(line_numbering=jde.MATCH_HEADER, exempt_code="X"))[jde.HEADER_FILE]
+    custom = _files(
+        [inv], jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, line_numbering=jde.MATCH_HEADER, exempt_code="X")
+    )[jde.HEADER_FILE]
     assert [h["VLEXR1"] for h in custom][-2:] == ["X", "X"]
 
 
@@ -306,7 +314,10 @@ def test_a_yen_voucher_balances_in_whole_yen(old_distribution, numbering):
     inv = _yen_invoice(old_distribution)
     if old_distribution:
         assert any(e["amount"] != round(e["amount"]) for e in inv["final_output"]["gl_distribution"])
-    for mode in (jde.AMOUNT_GROSS, jde.AMOUNT_TAX):
+    gross = jde.JdeSettings(currencies=["CAD", "JPY"], line_numbering=numbering, amount_mode=jde.AMOUNT_GROSS)
+    # PST on three lines only: from the gross alone E1 would tax every line (B-921)
+    assert "works out 12% tax" in jde.validate([inv], gross, AN8)[1][0]
+    for mode in (jde.AMOUNT_TAX,):
         settings = jde.JdeSettings(currencies=["CAD", "JPY"], line_numbering=numbering, amount_mode=mode)
         assert jde.validate([inv], settings, AN8) == {}
         files = _files([inv], settings)
@@ -330,7 +341,7 @@ def test_exchange_rate_keeps_every_decimal():
 def test_the_exchange_rate_is_in_the_domestic_currency_when_it_is_not_cad():
     """AP Coder's rates are CAD per unit: with JDE's domestic currency USD, a CAD invoice's VLCRR is USD per CAD
     (1 / 1.37), never the CAD rate 1; without a rate for the domestic currency it is left blank (E1's table)."""
-    usd_books = jde.JdeSettings(domestic_currency="USD", currencies=["CAD", "USD", "EUR"])
+    usd_books = jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, domestic_currency="USD", currencies=["CAD", "USD", "EUR"])
     rates = {"CAD": 1.0, "USD": 1.37, "EUR": 1.5}
     (head,) = _files([_invoice(ON)], usd_books, fx_rates=rates)[jde.HEADER_FILE]
     assert (head["VLCRRM"], head["VLCRCD"], head["VLCRR"]) == ("F", "CAD", "0.729927")
@@ -346,6 +357,7 @@ def test_the_exchange_rate_is_in_the_domestic_currency_when_it_is_not_cad():
 
 def test_account_columns_mode_and_mapping():
     settings = jde.JdeSettings(
+        amount_mode=jde.AMOUNT_GROSS,
         account_mode=jde.ACCOUNT_COLUMNS,
         gl_map=[jde.GlMap("6010", "", "100", "6010", "01"), jde.GlMap("1500", "CC400", "200", "1500")],
     )
@@ -354,14 +366,14 @@ def test_account_columns_mode_and_mapping():
     assert (lines[1]["VNMCU"], lines[1]["VNOBJ"]) == ("200", "1500")
     assert (lines[2]["VNMCU"], lines[2]["VNOBJ"]) == ("CC400", "6020")  # the default rule
     assert jde.ani(jde.account_for("6010", "", settings)) == "100.6010.01"
-    no_cc = jde.JdeSettings(bu_from_cost_center=False, default_bu="1")
+    no_cc = jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, bu_from_cost_center=False, default_bu="1")
     assert jde.ani(jde.account_for("6010", "CC400", no_cc)) == "1.6010"
 
 
 def test_csv_columns_in_order_and_text_as_it_is():
     inv = _invoice(ON)
     inv["final_output"]["gl_distribution"][0]["description"] = "=HYPERLINK(evil)"
-    raw = jde.export_batch([inv], jde.JdeSettings(), AN8, batch=1)
+    raw = jde.export_batch([inv], jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS), AN8, batch=1)
     assert set(raw) == {jde.HEADER_FILE, jde.DIST_FILE}  # no match file outside PO-matched mode
     assert raw[jde.HEADER_FILE].decode().splitlines()[0].split(",") == jde.HEADER_COLUMNS
     assert raw[jde.DIST_FILE].decode().splitlines()[0].split(",") == jde.DIST_COLUMNS
@@ -376,7 +388,7 @@ def test_the_g_l_bank_account_follows_the_pay_from_account_when_it_is_mapped():
     other = _invoice(QC, 2, pay_from_account="CAD-PAY")
     none = _invoice(AB, 3)
     assert "VLGLBA" not in _files([paid])[jde.HEADER_FILE][0]
-    settings = jde.JdeSettings(bank_glba={"CAD-OP": "00012345"})
+    settings = jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, bank_glba={"CAD-OP": "00012345"})
     rows = {r["VLEDTN"]: r for r in _files([paid, other, none], settings)[jde.HEADER_FILE]}
     assert [rows[f"APC{i}"]["VLGLBA"] for i in (1, 2, 3)] == ["00012345", "", ""]
     assert jde.header_columns(settings) == [*jde.HEADER_COLUMNS, "VLGLBA"]
@@ -389,7 +401,7 @@ def test_an_unmapped_pay_from_account_is_said_and_codes_match_whatever_their_cas
     default bank, AAI PB); a key typed "cad-op" mapped nothing."""
     cad = _invoice(ON, 1, pay_from_account="CAD-OP")
     usd = _invoice(USD, 2, pay_from_account="USD-OP")
-    settings = jde.JdeSettings(bank_glba={"cad-op": "00012345"})
+    settings = jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, bank_glba={"cad-op": "00012345"})
     rows = {r["VLEDTN"]: r for r in _files([cad, usd], settings)[jde.HEADER_FILE]}
     assert rows["APC1"]["VLGLBA"] == "00012345" and rows["APC2"]["VLGLBA"] == ""
     none = _invoice(AB, 3)
@@ -399,7 +411,9 @@ def test_an_unmapped_pay_from_account_is_said_and_codes_match_whatever_their_cas
             "default bank (AAI PB), which may not be that account."],
         3: ["AP Coder #3 has no Pay from account: E1 pays it from its default bank (AAI PB)."],
     }  # fmt: skip
-    assert jde.bank_notes([cad, usd], jde.JdeSettings()) == {}  # no mapping in use: nothing to say
+    assert (
+        jde.bank_notes([cad, usd], jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS)) == {}
+    )  # no mapping in use: nothing to say
     report = jde.dry_run([cad, usd], settings, AN8)
     assert "USD-OP" in jde.dry_run_text(report)
     data, _, _ = jde.build_zip([cad, usd], settings, AN8, batch=3)
@@ -412,7 +426,7 @@ def test_z_files_hold_the_text_as_it_is_without_spreadsheet_quoting():
     number = "+" + "A" * 24  # 25 characters: VLVINV's width
     inv = _invoice(ON, invoice_number=number)
     inv["final_output"]["gl_distribution"][0]["description"] = "- Labour, 4 h on site"
-    assert jde.validate([inv], jde.JdeSettings(), AN8) == {}
+    assert jde.validate([inv], jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS), AN8) == {}
     files = _files([inv])
     assert files[jde.HEADER_FILE][0]["VLVINV"] == number  # JDE's own supplier + invoice number check still matches
     line = files[jde.DIST_FILE][0]
@@ -423,17 +437,23 @@ def test_z_files_hold_the_text_as_it_is_without_spreadsheet_quoting():
 
 
 def test_validation_failures():
-    settings = jde.JdeSettings()
+    settings = jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS)
     assert "no JDE supplier number" in jde.validate([_invoice(ON)], settings, lambda f: "")[1][0]
     assert "not a JDE address number" in jde.validate([_invoice(ON)], settings, lambda f: "V10023")[1][0]
     assert "longer than 25" in jde.validate([_invoice(ON, invoice_number="X" * 26)], settings, AN8)[1][0]
     assert (
         "longer than 8"
-        in jde.validate([_invoice(ON, po_number="PO-882139")], jde.JdeSettings(po_matched=True), AN8)[1][0]
+        in jde.validate(
+            [_invoice(ON, po_number="PO-882139")], jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, po_matched=True), AN8
+        )[1][0]
     )
-    unmapped = jde.validate([_invoice(ON)], jde.JdeSettings(use_default_rule=False), AN8)[1]
+    unmapped = jde.validate([_invoice(ON)], jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, use_default_rule=False), AN8)[
+        1
+    ]
     assert len(unmapped) == 5 and "GL 6010 / CC400 has no JDE account" in unmapped[0]
-    no_bu = jde.validate([_invoice(ON)], jde.JdeSettings(bu_from_cost_center=False), AN8)[1]
+    no_bu = jde.validate([_invoice(ON)], jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, bu_from_cost_center=False), AN8)[
+        1
+    ]
     assert "has no JDE account" in no_bu[0]  # no cost center rule and no default BU
     # PST set up as recoverable in AP Coder, but BC's code C expenses it: E1 would not post it.
     pst_recoverable = _invoice(BC, setup=_setup(PST=TaxTreatment("PST", RECOVERABLE, "2330")))
@@ -444,13 +464,13 @@ def test_validation_failures():
     assert "adds up to" in jde.validate([broken], settings, AN8)[1][0]
     nowhere = _invoice(ON, supplier_province="", ship_to_province="")
     assert "province of supply unknown" in jde.validate([nowhere], settings, AN8)[1][0]
-    assert jde.settings_problems(jde.JdeSettings(company="ABC", user="", batch_prefix="X" * 10)) and not (
-        jde.settings_problems(jde.JdeSettings())
-    )
+    assert jde.settings_problems(
+        jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, company="ABC", user="", batch_prefix="X" * 10)
+    ) and not (jde.settings_problems(jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS)))
 
 
 def test_duplicates_in_the_batch_and_against_earlier_exports():
-    settings = jde.JdeSettings()
+    settings = jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS)
     a, b = _invoice(ON, 1), _invoice(ON, 2, invoice_number="#NW-2026-0912")  # the same number, written differently
     assert jde.validate([a, b], settings, AN8) == {2: ["same supplier and invoice number as AP Coder #1 in this batch"]}
     prior = {
@@ -470,7 +490,7 @@ def test_duplicates_in_the_batch_and_against_earlier_exports():
 def test_an_earlier_export_known_only_by_its_gst_number_is_a_duplicate(tmp_path):
     from ap_coder.coding.vendors import norm_tax_number
 
-    settings = jde.JdeSettings()
+    settings = jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS)
     first = _invoice(ON, 1)
     gst = first["final_output"]["gst_hst_registration_number"]
     ids = {f"gst:{norm_tax_number(gst)}": "10023"}  # the vendor master knows the supplier by its GST/HST number
@@ -490,10 +510,10 @@ def test_an_earlier_export_known_only_by_its_gst_number_is_a_duplicate(tmp_path)
 def test_an8_from_the_vendor_master_and_the_overrides():
     final = _invoice(ON)["final_output"]
     ids = {"northwind it solutions": "4410"}
-    assert jde.resolve_an8(final, ids, jde.JdeSettings()) == "4410"
+    assert jde.resolve_an8(final, ids, jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS)) == "4410"
     by_gst = {"gst:123456782rt0001": "4411"}
-    assert jde.resolve_an8(final, by_gst, jde.JdeSettings()) == "4411"
-    override = jde.JdeSettings(an8_overrides={vendor_key(final["vendor_name"]): "777"})
+    assert jde.resolve_an8(final, by_gst, jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS)) == "4411"
+    override = jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, an8_overrides={vendor_key(final["vendor_name"]): "777"})
     assert jde.resolve_an8(final, ids, override) == "777"
 
 
@@ -515,7 +535,7 @@ def test_settings_round_trip(tmp_path):
     assert jde.save(store, settings, actor="jane") and not jde.save(store, settings, actor="jane")
     assert jde.load(store) == settings
     assert store.events(actions=["settings_changed"])[0]["detail"] == {"keys": [jde.SETTING_KEY]}
-    assert jde.JdeSettings.from_json("not json") == jde.JdeSettings()
+    assert jde.JdeSettings.from_json("not json") == jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS)
     assert jde.JdeSettings.from_json('{"amount_mode": "both", "company": "7"}').amount_mode == jde.AMOUNT_GROSS
 
 
@@ -538,7 +558,11 @@ def test_gl_map_import_from_a_spreadsheet():
 
 def test_zip_has_the_files_and_a_readme():
     data, name, mime = jde.build_zip(
-        [_invoice(ON)], jde.JdeSettings(), AN8, batch=12, left_out={2: ["no JDE supplier number (AN8)"]}
+        [_invoice(ON)],
+        jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS),
+        AN8,
+        batch=12,
+        left_out={2: ["no JDE supplier number (AN8)"]},
     )
     assert (name, mime) == ("ap_coder_jde_batch_12.zip", "application/zip")
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
@@ -576,6 +600,7 @@ def test_exports_page_jde_flow(db):
     assert re.search(r'<button[^>]*id="export-go"[^>]*disabled', page)
     assert "cannot go to JD Edwards yet" in page
     settings = jde.load(store)
+    settings.default_bu = "HQ"  # the tax accounts' business unit (the tax coded to G/L accounts: D-93)
     settings.an8_overrides = {vendor_key(store.get_invoice(northwind)["vendor_name"]): "10023"}
     jde.save(store, settings)
     page = client.get("/exports", params={"fmt": jde.FORMAT}).text
@@ -591,7 +616,7 @@ def test_exports_page_jde_flow(db):
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
         (head,) = _csv(zf.read(jde.HEADER_FILE))
         assert (head["VLEDBT"], head["VLAN8"], head["VLEDTN"]) == (f"APC{batch['id']}", "10023", f"APC{northwind}")
-        assert len(_csv(zf.read(jde.DIST_FILE))) == 5
+        assert len(_csv(zf.read(jde.DIST_FILE))) == 6  # five lines and the HST on its own (D-93)
     # Exported once: the same invoice cannot be exported again until the batch is undone.
     assert (
         "already exported"
@@ -617,6 +642,7 @@ def test_a_jde_batch_downloads_again_with_the_same_vouchers(db):
     client = client_for(store)
     northwind = next(i for i in store.unexported_approved() if i["vendor_name"].startswith("Northwind"))
     settings = jde.load(store)
+    settings.default_bu = "HQ"  # the tax accounts' business unit (the tax coded to G/L accounts: D-93)
     settings.an8_overrides = {vendor_key(northwind["vendor_name"]): "10023"}
     jde.save(store, settings)
     follow(client, post(client, "/exports/create", {"fmt": jde.FORMAT, "ids": [northwind["id"]]}))
@@ -664,6 +690,7 @@ def _one_jde_batch(store, send_due_date=True, **final_changes):
             conn.execute("UPDATE invoices SET final_output = ? WHERE id = ?",
                          (json.dumps({**final, **final_changes}), northwind["id"]))  # fmt: skip
     settings = jde.load(store)
+    settings.default_bu = "HQ"  # the tax accounts' business unit (the tax coded to G/L accounts: D-93)
     settings.an8_overrides = {vendor_key(northwind["vendor_name"]): "10023"}
     settings.send_due_date = send_due_date
     jde.save(store, settings)
@@ -726,7 +753,7 @@ def test_docs_exist():
 def test_no_balance_message_while_a_line_has_no_account_or_the_province_is_unknown():
     """B-812: an uncoded line, or a province of supply not read, has its own finding: "unbalanced … check the Tax
     setup" beside it misled the clerk. The voucher is still held back, and a real imbalance is still said."""
-    settings = jde.JdeSettings()
+    settings = jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS)
     uncoded = _invoice(ON)
     uncoded["final_output"]["gl_distribution"][0]["gl_code"] = "UNASSIGNED"
     nowhere = _invoice(ON, supplier_province="", ship_to_province="")
@@ -745,7 +772,7 @@ def test_a_po_number_longer_than_jde_holds_is_kept_here_and_not_sent():
     clerk is not made to change what is printed: the voucher goes out without a PO reference (VLPO, VLPDCT, VLPKCO
     blank), the PO kept in AP Coder and in the remark when it fits, with a warning. A PO-matched voucher needs its
     PO in E1's order number: still held back."""
-    settings = jde.JdeSettings()
+    settings = jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS)
     for po in ("4500078813", "MNT-2026-028"):
         inv = _invoice(ON, po_number=po)
         assert jde.validate([inv], settings, AN8) == {}
@@ -760,7 +787,7 @@ def test_a_po_number_longer_than_jde_holds_is_kept_here_and_not_sent():
     assert (short["VLPO"], short["VLRMK"]) == ("PO77120", "AP Coder #1")
     too_long = _files([_invoice(ON, po_number="P" * 20)])[jde.HEADER_FILE][0]
     assert too_long["VLRMK"] == "AP Coder #1"  # no room in the remark's 30 characters
-    matched = jde.JdeSettings(po_matched=True)
+    matched = jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, po_matched=True)
     inv = _invoice(ON, po_number="4500078813")
     assert "longer than 8" in jde.validate([inv], matched, AN8)[1][0]
     (finding,) = [f for f in jde.voucher_findings(inv["final_output"], matched, "10023") if f[1] == "JDE_PO_LONG"]
@@ -769,6 +796,6 @@ def test_a_po_number_longer_than_jde_holds_is_kept_here_and_not_sent():
 
 def test_a_line_with_no_gl_account_yet_has_no_e1_account():
     """An uncoded line (UNASSIGNED) is not an object account: the review screen showed "CC400.UNASSIGN" (B-830)."""
-    settings = jde.JdeSettings(default_bu="CC400")
+    settings = jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, default_bu="CC400")
     assert jde.account_for("UNASSIGNED", "", settings) is None and jde.account_text("UNASSIGNED", "", settings) == ""
     assert jde.account_text("6010", "", settings) == "CC400.6010"

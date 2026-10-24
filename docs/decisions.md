@@ -825,3 +825,20 @@ that is reversed keeps its line, marked "replaced by D-NN".
   self-test), then `python -m ap_coder.bench coding --vendors 20 --invoices 5 --ai --out bench_ai` (the chat model's
   precision, first invoice apart; report in `bench_ai/report.md`), and, once AP has posted the pilot's invoices,
   `python -m ap_coder pilot-score` on the JDE export.
+- **D-93** · JD Edwards: the tax coded to G/L accounts. The pilot's AP team posts GST/HST to a GST receivable account
+  and the other provinces' taxes to their own accounts, and does not want E1 computing tax; both earlier modes (gross,
+  tax amounts) left the recoverable tax to E1's tax AAIs. A third *Amounts* mode, "Tax coded to G/L accounts"
+  (`AMOUNT_GL`), is the default for a new setup; a saved setup keeps its mode (saved settings without one read as
+  gross, as they were), so its batches rebuild unchanged. In it F0911Z1 is the stored GL distribution unfiltered
+  (`tax.build_gl_distribution`): each recoverable GST/HST/QST on its own line to its tax account (`tax_gl_mapping`,
+  through `account_for`), the non-recoverable tax and the meals half in the expense lines; the header goes with VLAG =
+  gross, VLTXA1 blank and VLEXR1 = the exempt code (E; whether R04110ZA posts our lines as sent with it, or wants
+  VLEXR1 blank, is to confirm with the JDE administrator, in the checklist and the worksheet), so nothing is recoverable
+  for E1 and the voucher balances to the gross. Not asked in this mode: the tax areas, the gross mode's meals hold
+  (JDE_MEALS_GROSS; the claim is the tax line's amount); kept: JDE_MEALS_PO, and a PO-matched voucher with tax is held
+  back (JDE_GL_PO: E1 distributes from the receipts and posts no tax, so the tax would go nowhere). Match-header
+  numbering is one pay item per G/L line with its own amount, the tax lines included. A tax account with no
+  BU.Obj.Sub is the usual JDE_NO_ACCOUNT, named as the tax account. Self-assessed PST is never accrued by E1 here
+  (`accrues_use_tax` false): the Self-assessment report has it. Why: posting the tax as AP Coder coded and checked it
+  is what this AP team does by hand today, and it leaves E1 nothing to work out differently from the invoice.
+  (`erp/jde.py`, `tests/test_jde_gl_mode.py`, `docs/JDE_E1.md`)

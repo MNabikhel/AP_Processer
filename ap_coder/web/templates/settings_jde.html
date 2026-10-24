@@ -132,7 +132,9 @@
   <h4>Province → tax area and explanation code</h4>
   <p class="muted">The tax area names are placeholders: use your E1 tax areas (F4008). Codes: V = GST/HST/QST recoverable,
     C = GST + seller-charged PST (PST in the distribution), B = self-assessed PST, E = exempt. Invoices with no tax charged
-    use the exempt code; PST provinces without PST charged use the self-assessed code.</p>
+    use the exempt code; PST provinces without PST charged use the self-assessed code when every line owes the PST.
+    {% if js.amount_mode == "gl" %}<strong>Not used while the tax is coded to G/L accounts</strong> (Amounts, above):
+    each voucher goes with code {{ js.gl_tax_code }} and no tax area.{% endif %}</p>
   <form method="post" action="/settings/jde/tax-map" class="stack" data-busy="Saving…">
     <div class="table-wrap">
       <table class="apc-table st-edit">

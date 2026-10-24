@@ -47,7 +47,11 @@ QUESTIONS = [
         "header_bu", "Company", "Which business unit goes on the voucher header (blank if none)?", "VLMCU", width=12
     ),
     Question(
-        "default_bu", "Company", "Default business unit for G/L lines with no cost centre mapped?", "VNMCU", width=12
+        "default_bu",
+        "Company",
+        "Default business unit for G/L lines with no cost centre mapped (the tax lines too)?",
+        "VNMCU",
+        width=12,
     ),
     Question(
         "bu_from_cost_center",
@@ -112,10 +116,19 @@ QUESTIONS = [
     Question(
         "amount_mode",
         "Amounts",
-        "Send the gross amount only (E1 calculates the tax), or the taxable / tax amounts printed on the invoice?",
+        "Code the tax to G/L accounts (each tax on its own G/L line, E1 computes none), send the gross amount only "
+        "(E1 calculates the tax), or the taxable / tax amounts printed on the invoice?",
         "VLAG or VLATXA / VLSTAM",
         CHOICE,
         jde.AMOUNT_MODES,
+    ),
+    Question(
+        "info:gl_code_e",
+        "Amounts",
+        "With the tax coded to G/L accounts: does R04110ZA, with code E and no tax area, post our G/L lines as sent "
+        "(the tax lines to the tax accounts) and work out no tax of its own? Or should VLEXR1 be blank?",
+        "VLEXR1 / VLTXA1",
+        INFO,
     ),
     Question(
         "decimals",
