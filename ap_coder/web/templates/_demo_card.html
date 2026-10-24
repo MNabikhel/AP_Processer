@@ -1,6 +1,6 @@
 {# Load or remove the demo invoices (the bundled samples, already read and coded).
    Needs: demo_available, demo_count, where (the page to come back to: "/process" or "/review"). #}
-{% if demo_available %}
+{% if demo_available and can("/demo/load") %}{# server mode: the demo is an Admin's (D-98) #}
 <section class="card">
   <h4>Demo invoices</h4>
   {% if not demo_count %}

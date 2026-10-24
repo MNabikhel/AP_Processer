@@ -111,8 +111,7 @@ def test_in_a_browser_each_role_logs_in_sees_what_it_may_and_logs_out(browser, s
     else:
         assert "Not allowed" in page.locator("h1").inner_text()
         assert "Your role" in page.content()
-    page.click(".rail-foot a:has-text('Log out')")
-    page.click("button:has-text('Log out')")
+    page.click(".rail-foot button:has-text('Log out')")  # at once, no page to confirm it (B-1114)
     page.wait_for_url("**/login*")
     assert "You are logged out" in page.content()
     page.goto(f"{base}/review")
@@ -130,4 +129,27 @@ def test_in_a_browser_a_temporary_password_is_changed_first(browser, store):
     page.click("button:has-text('Save the new password')")
     page.wait_for_url("**/review*")
     assert "Password changed" in page.content()
+    assert errors == []
+
+
+def test_in_a_browser_read_only_opens_an_invoice_without_a_refusal(browser, store):
+    """B-1100: opening an invoice posted its check, which Read-only is refused (a 403 toast); B-1101: its fields
+    could be typed in. Read-only sees the stored checks, posts nothing and changes nothing."""
+    page, errors = _log_in(browser, "reader")
+    _, base = browser
+    posts: list[str] = []
+    page.on("request", lambda r: posts.append(r.url) if r.method == "POST" else None)
+    invoice = store.list_invoices("review")[0]["id"]
+    page.goto(f"{base}/review/{invoice}")
+    page.wait_for_selector("[data-live=checks] .rvw-status")
+    page.wait_for_timeout(600)
+    assert posts == []
+    assert page.locator("#toasts > *").count() == 0
+    box = page.locator('[form="inv"][name="invoice_number"]')
+    assert box.evaluate("el => el.readOnly")
+    box.click()
+    page.keyboard.type("X")
+    assert "X" not in box.input_value()
+    assert page.locator('[data-grid="lines"] .pk-input').first.evaluate("el => el.readOnly")
+    assert page.locator("[data-add-row], [data-vendor-add], [data-note-form]").count() == 0
     assert errors == []

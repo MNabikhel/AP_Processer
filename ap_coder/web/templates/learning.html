@@ -44,13 +44,17 @@
   </form>
   {% else %}
   {% if upload_gone %}{{ ui.empty_note("That upload has expired", " Upload the file again.", "schedule") }}{% endif %}
+  {% if can("/learning/history/upload") %}{# server mode: teaching the past coding is an Admin's (D-98) #}
   <form class="row" method="post" action="/learning/history/upload" enctype="multipart/form-data" data-busy="Reading…">
     <label class="field">AP line history (CSV or Excel)
       <input type="file" name="file" accept=".csv,.xlsx,.xls,.txt" required></label>
     <button class="btn" type="submit"><span class="ms" aria-hidden="true">upload</span>Read the file</button>
   </form>
+  {% else %}
+  <p class="muted">An Admin imports the past coding.</p>
   {% endif %}
-  {% if history_count %}
+  {% endif %}
+  {% if history_count and can("/learning/history/forget") %}
   <form method="post" action="/learning/history/forget" data-confirm="Forget all {{ history_count | num }} past lines? The AI no longer sees how vendors were coded in the ERP.">
     <button class="btn sm" type="submit"><span class="ms" aria-hidden="true">delete_sweep</span>Forget all past coding</button>
   </form>
@@ -130,18 +134,19 @@
   {% if not memory %}
   {{ ui.empty_note("No lines match", " Try another search.", "search_off") }}
   {% else %}
-  <form method="post" action="/learning/memory/forget" data-confirm="Forget the ticked lines? The AI no longer sees them.">
+  {% set forget = can("/learning/memory/forget") %}{# server mode: forgetting is an Admin's (D-98) #}
+  <form{% if forget %} method="post" action="/learning/memory/forget" data-confirm="Forget the ticked lines? The AI no longer sees them."{% endif %}>
     <div class="table-wrap an-scroll"><table class="apc-table">
       {% set show_cc = memory | selectattr("final_cc") | list %}{# none (no cost center list: D-53): no empty column #}
-      <thead><tr><th>Forget?</th><th>Date</th><th>Vendor</th><th>Line</th><th>AI suggested</th><th>Final GL</th>{% if show_cc %}<th>Cost center</th>{% endif %}<th>Outcome</th><th>Reviewer</th></tr></thead>
+      <thead><tr>{% if forget %}<th>Forget?</th>{% endif %}<th>Date</th><th>Vendor</th><th>Line</th><th>AI suggested</th><th>Final GL</th>{% if show_cc %}<th>Cost center</th>{% endif %}<th>Outcome</th><th>Reviewer</th></tr></thead>
       <tbody>{% for r in memory %}
-        <tr><td><input type="checkbox" name="ids" value="{{ r.id }}" aria-label="Forget the line {{ r.description }}"></td>
+        <tr>{% if forget %}<td><input type="checkbox" name="ids" value="{{ r.id }}" aria-label="Forget the line {{ r.description }}"></td>{% endif %}
           <td>{{ r.date }}</td><td>{{ r.vendor_name }}</td><td class="w">{{ r.description }}</td><td>{{ "no account" if r.suggested_gl == unassigned else (r.suggested_gl or "") }}</td>
           <td>{{ r.final_gl }}</td>{% if show_cc %}<td>{{ r.final_cc or "" }}</td>{% endif %}<td>{{ r.outcome_text }}</td><td>{{ r.reviewer or "" }}</td></tr>
       {% endfor %}</tbody>
     </table></div>
     <div class="row">
-      <button class="btn" type="submit"><span class="ms" aria-hidden="true">delete_sweep</span>Forget the ticked lines</button>
+      {% if forget %}<button class="btn" type="submit"><span class="ms" aria-hidden="true">delete_sweep</span>Forget the ticked lines</button>{% endif %}
       <span class="muted">{% if memory_matching > memory | length %}Showing {{ memory | length }} of {{ memory_matching | num }}{% else %}{{ memory_matching | plural("line") }}{% endif %}{% if mem_q %} matching “{{ mem_q }}”{% endif %} · {{ memory_total | num }} in the memory{% if memory_total >= 2000 %} (the newest 2,000){% endif %}.</span>
     </div>
   </form>
@@ -156,7 +161,7 @@
 <p class="muted">
   {% if touchless_on %}Touchless processing is <b>on</b>: a vendor that meets the bar skips review by itself, and one correction sends it back to review.
   {% else %}Touchless processing is <b>off</b> (Settings → Automation): every invoice is reviewed by a person, and each approval keeps training its vendor.{% endif %}
-  The bar, the same for every vendor (<a href="/settings/automation">Settings → Automation</a>): at least
+  The bar, the same for every vendor ({% if can("/settings/automation", "GET") %}<a href="/settings/automation">Settings → Automation</a>{% else %}Settings → Automation{% endif %}): at least
   {{ policy.min_invoices }} invoices reviewed, the last {{ policy.clean_streak }} without a correction, and its fields
   read right {{ "{:.0%}".format(policy.min_lower_bound) }} of the time. In practice a new vendor needs about
   {{ typical }} invoices approved without a correction; each vendor below says how many more it needs.</p>
@@ -182,13 +187,14 @@
       {% endif %}
       {% endif %}
     </details>
-    {% if s.has_layout %}
+    {% if s.has_layout and can("/learning/suppliers/reset-layout") %}
     <form method="post" action="/learning/suppliers/reset-layout" data-confirm="Reset {{ s.name }}'s layout? AP Coder forgets where this vendor prints each field: its next invoices are read as a new vendor's, and approving them teaches it again. Recorded in the Activity log with your name.">
       <input type="hidden" name="key" value="{{ s.key }}">
       <button class="btn sm ghost" type="submit" title="When AP Coder keeps reading this vendor's fields in the wrong place"><span class="ms" aria-hidden="true">restart_alt</span>Reset layout</button>
     </form>
     {% endif %}
-    {% if s.held %}
+    {% if not can("/learning/suppliers/hold") %}{# server mode: holding a vendor is an Admin's (D-98) #}
+    {% elif s.held %}
     <form method="post" action="/learning/suppliers/allow">
       <input type="hidden" name="key" value="{{ s.key }}">
       <button class="btn sm" type="submit"><span class="ms" aria-hidden="true">bolt</span>Allow again</button>
@@ -239,9 +245,9 @@
           <input type="text" name="explanation" value="{{ l.explanation }}" placeholder="Why AP chooses this value" aria-label="AP's reason">
           <button class="btn sm" type="submit">Save</button></form>
           {% if l.explained_by %}<div class="muted small">{{ l.explained_by }}, {{ (l.explained_at or "")[:10] }}</div>{% endif %}</td>
-        <td><form method="post" action="/learning/lessons/retire" data-busy="…">
+        <td>{% if can("/learning/lessons/retire") %}<form method="post" action="/learning/lessons/retire" data-busy="…">
           <input type="hidden" name="lesson_id" value="{{ l.id }}"><input type="hidden" name="retired" value="{{ '0' if l.retired else '1' }}">
-          <button class="btn sm ghost" type="submit" title="{{ 'Use it again' if l.retired else 'No longer true: not shown to the AI again' }}">{{ "Restore" if l.retired else "Retire" }}</button></form></td></tr>
+          <button class="btn sm ghost" type="submit" title="{{ 'Use it again' if l.retired else 'No longer true: not shown to the AI again' }}">{{ "Restore" if l.retired else "Retire" }}</button></form>{% endif %}</td></tr>
     {% endfor %}</tbody>
   </table></div>
 </section>

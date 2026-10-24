@@ -70,7 +70,7 @@ def set_session_cookie(request: Request, response: Response, token: str) -> None
                         secure=secure_cookie(request), path="/")  # fmt: skip
 
 
-@router.get(identity.LOGIN_PATH, response_class=HTMLResponse)
+@router.api_route(identity.LOGIN_PATH, methods=["GET", "HEAD"], response_class=HTMLResponse)  # HEAD: monitors
 def login_page(request: Request, next: str = HOME) -> Response:  # noqa: A002 - the address's own word
     if not server_mode(request):
         return RedirectResponse(HOME, status_code=303)

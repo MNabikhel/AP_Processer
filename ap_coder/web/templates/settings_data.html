@@ -40,11 +40,11 @@
   <form method="post" action="/settings/data/backup-copy" class="row st-end" data-busy="Saving…">
     <label class="field st-grow">Also copy each backup to (optional)
       <input type="text" name="folder" value="{{ copy_dir }}" placeholder="e.g. C:\Users\you\OneDrive - Company\AP Coder backups"
-             title="A OneDrive, SharePoint-synced or network folder, so a lost or broken computer does not lose the database. Only the backup copies go there; the database itself stays on this computer."></label>
+             title="A OneDrive, SharePoint-synced or network folder, so a lost or broken computer does not lose the database. Only the backup copies go there; the database itself stays {{ "on the server" if server_mode else "on this computer" }}."></label>
     <button class="btn" type="submit"><span class="ms" aria-hidden="true">save</span>Save</button>
   </form>
   <p class="muted">A OneDrive, SharePoint-synced or network folder, so a lost or broken computer does not lose the database.
-    Only the backup copies go there; the database itself stays on this computer.</p>
+    Only the backup copies go there; the database itself stays {{ "on the server" if server_mode else "on this computer" }}.</p>
   {% if copy_status %}
   <p class="muted">{% if copy_status.ok %}<span class="ms ok-ico" aria-hidden="true">check_circle</span> Last copied {{ copy_status.when }}: {{ copy_status.what }}
     {% else %}<span class="ms err-ico" aria-hidden="true">error</span> Copying failed {{ copy_status.when }}: {{ copy_status.what }}. The local backups are fine.{% endif %}</p>

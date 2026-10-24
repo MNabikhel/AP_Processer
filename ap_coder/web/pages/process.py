@@ -44,10 +44,12 @@ from ap_coder.intake.mailbox import (
     unpack_folder,
 )
 from ap_coder.intake.pictures import looks_incomplete
+from ap_coder.ops.help import SERVER_LM_STUDIO
 from ap_coder.web import identity
 from ap_coder.web.access import is_admin
 from ap_coder.web.core import (
     cache_dir,
+    can,
     done,
     flash_message,
     folder_on_the_server,
@@ -421,6 +423,24 @@ def next_step(steps: list[tuple[str, str, str]]) -> dict[str, Any] | None:
     return None
 
 
+def shown_setup(request: Request, steps: list[tuple[str, str, str]], coming: dict[str, Any] | None) -> tuple[
+        list[tuple[str, str, str]], dict[str, Any] | None, dict[str, str]]:  # fmt: skip
+    """The checklist, its Next step and the steps' links as the person sees them: on a laptop as they are; on the
+    company server (D-102) LM Studio is IT's or an Admin's (it runs on the server), a step whose page the role can't
+    open has no link, and a Next step the role can't do says who does it."""
+    links = {label: href for label, href in STEP_LINKS.items() if can(request, href, "GET")}
+    if not server_mode(request):
+        return steps, coming, links
+    steps = [(state, label, f"not ready: {SERVER_LM_STUDIO}" if label == LM_STUDIO and state in ("todo", "bad")
+              else detail) for state, label, detail in steps]  # fmt: skip
+    if coming and coming.get("check"):  # the LM Studio card
+        coming = {**coming, "title": "LM Studio isn't ready on the server", "steps": (),
+                  "text": f"{SERVER_LM_STUDIO}. Until it is ready, every invoice waits for a person."}  # fmt: skip
+    elif coming and not can(request, coming["href"], "GET"):
+        coming = {**coming, "text": f"{coming['text']} An Admin does this step."}
+    return steps, coming, links
+
+
 def ready_to_read(steps: list[tuple[str, str, str]]) -> bool:
     """PDF text / OCR and GL accounts are enough: OvisOCR2 reads invoices once it runs, the chat model is optional."""
     return step_state(steps, "GL accounts") == "ok"
@@ -585,7 +605,7 @@ def process_page(request: Request) -> HTMLResponse:
     waiting = [i for i in recent if i["status"] == REVIEW]
     reasons = attention(store, reference_or_none(store), waiting) if waiting else {}
     recent = [{**i, "needs_attention": i["id"] in reasons} for i in recent]  # its pill says what the queue says
-    coming = next_step(steps)
+    steps, coming, links = shown_setup(request, steps, next_step(steps))
     demo_count = store.demo_count()
     return render(
         request, "process.html", "process",
@@ -593,8 +613,7 @@ def process_page(request: Request) -> HTMLResponse:
         # and vendors don't mix into your numbers (B-468).
         demo_first=bool(demo_count) and demo_count >= len(invoices),
         steps=steps,
-        step_links=STEP_LINKS,
-        lm_studio_steps=LM_STUDIO_STEPS,
+        step_links=links,
         steps_done=steps_done,
         steps_needed=steps_needed,
         next=coming if coming and coming["href"] != "/process" else None,  # (this page's own step: choose files)

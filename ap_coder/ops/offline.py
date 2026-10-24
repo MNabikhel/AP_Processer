@@ -301,6 +301,14 @@ def server_mode() -> bool:
     return (os.environ.get(SERVER_ENV) or "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def setup_contact(text: str) -> str:
+    """``text`` with who to ask about the setup: the pilot tester on a laptop, an Admin on the company server, where
+    the setup is an Admin's (D-98, D-102)."""
+    if not server_mode():
+        return text
+    return text.replace("the pilot tester", "an Admin").replace("The pilot tester", "An Admin")
+
+
 def dashboard_address() -> str:
     """The address the dashboard listens on: this computer only, unless ``AP_DASHBOARD_ADDRESS`` says
     otherwise (e.g. ``0.0.0.0`` to let colleagues on the office network open it)."""

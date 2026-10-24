@@ -252,7 +252,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     from ..core.store.users import ROLES
 
-    p = sub.add_parser("users", help="Server mode: the people who log in (add, list, reset, deactivate, role)")
+    p = sub.add_parser("users", help="Server mode: the people who log in (add, list, reset, deactivate, activate, "
+                       "role)")  # fmt: skip
     users = p.add_subparsers(dest="users_command", required=True)
     u = users.add_parser("add", help="Add a person (the password is asked for, twice)")
     u.add_argument("username")
@@ -263,6 +264,8 @@ def build_parser() -> argparse.ArgumentParser:
     u = users.add_parser("reset", help="A new temporary password (asked for, twice); they choose their own at login")
     u.add_argument("username")
     u = users.add_parser("deactivate", help="Turn an account off: it can no longer log in")
+    u.add_argument("username")
+    u = users.add_parser("activate", help="Turn an account that was turned off on again: it can log in again")
     u.add_argument("username")
     u = users.add_parser("role", help="Change a person's role")
     u.add_argument("username")
@@ -301,7 +304,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         os.environ["AP_ENV_FILE"] = str(Path(args.env_file).resolve())
     from ..core.store import Store
     from ..web import server
-    from .offline import SERVER_ENV, free_port, is_loopback, server_mode
+    from .offline import DEFAULT_PORT, SERVER_ENV, free_port, is_loopback, server_mode
 
     if args.server:
         os.environ[SERVER_ENV] = "1"  # (the pages ask server_mode())
@@ -313,8 +316,14 @@ def cmd_serve(args: argparse.Namespace) -> int:
         print(refusal, file=sys.stderr)
         return 2
     host = args.host or server.default_host()
-    port = args.port or free_port(address=host)  # (the launcher's own choice: 8501, else the next free one)
+    # The launcher's own choice: 8501, else the next free one. Never on the company server: staff were given its
+    # address with its port, so a port in use stops it, in plain words (D-102).
+    port = args.port or (DEFAULT_PORT if server_mode() else free_port(address=host))
     url = server.browser_url(host, port, bool(certfile))
+    taken = server.port_refusal(host, port, bool(certfile)) if server_mode() else ""
+    if taken:  # said before "AP Coder server: ..." could be
+        print(taken, file=sys.stderr)
+        return 1
     if server_mode():
         print(f"AP Coder server: {url} on this computer; staff open it by the server's name (Ctrl+C here to stop)",
               file=sys.stderr)  # fmt: skip
@@ -895,6 +904,9 @@ def cmd_users(args: argparse.Namespace) -> int:
         elif action == "deactivate":
             store.deactivate_user(user["id"], actor=actor)
             print(f"{username} can no longer log in.")
+        elif action == "activate":
+            store.activate_user(user["id"], actor=actor)
+            print(f"{username} can log in again, with the same password as before.")
         else:
             store.set_role(user["id"], args.role, actor=actor)
             print(f"{username} is now {ROLE_LABELS[args.role]}.")

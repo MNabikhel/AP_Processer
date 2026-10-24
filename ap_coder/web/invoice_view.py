@@ -71,6 +71,7 @@ from ap_coder.core.schema import FROM_VENDOR_LIST, PROVINCE_VALUES, InvoiceCodin
 from ap_coder.core.store import Store, nothing_proposed, suggestion_kept
 from ap_coder.core.ui import TAX_LABELS, plural
 from ap_coder.ops.help import help_for
+from ap_coder.ops.offline import setup_contact
 from ap_coder.web.document import clean_boxes
 
 # --- The form ------------------------------------------------------------------------------------------------------
@@ -1151,7 +1152,7 @@ def checks_details(report: Any) -> list[dict[str, str]]:
     for issue in report.issues:
         where = f"Line {issue.line_number}: " if issue.line_number else ""
         about = help_for(issue.code)
-        hint = about.action if about and issue.severity != "info" else ""
+        hint = setup_contact(about.action) if about and issue.severity != "info" else ""  # an Admin on the server
         kind, title = {"error": ("error", "Must be fixed"), "info": ("info", "Good to know")}.get(
             issue.severity, ("warning", GROUP_TITLES[BLOCK] if issue.code in GOTO_BOX else GROUP_TITLES[LOOK])
         )
@@ -2042,7 +2043,9 @@ def merge_flags(*sets: dict[str, str]) -> dict[str, str]:
 
 def _short_reason(text: str) -> str:
     # the first sentence ("e.g. CAD" is no sentence's end)
-    return re.split(r"(?<=[a-z0-9)])(?<!e\.g)\. (?=[A-Z])|: (?=ask the pilot tester)", text, maxsplit=1)[0].rstrip(".")
+    return re.split(r"(?<=[a-z0-9)])(?<!e\.g)\. (?=[A-Z])|: (?=ask (?:the pilot tester|an Admin))", text, maxsplit=1)[
+        0
+    ].rstrip(".")
 
 
 def hard_reasons(hard: list[Any]) -> list[str]:

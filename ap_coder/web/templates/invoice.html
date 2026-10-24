@@ -60,7 +60,10 @@
 {% block content %}
 {# ---------------------------------------------------------------- the workspace #}
 {% if mode == "review" %}
-<form id="inv" method="post" action="/review/{{ inv.id }}/approve" data-busy="Approving…" data-invoice="{{ inv.id }}">
+{# Read-only (server mode, D-98): the same screen with every field read-only and nothing to change or check again;
+   the checks shown are the stored ones (invoice.js posts nothing, data-readonly). #}
+{% set edit = not live.read_only %}
+<form id="inv"{% if edit %} method="post" action="/review/{{ inv.id }}/approve" data-busy="Approving…"{% else %} data-readonly{% endif %} data-invoice="{{ inv.id }}">
   {# The form's default button, disabled: Enter in one of its text boxes sends nothing (only Approve and Ctrl+Enter
      approve), where the browser would otherwise press Approve with the value half typed. #}
   <button type="submit" disabled hidden aria-hidden="true" tabindex="-1"></button>
@@ -79,7 +82,7 @@
 
 <section class="card inv-summary" data-live="summary">{{ live_ui.summary(live, inv.id) }}</section>
 
-{% if draft_from %}{# edits kept from before, not approved yet (B-826): said, with a way back to the invoice as read #}
+{% if draft_from and edit %}{# edits kept from before, not approved yet (B-826): said, with a way back to the invoice as read #}
 <div class="inv-draft-note small" role="status"><span class="ms" aria-hidden="true">history</span>
   <span>Unsaved edits made {{ draft_from }}, still to approve.</span>
   <form method="post" action="/review/{{ inv.id }}/start-over" class="inv-inline" data-confirm="Discard the edits not approved yet? The fields show the invoice as read again.">
@@ -132,6 +135,7 @@
                  placeholder="Start typing to pick from the vendor list" aria-describedby="vendor-match" title="{{ draft.header["vendor_name"] }}">
           <div class="inv-vendor-match small" id="vendor-match" data-vendor-match aria-live="polite"{% if live.an8 is not none %} data-an8="{{ live.an8 }}"{% endif %}></div>
           <span class="inv-flag small" data-flag{% if "vendor_name" not in flags %} hidden{% endif %}><span class="ms" aria-hidden="true">error</span><span data-flag-text>{{ flags.get("vendor_name", "") }}</span></span>
+          {% if edit %}
           <details class="pop inv-vendor-add" data-vendor-add>
             <summary class="btn sm ghost"><span class="ms" aria-hidden="true">person_add</span>Add new vendor…</summary>
             <div class="pop-body stack">
@@ -148,6 +152,7 @@
               <button class="btn primary sm" type="button" data-new-go><span class="ms" aria-hidden="true">person_add</span>Add to the vendor list</button>
             </div>
           </details>
+          {% endif %}
           <script type="application/json" id="vendor-data">{{ vendors | tojson }}</script>
         </div>
         {{ field("gst_hst_registration_number", hint="The supplier's GST/HST registration number") }}
@@ -198,7 +203,7 @@
         {{ field("grand_total", type="number", step="0.01") }}
       </div>
       <div data-live="amounts">{{ live_ui.amounts(live, inv.id) }}</div>
-      {% if not pay_from.any %}<p class="small muted inv-pay-note"><span class="ms" aria-hidden="true">account_balance</span>To choose which of your bank accounts pays (Pay from), <a class="link" href="/accounts?tab=bank">add your bank accounts</a> on GL accounts &amp; tax.</p>{% endif %}
+      {% if not pay_from.any and can("/accounts/bank/save") %}<p class="small muted inv-pay-note"><span class="ms" aria-hidden="true">account_balance</span>To choose which of your bank accounts pays (Pay from), <a class="link" href="/accounts?tab=bank">add your bank accounts</a> on GL accounts &amp; tax.</p>{% endif %}
       <div data-live="jde">{{ live_ui.jde(live, inv.id) }}</div>
     </section>
 
@@ -218,6 +223,7 @@
       <script type="application/json" id="gl-options">{{ grid.gl_options | tojson }}</script>
       {% if grid.has_cc %}<script type="application/json" id="cc-options">{{ grid.cc_options | tojson }}</script>{% endif %}
       <script type="application/json" id="gl-vendor">{{ grid.vendor_accounts | tojson }}</script>
+      {% if edit %}
       <div class="row">
         <button type="button" class="btn sm" data-add-row="lines"><span class="ms" aria-hidden="true">add</span>Add a line</button>
         <details class="pop" data-split>
@@ -256,6 +262,7 @@
           </div>
         </details>
       </div>
+      {% endif %}
       {# The Tax check (D-64): each tax charged or marked, worked out again from the lines' tax codes at the official
          rate, against what the invoice charges; then the subtotal and the total. Drawn again after each edit. #}
       <div class="inv-taxcheck-wrap" data-live="taxcheck" aria-live="polite">{{ live_ui.taxcheck(live, inv.id) }}</div>
@@ -272,7 +279,7 @@
     </table>
   </div>
   {{ grids.tax_template(grid) }}
-  <button type="button" class="btn sm" data-add-row="taxes"><span class="ms" aria-hidden="true">add</span>Add a tax line</button>
+  {% if edit %}<button type="button" class="btn sm" data-add-row="taxes"><span class="ms" aria-hidden="true">add</span>Add a tax line</button>{% endif %}
 </section>
 
 <section class="card inv-posting">
@@ -371,7 +378,7 @@
     {% if can("/review/1/final-approve") %}
     <div class="row end">
       <form method="post" action="/review/{{ inv.id }}/final-approve">
-        <button class="btn primary" type="submit"{% if same %} disabled title="You approved it first (same name or computer login): someone else gives the second approval"{% endif %}>
+        <button class="btn primary" type="submit"{% if same %} disabled title="You approved it first ({{ 'the same account' if account else 'same name or computer login' }}): someone else gives the second approval"{% endif %}>
           <span class="ms" aria-hidden="true">how_to_reg</span>Final approval</button><input type="hidden" name="approval" value="{{ approval }}"></form>
       <details class="pop">
         <summary class="btn"><span class="ms" aria-hidden="true">undo</span>Send back</summary>

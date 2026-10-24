@@ -931,6 +931,44 @@ QUICK_START: list[tuple[str, str, str]] = [  # numbered 0 to 6, as docs/QUICK_ST
      "/exports"),
 ]  # fmt: skip
 
+# On the company server (D-97, D-102) the first steps are IT's and an Admin's: what Help says instead for those.
+SERVER_LM_STUDIO = "LM Studio runs on the server; ask IT or an Admin"
+SERVER_QUICK_START: dict[str, str] = {
+    "Start LM Studio": f"{SERVER_LM_STUDIO} if invoices wait for a person because it isn't running.",
+    "Your name and province": "Your name comes from your account: each approval is recorded under it. The "
+    "company's province is set once, by an Admin.",
+    "Your GL accounts and sales tax": "An Admin imports the GL accounts, the sales tax accounts, the vendor master and "
+    "the past coding.",
+}
+
+
+SERVER_FAQ: dict[str, tuple[str, str]] = {  # question -> (question, answer) on the company server
+    "Does any invoice or GL data leave this computer?": (
+        "Does any invoice or GL data leave the server?",
+        "No. Every invoice is read and coded on the company's server: the PDF's own text or OCR, OvisOCR2 in LM "
+        "Studio and the checks all run there. The database, the invoices, what the AI learns and the exports stay in "
+        "its data folder on the server; your browser shows them over the company network.",
+    ),
+    "OvisOCR2 isn't reading invoices.": (
+        "OvisOCR2 isn't reading invoices.",
+        f"{SERVER_LM_STUDIO}: OvisOCR2 runs in LM Studio there. Invoices processed meanwhile wait for it in the "
+        "review queue, and a person can still approve them.",
+    ),
+}
+
+
+def faq(server: bool = False) -> list[tuple[str, str]]:
+    """Help's questions and answers: on the company server, those about "this computer" and LM Studio as it is there."""
+    return [SERVER_FAQ.get(q, (q, a)) if server else (q, a) for q, a in FAQ]
+
+
+def quick_start(server: bool = False) -> list[tuple[str, str, str]]:
+    """The Quick start's steps as Help lists them: on the company server, the first ones say who does them."""
+    if not server:
+        return QUICK_START
+    return [(title, SERVER_QUICK_START.get(title, text), path) for title, text, path in QUICK_START]
+
+
 # What's new, for the pilot tester (the developer changelog, docs/WHATS_NEW.md, is a developer tool).
 WHATS_NEW: list[str] = [
     "LM Studio is the first step: the welcome page and Settings → Reading say whether it runs, with Check again.",

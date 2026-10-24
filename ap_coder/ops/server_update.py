@@ -101,8 +101,9 @@ def check_bundle(bundle: Path) -> dict:
         listed = manifest.get("files") if isinstance(manifest.get("files"), dict) else {}
         absent = [f for f in listed if f"{top}/{f}" not in names]
         if absent:
-            raise BundleError(f"{bundle.name} is incomplete: {len(absent)} files its manifest lists are missing "
-                              f"({absent[0]}, ...). Copy it again.")  # fmt: skip
+            some = f"{len(absent)} files its manifest lists are" if len(absent) > 1 else "1 file its manifest lists is"
+            raise BundleError(f"{bundle.name} is incomplete: {some} missing ({absent[0]}, ...). Copy it "
+                              "again.")  # fmt: skip
     if not identity.get("version"):
         raise BundleError(f"{not_bundle}: its pyproject.toml has no version.")
     return {"top": top, "identity": identity}
@@ -329,27 +330,32 @@ def _update(bundle: Path, data: Path, db: Path, *, server: Server | None, dry_ru
         return refuse(f"{said} Nothing was changed. To go back to the previous version: server-update --back")
     new = target_folder(current, new_version)
     label = f"before-update-{new_version}"
+    server = server or Server(data, s, say)
+    installed = server.installed()
     if dry_run:
         say(f"Updating AP Coder on this server from {paths.describe(mine)} to {paths.describe(theirs)}:")
         steps = [
             f"Check the bundle: {bundle} (one AP Coder folder, every file it lists, no damage): done, it is fine",
-            f'Stop the service: the task "{s.task_name}" (python -m ap_coder service stop)',
+            f'Stop the service: the task "{s.task_name}" (python -m ap_coder service stop)'
+            if installed
+            else "The service is not installed on this computer: nothing to stop",
             f"Back up the database {db} to backups\\ap_coder-<date>-{label}.db",
             f"Unzip it next to the current folder: {new}",
             f"Set up the new folder from its wheelhouse (offline): {new / 'scripts' / 'launch.py'} --no-start --yes",
             "Update the database (the new version opens it once: its migrations)",
             f"Self-check: {new / 'scripts' / 'pilot_check.py'} (the sample invoices read right)",
-            f"Start the service from {new} and wait for the dashboard to answer",
+            f"Start the service from {new} and wait for the dashboard to answer"
+            if installed
+            else f"Switch to {new}; no service to start (python -m ap_coder service install, from the new folder)",
         ]
         for n, step in enumerate(steps, 1):
             say(f"  {n}. {step}")
-        say(f"If 5 to 8 fail: the backup is put back and the service started again from {current}.")
+        again = "the service started again from" if installed else "the service switched back to"
+        say(f"If 5 to 8 fail: the backup is put back and {again} {current}.")
         say(f"The current folder {current} is kept: server-update --back goes back to it.")
         say("Nothing was changed (dry run).")
         return 0
 
-    server = server or Server(data, s, say)
-    installed = server.installed()
     say(f"Updating AP Coder from {paths.describe(mine)} to {paths.describe(theirs)}.")
     if installed:
         say("Stopping the service...")
@@ -451,11 +457,15 @@ def go_back(data: Path, db: Path, *, server: Server | None = None, dry_run: bool
         f"since {since} is not in it. A copy of the database as it is now is kept in backups. The user accounts, "
         "their passwords and roles, and paused logins stay as they are now; everyone is logged out and logs in "
         "again.")  # fmt: skip
+    server = server or Server(data, s, say)
+    installed = server.installed()
     if dry_run:
-        say(f'  1. Stop the service "{s.task_name}"')
+        say(f'  1. Stop the service "{s.task_name}"' if installed
+            else "  1. The service is not installed on this computer: nothing to stop")  # fmt: skip
         say("  2. Copy the database as it is now to backups\\ap_coder-<date>-before-going-back.db")
         say(f"  3. Put back {backup} (the user accounts kept as they are; everyone logged out)")
-        say(f"  4. Start the service from {previous} and wait for the dashboard to answer")
+        say(f"  4. Start the service from {previous} and wait for the dashboard to answer" if installed
+            else f"  4. Switch to {previous}; no service to start")  # fmt: skip
         say("Nothing was changed (dry run).")
         return 0
     if not yes:
@@ -466,8 +476,6 @@ def go_back(data: Path, db: Path, *, server: Server | None = None, dry_run: bool
         if answer != "yes":
             say("Nothing was changed.")
             return 1
-    server = server or Server(data, s, say)
-    installed = server.installed()
     if installed and not server.stop():
         print("The service did not stop: nothing was changed.", file=sys.stderr)
         return 1

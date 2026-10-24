@@ -148,8 +148,9 @@ class LocalOnly:
                 port = (scope.get("server") or (None, 8501))[1]
                 if self.server:
                     text = (f"AP Coder was opened through {host}, which is not one of the server's names, so nothing "
-                            f"is shown. IT can add the name to {ALLOWED_HOSTS_ENV} (a comma-separated list) and "
-                            "restart AP Coder.")  # fmt: skip
+                            f"is shown. IT adds the name with service install --allowed-hosts (which restarts AP "
+                            f"Coder), or to {ALLOWED_HOSTS_ENV} and restarts it; several names: comma-separated "
+                            "(docs/SERVER.md, section 4).")  # fmt: skip
                 else:
                     text = (
                         f"AP Coder was opened through {host}, which is not this computer's address, so nothing "

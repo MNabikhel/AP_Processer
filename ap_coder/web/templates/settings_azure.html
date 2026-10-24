@@ -2,7 +2,7 @@
 <details class="card st-dev" id="azure"{% if azure.doctor.state != "idle" %} open{% endif %}>
   <summary><span class="ms" aria-hidden="true">cloud</span>Developer: cloud services</summary>
   <p class="muted">Used only in a developer build that may use the internet (AP_ALLOW_INTERNET=1). The offline build ignores
-    these settings. Saved on this computer, in <code>{{ azure.env_file }}</code>. Keys show only their last 4 characters:
+    these settings. Saved {{ "on the server" if server_mode else "on this computer" }}, in <code>{{ azure.env_file }}</code>. Keys show only their last 4 characters:
     leave a key field empty to keep it.</p>
   <form method="post" action="/settings/reading/azure" class="stack" data-busy="Saving…">
     <div class="st-grid">

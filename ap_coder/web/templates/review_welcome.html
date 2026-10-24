@@ -17,8 +17,8 @@
     <p class="muted">Import your GL accounts (the chart of accounts from JD Edwards) to open them, or start with the
       sample accounts and switch to yours later.</p>
     <div class="row">
-      <a class="btn" href="/accounts"><span class="ms" aria-hidden="true">account_tree</span>Import GL accounts</a>
-      <form method="post" action="/review/sample-gl"><button class="btn" type="submit"><span class="ms" aria-hidden="true">science</span>Use the sample GL accounts for now</button></form>
+      {% if can("/accounts", "GET") %}<a class="btn" href="/accounts"><span class="ms" aria-hidden="true">account_tree</span>Import GL accounts</a>{% endif %}
+      {% if can("/review/sample-gl") %}<form method="post" action="/review/sample-gl"><button class="btn" type="submit"><span class="ms" aria-hidden="true">science</span>Use the sample GL accounts for now</button></form>{% endif %}
     </div>
   </section>
   {% endif %}

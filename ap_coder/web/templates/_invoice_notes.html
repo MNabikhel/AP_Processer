@@ -4,10 +4,12 @@
     <summary><span class="ms" aria-hidden="true">sticky_note_2</span>Notes<span data-notes-count>{% if notes %} · {{ notes | length }}{% endif %}</span></summary>
     <div data-notes>{{ ui.timeline(notes) }}</div>
     {# Sent by invoice.js with fetch (inline=1): the note shows without leaving the page, edits kept (D-60). #}
+    {% if can("/review/1/note") %}{# server mode: Read-only reads the notes, adds none (D-98) #}
     <form method="post" action="/review/{{ inv.id }}/note" class="inv-note-form" data-note-form>
       <label class="field">Add a note for the team<input type="text" name="text" required placeholder="e.g. asked Sam about the PO"></label>
       <input type="hidden" name="back" value="/review/{{ inv.id }}{% if query %}?{{ query | urlencode }}{% endif %}">
       <button class="btn sm" type="submit"><span class="ms" aria-hidden="true">add_comment</span>Add note</button>
     </form>
+    {% endif %}
   </details>
 </section>

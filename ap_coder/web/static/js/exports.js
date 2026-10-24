@@ -2,7 +2,7 @@
 import { escapeHtml, post } from "./app.js";
 
 const form = document.getElementById("export-form");
-if (form) {
+if (form && document.getElementById("export-go")) { // (Read-only on the server: the list without the button, D-98)
   const picks = () => [...form.querySelectorAll("input.export-pick:not(:disabled)")];
   const all = document.getElementById("export-all");
   const button = document.getElementById("export-go");

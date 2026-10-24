@@ -151,3 +151,4 @@ button.link.danger {color: var(--lg-danger);}
 .apc-table.edit.bank-grid input[name="transit"] {min-width: 72px; width: 80px;}
 .apc-table.edit.bank-grid input[name="account_number"] {min-width: 104px;}
 .apc-table.edit.bank-grid select[name="gl_account"], .apc-table.edit.bank-grid input[name="gl_account"] {min-width: 140px;}
+fieldset.ro-fieldset {border: 0; margin: 0; padding: 0; min-width: 0;}  /* a form shown read-only (server mode, D-98) */

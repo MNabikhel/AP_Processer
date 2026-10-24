@@ -47,7 +47,7 @@ def _rules(need: str, *routes: str) -> dict[tuple[str, str], str]:
 RULES: dict[tuple[str, str], str] = {
     **_rules(
         OPEN,
-        "GET /login", "POST /login", "GET /healthz",
+        "GET /login", "HEAD /login", "POST /login", "GET /healthz",
         "GET /who", "POST /who",  # in server mode: /who sends to /login, and its POST is refused (pages/who.py)
         "POST /shutdown",  # checked by the route itself: from the server's own console, with the launcher's token
     ),

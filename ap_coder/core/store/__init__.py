@@ -137,7 +137,7 @@ from ._base import (  # noqa: F401  (every name the old module had)
     unread_fx_text,
     vendor_key,
 )
-from .accounts import AccountsMixin
+from .accounts import EVENT_ACTOR, AccountsMixin  # noqa: F401  (EVENT_ACTOR: for web/identity.py)
 from .backups import BackupsMixin
 from .capture import CaptureMixin
 from .ephemeral import EphemeralMixin

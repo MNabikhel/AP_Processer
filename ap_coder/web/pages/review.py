@@ -59,6 +59,7 @@ from ap_coder.web.core import (
     refuse,
     render,
     reviewer,
+    server_mode,
 )
 from ap_coder.web.identity import shown_path
 from ap_coder.web.invoice_view import document_kind
@@ -474,16 +475,16 @@ def _second(inv: dict[str, Any], first: dict[str, Any] | None, me: str, my_login
 
 def _getting_started(request: Request, store: Store, invoices: list[dict[str, Any]]) -> HTMLResponse:
     from ap_coder.ops.demo import demo_available
-    from ap_coder.web.pages.process import LM_STUDIO_STEPS, STEP_LINKS, first_steps, next_step, step_state
+    from ap_coder.web.pages.process import first_steps, next_step, shown_setup, step_state
 
     steps, done_steps, needed = first_steps(store, get_settings(request), bool(invoices))  # as Import invoices counts
     named = step_state(steps, "Your name") == "ok"  # (before it, first_name() is the login: "Good morning, root")
+    steps, coming, links = shown_setup(request, steps, next_step(steps))
     return render(
         request, "review_welcome.html", "review",
         greeting=f"{ui.greeting()}, {first_name()}" if named else ui.greeting(),
-        next=next_step(steps),
-        step_links=STEP_LINKS,
-        lm_studio_steps=LM_STUDIO_STEPS,
+        next=coming,
+        step_links=links,
         steps=steps,
         ring_value=done_steps / needed,
         ring_label=f"{done_steps}/{needed}",
@@ -640,6 +641,8 @@ def review_final_approve(request: Request, invoice_id: int, approval: str | None
     try:
         store.final_approve(invoice_id, reviewer(), login=login(), shown=approval)
     except PermissionError as exc:  # the first approver (or their login): nobody changed anything meanwhile
+        if server_mode(request):  # refused as the other refusals are: not done, said, and a 409 (D-102)
+            return refuse(f"Not done: {exc}.", 409)
         return done(request, "/review?tab=second", f"Not done: {exc}.", tone="warn")
     except ApprovedAgain:
         now = store.get_invoice(invoice_id) or {}

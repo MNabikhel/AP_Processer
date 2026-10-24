@@ -48,6 +48,7 @@ from ap_coder.web import document, identity
 from ap_coder.web import invoice_view as view
 from ap_coder.web.access import key_of, person_key
 from ap_coder.web.core import (
+    can,
     done,
     flash_message,
     get_settings,
@@ -61,6 +62,7 @@ from ap_coder.web.core import (
     refuse,
     render,
     reviewer,
+    server_mode,
     templates,
 )
 from ap_coder.web.files import download
@@ -433,6 +435,13 @@ def _sent_back(store: Store, invoice_id: int) -> dict[str, str] | None:
             "reason": (back["detail"] or {}).get("reason") or "no reason given"}  # fmt: skip
 
 
+def _shown_live(request: Request, live: dict[str, Any], may_edit: bool = True) -> dict[str, Any]:
+    """The sections' values with what the person's role may use (server mode, D-98): Read-only changes nothing, and
+    the JD Edwards settings are an Admin's."""
+    return {**live, "read_only": not may_edit, "jde_settings": can(request, "/settings/jde", "GET"),
+            "setup_contact": "an Admin" if server_mode(request) else "the pilot tester"}  # fmt: skip
+
+
 def _render_live(live: dict[str, Any], invoice_id: int) -> dict[str, str]:
     """Every section that follows the edits, drawn again (``_invoice_live.html``)."""
     mod = templates.env.get_template("_invoice_live.html").module
@@ -482,7 +491,8 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         "title": inv.get("vendor_name") or inv.get("file_name") or "Invoice",
     }
     editable = inv["status"] == REVIEW and reference is not None
-    context["doc"] = _document(store, settings, inv, status, editable)
+    may_edit = can(request, f"/review/{invoice_id}/check")  # server mode: Read-only looks and changes nothing (D-98)
+    context["doc"] = _document(store, settings, inv, status, editable and may_edit)
     if not editable:
         mode = _mode(inv, reference)
         if mode in ("approved", "pending", "rejected", "parked"):  # nothing left to read: no reading tools' warning
@@ -508,7 +518,7 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         context["lm_off"], context["banner"] = LM_STUDIO_OFF, ""
     return render(
         request, "invoice.html", "review", mode="review", **context,
-        draft=draft, kept=kept, live=analysis.live, sure=sure,
+        draft=draft, kept=kept, live=_shown_live(request, analysis.live, may_edit), sure=sure,
         grid={**view.grid(reference, draft, inv.get("ai_output") or {},
                           view.vendor_accounts(store, draft.header.get("vendor_name") or "")),
               "tax_marks": analysis.live.get("tax_marks") or {}},
@@ -660,7 +670,9 @@ def reader_progress(request: Request, invoice_id: int) -> JSONResponse:
     state = view.reader_state(store, settings, inv, status)
     if inv["status"] == REVIEW and lm_studio_off(status):
         state = folded_reader(state)  # as the screen drew it (B-444)
-    html = templates.env.get_template("_invoice_live.html").module.reader(state, invoice_id)
+    html = templates.env.get_template("_invoice_live.html").module.reader(
+        state, invoice_id, can(request, f"/review/{invoice_id}/read-pages")
+    )
     return JSONResponse({"state": state["state"], "poll": state["poll"], "html": str(html)},
                         headers={"Cache-Control": "no-store"})  # fmt: skip
 
@@ -730,7 +742,7 @@ def _check(request: Request, invoice_id: int, form: Any) -> JSONResponse:
                          # the tax rows as checked: a row moved to a new place of supply moves on screen (B-1020)
                          "taxes": [{"tax_type": t.get("tax_type") or "", "province": t.get("province") or ""}
                                    for t in draft.taxes],
-                         "sections": _render_live(analysis.live, invoice_id)})  # fmt: skip
+                         "sections": _render_live(_shown_live(request, analysis.live), invoice_id)})  # fmt: skip
 
 
 def _draft_blocker(analysis: view.Analysis) -> str:

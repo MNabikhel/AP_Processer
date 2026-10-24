@@ -142,10 +142,18 @@ def run_checks(
     )
 
     # --- Offline readiness (OCR models, data folder, local-only dashboard) ----------------------------
+    from ..core.paths import private_dir
     from .offline import offline_checks
+    from .service import doctor_checks, is_server_here
 
+    # The company server (D-97): what it listens on and its own setup, not a laptop's "this computer only".
+    server = is_server_here(private_dir())
     for area, status, detail in offline_checks():
-        add(area, status, detail)
+        if not (server and area == "dashboard network"):
+            add(area, status, detail)
+    if server:
+        for area, status, detail in doctor_checks(private_dir()):
+            add(area, status, detail)
 
     # --- Configuration ----------------------------------------------------------
     di, oai, eng = settings.document_intelligence, settings.openai, settings.engine

@@ -89,6 +89,10 @@ Why these numbers:
    APProcessor.bat --no-start --yes
    ```
 
+   On the server the JD Edwards E1 settings and export are shown from the start (*Settings* → *JD Edwards E1*, and
+   *JD Edwards E1* on *Exports*); on a laptop they wait for *Settings* → *About* → *Show JD Edwards settings*, which
+   on the server hides them again if you export to Excel or CSV only.
+
 5. **Folder permissions.** The data folder: full control for `APCoderService` and the administrators, nobody else
    (the database holds every invoice). The code folder: full control for the administrators and SYSTEM, read and run
    for `APCoderService`, nobody else (whoever can change the code can read every invoice and log in as anyone).
@@ -168,7 +172,8 @@ Windows asks for `APCoderService`'s password once and keeps it for the task. `se
 `--dry-run` to see all of that first, changing nothing. Its options: `--account` (default `APCoderService`;
 `SYSTEM`, `"LOCAL SERVICE"` and `"NETWORK SERVICE"` need no password), `--port` (default 8501), `--host` (default
 `0.0.0.0`: every network card), `--certfile`, `--keyfile`, `--allowed-hosts`, `--proxy`, `--insecure-http`,
-`--task-name` (default `AP Coder`), `--no-start`.
+`--task-name` (default `AP Coder`), `--folder` (the AP Coder folder the service runs; default: the one the command
+runs in; `server-update` changes it), `--no-start`.
 
 | To | Run |
 |---|---|
@@ -198,8 +203,9 @@ On the server's console (nobody can sign up from a browser):
 .venv\Scripts\python.exe -m ap_coder users add --admin jsmith
 ```
 
-It asks for a password (at least 12 characters, not the user name). That person signs in at
-`https://apcoder.company.local:8501` and adds everyone else (step 10).
+It asks for a password, twice (at least 12 characters, not the user name). That password is a temporary one: tell it
+to the person, who must choose their own the first time they sign in at `https://apcoder.company.local:8501`, before
+anything else. They then add everyone else (step 10).
 
 ## 8. LM Studio on the same server
 
@@ -252,9 +258,11 @@ window, started at boot like AP Coder.
 
 ## 10. Users and roles
 
-An Admin adds people on the *Users* page (`https://apcoder.company.local:8501/admin/users`): a user name, their name,
-a role and a temporary password, which they change when they first sign in. The same page resets a password, changes
-a role and deactivates an account (an Admin can't remove the last Admin).
+An Admin adds people on the *Users* page (`https://apcoder.company.local:8501/admin/users`): a user name, their name
+and a role. AP Coder makes up a temporary password and shows it once, on that page: give it to the person (it is not
+kept anywhere to look up later). They must change it when they first sign in. The same page resets a password (a new
+temporary one, shown once), changes a role, and turns an account off or on again (an Admin can't turn off the last
+Admin).
 
 | Role | Can |
 |---|---|
@@ -263,15 +271,24 @@ a role and deactivates an account (an Admin can't remove the last Admin).
 | Approver | Also give the second approval (always by another account than the first). |
 | Admin | Everything else: Settings, users, the JD Edwards setup, GL accounts and vendors imports, backups and restore, deleting, the Azure check, updating. |
 
+Pages show each person only what their role may use; the server refuses the rest anyway. The JD Edwards settings
+are on *Settings* → *JD Edwards E1* from the start on the server (step 2).
+
 From the server's console, the same:
 
 ```bat
 .venv\Scripts\python.exe -m ap_coder users list
-.venv\Scripts\python.exe -m ap_coder users add mlee
-.venv\Scripts\python.exe -m ap_coder users role mlee approver
+.venv\Scripts\python.exe -m ap_coder users add mlee --name "Mary Lee" --role approver
+.venv\Scripts\python.exe -m ap_coder users role mlee clerk
 .venv\Scripts\python.exe -m ap_coder users reset mlee
 .venv\Scripts\python.exe -m ap_coder users deactivate mlee
+.venv\Scripts\python.exe -m ap_coder users activate mlee
 ```
+
+`users add` takes `--name` (the name on their approvals; default: the user name) and `--role` (`readonly`, `clerk`,
+`approver` or `admin`; default `clerk`; `--admin` is `--role admin`). On the console the temporary password is the one
+you type, twice (`add` and `reset`); the person changes it at their first sign-in. `activate` turns an account that
+was turned off on again, with its password as it was.
 
 Five wrong passwords within 15 minutes for one username from one computer pause that username's logins from that
 computer for 15 minutes; from anywhere else the person can still log in, so nobody can lock someone else out.
@@ -291,7 +308,8 @@ A new version comes as a new offline bundle. Copy it to the server, then, in the
 .venv\Scripts\python.exe -m ap_coder server-update D:\Install\APProcessor-offline-0.5.0-20261201.zip
 ```
 
-The first line shows the steps with the folders and files, and changes nothing. The second does them, in order:
+The first line shows the steps with the folders and files, and changes nothing (on a server where the service isn't
+installed yet, it says there is no service to stop or start). The second does them, in order:
 
 1. checks the bundle: one AP Coder folder, every file it lists, nothing damaged, and newer than the one running;
 2. stops the service (staff see AP Coder as closed for a few minutes: pick a quiet time);
@@ -327,7 +345,8 @@ installs in the administrator's `%USERPROFILE%\.ap_coder\settings.json`, as on a
 |---|---|
 | The browser can't reach `https://apcoder.company.local:8501` | `service status` on the server. Not running: the end of `D:\APCoderData\logs\service.log` says why. Running: check the firewall rule (step 5) and the DNS alias (`nslookup apcoder.company.local` on a staff PC). |
 | The browser warns about the certificate | The certificate doesn't name `apcoder.company.local`, has expired, or lacks the CA's intermediate certificates (step 3: add `ca-chain.pem` after it). |
-| "Invalid host" or a 400 error | The name typed is not in `--allowed-hosts`: `service install --allowed-hosts apcoder.company.local,apcoder` (each name staff use). |
+| "not one of the server's names" (a 400 error) | The name typed is not one of the allowed names: `service install --allowed-hosts apcoder.company.local,apcoder` (each name staff use; it restarts AP Coder), or add it to `AP_ALLOWED_HOSTS` and restart. |
+| AP Coder doesn't start: "Port 8501 is in use by another program" | On the server AP Coder keeps the port staff were given, and never moves to another. Find the other program (`netstat -ano \| findstr :8501`) and stop it, or install with another `--port` and tell staff the new address. |
 | The task doesn't start; Task Scheduler's *History* says "logon failure" | The account's password changed: `service install` again (it asks for it). Or the account lacks *Log on as a batch job*: `secpol.msc` → *Local Policies* → *User Rights Assignment* → add `APCoderService`. |
 | `service status` says "Service host: not running", and stopped on purpose | Someone ran `service stop`: `service start`. |
 | The log repeats "The dashboard stopped (exit code 1)" | The lines before it say why: often the port in use (another program on 8501: `netstat -ano \| findstr :8501`), or a certificate file it can't read (the account's rights on `D:\APCoderData\tls`). |
@@ -337,3 +356,10 @@ installs in the administrator's `%USERPROFILE%\.ap_coder\settings.json`, as on a
 | `server-update --back` says "Nothing to go back to" | No update was made with `server-update` since the last `--back`. To install an older version, ask for its bundle and the backup made before the update. |
 | Someone forgot their password, or is locked out | An Admin: *Users* → *Reset password*; or on the console `users reset <username>`. A lockout ends by itself after 15 minutes. |
 | Anything else | `.venv\Scripts\python.exe -m ap_coder doctor`, and the log. *Help* → *Report a problem* makes a report without invoice data. |
+
+**What `doctor` checks on the server** (when `AP_SERVER_MODE=1`, or `server.json` is in the data folder), besides
+what it checks on a laptop: *dashboard network* (the address and port the server listens on, and the address staff
+open), *server HTTPS certificate* and *private key* (set, there, and readable by the account you run it as; run it
+as `APCoderService` to check the service's own rights), *server names* (the allowed names, a warning when none is set)
+and, on Windows, *server service* (the scheduled task: installed, its state, the account, and whether it was stopped
+on purpose).
