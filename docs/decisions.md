@@ -879,3 +879,36 @@ that is reversed keeps its line, marked "replaced by D-NN".
   that contradicted the draft, and a second approver who couldn't see what was approved over.
   (`static/js/invoice.js`, `web/pages/invoice.py` `_keep_draft`, `web/pages/review.py` `draft_reasons`,
   `core/audit.py`; `tests/test_web_ui_sweep4.py`)
+- **D-100** · The company server runs AP Coder as a Windows scheduled task, and updates with a way back. (1) **The
+  service**: `python -m ap_coder service install|remove|start|stop|status` registers a Task Scheduler task (XML,
+  `schtasks /create /xml`) that starts at boot, a minute after, as a dedicated local account (`--account`, default
+  `APCoderService`; Windows' own accounts by their SID, no password), whether anyone is logged on or not, with no
+  time limit (`PT0S`: the default stops a task after 3 days), at normal priority (5: a task's default, 7, is below
+  normal), one instance, restarted on a failure to start, and started again every 5 minutes (nothing happens while it
+  runs). Its action is `<data folder>\service\run.cmd`, which sets `AP_PRIVATE_DIR` and `AP_SERVER_MODE=1` and runs
+  `python -m ap_coder service run`, the service host: it starts `serve --server ...` with the settings of
+  `server.json` (or `AP_SERVER_PORT`, `AP_DASHBOARD_ADDRESS`, `AP_TLS_CERT`, `AP_TLS_KEY`, `AP_ALLOWED_HOSTS`,
+  `AP_SERVER_PROXY`), writes its output to the rotating `logs\service.log` (5 MB × 6), starts it again when it stops
+  (5 s, doubling up to 5 min) and, on Windows, holds it in a job object that ends it with the host. `service stop`
+  leaves a `stopped` file (the 5-minute trigger then starts nothing, also after a reboot), asks the dashboard to stop
+  (`POST /shutdown` with its token, on 127.0.0.1) and ends the task. Why a task: it needs nothing downloaded and no
+  pywin32. `sc.exe create` of `pythonw.exe` is not a service (the Service Control Manager ends a program that does not
+  answer it after 30 s, error 1053); a ctypes service host (`StartServiceCtrlDispatcherW`) does not work from a
+  virtual environment, whose `python.exe` starts the real Python as a second process that cannot answer the Service
+  Control Manager, and it would be Windows-only code no CI runs end to end; NSSM and WinSW are downloads. Task
+  Scheduler's own restart covers only a failure to start, so the host does the restarts. `run.cmd` is what the task
+  points at, so an update rewrites that file and never registers the task again (which would ask for the account's
+  password). (2) **`server-update <bundle.zip>`**: check the bundle (one folder, nothing out of it, CRCs, every file
+  its manifest lists, newer by `paths.compare`, as the laptop updater judges), stop the service, back up the database
+  (`Store.backup_now("before-update-<version>")`), unzip next to the current folder (`APProcessor-<version>`), set it
+  up with its own launcher (`launch.py --no-start --yes`, offline from its wheelhouse; in server mode the launcher
+  keeps the older folder instead of cleaning it up), migrate (the new code opens the store once), self-check
+  (`pilot_check.py`), switch `run.cmd` and start, and wait for `/healthz` to answer from the new folder. A failure at
+  any step after the backup puts the backup back (SQLite's backup, no AP Coder code: nothing migrated) and starts the
+  old folder. `--back` goes to the previous folder and puts back the pre-update backup, after keeping a copy of the
+  database as it is (`before-going-back`): an older version refuses a newer schema, so the restore is required, and
+  what was done since the update is lost (it says so and asks first). `server.json` keeps `folder`,
+  `previous_folder`, `pre_update_backup` and `history`; the record of installs is written as the laptop updater does.
+  `--dry-run` prints the steps. Why: a server update must leave the AP team on a working version whatever happens.
+  (`ap_coder/ops/service.py`, `ap_coder/ops/server_update.py`, docs/SERVER.md; `tests/test_service.py`,
+  `tests/test_server_update.py`)

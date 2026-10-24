@@ -46,6 +46,10 @@ The welcome page's checklist ticks steps 0 to 3 off, and its *Next step* says wh
 Just looking around? On the welcome page click **Load demo invoices**: ten sample invoices to try.
 **Remove demo invoices** on **Import invoices** takes them away again.
 
+## On the company server
+
+Open the address IT gives you (https://…), sign in, choose your own password.
+
 ## Where things are
 
 - Pages you use less (Month-end, Vendors...) are under **More** in the menu.
@@ -56,13 +60,12 @@ Just looking around? On the welcome page click **Load demo invoices**: ten sampl
 
 ## When you are stuck
 
-- Each warning on a page says what to do. **Help** explains every check.
 - "LM Studio isn't running": open LM Studio, *Developer* → *Start server*, then **Settings** → **Reading** →
   **Check again**.
 - **Approve & teach** is greyed out: the invoice still needs something, often a GL account on a line. The note next
   to the button says what; click it (or press G) to go to that line.
-- The dashboard is closed or won't load: double-click *AP Coder* on the desktop again. It opens the AP Coder that
-  is running, or starts it.
+- The dashboard is closed or won't load: double-click *AP Coder* on the desktop again. It opens the AP Coder
+  running, or starts it.
 - A page says "Something went wrong": go back and try again. If it happens again, report it.
 
 ## Reporting a problem
