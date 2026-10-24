@@ -283,8 +283,9 @@ def next_url(store: Store, invoice_id: int, query: dict[str, str], seen_next: An
         seen = 0
     if seen in remaining:
         return _with_query(f"/review/{seen}", query)
-    at = min(position if position is not None else 0, len(remaining) - 1)
-    return _with_query(f"/review/{remaining[at]}", query)
+    if position is None or position >= len(remaining):  # it was the last one: back to the first, as said (B-998)
+        return _with_query(f"/review/{remaining[0]}", query)
+    return _with_query(f"/review/{remaining[position]}", query)
 
 
 _NOW = {APPROVED: "approved", PENDING: "approved, waiting for a second approval", REJECTED: "rejected",

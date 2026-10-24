@@ -8,8 +8,8 @@ import re
 
 from ap_coder.core.store import PENDING, REVIEW
 
-from .test_web_invoice import check, clean_invoice, form_of
-from .test_web_review_signoff import _id, _review, browser, client, demo_db, me, store
+from .test_web_invoice import PAGE, check, clean_invoice, form_of
+from .test_web_review_signoff import _id, _open, _review, browser, client, demo_db, me, store
 
 __all__ = ["browser", "client", "demo_db", "me", "store"]  # the fixtures, shared
 
@@ -206,3 +206,34 @@ def test_a_draft_keeps_the_time_it_was_edited_and_says_it_plainly(client, store)
     check(client, invoice_id, form_of(store, invoice_id, payment_terms="Net 60"))  # edited again: now
     assert client.app.state.invoice_drafts[invoice_id]["saved_at"] != "2026-01-05T00:37"
     assert re.search(r"Unsaved edits made today at \d{1,2}:\d\d [ap]\.m\.", client.get(f"/review/{invoice_id}").text)
+
+
+# --- 3. The end of the list ------------------------------------------------------------------------------------------
+
+
+def test_after_the_last_one_in_the_list_the_first_opens_as_the_message_says(client, store):
+    """B-998: "That was the last one in the list… back to the first of them" opened the one before it ("Reviewing 8
+    of 8")."""
+    from ap_coder.web.pages.invoice import navigation
+
+    ids = navigation(store, store.list_invoices(REVIEW)[0]["id"], {})["ids"]
+    last = next(i for i in reversed(ids) if check(client, i)["allow"])
+    rest = [i for i in ids if i != last]
+    answer = client.post(f"/review/{last}/approve", data=form_of(store, last), headers=PAGE).json()
+    assert answer["ok"], answer
+    page = client.get(answer["redirect"]).text
+    assert last == ids[-1]  # (the demo's last invoice can be approved as it is)
+    assert "That was the last one in the list" in page and "back to the first" in page
+    assert answer["redirect"].startswith(f"/review/{rest[0]}?")
+    assert 'Reviewing <b class="n">1</b> of' in page
+
+
+# --- 3. Help at 1366 ----------------------------------------------------------------------------------------------
+
+
+def test_in_a_browser_help_does_not_scroll_sideways_at_1366(browser, store):
+    """B-999: the Shortcuts table ran 68 px past the page at 1366: Help scrolled sideways."""
+    page = _open(browser, "/help", wait_viewer=False)
+    found = page.evaluate("[document.documentElement.scrollWidth, innerWidth]")
+    assert found[0] <= found[1], found
+    assert page.errors == []
