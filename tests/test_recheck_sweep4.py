@@ -289,3 +289,22 @@ def test_an_invoice_with_a_warning_bulk_approval_refuses_is_not_ready(client, st
             ]
         },
     )
+
+
+# --- 9. Rates in percent -----------------------------------------------------------------------------------------
+
+
+def test_the_tax_checks_say_rates_in_percent():
+    """B-1028: bulk approval's reason read "HST ON rate 0.15 differs from the official 0.13"."""
+    from ap_coder.coding.tax import TaxRateTable, TaxSetup, check_taxes, load_tax_mapping
+    from ap_coder.core.schema import InvoiceCoding
+
+    from .conftest import DATA
+    from .test_jde_gl_mode import doc, line, tl
+
+    setup = TaxSetup(TaxRateTable.load(DATA / "canada_tax_rates.csv"), load_tax_mapping(DATA / "tax_gl_mapping.csv"))
+    coding = InvoiceCoding.model_validate(doc([line(1, 1000.0, taxes=["HST"])], [tl("HST", "ON", 0.15, 1000.0, 140.0)]))
+    messages = {f.code: f.message for f in check_taxes(coding, setup)}
+    assert "rate 15% differs from the official 13%" in messages["TAX_RATE_NONSTANDARD"]
+    assert "1000.00 x 15% = 150.00" in messages["TAX_CALC_MISMATCH"]
+    assert "0.15" not in " ".join(messages.values()) and "0.13" not in " ".join(messages.values())
