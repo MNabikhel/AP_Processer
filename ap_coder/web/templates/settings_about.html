@@ -25,7 +25,7 @@
       Show JD Edwards settings (a Settings tab, and JD Edwards E1 as an export format)</label>
     {% if developer_env %}
     <p class="check"><span class="ms" aria-hidden="true">check_box</span> Show developer tools:
-      on (set by AP_DEVELOPER_TOOLS), on this computer only</p>
+      on (set by AP_DEVELOPER_TOOLS), {{ "on the server" if server_mode else "on this computer" }} only</p>
     {% else %}
     <label class="check"><input type="checkbox" name="developer" value="1"{% if developer_tools %} checked{% endif %}>
       Show developer tools (Learning &amp; accuracy → Readers, the training data export, the developer changelog)</label>

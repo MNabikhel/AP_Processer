@@ -683,6 +683,69 @@ def status(data: Path, s: ServerSettings, say: Say = print) -> int:
     return 0
 
 
+# --- What the doctor says about the server (D-102) --------------------------------------------------------------------
+
+
+def is_server_here(data: Path, env: dict | None = None) -> bool:
+    """Whether this AP Coder is the company server: server mode on (``AP_SERVER_MODE``), or its server.json there
+    (the doctor is often run from IT's own console, where the service's environment isn't set)."""
+    env = os.environ if env is None else env
+    on = (env.get("AP_SERVER_MODE") or "").strip().lower() in ("1", "true", "yes", "on")
+    return on or config_path(data).is_file()
+
+
+def _readable(path: str) -> str:
+    """ "" when the file is there and can be read, else why not."""
+    try:
+        with open(path, "rb") as f:
+            f.read(1)
+    except FileNotFoundError:
+        return "not found"
+    except OSError as exc:
+        return f"can't be read ({exc.strerror or type(exc).__name__})"
+    return ""
+
+
+def doctor_checks(data: Path, env: dict | None = None, *, windows: bool = WINDOWS) -> list[tuple[str, str, str]]:
+    """(area, status, detail) of the server's own setup, as the doctor shows them: what it listens on, its HTTPS
+    files, the names staff type and, on Windows, the scheduled task. Reads files only (and asks schtasks)."""
+    try:
+        s = settings(data, env)
+    except SettingsError as exc:
+        return [("server settings", "FAIL", str(exc))]
+    out = [("dashboard network", "PASS", f"the company server: listens on {s.host}, port {s.port}; staff open "
+            f"{address(s)}")]  # fmt: skip
+    if s.insecure_http:
+        out.append(("server HTTPS", "WARN", "off (--insecure-http): passwords cross the network unencrypted; for a "
+                    "first test only"))  # fmt: skip
+    elif not s.certfile or not s.keyfile:
+        out.append(("server HTTPS", "FAIL", "the certificate and its key are not set (AP_TLS_CERT and AP_TLS_KEY, or "
+                    "service install --certfile --keyfile): the server doesn't start without them"))  # fmt: skip
+    else:
+        for what, path in (("certificate", s.certfile), ("private key", s.keyfile)):
+            why = _readable(path)
+            out.append((f"server HTTPS {what}", "FAIL" if why else "PASS", f"{path}: {why}" if why else path))
+    if s.allowed_hosts:
+        out.append(("server names", "PASS", ", ".join(s.allowed_hosts)))
+    else:
+        out.append(("server names", "WARN", "AP_ALLOWED_HOSTS is not set: only this computer's own names open AP "
+                    "Coder; add the name staff type (service install --allowed-hosts)"))  # fmt: skip
+    if not windows:
+        out.append(("server service", "SKIP", "the scheduled task is on Windows only"))
+        return out
+    try:
+        done = run_command(["schtasks", "/query", "/tn", s.task_name, "/v", "/fo", "LIST"], capture_output=True)
+    except OSError as exc:
+        return [*out, ("server service", "WARN", f"schtasks could not be asked ({exc})")]
+    if done.returncode:
+        return [*out, ("server service", "WARN", f'the task "{s.task_name}" is not installed: python -m ap_coder '
+                       "service install")]  # fmt: skip
+    state = next((line.split(":", 1)[1].strip() for line in (done.stdout or "").splitlines()
+                  if line.strip().lower().startswith("status:")), "?")  # fmt: skip
+    stopped = " (stopped on purpose: service start)" if stop_flag(data).exists() else ""
+    return [*out, ("server service", "PASS", f'task "{s.task_name}": {state}, runs as {s.account}{stopped}')]
+
+
 def add_parser(sub: Any) -> None:
     p = sub.add_parser("service", help="The company server: run AP Coder as a Windows service (docs/SERVER.md)")
     p.add_argument("action", choices=["install", "remove", "start", "stop", "status", "run"],

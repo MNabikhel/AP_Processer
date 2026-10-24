@@ -12,9 +12,9 @@
       <summary class="btn sm ghost" title="How this invoice was read: OvisOCR2, the AI reviewer, LM Studio"><span class="ms" aria-hidden="true">tune</span>Reading tools{% if lm_off %}<span class="inv-dot warn" aria-label="(LM Studio isn't running)"></span>{% endif %}</summary>
       <div class="pop-body stack inv-doc-more-body">
         {% if lm_off %}<div class="inv-note warn"><span class="ms" aria-hidden="true">visibility_off</span><span>{{ lm_off }}</span></div>{% endif %}
-        <div data-reader data-state="{{ doc.reader.state }}"{% if doc.reader.poll %} data-poll="{{ poll_seconds }}"{% endif %}>{{ live_ui.reader(doc.reader, inv.id) }}</div>
+        <div data-reader data-state="{{ doc.reader.state }}"{% if doc.reader.poll %} data-poll="{{ poll_seconds }}"{% endif %}>{{ live_ui.reader(doc.reader, inv.id, can("/review/1/read-pages")) }}</div>
         {% for icon, text in doc.reviewer.lines %}<div class="inv-note"><span class="ms" aria-hidden="true">{{ icon }}</span><span>{{ text }}</span></div>{% endfor %}
-        {% if doc.reviewer.again %}
+        {% if doc.reviewer.again and can("/review/1/review-again") %}
         <form method="post" action="/review/{{ inv.id }}/review-again" class="inv-inline"><button class="btn sm ghost" type="submit" title="The AI reviewer checks the invoice against its pages, with the chat model in LM Studio"><span class="ms" aria-hidden="true">fact_check</span>{{ "Have the AI reviewer check it" if doc.reviewer.state == "none" else "Have the AI reviewer check it again" }}</button></form>
         {% endif %}
         {% if mode != "review" and doc.lines_note %}<div class="inv-note"><span class="ms" aria-hidden="true">table_rows</span><span>{{ doc.lines_note }}</span></div>{% endif %}
@@ -36,7 +36,7 @@
   </div>
   <div class="inv-doc-notes">
     {% if mode == "review" %}
-    {% if kept %}
+    {% if kept and can("/review/1/start-over") %}
     <div class="inv-note"><span class="ms" aria-hidden="true">edit_note</span><span>OvisOCR2 finished after you started editing: your edits are kept, so the fields still show the first reading.</span>
       <form method="post" action="/review/{{ inv.id }}/start-over" class="inv-inline"><button class="btn sm ghost" type="submit"><span class="ms" aria-hidden="true">restart_alt</span>Start over from its reading</button></form></div>
     {% endif %}

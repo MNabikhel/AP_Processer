@@ -983,3 +983,30 @@ that is reversed keeps its line, marked "replaced by D-NN".
   the rail says "Data stays on this server". Why: staff open the server from their own PCs over the company network, by
   its company name, possibly behind IIS. (`web/server.py`, `web/security.py`, `web/access.py`,
   `core/store/ephemeral.py`, `web/pages/process.py`; `tests/test_server_https.py`, `tests/test_server_ux.py`)
+- **D-102** · What each role sees on the company server, and how the server speaks (with D-97 to D-99). (1) **A page
+  offers only what the role may use**, from `web/roles.py`'s table (`core.can`, which takes a link's path without its
+  query): forms, links and the review screen's buttons to a route the role is refused are left out, a list the role
+  may only look at is shown read-only (the account lists and the tax setup in a disabled fieldset, the exports list
+  without its checkboxes), and where a step is an Admin's the page says so ("An Admin does this step", "ask an Admin to
+  undo the batch below"). A test walks every page each role may open (and the tabs and filters its links lead to) on
+  a full and an empty database and fails on any form, link or posting button the role is refused; it is generated
+  from `RULES`, so a new rule or page is covered. (2) **Read-only's review screen** is the same screen, marked
+  `data-readonly`: invoice.js posts nothing (no check on opening, no draft on leaving), the fields are read-only, the
+  pickers and menus don't open, and the tools to change the invoice are not drawn; the checks shown are the stored
+  ones. (3) **Wording on the server**: LM Studio runs on the server, so staff are told "LM Studio runs on the server;
+  ask IT or an Admin" (welcome, Import invoices, the banner, Help, Settings → Reading); "on this computer" is "on the
+  server"; the setup's contact is an Admin, not the pilot tester (`offline.setup_contact`); the second approval
+  speaks of accounts; the province is the company's; Help's folders are an Admin's (D-99); the in-app Quick start
+  leaves out the sections whose heading says "on the laptop". (4) **The audit**: an event recorded without an actor
+  in a request on the server records the person signed in (`store.EVENT_ACTOR`, set by the Identity middleware,
+  carried into the import's thread); on a laptop nothing changes. (5) **The server keeps its port**: `serve --server`
+  never picks another free port, and a port in use stops it before it says where it runs. (6) **JD Edwards is shown at
+  first on the server** (`jde_shown`: the server is the JD Edwards pilot; one line), still hidden by Settings → About.
+  (7) **The doctor on the server** (server mode on, or `server.json` in the data folder) reports where the server
+  listens, its HTTPS files, its allowed names and its scheduled task. (8) The rail logs out at once; the final
+  approval by the same account is a 409 refusal; HEAD /login answers; `users activate`. Laptop mode's wording and
+  behaviour are unchanged: every change branches on server mode. Why: an end-to-end walk of the server as each role
+  found every hidden control to be a 403, laptop words on a server, and uploads with no person in the audit.
+  (`web/core.py` `can`, `web/pages/process.py` `shown_setup`, `web/pages/invoice.py` `_shown_live`,
+  `static/js/invoice.js`, `ops/help.py`, `ops/service.py` `doctor_checks`, `core/store/_base.py` `EVENT_ACTOR`;
+  `tests/test_server_role_pages.py`, `tests/test_server_ui_fixes.py`)

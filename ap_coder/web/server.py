@@ -80,6 +80,22 @@ def tls_refusal(server: bool, certfile: str | None, keyfile: str | None, insecur
     return ""
 
 
+def port_refusal(host: str, port: int, https: bool = False) -> str:
+    """Why the dashboard can't listen on ``port`` ("" when nothing answers there): an AP Coder started earlier, or
+    another program. Its address as staff would open it (https on the server). On the company server the port is the
+    one IT gave staff, so it is never swapped for another (D-102)."""
+    probe = {"": "127.0.0.1", "0.0.0.0": "127.0.0.1", "localhost": "127.0.0.1", "::": "::1"}.get(host, host)
+    if not listening(port, probe):
+        return ""
+    if server_mode():
+        return (f"Port {port} is in use by another program (an AP Coder started earlier?): nothing was started. Staff "
+                f"open AP Coder at the address IT gave them, with this port, so it is not changed: stop the other "
+                f"program (netstat -ano | findstr :{port}), or give AP Coder another port with --port (and tell "
+                "staff the new address).")  # fmt: skip
+    return (f"Port {port} is in use by another program (an AP Coder started earlier?): nothing was started. Open "
+            f"{browser_url(host, port, https)}, or start with another --port.")  # fmt: skip
+
+
 def uvicorn_options(certfile: str | None, keyfile: str | None, proxy: str | None) -> dict[str, Any]:
     """The server's HTTPS files and its proxy setting. The X-Forwarded-For and -Proto headers are believed only from
     the reverse proxy named with ``--proxy`` (its address): never otherwise, not even from this computer (uvicorn's
@@ -156,12 +172,11 @@ def serve(host: str = "127.0.0.1", port: int = 8501, open_browser: bool = True, 
 
     # A port something answers on (an AP Coder started earlier): writing the server file would replace the running
     # one's (and its token, which the launcher stops it with), and "is it up?" would be answered by the other one.
-    probe = {"": "127.0.0.1", "0.0.0.0": "127.0.0.1", "localhost": "127.0.0.1", "::": "::1"}.get(host, host)
-    if listening(port, probe):
-        print(f"Port {port} is in use by another program (an AP Coder started earlier?): nothing was started. Open "
-              f"{browser_url(host, port)}, or start with another --port.", file=sys.stderr)  # fmt: skip
-        return 1
     https = bool(certfile and keyfile)
+    taken = port_refusal(host, port, https)
+    if taken:
+        print(taken, file=sys.stderr)
+        return 1
     if server_mode() and not https:
         print("On plain HTTP (--insecure-http): passwords and invoices cross the network unencrypted. Only for a "
               "first test: give the certificate (--certfile and --keyfile) before AP staff use it.",

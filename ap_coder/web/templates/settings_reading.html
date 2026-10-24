@@ -6,7 +6,7 @@
     <div>
       <h4>LM Studio</h4>
       <p class="muted">LM Studio runs OvisOCR2, which reads every page, and the chat model, which checks each invoice
-        and suggests GL accounts for new lines. Nothing leaves this computer.</p>
+        and suggests GL accounts for new lines. Nothing leaves {{ "the server" if server_mode else "this computer" }}.</p>
     </div>
     <form method="post" action="/settings/reading/check" data-busy="Checking…">
       <button class="btn" type="submit"><span class="ms" aria-hidden="true">refresh</span>Check again</button>
@@ -23,7 +23,15 @@
     {% elif reader.running %}{{ ui.pill("Not in LM Studio", "warn", "warning") }}{% endif %}
     {% if reader.running %}{{ ui.pill(("Chat model: " ~ reader.chat) if reader.chat else "No chat model loaded", "ok" if reader.chat else "gray") }}{% endif %}
   </div>
-  {% if not reader.running %}
+  {% if not reader.running and server_mode %}
+  <div class="st-note">
+    <b>LM Studio runs on the server; ask IT or an Admin</b>
+    <p>LM Studio isn't answering on the server. Whoever looks after the server starts it there (docs/SERVER.md, section
+      8: LM Studio on the same server), then presses Check again here.</p>
+    Without it AP Coder still works, but every invoice waits for a person: nothing is checked by OvisOCR2 or the AI
+    reviewer, and GL accounts come only from what AP approved before.
+  </div>
+  {% elif not reader.running %}
   <div class="st-note">
     <b>To start LM Studio on this computer</b>
     <ol>{% for step in reader.lm_studio_steps %}<li>{{ step }}</li>{% endfor %}</ol>
@@ -124,8 +132,8 @@
   {% endif %}
 
   {% if reader %}
-  <h4>On a new computer</h4>
-  <p class="muted">What AP Coder needs on this computer. Everything after the first two steps happens by itself.</p>
+  <h4>{{ "On the server" if server_mode else "On a new computer" }}</h4>
+  <p class="muted">What AP Coder needs {{ "on the server" if server_mode else "on this computer" }}. Everything after the first two steps happens by itself.</p>
   <div>{% for state, label, detail in reader.steps %}{{ ui.step(state, label, detail) }}{% endfor %}</div>
   {% if reader.test and reader.test.ok %}
   <details class="st-details">
@@ -156,7 +164,8 @@
   <h4 id="models">Models in LM Studio</h4>
   <p class="muted">What LM Studio has downloaded, which are loaded now, and what AP Coder uses each one for.</p>
   {% if models is none %}
-  {{ ui.empty_note("LM Studio isn't answering", " Start it, then its server (Developer tab, Start server), and press Check again. Without it, invoices are still read by the PDF's text and OCR, and coded from what AP approved.", "hourglass_empty") }}
+  {% if server_mode %}{{ ui.empty_note("LM Studio isn't answering", " LM Studio runs on the server; ask IT or an Admin. Without it, invoices are still read by the PDF's text and OCR, and coded from what AP approved.", "hourglass_empty") }}
+  {% else %}{{ ui.empty_note("LM Studio isn't answering", " Start it, then its server (Developer tab, Start server), and press Check again. Without it, invoices are still read by the PDF's text and OCR, and coded from what AP approved.", "hourglass_empty") }}{% endif %}
   {% elif not models %}
   {{ ui.empty_note("No models yet", " LM Studio has no chat or vision model downloaded yet.", "deployed_code") }}
   {% else %}

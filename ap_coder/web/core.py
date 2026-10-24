@@ -456,9 +456,10 @@ def _switch(store: Store, key: str) -> bool:
 
 
 def jde_shown(store: Store) -> bool:
-    """Whether the JD Edwards E1 settings and export are shown: off for the pilot (Excel and CSV exports only); a
-    switch on Settings → About shows them, nothing is removed. A database already set up for JD Edwards (its settings
-    saved, or a JD Edwards batch made) has it turned on, once and stored, so an update takes nothing away (B-526)."""
+    """Whether the JD Edwards E1 settings and export are shown: off for the laptop pilot (Excel and CSV exports only),
+    on at first on the company server (D-102); a switch on Settings → About shows or hides them, nothing is removed.
+    A database already set up for JD Edwards (its settings saved, or a JD Edwards batch made) has it turned on, once
+    and stored, so an update takes nothing away (B-526)."""
     try:
         value = store.get_setting(SHOW_JDE, "unset")
         if value != "unset":
@@ -470,7 +471,7 @@ def jde_shown(store: Store) -> bool:
         )
         if used:
             store.set_setting(SHOW_JDE, "1")
-        return used
+        return used or offline.server_mode()  # the company server is the JD Edwards pilot: shown at first (D-102)
     except Exception:  # noqa: BLE001 - a setting that can't be read is off: the page still opens
         return False
 
@@ -520,6 +521,7 @@ def can(request: Request, path: str, method: str = "POST") -> bool:
     from ap_coder.web import roles
 
     found = identity.person()
+    path = path.split("#", 1)[0].split("?", 1)[0]  # a link's address: the route is the path's
     return found is not None and roles.can(request.app, found.role, method, path)
 
 
@@ -553,6 +555,10 @@ def render(request: Request, template: str, page: str, status_code: int = 200, *
         banner = str(getattr(status, "banner", "") or "").strip()
         if getattr(status, "self_test", "") in ("pending", "running"):  # the first start's self-test: nothing wrong
             banner_tone = "info"
+        elif banner and server_mode(request):  # staff can't start LM Studio: it runs on the server (D-102)
+            from ap_coder.ops.help import SERVER_LM_STUDIO
+
+            banner = f"{banner} {SERVER_LM_STUDIO}."
     me = reviewer()
     base = {
         "page": page,

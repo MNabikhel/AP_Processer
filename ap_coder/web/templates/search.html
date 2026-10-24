@@ -21,6 +21,7 @@
     {% if filtered %}<a class="btn" href="/search?{{ query.query_string(filters={}, q='', page=1) }}#directory"><span class="ms" aria-hidden="true">filter_alt_off</span>Clear filters</a>{% endif %}
     <span class="dir-spacer"></span>
 
+    {% if can("/search/presets") %}{# server mode: saved layouts are a Clerk's and up (D-98) #}
     <details class="pop right">
       <summary class="btn"><span class="ms" aria-hidden="true">bookmarks</span>Layouts{% if presets %} ({{ presets | length }}){% endif %}</summary>
       <div class="pop-body stack">
@@ -47,6 +48,7 @@
         <label class="check"><input type="checkbox" name="make_default" value="1" form="preset-save">Open the directory with it</label>
       </div>
     </details>
+    {% endif %}
 
     <details class="pop right" data-columns>
       <summary class="btn"><span class="ms" aria-hidden="true">view_column</span>Columns</summary>
@@ -91,12 +93,14 @@
   </form>
 
   <form id="dir-columns" method="get" action="/search#directory" hidden>{{ hidden_except(["col"]) }}</form>
+  {% if can("/search/presets") %}
   <form id="preset-save" method="post" action="/search/presets" hidden><input type="hidden" name="query" value="{{ here }}"></form>
   <form id="preset-standard" method="post" action="/search/presets/default" hidden><input type="hidden" name="name" value=""></form>
   {% for p in presets %}
   <form id="preset-default-{{ loop.index }}" method="post" action="/search/presets/default" hidden><input type="hidden" name="name" value="{{ p.name }}"></form>
   <form id="preset-delete-{{ loop.index }}" method="post" action="/search/presets/delete" data-confirm="Delete this saved layout?" hidden><input type="hidden" name="name" value="{{ p.name }}"></form>
   {% endfor %}
+  {% endif %}
 
   {% if result.problems %}
   <div class="pad"><div class="flash warn" role="alert"><span class="ms" aria-hidden="true">warning</span><div>

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% import "_second_approval.html" as second_ui %}
 {% block subtitle %}{{ lead }}{% endblock %}
-{% block aside %}<a class="btn" href="/process"><span class="ms" aria-hidden="true">upload_file</span>Import invoices</a>{% endblock %}
+{% block aside %}{% if can("/process", "GET") %}<a class="btn" href="/process"><span class="ms" aria-hidden="true">upload_file</span>Import invoices</a>{% endif %}{% endblock %}
 {% block content %}
 {% if unnamed %}
 <div class="flash info" role="status"><span class="ms" aria-hidden="true">badge</span>
@@ -32,7 +32,7 @@
   {% if not pending %}
   <section class="card">
     {{ ui.empty_note("All caught up", " Every invoice has been reviewed.", "task_alt") }}
-    <a class="link" href="/process" autofocus>Process new invoices <span class="ms" aria-hidden="true">arrow_forward</span></a>
+    {% if can("/process", "GET") %}<a class="link" href="/process" autofocus>Process new invoices <span class="ms" aria-hidden="true">arrow_forward</span></a>{% endif %}
   </section>
   {% else %}
   <section class="card flush rq-queue">
@@ -207,7 +207,7 @@
       {% if can("/review/1/final-approve") %}
       <div class="row end">
         <form method="post" action="/review/{{ inv.id }}/final-approve">
-          <button class="btn primary sm" type="submit"{% if inv.same %} disabled title="You approved it first (same name or computer login): someone else gives the second approval"{% endif %}>
+          <button class="btn primary sm" type="submit"{% if inv.same %} disabled title="You approved it first ({{ 'the same account' if account else 'same name or computer login' }}): someone else gives the second approval"{% endif %}>
             <span class="ms" aria-hidden="true">how_to_reg</span>Final approval</button><input type="hidden" name="approval" value="{{ inv.approval }}"></form>
         <details class="pop right">
           <summary class="btn sm"><span class="ms" aria-hidden="true">undo</span>Send back</summary>

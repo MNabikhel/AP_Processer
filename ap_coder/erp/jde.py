@@ -1276,7 +1276,9 @@ def voucher_findings(output: dict[str, Any], settings: JdeSettings, an8: str) ->
         out.append((ERROR, "JDE_NO_ACCOUNT", f"JD Edwards: GL {', '.join(accounts)} {'has' if one else 'have'} no JDE "
                     "account (BU.Object.Subsidiary): ask the pilot tester to map "
                     f"{'it' if one else 'them'} in Settings → JD Edwards E1", None))  # fmt: skip
-    return out
+    from ap_coder.ops.offline import setup_contact
+
+    return [(severity, code, setup_contact(text), line) for severity, code, text, line in out]
 
 
 def account_text(gl_code: str, cost_center: str, settings: JdeSettings) -> str:

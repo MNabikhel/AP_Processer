@@ -14,7 +14,7 @@
       <li>
         <span class="no" aria-hidden="true">{{ loop.index0 }}</span>
         <div><b>{{ title }}</b><div class="muted">{{ text }}</div></div>
-        <a class="link" href="{{ path }}" title="Go to {{ title }}">Open <span class="ms" aria-hidden="true">arrow_forward</span></a>
+        {% if can(path, "GET") %}<a class="link" href="{{ path }}" title="Go to {{ title }}">Open <span class="ms" aria-hidden="true">arrow_forward</span></a>{% endif %}
       </li>
       {% endfor %}
     </ol>
@@ -31,7 +31,7 @@
       <h4>How every invoice is read</h4>
       <p class="muted">One way for every invoice, a digital PDF, a scan or a phone photo, with nothing to set up or choose.</p>
       <ol class="st-steps">{% for bold, rest in how_it_reads %}<li><b>{{ bold }}</b>{{ rest }}</li>{% endfor %}</ol>
-      <a class="link" href="/settings/reading">Settings → Reading <span class="ms" aria-hidden="true">arrow_forward</span></a>
+      {% if can("/settings/reading", "GET") %}<a class="link" href="/settings/reading">Settings → Reading <span class="ms" aria-hidden="true">arrow_forward</span></a>{% endif %}
     </section>
   </div>
 </div>
@@ -44,7 +44,7 @@
       <b>{{ when }}</b>
       <ul>
         {% for task, page in tasks %}
-        <li>{% if page %}<a href="{{ page.path }}"><span class="ms" aria-hidden="true">arrow_right</span>{{ task }}</a>{% else %}{{ task }}{% endif %}</li>
+        <li>{% if page and can(page.path, "GET") %}<a href="{{ page.path }}"><span class="ms" aria-hidden="true">arrow_right</span>{{ task }}</a>{% else %}{{ task }}{% endif %}</li>
         {% endfor %}
       </ul>
     </div>
@@ -112,12 +112,19 @@
     </section>
     <section class="card">
       <h4>Where your data is</h4>
+      {% if server_mode %}
+      <p class="muted">Nothing is sent anywhere: invoices are read, coded and kept on the server, in its data folder
+        (backed up every day{% if is_admin %}; Settings → Data &amp; backups{% endif %}).</p>
+      {% else %}
       <p class="muted">Nothing is sent anywhere: invoices are read, coded and kept on this computer, in the data folder
         (backed up every day; Settings → Data &amp; backups).</p>
+      {% endif %}
+      {% if is_admin %}{# the server's own paths: an Admin's only (D-99) #}
       <details class="st-forit">
         <summary><span class="ms" aria-hidden="true">engineering</span>For IT: the folders</summary>
         <dl class="apc-kv">{% for label, value in where %}<dt>{{ label }}</dt><dd><code>{{ value }}</code></dd>{% endfor %}</dl>
       </details>
+      {% endif %}
     </section>
   </div>
 </div>

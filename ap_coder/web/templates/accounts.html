@@ -3,9 +3,11 @@
 {% from "_tiles.html" import tile_row %}
 {% block head %}<link rel="stylesheet" href="/static/data.css?v={{ static_version }}">{% endblock %}
 {% block content %}
+{# server mode: the account lists and the tax setup are changed by an Admin; others see them read-only (D-98) #}
+{% set edit = can("/accounts/gl_accounts/save") %}
 {{ tile_row(tiles) }}
 
-{% if not has_gl %}
+{% if not has_gl and can("/accounts/sample") %}
 <section class="card sample">
   <div class="card-head">
     {{ ui.empty_note("Just exploring?", " Use the sample GL accounts and tax setup to try the app (no cost centers: each line needs only a GL account).", "science") }}
@@ -35,6 +37,7 @@
   <p class="muted">Optional. Leave empty if you do not code invoices to cost centers.</p>
   {% endif %}
 
+  {% if edit %}
   <details class="expander" id="import"{% if not a.rows or a.imp or a.imp_error %} open{% endif %}>
     <summary><span class="ms" aria-hidden="true">upload</span>Import {{ a.noun }}s from CSV or Excel</summary>
     {% if a.imp_error %}<div class="flash err"><span class="ms" aria-hidden="true">error</span><div>{{ a.imp_error }}</div></div>{% endif %}
@@ -52,14 +55,15 @@
     {{ upload_form("/accounts/" ~ a.table ~ "/upload", "A CSV or Excel file exported from your ERP", "Upload a CSV or Excel file") }}
     {% endif %}
   </details>
+  {% endif %}
 
   {% if not a.rows %}
   {{ ui.empty_note("No " ~ a.noun ~ "s yet", " Import them from a CSV or Excel file above.", "upload_file") }}
   {% else %}
   <div class="row">{% for cat, n in a.categories %}{{ ui.pill(cat ~ " · " ~ n, "gray") }}{% endfor %}</div>
   {% endif %}
-  <form method="post" action="/accounts/{{ a.table }}/save" class="stack" data-busy="Saving…" id="accounts-form"
-        data-noun="{{ a.noun }}">
+  <form{% if edit %} method="post" action="/accounts/{{ a.table }}/save"{% endif %} class="stack" data-busy="Saving…" id="accounts-form"
+        data-noun="{{ a.noun }}"><fieldset class="ro-fieldset"{% if not edit %} disabled{% endif %}>
     <input type="hidden" name="version" value="{{ a.version }}">
     <div class="table-wrap">
       <table class="apc-table edit">
@@ -75,7 +79,7 @@
             <td><label class="check"><input type="checkbox" name="delete" value="{{ loop.index0 }}" aria-label="Delete {{ r.code }}"></label></td>
           </tr>
           {% endfor %}
-          {% for n in range(a.blank) %}
+          {% for n in range(a.blank if edit else 0) %}
           <tr class="new">
             <td><input type="text" name="code" value="" aria-label="New code" placeholder="New code"></td>
             <td><input type="text" name="description" value="" aria-label="New description" class="wide"></td>
@@ -88,10 +92,10 @@
       </table>
     </div>
     <div class="row">
-      <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save changes</button>
+      {% if edit %}<button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save changes</button>{% endif %}
       {% if a.rows %}<a class="btn" href="/accounts/{{ a.table }}.csv" download><span class="ms" aria-hidden="true">download</span>Download {{ a.noun }}s</a>{% endif %}
     </div>
-  </form>
+  </fieldset></form>
 </section>
 
 {% elif tab == "tax" %}
@@ -100,7 +104,7 @@
   <p class="muted">Recoverable taxes (input tax credits / refunds) go to their own GL account: pick one for GST, HST
     and QST. Non-recoverable PST (and any other tax) is normally added to the cost of the expense lines it applies to,
     so it needs no account of its own. Then Save tax setup.</p>
-  <form method="post" action="/accounts/tax" class="stack" id="tax-form" data-busy="Saving…">
+  <form{% if edit %} method="post" action="/accounts/tax"{% endif %} class="stack" id="tax-form" data-busy="Saving…"><fieldset class="ro-fieldset"{% if not edit %} disabled{% endif %}>
     <div class="table-wrap">
       <table class="apc-table edit">
         <thead><tr><th>Tax</th><th>Treatment</th><th>GL account</th></tr></thead>
@@ -123,8 +127,8 @@
         </tbody>
       </table>
     </div>
-    <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save tax setup</button>
-  </form>
+    {% if edit %}<button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save tax setup</button>{% endif %}
+  </fieldset></form>
 </section>
 <section class="card">
   <h4>Rates in force today</h4>
@@ -143,10 +147,10 @@
   <h4>Coding policy</h4>
   <p class="muted">Plain-English rules the AI follows, one per line (e.g. 'Laptops under $2,500 go to 6010'). Lines starting
     with # are ignored.</p>
-  <form method="post" action="/accounts/policy" class="stack" data-busy="Saving…">
+  <form{% if edit %} method="post" action="/accounts/policy"{% endif %} class="stack" data-busy="Saving…"><fieldset class="ro-fieldset"{% if not edit %} disabled{% endif %}>
     <textarea name="notes" rows="12" class="full" aria-label="Coding policy">{{ policy }}</textarea>
-    <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save policy</button>
-  </form>
+    {% if edit %}<button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save policy</button>{% endif %}
+  </fieldset></form>
 </section>
 
 {% elif tab == "rules" %}
@@ -162,20 +166,20 @@
   {% if unknown %}
   <div class="flash warn"><span class="ms" aria-hidden="true">warning</span><div>GL account {{ unknown | join(", ") }} is not in your GL list any more: change these rules.</div></div>
   {% endif %}
-  <form method="post" action="/accounts/rules" class="stack" data-busy="Saving…">
+  <form{% if edit %} method="post" action="/accounts/rules"{% endif %} class="stack" data-busy="Saving…"><fieldset class="ro-fieldset"{% if not edit %} disabled{% endif %}>
     <input type="hidden" name="version" value="{{ rules_version }}">
     <div class="table-wrap">
       <table class="apc-table edit">
         <thead><tr><th>Vendor (optional)</th><th>Line contains (optional)</th><th>GL account</th><th>Cost center</th></tr></thead>
         <tbody>
           {% for r in rules %}{{ rule_row(r, gl_names, cc_codes) }}{% endfor %}
-          {% for n in range(3) %}{{ rule_row(none, gl_names, cc_codes) }}{% endfor %}
+          {% for n in range(3 if edit else 0) %}{{ rule_row(none, gl_names, cc_codes) }}{% endfor %}
         </tbody>
       </table>
     </div>
     <p class="muted small">A rule needs a GL account and a vendor or words, or both; an incomplete row is left out when you save.</p>
-    <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save rules</button>
-  </form>
+    {% if edit %}<button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save rules</button>{% endif %}
+  </fieldset></form>
   {% endif %}
 </section>
 {% if suggestions %}
@@ -185,11 +189,11 @@
   {% for s in suggestions %}
   <div class="suggestion">
     <div><b>{{ s.rule.vendor }}</b> → {{ s.target }}<div class="muted small">{{ s.lines | plural("line") }}, all coded the same</div></div>
-    <form method="post" action="/accounts/rules/add">
+    {% if can("/accounts/rules/add") %}<form method="post" action="/accounts/rules/add">
       <input type="hidden" name="vendor" value="{{ s.rule.vendor }}"><input type="hidden" name="contains" value="{{ s.rule.contains }}">
       <input type="hidden" name="gl_code" value="{{ s.rule.gl_code }}"><input type="hidden" name="cost_center" value="{{ s.rule.cost_center }}">
       <button class="btn sm" type="submit"><span class="ms" aria-hidden="true">add</span>Add rule</button>
-    </form>
+    </form>{% endif %}
   </div>
   {% endfor %}
 </section>
@@ -201,6 +205,7 @@
     screen). Each invoice takes the default account of its currency, or the one this vendor was last paid from. Only the
     last 4 digits of an account number are ever shown. Optional: without bank accounts, nothing asks for one.</p>
 
+  {% if edit %}
   <details class="expander" id="import"{% if not b.rows or b.imp or b.imp_error %} open{% endif %}>
     <summary><span class="ms" aria-hidden="true">upload</span>Import bank accounts from CSV or Excel</summary>
     {% if b.imp_error %}<div class="flash err"><span class="ms" aria-hidden="true">error</span><div>{{ b.imp_error }}</div></div>{% endif %}
@@ -221,11 +226,12 @@
       active. <a class="link" href="/accounts/bank/template.csv" download>Download a template</a></p>
     {% endif %}
   </details>
+  {% endif %}
 
   {% if not b.rows %}
   {{ ui.empty_note("No bank accounts yet", " Import them above, or type them in the grid below.", "account_balance") }}
   {% endif %}
-  <form method="post" action="/accounts/bank/save" class="stack" data-busy="Saving…" id="bank-form">
+  <form{% if edit %} method="post" action="/accounts/bank/save"{% endif %} class="stack" data-busy="Saving…" id="bank-form"><fieldset class="ro-fieldset"{% if not edit %} disabled{% endif %}>
     <input type="hidden" name="version" value="{{ b.version }}">
     <div class="table-wrap">
       <table class="apc-table edit bank-grid">
@@ -246,7 +252,7 @@
             <td><label class="check"><input type="checkbox" name="active" value="{{ n }}"{% if r.active %} checked{% endif %} aria-label="In use: {{ r.code }}"></label></td>
           </tr>
           {% endfor %}
-          {% for k in range(b.blank) %}{% set n = b.rows | length + k %}
+          {% for k in range(b.blank if edit else 0) %}{% set n = b.rows | length + k %}
           <tr class="new">
             <td><input type="text" name="code" value="" aria-label="New code" placeholder="e.g. CAD-OP"></td>
             <td><input type="text" name="name" value="" aria-label="New name" class="wide"></td>
@@ -264,8 +270,8 @@
     </div>
     <p class="muted small">One default per currency. An account no longer used: untick <i>In use</i> (it is kept for the
       invoices already paid from it).</p>
-    <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save bank accounts</button>
-  </form>
+    {% if edit %}<button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save bank accounts</button>{% endif %}
+  </fieldset></form>
 </section>
 {% endif %}
 {% endblock %}

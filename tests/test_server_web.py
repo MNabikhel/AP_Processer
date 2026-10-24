@@ -94,7 +94,7 @@ def test_login_sets_a_strict_http_only_cookie_and_a_new_token_each_time(store):
     assert token and token != planted and store.session_user(planted) is None
     page = client.get("/review")
     assert page.status_code == 200
-    assert "Ann Lee" in page.text and "Clerk" in page.text and 'href="/logout"' in page.text
+    assert "Ann Lee" in page.text and "Clerk" in page.text and 'action="/logout"' in page.text
 
 
 def test_over_https_the_cookie_is_secure(store):
@@ -257,7 +257,7 @@ def test_the_second_approval_needs_a_second_account(store):
     assert store.get_invoice(invoice_id)["status"] == PENDING
     shown = store.events(invoice_id, ["approved"])[0]["id"]
     refused = first.post(f"/review/{invoice_id}/final-approve", data={"approval": shown}, headers=PAGE)
-    assert "another account" in first.get(refused.json()["redirect"]).text
+    assert refused.status_code == 409 and "another account" in refused.json()["error"]  # (B-1113)
     assert store.get_invoice(invoice_id)["status"] == PENDING
     second.post(f"/review/{invoice_id}/final-approve", data={"approval": shown}, headers=PAGE)
     assert store.get_invoice(invoice_id)["status"] == "approved"
@@ -301,7 +301,7 @@ def test_on_a_laptop_there_is_no_login_and_nothing_changes(store, monkeypatch):
     client = TestClient(app, base_url="http://localhost", follow_redirects=False)
     assert app.state.server_mode is False
     page = client.get("/review")
-    assert page.status_code == 200 and 'href="/logout"' not in page.text and 'href="/settings"' in page.text
+    assert page.status_code == 200 and 'action="/logout"' not in page.text and 'href="/settings"' in page.text
     assert client.get("/login").headers["location"] == "/review"
     assert client.get("/admin/users").status_code == 404
     assert client.get("/settings").status_code == 200

@@ -43,7 +43,7 @@ from urllib.parse import quote
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from ap_coder.core.store import EVENT_ORIGIN
+from ap_coder.core.store import EVENT_ACTOR, EVENT_ORIGIN
 
 COOKIE = "ap_coder_person"
 MAX_NAME = 60  # characters kept of a name
@@ -280,9 +280,11 @@ class Identity:
                 refusal = RedirectResponse(f"{PASSWORD_PATH}?next={quote(_wanted(scope), safe='')}", status_code=303)
             else:
                 refusal = JSONResponse({"ok": False, "error": CHANGE_FIRST}, status_code=403)
+        signed_in = _account_person(user, client) if user is not None else None
         tokens = (
-            PERSON.set(_account_person(user, client) if user is not None else None),
+            PERSON.set(signed_in),
             EVENT_ORIGIN.set(client or None),
+            EVENT_ACTOR.set(signed_in.name if signed_in is not None else None),  # events record who (B-1106)
         )
         try:
             if refusal is None and user is not None and not roles.allowed(user["role"], need):
@@ -295,6 +297,7 @@ class Identity:
         finally:
             PERSON.reset(tokens[0])
             EVENT_ORIGIN.reset(tokens[1])
+            EVENT_ACTOR.reset(tokens[2])
 
 
 def _wanted(scope: dict[str, Any]) -> str:

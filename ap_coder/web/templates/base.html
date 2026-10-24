@@ -56,7 +56,8 @@
         <div class="apc-me-links">
           <a href="/account/password">Your password</a>
           {% if account.role == "admin" %}<a href="/admin/users">Users</a>{% endif %}
-          <a href="/logout">Log out</a>
+          {# logs out at once: a POST (app.js sends it with the header every action of the page carries) #}
+          <form method="post" action="/logout" class="apc-me-logout"><button type="submit">Log out</button></form>
         </div>
         {% else %}
         <div class="apc-me" title="AP reviewer · {{ approved_today | num }} approved today">
@@ -83,7 +84,7 @@
       <div class="banner {{ banner_tone or 'warn' }}" role="status">
         <span class="ms" aria-hidden="true">{{ 'hourglass_top' if banner_tone == 'info' else 'visibility_off' }}</span>
         <span>{{ banner }}</span>
-        <a href="/settings/reading">Open Settings → Reading <span class="ms" aria-hidden="true">arrow_forward</span></a>
+        {% if can("/settings/reading", "GET") %}<a href="/settings/reading">Open Settings → Reading <span class="ms" aria-hidden="true">arrow_forward</span></a>{% endif %}
       </div>
       {% endif %}
       <div id="flashes" class="flashes">
