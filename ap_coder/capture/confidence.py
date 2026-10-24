@@ -167,8 +167,9 @@ def _v(values: dict[str, Any], f: str) -> float | None:
 
 
 def run_checks(values: dict[str, Any], line_items: list[LineReading], vendor: dict[str, Any] | None = None,
-               today: dt.date | None = None) -> list[dict[str, Any]]:  # fmt: skip
-    """Cross-field checks. Each: code, ok (True/False), fields involved, plain-English detail."""
+               today: dt.date | None = None, text: str = "") -> list[dict[str, Any]]:  # fmt: skip
+    """Cross-field checks. Each: code, ok (True/False), fields involved, plain-English detail. ``text``: the page's
+    text, where a tip printed after the tax is looked for (it is in the total, not in the subtotal: B-1026)."""
     checks: list[dict[str, Any]] = []
     sub, total = _v(values, "subtotal"), _v(values, "grand_total")
     taxes = {f: _v(values, f) for f in TAX_FIELDS if _v(values, f) is not None}
@@ -181,6 +182,12 @@ def run_checks(values: dict[str, Any], line_items: list[LineReading], vendor: di
         if charges is not None:
             fields.append("other_charges")
         extra = f" + charges {charges:,.2f}" if charges is not None else ""
+        if not ok and text:  # the gap is a tip printed after the tax, untaxed (B-931): the subtotal is as printed
+            from ..ai.offline_coder import _tip_after_tax
+
+            tip = _tip_after_tax(text, round(total - sub - (charges or 0.0) - tax_sum, 2))
+            if tip:
+                ok, extra = True, f"{extra} + {tip[0].lower()} {tip[1]:,.2f}"
         checks.append({"code": "TOTALS_ADD_UP", "ok": ok, "fields": fields,
                        "detail": f"subtotal {sub:,.2f}{extra} + tax {tax_sum:,.2f} {'=' if ok else '≠'} total {total:,.2f}"})  # fmt: skip
     elif sub is None and total is not None and line_items:
@@ -476,9 +483,11 @@ def _whole_first_word(groups: list[_Group]) -> None:
 def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineReading],
          vendor: dict[str, Any] | None = None, fields: tuple[str, ...] = FIELDS,
          today: dt.date | None = None, layout_source: str = "text",
-         local_evidence: dict[str, tuple[int, int]] | None = None) -> tuple[dict[str, FieldResult], list[dict[str, Any]]]:  # fmt: skip
+         local_evidence: dict[str, tuple[int, int]] | None = None,
+         text: str = "") -> tuple[dict[str, FieldResult], list[dict[str, Any]]]:  # fmt: skip
     """``by_source``: reader name -> field -> readings (best first). Returns field results and checks.
-    ``local_evidence``: {evidence: (cases, right)} from AP's approvals, for the calibration."""
+    ``local_evidence``: {evidence: (cases, right)} from AP's approvals, for the calibration; ``text``: the page's
+    text (a tip printed after the tax, ``run_checks``)."""
     chosen: dict[str, _Group | None] = {}
     contest: dict[str, float] = {}
     all_groups: dict[str, list[_Group]] = {}
@@ -500,7 +509,7 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
     _one_tax_per_printed_amount(chosen, all_groups, contest)
     _totals_that_add_up(chosen, all_groups, contest)
     values = {f: (normalize_value(f, g.value) if f in AMOUNT_FIELDS else g.value) for f, g in chosen.items() if g}
-    checks = run_checks(values, line_items, vendor, today)
+    checks = run_checks(values, line_items, vendor, today, text)
     confirmed: dict[str, int] = {}
     failed: dict[str, list[str]] = {}
     soft: dict[str, list[str]] = {}

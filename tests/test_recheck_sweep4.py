@@ -226,3 +226,33 @@ def test_a_template_that_learned_hst_does_not_add_a_second_tax_to_a_gst_page():
     rules["grand_total"] = [r("grand_total", "567.20", 0.478, "label")]
     fields, _ = fuse({"rules": rules}, [])
     assert fields["gst_amount"].value == fields["hst_amount"].value == 25.78
+
+
+# --- 7. A tip after the tax: the printed subtotal is right -----------------------------------------------------------
+
+
+def test_a_gratuity_after_the_tax_does_not_fail_the_printed_subtotal():
+    """B-1026: with the tip line added (B-931) the screen still warned "As printed, subtotal 820.00 + tax 106.60 ≠
+    total 1,046.60" and the subtotal showed "Failed check": the difference is the untaxed gratuity read after the
+    tax."""
+    from ap_coder.capture.bridge import review_issues
+    from ap_coder.capture.confidence import fuse
+    from ap_coder.capture.types import LIKELY, VERIFIED, Box, CaptureResult, Reading
+
+    from .test_money_sweep4 import BISTRO
+
+    def r(field, value, y):
+        return Reading(field, value, value, [Box(1, 0.7, y, 0.8, y + 0.015)], 0.9, "label")
+
+    rules = {"subtotal": [r("subtotal", "820.00", 0.50)], "hst_amount": [r("hst_amount", "106.60", 0.52)],
+             "tax_total": [r("tax_total", "106.60", 0.52)],
+             "grand_total": [r("grand_total", "1046.60", 0.56)]}  # fmt: skip
+    fields, checks = fuse({"rules": rules}, [], text=BISTRO)
+    (totals,) = [c for c in checks if c["code"] == "TOTALS_ADD_UP"]
+    assert totals["ok"] and "gratuity 120.00" in totals["detail"].lower()
+    assert fields["subtotal"].status in (VERIFIED, LIKELY), fields["subtotal"]
+    assert not [x for x in fields["subtotal"].reasons if x.startswith("check failed")]
+    assert not [i for i in review_issues(CaptureResult(fields=fields, checks=checks)) if i[1] == "CAPTURE_TOTALS"]
+    # without the tip printed after the tax: the difference stays a difference
+    _, checks = fuse({"rules": rules}, [], text=BISTRO.replace("Gratuity\n120.00\n", ""))
+    assert not next(c for c in checks if c["code"] == "TOTALS_ADD_UP")["ok"]
