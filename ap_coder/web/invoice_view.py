@@ -397,7 +397,9 @@ def settle_header(store: Store, draft: Draft, read: dict[str, Any] | None = None
 
     header = draft.header
     key = vendor_key(header.get("vendor_name") or "")
-    vendor = store.get_vendor(key) if key else None
+    # of two vendors whose names read alike, the one with the GST/HST number on screen (B-1021)
+    vendor = store.find_vendor(header.get("vendor_name"), header.get("gst_hst_registration_number")) if key else None
+    key = (vendor or {}).get("vendor_key") or key
     draft.from_vendor, changed = fill_from_vendor(header, draft.from_vendor, draft.absent, vendor, unread_numbers(read))
     currency = (header.get("currency") or "CAD").strip().upper() or "CAD"
     if draft.pay_from_for and draft.pay_from_for != currency:
@@ -1393,11 +1395,12 @@ def suggestions(store: Store, reference: ReferenceData, coding: InvoiceCoding) -
              if li.predicted_gl_code == UNASSIGNED or accounts.get(li.predicted_gl_code) is None]  # fmt: skip
     if not lines:
         return []
-    feedback = store.learning_rows(coding.vendor_name)
-    default_gl = (store.get_vendor(vendor_key(coding.vendor_name)) or {}).get("default_gl") or ""
+    key = store.vendor_key_for(coding.vendor_name, coding.gst_hst_registration_number)  # its own of two (B-1021)
+    feedback = store.learning_rows(coding.vendor_name, key)
+    default_gl = (store.get_vendor(key) or {}).get("default_gl") or ""
     out = []
     for pos, li in lines:
-        found = suggest_gl(li.description, coding.vendor_name, feedback, reference, default_gl=default_gl)
+        found = suggest_gl(li.description, coding.vendor_name, feedback, reference, default_gl=default_gl, key=key)
         if found:
             out.append({
                 "position": pos, "number": li.line_number, "description": li.description,

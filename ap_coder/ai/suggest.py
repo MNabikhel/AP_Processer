@@ -210,6 +210,7 @@ def suggest_gl(
     reference: ReferenceData,
     limit: int = 3,
     default_gl: str = "",
+    key: str | None = None,
 ) -> list[Suggestion]:
     """Up to ``limit`` GL accounts for one line, best first. ``feedback`` is ``Store.feedback_rows()`` (newest
     first); ``default_gl`` is the vendor master's default account for this vendor, if any. Never a tax account or
@@ -238,7 +239,7 @@ def suggest_gl(
         if auto:
             strong[gl] = max(strong.get(gl, -1), PRIORITY[source])
 
-    key = vendor_key(vendor_name)
+    key = key or vendor_key(vendor_name)  # the vendor's own key, when two vendors' names read alike (B-1021)
     memory = _memory(feedback, valid)
     if default_gl:
         add(default_gl, 0.5, "the vendor's default GL account in the vendor master", "master")

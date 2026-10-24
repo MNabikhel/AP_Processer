@@ -79,7 +79,7 @@ class InvoicesMixin:
                     sha,
                     FAILED if error else REVIEW,
                     out.get("vendor_name"),
-                    vendor_key(out.get("vendor_name", "")),
+                    self.vendor_key_for(out.get("vendor_name", ""), out.get("gst_hst_registration_number")),
                     out.get("invoice_number"),
                     out.get("invoice_date"),
                     out.get("currency"),
@@ -724,7 +724,7 @@ class InvoicesMixin:
         second_reason = self.second_approval_reason(final_output, limit, rates={} if rate is None else {currency: rate})
         needs_second = bool(second_reason)
         vendor_name = final_output.get("vendor_name", "")
-        key = vendor_key(vendor_name)
+        key = self.vendor_key_for(vendor_name, final_output.get("gst_hst_registration_number"))  # B-1021
         now = _now()
         counts = {ACCEPTED: 0, CORRECTED: 0, CODED: 0, **({BULK: 0} if bulk else {})}
         reviewer_changed = reviewer_coded = 0

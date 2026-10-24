@@ -300,7 +300,7 @@ def expected_tax_numbers(coding: InvoiceCoding, store: Store, exclude_invoice_id
     """{invoice field: what it is compared with} for the tax numbers ``tax_number_findings`` checks, in a few words
     for the note under the field on the review screen (D-65): "Vendor list: 123456789 RT0001", else "Usual for this
     vendor: …" from its approved invoices."""
-    key = vendor_key(coding.vendor_name)
+    key = store.vendor_key_for(coding.vendor_name, coding.gst_hst_registration_number)
     if not key:
         return {}
     master = store.get_vendor(key)
@@ -320,7 +320,7 @@ def vendor_findings(
     coding: InvoiceCoding, store: Store, exclude_invoice_id: int | None = None
 ) -> list[tuple[str, str, str]]:
     """(severity, code, message) for the vendor-level checks on one invoice."""
-    key = vendor_key(coding.vendor_name)
+    key = store.vendor_key_for(coding.vendor_name, coding.gst_hst_registration_number)  # its own of two (B-1021)
     if not key:
         return []
     findings: list[tuple[str, str, str]] = []

@@ -342,9 +342,10 @@ def pair_lines(before: list[Any], after: list[Any]) -> list[tuple[Any | None, An
     return [(originals.get(k), li) for k, li in keyed(after)]
 
 
-def compare_with_history(coding: Any, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Per line: does the prediction agree with an established pattern for this vendor?"""
-    key = vendor_key(coding.vendor_name)
+def compare_with_history(coding: Any, rows: list[dict[str, Any]], key: str | None = None) -> list[dict[str, Any]]:
+    """Per line: does the prediction agree with an established pattern for this vendor? ``key``: the vendor's key
+    (``Store.vendor_key_for``: the second of two vendors by one name has its own, B-1021), else the name's."""
+    key = key or vendor_key(coding.vendor_name)
     patterns = [p for p in aggregate(rows) if p.vendor_key == key]
     results = []
     for li in coding.line_items:

@@ -92,7 +92,7 @@ def capture_invoice(path: str | Path, output: dict[str, Any] | None, *, store: A
         return None, "", None
     key, profile = supplier_for(store, output)
     template = (profile or {}).get("template") or None
-    vendor = vendor_record(store, (output or {}).get("vendor_name"))
+    vendor = vendor_record(store, (output or {}).get("vendor_name"), (output or {}).get("gst_hst_registration_number"))
     try:
         # Processed the day it arrives: that date also settles a 03/04/2026 the page leaves open.
         capture = analyze(path, di_raw=di_raw, ai_values=ai_values(output), template=template, vendor=vendor,

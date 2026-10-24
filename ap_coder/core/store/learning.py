@@ -29,7 +29,9 @@ def _feedback_stamp(conn: Any) -> tuple[Any, ...]:
 class LearningMixin:
     # --- Learning memory ------------------------------------------------------------------------------
 
-    def feedback_rows(self, limit: int | None = None, vendor_name: str | None = None) -> list[dict[str, Any]]:
+    def feedback_rows(
+        self, limit: int | None = None, vendor_name: str | None = None, key: str | None = None
+    ) -> list[dict[str, Any]]:
         """Recorded reviewer decisions, newest first (only one vendor's when ``vendor_name`` is given), at most
         ``limit`` (``FEEDBACK_READ``). Read once and kept until a lesson is added or removed: every invoice read asks
         for them, and years of imported ERP history take a third of a second to load on a laptop. The list is
@@ -37,14 +39,15 @@ class LearningMixin:
         limit = FEEDBACK_READ if limit is None else limit
         sql, args = "SELECT * FROM feedback", ()
         if vendor_name is not None:
-            sql, args = sql + " WHERE vendor_key = ?", (vendor_key(vendor_name),)
+            # ``key``: the vendor's own, of two whose names read alike (``vendor_key_for``, B-1021)
+            sql, args = sql + " WHERE vendor_key = ?", (key or vendor_key(vendor_name),)
         with self._conn() as conn:
             # Lessons are only ever added or deleted, never changed: the highest id, the count and the newest lesson
             # itself tell whether the ones kept are still the ones in the database. (The id alone is not enough: a
             # database restored from a backup, or made again where one was deleted, gives its next lesson an id a
             # lesson it no longer has once had.)
             stamp = _feedback_stamp(conn)
-            key = (str(self.path.resolve()), limit, vendor_name)
+            key = (str(self.path.resolve()), limit, vendor_name, args)
             with _FEEDBACK_LOCK:
                 kept = _FEEDBACK.get(key)
                 if kept is not None and kept[0] == stamp:
@@ -60,7 +63,7 @@ class LearningMixin:
                     _FEEDBACK.pop(next(iter(_FEEDBACK)))
         return rows
 
-    def learning_rows(self, vendor_name: str | None) -> list[dict[str, Any]]:
+    def learning_rows(self, vendor_name: str | None, key: str | None = None) -> list[dict[str, Any]]:
         """``feedback_rows()`` with every lesson of this vendor in it: what an invoice from it is coded and checked
         with. Past ``FEEDBACK_READ`` lessons the whole memory holds only the newest, so a vendor whose history was
         imported first would have none of its own; its older lessons then follow the shared list (in a new list,
@@ -68,9 +71,9 @@ class LearningMixin:
         rows = self.feedback_rows()
         if not vendor_name or len(rows) < FEEDBACK_READ:
             return rows
-        key = vendor_key(vendor_name)
+        key = key or vendor_key(vendor_name)
         have = {r["id"] for r in rows if r["vendor_key"] == key}
-        missing = [r for r in self.feedback_rows(vendor_name=vendor_name) if r["id"] not in have]
+        missing = [r for r in self.feedback_rows(vendor_name=vendor_name, key=key) if r["id"] not in have]
         return rows + missing if missing else rows
 
     def import_history(self, rows: list[dict[str, Any]], actor: str | None = None) -> dict[str, int]:

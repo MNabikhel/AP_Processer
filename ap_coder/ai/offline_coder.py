@@ -103,7 +103,7 @@ def read_invoice(path: str | Path, store: Any = None, layout: DocLayout | None =
     first = _values(capture)
     key, profile = supplier_for(store, first)
     template = (profile or {}).get("template") or None
-    vendor = vendor_record(store, first.get("vendor_name"))
+    vendor = vendor_record(store, first.get("vendor_name"), first.get("gst_hst_registration_number"))
     if template or vendor:
         capture = analyze(path, layout=layout, template=template, vendor=vendor, today=today, page_text=page_text,
                           local_evidence=local, ai_values=ai_values or None)  # fmt: skip
@@ -407,12 +407,14 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
         values, round(subtotal + freight, 2), ship_to_province or ours or supplier_province,
         dt.date.fromisoformat(invoice_on) if invoice_on else None,
     )  # fmt: skip
-    default_gl = ""
+    default_gl, key = "", vendor_key(vendor)
     if store is not None and vendor:
-        try:
-            default_gl = (store.get_vendor(vendor_key(vendor)) or {}).get("default_gl") or ""
+        try:  # the vendor of two whose names read alike by its GST/HST number (B-1021)
+            found = store.find_vendor(vendor, values.get("gst_hst_registration_number"))
         except Exception:  # an older store without the vendor table
-            default_gl = ""
+            found = None
+        default_gl = (found or {}).get("default_gl") or ""
+        key = (found or {}).get("vendor_key") or key
 
     if not readings:  # no table the reader could split: one line for the whole subtotal
         readings_data = [("Invoice " + str(values.get("invoice_number") or ""), 1.0, subtotal, subtotal)]
@@ -446,7 +448,8 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
     lines = []
     hints: dict[int, str] = {}
     for number, (description, quantity, unit_price, amount) in enumerate(readings_data, 1):
-        top = next(iter(suggest_gl(description, vendor, feedback, reference, limit=1, default_gl=default_gl)), None)
+        ranked = suggest_gl(description, vendor, feedback, reference, limit=1, default_gl=default_gl, key=key)
+        top = next(iter(ranked), None)
         # Only a strong match codes the line; a weaker one is left for AP, suggested on the review screen.
         best = top if top is not None and top.auto else None
         if top is not None and best is None:
@@ -470,7 +473,8 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
     lines = tax_codes(lines, tax_lines, flags, text, ship_to_province or ours or supplier_province, invoice_on,
                       supplier_province=supplier_province,
                       pst_number=str(values.get("pst_registration_number") or ""), feedback=feedback,
-                      vendor=vendor, qst_number=str(values.get("qst_registration_number") or ""))  # fmt: skip
+                      vendor=vendor, qst_number=str(values.get("qst_registration_number") or ""),
+                      vendor_key=key)  # fmt: skip
     if tip:  # a voluntary tip is no taxable supply
         from ..coding.line_tax import OUT_OF_SCOPE
 
@@ -552,7 +556,8 @@ def _money_of(text: str) -> float:
 def tax_codes(lines: list[LineItem], tax_lines: list[TaxLine], flags: list[str], text: str, province: str,
               invoice_on: str = "", keep: list[int] | None = None, *, supplier_province: str | None = None,
               pst_number: str | None = None, feedback: list[dict[str, Any]] | None = None,
-              vendor: str = "", qst_number: str | None = None) -> list[LineItem]:  # fmt: skip
+              vendor: str = "", qst_number: str | None = None,
+              vendor_key: str | None = None) -> list[LineItem]:  # fmt: skip
     """The lines with their tax codes (``line_tax.prefill``): ``flags`` the tax-code cell read on each line, ``text``
     the page text (its legend: "Tax codes: G = GST 5%, R = Manitoba RST 7%"), the official rates in force on the
     invoice's date where it is supplied; ``feedback`` (the learning memory) and ``vendor``: the codes AP approved on
@@ -577,7 +582,7 @@ def tax_codes(lines: list[LineItem], tax_lines: list[TaxLine], flags: list[str],
     from ..coding.line_tax import uncollected
 
     missing = uncollected(province, supplier_province, pst_number, qst_number, tax_lines)
-    learned = learned_codes(lines, feedback, vendor, province, missing) if feedback and vendor else None
+    learned = learned_codes(lines, feedback, vendor, province, missing, vendor_key) if feedback and vendor else None
     return prefill(lines, tax_lines, flags, parse_legend(text), keep=keep or [], rate_for=rate_for,
                    vendor_collects={t: t not in missing for t in ("PST", "QST")}, learned=learned,
                    learned_alike=True).lines  # fmt: skip

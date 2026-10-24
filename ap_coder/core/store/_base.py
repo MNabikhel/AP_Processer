@@ -765,6 +765,10 @@ class StoreCore:
         it was."""
 
         def new_key(name: Any, old: Any) -> str:
+            # the second of two vendors whose names read alike keeps its " #<ERP ID>" (B-930, B-1021)
+            base, mark, ident = str(old or "").rpartition(" #")
+            if mark and base and ident and " " not in ident:
+                return f"{vendor_key(str(name or '')) or refresh_vendor_key(base)} #{ident}"
             return vendor_key(str(name or "")) or refresh_vendor_key(str(old or ""))
 
         for table, name, ident in (

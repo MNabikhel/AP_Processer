@@ -1017,7 +1017,7 @@ def invoice_uncollected(coding: Any, province: str) -> list[str]:
 
 
 def learned_codes(lines: Sequence[Any], feedback: Iterable[dict[str, Any]], vendor: str, province: str,
-                  uncollected: Iterable[str] = ()) -> list[str]:  # fmt: skip
+                  uncollected: Iterable[str] = (), key: str | None = None) -> list[str]:  # fmt: skip
     """For each line, the tax code the vendor's history agrees on, else "" (D-70, with the safety rules of D-80).
 
     * Only rows of this vendor supplied in the same ``province`` (``tax_province``): a BC exemption says nothing of a
@@ -1034,7 +1034,7 @@ def learned_codes(lines: Sequence[Any], feedback: Iterable[dict[str, Any]], vend
       the tax charged again."""
     from ..core.memory import VENDOR_LINE_SIMILARITY, similarity, vendor_key
 
-    key = vendor_key(vendor or "")
+    key = key or vendor_key(vendor or "")  # ``key``: the vendor's own, of two whose names read alike (B-1021)
     province = str(province or "").strip().upper()
     context = "+".join(ordered(uncollected))
     past = [r for r in feedback or () if key and province and r.get("vendor_key") == key and r.get("final_tax_code")

@@ -268,7 +268,7 @@ def test_read_invoice_and_capture_invoice_pass_the_page_text_and_local_counts(mo
         def get_supplier_profile(self, key):
             return {"template": None}
 
-        def get_vendor(self, key):
+        def find_vendor(self, name, gst=None):
             return {"in_master": True, "display_name": "Northwind"}
 
     monkeypatch.setattr(offline_coder, "analyze", spy)

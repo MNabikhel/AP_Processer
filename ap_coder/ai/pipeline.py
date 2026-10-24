@@ -148,9 +148,11 @@ def finalise_coding(
     Used after inference and again by the dashboard whenever a reviewer edits an invoice. ``received``: the day the
     invoice was read (an invoice in the queue: its import day), default today.
     """
+    # the vendor's key: of two vendors whose names read alike, the one with this GST/HST number (B-1021)
+    key = store.vendor_key_for(coding.vendor_name, coding.gst_hst_registration_number) if store is not None else None
     if feedback is None and store is not None:
-        feedback = store.feedback_rows(vendor_name=coding.vendor_name)  # history check needs this vendor only
-    history = compare_with_history(coding, feedback) if feedback else None
+        feedback = store.feedback_rows(vendor_name=coding.vendor_name, key=key)  # history check: this vendor only
+    history = compare_with_history(coding, feedback, key) if feedback else None
     duplicates = (
         store.find_duplicates(
             coding.vendor_name, coding.invoice_number, exclude_id=exclude_invoice_id, grand_total=coding.grand_total
