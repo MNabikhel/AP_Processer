@@ -140,3 +140,24 @@ def test_a_province_with_the_postal_code_glued_on_is_read():
         "Part NO. X4R1A3B2",
     ):
         assert addresses(text) == ("", "", ""), text
+
+
+def test_the_rate_table_is_read_again_once_the_rate_file_changes(tmp_path, monkeypatch):
+    """The local coder kept the first rate table it read for the life of the process: a rate edited in the data
+    folder's copy was not seen until a restart (B-957)."""
+    import datetime as dt
+    import os
+    import shutil
+
+    from ap_coder.ai import offline_coder
+    from ap_coder.coding import tax
+
+    rates = tmp_path / "rates.csv"
+    shutil.copy(tax.DEFAULT_RATES_PATH, rates)
+    monkeypatch.setattr(tax, "rates_path", lambda: rates)
+    on = dt.date(2026, 5, 1)
+    assert offline_coder._rate_table().rate_for("HST", "ON", on) == 0.13
+    rates.write_text(rates.read_text(encoding="utf-8").replace("HST,ON,0.13", "HST,ON,0.14"), encoding="utf-8")
+    stamp = rates.stat().st_mtime_ns + 5_000_000_000
+    os.utime(rates, ns=(stamp, stamp))
+    assert offline_coder._rate_table().rate_for("HST", "ON", on) == 0.14

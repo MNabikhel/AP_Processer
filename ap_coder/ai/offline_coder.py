@@ -118,10 +118,24 @@ def _amount(values: dict[str, Any], field: str) -> float:
         return 0.0
 
 
-@functools.lru_cache(maxsize=1)
 def _rate_table() -> Any:
+    """The tax-rate table (``tax.rates_path``), read again once the file changes, as ``Store.reference_data`` does: an
+    edited rate is seen without a restart (B-957). None without one."""
+    from ..coding import tax
+
+    path = tax.rates_path()
     try:
-        return TaxRateTable.load()
+        seen = path.stat()
+        stamp: tuple[Any, ...] = (str(path), seen.st_mtime_ns, seen.st_size)
+    except OSError:
+        stamp = (str(path), None, None)
+    return _rate_table_at(stamp)
+
+
+@functools.lru_cache(maxsize=4)
+def _rate_table_at(stamp: tuple[Any, ...]) -> Any:
+    try:
+        return TaxRateTable.load(stamp[0])
     except Exception:  # no rate table: rates are worked out from the amounts
         return None
 
