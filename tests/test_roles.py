@@ -101,7 +101,7 @@ def test_every_route_for_every_role(setup, role):
             headers["Cookie"] = f"{SESSION_COOKIE}={tokens[role]}"
         answer = client.request(method, url, headers=headers)
         if need == roles.OPEN or (role is not None and roles.allowed(role, need)):
-            ok = answer.status_code == 200 and answer.text == "passed"
+            ok = answer.status_code == 200 and answer.text == ("" if method == "HEAD" else "passed")
         elif role is None:
             ok = answer.status_code == (303 if method == "GET" else 401)
             ok = ok and (method != "GET" or answer.headers["location"].startswith("/login?next="))

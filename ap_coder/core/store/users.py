@@ -250,7 +250,8 @@ def carry_accounts(conn: Any, saved: dict[str, tuple[list[str], list[str], list[
         conn.execute(f"DELETE FROM {table}")
         if rows and keep:
             names = ", ".join(columns[i] for i in keep)
-            conn.executemany(f"INSERT INTO {table} ({names}) VALUES ({', '.join('?' * len(keep))})",
+            marks = ", ".join("?" * len(keep))  # at most one per column of the table
+            conn.executemany(f"INSERT INTO {table} ({names}) VALUES ({marks})",
                              [tuple(r[i] for i in keep) for r in rows])  # fmt: skip
     if "sessions" in tables or "sessions" in saved:
         conn.execute("DELETE FROM sessions")
