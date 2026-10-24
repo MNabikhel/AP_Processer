@@ -825,3 +825,17 @@ that is reversed keeps its line, marked "replaced by D-NN".
   self-test), then `python -m ap_coder.bench coding --vendors 20 --invoices 5 --ai --out bench_ai` (the chat model's
   precision, first invoice apart; report in `bench_ai/report.md`), and, once AP has posted the pilot's invoices,
   `python -m ap_coder pilot-score` on the JDE export.
+
+- **D-93** · Touchless never approves what bulk approval would refuse. Before, only errors, the always-a-person
+  findings and a line without an account kept an invoice touchless processing passed from going through: HST at the
+  wrong rate, HST in a GST province, GST only where HST is due, a PST due and not charged, or no GST/HST number on a
+  large invoice went out without a person. Now any warning and an invoice its checks flag for review
+  (`requires_review`) go to a person (`supplier.should_auto_approve`), and the tax findings that put the input tax
+  credit at risk are in `ALWAYS_A_PERSON` (so bulk approval refuses them whatever their severity). An invoice held for
+  the Azure check or the AI reviewer has its checks done again before AP Coder approves it (`workflow.still_touchless`
+  re-runs `finalise_coding`, as `bulk_approve` does), is never approved while a person has a draft on it, and an
+  audit-sample pick is never bulk-approved. A bulk approval teaches only its corrections: its kept lines are recorded
+  with the outcome `bulk`, which the accuracy figures leave out, and kept values neither confirm a lesson nor count
+  as an invoice it was seen on. Why: a person approving in bulk refuses any warning; an invoice nobody looked at must
+  not pass more easily than one a person approves without opening. The learning simulation (`bench learn`) scores
+  the reading only, so its figures are unchanged. (B-950 to B-955)
