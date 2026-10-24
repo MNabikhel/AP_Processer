@@ -23,7 +23,7 @@ from ap_coder.coding.bulk import bulk_approve, issues_today, sort_for_bulk
 from ap_coder.coding.review import codes_to_pick, uses_cost_centers
 from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCE_NAMES, province_label, stored_supply
 from ap_coder.coding.terms import DUE_SOON_DAYS, LONG_OVERDUE_DAYS, overdue_since, payment
-from ap_coder.core import ui
+from ap_coder.core import audit, ui
 from ap_coder.core.memory import vendor_key
 from ap_coder.core.reference_data import ReferenceData
 from ap_coder.core.store import (
@@ -215,6 +215,24 @@ def attention(store: Store, reference: ReferenceData | None, pending: list[dict[
     return out
 
 
+def draft_reasons(request: Request, pending: list[dict[str, Any]]) -> dict[int, str]:
+    """The queue's reason for each invoice of ``pending`` with edits kept on this person's review screen: the draft's
+    own check, not the stored one ("Pick a GL account for line 4" after line 4 was coded in the draft, B-996). Never
+    Ready: bulk approval leaves an invoice with a draft alone, and the edits are approved on its screen."""
+    from ap_coder.web.pages.invoice import my_drafts
+
+    ids = {i["id"] for i in pending}
+    out = {}
+    for invoice_id, kept in my_drafts(request).items():
+        if invoice_id not in ids or not isinstance(kept.get("check"), dict):
+            continue
+        why = str(kept["check"].get("why") or "")
+        if why[1:2].islower():  # "Pick a GL account…" → "pick a GL account…"; "JD Edwards…" stays
+            why = why[:1].lower() + why[1:]
+        out[invoice_id] = "Edits not approved yet: " + (why or "ready to approve")
+    return out
+
+
 def left_out(pending: list[dict[str, Any]], reasons: dict[int, str], left: dict[int, str]) -> str:
     """Why the queue's Ready invoices not offered for bulk approval are left out (``sort_for_bulk``'s ``left``):
     "1 credit note and 2 with a warning left for a person", or "" when none is."""
@@ -313,13 +331,20 @@ def kpis(store: Store, pending: list[dict[str, Any]], flagged: list[dict[str, An
     note, compared = ("", True)
     if settings is not None and accuracy is not None:
         note, compared = accuracy_note(settings, metrics["lines_measured"])
+    # Of mine today, those still waiting for their second approval: said apart, as the Approved tab lists only the
+    # fully approved (B-1006).
+    me, today = reviewer().strip().casefold(), dt.date.today().isoformat()
+    mine_waiting = sum(
+        1
+        for i in awaiting
+        if (i.get("reviewer") or "").strip().casefold() == me and (i.get("reviewed_at") or "") >= today
+    )
+    waits = f" · {mine_waiting:,} wait{'s' if mine_waiting == 1 else ''} for a second approval" if mine_waiting else ""
     return [
         {"label": "Waiting", "value": f"{len(pending):,}", "sub": f"{len(flagged)} need attention"},
         {"label": "Approved today", "value": f"{done_today:,}",
-         "sub": f"{len(pending):,} still to review"
-                + (f" · {len(awaiting):,} waiting for a second approval" if awaiting else "")
-                + f" · {len(approved):,} approved in total",
-         "bar": done_today / total_today if total_today else 0.0},
+         "sub": f"{max(done_today - mine_waiting, 0):,} fully approved{waits} · {len(pending):,} still to review",
+         "bar": done_today / total_today if total_today else 0.0, "wrap": True},
         {"label": "Coding accuracy", "value": "—" if accuracy is None else f"{accuracy:.1%}",  # as on Learning
          "sub": "after the first approvals" if accuracy is None
                 else ("vs 90% target" + (f" · {note}" if note else "")) if compared else note,
@@ -359,6 +384,7 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
     # The checks as they are now, of the invoices not flagged (a flagged one is never Ready nor offered in bulk).
     today = issues_today(store, [i["id"] for i in pending if not i["requires_review"]], reference, settings)
     reasons = attention(store, reference, pending, threshold, today)  # Ready means its Approve is open
+    reasons.update(draft_reasons(request, pending))  # an invoice with edits kept: what its screen says (B-996)
     flagged = [i for i in pending if i["id"] in reasons]
     approved = [i for i in invoices if i["status"] == APPROVED]
     awaiting = [i for i in invoices if i["status"] == PENDING]
@@ -403,7 +429,8 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
         )  # fmt: skip
     elif tab == "approved":
         recent = sorted(approved, key=lambda i: i["reviewed_at"] or "", reverse=True)[:APPROVED_SHOWN]
-        context.update(approved=recent, approved_total=len(approved), to_export=len(store.unexported_approved()))
+        context.update(approved=recent, approved_total=len(approved), to_export=len(store.unexported_approved()),
+                       awaiting_count=len(awaiting))  # fmt: skip
     elif tab == "other":
         context.update(others=[_other(i) for i in others])
     elif tab == "parked":
@@ -431,7 +458,10 @@ def _second(inv: dict[str, Any], first: dict[str, Any] | None, me: str, my_login
     same = (me or "").strip().casefold() == (inv["reviewer"] or "").strip().casefold() or (
         bool(my_login) and my_login.casefold() == first_login.casefold()
     )
-    return {**inv, "same": same, "approval": (first or {}).get("id") or ""}
+    detail = (first or {}).get("detail") or {}
+    why = audit.second_reason(detail) if detail.get("needs_second") else ""
+    return {**inv, "same": same, "approval": (first or {}).get("id") or "", "second_why": why,
+            "approved_over": audit.approved_over(detail)}  # fmt: skip
 
 
 def _getting_started(request: Request, store: Store, invoices: list[dict[str, Any]]) -> HTMLResponse:

@@ -56,6 +56,11 @@ class Assumptions:
 AS_CODED = "Approved as coded"  # the one label of the figure, on Insights, Learning and Activity (D-39)
 
 
+# Changes that say where the invoice is supplied, not what the coder proposed: the place of supply is the clerk's to
+# know (rarely printed, often worked out), so setting it is no correction of the coding (B-1010).
+NOT_CODING = frozenset({"place of supply"})
+
+
 def corrected(event: dict[str, Any]) -> bool:
     """Whether an approval (its ``approved`` event) changed what the coder proposed: a value it gave changed, a line
     added or removed. Filling in what it left blank (a cost center it could not pick, an UNASSIGNED account, an empty
@@ -64,9 +69,9 @@ def corrected(event: dict[str, Any]) -> bool:
     changes = (event.get("detail") or {}).get("changes") or []
     return any(
         str(c.get("what") or "").endswith(" added")
-        or str(c.get("before") or "").strip().upper() not in ("", "UNASSIGNED", "NONE")
+        or str(c.get("before") or "").strip().upper() not in ("", "UNASSIGNED", "NONE", "(BLANK)")
         for c in changes
-        if isinstance(c, dict)
+        if isinstance(c, dict) and c.get("what") not in NOT_CODING
     )
 
 

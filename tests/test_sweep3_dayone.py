@@ -5,6 +5,7 @@ steps and the words of the docs)."""
 from __future__ import annotations
 
 import copy
+import datetime as dt
 import importlib
 import json
 from dataclasses import replace
@@ -417,12 +418,13 @@ def test_the_approved_today_tile_says_how_many_wait_for_a_second_approval():
     original = review_page.approved_today
     review_page.approved_today = lambda store: 2
     try:
-        tile = kpis(FakeStore(), [], [], [{"id": 1}], awaiting=[{"id": 2}])[1]
+        mine = {"id": 2, "reviewer": review_page.reviewer(), "reviewed_at": dt.datetime.now().isoformat()}
+        tile = kpis(FakeStore(), [], [], [{"id": 1}], awaiting=[mine, {"id": 3, "reviewer": "Someone else"}])[1]
     finally:
         review_page.approved_today = original
     assert tile["value"] == "2"
-    assert "1 waiting for a second approval" in tile["sub"]
-    assert "1 approved in total" in tile["sub"]  # (plain words: B-517)
+    assert "1 waits for a second approval" in tile["sub"]  # of mine today, not someone else's
+    assert "1 fully approved" in tile["sub"]  # as the Approved tab lists them (plain words: B-517, B-1006)
 
 
 def test_a_dry_run_with_nothing_to_load_has_no_stray_dash():

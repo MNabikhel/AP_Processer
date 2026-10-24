@@ -7,6 +7,7 @@ restores). This module computes the approval differences and turns events into r
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from ..coding.vendors import mask_account
@@ -105,8 +106,13 @@ def _tax_signature(doc: dict[str, Any]) -> list[tuple]:
     )  # fmt: skip
 
 
-def diff_coding(ai: dict[str, Any], final: dict[str, Any]) -> list[dict[str, str]]:
-    """Every change a reviewer made: header fields, line fields, added/removed lines, tax lines."""
+_ACCOUNTS = ("predicted_gl_code", "predicted_cost_center")
+
+
+def diff_coding(ai: dict[str, Any], final: dict[str, Any], cost_centers: bool = True) -> list[dict[str, str]]:
+    """Every change a reviewer made: header fields, line fields, added/removed lines, tax lines. An account or cost
+    center blank either way is no change, nor is any cost center when no cost center list is in use
+    (``cost_centers`` False): the screen shows none to keep (D-86, B-1001)."""
     changes: list[dict[str, str]] = []
     for field, label in HEADER_LABELS.items():
         before, after = ai.get(field), final.get(field)
@@ -123,7 +129,11 @@ def diff_coding(ai: dict[str, Any], final: dict[str, Any]) -> list[dict[str, str
             continue
         matched.add(id(original))
         for field, label in LINE_LABELS.items():
+            if field == "predicted_cost_center" and not cost_centers:
+                continue
             before, after = original.get(field), line.get(field)
+            if field in _ACCOUNTS:  # "UNASSIGNED" is the code's word for a blank (B-464)
+                before, after = ("" if v in ("UNASSIGNED", None) else v for v in (before, after))
             if field == "taxes_applied":  # the line's tax code: its taxes, or why it carries none (D-64)
                 from ..coding.line_tax import code_label, legacy_basis, tax_code_of
 
@@ -172,6 +182,59 @@ def _table(d: dict[str, Any]) -> str:
     return _TABLES.get(table, table)
 
 
+# A setting's key (the store's, or the .env's) as the Settings pages name it (B-1000).
+SETTING_LABELS = {
+    "jde_e1": "JD Edwards E1 settings", "show_jde_settings": "Show JD Edwards settings",
+    "show_developer_tools": "Show developer tools", "our_province": "Our province",
+    "site_provinces": "Our sites' provinces", "approval_limit": "Second approval limit", "fx_rates": "Exchange rates",
+    "default_terms_days": "Days to pay when no terms are printed", "why_after": "When to ask why",
+    "touchless_limit": "Touchless limit", "touchless_processing": "Touchless processing",
+    "export_layout": "Export layout", "verifier": "AI reviewer", "backup_copy_dir": "Backup copy folder",
+    "policy_notes": "Policy notes", "reviewer": "Your name", "azure_check": "Azure check",
+    "AP_REVIEWER": "Your name", "AP_REVIEW_THRESHOLD": "Review threshold",
+    "AP_CONSTRAIN_CODES": "Only accounts from the list",
+}  # fmt: skip
+
+
+def setting_label(key: str) -> str:
+    """ "approval_limit" → "Second approval limit"; a key not listed in words ("AP_LM_STUDIO_URL" → "LM studio url")."""
+    key = str(key or "")
+    if key in SETTING_LABELS:
+        return SETTING_LABELS[key]
+    words = key.removeprefix("AP_").replace("_", " ").strip().lower()
+    return words[:1].upper() + words[1:]
+
+
+def second_reason(detail: dict[str, Any]) -> str:
+    """Why a first approval waits for a second one, in plain words, from what the approval stored
+    (``second_reason``, ``Store.second_approval_reason``): "over the approval limit of 15,000.00 CAD", or "no CAD
+    exchange rate for USD (Settings → Review), so it needs one whatever its amount"."""
+    stored = str(detail.get("second_reason") or "").strip()
+    rate = re.match(r"no CAD rate for ([A-Za-z]+)", stored)
+    if rate:
+        currency = rate.group(1)
+        return f"no CAD exchange rate for {currency} is set (Settings → Review), so it needs one whatever its amount"
+    return stored or "over the approval limit"
+
+
+def approved_over(detail: dict[str, Any]) -> list[dict[str, Any]]:
+    """The errors an approval went ahead over ("Approve anyway", D-75), each with its title in plain words, its line
+    and the reason typed: [{"code", "title", "line", "reason"}]."""
+    from ..ops.help import help_for
+
+    out = []
+    for issue in detail.get("open_issues") or []:
+        if issue.get("severity") != "error":
+            continue
+        code = str(issue.get("code") or "")
+        found = help_for(code)
+        title = found.title if found else code.replace("_", " ").capitalize()
+        line = issue.get("line")
+        out.append({"code": code, "title": f"{title} (line {line})" if line else title, "line": line,
+                    "reason": str(issue.get("override_reason") or "").strip()})  # fmt: skip
+    return out
+
+
 def describe(event: dict[str, Any]) -> str:
     """One readable sentence for an event (plain text; escape before putting it in HTML)."""
     d = event.get("detail") or {}
@@ -193,10 +256,11 @@ def describe(event: dict[str, Any]) -> str:
     if action == "email_attachment_to_queue":
         return f"{d.get('file', '')} moved to the invoices folder to be read"
     if action == "approved":
-        overridden = [i["code"] for i in d.get("open_issues") or [] if i.get("severity") == "error"]
-        prefix = f"approved despite {', '.join(overridden)}; " if overridden else ""
+        over = approved_over(d)
+        prefix = ("Approved over: " + "; ".join(f"{o['title']}" + (f" ({o['reason']})" if o["reason"] else "")
+                                                for o in over) + ". ") if over else ""  # fmt: skip
         if d.get("needs_second"):
-            prefix += "over the approval limit (second approval needed); "
+            prefix += f"Second approval needed: {second_reason(d)}. "
         return prefix + _approved_text(d)
     if action == "rejected":
         return f"reason: {d.get('reason') or 'none given'}" + (
@@ -224,9 +288,9 @@ def describe(event: dict[str, Any]) -> str:
     if action == "settings_changed":
         rename = d.get("reviewer") or {}
         renamed = f" (reviewer name {rename.get('from')} → {rename.get('to')})" if rename else ""
-        changes = "".join(f" ({key} {c.get('from') or '(none)'} → {c.get('to') or '(none)'})"
+        changes = "".join(f" ({setting_label(key)} {c.get('from') or '(none)'} → {c.get('to') or '(none)'})"
                           for key, c in (d.get("changes") or {}).items())  # fmt: skip
-        return ", ".join(d.get("keys") or []) + renamed + changes
+        return ", ".join(setting_label(k) for k in d.get("keys") or []) + renamed + changes
     if action == "vendor_updated":
         parts = []
         if "status" in d:

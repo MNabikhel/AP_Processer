@@ -27,7 +27,7 @@
 </details>
 
 {% if not vendors %}
-<section class="card">{{ ui.empty_state("No vendors yet", "Vendors appear here once invoices have been processed.") }}</section>
+<section class="card">{% if master_count %}{{ ui.empty_state((master_count | plural("vendor")) ~ " in the vendor master", "Imported from the ERP. Each vendor appears here, with its invoices and spend, once its first invoice is processed.") }}{% else %}{{ ui.empty_state("No vendors yet", "Vendors appear here once invoices have been processed, or import the vendor master above.") }}{% endif %}</section>
 {% else %}
 {{ tile_row(tiles) }}
 

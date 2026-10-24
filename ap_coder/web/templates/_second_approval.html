@@ -1,0 +1,8 @@
+{# Why an invoice waits for a second approval, and each error its first approval went over with the reason typed
+   (D-75): said to the second approver on the invoice and in the queue's Second approval tab (B-990). #}
+{% macro why(second_why, approved_over, limit) -%}
+{% if second_why %}<p class="muted second-why"><b>Why a second approval:</b> {{ second_why[:1] | upper }}{{ second_why[1:] }}.</p>
+{% elif limit %}<p class="muted second-why">Invoices over {{ limit | money }} CAD need a second approver before they can be exported.</p>{% endif %}
+{% if approved_over %}<div class="second-over"><b>Approved anyway over {{ "this error" if approved_over | length == 1 else "these errors" }}:</b>
+  <ul>{% for o in approved_over %}<li>{{ o.title }}{% if o.reason %}: <i>“{{ o.reason }}”</i>{% else %} (no reason given){% endif %}</li>{% endfor %}</ul></div>{% endif %}
+{%- endmacro %}

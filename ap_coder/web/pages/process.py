@@ -270,13 +270,17 @@ def pilot_steps(store: Store) -> list[tuple[str, str, str]]:
         what = "the ERP's vendor list" + (", with each supplier's address number (AN8)" if shown else "")
         vendor = ("todo", VENDOR_STEP, f"on Vendors: import {what}")
     elif shown:
-        an8 = sum(1 for v in vendors if str(v.get("erp_id") or "").strip().isdigit())
+        # its ERP ID, else the number set in Settings → JD Edwards → Supplier address numbers (B-1002)
+        overrides = jde.load(store).an8_overrides
+        an8 = sum(1 for v in vendors if str(v.get("erp_id") or "").strip().isdigit()
+                  or str(overrides.get(v.get("vendor_key") or "") or "").strip().isdigit())  # fmt: skip
         vendor = (
             ("ok" if an8 else "todo"),
             VENDOR_STEP,
             f"{ui.plural(len(vendors), 'vendor')}, {an8} with an address number (AN8)"
             if an8
-            else f"{ui.plural(len(vendors), 'vendor')}, but no address number (AN8): import it as the ERP ID",
+            else f"{ui.plural(len(vendors), 'vendor')}, but no address number (AN8): import it as the ERP ID, or set "
+            "it in Settings → JD Edwards → Supplier address numbers",
         )
     else:
         vendor = ("ok", VENDOR_STEP, ui.plural(len(vendors), "vendor"))

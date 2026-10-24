@@ -385,13 +385,14 @@ def _would_be_touchless(inv: dict[str, Any]) -> bool:
 
 
 def our_invoices(store: Any, settings: jde.JdeSettings | None = None) -> list[Ours]:
-    """Every invoice approved in AP Coder (first approval or both), oldest first, as JD Edwards would get it."""
-    from ..core.store import APPROVED, PENDING
+    """Every invoice fully approved in AP Coder, oldest first, as JD Edwards would get it: one still waiting for its
+    second approval is not exported yet (B-1012)."""
+    from ..core.store import APPROVED
     from ..erp.exports import distribution
 
     settings = settings or jde.load(store)
     ids = store.vendor_ids()
-    rows = sorted(store.list_invoices(APPROVED) + store.list_invoices(PENDING), key=lambda r: r["id"])
+    rows = sorted(store.list_invoices(APPROVED), key=lambda r: r["id"])
     out = []
     for row in rows:
         inv = store.get_invoice(row["id"])

@@ -848,3 +848,17 @@ that is reversed keeps its line, marked "replaced by D-NN".
   as an invoice it was seen on. Why: a person approving in bulk refuses any warning; an invoice nobody looked at must
   not pass more easily than one a person approves without opening. The learning simulation (`bench learn`) scores
   the reading only, so its figures are unchanged. (B-950 to B-955)
+- **D-96** · The review screen's keys from the box it focuses, and drafts in the queue (fourth UI sweep). (1) Ctrl+Z
+  in a box of the review form (or its picker) not typed in since the page opened is the screen's, as outside a text
+  box: the last change, else the approval just made (the banner's Undo); once something is typed there it is the
+  box's own. (2) Alt+←/→/↑ go to the previous / next invoice and the queue from a text box too, except on a Mac, where
+  Option+arrows move the caret by word. (3) A box focused on opening that sits half under the approve bar is scrolled
+  just above it; wholly below the fold, the page stays at its top (D-86 (5)). (4) A draft keeps its own check
+  (`check.why`: the approve bar's first blocker, "" when none) and the time it was last edited (`saved_at`, not
+  changed when the same edits are checked again); the queue row of an invoice with this person's draft says "Edits not
+  approved yet: …" and is never Ready (bulk approval leaves it alone). (5) The second approver sees the stored reason
+  for the second approval and each error approved anyway with its reason, by its Help title (`audit.second_reason`,
+  `audit.approved_over`). Why: a sweep found Ctrl+Z and Alt+arrows dead where the page itself put the focus, a queue
+  that contradicted the draft, and a second approver who couldn't see what was approved over.
+  (`static/js/invoice.js`, `web/pages/invoice.py` `_keep_draft`, `web/pages/review.py` `draft_reasons`,
+  `core/audit.py`; `tests/test_web_ui_sweep4.py`)

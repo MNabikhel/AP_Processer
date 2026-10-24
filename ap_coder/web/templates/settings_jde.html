@@ -139,7 +139,7 @@
         <thead><tr><th>Province</th><th>Name</th><th>Tax area (VLTXA1)</th><th>Code (VLEXR1)</th></tr></thead>
         <tbody>
           {% for r in tax_rows %}
-          <tr><td><input type="hidden" name="province" value="{{ r.province }}">{{ r.province }}</td><td>{{ r.name }}</td>
+          <tr><td><input type="hidden" name="province" value="{{ r.province }}">{{ r.shown }}</td><td>{{ r.name }}</td>
             <td><input type="text" name="tax_area" value="{{ r.tax_area }}" maxlength="10" aria-label="Tax area for {{ r.name }}"></td>
             <td><select name="code" aria-label="Code for {{ r.name }}">{% for c in tax_codes %}<option value="{{ c }}"{% if r.code == c %} selected{% endif %}>{{ c or "—" }}</option>{% endfor %}</select></td></tr>
           {% endfor %}
@@ -174,7 +174,7 @@
     <label class="field">Code for terms not in the table (optional)
       <input type="text" name="default_terms_code" value="{{ js.payment_terms_code }}" maxlength="3" aria-label="Code for terms not in the table">
       <small class="muted">Blank: no code is sent for them and JD Edwards uses the supplier's own terms; the review screen
-        then warns when an invoice's terms are not in the table.</small></label>
+        then notes it when an invoice's terms are not in the table.</small></label>
     <div class="row">
       <button class="btn" type="button" data-add-row><span class="ms" aria-hidden="true">add</span>Add a row</button>
       <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save the payment terms</button>

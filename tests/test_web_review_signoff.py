@@ -192,15 +192,15 @@ def test_in_a_browser_a_long_remark_is_counted_quietly_until_its_box_is_used(bro
     quiet = page.evaluate("""() => { const t = [...document.querySelectorAll('textarea[name=line_description]')]
         .find((x) => x.value.trim().length > 30); const note = t.closest('td').querySelector('[data-remark]');
         const warn = getComputedStyle(document.documentElement).getPropertyValue('--lg-warning').trim();
-        return {shown: !note.hidden, color: getComputedStyle(note).color, border: getComputedStyle(t).borderColor,
-                title: note.title, warn}; }""")
-    assert quiet["shown"] and "JD Edwards keeps the first 30 characters" in quiet["title"]
+        return {shown: !note.hidden, border: getComputedStyle(t).borderColor, title: t.title, warn}; }""")
+    # not typed in: no count at all, the box's title says what JD Edwards keeps (B-995)
+    assert not quiet["shown"] and "JD Edwards keeps the first 30 characters" in quiet["title"]
     probe = page.evaluate(
         """(c) => { const d = document.createElement('i'); d.style.color = c; document.body.append(d);
         const v = getComputedStyle(d).color; d.remove(); return v; }""",
         quiet["warn"],
     )
-    assert quiet["color"] != probe and quiet["border"] != probe  # grey, not the warning colour
+    assert quiet["border"] != probe  # grey, not the warning colour
     long = page.locator("textarea[name=line_description]").first
     long.focus()
     note = page.evaluate("""() => { const t = document.activeElement;
