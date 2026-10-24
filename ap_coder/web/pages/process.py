@@ -29,7 +29,15 @@ from ap_coder.core.config import Settings
 from ap_coder.core.reference_data import ReferenceData
 from ap_coder.core.store import REVIEW, Store
 from ap_coder.intake import inbox
-from ap_coder.intake.mailbox import EMAIL_EXTENSIONS, Unpacked, emails_in, safe_name, unpack, unpack_folder
+from ap_coder.intake.mailbox import (
+    EMAIL_EXTENSIONS,
+    MAX_EMAIL_BYTES,
+    Unpacked,
+    emails_in,
+    safe_name,
+    unpack,
+    unpack_folder,
+)
 from ap_coder.intake.pictures import looks_incomplete
 from ap_coder.web import identity
 from ap_coder.web.core import (
@@ -59,6 +67,8 @@ router = APIRouter()
 JOB = "process"
 STILL_SAVING_SECONDS = 60  # a file changed this recently whose end is missing is still being written
 ACCEPT = sorted(SUPPORTED_EXTENSIONS | EMAIL_EXTENSIONS)  # what the upload takes: PDFs, scans, photos, saved emails
+# The largest invoice uploaded (B-981): as a spreadsheet (web/files.py); a saved email up to what the mailbox reads.
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 
 # --- Saving uploads -----------------------------------------------------------------------------------------------
@@ -602,11 +612,16 @@ def _start(request: Request, work: Any, total: int) -> JSONResponse:
 @router.post("/process/upload")
 async def process_upload(request: Request, files: list[UploadFile] = File(...)) -> JSONResponse:  # noqa: B008
     """Save the uploaded files to the invoices folder, then read and code the new ones in the background."""
-    received = [(upload.filename or "invoice", await upload.read()) for upload in files]
+    received = []
+    for upload in files:
+        name = upload.filename or "invoice"
+        limit = MAX_EMAIL_BYTES if Path(name).suffix.lower() in EMAIL_EXTENSIONS else MAX_UPLOAD_BYTES
+        content = await upload.read(limit + 1)  # never more than the limit read: the rest stays in the spool file
+        received.append((name, content if len(content) <= limit else None))
     return await run_in_threadpool(_save_and_start, request, received)
 
 
-def _save_and_start(request: Request, received: list[tuple[str, bytes]]) -> JSONResponse:
+def _save_and_start(request: Request, received: list[tuple[str, bytes | None]]) -> JSONResponse:
     store, settings = get_store(request), get_settings(request)
     if jobs(request).get(JOB).running:
         return refuse("AP Coder is already reading invoices. Wait for it to finish, then try again.", 409)
@@ -615,6 +630,12 @@ def _save_and_start(request: Request, received: list[tuple[str, bytes]]) -> JSON
     folder = invoice_dir(store)
     saved, mails, notes = [], [], []
     for name, content in received:
+        if content is None:  # over the limit (B-981): an invoice is never this large
+            email = Path(name).suffix.lower() in EMAIL_EXTENSIONS
+            notes.append(flash_message(f"{name} was not read: it is larger than {'100' if email else '50'} MB. An "
+                                       "invoice is far smaller: scan it again at 300 dpi, or save it as a PDF.",
+                                       "warn"))  # fmt: skip
+            continue
         if Path(name).suffix.lower() not in ACCEPT:
             notes.append(flash_message(f"{name} was not read: AP Coder reads PDFs, pictures (JPEG, PNG, HEIC, TIFF, "
                                        "BMP, WEBP, GIF), saved emails (.eml, .msg) and invoices saved as text (.txt). "

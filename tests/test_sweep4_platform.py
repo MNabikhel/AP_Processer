@@ -429,3 +429,36 @@ def test_healthz_tells_a_colleague_only_that_it_is_up(store):
     found = TestClient(app, base_url="http://localhost", client=("10.0.0.5", 50000)).get("/healthz").json()
     assert found == {"ok": True, "app": "ap-coder"}
     assert "folder" in local(app).get("/healthz").json()
+
+
+# --- 7. Windows' reserved names, and the size of an invoice uploaded ------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "name, saved",
+    [("CON.pdf", "_CON.pdf"), ("nul.pdf", "_nul.pdf"), ("COM1.jpg", "_COM1.jpg"), ("aux", "_aux"),
+     ("lpt9.tar.gz", "_lpt9.tar.gz"), ("Con .pdf", "_Con .pdf"), ("CONTRACT.pdf", "CONTRACT.pdf"),
+     ("COM10.pdf", "COM10.pdf")],
+)  # fmt: skip
+def test_a_windows_reserved_name_is_saved_with_an_underscore_before_it(name, saved):
+    from ap_coder.intake.mailbox import safe_name
+    from ap_coder.web.pages.process import safe_file_name
+
+    assert safe_name(name) == saved and safe_file_name(name) == saved
+
+
+def test_an_invoice_upload_over_the_size_limit_is_not_saved(store, monkeypatch):
+    import json
+
+    from ap_coder.web.pages import process
+
+    monkeypatch.setattr(process, "MAX_UPLOAD_BYTES", 1000)
+    app = create_app(web_settings(), store, start_reader=False)
+    client = local(app)
+    big = b"%PDF-1.4\n" + b"0" * 2000
+    answer = client.post("/process/upload", files=[("files", ("big.pdf", big, "application/pdf"))], headers=PAGE)
+    assert answer.json()["ok"], answer.text
+    job = app.state.jobs.get(process.JOB)
+    job.wait(30)
+    assert "larger than" in json.dumps(job.snapshot())
+    assert not (process.invoice_dir(store) / "big.pdf").exists()
