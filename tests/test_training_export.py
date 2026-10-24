@@ -347,3 +347,26 @@ def test_learning_from_an_approval_withdrawn_meanwhile_teaches_nothing(tmp_path,
     with store._conn() as conn:
         assert conn.execute("SELECT COUNT(*) FROM template_snapshots").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM supplier_outcomes").fetchone()[0] == 0
+
+
+def test_a_tax_number_from_the_vendor_list_is_not_labelled_as_read(store, ground_truth):
+    """A GST/HST number the review screen filled from the vendor list (not printed on the invoice) went into the
+    training set as read off the page, and as a correction of the reading (B-954)."""
+    from ap_coder.core.schema import FROM_VENDOR_LIST
+
+    read = {**ground_truth, "gst_hst_registration_number": ""}
+    final = {
+        **read,
+        "gst_hst_registration_number": "123456782 RT0001",
+        FROM_VENDOR_LIST: ["gst_hst_registration_number"],
+    }
+    invoice_id = store.add_invoice(PDF, read, {"requires_review": False})
+    store.approve_invoice(invoice_id, final, "Ann")
+    buf = io.BytesIO()
+    assert export_training_set(store, buf)["invoices"] == 1
+    with zipfile.ZipFile(buf) as zf:
+        row = json.loads(zf.read("fields.jsonl").decode().splitlines()[0])
+        chat = zf.read("chat.jsonl").decode()
+    assert row["fields"]["gst_hst_registration_number"] == ""
+    assert not row["corrected"].get("gst_hst_registration_number")
+    assert "123456782" not in chat

@@ -33,6 +33,7 @@ import zipfile
 from pathlib import Path
 from typing import IO, Any
 
+from ..core.schema import as_read
 from ..core.store import APPROVED, Store
 from .imaging import render_page_images
 
@@ -290,7 +291,9 @@ def export_training_set(
             for n, png in enumerate(pages, 1):
                 images.append(f"images/{inv['id']}-p{n}.png")
                 zf.writestr(images[-1], png, compress_type=zipfile.ZIP_STORED)  # a PNG is compressed already
-            final = inv["final_output"]
+            # A tax number the review screen filled from the vendor list was not read off the page: labelled as the
+            # reading had it (D-65, B-954).
+            final = as_read(inv["final_output"], inv.get("ai_output") or {})
             values = approved_values(final)
             capture = store.get_capture(inv["id"])
             split = holdout_split(inv["id"])
