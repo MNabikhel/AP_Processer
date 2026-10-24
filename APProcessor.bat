@@ -101,6 +101,8 @@ if errorlevel 1 exit /b 0
 echo.
 if defined OLDPY echo Python %OLDPY% is installed, but AP Coder needs Python 3.11 or newer.
 if not defined OLDPY echo AP Coder needs Python 3.11 or newer, and this computer has none.
+echo winget downloads it from Microsoft's package source (python.org's installer). To download nothing,
+echo use the offline bundle instead, or close this window and set AP_ALLOW_INTERNET=0.
 set "ANSWER=Y"
 if not defined AP_YES set /p "ANSWER=Install Python 3.12 now from the internet, just for you? It is free and takes about 2 minutes. [Y/n] "
 if /i "%ANSWER:~0,1%"=="N" exit /b 0

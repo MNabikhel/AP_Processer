@@ -718,7 +718,10 @@ class InvoicesMixin:
         if inv["status"] != REVIEW:  # a failed read has nothing checked to approve
             raise ValueError(f"invoice {invoice_id} is not in the review queue ({inv['status']})")
         ai = inv["ai_output"] or {"line_items": []}
-        second_reason = self.second_approval_reason(final_output)
+        currency = str(final_output.get("currency") or "CAD").strip().upper()
+        # The limit and rate in force since the invoice came in, the strictest of them (B-970); kept in the event.
+        limit, rate = self.approval_controls(currency, inv.get("created_at") or "")
+        second_reason = self.second_approval_reason(final_output, limit, rates={} if rate is None else {currency: rate})
         needs_second = bool(second_reason)
         vendor_name = final_output.get("vendor_name", "")
         key = vendor_key(vendor_name)
@@ -845,6 +848,7 @@ class InvoicesMixin:
                 "total": final_output.get("grand_total"), "changes": diff_coding(ai, final_output),
                 **({"bulk": True} if bulk else {}),
                 **({"needs_second": True, "second_reason": second_reason} if needs_second else {}),
+                **({"limit": limit, "rate": rate} if limit else {}),
                 **({"open_issues": open_issues} if open_issues else {}), **({"login": login} if login else {}),
             })  # fmt: skip
             conn.executemany(
@@ -870,7 +874,8 @@ class InvoicesMixin:
             return 0.0
 
     def second_approval_reason(self, coding: dict[str, Any], limit: float | None = None, *,
-                               unknown_rate: bool = True) -> str:  # fmt: skip
+                               unknown_rate: bool = True,
+                               rates: dict[str, float] | None = None) -> str:  # fmt: skip
         """Why this invoice needs a second approver ("" when it doesn't). The limit is in CAD: a foreign-currency total
         is converted at the rate set in Settings. Without a rate it is never taken as CAD (9,000 EUR is about 13,000
         CAD): it needs the second approver, whatever its total (``unknown_rate``; False: left out, for a caller that
@@ -879,7 +884,7 @@ class InvoicesMixin:
         if not limit:
             return ""
         currency = str(coding.get("currency") or "CAD").strip().upper()
-        rate = self.fx_rates().get(currency)
+        rate = (self.fx_rates() if rates is None else rates).get(currency)
         if rate is None:
             return f"no CAD rate for {currency}: a second approval is needed" if unknown_rate else ""
         total = abs(float(coding.get("grand_total") or 0))

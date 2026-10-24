@@ -36,8 +36,10 @@ from ..core.safe import neutralise_sheet, xlsx_row
 
 FORMATS = {
     "xlsx": "Excel workbook: invoices, GL lines and a GL summary",
-    "csv": "CSV: one row per GL line (for ERP import)",
-    "custom": "Custom CSV: your ERP's columns (set up below)",
+    "csv": "CSV: one row per GL line, for the ERP loader (its text exactly as it is: to look at it in Excel, use the "
+    ".xlsx export)",
+    "custom": "Custom CSV: your ERP's columns (set up below), for the ERP loader (to look at it in Excel, use the "
+    ".xlsx export)",
     "jde": "JD Edwards E1 (F0411Z1 / F0911Z1): ZIP of Z-table files (Settings → JD Edwards E1)",
 }
 

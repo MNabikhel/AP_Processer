@@ -107,6 +107,28 @@ connects to the internet (ONNX Runtime's own usage reports to Microsoft included
   grid clears every tick in the database. Back on this version, tick the meals accounts again (GL accounts & tax →
   GL accounts) before approving meals invoices, or their full tax credit is claimed.
 
+## Going back to the previous version
+
+There is no button for it yet: an update removes the older folder once the new version has passed its self-check,
+and the older version refuses a database the newer one has updated (*made by a newer AP Coder*). Going back takes
+these steps, about five minutes:
+
+1. **Close AP Coder** (close its window; on the office network, tell the others first).
+2. **Get the previous version back**: unzip the offline bundle you updated from (keep the ZIP of each version you
+   install) into a **new** folder, e.g. `C:\APCoder-previous`. Don't start it yet.
+3. **Set the new version aside**: rename its folder (e.g. add `-not-used`). Left as it is, the older version hands
+   over to it at the start, as it would to any newer one.
+4. **Put the database back as it was before the update.** In the data folder (`C:\Users\<you>\APCoder`), open
+   `backups`: the update made `ap_coder-<date>-before-update-from-schema-<n>.db` before it changed anything. Rename
+   the data folder's `ap_coder.db` to `ap_coder.db.newer` (with its `ap_coder.db-wal` and `ap_coder.db-shm`, if
+   there), then copy that newest *before-update* backup into the data folder as `ap_coder.db`. No *before-update*
+   backup from that day means the update didn't change the database: keep `ap_coder.db` as it is.
+5. **Double-click APProcessor** in the previous version's folder.
+
+What was done after the update (approvals, imports, settings) is in `ap_coder.db.newer`, not in the database you
+put back: do it again, or, to go forward again later, put `ap_coder.db.newer` back as `ap_coder.db` before starting
+the newer version. Invoice files and the rest of the data folder are not touched by any of this.
+
 ## How this is checked
 
 `scripts/ci/old_versions.py` does it for real: `extract` (the version's files, `git archive`), `install` (as its

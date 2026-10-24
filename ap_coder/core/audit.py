@@ -224,7 +224,9 @@ def describe(event: dict[str, Any]) -> str:
     if action == "settings_changed":
         rename = d.get("reviewer") or {}
         renamed = f" (reviewer name {rename.get('from')} → {rename.get('to')})" if rename else ""
-        return ", ".join(d.get("keys") or []) + renamed
+        changes = "".join(f" ({key} {c.get('from') or '(none)'} → {c.get('to') or '(none)'})"
+                          for key, c in (d.get("changes") or {}).items())  # fmt: skip
+        return ", ".join(d.get("keys") or []) + renamed + changes
     if action == "vendor_updated":
         parts = []
         if "status" in d:

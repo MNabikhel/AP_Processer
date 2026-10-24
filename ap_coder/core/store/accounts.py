@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import sqlite3
 import threading
 from typing import Any
@@ -14,10 +15,12 @@ from ..paths import PROJECT_DIR, default_db_path, find_moved_file, private_dir  
 from ..reference_data import ReferenceData, ReferenceTable, marks_meals, parse_policy_notes
 from ._base import (
     ACCOUNT_TABLES,
+    APPROVAL_CONTROLS,
     EVENT_ORIGIN,
     _clean_code,
     _in_list,
     _now,
+    parse_fx_rates,
 )
 
 # The reference data as last built, per database: (what it was built from, it) (``Store.reference_data``).
@@ -342,10 +345,44 @@ class AccountsMixin:
         with self._conn() as conn:
             if key == "policy_notes" and self.get_setting(key) != value:
                 self._log(conn, "policy_changed", actor=actor, detail={"rules": len(parse_policy_notes(value))})
+            row = None
+            if key in APPROVAL_CONTROLS:  # read on this connection: one call, one connection
+                row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+            before = row["value"] if row else ""
+            if key in APPROVAL_CONTROLS and before != value:
+                # The second-approval controls: their old and new values are kept, in the audit trail and for
+                # ``approval_controls`` (the strictest in force since an invoice came in counts, B-970).
+                self._log(conn, "settings_changed", actor=actor,
+                          detail={"keys": [key], "changes": {key: {"from": before, "to": value}}})  # fmt: skip
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (key, value),
             )
+
+    def approval_controls(self, currency: str, since: str) -> tuple[float, float | None]:
+        """The approval limit and the CAD rate of ``currency`` that decide an invoice that came in at ``since``: the
+        strictest of those in force since then (the lowest limit above 0; the highest rate, or none when it had
+        none). So a limit turned off, raised, or a rate lowered just before approving can't skip a second approval
+        that was due when the invoice came in (B-970); an invoice that came in after the change follows it."""
+        currency = (currency or "CAD").strip().upper()
+        limits, rates = [self.approval_limit()], [self.fx_rates().get(currency)]
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT detail FROM events WHERE action = 'settings_changed' AND created_at >= ? "
+                "AND detail LIKE '%\"changes\"%'",
+                (since or "",),
+            ).fetchall()
+        for row in rows:
+            changes = (json.loads(row["detail"] or "{}").get("changes")) or {}
+            if "approval_limit" in changes:
+                try:
+                    limits.append(max(float(changes["approval_limit"].get("from") or 0), 0.0))
+                except (TypeError, ValueError):
+                    pass
+            if "fx_rates" in changes:
+                rates.append(parse_fx_rates(str(changes["fx_rates"].get("from") or "")).get(currency))
+        above = [limit for limit in limits if limit > 0 and math.isfinite(limit)]
+        return (min(above) if above else 0.0), (None if None in rates else max(r for r in rates if r is not None))
 
     def has_reference(self) -> bool:
         with self._conn() as conn:

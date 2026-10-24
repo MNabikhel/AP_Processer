@@ -35,7 +35,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..capture.layout import HEIF_EXTENSIONS, IMAGE_EXTENSIONS, ONE_FRAME_EXTENSIONS, open_image
+from ..capture.layout import (
+    HEIF_EXTENSIONS,
+    IMAGE_EXTENSIONS,
+    ONE_FRAME_EXTENSIONS,
+    open_image,
+    within_pixel_limit,
+)
 
 log = logging.getLogger(__name__)
 
@@ -263,6 +269,7 @@ def image_to_pdf(source: str | Path, target: str | Path, *, note: dict[str, Any]
             for i, frame in enumerate(ImageSequence.Iterator(img)):
                 if i >= (1 if one else MAX_FRAMES):
                     break
+                within_pixel_limit(frame)  # each page of a TIFF too, before it is decoded (B-975)
                 if frame.mode not in ("P", "PA"):  # counting the pages read the last one: its palette is not this
                     frame.palette = None  # page's (Pillow keeps it, and a black-and-white page then can't load)
                 frame.load()

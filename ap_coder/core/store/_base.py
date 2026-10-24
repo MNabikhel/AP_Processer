@@ -42,6 +42,16 @@ from ..memory import ACCEPTED, CODED, CORRECTED, VENDOR_KEY_RULES, pair_lines, r
 from ..paths import PROJECT_DIR, default_db_path, find_moved_file, private_dir  # noqa: F401  (re-exported)
 from ..reference_data import UNASSIGNED, ReferenceData, ReferenceTable, parse_policy_notes
 from ..schema import as_read
+from .fx import (  # noqa: F401  (re-exported)
+    _FX_RATE,
+    APPROVAL_CONTROLS,
+    LOW_UNIT_FX_RATES,
+    MIN_FX_RATE,
+    min_fx_rate,
+    parse_fx_rates,
+    tiny_fx_rates,
+    unread_fx_text,
+)
 
 # 10: erp_invoices, 11: coding_rules (by _SCHEMA), 12: currency, 13: credit notes not due,
 # 14: invoice_capture, supplier_profiles, supplier_outcomes (by _SCHEMA), 15: reader_outcomes, page_reads (by _SCHEMA),
@@ -280,24 +290,6 @@ def _now() -> str:
 def _stale_before() -> str:
     """A page read started before this time is no longer under way (see STALE_READING_HOURS)."""
     return (dt.datetime.now() - dt.timedelta(hours=STALE_READING_HOURS)).isoformat(timespec="seconds")
-
-
-_FX_RATE = re.compile(r"([A-Za-z]{3})\s*[=:]?\s*([0-9]+(?:[.,][0-9]+)?)")
-
-
-def parse_fx_rates(text: str) -> dict[str, float]:
-    """ "USD=1.37, EUR 1,50; GBP: 1.85" -> {"USD": 1.37, "EUR": 1.5, "GBP": 1.85} (CAD is always 1)."""
-    rates = {"CAD": 1.0}
-    for code, value in _FX_RATE.findall(text or ""):
-        rate = float(value.replace(",", "."))
-        if rate > 0 and code.upper() != "CAD":  # a CAD rate typed in would scale every limit check
-            rates[code.upper()] = rate
-    return rates
-
-
-def unread_fx_text(text: str) -> str:
-    """What of ``text`` is not a rate ``parse_fx_rates`` reads ("" when all of it is): "1.37 USD" -> "1.37 USD"."""
-    return re.sub(r"[\s,;]+", " ", _FX_RATE.sub(" ", text or "")).strip()
 
 
 def _clean_code(value: Any) -> str:

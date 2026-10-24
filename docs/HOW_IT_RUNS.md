@@ -433,7 +433,7 @@ address is printed; forward the port (`ssh -L 8501:127.0.0.1:8501`) to use it fr
 
 ## 12. Compared with CloseDesk
 
-CloseDesk (`/home/user/mnabikhel/outlook-email`, the sibling app) starts with two short scripts, `CloseDesk.bat`
+CloseDesk (the sibling app, in its own `outlook-email` folder) starts with two short scripts, `CloseDesk.bat`
 (52 lines) and `CloseDesk.command` (37 lines), which make `.venv`, `pip install -e ".[ocr]"` online, check
 `scripts/check_deps.py`, and run `python -m controller_inbox run` (read the drop folder, write the digest, then
 uvicorn on port 8765 in the same process).

@@ -2,6 +2,7 @@
 
 import json
 import re
+import time
 
 import pytest
 
@@ -53,6 +54,7 @@ def test_under_the_limit_or_no_limit_is_approved_at_once(store, tmp_path):
     store.approve_invoice(a, small, "Jane")
     assert store.get_invoice(a)["status"] == APPROVED
     store.set_setting("approval_limit", "0")
+    time.sleep(1.1)  # a change in the invoice's own second counts as in force when it came in (B-970)
     b = store.add_invoice(tmp_path / "b.pdf", {**_gt(), "invoice_number": "B"}, {})
     store.approve_invoice(b, {**_gt(), "invoice_number": "B"}, "Jane")
     assert store.get_invoice(b)["status"] == APPROVED

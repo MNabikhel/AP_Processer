@@ -60,6 +60,7 @@ from ap_coder.web.core import (
     render,
     reviewer,
 )
+from ap_coder.web.identity import shown_path
 from ap_coder.web.invoice_view import document_kind
 
 router = APIRouter()
@@ -575,7 +576,7 @@ def review_retry(request: Request, invoice_id: int) -> JSONResponse:
         return refuse("Retry reads again only an invoice that could not be read: reload the page.", 409)
     path = Path(inv["source_path"])
     if not path.exists():
-        return refuse(f"The original file is no longer at {path}.")
+        return refuse(f"The original file is no longer at {shown_path(path)}.")
     if not jobs(request).get(JOB).start(process_files(store, get_settings(request), [path]), total=1):
         return refuse("AP Coder is already reading invoices. Wait for it to finish, then try again.", 409)
     return done(request, "/process", flash_message(f"Reading {path.name} again.", "info", icon="refresh"))
