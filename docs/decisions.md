@@ -825,3 +825,13 @@ that is reversed keeps its line, marked "replaced by D-NN".
   self-test), then `python -m ap_coder.bench coding --vendors 20 --invoices 5 --ai --out bench_ai` (the chat model's
   precision, first invoice apart; report in `bench_ai/report.md`), and, once AP has posted the pilot's invoices,
   `python -m ap_coder pilot-score` on the JDE export.
+- **D-94** · First-time setup is the one exception to "nothing goes online". From GitHub's ZIP (the code alone: no
+  offline bundle's manifest, wheelhouse or models), the launcher downloads, once, the Python packages from PyPI
+  (pypi.org, files.pythonhosted.org) and the OCR models from www.modelscope.cn, and APProcessor.bat may offer Python
+  3.12 through winget, as CloseDesk does; the offline bundle never downloads anything, and `AP_ALLOW_INTERNET=0`
+  forbids the downloads from the ZIP too. The dashboard (`python -m ap_coder serve`) stays fully offline either way:
+  nothing about an invoice is ever sent. Before downloading, the launcher says on screen what it downloads, from
+  where, and how to avoid it (`scripts/launch.py` `DOWNLOAD_NOTICE`, `say_downloads`; the .bat before winget). Why:
+  a pilot tester who downloads the ZIP needs AP Coder to set itself up without IT, and IT reviewing the pilot needs
+  to see exactly what left the laptop and when; a firm that allows no download uses the offline bundle.
+  (`tests/test_launch.py::test_the_first_setup_says_which_packages_it_downloads_from_where`, `::..._models_...`)
