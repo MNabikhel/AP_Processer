@@ -38,6 +38,8 @@ GROUPS = {
                  "layout_reset", "touchless_on", "touchless_off", "page_reader_tested"],
     "Emails": ["email_sorted", "email_bank_change", "email_triage_done", "email_attachment_to_queue"],
     "Backups": ["backup_made", "backup_restored"],
+    "Logins": ["login", "login_failed", "login_locked", "logout", "password_changed", "password_reset", "user_added",
+               "role_changed", "user_deactivated", "user_activated"],
 }  # fmt: skip
 EVENTS_READ = 5000  # the newest events the page works on
 TIMELINE_SHOWN = 200

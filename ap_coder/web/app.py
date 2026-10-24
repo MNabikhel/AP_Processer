@@ -35,7 +35,7 @@ from ap_coder import __version__
 from ap_coder.core import paths
 from ap_coder.core.config import Settings
 from ap_coder.core.store import Store, default_db_path
-from ap_coder.ops.offline import server_mode
+from ap_coder.ops import offline
 from ap_coder.web import core
 from ap_coder.web.errors import FriendlyErrors
 from ap_coder.web.identity import THIS_COMPUTER, Identity, from_this_computer, is_this_computer
@@ -141,12 +141,14 @@ class EnvSettings:
 
 
 def create_app(settings: Settings | None = None, store: Store | None = None, *, address: str = "127.0.0.1",
-               start_reader: bool = True) -> FastAPI:  # fmt: skip
+               start_reader: bool = True, server: bool | None = None) -> FastAPI:  # fmt: skip
     """The dashboard. ``settings``: fixed settings (tests); by default the .env is read again for every page, so a
     change on the Settings page applies at once. ``store``: the database (default: ``default_store``). ``address``:
     what the server listens on (the Host check allows it). ``start_reader``: start the page reader's background
-    thread (OvisOCR2) when the app starts (tests replace ``page_worker.start_background`` with a no-op)."""
+    thread (OvisOCR2) when the app starts (tests replace ``page_worker.start_background`` with a no-op).
+    ``server``: server mode, people log in and their role says what they may do (D-97; default ``AP_SERVER_MODE``)."""
     store = store or default_store()
+    server = offline.server_mode() if server is None else bool(server)
     settings_factory: Callable[[], Settings] = (lambda: settings) if settings is not None else EnvSettings()
 
     @contextlib.asynccontextmanager
@@ -185,10 +187,13 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     app.state.daily_backup = DailyBackup(store)
     app.add_middleware(BackupCheck, backup=app.state.daily_backup)  # after the security checks: only for pages served
     app.add_middleware(FriendlyErrors)  # an error no page expected is drawn as a page, with the menu
-    app.add_middleware(Identity, secret=app.state.identity_secret, address=address)
+    app.state.server_mode = server  # accounts and roles (web/identity.py, web/roles.py)
+    app.add_middleware(Identity, secret=app.state.identity_secret, address=address, server=server)
     app.add_middleware(core.StoreContext, store=store)  # messages and uploads kept in this database (D-99)
-    app.add_middleware(LocalOnly, address=address, extra=allowed_hosts())  # + the server's names (AP_ALLOWED_HOSTS)
-    app.add_middleware(SecurityHeaders, server=server_mode())  # outermost: a refusal carries the headers too
+    app.add_middleware(
+        LocalOnly, address=address, extra=allowed_hosts(), server=server
+    )  # + the server's names (AP_ALLOWED_HOSTS)
+    app.add_middleware(SecurityHeaders, server=server)  # outermost: a refusal carries the headers too
     app.mount("/static", CheckedStaticFiles(directory=str(core.STATIC_DIR)), name="static")
     app.mount("/fonts", StaticFiles(directory=str(core.FONTS_DIR)), name="fonts")
     app.mount("/assets", StaticFiles(directory=str(core.ASSETS_DIR)), name="assets")

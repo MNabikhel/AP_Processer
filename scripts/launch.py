@@ -84,7 +84,7 @@ import running  # noqa: E402  (standard library only)
 import upgrade  # noqa: E402  (standard library only)
 
 from ap_coder.core import envfile, paths  # noqa: E402  (standard library only)
-from ap_coder.ops.offline import INTERNET_ENV, browser_wanted, internet_allowed  # noqa: E402
+from ap_coder.ops.offline import INTERNET_ENV, browser_wanted, internet_allowed, server_mode  # noqa: E402
 
 WINDOWS = os.name == "nt"
 MAC = sys.platform == "darwin"
@@ -2220,7 +2220,12 @@ def settle_and_check(
         word = "OK" if last.get("ok") else "FAILED"
         lines.append(("ok" if last.get("ok") else "warn",
                       f"Self-check {word} at setup ({last.get('at', '?')})"))  # fmt: skip
-    if old and (state.get("self_check") or {}).get("ok"):
+    if old and server_mode():  # the company server: `server-update --back` goes back to the previous folder (D-100)
+        kept = ", ".join(str(f) for f in old)
+        lines.append(
+            ("info", f"The previous AP Coder is kept in {kept} (the server keeps it for server-update --back)")
+        )
+    elif old and (state.get("self_check") or {}).get("ok"):
         step.now = "cleaning up the older AP Coder"
         say("Cleaning up the older AP Coder:")
         freed = upgrade.clean_up(ROOT, data, old, say)

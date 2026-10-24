@@ -295,6 +295,7 @@
            value="{{ draft.override_reason }}" placeholder="Why approve anyway? (kept with the approval)" aria-label="Why approve anyway"{% if not live.bar or not live.bar.override %} hidden{% endif %}></div>
   <div class="inv-actionbar-right">
     <span class="inv-checking small muted" data-checking role="status" aria-live="polite"></span>
+    {% if can("/review/1/approve") %}{# server mode: only a role that may approve sees these (web/roles.py, D-98) #}
     <details class="pop up" data-park>
       <summary class="btn" title="Set it aside while waiting for information (P)" aria-keyshortcuts="p"><span class="ms" aria-hidden="true">pause_circle</span>Park</summary>
       <form class="pop-body stack" method="post" action="/review/{{ inv.id }}/park">
@@ -316,6 +317,7 @@
         <button class="btn" type="submit"><span class="ms" aria-hidden="true">block</span>Reject</button>
       </form>
     </details>
+    {% if can("/review/1/delete") %}
     <details class="pop up">
       <summary class="btn" title="More: delete the invoice" aria-label="More"><span class="ms" aria-hidden="true">more_horiz</span></summary>
       <form class="pop-body stack" method="post" action="/review/{{ inv.id }}/delete">
@@ -325,8 +327,10 @@
         <button class="btn" type="submit" disabled><span class="ms" aria-hidden="true">delete</span>Delete invoice</button>
       </form>
     </details>
+    {% endif %}
     <button class="btn primary" type="submit" form="inv" data-approve aria-keyshortcuts="Control+Enter" title="Approve & teach (Ctrl+Enter)"{% if not live.ok or not live.bar.allow %} disabled{% endif %}>
       <span class="ms" aria-hidden="true">check</span><span data-approve-label>{{ "Approve credit note" if live.bar and live.bar.credit else "Approve &amp; teach" | safe }}</span></button>
+    {% endif %}
   </div>
 </div>
 
@@ -355,10 +359,16 @@
     <h4><span class="ms" aria-hidden="true">how_to_reg</span>Waiting for a second approval</h4>
     <p class="muted">Approved by {{ inv.reviewer }} {{ inv.reviewed_at | time_ago }} · {{ edits }}. The second approver must be someone other than the first.</p>
     {{ second_ui.why(second_why, approved_over, limit) }}
+    {% if account %}
+    <p class="muted small">{% if same %}You approved it first, so another person gives the final approval, logged in with their own account.{% else %}It takes another person than the first approver, with their own account.{% endif %}
+      Not going ahead? Send back returns it to the review queue.</p></div>
+    {% else %}
     <p class="muted small">{% if same %}You approved it first, so someone else gives the final approval, on{% else %}It takes another person on{% endif %}
       another computer login: on one laptop with one Windows login it can't be given. To test it, sign in to this laptop
       with a second Windows account and open AP Coder there, or have a colleague open it from their computer over the
       office network. Not going ahead? Send back returns it to the review queue.</p></div>
+    {% endif %}
+    {% if can("/review/1/final-approve") %}
     <div class="row end">
       <form method="post" action="/review/{{ inv.id }}/final-approve">
         <button class="btn primary" type="submit"{% if same %} disabled title="You approved it first (same name or computer login): someone else gives the second approval"{% endif %}>
@@ -370,12 +380,12 @@
           <button class="btn" type="submit">Send back to the queue</button>
         </form>
       </details>
-    </div></div>
+    </div>{% endif %}</div>
   {% elif mode == "parked" %}
   <div class="card-head"><div>
     <h4><span class="ms" aria-hidden="true">pause_circle</span>Parked</h4>
     <p class="muted">Waiting for: {{ inv.parked_reason }}{% if inv.follow_up %} · follow up {{ inv.follow_up }}{% endif %}</p></div>
-    <form method="post" action="/review/{{ inv.id }}/resume"><button class="btn primary" type="submit" title="Back to the review queue, to be approved"><span class="ms" aria-hidden="true">play_circle</span>Un-park</button></form>
+    {% if can("/review/1/resume") %}<form method="post" action="/review/{{ inv.id }}/resume"><button class="btn primary" type="submit" title="Back to the review queue, to be approved"><span class="ms" aria-hidden="true">play_circle</span>Un-park</button></form>{% endif %}
   </div>
   {% elif mode == "approved" %}
   <div class="card-head"><div>
@@ -385,7 +395,7 @@
       {% if can_stamp %}<a class="btn" href="/review/{{ inv.id }}/approved.pdf" title="The invoice with an APPROVED stamp and its coding page, to attach in the ERP or to file."><span class="ms" aria-hidden="true">approval</span>Approved PDF</a>{% endif %}
       {% if inv.export_batch %}
       <span class="muted">Exported in batch {{ inv.export_batch }}: to correct it, undo the batch on the Exports page first.</span>
-      {% else %}
+      {% elif can("/review/1/correct") %}
       <details class="pop">
         <summary class="btn"><span class="ms" aria-hidden="true">undo</span>Reopen for correction…</summary>
         <form class="pop-body stack" method="post" action="/review/{{ inv.id }}/correct">
@@ -400,10 +410,12 @@
     <h4><span class="ms" aria-hidden="true">block</span>Rejected</h4>
     <p class="muted">{{ inv.error or "No reason recorded." }}</p></div>
     <div class="row end">
-      <form method="post" action="/review/{{ inv.id }}/restore"><button class="btn" type="submit" title="Back to the review queue (e.g. rejected by mistake)"><span class="ms" aria-hidden="true">undo</span>Reopen</button></form>
+      {% if can("/review/1/restore") %}<form method="post" action="/review/{{ inv.id }}/restore"><button class="btn" type="submit" title="Back to the review queue (e.g. rejected by mistake)"><span class="ms" aria-hidden="true">undo</span>Reopen</button></form>{% endif %}
+      {% if can("/review/1/delete") %}
       <form method="post" action="/review/{{ inv.id }}/delete" data-confirm="Delete this invoice? Its file moves to invoices/deleted.">
         <input type="hidden" name="back" value="/review?tab=other">
         <button class="btn" type="submit"><span class="ms" aria-hidden="true">delete</span>Delete</button></form>
+      {% endif %}
     </div></div>
   {% elif mode == "failed" %}
   <div class="card-head"><div>
@@ -411,17 +423,19 @@
     <p class="muted">{{ error_first }}</p>
     {% if error_details %}<details class="tech"><summary>Technical details</summary><pre>{{ error_details }}</pre></details>{% endif %}</div>
     <div class="row end">
-      <form method="post" action="/review/{{ inv.id }}/retry"><button class="btn" type="submit"><span class="ms" aria-hidden="true">refresh</span>Retry</button></form>
+      {% if can("/review/1/retry") %}<form method="post" action="/review/{{ inv.id }}/retry"><button class="btn" type="submit"><span class="ms" aria-hidden="true">refresh</span>Retry</button></form>{% endif %}
+      {% if can("/review/1/delete") %}
       <form method="post" action="/review/{{ inv.id }}/delete" data-confirm="Delete this invoice? Its file moves to invoices/deleted.">
         <input type="hidden" name="back" value="/review?tab=other">
         <button class="btn" type="submit"><span class="ms" aria-hidden="true">delete</span>Delete</button></form>
+      {% endif %}
     </div></div>
   {% elif mode == "nogl" %}
   <div class="card-head"><div>
     <h4><span class="ms" aria-hidden="true">account_tree</span>Waiting for your GL accounts</h4>
     <p class="muted">Import your GL accounts (the chart of accounts from JD Edwards) to review it, or start with the sample accounts and switch to yours later.</p></div>
     <div class="row end"><a class="btn" href="/accounts"><span class="ms" aria-hidden="true">account_tree</span>Import GL accounts</a>
-      <form method="post" action="/review/sample-gl"><button class="btn" type="submit"><span class="ms" aria-hidden="true">science</span>Use the sample GL accounts for now</button></form></div>
+      {% if can("/review/sample-gl") %}<form method="post" action="/review/sample-gl"><button class="btn" type="submit"><span class="ms" aria-hidden="true">science</span>Use the sample GL accounts for now</button></form>{% endif %}</div>
   </div>
   {% endif %}
 </section>

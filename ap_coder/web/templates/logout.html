@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{# Log out (pages/login.py, server mode): the session is deleted when the button is pressed. #}
+{% block header %}
+<header class="apc-head apc-anim"><div>
+  {{ ui.breadcrumbs(["AP Coder", "Your account"]) }}
+  <h1 class="apc-title">Log out</h1>
+</div></header>
+{% endblock %}
+{% block content %}
+<div class="narrow">
+<section class="card">
+  <p>Log out of AP Coder on this browser? Your work is saved; edits you didn't approve stay with your account.</p>
+  <form method="post" action="/logout" class="row" data-busy="Logging out…">
+    <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">logout</span>Log out</button>
+    <a class="btn" href="/review">Stay logged in</a>
+  </form>
+</section>
+</div>
+{% endblock %}

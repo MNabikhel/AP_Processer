@@ -55,6 +55,8 @@ Windows and Mac machines): [docs/PILOT.md](docs/PILOT.md). Real data, step by st
 [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md); its one-page summary for the pilot tester, to print:
 [docs/QUICK_START.md](docs/QUICK_START.md) (also under Help → Quick start). Updating from an older version:
 [docs/UPGRADING.md](docs/UPGRADING.md).
+On a company Windows Server for the whole AP team (a service, HTTPS, logins and roles, updates with a way back):
+[docs/SERVER.md](docs/SERVER.md).
 
 ## Screens
 
@@ -528,7 +530,8 @@ docs/                PILOT.md (offline pilot), GETTING_STARTED.md (step by step 
                      (the pilot tester's one printable page), HOW_IT_RUNS.md
                      (launcher, update, server, files, network), UPGRADING.md (from each older version),
                      WHATS_NEW.md, PILOT_PLAN.md, CODING.md (GL coding without an AI model), SALES_TAX.md
-                     (place of supply, taxes per line, the math), screenshots/
+                     (place of supply, taxes per line, the math), SERVER.md (a company Windows Server, for IT),
+                     screenshots/
 private/             git-ignored: default data folder when the installer is not used
 tests/               offline test suite (Azure clients and LM Studio mocked)
 ```

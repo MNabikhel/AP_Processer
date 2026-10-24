@@ -17,8 +17,8 @@ helpers), ``accounts`` (GL accounts, cost centers, audit trail, bank accounts, t
 approving, the ERP's register, the second approval), ``purchasing`` (POs, export batches, coding rules), ``capture``
 (supplier learning, touchless, reader scores, the page-reader and Azure queues), ``lessons`` (lessons and the AI
 reviewer's queue), ``vendors``, ``backups``, ``learning`` (the feedback memory, metrics), ``ephemeral`` (messages
-and uploads kept for a short while), ``samples``. A test that patches a module-level name (``_now``, ``json``...)
-patches it in the part that uses it.
+and uploads kept for a short while), ``samples``, ``users`` (server mode's accounts, sessions and login attempts,
+D-97). A test that patches a module-level name (``_now``, ``json``...) patches it in the part that uses it.
 """
 
 from ._base import (  # noqa: F401  (every name the old module had)
@@ -145,6 +145,7 @@ from .invoices import InvoicesMixin
 from .learning import LearningMixin
 from .lessons import LessonsMixin
 from .purchasing import PurchasingMixin
+from .users import UsersMixin
 from .vendors import VendorsMixin
 
 
@@ -159,6 +160,7 @@ class Store(
     BackupsMixin,
     LearningMixin,
     EphemeralMixin,
+    UsersMixin,
 ):
     """The local SQLite database: one class, its parts in this folder by subject (see the module list above)."""
 

@@ -42,10 +42,11 @@ from ap_coder.core import audit, ui
 from ap_coder.core.memory import ACCEPTED, CODED, CORRECTED, vendor_key
 from ap_coder.core.reference_data import ReferenceData
 from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store, coded_blanks
+from ap_coder.core.store.users import same_approver
 from ap_coder.erp import stamp
 from ap_coder.web import document, identity
 from ap_coder.web import invoice_view as view
-from ap_coder.web.access import person_key
+from ap_coder.web.access import key_of, person_key
 from ap_coder.web.core import (
     done,
     flash_message,
@@ -126,8 +127,7 @@ def _drafts(request: Request) -> dict[int, dict[str, Any]]:
 
 
 def _draft_key(found: identity.Person) -> tuple[str, str]:
-    return found.name.casefold(), found.browser or found.address  # by address: a cookie made without a browser id
-    # (the same key as access.person_key gives a colleague on the office network)
+    return key_of(found)  # server mode: the account's; on the office network the colleague's name and browser
 
 
 def rename_drafts(request: Request, found: identity.Person, now: identity.Person) -> None:
@@ -608,9 +608,7 @@ def _closed(store: Store, reference: ReferenceData | None, inv: dict[str, Any]) 
         me, my_login = reviewer(), login()
         first = next((e for e in store.events(inv["id"]) if e["action"] == "approved"), None)
         first_login = ((first or {}).get("detail") or {}).get("login") or ""
-        out["same"] = (me or "").strip().casefold() == (inv["reviewer"] or "").strip().casefold() or (
-            bool(my_login) and my_login.casefold() == first_login.casefold()
-        )
+        out["same"] = same_approver(inv["reviewer"], first_login, me, my_login)
         out["limit"] = store.approval_limit()
         detail = (first or {}).get("detail") or {}
         out["second_why"] = audit.second_reason(detail) if detail.get("needs_second") else ""
@@ -870,6 +868,12 @@ def undo_approve(request: Request, invoice_id: int) -> JSONResponse:
         now = {REVIEW: "it is back in the review queue already", REJECTED: "it was rejected since",
                PARKED: "it was parked since"}.get(inv["status"], "it is no longer approved")  # fmt: skip
         return refuse(f"There is no approval to undo: {now}. Open it to see where it stands.")
+    found = identity.person()
+    if found is not None and found.user_id and found.role != "admin":  # server mode: one's own approval (D-98)
+        last = next((e for e in store.events(invoice_id, ["approved", "final_approved"])), None)
+        if ((last or {}).get("detail") or {}).get("user_id") != found.user_id:
+            return refuse("Only the person who gave this approval (or an Admin) can undo it. To correct it, use "
+                          "Reopen for correction.", 403)  # fmt: skip
     me = reviewer()
     try:
         store.reopen(invoice_id, me, UNDONE)

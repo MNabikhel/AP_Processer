@@ -4,6 +4,7 @@ Content-Security-Policy in a browser."""
 
 from __future__ import annotations
 
+import json
 import threading
 from dataclasses import replace
 from types import SimpleNamespace
@@ -14,7 +15,7 @@ from fastapi.testclient import TestClient
 from ap_coder.core.config import Settings
 from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.ops import offline
-from ap_coder.web import access, core, files
+from ap_coder.web import access, core, files, identity
 from ap_coder.web.app import create_app
 from ap_coder.web.pages import learning, process
 
@@ -37,26 +38,21 @@ def settings() -> Settings:
     return replace(s, llm=replace(s.llm, provider="off"))
 
 
-class Role:
-    """What the login middleware will set (srv-auth): the role of the session's user."""
-
-    def __init__(self, app, role: str = "", user_id: str = "") -> None:
-        self.app, self.role, self.user_id = app, role, user_id
-
-    async def __call__(self, scope, receive, send):
-        if scope["type"] == "http":
-            state = scope.setdefault("state", {})
-            if self.role:
-                state["user_role"] = self.role
-            if self.user_id:
-                state["user_id"] = self.user_id
-        await self.app(scope, receive, send)
+GOOD = "correct horse battery"
 
 
-def client_as(store, role: str = "", *, user_id: str = "", base_url: str = "https://localhost") -> TestClient:
-    app = create_app(settings(), store, start_reader=False)
-    app.add_middleware(Role, role=role, user_id=user_id)
-    return TestClient(app, base_url=base_url)
+def client_as(store, role: str = "", *, base_url: str = "https://localhost") -> TestClient:
+    """The dashboard as an account with ``role`` sees it on the server (logged in); no role: the laptop."""
+    app = create_app(settings(), store, start_reader=False, server=bool(role))
+    client = TestClient(app, base_url=base_url, client=("10.0.0.5", 50000))
+    if role:
+        username = f"{role}-{len(store.list_users())}"
+        uid = store.add_user(username, GOOD, role=role, display_name=username.title())
+        with store._conn() as conn:
+            conn.execute("UPDATE users SET must_change = 0 WHERE id = ?", (uid,))
+        answer = client.post("/login", data={"username": username, "password": GOOD, "next": "/review"}, headers=PAGE)
+        assert answer.status_code in (200, 303), answer.text
+    return client
 
 
 @pytest.fixture
@@ -93,11 +89,14 @@ def test_open_folder_on_the_server_shows_where_it_is_to_an_admin(store, server_o
     assert "download" in text.lower()
 
 
-@pytest.mark.parametrize("url", ["/process/open-folder", "/settings/data/open-folder"])
-def test_open_folder_on_the_server_does_not_show_its_path_to_others(store, server_on, opened, url):
-    answer = post(client_as(store, "clerk"), url).json()
+def test_open_folder_on_the_server_does_not_show_its_path_to_others(store, server_on, opened):
+    """Only an Admin may ask (web/roles.py); and the answer for anyone else never names the server's folder."""
+    for url in ("/process/open-folder", "/settings/data/open-folder"):
+        assert post(client_as(store, "clerk"), url).status_code == 403
+    answer = core.folder_on_the_server(_Request(), core.invoice_dir(store))
     assert opened == []
-    assert "on the server" in answer["toast"]["text"] and str(core.data_dir(store)) not in answer["toast"]["text"]
+    text = json.loads(answer.body)["toast"]["text"]
+    assert "on the server" in text and str(core.data_dir(store)) not in text
 
 
 def test_the_process_page_on_the_server_hides_the_folder_from_others(store, server_on):
@@ -249,35 +248,50 @@ class _Request:
         self.state = SimpleNamespace()
 
 
-def test_a_draft_is_keyed_by_the_user_when_there_are_accounts():
-    request = _Request()
-    request.state.user_id = 7
-    assert access.person_key(request) == ("user", "7")
+def as_person(**fields):
+    """The person a request is answered for (set by the login middleware on the server)."""
+    return identity.PERSON.set(identity.Person(name=fields.pop("name", "Pat"), address="10.1.2.40", **fields))
+
+
+def test_a_draft_is_keyed_by_the_account_on_the_server():
+    token = as_person(user_id=7, username="pat", role="clerk")
+    try:
+        assert access.person_key(_Request()) == ("", "user:7")
+    finally:
+        identity.PERSON.reset(token)
     assert access.person_key(_Request()) is None  # this computer's own person, as before
 
 
-def test_two_users_keep_drafts_of_their_own(store):
+def test_two_accounts_keep_drafts_of_their_own(store):
     from ap_coder.web.pages import invoice
 
     app = create_app(settings(), store, start_reader=False)
-    one = SimpleNamespace(app=app, state=SimpleNamespace(user_id=1))
-    two = SimpleNamespace(app=app, state=SimpleNamespace(user_id=2))
-    invoice._drafts(one)[5] = {"header": {}}
-    assert invoice._drafts(two) == {}
-    assert app.state.person_drafts[("user", "1")] == {5: {"header": {}}}
-    assert invoice._drafts(SimpleNamespace(app=app, state=SimpleNamespace())) is app.state.invoice_drafts
+    request = SimpleNamespace(app=app, state=SimpleNamespace())
+    token = as_person(user_id=1, username="one", role="clerk")
+    try:
+        invoice._drafts(request)[5] = {"header": {}}
+    finally:
+        identity.PERSON.reset(token)
+    token = as_person(user_id=2, username="two", role="clerk")
+    try:
+        assert invoice._drafts(request) == {}
+    finally:
+        identity.PERSON.reset(token)
+    assert app.state.person_drafts[("", "user:1")] == {5: {"header": {}}}
+    assert invoice._drafts(request) is app.state.invoice_drafts
 
 
 def test_is_admin_on_a_laptop_and_on_the_server(monkeypatch):
-    monkeypatch.setenv(offline.SERVER_ENV, "0")  # (restored afterwards: --server sets it)
+    monkeypatch.setenv(offline.SERVER_ENV, "0")
     assert access.is_admin(_Request()) is True
     monkeypatch.setenv(offline.SERVER_ENV, "1")
     assert access.is_admin(_Request()) is False
-    request = _Request()
-    request.state.user_role = "admin"
-    assert access.is_admin(request) is True
-    request.state.user_role = "clerk"
-    assert access.is_admin(request) is False
+    for role, admin in (("admin", True), ("clerk", False), ("approver", False), ("readonly", False)):
+        token = as_person(user_id=3, username="x", role=role)
+        try:
+            assert access.is_admin(_Request()) is admin
+        finally:
+            identity.PERSON.reset(token)
 
 
 # --- Every page in a browser, under the Content-Security-Policy ---------------------------------------------------
@@ -293,11 +307,13 @@ def test_in_a_browser_no_page_breaks_the_content_security_policy(store, server_o
     import uvicorn
     from playwright.sync_api import sync_playwright
 
+    from ap_coder.web.identity import SESSION_COOKIE
     from ap_coder.web.pages import PAGES
 
     invoice_id = add_clean(store)
-    app = create_app(settings(), store, start_reader=False)
-    app.add_middleware(Role, role="admin")
+    logged_in = client_as(store, "admin", base_url="http://127.0.0.1")
+    app, session = logged_in.app, logged_in.cookies.get(SESSION_COOKIE)
+    assert session
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
@@ -313,7 +329,9 @@ def test_in_a_browser_no_page_breaks_the_content_security_policy(store, server_o
     try:
         with sync_playwright() as p:
             chromium = p.chromium.launch(executable_path=chromium_path(), args=["--no-proxy-server"])
-            page = chromium.new_page(viewport={"width": 1366, "height": 768})
+            context = chromium.new_context(viewport={"width": 1366, "height": 768})
+            context.add_cookies([{"name": SESSION_COOKIE, "value": session, "url": f"http://127.0.0.1:{port}"}])
+            page = context.new_page()
 
             def console(m):
                 if "Content Security Policy" in m.text or "Content-Security-Policy" in m.text:

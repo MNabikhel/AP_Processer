@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{# Users (pages/users.py, server mode, Admin only): who can log in and with which role (D-97, D-98). #}
+{% block header %}
+<header class="apc-head apc-anim"><div>
+  {{ ui.breadcrumbs(["AP Coder", "System"]) }}
+  <h1 class="apc-title">Users</h1>
+  <div class="apc-sub">Who can log in to AP Coder, and what each role may do.</div>
+</div></header>
+{% endblock %}
+{% block content %}
+<div class="narrow">
+{% if temporary %}
+<section class="card" id="temporary">
+  <h4><span class="ms" aria-hidden="true">key</span> Temporary password for {{ temporary.username }}</h4>
+  <p><code class="big">{{ temporary.password }}</code></p>
+  <p class="muted">Give it to them yourself (in person or by phone): it is shown only this once. They choose their
+    own password when they first log in with it.</p>
+</section>
+{% endif %}
+
+<section class="card">
+  <h4>People</h4>
+  <div class="table-wrap">
+    <table class="apc-table">
+      <thead><tr><th>Username</th><th>Name</th><th>Role</th><th>Last login</th><th></th></tr></thead>
+      <tbody>
+        {% for u in users %}
+        <tr data-user="{{ u.username }}">
+          <td>{{ u.username }}{% if u.id == me %} <span class="muted">(you)</span>{% endif %}</td>
+          <td>{{ u.display_name }}</td>
+          <td>
+            <form method="post" action="/admin/users/{{ u.id }}/role" class="row">
+              <select name="role" aria-label="Role of {{ u.username }}">
+                {% for key, label in roles %}<option value="{{ key }}"{% if key == u.role %} selected{% endif %}>{{ label }}</option>{% endfor %}
+              </select>
+              <button class="btn" type="submit">Change</button>
+            </form>
+          </td>
+          <td>{% if not u.active %}{{ ui.pill("Turned off", "gray") }}{% elif u.must_change %}{{ ui.pill("Temporary password", "warn") }}{% else %}{{ (u.last_login or "never") | replace("T", " ") }}{% endif %}</td>
+          <td class="r">
+            <div class="row end">
+              <form method="post" action="/admin/users/{{ u.id }}/reset" data-confirm="Reset the password of {{ u.username }}? They are logged out everywhere and get a temporary password.">
+                <button class="btn" type="submit"><span class="ms" aria-hidden="true">lock_reset</span>Reset password</button>
+              </form>
+              {% if u.active %}
+              <form method="post" action="/admin/users/{{ u.id }}/deactivate" data-confirm="Turn off {{ u.username }}? They can no longer log in. Their approvals and history stay.">
+                <button class="btn danger" type="submit"><span class="ms" aria-hidden="true">person_off</span>Turn off</button>
+              </form>
+              {% else %}
+              <form method="post" action="/admin/users/{{ u.id }}/activate">
+                <button class="btn" type="submit"><span class="ms" aria-hidden="true">person</span>Turn back on</button>
+              </form>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card">
+  <h4>Add a person</h4>
+  <form method="post" action="/admin/users/add" class="row st-end" data-busy="Adding…">
+    <label class="field">Username
+      <input type="text" name="username" maxlength="64" required autocapitalize="none" spellcheck="false" placeholder="e.g. ann.lee"></label>
+    <label class="field">Name (on approvals)
+      <input type="text" name="name" maxlength="60" placeholder="e.g. Ann Lee"></label>
+    <label class="field">Role
+      <select name="role">{% for key, label in roles %}<option value="{{ key }}"{% if key == "clerk" %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+    <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">person_add</span>Add</button>
+  </form>
+  <p class="muted">AP Coder makes a temporary password and shows it once; they choose their own at their first login.</p>
+</section>
+
+<section class="card">
+  <h4>The roles</h4>
+  <ul>
+    <li><b>Read-only</b>: looks at the review queue, invoices, reports, exports, Insights, Spend, Activity and Help. Changes nothing.</li>
+    <li><b>Clerk</b>: also imports invoices, reviews, checks and approves them (the first approval), parks, rejects and reopens them, approves in bulk and makes export batches.</li>
+    <li><b>Approver</b>: also gives the second approval to invoices over the approval limit. It must be another person than the first approver.</li>
+    <li><b>Admin</b>: everything, including Settings, users, the GL accounts and tax setup, imports, JD Edwards, backups and restore, and deleting.</li>
+  </ul>
+</section>
+</div>
+{% endblock %}

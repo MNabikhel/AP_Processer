@@ -130,8 +130,11 @@ def _refusal(text: str, status: int) -> PlainTextResponse:
 class LocalOnly:
     """ASGI middleware: refuses a foreign Host header (400) and a POST that is not from AP Coder's own page (403)."""
 
-    def __init__(self, app: Any, address: str = "127.0.0.1", extra: Iterable[str] = ()) -> None:
+    def __init__(
+        self, app: Any, address: str = "127.0.0.1", extra: Iterable[str] = (), server: bool | None = None
+    ) -> None:
         self.app = app
+        self.server = server_mode() if server is None else server
         self.address = address
         self.extra = tuple(extra)
         if host_name(address or "") in WILDCARD_ADDRESSES:
@@ -143,7 +146,7 @@ class LocalOnly:
             host = headers.get("host")
             if not host_allowed(host, self.address, self.extra):
                 port = (scope.get("server") or (None, 8501))[1]
-                if server_mode():
+                if self.server:
                     text = (f"AP Coder was opened through {host}, which is not one of the server's names, so nothing "
                             f"is shown. IT can add the name to {ALLOWED_HOSTS_ENV} (a comma-separated list) and "
                             "restart AP Coder.")  # fmt: skip
@@ -154,7 +157,7 @@ class LocalOnly:
                     )
                 await _refusal(text, 400)(scope, receive, send)
                 return
-            if server_mode() and unnamed_proxy(scope.get("client"), headers):
+            if self.server and unnamed_proxy(scope.get("client"), headers):
                 await _refusal(
                     "This request came through a reverse proxy, but AP Coder was not told the proxy's address, so "
                     "nothing is shown (everyone would look like the server itself). Start AP Coder with --proxy "

@@ -5,7 +5,9 @@
   <div class="st-2">
     <section class="card">
       <h4>You</h4>
-      {% if colleague %}
+      {% if account %}
+      <p class="field">Your name: <b>{{ account.name }}</b> (your account's, {{ account.username }}: it is on every invoice you approve)</p>
+      {% elif colleague %}
       <p class="field">Your name: <b>{{ reviewer_name }}</b> (<a href="/who">change it</a>; this browser gave it to AP Coder)</p>
       {% else %}
       <label class="field">Your name

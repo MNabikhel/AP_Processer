@@ -44,7 +44,6 @@ from ap_coder.intake.mailbox import (
     unpack_folder,
 )
 from ap_coder.intake.pictures import looks_incomplete
-from ap_coder.ops.offline import server_mode
 from ap_coder.web import identity
 from ap_coder.web.access import is_admin
 from ap_coder.web.core import (
@@ -64,6 +63,7 @@ from ap_coder.web.core import (
     refuse,
     render,
     reviewer,
+    server_mode,
     short_path,
 )
 from ap_coder.web.identity import person
@@ -799,7 +799,7 @@ def process_status(request: Request) -> JSONResponse:
 @router.post("/process/open-folder")
 def process_open_folder(request: Request) -> JSONResponse:
     folder = invoice_dir(get_store(request))
-    if server_mode():
+    if server_mode(request):
         return folder_on_the_server(request, folder)
     if person() is not None:  # a colleague's click must not open a window on the computer running AP Coder
         return message("The invoices folder is on the computer running AP Coder: open it there.", "info")

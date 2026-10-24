@@ -57,8 +57,9 @@ from .fx import (  # noqa: F401  (re-exported)
 # 14: invoice_capture, supplier_profiles, supplier_outcomes (by _SCHEMA), 15: reader_outcomes, page_reads (by _SCHEMA),
 # 16: bank_accounts, our company's bank accounts (by _SCHEMA, D-66), 17: feedback.final_tax_code, tax_source,
 # tax_province and tax_uncollected (filled from the approved invoices, D-70, D-80), template_snapshots (D-85),
-# invoice_drafts (by _SCHEMA: the review screen's edits not approved yet, kept over a restart, D-86)
-SCHEMA_VERSION = 17
+# invoice_drafts (by _SCHEMA: the review screen's edits not approved yet, kept over a restart, D-86),
+# 18: users, sessions, login_attempts (by _SCHEMA: server mode's accounts, D-97)
+SCHEMA_VERSION = 18
 # The one-off clean-ups of the learning memory ``_migrate`` has run on a database (settings.feedback_cleanup): a new
 # clean-up added there changes it, so it runs once on every database.
 FEEDBACK_CLEANUP = "1"
@@ -233,17 +234,24 @@ CREATE TABLE IF NOT EXISTS lesson_approvals (
     confirmed INTEGER NOT NULL DEFAULT 0, value TEXT NOT NULL DEFAULT '', proposed TEXT NOT NULL DEFAULT '',
     at TEXT NOT NULL, PRIMARY KEY (invoice_id, situation));
 CREATE INDEX IF NOT EXISTS lesson_approvals_situation ON lesson_approvals (situation);
-CREATE TABLE IF NOT EXISTS bank_accounts (
-    code TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', currency TEXT NOT NULL DEFAULT 'CAD',
-    institution TEXT NOT NULL DEFAULT '', transit TEXT NOT NULL DEFAULT '', account_number TEXT NOT NULL DEFAULT '',
-    gl_account TEXT NOT NULL DEFAULT '', is_default INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1,
-    updated_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS invoice_drafts (
-    invoice_id INTEGER NOT NULL, person TEXT NOT NULL DEFAULT '', draft TEXT NOT NULL, updated_at TEXT NOT NULL,
-    PRIMARY KEY (invoice_id, person));
-CREATE TABLE IF NOT EXISTS ephemeral (
-    kind TEXT NOT NULL, token TEXT NOT NULL, value BLOB NOT NULL, created_at REAL NOT NULL, expires_at REAL NOT NULL,
-    PRIMARY KEY (kind, token));
+CREATE TABLE IF NOT EXISTS bank_accounts (code TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '',
+    currency TEXT NOT NULL DEFAULT 'CAD', institution TEXT NOT NULL DEFAULT '', transit TEXT NOT NULL DEFAULT '',
+    account_number TEXT NOT NULL DEFAULT '', gl_account TEXT NOT NULL DEFAULT '', is_default INTEGER NOT NULL DEFAULT 0,
+    active INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS invoice_drafts (invoice_id INTEGER NOT NULL, person TEXT NOT NULL DEFAULT '',
+    draft TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (invoice_id, person));
+CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL DEFAULT '', role TEXT NOT NULL DEFAULT 'clerk', pw_hash TEXT NOT NULL, active INTEGER
+    NOT NULL DEFAULT 1, must_change INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, last_login TEXT);
+CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL, created_at REAL NOT NULL,
+    last_seen REAL NOT NULL, ip TEXT NOT NULL DEFAULT '', user_agent TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS login_attempts (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL DEFAULT '',
+    ip TEXT NOT NULL DEFAULT '', at REAL NOT NULL, ok INTEGER NOT NULL DEFAULT 0, user_locked_until REAL,
+    ip_locked_until REAL);
+CREATE INDEX IF NOT EXISTS login_attempts_user ON login_attempts (username, at);
+CREATE INDEX IF NOT EXISTS login_attempts_ip ON login_attempts (ip, at);
+CREATE TABLE IF NOT EXISTS ephemeral (kind TEXT NOT NULL, token TEXT NOT NULL, value BLOB NOT NULL,
+    created_at REAL NOT NULL, expires_at REAL NOT NULL, PRIMARY KEY (kind, token));
 """
 
 # The page reader's queue (``page_reads.status``). A read still "reading" after STALE_READING_HOURS was

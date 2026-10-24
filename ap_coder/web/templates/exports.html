@@ -49,7 +49,7 @@
       {% if fmt == jde_format and ready %}
       <a class="btn" href="/exports/jde/dry-run.txt" title="Exactly what a batch of these invoices would load into F0411Z1 / F0911Z1, row by row, and why any is held back. Nothing is exported."><span class="ms" aria-hidden="true">fact_check</span>Dry run</a>
       {% endif %}
-      <button class="btn primary" type="submit" id="export-go"{% if not selectable %} disabled{% endif %}>
+      <button class="btn primary" type="submit" id="export-go"{% if not selectable %} disabled{% endif %}{% if not can("/exports/create") %} hidden{% endif %}>
         <span class="ms" aria-hidden="true">ios_share</span><span id="export-label">Export {{ selectable | plural("invoice") }}</span></button>
     </div>
   </form>
@@ -87,6 +87,7 @@
 </section>
 {% endif %}
 
+{% if can("/exports/layout") %}{# server mode: the ERP layout and the ERP's invoice list are an Admin's (D-98) #}
 <details class="card expander" id="layout"{% if fmt == "custom" %} open{% endif %}>
   <summary><span class="ms" aria-hidden="true">view_column</span>Custom layout for your ERP</summary>
   <p class="muted">One row per GL posting line. Pick the columns your ERP's import expects, in order, with its headers; a
@@ -152,6 +153,7 @@
   </form>
   {% endif %}
 </details>
+{% endif %}
 
 <section class="card" id="batches">
   <h4>Past batches</h4>
@@ -198,6 +200,7 @@
     <a class="btn" href="/exports/batches/{{ chosen.id }}/approved-pdfs.zip" download
        title="Each invoice of the batch with an APPROVED stamp and its coding page: to attach in the ERP.">
       <span class="ms" aria-hidden="true">approval</span>Approved PDFs (ZIP)</a>
+    {% if can("/exports/batches/1/undo") %}
     <details class="pop">
       <summary class="btn"><span class="ms" aria-hidden="true">undo</span>Undo this batch…</summary>
       <div class="pop-body">
@@ -208,6 +211,7 @@
         </form>
       </div>
     </details>
+    {% endif %}
   </div>
   {% endif %}
   {% endif %}

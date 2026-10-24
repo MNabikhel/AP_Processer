@@ -32,7 +32,6 @@ from ap_coder.coding.tax import PROVINCE_NAMES
 from ap_coder.core import paths, ui
 from ap_coder.core.envfile import one_line, read_env, write_env
 from ap_coder.core.store import APPROVAL_CONTROLS, Store, tiny_fx_rates, unread_fx_text
-from ap_coder.ops.offline import server_mode
 from ap_coder.web import identity
 from ap_coder.web.core import (
     DEVELOPER_TOOLS,
@@ -54,6 +53,7 @@ from ap_coder.web.core import (
     refuse,
     render,
     reviewer,
+    server_mode,
 )
 
 router = APIRouter()
@@ -257,6 +257,8 @@ def _review_part(request: Request, reviewer_name: str | None, threshold: str | N
     name = None if reviewer_name is None else reviewer_name.strip()
     if name is not None and identity.person() is not None:  # a colleague's name is never the owner's saved one
         if name and name != reviewer():
+            if identity.person().user_id:  # server mode (D-97)
+                return refuse("Your name is your account's: it is the one on every invoice you approve.")
             return refuse("Your name is the one this browser gave AP Coder: change it on the Who are you? page (/who).")
         name = reviewer()
 
@@ -445,7 +447,7 @@ def backup_path(store: Store, name: str) -> Path:
 @router.post("/settings/data/open-folder")
 def open_data_folder(request: Request) -> JSONResponse:
     folder = data_dir(get_store(request))
-    if server_mode():
+    if server_mode(request):
         return folder_on_the_server(request, folder)
     if open_folder(folder):
         return message("Opened the data folder.", "info")
