@@ -38,7 +38,7 @@ from ap_coder.capture.confidence import LABELS
 from ap_coder.capture.workflow import learn_from_approval, on_reopen, taught_message
 from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCE_NAMES
 from ap_coder.coding.vendors import mask_account
-from ap_coder.core import ui
+from ap_coder.core import audit, ui
 from ap_coder.core.memory import ACCEPTED, CODED, CORRECTED, vendor_key
 from ap_coder.core.reference_data import ReferenceData
 from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store, coded_blanks
@@ -584,6 +584,9 @@ def _closed(store: Store, reference: ReferenceData | None, inv: dict[str, Any]) 
             bool(my_login) and my_login.casefold() == first_login.casefold()
         )
         out["limit"] = store.approval_limit()
+        detail = (first or {}).get("detail") or {}
+        out["second_why"] = audit.second_reason(detail) if detail.get("needs_second") else ""
+        out["approved_over"] = audit.approved_over(detail)  # what "Approve anyway" went over, and why (D-75)
         out["approval"] = (first or {}).get("id") or ""  # posted back with the final approval (B-654)
     if inv["status"] == FAILED:
         error = (inv.get("error") or "No reason recorded.").strip()

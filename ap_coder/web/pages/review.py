@@ -23,7 +23,7 @@ from ap_coder.coding.bulk import bulk_approve, issues_today, sort_for_bulk
 from ap_coder.coding.review import codes_to_pick, uses_cost_centers
 from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCE_NAMES, province_label, stored_supply
 from ap_coder.coding.terms import DUE_SOON_DAYS, LONG_OVERDUE_DAYS, overdue_since, payment
-from ap_coder.core import ui
+from ap_coder.core import audit, ui
 from ap_coder.core.memory import vendor_key
 from ap_coder.core.reference_data import ReferenceData
 from ap_coder.core.store import (
@@ -428,7 +428,10 @@ def _second(inv: dict[str, Any], first: dict[str, Any] | None, me: str, my_login
     same = (me or "").strip().casefold() == (inv["reviewer"] or "").strip().casefold() or (
         bool(my_login) and my_login.casefold() == first_login.casefold()
     )
-    return {**inv, "same": same, "approval": (first or {}).get("id") or ""}
+    detail = (first or {}).get("detail") or {}
+    why = audit.second_reason(detail) if detail.get("needs_second") else ""
+    return {**inv, "same": same, "approval": (first or {}).get("id") or "", "second_why": why,
+            "approved_over": audit.approved_over(detail)}  # fmt: skip
 
 
 def _getting_started(request: Request, store: Store, invoices: list[dict[str, Any]]) -> HTMLResponse:

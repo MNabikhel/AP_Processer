@@ -4,6 +4,7 @@
    edits are macros of _invoice_live.html, drawn again by POST /review/<id>/check; static/js/invoice.js runs it. #}
 {% import "_invoice_live.html" as live_ui %}
 {% import "_invoice_lines.html" as grids %}
+{% import "_second_approval.html" as second_ui %}
 {% block title %}{{ title }} · Review · AP Coder{% endblock %}
 {% block head %}
 <link rel="stylesheet" href="/static/invoice.css?v={{ static_version }}">
@@ -352,8 +353,8 @@
   {% if mode == "pending" %}
   <div class="card-head"><div>
     <h4><span class="ms" aria-hidden="true">how_to_reg</span>Waiting for a second approval</h4>
-    <p class="muted">Approved by {{ inv.reviewer }} {{ inv.reviewed_at | time_ago }} · {{ edits }}.
-      {% if limit %}Invoices over {{ limit | money }} CAD need a second approver before they can be exported. {% endif %}The second approver must be someone other than the first.</p>
+    <p class="muted">Approved by {{ inv.reviewer }} {{ inv.reviewed_at | time_ago }} · {{ edits }}. The second approver must be someone other than the first.</p>
+    {{ second_ui.why(second_why, approved_over, limit) }}
     <p class="muted small">{% if same %}You approved it first, so someone else gives the final approval, on{% else %}It takes another person on{% endif %}
       another computer login: on one laptop with one Windows login it can't be given. To test it, sign in to this laptop
       with a second Windows account and open AP Coder there, or have a colleague open it from their computer over the
