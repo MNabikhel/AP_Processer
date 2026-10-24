@@ -624,6 +624,25 @@ def internet_forbidden() -> bool:
     return (os.environ.get(INTERNET_ENV) or "").strip().lower() in ("0", "false", "no", "off")
 
 
+# Said before the first setup from GitHub's ZIP downloads anything (D-94): what, from where, and how to avoid it.
+DOWNLOAD_NOTICE = (
+    "First-time setup: this folder is AP Coder's code from GitHub's ZIP, without the offline bundle, so it downloads "
+    "{what} from {where}, once, to set itself up. Nothing about your invoices is sent, and AP Coder itself (the "
+    "dashboard) never goes online. To download nothing, use the offline bundle instead (unzip it and double-click "
+    "its APProcessor), or set AP_ALLOW_INTERNET=0 (the setup then stops at what is missing)."
+)
+PACKAGE_SITE = "pypi.org (files.pythonhosted.org)"
+MODEL_SITE = "www.modelscope.cn (RapidAI's OCR models)"
+
+
+def say_downloads(what: str, where: str) -> None:
+    """The notice before a download of the first setup (``DOWNLOAD_NOTICE``); a developer's opt-in gets one line."""
+    if internet_allowed():
+        say(f"Downloading {what} from {where}: {INTERNET_ENV}=1 allows it.")
+    else:
+        say(DOWNLOAD_NOTICE.format(what=what, where=where))
+
+
 def plain_download() -> bool:
     """This folder is the code alone: GitHub's ZIP or a git checkout, with no offline bundle's manifest, wheelhouse or
     models folder. Its setup downloads the packages and OCR models once, as CloseDesk does (unless
@@ -1201,11 +1220,8 @@ def _ensure_packages(state: dict, extras: tuple[str, ...]) -> tuple[str, str, bo
         say("Installing from the wheelhouse folder (no internet needed).")
     elif misfit:
         say(f"{misfit}. Installing from the internet (PyPI) instead: {INTERNET_ENV}=1 allows it.")
-    elif internet_allowed():
-        say(f"Installing from the internet (PyPI): {INTERNET_ENV}=1 allows it.")
-    else:
-        say("This folder is AP Coder's code without the offline bundle's packages (GitHub's ZIP): downloading them "
-            "from the internet once, for the setup only. AP Coder itself never goes online.")  # fmt: skip
+    else:  # the opt-in, or the code alone (GitHub's ZIP): said plainly before anything is downloaded (D-94)
+        say_downloads("the Python packages it needs (a few hundred MB)", PACKAGE_SITE)
     plain = tuple(e for e in extras if e != "ocr")
     if self_problem and missing:
         say(f"Installing AP Coder's packages: {len(missing)} missing, with the packages they need in turn. The first "
@@ -1376,6 +1392,8 @@ def ensure_models(first: bool, state: dict) -> None:
         return
     again = online and state.get("models_failed") == attempt
     if online:
+        if not again:
+            say_downloads("the OCR models for scanned invoices (about 35 MB)", MODEL_SITE)
         say("Downloading the OCR models again (the last try didn't finish)." if again else
             "Downloading the OCR models (once).")  # fmt: skip
         with setup_downloads():

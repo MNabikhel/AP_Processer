@@ -825,3 +825,57 @@ that is reversed keeps its line, marked "replaced by D-NN".
   self-test), then `python -m ap_coder.bench coding --vendors 20 --invoices 5 --ai --out bench_ai` (the chat model's
   precision, first invoice apart; report in `bench_ai/report.md`), and, once AP has posted the pilot's invoices,
   `python -m ap_coder pilot-score` on the JDE export.
+- **D-93** · JD Edwards: the tax coded to G/L accounts. The pilot's AP team posts GST/HST to a GST receivable account
+  and the other provinces' taxes to their own accounts, and does not want E1 computing tax; both earlier modes (gross,
+  tax amounts) left the recoverable tax to E1's tax AAIs. A third *Amounts* mode, "Tax coded to G/L accounts"
+  (`AMOUNT_GL`), is the default for a new setup; a saved setup keeps its mode (saved settings without one read as
+  gross, as they were), so its batches rebuild unchanged. In it F0911Z1 is the stored GL distribution unfiltered
+  (`tax.build_gl_distribution`): each recoverable GST/HST/QST on its own line to its tax account (`tax_gl_mapping`,
+  through `account_for`), the non-recoverable tax and the meals half in the expense lines; the header goes with VLAG =
+  gross, VLTXA1 blank and VLEXR1 = the exempt code (E; whether R04110ZA posts our lines as sent with it, or wants
+  VLEXR1 blank, is to confirm with the JDE administrator, in the checklist and the worksheet), so nothing is recoverable
+  for E1 and the voucher balances to the gross. Not asked in this mode: the tax areas, the gross mode's meals hold
+  (JDE_MEALS_GROSS; the claim is the tax line's amount); kept: JDE_MEALS_PO, and a PO-matched voucher with tax is held
+  back (JDE_GL_PO: E1 distributes from the receipts and posts no tax, so the tax would go nowhere). Match-header
+  numbering is one pay item per G/L line with its own amount, the tax lines included. A tax account with no
+  BU.Obj.Sub is the usual JDE_NO_ACCOUNT, named as the tax account. Self-assessed PST is never accrued by E1 here
+  (`accrues_use_tax` false): the Self-assessment report has it. Why: posting the tax as AP Coder coded and checked it
+  is what this AP team does by hand today, and it leaves E1 nothing to work out differently from the invoice.
+  (`erp/jde.py`, `tests/test_jde_gl_mode.py`, `docs/JDE_E1.md`)
+- **D-94** · First-time setup is the one exception to "nothing goes online". From GitHub's ZIP (the code alone: no
+  offline bundle's manifest, wheelhouse or models), the launcher downloads, once, the Python packages from PyPI
+  (pypi.org, files.pythonhosted.org) and the OCR models from www.modelscope.cn, and APProcessor.bat may offer Python
+  3.12 through winget, as CloseDesk does; the offline bundle never downloads anything, and `AP_ALLOW_INTERNET=0`
+  forbids the downloads from the ZIP too. The dashboard (`python -m ap_coder serve`) stays fully offline either way:
+  nothing about an invoice is ever sent. Before downloading, the launcher says on screen what it downloads, from
+  where, and how to avoid it (`scripts/launch.py` `DOWNLOAD_NOTICE`, `say_downloads`; the .bat before winget). Why:
+  a pilot tester who downloads the ZIP needs AP Coder to set itself up without IT, and IT reviewing the pilot needs
+  to see exactly what left the laptop and when; a firm that allows no download uses the offline bundle.
+  (`tests/test_launch.py::test_the_first_setup_says_which_packages_it_downloads_from_where`, `::..._models_...`)
+- **D-95** · Touchless never approves what bulk approval would refuse. Before, only errors, the always-a-person
+  findings and a line without an account kept an invoice touchless processing passed from going through: HST at the
+  wrong rate, HST in a GST province, GST only where HST is due, a PST due and not charged, or no GST/HST number on a
+  large invoice went out without a person. Now any warning and an invoice its checks flag for review
+  (`requires_review`) go to a person (`supplier.should_auto_approve`), and the tax findings that put the input tax
+  credit at risk are in `ALWAYS_A_PERSON` (so bulk approval refuses them whatever their severity). An invoice held for
+  the Azure check or the AI reviewer has its checks done again before AP Coder approves it (`workflow.still_touchless`
+  re-runs `finalise_coding`, as `bulk_approve` does), is never approved while a person has a draft on it, and an
+  audit-sample pick is never bulk-approved. A bulk approval teaches only its corrections: its kept lines are recorded
+  with the outcome `bulk`, which the accuracy figures leave out, and kept values neither confirm a lesson nor count
+  as an invoice it was seen on. Why: a person approving in bulk refuses any warning; an invoice nobody looked at must
+  not pass more easily than one a person approves without opening. The learning simulation (`bench learn`) scores
+  the reading only, so its figures are unchanged. (B-950 to B-955)
+- **D-96** · The review screen's keys from the box it focuses, and drafts in the queue (fourth UI sweep). (1) Ctrl+Z
+  in a box of the review form (or its picker) not typed in since the page opened is the screen's, as outside a text
+  box: the last change, else the approval just made (the banner's Undo); once something is typed there it is the
+  box's own. (2) Alt+←/→/↑ go to the previous / next invoice and the queue from a text box too, except on a Mac, where
+  Option+arrows move the caret by word. (3) A box focused on opening that sits half under the approve bar is scrolled
+  just above it; wholly below the fold, the page stays at its top (D-86 (5)). (4) A draft keeps its own check
+  (`check.why`: the approve bar's first blocker, "" when none) and the time it was last edited (`saved_at`, not
+  changed when the same edits are checked again); the queue row of an invoice with this person's draft says "Edits not
+  approved yet: …" and is never Ready (bulk approval leaves it alone). (5) The second approver sees the stored reason
+  for the second approval and each error approved anyway with its reason, by its Help title (`audit.second_reason`,
+  `audit.approved_over`). Why: a sweep found Ctrl+Z and Alt+arrows dead where the page itself put the focus, a queue
+  that contradicted the draft, and a second approver who couldn't see what was approved over.
+  (`static/js/invoice.js`, `web/pages/invoice.py` `_keep_draft`, `web/pages/review.py` `draft_reasons`,
+  `core/audit.py`; `tests/test_web_ui_sweep4.py`)

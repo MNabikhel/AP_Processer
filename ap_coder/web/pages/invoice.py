@@ -38,7 +38,7 @@ from ap_coder.capture.confidence import LABELS
 from ap_coder.capture.workflow import learn_from_approval, on_reopen, taught_message
 from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCE_NAMES
 from ap_coder.coding.vendors import mask_account
-from ap_coder.core import ui
+from ap_coder.core import audit, ui
 from ap_coder.core.memory import ACCEPTED, CODED, CORRECTED, vendor_key
 from ap_coder.core.reference_data import ReferenceData
 from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store, coded_blanks
@@ -62,6 +62,7 @@ from ap_coder.web.core import (
     templates,
 )
 from ap_coder.web.files import download
+from ap_coder.web.identity import shown_path
 from ap_coder.web.pages.review import attention, filter_queue, sort_queue
 
 router = APIRouter()
@@ -192,9 +193,27 @@ def current_draft(request: Request, inv: dict[str, Any]) -> tuple[view.Draft, bo
     return draft, draft.reader_at != _reader_at(inv)
 
 
-def _keep_draft(request: Request, invoice_id: int, draft: view.Draft, keep: bool) -> None:
+_NOT_THE_EDITS = ("saved_at", "check")  # what a kept draft carries besides the edits
+
+
+def my_drafts(request: Request) -> dict[int, dict[str, Any]]:
+    """The drafts of the person asking, by invoice: each its edits, ``saved_at`` (when last edited) and ``check``
+    ({"why": what keeps it from being approved, "" when nothing does}), as the queue shows them (B-996)."""
+    return _drafts(request)
+
+
+def _keep_draft(request: Request, invoice_id: int, draft: view.Draft, keep: bool, why: str | None = None) -> None:
+    """Keep the edits (``keep``) or drop them. ``saved_at`` is when they were last edited: the same edits checked again
+    (the invoice opened again) keep their time (B-997). ``why``: the draft's own blocker, for the queue (B-996)."""
     if keep:
-        kept = {**draft.to_dict(), "saved_at": dt.datetime.now().isoformat(timespec="minutes")}
+        edits = draft.to_dict()
+        before = _drafts(request).get(invoice_id) or {}
+        same = before and {k: v for k, v in before.items() if k not in _NOT_THE_EDITS} == json.loads(json.dumps(edits))
+        check = {"why": why} if why is not None else before.get("check")
+        if same and before.get("saved_at") and before.get("check") == check:
+            return  # nothing new to keep
+        at = before["saved_at"] if same and before.get("saved_at") else dt.datetime.now().isoformat(timespec="minutes")
+        kept = {**edits, "saved_at": at, **({"check": check} if check is not None else {})}
         _drafts(request)[invoice_id] = kept
         get_store(request).save_invoice_draft(invoice_id, _person(_my_key()), kept)
     elif invoice_id in _drafts(request):
@@ -265,8 +284,9 @@ def next_url(store: Store, invoice_id: int, query: dict[str, str], seen_next: An
         seen = 0
     if seen in remaining:
         return _with_query(f"/review/{seen}", query)
-    at = min(position if position is not None else 0, len(remaining) - 1)
-    return _with_query(f"/review/{remaining[at]}", query)
+    if position is None or position >= len(remaining):  # it was the last one: back to the first, as said (B-998)
+        return _with_query(f"/review/{remaining[0]}", query)
+    return _with_query(f"/review/{remaining[position]}", query)
 
 
 _NOW = {APPROVED: "approved", PENDING: "approved, waiting for a second approval", REJECTED: "rejected",
@@ -367,7 +387,7 @@ def _document(store: Store, settings: Any, inv: dict[str, Any], status: Any, edi
     sizes: list[tuple[float, float]] = []
     problem = ""
     if not path.exists():  # (a file an update moved was found again by get_invoice)
-        problem = f"This invoice's file is no longer at {path}."
+        problem = f"This invoice's file is no longer at {shown_path(path)}."
     elif path.suffix.lower() in document.VIEWABLE:
         try:
             sizes = document.page_sizes(path)
@@ -506,13 +526,19 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
 
 
 def _when(iso: str) -> str:
-    """When a draft was kept, as the screen says it: "4:23" today, "Oct 21, 4:23" before (B-826)."""
+    """When a draft was last edited, as the screen says it: "today at 4:23 p.m.", "Oct 21 at 12:37 a.m." before
+    (B-826, B-997: "0:37" read as a duration)."""
     try:
         at = dt.datetime.fromisoformat(iso)
     except ValueError:
         return ""
-    clock = f"{at.hour}:{at.minute:02d}"
-    return clock if at.date() == dt.date.today() else f"{at:%b} {at.day}, {clock}"
+    clock = f"{at.hour % 12 or 12}:{at.minute:02d} {'a.m.' if at.hour < 12 else 'p.m.'}"
+    day = (
+        "today"
+        if at.date() == dt.date.today()
+        else f"{at:%b} {at.day}" + (f", {at.year}" if at.year != dt.date.today().year else "")
+    )
+    return f"{day} at {clock}"
 
 
 def vendor_options(store: Store) -> dict[str, Any]:
@@ -584,6 +610,9 @@ def _closed(store: Store, reference: ReferenceData | None, inv: dict[str, Any]) 
             bool(my_login) and my_login.casefold() == first_login.casefold()
         )
         out["limit"] = store.approval_limit()
+        detail = (first or {}).get("detail") or {}
+        out["second_why"] = audit.second_reason(detail) if detail.get("needs_second") else ""
+        out["approved_over"] = audit.approved_over(detail)  # what "Approve anyway" went over, and why (D-75)
         out["approval"] = (first or {}).get("id") or ""  # posted back with the final approval (B-654)
     if inv["status"] == FAILED:
         error = (inv.get("error") or "No reason recorded.").strip()
@@ -599,7 +628,8 @@ def page_picture(request: Request, invoice_id: int, number: int, scale: str = "1
     is 1). The scale is in the address, so the browser keeps each one apart."""
     inv = _invoice(get_store(request), invoice_id)
     if not Path(inv.get("source_path") or "").is_file():
-        raise HTTPException(status_code=404, detail=f"This invoice's file is no longer at {inv.get('source_path')}.")
+        gone = shown_path(inv.get("source_path"))  # its name alone to a colleague on another computer (B-979)
+        raise HTTPException(status_code=404, detail=f"This invoice's file is no longer at {gone}.")
     try:
         png = document.page_png(inv["source_path"], number, document.clean_scale(scale))
     except (IndexError, OSError) as exc:
@@ -679,7 +709,7 @@ def _check(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     if analysis.report is not None:
         store.refresh_confidence(invoice_id, analysis.report.adjusted_confidence, analysis.report.requires_review)
     kept = analysis.coding is None or analysis.changed or bool(draft.taught)
-    _keep_draft(request, invoice_id, draft, kept)
+    _keep_draft(request, invoice_id, draft, kept, _draft_blocker(analysis) if kept else None)
     # the account lists' "Used for this vendor", for the vendor now in the vendor field (B-596)
     listed = {code for code, _ in view.gl_options(reference, draft.lines)}
     used = [c for c in view.vendor_accounts(store, draft.header.get("vendor_name") or "") if c in listed]
@@ -697,7 +727,23 @@ def _check(request: Request, invoice_id: int, form: Any) -> JSONResponse:
                          "problems": analysis.problems, "vendor_accounts": used, "header": header,
                          "tax_codes": codes["options"], "tax_code_labels": codes["labels"],
                          "tax_marks": {str(k): v for k, v in (analysis.live.get("tax_marks") or {}).items()},
+                         # the tax rows as checked: a row moved to a new place of supply moves on screen (B-1020)
+                         "taxes": [{"tax_type": t.get("tax_type") or "", "province": t.get("province") or ""}
+                                   for t in draft.taxes],
                          "sections": _render_live(analysis.live, invoice_id)})  # fmt: skip
+
+
+def _draft_blocker(analysis: view.Analysis) -> str:
+    """What keeps the screen's Approve closed, as the queue says it ("" when nothing does): the approve bar's first
+    blocker, else the errors to approve anyway (B-996)."""
+    if analysis.coding is None:
+        return "Fix " + (analysis.problems[0] if analysis.problems else "a field")
+    if analysis.allow:
+        return ""
+    bar = analysis.live.get("bar") or {}
+    first = (bar.get("first") or {}).get("text") or ""
+    errors = int(bar.get("errors") or 0)
+    return first or (f"{ui.plural(errors, 'error')} to fix" if errors else "Not ready to approve")
 
 
 @router.post("/review/{invoice_id:int}/approve")
@@ -760,7 +806,9 @@ def _approve(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     waits = (store.get_invoice(invoice_id) or {}).get("status") == PENDING
     messages = []
     if waits:  # not approved yet: never "Approved <vendor>" for it
-        why = store.second_approval_reason(analysis.output) or "over the approval limit"
+        # the reason the approval stored: the limit and rate in force since it came in (B-970, B-1024)
+        first = next((e for e in store.events(invoice_id) if e["action"] == "approved"), None)
+        why = audit.second_reason((first or {}).get("detail") or {})
         messages.append(flash_message(f"First approval recorded for {vendor}: {why}; it waits for a second "
                                       "approver.", "info", icon="how_to_reg"))  # fmt: skip
     total = sum(counts.values())

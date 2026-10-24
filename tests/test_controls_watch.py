@@ -40,9 +40,12 @@ def test_controls_report_lists_the_exceptions(tmp_path):
     assert any(e["action"] == "settings_changed" for e in r["setup"])
     assert r["by_person"] == [("Jane", 2, 0)] and controls.exceptions(r) == 2
     page = controls.report_html(r)
-    assert "Approved despite an error (1)" in page and "TOTAL_MISMATCH" in page and "check the GST number" in page
+    assert "Approved despite an error (1)" in page and "check the GST number" in page
+    assert "Total doesn&#x27;t add up" in page  # the error's title, not its code (B-991)
     overridden = next(e for e in store.events(a) if e["action"] == "approved")
-    assert describe(overridden).startswith("approved despite TOTAL_MISMATCH; over the approval limit")
+    said = describe(overridden)  # in plain words, not the code (B-991)
+    assert said.startswith("Approved over: ") and "TOTAL_MISMATCH" not in said
+    assert "Second approval needed: over the approval limit" in said
 
     earlier = controls.build(store, today - dt.timedelta(days=30), today - dt.timedelta(days=10))
     assert earlier["approvals"] == 0 and "None: no error was overridden." in controls.report_html(earlier)

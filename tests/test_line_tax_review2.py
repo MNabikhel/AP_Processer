@@ -186,7 +186,7 @@ def test_the_dry_run_warns_that_a_use_tax_code_and_the_self_assessment_could_acc
     final["gl_distribution"] = build_gl_distribution(
         IC.model_validate({k: v for k, v in final.items() if k != "gl_distribution"}), setup
     )
-    report = jde.dry_run([doc_inv], jde.JdeSettings(), AN8)
+    report = jde.dry_run([doc_inv], jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS), AN8)
     voucher = report["vouchers"][0]
     assert voucher["tax_code"] == "B"
     assert any("accrued twice" in w for w in voucher["warnings"])

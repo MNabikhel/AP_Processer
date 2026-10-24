@@ -134,11 +134,11 @@ def test_in_a_browser_ticking_approve_anyway_says_no_draft_saved(browser, store)
 def test_a_draft_kept_from_before_says_so_with_discard(client, store):
     """B-826: a draft restored after a restart or on coming back looked like the invoice as read."""
     invoice_id = _id(store, "Pacific")
-    assert "Unsaved edits from" not in client.get(f"/review/{invoice_id}").text
+    assert "Unsaved edits made" not in client.get(f"/review/{invoice_id}").text
     check(client, invoice_id, form_of(store, invoice_id, payment_terms="Net 45 EOM"))
     page = client.get(f"/review/{invoice_id}").text
-    assert re.search(r"Unsaved edits from \d{1,2}:\d\d", page)
-    assert f'action="/review/{invoice_id}/start-over"' in page.split("Unsaved edits from", 1)[1][:600]
+    assert re.search(r"Unsaved edits made today at \d{1,2}:\d\d [ap]\.m\.", page)
+    assert f'action="/review/{invoice_id}/start-over"' in page.split("Unsaved edits made", 1)[1][:600]
 
 
 # --- 8. One colour per finding ----------------------------------------------------------------------------------------

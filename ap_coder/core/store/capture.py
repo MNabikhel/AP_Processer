@@ -146,14 +146,29 @@ class CaptureMixin:
                 )
         return True
 
-    def forget_if_withdrawn(self, invoice_id: int) -> bool:
+    def approval_generation(self, invoice_id: int) -> int:
+        """How many times the invoice was approved (its ``approved`` events): which approval learning learns from, so
+        one withdrawn and made again meanwhile is told apart from the one still standing (B-960)."""
+        with self._conn() as conn:
+            return self._generation(conn, invoice_id)
+
+    @staticmethod
+    def _generation(conn: sqlite3.Connection, invoice_id: int) -> int:
+        return int(conn.execute("SELECT COUNT(*) FROM events WHERE invoice_id = ? AND action = 'approved'",
+                                (invoice_id,)).fetchone()[0])  # fmt: skip
+
+    def forget_if_withdrawn(self, invoice_id: int, generation: int | None = None) -> bool:
         """After learning from an approval: if the invoice is no longer approved (withdrawn while it was learned
-        from), what was learned is taken back (``_forget_learning``), in the same transaction as the check (B-782).
-        True when it was. A deleted invoice is left to ``delete_invoice``."""
+        from), or approved again since (``generation``: ``approval_generation`` when learning began, B-960), what was
+        learned is taken back (``_forget_learning``), in the same transaction as the check (B-782). True when it
+        was. A deleted invoice is left to ``delete_invoice``."""
         with self._conn() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute("SELECT status FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
-            if row is None or row["status"] in (APPROVED, PENDING):
+            if row is None:
+                return False
+            standing = row["status"] in (APPROVED, PENDING)
+            if standing and (generation is None or self._generation(conn, invoice_id) == generation):
                 return False
             self._forget_learning(conn, invoice_id)
         return True
@@ -295,8 +310,18 @@ class CaptureMixin:
         if state == AUTONOMOUS and profile["state"] != AUTONOMOUS:
             if not meets_policy(self.supplier_stats(key, policy.window), policy):
                 raise ValueError(f"{profile['display_name'] or key} does not meet the autonomy policy yet")
-        if state == profile["state"] or (state == SUSPENDED and profile["state"] != AUTONOMOUS):
-            return  # nothing to suspend: the supplier is not touchless
+        if state == SUSPENDED and profile["state"] != AUTONOMOUS:
+            # Not touchless now (kept supervised by an AP lead, or suspended already), but one of its touchless
+            # invoices was found wrong: its state stays, its clean streak starts again from now (B-959).
+            with self._conn() as conn:
+                conn.execute("UPDATE supplier_profiles SET suspended_at = ?, updated_at = ?, updated_by = ? "
+                             "WHERE key = ?", (_now(), _now(), by, key))  # fmt: skip
+                self._log(conn, "autonomy_suspended", actor=by, detail={
+                    "supplier": profile["display_name"] or key, "key": key, "from": profile["state"],
+                    "to": profile["state"], **({"reason": reason} if reason else {})})  # fmt: skip
+            return
+        if state == profile["state"]:
+            return
         with self._conn() as conn:
             self._set_state(conn, profile, state, by, reason, audit_rate, policy)
         if state != SUSPENDED:  # "Allow again": it may go touchless straight away

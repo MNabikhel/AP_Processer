@@ -25,13 +25,14 @@ import contextvars
 import hashlib
 import hmac
 import ipaddress
+import re
 import secrets
 import unicodedata
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
 
-from starlette.responses import JSONResponse, RedirectResponse
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from ap_coder.core.store import EVENT_ORIGIN
 
@@ -41,6 +42,20 @@ WHO_PATH = "/who"
 OPEN_PATHS = ("/healthz", WHO_PATH)  # answered to a browser that has not said who it is
 OPEN_PREFIXES = ("/static/", "/fonts/", "/assets/")
 THIS_COMPUTER = {"127.0.0.1", "localhost", "::1"}
+# Settings (all of it: the approval limit and rates, Data's backups and restore, the Azure check) are changed only on
+# the computer running AP Coder when it is shared on the office network (B-972); logins come later.
+THIS_COMPUTER_ONLY = ("/settings",)
+# The setup and its imports, changed only from this computer too (B-1030): the account lists, the tax setup, the
+# policy notes and coding rules (all under /accounts), and the vendor master's import. Looking at them stays open.
+SETUP_CHANGES_HERE_ONLY = ("/accounts", "/vendors/master")
+SETUP_HERE_ONLY = (
+    "The account lists, the tax setup, the coding rules and the vendor master are changed only on the computer "
+    "running AP Coder. Ask the person at that computer, or the pilot tester."
+)
+SETTINGS_HERE_ONLY = (
+    "Settings are changed only on the computer running AP Coder. Ask the person at that computer, or the pilot "
+    "tester. To change your own name, use the Who are you? page (/who)."
+)
 
 
 @dataclass(frozen=True)
@@ -111,6 +126,22 @@ def name_from_cookie(secret: bytes, value: str | None) -> str | None:
     return found[0] if found else None
 
 
+_QUOTED_PATH = re.compile(r"""(['"])[^'"]*[\\/]([^'"\\/]*)\1""")  # 'C:\\Users\\x\\a.db', "/home/x/a.db"
+
+
+def shown_path(path: Any) -> str:
+    """A file's path as the browser asking is shown it: in full on this computer, its name alone to a colleague on
+    another computer (this computer's folders and user name are not theirs to see, B-979)."""
+    text = str(path or "")
+    return text if person() is None else text.replace("\\", "/").rsplit("/", 1)[-1]
+
+
+def without_folders(text: str) -> str:
+    """``text`` (an error's message) with each path quoted in it cut to its file name, for a colleague on another
+    computer; as it is on this computer. Python's errors quote the file they failed on: the name says which."""
+    return text if person() is None else _QUOTED_PATH.sub(lambda m: m.group(1) + m.group(2) + m.group(1), text)
+
+
 def _ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
     """An address as an IP, an IPv4-mapped IPv6 one (``::ffff:10.0.0.5``) as its IPv4 address; None for a name."""
     try:
@@ -160,9 +191,25 @@ class Identity:
         if scope["type"] != "http" or not self.network or from_this_computer(scope):
             await self.app(scope, receive, send)
             return
+        path = scope.get("path") or ""
+        if any(path == p or path.startswith(p + "/") for p in THIS_COMPUTER_ONLY):
+            if scope.get("method", "GET") in ("GET", "HEAD"):
+                page = f"<!doctype html><meta charset=utf-8><title>Settings</title><p>{SETTINGS_HERE_ONLY}</p>"
+                refusal: Any = HTMLResponse(page + '<p><a href="/">Back</a></p>', 403)
+            else:
+                refusal = JSONResponse({"ok": False, "error": SETTINGS_HERE_ONLY}, status_code=403)
+            refusal.headers["Cache-Control"] = "no-store"
+            await refusal(scope, receive, send)
+            return
+        if scope.get("method", "GET") not in ("GET", "HEAD") and any(
+            path == p or path.startswith(p + "/") for p in SETUP_CHANGES_HERE_ONLY
+        ):
+            refusal = JSONResponse({"ok": False, "error": SETUP_HERE_ONLY}, status_code=403)
+            refusal.headers["Cache-Control"] = "no-store"
+            await refusal(scope, receive, send)
+            return
         found = from_cookie(self.secret, _cookies(scope.get("headers") or []).get(COOKIE))
         if found is None:
-            path = scope.get("path") or ""
             if path in OPEN_PATHS or path.startswith(OPEN_PREFIXES):
                 await self.app(scope, receive, send)
                 return

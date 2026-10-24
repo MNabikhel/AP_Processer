@@ -99,7 +99,7 @@
   <div class="col">
     <section class="card">
       <h4>Shortcuts</h4>
-      <table class="apc-table">
+      <table class="apc-table hp-keys">
         <tbody>
           {% for keys, what in shortcuts %}
           <tr><td>{% for part in keys %}{% if part.key %}{{ ui.kbd(part.text) }}{% else %}{{ part.text }}{% endif %}{% if not loop.last %} {% endif %}{% endfor %}</td><td class="w">{{ what }}</td></tr>

@@ -71,6 +71,18 @@ def test_a_vendor_put_on_hold_is_seen_by_the_queues_checks_at_once(store):
     assert "VENDOR_ON_HOLD" in {i["code"] for i in today.get(candidate["id"], [])}
 
 
+def test_our_bank_accounts_are_in_the_checks_stamp(store):
+    """The checks read our bank accounts (the account an invoice is paid from, D-66), but a change to them did not
+    change the checks stamp: the queue kept the findings made against the old accounts (B-958)."""
+    first = store.checks_stamp()
+    row = {"code": "OPS-CAD", "name": "Operating", "currency": "CAD", "institution": "", "transit": "",
+           "account_number": "", "gl_account": "", "is_default": 1, "active": 1}  # fmt: skip
+    store.save_bank_accounts([row])
+    second = store.checks_stamp()
+    store.save_bank_accounts([{**row, "active": 0}])
+    assert len({first, second, store.checks_stamp()}) == 3
+
+
 def test_each_po_change_changes_the_checks_stamp_even_in_the_same_second(store):
     """B-842: a PO imported, then its received quantity changed a moment later: each is a change the checks read."""
     row = {"po_number": "PO-77001", "vendor_name": "Pacific Office Supply Ltd.", "line_number": 1,

@@ -9,7 +9,8 @@
   <div class="table-wrap"><table class="apc-table"><tbody>
     {% for label, value in pilot.rows %}<tr><td>{{ label }}</td><td class="r"><b>{{ value }}</b></td></tr>{% endfor %}
   </tbody></table></div>
-  <p class="muted">From the last <code>python -m ap_coder pilot-score</code>{% if pilot.made %} ({{ pilot.made }}){% endif %}: its report and the differences are in the data folder, <code>pilot_score</code>.</p>
+  <p class="muted">From the last score of the pilot{% if pilot.made %} ({{ pilot.made }}){% endif %}, fully approved invoices only: its report and the differences are in the data folder's pilot_score folder.</p>
+  <p class="muted small pilot-hint">For the pilot tester: to score again with a new JD Edwards export, run <code>python -m ap_coder pilot-score</code>.</p>
 </section>
 {% endif %}
 {% if early %}

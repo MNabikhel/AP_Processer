@@ -88,7 +88,21 @@ function applySections(answer, posted = null) {
   // the accounts of the vendor now in the vendor field: the account lists' "Used for this vendor" (B-596)
   if (Array.isArray(answer.vendor_accounts)) vendorAccounts = answer.vendor_accounts;
   if (answer.header) applyHeader(answer.header, posted);
+  if (Array.isArray(answer.taxes)) applyTaxRows(answer.taxes, posted);
   showMailLanguage();
+}
+
+/** The tax rows' provinces as the server checked them: a row put in the old place of supply follows a new one
+    (B-935, B-1020). Only a box that still holds what was sent is changed, and only when the rows are those sent. */
+function applyTaxRows(taxes, posted) {
+  const boxes = [...document.querySelectorAll('[data-grid="taxes"] [name="tax_province"]')];
+  const sent = posted ? posted.getAll("tax_province") : null;
+  if (boxes.length !== taxes.length || (sent && sent.length !== boxes.length)) return;
+  boxes.forEach((box, i) => {
+    const want = taxes[i].province || "";
+    if (box.value === want || (sent && box.value !== sent[i])) return;
+    if ([...box.options].some((o) => o.value === want)) box.value = want;
+  });
 }
 
 async function check() {
@@ -1212,7 +1226,10 @@ function elsewhere(target) {
   return Boolean(owner) && owner !== form;
 }
 
-/** A box being typed in, where Alt+←/→ moves the caret word by word (Option+arrows on a Mac). */
+/** On a Mac, where Option+←/→ in a text box moves the caret word by word. */
+const onMac = /Mac/.test(navigator.platform || navigator.userAgentData?.platform || "");
+
+/** A box being typed in. */
 function typing(target) {
   if (target.isContentEditable || target.tagName === "TEXTAREA" || target.tagName === "SELECT") return true;
   return target.tagName === "INPUT" && !["checkbox", "radio", "button", "submit", "reset"].includes(target.type);
@@ -1254,7 +1271,9 @@ document.addEventListener("keydown", (e) => {
     if (goToPick()) e.preventDefault();
     return;
   }
-  if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && approveButton && form) {
+  // Enter in "Why approve anyway?" approves, as Ctrl+Enter does: the reason is the last thing typed (B-1011).
+  const why = e.key === "Enter" && !e.shiftKey && !e.altKey && e.target.matches?.("[data-override-reason]");
+  if (((e.ctrlKey || e.metaKey) && e.key === "Enter" || why) && approveButton && form) {
     if (elsewhere(e.target)) return;
     e.preventDefault();
     flush().then(() => {
@@ -1266,7 +1285,10 @@ document.addEventListener("keydown", (e) => {
     });
     return;
   }
-  if (!e.altKey || e.ctrlKey || e.metaKey || typing(e.target)) return;
+  // From a text box too, where the page puts the focus on opening: on Windows Alt+arrows are no text-editing keys
+  // (B-993). On a Mac, Option+arrows in a text box move the caret word by word: theirs there.
+  if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.target.closest?.("dialog, [role=dialog]")) return;
+  if (onMac && typing(e.target)) return;
   const where = { ArrowLeft: "prev", ArrowRight: "next", ArrowUp: "queue" }[e.key];
   const link = where && document.querySelector(`[data-nav="${where}"]`);
   if (link) {
@@ -2178,19 +2200,26 @@ if (form) {
 
 /* ---------- Ctrl+Z, P (Park), X (Reject) ---------- */
 
+/** The boxes typed in since the page opened: in one of them Ctrl+Z is the box's own (B-992). */
+const typedIn = new WeakSet();
+document.addEventListener("input", (e) => typedIn.add(e.target), { capture: true });
+
 document.addEventListener("keydown", (e) => {
   if (e.defaultPrevented || e.altKey || e.target.closest?.("dialog, [role=dialog]")) return;
   if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === "z" || e.key === "Z")) {
+    // A box of the form (or its picker) not typed in since the page opened, as the one focused on opening, has no
+    // typing of its own to undo: Ctrl+Z there is the screen's, as outside a text box (B-992).
+    const fresh = typing(e.target) && !typedIn.has(e.target) && (e.target.form === form || !!e.target.closest(".pk"));
     // Not in a text box, where Ctrl+Z is the box's own; but in a box of the review form nothing was typed in since
     // the change (typing there drops the Undo), as after a right-click in it: there the change is what to undo.
-    if (typing(e.target) && e.target.form !== form) return;
+    if (typing(e.target) && !fresh && e.target.form !== form) return;
     if (undo()) {
       e.preventDefault();
       return;
     }
     // Outside a text box the browser's own undo would take a character off the last box typed in, maybe off the
     // screen, and that would be kept (B-739): never. In a box of the form, its own typing is the browser's to undo.
-    if (!(typing(e.target) && e.target.tagName !== "SELECT")) {
+    if (fresh || !(typing(e.target) && e.target.tagName !== "SELECT")) {
       e.preventDefault();
       // nothing edited here since: the approval just made, as the banner's Undo (B-823)
       const banner = document.querySelector("#flashes form.flash-undo");
@@ -2318,16 +2347,21 @@ const remarkLimit = Number(document.getElementById("lines")?.dataset.remarkLimit
 function showRemark(textarea, typingNow) {
   const note = textarea?.closest("td")?.querySelector("[data-remark]");
   if (!note || !remarkLimit) return;
-  const n = textarea.value.trim().length;
+  const text = textarea.value.trim();
+  const n = text.length;
   const over = n > remarkLimit;
-  note.hidden = !(over || typingNow);
+  // Only in the box being typed in, in words (B-995): a bare "53/30" under nearly every line, over the box's corner,
+  // meant nothing. Past the limit, the box's own title says what JD Edwards keeps.
+  note.hidden = !typingNow;
   note.classList.toggle("over", over);
   note.classList.toggle("typing", Boolean(typingNow));
-  // past the limit: the count, and while typing what JD Edwards keeps (its title says it too)
-  note.textContent = over && typingNow
-    ? `${n}/${remarkLimit}: JD Edwards keeps “${textarea.value.trim().slice(0, remarkLimit)}”`
-    : `${n}/${remarkLimit}`;
-  note.title = over ? `JD Edwards keeps the first ${remarkLimit} characters: “${textarea.value.trim().slice(0, remarkLimit)}”` : "";
+  const kept = `“${text.slice(0, remarkLimit)}”`;
+  note.textContent = over
+    ? `JD Edwards keeps ${remarkLimit} of ${n} characters: ${kept}`
+    : `${n} of ${remarkLimit} characters JD Edwards keeps`;
+  note.title = over ? `JD Edwards keeps the first ${remarkLimit} characters: ${kept}` : "";
+  if (over) textarea.title = `JD Edwards keeps the first ${remarkLimit} characters: ${kept}`;
+  else textarea.removeAttribute("title");
 }
 
 document.addEventListener("focusin", (e) => {
@@ -2414,7 +2448,14 @@ function focusFirstToCheck(always = false) {
   // view (above the approve bar).
   box.focus({ preventScroll: true });
   if (always) box.scrollIntoView({ block: "nearest" }); // after an Undo: where the work is
-  else reachApprovalUndo(box);
+  else {
+    // Half under the approve bar, it looks lost: brought just above it (the scroll padding is the bar's height).
+    // Wholly below it, the page stays at its top, as above (B-992).
+    const bar = document.querySelector(".inv-actionbar")?.getBoundingClientRect();
+    const r = box.getBoundingClientRect();
+    if (bar && r.top < bar.top && r.bottom > bar.top - 4) box.scrollIntoView({ block: "nearest" });
+    reachApprovalUndo(box);
+  }
   return true;
 }
 

@@ -14,7 +14,7 @@ from ...coding.line_tax import invoice_uncollected, supply_province, tax_vote
 from ...coding.po import po_key
 from ...coding.terms import DEFAULT_TERMS_DAYS
 from ..audit import diff_coding
-from ..memory import ACCEPTED, CODED, CORRECTED, pair_lines, vendor_key
+from ..memory import ACCEPTED, BULK, CODED, CORRECTED, pair_lines, vendor_key
 from ..paths import PROJECT_DIR, default_db_path, find_moved_file, private_dir  # noqa: F401  (re-exported)
 from ..reference_data import UNASSIGNED
 from ..schema import as_read
@@ -79,7 +79,7 @@ class InvoicesMixin:
                     sha,
                     FAILED if error else REVIEW,
                     out.get("vendor_name"),
-                    vendor_key(out.get("vendor_name", "")),
+                    self.vendor_key_for(out.get("vendor_name", ""), out.get("gst_hst_registration_number")),
                     out.get("invoice_number"),
                     out.get("invoice_date"),
                     out.get("currency"),
@@ -718,12 +718,15 @@ class InvoicesMixin:
         if inv["status"] != REVIEW:  # a failed read has nothing checked to approve
             raise ValueError(f"invoice {invoice_id} is not in the review queue ({inv['status']})")
         ai = inv["ai_output"] or {"line_items": []}
-        second_reason = self.second_approval_reason(final_output)
+        currency = str(final_output.get("currency") or "CAD").strip().upper()
+        # The limit and rate in force since the invoice came in, the strictest of them (B-970); kept in the event.
+        limit, rate = self.approval_controls(currency, inv.get("created_at") or "")
+        second_reason = self.second_approval_reason(final_output, limit, rates={} if rate is None else {currency: rate})
         needs_second = bool(second_reason)
         vendor_name = final_output.get("vendor_name", "")
-        key = vendor_key(vendor_name)
+        key = self.vendor_key_for(vendor_name, final_output.get("gst_hst_registration_number"))  # B-1021
         now = _now()
-        counts = {ACCEPTED: 0, CORRECTED: 0, CODED: 0}
+        counts = {ACCEPTED: 0, CORRECTED: 0, CODED: 0, **({BULK: 0} if bulk else {})}
         reviewer_changed = reviewer_coded = 0
         # Lines a fixed coding rule set: the AI's own answer is what its accuracy is measured on.
         by_rule = {c["line_number"]: c for c in (inv.get("meta") or {}).get("rules_applied") or []}
@@ -768,6 +771,8 @@ class InvoicesMixin:
                 CODED if guess or nothing_proposed(s_gl, s_cc) else ACCEPTED if kept(s_gl, s_cc, f_gl, f_cc)
                 else CORRECTED
             )  # fmt: skip
+            if bulk and outcome == ACCEPTED:  # kept, but nobody looked at it: no confirmation (B-955)
+                outcome = BULK
             counts[outcome] += 1
             feedback_rows.append(
                 (
@@ -840,9 +845,10 @@ class InvoicesMixin:
             self._log(conn, "approved", invoice_id, reviewer, {
                 "lines": len(final_output.get("line_items", [])), "corrected": counts[CORRECTED],
                 **({"coded": counts[CODED]} if counts[CODED] else {}),
-                "total": final_output.get("grand_total"), "changes": diff_coding(ai, final_output),
+                "total": final_output.get("grand_total"), "changes": diff_coding(ai, final_output, cost_centers),
                 **({"bulk": True} if bulk else {}),
                 **({"needs_second": True, "second_reason": second_reason} if needs_second else {}),
+                **({"limit": limit, "rate": rate} if limit else {}),
                 **({"open_issues": open_issues} if open_issues else {}), **({"login": login} if login else {}),
             })  # fmt: skip
             conn.executemany(
@@ -868,7 +874,8 @@ class InvoicesMixin:
             return 0.0
 
     def second_approval_reason(self, coding: dict[str, Any], limit: float | None = None, *,
-                               unknown_rate: bool = True) -> str:  # fmt: skip
+                               unknown_rate: bool = True,
+                               rates: dict[str, float] | None = None) -> str:  # fmt: skip
         """Why this invoice needs a second approver ("" when it doesn't). The limit is in CAD: a foreign-currency total
         is converted at the rate set in Settings. Without a rate it is never taken as CAD (9,000 EUR is about 13,000
         CAD): it needs the second approver, whatever its total (``unknown_rate``; False: left out, for a caller that
@@ -877,7 +884,7 @@ class InvoicesMixin:
         if not limit:
             return ""
         currency = str(coding.get("currency") or "CAD").strip().upper()
-        rate = self.fx_rates().get(currency)
+        rate = (self.fx_rates() if rates is None else rates).get(currency)
         if rate is None:
             return f"no CAD rate for {currency}: a second approval is needed" if unknown_rate else ""
         total = abs(float(coding.get("grand_total") or 0))
@@ -919,9 +926,10 @@ class InvoicesMixin:
             )
             if cur.rowcount == 0:
                 raise ValueError(f"invoice {invoice_id} is not waiting for a second approval")
+            reason = ((first or {}).get("detail") or {}).get("second_reason")  # why it waited (B-1024)
             self._log(conn, "final_approved", invoice_id, approver, {
                 "first_approver": inv["reviewer"], "total": (inv["final_output"] or {}).get("grand_total"),
-                **({"login": login} if login else {}),
+                **({"second_reason": reason} if reason else {}), **({"login": login} if login else {}),
             })  # fmt: skip
 
     def send_back(self, invoice_id: int, actor: str, reason: str = "") -> None:

@@ -73,7 +73,20 @@ MEALS_WHY = (
     "The ITC total above is already net of it: report it as is on line 106 of the GST/HST return, with no add-back "
     "for these meals on line 104 at year end."
 )
-RISKS = {NO_GST_NUMBER, NO_QST_NUMBER, GST_CHECK_DIGIT, GST_NOT_PRINTED, QST_NOT_PRINTED, FOREIGN}
+# Tax charged in error (B-925): only the tax properly payable is claimable (ETA s.169); what was charged too much is
+# recovered from the vendor (s.232: a credit note), not claimed. From the findings still open when it was approved.
+WRONG_RATE = (
+    "Tax charged at the wrong rate: recover the excess from the vendor (credit note, ETA s.232), claim only the right "
+    "rate"
+)
+NOT_PAYABLE = (
+    "Tax charged that isn't payable here (HST where GST applies): claim the GST part only, or get a corrected invoice "
+    "(ETA s.169)"
+)
+TAX_WRONG = "Tax doesn't match the rate on the lines: claim only the tax properly charged, or get a corrected invoice"
+CHARGED_IN_ERROR = {"TAX_RATE_NONSTANDARD": WRONG_RATE, "ITC_AT_RISK": NOT_PAYABLE, "TAX_CALC_MISMATCH": TAX_WRONG}
+RISKS = {NO_GST_NUMBER, NO_QST_NUMBER, GST_CHECK_DIGIT, GST_NOT_PRINTED, QST_NOT_PRINTED, FOREIGN,
+         *CHARGED_IN_ERROR.values()}  # fmt: skip
 
 
 @dataclass
@@ -189,7 +202,10 @@ def build(store: Store, start: dt.date, end: dt.date, treatments: dict[str, TaxT
     setup = supply_setup(store)
     first, last = start.isoformat(), end.isoformat()
     claims, not_approved = [], 0
-    for r in store.invoice_columns(("id", "status", "invoice_date", "export_batch", "ai_output", "final_output")):
+    rows = store.invoice_columns(("id", "status", "invoice_date", "export_batch", "ai_output", "final_output",
+                                  "validation"))  # fmt: skip
+    approvals = store.latest_events("approved", [r["id"] for r in rows if r["status"] == APPROVED])
+    for r in rows:
         doc = r["final_output"] or r["ai_output"] or {}
         date = str(doc.get("invoice_date") or r["invoice_date"] or "")
         if not (first <= date <= last):
@@ -203,6 +219,7 @@ def build(store: Store, start: dt.date, end: dt.date, treatments: dict[str, TaxT
         currency = str(doc.get("currency") or "CAD").upper()
         total = float(doc.get("grand_total") or 0)
         meals = meals_by_tax_line(doc)
+        in_error = charged_in_error(r, approvals.get(r["id"]))
         for position, tl in enumerate(doc.get("tax_lines") or []):
             tax_type = str(tl.get("tax_type") or "").upper()
             amount = round(float(tl.get("tax_amount") or 0), 2)
@@ -212,6 +229,7 @@ def build(store: Store, start: dt.date, end: dt.date, treatments: dict[str, TaxT
             amount = round(amount - not_claimed, 2)
             number, issue = _registration_issue(tax_type, doc)
             issues = [issue] if issue and abs(total) >= document_threshold(date) else []
+            issues += in_error
             if not_claimed:
                 issues.append(MEALS)
             if currency != "CAD":
@@ -238,6 +256,24 @@ def build(store: Store, start: dt.date, end: dt.date, treatments: dict[str, TaxT
     claims.sort(key=lambda c: (c.invoice_date, c.invoice_id))
     not_recoverable = [t for t in GROUPS if not recoverable(t)]
     return Report(start, end, claims, not_approved, not_recoverable)
+
+
+def charged_in_error(row: dict[str, Any], approval: dict[str, Any] | None) -> list[str]:
+    """What the tax checks said of tax charged in error on an approved invoice (B-925), as claim issues: from the
+    findings still open when it was approved (the approval's ``open_issues``); an approval that kept none (approved
+    outside the review screen) reads the checks stored when it was read, as long as its tax lines were not changed
+    since."""
+    detail = (approval or {}).get("detail") or {}
+    if "open_issues" in detail:
+        found = detail.get("open_issues") or []
+    elif approval is not None and detail.get("login") is not None:
+        found = []  # approved on the review screen with nothing open
+    else:
+        before = (row.get("ai_output") or {}).get("tax_lines")
+        same = before == (row.get("final_output") or {}).get("tax_lines")
+        found = ((row.get("validation") or {}).get("issues") or []) if same else []
+    codes = {str(i.get("code") or "") for i in found if isinstance(i, dict)}
+    return [CHARGED_IN_ERROR[c] for c in CHARGED_IN_ERROR if c in codes]
 
 
 def meals_by_tax_line(doc: dict[str, Any]) -> dict[int, float]:
@@ -283,17 +319,29 @@ class SelfAssessment:
 
 
 JDE_ACCRUES = "JD Edwards accrues this one (code B): don't book it again from this report"
+# Approved, not exported yet, while JD Edwards is the export and its settings would accrue it (B-928).
+JDE_WILL_ACCRUE = "JD Edwards will accrue this one once exported (code B): don't book it from this report"
 
 
 def _jde_accruing(store: Store) -> Any:
-    """A test of a coded invoice: exported to JD Edwards (in a batch not undone) with the self-assessed code (B)."""
+    """The note of a coded invoice whose PST JD Edwards accrues itself with the self-assessed code (B): exported to
+    JD Edwards (in a batch not undone), or not exported yet while JD Edwards is the export in use ("" otherwise)."""
     from ..erp import jde
 
     batches = {b["id"] for b in store.export_batches() if b.get("format") == jde.FORMAT and not b.get("undone_at")}
-    if not batches:
-        return lambda batch, doc: False
+    pending = jde.in_use(store)
+    if not batches and not pending:
+        return lambda batch, doc: ""
     settings = jde.load(store)
-    return lambda batch, doc: batch in batches and jde.accrues_use_tax(doc, settings)
+
+    def note(batch: Any, doc: dict[str, Any]) -> str:
+        if batch in batches:
+            return JDE_ACCRUES if jde.accrues_use_tax(doc, settings) else ""
+        if batch is None and pending:
+            return JDE_WILL_ACCRUE if jde.accrues_use_tax(doc, settings) else ""
+        return ""
+
+    return note
 
 
 def self_assessment(
@@ -339,7 +387,7 @@ def self_assessment(
                     rate,
                     round(base * rate, 2),
                     str(doc.get("currency") or "CAD").upper(),
-                    JDE_ACCRUES if tax_type == "PST" and accrued(r["export_batch"], doc) else "",
+                    accrued(r["export_batch"], doc) if tax_type == "PST" else "",
                 )  # fmt: skip
             )
     return sorted(out, key=lambda s: (s.province, s.invoice_date, s.invoice_id))

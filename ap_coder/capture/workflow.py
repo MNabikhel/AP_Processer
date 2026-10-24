@@ -92,7 +92,7 @@ def capture_invoice(path: str | Path, output: dict[str, Any] | None, *, store: A
         return None, "", None
     key, profile = supplier_for(store, output)
     template = (profile or {}).get("template") or None
-    vendor = vendor_record(store, (output or {}).get("vendor_name"))
+    vendor = vendor_record(store, (output or {}).get("vendor_name"), (output or {}).get("gst_hst_registration_number"))
     try:
         # Processed the day it arrives: that date also settles a 03/04/2026 the page leaves open.
         capture = analyze(path, di_raw=di_raw, ai_values=ai_values(output), template=template, vendor=vendor,
@@ -196,7 +196,8 @@ def autonomy_decision(store: Any, key: str, profile: dict[str, Any] | None, capt
     if gates:
         return {"state": state, "auto": False, "audit": False, "reason": "always a person: " + "; ".join(gates)}
     issues = [{"code": i.code, "severity": i.severity} for i in (report.issues if report else [])]
-    ok, reason = should_auto_approve(state, capture, checks_ok=not (report and report.errors), issues=issues)
+    ok, reason = should_auto_approve(state, capture, checks_ok=not (report and report.errors), issues=issues,
+                                     requires_review=bool(report and report.requires_review))  # fmt: skip
     audit = ok and audit_pick(path, policy.audit_rate)  # the same audit share for every supplier
     if audit:
         reason = "picked for the audit sample"
@@ -206,10 +207,16 @@ def autonomy_decision(store: Any, key: str, profile: dict[str, Any] | None, capt
 CHECK_CODES = ("VERIFIER_", "AZURE_DI_")  # the issues of a check made after processing (AI reviewer, Azure check)
 
 
+def has_draft(store: Any, invoice_id: int) -> bool:
+    """Whether a person has unapproved corrections on the invoice (a draft, D-86): never approved by AP Coder over
+    them (B-953)."""
+    return any(d[0] == invoice_id for d in store.invoice_drafts())
+
+
 def still_untouched(store: Any, invoice_id: int, output: dict[str, Any]) -> bool:
     """The invoice as stored now (read again, right before an approval by AP Coder): still in the review queue with
-    ``output`` as its proposal, nobody's coding on it (a person may have approved it with corrections and reopened it
-    meanwhile), no check still holding it (``azure_hold``, ``verifier_hold``) and no open issue from one."""
+    ``output`` as its proposal, nobody's coding or draft on it (a person may have approved it with corrections and
+    reopened it meanwhile), no check still holding it (``azure_hold``, ``verifier_hold``) and no open issue from one."""
     from ..ai.verifier import HOLDS
     from ..core.store import REVIEW
 
@@ -218,6 +225,8 @@ def still_untouched(store: Any, invoice_id: int, output: dict[str, Any]) -> bool
         return False
     if inv.get("ai_output") != output:  # read again meanwhile: what was checked is not what is proposed now
         return False
+    if has_draft(store, invoice_id):  # a person is correcting it
+        return False
     notes = (inv.get("meta") or {}).get("capture") or {}
     if any(notes.get(k) for k in HOLDS):
         return False
@@ -225,16 +234,52 @@ def still_untouched(store: Any, invoice_id: int, output: dict[str, Any]) -> bool
     return not any(str(i.get("code") or "").startswith(CHECK_CODES) for i in issues if isinstance(i, dict))
 
 
+def checks_today(store: Any, invoice_id: int, output: dict[str, Any], settings: Any = None) -> Any:
+    """The coding's checks of ``output`` (an invoice in the queue) done again now, as ``bulk_approve`` does: a vendor
+    put on hold, or the same invoice entered in the ERP, while it waited is found (B-951). The ``ValidationReport``;
+    None when the coding can't be read."""
+    from ..ai.pipeline import finalise_coding
+    from ..coding.bulk import _received_on
+    from ..core.config import Settings
+    from ..core.schema import InvoiceCoding
+
+    if settings is None:
+        try:
+            settings = Settings.from_env()
+        except Exception:  # noqa: BLE001 - an unreadable .env: the defaults
+            settings = Settings()
+    try:
+        coding = InvoiceCoding.model_validate({k: v for k, v in output.items() if k != "gl_distribution"})
+        inv = store.get_invoice(invoice_id) or {}
+        _, report = finalise_coding(coding, store.reference_data(), settings, store=store,
+                                    exclude_invoice_id=invoice_id, received=_received_on(inv))  # fmt: skip
+    except Exception as exc:  # noqa: BLE001 - not checked again: a person looks
+        log.info("invoice %s: checks not done again (%s)", invoice_id, exc)
+        return None
+    return report
+
+
 def still_touchless(store: Any, capture: CaptureResult | None, output: dict[str, Any],
-                    invoice_id: int | None = None) -> bool:  # fmt: skip
+                    invoice_id: int | None = None, settings: Any = None) -> bool:  # fmt: skip
     """Whether an invoice touchless processing passed earlier but held back (for the Azure check, the AI reviewer)
     may still be approved without a person now: the switch is still on, its supplier still touchless (not suspended
     or kept supervised by an AP lead meanwhile) and its total still within the touchless and approval limits. With
-    ``invoice_id``: the invoice as stored now is also ``still_untouched``."""
+    ``invoice_id``: the invoice as stored now is also ``still_untouched``, and its checks done again now
+    (``checks_today``) find nothing a person must see: no error, no warning, nothing that always goes to a person and
+    no review flag (B-951)."""
     if store is None or not store.touchless_enabled():
         return False
-    if invoice_id is not None and not still_untouched(store, invoice_id, output):
-        return False
+    report = None
+    if invoice_id is not None:
+        if not still_untouched(store, invoice_id, output):
+            return False
+        from ..coding.bulk import _needs_a_person
+
+        report = checks_today(store, invoice_id, output, settings)
+        if report is None or report.requires_review:
+            return False
+        if any(_needs_a_person(i.severity, i.code) for i in report.issues):
+            return False
     key, _ = supplier_for(store, output)
     if not key:
         return False
@@ -244,7 +289,7 @@ def still_touchless(store: Any, capture: CaptureResult | None, output: dict[str,
     state, _, _ = autonomy_status(store.supplier_stats(key, policy.window), policy, profile.get("state") or SUPERVISED,
                                   profile.get("autonomous_since"), touchless_on=True,
                                   suspended_at=profile.get("suspended_at"))  # fmt: skip
-    return state == AUTONOMOUS and not invoice_gates(store, capture, None, output)
+    return state == AUTONOMOUS and not invoice_gates(store, capture, report, output)
 
 
 NOT_READERS = ("computed", "vendor master")  # a field's sources that did not read the page
@@ -294,7 +339,8 @@ def reader_outcome_rows(capture: CaptureResult | dict[str, Any] | None, final: d
 
 
 def learn_from_approval(store: Any, invoice_id: int, final: dict[str, Any], *, actor: str = "",
-                        taught: dict[str, list[Box]] | None = None, bulk: bool = False) -> dict[str, Any]:  # fmt: skip
+                        taught: dict[str, list[Box]] | None = None, bulk: bool = False,
+                        _again: bool = False) -> dict[str, Any]:  # fmt: skip
     """After a person approves: score each reader against what AP approved (the Learning page's Readers tab and
     the local calibration of confidence), count what was corrected, field by field, towards the supplier's accuracy,
     and teach the supplier's template where each confirmed value sits on the page.
@@ -308,6 +354,7 @@ def learn_from_approval(store: Any, invoice_id: int, final: dict[str, Any], *, a
                                "template": False}  # fmt: skip
     from ..core.store import APPROVED, PENDING
 
+    generation = store.approval_generation(invoice_id)  # the approval learned from (B-960)
     inv = store.get_invoice(invoice_id)
     if inv is None or inv.get("status") not in (APPROVED, PENDING):  # withdrawn meanwhile: nothing to learn (B-782)
         return learned
@@ -317,7 +364,7 @@ def learn_from_approval(store: Any, invoice_id: int, final: dict[str, Any], *, a
     # takes it as it was read (D-65, B-681). The approved coding keeps it.
     approved = final
     final = as_read(final, inv.get("ai_output") or {})
-    record_lessons(store, invoice_id, inv.get("ai_output") or {}, final, actor)  # per situation (never raises)
+    record_lessons(store, invoice_id, inv.get("ai_output") or {}, final, actor, bulk=bulk)  # never raises
     try:
         reader_rows = reader_outcome_rows(store.get_capture(invoice_id), final)
         if bulk:  # nobody checked a value AP kept: scored on the Readers tab, but no proof for the calibration
@@ -362,9 +409,26 @@ def learn_from_approval(store: Any, invoice_id: int, final: dict[str, Any], *, a
         _keep_taught(store, invoice_id, approved, taught)
     except Exception as exc:  # learning must never block an approval
         log.warning("invoice %s: taught boxes not kept (%s)", invoice_id, exc)
-    if store.forget_if_withdrawn(invoice_id):  # withdrawn while it was learned from: taken back (B-782)
+    # Withdrawn while it was learned from: taken back (B-782). Withdrawn and approved again meanwhile: taken back too,
+    # and learned from the approval that stands (B-960).
+    if store.forget_if_withdrawn(invoice_id, generation):
         learned.update(counted=False, template=False)
+        return learned if _again else _learn_again(store, invoice_id, actor)
     return learned
+
+
+def _learn_again(store: Any, invoice_id: int, actor: str) -> dict[str, Any]:
+    """Learning from the approval that stands now, once the one learned from was withdrawn and made again meanwhile
+    (``learn_from_approval``): nothing when it is no longer approved, or was approved by AP Coder on its own."""
+    from ..core.store import APPROVED, PENDING
+
+    inv = store.get_invoice(invoice_id) or {}
+    final = inv.get("final_output")
+    if inv.get("status") not in (APPROVED, PENDING) or not final or inv.get("reviewer") == AUTONOMOUS_REVIEWER:
+        return {"supplier": "", "name": "", "fields": 0, "corrected": [], "counted": False, "template": False}
+    last = store.events(invoice_id=invoice_id, actions=["approved"], limit=1)
+    bulk = bool(last and (last[0].get("detail") or {}).get("bulk"))
+    return learn_from_approval(store, invoice_id, final, actor=inv.get("reviewer") or actor, bulk=bulk, _again=True)
 
 
 def _keep_taught(store: Any, invoice_id: int, approved: dict[str, Any], taught: dict[str, list[Box]] | None) -> None:

@@ -508,9 +508,11 @@ def analyze(path: str | Path, *, di_raw: dict[str, Any] | None = None, ai_values
             log.warning("%s: page reader's transcription not read (%s)", path.name, exc)
     words = _labelled(read_line_items(layout), "words")
 
+    page_words = layout.text()  # a tip printed after the tax (B-1026)
+
     def fused(lines: list[LineReading]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         return fuse(sources, lines, vendor=vendor, today=today, layout_source=layout.source,
-                    fields=FIELDS + EXTRA_FIELDS, local_evidence=local_evidence)  # fmt: skip
+                    fields=FIELDS + EXTRA_FIELDS, local_evidence=local_evidence, text=page_words)  # fmt: skip
 
     fields, checks = fused(words)
     items, readings = words, [words] if words else []

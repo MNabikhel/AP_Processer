@@ -192,6 +192,27 @@ def test_a_reopened_touchless_invoice_suspends_until_a_fresh_streak(tmp_path, gr
     assert store.get_supplier_profile(KEY)["state"] == AUTONOMOUS
 
 
+def test_a_touchless_invoice_reopened_while_its_vendor_is_held_still_counts(tmp_path, ground_truth):
+    """An AP lead kept the vendor supervised, then a person reopened one of its touchless invoices: nothing was
+    recorded, so once allowed again it went touchless at once on its old clean streak (B-959)."""
+    store = Store(tmp_path / "s.db")
+    _ready(store)
+    store.set_touchless(True, "Mia")
+    ground_truth["gst_hst_registration_number"] = ""
+    store.import_vendor_master([{"vendor_name": ground_truth["vendor_name"], "erp_id": "V1"}])
+    invoice_id = store.add_invoice(tmp_path / "a.pdf", ground_truth, {"requires_review": False})
+    store.approve_invoice(invoice_id, ground_truth, AUTONOMOUS_REVIEWER, login="ap-coder")
+    store.set_supplier_state(KEY, HELD, "Mia", reason="new contract")
+    before = store.get_invoice(invoice_id)
+    store.reopen(invoice_id, "Ann", "wrong PO")
+    on_reopen(store, invoice_id, "Ann", "wrong PO", before=before)
+    profile = store.get_supplier_profile(KEY)
+    assert profile["state"] == HELD and profile["suspended_at"]  # still kept supervised, the reopen recorded
+    assert "reopened" in store.events(actions=["autonomy_suspended"])[0]["detail"]["reason"]
+    store.set_supplier_state(KEY, SUPERVISED, "Mia")  # allowed again: a fresh clean streak first
+    assert store.get_supplier_profile(KEY)["state"] == SUPERVISED
+
+
 def test_keep_supervised_overrides_the_bar_until_allowed_again(tmp_path, path):
     store = Store(tmp_path / "s.db")
     _ready(store)
@@ -577,3 +598,68 @@ def test_bench_learn_promotes_a_supplier_by_itself(tmp_path):
     assert on and report["summary"]["autonomy"]["suppliers_ready"] == 1
     assert rows[on[0] - 1]["state"] == AUTONOMOUS
     assert "goes touchless by itself" in (tmp_path / "learn" / "report.md").read_text(encoding="utf-8")
+
+
+TAX_TO_LOOK_AT = ["ITC_AT_RISK", "TAX_RATE_NONSTANDARD", "TAX_TYPE_NOT_LEVIED", "HST_NOT_CHARGED",
+                  "TAX_REGIME_MISMATCH", "PROVINCIAL_TAX_NOT_CHARGED", "TAX_CALC_MISMATCH", "GST_HST_NUMBER_MISSING",
+                  "GST_HST_NUMBER_FORMAT", "GST_HST_NUMBER_NOT_PRINTED"]  # fmt: skip
+
+
+@pytest.mark.parametrize("code", TAX_TO_LOOK_AT)
+def test_a_tax_finding_always_goes_to_a_person(touchless, path, code):
+    """A tax charged at the wrong rate, of the wrong regime, not charged, or without a valid GST/HST number was
+    approved without a person: only errors and the gates blocked (B-950)."""
+    assert code in ALWAYS_A_PERSON
+    decision = _decide(touchless, path, report=_report(code))
+    assert not decision["auto"] and decision["reason"].startswith("always a person: ")
+
+
+def test_any_warning_or_a_review_flag_keeps_an_invoice_for_a_person(touchless, path):
+    """Touchless refuses what bulk approval refuses: any warning, and an invoice its checks flag for review (B-950)."""
+    decision = _decide(touchless, path, report=_report("TAX_PROVINCE_DIFFERS"))
+    assert not decision["auto"] and not decision["audit"] and "TAX_PROVINCE_DIFFERS" not in decision["reason"]
+    assert decision["reason"].startswith("a check needs a person: ")
+    flagged = ValidationReport("", 0.95, 0.7, 0.85, True, [])
+    decision = _decide(touchless, path, report=flagged)
+    assert not decision["auto"] and "confidence" in decision["reason"]
+    assert _decide(touchless, path, report=_report("SOMETHING_INFO", severity="info"))["auto"]
+
+
+@pytest.mark.parametrize("province, tax, date, number", [
+    ("NS", ("HST", "NS", 0.15, 150.0), "2025-06-10", "123456782RT0001"),  # NS cut HST to 14% on 2025-04-01
+    ("AB", ("HST", "ON", 0.13, 130.0), "2026-05-01", "123456782RT0001"),  # HST charged in a GST province
+    ("ON", ("GST", "", 0.05, 50.0), "2026-05-01", "123456782RT0001"),  # GST only where HST is due
+    ("BC", ("GST", "", 0.05, 50.0), "2026-05-01", "123456782RT0001"),  # BC PST due, not charged
+    ("AB", ("GST", "", 0.05, 50.0), "2026-05-01", ""),  # $1,050 with no GST/HST number
+])  # fmt: skip
+def test_tax_problems_found_by_the_checks_are_never_touchless(tmp_path, province, tax, date, number):
+    from ap_coder.coding.validation import validate_coding
+    from ap_coder.core.schema import InvoiceCoding
+    from ap_coder.core.store import load_sample_setup
+
+    store = Store(tmp_path / "t.db")
+    load_sample_setup(store)
+    kind, prov, rate, amount = tax
+    line = {
+        "line_number": 1,
+        "description": "item",
+        "quantity": 1,
+        "unit_price": 1000.0,
+        "amount": 1000.0,
+        "predicted_gl_code": "6010",
+        "predicted_cost_center": "CC400",
+        "taxes_applied": [kind],
+    }
+    doc = {"vendor_name": "Acme Ltd", "invoice_number": "A-1", "invoice_date": date, "currency": "CAD",
+           "supplier_province": province, "ship_to_province": province, "gst_hst_registration_number": number,
+           "subtotal": 1000.0, "tax_total": amount, "grand_total": 1000.0 + amount, "confidence_score": 0.99,
+           "line_items": [line], "tax_lines": [{"tax_type": kind, "province": prov, "rate": rate,
+                                                "taxable_amount": 1000.0, "tax_amount": amount}]}  # fmt: skip
+    report = validate_coding(InvoiceCoding.model_validate(doc), store.reference_data(), review_threshold=0.85)
+    fields = {k: FieldResult(k, doc[k], 0.99, "verified") for k in ("vendor_name", "invoice_number", "invoice_date",
+                                                                       "grand_total", "subtotal")}  # fmt: skip
+    capture = CaptureResult(fields, checks=[{"code": "TOTALS_ADD_UP", "ok": True}])
+    issues = [{"code": i.code, "severity": i.severity} for i in report.issues]
+    ok, why = should_auto_approve(AUTONOMOUS, capture, checks_ok=not report.errors, issues=issues,
+                                  requires_review=report.requires_review)  # fmt: skip
+    assert not ok, why

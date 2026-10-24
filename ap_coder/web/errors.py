@@ -56,13 +56,17 @@ def summary(exc: BaseException) -> str:
 
 def response(request: Request, exc: BaseException) -> Response:
     """What the browser gets: the error page for a page asked for, a JSON message for a form sent from a page."""
+    from ap_coder.web.identity import person, without_folders
+
     logged = record(request, exc)
+    if person() is not None:  # a colleague on another computer: no folder of this one, no log path (B-979)
+        logged = None
     wants_page = request.method == "GET" and "text/html" in request.headers.get("accept", "")
     if not wants_page:
-        return JSONResponse({"ok": False, "error": f"Something went wrong ({summary(exc)}). {WHAT_TO_DO}"},
-                            status_code=500)  # fmt: skip
+        said = without_folders(summary(exc))
+        return JSONResponse({"ok": False, "error": f"Something went wrong ({said}). {WHAT_TO_DO}"}, status_code=500)
     context: dict[str, Any] = {"code": 500, "title": "Something went wrong", "what_to_do": WHAT_TO_DO,
-                               "error_text": summary(exc), "error_log": str(logged or "")}  # fmt: skip
+                               "error_text": without_folders(summary(exc)), "error_log": str(logged or "")}  # fmt: skip
     try:
         from ap_coder.web import core
 

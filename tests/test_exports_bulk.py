@@ -307,3 +307,26 @@ def test_the_queue_says_clean_and_ready_by_todays_checks_after_a_setting_changes
     assert store.update_after_azure_check(ids[0], None, issue, "AZURE_DI_DISAGREES")
     store.set_setting(jde.SHOW_SETTING, "")
     assert ids[0] not in [c["id"] for c in clean_candidates(store)]
+
+
+def test_an_invoice_picked_for_the_audit_sample_is_never_bulk_approved(demo_store):
+    """The audit sample is an invoice touchless processing passed that a person must check: bulk approval offered it
+    and approved it unseen (B-952)."""
+    from ap_coder.web.pages.review import left_out
+
+    store = demo_store
+    picked = clean_candidates(store)[0]["id"]
+    meta = store.get_invoice(picked)["meta"]
+    meta.setdefault("capture", {}).update(audit=True, auto=False, reason="picked for the audit sample")
+    with store._conn() as conn:
+        conn.execute("UPDATE invoices SET meta = ? WHERE id = ?", (json.dumps(meta), picked))
+    assert picked not in [c["id"] for c in clean_candidates(store)]
+    from ap_coder.coding.bulk import sort_for_bulk
+
+    left = sort_for_bulk(store)[1]
+    assert left[picked] == "audit"
+    assert left_out([{"id": picked}], {}, left) == "1 picked for the audit sample left for a person"
+    result = bulk_approve(store, store.reference_data(), Settings(), [picked], "jane")
+    assert result["approved"] == []
+    assert result["skipped"] == [(picked, "Picked for the audit sample: a person checks it")]
+    assert store.get_invoice(picked)["status"] == REVIEW

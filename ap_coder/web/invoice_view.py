@@ -65,7 +65,7 @@ from ap_coder.coding.taxmath import math_check  # noqa: F401 - the review screen
 from ap_coder.coding.terms import describe as terms_describe
 from ap_coder.coding.terms import payment
 from ap_coder.core.config import Settings
-from ap_coder.core.memory import ACCEPTED, CODED, CORRECTED, pair_lines, vendor_key
+from ap_coder.core.memory import ACCEPTED, BULK, CODED, CORRECTED, pair_lines, vendor_key
 from ap_coder.core.reference_data import UNASSIGNED, ReferenceData, short_name
 from ap_coder.core.schema import FROM_VENDOR_LIST, PROVINCE_VALUES, InvoiceCoding
 from ap_coder.core.store import Store, nothing_proposed, suggestion_kept
@@ -298,6 +298,11 @@ class Draft:
                      for i in range(len(tcols["tax_type"]))]  # fmt: skip
             for t in taxes:
                 t.update({c: _number_cell(t[c]) for c in NUMBER_CELLS if c in t})
+        supply = header.get("ship_to_province", "").strip().upper()
+        if supply != base.header.get("ship_to_province", "").strip().upper():  # tax rows put in the old one follow
+            from ap_coder.coding.tax import follow_supply
+
+            taxes = follow_supply(taxes, supply, _date_or_none(header.get("invoice_date")))
         absent = parse_absent(form.get("absent"), header) if form.get("absent") is not None else base.absent
         from_vendor = (
             parse_from_vendor(form.get("from_vendor")) if form.get("from_vendor") is not None else base.from_vendor
@@ -392,7 +397,9 @@ def settle_header(store: Store, draft: Draft, read: dict[str, Any] | None = None
 
     header = draft.header
     key = vendor_key(header.get("vendor_name") or "")
-    vendor = store.get_vendor(key) if key else None
+    # of two vendors whose names read alike, the one with the GST/HST number on screen (B-1021)
+    vendor = store.find_vendor(header.get("vendor_name"), header.get("gst_hst_registration_number")) if key else None
+    key = (vendor or {}).get("vendor_key") or key
     draft.from_vendor, changed = fill_from_vendor(header, draft.from_vendor, draft.absent, vendor, unread_numbers(read))
     currency = (header.get("currency") or "CAD").strip().upper() or "CAD"
     if draft.pay_from_for and draft.pay_from_for != currency:
@@ -675,7 +682,7 @@ def vendor_accounts(store: Store, vendor_name: str, limit: int = 6) -> list[str]
     never what the AI proposed; lines left without an account are not counted."""
     if not (vendor_name or "").strip():
         return []
-    decided = {ACCEPTED, CORRECTED, CODED, HISTORY}
+    decided = {ACCEPTED, CORRECTED, CODED, BULK, HISTORY}
     counts: dict[str, int] = {}
     for row in store.feedback_rows(vendor_name=vendor_name):  # newest first: a tie keeps the newest first
         code = _text(row.get("final_gl"))
@@ -1388,11 +1395,12 @@ def suggestions(store: Store, reference: ReferenceData, coding: InvoiceCoding) -
              if li.predicted_gl_code == UNASSIGNED or accounts.get(li.predicted_gl_code) is None]  # fmt: skip
     if not lines:
         return []
-    feedback = store.learning_rows(coding.vendor_name)
-    default_gl = (store.get_vendor(vendor_key(coding.vendor_name)) or {}).get("default_gl") or ""
+    key = store.vendor_key_for(coding.vendor_name, coding.gst_hst_registration_number)  # its own of two (B-1021)
+    feedback = store.learning_rows(coding.vendor_name, key)
+    default_gl = (store.get_vendor(key) or {}).get("default_gl") or ""
     out = []
     for pos, li in lines:
-        found = suggest_gl(li.description, coding.vendor_name, feedback, reference, default_gl=default_gl)
+        found = suggest_gl(li.description, coding.vendor_name, feedback, reference, default_gl=default_gl, key=key)
         if found:
             out.append({
                 "position": pos, "number": li.line_number, "description": li.description,
@@ -1539,8 +1547,10 @@ def distribution(output: dict[str, Any], reference: ReferenceData | None, js: An
     rows = []
     for e in output.get("gl_distribution") or []:
         account = None
-        if js is not None:  # a recoverable tax line is posted by E1 itself (its tax AAIs): no account of ours
+        if js is not None:  # a recoverable tax line is posted by E1 itself (its tax AAIs): no account of ours,
+            # except with the tax coded to G/L accounts, where it goes to its tax account (D-93, B-1022)
             recoverable = e["kind"] == "tax" and abs(float(e.get("non_recoverable_tax") or 0)) < 0.005
+            recoverable = recoverable and not getattr(js, "tax_on_gl", False)
             mapped = jde.account_text(e["gl_code"] or "", e.get("cost_center") or "", js)
             account = "posted by JD Edwards" if recoverable else mapped or "not mapped"
         rows.append({
@@ -1859,6 +1869,8 @@ VUV WST XAF XCD XOF XPF YER ZAR ZMW ZWL
 HARD_CODES = frozenset({
     "MISSING_VENDOR", "MISSING_INVOICE_NUMBER", "NO_LINE_ITEMS", "SUBTOTAL_MISMATCH", "TOTAL_MISMATCH",
     "POSTING_UNBALANCED", "INVOICE_DATE_INVALID", "DUE_DATE_INVALID", "DATE_AMBIGUOUS", "CURRENCY_UNKNOWN",
+    # An account that is wrong or missing would post to the wrong (or a blank) GL (B-926).
+    "GL_IS_TAX_ACCOUNT", "GL_UNKNOWN", "CC_UNKNOWN", "TAX_GL_UNMAPPED", "TAX_GL_UNKNOWN",
 })  # fmt: skip
 
 
@@ -1868,6 +1880,13 @@ def is_hard(issue: Any) -> bool:
 
 
 DATE_FIELDS = ("invoice_date", "due_date")
+
+
+def _date_or_none(text: Any) -> dt.date | None:
+    try:
+        return dt.date.fromisoformat(str(text or "").strip()[:10])
+    except ValueError:
+        return None
 
 
 def _iso(text: str) -> bool:

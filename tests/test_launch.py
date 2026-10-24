@@ -933,3 +933,32 @@ def test_mac_launcher_explains_a_missing_python(tmp_path):
     assert out.returncode == 1
     assert "needs Python 3.11 or newer (3.12 is best), and it is not installed" in out.stdout
     assert "What to do:" in out.stdout
+
+
+# --- 8. The first setup from GitHub's ZIP says what it downloads, from where, and how to avoid it (D-94) -----------
+
+
+def _says_the_downloads(out: str, where: str) -> None:
+    assert where in out and "offline bundle" in out and "AP_ALLOW_INTERNET=0" in out
+    assert "your invoices" in out.lower()
+
+
+def test_the_first_setup_says_which_packages_it_downloads_from_where(launch, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(launch, "ROOT", tmp_path)
+    monkeypatch.setattr(launch.fetch_models, "BUNDLE_MODELS", tmp_path / "models")
+    monkeypatch.delenv("AP_ALLOW_INTERNET", raising=False)
+    commands = _record_pip(launch, monkeypatch)
+    monkeypatch.setattr(launch, "missing_packages", lambda extras: (["fastapi>=0.115,<1"], "x"))
+    with pytest.raises(launch.SetupError):
+        launch.ensure_packages({})
+    assert commands  # pip was run, after the notice
+    _says_the_downloads(capsys.readouterr().out, "pypi.org")
+
+
+def test_the_first_setup_says_which_models_it_downloads_from_where(launch, no_models, monkeypatch, capsys):
+    fetch_models, downloads = no_models
+    monkeypatch.setattr(launch, "plain_download", lambda: True)  # GitHub's ZIP
+    launch.ensure_models(first=True, state={})
+    out = capsys.readouterr().out
+    _says_the_downloads(out, "www.modelscope.cn")
+    assert out.index("www.modelscope.cn") < out.index("Downloading the OCR models")

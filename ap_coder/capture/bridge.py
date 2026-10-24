@@ -44,14 +44,13 @@ def ai_values(output: dict[str, Any] | None) -> dict[str, Any]:
     return values
 
 
-def vendor_record(store: Any, vendor_name: str | None) -> dict[str, Any] | None:
-    """{name, gst_number, erp_id} from the vendor master, if this vendor is there."""
+def vendor_record(store: Any, vendor_name: str | None, gst_number: Any = None) -> dict[str, Any] | None:
+    """{name, gst_number, erp_id} from the vendor master, if this vendor is there: of two whose names read alike, the
+    one with ``gst_number`` (B-1021)."""
     if store is None or not vendor_name:
         return None
-    from ..core.memory import vendor_key
-
     try:
-        rec = store.get_vendor(vendor_key(vendor_name))
+        rec = store.find_vendor(vendor_name, gst_number)
     except Exception:  # an older store without the vendor table
         return None
     if not rec or not rec.get("in_master"):

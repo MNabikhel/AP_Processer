@@ -128,15 +128,18 @@ def test_a_credit_note_is_not_shown_as_due(client, store):
 
 def test_approve_anyway_asks_again_when_a_new_error_appears(client, store):
     doc = gt()
-    doc["line_items"][0]["predicted_cost_center"] = "CC999"  # one error: a cost center not in the list
+    # one error: HST put in Alberta, where it is not levied (a cost center not in the list is never approved anyway)
+    doc["tax_lines"][0]["province"] = "AB"
     invoice_id = _flagged(store, doc)
     data = form_of(store, invoice_id)
     bar = check(client, invoice_id, data)["sections"]["bar"]
     assert "Approve anyway, despite" in bar and "1 error" in bar
     key = re.search(r'name="override" value="([0-9a-f]+)"', bar).group(1)
-    assert check(client, invoice_id, {**data, "override": key, "override_reason": "CC999 opens next week"})["allow"]
+    assert check(client, invoice_id, {**data, "override": key, "override_reason": "the vendor is correcting it"})[
+        "allow"
+    ]
     # a second error: the totals differ, which is never approved anyway (D-75)
-    worse = {**data, "override": key, "override_reason": "CC999 opens next week", "grand_total": "99999"}
+    worse = {**data, "override": key, "override_reason": "the vendor is correcting it", "grand_total": "99999"}
     answer = check(client, invoice_id, worse)
     assert not answer["allow"] and "Not ready: Subtotal + tax" in answer["sections"]["bar"]
     assert post(client, f"/review/{invoice_id}/approve", worse).status_code == 400

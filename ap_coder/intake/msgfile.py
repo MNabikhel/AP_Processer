@@ -14,6 +14,8 @@ from __future__ import annotations
 import html
 import re
 import struct
+import sys
+from array import array
 from dataclasses import dataclass, field
 
 SIGNATURE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
@@ -72,18 +74,29 @@ class CompoundFile:
         n_fat, first_dir = struct.unpack_from("<II", data, 0x2C)
         self.cutoff, first_mini_fat, n_mini_fat, first_difat, n_difat = struct.unpack_from("<IIIII", data, 0x38)
         self.n_sectors = max(0, (len(data) - self.sector) // self.sector)
-        fat_sectors = [s for s in struct.unpack_from("<109I", data, 0x4C) if s not in (_FREE, _END)]
-        s, seen = first_difat, 0
+        # The FAT needs no more sectors than one entry per sector of the file takes, and none twice: a crafted list
+        # of one sector repeated made a FAT of ten times the file's size (B-977). Kept as 4-byte numbers.
+        most = -(-self.n_sectors // (self.sector // 4))
+        fat_sectors: dict[int, None] = {}
+        for s in struct.unpack_from("<109I", data, 0x4C):
+            if s not in (_FREE, _END):
+                fat_sectors.setdefault(s)
+        s, seen, walked = first_difat, 0, set()
         per = self.sector // 4 - 1
-        while s not in (_FREE, _END) and seen < n_difat + 1 and len(fat_sectors) < self.n_sectors:
+        while s not in (_FREE, _END) and s not in walked and seen < n_difat + 1 and len(fat_sectors) < most:
+            walked.add(s)  # a DIFAT that points back at itself ends here
             block = self._raw_sector(s)
-            fat_sectors += [x for x in struct.unpack_from(f"<{per}I", block) if x not in (_FREE, _END)]
+            for x in struct.unpack_from(f"<{per}I", block):
+                if x not in (_FREE, _END):
+                    fat_sectors.setdefault(x)
             s = struct.unpack_from("<I", block, per * 4)[0]
             seen += 1
-        fat_sectors = fat_sectors[: max(n_fat, 0) or len(fat_sectors)]
-        self.fat: list[int] = []
-        for fs in fat_sectors:
-            self.fat += struct.unpack_from(f"<{self.sector // 4}I", self._raw_sector(fs))
+        chosen = list(fat_sectors)[: min(max(n_fat, 0) or most, most)]
+        self.fat = array("I")
+        for fs in chosen:
+            self.fat.frombytes(self._raw_sector(fs)[: self.sector].ljust(self.sector, b"\0"))
+        if sys.byteorder == "big":  # the file is little-endian
+            self.fat.byteswap()
         directory = self._chain_bytes(first_dir)
         self.entries: list[_Entry] = []
         for off in range(0, min(len(directory), MAX_ENTRIES * 128), 128):

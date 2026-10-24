@@ -102,11 +102,16 @@ def outcomes(proposed: dict[str, Any], final: dict[str, Any]) -> list[dict[str, 
     return out
 
 
-def record(store: Any, invoice_id: int, proposed: dict[str, Any], final: dict[str, Any], actor: str = "") -> int:
+def record(store: Any, invoice_id: int, proposed: dict[str, Any], final: dict[str, Any], actor: str = "",
+           bulk: bool = False) -> int:  # fmt: skip
     """After an approval: each situation seen, and corrected or confirmed. Returns how many were corrected. Never
-    raises (learning must never block an approval)."""
+    raises (learning must never block an approval). ``bulk``: approved in bulk, without anyone opening it: only its
+    corrections (an earlier approver's, on a reopened invoice) are recorded; what was kept was never looked at, so it
+    neither confirms a lesson nor counts as an invoice the lesson was seen on (B-955)."""
     try:
         rows = outcomes(proposed, final)
+        if bulk:
+            rows = [r for r in rows if r["corrected"]]
         for row in rows:
             store.record_lesson(row, invoice_id=invoice_id, actor=actor)
         return sum(1 for r in rows if r["corrected"])

@@ -89,6 +89,27 @@ def test_a_new_invoice_waits_for_the_page_reader_then_it_decides(store, touchles
     assert store.get_invoice(result.invoice_id)["status"] == APPROVED
 
 
+def test_an_invoice_a_person_is_correcting_is_never_approved_by_the_page_reader(store, touchless, monkeypatch):
+    """A person's unapproved corrections (a draft, D-86) on an invoice waiting for the page reader: its reading
+    still replaces the proposal, but AP Coder does not approve it over the person's work (B-953)."""
+    from ap_coder.ai import verifier
+
+    verifier.save_settings(store, on=False, rounds=3, minutes=5)
+    result = InvoicePipeline(_settings(), store.reference_data(), store=store).process(PDF)
+    store.save_invoice_draft(result.invoice_id, "Pat", {"header": {"invoice_number": "TYPED-BY-PAT"}, "lines": []})
+    transcript = (SAMPLES / f"{STEM}.md").read_text(encoding="utf-8")
+    status = page_reader.ReaderStatus(reachable=True, lm_studio=True, model=MODEL, document_reader=True,
+                                      state="loaded", candidates=[MODEL])  # fmt: skip
+    monkeypatch.setattr(page_reader, "reader_status", lambda settings, use_cache=True: status)
+    monkeypatch.setattr(page_reader, "load_reader", lambda settings, model=None: "")
+    monkeypatch.setattr(page_reader, "read_document", lambda settings, path, **kw: page_reader.PageReading(
+        model=MODEL, pages=[transcript], seconds=[90.0], page_count=1))  # fmt: skip
+    outcome = page_worker.read_one(_settings(), store)
+    assert outcome.status == "done" and outcome.updated and not outcome.auto_approved
+    assert store.get_invoice(result.invoice_id)["status"] == REVIEW
+    assert [d[0] for d in store.invoice_drafts()] == [result.invoice_id]  # the person's draft is still there
+
+
 def test_an_edited_invoice_is_never_approved_by_the_page_reader(store, touchless, monkeypatch):
     result = InvoicePipeline(_settings(), store.reference_data(), store=store).process(PDF)
     store.approve_invoice(result.invoice_id, dict(result.output, invoice_number="TYPED-BY-AP"), "Pat")

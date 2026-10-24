@@ -1536,6 +1536,18 @@ ALWAYS_A_PERSON: dict[str, str] = {
     "TAX_NOT_ALLOCATED": "the tax charged does not add up with the lines' tax codes",
     # Which lines carry the tax of a meals invoice is a guess, and with it the half expensed (D-90, B-891).
     "MEALS_TAX_LINES": "which lines carry the tax of a meals line is to confirm",
+    # A tax charged at a rate or of a regime the place of supply does not call for, one due but not charged, or no
+    # valid GST/HST number on it: the input tax credit is at risk, a person looks (B-950).
+    "ITC_AT_RISK": "the input tax credit is at risk",
+    "TAX_RATE_NONSTANDARD": "a tax is charged at a rate that is not the province's",
+    "TAX_TYPE_NOT_LEVIED": "a tax is charged that the province does not levy",
+    "TAX_REGIME_MISMATCH": "the tax charged is not the one the place of supply calls for",
+    "HST_NOT_CHARGED": "HST is due but not charged",
+    "PROVINCIAL_TAX_NOT_CHARGED": "a provincial tax is due but not charged",
+    "TAX_CALC_MISMATCH": "a tax does not work out from its base and rate",
+    "GST_HST_NUMBER_MISSING": "the GST/HST number is missing or not valid",
+    "GST_HST_NUMBER_FORMAT": "the GST/HST number is missing or not valid",
+    "GST_HST_NUMBER_NOT_PRINTED": "the GST/HST number is missing or not valid",
     "VENDOR_TAX_NUMBER_CHANGED": "the GST/HST number changed",
     "VENDOR_QST_CHANGED": "the QST number changed",
     "VENDOR_PST_CHANGED": "the PST number changed",
@@ -1585,7 +1597,9 @@ ALWAYS_A_PERSON_RULES: list[tuple[str, str]] = [
     ("Purchase order exception", "the PO is unknown, closed or another vendor's, or billed beyond what was ordered or "
      "received"),
     ("Tax to look at", "a PST or QST exemption learned from earlier approvals, a tax charged that the lines' tax "
-     "codes don't add up to, or a meals line sharing a tax with other lines"),
+     "codes don't add up to, a meals line sharing a tax with other lines, a tax at the wrong rate or of the wrong "
+     "kind for the province, a tax due but not charged, or no valid GST/HST number"),
+    ("Any warning", "any finding a person would look at, and an invoice its checks flag for review"),
     ("Dated in the future", "an invoice date after today: misread, or a bill sent ahead"),
     ("File cut off", "a PDF whose end is missing (a download that stopped): part of the invoice may be too"),
     ("Not read by every reader", "the page reader has not read it yet, not every page of it (nor the local readers, "
@@ -1645,12 +1659,13 @@ def touchless_gates(
 
 def should_auto_approve(
     state: str, capture: CaptureResult | dict[str, Any] | None, checks_ok: bool,
-    issues: Iterable[dict[str, Any]] | None = None,
+    issues: Iterable[dict[str, Any]] | None = None, requires_review: bool = False,
 ) -> tuple[bool, str]:  # fmt: skip
     """Approve without a person only for an ``autonomous`` supplier, every printed header field
-    ``verified``, the totals proven (subtotal, or the lines, + charges + tax = total), no failed check, no error-level
-    validation issue and none of the findings that always need a person (``touchless_gates``). Otherwise the reason it
-    goes to review."""
+    ``verified``, the totals proven (subtotal, or the lines, + charges + tax = total), no failed check, no error- or
+    warning-level validation issue, none of the findings that always need a person (``touchless_gates``) and not
+    flagged for review by its checks (``requires_review``): never what bulk approval would refuse (B-950). Otherwise
+    the reason it goes to review."""
     if state != AUTONOMOUS:
         return False, f"supplier is {STATE_LABELS.get(state, state).lower()}, not autonomous"
     if capture is None:
@@ -1684,6 +1699,14 @@ def should_auto_approve(
         return False, "a line has no GL account yet"
     if "CC_UNASSIGNED" in codes:
         return False, "a line has no cost center yet"
+    warnings = [i.get("code") or "warning" for i in issues if str(i.get("severity", "")).lower() == "warning"]
+    if warnings:  # what bulk approval refuses too (``bulk._needs_a_person``)
+        from ..ops.help import help_for
+
+        about = help_for(str(warnings[0]))
+        return False, "a check needs a person: " + (about.title if about else str(warnings[0]))
+    if requires_review:
+        return False, "its checks flag it for review: the confidence is below the review threshold"
     if not capture.fields:
         return False, "no header fields were read"
     for name in REQUIRED_FIELDS:

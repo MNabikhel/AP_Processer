@@ -23,7 +23,7 @@ from ap_coder.coding.bulk import bulk_approve, issues_today, sort_for_bulk
 from ap_coder.coding.review import codes_to_pick, uses_cost_centers
 from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCE_NAMES, province_label, stored_supply
 from ap_coder.coding.terms import DUE_SOON_DAYS, LONG_OVERDUE_DAYS, overdue_since, payment
-from ap_coder.core import ui
+from ap_coder.core import audit, ui
 from ap_coder.core.memory import vendor_key
 from ap_coder.core.reference_data import ReferenceData
 from ap_coder.core.store import (
@@ -60,6 +60,7 @@ from ap_coder.web.core import (
     render,
     reviewer,
 )
+from ap_coder.web.identity import shown_path
 from ap_coder.web.invoice_view import document_kind
 
 router = APIRouter()
@@ -137,8 +138,10 @@ _PAY_FROM: dict[int, tuple[int, str]] = {}  # the Pay from part of ``attention``
 
 
 def _to_fix(invoice_id: int, final: str | None, ai: str | None, validation: str | None,
-            cost_centers: bool) -> tuple[str, int]:  # fmt: skip
-    """(what the lines still need to be approved, how many errors the checks found) of one invoice, from its stored
+            cost_centers: bool) -> tuple[str, int, int]:  # fmt: skip
+    """(what the lines still need to be approved, how many errors the checks found, how many other findings bulk
+    approval leaves for a person: a warning, or one that always goes to a person, ``bulk.needs_a_person``, B-1027)
+    of one invoice, from its stored
     coding and checks (their JSON text). Remembered with the hash of that text: the queue asks it of every waiting
     invoice on each load (also to count them on the other tabs), and decoding them all again took most of the
     page's time (0.34 s at 5,000 waiting); a changed invoice is asked again."""
@@ -148,9 +151,13 @@ def _to_fix(invoice_id: int, final: str | None, ai: str | None, validation: str 
         return known[1]
     coded = (json.loads(final) if final else None) or (json.loads(ai) if ai else None) or {}
     issues = ((json.loads(validation) if validation else None) or {}).get("issues") or []
+    from ap_coder.coding.bulk import needs_a_person
+
+    errors = sum(1 for i in issues if i.get("severity") == "error")
     answer = (
         codes_to_pick(coded.get("line_items"), cost_centers, hint=False).removesuffix(" to approve"),
-        sum(1 for i in issues if i.get("severity") == "error"),
+        errors,
+        sum(1 for i in issues if needs_a_person(i.get("severity"), i.get("code"))) - errors,
     )
     _TO_FIX[invoice_id] = (asked, answer)
     return answer
@@ -160,8 +167,9 @@ def attention(store: Store, reference: ReferenceData | None, pending: list[dict[
               threshold: float | None = None,
               today: dict[int, list[dict[str, Any]]] | None = None) -> dict[int, str]:  # fmt: skip
     """Why each invoice of ``pending`` (the queue) needs attention, by id; one not listed is Ready: its review
-    screen's Approve is open as it stands. The lines' codes are asked as the review screen asks (``codes_to_pick``),
-    then the checks' flag (an error, or confidence under ``threshold``; None: the flag alone, without its words).
+    screen's Approve is open as it stands, and nothing in its checks keeps bulk approval from taking it (B-1027).
+    The lines' codes are asked as the review screen asks (``codes_to_pick``), then the checks' flag (an error, or
+    confidence under ``threshold``; None: the flag alone, without its words).
     The checks are today's (``bulk.issues_today``, or ``today`` when the caller has it): an invoice whose stored
     checks were made against other settings is checked again (B-815)."""
     from ap_coder.coding import banks
@@ -186,7 +194,8 @@ def attention(store: Store, reference: ReferenceData | None, pending: list[dict[
     for inv in pending:
         r = stored.get(inv["id"]) or {}
         checked = json.dumps({"issues": today[inv["id"]]}) if inv["id"] in today else r.get("validation")
-        to_pick, errors = _to_fix(inv["id"], r.get("final_output"), r.get("ai_output"), checked, cost_centers)
+        to_pick, errors, warned = _to_fix(inv["id"], r.get("final_output"), r.get("ai_output"), checked,
+                                          cost_centers)  # fmt: skip
         low = threshold is not None and (inv.get("adjusted_confidence") or 0.0) < threshold
         bank = ""
         if any(a["active"] for a in accounts):  # the review screen's Pay from rule (B-685): its Approve, its Ready
@@ -206,6 +215,8 @@ def attention(store: Store, reference: ReferenceData | None, pending: list[dict[
             to_pick,
             bank,
             f"{ui.plural(errors, 'error')} to fix" if errors else "",
+            # Ready is what bulk approval takes: a warning, or a finding that always goes to a person, is not (B-1027)
+            f"{ui.plural(warned, 'warning')} to look at" if warned else "",
             f"confidence under {threshold:.0%}" if low and inv.get("requires_review") else "",
         ]
         why = [w for w in why if w]
@@ -214,12 +225,32 @@ def attention(store: Store, reference: ReferenceData | None, pending: list[dict[
     return out
 
 
+def draft_reasons(request: Request, pending: list[dict[str, Any]]) -> dict[int, str]:
+    """The queue's reason for each invoice of ``pending`` with edits kept on this person's review screen: the draft's
+    own check, not the stored one ("Pick a GL account for line 4" after line 4 was coded in the draft, B-996). Never
+    Ready: bulk approval leaves an invoice with a draft alone, and the edits are approved on its screen."""
+    from ap_coder.web.pages.invoice import my_drafts
+
+    ids = {i["id"] for i in pending}
+    out = {}
+    for invoice_id, kept in my_drafts(request).items():
+        if invoice_id not in ids or not isinstance(kept.get("check"), dict):
+            continue
+        why = str(kept["check"].get("why") or "")
+        if why[1:2].islower():  # "Pick a GL account…" → "pick a GL account…"; "JD Edwards…" stays
+            why = why[:1].lower() + why[1:]
+        out[invoice_id] = "Edits not approved yet: " + (why or "ready to approve")
+    return out
+
+
 def left_out(pending: list[dict[str, Any]], reasons: dict[int, str], left: dict[int, str]) -> str:
     """Why the queue's Ready invoices not offered for bulk approval are left out (``sort_for_bulk``'s ``left``):
     "1 credit note and 2 with a warning left for a person", or "" when none is."""
     ready = [left[i["id"]] for i in pending if i["id"] not in reasons and i["id"] in left]
-    credit, warned = ready.count("credit note"), ready.count("warning")
-    parts = [ui.plural(credit, "credit note") if credit else "", f"{warned} with a warning" if warned else ""]
+    credit, warned, audit = ready.count("credit note"), ready.count("warning"), ready.count("audit")
+    parts = [ui.plural(credit, "credit note") if credit else "",
+             f"{audit} picked for the audit sample" if audit else "",
+             f"{warned} with a warning" if warned else ""]  # fmt: skip
     text = " and ".join(p for p in parts if p)
     return f"{text} left for a person" if text else ""
 
@@ -310,13 +341,20 @@ def kpis(store: Store, pending: list[dict[str, Any]], flagged: list[dict[str, An
     note, compared = ("", True)
     if settings is not None and accuracy is not None:
         note, compared = accuracy_note(settings, metrics["lines_measured"])
+    # Of mine today, those still waiting for their second approval: said apart, as the Approved tab lists only the
+    # fully approved (B-1006).
+    me, today = reviewer().strip().casefold(), dt.date.today().isoformat()
+    mine_waiting = sum(
+        1
+        for i in awaiting
+        if (i.get("reviewer") or "").strip().casefold() == me and (i.get("reviewed_at") or "") >= today
+    )
+    waits = f" · {mine_waiting:,} wait{'s' if mine_waiting == 1 else ''} for a second approval" if mine_waiting else ""
     return [
         {"label": "Waiting", "value": f"{len(pending):,}", "sub": f"{len(flagged)} need attention"},
         {"label": "Approved today", "value": f"{done_today:,}",
-         "sub": f"{len(pending):,} still to review"
-                + (f" · {len(awaiting):,} waiting for a second approval" if awaiting else "")
-                + f" · {len(approved):,} approved in total",
-         "bar": done_today / total_today if total_today else 0.0},
+         "sub": f"{max(done_today - mine_waiting, 0):,} fully approved{waits} · {len(pending):,} still to review",
+         "bar": done_today / total_today if total_today else 0.0, "wrap": True},
         {"label": "Coding accuracy", "value": "—" if accuracy is None else f"{accuracy:.1%}",  # as on Learning
          "sub": "after the first approvals" if accuracy is None
                 else ("vs 90% target" + (f" · {note}" if note else "")) if compared else note,
@@ -356,6 +394,7 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
     # The checks as they are now, of the invoices not flagged (a flagged one is never Ready nor offered in bulk).
     today = issues_today(store, [i["id"] for i in pending if not i["requires_review"]], reference, settings)
     reasons = attention(store, reference, pending, threshold, today)  # Ready means its Approve is open
+    reasons.update(draft_reasons(request, pending))  # an invoice with edits kept: what its screen says (B-996)
     flagged = [i for i in pending if i["id"] in reasons]
     approved = [i for i in invoices if i["status"] == APPROVED]
     awaiting = [i for i in invoices if i["status"] == PENDING]
@@ -400,7 +439,8 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
         )  # fmt: skip
     elif tab == "approved":
         recent = sorted(approved, key=lambda i: i["reviewed_at"] or "", reverse=True)[:APPROVED_SHOWN]
-        context.update(approved=recent, approved_total=len(approved), to_export=len(store.unexported_approved()))
+        context.update(approved=recent, approved_total=len(approved), to_export=len(store.unexported_approved()),
+                       awaiting_count=len(awaiting))  # fmt: skip
     elif tab == "other":
         context.update(others=[_other(i) for i in others])
     elif tab == "parked":
@@ -428,7 +468,10 @@ def _second(inv: dict[str, Any], first: dict[str, Any] | None, me: str, my_login
     same = (me or "").strip().casefold() == (inv["reviewer"] or "").strip().casefold() or (
         bool(my_login) and my_login.casefold() == first_login.casefold()
     )
-    return {**inv, "same": same, "approval": (first or {}).get("id") or ""}
+    detail = (first or {}).get("detail") or {}
+    why = audit.second_reason(detail) if detail.get("needs_second") else ""
+    return {**inv, "same": same, "approval": (first or {}).get("id") or "", "second_why": why,
+            "approved_over": audit.approved_over(detail)}  # fmt: skip
 
 
 def _getting_started(request: Request, store: Store, invoices: list[dict[str, Any]]) -> HTMLResponse:
@@ -573,7 +616,7 @@ def review_retry(request: Request, invoice_id: int) -> JSONResponse:
         return refuse("Retry reads again only an invoice that could not be read: reload the page.", 409)
     path = Path(inv["source_path"])
     if not path.exists():
-        return refuse(f"The original file is no longer at {path}.")
+        return refuse(f"The original file is no longer at {shown_path(path)}.")
     if not jobs(request).get(JOB).start(process_files(store, get_settings(request), [path]), total=1):
         return refuse("AP Coder is already reading invoices. Wait for it to finish, then try again.", 409)
     return done(request, "/process", flash_message(f"Reading {path.name} again.", "info", icon="refresh"))

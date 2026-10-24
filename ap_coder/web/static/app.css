@@ -688,3 +688,14 @@ details.tech summary {cursor: pointer; font-size: 13px; color: var(--lg-muted); 
 .flash-more > summary:hover {opacity: 1;}
 .flash-more > div {margin-top: 4px; color: var(--lg-text);}
 .flash .flash-act .flash-key {margin-left: 6px; font: inherit; font-size: 11px; opacity: .7;}
+
+/* Why a second approval, and what the first approval went over (B-990) */
+.second-why { margin: 4px 0 0; }
+.second-over { margin: 6px 0 0; font-size: 13px; }
+.second-over ul { margin: 2px 0 0; padding-left: 18px; }
+.second-over li { margin: 1px 0; overflow-wrap: anywhere; }
+
+/* Help's Shortcuts at 1366: the keys wrap and what they do takes the rest, inside the card (B-999) */
+.apc-table.hp-keys td {white-space: normal; padding: 6px 8px;}
+.apc-table.hp-keys td.w {min-width: 0;}
+.apc-table.hp-keys td:first-child {width: 42%;}

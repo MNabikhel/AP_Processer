@@ -22,7 +22,7 @@ from ..capture import analyze, build_layout
 from ..capture.bridge import vendor_record
 from ..capture.confidence import apply_supplier_record, reading_confidence
 from ..capture.reader import us_address
-from ..capture.types import LIKELY, VERIFIED, CaptureResult, DocLayout
+from ..capture.types import LIKELY, VERIFIED, CaptureResult, DocLayout, Line
 from ..capture.workflow import local_evidence, supplier_for, supplier_record
 from ..coding.tax import OUTSIDE_CANADA, TaxRateTable
 from ..coding.vendors import bank_digit_count, cut_bank_details
@@ -64,7 +64,8 @@ _OFFICIAL = {"GST": (0.05,), "HST": (0.13, 0.14, 0.15), "QST": (0.09975,), "PST"
 _RATE_PROVINCE = {("HST", 0.13): "ON", ("HST", 0.14): "NS", ("QST", 0.09975): "QC", ("PST", 0.06): "SK"}
 # A province code, then its postal code: "Calgary, AB T2P 1J9", "(ON) M5V 2T6", and as OCR glues them, "Calgary,AB"
 # and "Steinbach,MBR6X5X0" (the postal code straight after the code, standing alone after it) (B-810).
-_POSTAL = r"[A-Z]\d[A-Z]\s?\d[A-Z]\d"
+# OCR reads a postal code's 0 and 1 as O and I now and then ("T0J 1G2" as "TOJ1G2", "J1Z" as "JIZ", B-920).
+_POSTAL = r"[A-Z][\dOI][A-Z]\s?[\dOI][A-Z][\dOI]"
 _PROVINCE_AT = re.compile(
     r"(?:\(|\b)(ON|QC|BC|AB|MB|SK|NS|NB|NL|PE|YT|NT|NU)"
     rf"(?:(?:\)|\b)\s*,?\s*{_POSTAL}|(?={_POSTAL}(?![A-Za-z0-9])){_POSTAL})"
@@ -74,9 +75,13 @@ _PROVINCE_AT = re.compile(
 _SHIP_LABEL = re.compile(
     r"(?i)\b(?:ship|deliver)(?:ped|ed)?\s*to\b|\b(?:livr|exp[ée]di)(?:é|e|er|ée)\s*(?:à|a)\b"
     r"|\b(?:adresse|lieu)\s+de\s+livraison\b"
+    # Where a service is done is its place of supply too (B-920): "Service Address", "Job site", "Site address".
+    r"|\bservice\s+(?:address|location|site)\b|\b(?:job|work|project|install(?:ation)?)\s*site\b"
+    r"|\bsite\s+(?:address|location)\b|\b(?:adresse|lieu)\s+(?:du\s+service|des\s+travaux|du\s+chantier)\b"
 )
 _CUSTOMER_LABEL = re.compile(
     r"(?i)\b(?:bill|ship|sold|invoice|deliver)(?:ed)?\s*to\b|^\W*(?:client|customer)\s*(?::|$)"
+    r"|^\W*to\s*:"  # "To:" before the customer's name and address (B-920)
     r"|\b(?:factur(?:é|e|er|ée)|vendue?)\s*(?:à|a)\b|\badresse\s+de\s+facturation\b"
 )
 
@@ -98,7 +103,7 @@ def read_invoice(path: str | Path, store: Any = None, layout: DocLayout | None =
     first = _values(capture)
     key, profile = supplier_for(store, first)
     template = (profile or {}).get("template") or None
-    vendor = vendor_record(store, first.get("vendor_name"))
+    vendor = vendor_record(store, first.get("vendor_name"), first.get("gst_hst_registration_number"))
     if template or vendor:
         capture = analyze(path, layout=layout, template=template, vendor=vendor, today=today, page_text=page_text,
                           local_evidence=local, ai_values=ai_values or None)  # fmt: skip
@@ -118,20 +123,39 @@ def _amount(values: dict[str, Any], field: str) -> float:
         return 0.0
 
 
-@functools.lru_cache(maxsize=1)
 def _rate_table() -> Any:
+    """The tax-rate table (``tax.rates_path``), read again once the file changes, as ``Store.reference_data`` does: an
+    edited rate is seen without a restart (B-957). None without one."""
+    from ..coding import tax
+
+    path = tax.rates_path()
     try:
-        return TaxRateTable.load()
+        seen = path.stat()
+        stamp: tuple[Any, ...] = (str(path), seen.st_mtime_ns, seen.st_size)
+    except OSError:
+        stamp = (str(path), None, None)
+    return _rate_table_at(stamp)
+
+
+@functools.lru_cache(maxsize=4)
+def _rate_table_at(stamp: tuple[Any, ...]) -> Any:
+    try:
+        return TaxRateTable.load(stamp[0])
     except Exception:  # no rate table: rates are worked out from the amounts
         return None
 
 
-def provinces(text: str) -> tuple[str, str]:
+def provinces(text: str, layout: DocLayout | None = None) -> tuple[str, str]:
     """(supplier province, ship-to province) from the addresses on the page: the ship-to printed, else the address
     printed under a customer label ("Bill to", "Sold to", "Client", "Facturé à": ours, as the customer), else "".
     Never the vendor's own province (its letterhead): with no address of ours printed, the place of supply is worked
-    out as D-23 says, the cost center's site or our province (D-61, B-651)."""
+    out as D-23 says, the cost center's site or our province (D-61, B-651). With the page's ``layout``, each label's
+    address is read from where it is printed, under or right of the label (``spatial_addresses``, B-920); the text's
+    line order only for what that does not find."""
     supplier, ship_to, bill_to = addresses(text)
+    if layout is not None:
+        ship, bill = spatial_addresses(layout)
+        ship_to, bill_to = ship or ship_to, bill or bill_to
     return supplier, ship_to or bill_to
 
 
@@ -178,6 +202,83 @@ def addresses(text: str) -> tuple[str, str, str]:
             else:
                 bill_to = bill_to or where
     return supplier, ship_to, bill_to
+
+
+# How far under its label an address is looked for, in the label's line heights (the name, an "Attn:" line, a site
+# name, two street lines, the city: two columns of it read in turn put the city 8 or 9 text lines after the label).
+SPATIAL_BLOCK_LINES = 9
+SPATIAL_COLUMN = 0.5  # a label's column: from it to the next label on its row, at most half the page across
+
+
+def spatial_addresses(layout: DocLayout) -> tuple[str, str]:
+    """(ship-to, bill-to) provinces read where each address is printed (B-920): for each "Ship to" / "Bill to" /
+    "Customer" label, the first province (or US address) in its own block, the lines under it (or right of it on its
+    row) in its column, which ends at the next label to its right on the row and at the next label under it. Side by
+    side columns, which a PDF's text gives one after the other, so are told apart. A remit-to's block is never ours."""
+    ship = bill = ""
+    for page in layout.pages[:2]:
+        width, height = 1.0, 1.0
+        lines = [ln for ln in page.lines if ln.text.strip()]
+        if lines and max(ln.box.x1 for ln in lines) > 1.5:  # in points: as fractions of the page
+            width, height = page.width or 1.0, page.height or 1.0
+        labels = []
+        for ln in lines:
+            kind = ("remit" if _REMIT_LABEL.search(ln.text) else "ship" if _SHIP_LABEL.search(ln.text)
+                    else "bill" if _CUSTOMER_LABEL.search(ln.text) else "")  # fmt: skip
+            if kind:
+                labels.append((kind, ln))
+        for kind, label in labels:
+            if kind == "remit" or (kind == "ship" and ship) or (kind == "bill" and bill):
+                continue
+            where = _block_province(label, lines, [ln for _, ln in labels], width, height)
+            if kind == "ship":
+                ship = where
+            else:
+                bill = where
+    return ship, bill
+
+
+def _block_province(label: Line, lines: list[Line], labels: list[Line], width: float, height: float) -> str:
+    """The province of the address printed in ``label``'s block (``spatial_addresses``), "" when none is."""
+
+    def box(ln: Line) -> tuple[float, float, float, float]:
+        b = ln.box
+        return b.x0 / width, b.y0 / height, b.x1 / width, b.y1 / height
+
+    lx0, ly0, lx1, ly1 = box(label)
+    tall = max(ly1 - ly0, 0.008)
+    same_row = [box(o) for o in labels if o is not label and abs((box(o)[1] + box(o)[3]) / 2 - (ly0 + ly1) / 2) < tall]
+    right = min([b[0] for b in same_row if b[0] > lx0 + 0.01], default=lx0 + SPATIAL_COLUMN)
+    left = max([b[2] for b in same_row if b[2] <= lx0 + 0.01], default=0.0)
+    left = max(left, lx0 - 0.03)
+    below = [b for o in labels if o is not label and (b := box(o))[1] > ly1 - tall / 4
+             and b[0] < right and b[2] > left and not any(b == r for r in same_row)]  # fmt: skip
+    bottom = min([b[1] for b in below], default=ly1 + SPATIAL_BLOCK_LINES * tall)
+    bottom = min(bottom, ly1 + SPATIAL_BLOCK_LINES * tall)
+    after = _SHIP_LABEL.split(label.text, 1)[-1] if _SHIP_LABEL.search(label.text) else (
+        _CUSTOMER_LABEL.split(label.text, 1)[-1])  # fmt: skip
+    found = _province_of(after)
+    if found:
+        return found
+    block = []
+    marked = {id(o) for o in labels}
+    for ln in lines:
+        if id(ln) in marked:
+            continue
+        x0, y0, _x1, _y1 = box(ln)
+        if y0 < ly0 - tall / 2 or y0 >= bottom or not left <= x0 < right:
+            continue
+        block.append(((y0, x0), ln))
+    for _, ln in sorted(block, key=lambda item: item[0]):
+        found = _province_of(ln.text)
+        if found:
+            return found
+    return ""
+
+
+def _province_of(text: str) -> str:
+    m = _PROVINCE_AT.search(text or "")
+    return m.group(1) if m else (OUTSIDE_CANADA if text and us_address(text) else "")
 
 
 def default_currency(supplier_province: str) -> str:
@@ -280,8 +381,10 @@ def not_sure(top: Any) -> str:
 
 
 def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback: list[dict[str, Any]],
-                      store: Any = None, text: str = "") -> CodingResult:  # fmt: skip
-    """``text``: the page text (labels a charge printed outside the line table). A line gets an account only when
+                      store: Any = None, text: str = "", layout: DocLayout | None = None,
+                      ) -> CodingResult:  # fmt: skip
+    """``text``: the page text (labels a charge printed outside the line table); ``layout``: the page as read, for
+    where each address is printed (``provinces``). A line gets an account only when
     the evidence is strong enough (``Suggestion.auto``); the others stay UNASSIGNED and the review screen suggests
     accounts for them. The weak match of each line left blank is kept in ``CodingResult.hints`` (its place on the
     invoice, from 1 -> account), for the chat model's answer to be compared with (``pipeline._local_accounts``)."""
@@ -295,7 +398,7 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
     # Freight read beside the subtotal is part of the coded subtotal (lines + charges, before tax) and taxed.
     charges = capture.fields.get("other_charges")
     freight = _amount(values, "other_charges") if charges is not None and charges.status in (VERIFIED, LIKELY) else 0.0
-    supplier_province, ship_to_province = provinces(text)
+    supplier_province, ship_to_province = provinces(text, layout)
     invoice_on = _iso_or_empty(values.get("invoice_date"))
     # The province a tax line names when its rate does not say: where it is delivered as best known (the vendor's
     # province is never stored as the ship-to, D-61).
@@ -304,12 +407,14 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
         values, round(subtotal + freight, 2), ship_to_province or ours or supplier_province,
         dt.date.fromisoformat(invoice_on) if invoice_on else None,
     )  # fmt: skip
-    default_gl = ""
+    default_gl, key = "", vendor_key(vendor)
     if store is not None and vendor:
-        try:
-            default_gl = (store.get_vendor(vendor_key(vendor)) or {}).get("default_gl") or ""
+        try:  # the vendor of two whose names read alike by its GST/HST number (B-1021)
+            found = store.find_vendor(vendor, values.get("gst_hst_registration_number"))
         except Exception:  # an older store without the vendor table
-            default_gl = ""
+            found = None
+        default_gl = (found or {}).get("default_gl") or ""
+        key = (found or {}).get("vendor_key") or key
 
     if not readings:  # no table the reader could split: one line for the whole subtotal
         readings_data = [("Invoice " + str(values.get("invoice_number") or ""), 1.0, subtotal, subtotal)]
@@ -332,10 +437,19 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
     short = round(subtotal + freight - sum(r[3] for r in readings_data), 2)
     if (readings or freight) and abs(short) >= 0.01:
         readings_data.append((_unlisted_charge(text, short), 1.0, short, short))
+    # A tip printed between the tax and the total (a restaurant's "Gratuity 120.00"): a line with no tax, in the
+    # subtotal, so the invoice adds up (B-931).
+    tax_charged = _amount(values, "tax_total") or round(sum(t.tax_amount for t in tax_lines), 2)
+    tip = _tip_after_tax(text, round(_amount(values, "grand_total") - subtotal - freight - tax_charged, 2))
+    if tip:
+        readings_data.append((tip[0], 1.0, tip[1], tip[1]))
+        flags.append("")
+        subtotal = round(subtotal + tip[1], 2)
     lines = []
     hints: dict[int, str] = {}
     for number, (description, quantity, unit_price, amount) in enumerate(readings_data, 1):
-        top = next(iter(suggest_gl(description, vendor, feedback, reference, limit=1, default_gl=default_gl)), None)
+        ranked = suggest_gl(description, vendor, feedback, reference, limit=1, default_gl=default_gl, key=key)
+        top = next(iter(ranked), None)
         # Only a strong match codes the line; a weaker one is left for AP, suggested on the review screen.
         best = top if top is not None and top.auto else None
         if top is not None and best is None:
@@ -359,7 +473,12 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
     lines = tax_codes(lines, tax_lines, flags, text, ship_to_province or ours or supplier_province, invoice_on,
                       supplier_province=supplier_province,
                       pst_number=str(values.get("pst_registration_number") or ""), feedback=feedback,
-                      vendor=vendor, qst_number=str(values.get("qst_registration_number") or ""))  # fmt: skip
+                      vendor=vendor, qst_number=str(values.get("qst_registration_number") or ""),
+                      vendor_key=key)  # fmt: skip
+    if tip:  # a voluntary tip is no taxable supply
+        from ..coding.line_tax import OUT_OF_SCOPE
+
+        lines[-1] = lines[-1].model_copy(update={"taxes_applied": [], "tax_exempt": [], "tax_status": OUT_OF_SCOPE})
 
     # The coding's confidence_score is the Reading (D-89): how sure the header is. How sure the lines' accounts and
     # tax codes are is the Coding, worked out from the lines by the checks (``validation.coding_confidence``).
@@ -393,10 +512,52 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
     return CodingResult(coding=coding, raw_response="", model=MODEL_NAME, attempts=0, hints=hints)
 
 
+_TIP_LABEL = re.compile(
+    r"(?i)^\W*(?:tips?|gratuit(?:y|ies|é|e)s?|pourboires?|service\s+charge|frais\s+de\s+service)\b[^0-9\n]{0,24}"
+)
+_TAX_LABEL = re.compile(r"(?i)\b(?:gst|hst|pst|qst|rst|tps|tvq|tvh|tax(?:es)?|taxe)\b")
+_TOTAL_LABEL = re.compile(r"(?i)\b(?:total|amount\s+due|balance\s+due|montant\s+d[uû])\b")
+_LINE_AMOUNT = re.compile(r"(?<![\d.,])-?\$?\s?\d{1,3}(?:[ ,]\d{3})*(?:[.,]\d{2})(?![\d])")
+
+
+def _tip_after_tax(text: str, gap: float) -> tuple[str, float] | None:
+    """(its label, amount) of a tip, gratuity or service charge printed after a tax line and before the total, whose
+    amount is what the subtotal and the tax fall short of the total by (``gap``); None when there is none."""
+    if gap < 0.01 or not text:
+        return None
+    rows = [r.strip() for r in text.splitlines() if r.strip()]
+    taxed = False
+    for i, row in enumerate(rows):
+        if _TOTAL_LABEL.search(row) and taxed and not _TIP_LABEL.match(row) and "sub" not in row.lower():
+            return None  # the total came first
+        if _TAX_LABEL.search(row) and not _TIP_LABEL.match(row):
+            taxed = True
+            continue
+        m = _TIP_LABEL.match(row)
+        if not (m and taxed):
+            continue
+        after = row[m.end() :] + " " + (rows[i + 1] if i + 1 < len(rows) else "")
+        found = _LINE_AMOUNT.search(after)
+        if found and abs(_money_of(found.group(0)) - gap) < 0.01:
+            return " ".join(m.group(0).split()).strip(" :").capitalize() or "Gratuity", gap
+    return None
+
+
+def _money_of(text: str) -> float:
+    digits = re.sub(r"[^\d.,-]", "", text)
+    if "," in digits and digits.rfind(",") > digits.rfind("."):  # 1.234,56
+        digits = digits.replace(".", "").replace(",", ".")
+    try:
+        return float(digits.replace(",", ""))
+    except ValueError:
+        return 0.0
+
+
 def tax_codes(lines: list[LineItem], tax_lines: list[TaxLine], flags: list[str], text: str, province: str,
               invoice_on: str = "", keep: list[int] | None = None, *, supplier_province: str | None = None,
               pst_number: str | None = None, feedback: list[dict[str, Any]] | None = None,
-              vendor: str = "", qst_number: str | None = None) -> list[LineItem]:  # fmt: skip
+              vendor: str = "", qst_number: str | None = None,
+              vendor_key: str | None = None) -> list[LineItem]:  # fmt: skip
     """The lines with their tax codes (``line_tax.prefill``): ``flags`` the tax-code cell read on each line, ``text``
     the page text (its legend: "Tax codes: G = GST 5%, R = Manitoba RST 7%"), the official rates in force on the
     invoice's date where it is supplied; ``feedback`` (the learning memory) and ``vendor``: the codes AP approved on
@@ -421,7 +582,7 @@ def tax_codes(lines: list[LineItem], tax_lines: list[TaxLine], flags: list[str],
     from ..coding.line_tax import uncollected
 
     missing = uncollected(province, supplier_province, pst_number, qst_number, tax_lines)
-    learned = learned_codes(lines, feedback, vendor, province, missing) if feedback and vendor else None
+    learned = learned_codes(lines, feedback, vendor, province, missing, vendor_key) if feedback and vendor else None
     return prefill(lines, tax_lines, flags, parse_legend(text), keep=keep or [], rate_for=rate_for,
                    vendor_collects={t: t not in missing for t in ("PST", "QST")}, learned=learned,
                    learned_alike=True).lines  # fmt: skip

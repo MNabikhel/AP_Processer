@@ -126,9 +126,14 @@ class UnreadableEmail(ValueError):
     """An email AP Coder will not open; the message says why in plain words."""
 
 
+# Names Windows keeps for devices, whatever the extension ("CON.pdf", "nul.tar.gz" open the device, not a file).
+_RESERVED = re.compile(r"(?:CON|PRN|AUX|NUL|COM[0-9¹²³]|LPT[0-9¹²³])", re.IGNORECASE)
+
+
 def safe_name(name: str) -> str:
     """A file name safe to save on Windows: no folders or reserved characters, at most 80 characters
-    (and 200 bytes, for names in Chinese, Japanese or emoji), the extension kept."""
+    (and 200 bytes, for names in Chinese, Japanese or emoji), the extension kept; a device's name ("CON.pdf",
+    "aux") gets an underscore before it (B-980)."""
     name = re.split(r"[\\/]", name)[-1]  # the file name only, whichever separator the sender's system used
     name = re.sub(r'[:*?"<>|\x00-\x1f]', "_", name).strip(" .")
     if len(name) > 80 or len(name.encode()) > 200:  # short enough for Windows paths; the extension is kept
@@ -137,6 +142,8 @@ def safe_name(name: str) -> str:
         while len((stem + suffix).encode()) > 200:
             stem = stem[:-1]
         name = stem.rstrip(" .") + suffix
+    if _RESERVED.fullmatch(name.split(".", 1)[0].rstrip(" ")):
+        name = "_" + name
     return name or "attachment"
 
 

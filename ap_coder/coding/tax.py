@@ -354,6 +354,11 @@ class TaxFinding:
     line_number: int | None = None
 
 
+def pct(rate: float) -> str:
+    """A rate as the clerk reads it: 0.13 is "13%", 0.09975 "9.975%" (B-1028)."""
+    return f"{round(float(rate) * 100, 4):g}%"
+
+
 def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = None) -> list[TaxFinding]:
     findings: list[TaxFinding] = []
 
@@ -423,7 +428,7 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
             add(
                 WARNING if _close(expected, tl.tax_amount, rounding) or suspect is not None else ERROR,
                 "TAX_CALC_MISMATCH",
-                f"{label}: {tl.taxable_amount:.2f} x {tl.rate:.5g} = {expected:.2f} "
+                f"{label}: {tl.taxable_amount:.2f} x {pct(tl.rate)} = {expected:.2f} "
                 f"but invoice charges {tl.tax_amount:.2f}{hint}",
             )
 
@@ -446,7 +451,7 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
                 add(
                     WARNING,
                     "TAX_RATE_NONSTANDARD",
-                    f"{label} rate {tl.rate:.5g} differs from the official {official:.5g} on {coding.invoice_date}",
+                    f"{label} rate {pct(tl.rate)} differs from the official {pct(official)} on {coding.invoice_date}",
                 )
         if prov and tl.province and tl.tax_type != "GST" and tl.province != prov:
             add(WARNING, "TAX_PROVINCE_DIFFERS", f"{label} charged but place of supply is {prov}{assumed}")
@@ -737,6 +742,33 @@ def tax_state(line: Any, tax_type: str, charged: Any = ()) -> str:
 
 
 DUE, NOT_DUE = "due", "not_due"  # line_tax's states of a tax on a line
+
+
+def follow_supply(
+    taxes: list[dict[str, Any]], province: str, on: dt.date | None = None, rates: TaxRateTable | None = None
+) -> list[dict[str, Any]]:
+    """The review screen's tax rows once the place of supply is changed to ``province`` (B-935): a provincial tax row
+    (HST, PST, QST) put in another province only as the place of supply was then, whose rate is the one levied in
+    the new province, is that province's ("PST ON 7%" with Manitoba: RST MB 7%). A rate the new province does not levy
+    stays as charged, for the tax check to say (HST 13% on a BC supply). Rows as given otherwise; ``rates``: the rate
+    table (the data folder's by default)."""
+    if province not in PROVINCES:
+        return taxes
+    table = rates or TaxRateTable.load()
+    out = []
+    for row in taxes:
+        row = dict(row)
+        kind = str(row.get("tax_type") or "").upper()
+        if kind in ("HST", "PST", "QST") and str(row.get("province") or "") != province:
+            try:
+                rate = float(row.get("rate_pct") or 0) / 100
+            except (TypeError, ValueError):
+                rate = 0.0
+            levied = table.rate_for(kind, province, on)
+            if levied is not None and rate and abs(levied - rate) < 1e-6:
+                row["province"] = province
+        out.append(row)
+    return out
 
 
 # --- GL distribution --------------------------------------------------------------------------

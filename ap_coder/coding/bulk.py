@@ -45,9 +45,21 @@ def _plain(message: Any, code: Any) -> str:
     return text[:1].upper() + text[1:]
 
 
-def _needs_a_person(severity: Any, code: Any) -> bool:
-    """An error, a warning, or a finding that always goes to a person whatever its severity."""
+def needs_a_person(severity: Any, code: Any) -> bool:
+    """An error, a warning, or a finding that always goes to a person whatever its severity: bulk approval leaves the
+    invoice for a person, and the queue does not call it Ready (B-1027)."""
     return severity in ("error", "warning") or str(code or "") in ALWAYS_A_PERSON
+
+
+_needs_a_person = needs_a_person
+
+
+AUDIT_PICK = "picked for the audit sample: a person checks it"
+
+
+def _audit_pick(meta: Any) -> bool:
+    """Picked for the touchless audit sample (``meta.capture.audit``): a person must check it, never bulk (B-952)."""
+    return bool(((meta or {}).get("capture") or {}).get("audit")) if isinstance(meta, dict) else False
 
 
 def _credit_note(titled: bool, grand_total: Any) -> bool:
@@ -150,11 +162,14 @@ def sort_for_bulk(
     store: Store, queue: list[dict[str, Any]] | None = None, today: dict[int, list[dict[str, Any]]] | None = None
 ) -> tuple[list[dict[str, Any]], dict[int, str]]:
     """(``clean_candidates``, why each other invoice of the queue not flagged when processed is left for a person:
-    "credit note", or "warning" for an error, a warning or a finding that always goes to a person). ``queue``: the
+    "credit note", "audit" for one picked for the touchless audit sample, or "warning" for an error, a warning or a
+    finding that always goes to a person). ``queue``: the
     invoices in review as ``store.list_invoices`` gives them, when the caller has them already. ``today``:
     ``issues_today`` of the queue, when the caller has it already. The checks are today's: an invoice whose stored
     checks were made against other settings is checked again (B-815)."""
-    validations = {r["id"]: r["validation"] or {} for r in store.invoice_columns(("id", "validation"), REVIEW)}
+    columns = store.invoice_columns(("id", "validation", "meta"), REVIEW)
+    validations = {r["id"]: r["validation"] or {} for r in columns}
+    audited = {r["id"] for r in columns if _audit_pick(r["meta"])}
     titled = store.credit_note_ids(REVIEW)
     queue = store.list_invoices(REVIEW) if queue is None else queue
     if today is None:
@@ -166,6 +181,8 @@ def sort_for_bulk(
         issues = today[inv["id"]] if inv["id"] in today else validations.get(inv["id"], {}).get("issues") or []
         if _credit_note(inv["id"] in titled, inv["grand_total"]):
             left[inv["id"]] = "credit note"
+        elif inv["id"] in audited:
+            left[inv["id"]] = "audit"
         elif any(_needs_a_person(i.get("severity"), i.get("code")) for i in issues):
             left[inv["id"]] = "warning"
         else:
@@ -194,6 +211,9 @@ def _bulk_approve(
         inv = store.get_invoice(invoice_id)
         if inv is None or inv["status"] != REVIEW or not inv.get("ai_output"):
             skipped.append((invoice_id, "no longer in the queue"))
+            continue
+        if _audit_pick(inv.get("meta")):
+            skipped.append((invoice_id, AUDIT_PICK[:1].upper() + AUDIT_PICK[1:]))
             continue
         # What was found after processing and is kept only with the invoice (the Azure check's disagreement, the page
         # reader's line items or text layer read differently): finalise_coding below does not raise it again.

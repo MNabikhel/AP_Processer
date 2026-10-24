@@ -553,12 +553,14 @@ def test_the_queue_does_not_decode_every_invoice_again_for_pay_from(store, monke
     rows, _ = banks.clean_rows([{"code": "USD-OP", "name": "US", "currency": "USD", "is_default": "yes"}])
     store.save_bank_accounts(rows)
     pending = store.list_invoices(REVIEW)
-    first = review.attention(store, None, pending)
+    # The queue's checks, given: the bank accounts are in the checks stamp (B-958), so they are done again apart.
+    today = review.issues_today(store, [i["id"] for i in pending])
+    first = review.attention(store, None, pending, today=today)
     calls = []
     real = review.json.loads
     monkeypatch.setattr(review.json, "loads", lambda *a, **k: calls.append(1) or real(*a, **k))
-    assert review.attention(store, None, pending) == first and calls == []
+    assert review.attention(store, None, pending, today=today) == first and calls == []
     rows, _ = banks.clean_rows([{"code": "CAD-OP", "name": "Operating", "currency": "CAD", "is_default": "yes"}])
     store.save_bank_accounts(rows)  # the bank accounts changed: asked again
-    again = review.attention(store, None, pending)
+    again = review.attention(store, None, pending, today=today)
     assert calls and again != first

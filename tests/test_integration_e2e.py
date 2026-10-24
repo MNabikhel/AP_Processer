@@ -139,6 +139,8 @@ def test_a_folder_of_emails_becomes_a_checked_jde_batch(tmp_path, monkeypatch):
     questions = wb["Questions"]
     company = next(r for r in questions.iter_rows(min_row=2) if r[0].value == "company")
     company[5].value = "00042"
+    bu = next(r for r in questions.iter_rows(min_row=2) if r[0].value == "default_bu")
+    bu[5].value = "HQ"  # the business unit of the tax accounts' G/L lines (the tax coded to G/L accounts: D-93)
     buf = io.BytesIO()
     wb.save(buf)
     answer = post(client, "/settings/jde/worksheet", files={"file": ("answers.xlsx", buf.getvalue())})

@@ -68,15 +68,50 @@ def register_heif() -> bool:
     return _heif_registered
 
 
+# The most pixels a picture is decoded at (B-975): a 189 KB PNG of 13000 x 13000 pixels took 2 GB to draw. An invoice
+# scanned at 600 dpi is 35 MP; a phone's 48 MP photo is a JPEG, read smaller (``Image.draft``).
+MAX_PICTURE_PIXELS = 40_000_000
+
+
+def too_large(width: int, height: int) -> str:
+    return (f"this picture is too large to open safely ({width:,} x {height:,} pixels, over "
+            f"{MAX_PICTURE_PIXELS // 1_000_000} megapixels): scan or save it at a lower resolution "
+            "(300 dpi is plenty), or as a PDF")  # fmt: skip
+
+
+def within_pixel_limit(frame: Any) -> None:
+    """Raises ``CannotRead`` for a picture (a frame of a TIFF) over ``MAX_PICTURE_PIXELS``, before it is decoded."""
+    width, height = frame.size
+    if width * height > MAX_PICTURE_PIXELS:
+        raise CannotRead(too_large(width, height))
+
+
 def open_image(source: Any, name: str = "") -> Any:
     """Pillow's ``Image.open`` for a picture (a path or a file object), HEIC/HEIF photos included. Raises
-    ``CannotRead`` for a HEIC photo when pillow-heif isn't installed."""
+    ``CannotRead`` for a HEIC photo when pillow-heif isn't installed, and for a picture over ``MAX_PICTURE_PIXELS``
+    (a JPEG is read at a half, a quarter or an eighth of its size instead, its resolution scaled to match: the page
+    keeps its size). Each further frame of a TIFF is checked by the caller (``within_pixel_limit``)."""
     from PIL import Image
 
     heif = Path(name or str(source)).suffix.lower() in HEIF_EXTENSIONS
     if not register_heif() and heif:
         raise CannotRead(NO_HEIF)
-    return Image.open(source)
+    img = Image.open(source)  # over twice Pillow's own limit, DecompressionBombError (said plainly: plain_error)
+    width, height = img.size
+    if width * height <= MAX_PICTURE_PIXELS:
+        return img
+    scale = next((f for f in (2, 4, 8) if width * height <= MAX_PICTURE_PIXELS * f * f), 0)
+    if img.format == "JPEG" and scale and img.mode in ("RGB", "L", "CMYK"):
+        img.draft(img.mode, (width // scale, height // scale))  # decoded at that size: never at full size
+        dpi = img.info.get("dpi")
+        try:
+            if dpi:
+                img.info["dpi"] = (float(dpi[0]) * img.width / width, float(dpi[1]) * img.height / height)
+        except (TypeError, ValueError, IndexError):
+            pass
+        return img
+    img.close()
+    raise CannotRead(too_large(width, height))
 
 
 # ---------------------------------------------------------------- photos

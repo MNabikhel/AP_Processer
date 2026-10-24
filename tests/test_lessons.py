@@ -282,3 +282,89 @@ def test_corrections_from_before_each_approval_was_kept_still_count(tmp_path, gr
     with store._conn() as conn:
         store._withdraw_lessons(conn, 3)
     assert store.lesson(key)["agreeing"] == 2  # the one since withdrawn: the two from before are left
+
+
+# --- Bulk approvals and confirmations (B-955) ----------------------------------------------------------------------
+
+_BULK_OUT = {"vendor_name": "Acme Ltd", "invoice_number": "A-1", "invoice_date": "2026-10-01", "currency": "CAD",
+             "subtotal": 100.0, "tax_total": 0.0, "grand_total": 100.0, "tax_lines": [],
+             "line_items": [{"line_number": 1, "description": "Mobility services", "quantity": 1, "unit_price": 100,
+                             "amount": 100.0, "predicted_gl_code": "6000", "predicted_cost_center": "",
+                             "reasoning_justification": "memory"}]}  # fmt: skip
+
+
+def _bulk_line(gl):
+    out = copy.deepcopy(_BULK_OUT)
+    out["line_items"][0]["predicted_gl_code"] = gl
+    return out
+
+
+def _approve_and_learn(st, tmp_path, n, proposed, final, actor, bulk=False):
+    from ap_coder.capture.workflow import learn_from_approval
+
+    f = tmp_path / f"{actor}{n}.txt"
+    f.write_text(f"{actor} {n}")
+    iid = st.add_invoice(f, proposed, {"issues": []})
+    st.approve_invoice(iid, final, actor, bulk=bulk)
+    learn_from_approval(st, iid, final, actor=actor, bulk=bulk)
+    return iid
+
+
+def test_an_untouched_bulk_approval_is_not_seen_by_the_lessons(tmp_path):
+    """Nobody opened an invoice approved in bulk: it is no confirmation of a lesson, nor an invoice the lesson was
+    seen on (B-955)."""
+    st = Store(tmp_path / "ap.db")
+    for n in range(2):  # two people corrected the invoice number the same way: the lesson reaches the AI
+        _approve_and_learn(st, tmp_path, n, {**_BULK_OUT, "invoice_number": f"A1{n}"},
+                           {**_BULK_OUT, "invoice_number": f"A-1{n}"}, "alice")  # fmt: skip
+    key = lessons.situation("Acme Ltd", "invoice", "invoice_number")
+    before = st.lesson(key)
+    for n in range(3):
+        out = {**_BULK_OUT, "invoice_number": f"B{n}"}
+        _approve_and_learn(st, tmp_path, n, out, out, "bob", bulk=True)
+    assert st.lesson(key)["seen"] == before["seen"]
+
+
+def test_bulk_approvals_do_not_make_a_lesson_look_working(tmp_path):
+    st = Store(tmp_path / "ap.db")
+    for n in range(2):  # AP corrects 6000 -> 6100 twice: the lesson reaches the AI
+        _approve_and_learn(st, tmp_path, n, _bulk_line("6000"), _bulk_line("6100"), "alice")
+    for n in range(3):  # three invoices nobody opened, bulk approved as proposed
+        _approve_and_learn(st, tmp_path, n, _bulk_line("6100"), _bulk_line("6100"), "bob", bulk=True)
+    key = lessons.situation("Acme Ltd", "invoice", lessons.LINE_GL, "mobility services")
+    assert lessons.effect(st.lesson_history([key])[key], st.lesson(key))["verdict"] == lessons.TOO_EARLY
+
+
+def test_a_correction_in_a_bulk_approval_still_counts(tmp_path):
+    """An earlier approver's correction on a reopened invoice, approved in bulk: still a correction (B-955)."""
+    st = Store(tmp_path / "ap.db")
+    _approve_and_learn(st, tmp_path, 0, _bulk_line("6000"), _bulk_line("6100"), "bob", bulk=True)
+    key = lessons.situation("Acme Ltd", "invoice", lessons.LINE_GL, "mobility services")
+    assert st.lesson(key)["corrected"] == 1
+
+
+def test_a_blank_line_coded_to_another_account_does_not_confirm_the_lesson(tmp_path):
+    st = Store(tmp_path / "ap.db")
+    for n in range(2):  # "lines like 'mobility services' are coded to 6100"
+        _approve_and_learn(st, tmp_path, n, _bulk_line("6000"), _bulk_line("6100"), "alice")
+    key = lessons.situation("Acme Ltd", "invoice", lessons.LINE_GL, "mobility services")
+    before = st.lesson(key)
+    # The line left blank; AP codes it to 6200, not the lesson's account: no confirmation.
+    _approve_and_learn(st, tmp_path, 3, _bulk_line("UNASSIGNED"), _bulk_line("6200"), "alice")
+    assert st.lesson(key)["confirmed"] == before["confirmed"]
+    # Coded to the lesson's own account: that confirms it.
+    _approve_and_learn(st, tmp_path, 4, _bulk_line("6100"), _bulk_line("6100"), "alice")
+    assert st.lesson(key)["confirmed"] == before["confirmed"] + 1
+
+
+def test_a_line_bulk_approved_unchanged_is_left_out_of_the_accuracy(tmp_path):
+    from ap_coder.core.memory import ACCEPTED, BULK
+
+    st = Store(tmp_path / "ap.db")
+    f = tmp_path / "x.txt"
+    f.write_text("b")
+    iid = st.add_invoice(f, _bulk_line("6100"), {"issues": []})
+    assert st.approve_invoice(iid, _bulk_line("6100"), "bob", bulk=True)[ACCEPTED] == 0
+    m = st.metrics()
+    assert m["lines_accepted"] == 0 and m["line_accuracy"] is None and m["lines_bulk"] == 1
+    assert st.feedback_rows()[0]["outcome"] == BULK

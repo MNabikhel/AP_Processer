@@ -108,6 +108,8 @@ TOUCHPOINTS = {
     "ap_coder/ops/offline.py": "import_azure: imports only; free_port binds and connects on this computer's dashboard "
     "address (no proxy)",
     "ap_coder/core/paths.py": "git log -1 on this checkout, for its build (no network)",
+    "ap_coder/core/config.py": "socket.getaddrinfo of a model server's name, to judge the address it has (no "
+    "connection)",
     "scripts/launch.py": "pip --no-index from the wheelhouse (PyPI only with AP_ALLOW_INTERNET=1); socket binds "
     "127.0.0.1; webbrowser opens http://localhost",
     "scripts/running.py": "the dashboard on 127.0.0.1 (no proxy)",

@@ -216,7 +216,7 @@ def test_in_gross_mode_a_meals_voucher_is_held_back():
     """B-866: with gross amounts only, E1 works out the tax itself and claims the full ITC while AP Coder expenses half
     of it: the GL and the ITC report disagree. It was a warning; it is now a blocker, before approval and at export."""
     inv = _jde_invoice()
-    settings = jde.JdeSettings(an8_overrides={})
+    settings = jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, an8_overrides={})
     findings = jde.voucher_findings(inv["final_output"], settings, "10023")
     meals = [f for f in findings if f[1] == "JDE_MEALS_GROSS"]
     assert meals and meals[0][0] == "error" and "Settings → JD Edwards E1" in meals[0][2]

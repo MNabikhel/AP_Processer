@@ -42,6 +42,16 @@ from ..memory import ACCEPTED, CODED, CORRECTED, VENDOR_KEY_RULES, pair_lines, r
 from ..paths import PROJECT_DIR, default_db_path, find_moved_file, private_dir  # noqa: F401  (re-exported)
 from ..reference_data import UNASSIGNED, ReferenceData, ReferenceTable, parse_policy_notes
 from ..schema import as_read
+from .fx import (  # noqa: F401  (re-exported)
+    _FX_RATE,
+    APPROVAL_CONTROLS,
+    LOW_UNIT_FX_RATES,
+    MIN_FX_RATE,
+    min_fx_rate,
+    parse_fx_rates,
+    tiny_fx_rates,
+    unread_fx_text,
+)
 
 # 10: erp_invoices, 11: coding_rules (by _SCHEMA), 12: currency, 13: credit notes not due,
 # 14: invoice_capture, supplier_profiles, supplier_outcomes (by _SCHEMA), 15: reader_outcomes, page_reads (by _SCHEMA),
@@ -282,24 +292,6 @@ def _stale_before() -> str:
     return (dt.datetime.now() - dt.timedelta(hours=STALE_READING_HOURS)).isoformat(timespec="seconds")
 
 
-_FX_RATE = re.compile(r"([A-Za-z]{3})\s*[=:]?\s*([0-9]+(?:[.,][0-9]+)?)")
-
-
-def parse_fx_rates(text: str) -> dict[str, float]:
-    """ "USD=1.37, EUR 1,50; GBP: 1.85" -> {"USD": 1.37, "EUR": 1.5, "GBP": 1.85} (CAD is always 1)."""
-    rates = {"CAD": 1.0}
-    for code, value in _FX_RATE.findall(text or ""):
-        rate = float(value.replace(",", "."))
-        if rate > 0 and code.upper() != "CAD":  # a CAD rate typed in would scale every limit check
-            rates[code.upper()] = rate
-    return rates
-
-
-def unread_fx_text(text: str) -> str:
-    """What of ``text`` is not a rate ``parse_fx_rates`` reads ("" when all of it is): "1.37 USD" -> "1.37 USD"."""
-    return re.sub(r"[\s,;]+", " ", _FX_RATE.sub(" ", text or "")).strip()
-
-
 def _clean_code(value: Any) -> str:
     """Codes come from spreadsheets: 6000.0 -> '6000', strip whitespace."""
     if value is None:
@@ -373,6 +365,8 @@ def _rescored(output: dict[str, Any], stored: str | None, reading: float) -> dic
     sure = [line_coding_confidence(li, False, taxed) for li in coding.line_items]
     coded = round(sum(sure) / len(sure), 4) if sure else 0.0
     read, coded, adjusted, review = score(reading, coded, findings, threshold)
+    # The AI reviewer's or the Azure check's disagreement keeps it for a person whatever the scores (B-956).
+    review = review or any(code.startswith(("VERIFIER_", "AZURE_DI_")) for _, code in findings)
     validation.pop(CHECKS_STAMP_KEY, None)
     validation.pop("recheck", None)
     return {**validation, "model_confidence": reading, "reading_confidence": read, "coding_confidence": coded,
@@ -689,7 +683,9 @@ class StoreCore:
         Reading of their stored capture, as it is read now. The queue's confidence and review flag follow, from their
         stored findings and a Coding worked out from their lines (``validation.score``; the accounts' lists are
         checked again in the queue: their checks stamp is cleared, so ``bulk.issues_today`` checks them again, D-88),
-        so the queue is sorted and flagged by the new figures at once (B-895)."""
+        so the queue is sorted and flagged by the new figures at once (B-895). One read by a chat model (or without a
+        stored capture) keeps its own confidence as its Reading, but its queue figure is worked out again the same
+        way: it showed the old one beside a lower Coding (B-956)."""
         if conn.execute("SELECT 1 FROM settings WHERE key = 'reading_d89'").fetchone():
             return
         from ...ai.offline_coder import MODEL_NAME
@@ -697,22 +693,25 @@ class StoreCore:
         from ...capture.types import FieldResult
 
         rows = conn.execute(
-            """SELECT i.id, i.ai_output, i.meta, i.validation, c.capture_json FROM invoices i JOIN invoice_capture c
-               ON c.invoice_id = i.id WHERE i.status IN (?, ?) AND i.ai_output IS NOT NULL""",
+            """SELECT i.id, i.ai_output, i.meta, i.validation, c.capture_json FROM invoices i LEFT JOIN
+               invoice_capture c ON c.invoice_id = i.id WHERE i.status IN (?, ?) AND i.ai_output IS NOT NULL""",
             (REVIEW, PARKED),
         ).fetchall()
         for r in rows:
             try:
-                if (json.loads(r["meta"] or "{}").get("inference") or {}).get("model") != MODEL_NAME:
-                    continue  # read by a chat model or the demo: its own confidence
-                fields = (json.loads(r["capture_json"]) or {}).get("fields") or {}
-                reading = reading_confidence({k: FieldResult.from_dict(v) for k, v in fields.items()})
                 output = json.loads(r["ai_output"])
+                local = (json.loads(r["meta"] or "{}").get("inference") or {}).get("model") == MODEL_NAME
+                if local and r["capture_json"]:
+                    fields = (json.loads(r["capture_json"]) or {}).get("fields") or {}
+                    reading = reading_confidence({k: FieldResult.from_dict(v) for k, v in fields.items()})
+                else:  # read by a chat model or the demo: its own confidence
+                    reading, local = float(output.get("confidence_score") or 0.0), False
             except (ValueError, TypeError, KeyError, AttributeError):
                 continue
-            output["confidence_score"] = reading
-            conn.execute("UPDATE invoices SET ai_output = ?, model_confidence = ? WHERE id = ?",
-                         (json.dumps(output), reading, r["id"]))  # fmt: skip
+            if local:
+                output["confidence_score"] = reading
+                conn.execute("UPDATE invoices SET ai_output = ?, model_confidence = ? WHERE id = ?",
+                             (json.dumps(output), reading, r["id"]))  # fmt: skip
             validation = _rescored(output, r["validation"], reading)
             if validation is not None:
                 conn.execute("UPDATE invoices SET validation = ?, adjusted_confidence = ?, requires_review = ? "
@@ -766,6 +765,10 @@ class StoreCore:
         it was."""
 
         def new_key(name: Any, old: Any) -> str:
+            # the second of two vendors whose names read alike keeps its " #<ERP ID>" (B-930, B-1021)
+            base, mark, ident = str(old or "").rpartition(" #")
+            if mark and base and ident and " " not in ident:
+                return f"{vendor_key(str(name or '')) or refresh_vendor_key(base)} #{ident}"
             return vendor_key(str(name or "")) or refresh_vendor_key(str(old or ""))
 
         for table, name, ident in (

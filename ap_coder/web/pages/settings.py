@@ -31,7 +31,7 @@ from ap_coder.ai import lessons
 from ap_coder.coding.tax import PROVINCE_NAMES
 from ap_coder.core import paths, ui
 from ap_coder.core.envfile import one_line, read_env, write_env
-from ap_coder.core.store import Store, unread_fx_text
+from ap_coder.core.store import APPROVAL_CONTROLS, Store, tiny_fx_rates, unread_fx_text
 from ap_coder.web import identity
 from ap_coder.web.core import (
     DEVELOPER_TOOLS,
@@ -305,6 +305,12 @@ def _approval_part(
         return refuse("The days to pay must be from 0 to 180.")
     if why is not None and not 1 <= why <= 20:
         return refuse("Ask why after 1 to 20 corrections of the same thing.")
+    tiny = tiny_fx_rates(fx_rates or "")
+    if tiny:  # "USD=0" was saved and ignored; "USD=0.0001" let every USD invoice skip the second approval (B-971)
+        return refuse(
+            f"Exchange rates not saved: {', '.join(tiny)} is not a believable rate (the CAD for one unit "
+            "can't be 0 or a tiny fraction of a cent). Check it and type it again, e.g. USD=1.37."
+        )
     unread = unread_fx_text(fx_rates or "")
     if unread:  # saved as it was, a rate typed the wrong way round would be ignored without a word
         return refuse(f"Exchange rates not saved: “{unread}” can't be read. Write each one as a currency code, then "
@@ -324,8 +330,9 @@ def _approval_part(
         if limit is not None and limit != store.approval_limit():
             store.set_setting("approval_limit", f"{limit:.2f}", actor=reviewer())
             changed.append("approval_limit")
-        if changed:
-            store.log_event("settings_changed", actor=reviewer(), detail={"keys": changed})
+        others = [key for key in changed if key not in APPROVAL_CONTROLS]  # those the store logs with old and new
+        if others:
+            store.log_event("settings_changed", actor=reviewer(), detail={"keys": others})
         return changed
 
     return save

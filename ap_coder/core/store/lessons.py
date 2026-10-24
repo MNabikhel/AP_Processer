@@ -58,8 +58,10 @@ class LessonsMixin:
         with self._conn() as conn:
             if invoice_id is not None:  # the same invoice's word on it counts once, the latest
                 self._withdraw_lessons(conn, invoice_id, row["key"])
-            before = conn.execute("SELECT corrected FROM lessons WHERE situation = ?", (row["key"],)).fetchone()
-            confirmed = 1 if not corrected and before is not None and before["corrected"] > 0 else 0
+            before = conn.execute("SELECT corrected, value FROM lessons WHERE situation = ?", (row["key"],)).fetchone()
+            # A confirmation keeps the lesson's own value: another (a blank line coded elsewhere) is none (B-955).
+            confirmed = 1 if (not corrected and before is not None and before["corrected"] > 0
+                              and before["value"] == value) else 0  # fmt: skip
             conn.execute(
                 """INSERT INTO lessons (situation, vendor_key, vendor_name, kind, field, pattern, value, proposed, seen,
                    corrected, since_why, confirmed, last_invoice, created_at, updated_at)
@@ -68,7 +70,7 @@ class LessonsMixin:
                    corrected = lessons.corrected + excluded.corrected,
                    since_why = lessons.since_why + excluded.since_why,
                    confirmed = lessons.confirmed + CASE WHEN excluded.corrected = 0 AND lessons.corrected > 0
-                                                   THEN 1 ELSE 0 END,
+                                                   AND excluded.value = lessons.value THEN 1 ELSE 0 END,
                    value = CASE WHEN excluded.corrected = 1 THEN excluded.value ELSE lessons.value END,
                    proposed = CASE WHEN excluded.corrected = 1 THEN excluded.proposed ELSE lessons.proposed END,
                    last_invoice = excluded.last_invoice, updated_at = excluded.updated_at""",

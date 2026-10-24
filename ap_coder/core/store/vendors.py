@@ -18,6 +18,18 @@ from ._base import (
 )
 
 
+def _distinct(first: dict[str, Any], row: dict[str, Any]) -> bool:
+    """Whether two vendor master rows whose names read the same are two suppliers: each has its own ERP ID and its own
+    GST/HST number (B-930). Without both numbers it reads as the same supplier set up twice: merged, as before."""
+    from ...coding.vendors import same_tax_number
+
+    a, b = str(first.get("erp_id") or "").strip(), str(row.get("erp_id") or "").strip()
+    if not a or not b or a == b:
+        return False
+    gst_a, gst_b = str(first.get("gst") or ""), str(row.get("gst") or "")
+    return bool(gst_a and gst_b) and not same_tax_number(gst_a, gst_b)
+
+
 class VendorsMixin:
     # --- Vendors ----------------------------------------------------------------------------------------
 
@@ -25,6 +37,45 @@ class VendorsMixin:
         with self._conn() as conn:
             row = conn.execute("SELECT * FROM vendors WHERE vendor_key = ?", (key,)).fetchone()
         return dict(row) if row else None
+
+    def find_vendor(self, name: str | None, gst_number: Any = None, erp_id: Any = None) -> dict[str, Any] | None:
+        """The vendor list's row for an invoice's vendor: among the vendors whose names read as this one (the vendor
+        master keeps a second one under "<name> #<ERP ID>", B-930), the one with the invoice's GST/HST number, else
+        its ERP ID, else the one under the name itself (B-1021). None when no vendor goes by this name. One vendor by
+        the name (the usual case): that vendor, whatever number the invoice shows (the checks then say it differs)."""
+        from ...coding.vendors import norm_tax_number, same_tax_number
+
+        key = vendor_key(name or "")
+        if not key:
+            return None
+        with self._conn() as conn:
+            rows = [dict(r) for r in conn.execute(
+                "SELECT * FROM vendors WHERE vendor_key = ? OR substr(vendor_key, 1, ?) = ?",
+                (key, len(key) + 2, f"{key} #"),
+            )]  # fmt: skip
+        own = next((r for r in rows if r["vendor_key"] == key), None)
+        if len(rows) < 2:
+            return own
+        number = norm_tax_number(gst_number)
+        if sum(c.isdigit() for c in number) >= 9:
+            found = [r for r in rows if r.get("expected_gst") and same_tax_number(r["expected_gst"], number)]
+            if found:
+                return own if own in found else found[0]
+        ident = str(erp_id or "").strip()
+        if ident:
+            found = [r for r in rows if str(r.get("erp_id") or "").strip() == ident]
+            if found:
+                return own if own in found else found[0]
+        return own
+
+    def vendor_key_for(self, name: str | None, gst_number: Any = None, erp_id: Any = None) -> str:
+        """The vendor key an invoice's vendor is kept under (its history, its lessons, its checks): ``vendor_key`` of
+        the name, or the key of the vendor list's second vendor by that name it is (``find_vendor``, B-1021)."""
+        key = vendor_key(name or "")
+        if not key:
+            return ""
+        found = self.find_vendor(name, gst_number, erp_id)
+        return found["vendor_key"] if found else key
 
     def save_vendor(
         self, key: str, display_name: str, status: str = "active", expected_gst: str = "", notes: str = "",
@@ -73,6 +124,14 @@ class VendorsMixin:
             key = vendor_key(row["vendor_name"])
             if not key:
                 continue
+            first = merged.get(key)
+            if first is not None and _distinct(first, row):
+                # Two suppliers whose names read the same, each with its own ERP ID (and GST/HST number): two vendors,
+                # the second kept under its ERP ID, not merged into the first (B-930).
+                key = f"{key} #{row['erp_id'].strip()}"
+                if key not in merged:
+                    merged[key] = dict(row)
+                    continue
             names.setdefault(key, []).append(row["vendor_name"])
             if key in merged:
                 first = merged[key]
@@ -307,7 +366,7 @@ class VendorsMixin:
             lessons = {
                 r["vendor_key"]: dict(r)
                 for r in conn.execute(
-                    """SELECT vendor_key, COUNT(*) lessons, SUM(outcome NOT IN ('history', 'coded')) lines,
+                    """SELECT vendor_key, COUNT(*) lessons, SUM(outcome NOT IN ('history', 'coded', 'bulk')) lines,
                               SUM(outcome = 'accepted') accepted FROM feedback GROUP BY vendor_key"""
                 )
             }

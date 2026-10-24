@@ -40,7 +40,9 @@ Confirm with your JDE team before the first live load:
   tax AAIs (PT / GT) post GST, HST, QST and PST.
 - **Account mapping**: AP Coder GL code (+ cost center) → BU.Object.Subsidiary, and subledgers if used.
 - **Batch numbering** (VLEDBT): the prefix and the user ID R04110ZA is run for.
-- **Amounts**: implied decimals or a decimal point, gross only or taxable / tax amounts.
+- **Amounts**: implied decimals or a decimal point; the tax coded to G/L accounts, gross only or taxable / tax
+  amounts. With the tax coded to G/L accounts: does R04110ZA, with code E and no tax area, post our G/L lines as
+  sent (the tax lines to the tax accounts) and work out no tax of its own?
 - **Line numbering** (VNEDLN): sequential, or matching the pay item line (VLEDLN).
 - **Duplicate-invoice edit** in the processing options (H = hard error, I = warning): AP Coder checks
   supplier + invoice number too, but E1 should be the last word.
@@ -69,7 +71,9 @@ UPPER = {"document_type", "domestic_currency", "credit_document_type", "po_docum
          "exempt_code"}  # fmt: skip
 # (field, label, choices, help) of the radio groups.
 CHOICES = [
-    ("amount_mode", "Amounts", jde.AMOUNT_MODES, "Never both: E1 rejects a voucher with both."),
+    ("amount_mode", "Amounts", jde.AMOUNT_MODES,
+     "Tax coded to G/L accounts: your tax accounts are in GL accounts & tax, each mapped below like any account; the "
+     "tax areas are not used. Otherwise gross or tax amounts, never both: E1 rejects a voucher with both."),
     ("decimals", "Amount format", jde.DECIMAL_MODES, ""),
     ("account_mode", "Account", jde.ACCOUNT_MODES, ""),
     ("line_numbering", "Line numbering (VNEDLN) · unconfirmed", jde.LINE_NUMBERING,
@@ -98,7 +102,13 @@ def jde_context(store: Store) -> dict[str, Any]:
         "gl_columns": GL_COLUMNS,
         "gl_rows": [vars(m) for m in js.gl_map],
         "tax_rows": [
-            {"province": p, "name": province_label(p), "tax_area": js.tax_map[p].tax_area, "code": js.tax_map[p].code}
+            {
+                "province": p,
+                "shown": "—" if p == OUTSIDE_CANADA else p,
+                "name": province_label(p),
+                "tax_area": js.tax_map[p].tax_area,
+                "code": js.tax_map[p].code,
+            }
             for p in order
             if p in js.tax_map
         ],

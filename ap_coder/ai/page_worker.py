@@ -426,7 +426,7 @@ def _read_taken(settings: Settings, store: Any, row: dict[str, Any], model: str,
                 should_stop: Callable[[], bool] | None, finish_page: bool) -> ReadOutcome:  # fmt: skip
     """``read_one`` on the invoice it took from the queue (marked as being read)."""
     from ..capture.transcript import made_up
-    from ..capture.workflow import AUTONOMOUS_REVIEWER
+    from ..capture.workflow import AUTONOMOUS_REVIEWER, has_draft
     from . import page_reader
     from .figures import compare_figures, first_pages
     from .pipeline import InvoicePipeline
@@ -513,7 +513,9 @@ def _read_taken(settings: Settings, store: Any, row: dict[str, Any], model: str,
     capture = result.capture.to_dict() if result.capture is not None else None
     updated = store.replace_proposal(iid, result.output, result.report.to_dict(), capture, meta, expect=identity)
     outcome = ReadOutcome(iid, "done", model, len(reading.pages), seconds, updated, summary=summary)
-    if updated and result.autonomy.get("auto"):
+    # A person's unapproved corrections on it (a draft, D-86): the reading replaces the proposal, but nothing is
+    # approved over their work (B-953).
+    if updated and result.autonomy.get("auto") and not has_draft(store, iid):
         try:
             store.approve_invoice(iid, result.output, AUTONOMOUS_REVIEWER, login="ap-coder")
             outcome.auto_approved = True
