@@ -30,6 +30,10 @@ The F0911Z1 lines are that distribution without the recoverable-tax lines, so ``
 ``sum(F0911Z1) == gross - recoverable tax for the code``. When the Tax setup and the JDE code
 disagree (e.g. PST set up as recoverable in AP Coder but code C), the invoice is unbalanced and is
 left out of the batch, instead of E1 posting the PST twice or not at all.
+
+With the tax coded to G/L accounts (``AMOUNT_GL``, the default for a new setup, D-93) E1 posts no tax: the F0911Z1
+lines are AP Coder's distribution unfiltered (each recoverable tax on its own line to its tax account), the voucher
+goes with the gross, code E and no tax area, and ``sum(F0911Z1) == gross``.
 """
 
 from __future__ import annotations
