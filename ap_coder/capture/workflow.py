@@ -196,7 +196,8 @@ def autonomy_decision(store: Any, key: str, profile: dict[str, Any] | None, capt
     if gates:
         return {"state": state, "auto": False, "audit": False, "reason": "always a person: " + "; ".join(gates)}
     issues = [{"code": i.code, "severity": i.severity} for i in (report.issues if report else [])]
-    ok, reason = should_auto_approve(state, capture, checks_ok=not (report and report.errors), issues=issues)
+    ok, reason = should_auto_approve(state, capture, checks_ok=not (report and report.errors), issues=issues,
+                                     requires_review=bool(report and report.requires_review))  # fmt: skip
     audit = ok and audit_pick(path, policy.audit_rate)  # the same audit share for every supplier
     if audit:
         reason = "picked for the audit sample"
