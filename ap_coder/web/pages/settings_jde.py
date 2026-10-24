@@ -98,7 +98,13 @@ def jde_context(store: Store) -> dict[str, Any]:
         "gl_columns": GL_COLUMNS,
         "gl_rows": [vars(m) for m in js.gl_map],
         "tax_rows": [
-            {"province": p, "name": province_label(p), "tax_area": js.tax_map[p].tax_area, "code": js.tax_map[p].code}
+            {
+                "province": p,
+                "shown": "—" if p == OUTSIDE_CANADA else p,
+                "name": province_label(p),
+                "tax_area": js.tax_map[p].tax_area,
+                "code": js.tax_map[p].code,
+            }
             for p in order
             if p in js.tax_map
         ],

@@ -173,6 +173,29 @@ def _table(d: dict[str, Any]) -> str:
     return _TABLES.get(table, table)
 
 
+# A setting's key (the store's, or the .env's) as the Settings pages name it (B-1000).
+SETTING_LABELS = {
+    "jde_e1": "JD Edwards E1 settings", "show_jde_settings": "Show JD Edwards settings",
+    "show_developer_tools": "Show developer tools", "our_province": "Our province",
+    "site_provinces": "Our sites' provinces", "approval_limit": "Second approval limit", "fx_rates": "Exchange rates",
+    "default_terms_days": "Days to pay when no terms are printed", "why_after": "When to ask why",
+    "touchless_limit": "Touchless limit", "touchless_processing": "Touchless processing",
+    "export_layout": "Export layout", "verifier": "AI reviewer", "backup_copy_dir": "Backup copy folder",
+    "policy_notes": "Policy notes", "reviewer": "Your name", "azure_check": "Azure check",
+    "AP_REVIEWER": "Your name", "AP_REVIEW_THRESHOLD": "Review threshold",
+    "AP_CONSTRAIN_CODES": "Only accounts from the list",
+}  # fmt: skip
+
+
+def setting_label(key: str) -> str:
+    """ "approval_limit" → "Second approval limit"; a key not listed in words ("AP_LM_STUDIO_URL" → "LM studio url")."""
+    key = str(key or "")
+    if key in SETTING_LABELS:
+        return SETTING_LABELS[key]
+    words = key.removeprefix("AP_").replace("_", " ").strip().lower()
+    return words[:1].upper() + words[1:]
+
+
 def second_reason(detail: dict[str, Any]) -> str:
     """Why a first approval waits for a second one, in plain words, from what the approval stored
     (``second_reason``, ``Store.second_approval_reason``): "over the approval limit of 15,000.00 CAD", or "no CAD
@@ -256,7 +279,7 @@ def describe(event: dict[str, Any]) -> str:
     if action == "settings_changed":
         rename = d.get("reviewer") or {}
         renamed = f" (reviewer name {rename.get('from')} → {rename.get('to')})" if rename else ""
-        return ", ".join(d.get("keys") or []) + renamed
+        return ", ".join(setting_label(k) for k in d.get("keys") or []) + renamed
     if action == "vendor_updated":
         parts = []
         if "status" in d:

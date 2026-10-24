@@ -237,3 +237,27 @@ def test_in_a_browser_help_does_not_scroll_sideways_at_1366(browser, store):
     found = page.evaluate("[document.documentElement.scrollWidth, innerWidth]")
     assert found[0] <= found[1], found
     assert page.errors == []
+
+
+# --- 3. Plain words for settings and provinces ---------------------------------------------------------------------
+
+
+def test_activity_names_the_settings_changed_in_plain_words(client, store):
+    """B-1000: Activity said "Settings changed · jde_e1 / our_province / approval_limit"."""
+    for key in ("jde_e1", "our_province", "approval_limit", "show_jde_settings", "AP_REVIEW_THRESHOLD"):
+        store.log_event("settings_changed", actor="Dana Clerk", detail={"keys": [key]})
+    text = client.get("/activity").text
+    for code in ("jde_e1", "our_province", "approval_limit", "show_jde_settings", "AP_REVIEW_THRESHOLD"):
+        assert code not in text, code
+    for words in ("JD Edwards E1 settings", "Our province", "Second approval limit", "Review threshold"):
+        assert words in text, words
+
+
+def test_the_jd_edwards_tax_areas_say_outside_canada_not_its_code(client, store):
+    """B-1000: the JD Edwards tax areas listed "OUTSIDE_CANADA" as a province."""
+    from .test_web_review_signoff import _jde_on
+
+    _jde_on(store)
+    text = client.get("/settings/jde").text
+    shown = re.sub(r'value="[^"]*"', "", text)  # the form's own value may keep the code
+    assert "OUTSIDE_CANADA" not in shown and "Outside Canada" in shown
