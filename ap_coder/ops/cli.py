@@ -36,6 +36,7 @@ from ..core.reference_data import ReferenceData, load_reference_data, load_table
 from ..core.schema import build_json_schema
 from ..core.store import Store, default_db_path, private_dir
 from ..intake.mailbox import EMAIL_EXTENSIONS, emails_in, unpack, unpack_folder
+from . import server_update, service
 from .doctor import FAIL, Check, exit_code, format_checks, run_checks
 from .share_report import build_share_report
 
@@ -149,6 +150,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("doctor", help="Check configuration, reference data and (with --online) Azure connectivity")
     p.add_argument("--online", action="store_true", help="Call both Azure services (costs about one invoice)")
     _add_reference_args(p)
+    _add_server_ops(sub)
 
     p = sub.add_parser("process", help="Extract + GL-code invoices (files or directories)")
     p.add_argument("inputs", nargs="+", help="PDF/TIFF/image invoices, or .md/.txt pre-extracted content")
@@ -237,6 +239,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-constrain-codes", action="store_true", help="Do not embed valid codes as enums")
     _add_reference_args(p)
     return parser
+
+
+def _add_server_ops(sub: Any) -> None:
+    """The company server's own commands (D-100): ``service`` and ``server-update`` (docs/SERVER.md)."""
+    service.add_parser(sub)
+    server_update.add_parser(sub)
 
 
 def cmd_doctor(args: argparse.Namespace, settings: Settings) -> int:
@@ -809,6 +817,8 @@ def main(argv: list[str] | None = None) -> int:
         "serve": lambda: cmd_serve(args),
         "dashboard": lambda: cmd_serve(args),
         "doctor": lambda: cmd_doctor(args, settings),
+        "service": lambda: service.main(args),  # the company server (D-100)
+        "server-update": lambda: server_update.main(args),
         "process": lambda: cmd_process(args, settings),
         "watch": lambda: cmd_watch(args, settings),
         "read-pages": lambda: cmd_read_pages(args, settings),

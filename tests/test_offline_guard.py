@@ -108,6 +108,8 @@ TOUCHPOINTS = {
     "ap_coder/ops/offline.py": "import_azure: imports only; free_port binds and connects on this computer's dashboard "
     "address (no proxy)",
     "ap_coder/core/paths.py": "git log -1 on this checkout, for its build (no network)",
+    "ap_coder/ops/service.py": "the company server's service: urllib to its own dashboard on 127.0.0.1 (/healthz, "
+    "/shutdown; no proxy)",
     "ap_coder/core/config.py": "socket.getaddrinfo of a model server's name, to judge the address it has (no "
     "connection)",
     "scripts/launch.py": "pip --no-index from the wheelhouse (PyPI only with AP_ALLOW_INTERNET=1); socket binds "
@@ -202,6 +204,8 @@ def test_python_written_html_names_no_other_host():
                     continue  # the models' origin, for the bundle builder (fetch_models: AP_ALLOW_INTERNET=1)
                 if rel == "ap_coder/ai/inference.py" and "cognitiveservices.azure.com/.default" in url:
                     continue  # Azure OpenAI's sign-in scope (AP_ALLOW_INTERNET=1 only)
+                if rel == "ap_coder/ops/service.py" and url == "http://schemas.microsoft.com/windows/2004/02/mit/task":
+                    continue  # the scheduled task's XML namespace: a name, never fetched
                 problems.append(f"{rel}:{number}: {url}")
     assert not problems, "\n".join(problems)
 
