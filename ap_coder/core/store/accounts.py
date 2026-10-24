@@ -36,12 +36,15 @@ _REFERENCE_STAMP = """SELECT
 
 # What the checks read besides the reference data, as the queue's re-check compares them (``Store.checks_stamp``,
 # B-815): JD Edwards' settings, whether it is in use (its switch, or a batch made), the days to pay, and the count of
-# changes to the vendor master and the POs (``masters_version``, B-842).
+# changes to the vendor master and the POs (``masters_version``, B-842), and our bank accounts (the account an invoice
+# is paid from, D-66, B-958).
 _CHECKS_STAMP = """SELECT
     (SELECT group_concat(key || '=' || value, char(10))
      FROM (SELECT * FROM settings WHERE key IN ('jde_e1', 'show_jde_settings', 'default_terms_days', 'masters_version')
            ORDER BY key)),
-    (SELECT COUNT(*) FROM export_batches WHERE format = 'jde')"""
+    (SELECT COUNT(*) FROM export_batches WHERE format = 'jde'),
+    (SELECT group_concat(code || '|' || currency || '|' || gl_account || '|' || is_default || '|' || active, char(10))
+     FROM (SELECT * FROM bank_accounts ORDER BY code))"""
 
 # The audit events of a change to the vendor master or the POs: each one counts (``count_masters_change``).
 MASTERS_CHANGES = frozenset({"vendor_updated", "vendors_imported", "vendor_added", "vendors_deleted", "pos_imported",
