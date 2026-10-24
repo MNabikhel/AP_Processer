@@ -45,9 +45,13 @@ def _plain(message: Any, code: Any) -> str:
     return text[:1].upper() + text[1:]
 
 
-def _needs_a_person(severity: Any, code: Any) -> bool:
-    """An error, a warning, or a finding that always goes to a person whatever its severity."""
+def needs_a_person(severity: Any, code: Any) -> bool:
+    """An error, a warning, or a finding that always goes to a person whatever its severity: bulk approval leaves the
+    invoice for a person, and the queue does not call it Ready (B-1027)."""
     return severity in ("error", "warning") or str(code or "") in ALWAYS_A_PERSON
+
+
+_needs_a_person = needs_a_person
 
 
 AUDIT_PICK = "picked for the audit sample: a person checks it"

@@ -138,8 +138,10 @@ _PAY_FROM: dict[int, tuple[int, str]] = {}  # the Pay from part of ``attention``
 
 
 def _to_fix(invoice_id: int, final: str | None, ai: str | None, validation: str | None,
-            cost_centers: bool) -> tuple[str, int]:  # fmt: skip
-    """(what the lines still need to be approved, how many errors the checks found) of one invoice, from its stored
+            cost_centers: bool) -> tuple[str, int, int]:  # fmt: skip
+    """(what the lines still need to be approved, how many errors the checks found, how many other findings bulk
+    approval leaves for a person: a warning, or one that always goes to a person, ``bulk.needs_a_person``, B-1027)
+    of one invoice, from its stored
     coding and checks (their JSON text). Remembered with the hash of that text: the queue asks it of every waiting
     invoice on each load (also to count them on the other tabs), and decoding them all again took most of the
     page's time (0.34 s at 5,000 waiting); a changed invoice is asked again."""
@@ -149,9 +151,13 @@ def _to_fix(invoice_id: int, final: str | None, ai: str | None, validation: str 
         return known[1]
     coded = (json.loads(final) if final else None) or (json.loads(ai) if ai else None) or {}
     issues = ((json.loads(validation) if validation else None) or {}).get("issues") or []
+    from ap_coder.coding.bulk import needs_a_person
+
+    errors = sum(1 for i in issues if i.get("severity") == "error")
     answer = (
         codes_to_pick(coded.get("line_items"), cost_centers, hint=False).removesuffix(" to approve"),
-        sum(1 for i in issues if i.get("severity") == "error"),
+        errors,
+        sum(1 for i in issues if needs_a_person(i.get("severity"), i.get("code"))) - errors,
     )
     _TO_FIX[invoice_id] = (asked, answer)
     return answer
@@ -161,8 +167,9 @@ def attention(store: Store, reference: ReferenceData | None, pending: list[dict[
               threshold: float | None = None,
               today: dict[int, list[dict[str, Any]]] | None = None) -> dict[int, str]:  # fmt: skip
     """Why each invoice of ``pending`` (the queue) needs attention, by id; one not listed is Ready: its review
-    screen's Approve is open as it stands. The lines' codes are asked as the review screen asks (``codes_to_pick``),
-    then the checks' flag (an error, or confidence under ``threshold``; None: the flag alone, without its words).
+    screen's Approve is open as it stands, and nothing in its checks keeps bulk approval from taking it (B-1027).
+    The lines' codes are asked as the review screen asks (``codes_to_pick``), then the checks' flag (an error, or
+    confidence under ``threshold``; None: the flag alone, without its words).
     The checks are today's (``bulk.issues_today``, or ``today`` when the caller has it): an invoice whose stored
     checks were made against other settings is checked again (B-815)."""
     from ap_coder.coding import banks
@@ -187,7 +194,8 @@ def attention(store: Store, reference: ReferenceData | None, pending: list[dict[
     for inv in pending:
         r = stored.get(inv["id"]) or {}
         checked = json.dumps({"issues": today[inv["id"]]}) if inv["id"] in today else r.get("validation")
-        to_pick, errors = _to_fix(inv["id"], r.get("final_output"), r.get("ai_output"), checked, cost_centers)
+        to_pick, errors, warned = _to_fix(inv["id"], r.get("final_output"), r.get("ai_output"), checked,
+                                          cost_centers)  # fmt: skip
         low = threshold is not None and (inv.get("adjusted_confidence") or 0.0) < threshold
         bank = ""
         if any(a["active"] for a in accounts):  # the review screen's Pay from rule (B-685): its Approve, its Ready
@@ -207,6 +215,8 @@ def attention(store: Store, reference: ReferenceData | None, pending: list[dict[
             to_pick,
             bank,
             f"{ui.plural(errors, 'error')} to fix" if errors else "",
+            # Ready is what bulk approval takes: a warning, or a finding that always goes to a person, is not (B-1027)
+            f"{ui.plural(warned, 'warning')} to look at" if warned else "",
             f"confidence under {threshold:.0%}" if low and inv.get("requires_review") else "",
         ]
         why = [w for w in why if w]
