@@ -207,10 +207,16 @@ def autonomy_decision(store: Any, key: str, profile: dict[str, Any] | None, capt
 CHECK_CODES = ("VERIFIER_", "AZURE_DI_")  # the issues of a check made after processing (AI reviewer, Azure check)
 
 
+def has_draft(store: Any, invoice_id: int) -> bool:
+    """Whether a person has unapproved corrections on the invoice (a draft, D-86): never approved by AP Coder over
+    them (B-953)."""
+    return any(d[0] == invoice_id for d in store.invoice_drafts())
+
+
 def still_untouched(store: Any, invoice_id: int, output: dict[str, Any]) -> bool:
     """The invoice as stored now (read again, right before an approval by AP Coder): still in the review queue with
-    ``output`` as its proposal, nobody's coding on it (a person may have approved it with corrections and reopened it
-    meanwhile), no check still holding it (``azure_hold``, ``verifier_hold``) and no open issue from one."""
+    ``output`` as its proposal, nobody's coding or draft on it (a person may have approved it with corrections and
+    reopened it meanwhile), no check still holding it (``azure_hold``, ``verifier_hold``) and no open issue from one."""
     from ..ai.verifier import HOLDS
     from ..core.store import REVIEW
 
@@ -218,6 +224,8 @@ def still_untouched(store: Any, invoice_id: int, output: dict[str, Any]) -> bool
     if not inv or inv.get("status") != REVIEW or inv.get("final_output") or inv.get("reviewer") or inv.get("edits"):
         return False
     if inv.get("ai_output") != output:  # read again meanwhile: what was checked is not what is proposed now
+        return False
+    if has_draft(store, invoice_id):  # a person is correcting it
         return False
     notes = (inv.get("meta") or {}).get("capture") or {}
     if any(notes.get(k) for k in HOLDS):
