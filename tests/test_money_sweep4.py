@@ -89,3 +89,84 @@ def test_two_suppliers_with_different_address_numbers_stay_two_vendors(tmp_path)
     # imported again: still two, nothing doubled
     store.import_vendor_master(master_rows(records, master_columns(list(records[0]))))
     assert len([v for v in store.master_vendors() if v["display_name"].startswith("Great Lakes")]) == 2
+
+
+BISTRO = """Maple Leaf Bistro Inc.
+455 King Street West, Toronto ON M5V 1K4
+HST Reg. No: 55807 3029 RT 0001
+INVOICE
+Invoice No: MLB-20931
+Bill To: Bench Company Ltd., 100 Main Street, Toronto ON M5H 2N2
+Description
+Amount
+Client dinner - food (8 guests)
+640.00
+Wine and beverages
+180.00
+Subtotal
+820.00
+HST 13%
+106.60
+Gratuity
+120.00
+Total Due
+CAD 1,046.60
+"""
+
+
+def test_a_gratuity_printed_after_the_tax_is_an_untaxed_line(reference):
+    from ap_coder.ai.offline_coder import code_from_capture
+    from ap_coder.capture.types import CaptureResult, FieldResult, LineReading
+    from ap_coder.coding.validation import validate_coding
+
+    values = {"vendor_name": "Maple Leaf Bistro Inc.", "invoice_number": "MLB-20931", "invoice_date": "2026-10-15",
+              "currency": "CAD", "subtotal": 820.0, "hst_amount": 106.6, "tax_total": 106.6, "grand_total": 1046.6,
+              "gst_hst_registration_number": "558073029RT0001"}  # fmt: skip
+    capture = CaptureResult(
+        fields={k: FieldResult(k, v, 0.9, "likely") for k, v in values.items()},
+        line_items=[LineReading("Client dinner - food (8 guests)", None, None, 640.0),
+                    LineReading("Wine and beverages", None, None, 180.0)],
+    )  # fmt: skip
+    coding = code_from_capture(capture, reference, [], text=BISTRO).coding
+    tip = coding.line_items[-1]
+    assert (tip.description, tip.amount, tip.taxes_applied, tip.tax_status) == ("Gratuity", 120.0, [], "out_of_scope")
+    assert coding.subtotal == 940.0 and coding.tax_total == 106.6 and coding.grand_total == 1046.6
+    codes = {i.code for i in validate_coding(coding, reference).issues}
+    assert not codes & {"TOTAL_MISMATCH", "SUBTOTAL_MISMATCH", "TAX_CALC_MISMATCH"}, codes
+    # No gap: nothing added (a gratuity already in the lines, or none)
+    plain = code_from_capture(capture, reference, [], text=BISTRO.replace("Gratuity\n120.00\n", "")).coding
+    assert len(plain.line_items) == 2
+
+
+def test_a_meal_is_never_steered_to_the_100_percent_account_on_a_weak_match(tmp_path):
+    from ap_coder.ai.suggest import suggest_gl
+    from ap_coder.core.reference_data import load_reference_data
+
+    from .conftest import DATA
+
+    chart = tmp_path / "chart.csv"
+    chart.write_text("gl_code,description,category,meals\n6010,Office supplies,Office,\n"
+                     "6320,Meals & Entertainment,Travel,yes\n6325,Staff events & meals billed to clients,Travel,\n"
+                     "2310,GST/HST receivable,Tax,\n", encoding="utf-8")  # fmt: skip
+    reference = load_reference_data(chart, None, DATA / "tax_gl_mapping.csv")
+    (top, *_rest) = suggest_gl("Client dinner – food (8 guests)", "Maple Leaf Bistro Inc.", [], reference)
+    assert top.gl_code == "6320" and not top.auto
+    assert any("6325" in r for r in top.reasons)  # the other account said, for a client's or a staff event
+    # Coded to the 100% account by AP for this vendor before: strong evidence, kept
+    feedback = [
+        {
+            "vendor_key": "maple leaf bistro",
+            "vendor_name": "Maple Leaf Bistro Inc.",
+            "description": "Client dinner – food (8 guests)",
+            "final_gl": "6325",
+            "final_cc": "",
+            "outcome": "accepted",
+            "created_at": f"2026-0{m}-01",
+            "suggested_gl": "6325",
+        }
+        for m in (1, 2, 3)
+    ]
+    assert (
+        suggest_gl("Client dinner – food (8 guests)", "Maple Leaf Bistro Inc.", feedback, reference)[0].gl_code
+        == "6325"
+    )

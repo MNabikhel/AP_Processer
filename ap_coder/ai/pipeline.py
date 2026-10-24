@@ -537,7 +537,7 @@ class InvoicePipeline:
                 # A weak match (an account's name) is never put in the line: it is left blank, suggested on the
                 # review screen, and the chat model is asked about it when it answers (B-463).
                 result.coding = code_from_capture(
-                    captured[0], self.reference, feedback, self.store, text=result.extraction.content
+                    captured[0], self.reference, feedback, self.store, text=result.extraction.content, layout=layout
                 )  # fmt: skip
                 if provider == "local":
                     self._local_accounts(result.coding, history_text)

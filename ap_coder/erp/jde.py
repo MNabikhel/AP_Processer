@@ -844,6 +844,20 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
     return v
 
 
+def sent_tax(invoice: dict[str, Any], settings: JdeSettings, an8: str = "") -> float | None:
+    """The tax a voucher gives JD Edwards (pilot-score, B-934): with tax amounts, VLSTAM (the claimable tax: half of it
+    on meals, D-90); with the tax coded to G/L accounts, the recoverable tax on its own G/L lines; with the gross only
+    None (E1 works it out from the tax area)."""
+    if settings.amount_mode == AMOUNT_GROSS:
+        return None
+    v = _prepare(invoice, settings, an8)
+    if settings.tax_on_gl:
+        cents = sum(e["cents"] for e in v.entries if _is_recoverable_entry(e))
+    else:
+        cents = v.stam
+    return round(cents / 100, 2)
+
+
 def _amount(cents: int, settings: JdeSettings, decimals: int) -> int | str:
     return jde_amount(Decimal(cents) / 100, settings.decimals == IMPLIED, decimals)
 
