@@ -1547,8 +1547,10 @@ def distribution(output: dict[str, Any], reference: ReferenceData | None, js: An
     rows = []
     for e in output.get("gl_distribution") or []:
         account = None
-        if js is not None:  # a recoverable tax line is posted by E1 itself (its tax AAIs): no account of ours
+        if js is not None:  # a recoverable tax line is posted by E1 itself (its tax AAIs): no account of ours,
+            # except with the tax coded to G/L accounts, where it goes to its tax account (D-93, B-1022)
             recoverable = e["kind"] == "tax" and abs(float(e.get("non_recoverable_tax") or 0)) < 0.005
+            recoverable = recoverable and not getattr(js, "tax_on_gl", False)
             mapped = jde.account_text(e["gl_code"] or "", e.get("cost_center") or "", js)
             account = "posted by JD Edwards" if recoverable else mapped or "not mapped"
         rows.append({
