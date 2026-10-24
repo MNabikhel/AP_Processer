@@ -926,9 +926,10 @@ class InvoicesMixin:
             )
             if cur.rowcount == 0:
                 raise ValueError(f"invoice {invoice_id} is not waiting for a second approval")
+            reason = ((first or {}).get("detail") or {}).get("second_reason")  # why it waited (B-1024)
             self._log(conn, "final_approved", invoice_id, approver, {
                 "first_approver": inv["reviewer"], "total": (inv["final_output"] or {}).get("grand_total"),
-                **({"login": login} if login else {}),
+                **({"second_reason": reason} if reason else {}), **({"login": login} if login else {}),
             })  # fmt: skip
 
     def send_back(self, invoice_id: int, actor: str, reason: str = "") -> None:

@@ -5,7 +5,7 @@ column, and the setup pages kept to this computer."""
 
 from __future__ import annotations
 
-from .test_web_invoice import check, form_of
+from .test_web_invoice import PAGE, check, form_of
 from .test_web_review_signoff import _id, _review, browser, client, demo_db, me, store
 
 __all__ = ["browser", "client", "demo_db", "me", "store"]  # the fixtures, shared
@@ -161,3 +161,37 @@ def test_pilot_score_compares_the_tax_with_the_tax_account_lines_in_the_gl_tax_m
     report = pilot_score.score([o], posted, notes)
     assert report["header"]["tax_total"]["n"] == 0
     assert any("F0911" in n and "tax" in n for n in report["notes"])
+
+
+# --- 5. The stored reason for the second approval -----------------------------------------------------------------
+
+
+def test_activity_says_the_stored_reason_on_the_second_approval(client, store):
+    """B-1024: Activity's "Second approval" line said "(over the approval limit)" for a USD invoice with no rate."""
+    from ap_coder.core import audit
+
+    from .test_web_ui_sweep4 import _waiting_for_second
+
+    invoice_id = _waiting_for_second(store, client)
+    store.final_approve(invoice_id, "Sam Second", login="ssecond")
+    event = next(e for e in store.events(invoice_id) if e["action"] == "final_approved")
+    text = audit.describe(event)
+    assert "no CAD exchange rate for USD" in text and "over the approval limit" not in text
+
+
+def test_the_flash_after_a_first_approval_says_the_limit_in_force(client, store):
+    """B-1024: a USD invoice whose rate was lowered after it came in still waits (B-970), but the flash said only
+    "over the approval limit": the reason was worked out again at today's rate (none)."""
+    from .test_web_invoice import clean_invoice, flash_text
+
+    invoice_id = clean_invoice(client, store)
+    total = float(store.get_invoice(invoice_id)["ai_output"]["grand_total"])
+    store.set_setting("approval_limit", f"{total:.2f}")
+    with store._conn() as conn:  # the rate in force when the invoice came in
+        conn.execute("INSERT INTO settings (key, value) VALUES ('fx_rates', 'USD=1.37')")
+    store.set_setting("fx_rates", "USD=0.05")  # lowered after the invoice came in: the 1.37 still decides
+    answer = client.post(f"/review/{invoice_id}/approve", data=form_of(store, invoice_id, currency="USD"),
+                         headers=PAGE).json()  # fmt: skip
+    assert answer["ok"], answer
+    assert store.get_invoice(invoice_id)["status"] == "pending_approval"
+    assert f"over the approval limit of {total:,.2f} CAD" in flash_text(client, answer)

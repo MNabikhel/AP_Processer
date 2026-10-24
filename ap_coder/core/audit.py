@@ -332,7 +332,7 @@ def describe(event: dict[str, Any]) -> str:
     if action == "note":
         return str(d.get("text") or "")
     if action == "final_approved":
-        return f"approved after {d.get('first_approver') or '?'} (over the approval limit)"
+        return f"approved after {d.get('first_approver') or '?'} ({second_reason(d)})"  # the stored reason (B-1024)
     if action in ("sent_back", "reopened"):
         layout = f" · vendor's layout {d['layout']}" if d.get("layout") else ""  # what it taught, taken back (D-71)
         return f"back to the review queue · reason: {d.get('reason') or 'none given'}{layout}"

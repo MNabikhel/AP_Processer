@@ -806,7 +806,9 @@ def _approve(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     waits = (store.get_invoice(invoice_id) or {}).get("status") == PENDING
     messages = []
     if waits:  # not approved yet: never "Approved <vendor>" for it
-        why = store.second_approval_reason(analysis.output) or "over the approval limit"
+        # the reason the approval stored: the limit and rate in force since it came in (B-970, B-1024)
+        first = next((e for e in store.events(invoice_id) if e["action"] == "approved"), None)
+        why = audit.second_reason((first or {}).get("detail") or {})
         messages.append(flash_message(f"First approval recorded for {vendor}: {why}; it waits for a second "
                                       "approver.", "info", icon="how_to_reg"))  # fmt: skip
     total = sum(counts.values())
