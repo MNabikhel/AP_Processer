@@ -952,17 +952,26 @@ def test_in_a_browser_an_edit_typed_just_before_leaving_is_kept(browser, store):
     assert page.input_value("[form=inv][name=po_number]") == "PO-NEW-1"
 
 
-def test_in_a_browser_alt_arrows_in_a_text_box_stay_on_the_invoice(browser, store):
-    """Alt+←/→ in a text box moves the caret word by word (Option+arrows on a Mac); outside one they go to the
-    previous / next invoice."""
+def test_in_a_browser_alt_arrows_in_a_text_box_stay_on_the_invoice_only_on_a_mac(browser, store):
+    """Alt+←/→ go to the previous / next invoice, from a text box too on Windows (B-993); on a Mac, Option+arrows in a
+    text box move the caret word by word, so there they stay on the invoice."""
     invoice_id = store.list_invoices(REVIEW)[1]["id"]
-    page = _open(browser, invoice_id)
+    chromium, base = browser
+    page = chromium.new_page(viewport={"width": 1366, "height": 768})
+    page.add_init_script("Object.defineProperty(navigator, 'platform', {get: () => 'MacIntel'})")
+    page.goto(f"{base}/review/{invoice_id}")
+    page.wait_for_load_state("networkidle")
     page.click("#vendor-name")
     page.keyboard.press("End")
     page.keyboard.press("Alt+ArrowLeft")
     page.wait_for_timeout(1000)
     assert page.url.endswith(f"/review/{invoice_id}")
     page.evaluate("() => document.activeElement.blur()")
+    page.keyboard.press("Alt+ArrowLeft")
+    page.wait_for_url(lambda url: not url.endswith(f"/review/{invoice_id}"), timeout=10000)
+    page.close()
+    page = _open(browser, invoice_id)  # not a Mac
+    page.click("#vendor-name")
     page.keyboard.press("Alt+ArrowLeft")
     page.wait_for_url(lambda url: not url.endswith(f"/review/{invoice_id}"), timeout=10000)
 

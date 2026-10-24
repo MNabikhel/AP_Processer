@@ -1212,7 +1212,10 @@ function elsewhere(target) {
   return Boolean(owner) && owner !== form;
 }
 
-/** A box being typed in, where Alt+←/→ moves the caret word by word (Option+arrows on a Mac). */
+/** On a Mac, where Option+←/→ in a text box moves the caret word by word. */
+const onMac = /Mac/.test(navigator.platform || navigator.userAgentData?.platform || "");
+
+/** A box being typed in. */
 function typing(target) {
   if (target.isContentEditable || target.tagName === "TEXTAREA" || target.tagName === "SELECT") return true;
   return target.tagName === "INPUT" && !["checkbox", "radio", "button", "submit", "reset"].includes(target.type);
@@ -1266,7 +1269,10 @@ document.addEventListener("keydown", (e) => {
     });
     return;
   }
-  if (!e.altKey || e.ctrlKey || e.metaKey || typing(e.target)) return;
+  // From a text box too, where the page puts the focus on opening: on Windows Alt+arrows are no text-editing keys
+  // (B-993). On a Mac, Option+arrows in a text box move the caret word by word: theirs there.
+  if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.target.closest?.("dialog, [role=dialog]")) return;
+  if (onMac && typing(e.target)) return;
   const where = { ArrowLeft: "prev", ArrowRight: "next", ArrowUp: "queue" }[e.key];
   const link = where && document.querySelector(`[data-nav="${where}"]`);
   if (link) {
@@ -2178,19 +2184,26 @@ if (form) {
 
 /* ---------- Ctrl+Z, P (Park), X (Reject) ---------- */
 
+/** The boxes typed in since the page opened: in one of them Ctrl+Z is the box's own (B-992). */
+const typedIn = new WeakSet();
+document.addEventListener("input", (e) => typedIn.add(e.target), { capture: true });
+
 document.addEventListener("keydown", (e) => {
   if (e.defaultPrevented || e.altKey || e.target.closest?.("dialog, [role=dialog]")) return;
   if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === "z" || e.key === "Z")) {
+    // A box of the form (or its picker) not typed in since the page opened, as the one focused on opening, has no
+    // typing of its own to undo: Ctrl+Z there is the screen's, as outside a text box (B-992).
+    const fresh = typing(e.target) && !typedIn.has(e.target) && (e.target.form === form || !!e.target.closest(".pk"));
     // Not in a text box, where Ctrl+Z is the box's own; but in a box of the review form nothing was typed in since
     // the change (typing there drops the Undo), as after a right-click in it: there the change is what to undo.
-    if (typing(e.target) && e.target.form !== form) return;
+    if (typing(e.target) && !fresh && e.target.form !== form) return;
     if (undo()) {
       e.preventDefault();
       return;
     }
     // Outside a text box the browser's own undo would take a character off the last box typed in, maybe off the
     // screen, and that would be kept (B-739): never. In a box of the form, its own typing is the browser's to undo.
-    if (!(typing(e.target) && e.target.tagName !== "SELECT")) {
+    if (fresh || !(typing(e.target) && e.target.tagName !== "SELECT")) {
       e.preventDefault();
       // nothing edited here since: the approval just made, as the banner's Undo (B-823)
       const banner = document.querySelector("#flashes form.flash-undo");
@@ -2414,7 +2427,14 @@ function focusFirstToCheck(always = false) {
   // view (above the approve bar).
   box.focus({ preventScroll: true });
   if (always) box.scrollIntoView({ block: "nearest" }); // after an Undo: where the work is
-  else reachApprovalUndo(box);
+  else {
+    // Half under the approve bar, it looks lost: brought just above it (the scroll padding is the bar's height).
+    // Wholly below it, the page stays at its top, as above (B-992).
+    const bar = document.querySelector(".inv-actionbar")?.getBoundingClientRect();
+    const r = box.getBoundingClientRect();
+    if (bar && r.top < bar.top && r.bottom > bar.top - 4) box.scrollIntoView({ block: "nearest" });
+    reachApprovalUndo(box);
+  }
   return true;
 }
 
