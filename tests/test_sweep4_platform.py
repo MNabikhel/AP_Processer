@@ -372,3 +372,60 @@ def test_the_azure_check_takes_an_azure_document_intelligence_endpoint(endpoint)
     from ap_coder.ai import azure_check
 
     assert azure_check.endpoint_host(endpoint) == endpoint.split("/")[2]
+
+
+# --- 6. A colleague's browser is not shown this computer's folders --------------------------------------------------
+
+
+def _network(store):
+    return create_app(web_settings(), store, address="0.0.0.0", start_reader=False)
+
+
+def _gone(store, tmp_path, error: str = "") -> int:
+    from .conftest import SAMPLE_STEM, SAMPLES
+
+    secret = tmp_path / "Secret Folder" / "Supplier 123.pdf"
+    secret.parent.mkdir()
+    shutil.copy(SAMPLES / f"{SAMPLE_STEM}.pdf", secret)
+    invoice_id = store.add_invoice(secret, None if error else {"line_items": []}, {}, error=error)
+    secret.unlink()
+    return invoice_id
+
+
+def test_a_missing_file_is_named_without_its_folder_to_a_colleague(store, tmp_path):
+    app = _network(store)
+    invoice_id = _gone(store, tmp_path)
+    answer = colleague(app).get(f"/review/{invoice_id}/page/1.png")
+    assert answer.status_code == 404 and "Supplier 123.pdf" in answer.text and "Secret Folder" not in answer.text
+    page = colleague(app).get(f"/review/{invoice_id}")
+    assert "Secret Folder" not in page.text
+    assert "Secret Folder" in local(app).get(f"/review/{invoice_id}/page/1.png").text  # this computer: all of it
+
+
+def test_retrying_a_missing_file_names_it_without_its_folder_to_a_colleague(store, tmp_path):
+    app = _network(store)
+    invoice_id = _gone(store, tmp_path, error="could not read")
+    answer = colleague(app).post(f"/review/{invoice_id}/retry", headers=PAGE).json()
+    assert not answer["ok"] and "Supplier 123.pdf" in answer["error"] and "Secret Folder" not in answer["error"]
+
+
+def test_an_error_page_shows_a_colleague_no_folder_and_no_log_path(store):
+    app = _network(store)
+
+    def boom():
+        raise FileNotFoundError(2, "No such file or directory", "/home/someone/Secret Folder/x.db")
+
+    app.add_api_route("/boom", boom, methods=["GET"])
+    client = colleague(app)
+    page = client.get("/boom", headers={"accept": "text/html"})
+    assert page.status_code == 500
+    assert "Secret Folder" not in page.text and "dashboard-errors.log" not in page.text and "x.db" in page.text
+    mine = local(app).get("/boom", headers={"accept": "text/html"})
+    assert "dashboard-errors.log" in mine.text
+
+
+def test_healthz_tells_a_colleague_only_that_it_is_up(store):
+    app = _network(store)
+    found = TestClient(app, base_url="http://localhost", client=("10.0.0.5", 50000)).get("/healthz").json()
+    assert found == {"ok": True, "app": "ap-coder"}
+    assert "folder" in local(app).get("/healthz").json()

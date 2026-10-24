@@ -50,6 +50,7 @@ from ap_coder.web.core import (
     reviewer,
     short_path,
 )
+from ap_coder.web.identity import person
 from ap_coder.web.jobs import Job
 from ap_coder.web.pages.review import attention
 
@@ -677,6 +678,8 @@ def process_status(request: Request) -> JSONResponse:
 @router.post("/process/open-folder")
 def process_open_folder(request: Request) -> JSONResponse:
     folder = invoice_dir(get_store(request))
+    if person() is not None:  # a colleague's click must not open a window on the computer running AP Coder
+        return message("The invoices folder is on the computer running AP Coder: open it there.", "info")
     if open_folder(folder):
         return message("Opened the invoices folder.", "info")
     return message(f"Open this folder yourself: {folder}", "info")

@@ -37,7 +37,7 @@ from ap_coder.core.config import Settings
 from ap_coder.core.store import Store, default_db_path
 from ap_coder.web import core
 from ap_coder.web.errors import FriendlyErrors
-from ap_coder.web.identity import Identity, is_this_computer
+from ap_coder.web.identity import THIS_COMPUTER, Identity, from_this_computer, is_this_computer
 from ap_coder.web.jobs import Jobs
 from ap_coder.web.pages import MORE_MODULES, PAGES, Page
 from ap_coder.web.security import TOKEN_HEADER, LocalOnly
@@ -205,9 +205,12 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
         return RedirectResponse(PAGES[0].path, status_code=307)
 
     build = paths.build_stamp(CODE_FOLDER)["commit"]  # the code this server runs (the launcher compares it)
+    network = str(address or "").strip().strip("[]").lower() not in THIS_COMPUTER  # shared on the office network
 
     @app.get("/healthz")
     def healthz(request: Request) -> dict[str, Any]:
+        if network and not from_this_computer(request.scope):
+            return {"ok": True, "app": "ap-coder"}  # another computer: only that it is up (B-979)
         server = request.scope.get("server") or (None, None)
         found = {
             "ok": True,

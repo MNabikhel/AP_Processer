@@ -25,6 +25,7 @@ import contextvars
 import hashlib
 import hmac
 import ipaddress
+import re
 import secrets
 import unicodedata
 from dataclasses import dataclass
@@ -116,6 +117,22 @@ def name_from_cookie(secret: bytes, value: str | None) -> str | None:
     """The name a cookie holds, or None when it was not made by this start of the server (made up, changed, old)."""
     found = from_cookie(secret, value)
     return found[0] if found else None
+
+
+_QUOTED_PATH = re.compile(r"""(['"])[^'"]*[\\/]([^'"\\/]*)\1""")  # 'C:\\Users\\x\\a.db', "/home/x/a.db"
+
+
+def shown_path(path: Any) -> str:
+    """A file's path as the browser asking is shown it: in full on this computer, its name alone to a colleague on
+    another computer (this computer's folders and user name are not theirs to see, B-979)."""
+    text = str(path or "")
+    return text if person() is None else text.replace("\\", "/").rsplit("/", 1)[-1]
+
+
+def without_folders(text: str) -> str:
+    """``text`` (an error's message) with each path quoted in it cut to its file name, for a colleague on another
+    computer; as it is on this computer. Python's errors quote the file they failed on: the name says which."""
+    return text if person() is None else _QUOTED_PATH.sub(lambda m: m.group(1) + m.group(2) + m.group(1), text)
 
 
 def _ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:

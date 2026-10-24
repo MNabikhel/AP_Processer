@@ -62,6 +62,7 @@ from ap_coder.web.core import (
     templates,
 )
 from ap_coder.web.files import download
+from ap_coder.web.identity import shown_path
 from ap_coder.web.pages.review import attention, filter_queue, sort_queue
 
 router = APIRouter()
@@ -367,7 +368,7 @@ def _document(store: Store, settings: Any, inv: dict[str, Any], status: Any, edi
     sizes: list[tuple[float, float]] = []
     problem = ""
     if not path.exists():  # (a file an update moved was found again by get_invoice)
-        problem = f"This invoice's file is no longer at {path}."
+        problem = f"This invoice's file is no longer at {shown_path(path)}."
     elif path.suffix.lower() in document.VIEWABLE:
         try:
             sizes = document.page_sizes(path)
@@ -599,7 +600,8 @@ def page_picture(request: Request, invoice_id: int, number: int, scale: str = "1
     is 1). The scale is in the address, so the browser keeps each one apart."""
     inv = _invoice(get_store(request), invoice_id)
     if not Path(inv.get("source_path") or "").is_file():
-        raise HTTPException(status_code=404, detail=f"This invoice's file is no longer at {inv.get('source_path')}.")
+        gone = shown_path(inv.get("source_path"))  # its name alone to a colleague on another computer (B-979)
+        raise HTTPException(status_code=404, detail=f"This invoice's file is no longer at {gone}.")
     try:
         png = document.page_png(inv["source_path"], number, document.clean_scale(scale))
     except (IndexError, OSError) as exc:
