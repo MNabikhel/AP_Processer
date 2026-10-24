@@ -241,6 +241,9 @@ CREATE TABLE IF NOT EXISTS bank_accounts (
 CREATE TABLE IF NOT EXISTS invoice_drafts (
     invoice_id INTEGER NOT NULL, person TEXT NOT NULL DEFAULT '', draft TEXT NOT NULL, updated_at TEXT NOT NULL,
     PRIMARY KEY (invoice_id, person));
+CREATE TABLE IF NOT EXISTS ephemeral (
+    kind TEXT NOT NULL, token TEXT NOT NULL, value BLOB NOT NULL, created_at REAL NOT NULL, expires_at REAL NOT NULL,
+    PRIMARY KEY (kind, token));
 """
 
 # The page reader's queue (``page_reads.status``). A read still "reading" after STALE_READING_HOURS was

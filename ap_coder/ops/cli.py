@@ -145,6 +145,21 @@ def build_parser() -> argparse.ArgumentParser:
             "0.0.0.0 lets others on the network open it",
         )  # fmt: skip
         p.add_argument("--no-browser", action="store_true", help="Don't open the browser (it prints the address)")
+        p.add_argument(
+            "--server",
+            action="store_true",
+            help="Run as the company's server (AP_SERVER_MODE=1): HTTPS, every network, no browser",
+        )
+        p.add_argument("--certfile", default=None, help="HTTPS certificate, a PEM file (or AP_TLS_CERT)")
+        p.add_argument("--keyfile", default=None, help="The certificate's private key, a PEM file (or AP_TLS_KEY)")
+        p.add_argument(
+            "--proxy",
+            default=None,
+            metavar="IP",
+            help="The reverse proxy's address: its X-Forwarded-For is believed (from no one else)",
+        )
+        p.add_argument("--insecure-http", action="store_true",
+                       help="Server mode on plain HTTP, for a first test on a trusted network only")  # fmt: skip
 
     p = sub.add_parser("doctor", help="Check configuration, reference data and (with --online) Azure connectivity")
     p.add_argument("--online", action="store_true", help="Call both Azure services (costs about one invoice)")
@@ -254,21 +269,38 @@ def cmd_doctor(args: argparse.Namespace, settings: Settings) -> int:
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
-    """Run the dashboard in this process (ap_coder/web/server.py) until Ctrl+C or the launcher stops it."""
+    """Run the dashboard in this process (ap_coder/web/server.py) until Ctrl+C or the launcher stops it; with
+    ``--server``, as the company's server (HTTPS, D-99) until its service is stopped."""
     if args.env_file:  # the settings the dashboard reads again for every page
         os.environ["AP_ENV_FILE"] = str(Path(args.env_file).resolve())
     from ..core.store import Store
-    from ..web.server import browser_url, serve
-    from .offline import dashboard_address, free_port, is_loopback
+    from ..web import server
+    from .offline import SERVER_ENV, free_port, is_loopback, server_mode
 
-    host = args.host or dashboard_address()
+    if args.server:
+        os.environ[SERVER_ENV] = "1"  # (the pages ask server_mode())
+
+    certfile = args.certfile or os.environ.get(server.CERT_ENV) or None
+    keyfile = args.keyfile or os.environ.get(server.KEY_ENV) or None
+    refusal = server.tls_refusal(server_mode(), certfile, keyfile, args.insecure_http)
+    if refusal:
+        print(refusal, file=sys.stderr)
+        return 2
+    host = args.host or server.default_host()
     port = args.port or free_port(address=host)  # (the launcher's own choice: 8501, else the next free one)
-    opens = "" if args.no_browser else "it opens in your browser; "  # (the launcher opens it, and says so itself)
-    print(f"Dashboard: {browser_url(host, port)}  ({opens}Ctrl+C here to stop)", file=sys.stderr)
-    if not is_loopback(host if host not in ("", "localhost") else "127.0.0.1"):
-        print(f"Listening on {host}: other computers on the network can open the dashboard. There is no login: "
-              "anyone who can reach this address can see the invoices.", file=sys.stderr)  # fmt: skip
-    return serve(host, port, open_browser=not args.no_browser, store=Store(Path(args.db)))
+    url = server.browser_url(host, port, bool(certfile))
+    if server_mode():
+        print(f"AP Coder server: {url} on this computer; staff open it by the server's name (Ctrl+C here to stop)",
+              file=sys.stderr)  # fmt: skip
+    else:
+        opens = "" if args.no_browser else "it opens in your browser; "  # (the launcher opens it, and says so itself)
+        print(f"Dashboard: {url}  ({opens}Ctrl+C here to stop)", file=sys.stderr)
+        if not is_loopback(host if host not in ("", "localhost") else "127.0.0.1"):
+            print(f"Listening on {host}: other computers on the network can open the dashboard. There is no login: "
+                  "anyone who can reach this address can see the invoices.", file=sys.stderr)  # fmt: skip
+    network = {"certfile": certfile, "keyfile": keyfile, "proxy": args.proxy, "insecure_http": args.insecure_http}
+    extra = network if server_mode() or any(network.values()) else {}  # (the laptop's call is as before)
+    return server.serve(host, port, open_browser=not args.no_browser, store=Store(Path(args.db)), **extra)
 
 
 def _inputs(paths: list[str], store: Store | None = None) -> tuple[list[Path], bool, int] | None:

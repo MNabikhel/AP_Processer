@@ -35,27 +35,18 @@
           <summary class="nav-link"><span class="ms" aria-hidden="true">more_horiz</span><span class="label">More</span><span class="ms chev" aria-hidden="true">expand_more</span></summary>
           {% for item in rail.more %}{{ nav_link(item) }}{% endfor %}
         </details>
-        <script>
-          (function () { // remembered per browser; a page under More opens it without changing what was chosen
-            var more = document.getElementById("nav-more");
-            try { if (!more.open && localStorage.getItem("apc-nav-more") === "open") more.open = true; } catch (e) {}
-            var here = document.querySelector(".rail .nav-link.on");
-            var fixed = getComputedStyle(more.closest(".rail")).position === "fixed";  // (a phone: the page scrolls)
-            if (here && fixed && more.contains(here)) {  // once the menu below it is drawn too
-              document.addEventListener("DOMContentLoaded", function () { here.scrollIntoView({block: "nearest"}); });
-            }
-            more.querySelector("summary").addEventListener("click", function () {
-              setTimeout(function () { try { localStorage.setItem("apc-nav-more", more.open ? "open" : "closed"); } catch (e) {} });
-            });
-          })();
-        </script>
+        <script src="/static/js/nav_more.js?v={{ static_version }}"></script>{# not inline: the server's Content-Security-Policy runs AP Coder's own files only #}
       </nav>
       <nav class="nav nav-pinned" aria-label="Settings and help">
         {% for item in rail.pinned %}{{ nav_link(item) }}{% endfor %}
       </nav>
       <div class="rail-foot">
         {% if demo_count %}<div class="rail-demo">{{ ui.pill("Demo invoices loaded", "gray", "science") }}</div>{% endif %}
+        {% if server_mode %}
+        <div class="apc-env"{% if is_admin %} title="{{ data_folder }}"{% endif %}>{{ ui.status("Offline · Data stays on the company server", "ok") }}</div>
+        {% else %}
         <div class="apc-env" title="{{ data_folder }}">{{ ui.status("Offline · Data stays on this computer", "ok") }}</div>
+        {% endif %}
         <div class="apc-me" title="AP reviewer · {{ approved_today | num }} approved today">
           {{ ui.avatar(reviewer, "sm") }}
           <div><div class="name">{{ reviewer }}</div><div class="role">{{ approved_today | num }} approved today</div></div>

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import datetime as dt
 import io
+import json
 import re
 import secrets
 import tempfile
@@ -40,6 +41,7 @@ from ap_coder.web.charts import SERIES, Series, line_chart, percent
 from ap_coder.web.core import (
     TARGET_ACCURACY,
     accuracy_note,
+    current_store,
     developer_tools,
     done,
     get_settings,
@@ -137,11 +139,13 @@ def _url(**params: Any) -> str:
 
 
 # --- Uploaded AP line history, waiting for its columns ------------------------------------------------------------
-# The upload is read once and kept in memory (never on disk) under a one-off token until the columns are matched;
-# an hour later, or after teaching, it is forgotten.
+# The upload is read once and kept under a one-off token until the columns are matched: in the dashboard's database
+# while a request is answered (a restart of the server keeps it, D-99), else in memory; an hour later, or after
+# teaching, it is forgotten.
 
 _UPLOAD_TTL = 3600
 _MAX_UPLOADS = 4
+HISTORY_KIND = "ap-history"  # its kind in the database's short-lived table (``Store.keep_ephemeral``)
 _uploads: dict[str, tuple[float, str, dict[str, tuple[list[str], list[dict[str, Any]]]]]] = {}
 _uploads_lock = threading.Lock()
 
@@ -186,6 +190,10 @@ def read_sheets(name: str, data: bytes) -> dict[str, tuple[list[str], list[dict[
 
 
 def keep_upload(name: str, sheets: dict[str, tuple[list[str], list[dict[str, Any]]]]) -> str:
+    store = current_store()
+    if store is not None:
+        value = json.dumps({"name": name, "sheets": sheets}, default=str).encode("utf-8")
+        return store.keep_ephemeral(HISTORY_KIND, value, _UPLOAD_TTL, keep=_MAX_UPLOADS)
     token = secrets.token_urlsafe(9)
     now = time.monotonic()
     with _uploads_lock:
@@ -198,12 +206,22 @@ def keep_upload(name: str, sheets: dict[str, tuple[list[str], list[dict[str, Any
 
 
 def get_upload(token: str | None) -> tuple[str, dict[str, tuple[list[str], list[dict[str, Any]]]]] | None:
+    store = current_store()
+    if store is not None:
+        kept = store.ephemeral(HISTORY_KIND, token)
+        if kept is None:
+            return None
+        found = json.loads(kept)
+        return found["name"], {sheet: (columns, rows) for sheet, (columns, rows) in found["sheets"].items()}
     with _uploads_lock:
         found = _uploads.get(token or "")
     return (found[1], found[2]) if found else None
 
 
 def drop_upload(token: str) -> None:
+    store = current_store()
+    if store is not None:
+        store.drop_ephemeral(HISTORY_KIND, token)
     with _uploads_lock:
         _uploads.pop(token, None)
 

@@ -32,6 +32,7 @@ from ap_coder.coding.tax import PROVINCE_NAMES
 from ap_coder.core import paths, ui
 from ap_coder.core.envfile import one_line, read_env, write_env
 from ap_coder.core.store import APPROVAL_CONTROLS, Store, tiny_fx_rates, unread_fx_text
+from ap_coder.ops.offline import server_mode
 from ap_coder.web import identity
 from ap_coder.web.core import (
     DEVELOPER_TOOLS,
@@ -41,6 +42,7 @@ from ap_coder.web.core import (
     developer_env_on,
     developer_tools,
     done,
+    folder_on_the_server,
     get_settings,
     get_store,
     invoice_dir,
@@ -443,6 +445,8 @@ def backup_path(store: Store, name: str) -> Path:
 @router.post("/settings/data/open-folder")
 def open_data_folder(request: Request) -> JSONResponse:
     folder = data_dir(get_store(request))
+    if server_mode():
+        return folder_on_the_server(request, folder)
     if open_folder(folder):
         return message("Opened the data folder.", "info")
     return message(f"Open this folder yourself: {folder}", "info")

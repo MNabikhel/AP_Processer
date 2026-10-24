@@ -94,19 +94,21 @@ def test_a_file_already_in_ap_coder_is_skipped(app, client, store):
     assert len(store.list_invoices()) == 1
 
 
-def test_upload_refuses_other_files_and_waits_for_a_running_job(app, client):
+def test_upload_refuses_other_files_and_queues_behind_a_running_job(app, client):
     response = client.post("/process/upload", files=[("files", ("notes.exe", b"MZ", "application/octet-stream"))],
                            headers=PAGE)  # fmt: skip
     snap = finished(app, client)
     assert response.status_code == 200
     assert any("notes.exe was not read" in m["text"] for m in snap["result"]["messages"])
     job = app.state.jobs.get("process")
-    job.state = "running"  # as if a run were under way
+    job.state = "running"  # as if a run were under way: the upload is saved and waits behind it (D-99)
     try:
         response = upload(client, f"{STEM}.pdf")
-        assert response.status_code == 409 and "already reading" in response.json()["error"]
+        assert response.status_code == 200 and response.json()["queued"] == 1
+        assert "queued behind the import in progress" in response.json()["toast"]["text"]
     finally:
         job.state = "done"
+        app.state.import_queue.waiting.clear()
 
 
 def test_upload_needs_gl_accounts_first(tmp_path):

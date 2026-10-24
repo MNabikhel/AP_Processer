@@ -16,18 +16,45 @@ GET requests never change anything, so they need neither. The one exception to t
 
 from __future__ import annotations
 
+import functools
 import ipaddress
+import os
 import socket
 from collections.abc import Iterable
 from typing import Any
 
 from starlette.responses import PlainTextResponse
 
+from ap_coder.ops.offline import server_mode
+
 PAGE_HEADER = "x-ap-coder"  # sent by static/js/app.js on every POST, lower case as ASGI gives it
 TOKEN_HEADER = "x-ap-coder-token"  # the launcher's POST /shutdown (see web/server.py)
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 WILDCARD_ADDRESSES = {"", "0.0.0.0", "::"}  # listening on every network: colleagues use an IP or this PC's name
+ALLOWED_HOSTS_ENV = "AP_ALLOWED_HOSTS"  # the server's other names, e.g. "apcoder.company.local,10.1.2.3" (D-99)
+
+
+def allowed_hosts() -> tuple[str, ...]:
+    """The names the company gave the server (``AP_ALLOWED_HOSTS``, comma-separated): a DNS alias or an address
+    browsers open it by, besides this computer's own."""
+    raw = os.environ.get(ALLOWED_HOSTS_ENV) or ""
+    return tuple(h for h in (host_name(part) for part in raw.split(",")) if h)
+
+
+@functools.cache
+def computer_names() -> frozenset[str]:
+    """This computer's own names (its host name and full DNS name), looked up once: ``getfqdn`` asks the DNS, and a
+    slow DNS asked on every request froze every page (N-58)."""
+    names = set()
+    for lookup in (socket.gethostname, socket.getfqdn):
+        try:
+            name = lookup()
+        except OSError:
+            continue
+        if name:
+            names.add(name.lower().rstrip("."))
+    return frozenset(names)
 
 
 def host_name(host: str) -> str:
@@ -62,9 +89,26 @@ def host_allowed(host: str | None, address: str | None, extra: Iterable[str | No
     if host_name(address or "") in WILDCARD_ADDRESSES:
         if ip is not None:
             return True
-        names = {socket.gethostname(), socket.getfqdn()}
-        return name in {n.lower().rstrip(".") for n in names if n}
+        return name in computer_names()
     return False
+
+
+def unnamed_proxy(client: Any, headers: dict[str, str]) -> bool:
+    """A request from this computer that says it was forwarded for another one: a reverse proxy on the server whose
+    address was not given with ``--proxy`` (then uvicorn would have put the forwarded address in its place). Without
+    this, everyone behind the proxy would look like the server's own console."""
+    host = (client or ("", 0))[0] or ""
+    try:
+        here = ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+    forwarded = headers.get("x-forwarded-for", "").split(",")[0].strip() or ("for=" in headers.get("forwarded", ""))
+    if not here or not forwarded:
+        return False
+    try:
+        return not ipaddress.ip_address(str(forwarded)).is_loopback
+    except ValueError:
+        return True  # "for=..." or a name: forwarded all the same
 
 
 def same_origin(headers: dict[str, str], host: str | None) -> bool:
@@ -90,6 +134,8 @@ class LocalOnly:
         self.app = app
         self.address = address
         self.extra = tuple(extra)
+        if host_name(address or "") in WILDCARD_ADDRESSES:
+            computer_names()  # looked up now, at the start, never while a request waits (N-58)
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         if scope["type"] == "http":
@@ -97,9 +143,22 @@ class LocalOnly:
             host = headers.get("host")
             if not host_allowed(host, self.address, self.extra):
                 port = (scope.get("server") or (None, 8501))[1]
+                if server_mode():
+                    text = (f"AP Coder was opened through {host}, which is not one of the server's names, so nothing "
+                            f"is shown. IT can add the name to {ALLOWED_HOSTS_ENV} (a comma-separated list) and "
+                            "restart AP Coder.")  # fmt: skip
+                else:
+                    text = (
+                        f"AP Coder was opened through {host}, which is not this computer's address, so nothing "
+                        f"is shown. Open it at http://localhost:{port} (or with the AP Coder shortcut)."
+                    )
+                await _refusal(text, 400)(scope, receive, send)
+                return
+            if server_mode() and unnamed_proxy(scope.get("client"), headers):
                 await _refusal(
-                    f"AP Coder was opened through {host}, which is not this computer's address, so nothing is shown. "
-                    f"Open it at http://localhost:{port} (or with the AP Coder shortcut).",
+                    "This request came through a reverse proxy, but AP Coder was not told the proxy's address, so "
+                    "nothing is shown (everyone would look like the server itself). Start AP Coder with --proxy "
+                    "<the proxy's address>.",
                     400,
                 )(scope, receive, send)
                 return
@@ -111,3 +170,44 @@ class LocalOnly:
                 await _refusal("Use the AP Coder page for this.", 403)(scope, receive, send)
                 return
         await self.app(scope, receive, send)
+
+
+# --- Security headers (D-99) --------------------------------------------------------------------------------------
+
+# Scripts only from AP Coder's own files (no inline script runs: tests/test_server_https.py checks the templates);
+# inline styles are allowed, as the pages set a bar's width or a column's size in style="...". Nothing is loaded from
+# another site, and no other site may show AP Coder in a frame.
+CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+    "font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; "
+    "frame-ancestors 'none'"
+)
+HSTS = "max-age=31536000"  # a year; without includeSubDomains, the company's other sites are not this server's
+
+
+class SecurityHeaders:
+    """ASGI middleware: the headers that tell the browser what a page may do. On the laptop the harmless two (no
+    frames, no guessed file types); on the server also the referrer and content policies, and HSTS over HTTPS."""
+
+    def __init__(self, app: Any, server: bool = False) -> None:
+        self.app = app
+        self.server = server
+
+    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        added = [(b"x-frame-options", b"DENY"), (b"x-content-type-options", b"nosniff")]
+        if self.server:
+            added += [(b"referrer-policy", b"same-origin"),
+                      (b"content-security-policy", CONTENT_SECURITY_POLICY.encode())]  # fmt: skip
+            if scope.get("scheme") == "https":
+                added.append((b"strict-transport-security", HSTS.encode()))
+
+        async def sending(message: dict[str, Any]) -> None:
+            if message["type"] == "http.response.start":
+                names = {k.lower() for k, _ in message.get("headers") or []}
+                message["headers"] = [*(message.get("headers") or []), *(h for h in added if h[0] not in names)]
+            await send(message)
+
+        await self.app(scope, receive, sending)

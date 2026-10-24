@@ -64,6 +64,12 @@ function drawJob(snap) {
     .join("");
   lines.scrollTop = lines.scrollHeight;
   actions.hidden = running;
+  const waiting = card.querySelector("#job-waiting");
+  if (waiting) {
+    const n = snap.waiting || 0;
+    waiting.hidden = !n;
+    waiting.lastElementChild.textContent = n ? `Waiting: ${n} file${n === 1 ? "" : "s"} queued behind the import in progress.` : "";
+  }
   const box = card.querySelector("#job-messages");
   box.innerHTML = "";
   for (const m of (snap.result && snap.result.messages) || []) box.appendChild(messageElement(m));
@@ -71,7 +77,10 @@ function drawJob(snap) {
 
 async function follow_job(statusUrl) {
   card?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  await pollJob(statusUrl, drawJob);
+  // Uploads queued behind this import (a colleague's) start when it finishes: followed too, then the page is drawn again.
+  for (let snap = await pollJob(statusUrl, drawJob); snap && snap.waiting; snap = await pollJob(statusUrl, drawJob)) {
+    await new Promise((resolve) => setTimeout(resolve, 800));
+  }
   location.reload();
 }
 
@@ -118,6 +127,7 @@ if (form) {
     const answer = await upload();
     go.classList.remove("busy");
     if (answer.job && answer.status) {
+      if (answer.toast) toast(answer.toast); // queued behind the import in progress: it says so
       files = [];
       showPicked();
       await follow_job(answer.status);
@@ -129,4 +139,4 @@ if (form) {
 
 // The folder's "Process N files" (app.js sends it and tells us a job started), or a job already running.
 document.addEventListener("apc:job", (e) => follow_job(e.detail.status));
-if (card && card.dataset.state === "running") follow_job(card.dataset.statusUrl);
+if (card && (card.dataset.state === "running" || Number(card.dataset.waiting) > 0)) follow_job(card.dataset.statusUrl);

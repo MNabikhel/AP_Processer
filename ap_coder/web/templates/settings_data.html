@@ -3,12 +3,19 @@
   <div class="card-head">
     <div>
       <h4>Data folder</h4>
+      {% if server_mode %}
+      <p class="muted">Everything AP Coder keeps (database, invoices, exports, backups and settings) is in one folder on the
+        server{% if is_admin %}: <code>{{ data_path }}</code>{% else %}.{% endif %}</p>
+      {% else %}
       <p class="muted">Everything AP Coder keeps (database, invoices, exports, backups and settings) is in one folder on this
         computer: <code>{{ data_path }}</code></p>
+      {% endif %}
     </div>
+    {% if not server_mode or is_admin %}
     <form method="post" action="/settings/data/open-folder">
-      <button class="btn" type="submit" title="{{ data_path }}"><span class="ms" aria-hidden="true">folder_open</span>Open folder</button>
+      <button class="btn" type="submit"{% if is_admin %} title="{{ data_path }}"{% endif %}><span class="ms" aria-hidden="true">folder_open</span>{{ "Where is it?" if server_mode else "Open folder" }}</button>
     </form>
+    {% endif %}
   </div>
   {{ ui.tiles([
     ui.tile("Database", db_size, "database", "blue", "ap_coder.db"),

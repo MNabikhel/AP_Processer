@@ -45,6 +45,7 @@ from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REV
 from ap_coder.erp import stamp
 from ap_coder.web import document, identity
 from ap_coder.web import invoice_view as view
+from ap_coder.web.access import person_key
 from ap_coder.web.core import (
     done,
     flash_message,
@@ -83,7 +84,7 @@ NAV_PARAMS = ("show", "q", "sort")  # the queue's view, carried along so Previou
 _drafts_lock = threading.Lock()
 
 
-def _person(key: tuple[str, str] | None) -> str:
+def _person(key: tuple[str, ...] | None) -> str:
     """The store's name for whose draft it is: "" this computer, else the colleague's key."""
     return "" if key is None else json.dumps(list(key))
 
@@ -109,15 +110,15 @@ def _all_drafts(request: Request) -> list[dict[int, dict[str, Any]]]:
         return [state.invoice_drafts, *state.person_drafts.values()]
 
 
-def _my_key() -> tuple[str, str] | None:
-    found = identity.person()
-    return None if found is None else _draft_key(found)
+def _my_key(request: Request) -> tuple[str, ...] | None:
+    """Whose drafts: this computer's (None), a colleague's on the office network, or a user's (``web/access.py``)."""
+    return person_key(request)
 
 
 def _drafts(request: Request) -> dict[int, dict[str, Any]]:
     """The edits of the person asking: this computer's, or a colleague's on the office network."""
     _all_drafts(request)
-    key = _my_key()
+    key = _my_key(request)
     if key is None:
         return request.app.state.invoice_drafts
     with _drafts_lock:
@@ -126,6 +127,7 @@ def _drafts(request: Request) -> dict[int, dict[str, Any]]:
 
 def _draft_key(found: identity.Person) -> tuple[str, str]:
     return found.name.casefold(), found.browser or found.address  # by address: a cookie made without a browser id
+    # (the same key as access.person_key gives a colleague on the office network)
 
 
 def rename_drafts(request: Request, found: identity.Person, now: identity.Person) -> None:
@@ -153,7 +155,7 @@ def unsaved_edits(request: Request) -> set[int]:
 def forget_draft(request: Request, invoice_id: int) -> None:
     """Drop the edits of the person asking (Start over)."""
     _drafts(request).pop(invoice_id, None)
-    get_store(request).drop_invoice_drafts(invoice_id, _person(_my_key()))
+    get_store(request).drop_invoice_drafts(invoice_id, _person(_my_key(request)))
 
 
 def forget_everyones_draft(request: Request, invoice_id: int) -> None:
@@ -215,7 +217,7 @@ def _keep_draft(request: Request, invoice_id: int, draft: view.Draft, keep: bool
         at = before["saved_at"] if same and before.get("saved_at") else dt.datetime.now().isoformat(timespec="minutes")
         kept = {**edits, "saved_at": at, **({"check": check} if check is not None else {})}
         _drafts(request)[invoice_id] = kept
-        get_store(request).save_invoice_draft(invoice_id, _person(_my_key()), kept)
+        get_store(request).save_invoice_draft(invoice_id, _person(_my_key(request)), kept)
     elif invoice_id in _drafts(request):
         forget_draft(request, invoice_id)
 

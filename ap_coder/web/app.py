@@ -35,12 +35,13 @@ from ap_coder import __version__
 from ap_coder.core import paths
 from ap_coder.core.config import Settings
 from ap_coder.core.store import Store, default_db_path
+from ap_coder.ops.offline import server_mode
 from ap_coder.web import core
 from ap_coder.web.errors import FriendlyErrors
 from ap_coder.web.identity import THIS_COMPUTER, Identity, from_this_computer, is_this_computer
 from ap_coder.web.jobs import Jobs
 from ap_coder.web.pages import MORE_MODULES, PAGES, Page
-from ap_coder.web.security import TOKEN_HEADER, LocalOnly
+from ap_coder.web.security import TOKEN_HEADER, LocalOnly, SecurityHeaders, allowed_hosts
 
 CODE_FOLDER = core.WEB_DIR.parent.parent  # the folder holding ap_coder/ (the launcher checks it is its own)
 
@@ -185,7 +186,9 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     app.add_middleware(BackupCheck, backup=app.state.daily_backup)  # after the security checks: only for pages served
     app.add_middleware(FriendlyErrors)  # an error no page expected is drawn as a page, with the menu
     app.add_middleware(Identity, secret=app.state.identity_secret, address=address)
-    app.add_middleware(LocalOnly, address=address)
+    app.add_middleware(core.StoreContext, store=store)  # messages and uploads kept in this database (D-99)
+    app.add_middleware(LocalOnly, address=address, extra=allowed_hosts())  # + the server's names (AP_ALLOWED_HOSTS)
+    app.add_middleware(SecurityHeaders, server=server_mode())  # outermost: a refusal carries the headers too
     app.mount("/static", CheckedStaticFiles(directory=str(core.STATIC_DIR)), name="static")
     app.mount("/fonts", StaticFiles(directory=str(core.FONTS_DIR)), name="fonts")
     app.mount("/assets", StaticFiles(directory=str(core.ASSETS_DIR)), name="assets")

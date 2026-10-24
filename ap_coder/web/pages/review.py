@@ -49,7 +49,6 @@ from ap_coder.web.core import (
     get_settings,
     get_store,
     invoice_dir,
-    jobs,
     local_url,
     login,
     money,
@@ -606,7 +605,7 @@ def review_reopen(request: Request, invoice_id: int) -> JSONResponse:
 @router.post("/review/{invoice_id}/retry")
 def review_retry(request: Request, invoice_id: int) -> JSONResponse:
     """Read a failed invoice again (the new attempt replaces the failed one), as a Import invoices job."""
-    from ap_coder.web.pages.process import JOB, process_files
+    from ap_coder.web.pages.process import process_files, start_import
 
     store = get_store(request)
     inv = store.get_invoice(invoice_id)
@@ -617,7 +616,7 @@ def review_retry(request: Request, invoice_id: int) -> JSONResponse:
     path = Path(inv["source_path"])
     if not path.exists():
         return refuse(f"The original file is no longer at {shown_path(path)}.")
-    if not jobs(request).get(JOB).start(process_files(store, get_settings(request), [path]), total=1):
+    if not start_import(request, process_files(store, get_settings(request), [path]), 1):
         return refuse("AP Coder is already reading invoices. Wait for it to finish, then try again.", 409)
     return done(request, "/process", flash_message(f"Reading {path.name} again.", "info", icon="refresh"))
 

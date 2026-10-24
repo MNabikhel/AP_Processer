@@ -879,3 +879,35 @@ that is reversed keeps its line, marked "replaced by D-NN".
   that contradicted the draft, and a second approver who couldn't see what was approved over.
   (`static/js/invoice.js`, `web/pages/invoice.py` `_keep_draft`, `web/pages/review.py` `draft_reasons`,
   `core/audit.py`; `tests/test_web_ui_sweep4.py`)
+- **D-99** · The company server's network side and pages (with D-97's switch). (1) **HTTPS:** `serve --certfile
+  --keyfile` (PEM; or `AP_TLS_CERT`/`AP_TLS_KEY`) are passed to uvicorn. In server mode (`--server` or
+  `AP_SERVER_MODE=1`) AP Coder refuses to start without both, in plain words, unless `--insecure-http` (a first test;
+  it says so when it starts). The server listens on every network unless `--host` or `AP_DASHBOARD_ADDRESS` says
+  otherwise, and never opens a browser. (2) **Proxy headers** are off by default: uvicorn's own default believes
+  X-Forwarded-For from 127.0.0.1; now only from the address given with `--proxy <ip>` (`forwarded_allow_ips`). A
+  request from this computer that says it was forwarded, with no `--proxy`, is refused in server mode (everyone behind
+  the proxy would look like the server's console). (3) **Allowed hosts:** `AP_ALLOWED_HOSTS` (comma list) feeds
+  `LocalOnly`'s extra names; any other name is still refused (400), and in server mode the refusal says which setting
+  to add it to. The computer's own names are looked up once at the start (B-1060). (4) **Headers:** always
+  `X-Frame-Options: DENY` and `X-Content-Type-Options: nosniff` (nothing frames AP Coder); in server mode also
+  `Referrer-Policy: same-origin`, HSTS (over HTTPS only, a year, no subdomains) and a Content-Security-Policy:
+  `default-src 'self'`, scripts from AP Coder's own files only (the one inline script, the rail's More menu, is now
+  `static/js/nav_more.js`), inline styles allowed (pages set widths in `style=`), images also `data:`/`blob:`, no
+  objects, no frames. A browser test walks every page under it with no CSP error, and a test refuses any new inline
+  script or `on...=` handler in a template. (5) **Open folder** never opens a window on the server: an Admin
+  (`web/access.py` `is_admin`) is told "This folder is on the server: <path>", everyone else that it is on the server,
+  and both are pointed to the downloads; the folder's path is not shown to others. **Shutdown:** no page offers it;
+  `POST /shutdown` stays as it was (from the server itself, with the server file's token), which is how the service's
+  stop ends it cleanly. `/healthz` needs no login and still gives `app`, `folder` and `version` on the server itself.
+  (6) **Imports queue:** an upload while an import runs is saved at once and waits ("Waiting: N files queued behind the
+  import in progress"); when the import finishes the next one starts, as the person who uploaded it, and which files are
+  new is decided then. In memory, one process: after a restart the files are in the invoices folder, listed as new. The
+  folder pick-up still says it is busy (409). (7) **Restart-safe state:** messages waiting for their page and
+  spreadsheets waiting for their columns (imports, AP line history) are kept in the database's `ephemeral` table (kind,
+  token, value, expiry; `CREATE TABLE IF NOT EXISTS`, no schema bump), deleted once used or expired; outside a request,
+  in memory as before. An upload therefore sits in the database (and a backup made in that hour) instead of only in
+  memory: the same data the database holds anyway. (8) **Drafts** are keyed by `access.person_key(request)`: ("user",
+  id) once the login sets `request.state.user_id`, else the colleague's (name, browser) as before. Why: staff open the
+  server from their own PCs over the company network, by its company name, possibly behind IIS. (`web/server.py`,
+  `web/security.py`, `web/access.py`, `core/store/ephemeral.py`, `web/pages/process.py`; `tests/test_server_https.py`,
+  `tests/test_server_ux.py`)

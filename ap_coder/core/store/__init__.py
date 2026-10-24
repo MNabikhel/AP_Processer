@@ -16,8 +16,9 @@ One class, ``Store``, built from a part per subject (D-69): ``_base`` (the schem
 helpers), ``accounts`` (GL accounts, cost centers, audit trail, bank accounts, tax setup), ``invoices`` (saving,
 approving, the ERP's register, the second approval), ``purchasing`` (POs, export batches, coding rules), ``capture``
 (supplier learning, touchless, reader scores, the page-reader and Azure queues), ``lessons`` (lessons and the AI
-reviewer's queue), ``vendors``, ``backups``, ``learning`` (the feedback memory, metrics), ``samples``. A test that
-patches a module-level name (``_now``, ``json``...) patches it in the part that uses it.
+reviewer's queue), ``vendors``, ``backups``, ``learning`` (the feedback memory, metrics), ``ephemeral`` (messages
+and uploads kept for a short while), ``samples``. A test that patches a module-level name (``_now``, ``json``...)
+patches it in the part that uses it.
 """
 
 from ._base import (  # noqa: F401  (every name the old module had)
@@ -139,6 +140,7 @@ from ._base import (  # noqa: F401  (every name the old module had)
 from .accounts import AccountsMixin
 from .backups import BackupsMixin
 from .capture import CaptureMixin
+from .ephemeral import EphemeralMixin
 from .invoices import InvoicesMixin
 from .learning import LearningMixin
 from .lessons import LessonsMixin
@@ -156,6 +158,7 @@ class Store(
     VendorsMixin,
     BackupsMixin,
     LearningMixin,
+    EphemeralMixin,
 ):
     """The local SQLite database: one class, its parts in this folder by subject (see the module list above)."""
 

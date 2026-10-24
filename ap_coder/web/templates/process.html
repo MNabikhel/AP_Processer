@@ -4,8 +4,8 @@
 <div class="grid-3-2">
   <div class="col">
     {# Progress of the reading job: drawn here when it runs or ran, kept up to date by static/js/process.js #}
-    <section class="card job{% if job.state == 'idle' %} hidden{% endif %}" id="job" data-state="{{ job.state }}"
-             data-status-url="/process/status" aria-live="polite">
+    <section class="card job{% if job.state == 'idle' and not waiting %} hidden{% endif %}" id="job" data-state="{{ job.state }}"
+             data-waiting="{{ waiting }}" data-status-url="/process/status" aria-live="polite">
       <div class="card-head">
         <h4 id="job-title">{% if job.state == 'running' %}Processing…{% elif job.state == 'error' %}Processing stopped{% else %}{{ (job.result or {}).label or "Processed" }}{% endif %}</h4>
         <span class="muted" id="job-when">{% if job.finished_at %}{{ job.finished_at | time_ago }}{% endif %}</span>
@@ -14,6 +14,8 @@
         <div id="job-bar" style="width: {{ (100 * job.done / job.total) | round | int if job.total else (100 if job.state == 'done' else 0) }}%"></div>
       </div>
       <div class="muted" id="job-note">{% if job.state == 'running' %}{{ job.note }}{% elif job.error %}{{ job.error }}{% endif %}</div>
+      <p class="muted" id="job-waiting"{% if not waiting %} hidden{% endif %}><span class="ms" aria-hidden="true">hourglass_top</span>
+        <span>{{ waiting_text if waiting else "" }}</span></p>
       <ul class="lines" id="job-lines">
         {% for line in job.lines %}
         <li class="{{ line.tone }}"><span class="ms" aria-hidden="true">{{ line.icon or "chevron_right" }}</span><span>{{ line.text }}</span></li>
@@ -75,7 +77,7 @@
             <button class="btn" type="submit"><span class="ms" aria-hidden="true">delete_sweep</span>Remove the demo invoices</button>
           </form></div></div>
       {% endif %}
-      <p class="muted">Each file is saved to the invoices folder on this computer, then read, coded and checked. A photo or
+      <p class="muted">Each file is saved to the invoices folder {{ "on the server" if server_mode else "on this computer" }}, then read, coded and checked. A photo or
         a scanned picture is made into a PDF first; the picture is kept in the <code>originals</code> folder there.</p>
       <form id="upload-form" method="post" action="/process/upload" enctype="multipart/form-data" data-upload>
         <label class="dropzone" id="dropzone">
@@ -105,13 +107,20 @@
     <section class="card">
       <div class="card-head">
         <h4>Invoices folder</h4>
+        {% if not server_mode or is_admin %}
         <form method="post" action="/process/open-folder">
-          <button class="btn" type="submit" title="{{ folder }}">
-            <span class="ms" aria-hidden="true">folder_open</span>Open folder</button>
+          <button class="btn" type="submit"{% if folder %} title="{{ folder }}"{% endif %}>
+            <span class="ms" aria-hidden="true">folder_open</span>{{ "Where is it?" if server_mode else "Open folder" }}</button>
         </form>
+        {% endif %}
       </div>
+      {% if server_mode %}
+      <p class="muted">This folder is on the server: a scanner or mail rule can save invoices there, or upload them above. New
+        files are listed here, ready to process.</p>
+      {% else %}
       <p class="muted">Copy invoices into this folder, or have a scanner or mail rule save them there. New files are listed
         here, ready to process.</p>
+      {% endif %}
       {% if not_read %}
       <p class="muted"><span class="ms" aria-hidden="true">warning</span>
         Not read from this folder: {{ not_read | join(", ") }}. Save them as PDF (or JPEG) to have them read.</p>
