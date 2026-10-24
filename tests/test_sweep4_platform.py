@@ -246,3 +246,72 @@ def test_a_name_that_does_not_resolve_is_judged_by_its_name(monkeypatch):
 
     monkeypatch.setattr(config.socket, "getaddrinfo", nothing)
     assert config._on_this_network("gpu-box:1234") and not config._on_this_network("example.com")
+
+
+# --- 3. A small picture of a huge page is not decoded at full size ------------------------------------------------
+
+
+@pytest.fixture
+def small_limit(monkeypatch):
+    """The picture limit brought down to 1 megapixel, so the test's pictures stay small."""
+    from ap_coder.capture import layout
+
+    monkeypatch.setattr(layout, "MAX_PICTURE_PIXELS", 1_000_000)
+    from ap_coder.web import document
+
+    document._png_cached.cache_clear()
+    document._sizes_cached.cache_clear()
+
+
+def test_a_picture_over_the_pixel_limit_is_refused_before_it_is_decoded(tmp_path, small_limit):
+    from PIL import Image
+
+    from ap_coder.capture.layout import CannotRead
+    from ap_coder.web import document
+
+    path = tmp_path / "huge.png"
+    Image.new("L", (1200, 1200), 255).save(path)
+    with pytest.raises(CannotRead, match="too large"):
+        document.page_png(str(path), 1)
+
+
+def test_a_huge_jpeg_is_read_at_a_reduced_size_and_keeps_its_page_size(tmp_path, small_limit):
+    from PIL import Image
+
+    from ap_coder.capture.layout import open_image
+
+    path = tmp_path / "huge.jpg"
+    Image.new("RGB", (1700, 2200), "white").save(path, dpi=(200, 200))
+    with open_image(path) as img:
+        img.load()
+        assert img.width * img.height <= 1_000_000
+        assert abs(img.width / img.info["dpi"][0] - 8.5) < 0.1  # still a letter-sized page
+
+
+def test_only_the_tiff_page_asked_for_is_drawn(tmp_path, monkeypatch):
+    from PIL import Image
+
+    from ap_coder.capture import layout
+    from ap_coder.web import document
+
+    path = tmp_path / "three.tif"
+    pages = [Image.new("L", (850, 1100), shade) for shade in (200, 220, 240)]
+    pages[0].save(path, save_all=True, append_images=pages[1:])
+    drawn = []
+    real = layout.flatten_photo
+    monkeypatch.setattr(layout, "flatten_photo", lambda pic: drawn.append(pic.size) or real(pic))
+    assert document.page_png(str(path), 3)[:4] == b"\x89PNG"
+    assert len(drawn) == 1
+
+
+def test_a_picture_over_the_pixel_limit_is_refused_at_intake_in_plain_words(tmp_path, small_limit):
+    from PIL import Image
+
+    from ap_coder.capture.layout import CannotRead
+    from ap_coder.intake import pictures
+
+    path = tmp_path / "huge.png"
+    Image.new("L", (1200, 1200), 255).save(path)
+    with pytest.raises(CannotRead, match="too large"):
+        pictures.to_pdf(path)
+    assert path.exists()  # left where it was

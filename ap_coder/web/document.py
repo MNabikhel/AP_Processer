@@ -193,29 +193,35 @@ def _draw_png(path: str, _mtime: int, _size: int, number: int, scale: int = 1) -
             rect = page.rect  # points, after the page's own rotation
             zoom = min(dpi / 72, cap / max(rect.width, rect.height, 1))
             return page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False).tobytes("png")
-    for index, (_, _, png) in enumerate(_image_pages(path, dpi=dpi, cap=cap), start=1):
-        if index == number:
-            return png
-    raise IndexError(number)
+    found = _image_pages(path, dpi=dpi, cap=cap, only=number)  # that page only: the others are not decoded
+    if not found:
+        raise IndexError(number)
+    return found[0][2]
 
 
 _png_cached = _PictureCache(_draw_png, PICTURE_CACHE_BYTES)
 
 
-def _image_pages(path: str, sizes_only: bool = False, dpi: float = 0, cap: int = 0) -> list[tuple[float, float, bytes]]:
-    """(width pt, height pt, PNG) per frame of a picture (a TIFF can hold several pages)."""
+def _image_pages(
+    path: str, sizes_only: bool = False, dpi: float = 0, cap: int = 0, only: int = 0
+) -> list[tuple[float, float, bytes]]:
+    """(width pt, height pt, PNG) per frame of a picture (a TIFF can hold several pages); ``only``: that page alone
+    (from 1). A picture over ``layout.MAX_PICTURE_PIXELS`` raises ``CannotRead`` before it is decoded (B-975)."""
     from PIL import Image, ImageOps, ImageSequence
 
-    from ap_coder.capture.layout import flatten_photo, open_image
+    from ap_coder.capture import layout
 
     out = []
-    with open_image(path) as img:  # an iPhone's HEIC/HEIF photo too, with pillow-heif
+    with layout.open_image(path) as img:  # an iPhone's HEIC/HEIF photo too, with pillow-heif
         for index, frame in enumerate(ImageSequence.Iterator(img)):
             if index >= MAX_PAGES:
                 break
+            if only and index + 1 != only:
+                continue
+            layout.within_pixel_limit(frame)
             source_dpi = _image_dpi(frame)
             pic = ImageOps.exif_transpose(frame.copy())
-            pic = flatten_photo(pic) or pic  # the page as OCR read it (a photo of a page on a desk: flattened)
+            pic = layout.flatten_photo(pic) or pic  # the page as OCR read it (a photo of a page on a desk: flattened)
             width_pt, height_pt = round(pic.width * 72 / source_dpi, 2), round(pic.height * 72 / source_dpi, 2)
             if sizes_only:
                 out.append((width_pt, height_pt, b""))
@@ -235,6 +241,8 @@ def _image_pages(path: str, sizes_only: bool = False, dpi: float = 0, cap: int =
             buf = io.BytesIO()
             pic.save(buf, format="PNG", optimize=True)
             out.append((width_pt, height_pt, buf.getvalue()))
+            if only:
+                break
     return out
 
 
