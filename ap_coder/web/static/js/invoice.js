@@ -2331,16 +2331,21 @@ const remarkLimit = Number(document.getElementById("lines")?.dataset.remarkLimit
 function showRemark(textarea, typingNow) {
   const note = textarea?.closest("td")?.querySelector("[data-remark]");
   if (!note || !remarkLimit) return;
-  const n = textarea.value.trim().length;
+  const text = textarea.value.trim();
+  const n = text.length;
   const over = n > remarkLimit;
-  note.hidden = !(over || typingNow);
+  // Only in the box being typed in, in words (B-995): a bare "53/30" under nearly every line, over the box's corner,
+  // meant nothing. Past the limit, the box's own title says what JD Edwards keeps.
+  note.hidden = !typingNow;
   note.classList.toggle("over", over);
   note.classList.toggle("typing", Boolean(typingNow));
-  // past the limit: the count, and while typing what JD Edwards keeps (its title says it too)
-  note.textContent = over && typingNow
-    ? `${n}/${remarkLimit}: JD Edwards keeps “${textarea.value.trim().slice(0, remarkLimit)}”`
-    : `${n}/${remarkLimit}`;
-  note.title = over ? `JD Edwards keeps the first ${remarkLimit} characters: “${textarea.value.trim().slice(0, remarkLimit)}”` : "";
+  const kept = `“${text.slice(0, remarkLimit)}”`;
+  note.textContent = over
+    ? `JD Edwards keeps ${remarkLimit} of ${n} characters: ${kept}`
+    : `${n} of ${remarkLimit} characters JD Edwards keeps`;
+  note.title = over ? `JD Edwards keeps the first ${remarkLimit} characters: ${kept}` : "";
+  if (over) textarea.title = `JD Edwards keeps the first ${remarkLimit} characters: ${kept}`;
+  else textarea.removeAttribute("title");
 }
 
 document.addEventListener("focusin", (e) => {

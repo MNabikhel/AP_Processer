@@ -114,3 +114,52 @@ def test_in_a_browser_alt_arrows_work_from_the_box_the_page_focused(browser, sto
     page.wait_for_function(f"location.href !== {before!r}", timeout=10000)
     assert re.search(r"/review/\d+", page.url)
     assert page.errors == []
+
+
+# --- 3. The meals note, the remark count ----------------------------------------------------------------------------
+
+
+def _set_line_gl(store, invoice_id: int, line: int, gl: str) -> None:
+    import json
+
+    inv = store.get_invoice(invoice_id)
+    doc = inv["ai_output"]
+    doc["line_items"][line]["predicted_gl_code"] = gl
+    with store._conn() as conn:
+        conn.execute("UPDATE invoices SET ai_output = ? WHERE id = ?", (json.dumps(doc), invoice_id))
+
+
+def test_in_a_browser_the_meals_note_wraps_at_1366(browser, store):
+    """B-994: "Meals: 50% of the GST/HST is claimable. Billed to a client or a staff event? Use…" was cut off."""
+    invoice_id = _id(store, "Harbourview")
+    _set_line_gl(store, invoice_id, 3, "6320")
+    page = _review(browser, store, "Harbourview")
+    found = page.evaluate("""() => { const n = [...document.querySelectorAll('[data-meals-note]')]
+        .find((x) => !x.hidden); const td = n.closest('td').getBoundingClientRect();
+        const r = n.getBoundingClientRect();
+        return {clipped: n.scrollWidth > n.clientWidth + 1, out: r.right > td.right + 1 || r.left < td.left - 1,
+                text: n.textContent.trim()}; }""")
+    assert found["text"].endswith("Use the other account.")
+    assert not found["clipped"] and not found["out"], found
+    assert page.errors == []
+
+
+def test_in_a_browser_the_remark_count_shows_only_in_the_box_typed_in_and_says_what_jde_keeps(browser, store):
+    """B-995: a bare "53/30" sat under most descriptions, over the box's corner, even when nobody typed."""
+    from .test_web_review_signoff import _jde_on
+
+    _jde_on(store)
+    page = _review(browser, store, "Harbourview")
+    page.evaluate("document.activeElement.blur()")
+    page.wait_for_timeout(300)
+    shown = page.evaluate("[...document.querySelectorAll('[data-remark]')].filter((n) => !n.hidden).length")
+    assert shown == 0
+    long = page.evaluate("""() => [...document.querySelectorAll('textarea[name=line_description]')]
+        .findIndex((x) => x.value.trim().length > 30)""")
+    box = page.locator("textarea[name=line_description]").nth(long)
+    assert "JD Edwards keeps the first 30 characters" in (box.get_attribute("title") or "")
+    box.focus()
+    n = len(box.input_value().strip())
+    said = page.evaluate("document.activeElement.closest('td').querySelector('[data-remark]').textContent")
+    assert said.startswith(f"JD Edwards keeps 30 of {n} characters"), said
+    assert page.errors == []
