@@ -826,7 +826,7 @@ that is reversed keeps its line, marked "replaced by D-NN".
   precision, first invoice apart; report in `bench_ai/report.md`), and, once AP has posted the pilot's invoices,
   `python -m ap_coder pilot-score` on the JDE export.
 
-- **D-93** · Touchless never approves what bulk approval would refuse. Before, only errors, the always-a-person
+- **D-95** · Touchless never approves what bulk approval would refuse. Before, only errors, the always-a-person
   findings and a line without an account kept an invoice touchless processing passed from going through: HST at the
   wrong rate, HST in a GST province, GST only where HST is due, a PST due and not charged, or no GST/HST number on a
   large invoice went out without a person. Now any warning and an invoice its checks flag for review
