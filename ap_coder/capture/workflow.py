@@ -226,16 +226,52 @@ def still_untouched(store: Any, invoice_id: int, output: dict[str, Any]) -> bool
     return not any(str(i.get("code") or "").startswith(CHECK_CODES) for i in issues if isinstance(i, dict))
 
 
+def checks_today(store: Any, invoice_id: int, output: dict[str, Any], settings: Any = None) -> Any:
+    """The coding's checks of ``output`` (an invoice in the queue) done again now, as ``bulk_approve`` does: a vendor
+    put on hold, or the same invoice entered in the ERP, while it waited is found (B-951). The ``ValidationReport``;
+    None when the coding can't be read."""
+    from ..ai.pipeline import finalise_coding
+    from ..coding.bulk import _received_on
+    from ..core.config import Settings
+    from ..core.schema import InvoiceCoding
+
+    if settings is None:
+        try:
+            settings = Settings.from_env()
+        except Exception:  # noqa: BLE001 - an unreadable .env: the defaults
+            settings = Settings()
+    try:
+        coding = InvoiceCoding.model_validate({k: v for k, v in output.items() if k != "gl_distribution"})
+        inv = store.get_invoice(invoice_id) or {}
+        _, report = finalise_coding(coding, store.reference_data(), settings, store=store,
+                                    exclude_invoice_id=invoice_id, received=_received_on(inv))  # fmt: skip
+    except Exception as exc:  # noqa: BLE001 - not checked again: a person looks
+        log.info("invoice %s: checks not done again (%s)", invoice_id, exc)
+        return None
+    return report
+
+
 def still_touchless(store: Any, capture: CaptureResult | None, output: dict[str, Any],
-                    invoice_id: int | None = None) -> bool:  # fmt: skip
+                    invoice_id: int | None = None, settings: Any = None) -> bool:  # fmt: skip
     """Whether an invoice touchless processing passed earlier but held back (for the Azure check, the AI reviewer)
     may still be approved without a person now: the switch is still on, its supplier still touchless (not suspended
     or kept supervised by an AP lead meanwhile) and its total still within the touchless and approval limits. With
-    ``invoice_id``: the invoice as stored now is also ``still_untouched``."""
+    ``invoice_id``: the invoice as stored now is also ``still_untouched``, and its checks done again now
+    (``checks_today``) find nothing a person must see: no error, no warning, nothing that always goes to a person and
+    no review flag (B-951)."""
     if store is None or not store.touchless_enabled():
         return False
-    if invoice_id is not None and not still_untouched(store, invoice_id, output):
-        return False
+    report = None
+    if invoice_id is not None:
+        if not still_untouched(store, invoice_id, output):
+            return False
+        from ..coding.bulk import _needs_a_person
+
+        report = checks_today(store, invoice_id, output, settings)
+        if report is None or report.requires_review:
+            return False
+        if any(_needs_a_person(i.severity, i.code) for i in report.issues):
+            return False
     key, _ = supplier_for(store, output)
     if not key:
         return False
@@ -245,7 +281,7 @@ def still_touchless(store: Any, capture: CaptureResult | None, output: dict[str,
     state, _, _ = autonomy_status(store.supplier_stats(key, policy.window), policy, profile.get("state") or SUPERVISED,
                                   profile.get("autonomous_since"), touchless_on=True,
                                   suspended_at=profile.get("suspended_at"))  # fmt: skip
-    return state == AUTONOMOUS and not invoice_gates(store, capture, None, output)
+    return state == AUTONOMOUS and not invoice_gates(store, capture, report, output)
 
 
 NOT_READERS = ("computed", "vendor master")  # a field's sources that did not read the page

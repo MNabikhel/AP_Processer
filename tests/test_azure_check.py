@@ -283,6 +283,7 @@ def test_a_spot_checked_invoice_waits_for_azure_then_goes_touchless(store, monke
     assert azure_check.hold({"auto": False, "reason": "x"}, plan) == {"auto": False, "reason": "x"}
     result = _process(store)
     assert store.azure_check(result.invoice_id)["reason"] == azure_check.SPOT
+    _code_the_lines(store, result.invoice_id)
     _touchless_vendor(store, result.output)
     # As if touchless processing had approved it but for the spot-check (the page reader's decision).
     store.update_after_azure_check(result.invoice_id, None, None, azure_check.ISSUE_CODE,
@@ -291,6 +292,17 @@ def test_a_spot_checked_invoice_waits_for_azure_then_goes_touchless(store, monke
     assert outcome.approved is True
     inv = store.get_invoice(result.invoice_id)
     assert inv["status"] == APPROVED and inv["reviewer"] == AUTONOMOUS_REVIEWER
+
+
+def _code_the_lines(store, invoice_id):
+    """Each line of the invoice's proposal given an account and a cost center (the local model is off here, so it
+    leaves them unassigned, and an invoice with a line to code is never approved without a person)."""
+    output = store.get_invoice(invoice_id)["ai_output"]
+    for li in output["line_items"]:
+        li.update(predicted_gl_code="6010", predicted_cost_center="CC100")
+    with store._conn() as conn:
+        conn.execute("UPDATE invoices SET ai_output = ? WHERE id = ?", (json.dumps(output), invoice_id))
+    return output
 
 
 def _touchless_vendor(store, output):
@@ -306,13 +318,16 @@ def _touchless_vendor(store, output):
     return key
 
 
-@pytest.mark.parametrize("change", ["switch off", "vendor held", "limit lowered"])
+@pytest.mark.parametrize("change", ["switch off", "vendor held", "limit lowered", "vendor on hold", "in the ERP"])
 def test_a_held_invoice_is_not_approved_once_touchless_no_longer_applies(store, monkeypatch, change):
     """Held for a spot-check, then the switch was turned off, an AP lead kept the vendor supervised or the touchless
-    limit was lowered below its total: Azure agreeing does not approve it without a person."""
+    limit was lowered below its total: Azure agreeing does not approve it without a person. Nor once the vendor was
+    put on hold in the vendor list, or the same invoice turned up in the ERP register: its checks are done again, as
+    they come out today (B-951)."""
     _turn_on(store, monkeypatch, rate=100)
     monkeypatch.setattr(azure_check, "low_confidence", lambda capture: False)
     result = _process(store)
+    _code_the_lines(store, result.invoice_id)  # else its lines to code alone keep it for a person
     key = _touchless_vendor(store, result.output)
     store.update_after_azure_check(result.invoice_id, None, None, azure_check.ISSUE_CODE,
                                    {"capture": {"state": AUTONOMOUS, "azure_hold": True}})  # fmt: skip
@@ -320,6 +335,15 @@ def test_a_held_invoice_is_not_approved_once_touchless_no_longer_applies(store, 
         store.set_touchless(False, "Bob")
     elif change == "vendor held":
         store.set_supplier_state(key, "held", "Bob", "new contract")
+    elif change == "vendor on hold":
+        from ap_coder.core.memory import vendor_key
+
+        name = result.output["vendor_name"]
+        store.save_vendor(vendor_key(name), name, status="on_hold", notes="bank fraud attempt", actor="Bob")
+    elif change == "in the ERP":
+        out = result.output
+        store.import_erp_register([{"vendor_name": out["vendor_name"], "invoice_number": out["invoice_number"],
+                                    "total": out["grand_total"], "invoice_date": out["invoice_date"]}])  # fmt: skip
     else:
         store.set_touchless_limit(float(result.output["grand_total"]) / 2, "Bob")
     outcome = azure_check.check_one(_settings(), store, client=FakeClient(_raw_from(result.capture)))

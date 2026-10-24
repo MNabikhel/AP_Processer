@@ -313,9 +313,9 @@ def test_touchless_waits_for_the_reviewer_then_it_approves(store, touchless, mon
     assert inv["status"] == REVIEW and inv["meta"]["capture"].get("verifier_hold")
     assert store.verification(iid)["status"] == "waiting"  # reviewed again, as the page reader left it
 
-    from .test_azure_check import _touchless_vendor
+    from .test_azure_check import _code_the_lines, _touchless_vendor
 
-    _touchless_vendor(store, store.get_invoice(iid)["ai_output"])  # touchless still applies, as it stands now
+    _touchless_vendor(store, _code_the_lines(store, iid))  # touchless still applies, as it stands now
     coder = FakeCoder(_answer())
     done = verifier.verify_one(_settings(), store, coder=coder)
     assert done.status == verifier.AGREED and done.approved and coder.calls == [True]  # asked with thinking on
