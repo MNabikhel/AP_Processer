@@ -504,3 +504,18 @@ def test_the_docs_name_no_one_s_own_folder():
     found = [f"{p.relative_to(root)}: {m.group(0)}" for p in [*root.glob("*.md"), *(root / "docs").glob("*.md")]
              if p.name != "BUGS.md" for m in own.finditer(p.read_text(encoding="utf-8"))]  # fmt: skip
     assert not found, found
+
+
+# --- 11. Going back after an update is written down ----------------------------------------------------------------
+
+
+def test_the_way_back_after_an_update_is_written_down_with_the_backup_the_update_makes():
+    from pathlib import Path
+
+    from ap_coder.core.store import _base
+
+    root = Path(__file__).resolve().parent.parent
+    doc = (root / "docs" / "UPGRADING.md").read_text(encoding="utf-8")
+    assert "## Going back to the previous version" in doc
+    made = "before-update-from-schema-"
+    assert made in Path(_base.__file__).read_text(encoding="utf-8") and made in doc
