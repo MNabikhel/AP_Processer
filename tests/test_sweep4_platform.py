@@ -489,3 +489,18 @@ def test_the_xlsx_export_keeps_formula_like_text_as_text(store):
     risky = [c for c in texts if c.value.startswith(("=", "+", "-", "@"))]
     assert {c.value for c in risky} >= {final["vendor_name"], "+A-100", "@SUM(A1)"}
     assert all(c.data_type == "s" for c in risky)
+
+
+# --- 10. No one's own folder in the docs ----------------------------------------------------------------------------
+
+
+def test_the_docs_name_no_one_s_own_folder():
+    """A path in the docs is a generic one (``C:\\Users\\<you>``, ``~/APCoder``), never a developer's own."""
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    own = re.compile(r"/home/(?!<)[\w.-]+/|/Users/(?!<|you\b)[\w.-]+/|[A-Z]:\\Users\\(?!<|you\\)[\w.-]+\\")
+    found = [f"{p.relative_to(root)}: {m.group(0)}" for p in [*root.glob("*.md"), *(root / "docs").glob("*.md")]
+             if p.name != "BUGS.md" for m in own.finditer(p.read_text(encoding="utf-8"))]  # fmt: skip
+    assert not found, found
