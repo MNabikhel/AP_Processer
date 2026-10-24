@@ -195,3 +195,34 @@ def test_the_flash_after_a_first_approval_says_the_limit_in_force(client, store)
     assert answer["ok"], answer
     assert store.get_invoice(invoice_id)["status"] == "pending_approval"
     assert f"over the approval limit of {total:,.2f} CAD" in flash_text(client, answer)
+
+
+# --- 6. One printed tax amount, one tax row ----------------------------------------------------------------------
+
+
+def test_a_template_that_learned_hst_does_not_add_a_second_tax_to_a_gst_page():
+    """B-1025: an autonomous supplier's template learned HST; a page printing "G.S.T. @ 5%" was read as both GST 5%
+    (the label) and HST 5% (the template, on the sales tax total's line): three math errors for one printed tax."""
+    from ap_coder.capture.confidence import fuse
+    from ap_coder.capture.types import MISSING, Box, Reading
+
+    def r(field, value, y, method):
+        return Reading(field, value, f"${value}", [Box(1, 0.355, y, 0.396, y + 0.015)], 0.9, method)
+
+    rules = {"subtotal": [r("subtotal", "515.64", 0.417, "label")], "gst_amount": [r("gst_amount", "25.78", 0.438,
+             "label")], "tax_total": [r("tax_total", "25.78", 0.459, "label")],
+             "grand_total": [r("grand_total", "541.42", 0.478, "label")]}  # fmt: skip
+    template = {"subtotal": [r("subtotal", "515.64", 0.417, "template")],
+                "hst_amount": [r("hst_amount", "25.78", 0.459, "template")],
+                "tax_total": [r("tax_total", "25.78", 0.459, "template")],
+                "grand_total": [r("grand_total", "541.42", 0.478, "template")]}  # fmt: skip
+    fields, checks = fuse({"rules": rules, "template": template}, [])
+    assert fields["gst_amount"].value == 25.78
+    assert fields["hst_amount"].status == MISSING
+    assert not [c for c in checks if not c["ok"] and c["code"].startswith("TOTALS")]
+    # two taxes of the same amount printed on their own lines, adding up: both kept
+    rules["hst_amount"] = [r("hst_amount", "25.78", 0.448, "label")]
+    rules["tax_total"] = [r("tax_total", "51.56", 0.459, "label")]
+    rules["grand_total"] = [r("grand_total", "567.20", 0.478, "label")]
+    fields, _ = fuse({"rules": rules}, [])
+    assert fields["gst_amount"].value == fields["hst_amount"].value == 25.78

@@ -497,6 +497,7 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
         # Only the template read a total tax, where it cannot vouch for it; the taxes read on the page give it.
         chosen["tax_total"] = None
         contest.pop("tax_total", None)
+    _one_tax_per_printed_amount(chosen, all_groups, contest)
     _totals_that_add_up(chosen, all_groups, contest)
     values = {f: (normalize_value(f, g.value) if f in AMOUNT_FIELDS else g.value) for f, g in chosen.items() if g}
     checks = run_checks(values, line_items, vendor, today)
@@ -520,7 +521,7 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
     template_rival: dict[str, Any] = {}
     adds_up = {f for c in checks if c["ok"] and c["code"] == "TOTALS_ADD_UP" for f in c["fields"]}
     for f in AMOUNT_FIELDS:
-        rival = all_groups[f][1] if f in contest else None
+        rival = all_groups[f][1] if f in contest and len(all_groups[f]) > 1 else None
         if rival and f in adds_up and f not in failed and all(s == "template" for s, _ in rival.readings):
             # The supplier's template read another amount (its learned spot, as the layout was): the totals add up with
             # this one, read on the page by another reader. The arithmetic settles it: no contest.
@@ -774,6 +775,48 @@ def _vendor_master_name(
 
 # The total tax stands in for the separate taxes when none of them is read ("VAT 88.92", a US sales tax).
 _TOTAL_PARTS = ("subtotal", "other_charges", *TAX_FIELDS, "tax_total")
+
+
+def _one_tax_per_printed_amount(
+    chosen: dict[str, Any], all_groups: dict[str, list[Any]], contest: dict[str, float]
+) -> None:
+    """Two taxes of the same amount where one is printed (B-1025): a supplier's template that learned HST reads its
+    spot on a page that prints "G.S.T. @ 5%" (or the sales tax total's line), and the label reads GST. Unless the
+    amounts add up with both, read on the same words, or on the total tax's line, or adding up with one of them, it is
+    one tax: the reading only the template made (else the one on the total's line, else the weaker) is dropped. In
+    place."""
+
+    def cents(g: Any) -> int | None:
+        v = normalize_value("subtotal", g.value) if g is not None else None
+        return round(float(v) * 100) if v is not None else None
+
+    def boxes(g: Any) -> list[Any]:
+        return [b for _, r in g.readings for b in r.boxes]
+
+    def same_spot(a: Any, b: Any) -> bool:
+        return any(x.page == y.page and x.x0 < y.x1 and y.x0 < x.x1 and x.y0 < y.y1 and y.y0 < x.y1
+                   for x in boxes(a) for y in boxes(b))  # fmt: skip
+
+    total = chosen.get("tax_total")
+    for i, a in enumerate(TAX_FIELDS):
+        for b in TAX_FIELDS[i + 1 :]:
+            ga, gb = chosen.get(a), chosen.get(b)
+            if ga is None or gb is None or not cents(ga) or cents(ga) != cents(gb):
+                continue
+            on_total = {f for f, g in ((a, ga), (b, gb)) if total is not None and same_spot(g, total)}
+            parts = [cents(chosen.get(f)) for f in ("subtotal", "other_charges", *TAX_FIELDS)]
+            grand = cents(chosen.get("grand_total"))
+            once = grand is not None and sum(p or 0 for p in parts) - (cents(ga) or 0) == grand
+            twice = grand is not None and sum(p or 0 for p in parts) == grand
+            if twice or not (same_spot(ga, gb) or (on_total and cents(total) == cents(ga)) or once):
+                continue  # both printed: the total has them both
+
+            weight = {f: (not all(s == "template" for s, _ in g.readings), f not in on_total, g.strength())
+                      for f, g in ((a, ga), (b, gb))}  # fmt: skip
+            loser = a if weight[a] < weight[b] else b
+            all_groups[loser] = [g for g in all_groups.get(loser) or [] if g is not chosen[loser]]
+            chosen[loser] = None
+            contest.pop(loser, None)
 
 
 def _totals_that_add_up(chosen: dict[str, Any], all_groups: dict[str, list[Any]], contest: dict[str, float]) -> None:
