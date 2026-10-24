@@ -8,7 +8,7 @@ import re
 
 from ap_coder.core.store import PENDING, REVIEW
 
-from .test_web_invoice import clean_invoice
+from .test_web_invoice import check, clean_invoice, form_of
 from .test_web_review_signoff import _id, _review, browser, client, demo_db, me, store
 
 __all__ = ["browser", "client", "demo_db", "me", "store"]  # the fixtures, shared
@@ -163,3 +163,46 @@ def test_in_a_browser_the_remark_count_shows_only_in_the_box_typed_in_and_says_w
     said = page.evaluate("document.activeElement.closest('td').querySelector('[data-remark]').textContent")
     assert said.startswith(f"JD Edwards keeps 30 of {n} characters"), said
     assert page.errors == []
+
+
+# --- 3. Drafts: the queue, and when they were made ------------------------------------------------------------------
+
+
+def _queue_row(client, invoice_id: int) -> str:
+    text = client.get("/review").text
+    at = text.index(f'href="/review/{invoice_id}"')
+    row = text[at : text.index("</li>", at)]
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", row))
+
+
+def test_the_queue_row_says_the_drafts_own_blocker(client, store):
+    """B-996: the queue still said "Pick a GL account for line 4" after line 4 was coded in a saved draft."""
+    invoice_id = _id(store, "Harbourview")
+    assert "Pick a GL account for line 4" in _queue_row(client, invoice_id)
+
+    def code(rows):
+        rows[3]["predicted_gl_code"] = "6800"
+        return rows
+
+    answer = check(client, invoice_id, form_of(store, invoice_id, lines=code))
+    assert answer["draft"]
+    row = _queue_row(client, invoice_id)
+    assert "Pick a GL account for line 4" not in row
+    assert "Edits not approved yet" in row, row
+
+
+def test_a_draft_keeps_the_time_it_was_edited_and_says_it_plainly(client, store):
+    """B-997: "Unsaved edits from 0:37" was when the invoice was last opened (the opening check saved the draft
+    again), on a 24-hour clock."""
+    invoice_id = _id(store, "Pacific")
+    form = form_of(store, invoice_id, payment_terms="Net 45 EOM")
+    check(client, invoice_id, form)
+    kept = client.app.state.invoice_drafts[invoice_id]
+    kept["saved_at"] = "2026-01-05T00:37"
+    check(client, invoice_id, form)  # opened again: the same edits
+    assert client.app.state.invoice_drafts[invoice_id]["saved_at"] == "2026-01-05T00:37"
+    page = re.sub(r"\s+", " ", client.get(f"/review/{invoice_id}").text)
+    assert "Unsaved edits made Jan 5 at 12:37 a.m." in page
+    check(client, invoice_id, form_of(store, invoice_id, payment_terms="Net 60"))  # edited again: now
+    assert client.app.state.invoice_drafts[invoice_id]["saved_at"] != "2026-01-05T00:37"
+    assert re.search(r"Unsaved edits made today at \d{1,2}:\d\d [ap]\.m\.", client.get(f"/review/{invoice_id}").text)

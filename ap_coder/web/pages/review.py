@@ -214,6 +214,22 @@ def attention(store: Store, reference: ReferenceData | None, pending: list[dict[
     return out
 
 
+def draft_reasons(request: Request, pending: list[dict[str, Any]]) -> dict[int, str]:
+    """The queue's reason for each invoice of ``pending`` with edits kept on this person's review screen: the draft's
+    own check, not the stored one ("Pick a GL account for line 4" after line 4 was coded in the draft, B-996). Never
+    Ready: bulk approval leaves an invoice with a draft alone, and the edits are approved on its screen."""
+    from ap_coder.web.pages.invoice import my_drafts
+
+    ids = {i["id"] for i in pending}
+    out = {}
+    for invoice_id, kept in my_drafts(request).items():
+        if invoice_id not in ids or not isinstance(kept.get("check"), dict):
+            continue
+        why = str(kept["check"].get("why") or "")
+        out[invoice_id] = "Edits not approved yet: " + (why[:1].lower() + why[1:] if why else "ready to approve")
+    return out
+
+
 def left_out(pending: list[dict[str, Any]], reasons: dict[int, str], left: dict[int, str]) -> str:
     """Why the queue's Ready invoices not offered for bulk approval are left out (``sort_for_bulk``'s ``left``):
     "1 credit note and 2 with a warning left for a person", or "" when none is."""
@@ -356,6 +372,7 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
     # The checks as they are now, of the invoices not flagged (a flagged one is never Ready nor offered in bulk).
     today = issues_today(store, [i["id"] for i in pending if not i["requires_review"]], reference, settings)
     reasons = attention(store, reference, pending, threshold, today)  # Ready means its Approve is open
+    reasons.update(draft_reasons(request, pending))  # an invoice with edits kept: what its screen says (B-996)
     flagged = [i for i in pending if i["id"] in reasons]
     approved = [i for i in invoices if i["status"] == APPROVED]
     awaiting = [i for i in invoices if i["status"] == PENDING]

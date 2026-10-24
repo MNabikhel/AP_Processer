@@ -81,7 +81,7 @@
 
 {% if draft_from %}{# edits kept from before, not approved yet (B-826): said, with a way back to the invoice as read #}
 <div class="inv-draft-note small" role="status"><span class="ms" aria-hidden="true">history</span>
-  <span>Unsaved edits from {{ draft_from }}: still to approve.</span>
+  <span>Unsaved edits made {{ draft_from }}, still to approve.</span>
   <form method="post" action="/review/{{ inv.id }}/start-over" class="inv-inline" data-confirm="Discard the edits not approved yet? The fields show the invoice as read again.">
     <button type="submit" class="inv-linkbtn" title="Drop the edits not approved yet: the fields show the invoice as read">Discard</button></form></div>
 {% endif %}
