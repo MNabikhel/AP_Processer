@@ -452,7 +452,8 @@ MASTER_ALIASES: dict[str, tuple[str, ...]] = {
                "addressnumber", "an8", "suppliernumberan8"),  # JD Edwards' supplier number (B-929)
     "gst": ("gsthstnumber", "gstnumber", "hstnumber", "gsthst", "gst", "businessnumber", "bn", "taxnumber",
             "tps", "numerotps", "vatregistrationno", "taxregistrationno", "gstregistrationno",
-            "gsthstregistrationno"),
+            "gsthstregistrationno",
+            "taxid", "taxidnumber"),  # "Tax ID" in JD Edwards' address book (B-1029)
     "qst": ("qstnumber", "qst", "tvq", "numerotvq", "qstregistrationno", "qstregistrationnumber"),
     "pst": ("pstnumber", "pst", "rstnumber", "rst", "tvp", "pstregistrationno", "pstregistrationnumber",
             "provincialtaxnumber"),

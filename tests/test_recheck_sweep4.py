@@ -308,3 +308,16 @@ def test_the_tax_checks_say_rates_in_percent():
     assert "rate 15% differs from the official 13%" in messages["TAX_RATE_NONSTANDARD"]
     assert "1000.00 x 15% = 150.00" in messages["TAX_CALC_MISMATCH"]
     assert "0.15" not in " ".join(messages.values()) and "0.13" not in " ".join(messages.values())
+
+
+# --- 10. JD Edwards' "Tax ID" column -------------------------------------------------------------------------------
+
+
+def test_the_vendor_master_reads_jd_edwards_tax_id_as_the_gst_number():
+    """B-1029: JD Edwards' address book exports the GST/HST number as "Tax ID" (TAX); the import left it out."""
+    from ap_coder.coding.vendors import master_columns, master_rows
+
+    records = [{"Alpha Name": "Great Lakes Mechanical Limited", "Address Number": "40120", "Tax ID": LTD}]
+    columns = master_columns(list(records[0]))
+    assert columns["gst"] == "Tax ID"
+    assert master_rows(records, columns)[0]["gst"] == LTD
