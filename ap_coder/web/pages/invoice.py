@@ -727,6 +727,9 @@ def _check(request: Request, invoice_id: int, form: Any) -> JSONResponse:
                          "problems": analysis.problems, "vendor_accounts": used, "header": header,
                          "tax_codes": codes["options"], "tax_code_labels": codes["labels"],
                          "tax_marks": {str(k): v for k, v in (analysis.live.get("tax_marks") or {}).items()},
+                         # the tax rows as checked: a row moved to a new place of supply moves on screen (B-1020)
+                         "taxes": [{"tax_type": t.get("tax_type") or "", "province": t.get("province") or ""}
+                                   for t in draft.taxes],
                          "sections": _render_live(analysis.live, invoice_id)})  # fmt: skip
 
 

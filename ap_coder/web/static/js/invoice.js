@@ -88,7 +88,21 @@ function applySections(answer, posted = null) {
   // the accounts of the vendor now in the vendor field: the account lists' "Used for this vendor" (B-596)
   if (Array.isArray(answer.vendor_accounts)) vendorAccounts = answer.vendor_accounts;
   if (answer.header) applyHeader(answer.header, posted);
+  if (Array.isArray(answer.taxes)) applyTaxRows(answer.taxes, posted);
   showMailLanguage();
+}
+
+/** The tax rows' provinces as the server checked them: a row put in the old place of supply follows a new one
+    (B-935, B-1020). Only a box that still holds what was sent is changed, and only when the rows are those sent. */
+function applyTaxRows(taxes, posted) {
+  const boxes = [...document.querySelectorAll('[data-grid="taxes"] [name="tax_province"]')];
+  const sent = posted ? posted.getAll("tax_province") : null;
+  if (boxes.length !== taxes.length || (sent && sent.length !== boxes.length)) return;
+  boxes.forEach((box, i) => {
+    const want = taxes[i].province || "";
+    if (box.value === want || (sent && box.value !== sent[i])) return;
+    if ([...box.options].some((o) => o.value === want)) box.value = want;
+  });
 }
 
 async function check() {
