@@ -18,6 +18,18 @@ from ._base import (
 )
 
 
+def _distinct(first: dict[str, Any], row: dict[str, Any]) -> bool:
+    """Whether two vendor master rows whose names read the same are two suppliers: each has its own ERP ID and its own
+    GST/HST number (B-930). Without both numbers it reads as the same supplier set up twice: merged, as before."""
+    from ...coding.vendors import same_tax_number
+
+    a, b = str(first.get("erp_id") or "").strip(), str(row.get("erp_id") or "").strip()
+    if not a or not b or a == b:
+        return False
+    gst_a, gst_b = str(first.get("gst") or ""), str(row.get("gst") or "")
+    return bool(gst_a and gst_b) and not same_tax_number(gst_a, gst_b)
+
+
 class VendorsMixin:
     # --- Vendors ----------------------------------------------------------------------------------------
 
@@ -73,6 +85,14 @@ class VendorsMixin:
             key = vendor_key(row["vendor_name"])
             if not key:
                 continue
+            first = merged.get(key)
+            if first is not None and _distinct(first, row):
+                # Two suppliers whose names read the same, each with its own ERP ID (and GST/HST number): two vendors,
+                # the second kept under its ERP ID, not merged into the first (B-930).
+                key = f"{key} #{row['erp_id'].strip()}"
+                if key not in merged:
+                    merged[key] = dict(row)
+                    continue
             names.setdefault(key, []).append(row["vendor_name"])
             if key in merged:
                 first = merged[key]

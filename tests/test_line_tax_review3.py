@@ -87,7 +87,8 @@ def test_the_self_assessment_report_marks_invoices_jd_edwards_accrues_with_code_
     day = dt.date.fromisoformat(final["invoice_date"])
     items = {s.invoice_id: s for s in taxreturn.self_assessment(store, day, day)}
     assert "JD Edwards accrues this one (code B): don't book it again from this report" == items[ids[0]].note
-    assert items[ids[1]].note == ""
+    # approved, not exported yet: JD Edwards will accrue it once it is (B-928)
+    assert items[ids[1]].note == taxreturn.JDE_WILL_ACCRUE
     assert b"JD Edwards accrues this one" in taxreturn.self_assessment_csv(list(items.values()), day, day)
 
 

@@ -98,20 +98,20 @@ def same_qst_number(a: Any, b: Any) -> bool:
 
 
 def master_vendor_id(ids: dict[str, str], vendor_name: str | None, gst_number: Any = None) -> str:
-    """The vendor master's ERP vendor ID for an invoice (``ids``: ``Store.vendor_ids()``): by name, else by its
-    GST/HST number however much of it either side keeps (``same_tax_number``): the master's 9-digit Business Number
-    for the invoice's full account, or the master's full account for 9 digits. "" when the master doesn't know it.
+    """The vendor master's ERP vendor ID for an invoice (``ids``: ``Store.vendor_ids()``): by its GST/HST number
+    however much of it either side keeps (``same_tax_number``: the master's 9-digit Business Number for the invoice's
+    full account, or the master's full account for 9 digits), else by name. The number first: two suppliers whose
+    names read the same ("… Inc." and "… Limited") have their own numbers (B-930). "" when the master doesn't know it.
     The supplier key (``Store.supplier_key_for``) and the export files both use this, so they agree."""
-    found = ids.get(vendor_key(vendor_name or ""))
-    if found or not gst_number:
-        return found or ""
-    number = norm_tax_number(gst_number)
-    bn = number[:9] if number[:9].isdigit() else ""
-    return (
-        ids.get(f"gst:{number}")
-        or (bn and (ids.get(f"bn:{bn}") or (ids.get(f"bnx:{bn}") if len(number) == 9 else None)))
-        or ""
-    )
+    if gst_number:
+        number = norm_tax_number(gst_number)
+        bn = number[:9] if number[:9].isdigit() else ""
+        found = ids.get(f"gst:{number}") or (
+            bn and (ids.get(f"bn:{bn}") or (ids.get(f"bnx:{bn}") if len(number) == 9 else None))
+        )
+        if found:
+            return found
+    return ids.get(vendor_key(vendor_name or "")) or ""
 
 
 _ACCOUNT_LABEL = re.compile(r"(?i)\b(?:account|acct|acc|a/c|compte|cpte)\b\D{0,12}?(\d[\d\s-]*\d|\d)")
@@ -443,9 +443,11 @@ def vendor_findings(
 # --- Vendor master import ------------------------------------------------------------------------------
 
 MASTER_ALIASES: dict[str, tuple[str, ...]] = {
-    "vendor_name": ("vendorname", "vendor", "name", "supplier", "suppliername", "fournisseur", "legalname"),
+    "vendor_name": ("vendorname", "vendor", "name", "supplier", "suppliername", "fournisseur", "legalname",
+                    "alphaname"),  # "Alpha Name" in JD Edwards' address book
     "erp_id": ("vendorid", "vendornumber", "vendorno", "vendorcode", "supplierid", "suppliernumber", "id",
-               "number", "no", "code", "accountnumber", "suppliercode", "numero"),  # "No." in Business Central
+               "number", "no", "code", "accountnumber", "suppliercode", "numero",  # "No." in Business Central
+               "addressnumber", "an8", "suppliernumberan8"),  # JD Edwards' supplier number (B-929)
     "gst": ("gsthstnumber", "gstnumber", "hstnumber", "gsthst", "gst", "businessnumber", "bn", "taxnumber",
             "tps", "numerotps", "vatregistrationno", "taxregistrationno", "gstregistrationno",
             "gsthstregistrationno"),
