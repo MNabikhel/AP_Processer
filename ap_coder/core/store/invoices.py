@@ -42,6 +42,7 @@ from ._base import (
     parse_fx_rates,
     suggestion_kept,
 )
+from .users import account_of, same_approver  # noqa: F401  (also used by the pages)
 
 
 class InvoicesMixin:
@@ -850,6 +851,7 @@ class InvoicesMixin:
                 **({"needs_second": True, "second_reason": second_reason} if needs_second else {}),
                 **({"limit": limit, "rate": rate} if limit else {}),
                 **({"open_issues": open_issues} if open_issues else {}), **({"login": login} if login else {}),
+                **({"user_id": account_of(login)} if account_of(login) is not None else {}),
             })  # fmt: skip
             conn.executemany(
                 """INSERT INTO feedback (invoice_id, line_number, vendor_key, vendor_name, description, amount,
@@ -899,17 +901,20 @@ class InvoicesMixin:
 
     def final_approve(self, invoice_id: int, approver: str, login: str = "", shown: str | None = None) -> None:
         """The second approval: by someone other than the first approver (another name and, when the
-        dashboard records it, another computer login). The invoice can then be exported. ``shown``: the first
-        approval the page showed (its ``approved`` event's id, as the page posts it): approved again since, it is
-        refused (``ApprovedAgain``), as the version now waiting is not the one the approver looked at (B-654)."""
+        dashboard records it, another computer login; in server mode another account: ``same_approver``). The
+        invoice can then be exported. ``shown``: the first approval the page showed (its ``approved`` event's id, as
+        the page posts it): approved again since, it is refused (``ApprovedAgain``), as the version now waiting is not
+        the one the approver looked at (B-654)."""
         inv = self.get_invoice(invoice_id)
         if inv is None or inv["status"] != PENDING:
             raise ValueError(f"invoice {invoice_id} is not waiting for a second approval")
-        if (approver or "").strip().casefold() == (inv["reviewer"] or "").strip().casefold():
-            raise PermissionError("the second approval must come from someone other than the first approver")
         first = next((e for e in self.events(invoice_id) if e["action"] == "approved"), None)
         first_login = ((first or {}).get("detail") or {}).get("login") or ""
-        if login and first_login and login.casefold() == first_login.casefold():
+        if same_approver(inv["reviewer"], first_login, approver, login):
+            if account_of(first_login) is not None and account_of(login) is not None:
+                raise PermissionError("the second approval must come from another account than the first")
+            if (approver or "").strip().casefold() == (inv["reviewer"] or "").strip().casefold():
+                raise PermissionError("the second approval must come from someone other than the first approver")
             raise PermissionError("the second approval must come from another computer login than the first")
         with self._conn() as conn:
             conn.execute("BEGIN IMMEDIATE")  # checked and approved in one go: no new first approval in between
@@ -930,6 +935,7 @@ class InvoicesMixin:
             self._log(conn, "final_approved", invoice_id, approver, {
                 "first_approver": inv["reviewer"], "total": (inv["final_output"] or {}).get("grand_total"),
                 **({"second_reason": reason} if reason else {}), **({"login": login} if login else {}),
+                **({"user_id": account_of(login)} if account_of(login) is not None else {}),
             })  # fmt: skip
 
     def send_back(self, invoice_id: int, actor: str, reason: str = "") -> None:

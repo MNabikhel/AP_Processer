@@ -171,6 +171,6 @@ def test_a_database_at_17_without_the_new_columns_gets_them(tmp_path):
     _approve(store, tmp_path / "A.pdf", "Electrician - labour", "GST", "GST~PST")
     _drop_columns(path, "tax_province", "tax_source", "tax_uncollected", version="17")
     upgraded = Store(path)
-    assert SCHEMA_VERSION == 17 and upgraded.get_setting("schema_version") == "17"
+    assert upgraded.get_setting("schema_version") == str(SCHEMA_VERSION)  # 17 and on (18: the accounts, D-97)
     assert [(r["final_tax_code"], r["tax_source"], r["tax_province"]) for r in upgraded.feedback_rows()] == [
         ("GST~PST", "picked", "BC")]  # fmt: skip

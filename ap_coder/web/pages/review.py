@@ -37,6 +37,7 @@ from ap_coder.core.store import (
     fold_text,
     load_sample_setup,
 )
+from ap_coder.core.store.users import same_approver
 from ap_coder.erp import recurring
 from ap_coder.web.core import (
     TARGET_ACCURACY,
@@ -465,9 +466,7 @@ def _second(inv: dict[str, Any], first: dict[str, Any] | None, me: str, my_login
     """An invoice waiting for its second approval, and whether this reviewer may give it (not the first approver,
     whose ``approved`` event is ``first``)."""
     first_login = ((first or {}).get("detail") or {}).get("login") or ""
-    same = (me or "").strip().casefold() == (inv["reviewer"] or "").strip().casefold() or (
-        bool(my_login) and my_login.casefold() == first_login.casefold()
-    )
+    same = same_approver(inv["reviewer"], first_login, me, my_login)
     detail = (first or {}).get("detail") or {}
     why = audit.second_reason(detail) if detail.get("needs_second") else ""
     return {**inv, "same": same, "approval": (first or {}).get("id") or "", "second_why": why,

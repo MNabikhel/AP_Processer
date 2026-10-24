@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+{# The login page of server mode (pages/login.py, D-97): nothing of AP Coder shows before a person logs in, so no
+   rail; the form is sent by app.js like every other form (with the page header). #}
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="same-origin">
+  <title>Log in · AP Coder</title>
+  <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/app.css?v={{ static_version }}">
+</head>
+<body data-page="login">
+  <main class="apc-login" id="main">
+    <img src="/assets/logo.svg" alt="AP Coder" height="28">
+    <div id="flashes" class="flashes">
+      {% for f in flashes %}
+      <div class="flash {{ f.tone }}" role="status"><span class="ms" aria-hidden="true">{{ f.icon }}</span>
+        <div><div class="flash-text">{{ f.text }}</div></div></div>
+      {% endfor %}
+    </div>
+    <section class="card">
+      <h1 class="apc-title">Log in</h1>
+      <p class="muted">Use the username and password your AP Coder Admin gave you.</p>
+      <form method="post" action="/login" class="stack" data-busy="Logging in…">
+        <input type="hidden" name="next" value="{{ next }}">
+        <label class="field">Username
+          <input type="text" name="username" autocomplete="username" autocapitalize="none" spellcheck="false"
+                 maxlength="64" required autofocus></label>
+        <label class="field">Password
+          <input type="password" name="password" autocomplete="current-password" required></label>
+        <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">login</span>Log in</button>
+      </form>
+      {% if first_admin %}
+      <p class="muted">No one has an account yet. On the server, the first Admin is added in a command window:
+        <code>python -m ap_coder users add &lt;username&gt; --role admin</code></p>
+      {% else %}
+      <p class="muted">Forgot your password? Ask an Admin to reset it.</p>
+      {% endif %}
+    </section>
+  </main>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <script type="module" src="/static/js/app.js"></script>
+</body>
+</html>

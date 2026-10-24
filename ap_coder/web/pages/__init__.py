@@ -177,8 +177,10 @@ PAGES: list[Page] = [
 ]
 
 # Routes without a rail entry: the invoice review screen (/review/{id}); the Azure check's card on Settings → Reading
-# (/settings/azure-check); the "Who are you?" page of a colleague on the office network (/who).
-MORE_MODULES: list[str] = ["invoice", "azure", "who"]
+# (/settings/azure-check); the "Who are you?" page of a colleague on the office network (/who); in server mode
+# (D-97), logging in and out and one's own password (/login, /logout, /account/password) and the Users page
+# (/admin/users).
+MORE_MODULES: list[str] = ["invoice", "azure", "who", "login", "users"]
 
 SECTIONS: list[str] = list(dict.fromkeys(p.section for p in PAGES))
 BY_KEY: dict[str, Page] = {p.key: p for p in PAGES}

@@ -56,6 +56,7 @@
         <span class="ms" aria-hidden="true">done_all</span>
         <span><b>{{ candidates | length }} invoices look clean</b><span class="rq-bulk-sub"> · no errors or warnings · {{ candidates_total }}{% if candidates_left %} · {{ candidates_left }}{% endif %}</span></span>
       </div>
+      {% if can("/review/bulk-approve") %}
       <details class="pop">
         <summary class="btn sm"><span class="ms" aria-hidden="true">done_all</span>Approve {{ candidates | length }}</summary>
         <div class="pop-body">
@@ -71,6 +72,7 @@
           </form>
         </div>
       </details>
+      {% endif %}
     </div>
     {% endif %}
 
@@ -152,14 +154,17 @@
           {% if inv.details %}<details class="tech"><summary>Technical details</summary><pre>{{ inv.details }}</pre></details>{% endif %}
         </div></div>
       <div class="row end">
-        {% if inv.status == "rejected" %}
+        {% if not can("/review/1/reopen") %}
+        {% elif inv.status == "rejected" %}
         <form method="post" action="/review/{{ inv.id }}/reopen"><button class="btn sm" type="submit" title="Back to the review queue (e.g. rejected by mistake)"><span class="ms" aria-hidden="true">undo</span>Reopen</button></form>
         {% else %}
         <form method="post" action="/review/{{ inv.id }}/retry"><button class="btn sm" type="submit"><span class="ms" aria-hidden="true">refresh</span>Retry</button></form>
         {% endif %}
+        {% if can("/review/1/delete") %}
         <form method="post" action="/review/{{ inv.id }}/delete" data-confirm="Delete this invoice? Its file moves to invoices/deleted.">
           <input type="hidden" name="back" value="/review?tab=other">
           <button class="btn sm" type="submit"><span class="ms" aria-hidden="true">delete</span>Delete</button></form>
+        {% endif %}
       </div>
     </div>
     {% endfor %}
@@ -177,16 +182,16 @@
             {% if inv.follow_up %}{{ ui.pill("Follow up " ~ inv.follow_up, "err" if inv.late else "gray") }}{% endif %}</div>
           <div class="rq-item-sub">Waiting for: {{ inv.parked_reason }}</div>
         </div></div>
-      <form method="post" action="/review/{{ inv.id }}/unpark"><button class="btn sm" type="submit"><span class="ms" aria-hidden="true">play_circle</span>Un-park</button></form>
+      {% if can("/review/1/unpark") %}<form method="post" action="/review/{{ inv.id }}/unpark"><button class="btn sm" type="submit"><span class="ms" aria-hidden="true">play_circle</span>Un-park</button></form>{% endif %}
     </div>
     {% endfor %}
   </section>
 
 {% elif tab == "second" %}
   <p class="muted">{% if limit_amount %}A second approval is needed over {{ limit_amount | money }} CAD, or in a currency with no CAD exchange rate set: each invoice says why. {% endif %}The second approver must be someone other than the first,
-    on another computer login: on one laptop with one Windows login it can't be given. To test it, sign in to this laptop
+    {% if account %}logged in with their own account (an Approver or an Admin).{% else %}on another computer login: on one laptop with one Windows login it can't be given. To test it, sign in to this laptop
     with a second Windows account and open AP Coder there, or have a colleague open it from their computer over the
-    office network. Not going ahead? Send back returns an invoice to the review queue.</p>
+    office network.{% endif %} Not going ahead? Send back returns an invoice to the review queue.</p>
   <section class="card list">
     {% if not awaiting %}
     {{ ui.empty_note("Nothing waiting", " Invoices over the approval limit appear here once approved.", "how_to_reg") }}
@@ -199,6 +204,7 @@
           <div class="rq-item-sub">{{ inv.grand_total | money(inv.currency) }} · approved by {{ inv.reviewer }} {{ inv.reviewed_at | time_ago }}</div>
           {{ second_ui.why(inv.second_why, inv.approved_over, 0) }}
         </div></div>
+      {% if can("/review/1/final-approve") %}
       <div class="row end">
         <form method="post" action="/review/{{ inv.id }}/final-approve">
           <button class="btn primary sm" type="submit"{% if inv.same %} disabled title="You approved it first (same name or computer login): someone else gives the second approval"{% endif %}>
@@ -211,6 +217,7 @@
           </form>
         </details>
       </div>
+      {% endif %}
     </div>
     {% endfor %}
   </section>

@@ -261,3 +261,22 @@ Store.vendor_summaries
 Store.vendor_terms
 Store.verification
 Store.verification_counts
+# Server mode's accounts, sessions and login attempts (core/store/users.py, D-97).
+Store._account
+Store._active_admins
+Store._locked
+Store.activate_user
+Store.add_user
+Store.authenticate
+Store.change_password
+Store.deactivate_user
+Store.end_session
+Store.end_sessions
+Store.find_user
+Store.list_users
+Store.reset_password
+Store.session_user
+Store.set_role
+Store.start_session
+Store.user
+Store.user_count

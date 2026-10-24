@@ -879,6 +879,45 @@ that is reversed keeps its line, marked "replaced by D-NN".
   that contradicted the draft, and a second approver who couldn't see what was approved over.
   (`static/js/invoice.js`, `web/pages/invoice.py` `_keep_draft`, `web/pages/review.py` `draft_reasons`,
   `core/audit.py`; `tests/test_web_ui_sweep4.py`)
+- **D-97** · Server mode: AP Coder on one company server, each person with their own account. Off by default
+  (`AP_SERVER_MODE=1`, or `serve --server`): the laptop pilot is unchanged (D-34 still holds there). On, every request
+  but /login, /healthz, the styles and scripts needs a session, whichever computer it comes from: the server's own
+  browser is not "this computer" (no automatic identity, no shortcut past the roles); the console is the one local
+  path (`python -m ap_coder users add|list|reset|deactivate|role`, the password typed twice with getpass), and the
+  first Admin is added there. Accounts are AP Coder's own (SSO can come later), in the database (`users`, `sessions`,
+  `login_attempts`, schema 18): the username kept case-folded; passwords hashed with the standard library's scrypt
+  (n=2^14, r=8, p=1, a 16-byte salt, `scrypt$n$r$p$salt$hash`, compared in constant time), at least 12 characters and
+  not the username or the name; a new account and a reset get a temporary password, changed before anything else.
+  Five tries that don't match within 15 minutes for one username, or from one address, pause logins there for 15
+  minutes, an unknown username counted alike, every refusal in the same words. A session is a random 32-byte token in
+  the `ap_session` cookie (HttpOnly, SameSite=Strict, Secure over HTTPS, read from `request.url.scheme`), only its
+  SHA-256 stored; a new one at every login (no fixation); it ends after 8 hours unused or 7 days, at logout, and when
+  the password changes (the person's other sessions) or an Admin resets it or turns the account off (all of them);
+  in the database, so a restart logs nobody out. The person is their account: `reviewer()` its name, `login()`
+  `user:<id>`, events name them and their address; drafts are kept by account. A temporary password made on the
+  Users page is shown once from memory, never kept in a message or the database. Logins, refusals, lockouts,
+  logouts, password changes and resets, accounts added, role changes and accounts turned off or on are events
+  (Activity → Logins). Why: on a server everyone opens the same address, so a typed name (D-34) can't stand for a
+  person, nor an address for a login; the pilot tester asked for logins and roles with nothing installed on the
+  clerks' PCs and nothing new to download. (`ap_coder/core/store/users.py`, `ap_coder/web/identity.py`,
+  `ap_coder/web/pages/login.py`, `ap_coder/web/pages/users.py`, `ap_coder/ops/cli.py` `cmd_users`;
+  `tests/test_users.py`, `tests/test_users_cli.py`, `tests/test_server_web.py`, `tests/test_server_browser.py`)
+- **D-98** · Roles in server mode: Read-only, Clerk, Approver, Admin, each able to do what the one before can.
+  Read-only looks (the queue, invoices and their pages, the directory, reports, the exports list, Insights, Spend,
+  Activity, Help, its own password) and changes nothing; Clerk also imports, reviews and checks, gives the first
+  approval, parks, rejects, reopens, undoes its own approval, approves in bulk, makes export batches and downloads
+  them, keeps vendors' hold and notes, and sees the account lists, POs and Learning; Approver also gives the second
+  approval or sends back; Admin everything else (Settings, Users, JD Edwards, the account lists' and tax setup's
+  changes, imports of the vendor master, POs and the ERP list, export layouts and undoing a batch, backups and
+  restore, deleting, the Azure check, the learning memory's resets and holds, the demo). One table from each route to
+  what it needs (`web/roles.py` `RULES`), enforced in the Identity middleware before any page runs; a route without a
+  rule needs an Admin, and a test walks the app's routes so a new route without a rule fails. A role that may not
+  gets a 403 page (JSON for an action), "Your role (Clerk) can't …". Pages hide the menu entries and buttons a role
+  can't use (`core.can`), but the server is what refuses. The second approval needs a second account: two accounts
+  are compared by id (`same_approver`; two people may share a name), and each approval records the account
+  (`detail.user_id`). Why: the plan's roles, with one place that says who may do what and a default that closes
+  rather than opens. (`ap_coder/web/roles.py`, `ap_coder/core/store/users.py` `same_approver`; `tests/test_roles.py`,
+  `tests/test_server_second_approval.py`)
 - **D-100** · The company server runs AP Coder as a Windows scheduled task, and updates with a way back. (1) **The
   service**: `python -m ap_coder service install|remove|start|stop|status` registers a Task Scheduler task (XML,
   `schtasks /create /xml`) that starts at boot, a minute after, as a dedicated local account (`--account`, default
