@@ -207,6 +207,54 @@ def test_an_invoice_read_before_is_sorted_and_flagged_by_its_new_reading(tmp_pat
     assert json.loads(json.dumps(validation["issues"])) == []
 
 
+@pytest.mark.parametrize("code", ["VERIFIER_DISAGREES", "AZURE_DI_DISAGREES"])
+def test_the_one_time_reading_keeps_a_check_s_review_flag(tmp_path, code):
+    """The AI reviewer's or the Azure check's disagreement keeps an invoice for a person whatever its scores: the
+    one-time rescoring (D-89) cleared that flag (B-956)."""
+    from ap_coder.ai.offline_coder import MODEL_NAME
+    from ap_coder.core.store import Store
+
+    store = Store(tmp_path / "ap.db")
+    out = {"vendor_name": "Acme Ltd", "invoice_number": "A-1", "invoice_date": "2026-10-01", "currency": "CAD",
+           "subtotal": 100.0, "tax_total": 0.0, "grand_total": 100.0, "tax_lines": [], "confidence_score": 0.5,
+           "line_items": [{"line_number": 1, "description": "Widgets", "quantity": 1, "unit_price": 100,
+                           "amount": 100.0, "predicted_gl_code": "6000", "predicted_cost_center": "",
+                           "reasoning_justification": "memory"}]}  # fmt: skip
+    issue = {"severity": "warning", "code": code, "message": "the check disagrees: total"}
+    iid = store.add_invoice(tmp_path / "x.pdf", out, {"issues": [issue], "requires_review": True,
+                                                      "adjusted_confidence": 0.5, "review_threshold": 0.85},
+                            meta={"inference": {"model": MODEL_NAME}})  # fmt: skip
+    fields = {n: _field(n, 0.99).to_dict() for n in ("vendor_name", "invoice_number", "grand_total")}
+    store.save_capture(iid, {"fields": fields})
+    with store._conn() as conn:
+        conn.execute("DELETE FROM settings WHERE key = 'reading_d89'")
+    store = Store(tmp_path / "ap.db")
+    inv = store.get_invoice(iid)
+    assert inv["requires_review"] and inv["validation"]["requires_review"]
+
+
+def test_the_one_time_reading_rescores_the_queue_of_an_invoice_a_chat_model_read(tmp_path, ground_truth):
+    """An invoice a chat model read before D-89 kept its old queue confidence (90%) while its review screen showed a
+    Coding of 50%: its own confidence stays its Reading, and the queue's figure is worked out again (B-956)."""
+    from ap_coder.core.store import Store
+
+    store = Store(tmp_path / "ap.db")
+    coding = dict(copy.deepcopy(ground_truth), confidence_score=0.9)
+    coding["line_items"][0]["predicted_gl_code"] = UNASSIGNED
+    old = {"model_confidence": 0.9, "adjusted_confidence": 0.9, "requires_review": False, "review_threshold": 0.85,
+           "issues": []}  # fmt: skip
+    iid = store.add_invoice(tmp_path / "a.pdf", coding, old, meta={"inference": {"model": "gpt-4o"}})
+    with store._conn() as conn:
+        conn.execute("DELETE FROM settings WHERE key = 'reading_d89'")
+    store = Store(tmp_path / "ap.db")
+    inv = store.get_invoice(iid)
+    validation = inv["validation"]
+    assert inv["ai_output"]["confidence_score"] == 0.9 and validation["reading_confidence"] == 0.9
+    assert validation["coding_confidence"] < 0.9
+    assert inv["adjusted_confidence"] == validation["adjusted_confidence"] == validation["coding_confidence"]
+    assert inv["requires_review"]
+
+
 def test_a_business_finding_keeps_the_invoice_back_but_takes_nothing_off(tmp_path, reference, ground_truth):
     """D-89: a vendor not in the vendor master read every value right: an error to fix, not a doubt about the reading
     (it made a supplier's Reading 54% with every field at 99.9%)."""
