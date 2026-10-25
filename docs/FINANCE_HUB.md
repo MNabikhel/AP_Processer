@@ -44,7 +44,7 @@ seen.
 
 **Formats.** Parquet (snappy) when the `pyarrow` package is installed; otherwise CSV (UTF-8, a header row, comma,
 `"` quotes, empty for null), and `_metadata.json` says so (`"fileFormat": "DelimitedText"`). Types in Parquet:
-int64, decimal(18,2), float64, date32, timestamp (seconds), boolean, string. In CSV: dates `YYYY-MM-DD`, timestamps
+int64, decimal(18,2), float64, date32, timestamp (milliseconds), boolean, string. In CSV: dates `YYYY-MM-DD`, timestamps
 `YYYY-MM-DDTHH:MM:SS`, booleans `true`/`false`, money with two decimals.
 
 **Times** are the local time of the computer or server running AP Coder, without a time zone, as AP Coder records
@@ -91,7 +91,9 @@ workflow_runs (run_id): import-<event> and hub_export-<event> are activity event
 - A vendor's bank details (in an event's detail they are shown as `(hidden)`), and the company's own bank accounts.
 - Sign-in events (logins, failed logins, passwords, unlocked addresses): the server's security record.
 - Settings, accounts and passwords (also their events in `activity`: user_added, role_changed, user_activated,
-  user_deactivated, backup_restored, settings_changed), the learning memory's lessons, imported ERP history.
+  user_deactivated, backup_restored, settings_changed, tax_setup_changed, policy_changed), the learning memory's
+  lessons, imported ERP history.
+- The computer address a change was made from: it is not in `activity`'s details.
 
 ## The tables
 
@@ -145,7 +147,7 @@ Key: `invoice_id`. Changes: compared row by row with what was sent (a fingerprin
 | `jde_doc_type` | string | Its document type (PV...). |
 | `jde_company` | string | Its document company. |
 | `jde_posted_at` | timestamp | When it was posted. |
-| `invoice_url` | string | A link to the invoice's page in AP Coder (the PDF stays there). |
+| `invoice_url` | string | A link to the invoice's page in AP Coder (the PDF stays there): Settings → Finance hub's address, by default `http://127.0.0.1:8501` on a laptop and the server's own address in server mode. |
 
 ### `invoice_lines`
 
@@ -194,7 +196,7 @@ Key: `approval_id`. Changes: compared row by row with what was sent (a fingerpri
 
 ### `activity`
 
-The audit trail: every event AP Coder records (read, approved, exported...), oldest first. Sign-in, account and settings events are left out.
+The audit trail: every event AP Coder records (read, approved, exported...), oldest first. Sign-in, account and settings events (`tax_setup_changed` and `policy_changed` too) are left out, and so is the computer address in an event's detail.
 
 Key: `event_id`. Changes: only ever added; sent by the last event id sent (the watermark).
 
@@ -205,7 +207,7 @@ Key: `event_id`. Changes: only ever added; sent by the last event id sent (the w
 | `action` | string | What happened (processed, approved, final_approved, exported, parked, rejected, import_run, hub_export...). |
 | `actor` | string | Who did it (a person, or AP Coder). |
 | `occurred_at` | timestamp | When. |
-| `detail_json` | string | What AP Coder recorded with it, as JSON (a vendor's bank details hidden). |
+| `detail_json` | string | What AP Coder recorded with it, as JSON (a vendor's bank details hidden, no computer address). |
 
 ### `accuracy`
 
@@ -245,7 +247,7 @@ Key: `run_id`. Changes: compared row by row with what was sent (a fingerprint pe
 | `succeeded` | int64 | Read and coded (import), exported (export), rows written (hub). |
 | `failed` | int64 | Files that could not be read (import). |
 | `skipped` | int64 | Files already in AP Coder (import). |
-| `total_amount` | decimal(18,2) | The batch's total (export). |
+| `total_amount` | decimal(18,2) | The batch's total (export); empty for a batch that mixes currencies. |
 | `status` | string | ok, failed (some or all failed), undone (an export batch undone). |
 | `errors` | string | The errors, one per line (the first 20). |
 

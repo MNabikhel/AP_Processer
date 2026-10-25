@@ -1,7 +1,7 @@
 # AP Coder on a company Windows Server (for IT)
 
-This guide sets AP Coder up on one Windows Server for the whole AP team. It runs as a Windows service, staff open it
-in their browser over HTTPS and log in with their own account, and nothing is installed on their PCs. Everything stays
+This guide sets AP Coder up on one Windows Server for the whole AP team. It runs as a Windows scheduled task (not a
+Windows service), staff open it in their browser over HTTPS and log in with their own account, and nothing is installed on their PCs. Everything stays
 offline: AP Coder and LM Studio run on the server and connect to nothing on the internet.
 
 The laptop pilot is not changed by any of this: a laptop still runs AP Coder for one person at 127.0.0.1, with no
@@ -271,7 +271,7 @@ Admin).
 |---|---|
 | Read-only | Look at invoices, the review queue, reports, the exports list and Help. Change nothing. |
 | Clerk | Also import and process invoices, review and correct them, approve within the limit, park, reject, reopen, bulk approve, and export batches. |
-| Approver | Also give the second approval (always by another account than the first). |
+| Approver | Also give the second approval (always by another account than the first), and post vouchers to JD Edwards through the API. |
 | Admin | Everything else: Settings, users, the JD Edwards setup, GL accounts and vendors imports, backups and restore, deleting, the Azure check, updating. |
 
 Pages show each person only what their role may use; the server refuses the rest anyway. The JD Edwards settings

@@ -7,8 +7,11 @@ each step lives: `file:function`). Everything here is read from the code; when t
 this file is wrong.
 
 AP Coder is an **offline** build: nothing it runs connects to the internet unless a developer or the bundle builder
-sets `AP_ALLOW_INTERNET=1` (`ap_coder/ops/offline.py:internet_allowed`). The one exception, by design, is the optional
-Azure check, which AP switches on in Settings (it is off by default; [section 10](#10-the-network-every-place-and-its-gate)).
+sets `AP_ALLOW_INTERNET=1` (`ap_coder/ops/offline.py:internet_allowed`). The exceptions, by design and each off by
+default, are switched on by someone on purpose: the optional Azure check (its own switch in Settings → Reading), the
+finance hub feed (a shared folder; OneLake only with `AP_ALLOW_INTERNET=1`), the JD Edwards AIS connection (a named
+internal system, D-104) and server mode, which listens on the network over HTTPS
+([section 10](#10-the-network-every-place-and-its-gate)).
 The setup is offline too from the offline bundle; from the code alone (GitHub's ZIP or a git checkout: no
 `bundle_manifest.json`, `wheelhouse/` or `models/`) it downloads its packages and OCR models once, unless
 `AP_ALLOW_INTERNET=0` (`scripts/launch.py:plain_download`); the dashboard it starts stays offline.
@@ -315,7 +318,9 @@ or data) is not found again on later starts (`upgrade.left_to_clean`), so it is 
   `.venv/ap_coder_launcher.json` so the next double-click finds it. `serve` on a port something already answers on
   says so and starts nothing (it never writes over a running server's file).
 * **Address** (`ap_coder/ops/offline.py:dashboard_address`): `127.0.0.1`, unless `AP_DASHBOARD_ADDRESS` (or
-  `--address`) says otherwise; listening beyond this computer prints a warning (there is no login).
+  `--address`) says otherwise; listening beyond this computer prints a warning. On a laptop shared that way there
+  are no passwords: a colleague gives their name once ("Who are you?", `ap_coder/web/identity.py`) and their changes
+  are recorded under it. Logins with passwords and roles are server mode's (below, and [SERVER.md](SERVER.md)).
 * **Server** (`ap_coder/web/server.py:serve`): uvicorn in that process; a random token; the server file
   `<data>/.ap_coder_server.json` (`pid`, `port`, `folder`, `version`, `token`, `user`, `started`; mode 0600 on macOS/Linux),
   removed when it stops if it is still its own.
@@ -323,10 +328,14 @@ or data) is not found again on later starts (`upgrade.left_to_clean`), so it is 
   that is not this computer is refused, against DNS rebinding; a POST must carry `X-AP-Coder: 1` and come from the
   same origin). `GET /healthz` (no secrets), `POST /shutdown` (loopback client and the token). At start-up
   (`lifespan`): `Store.auto_backup` (once a day), the page reader's background thread, the Azure check's thread (does
-  nothing while it is off).
+  nothing while it is off) and the JD Edwards worker (`ap_coder/erp/jde_sync.py:Background`: every 5 minutes, the
+  nightly sync when it is due, then the vouchers waiting in the queue, retried after 5, 15 and 60 minutes, then
+  hourly; nothing while both are off). The finance hub feed runs on its schedule (`ap_coder/erp/hub/run.py:HubSchedule`:
+  every 1, 4, 12 or 24 hours, or only by hand) from the pages served, like the daily backup: a dashboard nobody
+  opens runs nothing, so a scheduled `python -m ap_coder hub export` covers that.
 * **Up?** The server checks its own `/healthz` directly, never through a proxy, and prints `AP Coder is running at
-  http://127.0.0.1:N`. The launcher opens `http://localhost:N` when it sees that line or `/healthz` answers
-  (`running.health`), once.
+  http://127.0.0.1:N`. The launcher opens `http://127.0.0.1:N` (`scripts/launch.py:dashboard_url`, never
+  `localhost`) when it sees that line or `/healthz` answers (`running.health`), once.
 * **Browser** (`scripts/launch.py:open_browser`, `ap_coder/ops/offline.py:browser_wanted`): not with `BROWSER=none`, and
   not on a Linux computer with neither `DISPLAY` nor `WAYLAND_DISPLAY` (over SSH: Python would start a text browser
   in this window); then the address is said.
@@ -336,6 +345,15 @@ or data) is not found again on later starts (`upgrade.left_to_clean`), so it is 
   Windows, `flock` elsewhere), held by the start for as long as its dashboard runs and released by the OS if it
   crashes. A second double-click opens the running dashboard (`running_dashboard`), waits for one being set up (up
   to 30 minutes, `wait_for_other`), or stops an older one (`stop_older`). `--installer` refuses while AP Coder runs.
+
+**Server mode** (a company server instead of a laptop, [SERVER.md](SERVER.md); `AP_SERVER_MODE=1`,
+`python -m ap_coder serve --server`): the same app on every network card, with HTTPS (`--certfile`, `--keyfile`;
+`ap_coder/web/server.py:tls_refusal` refuses to start without them unless `--insecure-http`, a first test only),
+logins and four roles (`ap_coder/web/roles.py`), and no browser. It is not a Windows service: `python -m ap_coder
+service install` registers a **scheduled task** that starts at boot under its own account and runs
+`<data folder>\service\run.cmd`; that runs the service host (`ap_coder/ops/service.py:run_host`), which starts the
+dashboard, starts it again when it stops, and writes what it says to `<data folder>\logs\service.log`. Updates are
+`python -m ap_coder server-update <bundle>` (`--back` to go back), not the launcher.
 
 ## 9. The data folder and everything AP Coder writes
 
@@ -363,17 +381,23 @@ can corrupt an open SQLite database).
 | `output/`, `share_report.md`, `share_report_key.csv`, `labels.xlsx` | command-line outputs | `ap_coder/ops/cli.py` |
 | `backup-<date>/` | the data set aside by `install --fresh-start` | `install.fresh_start` |
 | `models/` (optional) | the table finder model, if IT puts it there | IT |
-| **`~/.ap_coder/settings.json`** | the record of installs and the data folder (section 6) | `paths.write_user_settings` |
+| **`~/.ap_coder/settings.json`** | the record of installs and the data folder (section 6), and your name (per user) | `paths.write_user_settings` |
 | **`~/.ap_coder/logs/launch.log`** | everything each start said, pip's lines and the dashboard's output; `launch.previous.log` past 1 MB | `launch.log` |
 | **Desktop** `AP Coder.lnk` / `AP Coder.command` | the shortcut (Windows / Mac) | `launch.ensure_shortcut` |
 | **Second backup folder** (Settings → Data & backups) | copies of the daily backups, newest 14 | `Store.copy_backup` |
 | Next to an older install | `<folder>.removing-<date>` while it is deleted | `upgrade.remove_folder` |
+| **Server mode only:** `server.json` | the server's settings (port, address, certificate, host names, proxy) | `service install`, `server-update` |
+| `tls/` | the HTTPS certificate and its key, where IT puts them ([SERVER.md](SERVER.md)) | IT |
+| `service/run.cmd` (and the task's XML, `host.json`, `stopped`) | what the scheduled task runs | `service install`, `server-update` |
+| `logs/service.log` | what the server said (rotating) | the service host |
+| `finance_hub/` | the finance hub feed's own record of what was sent (`state.db`) | `hub export`, the schedule |
 
 **Backups**: one a day when the dashboard starts (`Store.auto_backup`, 20 hours apart, 14 kept), each a single
 self-contained SQLite file (`journal_mode=DELETE`); one before every schema migration and before an update repoints
 file paths; manual ones from Settings; optionally copied to a second folder. Restore from Settings → Data & backups.
 
-**Logs**: `~/.ap_coder/logs/launch.log` holds every start (a header line with the time, options, Python and folder;
+**Logs**: on a server, `<data folder>\logs\service.log`. On a laptop, `~/.ap_coder/logs/launch.log` holds every
+start (a header line with the time, options, Python and folder;
 then what the window showed, pip's lines and the dashboard's own output and warnings). A step that fails names it;
 an unexpected error is one line in the window and its traceback in the log. It holds file paths and the dashboard's
 messages, so it stays on the computer like the data. The dashboard's Activity page is the audit trail.
@@ -399,6 +423,9 @@ messages, so it stays on the computer like the data. The dashboard's Activity pa
 | 15 | RapidOCR's own model downloader | (would fetch models on first use) | never runs: the engine is given the model paths (`offline.ppocrv5_engine_params`) and used only when they are intact (`ppocrv5_ready`) |
 | 16 | fonts, icons, scripts of the pages | — | served from the package (`/fonts`, `/static`); no CDN |
 | 17 | `Store.copy_backup` | the second backup folder (may be a network share) | only when AP sets one in Settings |
+| 18 | `ap_coder/erp/hub/run.py:export` | the finance hub feed: a shared folder, or OneLake (`ap_coder/erp/hub/onelake.py:push_allowed`) | off until an Admin turns it on (Settings → Finance hub); OneLake only with `AP_ALLOW_INTERNET=1` |
+| 19 | `ap_coder/erp/jde_ais.py:internal_address` | the company's JD Edwards AIS Server, its saved address only | off until an Admin sets it up (Settings → JD Edwards E1); a named internal system (D-104): an address on the internet is refused unless `AP_ALLOW_INTERNET=1` |
+| 20 | server mode (`ap_coder/web/server.py:serve`) | listens on every network card, over HTTPS (inbound) | only on a server set up for it (`AP_SERVER_MODE=1`, [SERVER.md](SERVER.md)) |
 
 Tests: `tests/test_offline*.py`, `tests/test_network_gates.py`, and a web test that fails if a page connects out.
 

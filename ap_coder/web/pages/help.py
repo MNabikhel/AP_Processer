@@ -24,6 +24,7 @@ from ap_coder.core import paths
 from ap_coder.ops import service
 from ap_coder.ops.help import AREAS, CHECKS, CLOUD_CHECKS, ROUTINE, TO_DO, WHATS_NEW, CheckHelp, faq, quick_start
 from ap_coder.ops.offline import internet_allowed, setup_contact
+from ap_coder.ops.service import log_path as service_log
 from ap_coder.web import minimd
 from ap_coder.web.access import is_admin
 from ap_coder.web.core import data_dir, developer_tools, get_store, render, server_mode, short_path
@@ -71,7 +72,10 @@ def shortcut_keys(spec: str) -> list[dict[str, Any]]:
     return parts
 
 
-SHORTCUTS = [(shortcut_keys(spec), what) for spec, what in SHORTCUT_ROWS]
+# The review screen's G, shown with the invoice keys; kept out of SHORTCUT_ROWS, whose rows after the first four are
+# the page viewer's, the menus', Undo's, Park's and Reject's (tests/test_web_help.py).
+GO_TO_LINE = ("[G]", "Go to the line still to code")
+SHORTCUTS = [(shortcut_keys(spec), what) for spec, what in [*SHORTCUT_ROWS[:4], GO_TO_LINE, *SHORTCUT_ROWS[4:]]]
 
 
 def matching_checks(query: str = "", area: str | None = None, cloud: bool = True) -> list[tuple[str, CheckHelp]]:
@@ -249,7 +253,12 @@ def help_page(request: Request, q: str = "", area: str = "") -> HTMLResponse:
             ("Database", short_path(store.path)),
             ("Backups", short_path(data / "backups")),
             ("Settings", "the Settings page (kept in the data folder)"),
-            ("Logs, for IT", short_path(paths.user_settings_path().parent / "logs")),
+            (
+                "Logs, for IT",
+                short_path(service_log(data))
+                if server_mode(request)
+                else short_path(paths.user_settings_path().parent / "logs"),
+            ),  # on the server: the service host's log
         ]
         if is_admin(request)
         else [],  # the server's own paths: an Admin's only (D-99)

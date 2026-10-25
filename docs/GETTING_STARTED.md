@@ -1,11 +1,13 @@
 # Getting started: running the prototype on your enterprise data
 
-**How we work together.** You run everything on your own computer, offline: every invoice is read
+**How we work together.** You run everything on your own computer, offline (or on a company server:
+[SERVER.md](SERVER.md)): every invoice is read
 on the laptop (the PDF's text or local OCR, and OvisOCR2 in LM Studio). Invoices, GL accounts, reviews
 and the AI's memory stay in your **data folder**
 (default `C:\Users\<you>\APCoder`, chosen during install), outside the code, so none of it can
 be pushed to GitHub. The dashboard is a local web app on
-your computer (`http://127.0.0.1:8501`, opened in your browser) and is not reachable from other machines. You only send back two text
+your computer (`http://127.0.0.1:8501`, opened in your browser) and is not reachable from other machines (in
+server mode, staff open it over HTTPS and log in). You only send back two text
 reports, and you can read both before sending:
 
 | You paste back | Produced by | Contains | Never contains |
@@ -28,8 +30,9 @@ page-reading model (about 1 GB) that reads every page of every invoice as a seco
 [LM Studio](https://lmstudio.ai/) on the laptop.
 
 1. **IT installs LM Studio** (0.4.8 or newer) with OvisOCR2 and the chat model already in it (**Gemma 4 12B**,
-   QAT Q4_0, or **Qwen 3.5 9B**, Q4_K_M): the chat model is the AI reviewer, and suggests GL accounts for lines
-   nothing was learned for. The pilot runs with both. Nothing is downloaded on the laptop. The files and sizes are in [PILOT.md](PILOT.md#what-you-need); direct links and steps
+   QAT Q4_0, or **Qwen 3.5 9B**, Q4_K_M): the chat model reviews each invoice (the AI reviewer), reads its header
+   from the page images and suggests GL accounts for lines nothing was learned for. AP Coder starts without LM
+   Studio, but the pilot runs with it: without OvisOCR2 every invoice waits for a person. Nothing is downloaded on the laptop. The files and sizes are in [PILOT.md](PILOT.md#what-you-need); direct links and steps
    for Gemma 4 12B are in [LM_STUDIO.md](LM_STUDIO.md#using-gemma-4-12b-instead-of-qwen-35-9b-windows-laptop).
 2. **Start the server:** open LM Studio, **Developer** tab → **Start server**.
 3. **That's all.** When AP Coder starts, it finds OvisOCR2 on its own and runs its self-test by itself (it
@@ -38,8 +41,9 @@ page-reading model (about 1 GB) that reads every page of every invoice as a seco
    after you start it. There is no model to pick and nothing to link.
 
 LM Studio running is step 0 of the [Quick start](QUICK_START.md) and the first row of the welcome page's checklist.
-Without it AP Coder still works, but every invoice waits for a person: nothing is checked by OvisOCR2 or the AI
-reviewer, and GL accounts are suggested only from what AP approved before (a line unlike anything approved has
+AP Coder starts without LM Studio, but the pilot runs with it. Without it every invoice waits for a person: nothing
+is checked by OvisOCR2 or the AI reviewer (the chat model reviews each invoice), and GL accounts are suggested only
+from what AP approved before (a line unlike anything approved has
 none). A banner on the Import invoices and Review pages says so.
 
 ## Step 2: Install (~10 min, one double-click)
@@ -148,7 +152,8 @@ Things to try:
   the filter over Total.
 - The **Today** line above the queue lists what is past due, parked for follow-up and ready to export.
 - Approve a few, then look at **Exports** (export a batch, then *Approved PDFs*), **Learning &
-  accuracy**, **Insights**, **Spend** and **Activity** (*Run the audit* for possible duplicate payments).
+  accuracy**, **Insights**, **Spend** and **Activity**. The duplicate payment audit is on **Exports** (*Run the
+  audit* for possible duplicate payments).
 - **GL accounts & tax** → **Fixed rules**: add a rule such as *line contains "delivery" → 6800*; open
   an invoice and *Apply the coding rules*.
 - **Vendor statements** → pick Northwind and upload `data\sample_statement_northwind.csv`, then open
@@ -267,7 +272,7 @@ For each invoice:
    updates its template; the confirmation says what was learned and how far the vendor is from touchless
    (e.g. *Learned from your 2 corrections (invoice number, due date). Acme Ltd: 14 invoices reviewed, about
    6 more invoices approved without a correction before this vendor can skip review.*). Invoices nobody needs to look at can be approved together with
-   *Approve N clean…* above the queue; those approvals don't count toward touchless.
+   **Approve N** above the queue; those approvals don't count toward touchless.
 5. Approved invoices wait in **Exports**: export them as a batch for the ERP (Excel, CSV or your
    custom layout), with the **Approved PDFs** to attach if your ERP keeps invoice images.
 
@@ -327,13 +332,17 @@ Run these in `scripts\terminal.bat` as `python -m ap_coder <command>`.
 | Command | What it does |
 |---|---|
 | `dashboard` | the review app (what the desktop shortcut and `APProcessor.bat` start) |
-| `doctor [--online]` | setup check; safe to paste |
+| `doctor [--online]` | setup check (with `--online`, also asks the chat model in LM Studio for two lines' accounts); safe to paste |
 | `share-report [--include-codes]` | redacted summary; safe to paste |
 | `demo [--remove]` | load or remove the demo invoices |
 | `watch [--every 60]` | keep processing new files dropped in the invoices folder; with `--once` it checks once (for Windows Task Scheduler: program `<AP Coder folder>\.venv\Scripts\python.exe`, arguments `-m ap_coder watch --once`, start in the AP Coder folder) |
 | `process <files/folders>` | batch processing without the dashboard; results also appear in the review queue. Files already processed are skipped (`--force` to redo), so it is safe to run again after Ctrl+C |
 | `labels` / `evaluate` | spreadsheet-based labelling and scoring (an alternative to reviewing in the dashboard) |
-| `read-pages [--minutes 240]` | have OvisOCR2 read the invoices waiting for it, then stop (Task Scheduler overnight) |
+| `read-pages [--minutes 240]` | have OvisOCR2 read the invoices waiting for it, then stop (Task Scheduler overnight); `--test` runs its self-test again |
+| `pilot-score --vouchers <F0411 export>` | shadow pilot: compare what AP Coder approved with what AP posted in JD Edwards |
+| `jde test` / `jde sync` / `jde status` | the JD Edwards API connection, when IT has set it up ([JDE_E1.md](JDE_E1.md)) |
+| `hub export` / `hub status` | the finance hub feed, when IT has switched it on ([FINANCE_HUB.md](FINANCE_HUB.md)) |
+| `service`, `server-update`, `users` | the company server only (server mode): see [SERVER.md](SERVER.md) |
 
 **A scheduled task after an update.** There is no command that follows the current version by itself: a task
 names one folder's `.venv`. An update unzipped **over** the old folder keeps that path. One unzipped into a **new**

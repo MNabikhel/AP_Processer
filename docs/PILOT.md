@@ -23,7 +23,8 @@ plan that turns the pilot into a decision, see [PILOT_PLAN.md](PILOT_PLAN.md).
   `mmproj-ATH-MaaS_OvisOCR2-f16.gguf`) into LM Studio's models folder under
   `bartowski/ATH-MaaS_OvisOCR2-GGUF`. Leave it unloaded: AP Coder has LM Studio load it, with the context it
   needs, when there is a page to read. **There is nothing to choose or link**: see *Set up LM Studio* below.
-  AP Coder still starts without LM Studio: invoices are read by the PDF's text or OCR, and wait for a person.
+  AP Coder starts without LM Studio, but the pilot runs with it: without OvisOCR2 invoices are read by the PDF's
+  text or OCR, and every invoice waits for a person.
   - *Speed.* Minutes a page on a laptop CPU, so it reads in the background; invoices are in the review queue
     at once and their fields update when it is done. Measured
     with LM Studio's headless server on a 4-core server CPU, no graphics card, where LM Studio gave
@@ -37,7 +38,8 @@ plan that turns the pilot into a decision, see [PILOT_PLAN.md](PILOT_PLAN.md).
     loaded, set *Max Concurrent Predictions* to 1 for OvisOCR2 in LM Studio.
   - *Overnight instead.* `python -m ap_coder read-pages --minutes 240` reads the queue and stops; schedule
     it with Task Scheduler for a laptop that is busy during the day.
-- **A chat model in LM Studio** (the pilot runs with it): the AI reviewer, and GL suggestions for new lines.
+- **A chat model in LM Studio** (Gemma 4 12B, else Qwen 3.5 9B; the pilot runs with it): it reviews each invoice
+  (the AI reviewer), reads its header from the page images, and suggests GL accounts for new lines.
   Without it every invoice is still read and checked the same way, waits for a person, and each line is
   suggested an account only from what AP approved before for that vendor, the vendor master's default account
   and your fixed coding rules; a line with nothing to learn from is left for you to code. With the model
@@ -79,11 +81,13 @@ plan that turns the pilot into a decision, see [PILOT_PLAN.md](PILOT_PLAN.md).
   - *Speed measured.* `python -m ap_coder doctor --online` with Qwen 3.5 2B on a busy 4-core CPU, no
     graphics card: 100 s for the two-line dry run (69 s reading the prompt, 30 s writing the answer). The 9B
     is several times larger, so expect it to be slower on the same laptop; a graphics card is much faster.
-  - The chat model only suggests accounts: it never reads the invoice. Invoices are read by AP Coder's own
-    readers and OvisOCR2.
+  - The chat model has three jobs: it reads the invoice's header from the page images (one more independent
+    reader next to AP Coder's own readers and OvisOCR2), reviews every invoice (the AI reviewer) and suggests
+    accounts. It never decides alone: its answers are checked against the other readers and your rules.
 - **No Azure needed.** The offline build reads and codes every invoice on the laptop, and the installer asks no
-  cloud questions. The optional Azure check is off by default and sends nothing unless IT switches it on.
-  Azure exists only for developers with the internet allowed (`AP_ALLOW_INTERNET=1`).
+  cloud questions. The optional Azure check is the one exception: it has its own switch (Settings → Reading),
+  is off by default and sends nothing unless IT switches it on; it does not need `AP_ALLOW_INTERNET`. Azure as
+  the reader or the coder exists only for developers with the internet allowed (`AP_ALLOW_INTERNET=1`).
 
 ## Install: one button
 
@@ -145,8 +149,9 @@ server; then press Check again in AP Coder's Settings → Reading (no need to re
 
 ### Set up LM Studio: start the server, nothing to choose
 
-1. **IT installs LM Studio** with OvisOCR2 (and, optionally, the chat model) already in it (see *What you
-   need*).
+1. **IT installs LM Studio** with OvisOCR2 and the chat model already in it (see *What you need*). AP Coder
+   starts without LM Studio, but the pilot runs with it: without OvisOCR2 every invoice waits for a person, and
+   the chat model reviews each invoice.
 2. **Start the server**: open LM Studio, **Developer** tab → **Start server**. Then start AP Coder.
 3. **AP Coder does the rest on its own.** It finds OvisOCR2 in LM Studio and runs its self-test by itself:
    OvisOCR2 reads a scan of a sample invoice whose answers are known, field by field. This takes 10 to 20
@@ -246,7 +251,7 @@ name). From then on, a vendor that meets the bar goes touchless by itself:
 
 - at least 20 invoices reviewed by a person;
 - header fields read right at least 99% of the time, with 95% confidence, over its last 200 invoices
-  (with about 13 header fields an invoice, that usually takes about 30 clean invoices);
+  (with about 13 header fields an invoice, that usually takes about 30 to 40 clean invoices);
 - the last 10 with no correction at all.
 
 5% of touchless invoices still go to a person as an audit. One correction, or a touchless invoice
@@ -355,13 +360,15 @@ itself (and makes its `.venv` again with it).
 
 ## What is sent over the network
 
-**Nothing**, in the offline build:
+**Nothing**, in the offline build, unless someone switches on one of the exceptions listed at the end of this
+section (the Azure check, the finance hub feed, the JD Edwards connection or server mode; all off by default):
 
 - The setup never connects to the internet: packages come only from the bundle's `wheelhouse/`
   (`pip --no-index`), the OCR models only from its `models/` (RapidOCR is given their paths, so its own
   downloader never runs, and a damaged model file counts as missing instead of being fetched again), the
   installer runs no `git fetch` / `git pull`, and APProcessor.bat never installs Python with `winget`.
-- The dashboard listens only on this laptop (`127.0.0.1`); other computers cannot open it. To share it
+- The dashboard listens only on this laptop (`127.0.0.1`; or on a company server: [SERVER.md](SERVER.md));
+  other computers cannot open it. To share it
   on the office network on purpose, set `AP_DASHBOARD_ADDRESS=0.0.0.0` before starting. A colleague
   opening it from another computer is asked "Who are you?" once: their approvals, rejections and other
   changes are then recorded in their name, with their computer's address, so they can give the second
@@ -369,7 +376,7 @@ itself (and makes its `.venv` again with it).
 - The dashboard is AP Coder's own small web server (FastAPI): no usage statistics, no outside service;
   fonts, icons and scripts come from the app, not the internet. It answers only requests addressed to this
   laptop and changes nothing for a page that is not its own.
-- OCR runs on the laptop with local models; OvisOCR2 and the optional chat model run in LM Studio on the
+- OCR runs on the laptop with local models; OvisOCR2 and the chat model run in LM Studio on the
   laptop too and are reached over `localhost`.
 - A test (`tests/test_offline.py`) reads an invoice, runs every dashboard page and builds a JD Edwards
   batch with all outside connections blocked, and fails if anything tries to connect.
@@ -383,5 +390,14 @@ The only outside connections are the ones someone chooses:
   terminal that runs APProcessor.bat, the installer also checks GitHub for updates, and the app may use a model
   server or Azure on the internet. `scripts/build_offline_bundle.py` sets it for itself, on IT's computer. Never
   set it on a pilot laptop.
-- Azure, only on a developer's computer with `AP_ALLOW_INTERNET=1` and Azure settings filled in (then
-  invoices go to your organisation's own Azure resources). The offline build ignores Azure settings.
+- **The Azure check**, its own opt-in switch in Settings → Reading (off by default, no `AP_ALLOW_INTERNET`
+  needed): once it is switched on with your organisation's Azure endpoint and key, the invoices AP Coder isn't
+  sure of, and a small share of the others (capped per day), are sent to that one Azure resource for a second
+  opinion. Azure as the reader or the coder is developer-only, on a computer
+  with `AP_ALLOW_INTERNET=1`; the offline build ignores those Azure settings.
+- **The finance hub feed** (off by default, Settings → Finance hub): it writes tables to a shared folder you
+  choose, or to OneLake only with `AP_ALLOW_INTERNET=1`. See [FINANCE_HUB.md](FINANCE_HUB.md).
+- **The JD Edwards AIS connection** (off by default, Settings → JD Edwards E1): it talks to your company's own
+  JD Edwards server on the internal network, a named internal system (D-104). See [JDE_E1.md](JDE_E1.md).
+- **Server mode** (off by default): the dashboard then listens on the office network, over HTTPS with logins.
+  See [SERVER.md](SERVER.md).

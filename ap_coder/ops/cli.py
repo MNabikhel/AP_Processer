@@ -137,7 +137,9 @@ def build_parser() -> argparse.ArgumentParser:
     private = private_dir()
     db_path, out_dir, cache_dir = private / "ap_coder.db", private / "output", private / ".cache" / "extraction"
     db_path = env_path("AP_DB_PATH") or db_path  # the database the dashboard uses, as it chooses it
-    parser = argparse.ArgumentParser(prog="ap_coder", description="Enterprise AP Invoice Coder Engine (PoC)")
+    parser = argparse.ArgumentParser(
+        prog="ap_coder", description="AP Coder: offline AP invoice coding for Canadian invoices"
+    )
     parser.add_argument(
         "--env-file", default=None, help="Path to a .env file (default: the data folder's, else ./.env)"
     )
@@ -171,8 +173,13 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--insecure-http", action="store_true",
                        help="Server mode on plain HTTP, for a first test on a trusted network only")  # fmt: skip
 
-    p = sub.add_parser("doctor", help="Check configuration, reference data and (with --online) Azure connectivity")
-    p.add_argument("--online", action="store_true", help="Call both Azure services (costs about one invoice)")
+    p = sub.add_parser("doctor", help="Check configuration, reference data and (with --online) the models")
+    p.add_argument(
+        "--online",
+        action="store_true",
+        help="Also ask the local model in LM Studio for two lines' accounts (the dry run); Azure only with "
+        "AP_ALLOW_INTERNET=1 (costs about one invoice)",
+    )
     _add_reference_args(p)
     _add_server_ops(sub)
 

@@ -1,8 +1,9 @@
 # AP Coder
 
-An offline accounts-payable app for Canadian invoices, on one laptop: it reads each PDF or picture locally, codes the GL
-accounts and cost centers, checks GST/HST/PST/QST and the math, learns from what AP approves, and exports approved
-invoices to JD Edwards E1 or Excel/CSV. People review on a local dashboard (FastAPI) at 127.0.0.1.
+An offline accounts-payable app for Canadian invoices, on one laptop (or a company server: docs/SERVER.md): it reads
+each PDF or picture locally, codes the GL accounts and cost centers, checks GST/HST/PST/QST and the math, learns from
+what AP approves, and exports approved invoices to JD Edwards E1 or Excel/CSV. People review on a local dashboard
+(FastAPI) at 127.0.0.1 (or a company server: docs/SERVER.md).
 
 Code: `ap_coder/` (`core` store and settings, `ai` pipeline and models, `coding` tax and checks, `erp` exports and
 reports, `intake` pictures and emails, `ops` command line and doctor, `capture` document reading, `web` the dashboard,
@@ -57,5 +58,5 @@ Every step re-reads the whole conversation, so fewer, fuller steps cost less:
 - Run: `python -m ap_coder serve` (http://127.0.0.1:8501); `python -m ap_coder doctor`; `python scripts/pilot_check.py`.
 - Check a change: `python scripts/check.py` (ruff on the changed files, then their tests; a minute or two).
 - Test: `python -m pytest -q` runs all but the slow tests (a few minutes; serially, no xdist). The whole suite with the
-  browser tests, `python -m pytest -q -m ""`, takes ~25 minutes: CI runs it on every push, so leave it to CI.
+  browser tests, `python -m pytest -q -m ""`, takes ~25 minutes: CI runs it on pushes to main and on pull requests, so leave it to CI.
 - Lint: `ruff check ap_coder tests scripts` and `ruff format --check ap_coder tests scripts`.

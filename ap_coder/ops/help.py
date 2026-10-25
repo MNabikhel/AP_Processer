@@ -775,7 +775,9 @@ FAQ: list[tuple[str, str]] = [
         "Does any invoice or GL data leave this computer?",
         "No. Every invoice is read and coded on this computer: the PDF's own text or OCR, OvisOCR2 in LM Studio and "
         "the checks all run here. The database, the invoices, what the AI learns and the exports stay in the "
-        "private folder on this computer.",
+        "private folder on this computer. The only exceptions are ones someone switches on, each off by default: the "
+        "Azure check (Settings → Reading), the finance hub feed (Settings → Finance hub), the JD Edwards connection "
+        "(your company's own JD Edwards server) and server mode (AP Coder on a company server).",
     ),
     (
         "How does the AI learn?",
@@ -965,7 +967,17 @@ SERVER_FAQ: dict[str, tuple[str, str]] = {  # question -> (question, answer) on 
         "Does any invoice or GL data leave the server?",
         "No. Every invoice is read and coded on the company's server: the PDF's own text or OCR, OvisOCR2 in LM "
         "Studio and the checks all run there. The database, the invoices, what the AI learns and the exports stay in "
-        "its data folder on the server; your browser shows them over the company network.",
+        "its data folder on the server; your browser shows them over the company network, over HTTPS. The only "
+        "exceptions are ones an Admin switches on, each off by default: the Azure check (Settings → Reading), the "
+        "finance hub feed (Settings → Finance hub) and the JD Edwards connection (your company's own JD Edwards "
+        "server).",
+    ),
+    "What is the second approval?": (
+        "What is the second approval?",
+        "If an approval limit is set (Settings → Review), an invoice above it is not ready to export after the "
+        "first approval: it waits in the Second approval tab until someone else approves it, or sends it back to "
+        "the queue. On the server each person logs in with their own account, so the second approval is always "
+        "another person's; an Approver or an Admin can give it. The two names are recorded in the Activity log.",
     ),
     "OvisOCR2 isn't reading invoices.": (
         "OvisOCR2 isn't reading invoices.",
@@ -990,12 +1002,14 @@ def quick_start(server: bool = False) -> list[tuple[str, str, str]]:
 # What's new, for the pilot tester (the developer changelog, docs/WHATS_NEW.md, is a developer tool).
 WHATS_NEW: list[str] = [
     "LM Studio is the first step: the welcome page and Settings → Reading say whether it runs, with Check again.",
-    "The menu shows the pages you use every day; the others are under More.",
+    "The AI reviewer: the chat model in LM Studio checks every invoice against its pages before it can skip review.",
+    "The review screen shows two numbers: Reading (how sure the header is) and Coding (how sure the lines are).",
+    "Tick Meals & entertainment on a GL account: only half the GST/HST and QST on its lines is claimed.",
+    "The Invoice directory: every invoice in one table, with a filter over each column, saved layouts and Excel.",
+    "A correction AP keeps making becomes a lesson; AP Coder asks once for the reason (Learning & accuracy → Lessons).",
+    "On the review screen, G goes to the line still to code.",
+    "AP Coder can also run on a company server: each person logs in with their own account.",
     "Settings opens on Review: your name, approvals and your province, with one Save.",
     "Exports are Excel or CSV for the pilot, and the page remembers the last one you used.",
-    "The sample GL accounts come without cost centers: each line needs only a GL account.",
-    "Each line has one tax code (GST + PST, GST only, Exempt...), and the Tax check under the lines adds each tax up.",
-    "On the review screen the invoice details come first, then the lines.",
-    "A vendor from the vendor list fills in the GST/HST, QST and PST numbers the invoice does not print, and says so.",
     "Pay from: the company bank account that pays each invoice, from GL accounts & tax → Bank accounts.",
 ]
