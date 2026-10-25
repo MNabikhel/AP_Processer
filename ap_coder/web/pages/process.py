@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import collections
 import contextvars
+import datetime as dt
 import hashlib
 import logging
 import os
@@ -489,6 +490,8 @@ def process_files(store: Store, settings: Settings, paths: list[Path], *, alread
     before (said in the summary); ``emails``: saved emails unpacked for this run; ``notes``: messages from saving the
     upload; ``folder_emails``: first unpack the saved emails waiting in the invoices folder (the folder pick-up)."""
 
+    actor = reviewer()  # who started it (the job's thread has no request to say)
+
     def work(job: Job) -> dict[str, Any]:
         todo, skipped, mails = list(paths), list(already or []), list(emails or [])
         if folder_emails:
@@ -502,7 +505,8 @@ def process_files(store: Store, settings: Settings, paths: list[Path], *, alread
             job.log(text, tone, "gpp_maybe" if tone == "err" and mail.triage else "mail")
             inbox.log_sorted(store, mail)
         job.step(0, len(todo), "Starting")
-        ok = 0
+        ok, errors = 0, []
+        started, clock = dt.datetime.now().isoformat(timespec="seconds"), time.monotonic()
         waiting = store.page_reads_waiting()
         pipeline = reference = None
         if todo:
@@ -519,7 +523,12 @@ def process_files(store: Store, settings: Settings, paths: list[Path], *, alread
                         "flag" if attention else "check_circle")  # fmt: skip
             else:
                 job.log(f"{path.name}: {result.error}", "err", "error")
+                errors.append(f"{path.name}: {result.error}")
         failed = len(todo) - ok
+        if todo or skipped:  # the run in the audit trail (the finance hub's workflow_runs, D-103)
+            store.record_import_run("dashboard", files=len(todo), ok=ok, failed=failed, skipped=len(skipped),
+                                    started_at=started, seconds=time.monotonic() - clock, errors=errors,
+                                    actor=actor)  # fmt: skip
         queued = max(0, store.page_reads_waiting() - waiting)
         messages = list(notes or [])
         if ok:

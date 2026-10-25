@@ -12,7 +12,7 @@ The roles, each able to do everything the one before it can (``core/store/users.
   and gives the go-ahead to post vouchers to JD Edwards through the API (D-104; a Clerk may run its dry run).
 * **Admin** (``ADMIN``): everything else: Settings, the people who log in, JD Edwards setup (the API connection and
   its sync too), the account lists and tax setup, imports of the vendor master and the like, backups and restore,
-  deleting, the Azure check, the learning memory's resets.
+  deleting, the Azure check, the learning memory's resets, the finance hub feed.
 
 ``OPEN`` routes answer anyone (the login page, ``/healthz``, the styles and scripts); ``SIGNED_IN`` ones anyone
 logged in, also while they must still choose a new password (logging out, changing it). A route not in ``RULES``
@@ -140,6 +140,7 @@ RULES: dict[tuple[str, str], str] = {
         "POST /settings/jde/gl-map/import", "POST /settings/jde/tax-map", "POST /settings/jde/terms",
         "POST /settings/jde/an8", "GET /settings/jde/worksheet.xlsx", "POST /settings/jde/worksheet",
         "POST /settings/jde/api", "POST /settings/jde/api/test", "POST /settings/jde/api/sync",  # D-104
+        "POST /settings/hub", "POST /settings/hub/run",  # the finance hub feed (D-103)
         "GET /admin/users", "POST /admin/users/add", "POST /admin/users/{user_id:int}/reset",
         "POST /admin/users/{user_id:int}/role", "POST /admin/users/{user_id:int}/deactivate",
         "POST /admin/users/{user_id:int}/activate", "POST /admin/users/addresses/unlock",

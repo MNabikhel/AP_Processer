@@ -138,7 +138,7 @@ def test_settings_tabs_are_review_reading_automation_data_about(client, status):
     tabs = re.findall(r'href="/settings/(\w+)"[^>]*>(?:<span[^>]*>[^<]*</span>)?\s*([^<]+)<', page)
     assert [key for key, _ in tabs][:5] == ["review", "reading", "automation", "data", "about"]
     assert [html.unescape(name).strip() for _, name in tabs][:5] == TAB_NAMES
-    assert sorted(TAB_KEYS) == sorted([*(key for key, _ in tabs[:5]), "jde"])
+    assert sorted(TAB_KEYS) == sorted([*(key for key, _ in tabs[:5]), "jde", "hub"])  # the finance hub (D-103)
     labels = " ".join(name for _, name in tabs)
     assert "AI model" not in labels and "Page reader" not in labels and "Azure" not in labels
 
@@ -160,7 +160,7 @@ def test_every_settings_tab_the_app_names_exists():
         (name, tab)
         for name, tab in named
         if not any(tab.startswith(t) or t.startswith(tab) for t in TAB_NAMES)
-        and not tab.startswith(("JD", "Data &amp;"))
+        and not tab.startswith(("JD", "Data &amp;", "Finance hub"))
     ]  # (JD Edwards E1: hidden, D-52)
     assert not wrong, wrong
 

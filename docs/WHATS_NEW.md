@@ -8,6 +8,14 @@ has a short tour, and the [pilot plan](PILOT_PLAN.md) suggests four weeks to a d
 Your existing data is safe. On first start the database upgrades itself (schema version 15), and a
 backup of the database is made automatically once a day when AP Coder starts (the newest 14 are kept).
 
+## This release: a feed for the finance hub on Microsoft Fabric (off until an Admin turns it on)
+
+Settings → Finance hub sends six tables (invoices, their lines, approvals, the Activity log, accuracy and runs) to the
+company's finance hub, only what changed each time: to a shared folder Fabric reads (laid out for Fabric Open
+Mirroring, with a read-only SQLite copy for the on-premises gateway), or straight to OneLake where the internet is
+allowed. The invoices' PDFs stay in AP Coder. The tables are described in [FINANCE_HUB.md](FINANCE_HUB.md); from the
+command line: `python -m ap_coder hub export [--full] [--dry-run]`.
+
 ## This release: colleagues on the office network each approve in their own name
 
 When AP Coder is shared on the office network (`AP_DASHBOARD_ADDRESS=0.0.0.0`), a colleague opening it from another

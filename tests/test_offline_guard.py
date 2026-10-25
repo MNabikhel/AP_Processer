@@ -115,6 +115,8 @@ TOUCHPOINTS = {
     "/shutdown; no proxy)",
     "ap_coder/core/config.py": "socket.getaddrinfo of a model server's name, to judge the address it has (no "
     "connection)",
+    "ap_coder/erp/hub/onelake.py": "the finance hub's push to OneLake: only with AP_ALLOW_INTERNET=1 and an Admin's "
+    "opt-in (push_allowed), to the sign-in host and the OneLake host given, no redirects",
     "scripts/launch.py": "pip --no-index from the wheelhouse (PyPI only with AP_ALLOW_INTERNET=1); socket binds "
     "127.0.0.1; webbrowser opens http://localhost",
     "scripts/running.py": "the dashboard on 127.0.0.1 (no proxy)",
@@ -209,6 +211,11 @@ def test_python_written_html_names_no_other_host():
                     continue  # Azure OpenAI's sign-in scope (AP_ALLOW_INTERNET=1 only)
                 if rel == "ap_coder/ops/service.py" and url == "http://schemas.microsoft.com/windows/2004/02/mit/task":
                     continue  # the scheduled task's XML namespace: a name, never fetched
+                if rel == "ap_coder/erp/hub/onelake.py" and re.match(
+                    r"https://(onelake\.dfs\.fabric\.microsoft\.com|login\.microsoftonline\.com|storage\.azure\.com)(/|$)",
+                    url,
+                ):
+                    continue  # the finance hub's push: AP_ALLOW_INTERNET=1 and an Admin's opt-in only (D-103)
                 problems.append(f"{rel}:{number}: {url}")
     assert not problems, "\n".join(problems)
 
