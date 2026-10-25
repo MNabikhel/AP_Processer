@@ -1168,3 +1168,22 @@ that is reversed keeps its line, marked "replaced by D-NN".
   finish an ambiguous task and say the choice. It is a profile, not a setting: lead sessions that publish documents,
   run workflows or talk to other agents keep every tool. `tests/test_agent_profile.py` keeps its tool list
   deliberate.
+- **D-107** · Fixes of an end-to-end walk (B-1180 to B-1210), with the choices they made. (1) **Releasing a voucher
+  checked in JD Edwards**: a voucher locked because JDE answered EXISTS for another invoice (or whose answer was lost)
+  had no way out. An Admin, after checking in JD Edwards, uses "I've checked in JD Edwards: release this voucher"
+  (Exports → the batch → JD Edwards API) with a typed note: the row is marked not sent (failed, `maybe_sent` 0), so the
+  batch files hold it again and the batch can be undone; the event `jde_voucher_released` keeps the Admin's name, the
+  note and the status it had. Never offered, and refused, for a posted voucher (voided in JD Edwards) or one being
+  sent. An Admin's only (`web/roles.py`): a person's word against JDE's answer, recorded. (2) **The retry queue**: a
+  voucher never sent waits 5, then 15 minutes, never hourly; one a run never reached (JDE not asked: the rest skipped
+  after a timeout, a 504 or a busy JDE) keeps its tries. (3) **Secrets** are scrubbed as a whole word, or as the value
+  of password= / token: / Authorization, at any length, never inside another word. (4) **An AIS address on the
+  internet is refused at save** with the connection's check; a name this computer can't look up now (VPN off) is saved
+  and checked when used. (5) **Vendors that make work** count what was still open when an invoice was approved: a
+  finding the reviewer cleared by correcting what AP Coder read was AP Coder's misread; rejected invoices are left
+  out. (6) **A split's parts go under the line split**, keeping their numbers (pairing with the AI's lines, D-71), so
+  LINE_NUMBERING looks at the numbers, not their order. (7) **The doctor on the server** warns, not fails, when the
+  HTTPS files are in neither server.json nor the environment: it can't see a running server's command line. (8) **The
+  hub's invoice links** default to the server's own address in server mode (server.json and the environment; the
+  computer's name when no name is set). (`erp/jde_post.py`, `erp/jde_ais.py`, `erp/insights.py`, `coding/review.py`,
+  `ops/service.py`, `erp/hub/run.py`; `tests/test_walk_fixes.py`, `tests/test_server_walk_fixes.py`)
