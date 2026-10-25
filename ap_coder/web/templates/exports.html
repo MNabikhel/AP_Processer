@@ -212,7 +212,18 @@
             <td><a href="/review/{{ r.invoice_id }}">#{{ r.invoice_id }}</a> {{ r.number }}</td><td>{{ r.vendor }}</td>
             <td class="r">{% if r.total is not none %}{{ r.total | money }} <span class="muted">{{ r.currency }}</span>{% endif %}</td>
             <td>{{ ui.pill(r.label, r.tone) }}</td><td>{{ r.voucher or "—" }}</td>
-            <td class="w">{{ r.error }}</td>
+            <td class="w">{{ r.error }}
+              {% if r.locked and r.status not in ("posted", "sending") and can("/exports/batches/1/jde-api/release") %}
+              <details class="pop">
+                <summary class="btn sm ghost"><span class="ms" aria-hidden="true">lock_open</span>I've checked in JD Edwards: release this voucher</summary>
+                <form class="pop-body stack" method="post" action="/exports/batches/{{ chosen.id }}/jde-api/release" data-confirm="Release AP Coder #{{ r.invoice_id }}? It is then taken as not sent: the batch files hold it again, and the batch can be undone.">
+                  <input type="hidden" name="invoice_id" value="{{ r.invoice_id }}">
+                  <p class="small muted">Only once you have checked in JD Edwards that this voucher isn't there. Your name and this note are kept in its history.</p>
+                  <label class="field">What you checked<textarea name="note" rows="2" required></textarea></label>
+                  <button class="btn sm" type="submit"><span class="ms" aria-hidden="true">lock_open</span>Release it</button>
+                </form>
+              </details>
+              {% endif %}</td>
           </tr>
           {% endfor %}
         </tbody>

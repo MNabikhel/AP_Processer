@@ -18,7 +18,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from ap_coder.core import ui
@@ -618,6 +618,19 @@ def jde_api_post(request: Request, batch: int) -> JSONResponse:
             return {"messages": [{"text": str(exc), "tone": "warn"}]}
 
     return _api_job(request, "Posting to JD Edwards", work)
+
+
+@router.post("/exports/batches/{batch:int}/jde-api/release")
+def jde_api_release(request: Request, batch: int, invoice_id: int = Form(0), note: str = Form("")) -> JSONResponse:
+    """An Admin's "I've checked in JD Edwards: release this voucher" (D-107): a voucher held here (JD Edwards answered
+    EXISTS for another invoice, say) is marked not sent, with the Admin's name and note in the history."""
+    try:
+        jde_post.release(get_store(request), batch, invoice_id, current_reviewer(), note)
+    except ValueError as exc:
+        return refuse(str(exc))
+    return done(request, f"/exports?batch={batch}#jde-api", flash_message(
+        f"AP Coder #{invoice_id} released: it is not sent, so the batch files hold it again and the batch can be "
+        "undone.", "ok", icon="lock_open"))  # fmt: skip
 
 
 @router.post("/exports/jde-api/retry")

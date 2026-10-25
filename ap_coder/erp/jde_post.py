@@ -268,6 +268,29 @@ def _locked_message(batch: int, found: list[str]) -> str:
     return f"Batch {batch} can't be undone: {'; '.join(parts)}."
 
 
+def release(store: Any, batch: int, invoice_id: int, actor: str | None, note: str) -> None:
+    """An Admin checked in JD Edwards that a voucher locked here isn't there (JDE answered EXISTS for another
+    invoice, say): the row is marked not sent, so the invoice goes in the batch files again or the batch can be
+    undone, and an event says who released it and why (D-107). ValueError, in plain words, when it can't be: no
+    note, not locked, being sent, or posted (that one is voided in JD Edwards, never released)."""
+    note = " ".join((note or "").split())
+    if not note:
+        raise ValueError("Say what you checked in JD Edwards.")
+    row = next((p for p in postings(store, batch) if p["invoice_id"] == invoice_id), None)
+    if row is None or not (row["status"] in LOCKED or row.get("maybe_sent")):
+        raise ValueError(f"AP Coder #{invoice_id} isn't held for JD Edwards in batch {batch}: nothing to release.")
+    if row["status"] == POSTED:
+        raise ValueError(f"AP Coder #{invoice_id} is posted to JD Edwards: reverse it there (void the voucher).")
+    if row["status"] == SENDING:
+        raise ValueError(f"AP Coder #{invoice_id} is being sent to JD Edwards: wait for its answer.")
+    error = f"Released by {actor or 'an Admin'} after checking in JD Edwards: {note}"[:500]
+    if not _put(store, row["idem_key"], invoice_id, batch, rev=row["rev"], status=FAILED, maybe_sent=0, verify=0,
+                next_try=None, error=error):  # fmt: skip
+        raise ValueError(f"AP Coder #{invoice_id} changed meanwhile: look at it again.")
+    store.log_event("jde_voucher_released", invoice_id=invoice_id, actor=actor,
+                    detail={"batch": batch, "key": row["idem_key"], "was": row["status"], "note": note})  # fmt: skip
+
+
 def undo_problem(store: Any, batch: int) -> str:
     """Why the batch can't be undone ("" when it can): JDE has, or may have, one of its vouchers."""
     found = locked(store, batch)

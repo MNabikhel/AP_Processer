@@ -71,6 +71,7 @@ ACTIONS = {
     "jde_voucher_posted": ("cloud_done", "ok", "Posted to JD Edwards"),
     "jde_voucher_refused": ("cloud_off", "err", "Refused by JD Edwards"),
     "jde_voucher_mismatch": ("gpp_bad", "err", "JD Edwards holds another voucher under this key"),
+    "jde_voucher_released": ("lock_open", "warn", "Voucher released after a check in JD Edwards"),
     "parked": ("pause_circle", "warn", "Parked"),
     "unparked": ("play_circle", "info", "Back in the queue"),
     "note": ("sticky_note_2", "violet", "Note"),
@@ -420,6 +421,8 @@ def describe(event: dict[str, Any]) -> str:
             " (checked here only: JD Edwards not reached)" if d.get("jde") is False else "")  # fmt: skip
     if action == "jde_voucher_mismatch":
         return f"batch {d.get('batch', '')}: JD Edwards' voucher {d.get('document', '')} is not this invoice"
+    if action == "jde_voucher_released":
+        return f"batch {d.get('batch', '')}: taken as not sent · {d.get('note', '')}"
     if action in ("jde_voucher_posted", "jde_voucher_refused"):
         voucher = f": voucher {d['voucher']}" if d.get("voucher") else ""
         return f"batch {d.get('batch', '')}{voucher}"

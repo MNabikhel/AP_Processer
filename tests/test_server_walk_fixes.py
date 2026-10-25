@@ -163,3 +163,39 @@ def test_the_batch_readme_offers_no_undo_when_the_batch_cant_be_undone(tmp_path,
     jde_post.post(store, batch)
     text = readme()
     assert "Undo this batch" not in text and "can't be undone" in text and "void the voucher" in text
+
+
+# --- S8. An Admin releases a voucher checked in JD Edwards -------------------------------------------------------
+
+
+def test_an_admin_releases_a_voucher_jde_holds_another_invoice_under_after_checking(tmp_path, ais):
+    """B-1204: a voucher locked because JD Edwards answered EXISTS for another invoice had no way out: neither undone
+    nor exported again. An Admin who checked in JD Edwards releases it with a note (D-107): the row is not sent,
+    the batch can be undone, and the event says who and why. Never a voucher posted."""
+    import re
+
+    from ap_coder.web import roles
+
+    from .test_jde_post import batch_of
+    from .test_jde_post_safety import _plant
+    from .webclient import client_for, follow, post
+
+    store, batch = batch_of(tmp_path, ais, ON, QC)
+    jde_post.dry_run(store, batch)
+    _plant(ais, store, batch, an8="4999", invoice_number="OTHER-1", gross=5.0)
+    jde_post.post(store, batch)
+    assert statuses(store, batch) == {1: jde_post.FAILED, 2: jde_post.POSTED}
+    client = client_for(store)
+    page = client.get("/exports", params={"batch": batch}).text
+    release = f"/exports/batches/{batch}/jde-api/release"
+    forms = re.findall(rf'action="{release}".*?name="invoice_id" value="(\d+)"', page, re.S)
+    assert forms == ["1"] and "I've checked in JD Edwards: release this voucher" in page  # not the posted one
+    assert not post(client, release, {"invoice_id": "1", "note": ""}).json()["ok"]  # a note is needed
+    assert not post(client, release, {"invoice_id": "2", "note": "checked"}).json()["ok"]  # never a posted voucher
+    follow(client, post(client, release, {"invoice_id": "1", "note": "77777 is invoice OTHER-1's, ours isn't there"}))
+    row = next(p for p in jde_post.postings(store, batch) if p["invoice_id"] == 1)
+    assert not row["maybe_sent"] and row["status"] != jde_post.POSTED
+    assert 1 not in jde_post.left_out_of_files(store, batch)  # the files hold it again
+    (event,) = store.events(actions=["jde_voucher_released"])
+    assert event["invoice_id"] == 1 and event["detail"]["note"].startswith("77777") and event["actor"]
+    assert roles.RULES[("POST", "/exports/batches/{batch:int}/jde-api/release")] == roles.ADMIN

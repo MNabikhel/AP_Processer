@@ -118,6 +118,7 @@ RULES: dict[tuple[str, str], str] = {
         "POST /review/{invoice_id}/delete", "POST /review/sample-gl", "POST /process/open-folder",
         "POST /demo/load", "POST /demo/remove",
         "POST /exports/batches/{batch:int}/undo", "POST /exports/layout", "POST /exports/layout/preview",
+        "POST /exports/batches/{batch:int}/jde-api/release",  # a voucher checked in JD Edwards, released (D-107)
         "POST /exports/register/upload", "POST /exports/register/import", "POST /exports/register/clear",
         "POST /accounts/sample", "POST /accounts/bank/upload", "POST /accounts/bank/import", "POST /accounts/bank/save",
         "POST /accounts/{table}/upload", "POST /accounts/{table}/import", "POST /accounts/{table}/save",
