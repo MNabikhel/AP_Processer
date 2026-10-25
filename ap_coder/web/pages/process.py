@@ -146,15 +146,19 @@ def split_new(store: Store, files: list[Path]) -> tuple[list[Path], list[Path]]:
     return todo, already
 
 
-def email_line(mail: Unpacked) -> tuple[str, str]:
-    """(text, tone) about a saved email: what it was, where its attachments went, what was left out and why."""
+def email_line(mail: Unpacked, already: list[Path] | None = None) -> tuple[str, str]:
+    """(text, tone) about a saved email: what it was, where its attachments went, what was left out and why.
+    ``already``: the files of this run skipped as already in AP Coder (not sent to the review queue)."""
     if mail.error:
         return (f"{mail.email} {mail.error}. It was moved to the emails/could not read subfolder; ask the sender to "
                 "send the invoice again."), "err"  # fmt: skip
     t = mail.triage
     went = []
-    if mail.saved:
-        went.append(f"{ui.plural(len(mail.saved), 'invoice')} to the review queue")
+    seen = [p for p in mail.saved if p in (already or [])]
+    if len(mail.saved) > len(seen):
+        went.append(f"{ui.plural(len(mail.saved) - len(seen), 'invoice')} to the review queue")
+    if seen:
+        went.append(f"{ui.plural(len(seen), 'attachment')} already in AP Coder")
     if mail.statements:
         went.append(f"{ui.plural(len(mail.statements), 'statement')} to Statements")
     if mail.held:
@@ -501,7 +505,7 @@ def process_files(store: Store, settings: Settings, paths: list[Path], *, alread
             todo += [p for p in new if p not in todo]
             skipped += dup
         for mail in mails:
-            text, tone = email_line(mail)
+            text, tone = email_line(mail, skipped)
             job.log(text, tone, "gpp_maybe" if tone == "err" and mail.triage else "mail")
             inbox.log_sorted(store, mail)
         job.step(0, len(todo), "Starting")
@@ -544,8 +548,11 @@ def process_files(store: Store, settings: Settings, paths: list[Path], *, alread
                                           [p.name for p in skipped], "content_copy"))  # fmt: skip
         if not todo and not skipped and not mails:
             messages.append(flash_message("Nothing new to read.", "info"))
+        label = f"Processed {ok} of {len(todo) + len(skipped)}" if todo else "Nothing new to read"
+        if todo and skipped:  # every file of the run counted, the ones not read said (B-1184)
+            label += f": {len(skipped)} already in AP Coder"
         return {"processed": len(todo), "ok": ok, "failed": failed, "queued": queued, "messages": messages,
-                "label": f"Processed {ok} of {len(todo)}" if todo else "Nothing new to read"}  # fmt: skip
+                "label": label}  # fmt: skip
 
     return work
 

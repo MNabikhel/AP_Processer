@@ -108,3 +108,38 @@ def test_vendors_that_make_work_leave_out_rejected_invoices_and_ap_coders_own_mi
     store.reject_invoice(rejected, "Jane", "Not ours")
     (row,) = vendor_workload(store)
     assert (row["invoices"], row["with_problems"], row["top_codes"]) == (2, 1, ["SUBTOTAL_MISMATCH"])
+
+
+# --- L5. An email import's counts ----------------------------------------------------------------------------------
+
+
+def test_an_email_whose_attachment_is_already_in_ap_coder_says_so_and_the_counts_are_true(tmp_path):
+    """B-1184: an email whose attachment was already in AP Coder said "1 invoice to the review queue" though it was
+    skipped, and "Processed 1 of 1" was shown for the three files uploaded."""
+    from email.message import EmailMessage
+
+    from ap_coder.core.store import Store, load_sample_setup
+
+    from .conftest import SAMPLES
+    from .test_web_process import PAGE, finished
+    from .webclient import client_for
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(store)
+    client = client_for(store)
+    first, other = (SAMPLES / f"{s}.pdf" for s in ("harbourview_NS_HST_HPS-2026-0347", "northwind_ON_HST_NW-2026-0912"))
+    client.post("/process/upload", files=[("files", (first.name, first.read_bytes(), "application/pdf"))],
+                headers=PAGE)  # fmt: skip
+    finished(client.app, client)
+    mail = EmailMessage()
+    mail["Subject"], mail["From"] = "Invoice HPS-2026-0347", "ar@vendor.example"
+    mail.set_content("Attached.")
+    mail.add_attachment(first.read_bytes(), maintype="application", subtype="pdf", filename=first.name)
+    files = [("files", ("again.eml", mail.as_bytes(), "message/rfc822")),
+             ("files", (first.name, first.read_bytes(), "application/pdf")),
+             ("files", (other.name, other.read_bytes(), "application/pdf"))]  # fmt: skip
+    client.post("/process/upload", files=files, headers=PAGE)
+    snap = finished(client.app, client)
+    assert snap["result"]["label"] == "Processed 1 of 3: 2 already in AP Coder"
+    (line,) = [entry["text"] for entry in snap["lines"] if entry["text"].startswith("again.eml")]
+    assert "to the review queue" not in line and "1 attachment already in AP Coder" in line, line
