@@ -83,7 +83,7 @@ def test_exports_carry_the_vendor_id(tmp_path):
     text = exports.build("csv", [inv], {}, 1, store.vendor_ids())[0].decode("utf-8-sig")
     assert text.splitlines()[0].startswith("Batch,AP Coder #,Vendor ID,Vendor")
     rows = exports.invoice_rows([inv], 1, store.vendor_ids())
-    assert rows[0]["vendor_id"] == "V10023"
+    assert rows[0]["vendor_id"] == "10023"
 
 
 def test_exports_find_the_vendor_id_as_supplier_learning_does(tmp_path):

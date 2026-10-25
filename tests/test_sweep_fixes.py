@@ -358,7 +358,7 @@ def test_vendor_id_found_by_gst_number(tmp_path):
     load_sample_vendor_master(store)
     inv = {"id": 1, "final_output": {**_gt(vendor_name="Northwind Information Technology Solutions"),
                                      "gl_distribution": []}}  # fmt: skip
-    assert exports.invoice_rows([inv], vendor_ids=store.vendor_ids())[0]["vendor_id"] == "V10023"
+    assert exports.invoice_rows([inv], vendor_ids=store.vendor_ids())[0]["vendor_id"] == "10023"
 
 
 def test_unreadable_printed_terms_fall_back_to_the_vendor_master():

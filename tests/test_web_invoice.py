@@ -567,7 +567,7 @@ def test_the_vendor_is_picked_from_the_vendor_list_or_added_as_a_new_vendor(clie
     assert re.search(r'id="vendor-name"[^>]*data-picker="free"', page) and "Add new vendor" in page
     data = json.loads(re.search(r'<script type="application/json" id="vendor-data">(.*?)</script>', page, re.S)
                       .group(1))  # fmt: skip
-    assert data["enforced"] and any(v["id"] == "V10023" for v in data["list"])
+    assert data["enforced"] and any(v["id"] == "10023" for v in data["list"])
     assert not any("Cascade" in v["name"] for v in data["list"])  # the demo vendor not in the vendor master
     answer = check(client, cascade["id"])
     assert not answer["allow"] and "VENDOR_NOT_IN_MASTER" in json.dumps(answer["sections"])
