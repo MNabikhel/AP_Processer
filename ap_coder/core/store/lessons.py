@@ -368,6 +368,41 @@ class LessonsMixin:
                 self._save_capture(conn, invoice_id, capture)
         return True
 
+    def _recheck_duplicates(self, vendor_name: str, invoice_number: str) -> None:
+        """The open invoices (in review or parked) with this vendor and invoice number, after one of them was rejected
+        or deleted, checked again for duplicates: DUPLICATE_INVOICE dropped, or said with the invoices left, and
+        whether a person must look worked out again; the rest of their checks stand (B-1182)."""
+        from ...coding.validation import ERROR, duplicate_message, needs_review
+
+        for other in self.find_duplicates(vendor_name, invoice_number):
+            with self._conn() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute("SELECT status, validation, grand_total, adjusted_confidence FROM invoices "
+                                   "WHERE id = ?", (other,)).fetchone()  # fmt: skip
+                if row is None or row["status"] not in (REVIEW, PARKED) or not row["validation"]:
+                    continue
+                validation = json.loads(row["validation"])
+                issues = validation.get("issues") or []
+                kept = [i for i in issues if i.get("code") != "DUPLICATE_INVOICE"]
+                if len(kept) == len(issues):
+                    continue  # never flagged a duplicate
+                still = self.find_duplicates(
+                    vendor_name, invoice_number, exclude_id=other, grand_total=row["grand_total"]
+                )
+                if still:
+                    kept.insert(0, {"severity": ERROR, "code": "DUPLICATE_INVOICE", "line_number": None,
+                                    "message": duplicate_message(still)})  # fmt: skip
+                validation["issues"] = kept
+                validation.pop("recheck", None)  # the queue's re-check said the duplicate too
+                threshold = float(validation.get("review_threshold") or 0.85)
+                validation["requires_review"] = needs_review(float(row["adjusted_confidence"] or 0.0),
+                                                             [(i.get("severity"), i.get("code")) for i in kept],
+                                                             threshold)  # fmt: skip
+                conn.execute(
+                    "UPDATE invoices SET validation = ?, requires_review = ? WHERE id = ?",
+                    (json.dumps(validation, default=str), int(validation["requires_review"]), other),
+                )
+
     def replace_proposal(
         self, invoice_id: int, output: dict[str, Any], report: Any, capture: Any, meta: dict[str, Any] | None = None,
         actor: str = "AP Coder", *, expect: tuple[Any, ...] | None = None,

@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
 from ap_coder.core.store import REVIEW
 from ap_coder.erp import jde
 
@@ -33,3 +35,49 @@ def test_the_demo_vendors_have_jd_edwards_address_numbers(client, store):
         assert "JDE_BAD_AN8" not in codes, inv["vendor_name"]
     about = _plain(client.get("/settings/about").text)
     assert "adds the JD Edwards checks to every invoice" in about
+
+
+# --- L2. A rejected invoice reopened -------------------------------------------------------------------------------
+
+
+def test_a_rejected_invoice_reopened_speaks_of_the_rejection_and_its_reason(client, store):
+    """B-1181: reopening a rejected invoice said "Reopened by X / no reason given. The approved coding is kept below":
+    it was never approved, and the rejection's reason was not shown."""
+    from ap_coder.core.audit import describe
+
+    invoice_id = store.list_invoices(REVIEW)[0]["id"]
+    store.reject_invoice(invoice_id, "Sam Reviewer", "Duplicate of NW-2026-0912")
+    store.reopen(invoice_id, "Jordan Lee", only_rejected=True)
+    page = _plain(client.get(f"/review/{invoice_id}").text)
+    assert "Rejected by Sam Reviewer, reopened by Jordan Lee" in page
+    assert "Duplicate of NW-2026-0912" in page and "no reason given" not in page
+    assert "approved coding is kept" not in page
+    reopened = next(e for e in store.events(invoice_id) if e["action"] == "reopened")
+    assert describe(reopened) == "rejection undone, back to the review queue · rejected for: Duplicate of NW-2026-0912"
+
+
+# --- L3. A duplicate pair after a reject or a delete ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize("how", ["reject", "delete"])
+def test_rejecting_one_of_a_duplicate_pair_checks_the_other_again(store, tmp_path, how):
+    """B-1182: rejecting one invoice of a duplicate pair left the other "Needs attention" (its DUPLICATE_INVOICE
+    stored) and out of bulk approval until it was opened."""
+    from ap_coder.coding.bulk import clean_candidates
+
+    first = clean_candidates(store)[0]
+    inv = store.get_invoice(first["id"])
+    copy = store.add_invoice(tmp_path / "copy.pdf", inv["ai_output"], {**inv["validation"], "requires_review": True})
+    for this, other in ((first["id"], copy), (copy, first["id"])):
+        said = f"same vendor and invoice number as invoice #{other}: possible duplicate payment"
+        flag = {"severity": "error", "code": "DUPLICATE_INVOICE", "line_number": None, "message": said}
+        assert store.update_after_check(this, None, flag, ("DUPLICATE_INVOICE",))
+    assert first["id"] not in [c["id"] for c in clean_candidates(store)]
+
+    if how == "reject":
+        store.reject_invoice(copy, "Sam Reviewer", "Sent twice")
+    else:
+        store.delete_invoice(copy, actor="Sam Reviewer")
+    left = store.get_invoice(first["id"])
+    assert "DUPLICATE_INVOICE" not in [i["code"] for i in left["validation"]["issues"]]
+    assert not left["requires_review"] and first["id"] in [c["id"] for c in clean_candidates(store)]

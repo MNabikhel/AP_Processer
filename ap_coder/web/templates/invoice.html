@@ -91,8 +91,9 @@
 
 {% if sent_back %}
 <div class="rvw-status warn" role="status"><div class="rvw-status-title"><span class="ms" aria-hidden="true">undo</span>
-  <span>{{ sent_back.verb }} by {{ sent_back.actor }}</span></div>
-  <div class="rvw-status-sub">{{ sent_back.reason }}. The approved coding is kept below; fix what is needed and approve again.</div></div>
+  <span>{{ sent_back.verb }} by {{ sent_back.actor }}{% if sent_back.reopened_by %}, reopened by {{ sent_back.reopened_by }}{% endif %}</span></div>
+  {% if sent_back.reopened_by %}<div class="rvw-status-sub">Rejected for: {{ sent_back.reason }}. Fix what is needed and approve it, or reject it again.</div></div>
+  {% else %}<div class="rvw-status-sub">{{ sent_back.reason }}. The approved coding is kept below; fix what is needed and approve again.</div></div>{% endif %}
 {% endif %}
 
 <div class="inv-split">

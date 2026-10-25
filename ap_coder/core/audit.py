@@ -355,6 +355,8 @@ def describe(event: dict[str, Any]) -> str:
         return f"approved after {d.get('first_approver') or '?'} ({second_reason(d)})"  # the stored reason (B-1024)
     if action in ("sent_back", "reopened"):
         layout = f" · vendor's layout {d['layout']}" if d.get("layout") else ""  # what it taught, taken back (D-71)
+        if "rejected" in d:  # a rejected invoice back in the queue: the rejection undone
+            return f"rejection undone, back to the review queue · rejected for: {d['rejected'] or 'no reason given'}"
         return f"back to the review queue · reason: {d.get('reason') or 'none given'}{layout}"
     if action == "erp_register_imported":
         return (
