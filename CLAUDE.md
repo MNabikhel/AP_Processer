@@ -43,6 +43,9 @@ guides, the bug log (BUGS.md) and decisions (decisions.md). Search the code to f
   Significant choices go in docs/decisions.md (next D-NN).
 
 ## Working here in few steps
+- Coding work (a fix, a feature, a test, a question about the code) runs best as the `developer` agent
+  (`.claude/agents/developer.md`): `claude --agent developer`, or `subagent_type: "developer"` when an agent starts
+  one. It carries only the developer tools, so each step costs about a fifth of a general session's tokens.
 Every step re-reads the whole conversation, so fewer, fuller steps cost less:
 - Put independent lookups in one command (several `grep -n` / `sed -n A,Bp` joined with `;`), and read the lines
   around a match rather than whole files.
