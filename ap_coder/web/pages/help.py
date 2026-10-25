@@ -183,6 +183,9 @@ def report_page(request: Request, codes: bool = False) -> HTMLResponse:
     the page (``/help/report/setup``): the page opens at once."""
     store = get_store(request)
     logs = paths.user_settings_path().parent / "logs"
+    shown = [logs / "launch.log", logs / "dashboard-errors.log"]
+    if server_mode(request):  # the service's log (D-100)
+        shown = [service.log_path(data_dir(store))]
     key = str(store.path)
     with _setup_lock:
         kept = _setup_cache.get(key)
@@ -196,8 +199,7 @@ def report_page(request: Request, codes: bool = False) -> HTMLResponse:
         activity=activity_report(store, codes),
         codes=codes,
         key_file=short_path(data_dir(store) / "share_report_key.csv"),
-        logs=[short_path(service.log_path(data_dir(store)))] if server_mode(request)  # the service's (D-100)
-        else [short_path(logs / "launch.log"), short_path(logs / "dashboard-errors.log")],
+        logs=[short_path(p) for p in shown],
     )
 
 
