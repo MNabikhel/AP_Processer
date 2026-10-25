@@ -5,10 +5,10 @@ names them. On this computer the page only says who is approving here (Settings 
 from __future__ import annotations
 
 from fastapi import APIRouter, Form, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from ap_coder.web import identity
-from ap_coder.web.core import done, local_url, refuse, render, reviewer
+from ap_coder.web.core import done, local_url, refuse, render, reviewer, server_mode
 from ap_coder.web.pages.invoice import rename_drafts
 
 router = APIRouter()
@@ -17,7 +17,9 @@ COOKIE_DAYS = 365  # kept by the browser; a restart of AP Coder asks again (the 
 
 
 @router.get(identity.WHO_PATH, response_class=HTMLResponse)
-def who(request: Request, next: str = "/review") -> HTMLResponse:  # noqa: A002 - the address's own word
+def who(request: Request, next: str = "/review") -> Response:  # noqa: A002 - the address's own word
+    if server_mode(request):  # people log in with their own account instead (D-97)
+        return RedirectResponse(identity.LOGIN_PATH, status_code=303)
     found = identity.person()
     here = request.client is None or identity.from_this_computer(request.scope)
     name = reviewer() if (found or here) else "Not given yet"  # the rail shows no one's name before it is given
@@ -27,6 +29,8 @@ def who(request: Request, next: str = "/review") -> HTMLResponse:  # noqa: A002 
 
 @router.post(identity.WHO_PATH)
 def who_save(request: Request, name: str = Form(""), next: str = Form("/review")) -> JSONResponse:  # noqa: A002
+    if server_mode(request):
+        return refuse("Your name is your account's: an Admin changes it on the Users page.", 403)
     if request.client is None or identity.from_this_computer(request.scope):
         return refuse("On this computer, your name is set in Settings → Review.")
     cleaned = identity.clean_name(name)

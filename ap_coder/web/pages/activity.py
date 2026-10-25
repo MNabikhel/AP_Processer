@@ -21,6 +21,7 @@ from ap_coder.core import ui
 from ap_coder.core.audit import ACTIONS, describe
 from ap_coder.core.safe import csv_row
 from ap_coder.erp import controls, dupaudit, insights
+from ap_coder.web.access import is_admin
 from ap_coder.web.core import clamp_day, get_store, render
 
 router = APIRouter()
@@ -38,6 +39,8 @@ GROUPS = {
                  "layout_reset", "touchless_on", "touchless_off", "page_reader_tested"],
     "Emails": ["email_sorted", "email_bank_change", "email_triage_done", "email_attachment_to_queue"],
     "Backups": ["backup_made", "backup_restored"],
+    "Logins": ["login", "login_failed", "login_locked", "logout", "password_changed", "password_reset", "user_added",
+               "role_changed", "user_deactivated", "user_activated", "address_unlocked"],
 }  # fmt: skip
 EVENTS_READ = 5000  # the newest events the page works on
 TIMELINE_SHOWN = 200
@@ -135,6 +138,23 @@ def _filters(request: Request) -> tuple[str, str, str, str]:
     return group, q.get("person") or "Everyone", q.get("q") or "", view if view in VIEWS else "timeline"
 
 
+ACCOUNT_GROUP = "Logins"  # logins, refusals, lockouts and changes to accounts: an Admin's to see (D-101)
+
+
+def _events(request: Request) -> list[dict[str, Any]]:
+    """The newest events, as the person asking may see them: on the server, the login and account events only to an
+    Admin (a refusal names the account tried, and the addresses people log in from are theirs)."""
+    events = get_store(request).events(limit=EVENTS_READ)
+    if is_admin(request):
+        return events
+    hidden = set(GROUPS[ACCOUNT_GROUP])
+    return [e for e in events if e["action"] not in hidden]
+
+
+def _groups(request: Request) -> list[str]:
+    return ["All", *(g for g in GROUPS if g != ACCOUNT_GROUP or is_admin(request))]
+
+
 def _attachment(data: bytes, filename: str, media_type: str) -> Response:
     return Response(data, media_type=media_type, headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
@@ -142,7 +162,7 @@ def _attachment(data: bytes, filename: str, media_type: str) -> Response:
 @router.get("/activity", response_class=HTMLResponse)
 def activity_page(request: Request) -> HTMLResponse:
     store = get_store(request)
-    events = store.events(limit=EVENTS_READ)
+    events = _events(request)
     group, person, query, view = _filters(request)
     params = {"group": group, "person": person, "q": query, "view": view}
     start, end = controls_period(request.query_params.get("start"), request.query_params.get("end"))
@@ -178,7 +198,7 @@ def activity_page(request: Request) -> HTMLResponse:
         "activity",
         events=events,
         tiles=tiles,
-        groups=["All", *GROUPS],
+        groups=_groups(request),
         people=people,
         group=group,
         person=person,
@@ -202,7 +222,7 @@ def activity_page(request: Request) -> HTMLResponse:
 def activity_csv(request: Request) -> Response:
     """The events the page shows with the same filters, all of them (not only the newest 200)."""
     group, person, query, _ = _filters(request)
-    shown = filter_events(get_store(request).events(limit=EVENTS_READ), group, person, query)
+    shown = filter_events(_events(request), group, person, query)
     return _attachment(events_csv(shown), f"ap_coder_activity_{dt.date.today()}.csv", "text/csv; charset=utf-8")
 
 

@@ -37,6 +37,7 @@ from ap_coder.core.store import (
     fold_text,
     load_sample_setup,
 )
+from ap_coder.core.store.users import same_approver
 from ap_coder.erp import recurring
 from ap_coder.web.core import (
     TARGET_ACCURACY,
@@ -49,7 +50,6 @@ from ap_coder.web.core import (
     get_settings,
     get_store,
     invoice_dir,
-    jobs,
     local_url,
     login,
     money,
@@ -59,6 +59,7 @@ from ap_coder.web.core import (
     refuse,
     render,
     reviewer,
+    server_mode,
 )
 from ap_coder.web.identity import shown_path
 from ap_coder.web.invoice_view import document_kind
@@ -465,9 +466,7 @@ def _second(inv: dict[str, Any], first: dict[str, Any] | None, me: str, my_login
     """An invoice waiting for its second approval, and whether this reviewer may give it (not the first approver,
     whose ``approved`` event is ``first``)."""
     first_login = ((first or {}).get("detail") or {}).get("login") or ""
-    same = (me or "").strip().casefold() == (inv["reviewer"] or "").strip().casefold() or (
-        bool(my_login) and my_login.casefold() == first_login.casefold()
-    )
+    same = same_approver(inv["reviewer"], first_login, me, my_login)
     detail = (first or {}).get("detail") or {}
     why = audit.second_reason(detail) if detail.get("needs_second") else ""
     return {**inv, "same": same, "approval": (first or {}).get("id") or "", "second_why": why,
@@ -476,16 +475,16 @@ def _second(inv: dict[str, Any], first: dict[str, Any] | None, me: str, my_login
 
 def _getting_started(request: Request, store: Store, invoices: list[dict[str, Any]]) -> HTMLResponse:
     from ap_coder.ops.demo import demo_available
-    from ap_coder.web.pages.process import LM_STUDIO_STEPS, STEP_LINKS, first_steps, next_step, step_state
+    from ap_coder.web.pages.process import first_steps, next_step, shown_setup, step_state
 
     steps, done_steps, needed = first_steps(store, get_settings(request), bool(invoices))  # as Import invoices counts
     named = step_state(steps, "Your name") == "ok"  # (before it, first_name() is the login: "Good morning, root")
+    steps, coming, links = shown_setup(request, steps, next_step(steps))
     return render(
         request, "review_welcome.html", "review",
         greeting=f"{ui.greeting()}, {first_name()}" if named else ui.greeting(),
-        next=next_step(steps),
-        step_links=STEP_LINKS,
-        lm_studio_steps=LM_STUDIO_STEPS,
+        next=coming,
+        step_links=links,
         steps=steps,
         ring_value=done_steps / needed,
         ring_label=f"{done_steps}/{needed}",
@@ -606,7 +605,7 @@ def review_reopen(request: Request, invoice_id: int) -> JSONResponse:
 @router.post("/review/{invoice_id}/retry")
 def review_retry(request: Request, invoice_id: int) -> JSONResponse:
     """Read a failed invoice again (the new attempt replaces the failed one), as a Import invoices job."""
-    from ap_coder.web.pages.process import JOB, process_files
+    from ap_coder.web.pages.process import process_files, start_import
 
     store = get_store(request)
     inv = store.get_invoice(invoice_id)
@@ -617,7 +616,7 @@ def review_retry(request: Request, invoice_id: int) -> JSONResponse:
     path = Path(inv["source_path"])
     if not path.exists():
         return refuse(f"The original file is no longer at {shown_path(path)}.")
-    if not jobs(request).get(JOB).start(process_files(store, get_settings(request), [path]), total=1):
+    if not start_import(request, process_files(store, get_settings(request), [path]), 1):
         return refuse("AP Coder is already reading invoices. Wait for it to finish, then try again.", 409)
     return done(request, "/process", flash_message(f"Reading {path.name} again.", "info", icon="refresh"))
 
@@ -642,6 +641,8 @@ def review_final_approve(request: Request, invoice_id: int, approval: str | None
     try:
         store.final_approve(invoice_id, reviewer(), login=login(), shown=approval)
     except PermissionError as exc:  # the first approver (or their login): nobody changed anything meanwhile
+        if server_mode(request):  # refused as the other refusals are: not done, said, and a 409 (D-102)
+            return refuse(f"Not done: {exc}.", 409)
         return done(request, "/review?tab=second", f"Not done: {exc}.", tone="warn")
     except ApprovedAgain:
         now = store.get_invoice(invoice_id) or {}

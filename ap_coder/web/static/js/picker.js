@@ -272,8 +272,13 @@ class Picker {
     return shown === this;
   }
 
+  /** A box shown read-only (Read-only on the review screen, D-98): its list never opens. */
+  locked() {
+    return this.input.readOnly || this.input.disabled || Boolean(this.select?.disabled);
+  }
+
   open(typing = false) {
-    if (this.isOpen()) return;
+    if (this.isOpen() || this.locked()) return;
     if (shown) shown.close();
     makeLayer();
     shown = this;
@@ -493,6 +498,7 @@ class Picker {
   }
 
   key(e) {
+    if (this.locked()) return;
     const open = this.isOpen();
     const k = e.key;
     if (e.ctrlKey || e.metaKey) {

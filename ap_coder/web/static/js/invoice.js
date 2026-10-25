@@ -27,6 +27,8 @@ const form = document.getElementById("inv");
 const invoiceId = document.body.querySelector("[data-invoice]")?.dataset.invoice || location.pathname.split("/")[2];
 const base = `/review/${invoiceId}`;
 const approveButton = document.querySelector("[data-approve]");
+// Read-only (server mode, D-98): the screen shows the invoice and its stored checks; nothing is edited or posted.
+const readOnly = Boolean(form?.hasAttribute("data-readonly"));
 let viewer = null;
 
 /* ---------- The page viewer ---------- */
@@ -108,7 +110,7 @@ function applyTaxRows(taxes, posted) {
 async function check() {
   clearTimeout(timer);
   timer = 0;
-  if (!form || form.dataset.sending) return; // being approved: nothing more to check
+  if (!form || readOnly || form.dataset.sending) return; // being approved, or read-only: nothing to check
   if (running) {
     queued = true;
     return running;
@@ -1300,7 +1302,7 @@ document.addEventListener("keydown", (e) => {
 /* The page left another way (the browser's Back, closing the tab) while an edit waits to be checked: it is sent
    anyway, so the server keeps it as a draft (keepalive: the request outlives the page). */
 window.addEventListener("pagehide", () => {
-  if (!form || !timer || form.dataset.sending) return;
+  if (!form || readOnly || !timer || form.dataset.sending) return;
   clearTimeout(timer);
   timer = 0;
   fetch(`${base}/check`, { method: "POST", body: formData(), headers: HEADERS, credentials: "same-origin", keepalive: true }).catch(() => {});
@@ -2183,7 +2185,7 @@ function checkMenu(li) {
 
 /* ---------- Which menu: the first that matches (a box on the page is its field's, not the page's) ---------- */
 
-if (form) {
+if (form && !readOnly) {
   register(".iv-row[data-field]", (el) => fieldMenu(el.dataset.field, "list"));
   register(".iv-f[data-field], .iv-tag[data-field]", (el) => fieldMenu(el.dataset.field, "page"));
   register(".iv-stage", pageMenu);
@@ -2497,6 +2499,18 @@ function reachApprovalUndo(box) {
 
 /* ---------- Start ---------- */
 
+/** Read-only: every box of the form shown as it is, none to change (the server refuses a change anyway). */
+function lockFields() {
+  const boxes = document.querySelectorAll('[form="inv"], #inv [name], [data-grid] input, [data-grid] select, [data-grid] textarea, .inv-details .pk-input');
+  for (const el of boxes) {
+    if (el.type === "hidden" || el.name === "mail_lang") continue;
+    if (el.tagName === "SELECT" || ["checkbox", "radio"].includes(el.type)) el.disabled = true;
+    else el.readOnly = true;
+  }
+  document.querySelectorAll("[data-grid] button, [data-menu-hint]").forEach((b) => (b.hidden = true));
+  document.querySelectorAll("[data-grid] .pk-input").forEach((el) => (el.readOnly = true));
+}
+
 showMailLanguage();
 titleTaxCodes();
 fillSplitLines();
@@ -2507,4 +2521,5 @@ showBarState();
 document.querySelectorAll('[data-grid="lines"] textarea[name="line_description"]').forEach((t) => showRemark(t, false));
 // The queue shows what this screen shows: check once on opening (today's checks, and any draft kept); then the
 // focus goes to the first thing to check, unless the clerk is somewhere already.
-if (form) check().then(() => focusFirstToCheck());
+if (readOnly) lockFields();
+else if (form) check().then(() => focusFirstToCheck());

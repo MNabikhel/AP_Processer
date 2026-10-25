@@ -36,6 +36,7 @@ from ..core.reference_data import ReferenceData, load_reference_data, load_table
 from ..core.schema import build_json_schema
 from ..core.store import Store, default_db_path, private_dir
 from ..intake.mailbox import EMAIL_EXTENSIONS, emails_in, unpack, unpack_folder
+from . import server_update, service
 from .doctor import FAIL, Check, exit_code, format_checks, run_checks
 from .share_report import build_share_report
 
@@ -145,10 +146,26 @@ def build_parser() -> argparse.ArgumentParser:
             "0.0.0.0 lets others on the network open it",
         )  # fmt: skip
         p.add_argument("--no-browser", action="store_true", help="Don't open the browser (it prints the address)")
+        p.add_argument(
+            "--server",
+            action="store_true",
+            help="Run as the company's server (AP_SERVER_MODE=1): HTTPS, every network, no browser",
+        )
+        p.add_argument("--certfile", default=None, help="HTTPS certificate, a PEM file (or AP_TLS_CERT)")
+        p.add_argument("--keyfile", default=None, help="The certificate's private key, a PEM file (or AP_TLS_KEY)")
+        p.add_argument(
+            "--proxy",
+            default=None,
+            metavar="IP",
+            help="The reverse proxy's address: its X-Forwarded-For is believed (from no one else)",
+        )
+        p.add_argument("--insecure-http", action="store_true",
+                       help="Server mode on plain HTTP, for a first test on a trusted network only")  # fmt: skip
 
     p = sub.add_parser("doctor", help="Check configuration, reference data and (with --online) Azure connectivity")
     p.add_argument("--online", action="store_true", help="Call both Azure services (costs about one invoice)")
     _add_reference_args(p)
+    _add_server_ops(sub)
 
     p = sub.add_parser("process", help="Extract + GL-code invoices (files or directories)")
     p.add_argument("inputs", nargs="+", help="PDF/TIFF/image invoices, or .md/.txt pre-extracted content")
@@ -233,10 +250,37 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("demo", help="Load the sample invoices into the review queue (no Azure needed)")
     p.add_argument("--remove", action="store_true", help="Remove the demo invoices and their lessons instead")
 
+    from ..core.store.users import ROLES
+
+    p = sub.add_parser("users", help="Server mode: the people who log in (add, list, reset, deactivate, activate, "
+                       "role)")  # fmt: skip
+    users = p.add_subparsers(dest="users_command", required=True)
+    u = users.add_parser("add", help="Add a person (the password is asked for, twice)")
+    u.add_argument("username")
+    u.add_argument("--role", choices=ROLES, default="clerk", help="Default: clerk")
+    u.add_argument("--admin", action="store_true", help="The same as --role admin (the first Admin)")
+    u.add_argument("--name", default="", help="The name on their approvals (default: the username)")
+    users.add_parser("list", help="Everyone who can log in, with their role")
+    u = users.add_parser("reset", help="A new temporary password (asked for, twice); they choose their own at login")
+    u.add_argument("username")
+    u = users.add_parser("deactivate", help="Turn an account off: it can no longer log in")
+    u.add_argument("username")
+    u = users.add_parser("activate", help="Turn an account that was turned off on again: it can log in again")
+    u.add_argument("username")
+    u = users.add_parser("role", help="Change a person's role")
+    u.add_argument("username")
+    u.add_argument("role", choices=ROLES)
+
     p = sub.add_parser("schema", help="Developers: print the coding schema a cloud build sends to Azure OpenAI")
     p.add_argument("--no-constrain-codes", action="store_true", help="Do not embed valid codes as enums")
     _add_reference_args(p)
     return parser
+
+
+def _add_server_ops(sub: Any) -> None:
+    """The company server's own commands (D-100): ``service`` and ``server-update`` (docs/SERVER.md)."""
+    service.add_parser(sub)
+    server_update.add_parser(sub)
 
 
 def cmd_doctor(args: argparse.Namespace, settings: Settings) -> int:
@@ -254,21 +298,44 @@ def cmd_doctor(args: argparse.Namespace, settings: Settings) -> int:
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
-    """Run the dashboard in this process (ap_coder/web/server.py) until Ctrl+C or the launcher stops it."""
+    """Run the dashboard in this process (ap_coder/web/server.py) until Ctrl+C or the launcher stops it; with
+    ``--server``, as the company's server (HTTPS, D-99) until its service is stopped."""
     if args.env_file:  # the settings the dashboard reads again for every page
         os.environ["AP_ENV_FILE"] = str(Path(args.env_file).resolve())
     from ..core.store import Store
-    from ..web.server import browser_url, serve
-    from .offline import dashboard_address, free_port, is_loopback
+    from ..web import server
+    from .offline import DEFAULT_PORT, SERVER_ENV, free_port, is_loopback, server_mode
 
-    host = args.host or dashboard_address()
-    port = args.port or free_port(address=host)  # (the launcher's own choice: 8501, else the next free one)
-    opens = "" if args.no_browser else "it opens in your browser; "  # (the launcher opens it, and says so itself)
-    print(f"Dashboard: {browser_url(host, port)}  ({opens}Ctrl+C here to stop)", file=sys.stderr)
-    if not is_loopback(host if host not in ("", "localhost") else "127.0.0.1"):
-        print(f"Listening on {host}: other computers on the network can open the dashboard. There is no login: "
-              "anyone who can reach this address can see the invoices.", file=sys.stderr)  # fmt: skip
-    return serve(host, port, open_browser=not args.no_browser, store=Store(Path(args.db)))
+    if args.server:
+        os.environ[SERVER_ENV] = "1"  # (the pages ask server_mode())
+
+    certfile = args.certfile or os.environ.get(server.CERT_ENV) or None
+    keyfile = args.keyfile or os.environ.get(server.KEY_ENV) or None
+    refusal = server.tls_refusal(server_mode(), certfile, keyfile, args.insecure_http)
+    if refusal:
+        print(refusal, file=sys.stderr)
+        return 2
+    host = args.host or server.default_host()
+    # The launcher's own choice: 8501, else the next free one. Never on the company server: staff were given its
+    # address with its port, so a port in use stops it, in plain words (D-102).
+    port = args.port or (DEFAULT_PORT if server_mode() else free_port(address=host))
+    url = server.browser_url(host, port, bool(certfile))
+    taken = server.port_refusal(host, port, bool(certfile)) if server_mode() else ""
+    if taken:  # said before "AP Coder server: ..." could be
+        print(taken, file=sys.stderr)
+        return 1
+    if server_mode():
+        print(f"AP Coder server: {url} on this computer; staff open it by the server's name (Ctrl+C here to stop)",
+              file=sys.stderr)  # fmt: skip
+    else:
+        opens = "" if args.no_browser else "it opens in your browser; "  # (the launcher opens it, and says so itself)
+        print(f"Dashboard: {url}  ({opens}Ctrl+C here to stop)", file=sys.stderr)
+        if not is_loopback(host if host not in ("", "localhost") else "127.0.0.1"):
+            print(f"Listening on {host}: other computers on the network can open the dashboard. There is no login: "
+                  "anyone who can reach this address can see the invoices.", file=sys.stderr)  # fmt: skip
+    network = {"certfile": certfile, "keyfile": keyfile, "proxy": args.proxy, "insecure_http": args.insecure_http}
+    extra = network if server_mode() or any(network.values()) else {}  # (the laptop's call is as before)
+    return server.serve(host, port, open_browser=not args.no_browser, store=Store(Path(args.db)), **extra)
 
 
 def _inputs(paths: list[str], store: Store | None = None) -> tuple[list[Path], bool, int] | None:
@@ -773,6 +840,82 @@ def cmd_demo(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+def _new_password(username: str, name: str = "") -> str | None:
+    """A password typed twice at the console (never shown, never an argument: it would stay in the history)."""
+    import getpass
+
+    from ..core.store.users import password_problem
+
+    first = getpass.getpass(f"Password for {username}: ")
+    problem = password_problem(first, username, name)
+    if problem:
+        print(problem, file=sys.stderr)
+        return None
+    if getpass.getpass("The same password again: ") != first:
+        print("The two passwords are not the same: nothing was changed.", file=sys.stderr)
+        return None
+    return first
+
+
+def cmd_users(args: argparse.Namespace) -> int:
+    """The accounts of server mode, from the server's console (D-97): the first Admin is added here."""
+    from ..core.store.users import ADMIN, ROLE_LABELS, USERNAME, fold_username
+
+    store = Store(args.db)
+    actor = "the server console"
+    action = args.users_command
+    if action == "list":
+        found = store.list_users()
+        if not found:
+            print("No accounts yet. Add the first Admin: python -m ap_coder users add <username> --role admin")
+        for u in found:
+            state = "turned off" if not u["active"] else ("temporary password" if u["must_change"] else "active")
+            print(f"{u['username']:<24} {ROLE_LABELS[u['role']]:<10} {u['display_name']:<30} {state}")
+        return 0
+    username = fold_username(args.username)
+    if action == "add":
+        if not USERNAME.fullmatch(username) or store.find_user(username) is not None:
+            taken = f"There is already an account {username}." if store.find_user(username) else ""
+            print(taken or "A username is 1 to 64 letters, digits, dots, dashes, underscores or @ (e.g. ann.lee).",
+                  file=sys.stderr)  # fmt: skip
+            return 1
+        role = ADMIN if args.admin else args.role
+        password = _new_password(username, args.name)
+        if password is None:
+            return 1
+        try:
+            store.add_user(username, password, role=role, display_name=args.name, actor=actor)
+        except ValueError as exc:
+            print(exc, file=sys.stderr)
+            return 1
+        print(f"Added {username} ({ROLE_LABELS[role]}). They choose their own password at their first login.")
+        return 0
+    user = store.find_user(username)
+    if user is None:
+        print(f"There is no account {username} (python -m ap_coder users list shows them).", file=sys.stderr)
+        return 1
+    try:
+        if action == "reset":
+            password = _new_password(username, user["display_name"])
+            if password is None:
+                return 1
+            store.reset_password(user["id"], actor=actor, password=password)
+            print(f"Password of {username} reset: they are logged out everywhere and choose their own at login.")
+        elif action == "deactivate":
+            store.deactivate_user(user["id"], actor=actor)
+            print(f"{username} can no longer log in.")
+        elif action == "activate":
+            store.activate_user(user["id"], actor=actor)
+            print(f"{username} can log in again, with the same password as before.")
+        else:
+            store.set_role(user["id"], args.role, actor=actor)
+            print(f"{username} is now {ROLE_LABELS[args.role]}.")
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    return 0
+
+
 def cmd_schema(args: argparse.Namespace) -> int:
     schema = build_json_schema(
         _load_reference(args),
@@ -809,6 +952,8 @@ def main(argv: list[str] | None = None) -> int:
         "serve": lambda: cmd_serve(args),
         "dashboard": lambda: cmd_serve(args),
         "doctor": lambda: cmd_doctor(args, settings),
+        "service": lambda: service.main(args),  # the company server (D-100)
+        "server-update": lambda: server_update.main(args),
         "process": lambda: cmd_process(args, settings),
         "watch": lambda: cmd_watch(args, settings),
         "read-pages": lambda: cmd_read_pages(args, settings),
@@ -820,6 +965,7 @@ def main(argv: list[str] | None = None) -> int:
         "pilot-score": lambda: cmd_pilot_score(args),
         "demo": lambda: cmd_demo(args, settings),
         "schema": lambda: cmd_schema(args),
+        "users": lambda: cmd_users(args),
     }
     try:
         return commands[args.command]()

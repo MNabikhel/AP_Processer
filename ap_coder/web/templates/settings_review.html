@@ -4,8 +4,10 @@
   <input type="hidden" name="version" value="{{ version }}">
   <div class="st-2">
     <section class="card">
-      <h4>You</h4>
-      {% if colleague %}
+      <h4>{{ "You and the company" if account else "You" }}</h4>
+      {% if account %}
+      <p class="field">Your name: <b>{{ account.name }}</b> (your account's, {{ account.username }}: it is on every invoice you approve)</p>
+      {% elif colleague %}
       <p class="field">Your name: <b>{{ reviewer_name }}</b> (<a href="/who">change it</a>; this browser gave it to AP Coder)</p>
       {% else %}
       <label class="field">Your name
@@ -14,7 +16,8 @@
       <p class="muted">Each approval is recorded under it. A colleague who opens AP Coder from their own computer gives
         their own name on the <a href="/who">Who are you?</a> page.</p>
       {% endif %}
-      <label class="field">Your province (where goods are delivered to you)
+      {# on the server the province is the whole company's, set once by an Admin (D-102) #}
+      <label class="field">{% if account %}The company's province (where goods are delivered; the same for everyone){% else %}Your province (where goods are delivered to you){% endif %}
         <select name="our_province">
           <option value=""{% if not our_province %} selected{% endif %}>— not set</option>
           {% for code, label in provinces.items() %}<option value="{{ code }}"{% if code == our_province %} selected{% endif %}>{{ label }}</option>{% endfor %}
@@ -34,11 +37,17 @@
       <label class="field">Second approval for invoices over, in CAD (0 = never)
         <input type="number" name="approval_limit" min="0" step="0.01" value="{{ '%.2f' | format(approval_limit) }}"
                title="Above this amount, an approved invoice waits for a second, different approver before export."></label>
+      {% if account %}
+      <p class="muted">Above this amount, an approved invoice waits for a second, different approver (another account:
+        an Approver or an Admin) before export. A foreign-currency invoice is converted to CAD at the exchange rates
+        below. An invoice waiting for it can always be sent back to the review queue with Send back.</p>
+      {% else %}
       <p class="muted">Above this amount, an approved invoice waits for a second, different approver (another name and
         another computer login) before export. A foreign-currency invoice is converted to CAD at the exchange rates below.
         On one laptop with one Windows login it can't be given: sign in with a second Windows account, or have a
         colleague open AP Coder from their computer over the office network (IT sets that up). An invoice waiting for it can always be sent back
         to the review queue with Send back.</p>
+      {% endif %}
       <label class="field">Days to pay when an invoice prints no due date and no terms
         <input type="number" name="terms_days" min="0" max="180" step="1" value="{{ terms_days }}"
                title="Used to show when an invoice is due, to sort the queue by due date and in exports."></label>

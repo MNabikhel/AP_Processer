@@ -244,6 +244,21 @@ def test_the_older_install_is_kept_while_the_self_check_fails(launch, monkeypatc
     assert cleaned == [] and f"kept in {old} until the self-check passes" in capsys.readouterr().out
 
 
+def test_on_the_company_server_the_previous_version_is_kept_for_going_back(launch, monkeypatch, tmp_path, capsys):
+    """Server mode (D-100): ``server-update`` sets up the new folder with this launcher, and ``server-update --back``
+    needs the previous folder whole (its .venv too): the launcher keeps it, even after a passed self-check."""
+    _, _, cleaned = _quiet_setup(launch, monkeypatch)
+    monkeypatch.setenv("AP_SERVER_MODE", "1")
+    old = tmp_path / "AP Coder 0.1"
+    (old / "ap_coder").mkdir(parents=True)
+    (old / "scripts").mkdir()
+    (old / "scripts" / "launch.py").write_text("")
+    (old / "pyproject.toml").write_text('[project]\nversion = "0.1.0"\n')
+    paths.record_install(paths.install_identity(old))
+    assert launch.run(*launch.parse(["--venv=created"])) == 0
+    assert cleaned == [] and f"The previous AP Coder is kept in {old}" in capsys.readouterr().out
+
+
 def test_an_ap_coder_0_1_folder_whose_data_moved_out_is_still_cleaned_up(launch, monkeypatch, tmp_path, capsys):
     """AP Coder 0.1 kept no record of itself: it was found only from its data folder (``<folder>/private``). The
     start moved that data out first, so the older folder (and its 1 GB .venv) was never cleaned up: not on this

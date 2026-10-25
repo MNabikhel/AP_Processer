@@ -3,9 +3,10 @@
 Downloads are GET routes answered with ``download(data, name, mime)``: the file with its content type and name.
 
 An import from a spreadsheet takes two steps: the clerk uploads the file, then checks
-which column holds what before anything is imported. The uploaded file waits in memory under a one-off token
+which column holds what before anything is imported. The uploaded file waits under a one-off token
 (``keep_upload``) for an hour; the page reads it again with ``read_upload`` (``?file=<token>``) to show its first rows
-and the column choices (``sheet_context``), and the import POST names the token. Nothing is written to disk.
+and the column choices (``sheet_context``), and the import POST names the token. It waits in the dashboard's
+database (a restart of the server keeps it), never as a file of its own, and is deleted after the hour (D-99).
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from fastapi.responses import Response
 
 from ap_coder.core.csvio import sniff_delimiter
 from ap_coder.intake import triage
+from ap_coder.web.core import current_store
 
 SHEET_TYPES = (".csv", ".xlsx", ".xls")
 NONE = ""  # the value of "(none)" in a column choice
@@ -61,6 +63,7 @@ def download(data: bytes, name: str, mime: str) -> Response:
 _TTL = 3600  # seconds an upload waits
 _MAX = 24  # uploads kept at most (the oldest go first)
 _MAX_BYTES = 50 * 1024 * 1024  # an uploaded file, and an emailed statement read for the Statements page
+UPLOAD_KIND = "upload"  # its kind in the database's short-lived table (``Store.keep_ephemeral``)
 
 
 @dataclass(frozen=True)
@@ -75,7 +78,11 @@ _lock = threading.Lock()
 
 
 def keep_upload(name: str, content: bytes) -> str:
-    """Keep an uploaded file for the next page; returns its token."""
+    """Keep an uploaded file for the next page; returns its token. In the dashboard's database while a request is
+    answered (a restart of the server keeps it, D-99), else in memory."""
+    store = current_store()
+    if store is not None:
+        return store.keep_ephemeral(UPLOAD_KIND, name.encode("utf-8") + b"\0" + content, _TTL, keep=_MAX)
     token = secrets.token_urlsafe(12)
     now = time.monotonic()
     with _lock:
@@ -90,6 +97,13 @@ def keep_upload(name: str, content: bytes) -> str:
 def get_upload(token: str | None) -> Upload | None:
     if not token:
         return None
+    store = current_store()
+    if store is not None:
+        kept = store.ephemeral(UPLOAD_KIND, token)
+        if kept is None:
+            return None
+        name, _, content = kept.partition(b"\0")
+        return Upload(name.decode("utf-8", "replace"), content, time.monotonic())
     with _lock:
         upload = _uploads.get(token)
     if upload is None or time.monotonic() - upload.at > _TTL:
@@ -98,6 +112,9 @@ def get_upload(token: str | None) -> Upload | None:
 
 
 def drop_upload(token: str | None) -> None:
+    store = current_store()
+    if store is not None:
+        store.drop_ephemeral(UPLOAD_KIND, token)
     with _lock:
         _uploads.pop(token or "", None)
 

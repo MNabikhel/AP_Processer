@@ -62,6 +62,8 @@ INTERNET_ENV = "AP_ALLOW_INTERNET"
 # Environment variable that lets the dashboard listen on the office network (default: this computer only).
 ADDRESS_ENV = "AP_DASHBOARD_ADDRESS"
 LOCAL_ADDRESS = "127.0.0.1"
+# Server mode (D-97): AP Coder on a company server, people log in with their own account and role; off on a laptop.
+SERVER_ENV = "AP_SERVER_MODE"
 
 
 def internet_allowed() -> bool:
@@ -291,6 +293,20 @@ def quiet_onnxruntime() -> None:
 
 
 # --- Dashboard network settings ---------------------------------------------------------------------------------
+
+
+def server_mode() -> bool:
+    """AP Coder runs as the company's server (``AP_SERVER_MODE`` 1 / true / yes / on, or ``serve --server``):
+    every page needs a login, and what each person may do comes from their role (D-97). Off by default."""
+    return (os.environ.get(SERVER_ENV) or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def setup_contact(text: str) -> str:
+    """``text`` with who to ask about the setup: the pilot tester on a laptop, an Admin on the company server, where
+    the setup is an Admin's (D-98, D-102)."""
+    if not server_mode():
+        return text
+    return text.replace("the pilot tester", "an Admin").replace("The pilot tester", "An Admin")
 
 
 def dashboard_address() -> str:

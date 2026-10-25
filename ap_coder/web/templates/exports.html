@@ -24,20 +24,21 @@
     </div>
   </div>
   <p class="muted small">{{ format_help[fmt] }}</p>
+  {% set jde_settings = can("/settings/jde", "GET") %}{% set export = can("/exports/create") %}{# server mode (D-98) #}
   {% for p in blocking %}
-  <div class="flash err"><span class="ms" aria-hidden="true">settings</span><div>{{ p }} Set it in <a href="/settings/jde">Settings → JD Edwards E1</a>.</div></div>
+  <div class="flash err"><span class="ms" aria-hidden="true">settings</span><div>{{ p }} {% if jde_settings %}Set it in <a href="/settings/jde">Settings → JD Edwards E1</a>{% else %}An Admin sets it in Settings → JD Edwards E1{% endif %}.</div></div>
   {% endfor %}
-  <form method="post" action="/exports/create" id="export-form" data-busy="Exporting…">
+  <form{% if export %} method="post" action="/exports/create"{% endif %} id="export-form" data-busy="Exporting…">
     <input type="hidden" name="fmt" value="{{ fmt }}">
     <div class="table-wrap">
       <table class="apc-table">
-        <thead><tr><th><input type="checkbox" id="export-all" checked aria-label="Export all"{% if not selectable %} disabled{% endif %}></th>
+        <thead><tr>{% if export %}<th><input type="checkbox" id="export-all" checked aria-label="Export all"{% if not selectable %} disabled{% endif %}></th>{% endif %}
           <th>Vendor</th><th>Invoice #</th><th>Date</th><th>Cur.</th><th class="r">Total</th><th>Approved by</th></tr></thead>
         <tbody>
           {% for r in ready %}
           <tr{% if r.blocked %} class="dim"{% endif %}>
-            <td><input type="checkbox" name="ids" value="{{ r.id }}" class="export-pick" aria-label="Export {{ r.vendor_name }} {{ r.invoice_number }}"
-                       {% if r.blocked %}disabled{% else %}checked{% endif %}></td>
+            {% if export %}<td><input type="checkbox" name="ids" value="{{ r.id }}" class="export-pick" aria-label="Export {{ r.vendor_name }} {{ r.invoice_number }}"
+                       {% if r.blocked %}disabled{% else %}checked{% endif %}></td>{% endif %}
             <td class="w">{{ r.vendor_name }}</td><td>{{ r.invoice_number }}</td><td>{{ r.invoice_date }}</td>
             <td>{{ r.currency }}</td><td class="r">{{ r.grand_total | money }}</td><td>{{ r.reviewer }}</td>
           </tr>
@@ -46,11 +47,11 @@
       </table>
     </div>
     <div class="row end">
-      {% if fmt == jde_format and ready %}
+      {% if fmt == jde_format and ready and can("/exports/jde/dry-run.txt", "GET") %}
       <a class="btn" href="/exports/jde/dry-run.txt" title="Exactly what a batch of these invoices would load into F0411Z1 / F0911Z1, row by row, and why any is held back. Nothing is exported."><span class="ms" aria-hidden="true">fact_check</span>Dry run</a>
       {% endif %}
-      <button class="btn primary" type="submit" id="export-go"{% if not selectable %} disabled{% endif %}>
-        <span class="ms" aria-hidden="true">ios_share</span><span id="export-label">Export {{ selectable | plural("invoice") }}</span></button>
+      {% if export %}<button class="btn primary" type="submit" id="export-go"{% if not selectable %} disabled{% endif %}>
+        <span class="ms" aria-hidden="true">ios_share</span><span id="export-label">Export {{ selectable | plural("invoice") }}</span></button>{% endif %}
     </div>
   </form>
   {% if problems %}
@@ -58,15 +59,15 @@
     {% set one = problems | length == 1 %}
     {{ problems | length | plural("invoice") }} cannot go to JD Edwards yet and {{ "is" if one else "are" }} left out of the
     batch: fix {{ "it" if one else "them" }} (the mapping in Settings → JD Edwards E1, the vendor master's ERP ID, or the
-    invoice) and export {{ "it" if one else "them" }} later.
-    {% if problems | selectattr("an8") | list %}<a href="/settings/jde#an8">Set the missing supplier numbers in Settings
+    invoice) and export {{ "it" if one else "them" }} later.{% if not jde_settings %} The settings and the vendor master are an Admin's.{% endif %}
+    {% if jde_settings and problems | selectattr("an8") | list %}<a href="/settings/jde#an8">Set the missing supplier numbers in Settings
       → JD Edwards E1 → Supplier address numbers</a>.{% endif %}</div></div>
   <div class="table-wrap">
     <table class="apc-table">
       <thead><tr><th>#</th><th>Vendor</th><th>Invoice #</th><th>Why not</th></tr></thead>
       <tbody>{% for p in problems %}<tr><td><b>{{ p.id }}</b></td><td>{{ p.vendor }}</td><td>{{ p.number }}</td>
         <td class="w">{% for reason in p.reasons %}<div>{{ reason }}</div>{% endfor %}
-          {% if p.an8 %}<a class="small" href="/settings/jde#an8">Supplier address numbers</a>{% endif %}</td></tr>{% endfor %}</tbody>
+          {% if p.an8 and jde_settings %}<a class="small" href="/settings/jde#an8">Supplier address numbers</a>{% endif %}</td></tr>{% endfor %}</tbody>
     </table>
   </div>
   {% endif %}
@@ -74,19 +75,21 @@
 </section>
 
 {% if just %}
+{% set undo_text = "undo the batch below" if can("/exports/batches/1/undo") else "ask an Admin to undo the batch below" %}
 <section class="card" id="made">
   <h4>Batch {{ just.id }} is ready</h4>
   {% if just.format == jde_format %}
   <p class="muted">Load F0411Z1.csv and F0911Z1.csv into the Z-tables, then run R04110ZA in proof mode first, then final
-    (see README.txt in the ZIP). If the load fails, undo the batch below and export again.</p>
+    (see README.txt in the ZIP). If the load fails, {{ undo_text }} and export again.</p>
   {% else %}
-  <p class="muted">Import this file into your ERP. If the import fails, undo the batch below and export again.</p>
+  <p class="muted">Import this file into your ERP. If the import fails, {{ undo_text }} and export again.</p>
   {% endif %}
   <a class="btn primary" href="/exports/batches/{{ just.id }}/download?fmt={{ just.format }}" download>
     <span class="ms" aria-hidden="true">download</span>Download batch {{ just.id }}</a>
 </section>
 {% endif %}
 
+{% if can("/exports/layout") %}{# server mode: the ERP layout and the ERP's invoice list are an Admin's (D-98) #}
 <details class="card expander" id="layout"{% if fmt == "custom" %} open{% endif %}>
   <summary><span class="ms" aria-hidden="true">view_column</span>Custom layout for your ERP</summary>
   <p class="muted">One row per GL posting line. Pick the columns your ERP's import expects, in order, with its headers; a
@@ -152,6 +155,7 @@
   </form>
   {% endif %}
 </details>
+{% endif %}
 
 <section class="card" id="batches">
   <h4>Past batches</h4>
@@ -198,6 +202,7 @@
     <a class="btn" href="/exports/batches/{{ chosen.id }}/approved-pdfs.zip" download
        title="Each invoice of the batch with an APPROVED stamp and its coding page: to attach in the ERP.">
       <span class="ms" aria-hidden="true">approval</span>Approved PDFs (ZIP)</a>
+    {% if can("/exports/batches/1/undo") %}
     <details class="pop">
       <summary class="btn"><span class="ms" aria-hidden="true">undo</span>Undo this batch…</summary>
       <div class="pop-body">
@@ -208,6 +213,7 @@
         </form>
       </div>
     </details>
+    {% endif %}
   </div>
   {% endif %}
   {% endif %}

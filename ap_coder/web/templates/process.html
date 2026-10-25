@@ -4,8 +4,8 @@
 <div class="grid-3-2">
   <div class="col">
     {# Progress of the reading job: drawn here when it runs or ran, kept up to date by static/js/process.js #}
-    <section class="card job{% if job.state == 'idle' %} hidden{% endif %}" id="job" data-state="{{ job.state }}"
-             data-status-url="/process/status" aria-live="polite">
+    <section class="card job{% if job.state == 'idle' and not waiting %} hidden{% endif %}" id="job" data-state="{{ job.state }}"
+             data-waiting="{{ waiting }}" data-status-url="/process/status" aria-live="polite">
       <div class="card-head">
         <h4 id="job-title">{% if job.state == 'running' %}Processing…{% elif job.state == 'error' %}Processing stopped{% else %}{{ (job.result or {}).label or "Processed" }}{% endif %}</h4>
         <span class="muted" id="job-when">{% if job.finished_at %}{{ job.finished_at | time_ago }}{% endif %}</span>
@@ -14,6 +14,8 @@
         <div id="job-bar" style="width: {{ (100 * job.done / job.total) | round | int if job.total else (100 if job.state == 'done' else 0) }}%"></div>
       </div>
       <div class="muted" id="job-note">{% if job.state == 'running' %}{{ job.note }}{% elif job.error %}{{ job.error }}{% endif %}</div>
+      <p class="muted" id="job-waiting"{% if not waiting %} hidden{% endif %}><span class="ms" aria-hidden="true">hourglass_top</span>
+        <span>{{ waiting_text if waiting else "" }}</span></p>
       <ul class="lines" id="job-lines">
         {% for line in job.lines %}
         <li class="{{ line.tone }}"><span class="ms" aria-hidden="true">{{ line.icon or "chevron_right" }}</span><span>{{ line.text }}</span></li>
@@ -64,18 +66,20 @@
       {% if first_invoices %}
       <div class="flash info" role="status"><span class="ms" aria-hidden="true">flag</span>
         <div><b>Start here:</b> choose one invoice or a few, then click <b>Process</b>. They wait for you in the review
-          queue. No invoices at hand? <b>Load demo invoices</b> (on this page) gives you ten to practise on.</div></div>
+          queue.{% if can("/demo/load") %} No invoices at hand? <b>Load demo invoices</b> (on this page) gives you ten to practise on.{% endif %}</div></div>
       {% endif %}
       {% if demo_first %}
       <div class="flash warn" role="status" id="demo-first"><span class="ms" aria-hidden="true">science</span>
         <div><div><b>Remove the demo invoices before you import your own.</b> Otherwise the demo's approvals, lessons and
           vendors are counted with yours: in coding accuracy, Activity and the vendor list.</div>
+          {% if can("/demo/remove") %}
           <form method="post" action="/demo/remove" class="row" data-busy="Removing the demo…">
             <input type="hidden" name="back" value="/process"><input type="hidden" name="sure" value="1">
             <button class="btn" type="submit"><span class="ms" aria-hidden="true">delete_sweep</span>Remove the demo invoices</button>
-          </form></div></div>
+          </form>
+          {% else %}<div>Ask an Admin to remove them.</div>{% endif %}</div></div>
       {% endif %}
-      <p class="muted">Each file is saved to the invoices folder on this computer, then read, coded and checked. A photo or
+      <p class="muted">Each file is saved to the invoices folder {{ "on the server" if server_mode else "on this computer" }}, then read, coded and checked. A photo or
         a scanned picture is made into a PDF first; the picture is kept in the <code>originals</code> folder there.</p>
       <form id="upload-form" method="post" action="/process/upload" enctype="multipart/form-data" data-upload>
         <label class="dropzone" id="dropzone">
@@ -89,10 +93,10 @@
           <button class="btn primary" type="submit" id="upload-go" disabled data-ready="{{ 'yes' if ready else 'no' }}">
             <span class="ms" aria-hidden="true">play_arrow</span><span id="upload-label">Process uploaded invoices</span>
           </button>
-          {% if not ready %}<span class="muted">Finish the setup first (GL accounts).</span>{% endif %}
+          {% if not ready %}<span class="muted">Finish the setup first (GL accounts){% if not can("/review/sample-gl") %}: an Admin imports them{% endif %}.</span>{% endif %}
         </div>
       </form>
-      {% if not ready %}
+      {% if not ready and can("/review/sample-gl") %}
       <form method="post" action="/review/sample-gl" class="row">
         <input type="hidden" name="back" value="/process">
         <span class="muted">No GL accounts yet?</span>
@@ -105,13 +109,20 @@
     <section class="card">
       <div class="card-head">
         <h4>Invoices folder</h4>
+        {% if not server_mode or is_admin %}
         <form method="post" action="/process/open-folder">
-          <button class="btn" type="submit" title="{{ folder }}">
-            <span class="ms" aria-hidden="true">folder_open</span>Open folder</button>
+          <button class="btn" type="submit"{% if folder %} title="{{ folder }}"{% endif %}>
+            <span class="ms" aria-hidden="true">folder_open</span>{{ "Where is it?" if server_mode else "Open folder" }}</button>
         </form>
+        {% endif %}
       </div>
+      {% if server_mode %}
+      <p class="muted">This folder is on the server: a scanner or mail rule can save invoices there, or upload them above. New
+        files are listed here, ready to process.</p>
+      {% else %}
       <p class="muted">Copy invoices into this folder, or have a scanner or mail rule save them there. New files are listed
         here, ready to process.</p>
+      {% endif %}
       {% if not_read %}
       <p class="muted"><span class="ms" aria-hidden="true">warning</span>
         Not read from this folder: {{ not_read | join(", ") }}. Save them as PDF (or JPEG) to have them read.</p>

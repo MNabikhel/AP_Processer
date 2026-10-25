@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import contextvars
 import datetime as dt
+import logging
 import threading
 from collections.abc import Callable
 from typing import Any
@@ -54,8 +55,9 @@ class Job:
         return self.state == RUNNING
 
     def start(self, work: Callable[[Job], dict[str, Any] | None], *, total: int = 0, note: str = "",
-              about: dict[str, Any] | None = None) -> bool:  # fmt: skip
-        """Run ``work(job)`` in a new thread; False (nothing started) while this job is already running."""
+              about: dict[str, Any] | None = None, then: Callable[[], Any] | None = None) -> bool:  # fmt: skip
+        """Run ``work(job)`` in a new thread; False (nothing started) while this job is already running. ``then``:
+        called on that thread once the job has finished (it may start the job again, e.g. the next import queued)."""
         with self._lock:
             if self.state == RUNNING:
                 return False
@@ -65,7 +67,7 @@ class Job:
             self._finished.clear()
         # The thread sees what the request saw: who started the job (web/identity.py) is who its events name.
         context = contextvars.copy_context()
-        threading.Thread(target=context.run, args=(self._run, work), name=f"ap-coder-job-{self.name}",
+        threading.Thread(target=context.run, args=(self._run, work, then), name=f"ap-coder-job-{self.name}",
                          daemon=True).start()  # fmt: skip
         return True
 
@@ -106,7 +108,7 @@ class Job:
         """Block until the job is not running (tests, the command line); False when ``timeout`` ran out first."""
         return self._finished.wait(timeout)
 
-    def _run(self, work: Callable[[Job], dict[str, Any] | None]) -> None:
+    def _run(self, work: Callable[[Job], dict[str, Any] | None], then: Callable[[], Any] | None = None) -> None:
         try:
             result, state, error = work(self) or {}, DONE, ""
         except Exception as exc:  # noqa: BLE001 - the page shows the error instead of a spinner that never stops
@@ -116,6 +118,11 @@ class Job:
             if state == DONE and self.total:
                 self.done = self.total
         self._finished.set()
+        if then is not None:
+            try:
+                then()
+            except Exception:  # noqa: BLE001 - what comes next never turns a finished job into an error
+                logging.getLogger(__name__).exception("After the %s job", self.name)
 
 
 class Jobs:

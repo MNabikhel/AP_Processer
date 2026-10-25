@@ -3,16 +3,16 @@
 {% block header %}
 <header class="apc-head apc-anim"><div>
   {{ ui.breadcrumbs(["AP Coder"]) }}
-  <h1 class="apc-title">{{ "Not found" if code == 404 else "Something went wrong" }}</h1>
+  <h1 class="apc-title">{{ "Not found" if code == 404 else ("Not allowed" if code == 403 else "Something went wrong") }}</h1>
 </div></header>
 {% endblock %}
 {% block content %}
 <section class="card">
-  {{ ui.empty_state("Nothing here" if code == 404 else "That didn't work", detail) }}
+  {{ ui.empty_state("Nothing here" if code == 404 else ("Not for your role" if code == 403 else "That didn't work"), detail) }}
   {% if what_to_do %}<p class="center"><b>What to do:</b> {{ what_to_do }}</p>{% endif %}
   <div class="row center">
     <a class="btn" href="/review"><span class="ms" aria-hidden="true">inbox</span>Go to the review queue</a>
-    {% if code != 404 %}<a class="btn" href="/help/report" data-busy="Gathering the reports…"><span class="ms" aria-hidden="true">bug_report</span>Report a problem</a>{% endif %}
+    {% if code not in (403, 404) %}<a class="btn" href="/help/report" data-busy="Gathering the reports…"><span class="ms" aria-hidden="true">bug_report</span>Report a problem</a>{% endif %}
   </div>
   {% if error_text %}
   <details class="muted small">

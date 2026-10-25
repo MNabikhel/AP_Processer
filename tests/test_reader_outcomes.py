@@ -73,7 +73,7 @@ def _by(rows):
 
 def test_fresh_database_has_the_reader_tables(tmp_path):
     store = Store(tmp_path / "fresh.db")
-    assert SCHEMA_VERSION == 17 and store.get_setting("schema_version") == "17"
+    assert SCHEMA_VERSION >= 17 and store.get_setting("schema_version") == str(SCHEMA_VERSION)
     for table, columns in SPEC_COLUMNS.items():
         assert columns <= _columns(store.path, table)
     assert {"reader_outcomes_invoice", "reader_outcomes_reader", "page_reads_status"} <= _tables(store.path)

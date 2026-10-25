@@ -14,18 +14,20 @@ from __future__ import annotations
 import re
 import threading
 import time
+from dataclasses import replace
 from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 
 from ap_coder.core import paths
-from ap_coder.ops.help import AREAS, CHECKS, CLOUD_CHECKS, FAQ, QUICK_START, ROUTINE, TO_DO, WHATS_NEW, CheckHelp
-from ap_coder.ops.offline import internet_allowed
+from ap_coder.ops.help import AREAS, CHECKS, CLOUD_CHECKS, ROUTINE, TO_DO, WHATS_NEW, CheckHelp, faq, quick_start
+from ap_coder.ops.offline import internet_allowed, setup_contact
 from ap_coder.web import minimd
-from ap_coder.web.core import data_dir, developer_tools, get_store, render, short_path
+from ap_coder.web.access import is_admin
+from ap_coder.web.core import data_dir, developer_tools, get_store, render, server_mode, short_path
 from ap_coder.web.pages import BY_KEY
-from ap_coder.web.pages.settings_reading import HOW_IT_READS, azure_check_on
+from ap_coder.web.pages.settings_reading import azure_check_on, how_it_reads
 
 router = APIRouter()
 
@@ -97,20 +99,27 @@ def whats_new() -> Any:
     return minimd.render(text, top=5)
 
 
-def quick_start_doc() -> Any:
-    """docs/QUICK_START.md as HTML, without its own title ("" when the file isn't there)."""
+LAPTOP_ONLY = "on the laptop"  # in a Quick start heading: its section is only for AP Coder on a laptop
+
+
+def quick_start_doc(server: bool = False) -> Any:
+    """docs/QUICK_START.md as HTML, without its own title ("" when the file isn't there). On the company server,
+    without the sections for a laptop (their heading says "on the laptop"): its install, addresses and folders."""
     doc = paths.PROJECT_DIR / "docs" / "QUICK_START.md"
     if not doc.is_file():
         return ""
     text = doc.read_text(encoding="utf-8")
     text = text.split("\n", 1)[1] if text.startswith("# ") else text
+    if server:
+        parts = re.split(r"(?m)^(?=## )", text)
+        text = "".join(p for p in parts if LAPTOP_ONLY not in p.split("\n", 1)[0])
     return minimd.render(text, top=1)  # "## Install" is a section of the page: h2
 
 
 @router.get("/help/quick-start", response_class=HTMLResponse)
 def quick_start_page(request: Request) -> HTMLResponse:
     """The pilot tester's one-page Quick start (docs/QUICK_START.md), to read or print."""
-    return render(request, "help_quick_start.html", "help", doc=quick_start_doc())
+    return render(request, "help_quick_start.html", "help", doc=quick_start_doc(server_mode(request)))
 
 
 def forget_setup_report() -> None:
@@ -190,6 +199,10 @@ def report_page(request: Request, codes: bool = False) -> HTMLResponse:
     )
 
 
+def _on_the_server(text: str) -> str:
+    return setup_contact(text).replace("on this computer", "on the server")
+
+
 def link(key: str) -> dict[str, str] | None:
     page = BY_KEY.get(key)
     return {"path": page.path, "title": page.title} if page else None
@@ -201,6 +214,9 @@ def help_page(request: Request, q: str = "", area: str = "") -> HTMLResponse:
     area = area if area in AREAS else ""
     cloud = internet_allowed() or azure_check_on(store)
     checks = matching_checks(q, area or None, cloud)
+    if server_mode(request):  # who to ask about the setup: an Admin; where it runs: the server (D-102)
+        checks = [(code, replace(about, meaning=_on_the_server(about.meaning), action=_on_the_server(about.action)))
+                  for code, about in checks]  # fmt: skip
     data = data_dir(store)
     groups = [
         {"area": a, "title": title, "checks": [(code, about) for code, about in checks if about.area == a]}
@@ -212,8 +228,8 @@ def help_page(request: Request, q: str = "", area: str = "") -> HTMLResponse:
         "help",
         news=whats_new() if developer_tools(store) else "",
         whats_new=WHATS_NEW,
-        quick_start=QUICK_START,
-        how_it_reads=HOW_IT_READS,
+        quick_start=quick_start(server_mode(request)),
+        how_it_reads=how_it_reads(server_mode(request)),
         routine=[(when, [(task, link(key)) for task, key in tasks]) for when, tasks in ROUTINE],
         areas=AREAS,
         area=area,
@@ -222,12 +238,14 @@ def help_page(request: Request, q: str = "", area: str = "") -> HTMLResponse:
         groups=[g for g in groups if g["checks"]],
         open_groups=bool(q.strip() or area),
         check_total=len(matching_checks(cloud=cloud)),
-        faq=FAQ,
+        faq=faq(server_mode(request)),
         shortcuts=SHORTCUTS,
         where=[
             ("Database", short_path(store.path)),
             ("Backups", short_path(data / "backups")),
             ("Settings", "the Settings page (kept in the data folder)"),
             ("Logs, for IT", short_path(paths.user_settings_path().parent / "logs")),
-        ],
+        ]
+        if is_admin(request)
+        else [],  # the server's own paths: an Admin's only (D-99)
     )

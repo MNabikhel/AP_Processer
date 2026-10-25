@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import json
 import math
@@ -63,6 +64,11 @@ def count_masters_change(conn: sqlite3.Connection) -> None:
     )
 
 
+# Who is signed in on the company server (set by web/identity.py): an event recorded without an actor (an upload, the
+# demo, a setup import) records them (B-1106). None on a laptop, whose events are as before.
+EVENT_ACTOR: contextvars.ContextVar[str | None] = contextvars.ContextVar("ap_coder_event_actor", default=None)
+
+
 class AccountsMixin:
     # --- GL accounts / cost centers ----------------------------------------------------------
 
@@ -74,6 +80,7 @@ class AccountsMixin:
         detail: dict[str, Any] | None = None,
     ) -> None:  # fmt: skip
         origin = EVENT_ORIGIN.get()
+        actor = actor if actor else EVENT_ACTOR.get()  # the person signed in on the server (B-1106)
         if origin:
             detail = {**(detail or {}), "address": origin}  # never "from": events use it (B-129)
         conn.execute(

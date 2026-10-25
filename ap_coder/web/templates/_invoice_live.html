@@ -72,7 +72,14 @@
 {% for p in live.problems %}{{ ui.check("error", "Fix this field", p) }}{% endfor %}
 {% else %}
 {% set c = live.checks %}
+{% if live.read_only %}{# Read-only (D-98): the checks, without "Before you can approve" (nothing for them to pick) #}
+{% set groups = c.groups | rejectattr("kind", "equalto", "block") | list %}
+{% if groups %}{{ status_block(c.tone, c.icon, c.title, [], "", groups) }}
+{% elif c.groups %}{{ status_block("warn", "visibility", "Not ready to approve: a line still needs its coding", []) }}
+{% else %}{{ status_block(c.tone, c.icon, c.title, c["items"], c.sub) }}{% endif %}
+{% else %}
 {{ status_block(c.tone, c.icon, c.title, c["items"], c.sub, c.groups) }}
+{% endif %}
 <details class="inv-more">
   <summary><span class="ms" aria-hidden="true">checklist</span>Details and what to do</summary>
   <div class="inv-more-body">
@@ -80,7 +87,7 @@
     {% for r in live.rules_applied %}{{ ui.check("info", "Coding rule", r) }}{% endfor %}
   </div>
 </details>
-{% if live.rule_changes %}
+{% if live.rule_changes and not live.read_only %}
 <button type="button" class="btn sm" data-grid-action="/review/{{ invoice_id }}/apply-rules" title="{{ live.rule_changes.help }}">
   <span class="ms" aria-hidden="true">rule_settings</span>Apply the coding rules to line {{ live.rule_changes.numbers }}</button>
 {% endif %}
@@ -131,7 +138,7 @@
 {%- endmacro %}
 
 {% macro suggest(live, invoice_id) -%}
-{% if live.suggestions %}
+{% if live.suggestions and not live.read_only %}
 <section class="card">
   {{ head("Suggested GL accounts") }}
   <p class="muted">From how similar lines were coded before and from your GL account descriptions.</p>
@@ -172,7 +179,7 @@
     {% endfor %}</tbody>
   </table></div>
   <p class="muted">{{ p.notes }}</p>
-  {% if p.differs %}
+  {% if p.differs and not live.read_only %}
   <button type="button" class="btn sm" data-grid-action="/review/{{ invoice_id }}/po-coding" title="Sets the GL account and cost center of these lines to the ones on the PO">
     <span class="ms" aria-hidden="true">auto_fix_high</span>Use the PO's coding on {{ p.differs | plural("line") }}</button>
   {% endif %}
@@ -273,7 +280,8 @@
   <div class="rvw-post-sub" title="What approving teaches AP Coder: {{ b.learn }}."><span class="ms" aria-hidden="true">school</span>
     <span data-change-count="{{ b.changed }}">{{ b.learn }}</span></div>
 </div>
-{% if b.first and b.first.kind == "pick" %}{# a button to the first line that needs an account or a cost center (B-434; G does the same) #}
+{% if live.read_only %}{# Read-only (D-98): nothing to pick or approve anyway #}
+{% elif b.first and b.first.kind == "pick" %}{# a button to the first line that needs an account or a cost center (B-434; G does the same) #}
 <button type="button" class="apc-pill warn inv-pick" data-goto-pick aria-keyshortcuts="G" title="Go to the line (G)">{{ b.first.text }}<span class="ms" aria-hidden="true">arrow_downward</span></button>
 {% elif b.first %}{# never approved anyway: what makes the voucher invalid (D-75), the first in screen order #}
 <span class="apc-pill err inv-hard" role="note" title="{{ b.blockers | map(attribute='text') | join('; ') }}"><span class="ms" aria-hidden="true">block</span><span class="t">Not ready: {{ b.first.text }}</span>{% if b.blockers | length > 1 %}<span class="more">+{{ b.blockers | length - 1 }}</span>{% endif %}</span>
@@ -284,9 +292,9 @@
 {% endif %}
 {%- endmacro %}
 
-{% macro reader(state, invoice_id) -%}
+{% macro reader(state, invoice_id, may=True) -%}
 {% for icon, text in state.lines %}<div class="inv-note"><span class="ms" aria-hidden="true">{{ icon }}</span><span>{{ text }}</span></div>{% endfor %}
-{% if state.queue %}
+{% if state.queue and may %}{# may: the role may add it (server mode, D-98) #}
 <form method="post" action="/review/{{ invoice_id }}/read-pages" class="inv-inline">
   <button type="submit" class="btn sm ghost"><span class="ms" aria-hidden="true">playlist_add</span>Add it to OvisOCR2's queue</button>
 </form>
@@ -304,7 +312,7 @@
       <dt title="{{ r.column }}">{{ r.label }}</dt><dd>{{ r.value }}{% if r.source == 'settings' %} <span class="inv-jde-src" title="From Settings → JD Edwards E1: read-only here">settings</span>{% endif %}</dd></div>{% endfor %}
   </dl>
   {# last, after the voucher's values: not in the middle of the form's Tab order (B-804) #}
-  <a class="link small inv-jde-settings" href="{{ j.settings_url }}" title="The values marked “settings” come from Settings → JD Edwards E1 (for the pilot tester)">Change the settings<span class="ms" aria-hidden="true">settings</span></a>
+  {% if live.jde_settings %}<a class="link small inv-jde-settings" href="{{ j.settings_url }}" title="The values marked “settings” come from Settings → JD Edwards E1 (for {{ live.setup_contact or 'the pilot tester' }})">Change the settings<span class="ms" aria-hidden="true">settings</span></a>{% endif %}
 </div>
 {% endif %}
 {%- endmacro %}

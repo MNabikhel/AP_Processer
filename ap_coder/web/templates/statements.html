@@ -29,6 +29,7 @@
 {% else %}
 <section class="card">
   <h4>Statement</h4>
+  {% if can("/statements/upload") %}{# server mode: Read-only compares no statements (D-98) #}
   <form method="post" action="/statements/upload" enctype="multipart/form-data" class="row upload-row" data-busy="Reading…">
     <label class="field">Vendor
       <select name="vendor" data-picker data-picker-noun="vendor">{% for key, name in names.items() %}<option value="{{ key }}"{% if key == vendor %} selected{% endif %}>{{ name }}</option>{% endfor %}</select></label>
@@ -37,6 +38,9 @@
     <button class="btn{{ '' if s else ' primary' }}" type="submit"><span class="ms" aria-hidden="true">upload_file</span>Upload</button>
   </form>
   <p class="muted small">One row per invoice, credit or payment, as the vendor sent it. Nothing is stored.</p>
+  {% else %}
+  <p class="muted">A Clerk uploads a vendor's statement here to compare it with the invoices.</p>
+  {% endif %}
   {% if s %}
   {{ preview(s, "/statements", {"vendor": vendor, "file": s.token}) }}
   <form method="get" action="/statements" class="stack">

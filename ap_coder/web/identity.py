@@ -15,6 +15,14 @@ name again. For each request, ``Identity`` (ASGI middleware) puts the person in 
 
 A browser on another computer without a valid cookie sees only the "Who are you?" page (a page asked for is sent
 there; an action is refused), the styles and scripts, and ``/healthz``.
+
+**Server mode** (``AP_SERVER_MODE=1``, D-97) replaces all of this: everyone logs in with their own account
+(``pages/login.py``), whichever computer they use, the server's own included (no address is "this computer" for
+what may be done). The session cookie (``SESSION_COOKIE``) holds a token whose SHA-256 the store keeps
+(``core/store/users.py``); ``PERSON`` is then the account (``user_id``, ``role``), so approvals name the person and
+record ``user:<id>`` as their login, and what each request may do is the role's (``web/roles.py``, D-98): no
+session, the login page (a page) or a 401 (an action); a password to change first, the password page; a role that
+may not, a 403 page (or JSON for an action).
 """
 
 from __future__ import annotations
@@ -32,15 +40,22 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
 
+from starlette.concurrency import run_in_threadpool
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from ap_coder.core.store import EVENT_ORIGIN
+from ap_coder.core.store import EVENT_ACTOR, EVENT_ORIGIN
 
 COOKIE = "ap_coder_person"
 MAX_NAME = 60  # characters kept of a name
 WHO_PATH = "/who"
 OPEN_PATHS = ("/healthz", WHO_PATH)  # answered to a browser that has not said who it is
 OPEN_PREFIXES = ("/static/", "/fonts/", "/assets/")
+# Server mode (D-97): the session cookie, the login page and the page where a password is changed.
+SESSION_COOKIE = "ap_session"
+LOGIN_PATH = "/login"
+PASSWORD_PATH = "/account/password"
+SESSION_ENDED = "You are not logged in (or your session ended): log in again."
+CHANGE_FIRST = "Choose a new password first (Your password), then carry on."
 THIS_COMPUTER = {"127.0.0.1", "localhost", "::1"}
 # Settings (all of it: the approval limit and rates, Data's backups and restore, the Azure check) are changed only on
 # the computer running AP Coder when it is shared on the office network (B-972); logins come later.
@@ -61,11 +76,15 @@ SETTINGS_HERE_ONLY = (
 @dataclass(frozen=True)
 class Person:
     """A colleague on another computer: the name they gave, the address their browser came from and the browser's
-    own id (kept in its name cookie: the same browser after its computer got a new address)."""
+    own id (kept in its name cookie: the same browser after its computer got a new address). In server mode, the
+    person logged in: their account's id, username and role, the name it shows."""
 
     name: str
     address: str
     browser: str = ""
+    user_id: int = 0
+    username: str = ""
+    role: str = ""
 
 
 PERSON: contextvars.ContextVar[Person | None] = contextvars.ContextVar("ap_coder_person", default=None)
@@ -177,16 +196,53 @@ def _cookies(headers: list[tuple[bytes, bytes]]) -> dict[str, str]:
     return found
 
 
+def session_tokens(headers: list[tuple[bytes, bytes]]) -> list[str]:
+    """Every ``ap_session`` cookie the request carries, in order."""
+    found = []
+    for key, value in headers:
+        if key.lower() == b"cookie":
+            for part in value.decode("latin-1").split(";"):
+                name, _, kept = part.strip().partition("=")
+                if name == SESSION_COOKIE:
+                    found.append(kept)
+    return found
+
+
+def session_token(headers: list[tuple[bytes, bytes]]) -> str:
+    """The session token of a request, read the same way by the login middleware and the pages: its one
+    ``ap_session`` cookie. Two or more (one planted by another site of the company for a path or a parent domain, or
+    left over) are no login at all, never one of them picked (D-101)."""
+    found = session_tokens(headers)
+    return found[0] if len(found) == 1 else ""
+
+
+def _no_store(send: Any) -> Any:
+    """``send`` with every answer marked ``Cache-Control: no-store`` (whatever the page said): on the server, what
+    needs a login is never kept by the browser or a proxy, the downloads and the invoices' page images too."""
+
+    async def sending(message: dict[str, Any]) -> None:
+        if message["type"] == "http.response.start":
+            kept = [(k, v) for k, v in message.get("headers") or [] if k.lower() not in (b"cache-control", b"pragma")]
+            message["headers"] = [*kept, (b"cache-control", b"no-store")]
+        await send(message)
+
+    return sending
+
+
 class Identity:
     """ASGI middleware: puts the colleague of each request in ``PERSON`` (and their address in the store's
     ``EVENT_ORIGIN``); a browser on another computer that has not said who it is goes to the "Who are you?" page."""
 
-    def __init__(self, app: Any, secret: bytes, address: str = "127.0.0.1") -> None:
+    def __init__(self, app: Any, secret: bytes, address: str = "127.0.0.1", server: bool = False) -> None:
         self.app = app
         self.secret = secret
         self.network = str(address or "").strip().strip("[]").lower() not in THIS_COMPUTER
+        self.server = bool(server)
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        if self.server and scope["type"] == "http":
+            await self._server(scope, receive, send)
+            return
         client = (scope.get("client") or ("", 0))[0] or ""
         if scope["type"] != "http" or not self.network or from_this_computer(scope):
             await self.app(scope, receive, send)
@@ -231,3 +287,84 @@ class Identity:
         finally:
             PERSON.reset(tokens[0])
             EVENT_ORIGIN.reset(tokens[1])
+
+    async def _server(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        """Server mode: the account behind the session cookie, and what its role may do (web/roles.py)."""
+        from ap_coder.web import roles
+
+        client = (scope.get("client") or ("", 0))[0] or ""
+        path, method = scope.get("path") or "", str(scope.get("method") or "GET").upper()
+        need = roles.need_for(scope.get("app"), scope)
+        user = None
+        store = getattr(getattr(scope.get("app"), "state", None), "store", None)
+        if not path.startswith(OPEN_PREFIXES):
+            token = session_token(scope.get("headers") or [])
+            if token and store is not None:
+                user = await run_in_threadpool(store.session_user, token)
+        page = method in ("GET", "HEAD")
+        refusal: Any = None
+        if user is None and need != roles.OPEN:
+            if page:
+                refusal = RedirectResponse(f"{LOGIN_PATH}?next={quote(_wanted(scope), safe='')}", status_code=303)
+            else:
+                refusal = JSONResponse({"ok": False, "error": SESSION_ENDED, "redirect": LOGIN_PATH}, status_code=401)
+                if path == "/logout":  # (two cookies, say): the sessions they name end, and the cookie is cleared
+                    for named in session_tokens(scope.get("headers") or []):
+                        if named and store is not None:
+                            await run_in_threadpool(store.end_session, named)
+                    refusal.delete_cookie(SESSION_COOKIE, path="/", httponly=True, samesite="strict")
+        elif user is not None and user["must_change"] and need not in (roles.OPEN, roles.SIGNED_IN):
+            if page:
+                refusal = RedirectResponse(f"{PASSWORD_PATH}?next={quote(_wanted(scope), safe='')}", status_code=303)
+            else:
+                refusal = JSONResponse({"ok": False, "error": CHANGE_FIRST}, status_code=403)
+        signed_in = _account_person(user, client) if user is not None else None
+        tokens = (
+            PERSON.set(signed_in),
+            EVENT_ORIGIN.set(client or None),
+            EVENT_ACTOR.set(signed_in.name if signed_in is not None else None),  # events record who (B-1106)
+        )
+        try:
+            if refusal is None and user is not None and not roles.allowed(user["role"], need):
+                refusal = await run_in_threadpool(_not_allowed, scope, receive, user, page)
+            if refusal is not None:
+                refusal.headers["Cache-Control"] = "no-store"
+                await refusal(scope, receive, send)
+                return
+            await self.app(scope, receive, send if need == roles.OPEN else _no_store(send))
+        finally:
+            PERSON.reset(tokens[0])
+            EVENT_ORIGIN.reset(tokens[1])
+            EVENT_ACTOR.reset(tokens[2])
+
+
+def _wanted(scope: dict[str, Any]) -> str:
+    query = (scope.get("query_string") or b"").decode("latin-1")
+    return (scope.get("path") or "/") + (f"?{query}" if query else "")
+
+
+def _account_person(user: dict[str, Any], client: str) -> Person:
+    return Person(user.get("name") or user["username"], client, f"user:{user['id']}", int(user["id"]),
+                  user["username"], user["role"])  # fmt: skip
+
+
+def not_allowed_text(role_label: str, page: bool) -> str:
+    what = "open this page" if page else "do this"
+    return f"Your role ({role_label}) can't {what}. Ask an Admin if you need it."
+
+
+def _not_allowed(scope: dict[str, Any], receive: Any, user: dict[str, Any], page: bool) -> Any:
+    """The 403: AP Coder's own page with the menu (a page asked for), else ``{"ok": false, "error": ...}``."""
+    from starlette.requests import Request
+
+    text = not_allowed_text(user.get("role_label") or user["role"], page)
+    request = Request(scope, receive)
+    if not page or "text/html" not in request.headers.get("accept", ""):
+        return JSONResponse({"ok": False, "error": text}, status_code=403)
+    try:
+        from ap_coder.web import core
+
+        return core.render(request, "error.html", "", status_code=403, title="Not allowed", code=403, detail=text)
+    except Exception:  # noqa: BLE001 - the page frame reads the database: a plain page then
+        return HTMLResponse(f"<!doctype html><meta charset=utf-8><title>Not allowed</title><p>{text}</p>"
+                            '<p><a href="/">Back</a></p>', 403)  # fmt: skip

@@ -21,11 +21,12 @@
   </form>
   {% else %}
   <div class="row">
-    {{ upload_form("/purchase-orders/upload", "PO lines (CSV or Excel)", "Upload PO lines") }}
+    {% if can("/purchase-orders/upload") %}{{ upload_form("/purchase-orders/upload", "PO lines (CSV or Excel)", "Upload PO lines") }}
+    {% else %}<p class="muted">An Admin imports the purchase orders.</p>{% endif %}{# server mode (D-98) #}
     <a class="btn" href="/purchase-orders/template.csv" download><span class="ms" aria-hidden="true">download</span>Template</a>
   </div>
   {% endif %}
-  {% if not pos %}
+  {% if not pos and can("/purchase-orders/sample") %}
   <hr>
   <p class="muted small">Just trying it out? Load the sample POs that go with the sample invoices.</p>
   <form method="post" action="/purchase-orders/sample">
@@ -112,6 +113,7 @@
   {% else %}
   <p class="muted">No invoices have quoted this PO yet.</p>
   {% endif %}
+  {% if can("/purchase-orders/status") %}
   <div class="row">
     <form method="post" action="/purchase-orders/status">
       <input type="hidden" name="key" value="{{ p.po_key }}">
@@ -122,6 +124,7 @@
       <button class="btn" type="submit"><span class="ms" aria-hidden="true">delete</span>Delete PO</button>
     </form>
   </div>
+  {% endif %}
 </section>
 {% endif %}
 {% endif %}

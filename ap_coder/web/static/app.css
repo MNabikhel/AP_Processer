@@ -699,3 +699,14 @@ details.tech summary {cursor: pointer; font-size: 13px; color: var(--lg-muted); 
 .apc-table.hp-keys td {white-space: normal; padding: 6px 8px;}
 .apc-table.hp-keys td.w {min-width: 0;}
 .apc-table.hp-keys td:first-child {width: 42%;}
+
+/* Server mode (D-97): the login page, and the person logged in at the rail's foot. */
+.apc-login {max-width: 400px; margin: 10vh auto 0; padding: 0 16px; display: flex; flex-direction: column; gap: 16px;}
+.apc-login .stack {align-items: stretch;}
+.apc-login .apc-title {margin: 0;}
+.apc-me-links {display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 6px; font-size: 12px;}
+.apc-me-links a {color: var(--lg-muted);}
+.apc-me-links a:hover {color: var(--lg-text);}
+.apc-me-logout {display: inline; margin: 0;}
+.apc-me-logout button {border: 0; padding: 0; background: none; font: inherit; color: var(--lg-muted); cursor: pointer;}
+.apc-me-logout button:hover {color: var(--lg-text); text-decoration: underline;}

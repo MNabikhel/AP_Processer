@@ -7,16 +7,19 @@
   <p class="muted">{{ next.text }}</p>
   {% if next.steps %}<ol class="next-steps">{% for step in next.steps %}<li>{{ step }}</li>{% endfor %}</ol>{% endif %}
   <div class="row">
+    {# server mode: only what the role may use (web/roles.py, D-102) #}
     {% if next.check %}
+    {% if can("/settings/reading/check") %}
     <form method="post" action="/settings/reading/check" data-busy="Checking…">
       <input type="hidden" name="back" value="{{ where }}">
       <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">refresh</span>Check again</button>
     </form>
-    <a class="link" href="{{ next.href }}">{{ next.button }} <span class="ms" aria-hidden="true">arrow_forward</span></a>
-    {% else %}
+    {% endif %}
+    {% if can(next.href, "GET") %}<a class="link" href="{{ next.href }}">{{ next.button }} <span class="ms" aria-hidden="true">arrow_forward</span></a>{% endif %}
+    {% elif can(next.href, "GET") %}
     <a class="btn primary" href="{{ next.href }}"><span class="ms" aria-hidden="true">arrow_forward</span>{{ next.button }}</a>
     {% endif %}
-    {% if next.sample %}
+    {% if next.sample and can("/review/sample-gl") %}
     <form method="post" action="/review/sample-gl">
       <input type="hidden" name="back" value="{{ where }}">
       <button class="btn" type="submit"><span class="ms" aria-hidden="true">science</span>Use the sample GL accounts for now</button>

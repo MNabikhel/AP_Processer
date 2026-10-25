@@ -24,6 +24,7 @@ from ap_coder.core import ui
 from ap_coder.core.config import Settings
 from ap_coder.core.envfile import clean_url, read_env
 from ap_coder.core.store import Store
+from ap_coder.ops.help import SERVER_LM_STUDIO
 from ap_coder.ops.offline import internet_allowed
 from ap_coder.web.core import (
     done,
@@ -36,6 +37,7 @@ from ap_coder.web.core import (
     reference_or_none,
     refuse,
     reviewer,
+    server_mode,
 )
 from ap_coder.web.jobs import Job
 
@@ -55,6 +57,15 @@ HOW_IT_READS: tuple[tuple[str, str], ...] = (
     ("A person decides", " whenever a reader or a check is unsure. No invoice is approved without a person before "
      "OvisOCR2 has read it."),
 )  # fmt: skip
+
+
+def how_it_reads(server: bool = False) -> tuple[tuple[str, str], ...]:
+    """``HOW_IT_READS``; on the company server, where all of it runs on the server (D-102)."""
+    if not server:
+        return HOW_IT_READS
+    return tuple((bold, rest.replace("on this computer", "on the server")) for bold, rest in HOW_IT_READS)
+
+
 READER_PILL = {
     "ok": ("Working", "ok", "check_circle"),
     "warn": ("Needs a look", "warn", "warning"),
@@ -83,12 +94,14 @@ DOCTOR_JOB = "settings-doctor"
 # --- What the tab shows ---------------------------------------------------------------------------------------------
 
 
-def reader_rows(status: Any) -> list[dict[str, str]]:
-    """The readers of ``reading_status``: name, state pill (label, tone, icon), plain-English detail."""
+def reader_rows(status: Any, server: bool = False) -> list[dict[str, str]]:
+    """The readers of ``reading_status``: name, state pill (label, tone, icon), plain-English detail (``server``: as
+    the company server is, where they all run)."""
     rows = []
     for line in status.readers:
         label, tone, icon = READER_PILL.get(line.state, ("Unknown", "gray", "help"))
-        rows.append({"name": line.name, "label": label, "tone": tone, "icon": icon, "detail": line.detail})
+        detail = line.detail.replace("on this computer", "on the server") if server else line.detail
+        rows.append({"name": line.name, "label": label, "tone": tone, "icon": icon, "detail": detail})
     return rows
 
 
@@ -185,8 +198,11 @@ def chat_model(settings: Settings) -> tuple[bool, str]:
     return status.ready, status.label if status.ready else ""
 
 
-def setup_steps(status: Any, running: bool, chat: tuple[bool, str]) -> list[tuple[str, str, str]]:
-    """(state, step, detail) for a new computer, in order: "ok" when done, "todo" when it is next, "opt" optional."""
+def setup_steps(
+    status: Any, running: bool, chat: tuple[bool, str], *, server: bool = False
+) -> list[tuple[str, str, str]]:
+    """(state, step, detail) for a new computer, in order: "ok" when done, "todo" when it is next, "opt" optional.
+    ``server``: the company server, where LM Studio runs on the server itself (D-102)."""
     found = bool(status.page_reader_model)
     if found:
         have = f"found: {status.page_reader_model}"
@@ -203,7 +219,8 @@ def setup_steps(status: Any, running: bool, chat: tuple[bool, str]) -> list[tupl
     ready, label = chat
     return [
         ("ok" if running else "todo", "LM Studio is running",
-         "its server answers" if running else "start LM Studio, then its server (Developer tab, Start server)"),
+         "its server answers" if running else SERVER_LM_STUDIO if server
+         else "start LM Studio, then its server (Developer tab, Start server)"),
         ("ok" if found else "todo", "OvisOCR2 is in LM Studio", have),
         (test[0], "Self-test passed (automatic)", test[1]),
         ("ok" if ready else "opt", "Chat model for GL suggestions (optional)",
@@ -252,7 +269,7 @@ def testing_snapshot(store: Store) -> dict[str, Any]:
     }
 
 
-def page_reader_context(settings: Settings, store: Store, status: Any) -> dict[str, Any]:
+def page_reader_context(settings: Settings, store: Store, status: Any, server: bool = False) -> dict[str, Any]:
     from ap_coder.ai.local_llm import LM_STUDIO_STEPS
 
     running = lm_studio_running(settings)
@@ -295,7 +312,7 @@ def page_reader_context(settings: Settings, store: Store, status: Any) -> dict[s
             if vlm and vlm.get("fields")
             else ""
         ),
-        "steps": setup_steps(status, running, chat),
+        "steps": setup_steps(status, running, chat, server=server),
         "chat": chat[1].split(" · ")[-1] if chat[0] else "",
     }
 
@@ -339,9 +356,9 @@ def reading_context(request: Request, *, fresh: bool = False) -> dict[str, Any]:
     settings, store = get_settings(request), get_store(request)
     status = reading_status_or_none(settings, store, use_cache=not fresh)
     context: dict[str, Any] = {
-        "how_it_reads": HOW_IT_READS,
+        "how_it_reads": how_it_reads(server_mode(request)),
         "status": status,
-        "readers": reader_rows(status) if status is not None else [],
+        "readers": reader_rows(status, server_mode(request)) if status is not None else [],
         "models": model_rows(settings),
         "poll_seconds": TEST_POLL_SECONDS,
         "developer": internet_allowed(),
@@ -350,7 +367,7 @@ def reading_context(request: Request, *, fresh: bool = False) -> dict[str, Any]:
         "show_azure_check": internet_allowed() or azure_check_on(store),
     }
     if status is not None:
-        context["reader"] = page_reader_context(settings, store, status)
+        context["reader"] = page_reader_context(settings, store, status, server_mode(request))
     from ap_coder.ai import verifier
 
     context["ai_reviewer"] = verifier.load_settings(store)

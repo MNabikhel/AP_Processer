@@ -35,12 +35,13 @@ from ap_coder import __version__
 from ap_coder.core import paths
 from ap_coder.core.config import Settings
 from ap_coder.core.store import Store, default_db_path
+from ap_coder.ops import offline
 from ap_coder.web import core
 from ap_coder.web.errors import FriendlyErrors
 from ap_coder.web.identity import THIS_COMPUTER, Identity, from_this_computer, is_this_computer
 from ap_coder.web.jobs import Jobs
 from ap_coder.web.pages import MORE_MODULES, PAGES, Page
-from ap_coder.web.security import TOKEN_HEADER, LocalOnly
+from ap_coder.web.security import TOKEN_HEADER, LocalOnly, SecurityHeaders, allowed_hosts
 
 CODE_FOLDER = core.WEB_DIR.parent.parent  # the folder holding ap_coder/ (the launcher checks it is its own)
 
@@ -140,12 +141,17 @@ class EnvSettings:
 
 
 def create_app(settings: Settings | None = None, store: Store | None = None, *, address: str = "127.0.0.1",
-               start_reader: bool = True) -> FastAPI:  # fmt: skip
+               start_reader: bool = True, server: bool | None = None,
+               insecure_http: bool = False) -> FastAPI:  # fmt: skip
     """The dashboard. ``settings``: fixed settings (tests); by default the .env is read again for every page, so a
     change on the Settings page applies at once. ``store``: the database (default: ``default_store``). ``address``:
     what the server listens on (the Host check allows it). ``start_reader``: start the page reader's background
-    thread (OvisOCR2) when the app starts (tests replace ``page_worker.start_background`` with a no-op)."""
+    thread (OvisOCR2) when the app starts (tests replace ``page_worker.start_background`` with a no-op).
+    ``server``: server mode, people log in and their role says what they may do (D-97; default ``AP_SERVER_MODE``).
+    ``insecure_http``: the server's ``--insecure-http`` (a first test): its session cookie is then not Secure and it
+    sends no HSTS; otherwise both, whatever scheme a request reports (D-101)."""
     store = store or default_store()
+    server = offline.server_mode() if server is None else bool(server)
     settings_factory: Callable[[], Settings] = (lambda: settings) if settings is not None else EnvSettings()
 
     @contextlib.asynccontextmanager
@@ -179,13 +185,21 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     app.state.port = None  # set by server.serve
     app.state.shutdown_token = None  # set by server.serve; without it /shutdown refuses
     app.state.server = None  # the uvicorn.Server, set by server.serve
+    app.state.proxy = None  # the reverse proxy's address (--proxy), set by server.serve
+    app.state.insecure_http = bool(insecure_http)
     # A colleague on the office network says who they are once (web/identity.py); LocalOnly, added last, runs first.
     app.state.identity_secret = secrets.token_bytes(32)  # made at each start: a cookie from another start is refused
     app.state.daily_backup = DailyBackup(store)
     app.add_middleware(BackupCheck, backup=app.state.daily_backup)  # after the security checks: only for pages served
     app.add_middleware(FriendlyErrors)  # an error no page expected is drawn as a page, with the menu
-    app.add_middleware(Identity, secret=app.state.identity_secret, address=address)
-    app.add_middleware(LocalOnly, address=address)
+    app.state.server_mode = server  # accounts and roles (web/identity.py, web/roles.py)
+    app.add_middleware(Identity, secret=app.state.identity_secret, address=address, server=server)
+    app.add_middleware(core.StoreContext, store=store)  # messages and uploads kept in this database (D-99)
+    app.add_middleware(
+        LocalOnly, address=address, extra=allowed_hosts(), server=server
+    )  # + the server's names (AP_ALLOWED_HOSTS)
+    # Outermost: a refusal carries the headers too.
+    app.add_middleware(SecurityHeaders, server=server, hsts=server and not insecure_http)
     app.mount("/static", CheckedStaticFiles(directory=str(core.STATIC_DIR)), name="static")
     app.mount("/fonts", StaticFiles(directory=str(core.FONTS_DIR)), name="fonts")
     app.mount("/assets", StaticFiles(directory=str(core.ASSETS_DIR)), name="assets")
@@ -207,8 +221,15 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     build = paths.build_stamp(CODE_FOLDER)["commit"]  # the code this server runs (the launcher compares it)
     network = str(address or "").strip().strip("[]").lower() not in THIS_COMPUTER  # shared on the office network
 
+    console_only = server  # the server: /healthz tells only its own console where it runs (D-101)
+
     @app.get("/healthz")
     def healthz(request: Request) -> dict[str, Any]:
+        client = request.client.host if request.client else ""
+        if console_only and not is_this_computer(client):
+            # The server: by the client's own address (after --proxy), not the one listened on: behind IIS on the same
+            # server AP Coder listens on 127.0.0.1, and everyone arrives through it (D-101).
+            return {"ok": True, "app": "ap-coder"}
         if network and not from_this_computer(request.scope):
             return {"ok": True, "app": "ap-coder"}  # another computer: only that it is up (B-979)
         server = request.scope.get("server") or (None, None)

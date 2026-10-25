@@ -21,8 +21,10 @@
       <a class="link" href="/vendors">Cancel</a>
     </div>
   </form>
-  {% else %}
+  {% elif can("/vendors/master/upload") %}{# server mode: the vendor master is an Admin's (D-98) #}
   {{ upload_form("/vendors/master/upload", "Vendor list (CSV or Excel)", "Upload the vendor list") }}
+  {% else %}
+  <p class="muted">An Admin imports the vendor master.</p>
   {% endif %}
 </details>
 

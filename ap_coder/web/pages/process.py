@@ -7,10 +7,15 @@ too; the review queue's welcome card uses the same routes.
 
 from __future__ import annotations
 
+import collections
+import contextvars
 import hashlib
+import logging
 import os
 import re
+import threading
 import time
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
@@ -39,11 +44,15 @@ from ap_coder.intake.mailbox import (
     unpack_folder,
 )
 from ap_coder.intake.pictures import looks_incomplete
+from ap_coder.ops.help import SERVER_LM_STUDIO
 from ap_coder.web import identity
+from ap_coder.web.access import is_admin
 from ap_coder.web.core import (
     cache_dir,
+    can,
     done,
     flash_message,
+    folder_on_the_server,
     get_settings,
     get_store,
     invoice_dir,
@@ -56,6 +65,7 @@ from ap_coder.web.core import (
     refuse,
     render,
     reviewer,
+    server_mode,
     short_path,
 )
 from ap_coder.web.identity import person
@@ -413,6 +423,24 @@ def next_step(steps: list[tuple[str, str, str]]) -> dict[str, Any] | None:
     return None
 
 
+def shown_setup(request: Request, steps: list[tuple[str, str, str]], coming: dict[str, Any] | None) -> tuple[
+        list[tuple[str, str, str]], dict[str, Any] | None, dict[str, str]]:  # fmt: skip
+    """The checklist, its Next step and the steps' links as the person sees them: on a laptop as they are; on the
+    company server (D-102) LM Studio is IT's or an Admin's (it runs on the server), a step whose page the role can't
+    open has no link, and a Next step the role can't do says who does it."""
+    links = {label: href for label, href in STEP_LINKS.items() if can(request, href, "GET")}
+    if not server_mode(request):
+        return steps, coming, links
+    steps = [(state, label, f"not ready: {SERVER_LM_STUDIO}" if label == LM_STUDIO and state in ("todo", "bad")
+              else detail) for state, label, detail in steps]  # fmt: skip
+    if coming and coming.get("check"):  # the LM Studio card
+        coming = {**coming, "title": "LM Studio isn't ready on the server", "steps": (),
+                  "text": f"{SERVER_LM_STUDIO}. Until it is ready, every invoice waits for a person."}  # fmt: skip
+    elif coming and not can(request, coming["href"], "GET"):
+        coming = {**coming, "text": f"{coming['text']} An Admin does this step."}
+    return steps, coming, links
+
+
 def ready_to_read(steps: list[tuple[str, str, str]]) -> bool:
     """PDF text / OCR and GL accounts are enough: OvisOCR2 reads invoices once it runs, the chat model is optional."""
     return step_state(steps, "GL accounts") == "ok"
@@ -577,7 +605,7 @@ def process_page(request: Request) -> HTMLResponse:
     waiting = [i for i in recent if i["status"] == REVIEW]
     reasons = attention(store, reference_or_none(store), waiting) if waiting else {}
     recent = [{**i, "needs_attention": i["id"] in reasons} for i in recent]  # its pill says what the queue says
-    coming = next_step(steps)
+    steps, coming, links = shown_setup(request, steps, next_step(steps))
     demo_count = store.demo_count()
     return render(
         request, "process.html", "process",
@@ -585,8 +613,7 @@ def process_page(request: Request) -> HTMLResponse:
         # and vendors don't mix into your numbers (B-468).
         demo_first=bool(demo_count) and demo_count >= len(invoices),
         steps=steps,
-        step_links=STEP_LINKS,
-        lm_studio_steps=LM_STUDIO_STEPS,
+        step_links=links,
         steps_done=steps_done,
         steps_needed=steps_needed,
         next=coming if coming and coming["href"] != "/process" else None,  # (this page's own step: choose files)
@@ -597,20 +624,106 @@ def process_page(request: Request) -> HTMLResponse:
         files=folder_files(store),
         not_read=not_read_here(invoice_dir(store)),
         set_aside=inbox.needs_person(store, invoice_dir(store)),
-        folder=short_path(invoice_dir(store)),
+        folder=short_path(invoice_dir(store)) if is_admin(request) else "",
         accept=",".join(ACCEPT),
         accept_text=", ".join(e.lstrip(".").upper() for e in ACCEPT),
         job=jobs(request).get(JOB).snapshot(),
+        waiting=import_queue(request).files(),
+        waiting_text=waiting_text(import_queue(request).files()),
         demo_available=demo_available(),
         demo_count=demo_count,
         where="/process",
     )  # fmt: skip
 
 
+# --- Imports queued behind the one running (D-99) -------------------------------------------------------------------
+# One import reads at a time. An upload that comes while one runs (a colleague's, on the server) is saved to the
+# invoices folder at once and waits here; when the running import finishes, the next one waiting starts, as the person
+# who uploaded it (their context). In this process only: after a restart its files are in the folder, listed as new.
+
+
+class ImportQueue:
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.waiting: collections.deque[tuple[contextvars.Context, Callable[[], tuple[Any, int]], int]] = (
+            collections.deque()
+        )
+
+    def files(self) -> int:
+        """How many files wait behind the import in progress."""
+        return sum(count for _, _, count in self.waiting)
+
+
+_queue_lock = threading.Lock()
+
+
+def import_queue(request: Request) -> ImportQueue:
+    state = request.app.state
+    with _queue_lock:
+        if getattr(state, "import_queue", None) is None:
+            state.import_queue = ImportQueue()
+        return state.import_queue
+
+
+def waiting_text(files: int) -> str:
+    return f"Waiting: {ui.plural(files, 'file')} queued behind the import in progress."
+
+
+def _next_import(queue: ImportQueue, job: Job) -> None:
+    """After an import: start the next one waiting (which of its files are new is decided now, so one read
+    meanwhile is skipped)."""
+    with queue.lock:
+        _start_next(queue, job)
+
+
+def _start_next(queue: ImportQueue, job: Job) -> None:
+    """Start the first import waiting, if the job is free (the caller holds ``queue.lock``)."""
+    while queue.waiting and not job.running:
+        context, build, _ = queue.waiting[0]
+        try:
+            started = context.run(_begin, queue, job, build)
+        except Exception:  # noqa: BLE001 - one batch that cannot start never holds up the rest
+            logging.getLogger(__name__).exception("A queued import could not start")
+            queue.waiting.popleft()
+            continue
+        if started:
+            queue.waiting.popleft()
+        return  # (not started: another import began meanwhile; this one waits for it)
+
+
+def _begin(queue: ImportQueue, job: Job, build: Callable[[], tuple[Any, int]]) -> bool:
+    work, total = build()
+    return job.start(work, total=total, then=lambda: _next_import(queue, job))
+
+
+def start_import(request: Request, work: Any, total: int) -> bool:
+    """Start reading (``work``) now, False while an import runs; the imports queued meanwhile follow it."""
+    queue, job = import_queue(request), jobs(request).get(JOB)
+    return job.start(work, total=total, then=lambda: _next_import(queue, job))
+
+
 def _start(request: Request, work: Any, total: int) -> JSONResponse:
-    if not jobs(request).get(JOB).start(work, total=total):
+    if not start_import(request, work, total):
         return refuse("AP Coder is already reading invoices. Wait for it to finish, then try again.", 409)
     return JSONResponse({"ok": True, "job": JOB, "status": "/process/status"})
+
+
+def _start_or_queue(request: Request, build: Callable[[], tuple[Any, int]], files: int) -> JSONResponse:
+    """Start the import ``build`` makes (``(work, total)``), or queue it behind the one running."""
+    queue, job = import_queue(request), jobs(request).get(JOB)
+    started = {"ok": True, "job": JOB, "status": "/process/status"}
+    with queue.lock:
+        if not job.running and not queue.waiting:
+            work, total = build()
+            if job.start(work, total=total, then=lambda: _next_import(queue, job)):
+                return JSONResponse(started)
+        batch = (contextvars.copy_context(), build, files)
+        queue.waiting.append(batch)
+        _start_next(queue, job)  # (an import that ended without starting the next: never left waiting for nothing)
+        if not any(b is batch for b in queue.waiting):
+            return JSONResponse(started)
+        waiting = queue.files()
+    return JSONResponse({**started, "queued": waiting, "toast": flash_message(waiting_text(waiting), "info")})
 
 
 @router.post("/process/upload")
@@ -627,8 +740,6 @@ async def process_upload(request: Request, files: list[UploadFile] = File(...)) 
 
 def _save_and_start(request: Request, received: list[tuple[str, bytes | None]]) -> JSONResponse:
     store, settings = get_store(request), get_settings(request)
-    if jobs(request).get(JOB).running:
-        return refuse("AP Coder is already reading invoices. Wait for it to finish, then try again.", 409)
     if not ready_to_read(setup_steps(store, settings)):
         return refuse("Finish the setup first: import your GL accounts (GL accounts & tax).")
     folder = invoice_dir(store)
@@ -663,9 +774,12 @@ def _save_and_start(request: Request, received: list[tuple[str, bytes | None]]) 
                                        "err"))  # fmt: skip
             continue
         saved.append(target)
-    todo, already = split_new(store, saved)
-    work = process_files(store, settings, todo, already=already, emails=mails, notes=notes)
-    return _start(request, work, len(todo))
+
+    def build() -> tuple[Any, int]:  # when it starts: a file read by the import before it is then skipped
+        todo, already = split_new(store, saved)
+        return process_files(store, settings, todo, already=already, emails=mails, notes=notes), len(todo)
+
+    return _start_or_queue(request, build, len(saved))
 
 
 @router.post("/process/folder")
@@ -697,12 +811,15 @@ def process_folder(request: Request) -> JSONResponse:
 @router.get("/process/status")
 def process_status(request: Request) -> JSONResponse:
     """How far reading and coding got (the page polls this)."""
-    return JSONResponse(jobs(request).get(JOB).snapshot(), headers={"Cache-Control": "no-store"})
+    snap = {**jobs(request).get(JOB).snapshot(), "waiting": import_queue(request).files()}
+    return JSONResponse(snap, headers={"Cache-Control": "no-store"})
 
 
 @router.post("/process/open-folder")
 def process_open_folder(request: Request) -> JSONResponse:
     folder = invoice_dir(get_store(request))
+    if server_mode(request):
+        return folder_on_the_server(request, folder)
     if person() is not None:  # a colleague's click must not open a window on the computer running AP Coder
         return message("The invoices folder is on the computer running AP Coder: open it there.", "info")
     if open_folder(folder):

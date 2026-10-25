@@ -879,3 +879,168 @@ that is reversed keeps its line, marked "replaced by D-NN".
   that contradicted the draft, and a second approver who couldn't see what was approved over.
   (`static/js/invoice.js`, `web/pages/invoice.py` `_keep_draft`, `web/pages/review.py` `draft_reasons`,
   `core/audit.py`; `tests/test_web_ui_sweep4.py`)
+- **D-97** · Server mode: AP Coder on one company server, each person with their own account. Off by default
+  (`AP_SERVER_MODE=1`, or `serve --server`): the laptop pilot is unchanged (D-34 still holds there). On, every request
+  but /login, /healthz, the styles and scripts needs a session, whichever computer it comes from: the server's own
+  browser is not "this computer" (no automatic identity, no shortcut past the roles); the console is the one local
+  path (`python -m ap_coder users add|list|reset|deactivate|role`, the password typed twice with getpass), and the
+  first Admin is added there. Accounts are AP Coder's own (SSO can come later), in the database (`users`, `sessions`,
+  `login_attempts`, schema 18): the username kept case-folded; passwords hashed with the standard library's scrypt
+  (n=2^14, r=8, p=1, a 16-byte salt, `scrypt$n$r$p$salt$hash`, compared in constant time), at least 12 characters and
+  not the username or the name; a new account and a reset get a temporary password, changed before anything else.
+  Five tries that don't match within 15 minutes for one username, or from one address, pause logins there for 15
+  minutes, an unknown username counted alike, every refusal in the same words. A session is a random 32-byte token in
+  the `ap_session` cookie (HttpOnly, SameSite=Strict, Secure over HTTPS, read from `request.url.scheme`), only its
+  SHA-256 stored; a new one at every login (no fixation); it ends after 8 hours unused or 7 days, at logout, and when
+  the password changes (the person's other sessions) or an Admin resets it or turns the account off (all of them);
+  in the database, so a restart logs nobody out. The person is their account: `reviewer()` its name, `login()`
+  `user:<id>`, events name them and their address; drafts are kept by account. A temporary password made on the
+  Users page is shown once from memory, never kept in a message or the database. Logins, refusals, lockouts,
+  logouts, password changes and resets, accounts added, role changes and accounts turned off or on are events
+  (Activity → Logins). Why: on a server everyone opens the same address, so a typed name (D-34) can't stand for a
+  person, nor an address for a login; the pilot tester asked for logins and roles with nothing installed on the
+  clerks' PCs and nothing new to download. (`ap_coder/core/store/users.py`, `ap_coder/web/identity.py`,
+  `ap_coder/web/pages/login.py`, `ap_coder/web/pages/users.py`, `ap_coder/ops/cli.py` `cmd_users`;
+  `tests/test_users.py`, `tests/test_users_cli.py`, `tests/test_server_web.py`, `tests/test_server_browser.py`)
+- **D-98** · Roles in server mode: Read-only, Clerk, Approver, Admin, each able to do what the one before can.
+  Read-only looks (the queue, invoices and their pages, the directory, reports, the exports list, Insights, Spend,
+  Activity, Help, its own password) and changes nothing; Clerk also imports, reviews and checks, gives the first
+  approval, parks, rejects, reopens, undoes its own approval, approves in bulk, makes export batches and downloads
+  them, keeps vendors' hold and notes, and sees the account lists, POs and Learning; Approver also gives the second
+  approval or sends back; Admin everything else (Settings, Users, JD Edwards, the account lists' and tax setup's
+  changes, imports of the vendor master, POs and the ERP list, export layouts and undoing a batch, backups and
+  restore, deleting, the Azure check, the learning memory's resets and holds, the demo). One table from each route to
+  what it needs (`web/roles.py` `RULES`), enforced in the Identity middleware before any page runs; a route without a
+  rule needs an Admin, and a test walks the app's routes so a new route without a rule fails. A role that may not
+  gets a 403 page (JSON for an action), "Your role (Clerk) can't …". Pages hide the menu entries and buttons a role
+  can't use (`core.can`), but the server is what refuses. The second approval needs a second account: two accounts
+  are compared by id (`same_approver`; two people may share a name), and each approval records the account
+  (`detail.user_id`). Why: the plan's roles, with one place that says who may do what and a default that closes
+  rather than opens. (`ap_coder/web/roles.py`, `ap_coder/core/store/users.py` `same_approver`; `tests/test_roles.py`,
+  `tests/test_server_second_approval.py`)
+- **D-100** · The company server runs AP Coder as a Windows scheduled task, and updates with a way back. (1) **The
+  service**: `python -m ap_coder service install|remove|start|stop|status` registers a Task Scheduler task (XML,
+  `schtasks /create /xml`) that starts at boot, a minute after, as a dedicated local account (`--account`, default
+  `APCoderService`; Windows' own accounts by their SID, no password), whether anyone is logged on or not, with no
+  time limit (`PT0S`: the default stops a task after 3 days), at normal priority (5: a task's default, 7, is below
+  normal), one instance, restarted on a failure to start, and started again every 5 minutes (nothing happens while it
+  runs). Its action is `<data folder>\service\run.cmd`, which sets `AP_PRIVATE_DIR` and `AP_SERVER_MODE=1` and runs
+  `python -m ap_coder service run`, the service host: it starts `serve --server ...` with the settings of
+  `server.json` (or `AP_SERVER_PORT`, `AP_DASHBOARD_ADDRESS`, `AP_TLS_CERT`, `AP_TLS_KEY`, `AP_ALLOWED_HOSTS`,
+  `AP_SERVER_PROXY`), writes its output to the rotating `logs\service.log` (5 MB × 6), starts it again when it stops
+  (5 s, doubling up to 5 min) and, on Windows, holds it in a job object that ends it with the host. `service stop`
+  leaves a `stopped` file (the 5-minute trigger then starts nothing, also after a reboot), asks the dashboard to stop
+  (`POST /shutdown` with its token, on 127.0.0.1) and ends the task. Why a task: it needs nothing downloaded and no
+  pywin32. `sc.exe create` of `pythonw.exe` is not a service (the Service Control Manager ends a program that does not
+  answer it after 30 s, error 1053); a ctypes service host (`StartServiceCtrlDispatcherW`) does not work from a
+  virtual environment, whose `python.exe` starts the real Python as a second process that cannot answer the Service
+  Control Manager, and it would be Windows-only code no CI runs end to end; NSSM and WinSW are downloads. Task
+  Scheduler's own restart covers only a failure to start, so the host does the restarts. `run.cmd` is what the task
+  points at, so an update rewrites that file and never registers the task again (which would ask for the account's
+  password). (2) **`server-update <bundle.zip>`**: check the bundle (one folder, nothing out of it, CRCs, every file
+  its manifest lists, newer by `paths.compare`, as the laptop updater judges), stop the service, back up the database
+  (`Store.backup_now("before-update-<version>")`), unzip next to the current folder (`APProcessor-<version>`), set it
+  up with its own launcher (`launch.py --no-start --yes`, offline from its wheelhouse; in server mode the launcher
+  keeps the older folder instead of cleaning it up), migrate (the new code opens the store once), self-check
+  (`pilot_check.py`), switch `run.cmd` and start, and wait for `/healthz` to answer from the new folder. A failure at
+  any step after the backup puts the backup back (SQLite's backup, no AP Coder code: nothing migrated) and starts the
+  old folder. `--back` goes to the previous folder and puts back the pre-update backup, after keeping a copy of the
+  database as it is (`before-going-back`): an older version refuses a newer schema, so the restore is required, and
+  what was done since the update is lost (it says so and asks first). `server.json` keeps `folder`,
+  `previous_folder`, `pre_update_backup` and `history`; the record of installs is written as the laptop updater does.
+  `--dry-run` prints the steps. Why: a server update must leave the AP team on a working version whatever happens.
+  (`ap_coder/ops/service.py`, `ap_coder/ops/server_update.py`, docs/SERVER.md; `tests/test_service.py`,
+  `tests/test_server_update.py`)
+- **D-99** · The company server's network side and pages (with D-97's switch). (1) **HTTPS:** `serve --certfile
+  --keyfile` (PEM; or `AP_TLS_CERT`/`AP_TLS_KEY`) are passed to uvicorn. In server mode (`--server` or
+  `AP_SERVER_MODE=1`) AP Coder refuses to start without both, in plain words, unless `--insecure-http` (a first test; it
+  says so when it starts). The server listens on every network unless `--host` or `AP_DASHBOARD_ADDRESS` says otherwise,
+  and never opens a browser. (2) **Proxy headers** are off by default: uvicorn's own default believes X-Forwarded-For
+  from 127.0.0.1; now only from the address given with `--proxy <ip>` (`forwarded_allow_ips`). A request from this
+  computer that says it was forwarded, with no `--proxy`, is refused in server mode (everyone behind the proxy would
+  look like the server's console). (3) **Allowed hosts:** `AP_ALLOWED_HOSTS` (comma list) feeds `LocalOnly`'s extra
+  names; any other name is still refused (400), and in server mode the refusal says which setting to add it to. The
+  computer's own names are looked up once at the start (B-1060). (4) **Headers:** always `X-Frame-Options: DENY` and
+  `X-Content-Type-Options: nosniff` (nothing frames AP Coder); in server mode also `Referrer-Policy: same-origin`, HSTS
+  (over HTTPS only, a year, no subdomains) and a Content-Security-Policy: `default-src 'self'`, scripts from AP Coder's
+  own files only (the one inline script, the rail's More menu, is now `static/js/nav_more.js`), inline styles allowed
+  (pages set widths in `style=`), images also `data:`/`blob:`, no objects, no frames. A browser test walks every page
+  under it with no CSP error, and a test refuses any new inline script or `on...=` handler in a template. (5) **Open
+  folder** never opens a window on the server: an Admin (`web/access.py` `is_admin`) is told "This folder is on the
+  server: <path>", everyone else that it is on the server, and both are pointed to the downloads; the folder's path is
+  not shown to others. **Shutdown:** no page offers it; `POST /shutdown` stays as it was (from the server itself, with
+  the server file's token), which is how the service's stop ends it cleanly. `/healthz` needs no login and still gives
+  `app`, `folder` and `version` on the server itself. (6) **Imports queue:** an upload while an import runs is saved at
+  once and waits ("Waiting: N files queued behind the import in progress"); when the import finishes the next one
+  starts, as the person who uploaded it, and which files are new is decided then. In memory, one process: after a
+  restart the files are in the invoices folder, listed as new. The folder pick-up still says it is busy (409). (7)
+  **Restart-safe state:** messages waiting for their page and spreadsheets waiting for their columns (imports, AP line
+  history) are kept in the database's `ephemeral` table (kind, token, value, expiry; `CREATE TABLE IF NOT EXISTS`, no
+  schema bump), deleted once used or expired; outside a request, in memory as before. An upload therefore sits in the
+  database (and a backup made in that hour) instead of only in memory: the same data the database holds anyway. (8)
+  **Drafts** are keyed by `access.person_key` (one key, `key_of`): the account's id on the server, else the colleague's
+  (name, browser) as before. `is_admin` is the logged-in account's role (`identity.person()`), always yes on a laptop;
+  the rail says "Data stays on this server". Why: staff open the server from their own PCs over the company network, by
+  its company name, possibly behind IIS. (`web/server.py`, `web/security.py`, `web/access.py`,
+  `core/store/ephemeral.py`, `web/pages/process.py`; `tests/test_server_https.py`, `tests/test_server_ux.py`)
+- **D-101** · Server security review (changes D-97, D-99 and D-100 where they say otherwise). (1) **Lockout**: 5
+  tries that don't match within 15 minutes for one username from one address pause that pair for 15 minutes; 30 from
+  one address, whatever the usernames, pause the address. A person elsewhere is never locked out by someone else's
+  guesses, and a shared NAT, RDS or proxy address is not paused by five people mistyping. The server's own console
+  (a loopback client with no `--proxy`; behind a proxy everyone is loopback) is never paused by address. A reset
+  (Users page or `users reset`) lifts the username's pauses and those of every address the person logged in or tried
+  from; the Users page lists paused addresses with *Lift the pause* (`address_unlocked`). A try is recorded, as one
+  that did not match, in the `BEGIN IMMEDIATE` transaction that checks the pause, before scrypt runs, so guesses in
+  parallel get no more checks than one by one; a match then turns it into a success. (2) **What a failed login
+  keeps**: for an unknown username, "unknown account", and in `login_attempts` a hash, never the text typed (often a
+  password in the wrong box); for an account, its username. Login and account events (Activity → Logins, its CSV)
+  are shown to Admins only. (3) **Restore** (Settings → Data, `server-update --back`, a failed update's rollback):
+  on the server the current `users` and `login_attempts` stay (`users.carry_accounts`), a backup older than the
+  accounts gets their tables, and when there was no account the backup's are kept, so a restore never leaves the
+  server with none; every session ends, everywhere (laptop too), the Admin restoring included, and the confirm texts
+  say so. (4) **Sessions**: two or more `ap_session` cookies are no login (`identity.session_token`, read the same way
+  by the middleware and the pages; the name is kept), and logout then ends what they name and clears the cookie; a
+  password change gives the session a new token and ends all the others; an Admin can't reset their own password on
+  the Users page (it would log them out before the temporary password shows): *Your password* instead. (5) **HTTPS**:
+  on the server the cookie is always Secure and HSTS always sent, unless `--insecure-http`, whatever the scheme a
+  request reports (a proxy may end HTTPS). `/healthz` on the server tells its folder, version, build and pid only to
+  a loopback client (after `--proxy`), not by the address listened on. (6) **Caching**: on the server every response
+  that needs a login is `Cache-Control: no-store` (the Identity middleware, whatever the route said: CSVs, xlsx,
+  reports, page images); /static, /fonts and /assets keep theirs; the laptop is unchanged. (7) **Passwords**: at
+  least 12 characters, and not easy to guess, in one message: not only spaces, one character or a pattern of up to 6
+  repeated (or any repeated 3 times), not the username or the name, not holding a username of 4 or more characters,
+  not one of about 50 common passwords. (8) **`server-update`** copies the bundle into a private temporary folder and
+  checks and unzips that copy. The code folder is locked down (`icacls C:\APCoder /inheritance:r`, Administrators
+  and SYSTEM full control, the service account read and run, docs/SERVER.md step 5); the folders `server-update`
+  makes are inside it and inherit that, so nothing is applied by code. Left for later, by design: a Clerk may release
+  a vendor's hold and reopen another person's approval (separation of duties). Why: a reviewer's walk of the server
+  mode found each of these a way past, or around, D-97's logins. (`core/store/users.py`, `core/store/backups.py`,
+  `ops/server_update.py`, `web/identity.py`, `web/pages/login.py`, `web/pages/users.py`, `web/pages/activity.py`,
+  `web/app.py`, `web/security.py`; `tests/test_server_security.py`, `tests/test_server_update.py`)
+- **D-102** · What each role sees on the company server, and how the server speaks (with D-97 to D-99). (1) **A page
+  offers only what the role may use**, from `web/roles.py`'s table (`core.can`, which takes a link's path without its
+  query): forms, links and the review screen's buttons to a route the role is refused are left out, a list the role
+  may only look at is shown read-only (the account lists and the tax setup in a disabled fieldset, the exports list
+  without its checkboxes), and where a step is an Admin's the page says so ("An Admin does this step", "ask an Admin to
+  undo the batch below"). A test walks every page each role may open (and the tabs and filters its links lead to) on
+  a full and an empty database and fails on any form, link or posting button the role is refused; it is generated
+  from `RULES`, so a new rule or page is covered. (2) **Read-only's review screen** is the same screen, marked
+  `data-readonly`: invoice.js posts nothing (no check on opening, no draft on leaving), the fields are read-only, the
+  pickers and menus don't open, and the tools to change the invoice are not drawn; the checks shown are the stored
+  ones. (3) **Wording on the server**: LM Studio runs on the server, so staff are told "LM Studio runs on the server;
+  ask IT or an Admin" (welcome, Import invoices, the banner, Help, Settings → Reading); "on this computer" is "on the
+  server"; the setup's contact is an Admin, not the pilot tester (`offline.setup_contact`); the second approval
+  speaks of accounts; the province is the company's; Help's folders are an Admin's (D-99); the in-app Quick start
+  leaves out the sections whose heading says "on the laptop". (4) **The audit**: an event recorded without an actor
+  in a request on the server records the person signed in (`store.EVENT_ACTOR`, set by the Identity middleware,
+  carried into the import's thread); on a laptop nothing changes. (5) **The server keeps its port**: `serve --server`
+  never picks another free port, and a port in use stops it before it says where it runs. (6) **JD Edwards is shown at
+  first on the server** (`jde_shown`: the server is the JD Edwards pilot; one line), still hidden by Settings → About.
+  (7) **The doctor on the server** (server mode on, or `server.json` in the data folder) reports where the server
+  listens, its HTTPS files, its allowed names and its scheduled task. (8) The rail logs out at once; the final
+  approval by the same account is a 409 refusal; HEAD /login answers; `users activate`. Laptop mode's wording and
+  behaviour are unchanged: every change branches on server mode. Why: an end-to-end walk of the server as each role
+  found every hidden control to be a 403, laptop words on a server, and uploads with no person in the audit.
+  (`web/core.py` `can`, `web/pages/process.py` `shown_setup`, `web/pages/invoice.py` `_shown_live`,
+  `static/js/invoice.js`, `ops/help.py`, `ops/service.py` `doctor_checks`, `core/store/_base.py` `EVENT_ACTOR`;
+  `tests/test_server_role_pages.py`, `tests/test_server_ui_fixes.py`)

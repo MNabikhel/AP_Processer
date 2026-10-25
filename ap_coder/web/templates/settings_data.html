@@ -3,12 +3,19 @@
   <div class="card-head">
     <div>
       <h4>Data folder</h4>
+      {% if server_mode %}
+      <p class="muted">Everything AP Coder keeps (database, invoices, exports, backups and settings) is in one folder on the
+        server{% if is_admin %}: <code>{{ data_path }}</code>{% else %}.{% endif %}</p>
+      {% else %}
       <p class="muted">Everything AP Coder keeps (database, invoices, exports, backups and settings) is in one folder on this
         computer: <code>{{ data_path }}</code></p>
+      {% endif %}
     </div>
+    {% if not server_mode or is_admin %}
     <form method="post" action="/settings/data/open-folder">
-      <button class="btn" type="submit" title="{{ data_path }}"><span class="ms" aria-hidden="true">folder_open</span>Open folder</button>
+      <button class="btn" type="submit"{% if is_admin %} title="{{ data_path }}"{% endif %}><span class="ms" aria-hidden="true">folder_open</span>{{ "Where is it?" if server_mode else "Open folder" }}</button>
     </form>
+    {% endif %}
   </div>
   {{ ui.tiles([
     ui.tile("Database", db_size, "database", "blue", "ap_coder.db"),
@@ -33,11 +40,11 @@
   <form method="post" action="/settings/data/backup-copy" class="row st-end" data-busy="Saving…">
     <label class="field st-grow">Also copy each backup to (optional)
       <input type="text" name="folder" value="{{ copy_dir }}" placeholder="e.g. C:\Users\you\OneDrive - Company\AP Coder backups"
-             title="A OneDrive, SharePoint-synced or network folder, so a lost or broken computer does not lose the database. Only the backup copies go there; the database itself stays on this computer."></label>
+             title="A OneDrive, SharePoint-synced or network folder, so a lost or broken computer does not lose the database. Only the backup copies go there; the database itself stays {{ "on the server" if server_mode else "on this computer" }}."></label>
     <button class="btn" type="submit"><span class="ms" aria-hidden="true">save</span>Save</button>
   </form>
   <p class="muted">A OneDrive, SharePoint-synced or network folder, so a lost or broken computer does not lose the database.
-    Only the backup copies go there; the database itself stays on this computer.</p>
+    Only the backup copies go there; the database itself stays {{ "on the server" if server_mode else "on this computer" }}.</p>
   {% if copy_status %}
   <p class="muted">{% if copy_status.ok %}<span class="ms ok-ico" aria-hidden="true">check_circle</span> Last copied {{ copy_status.when }}: {{ copy_status.what }}
     {% else %}<span class="ms err-ico" aria-hidden="true">error</span> Copying failed {{ copy_status.when }}: {{ copy_status.what }}. The local backups are fine.{% endif %}</p>
@@ -66,6 +73,8 @@
         <select name="name" required>{% for b in backups %}<option value="{{ b.name }}">{{ b.name }} · {{ b.made }}</option>{% endfor %}</select></label>
       <p>Replace the current database with this backup? Everything done since that backup (processed invoices, approvals,
         lessons, GL changes) is replaced. The current database is backed up first, so this can be undone.</p>
+      {% if server_mode %}<p>The user accounts, their passwords and roles, and paused logins stay as they are now (not as
+        in the backup). Everyone is logged out, you too: log in again after the restore.</p>{% endif %}
       <label class="field">Type {{ restore_word }} to confirm
         <input type="text" name="confirm" autocomplete="off" required pattern="\s*[Rr][Ee][Ss][Tt][Oo][Rr][Ee]\s*" data-word="{{ restore_word }}"></label>
       <button class="btn danger" type="submit" disabled><span class="ms" aria-hidden="true">restore</span>Restore</button>
