@@ -718,9 +718,11 @@ def doctor_checks(data: Path, env: dict | None = None, *, windows: bool = WINDOW
     if s.insecure_http:
         out.append(("server HTTPS", "WARN", "off (--insecure-http): passwords cross the network unencrypted; for a "
                     "first test only"))  # fmt: skip
-    elif not s.certfile or not s.keyfile:
-        out.append(("server HTTPS", "FAIL", "the certificate and its key are not set (AP_TLS_CERT and AP_TLS_KEY, or "
-                    "service install --certfile --keyfile): the server doesn't start without them"))  # fmt: skip
+    elif not s.certfile or not s.keyfile:  # a server started with them on its command line has them (B-1196)
+        out.append(("server HTTPS", "WARN", "the certificate and its key are not in server.json nor AP_TLS_CERT and "
+                    "AP_TLS_KEY: the service doesn't start without them (service install --certfile --keyfile). The "
+                    "doctor can't see a running server's command line: one started with serve --certfile --keyfile "
+                    "has them"))  # fmt: skip
     else:
         for what, path in (("certificate", s.certfile), ("private key", s.keyfile)):
             why = _readable(path)

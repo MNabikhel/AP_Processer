@@ -130,7 +130,7 @@ def forget_setup_report() -> None:
 
 
 def setup_report(store: Any) -> str:
-    """The doctor's report (``python -m ap_coder doctor``, offline, without asking LM Studio): safe to paste. Kept
+    """The doctor's report (``python -m ap_coder doctor``, offline, LM Studio's lines included): safe to paste. Kept
     ``SETUP_KEEP_SECONDS`` once made: it takes a few seconds (it looks at the OCR engines)."""
     key = str(store.path)
     with _setup_lock:
@@ -145,12 +145,13 @@ def setup_report(store: Any) -> str:
 
 def _make_setup_report(store: Any) -> str:
     from ap_coder.core.config import Settings
-    from ap_coder.ops.cli import _load_reference, build_parser
+    from ap_coder.ops.cli import _load_reference, build_parser, bundled_reference
     from ap_coder.ops.doctor import format_checks, run_checks
 
     args = build_parser().parse_args(["--db", str(store.path), "doctor"])
     try:
-        checks = run_checks(Settings.from_env(), lambda: _load_reference(args), online=False, llm_checks=False)
+        # with the LM Studio and page reader lines (B-1195)
+        checks = run_checks(Settings.from_env(), lambda: _load_reference(args), bundled=bundled_reference(args))
     except Exception as exc:  # noqa: BLE001 - the page that reports problems must not be one
         return f"## AP Coder doctor report\n\nThe checks could not run: {type(exc).__name__}: {exc}"
     return format_checks(checks)

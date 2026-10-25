@@ -117,9 +117,11 @@ def run_checks(
     load_reference: Callable[[], ReferenceData],
     online: bool = False,
     llm_checks: bool = True,
+    bundled: bool = False,
 ) -> list[Check]:
     """Every check, in order. ``llm_checks=False`` leaves out the two that ask LM Studio (the chat model and the page
-    reader): the launcher's summary has its own lines for them, from one question to LM Studio."""
+    reader): the launcher's summary has its own lines for them, from one question to LM Studio. ``bundled``: the
+    reference data is the sample bundled in data/, nothing imported yet (said on its lines, B-1194)."""
     checks: list[Check] = []
 
     def add(area: str, status: str, detail: str) -> None:
@@ -221,6 +223,8 @@ def run_checks(
                     detail += "; too many codes for schema enums -> free-text codes + local validation"
                 else:
                     detail += "; enforced as schema enum"
+            if bundled:
+                status, detail = WARN, f"not imported yet (bundled sample shown): {detail}"
             add(label, status, detail)
 
         known = set(reference.chart_of_accounts.codes)

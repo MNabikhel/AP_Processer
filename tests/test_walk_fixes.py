@@ -299,10 +299,54 @@ def test_in_a_browser_the_new_vendor_form_shows_no_error_before_anything_is_type
     name = page.locator('[data-vendor-add] [data-new="name"]')
     border = "(el) => getComputedStyle(el).borderTopColor"
     plain = page.locator("[form=inv][name=invoice_number]").evaluate(border)
-    assert [page.locator(f'[data-vendor-add] [data-new="{k}"]').evaluate(border) for k in ("name", "gst")] == [plain] * 2
+    boxes = [page.locator(f'[data-vendor-add] [data-new="{k}"]') for k in ("name", "gst")]
+    assert [box.evaluate(border) for box in boxes] == [plain] * 2
     name.fill("")
     page.locator("[data-new-go]").click()
     page.wait_for_timeout(500)
     assert name.get_attribute("aria-invalid") == "true" and name.evaluate(border) != plain
     name.type("Cascade")
     assert name.get_attribute("aria-invalid") is None
+
+
+# --- L11. The doctor and the setup report --------------------------------------------------------------------------
+
+
+def test_the_doctor_says_when_the_gl_accounts_are_the_bundled_sample(tmp_path, monkeypatch, capsys):
+    """B-1194: with no GL accounts imported, the doctor said "GL accounts: 26 active rows" (and the same of the cost
+    centers) from the bundled sample in data/: it says they are not imported yet, the bundled sample shown."""
+    from ap_coder.ops import cli
+
+    monkeypatch.setenv("AP_PRIVATE_DIR", str(tmp_path))
+    monkeypatch.delenv("AP_REFERENCE_DIR", raising=False)
+    cli.main(["--db", str(tmp_path / "ap_coder.db"), "doctor"])
+    lines = {line.split("]", 1)[1].split("  ", 1)[0].strip(): line for line in capsys.readouterr().out.splitlines()
+             if line.startswith("[")}  # fmt: skip
+    for table in ("GL accounts", "cost centers"):
+        assert "not imported yet (bundled sample shown)" in lines[table], lines[table]
+
+
+def test_the_setup_report_has_the_lm_studio_and_page_reader_lines(client, store, monkeypatch):
+    """B-1195: the dashboard's setup report (Report a problem) left out the LM Studio and page reader lines the doctor
+    shows, the two a problem with reading most often comes from."""
+    from ap_coder.ops import doctor
+    from ap_coder.web.pages import help as help_page
+
+    monkeypatch.setattr(doctor, "_local_check", lambda settings, provider: ("local model", "WARN", "not running"))
+    monkeypatch.setattr(doctor, "_page_reader_check", lambda settings: ("page reader", "WARN", "not running"))
+    report = help_page._make_setup_report(store)
+    assert "local model" in report and "page reader" in report
+
+
+def test_on_the_server_the_doctor_cant_see_https_given_on_the_command_line(tmp_path):
+    """B-1196: a server started with ``serve --server --certfile … --keyfile …`` was reported "[FAIL] server HTTPS"
+    by the doctor, which reads only server.json and the environment: it says what it read, and that it can't see a
+    running server's command line."""
+    from ap_coder.ops import service
+
+    data = tmp_path / "APCoderData"
+    data.mkdir()
+    service.write_config(data, allowed_hosts=["apcoder.company.local"])
+    checks = {area: (status, detail) for area, status, detail in service.doctor_checks(data, env={}, windows=False)}
+    status, detail = checks["server HTTPS"]
+    assert status == "WARN" and "server.json" in detail and "command line" in detail, checks["server HTTPS"]

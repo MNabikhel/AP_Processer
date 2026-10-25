@@ -89,6 +89,15 @@ def reference_source(args: argparse.Namespace) -> str:
     )
 
 
+def bundled_reference(args: argparse.Namespace) -> bool:
+    """Whether the reference data is the sample bundled in data/ (nothing imported yet); False when that can't be
+    told (a damaged database: the doctor says so itself)."""
+    try:
+        return reference_source(args).startswith("BUNDLED")
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _load_reference(args: argparse.Namespace) -> ReferenceData:
     if reference_source(args) == "dashboard database":
         reference = Store(args.db).reference_data()
@@ -295,7 +304,7 @@ def _add_server_ops(sub: Any) -> None:
 
 
 def cmd_doctor(args: argparse.Namespace, settings: Settings) -> int:
-    checks = run_checks(settings, lambda: _load_reference(args), online=args.online)
+    checks = run_checks(settings, lambda: _load_reference(args), online=args.online, bundled=bundled_reference(args))
     try:
         source = reference_source(args)
     except Exception as exc:  # noqa: BLE001 - a damaged database file: the doctor reports it, it never crashes
