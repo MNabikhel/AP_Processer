@@ -133,7 +133,7 @@ def default_link(store: Any) -> str:
     """Where the invoice links go when none is set: this computer's dashboard on a laptop; on the company server its
     own address (server.json and the environment: the first name staff type, the port, https with a certificate),
     which colleagues can open (B-1205)."""
-    import socket
+    import platform
 
     from ...ops import service
 
@@ -145,7 +145,7 @@ def default_link(store: Any) -> str:
     except service.SettingsError:
         return DEFAULT_LINK
     if not found.allowed_hosts:  # no name set: the server's own
-        found = dataclasses.replace(found, allowed_hosts=(socket.getfqdn().lower(),))
+        found = dataclasses.replace(found, allowed_hosts=(platform.node().lower(),))
     return service.address(found)
 
 
