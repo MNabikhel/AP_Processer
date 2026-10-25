@@ -142,3 +142,24 @@ def test_the_undo_refusal_says_what_each_voucher_is(tmp_path, ais):
         conn.execute("UPDATE jde_postings SET status = ?, maybe_sent = 1 WHERE invoice_id = 1", (jde_post.FAILED,))
     said = jde_post.undo_problem(store, batch)
     assert "1 voucher posted to JD Edwards" in said and "1 voucher may be in JD Edwards" in said, said
+
+
+# --- S7. The batch README's undo ----------------------------------------------------------------------------------
+
+
+def test_the_batch_readme_offers_no_undo_when_the_batch_cant_be_undone(tmp_path, ais):
+    """B-1203: the batch README said "Undo this batch, fix, and export again" when vouchers of it were posted (or may
+    be in JD Edwards) and the undo is refused: it says why it can't be undone instead."""
+    from .test_jde_post import batch_of
+
+    store, batch = batch_of(tmp_path, ais, ON, QC)
+
+    def readme() -> str:
+        with zipfile.ZipFile(io.BytesIO(exports.jde_file(store, batch)[0])) as zf:
+            return zf.read("README.txt").decode("utf-8")
+
+    assert "Undo this batch" in readme()  # nothing sent: it can be
+    jde_post.dry_run(store, batch)
+    jde_post.post(store, batch)
+    text = readme()
+    assert "Undo this batch" not in text and "can't be undone" in text and "void the voucher" in text

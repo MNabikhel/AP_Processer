@@ -1421,13 +1421,18 @@ def export_batch(
     return files
 
 
+UNDO_TEXT = "in AP Coder, Exports → Past batches → Undo this batch, fix, and export again."
+
+
 def readme(
     files: dict[str, bytes], settings: JdeSettings, batch: int | str, invoices: list[dict[str, Any]],
     left_out: Mapping[int, list[str]] | None = None, to_check: Mapping[int, list[str]] | None = None,
+    no_undo: str = "",
 ) -> str:  # fmt: skip
     """README.txt of the ZIP: what is in it and how to load it. ``left_out``: invoices not in the file;
     ``to_check``: invoices in it that the current settings would refuse (a batch downloaded again); the invoices whose
-    Pay from account has no VLGLBA mapped are listed too (``bank_notes``)."""
+    Pay from account has no VLGLBA mapped are listed too (``bank_notes``). ``no_undo``: why the batch can't be undone
+    (vouchers JD Edwards has, or may have), said instead of the undo (B-1203)."""
     totals: dict[str, float] = {}
     for inv in invoices:
         final = inv.get("final_output") or {}
@@ -1477,7 +1482,7 @@ def readme(
         "3. Run R04110ZA in FINAL mode. The Z-rows are marked processed (VLEDSP = 1) and the vouchers are created.",
         "4. Post the voucher batch (P0011 / R09801) as usual.",
         "",
-        "If the load fails: in AP Coder, Exports → Past batches → Undo this batch, fix, and export again.",
+        f"If the load fails: {no_undo or UNDO_TEXT}",
         "Each voucher's transaction number (EDTN) is APC + the AP Coder invoice number.",
         "",
         "To confirm with your JDE team before the first live load: "
@@ -1512,16 +1517,16 @@ def build_zip(
     invoices: list[dict[str, Any]], settings: JdeSettings, vendor_lookup: VendorLookup = None, *,
     batch: int | str = "", fx_rates: Mapping[str, float] | None = None, on: dt.date | None = None,
     left_out: Mapping[int, list[str]] | None = None, to_check: Mapping[int, list[str]] | None = None,
-    left_invoices: list[dict[str, Any]] = (),
+    left_invoices: list[dict[str, Any]] = (), no_undo: str = "",
 ) -> tuple[bytes, str, str]:  # fmt: skip
     """(ZIP bytes, file name, mime type): the CSVs and a README.txt. ``left_invoices``: the invoices of ``left_out``,
-    for their vendor, number and date in DRY_RUN.txt (B-1197)."""
+    for their vendor, number and date in DRY_RUN.txt (B-1197); ``no_undo``: why it can't be undone (``readme``)."""
     files = export_batch(invoices, settings, vendor_lookup, batch=batch, fx_rates=fx_rates, on=on)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for name, data in files.items():
             zf.writestr(name, data)
-        zf.writestr("README.txt", readme(files, settings, batch, invoices, left_out, to_check))
+        zf.writestr("README.txt", readme(files, settings, batch, invoices, left_out, to_check, no_undo))
         report = dry_run(invoices, settings, vendor_lookup, batch=batch, fx_rates=fx_rates, on=on)
         for h in report["held"]:
             if h["id"] in (to_check or {}):  # the files hold it: it passed the checks when the batch was made

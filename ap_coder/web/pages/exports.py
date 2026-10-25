@@ -135,6 +135,7 @@ def jde_file(store: Store, batch: int) -> tuple[bytes, str, str]:
         left_out=left_out,
         to_check=jde.validate(kept, settings, lookup),
         left_invoices=[i for i in invoices if i["id"] in left_out],
+        no_undo=jde_post.undo_problem(store, batch),
     )
 
 
