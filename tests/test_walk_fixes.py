@@ -189,3 +189,20 @@ def test_the_csv_exports_show_plain_statuses_and_amounts_with_two_decimals(clien
     lines = list(csv.DictReader(io.StringIO(exports.build("csv", invoices)[0].decode("utf-8-sig"))))
     assert lines and all(re.fullmatch(r"-?\d+\.\d\d", r["Amount"]) for r in lines), [r["Amount"] for r in lines]
     assert "4350.00" in [r["Amount"] for r in lines]
+
+
+# --- L8. A raised approval limit -----------------------------------------------------------------------------------
+
+
+def test_raising_the_approval_limit_says_the_invoices_already_in_keep_the_strictest(client, store):
+    """B-1187: raising the approval limit said only "Saved the second-approval limit", though the invoices already in
+    keep the strictest limit since they arrived (B-970): the message says so; lowering it applies at once."""
+    from .test_web_invoice import PAGE
+
+    def saved(value: str) -> str:
+        answer = client.post("/settings/review", data={"approval_limit": value}, headers=PAGE).json()
+        return _plain(client.get(answer["redirect"]).text)
+
+    assert "keep the strictest limit" not in saved("5000")
+    assert "Invoices already in AP Coder keep the strictest limit in force since they arrived" in saved("15000")
+    assert "keep the strictest limit" not in saved("1000")
