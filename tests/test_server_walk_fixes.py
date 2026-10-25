@@ -98,3 +98,27 @@ def test_an_ais_address_on_the_internet_is_refused_when_it_is_saved(tmp_path, mo
     for host in ("ais.company.local", "ais.vpn.local"):
         jde_ais.save(store, base_url=f"https://{host}:9300", environment="JPD920", role="", username="JDE")
         assert jde_ais.load(store).host == host
+
+
+# --- S5. The real reason an exported or posted invoice isn't reopened or deleted --------------------------------
+
+
+def test_deleting_or_reopening_an_exported_or_posted_invoice_says_why_not(tmp_path, ais):
+    """B-1201: deleting (or reopening) an exported invoice, or one posted to JD Edwards, said "someone else changed this
+    invoice meanwhile": it says it was exported in its batch, or posted to JD Edwards."""
+    from .test_jde_post import batch_of
+    from .webclient import client_for, follow, post
+
+    store, batch = batch_of(tmp_path, ais, ON, QC)
+    client = client_for(store)
+    said = follow(client, post(client, "/review/2/delete", {"back": "/review"}))
+    assert "someone else changed" not in said and f"it was exported in batch {batch}" in said
+    jde_post.dry_run(store, batch)
+    jde_post.post(store, batch)
+    assert statuses(store, batch)[1] == jde_post.POSTED
+    said = follow(client, post(client, "/review/1/delete", {"back": "/review"}))
+    assert "someone else changed" not in said and "it was posted to JD Edwards" in said
+    said = follow(client, post(client, "/review/1/reopen"))  # a Reopen button drawn before it was approved
+    assert "someone else changed" not in said and "it was posted to JD Edwards" in said
+    said = follow(client, post(client, "/review/1/correct", {"reason": "wrong GL"}))  # the review screen's
+    assert "changed meanwhile" not in said and "it was posted to JD Edwards" in said

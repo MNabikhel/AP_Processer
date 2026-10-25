@@ -304,6 +304,11 @@ def changed_meanwhile(request: Request, invoice_id: int, exc: Exception) -> JSON
     if inv is None:
         return done(request, "/review", flash_message("Not done: this invoice was deleted meanwhile.", "warn",
                                                       icon="sync_problem"))  # fmt: skip
+    from ap_coder.web.pages.review import exported_reason
+
+    why = exported_reason(get_store(request), inv)
+    if why:  # exported, or posted to JD Edwards: the real reason (B-1201)
+        return done(request, f"/review/{invoice_id}", flash_message(f"Not done: {why}.", "warn", icon="sync_problem"))
     now = _NOW.get(inv["status"], str(inv["status"]))
     by = f" by {inv['reviewer']}" if inv["status"] in (APPROVED, PENDING) and inv.get("reviewer") else ""
     return done(request, f"/review/{invoice_id}",
