@@ -97,6 +97,10 @@ class Destination(Protocol):
         """Write ``data`` at ``path`` (relative, with /), whole or not at all: staged, then renamed."""
         ...
 
+    def remove(self, path: str) -> None:
+        """Remove the file at ``path`` (relative, with /); nothing when it isn't there."""
+        ...
+
 
 class FolderDestination:
     kind = "folder"
@@ -144,6 +148,12 @@ class FolderDestination:
                 part.unlink()
             raise
 
+    def remove(self, path: str) -> None:
+        target = self.root / path
+        _make_writable(target)
+        with contextlib.suppress(FileNotFoundError):
+            target.unlink()
+
     def put_file(self, path: str, source: Path) -> None:
         """Move a finished file (the gateway database) into place, as ``write`` does."""
         target = self.root / path
@@ -187,6 +197,9 @@ class MemoryDestination:
 
     def write(self, path: str, data: bytes) -> None:
         self.files[path] = bytes(data)
+
+    def remove(self, path: str) -> None:
+        self.files.pop(path, None)
 
 
 def _make_writable(path: Path) -> None:

@@ -33,9 +33,10 @@ WITHDRAWN_BY = ("reopened", "sent_back")
 SIGN_IN_ACTIONS = ("login", "logout", "login_failed", "login_locked", "password_changed", "password_reset",
                    "address_unlocked")  # fmt: skip
 # Accounts and settings stay out too (docs/FINANCE_HUB.md "What is left out"): who has an account and what role, a
-# backup put back, and settings changed are the company server's administration, not the work on invoices.
+# backup put back, and settings changed (the tax setup and the policy notes too, B-1206) are the company server's
+# administration, not the work on invoices.
 ADMIN_ACTIONS = ("user_added", "role_changed", "user_activated", "user_deactivated", "backup_restored",
-                 "settings_changed")  # fmt: skip
+                 "settings_changed", "tax_setup_changed", "policy_changed")  # fmt: skip
 
 
 def left_out_of_activity(action: str) -> bool:
@@ -522,8 +523,9 @@ def activity(store: Any, ctx: Context, after_id: int = 0) -> list[dict[str, Any]
         out.append({
             "event_id": int(e["id"]), "invoice_id": whole(e.get("invoice_id")), "action": text(e["action"]),
             "actor": text(e.get("actor")), "occurred_at": stamp(e.get("created_at")),
-            "detail_json": json.dumps(_hide_bank(e.get("detail") or {}), ensure_ascii=False, sort_keys=True,
-                                      default=str),
+            # the computer it was done from stays out, as the sign-in events do (B-1206)
+            "detail_json": json.dumps(_hide_bank({k: v for k, v in (e.get("detail") or {}).items() if k != "address"}),
+                                      ensure_ascii=False, sort_keys=True, default=str),
         })  # fmt: skip
     return out
 

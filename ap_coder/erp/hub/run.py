@@ -393,11 +393,16 @@ def _run(store: Any, config: HubConfig, dest: Destination, result: Result, folde
         if result.dry_run or not (real or full):
             return
 
+        # Parquet to CSV or back at the same destination: the old format's files go before the full rebuild (B-1207)
+        old_format = state.get("format") if state.get("destination") == dest.ident() else ""
         if fresh:
             state.forget(everything=state.get("destination") != dest.ident())
         for name, table in TABLES.items():
             ups, dels, prints = changes[name]
             existing = dest.list(name)
+            if old_format and old_format != result.format:
+                for old in [n for n in existing if n.endswith(f".{old_format}")]:
+                    dest.remove(f"{name}/{old}")
             if full or landing.METADATA_FILE not in existing:  # every table's folder, rows or none yet
                 dest.write(f"{name}/{landing.METADATA_FILE}", landing.metadata(table, result.format))
                 dest.write(f"{name}/{landing.SCHEMA_FILE}", landing.schema_json(table, result.format))

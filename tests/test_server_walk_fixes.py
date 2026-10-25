@@ -221,3 +221,49 @@ def test_on_the_server_the_hubs_invoice_links_default_to_the_servers_address(tmp
     assert run.HubConfig.load(store).link_base == "https://apcoder.company.local:8443"
     store.set_setting(run.KEYS["link_base"], "https://ap.example.local")
     assert run.HubConfig.load(store).link_base == "https://ap.example.local"  # one set in Settings stays
+
+
+# --- S12. The finance hub: no address, settings events out, the old format's files cleared, timestamps in ms ------
+
+
+def test_the_hubs_activity_has_no_address_and_no_tax_or_policy_events(tmp_path):
+    """B-1206: the hub's ``activity`` sent the staff PC's address (``detail_json`` "address"), and the
+    tax_setup_changed and policy_changed events, settings events like those already left out."""
+    from ap_coder.core.store import Store
+    from ap_coder.erp.hub import tables
+
+    store = Store(tmp_path / "a.db")
+    store.log_event("note", 1, "Jane", {"text": "kept", "address": "10.0.0.5"})
+    store.log_event("tax_setup_changed", actor="Jane", detail={"tax_type": "GST"})
+    store.log_event("policy_changed", actor="Jane", detail={})
+    rows = tables.build(store, "activity", tables.Context())
+    assert [r["action"] for r in rows] == ["note"] and "10.0.0.5" not in rows[0]["detail_json"]
+    assert "kept" in rows[0]["detail_json"]
+
+
+def test_a_new_hub_format_clears_the_old_formats_files_and_parquet_times_are_milliseconds(tmp_path):
+    """B-1207: switching the hub between Parquet and CSV left the old format's files in the table folders beside the
+    full rebuild in the new one (read twice, or not at all); they are cleared first. (Parquet's timestamps are
+    milliseconds, as FINANCE_HUB.md says.)"""
+    import json as _json
+
+    import pyarrow.parquet as pq
+
+    from ap_coder.core.store import Store
+    from ap_coder.erp.hub.landing import CSV, PARQUET
+    from ap_coder.erp.hub.run import HubConfig, export
+
+    from .webclient import gt
+
+    store = Store(tmp_path / "data" / "a.db")
+    invoice = store.add_invoice(tmp_path / "a.pdf", gt(), {"requires_review": False})
+    store.approve_invoice(invoice, gt(), "Jane")
+    share = tmp_path / "share"
+    assert export(store, HubConfig(enabled=True, folder=str(share), format=PARQUET)).ok
+    stamp = pq.read_table(next((share / "invoices").glob("*.parquet"))).schema.field("received_at").type
+    assert str(stamp) == "timestamp[ms]"
+    assert export(store, HubConfig(enabled=True, folder=str(share), format=CSV)).ok
+    for table in ("invoices", "activity"):
+        names = sorted(p.name for p in (share / table).iterdir())
+        assert not [n for n in names if n.endswith(".parquet")] and [n for n in names if n.endswith(".csv")], names
+        assert _json.loads((share / table / "_metadata.json").read_text())["fileFormat"] == "DelimitedText"
