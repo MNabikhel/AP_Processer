@@ -122,3 +122,23 @@ def test_deleting_or_reopening_an_exported_or_posted_invoice_says_why_not(tmp_pa
     assert "someone else changed" not in said and "it was posted to JD Edwards" in said
     said = follow(client, post(client, "/review/1/correct", {"reason": "wrong GL"}))  # the review screen's
     assert "changed meanwhile" not in said and "it was posted to JD Edwards" in said
+
+
+# --- S6. The undo refusal, word for word per status --------------------------------------------------------------
+
+
+def test_the_undo_refusal_says_what_each_voucher_is(tmp_path, ais):
+    """B-1202: the undo refusal said every voucher was "in JD Edwards … void the voucher", one whose answer was lost
+    or that JD Edwards refused too: it says posted (void it there), answer not received (being checked), or may be
+    in JD Edwards (check there)."""
+    store, batch = lost_answer(tmp_path, ais, ON, QC)
+    said = jde_post.undo_problem(store, batch)
+    assert "void" not in said and "answer not received" in said, said
+    jde_post.retry_queue(store)
+    assert set(statuses(store, batch).values()) == {jde_post.POSTED}
+    said = jde_post.undo_problem(store, batch)
+    assert "2 vouchers posted to JD Edwards" in said and "void" in said, said
+    with store._conn() as conn:
+        conn.execute("UPDATE jde_postings SET status = ?, maybe_sent = 1 WHERE invoice_id = 1", (jde_post.FAILED,))
+    said = jde_post.undo_problem(store, batch)
+    assert "1 voucher posted to JD Edwards" in said and "1 voucher may be in JD Edwards" in said, said

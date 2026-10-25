@@ -249,15 +249,29 @@ def left_out_of_files(store: Any, batch: int) -> dict[int, list[str]]:
     return out
 
 
-def _locked_message(batch: int, count: int) -> str:
-    return (f"Batch {batch} can't be undone: {count} of its vouchers {'is' if count == 1 else 'are'} in JD Edwards "
-            "(or being sent or checked). Reverse them in JD Edwards (void the voucher) instead.")  # fmt: skip
+def _locked_message(batch: int, found: list[str]) -> str:
+    """Why batch ``batch`` can't be undone, from the statuses of its rows JDE has or may have, each said as it is: a
+    voucher posted is voided in JD Edwards; one being sent or checked waits; any other may be there (B-1202)."""
+    posted = found.count(POSTED)
+    checked = sum(1 for status in found if status in (SENDING, UNKNOWN))
+    other = len(found) - posted - checked
+
+    def vouchers(n: int) -> str:
+        return f"{n} voucher{'' if n == 1 else 's'}"
+
+    parts = ([f"{vouchers(posted)} posted to JD Edwards: reverse {'it' if posted == 1 else 'them'} there (void the "
+              "voucher)"] if posted else [])  # fmt: skip
+    if checked:
+        parts.append(f"{vouchers(checked)} sent, answer not received: being checked in JD Edwards (the queue does it)")
+    if other:
+        parts.append(f"{vouchers(other)} may be in JD Edwards (it refused or didn't answer): check there first")
+    return f"Batch {batch} can't be undone: {'; '.join(parts)}."
 
 
 def undo_problem(store: Any, batch: int) -> str:
     """Why the batch can't be undone ("" when it can): JDE has, or may have, one of its vouchers."""
     found = locked(store, batch)
-    return _locked_message(batch, len(found)) if found else ""
+    return _locked_message(batch, [p["status"] for p in found]) if found else ""
 
 
 def undo_batch(store: Any, batch: int, actor: str | None = None) -> int:
@@ -267,9 +281,10 @@ def undo_batch(store: Any, batch: int, actor: str | None = None) -> int:
 
     def guard(conn: Any) -> None:
         ledger.ensure(conn)
-        count = conn.execute(f"SELECT COUNT(*) FROM jde_postings WHERE batch = ? AND {LOCKED_SQL}", (batch,)).fetchone()
-        if count[0]:
-            raise Locked(_locked_message(batch, count[0]))
+        found = [r[0] for r in conn.execute(f"SELECT status FROM jde_postings WHERE batch = ? AND {LOCKED_SQL}",
+                                            (batch,))]  # fmt: skip
+        if found:
+            raise Locked(_locked_message(batch, found))
 
     count = store.undo_export_batch(batch, actor=actor, guard=guard)
     forget_batch(store, batch)
