@@ -271,6 +271,13 @@ def build_parser() -> argparse.ArgumentParser:
     u.add_argument("username")
     u.add_argument("role", choices=ROLES)
 
+    p = sub.add_parser("hub", help="The finance hub feed (Microsoft Fabric): send what changed (docs/FINANCE_HUB.md)")
+    hub = p.add_subparsers(dest="hub_command", required=True)
+    h = hub.add_parser("export", help="Write the tables' changes to the finance hub's folder or OneLake")
+    h.add_argument("--full", action="store_true", help="Every row again (a full rebuild), not only what changed")
+    h.add_argument("--dry-run", action="store_true", help="Say what would be sent; write and send nothing")
+    hub.add_parser("status", help="Whether the feed is on, where it goes and how the last run went")
+
     p = sub.add_parser("schema", help="Developers: print the coding schema a cloud build sends to Azure OpenAI")
     p.add_argument("--no-constrain-codes", action="store_true", help="Do not embed valid codes as enums")
     _add_reference_args(p)
@@ -409,8 +416,10 @@ def cmd_process(args: argparse.Namespace, settings: Settings) -> int:
         print("NOTE: using the bundled SAMPLE GL accounts (import yours in the dashboard).", file=sys.stderr)
     reference = _load_reference(args)
     pipeline = InvoicePipeline(settings, reference, cache_dir=args.cache_dir or None, store=store)
+    started, clock, skipped = dt.datetime.now().isoformat(timespec="seconds"), time.monotonic(), 0
     if store is not None and not args.force:
         done = [p for p in inputs if store.find_by_hash(p) is not None]
+        skipped = len(done)
         if done:
             print(
                 f"Skipping {len(done)} file(s) already in the review queue or approved "
@@ -430,6 +439,13 @@ def cmd_process(args: argparse.Namespace, settings: Settings) -> int:
 
     results = pipeline.process_many(inputs, workers=args.workers, on_result=save)
     summaries = [res.summary() for res in results]
+    if store is not None:  # the run in the audit trail (the finance hub's workflow_runs, D-103)
+        store.record_import_run(
+            "process", files=len(results), ok=sum(1 for r in results if r.ok),
+            failed=sum(1 for r in results if not r.ok), skipped=skipped, started_at=started,
+            seconds=time.monotonic() - clock, errors=[f"{r.source.name}: {r.error}" for r in results if not r.ok],
+            actor=login_name(),
+        )  # fmt: skip
 
     Path(args.out).mkdir(parents=True, exist_ok=True)
     (Path(args.out) / "batch_summary.json").write_text(json.dumps(summaries, indent=2), encoding="utf-8")
@@ -496,6 +512,7 @@ def watch_once(args: argparse.Namespace, settings: Settings, store: Store, folde
         return done, failed
     reference = _load_reference(args)  # picks up GL accounts edited in the dashboard meanwhile
     pipeline = InvoicePipeline(settings, reference, cache_dir=args.cache_dir or None, store=store)
+    started, clock, read, errors = dt.datetime.now().isoformat(timespec="seconds"), time.monotonic(), 0, []
     for path in files:
         try:
             result = pipeline.process(path)
@@ -504,12 +521,18 @@ def watch_once(args: argparse.Namespace, settings: Settings, store: Store, folde
             continue
         stamp = time.strftime("%H:%M:%S")
         done += 1
+        read += 1
+        if not result.ok:
+            errors.append(f"{path.name}: {result.error}")
         if result.ok:
             flag = "needs attention" if result.report and result.report.requires_review else "ready"
             print(f"{stamp} {path.name}: {result.output.get('vendor_name', '?')} ({flag})", file=sys.stderr)
         else:
             failed += 1
             print(f"{stamp} {path.name}: FAILED {result.error}", file=sys.stderr)
+    if read:  # the check in the audit trail (the finance hub's workflow_runs, D-103)
+        store.record_import_run("watch", files=read, ok=read - len(errors), failed=len(errors), started_at=started,
+                                seconds=time.monotonic() - clock, errors=errors, actor=login_name())  # fmt: skip
     return done, failed
 
 
@@ -916,6 +939,38 @@ def cmd_users(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_hub(args: argparse.Namespace) -> int:
+    """``hub export [--full] [--dry-run]`` and ``hub status`` (D-103)."""
+    from ..erp.hub.run import HubConfig, export, last_run
+
+    store = Store(args.db)
+    config = HubConfig.load(store)
+    if args.hub_command == "status":
+        where = config.folder if config.mode == "folder" else config.onelake_url
+        when = f"every {config.every_hours} hours" if config.every_hours else "only when run by hand"
+        print(f"Finance hub feed: {'on' if config.enabled else 'off'}; {config.mode}: {where or '(not set)'}; {when}")
+        last = last_run(store)
+        print(f"Last run: {last['at']} by {last.get('by')}: {last.get('summary')}" if last else "Last run: never")
+        return 0
+    if not config.enabled and not args.dry_run:
+        print("The finance hub feed is off: an Admin turns it on in Settings → Finance hub (a dry run works "
+              "anyway: hub export --dry-run).", file=sys.stderr)  # fmt: skip
+        return 1
+    result = export(store, config, full=args.full, dry_run=args.dry_run, actor=login_name())
+    print(result.summary(), file=sys.stdout if result.ok else sys.stderr)
+    return 0 if result.ok else 1
+
+
+def login_name() -> str:
+    """The computer login running the command (who ran it, in the audit trail)."""
+    import getpass
+
+    try:
+        return getpass.getuser()
+    except Exception:  # noqa: BLE001 - no login name available
+        return ""
+
+
 def cmd_schema(args: argparse.Namespace) -> int:
     schema = build_json_schema(
         _load_reference(args),
@@ -966,6 +1021,7 @@ def main(argv: list[str] | None = None) -> int:
         "demo": lambda: cmd_demo(args, settings),
         "schema": lambda: cmd_schema(args),
         "users": lambda: cmd_users(args),
+        "hub": lambda: cmd_hub(args),
     }
     try:
         return commands[args.command]()

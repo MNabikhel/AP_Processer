@@ -1,0 +1,88 @@
+{# Settings → Finance hub (pages/settings_hub.py, D-103): AP Coder's feed for the finance hub on Microsoft Fabric. An Admin's. #}
+<section class="card" id="hub">
+  <div class="card-head">
+    <div>
+      <h4>Finance hub</h4>
+      <div>{% if hub.enabled %}{{ ui.status("On: " ~ hub_every[hub.every_hours] | lower ~ ", " ~ ("to the shared folder" if hub.mode == "folder" else "to OneLake"), "ok") }}
+        {% else %}{{ ui.status("Off: nothing is sent to the finance hub", "gray") }}{% endif %}</div>
+      <p class="muted">Sends the company's finance hub on Microsoft Fabric six tables: invoices, their lines, approvals, the
+        Activity log, accuracy (what AP Coder proposed against what was approved) and runs. Only what changed since the last
+        run goes. The invoices' PDFs never leave AP Coder: each invoice carries a link back to its page here. The tables and
+        their columns are described in <code>docs/FINANCE_HUB.md</code> (version {{ hub_version }}).</p>
+    </div>
+    {% if hub.enabled %}
+    <details class="pop">
+      <summary class="btn primary"><span class="ms" aria-hidden="true">sync</span>Run now…</summary>
+      <form class="pop-body stack" method="post" action="/settings/hub/run" data-busy="Sending…">
+        <p>Sends what changed since the last run{{ " to " ~ (hub.folder if hub.mode == "folder" else "OneLake") }}.</p>
+        <label class="check"><input type="checkbox" name="full" value="1"> Full rebuild: every row again</label>
+        <button class="btn primary" type="submit">Run now</button>
+      </form>
+    </details>
+    {% endif %}
+  </div>
+  {% if hub_last %}
+  <p>{% if hub_last.ok %}<span class="ms ok-ico" aria-hidden="true">check_circle</span>{% else %}<span class="ms err-ico" aria-hidden="true">error</span>{% endif %}
+    <b>Last run</b> {{ hub_last.at | replace("T", " ") }} by {{ hub_last.by }}: {{ hub_last.summary }}</p>
+  {% else %}
+  <p class="muted">Last run: never.</p>
+  {% endif %}
+</section>
+
+<form method="post" action="/settings/hub" class="stack" data-busy="Saving…">
+<section class="card">
+  <h4>Turn it on</h4>
+  <label class="check"><input type="checkbox" name="enabled" value="1"{% if hub.enabled %} checked{% endif %}> Send the tables to the finance hub</label>
+  <div class="row st-end">
+    <label class="field">How often
+      <select name="every_hours">{% for n, words in hub_every.items() %}<option value="{{ n }}"{% if n == hub.every_hours %} selected{% endif %}>{{ words }}</option>{% endfor %}</select></label>
+    <label class="field">File format
+      <select name="format">{% for key, words in hub_formats.items() %}<option value="{{ key }}"{% if key == hub.format %} selected{% endif %}{% if key == "parquet" and not hub_parquet %} disabled{% endif %}>{{ words }}</option>{% endfor %}</select></label>
+    <label class="field st-grow">The address people open AP Coder at (for the links)
+      <input type="text" name="link_base" value="{{ hub.link_base }}" placeholder="https://&lt;the server’s name&gt;"></label>
+  </div>
+  <p class="muted">{% if hub_parquet %}Files are written as {{ hub_format_now | upper }}.{% else %}Files are written as CSV,
+    each table with a <code>_schema.json</code> saying its columns' types (Parquet needs the pyarrow package, not installed here).{% endif %}
+    {% if hub_on_server %}The schedule runs while the server runs; <code>python -m ap_coder hub export</code> runs it from a scheduled task too.{% else %}The schedule runs while AP Coder is open; <code>python -m ap_coder hub export</code> runs it from a scheduled task too.{% endif %}</p>
+</section>
+
+<section class="card">
+  <h4>How the files travel</h4>
+  <label class="check"><input type="radio" name="mode" value="folder"{% if hub.mode == "folder" %} checked{% endif %}> <b>Fabric pulls</b> from a shared folder (the default)</label>
+  <div class="row st-end">
+    <label class="field st-grow">The folder (a network share Fabric reads)
+      <input type="text" name="folder" value="{{ hub.folder }}" placeholder="e.g. \\fileserver\finance-hub\ap-coder"></label>
+  </div>
+  <label class="check"><input type="checkbox" name="sqlite" value="1"{% if hub.sqlite %} checked{% endif %}> Also keep a read-only SQLite copy of the tables for the on-premises data gateway (<code>_gateway/finance_hub.db</code>)</label>
+  <p class="muted">A folder per table with numbered files and a <code>_metadata.json</code>, as Fabric Open Mirroring's landing zone wants them.</p>
+
+  <label class="check"><input type="radio" name="mode" value="onelake"{% if hub.mode == "onelake" %} checked{% endif %}> <b>AP Coder pushes</b> the same files to OneLake</label>
+  {% if hub_push_blocked %}<p class="muted"><span class="ms warn-ico" aria-hidden="true">wifi_off</span> {{ hub_push_blocked }}</p>{% endif %}
+  <div class="row st-end">
+    <label class="field st-grow">OneLake folder URL
+      <input type="text" name="onelake_url" value="{{ hub.onelake_url }}" placeholder="the landing zone’s URL, as Fabric shows it"></label>
+  </div>
+  <div class="row st-end">
+    <label class="field">Tenant ID <input type="text" name="tenant_id" value="{{ hub.tenant_id }}" autocomplete="off"></label>
+    <label class="field">Client ID <input type="text" name="client_id" value="{{ hub.client_id }}" autocomplete="off"></label>
+    <label class="field">Client secret <input type="password" name="client_secret" value="" autocomplete="new-password"
+      placeholder="{{ 'kept: type a new one to replace it' if hub_secret_set else 'the app registration’s secret' }}"></label>
+  </div>
+  <details><summary class="muted">Advanced</summary>
+    <label class="field">Sign-in address <input type="text" name="authority" value="{{ hub.authority }}" placeholder="login.microsoftonline.com (the default)"></label>
+  </details>
+  <label class="check"><input type="checkbox" name="push_opt_in" value="1"{% if hub.push_opt_in %} checked{% endif %}> Send the files to OneLake: I understand AP Coder then connects to Microsoft over the internet</label>
+  <p class="muted">The client secret is kept in the data folder's <code>.env</code>, never shown again and never in the Activity log.
+    Nothing is sent unless the internet is allowed for AP Coder (AP_ALLOW_INTERNET=1) and this box is ticked.</p>
+</section>
+
+<div class="row"><button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save</button></div>
+</form>
+
+<section class="card">
+  <h4>The tables</h4>
+  <div class="table-wrap"><table class="apc-table">
+    <thead><tr><th>Table</th><th>Key</th><th>What it holds</th></tr></thead>
+    <tbody>{% for t in hub_tables %}<tr><td><code>{{ t.name }}</code></td><td><code>{{ t.key | join(", ") }}</code></td><td class="w">{{ t.meaning }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>

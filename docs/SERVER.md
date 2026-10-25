@@ -255,6 +255,9 @@ window, started at boot like AP Coder.
   Admin too. `server-update --back` and an update that fails do the same. By hand: `service stop`, copy the backup over
   `D:\APCoderData\ap_coder.db` (delete `ap_coder.db-wal` and `ap_coder.db-shm` beside it), `service start`: that
   brings back the backup's accounts and sessions, so prefer the page.
+- **The finance hub feed** (off until an Admin turns it on, *Settings* → *Finance hub*): its share needs the same
+  *Modify* for the service's account. Its schedule runs while staff use the dashboard; for a night run, add a
+  scheduled task running `python -m ap_coder hub export` as the service's account (docs/FINANCE_HUB.md).
 
 ## 10. Users and roles
 

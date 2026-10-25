@@ -1044,3 +1044,38 @@ that is reversed keeps its line, marked "replaced by D-NN".
   (`web/core.py` `can`, `web/pages/process.py` `shown_setup`, `web/pages/invoice.py` `_shown_live`,
   `static/js/invoice.js`, `ops/help.py`, `ops/service.py` `doctor_checks`, `core/store/_base.py` `EVENT_ACTOR`;
   `tests/test_server_role_pages.py`, `tests/test_server_ui_fixes.py`)
+- **D-103** · The finance hub feed (Microsoft Fabric): six versioned tables and two ways to deliver them, off by
+  default. (1) **The tables**: `invoices`, `invoice_lines`, `approvals`, `activity`, `accuracy`, `workflow_runs`, each
+  built from the Store with stable column names and types (`HUB_SCHEMA_VERSION = 1`; a change is a new version), the
+  data dictionary in docs/FINANCE_HUB.md (a test checks it names every column with its type). `accuracy` reuses what
+  the learning already records (the supplier learning's per-field outcomes, `capture.supplier.outcome_rows` for an
+  approval without them, and the learning memory's lines); `workflow_runs` reuses the export batches and adds the
+  minimum: an `import_run` event at the end of each import (dashboard, `process`, `watch`) and a `hub_export` event
+  per feed run. No invoice file is ever sent, only a link to its page. Left out: bank details, sign-in events,
+  settings and accounts. (2) **What is sent**: `activity` by a watermark (the last event id sent; events are only
+  added); the other tables row by row against a fingerprint of what was sent, kept in the data folder
+  (`finance_hub/state.db`), not in the database: an invoice has no "updated at" (rechecks, exports and parking change
+  it without one), adding one is a schema change for a column some writer would forget, and the fingerprints also
+  give deletes. A full rebuild on request, and by itself for a new destination, format, schema version or a database
+  put back from a backup. A failed run records nothing as sent. A run that would carry only the previous run's own
+  record sends nothing. (3) **Option A, "Fabric pulls"** (the default once on): a folder an Admin sets, laid out as
+  Fabric Open Mirroring's landing zone (a folder per table, `_metadata.json` with the key columns, files numbered
+  `00000000000000000001`, `__rowMarker__` 4 upsert / 2 delete), each file staged under `_staging/` and renamed; plus,
+  unless unticked, a read-only SQLite copy with views (`_gateway/finance_hub.db`) for the on-premises data gateway.
+  (4) **Format: Parquet when pyarrow is installed, else CSV with a `_schema.json`.** pyarrow is not a dependency in
+  pyproject (it is in some installs through other packages): tens of MB of wheels per platform for one optional
+  feed is not worth adding to every laptop and the offline bundle, so it is used when present and CSV (which Open
+  Mirroring also reads, `"fileFormat": "DelimitedText"`) is the fallback; an Admin may pin either. (5) **Option B,
+  "AP Coder pushes"**: the same files to OneLake through the ADLS Gen2 DFS API with an Entra ID client-credentials
+  token, the standard library's urllib only (no new package), behind the same `Destination` interface as the folder
+  (a memory stand-in for tests, a fake endpoint on 127.0.0.1 for the push). Real calls only with
+  `AP_ALLOW_INTERNET=1` and the Admin's tick "Send the files to OneLake", to the sign-in host and the OneLake host
+  only, over HTTPS, no redirects. The client secret is kept in the data folder's `.env` (`AP_HUB_CLIENT_SECRET`),
+  never in the database, the repo or the Activity log. (6) **Running it**: on a schedule inside the dashboard, ticked
+  by each page served as the daily backup is (`HubSchedule` beside `DailyBackup`), `python -m ap_coder hub export
+  [--full] [--dry-run]` and `hub status`, and Settings → Finance hub (an Admin's, `web/roles.py`) with on/off, the
+  delivery, folder, schedule, last run and Run now; each run is recorded with the person who ran it (the account on
+  the server). One run at a time per data folder (a lock file). Why: the data team has not chosen how the data will
+  travel, so both ways share one table format and one writer, and nothing leaves AP Coder until an Admin turns it
+  on. (`ap_coder/erp/hub/`, `core/store/hub.py`, `web/pages/settings_hub.py`, `ops/cli.py` `cmd_hub`;
+  `tests/test_finance_hub.py`, docs/FINANCE_HUB.md)

@@ -240,7 +240,7 @@ def _tabs(html: str) -> list[str]:
 
 def test_settings_opens_on_review_and_hides_jd_edwards_until_asked(client, store):
     page = client.get("/settings").text
-    assert _tabs(page) == ["review", "reading", "automation", "data", "about"]
+    assert _tabs(page) == ["review", "reading", "automation", "data", "about", "hub"]  # the finance hub last (D-103)
     assert 'href="/settings/review" class="on" aria-current="page"' in page
     hidden = client.get("/settings/jde")  # still there (nothing removed), and says how to show it
     assert hidden.status_code == 200 and "Show JD Edwards settings" in hidden.text

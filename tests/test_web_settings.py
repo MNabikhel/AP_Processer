@@ -25,7 +25,7 @@ from ap_coder.web.pages import settings as settings_page
 
 PAGE = {"X-AP-Coder": "1"}
 MODEL = "ath-maas_ovisocr2"
-TABS = ["reading", "automation", "review", "jde", "data", "about"]
+TABS = ["reading", "automation", "review", "jde", "data", "about", "hub"]
 
 
 @pytest.fixture(autouse=True)
