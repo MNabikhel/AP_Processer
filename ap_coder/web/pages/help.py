@@ -21,6 +21,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 
 from ap_coder.core import paths
+from ap_coder.ops import service
 from ap_coder.ops.help import AREAS, CHECKS, CLOUD_CHECKS, ROUTINE, TO_DO, WHATS_NEW, CheckHelp, faq, quick_start
 from ap_coder.ops.offline import internet_allowed, setup_contact
 from ap_coder.web import minimd
@@ -195,7 +196,8 @@ def report_page(request: Request, codes: bool = False) -> HTMLResponse:
         activity=activity_report(store, codes),
         codes=codes,
         key_file=short_path(data_dir(store) / "share_report_key.csv"),
-        logs=[short_path(logs / "launch.log"), short_path(logs / "dashboard-errors.log")],
+        logs=[short_path(service.log_path(data_dir(store)))] if server_mode(request)  # the service's (D-100)
+        else [short_path(logs / "launch.log"), short_path(logs / "dashboard-errors.log")],
     )
 
 

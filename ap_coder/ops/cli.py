@@ -342,8 +342,9 @@ def cmd_serve(args: argparse.Namespace) -> int:
         opens = "" if args.no_browser else "it opens in your browser; "  # (the launcher opens it, and says so itself)
         print(f"Dashboard: {url}  ({opens}Ctrl+C here to stop)", file=sys.stderr)
         if not is_loopback(host if host not in ("", "localhost") else "127.0.0.1"):
-            print(f"Listening on {host}: other computers on the network can open the dashboard. There is no login: "
-                  "anyone who can reach this address can see the invoices.", file=sys.stderr)  # fmt: skip
+            print(f"Listening on {host}: other computers on the network can open the dashboard. Colleagues give their "
+                  "name first, with no password: anyone who can reach this address can see the invoices. For logins, "
+                  "run it as the company server (server mode).", file=sys.stderr)  # fmt: skip
     network = {"certfile": certfile, "keyfile": keyfile, "proxy": args.proxy, "insecure_http": args.insecure_http}
     extra = network if server_mode() or any(network.values()) else {}  # (the laptop's call is as before)
     return server.serve(host, port, open_browser=not args.no_browser, store=Store(Path(args.db)), **extra)

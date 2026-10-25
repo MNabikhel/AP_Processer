@@ -1,5 +1,5 @@
-"""AP Coder as a Windows service on the company server (D-100): ``python -m ap_coder service install|remove|start|
-stop|status``.
+"""AP Coder run by a Windows scheduled task on the company server (D-100): ``python -m ap_coder service
+install|remove|start|stop|status``.
 
 How it runs, with nothing to download and no pywin32: a **Windows scheduled task** (Task Scheduler is part of every
 Windows Server) that starts at boot under a dedicated local account, whether anyone is logged on or not. The task runs

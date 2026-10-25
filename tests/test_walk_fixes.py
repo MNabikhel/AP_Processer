@@ -252,3 +252,35 @@ def test_the_headers_to_fix_count_is_the_blocking_items_listed(client, store):
                                             answer["sections"]["checks"]))  # fmt: skip
     said = re.search(r"(\d+) to fix", answer["sections"]["summary"])
     assert listed >= 2 and said and int(said.group(1)) == listed, (said and said.group(0), listed)
+
+
+# --- Shared on the network, and the server's log ----------------------------------------------------------------
+
+
+def test_shared_on_the_network_the_dashboard_says_colleagues_give_their_name(monkeypatch, capsys):
+    """B-1191: shared on the office network, ``serve`` said "There is no login", though each colleague gives their
+    name first (web/identity.py) and the company server has logins."""
+    from ap_coder.ops import offline
+
+    from .test_offline import _serve_call
+
+    monkeypatch.setenv(offline.ADDRESS_ENV, "0.0.0.0")
+    _serve_call(monkeypatch)
+    said = capsys.readouterr().err
+    assert "There is no login" not in said and "give their name" in said and "server mode" in said
+
+
+def test_on_the_server_report_a_problem_shows_the_services_log(tmp_path):
+    """B-1192: on the company server Report a problem named the laptop's logs only; it names the service's log,
+    ``<data folder>\\logs\\service.log``."""
+    from ap_coder.core.store import Store, load_sample_setup
+    from ap_coder.ops import service
+    from ap_coder.web.core import data_dir, short_path
+
+    from .test_server_role_pages import _server
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(store)
+    _, clients = _server(store)
+    page = clients["admin"].get("/help/report").text
+    assert short_path(service.log_path(data_dir(store))) in page and "launch.log" not in page
