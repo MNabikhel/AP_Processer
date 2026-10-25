@@ -81,3 +81,30 @@ def test_rejecting_one_of_a_duplicate_pair_checks_the_other_again(store, tmp_pat
     left = store.get_invoice(first["id"])
     assert "DUPLICATE_INVOICE" not in [i["code"] for i in left["validation"]["issues"]]
     assert not left["requires_review"] and first["id"] in [c["id"] for c in clean_candidates(store)]
+
+
+# --- L4. Vendors that make work ------------------------------------------------------------------------------------
+
+
+def test_vendors_that_make_work_leave_out_rejected_invoices_and_ap_coders_own_misreads(tmp_path):
+    """B-1183: "Vendors that make work" counted rejected invoices, and findings the reviewer cleared by correcting what
+    AP Coder read (its own misread, not the vendor's doing). An approved invoice counts what was still open when it was
+    approved."""
+    from ap_coder.core.store import Store
+    from ap_coder.erp.insights import vendor_workload
+
+    from .webclient import gt
+
+    store = Store(tmp_path / "w.db")
+    doc = gt()
+    totals = {"issues": [{"severity": "error", "code": "SUBTOTAL_MISMATCH", "message": "x"}]}
+    misread = store.add_invoice(tmp_path / "a.pdf", doc, totals)
+    store.approve_invoice(misread, doc, "Jane")  # the subtotal corrected: nothing open when approved
+    real = store.add_invoice(tmp_path / "b.pdf", {**doc, "invoice_number": "X-2"}, totals)
+    store.approve_invoice(real, {**doc, "invoice_number": "X-2"}, "Jane",
+                          open_issues=[{"code": "SUBTOTAL_MISMATCH", "severity": "error", "line": None}])  # fmt: skip
+    rejected = store.add_invoice(tmp_path / "c.pdf", {**doc, "invoice_number": "X-3"},
+                                 {"issues": [{"severity": "error", "code": "GST_HST_NUMBER_MISSING"}]})  # fmt: skip
+    store.reject_invoice(rejected, "Jane", "Not ours")
+    (row,) = vendor_workload(store)
+    assert (row["invoices"], row["with_problems"], row["top_codes"]) == (2, 1, ["SUBTOTAL_MISMATCH"])
