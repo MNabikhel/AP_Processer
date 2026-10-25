@@ -7,6 +7,8 @@ from __future__ import annotations
 import io
 import zipfile
 
+import pytest
+
 from ap_coder.erp import jde_post
 from ap_coder.web.pages import exports
 
@@ -249,8 +251,7 @@ def test_a_new_hub_format_clears_the_old_formats_files_and_parquet_times_are_mil
     milliseconds, as FINANCE_HUB.md says.)"""
     import json as _json
 
-    import pyarrow.parquet as pq
-
+    pq = pytest.importorskip("pyarrow.parquet")  # Parquet needs the optional pyarrow, as in test_finance_hub
     from ap_coder.core.store import Store
     from ap_coder.erp.hub.landing import CSV, PARQUET
     from ap_coder.erp.hub.run import HubConfig, export
