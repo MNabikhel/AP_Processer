@@ -462,19 +462,23 @@ def _take(store: Any, row: dict[str, Any], found: dict[str, Any], actor: str | N
     return _record(store, row, found, actor)
 
 
-def _later(attempts: int) -> str:
-    wait = RETRY_MINUTES[min(attempts, len(RETRY_MINUTES)) - 1] if attempts else RETRY_MINUTES[0]
+def _later(attempts: int, sent: bool = True) -> str:
+    """When to try again after ``attempts`` tries: a voucher never sent stays on the short waits (5, then 15
+    minutes), one that may be in JD Edwards goes on to hourly (B-1198)."""
+    steps = RETRY_MINUTES if sent else RETRY_MINUTES[:2]
+    wait = steps[min(max(attempts, 1), len(steps)) - 1]
     return (dt.datetime.now() + dt.timedelta(minutes=wait)).isoformat(timespec="seconds")
 
 
 def _wait(store: Any, row: dict[str, Any], attempts: int) -> str:
     """JDE can't be asked now: an approved voucher never sent is queued; any other row stays as it is (its next try
     only)."""
+    later = _later(attempts, bool(row.get("maybe_sent")))
     if row["status"] == CHECKED and not row.get("maybe_sent"):
         _put(store, row["idem_key"], row["invoice_id"], row["batch"], only_from=(CHECKED,), status=QUEUED,
-             attempts=attempts, next_try=_later(attempts))  # fmt: skip
+             attempts=attempts, next_try=later)  # fmt: skip
         return QUEUED
-    _put(store, row["idem_key"], row["invoice_id"], row["batch"], attempts=attempts, next_try=_later(attempts))
+    _put(store, row["idem_key"], row["invoice_id"], row["batch"], attempts=attempts, next_try=later)
     return row["status"]
 
 
@@ -494,8 +498,8 @@ def _deliver(store: Any, client: jde_ais.AisClient | None, row: dict[str, Any], 
              actor: str | None, look_first: bool) -> tuple[str, jde_ais.AisError | None]:  # fmt: skip
     """Send one approved voucher (asking first whether JDE has it already, when it may have); its new status."""
     attempts = int(row.get("attempts") or 0) + 1
-    if client is None:
-        return _wait(store, row, attempts), None
+    if client is None:  # the run never reached it (JDE not asked): its tries and its place stay (B-1198)
+        return _wait(store, row, attempts - 1), None
     if look_first or row.get("maybe_sent") or row.get("verify") or row["status"] != CHECKED:
         try:
             status, cleared = _lookup(store, client, row, actor)
