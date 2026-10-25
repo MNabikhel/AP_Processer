@@ -586,15 +586,13 @@ def jde_api_dry_run(request: Request, batch: int) -> JSONResponse:
         found = jde_post.dry_run(store, batch, actor=actor)
         rows = found["rows"]
         ok = sum(r["status"] == jde_post.CHECKED for r in rows)
-        out = [
-            {
-                "text": f"Dry run of batch {batch}: {ok} of {ui.plural(len(rows), 'voucher')} ready to post.",
-                "tone": "ok" if ok == len(rows) else "warn",
-            }
-        ]
-        if found["jde"]:
-            out.append({"text": f"Checked here only, not by JD Edwards: {found['jde']}", "tone": "warn"})
-        return {"messages": out}
+        if found["jde"]:  # JD Edwards' proof not received: never "ready" in green (B-1209)
+            return {"messages": [{"text": f"Dry run of batch {batch}: {ok} of {ui.plural(len(rows), 'voucher')} "
+                                  "checked here only: JD Edwards' proof wasn't received "
+                                  f"({found['jde']}). They can still be posted; JD Edwards checks each one then.",
+                                  "tone": "warn"}]}  # fmt: skip
+        return {"messages": [{"text": f"Dry run of batch {batch}: {ok} of {ui.plural(len(rows), 'voucher')} ready "
+                              "to post.", "tone": "ok" if ok == len(rows) else "warn"}]}  # fmt: skip
 
     return _api_job(request, "Dry run through the JD Edwards API", work)
 
