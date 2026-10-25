@@ -21,6 +21,7 @@ Settings: in the database (``hub_*``, Settings → Finance hub, an Admin's), the
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import datetime as dt
 import hashlib
 import json
@@ -93,7 +94,7 @@ class HubConfig:
         return cls(
             enabled=_on(get(KEYS["enabled"])), mode=mode if mode in MODES else FOLDER, folder=get(KEYS["folder"]),
             every_hours=every if every in EVERY_HOURS else DEFAULT_EVERY, format=fmt if fmt in FORMATS else "auto",
-            sqlite=get(KEYS["sqlite"], "on") != "off", link_base=get(KEYS["link_base"]) or DEFAULT_LINK,
+            sqlite=get(KEYS["sqlite"], "on") != "off", link_base=get(KEYS["link_base"]) or default_link(store),
             onelake_url=get(KEYS["onelake_url"]), tenant_id=get(KEYS["tenant_id"]),
             client_id=get(KEYS["client_id"]), authority=get(KEYS["authority"]),
             push_opt_in=_on(get(KEYS["push_opt_in"])), secret=client_secret(store),
@@ -126,6 +127,26 @@ class HubConfig:
 
 def data_folder(store: Any) -> Path:
     return Path(store.path).parent
+
+
+def default_link(store: Any) -> str:
+    """Where the invoice links go when none is set: this computer's dashboard on a laptop; on the company server its
+    own address (server.json and the environment: the first name staff type, the port, https with a certificate),
+    which colleagues can open (B-1205)."""
+    import socket
+
+    from ...ops import service
+
+    data = data_folder(store)
+    if not service.is_server_here(data):
+        return DEFAULT_LINK
+    try:
+        found = service.settings(data)
+    except service.SettingsError:
+        return DEFAULT_LINK
+    if not found.allowed_hosts:  # no name set: the server's own
+        found = dataclasses.replace(found, allowed_hosts=(socket.getfqdn().lower(),))
+    return service.address(found)
 
 
 def env_file(store: Any) -> Path:

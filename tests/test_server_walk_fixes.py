@@ -199,3 +199,25 @@ def test_an_admin_releases_a_voucher_jde_holds_another_invoice_under_after_check
     (event,) = store.events(actions=["jde_voucher_released"])
     assert event["invoice_id"] == 1 and event["detail"]["note"].startswith("77777") and event["actor"]
     assert roles.RULES[("POST", "/exports/batches/{batch:int}/jde-api/release")] == roles.ADMIN
+
+
+# --- S9. The hub's invoice links on the server --------------------------------------------------------------------
+
+
+def test_on_the_server_the_hubs_invoice_links_default_to_the_servers_address(tmp_path, monkeypatch):
+    """B-1205: on the company server the finance hub's invoice links defaulted to http://127.0.0.1:8501, a page no one
+    else can open: they default to the server's own address (its name staff type, its port, https with a
+    certificate). On a laptop, as before."""
+    from ap_coder.core.store import Store
+    from ap_coder.erp.hub import run
+    from ap_coder.ops import service
+
+    monkeypatch.delenv("AP_SERVER_MODE", raising=False)
+    data = tmp_path / "APCoderData"
+    data.mkdir()
+    store = Store(data / "ap_coder.db")
+    assert run.HubConfig.load(store).link_base == "http://127.0.0.1:8501"
+    service.write_config(data, certfile="c.pem", keyfile="k.pem", allowed_hosts=["apcoder.company.local"], port=8443)
+    assert run.HubConfig.load(store).link_base == "https://apcoder.company.local:8443"
+    store.set_setting(run.KEYS["link_base"], "https://ap.example.local")
+    assert run.HubConfig.load(store).link_base == "https://ap.example.local"  # one set in Settings stays
