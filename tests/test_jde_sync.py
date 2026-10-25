@@ -171,3 +171,15 @@ def test_a_printed_bank_account_jde_does_not_pay_is_flagged(store, ais):
     assert "VENDOR_BANK_NOT_JDE" not in [c for _, c, _ in vendor_findings(same, store)]
     found = [m for _, c, m in vendor_findings(other, store) if c == "VENDOR_BANK_NOT_JDE"]
     assert found and "…4321" in found[0] and "00012-003 …4567" in found[0]
+
+
+def test_the_sync_report_says_how_many_gl_descriptions_were_taken_from_jd_edwards(store, ais):
+    """B-1210: ``jde sync`` writes JD Edwards' GL account descriptions over AP Coder's (kept so: JDE is the books)
+    without saying so: the report says "N descriptions taken from JD Edwards"."""
+    connect(store, ais)
+    store.import_accounts("gl_accounts", [{"code": "6100", "description": "Paper and toner"},
+                                          {"code": "6200", "description": "Couriers"}], "code", "description")  # fmt: skip
+    report = jde_sync.sync(store)
+    assert {r["code"]: r["description"] for r in store.list_accounts("gl_accounts")}["6100"] == "Office supplies"
+    line = next(x for x in jde_sync.report_lines(report) if x.startswith("GL accounts"))
+    assert "2 descriptions taken from JD Edwards" in line, line

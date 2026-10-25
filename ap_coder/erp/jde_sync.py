@@ -318,6 +318,9 @@ def report_lines(report: dict[str, Any], shown: int = 10) -> list[str]:
             bits.append(f"{len(r['closed'])} closed in JDE")
         if r.get("refused_close"):
             bits.append(r["refused_close"])
+        if part == "gl_accounts" and r.get("changed"):  # JDE's words over AP Coder's: said (B-1210)
+            n = len(r["changed"])
+            bits.append(f"{n} description{'' if n == 1 else 's'} taken from JD Edwards")
         if r.get("not_postable"):
             bits.append(f"{r['not_postable']} not postable, left out")
         line = f"{LABELS[part]}: " + ", ".join(bits)
