@@ -158,8 +158,8 @@ def test_the_jd_edwards_setup_findings_say_where_to_set_it_or_whom_to_ask():
     told = "Settings → JD Edwards E1, or ask whoever sets up AP Coder"
     exempt = coded(doc([line(1, 100.0, taxes=["HST"]), line(2, 50.0, exempt=["HST"], status="exempt")],
                        [tl("HST", "ON", 0.13, 100.0, 13.0)]))["final_output"]  # fmt: skip
-    found = {code: text for _, code, text, _ in
-             jde.voucher_findings(exempt, jde.JdeSettings(company="x", amount_mode=jde.AMOUNT_GROSS), "V1")}  # fmt: skip
+    settings = jde.JdeSettings(company="x", amount_mode=jde.AMOUNT_GROSS)
+    found = {code: text for _, code, text, _ in jde.voucher_findings(exempt, settings, "V1")}
     for code in ("JDE_SETTINGS", "JDE_BAD_AN8", "JDE_GROSS_TAX"):
         assert told in found[code] and "pilot tester" not in found[code], found[code]
     for code in ("JDE_SETTINGS", "JDE_BAD_AN8", "JDE_MEALS_GROSS"):
@@ -252,4 +252,3 @@ def test_the_headers_to_fix_count_is_the_blocking_items_listed(client, store):
                                             answer["sections"]["checks"]))  # fmt: skip
     said = re.search(r"(\d+) to fix", answer["sections"]["summary"])
     assert listed >= 2 and said and int(said.group(1)) == listed, (said and said.group(0), listed)
-
