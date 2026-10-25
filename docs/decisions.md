@@ -1155,13 +1155,15 @@ that is reversed keeps its line, marked "replaced by D-NN".
   `erp/jde_sync.py`, `erp/hub/`; `tests/test_jde_post_safety.py`, `tests/test_jde_ais_safety.py`,
   `tests/test_jde_sync_safety.py`, `tests/test_finance_hub.py`)
 - **D-106** · Coding work runs as the `developer` agent (`.claude/agents/developer.md`). Measured on 6 tasks × 3 runs
-  each (a bug fix, a feature, a rename across folders, two code questions, a test), on main ff9c3ff: a general Claude
-  Code session starts every turn with ~36.6k tokens of context (its system prompt and ~39 tools: artifacts,
-  schedules, plugins and the like); this repo's CLAUDE.md is ~1.2k of it. The developer agent carries Bash, Read,
-  Edit, Write, WebFetch and WebSearch and a short prompt with the rules that matter here, and starts at ~7.3k.
-  Result: 63-67% fewer tokens per task (6.86M → 2.5M over 18 runs; cost ~30% lower, as written output costs the
-  same), same hidden-test results, same mutants killed, and in a blind review its answers and changes scored the
-  same or higher on 3 of 4 tasks; on the bug fix one run leaned on existing tests, so the agent now always adds its
-  own test. It is a profile, not a setting: lead sessions that publish documents, run workflows or talk to other
-  agents keep every tool. `tests/test_agent_profile.py` keeps its tool list deliberate.
-
+  each (a bug fix, a feature, a rename across folders, two code questions, a test), on main ff9c3ff, graded by hidden
+  checks: a general Claude Code session starts every turn with ~36.6k tokens of context in a cloud session (its
+  system prompt and ~39 tools: artifacts, schedules, plugins and the like) and ~15.9k with a typical local tool set;
+  this repo's CLAUDE.md is ~1.2k of it. The developer agent carries Bash, Read, Edit, Write, WebFetch and WebSearch
+  and a short prompt with the rules that matter here, and starts at ~7.3k. Tokens over the 18 runs: 6.86M (cloud
+  session) and 3.94M (local tool set) against 2.47M, i.e. 64% and 37% fewer; cost 30% and 18% lower (written output
+  costs the same). Hidden tests, related tests and mutants killed are the same; in a blind review it scored the same
+  or higher on the feature and the two questions, and slightly lower on the bug fix (35.7 against 37.0 of 40: an
+  extra comment, a reply's side claim; every fix correct and tested). Its prompt states what the general one would:
+  a bug fix brings its own test, the smallest correct change, finish an ambiguous task and say the choice. It is a
+  profile, not a setting: lead sessions that publish documents, run workflows or talk to other agents keep every
+  tool. `tests/test_agent_profile.py` keeps its tool list deliberate.
