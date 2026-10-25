@@ -177,8 +177,8 @@ def test_the_sync_report_says_how_many_gl_descriptions_were_taken_from_jd_edward
     """B-1210: ``jde sync`` writes JD Edwards' GL account descriptions over AP Coder's (kept so: JDE is the books)
     without saying so: the report says "N descriptions taken from JD Edwards"."""
     connect(store, ais)
-    store.import_accounts("gl_accounts", [{"code": "6100", "description": "Paper and toner"},
-                                          {"code": "6200", "description": "Couriers"}], "code", "description")  # fmt: skip
+    ours = [{"code": "6100", "description": "Paper and toner"}, {"code": "6200", "description": "Couriers"}]
+    store.import_accounts("gl_accounts", ours, "code", "description")
     report = jde_sync.sync(store)
     assert {r["code"]: r["description"] for r in store.list_accounts("gl_accounts")}["6100"] == "Office supplies"
     line = next(x for x in jde_sync.report_lines(report) if x.startswith("GL accounts"))
