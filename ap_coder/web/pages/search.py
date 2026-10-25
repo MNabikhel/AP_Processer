@@ -120,6 +120,9 @@ def _export_rows(request: Request) -> tuple[list[tuple[str, str]], list[dict[str
     result = directory.run(store, query, everything=True)
     columns = [(k, directory.COLUMNS[k].label) for k in query.columns]
     rows = [{k: directory.cell(r, k) for k, _ in columns} for r in result.rows]
+    for row in rows:  # the status in plain words, as the page says it (B-1186)
+        if row.get("status") in STATUS:
+            row["status"] = STATUS[row["status"]][0]
     return columns, rows, result
 
 
@@ -129,12 +132,15 @@ def export_csv(request: Request) -> Response:
     import csv
     import io
 
+    from ap_coder.erp.exports import csv_amount
+
     columns, rows, _ = _export_rows(request)
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow([label for _, label in columns])
     for r in rows:
-        writer.writerow(csv_row([r.get(k) if r.get(k) is not None else "" for k, _ in columns]))
+        writer.writerow(csv_row([csv_amount(r.get(k)) if directory.COLUMNS[k].kind == directory.MONEY else r.get(k)
+                                 if r.get(k) is not None else "" for k, _ in columns]))  # fmt: skip
     return download(buf.getvalue().encode("utf-8-sig"), "invoice_directory.csv", "text/csv")
 
 

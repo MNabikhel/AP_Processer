@@ -164,3 +164,28 @@ def test_the_jd_edwards_setup_findings_say_where_to_set_it_or_whom_to_ask():
         assert told in found[code] and "pilot tester" not in found[code], found[code]
     for code in ("JDE_SETTINGS", "JDE_BAD_AN8", "JDE_MEALS_GROSS"):
         assert told in CHECKS[code].action and "pilot tester" not in CHECKS[code].action, CHECKS[code].action
+
+
+# --- L7. The CSV exports -------------------------------------------------------------------------------------------
+
+
+def test_the_csv_exports_show_plain_statuses_and_amounts_with_two_decimals(client, store):
+    """B-1186: the directory CSV showed status codes ("approved") and the CSV exports amounts as 4350.0; the statuses
+    are plain words, the amounts have two decimals, and Excel's amounts stay numbers."""
+    import csv
+    import io
+
+    from openpyxl import load_workbook
+
+    from ap_coder.core.store import APPROVED
+    from ap_coder.erp import exports
+
+    query = "col=vendor&col=total&col=status&f_status=approved"
+    rows = list(csv.reader(io.StringIO(client.get(f"/search/export.csv?{query}").content.decode("utf-8-sig"))))
+    assert rows[1][2] == "Approved" and re.fullmatch(r"-?\d+\.\d\d", rows[1][1]), rows[1]
+    sheet = load_workbook(io.BytesIO(client.get(f"/search/export.xlsx?{query}").content)).active
+    assert isinstance(sheet["B2"].value, float) and sheet["C2"].value == "Approved"
+    invoices = [store.get_invoice(i["id"]) for i in store.list_invoices(APPROVED)]
+    lines = list(csv.DictReader(io.StringIO(exports.build("csv", invoices)[0].decode("utf-8-sig"))))
+    assert lines and all(re.fullmatch(r"-?\d+\.\d\d", r["Amount"]) for r in lines), [r["Amount"] for r in lines]
+    assert "4350.00" in [r["Amount"] for r in lines]

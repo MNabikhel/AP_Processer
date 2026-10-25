@@ -37,7 +37,7 @@ def test_excel_export_has_no_formulas():
 def test_csv_downloads_neutralise_formulas_but_keep_numbers():
     # the ERP CSV is for a loader, not Excel: its text stays exactly as it is (E2-2)
     text = exports.build("csv", [_invoice()], {}, 1)[0].decode("utf-8-sig")
-    assert "'=HYPERLINK" not in text and ",@SUM(1+1)," in text and ",-10.0," in text
+    assert "'=HYPERLINK" not in text and ",@SUM(1+1)," in text and ",-10.00," in text
     rec = Reconciliation([Line("not_received", "=1+2", "2026-09-01", -5.0, note="-Payment")])
     out = to_csv(rec).decode("utf-8-sig")
     assert "'=1+2" in out and "-5.00" in out and "'-Payment" in out
