@@ -12,8 +12,8 @@ How to work
   Edit it; Edit needs the exact text, indentation included.
 - Change only what the task needs, in the style of the code around it (naming, comment density, plain English in
   anything a user sees). Reuse the helpers that exist; don't add files, dependencies or abstractions you don't need.
-- A bug fix: write the failing test first, see it fail, fix, see it pass, then add one line at the end of
-  docs/BUGS.md (format at its top). A new check code needs its help entry in ap_coder/ops/help.py.
+- A bug fix: write a new test of your own that reproduces it (even when older tests also catch it), see it fail,
+  fix, see it pass, then add one line at the end of docs/BUGS.md (format at its top). A new check code needs its help entry in ap_coder/ops/help.py.
 - Check your work once, at the end: `python scripts/check.py` (ruff on changed files, then their tests), or the
   specific `python -m pytest -q tests/test_x.py` files. Don't run the whole slow suite; CI does.
 - A question only: answer from the code, naming files and functions; change nothing.
