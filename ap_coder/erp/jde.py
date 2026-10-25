@@ -1512,8 +1512,10 @@ def build_zip(
     invoices: list[dict[str, Any]], settings: JdeSettings, vendor_lookup: VendorLookup = None, *,
     batch: int | str = "", fx_rates: Mapping[str, float] | None = None, on: dt.date | None = None,
     left_out: Mapping[int, list[str]] | None = None, to_check: Mapping[int, list[str]] | None = None,
+    left_invoices: list[dict[str, Any]] = (),
 ) -> tuple[bytes, str, str]:  # fmt: skip
-    """(ZIP bytes, file name, mime type): the CSVs and a README.txt."""
+    """(ZIP bytes, file name, mime type): the CSVs and a README.txt. ``left_invoices``: the invoices of ``left_out``,
+    for their vendor, number and date in DRY_RUN.txt (B-1197)."""
     files = export_batch(invoices, settings, vendor_lookup, batch=batch, fx_rates=fx_rates, on=on)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -1525,9 +1527,12 @@ def build_zip(
             if h["id"] in (to_check or {}):  # the files hold it: it passed the checks when the batch was made
                 h["reasons"] = ["it IS in this batch's files (checked when the batch was made): check it before "
                                 "loading", *h["reasons"]]  # fmt: skip
-        report["held"] += [
-            {"id": i, "vendor": "", "number": "", "date": "", "reasons": r} for i, r in (left_out or {}).items()
-        ]
+        finals = {int(i.get("id") or 0): i.get("final_output") or {} for i in left_invoices}
+        for inv_id, reasons in (left_out or {}).items():
+            final = finals.get(inv_id, {})
+            report["held"].append({"id": inv_id, "vendor": final.get("vendor_name") or "",
+                                   "number": final.get("invoice_number") or "",
+                                   "date": final.get("invoice_date") or "", "reasons": reasons})  # fmt: skip
         zf.writestr("DRY_RUN.txt", dry_run_text(report))
     name = f"ap_coder_jde_batch_{batch}.zip" if batch != "" else "ap_coder_jde.zip"
     return buf.getvalue(), name, "application/zip"

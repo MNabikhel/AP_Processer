@@ -134,6 +134,7 @@ def jde_file(store: Store, batch: int) -> tuple[bytes, str, str]:
         on=dt.date.fromisoformat(created[:10]) if created else None,
         left_out=left_out,
         to_check=jde.validate(kept, settings, lookup),
+        left_invoices=[i for i in invoices if i["id"] in left_out],
     )
 
 
