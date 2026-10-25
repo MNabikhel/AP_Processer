@@ -57,3 +57,18 @@ def test_vouchers_never_sent_stay_on_the_short_schedule_and_one_never_reached_ke
     assert rows[2]["attempts"] == 0, rows[2]
     latest = dt.datetime.now() + dt.timedelta(minutes=15, seconds=5)
     assert all(dt.datetime.fromisoformat(r["next_try"]) <= latest for r in rows.values()), rows
+
+
+# --- S3. The secret scrubber ---------------------------------------------------------------------------------------
+
+
+def test_a_short_secret_is_scrubbed_as_a_whole_word_never_inside_other_words():
+    """B-1199: with the password ``x`` the scrubber made "e••••ample.com" of "example.com"; a secret is cut out as a
+    whole word, or after password= / token: / Authorization, whatever its length, never inside another word."""
+    from ap_coder.erp.jde_ais import scrub
+
+    assert scrub("AIS at ais.example.com refused", "x") == "AIS at ais.example.com refused"
+    assert scrub("the password x was refused", "x") == "the password •••• was refused"
+    assert scrub("sent password=x&user=jde", "x") == "sent password=••••&user=jde"
+    assert scrub("Authorization: Basic eA==", "eA==") == "Authorization: Basic ••••"
+    assert scrub('{"token": "ab1"} for ab12', "ab1") == '{"token": "••••"} for ab12'

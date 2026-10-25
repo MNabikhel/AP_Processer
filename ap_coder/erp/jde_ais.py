@@ -44,6 +44,7 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import socket
 import ssl
 import time
@@ -392,11 +393,19 @@ def status(cfg: AisSettings) -> tuple[bool, str]:
 # --- The client ------------------------------------------------------------------------------------------------------
 
 
+# Where a secret is cut out whatever comes after it: the value of password= / token: / an Authorization header.
+_SECRET_AFTER = r"""((?:password|passwd|pwd|token|secret|authorization)["']?\s*[:=]\s*["']?(?:(?:Basic|Bearer)\s+)?)"""
+
+
 def scrub(text: Any, *secrets: str) -> str:
-    """``text`` with each secret (the password, the token, a Basic header) cut out, at most 500 characters."""
+    """``text`` with each secret (the password, the token, a Basic header) cut out, at most 500 characters. Whatever
+    its length, as a whole word or as the value of password= / token: / Authorization, never inside another word: a
+    password "x" leaves "example.com" as it is (B-1199)."""
     out = str(text or "")
     for secret in sorted({s for s in secrets if s}, key=len, reverse=True):  # whatever its length
-        out = out.replace(secret, "••••")
+        found = re.escape(secret)
+        out = re.sub(_SECRET_AFTER + found, lambda m: m.group(1) + "••••", out, flags=re.IGNORECASE)
+        out = re.sub(rf"(?<![A-Za-z0-9]){found}(?![A-Za-z0-9])", "••••", out)
     return out[:500]
 
 
