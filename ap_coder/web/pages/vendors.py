@@ -202,7 +202,7 @@ def vendors_page(
     vendors = store.vendor_summaries()
     month_ago = (dt.datetime.now() - dt.timedelta(days=30)).isoformat()
     new = [v for v in vendors if (v["first_seen"] or "") >= month_ago]
-    on_hold = [v for v in vendors if v["status"] == ON_HOLD]
+    on_hold = [v for v in vendors if v["status"] == ON_HOLD or v.get("erp_hold")]  # here, or in JD Edwards
     shown = on_hold if view == "hold" else new if view == "new" else vendors
     if q.strip():
         shown = [v for v in shown if q.strip().lower() in (v["vendor_name"] or "").lower()]

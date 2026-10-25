@@ -155,6 +155,8 @@ FIELD_FLAGS: dict[str, tuple[str, str | None]] = {
     "VENDOR_PST_CHANGED": ("pst_registration_number", None),
     "VENDOR_BANK_CHANGED": ("remit_bank_account", "Not the account on this vendor's approved invoices: confirm by "
                             "phone before paying"),
+    "VENDOR_BANK_NOT_JDE": ("remit_bank_account", "Not the account JD Edwards pays this vendor on: confirm by phone "
+                            "before paying"),
     "PAY_FROM_CURRENCY": ("pay_from_account", "Not an account in the invoice's currency"),
     "PAY_FROM_MISSING": ("pay_from_account", "Pick the account that pays this invoice"),
     "PAY_FROM_UNKNOWN": ("pay_from_account", "Not one of your bank accounts in use"),

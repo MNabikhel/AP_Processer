@@ -1,7 +1,9 @@
 """Settings → JD Edwards E1: company, batch, amount and account formats, the GL → BU.Object.Subsidiary mapping, the
 province → tax area table, the payment terms → terms code table (D-91), PO-matched vouchers and supplier address
 numbers. Saved with ``ap_coder.erp.jde.save``
-(logged), checked with ``jde.settings_problems``.
+(logged), checked with ``jde.settings_problems``. The **API connection** card (D-104: the AIS address, environment,
+user, password kept in the .env, step 1 and step 2, Test connection, Sync now) is ``ap_coder.erp.jde_ais`` /
+``jde_sync``; an Admin's, like the rest of the tab.
 
 The editable tables (GL mapping, address numbers) are rows of inputs posted as lists (``gl_code``, ``bu``... one value
 per row); a row without a GL code (or vendor) is dropped, which is how a row is removed without JavaScript.
@@ -21,9 +23,9 @@ from ap_coder.coding.terms import terms_key
 from ap_coder.core import ui
 from ap_coder.core.memory import vendor_key
 from ap_coder.core.store import Store
-from ap_coder.erp import jde, jde_worksheet
+from ap_coder.erp import jde, jde_ais, jde_sync, jde_worksheet
 from ap_coder.web import minimd
-from ap_coder.web.core import done, get_store, posted_form, refuse, reviewer
+from ap_coder.web.core import done, get_store, jobs, posted_form, refuse, reviewer
 from ap_coder.web.files import SheetError, read_excel
 
 router = APIRouter()
@@ -119,7 +121,24 @@ def jde_context(store: Store) -> dict[str, Any]:
         "terms_rows": [{"terms": k, "code": c} for k, c in (js.terms_codes or jde.EXAMPLE_TERMS_CODES).items()],
         "checklist": minimd.render(CHECKLIST),
         "worksheet_labels": {q.id: q.question for q in jde_worksheet.QUESTIONS},
+        "api": api_context(store),
     }
+
+
+def api_context(store: Store) -> dict[str, Any]:
+    """What the API connection card shows (never the password)."""
+    cfg = jde_ais.load(store)
+    usable, note = jde_ais.status(cfg)
+    synced = jde_sync.state(store)
+    own, copy_path = jde_ais.mapping_paths()
+    return {
+        "cfg": cfg, "usable": usable, "note": note, "auth_modes": jde_ais.AUTH_MODES,
+        "tested": jde_ais.last_test(store),
+        "synced_at": str(synced.get("at") or "")[:16].replace("T", " "),
+        "tried_at": str(synced.get("tried") or "")[:16].replace("T", " "),
+        "report": jde_sync.report_lines(synced.get("report") or {}), "mapping": str(copy_path or own),
+        "mapping_copy": copy_path is not None, "syncing": False,
+    }  # fmt: skip
 
 
 def bank_rows(store: Store, js: jde.JdeSettings) -> list[dict[str, str]]:
@@ -354,3 +373,83 @@ async def jde_worksheet_import(request: Request, file: UploadFile = File(...)) -
         messages.append(flash_message("Not used (fix them in the worksheet and import it again):", "warn",
                                       result.problems[:40]))  # fmt: skip
     return done(request, URL, *messages)
+
+
+# --- The API connection (D-104) ---------------------------------------------------------------------------------
+
+API_URL = URL + "#api"
+SYNC_JOB = "jde-sync"
+
+
+@router.post("/settings/jde/api")
+async def save_api(request: Request) -> JSONResponse:
+    """Save the AIS connection; the password only when one is typed (it goes to the .env, never the database)."""
+    store = get_store(request)
+    form = await posted_form(request)
+
+    def text(name: str) -> str:
+        return str(form.get(name) or "").strip()
+
+    def number(name: str, default: float) -> float:
+        try:
+            return float(text(name) or default)
+        except ValueError:
+            raise ValueError(f"The {name.replace('_', ' ')} must be a number.") from None
+
+    try:
+        timeout = number("timeout", jde_ais.DEFAULT_TIMEOUT)
+        if not 1 <= timeout <= 300:
+            raise ValueError("The timeout is a number of seconds from 1 to 300.")
+        changed = jde_ais.save(
+            store, base_url=text("base_url"), environment=text("environment").upper(), role=text("role"),
+            username=text("username"), password=str(form.get("password") or ""),
+            forget_password=bool(form.get("forget_password")), device_name=text("device_name"),
+            auth_mode=text("auth_mode") or jde_ais.TOKEN, ca_file=text("ca_file"), timeout=timeout,
+            step1=bool(form.get("step1")), step2=bool(form.get("step2")), sync_hour=int(number("sync_hour", 2)),
+            company=text("company"), po_order_type=text("po_order_type").upper(),
+            voucher_days=int(number("voucher_days", 730)), shared_network=bool(form.get("shared_network")),
+            actor=reviewer(),
+        )  # fmt: skip
+    except ValueError as exc:
+        return refuse(str(exc))
+    jde_sync.forget_cache()
+    _, note = jde_ais.status(jde_ais.load(store))
+    return done(request, API_URL, f"API connection saved ({', '.join(changed)}). {note}" if changed
+                else "Nothing changed.")  # fmt: skip
+
+
+@router.post("/settings/jde/api/test")
+def test_api(request: Request) -> JSONResponse:
+    """Test connection: AIS's version, a sign-in and a logout. Only once a step is on: off, nothing is sent."""
+    store = get_store(request)
+    if not jde_ais.load(store).on:
+        return refuse(str(jde_ais.AisOff()) + " Switch step 1 or step 2 on (and save) to test the connection.")
+    found = jde_ais.connection_test(store)
+    if found.get("ok"):
+        return done(request, API_URL, found["summary"])
+    return refuse(found.get("error") or "The connection test failed.")
+
+
+@router.post("/settings/jde/api/sync")
+def sync_api(request: Request) -> JSONResponse:
+    """Sync now: suppliers, GL accounts, business units, open POs and vouchers from JD Edwards (step 1), in the
+    background; the page reloads with the report."""
+    store = get_store(request)
+    if not jde_ais.load(store).step1:
+        return refuse("Step 1 (reading from JD Edwards) is off: switch it on and save first.")
+    actor = reviewer()
+
+    def work(job: Any) -> dict[str, Any]:
+        job.step(0, 1, "Reading from JD Edwards…")
+        report = jde_sync.sync(store, actor=actor)
+        tone = "ok" if report["ok"] else "warn"
+        return {
+            "messages": [
+                {"text": "Synced from JD Edwards." if report["ok"] else "The sync did not finish.", "tone": tone},
+                *({"text": line, "tone": "info"} for line in jde_sync.report_lines(report)),
+            ]
+        }
+
+    if not jobs(request).get(SYNC_JOB).start(work, total=1, note="Syncing from JD Edwards"):
+        return refuse("A sync is running already.", status=409)
+    return JSONResponse({"ok": True, "job": SYNC_JOB, "status": f"/jobs/{SYNC_JOB}"})

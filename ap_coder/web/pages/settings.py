@@ -1,11 +1,11 @@
-"""Settings: how invoices are read, touchless processing, review behaviour, JD Edwards E1, the data folder and its
-backups, and about this installation.
+"""Settings: how invoices are read, touchless processing, review behaviour, JD Edwards E1, the finance hub feed, the
+data folder and its backups, and about this installation.
 
 Each tab is a page of its own (``/settings/review``, ``/settings/reading``...), so a tab can be linked to and
 Back works; ``/settings`` is the Review tab, what a pilot tester changes (B-506). The JD Edwards E1 tab shows only
 once Settings → About's "Show JD Edwards settings" is on (``/settings/jde`` still opens, and says so). The Reading,
-Automation and JD Edwards tabs are in their own modules (``settings_reading.py``, ``settings_automation.py``,
-``settings_jde.py``), included here.
+Automation, JD Edwards and Finance hub tabs are in their own modules (``settings_reading.py``,
+``settings_automation.py``, ``settings_jde.py``, ``settings_hub.py``), included here.
 
 Values that belong to the computer (review threshold, Azure endpoints...) are written to the ``.env`` with the same
 functions as before (``ap_coder.core.envfile``) and applied to the running dashboard at once; values that belong to the
@@ -66,6 +66,7 @@ TABS: list[tuple[str, str]] = [
     ("jde", "JD Edwards E1"),
     ("data", "Data & backups"),
     ("about", "About"),
+    ("hub", "Finance hub"),  # the feed for the finance hub on Microsoft Fabric, an Admin's (D-103)
 ]
 TAB_KEYS = [key for key, _ in TABS]
 RESTORE_WORD = "RESTORE"
@@ -139,6 +140,10 @@ def settings_tab(request: Request, tab: str) -> HTMLResponse:
         return render_tab(request, tab, jde_hidden=not jde_shown(get_store(request)), **jde_context(get_store(request)))
     if tab == "review":
         return render_tab(request, tab, **review_context(request))
+    if tab == "hub":
+        from ap_coder.web.pages.settings_hub import hub_context
+
+        return render_tab(request, tab, **hub_context(request))
     if tab == "data":
         return render_tab(request, tab, **data_context(get_store(request)))
     return render_tab(request, tab, **about_context(get_store(request)))
@@ -569,9 +574,9 @@ def save_shown(request: Request, show_jde: str = Form(""), developer: str = Form
 
 # The other tabs' routes (their modules import nothing from this one at import time but the helpers above).
 def _include_tabs() -> None:
-    from ap_coder.web.pages import settings_automation, settings_jde, settings_reading
+    from ap_coder.web.pages import settings_automation, settings_hub, settings_jde, settings_reading
 
-    for module in (settings_reading, settings_automation, settings_jde):
+    for module in (settings_reading, settings_automation, settings_jde, settings_hub):
         router.include_router(module.router)
 
 

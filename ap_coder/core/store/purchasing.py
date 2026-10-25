@@ -361,10 +361,16 @@ class PurchasingMixin:
                 r["id"] for r in conn.execute("SELECT id FROM invoices WHERE export_batch = ? ORDER BY id", (batch,))
             ]
 
-    def undo_export_batch(self, batch: int, actor: str | None = None) -> int:
+    def undo_export_batch(self, batch: int, actor: str | None = None, guard: Any = None) -> int:
         """The ERP import failed: put the batch's invoices back in the ready-to-export list. ValueError when the
-        batch was undone already (two clicks at once: the second must not log a second undo)."""
+        batch was undone already (two clicks at once: the second must not log a second undo). ``guard(conn)`` runs
+        first in the same write transaction (``BEGIN IMMEDIATE``) and may refuse with ValueError: the JD Edwards
+        vouchers' check that none of the batch's is, or may be, in JDE (D-105)."""
         with self._conn() as conn:
+            if not conn.in_transaction:
+                conn.execute("BEGIN IMMEDIATE")
+            if guard is not None:
+                guard(conn)
             claimed = conn.execute(
                 "UPDATE export_batches SET undone_at = ?, undone_by = ? WHERE id = ? AND undone_at IS NULL",
                 (_now(), actor, batch),

@@ -31,6 +31,87 @@
   {% endif %}
 </section>
 
+<section class="card" id="api">
+  {% set c = api.cfg %}
+  <div class="card-head">
+    <div><h4>API connection (AIS Server)</h4>
+      <p class="muted">Instead of files: AP Coder signs in to your AIS Server as its own JDE user and calls the
+        orchestrations your JDE team builds from <code>docs/JDE_ORCHESTRATIONS.md</code>. <b>Step 1</b> reads suppliers,
+        GL accounts, business units, open POs and the AP ledger's vouchers (every night, or now) and asks JD Edwards
+        whether an invoice is already there while it is reviewed. <b>Step 2</b> posts approved vouchers from Exports,
+        after a dry run and an Approver's go-ahead; the batch files stay the fallback. Off, AP Coder connects to
+        nothing; on, only to the AIS address below.</p></div>
+    {{ ui.pill("On" if c.on else "Off", "ok" if api.usable else ("warn" if c.on else "gray"), "lan" if c.on else "cloud_off") }}
+  </div>
+  <p class="muted small">{{ api.note }}</p>
+  <form method="post" action="/settings/jde/api" class="stack" data-busy="Saving…" autocomplete="off">
+    <div class="st-grid three">
+      <label class="field">AIS address
+        <input type="text" name="base_url" value="{{ c.base_url }}" placeholder="https://&lt;server&gt;:&lt;port&gt;" spellcheck="false"></label>
+      <label class="field">Environment
+        <input type="text" name="environment" value="{{ c.environment }}" placeholder="JPD920" maxlength="20"></label>
+      <label class="field">Role
+        <input type="text" name="role" value="{{ c.role }}" maxlength="20"></label>
+      <label class="field">JDE user (AP Coder's service user)
+        <input type="text" name="username" value="{{ c.username }}" maxlength="10" spellcheck="false"></label>
+      <label class="field">Password{% if c.password_hint %} <span class="muted">(saved)</span>{% endif %}
+        <input type="password" name="password" value="" autocomplete="new-password" spellcheck="false"
+               placeholder="{{ 'Leave blank to keep the saved one' if c.password_hint else '' }}">
+        <small class="muted">Kept in the data folder's .env file, never in the database.</small></label>
+      <label class="field">Device name
+        <input type="text" name="device_name" value="{{ c.device_name }}" maxlength="30"></label>
+    </div>
+    {% if c.password_hint %}<label class="check"><input type="checkbox" name="forget_password" value="1"> Forget the saved password</label>{% endif %}
+    <label class="check"><input type="checkbox" name="shared_network" value="1"{% if c.shared_network %} checked{% endif %}> This address is on our network <span class="muted">(only for an AIS address in 100.64.0.0/10, used by some VPNs)</span></label>
+    <small class="muted">A new AIS address forgets the saved password: type it again.</small>
+    <fieldset class="st-radios"><legend>Sign-in</legend>
+      {% for key, text in api.auth_modes.items() %}
+      <label class="check"><input type="radio" name="auth_mode" value="{{ key }}"{% if c.auth_mode == key %} checked{% endif %}> {{ text }}</label>
+      {% endfor %}
+    </fieldset>
+    <details class="st-details">
+      <summary>More</summary>
+      <div class="st-grid three">
+        <label class="field">Company CA certificate file
+          <input type="text" name="ca_file" value="{{ c.ca_file }}" placeholder="C:\APCoder\company-ca.pem" spellcheck="false">
+          <small class="muted">Blank: the certificates this computer trusts.</small></label>
+        <label class="field">Timeout (seconds)
+          <input type="number" name="timeout" value="{{ c.timeout | int }}" min="1" max="300"></label>
+        <label class="field">Nightly sync after (hour, 0-23)
+          <input type="number" name="sync_hour" value="{{ c.sync_hour }}" min="0" max="23"></label>
+        <label class="field">Company (accounts, business units)
+          <input type="text" name="company" value="{{ c.company }}" maxlength="5" placeholder="every company"></label>
+        <label class="field">PO order type
+          <input type="text" name="po_order_type" value="{{ c.po_order_type }}" maxlength="2"></label>
+        <label class="field">Vouchers read for the duplicate check (days back)
+          <input type="number" name="voucher_days" value="{{ c.voucher_days }}" min="1" max="3650"></label>
+      </div>
+      <p class="muted small">Orchestration names and fields: <code>{{ api.mapping }}</code>{% if not api.mapping_copy %} (copy it to the
+        data folder as jde_orchestrations.json to rename them){% endif %}.</p>
+    </details>
+    <label class="check"><input type="checkbox" name="step1" value="1"{% if c.step1 %} checked{% endif %}>
+      Step 1: read from JD Edwards (suppliers, GL accounts, business units, open POs, vouchers)</label>
+    <label class="check"><input type="checkbox" name="step2" value="1"{% if c.step2 %} checked{% endif %}>
+      Step 2: post approved vouchers through the API (Exports)</label>
+    <div class="row"><button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save</button></div>
+  </form>
+  <div class="row st-sep">
+    <form method="post" action="/settings/jde/api/test" data-busy="Testing…">
+      <button class="btn" type="submit"{% if not c.on %} disabled{% endif %}><span class="ms" aria-hidden="true">network_check</span>Test connection</button>
+    </form>
+    <form method="post" action="/settings/jde/api/sync" data-busy="Syncing…">
+      <button class="btn" type="submit"{% if not c.step1 %} disabled{% endif %}><span class="ms" aria-hidden="true">sync</span>Sync now</button>
+    </form>
+  </div>
+  {% if api.tested %}<p class="muted small">Last test {{ (api.tested.at or "")[:16] | replace("T", " ") }}:
+    {{ api.tested.summary if api.tested.ok else api.tested.error }}</p>{% endif %}
+  {% if api.tried_at %}
+  <details class="st-sep"{% if api.report %} open{% endif %}><summary>Last sync {{ api.tried_at }}{% if api.synced_at and api.synced_at != api.tried_at %} (last complete one {{ api.synced_at }}){% endif %}</summary>
+    <ul>{% for line in api.report %}<li>{{ line }}</li>{% endfor %}</ul>
+  </details>
+  {% endif %}
+</section>
+
 <section class="card" id="general">
   <h4>JD Edwards E1 vouchers</h4>
   <p class="muted">Exports → <i>JD Edwards E1</i> writes F0411Z1 (pay items) and F0911Z1 (G/L lines) files for the Voucher

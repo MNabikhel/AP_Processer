@@ -431,6 +431,29 @@ settings* on in Settings → About); a test checks that each one stays covered.
   the automation columns of the pay item.
 * Exchange rates: E1's table (VLCRR blank) or AP Coder's.
 
+## Through the API (AIS Server, D-104)
+
+Option 2 of the ways below is built, off until an Admin switches it on: **Settings → JD Edwards E1 → API
+connection** (the AIS address, environment, role, AP Coder's JDE user and its password, kept in the data folder's
+.env, never in the database). The JDE team builds the orchestrations from **docs/JDE_ORCHESTRATIONS.md**; their names,
+inputs and outputs are in `ap_coder/erp/jde_orchestrations.json`.
+
+* **Step 1 (read)**: suppliers, GL accounts, business units, open POs and the AP ledger's vouchers come from JDE
+  every night while AP Coder runs, or with *Sync now* (or `python -m ap_coder jde sync`), through the same imports
+  as the CSV files; the report says what was added and changed. While an invoice is reviewed, JDE is asked whether
+  it is already a voucher (*Already in the ERP*, with its voucher number and whether it is paid); JDE down, the
+  check uses the last sync's vouchers and says so (*JD Edwards not asked*). A supplier's bank account in JDE (its
+  last four digits) is compared with the one printed on the invoice (*Not the bank account JD Edwards pays*).
+* **Step 2 (vouchers)**: on Exports, a JD Edwards batch gets a *JD Edwards API* part: **Dry run through the API**
+  (a Clerk or more: the same rows as the files, checked here and by JDE's proof mode, nothing posted), then **Post
+  to JD Edwards** (an Approver or Admin). Each invoice keeps JDE's voucher number, or JDE's own error; a voucher that
+  could not reach JDE waits in a queue that is tried again every few minutes (or *Try again now*, `python -m
+  ap_coder jde status --retry`). A voucher is never posted twice: the key `APC-<invoice>-<batch>` is asked for
+  before anything is sent again, the batch can't be undone once one of its vouchers is in JDE, and its ZIP of files
+  leaves the posted vouchers out. The files stay the fallback at any time.
+* `python -m ap_coder jde test` tests the connection; `jde status` shows the settings, the last test and sync, and
+  the vouchers waiting.
+
 ## Later: direct integration
 
 The files are the first step. Three ways to skip them, in order of preference for volume:

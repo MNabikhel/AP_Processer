@@ -21,6 +21,7 @@ from ._base import (
     _now,
     _store_class,
 )
+from .postings import carry_postings, saved_postings
 from .users import carry_accounts, saved_accounts
 
 
@@ -226,6 +227,7 @@ class BackupsMixin:
             safety = self.backup_now("before-restore")
             with self._conn() as conn:
                 accounts = saved_accounts(conn) if keep_accounts else {}
+                postings = saved_postings(conn)  # the JD Edwards vouchers: never forgotten by a restore (D-105)
             source = sqlite3.connect(copy)
             target = sqlite3.connect(self.path)
             try:
@@ -240,6 +242,7 @@ class BackupsMixin:
                 carry_accounts(conn, accounts)
             else:
                 conn.execute("DELETE FROM sessions")  # no one stays logged in by a session the backup knew
+            carry_postings(conn, self.path, postings)
             restored_dir = conn.execute("SELECT value FROM settings WHERE key = 'backup_copy_dir'").fetchone()
             conn.execute("DELETE FROM settings WHERE key IN ('backup_copy_dir', 'backup_copy_status')")
             detail = {"file": Path(backup).name, "safety_copy": safety.name}

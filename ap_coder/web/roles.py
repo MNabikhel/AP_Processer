@@ -8,10 +8,11 @@ The roles, each able to do everything the one before it can (``core/store/users.
 * **Clerk** (``CLERK``): imports invoices, reviews and checks them, gives the first approval, parks, rejects,
   reopens, undoes their own approval, approves in bulk, makes export batches and downloads them, keeps vendors' hold
   and notes.
-* **Approver** (``APPROVER``): also gives the second approval (over the approval limit) or sends the invoice back.
-* **Admin** (``ADMIN``): everything else: Settings, the people who log in, JD Edwards setup, the account lists and
-  tax setup, imports of the vendor master and the like, backups and restore, deleting, the Azure check, the learning
-  memory's resets.
+* **Approver** (``APPROVER``): also gives the second approval (over the approval limit) or sends the invoice back,
+  and gives the go-ahead to post vouchers to JD Edwards through the API (D-104; a Clerk may run its dry run).
+* **Admin** (``ADMIN``): everything else: Settings, the people who log in, JD Edwards setup (the API connection and
+  its sync too), the account lists and tax setup, imports of the vendor master and the like, backups and restore,
+  deleting, the Azure check, the learning memory's resets, the finance hub feed.
 
 ``OPEN`` routes answer anyone (the login page, ``/healthz``, the styles and scripts); ``SIGNED_IN`` ones anyone
 logged in, also while they must still choose a new password (logging out, changing it). A route not in ``RULES``
@@ -97,6 +98,7 @@ RULES: dict[tuple[str, str], str] = {
         # Export batches and their downloads.
         "POST /exports/create", "GET /exports/batches/{batch:int}/download",
         "GET /exports/batches/{batch:int}/approved-pdfs.zip", "GET /exports/jde/dry-run.txt",
+        "POST /exports/batches/{batch:int}/jde-api/dry-run",  # the JDE API's dry run: nothing posted (D-104)
         # Statements compared, vendors' hold and notes, looking at the setup and what was learned.
         "POST /statements/upload", "POST /statements/emailed/{entry_id}/{n}",
         "GET /vendors", "POST /vendors/save",
@@ -107,6 +109,8 @@ RULES: dict[tuple[str, str], str] = {
     **_rules(
         APPROVER,
         "POST /review/{invoice_id}/final-approve", "POST /review/{invoice_id}/send-back",
+        # The go-ahead to post vouchers to JD Edwards through the API, and its queue (D-104).
+        "POST /exports/batches/{batch:int}/jde-api/post", "POST /exports/jde-api/retry",
     ),
     **_rules(
         ADMIN,
@@ -135,6 +139,8 @@ RULES: dict[tuple[str, str], str] = {
         "POST /settings/automation/limit", "POST /settings/jde", "POST /settings/jde/gl-map",
         "POST /settings/jde/gl-map/import", "POST /settings/jde/tax-map", "POST /settings/jde/terms",
         "POST /settings/jde/an8", "GET /settings/jde/worksheet.xlsx", "POST /settings/jde/worksheet",
+        "POST /settings/jde/api", "POST /settings/jde/api/test", "POST /settings/jde/api/sync",  # D-104
+        "POST /settings/hub", "POST /settings/hub/run",  # the finance hub feed (D-103)
         "GET /admin/users", "POST /admin/users/add", "POST /admin/users/{user_id:int}/reset",
         "POST /admin/users/{user_id:int}/role", "POST /admin/users/{user_id:int}/deactivate",
         "POST /admin/users/{user_id:int}/activate", "POST /admin/users/addresses/unlock",

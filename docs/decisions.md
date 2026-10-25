@@ -1044,3 +1044,113 @@ that is reversed keeps its line, marked "replaced by D-NN".
   (`web/core.py` `can`, `web/pages/process.py` `shown_setup`, `web/pages/invoice.py` `_shown_live`,
   `static/js/invoice.js`, `ops/help.py`, `ops/service.py` `doctor_checks`, `core/store/_base.py` `EVENT_ACTOR`;
   `tests/test_server_role_pages.py`, `tests/test_server_ui_fixes.py`)
+- **D-103** · The finance hub feed (Microsoft Fabric): six versioned tables and two ways to deliver them, off by
+  default. (1) **The tables**: `invoices`, `invoice_lines`, `approvals`, `activity`, `accuracy`, `workflow_runs`, each
+  built from the Store with stable column names and types (`HUB_SCHEMA_VERSION = 1`; a change is a new version), the
+  data dictionary in docs/FINANCE_HUB.md (a test checks it names every column with its type). `accuracy` reuses what
+  the learning already records (the supplier learning's per-field outcomes, `capture.supplier.outcome_rows` for an
+  approval without them, and the learning memory's lines); `workflow_runs` reuses the export batches and adds the
+  minimum: an `import_run` event at the end of each import (dashboard, `process`, `watch`) and a `hub_export` event
+  per feed run. No invoice file is ever sent, only a link to its page. Left out: bank details, sign-in events,
+  settings and accounts. (2) **What is sent**: `activity` by a watermark (the last event id sent; events are only
+  added); the other tables row by row against a fingerprint of what was sent, kept in the data folder
+  (`finance_hub/state.db`), not in the database: an invoice has no "updated at" (rechecks, exports and parking change
+  it without one), adding one is a schema change for a column some writer would forget, and the fingerprints also
+  give deletes. A full rebuild on request, and by itself for a new destination, format, schema version or a database
+  put back from a backup. A failed run records nothing as sent. A run that would carry only the previous run's own
+  record sends nothing. (3) **Option A, "Fabric pulls"** (the default once on): a folder an Admin sets, laid out as
+  Fabric Open Mirroring's landing zone (a folder per table, `_metadata.json` with the key columns, files numbered
+  `00000000000000000001`, `__rowMarker__` 4 upsert / 2 delete), each file staged under `_staging/` and renamed; plus,
+  unless unticked, a read-only SQLite copy with views (`_gateway/finance_hub.db`) for the on-premises data gateway.
+  (4) **Format: Parquet when pyarrow is installed, else CSV with a `_schema.json`.** pyarrow is not a dependency in
+  pyproject (it is in some installs through other packages): tens of MB of wheels per platform for one optional
+  feed is not worth adding to every laptop and the offline bundle, so it is used when present and CSV (which Open
+  Mirroring also reads, `"fileFormat": "DelimitedText"`) is the fallback; an Admin may pin either. (5) **Option B,
+  "AP Coder pushes"**: the same files to OneLake through the ADLS Gen2 DFS API with an Entra ID client-credentials
+  token, the standard library's urllib only (no new package), behind the same `Destination` interface as the folder
+  (a memory stand-in for tests, a fake endpoint on 127.0.0.1 for the push). Real calls only with
+  `AP_ALLOW_INTERNET=1` and the Admin's tick "Send the files to OneLake", to the sign-in host and the OneLake host
+  only, over HTTPS, no redirects. The client secret is kept in the data folder's `.env` (`AP_HUB_CLIENT_SECRET`),
+  never in the database, the repo or the Activity log. (6) **Running it**: on a schedule inside the dashboard, ticked
+  by each page served as the daily backup is (`HubSchedule` beside `DailyBackup`), `python -m ap_coder hub export
+  [--full] [--dry-run]` and `hub status`, and Settings → Finance hub (an Admin's, `web/roles.py`) with on/off, the
+  delivery, folder, schedule, last run and Run now; each run is recorded with the person who ran it (the account on
+  the server). One run at a time per data folder (a lock file). Why: the data team has not chosen how the data will
+  travel, so both ways share one table format and one writer, and nothing leaves AP Coder until an Admin turns it
+  on. (`ap_coder/erp/hub/`, `core/store/hub.py`, `web/pages/settings_hub.py`, `ops/cli.py` `cmd_hub`;
+  `tests/test_finance_hub.py`, docs/FINANCE_HUB.md)
+- **D-104** · JD Edwards through its AIS Server (the API connection), and the offline rule's named internal systems. AP
+  Coder signs in to the company's AIS Server as its own JDE service user and calls named orchestrations with JSON in and
+  out; it never writes JDE tables. (1) **One mapping file**, `erp/jde_orchestrations.json`: the AIS paths and versions
+  (v2 token request and logout, v3 orchestrator, the `jde-AIS-Auth` header, HTTP 444 for an expired token, the date
+  format, the page size) and each orchestration's name, inputs and outputs; a copy in the data folder renames them key
+  by key. `docs/JDE_ORCHESTRATIONS.md` is the JDE team's spec, with what they must confirm. (2) **The client**
+  (`erp/jde_ais.py`) on the standard library (http.client, ssl): token sign-in (or Basic), one sign-in again on an
+  expired token, timeouts, a read retried at most twice (AIS busy, the connection failed), a voucher's request never
+  repeated by it, JDE's messages read from its error shape, HTTPS checked against the computer's certificates or a named
+  company CA file, no proxy, no redirect followed, the password in the data folder's .env (`JDE_AIS_PASSWORD`, as the
+  Azure key) and cut out of any text with the token. (3) **Step 1** (`erp/jde_sync.py`): suppliers, GL accounts,
+  business units, open POs and vouchers go through the CSV imports' own code (`master_rows` + `import_vendor_master`,
+  `import_accounts`, `po.rows_from_records` + `import_purchase_orders`, `import_erp_register`), so the checks and the
+  learning see what they always did; nothing is deleted, a PO no longer open in JDE is closed, an account
+  object.subsidiary gets its JD Edwards mapping row; the report lists what was added and changed; nightly (the
+  dashboard's thread, after the hour set) or on demand (`jde sync`). The live check at review time asks JDE by supplier
+  number, caches five minutes, waits five seconds at most, and with JDE down says JDE_NOT_REACHED (INFO) and stands on
+  the last sync; the supplier's bank account (transit and last four digits only, `vendors.erp_bank`) gives
+  VENDOR_BANK_NOT_JDE. (4) **Step 2** (`erp/jde_post.py`): a JD Edwards batch is posted voucher by voucher with the
+  Z-files' own rows (`jde.voucher_rows`, so one field mapping for files and API); a dry run (here and JDE's proof mode)
+  records a fingerprint of each voucher; an Approver's go-ahead sends only what was checked and is unchanged; the result
+  is kept per invoice (`jde_postings`: posted with the voucher number, refused with JDE's words, queued, unknown; a
+  posted voucher also in the invoice's `meta["jde_voucher"]`, `{document, doc_type, company, posted_at}`, for the
+  finance hub feed); the queue asks the voucher status orchestration for the key before sending again. Never twice:
+  idempotency key `APC-<invoice>-<batch>`, no undo of a batch JDE holds a voucher of, the posted vouchers left out of
+  its files. The table is made on first use and the schema's version is unchanged, so an older AP Coder still opens the
+  database. (5) **The offline rule** (CLAUDE.md): a named internal system may be enabled by an Admin. The AIS connection
+  is off by default; on, AP Coder connects only to the one AIS address saved, which must be on the company network (a
+  private address, or a name resolving to private addresses only) unless AP_ALLOW_INTERNET=1; plain http only to this
+  computer (the stand-in). `tests/test_offline_guard.py` proves it. (6) **Roles**: the connection, its test and sync are
+  an Admin's; the dry run a Clerk's; the go-ahead and the queue an Approver's (`web/roles.py`). (7) **The stand-in**
+  `tests/fake_ais.py` answers as AIS does (token flow, expiry, sign-in failures, no permission, an orchestration not
+  built, timeouts, busy, JDE's error shape, paging, one voucher per key) over http or HTTPS with test-only certificates.
+  Why: the company has no AIS set up yet; the CSV imports and batch files need a person each time and see JDE a day
+  late. Built against the stand-in, off, ready to switch on once the JDE team has built and confirmed the
+  orchestrations. (`erp/jde_ais.py`, `erp/jde_sync.py`, `erp/jde_post.py`, `erp/jde_orchestrations.json`,
+  `ops/jde_cmd.py`, `web/pages/settings_jde.py`, `web/pages/exports.py`; `tests/test_jde_ais.py`,
+  `tests/test_jde_sync.py`, `tests/test_jde_post.py`, `tests/test_jde_api_web.py`)
+- **D-105** · Voucher posting safety (changes D-104 where it says otherwise). Posting moves money, so when AP Coder
+  can't be sure, it locks the voucher and asks JDE (or a person). (1) **Key**: `APC-<installation
+  id>-<invoice>-<batch>`; the installation id is 10 random hex digits in the data folder (`jde_installation_id`),
+  outside the database, so a second laptop never makes this one's keys; a restore starts a new one, so the invoice and
+  batch numbers a restored database hands out again never make a key JDE already holds. (2) **States**
+  (`erp/jde_post.py`): checked → sending only by a compare-and-set (`_claim`: the row's version unchanged, `maybe_sent`
+  0, no lookup owed, the batch not undone; one row changed or nothing is sent), used by the post, the queue and the
+  background tick alike. Sending → posted (CREATED with a number; EXISTS or a lookup only when JDE's record is this
+  voucher: the fingerprint sent with it, `PayloadFingerprint`, else supplier, invoice number and gross, all three),
+  failed (another voucher under the key: locked; or ERROR, or HTTP 500 followed by a lookup that says JDE has none),
+  unknown (timeout, 502 / 504, no document number, an answer not understood, a lookup that can't be made), queued only
+  when the request certainly never ran (not connected, 503, the sign-in or permission refused before the orchestration).
+  (3) **Locked** = posted, sending, unknown, or `maybe_sent` (set when a row becomes sending or unknown, cleared only by
+  a lookup by key that says JDE has nothing, `Found` 0; any other answer is "can't say"). A locked row never goes back
+  to queued or failed, is never sent blind, never written over by a dry run, never dropped by an undo (refused in the
+  same `BEGIN IMMEDIATE` transaction as the claim's), and is left out of the batch files (the unknown ones listed:
+  "check in JD Edwards before loading"); JDE down or no client leaves it as it is, its next try only. A row sending for
+  more than 15 minutes was left by a stop: looked up, never resent. A dry run never passes EXISTS ("already in JD
+  Edwards", locked). (4) **The client**: a voucher is never repeated on 502 / 504 (`sent`); 503 is taken as AIS turning
+  the request away before processing (retried, not sent), the assumption the JDE team confirms for their load balancer.
+  (5) **Restore**: every change of a postings row is appended to `jde_postings.jsonl` in the data folder; after a
+  restore it is merged back (with the rows the database had just before), for the invoices the restored database holds
+  (same file, same time added), as accounts are kept across a restore (D-101), and every row is looked up by its key
+  before anything is sent (`verify`). (6) **Sync**: JDE's hold is kept apart (`vendors.erp_hold`); a vendor is on hold
+  if AP Coder or JDE says so. The live duplicate check pages through all of a supplier's vouchers. An open-POs answer
+  that would close more than half, or all, of the open synced POs closes none and says so, unless `jde sync
+  --allow-mass-close`. VENDOR_BANK_NOT_JDE compares the transit too. (7) **Network and secrets**: the AIS name is
+  resolved once, every address checked, and the connection made to that address with the name for SNI and Host (no DNS
+  rebinding); 2002::/16 and 2001:db8::/32 are not internal; 100.64.0.0/10 only with the Admin's tick "this address is on
+  our network"; a new AIS host forgets the saved password; secrets of any length are scrubbed, the sign-in refusal too.
+  The OneLake push uses no environment proxy, and plain http only to this computer with the tests' flag. (8) **Finance
+  hub**: a new format or schema version at the same destination still sends deletes for the rows gone; account and
+  settings events stay out of `activity`; a failure of the gateway's SQLite copy is a warning once the data files are
+  written; the OneLake listing follows its continuation. Why: an independent review found ways a voucher could be posted
+  twice, or someone else's taken for it. (`erp/jde_post.py`, `core/store/postings.py`, `erp/jde_ais.py`,
+  `erp/jde_sync.py`, `erp/hub/`; `tests/test_jde_post_safety.py`, `tests/test_jde_ais_safety.py`,
+  `tests/test_jde_sync_safety.py`, `tests/test_finance_hub.py`)

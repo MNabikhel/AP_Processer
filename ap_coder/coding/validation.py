@@ -38,7 +38,7 @@ COUNTED_IN_CODING = frozenset({"GL_UNASSIGNED", "CC_UNASSIGNED", "GL_UNKNOWN", "
 # vendor master (D-89).
 BUSINESS_PREFIXES = ("PO_", "DUPLICATE_")
 BUSINESS_CODES = frozenset({"VENDOR_NOT_IN_MASTER", "VENDOR_ON_HOLD", "VENDOR_ADDED_HERE", "VENDOR_BANK_CHANGED",
-                            "POSSIBLE_DUPLICATE_AMOUNT", "AMOUNT_UNUSUAL"})  # fmt: skip
+                            "VENDOR_BANK_NOT_JDE", "POSSIBLE_DUPLICATE_AMOUNT", "AMOUNT_UNUSUAL"})  # fmt: skip
 # Findings that doubt the lines' coding rather than the reading: they take their share off the Coding.
 ABOUT_CODING = frozenset({"HISTORY_CONFLICT", "TAX_EXEMPTION_LEARNED", "EXEMPT_LINE_TAXED", "TAX_NOT_ALLOCATED",
                           "LINE_TAX_NOT_CHARGED", "TAX_BASE_MISMATCH", "MEALS_TAX_LINES"})  # fmt: skip

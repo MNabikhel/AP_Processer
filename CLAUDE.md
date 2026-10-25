@@ -20,7 +20,8 @@ guides, the bug log (BUGS.md) and decisions (decisions.md). Search the code to f
   `coding/terms.py`, tax `coding/tax.py` (`check_taxes`, `place_of_supply`), the Tax check `coding/taxmath.py`, line
   tax codes `coding/line_tax.py`, ITCs and self-assessment `coding/taxreturn.py`, vendors `coding/vendors.py`. Every
   check code needs a `CheckHelp` in `ops/help.py` (`tests/test_help.py` enforces it).
-- Exports: `erp/exports.py` (Excel/CSV), `erp/jde.py` (JD Edwards). Reports: the rest of `erp/`.
+- Exports: `erp/exports.py` (Excel/CSV), `erp/jde.py` (JD Edwards; its AIS API: `erp/jde_ais.py`, `jde_sync.py`,
+  `jde_post.py`). Reports: the rest of `erp/`.
 - The review screen: routes `web/pages/invoice.py`, view `web/invoice_view.py`, `web/templates/invoice.html`,
   `web/static/js/invoice.js` (the form) and `invoice_viewer.js` (the PDF beside it). Other pages:
   `web/pages/<page>.py` + `web/templates/<page>.html`; the review queue is `web/pages/review.py` (`coding/review.py`
@@ -33,7 +34,9 @@ guides, the bug log (BUGS.md) and decisions (decisions.md). Search the code to f
 ## Rules
 - Fully offline at run time: nothing connects to the internet unless `AP_ALLOW_INTERNET=1` (developers, the bundle
   builder). One exception, the first setup from GitHub's ZIP: the launcher downloads packages and OCR models once,
-  saying so first (D-94); the offline bundle never does. The Azure check is opt-in, off by default.
+  saying so first (D-94); the offline bundle never does. The Azure check is opt-in, off by default. A named
+  internal system may be enabled by an Admin: JD Edwards' AIS Server, only its saved address on the company network
+  (D-104).
 - No company data in the repo: the data folder (`private/` or `~/APCoder`) and `.env` are git-ignored.
 - User-facing wording: "pilot tester" for the person running the pilot, never "manager". Plain English.
 - A bug fix starts with a failing test, then the fix, then one line at the end of docs/BUGS.md (format at its top).

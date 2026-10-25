@@ -96,14 +96,17 @@ class DailyBackup:
 
 
 class BackupCheck:
-    """ASGI middleware: each HTTP request lets ``DailyBackup`` check whether a day has passed (it returns at once)."""
+    """ASGI middleware: each HTTP request lets ``DailyBackup`` check whether a day has passed, and the finance hub's
+    schedule (``erp/hub/run.py`` ``HubSchedule``) whether a run is due (each returns at once)."""
 
-    def __init__(self, app: Any, backup: DailyBackup) -> None:
-        self.app, self.backup = app, backup
+    def __init__(self, app: Any, backup: DailyBackup, also: tuple[Any, ...] = ()) -> None:
+        self.app, self.backup, self.also = app, backup, also
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         if scope["type"] == "http":
             self.backup.check()
+            for scheduled in self.also:
+                scheduled.check()
         await self.app(scope, receive, send)
 
 
@@ -170,8 +173,12 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
 
             # The optional Azure check (Settings → Reading): it does nothing while it is off, the default.
             app.state.azure_checker = azure_check.start_background(settings_factory, lambda: store)
+            from ap_coder.erp import jde_sync
+
+            # The JD Edwards API's nightly sync and voucher queue (D-104): nothing while both its steps are off.
+            app.state.jde_worker = jde_sync.Background(lambda: store).start()
         yield
-        for name in ("reader", "azure_checker"):
+        for name in ("reader", "azure_checker", "jde_worker"):
             worker = getattr(app.state, name, None)
             if worker is not None:
                 worker.stop()
@@ -182,6 +189,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     app.state.jobs = Jobs()
     app.state.reader = None
     app.state.azure_checker = None  # the Azure check's thread (ap_coder/ai/azure_check.py), started with the reader
+    app.state.jde_worker = None  # the JD Edwards API's nightly sync and queue (ap_coder/erp/jde_sync.py), likewise
     app.state.port = None  # set by server.serve
     app.state.shutdown_token = None  # set by server.serve; without it /shutdown refuses
     app.state.server = None  # the uvicorn.Server, set by server.serve
@@ -190,7 +198,11 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     # A colleague on the office network says who they are once (web/identity.py); LocalOnly, added last, runs first.
     app.state.identity_secret = secrets.token_bytes(32)  # made at each start: a cookie from another start is refused
     app.state.daily_backup = DailyBackup(store)
-    app.add_middleware(BackupCheck, backup=app.state.daily_backup)  # after the security checks: only for pages served
+    from ap_coder.erp.hub.run import HubSchedule
+
+    app.state.hub_schedule = HubSchedule(store)  # the finance hub feed, off until an Admin turns it on (D-103)
+    # After the security checks: only for pages served.
+    app.add_middleware(BackupCheck, backup=app.state.daily_backup, also=(app.state.hub_schedule,))
     app.add_middleware(FriendlyErrors)  # an error no page expected is drawn as a page, with the menu
     app.state.server_mode = server  # accounts and roles (web/identity.py, web/roles.py)
     app.add_middleware(Identity, secret=app.state.identity_secret, address=address, server=server)

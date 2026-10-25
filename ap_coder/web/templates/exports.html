@@ -196,6 +196,58 @@
     {{ "are" if left_out[0] > 1 else "is" }} left out of this file{% if left_out[0] == left_out[1] %}, so it holds no invoice{% endif %}
     (e.g. no supplier number in the vendor master). The reasons are listed in README.txt in the ZIP.</div></div>
   {% endif %}
+  {% if jde_api.shown %}{# JD Edwards through the API (D-104) #}
+  <div class="st-sep" id="jde-api">
+    <h5>JD Edwards API{% if not jde_api.on %} <span class="muted">(step 2 is off)</span>{% endif %}</h5>
+    <p class="muted small">Post this batch's vouchers through the API instead of loading the files: a dry run first
+      (checked here and by JD Edwards, nothing posted), then an Approver's go-ahead. Each voucher is posted once; the
+      files below stay the fallback and leave out what was posted.</p>
+    {% if jde_api.rows %}
+    <div class="table-wrap">
+      <table class="apc-table">
+        <thead><tr><th>Invoice</th><th>Vendor</th><th class="r">Total</th><th>Status</th><th>JD Edwards voucher</th><th>Message</th></tr></thead>
+        <tbody>
+          {% for r in jde_api.rows %}
+          <tr>
+            <td><a href="/review/{{ r.invoice_id }}">#{{ r.invoice_id }}</a> {{ r.number }}</td><td>{{ r.vendor }}</td>
+            <td class="r">{% if r.total is not none %}{{ r.total | money }} <span class="muted">{{ r.currency }}</span>{% endif %}</td>
+            <td>{{ ui.pill(r.label, r.tone) }}</td><td>{{ r.voucher or "—" }}</td>
+            <td class="w">{{ r.error }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+    {% if jde_api.on and not jde_api.done %}
+    <div class="row">
+      {% if can("/exports/batches/1/jde-api/dry-run") %}
+      <form method="post" action="/exports/batches/{{ chosen.id }}/jde-api/dry-run" data-busy="Checking…">
+        <button class="btn" type="submit"><span class="ms" aria-hidden="true">fact_check</span>Dry run through the API</button>
+      </form>
+      {% endif %}
+      {% if jde_api.checked and can("/exports/batches/1/jde-api/post") %}
+      <form method="post" action="/exports/batches/{{ chosen.id }}/jde-api/post" data-busy="Posting…"
+            data-confirm="Post {{ jde_api.checked | plural('voucher') }} of batch {{ chosen.id }} to JD Edwards?">
+        <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">send</span>Post {{ jde_api.checked | plural("voucher") }} to JD Edwards</button>
+      </form>
+      {% elif jde_api.checked %}
+      <p class="muted small">{{ jde_api.checked | plural("voucher") }} passed the dry run: an Approver or Admin posts them.</p>
+      {% endif %}
+    </div>
+    {% endif %}
+    {% if jde_api.waiting %}
+    <div class="row">
+      <span class="muted">{{ jde_api.waiting | plural("voucher") }} waiting for JD Edwards (tried again every few minutes).</span>
+      {% if can("/exports/jde-api/retry") %}
+      <form method="post" action="/exports/jde-api/retry" data-busy="Sending…">
+        <button class="btn sm" type="submit"><span class="ms" aria-hidden="true">refresh</span>Try again now</button>
+      </form>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
   <div class="row">
     <a class="btn primary" href="/exports/batches/{{ chosen.id }}/download?fmt={{ again_fmt }}" download>
       <span class="ms" aria-hidden="true">download</span>{{ "Download" if just and just.id == chosen.id else "Download again" }}</a>
