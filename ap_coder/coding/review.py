@@ -151,7 +151,7 @@ def split_line(lines: pd.DataFrame, line_number: int, parts: list[tuple[str, str
 
     Quantities are split in proportion at the same unit price (so PO matching still adds up), the last
     part takes the rounding, and each part keeps the line's description and taxes. The first part keeps
-    the line number and its place; the others are added at the end, numbered after the last line.
+    the line number and its place; the others go right under it, numbered after the last line (B-1188).
     """
     if any(not isinstance(p, (int, float)) or not math.isfinite(p) for _, _, p in parts):
         raise ValueError("every part needs a percentage")
@@ -185,10 +185,7 @@ def split_line(lines: pd.DataFrame, line_number: int, parts: list[tuple[str, str
         if quantity and new["quantity"]:
             new["unit_price"] = round(part_amount / new["quantity"], 6)
         new_rows.append(new)
-    # The first part replaces the line where it is; the others go last, keeping every other line's number
+    # The parts replace the line where it is, the first with its number; every other line keeps its number
     # (renumbering would pair lines wrongly with the AI's when learning from the approval).
     position = lines.index.get_loc(matches[0])
-    first = pd.DataFrame([new_rows[0]])
-    return pd.concat(
-        [lines.iloc[:position], first, lines.iloc[position + 1 :], pd.DataFrame(new_rows[1:])], ignore_index=True
-    )
+    return pd.concat([lines.iloc[:position], pd.DataFrame(new_rows), lines.iloc[position + 1 :]], ignore_index=True)

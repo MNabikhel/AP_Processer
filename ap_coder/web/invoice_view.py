@@ -1311,7 +1311,9 @@ def summary(coding: InvoiceCoding, report: Any, errors: list[Any], warnings: lis
          "Supplier's GST/HST number"),
     ]  # fmt: skip
     look = len(warnings) + (len(low_confidence(report)) if not errors else 0)
-    status = ((f"{len(errors)} to fix", "err") if errors else ("Needs attention", "warn") if look
+    # as many as the checks list before approving and to fix (B-1189)
+    blocking = sum(1 for i in checks_summary(report, errors, warnings)["items"] if i["bad"])
+    status = ((f"{blocking} to fix", "err") if blocking else ("Needs attention", "warn") if look
               else ("Ready to approve", "ok"))  # fmt: skip
     value = max(0.0, min(1.0, report.adjusted_confidence or 0.0))
     return {

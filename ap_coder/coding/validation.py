@@ -137,7 +137,7 @@ def validate_coding(
 
     # --- Line items -------------------------------------------------------
     numbers = [li.line_number for li in coding.line_items]
-    if numbers != list(range(1, len(numbers) + 1)):
+    if sorted(numbers) != list(range(1, len(numbers) + 1)):  # the parts of a split line sit under it (B-1188)
         add(WARNING, "LINE_NUMBERING", f"The line numbers don't run 1, 2, 3…: {', '.join(map(str, numbers))}")
 
     tax_gls = reference.tax.tax_gl_codes()

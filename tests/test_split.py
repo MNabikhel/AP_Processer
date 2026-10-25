@@ -22,7 +22,7 @@ def test_split_keeps_the_total_and_the_numbering(reference):
     gt = _gt()
     lines = pd.DataFrame(gt["line_items"])
     out = split_line(lines, 4, [("6110", "CC400", 60), ("6110", "CC200", 25), ("6100", "CC200", 15)])
-    assert out["line_number"].tolist() == [1, 2, 3, 4, 5, 6, 7]
+    assert out["line_number"].tolist() == [1, 2, 3, 4, 6, 7, 5]  # the parts under the line split (B-1188)
     assert round(out["amount"].sum(), 2) == gt["subtotal"]
     parts = out[out["description"].str.startswith("Implementation consulting")]
     assert parts["amount"].tolist() == [1080.0, 450.0, 270.0] and parts["quantity"].tolist() == [7.2, 3.0, 1.8]

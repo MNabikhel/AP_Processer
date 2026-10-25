@@ -206,3 +206,50 @@ def test_raising_the_approval_limit_says_the_invoices_already_in_keep_the_strict
     assert "keep the strictest limit" not in saved("5000")
     assert "Invoices already in AP Coder keep the strictest limit in force since they arrived" in saved("15000")
     assert "keep the strictest limit" not in saved("1000")
+
+
+# --- L9. The review screen: a split, the header's count, the address after an action ------------------------------
+
+
+def test_a_split_puts_the_new_parts_under_the_line_split(reference):
+    """B-1188: the new parts of a split line went to the end of the grid, away from the line they came from; they
+    are under it, and keep their own numbers (the AI's lines keep theirs, D-71), with no LINE_NUMBERING warning."""
+    import json
+
+    import pandas as pd
+
+    from ap_coder.ai.pipeline import finalise_coding
+    from ap_coder.coding.review import coding_from_inputs, split_line
+    from ap_coder.core.config import Settings
+
+    from .conftest import SAMPLE_STEM, SAMPLES
+
+    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+    out = split_line(pd.DataFrame(gt["line_items"]), 2, [("6110", "", 60), ("6110", "", 40)])
+    assert out["line_number"].tolist() == [1, 2, 6, 3, 4, 5]
+    assert out["description"].tolist()[1:3] == [f"{gt['line_items'][1]['description']} ({p}%)" for p in (60, 40)]
+    header = {k: gt[k] for k in gt if k not in ("line_items", "tax_lines", "confidence_score")}
+    coding, _ = coding_from_inputs(header, out, pd.DataFrame(gt["tax_lines"]), gt)
+    _, report = finalise_coding(coding, reference, Settings())
+    assert "LINE_NUMBERING" not in {i.code for i in report.issues}
+
+
+def test_the_headers_to_fix_count_is_the_blocking_items_listed(client, store):
+    """B-1189: the header said "1 to fix" over the two items the checks listed as keeping Approve closed (a GL account
+    to pick is a warning, not counted); it counts what the checks list."""
+    from ap_coder.core.reference_data import UNASSIGNED
+
+    from .test_web_invoice import check, clean_invoice, form_of
+
+    invoice_id = clean_invoice(client, store)
+
+    def blank(rows):
+        rows[0]["predicted_gl_code"] = rows[1]["predicted_gl_code"] = UNASSIGNED
+        return rows
+
+    answer = check(client, invoice_id, form_of(store, invoice_id, blank, invoice_number=""))
+    listed = sum(int(n) for n in re.findall(r"(?:Before you can approve|Must be fixed) \((\d+)\)",
+                                            answer["sections"]["checks"]))  # fmt: skip
+    said = re.search(r"(\d+) to fix", answer["sections"]["summary"])
+    assert listed >= 2 and said and int(said.group(1)) == listed, (said and said.group(0), listed)
+
