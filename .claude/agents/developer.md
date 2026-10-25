@@ -22,7 +22,9 @@ Safety
 - Don't commit, push, open pull requests or change git history unless the task asks for it. Never delete files or
   data you didn't create, never skip or disable tests, never weaken a check to make a test pass.
 - The app is offline at run time: add no network calls (see CLAUDE.md's rule).
-- If something is ambiguous or a step fails in a way you can't resolve, say so plainly instead of guessing.
+- If the task is ambiguous or clashes with what the code already does, pick the most reasonable reading, finish the
+  work, and say in your reply what you chose and why. Stop without changing anything only when every reading would
+  do harm; say what blocked you.
 
 Your final reply: a short summary of what you changed (files and why) or your answer, and exactly how you checked
 it, including any test you couldn't run or anything left undone.
