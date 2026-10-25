@@ -5,16 +5,52 @@ the demo: start AP Coder and click **Load demo invoices** (no Azure needed). The
 [Getting started guide](GETTING_STARTED.md#step-4-try-the-dashboard-with-the-sample-data-no-enterprise-data)
 has a short tour, and the [pilot plan](PILOT_PLAN.md) suggests four weeks to a decision.
 
-Your existing data is safe. On first start the database upgrades itself (schema version 15), and a
+Your existing data is safe. On first start the database upgrades itself (schema version 18), and a
 backup of the database is made automatically once a day when AP Coder starts (the newest 14 are kept).
 
-## This release: a feed for the finance hub on Microsoft Fabric (off until an Admin turns it on)
+## This release: AP Coder on a company server, each person with their own account (D-97 to D-102)
+
+For a team, AP Coder can now run on one company Windows Server instead of a laptop (off by default: the laptop pilot
+is unchanged). Staff open it from their browsers over **HTTPS** and **log in**; each person has their own account and
+one of **four roles** (Read-only, Clerk, Approver, Admin), and a page offers only what their role may use. It runs as a
+**scheduled task** that starts at boot (`python -m ap_coder service install`), not a Windows service, and updates
+with a way back (`python -m ap_coder server-update <bundle>`, `--back`). People are added with
+`python -m ap_coder users add`. For IT: [SERVER.md](SERVER.md).
+
+## This release: posting vouchers to JD Edwards through the API (D-104, D-105)
+
+Besides the Z-file batch, AP Coder can talk to the company's JD Edwards AIS Server (off until an Admin sets it up in
+Settings → JD Edwards E1 → API connection). Every night it reads suppliers, GL accounts, business units, open POs and
+vouchers from JD Edwards; while an invoice is reviewed it asks whether it is already a voucher. On Exports, a JD
+Edwards batch gets **Dry run through the API**, then **Post to JD Edwards** (an Approver or Admin). A voucher is
+never posted twice: each carries the key `APC-<installation id>-<invoice>-<batch>`, and one that did not reach JD
+Edwards is tried again after 5, 15 and 60 minutes, then hourly. The connection goes only to the company's own server
+(a named internal system). Setup: [JDE_E1.md](JDE_E1.md#through-the-api-ais-server-d-104); the orchestrations for the
+JDE team: [JDE_ORCHESTRATIONS.md](JDE_ORCHESTRATIONS.md).
+
+## This release: a feed for the finance hub on Microsoft Fabric (off until an Admin turns it on, D-103)
 
 Settings → Finance hub sends six tables (invoices, their lines, approvals, the Activity log, accuracy and runs) to the
 company's finance hub, only what changed each time: to a shared folder Fabric reads (laid out for Fabric Open
 Mirroring, with a read-only SQLite copy for the on-premises gateway), or straight to OneLake where the internet is
 allowed. The invoices' PDFs stay in AP Coder. The tables are described in [FINANCE_HUB.md](FINANCE_HUB.md); from the
 command line: `python -m ap_coder hub export [--full] [--dry-run]`.
+
+## This release: smaller changes
+
+- **Two confidence numbers (D-89).** The review screen's header shows the **Reading** (how sure the header is) and
+  the **Coding** (how sure the lines' GL accounts, cost centers and tax codes are) side by side, where one bar was.
+  The queue's order, the review threshold and bulk approval use the lower of the two.
+- **Meals and entertainment at 50% (D-90).** Tick *Meals & entertainment (50% tax credit)* on a GL account (GL
+  accounts & tax → GL accounts): on lines coded to it, half the GST/HST and QST is claimed and the other half goes to
+  the expense, in the exports, JD Edwards and the sales-tax report.
+- **Payment terms to JD Edwards (D-91).** Settings → JD Edwards E1 has a small table from the printed terms ("Net 30",
+  "2/10 Net 30") to your company's payment terms code (VLPTC). Nothing is sent until the table is saved.
+- **Scoring the pilot against JD Edwards (D-92).** `python -m ap_coder pilot-score --vouchers F0411.xlsx
+  [--distribution F0911.xlsx]` compares what AP Coder approved with what AP posted in JD Edwards; Insights shows the
+  headline figures ([JDE_E1.md](JDE_E1.md)).
+- **For developers (D-106).** Coding work on AP Coder runs as the `developer` agent (`.claude/agents/developer.md`),
+  which carries only the tools that work needs.
 
 ## This release: colleagues on the office network each approve in their own name
 
@@ -65,7 +101,7 @@ per bug with the test that keeps it fixed, is [docs/BUGS.md](BUGS.md). What you 
   note) and a field, or a kind of line ("lines like 'Mobility services'"). Each approval quietly counts, for each one,
   whether AP Coder's value was right or corrected, and the value AP chose. Nothing is asked.
 - **When the same correction keeps coming back, AP Coder asks why.** The third time the same field is corrected on
-  the same vendor (Settings → Review, "Ask why after the same correction"), approving opens one short question
+  the same vendor (Settings → Review, "Ask AP for the reason once the same correction has been made this many times"), approving opens one short question
   before saving: "Why is your value the right one?". The answer is kept with the lesson; **Skip for now** saves
   without it and asks again next time. The question comes back only if the corrections keep coming.
 - **The AI reads the lessons, with AP's reasons.** The AI reviewer and the GL suggestions are given the lessons for
@@ -300,7 +336,7 @@ per bug with the test that keeps it fixed, is [docs/BUGS.md](BUGS.md). What you 
 - **Touchless processing: one switch** in the new *Settings → Automation* tab, off by default, turned on
   with a confirmation (recorded in the Activity log). With it on, a vendor goes touchless by itself once it
   meets one fixed bar: at least 20 reviewed invoices, header fields at least 99% right with 95%
-  confidence over its last 200, and the last 10 without a correction (usually about 30 clean invoices).
+  confidence over its last 200, and the last 10 without a correction (usually about 30 to 40 clean invoices).
   5% of touchless invoices are still audited; one correction, or a touchless invoice reopened, suspends
   the vendor until it has a fresh clean streak.
 - **Always a person:** a changed bank account or GST/HST number, any sign of a duplicate, an unusual

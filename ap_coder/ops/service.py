@@ -747,7 +747,7 @@ def doctor_checks(data: Path, env: dict | None = None, *, windows: bool = WINDOW
 
 
 def add_parser(sub: Any) -> None:
-    p = sub.add_parser("service", help="The company server: run AP Coder as a Windows service (docs/SERVER.md)")
+    p = sub.add_parser("service", help="The company server: run AP Coder as a scheduled task (docs/SERVER.md)")
     p.add_argument("action", choices=["install", "remove", "start", "stop", "status", "run"],
                    help="run: what the scheduled task runs (the service host)")  # fmt: skip
     p.add_argument("--account", default=None, help=f"The Windows account it runs as (default {DEFAULT_ACCOUNT})")

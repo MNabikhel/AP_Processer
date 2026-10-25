@@ -92,7 +92,7 @@ slightly slower, nothing else. To go back to Qwen, load Qwen and unload Gemma.
 
 | What you see | What to do |
 | --- | --- |
-| *Settings → Reading*: "no model is loaded" | Load Qwen 3.5 9B in LM Studio (or *Models in LM Studio → Load*). AP Coder no longer picks some other downloaded model by itself. |
+| *Settings → Reading*: "no model is loaded" | Load Gemma 4 12B (or Qwen 3.5 9B) in LM Studio (or *Models in LM Studio → Load*). AP Coder no longer picks some other downloaded model by itself. |
 | "LM Studio couldn't load OvisOCR2 … not enough memory" | Close other apps or unload a model you don't need. AP Coder asks again in half an hour, or when Settings are saved. |
 | AP Coder uses Qwen although Gemma is loaded (or the other way round) | Both are loaded: unload the one you don't want. |
 | Two copies of Qwen in LM Studio's loaded list | One app loaded a different build or context. Unload one; set the per-model Context Length (step 2). |

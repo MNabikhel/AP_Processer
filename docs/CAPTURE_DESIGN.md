@@ -168,8 +168,8 @@ Modules:
 - `layout.py`: `build_layout(path, *, di_raw=None, ocr="auto") -> DocLayout`. Uses the text layer
   (PyMuPDF words) when the page has one, OCR (RapidOCR, optional) for scanned pages and images,
   and Document Intelligence words when `di_raw` is given.
-- `reader.py`: `read_fields(layout) -> dict[str, list[Reading]]`, candidates best first;
-  `read_line_items(layout) -> list[LineReading]`.
+- `reader/` (a package): `entry.py` `read_fields(layout) -> dict[str, list[Reading]]`, candidates best first;
+  `line_items.py` `read_line_items(layout) -> list[LineReading]`.
 - `locate.py`: `locate(layout, field, value) -> list[Reading]`. Finds where a value given by
   another reader (the AI, Document Intelligence) is printed.
 - `confidence.py`: `fuse(...) -> dict[str, FieldResult]` and the cross-field checks.
@@ -435,8 +435,8 @@ Automation):
   measures the header fields, not line coding) sends the invoice to a person (`should_auto_approve`,
   `invoice_gates`).
 - **How long it takes**: at about 13 header fields an invoice, a 99% lower bound with no error needs about 380
-  fields read right (n / (n + 1.96²) ≥ 0.99), so a vendor typically reaches the bar after about 30 clean
-  invoices, not 20.
+  fields read right (n / (n + 1.96²) ≥ 0.99), so a vendor typically reaches the bar after about 30 to
+  40 clean invoices, not 20.
 - **Training, visible**: every approval records, field by field, what the clerk corrected; the review screen says what
   was learned ("Learned from your 2 corrections (invoice number, due date). Acme Ltd: 14 invoices reviewed, about 6
   more invoices approved without a correction before this vendor can skip review."), and the Learning page shows each vendor's progress. A bulk approval (nobody

@@ -2,7 +2,8 @@
 
 AP Coder **never connects to the mailbox**, to Exchange or to the internet. A tool the company already runs saves each email,
 as a file, into AP Coder's **invoices folder** on the AP computer (`C:\Users\<user>\APCoder\invoices` by default;
-*Settings → Data* shows it). AP Coder then sorts every email it finds there, reads the invoices and sets the rest
+on a company server, `invoices` in its data folder, e.g. `D:\APCoderData\invoices`; *Settings → Data & backups*
+shows the data folder). AP Coder then sorts every email it finds there, reads the invoices and sets the rest
 aside for a person. No mailbox password, token or network access is given to AP Coder.
 
 **What to deliver:** the whole email, as **.eml** or **.msg** (not only its attachments): the subject and text are what
@@ -26,6 +27,9 @@ scheduled task moves new files into the invoices folder every 5 minutes:
 ```
 robocopy "<synced AP Coder inbox folder>" "%USERPROFILE%\APCoder\invoices" *.eml /MOV /R:1 /W:5
 ```
+
+On a company server, the target is the server's invoices folder instead (e.g. `D:\APCoderData\invoices`), and the
+task runs as an account that may write there.
 
 `/MOV` removes each file from the library once copied, so the library only holds what AP Coder has not taken yet.
 Where an on-premises data gateway is already in use, step 3 can instead be **File System: Create file** on a company file
