@@ -360,6 +360,7 @@ def vendor_findings(
              f"{' (dated ' + posted['invoice_date'] + ')' if posted['invoice_date'] else ''}, total "
              f"{posted['total']:,.2f}: possible duplicate payment")
         )  # fmt: skip
+    findings += _jde_live_findings(coding, store, exclude_invoice_id)
     for other in store.duplicates_elsewhere(
         coding.vendor_name, coding.invoice_number, coding.grand_total, exclude_invoice_id
     )[:3]:
@@ -385,6 +386,7 @@ def vendor_findings(
                          if not history else "no invoice from this vendor approved yet: confirm it is a known "
                          "supplier"))  # fmt: skip
     findings += tax_number_findings(coding, master, history)
+    findings += _jde_bank_findings(coding, master or own)
     if not history:
         return findings
 
@@ -464,6 +466,39 @@ MASTER_ALIASES: dict[str, tuple[str, ...]] = {
 }  # fmt: skip
 _HOLD_WORDS = {"hold", "on hold", "on_hold", "blocked", "inactive", "suspended", "closed", "disabled", "i", "h", "b",
                "bloqué", "bloque", "inactif", "suspendu"}  # fmt: skip
+
+
+def _jde_live_findings(
+    coding: InvoiceCoding, store: Store, exclude_invoice_id: int | None
+) -> list[tuple[str, str, str]]:
+    """The JD Edwards API's live "already in JD Edwards?" check (D-104, ``erp.jde_sync.live_findings``): nothing while
+    its step 1 is off; a problem with it never stops the other checks."""
+    from ..erp import jde_ais
+
+    try:
+        if not jde_ais.AisSettings.from_json(store.get_setting(jde_ais.SETTING_KEY)).step1:
+            return []
+        from ..erp import jde_sync
+
+        return jde_sync.live_findings(store, coding, exclude_invoice_id)
+    except Exception:  # noqa: BLE001 - the check is a help, never a reason the invoice can't be checked
+        return []
+
+
+def _jde_bank_findings(coding: InvoiceCoding, vendor: dict[str, Any] | None) -> list[tuple[str, str, str]]:
+    """VENDOR_BANK_NOT_JDE: the account printed for payment does not end like the one JD Edwards pays this vendor on
+    (``vendors.erp_bank``, "transit …last 4", from the JDE API's supplier sync, D-104)."""
+    jde_bank = str((vendor or {}).get("erp_bank") or "").strip()
+    printed = coding.remit_bank_account
+    if not jde_bank or not bank_digits(printed)[0]:
+        return []
+    shown = mask_account(printed)
+    if shown == "(none)" or shown[-4:] == jde_bank[-4:]:
+        return []
+    return [(WARNING, "VENDOR_BANK_NOT_JDE",
+             f"the bank details printed for payment ({shown}) are not the account JD Edwards pays this vendor on "
+             f"({jde_bank}): confirm by phone, on a number from your vendor file, not from the invoice, before paying "
+             "or changing the vendor's banking")]  # fmt: skip
 
 
 def _province_or_blank(value: str) -> str:

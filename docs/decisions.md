@@ -1044,3 +1044,41 @@ that is reversed keeps its line, marked "replaced by D-NN".
   (`web/core.py` `can`, `web/pages/process.py` `shown_setup`, `web/pages/invoice.py` `_shown_live`,
   `static/js/invoice.js`, `ops/help.py`, `ops/service.py` `doctor_checks`, `core/store/_base.py` `EVENT_ACTOR`;
   `tests/test_server_role_pages.py`, `tests/test_server_ui_fixes.py`)
+- **D-104** · JD Edwards through its AIS Server (the API connection), and the offline rule's named internal systems. AP
+  Coder signs in to the company's AIS Server as its own JDE service user and calls named orchestrations with JSON in and
+  out; it never writes JDE tables. (1) **One mapping file**, `erp/jde_orchestrations.json`: the AIS paths and versions
+  (v2 token request and logout, v3 orchestrator, the `jde-AIS-Auth` header, HTTP 444 for an expired token, the date
+  format, the page size) and each orchestration's name, inputs and outputs; a copy in the data folder renames them key
+  by key. `docs/JDE_ORCHESTRATIONS.md` is the JDE team's spec, with what they must confirm. (2) **The client**
+  (`erp/jde_ais.py`) on the standard library (http.client, ssl): token sign-in (or Basic), one sign-in again on an
+  expired token, timeouts, a read retried at most twice (AIS busy, the connection failed), a voucher's request never
+  repeated by it, JDE's messages read from its error shape, HTTPS checked against the computer's certificates or a named
+  company CA file, no proxy, no redirect followed, the password in the data folder's .env (`JDE_AIS_PASSWORD`, as the
+  Azure key) and cut out of any text with the token. (3) **Step 1** (`erp/jde_sync.py`): suppliers, GL accounts,
+  business units, open POs and vouchers go through the CSV imports' own code (`master_rows` + `import_vendor_master`,
+  `import_accounts`, `po.rows_from_records` + `import_purchase_orders`, `import_erp_register`), so the checks and the
+  learning see what they always did; nothing is deleted, a PO no longer open in JDE is closed, an account
+  object.subsidiary gets its JD Edwards mapping row; the report lists what was added and changed; nightly (the
+  dashboard's thread, after the hour set) or on demand (`jde sync`). The live check at review time asks JDE by supplier
+  number, caches five minutes, waits five seconds at most, and with JDE down says JDE_NOT_REACHED (INFO) and stands on
+  the last sync; the supplier's bank account (transit and last four digits only, `vendors.erp_bank`) gives
+  VENDOR_BANK_NOT_JDE. (4) **Step 2** (`erp/jde_post.py`): a JD Edwards batch is posted voucher by voucher with the
+  Z-files' own rows (`jde.voucher_rows`, so one field mapping for files and API); a dry run (here and JDE's proof mode)
+  records a fingerprint of each voucher; an Approver's go-ahead sends only what was checked and is unchanged; the result
+  is kept per invoice (`jde_postings`: posted with the voucher number, refused with JDE's words, queued, unknown; a
+  posted voucher also in the invoice's `meta["jde_voucher"]`, `{document, doc_type, company, posted_at}`, for the
+  finance hub feed); the queue asks the voucher status orchestration for the key before sending again. Never twice:
+  idempotency key `APC-<invoice>-<batch>`, no undo of a batch JDE holds a voucher of, the posted vouchers left out of
+  its files. The table is made on first use and the schema's version is unchanged, so an older AP Coder still opens the
+  database. (5) **The offline rule** (CLAUDE.md): a named internal system may be enabled by an Admin. The AIS connection
+  is off by default; on, AP Coder connects only to the one AIS address saved, which must be on the company network (a
+  private address, or a name resolving to private addresses only) unless AP_ALLOW_INTERNET=1; plain http only to this
+  computer (the stand-in). `tests/test_offline_guard.py` proves it. (6) **Roles**: the connection, its test and sync are
+  an Admin's; the dry run a Clerk's; the go-ahead and the queue an Approver's (`web/roles.py`). (7) **The stand-in**
+  `tests/fake_ais.py` answers as AIS does (token flow, expiry, sign-in failures, no permission, an orchestration not
+  built, timeouts, busy, JDE's error shape, paging, one voucher per key) over http or HTTPS with test-only certificates.
+  Why: the company has no AIS set up yet; the CSV imports and batch files need a person each time and see JDE a day
+  late. Built against the stand-in, off, ready to switch on once the JDE team has built and confirmed the
+  orchestrations. (`erp/jde_ais.py`, `erp/jde_sync.py`, `erp/jde_post.py`, `erp/jde_orchestrations.json`,
+  `ops/jde_cmd.py`, `web/pages/settings_jde.py`, `web/pages/exports.py`; `tests/test_jde_ais.py`,
+  `tests/test_jde_sync.py`, `tests/test_jde_post.py`, `tests/test_jde_api_web.py`)

@@ -63,6 +63,13 @@ ACTIONS = {
     "directory_preset_saved": ("bookmark_add", "info", "Directory view saved"),
     "directory_preset_deleted": ("bookmark_remove", "gray", "Directory view deleted"),
     "export_undone": ("undo", "warn", "Export undone"),
+    # The JD Edwards API (D-104)
+    "jde_api_tested": ("network_check", "info", "JD Edwards connection tested"),
+    "jde_synced": ("sync", "info", "Synced from JD Edwards"),
+    "jde_api_dry_run": ("fact_check", "info", "JD Edwards dry run"),
+    "jde_api_approved": ("send", "info", "Vouchers approved for JD Edwards"),
+    "jde_voucher_posted": ("cloud_done", "ok", "Posted to JD Edwards"),
+    "jde_voucher_refused": ("cloud_off", "err", "Refused by JD Edwards"),
     "parked": ("pause_circle", "warn", "Parked"),
     "unparked": ("play_circle", "info", "Back in the queue"),
     "note": ("sticky_note_2", "violet", "Note"),
@@ -397,6 +404,20 @@ def describe(event: dict[str, Any]) -> str:
             return words.format(user="an unknown account", name="", by=by, address="?", **roles)
         return _ACCOUNT_WORDS[action].format(user=d.get("username") or "?", name=d.get("name") or "", by=by,
                                              address=d.get("unpaused") or "?", **roles)  # fmt: skip
+    if action == "jde_api_tested":
+        return "connected" if d.get("ok") else f"not connected ({d.get('kind') or 'error'})"
+    if action == "jde_synced":
+        parts = [f"{part.replace('_', ' ')}: {r.get('added', 0)} added, {r.get('changed', 0)} changed"
+                 for part, r in d.items() if isinstance(r, dict)]  # fmt: skip
+        failed = f"; not synced: {', '.join(d['errors'])}" if d.get("errors") else ""
+        return ("; ".join(parts) or "nothing read") + failed
+    if action in ("jde_api_dry_run", "jde_api_approved"):
+        n = d.get("vouchers")
+        return f"batch {d.get('batch', '')}" + (f": {n} voucher{'' if n == 1 else 's'}" if n is not None else "") + (
+            " (checked here only: JD Edwards not reached)" if d.get("jde") is False else "")  # fmt: skip
+    if action in ("jde_voucher_posted", "jde_voucher_refused"):
+        voucher = f": voucher {d['voucher']}" if d.get("voucher") else ""
+        return f"batch {d.get('batch', '')}{voucher}"
     if action in ("backup_made", "backup_restored"):
         return str(d.get("file", "")) + (f" · {d['note']}" if d.get("note") else "")
     return ""

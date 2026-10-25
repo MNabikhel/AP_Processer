@@ -104,6 +104,9 @@ TOUCHPOINTS = {
     "ap_coder/ai/extraction.py": "Azure Document Intelligence client: AP_ALLOW_INTERNET=1, or the Azure check's client",
     "ap_coder/ai/azure_check.py": "Azure Document Intelligence: only switched on in Settings, only its endpoint host "
     "(only_host)",
+    "ap_coder/erp/jde_ais.py": "the JD Edwards AIS Server: only once an Admin switched a step on in Settings, only the "
+    "AIS address saved (no proxy, no redirect followed), which must be on the company network (private addresses) "
+    "unless AP_ALLOW_INTERNET=1 (D-104)",
     "ap_coder/ops/doctor.py": "doctor --online: Azure only with AP_ALLOW_INTERNET=1; LM Studio as local_llm",
     "ap_coder/ops/offline.py": "import_azure: imports only; free_port binds and connects on this computer's dashboard "
     "address (no proxy)",
@@ -294,6 +297,45 @@ def test_the_azure_check_sends_nothing_until_it_is_switched_on(offline_guard, tm
     record = azure_check.connection_test(store, Settings())
     assert record["ok"] is False  # the guard refused the connection
     assert offline_guard.attempts and all(host in a for a in offline_guard.attempts), offline_guard.attempts
+
+
+def test_the_jde_api_sends_nothing_until_it_is_switched_on_and_only_to_its_address(offline_guard, tmp_path,
+                                                                                    monkeypatch):  # fmt: skip
+    """The JD Edwards API connection (D-104): saved but off, Test connection, the sync, the live duplicate check and the
+    voucher queue send nothing. On, only the AIS address saved is contacted (here a private address, which the guard
+    stops); an address on the internet is refused before anything is sent."""
+    from ap_coder.core.schema import InvoiceCoding
+    from ap_coder.erp import jde_ais, jde_post, jde_sync
+
+    _bait(monkeypatch)
+    monkeypatch.delenv("AP_ALLOW_INTERNET", raising=False)
+    monkeypatch.setattr(jde_ais, "env_path", lambda: tmp_path / ".env")
+    monkeypatch.setattr(jde_ais, "RETRY_PAUSE", 0)
+    jde_sync.forget_cache()
+    store = _azure_store(tmp_path)
+    form = {"base_url": "https://10.20.30.40:9300", "environment": "JPD920", "role": "", "username": "APCODER",
+            "password": "pw-123456"}  # fmt: skip
+    jde_ais.save(store, **form)
+    coding = InvoiceCoding.model_validate({
+        "vendor_name": "Acme", "invoice_number": "1", "invoice_date": "2026-10-01", "subtotal": 1, "tax_total": 0,
+        "grand_total": 1, "currency": "CAD", "confidence_score": 1, "line_items": []})  # fmt: skip
+    assert not jde_ais.connection_test(store)["ok"]
+    with pytest.raises(jde_ais.AisOff):
+        jde_sync.sync(store)
+    assert jde_sync.live_findings(store, coding) == [] and jde_sync.tick(store) == []
+    assert jde_post.retry_queue(store)["posted"] == 0
+    assert offline_guard.attempts == []
+
+    jde_ais.save(store, **form, step1=True, step2=True)
+    assert jde_ais.connection_test(store)["kind"] == jde_ais.UNREACHABLE  # the guard refused it
+    assert jde_sync.live_findings(store, coding)[0][1] == "JDE_NOT_REACHED"
+    assert offline_guard.attempts and all("10.20.30.40" in a for a in offline_guard.attempts), offline_guard.attempts
+    offline_guard.attempts.clear()
+    store.set_setting(jde_ais.SETTING_KEY, jde_ais.load(store).to_json().replace("10.20.30.40", "93.184.216.34"))
+    found = jde_ais.connection_test(store)
+    assert found["kind"] == jde_ais.ADDRESS and "internet" in found["error"]
+    assert offline_guard.attempts == []
+    jde_sync.forget_cache()
 
 
 def test_onnx_runtime_usage_events_are_switched_off(monkeypatch):

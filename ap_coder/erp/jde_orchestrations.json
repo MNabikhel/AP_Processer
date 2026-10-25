@@ -1,0 +1,132 @@
+{
+  "_about": "AP Coder's JD Edwards AIS connection: the AIS paths and every orchestration AP Coder calls, with the names of their inputs and outputs. The JDE team builds the orchestrations from docs/JDE_ORCHESTRATIONS.md. To rename one (or one of its inputs or outputs), copy this file to the data folder as jde_orchestrations.json and change only what differs there: AP Coder reads that copy over this one, key by key. Entries marked CONFIRM are what the JDE team must check for their AIS release.",
+  "ais": {
+    "_confirm": "CONFIRM the paths and versions for your AIS Server release (tools 9.2.x): v2 token request and logout, v3 orchestrator, the token header, the HTTP status AIS gives for an expired token, and the date format of the orchestrations' inputs and outputs.",
+    "defaultconfig_path": "/jderest/v2/defaultconfig",
+    "token_path": "/jderest/v2/tokenrequest",
+    "logout_path": "/jderest/v2/tokenrequest/logout",
+    "orchestrator_path": "/jderest/v3/orchestrator/{name}",
+    "token_header": "jde-AIS-Auth",
+    "environment_header": "jde-AIS-Auth-Environment",
+    "role_header": "jde-AIS-Auth-Role",
+    "device_header": "jde-AIS-Auth-Device",
+    "expired_token_statuses": [444],
+    "date_format": "%Y-%m-%d",
+    "page_size": 500
+  },
+  "orchestrations": {
+    "suppliers": {
+      "name": "APC_Suppliers_Read",
+      "inputs": {"changed_since": "ChangedSince", "after": "AfterAddressNumber", "max_rows": "MaxRows"},
+      "rows": "Suppliers",
+      "fields": {
+        "an8": "AddressNumber",
+        "name": "AlphaName",
+        "tax_id": "TaxId",
+        "tax_id_2": "AdditionalTaxId",
+        "terms_code": "PaymentTermsCode",
+        "terms": "PaymentTermsDescription",
+        "hold_code": "HoldPaymentCode",
+        "bank_transit": "BankTransit",
+        "bank_last4": "BankAccountLast4",
+        "province": "State",
+        "currency": "CurrencyCode"
+      }
+    },
+    "gl_accounts": {
+      "name": "APC_Accounts_Read",
+      "inputs": {"company": "Company", "after": "AfterAccountId", "max_rows": "MaxRows"},
+      "rows": "Accounts",
+      "fields": {
+        "account_id": "AccountId",
+        "business_unit": "BusinessUnit",
+        "object": "ObjectAccount",
+        "subsidiary": "Subsidiary",
+        "description": "Description",
+        "posting_edit": "PostingEdit",
+        "level": "LevelOfDetail"
+      }
+    },
+    "business_units": {
+      "name": "APC_BusinessUnits_Read",
+      "inputs": {"company": "Company", "after": "AfterBusinessUnit", "max_rows": "MaxRows"},
+      "rows": "BusinessUnits",
+      "fields": {
+        "business_unit": "BusinessUnit",
+        "description": "Description",
+        "company": "Company",
+        "type": "BusinessUnitType",
+        "posting_edit": "PostingEdit"
+      }
+    },
+    "purchase_orders": {
+      "name": "APC_OpenPOs_Read",
+      "inputs": {"order_type": "OrderType", "after": "AfterKey", "max_rows": "MaxRows"},
+      "rows": "Lines",
+      "key": "Key",
+      "fields": {
+        "key": "Key",
+        "order_number": "OrderNumber",
+        "order_type": "OrderType",
+        "order_company": "OrderCompany",
+        "line_number": "LineNumber",
+        "an8": "SupplierNumber",
+        "supplier_name": "SupplierName",
+        "description": "Description",
+        "quantity": "QuantityOrdered",
+        "unit_cost": "UnitCost",
+        "amount": "ExtendedAmount",
+        "received": "QuantityReceived",
+        "object": "ObjectAccount",
+        "subsidiary": "Subsidiary",
+        "business_unit": "BusinessUnit",
+        "next_status": "NextStatus"
+      }
+    },
+    "vouchers": {
+      "name": "APC_Vouchers_Read",
+      "inputs": {"supplier": "SupplierNumber", "invoice": "InvoiceNumber", "since": "FromInvoiceDate", "after": "AfterKey", "max_rows": "MaxRows"},
+      "rows": "Vouchers",
+      "key": "Key",
+      "fields": {
+        "key": "Key",
+        "document": "DocumentNumber",
+        "doc_type": "DocumentType",
+        "company": "DocumentCompany",
+        "an8": "SupplierNumber",
+        "supplier_name": "SupplierName",
+        "invoice_number": "InvoiceNumber",
+        "invoice_date": "InvoiceDate",
+        "gross": "GrossAmount",
+        "open_amount": "OpenAmount",
+        "pay_status": "PayStatus",
+        "batch": "BatchNumber"
+      }
+    },
+    "voucher_create": {
+      "name": "APC_Voucher_Create",
+      "inputs": {"key": "IdempotencyKey", "mode": "ProcessingMode", "pay_items": "PayItems", "gl_lines": "GLLines", "matches": "ReceiptMatches"},
+      "modes": {"proof": "PROOF", "final": "FINAL"},
+      "fields": {
+        "result": "Result",
+        "document": "DocumentNumber",
+        "doc_type": "DocumentType",
+        "company": "DocumentCompany",
+        "batch": "BatchNumber",
+        "messages": "Messages"
+      },
+      "results": {"created": "CREATED", "exists": "EXISTS", "valid": "VALID", "error": "ERROR"}
+    },
+    "voucher_status": {
+      "name": "APC_Voucher_Status",
+      "inputs": {"key": "IdempotencyKey"},
+      "fields": {
+        "found": "Found",
+        "document": "DocumentNumber",
+        "doc_type": "DocumentType",
+        "company": "DocumentCompany",
+        "batch": "BatchNumber"
+      }
+    }
+  }
+}

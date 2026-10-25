@@ -187,6 +187,14 @@ CHECKS: dict[str, CheckHelp] = {
         "same number: it was entered, and maybe paid, before or outside AP Coder.",
         "Check the ERP. If it is the same bill, reject this one so it is not paid twice.",
     ),
+    "JDE_NOT_REACHED": CheckHelp(
+        ERP, "JD Edwards not asked",
+        "The JD Edwards API connection is on, but JD Edwards could not be asked just now whether this invoice is "
+        "already a voucher (it is down, slow, or this computer is off the company network). The duplicate check used "
+        "the vouchers of the last sync instead.",
+        "Nothing to do if the last sync is recent. Otherwise check the invoice again once JD Edwards is back "
+        "(Settings → JD Edwards E1 → API connection → Test connection).",
+    ),
     "DUPLICATE_OTHER_VENDOR": CheckHelp(
         FRAUD, "Same bill, other vendor name",
         "Another invoice has the same number and total but a different vendor name: often the same supplier set up "
@@ -232,6 +240,14 @@ CHECKS: dict[str, CheckHelp] = {
         "the vendor list (or on its earlier approved invoices).",
         "Call the vendor on a number you already have to confirm. If the vendor list is out of date, correct it on "
         "the Vendors page.",
+    ),
+    "VENDOR_BANK_NOT_JDE": CheckHelp(
+        FRAUD, "Not the bank account JD Edwards pays",
+        "The bank account printed on the invoice for payment does not end in the same four digits as the account JD "
+        "Edwards pays this vendor on (read by the JD Edwards API's supplier sync). New banking details on an invoice "
+        "are the most common way AP is defrauded.",
+        "Call the vendor on a number from your vendor file (not the one on this invoice or in the email) and "
+        "confirm before paying; a real change goes through your vendor banking change process in JD Edwards.",
     ),
     "VENDOR_BANK_CHANGED": CheckHelp(
         FRAUD, "Bank account changed",

@@ -271,6 +271,10 @@ def build_parser() -> argparse.ArgumentParser:
     u.add_argument("username")
     u.add_argument("role", choices=ROLES)
 
+    from . import jde_cmd
+
+    jde_cmd.add_parser(sub)  # the JD Edwards API connection (D-104)
+
     p = sub.add_parser("schema", help="Developers: print the coding schema a cloud build sends to Azure OpenAI")
     p.add_argument("--no-constrain-codes", action="store_true", help="Do not embed valid codes as enums")
     _add_reference_args(p)
@@ -916,6 +920,12 @@ def cmd_users(args: argparse.Namespace) -> int:
     return 0
 
 
+def _jde(args: argparse.Namespace) -> int:
+    from . import jde_cmd
+
+    return jde_cmd.main(args)
+
+
 def cmd_schema(args: argparse.Namespace) -> int:
     schema = build_json_schema(
         _load_reference(args),
@@ -966,6 +976,7 @@ def main(argv: list[str] | None = None) -> int:
         "demo": lambda: cmd_demo(args, settings),
         "schema": lambda: cmd_schema(args),
         "users": lambda: cmd_users(args),
+        "jde": lambda: _jde(args),
     }
     try:
         return commands[args.command]()

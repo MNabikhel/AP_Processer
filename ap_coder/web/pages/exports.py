@@ -1,6 +1,10 @@
 """Exports: approved invoices go to the ERP in batches; each invoice is exported once, plus the
 duplicate payment audit.
 
+* JD Edwards through the API (D-104, step 2 on): ``POST /exports/batches/<n>/jde-api/dry-run`` (a Clerk: what would
+  post, checked here and by JDE's proof mode), ``.../jde-api/post`` (an Approver or Admin: the go-ahead) and
+  ``POST /exports/jde-api/retry`` (the queue), each a background job; the batch's vouchers and their results are on
+  the batch's panel (``jde_post.status_rows``).
 * ``GET /exports``: the ready list (``?fmt=`` picks the format; JD Edwards E1 checks every invoice first), the batch
   just made (``?made=<batch>``), the custom CSV layout, the ERP's invoice register, past batches (``?batch=&bfmt=``
   picks one to download again, stamp or undo) and the duplicate audit (``?audit=1``).
@@ -20,13 +24,14 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from ap_coder.core import ui
 from ap_coder.core.reference_data import short_name
 from ap_coder.core.store import Store
-from ap_coder.erp import dupaudit, export_layout, exports, jde, registers, stamp
+from ap_coder.erp import dupaudit, export_layout, exports, jde, jde_ais, jde_post, registers, stamp
 from ap_coder.web.core import (
     by_currency,
     done,
     flash_message,
     get_store,
     jde_shown,
+    jobs,
     message,
     one_connection,
     posted_form,
@@ -114,6 +119,9 @@ def jde_file(store: Store, batch: int) -> tuple[bytes, str, str]:
     batch holds the same vouchers every time (what the current settings would now refuse is listed in the README
     to check before loading); in another batch an invoice that does not pass the checks is left out."""
     invoices, left_out = jde_left_out(store, batch)
+    # Vouchers already posted through the API (D-104) are left out of the files: loaded again, they would be twice.
+    posted = jde_post.posted_ids(store, batch)
+    left_out = {**left_out, **{i: ["already posted to JD Edwards through the API"] for i in posted}}
     settings, lookup = jde.load(store), store.vendor_ids()
     created = next((b["created_at"] for b in store.export_batches() if b["id"] == batch), "")
     kept = [i for i in invoices if i["id"] not in left_out]
@@ -258,6 +266,9 @@ def exports_page(
         left_out = (len(missing), len(invoices))
     totals, exported = store.batch_totals(), store.exported_totals()
 
+    # JD Edwards through the API (D-104): the chosen batch's vouchers and the queue
+    jde_api = api_context(store, chosen)
+
     # The custom layout
     current = layout(store)
     layout_rows = [{"header": c.header, "field": c.field, "text": c.text} for c in current.columns]
@@ -320,7 +331,20 @@ def exports_page(
         exact=dupaudit.EXACT,
         audit_at=dt.datetime.now().strftime("%H:%M"),
         empty_art=ui.EMPTY_INBOX_SVG if live else ui.EMPTY_TRAY_SVG,
+        jde_api=jde_api,
     )
+
+
+def api_context(store: Store, chosen: dict[str, Any] | None) -> dict[str, Any]:
+    """The batch panel's "JD Edwards API" part: shown for a JD Edwards batch while step 2 is on, or once any of its
+    vouchers went that way."""
+    cfg = jde_ais.load(store)
+    rows = jde_post.status_rows(store, chosen["id"]) if chosen and chosen["format"] == jde.FORMAT else []
+    shown = bool(chosen and chosen["format"] == jde.FORMAT and (cfg.step2 or rows))
+    return {"shown": shown, "on": cfg.step2, "rows": rows,
+            "checked": sum(r["status"] == jde_post.CHECKED for r in rows),
+            "waiting": len(jde_post.waiting(store)), "done": all(r["status"] == jde_post.POSTED for r in rows) and
+            bool(rows)}  # fmt: skip
 
 
 # --- Exporting ---------------------------------------------------------------------------------------------------
@@ -430,10 +454,13 @@ def undo_batch(request: Request, batch: int) -> JSONResponse:
     known = next((b for b in store.export_batches() if b["id"] == batch), None)
     if known is None or known["undone_at"]:
         return refuse(f"Batch {batch} is not an export that can be undone.")
+    if problem := jde_post.undo_problem(store, batch):  # JD Edwards has (or may have) one of its vouchers (D-104)
+        return refuse(problem)
     try:
         count = store.undo_export_batch(batch, actor=current_reviewer())
     except ValueError:  # undone meanwhile (another click, another tab)
         return refuse(f"Batch {batch} is not an export that can be undone.")
+    jde_post.forget_batch(store, batch)
     return done(
         request,
         "/exports",
@@ -515,3 +542,93 @@ def duplicates_csv(request: Request) -> Response:
     """Every pair the duplicate payment audit finds, as a CSV."""
     pairs = dupaudit.find(get_store(request))
     return download(dupaudit.to_csv(pairs), f"duplicate_audit_{dt.date.today()}.csv", "text/csv")
+
+
+# --- JD Edwards through the API (D-104) -----------------------------------------------------------------------------
+
+API_JOB = "jde-api"
+
+
+def _api_job(request: Request, note: str, work: Any) -> JSONResponse:
+    if not jobs(request).get(API_JOB).start(work, total=1, note=note):
+        return refuse("JD Edwards is being sent something already: wait for it to finish.", status=409)
+    return JSONResponse({"ok": True, "job": API_JOB, "status": f"/jobs/{API_JOB}"})
+
+
+def _api_messages(result: dict[str, Any]) -> list[dict[str, str]]:
+    parts = [f"{result[k]} {label}" for k, label in (("posted", "posted"), ("failed", "refused by JD Edwards"),
+             ("queued", "waiting in the queue"), ("unknown", "sent, being checked")) if result.get(k)]  # fmt: skip
+    out = [
+        {
+            "text": ("JD Edwards: " + ", ".join(parts) + ".") if parts else "Nothing was sent.",
+            "tone": "ok" if not (result.get("failed") or result.get("queued") or result.get("unknown")) else "warn",
+        }
+    ]
+    if result.get("error"):
+        out.append({"text": result["error"], "tone": "warn"})
+    out += [{"text": s, "tone": "warn"} for s in result.get("skipped") or []]
+    return out
+
+
+@router.post("/exports/batches/{batch:int}/jde-api/dry-run")
+def jde_api_dry_run(request: Request, batch: int) -> JSONResponse:
+    """What the batch's vouchers would post, checked here and in JD Edwards' proof mode; nothing is posted."""
+    store = get_store(request)
+    try:
+        jde_post.payloads(store, batch)
+    except ValueError as exc:
+        return refuse(str(exc))
+    actor = current_reviewer()
+
+    def work(job: Any) -> dict[str, Any]:
+        job.step(0, 1, "Checking the vouchers with JD Edwards…")
+        found = jde_post.dry_run(store, batch, actor=actor)
+        rows = found["rows"]
+        ok = sum(r["status"] == jde_post.CHECKED for r in rows)
+        out = [
+            {
+                "text": f"Dry run of batch {batch}: {ok} of {ui.plural(len(rows), 'voucher')} ready to post.",
+                "tone": "ok" if ok == len(rows) else "warn",
+            }
+        ]
+        if found["jde"]:
+            out.append({"text": f"Checked here only, not by JD Edwards: {found['jde']}", "tone": "warn"})
+        return {"messages": out}
+
+    return _api_job(request, "Dry run through the JD Edwards API", work)
+
+
+@router.post("/exports/batches/{batch:int}/jde-api/post")
+def jde_api_post(request: Request, batch: int) -> JSONResponse:
+    """The go-ahead (an Approver or Admin): the vouchers that passed the dry run, unchanged since, are posted."""
+    store = get_store(request)
+    if not jde_ais.load(store).step2:
+        return refuse("Step 2 of the JD Edwards API (vouchers) is off: an Admin switches it on in Settings → JD "
+                      "Edwards E1 → API connection.")  # fmt: skip
+    if not any(p["status"] == jde_post.CHECKED for p in jde_post.postings(store, batch)):
+        return refuse("Run the dry run first: only the vouchers that passed it are posted.")
+    actor = current_reviewer()
+
+    def work(job: Any) -> dict[str, Any]:
+        job.step(0, 1, "Posting the vouchers to JD Edwards…")
+        try:
+            return {"messages": _api_messages(jde_post.post(store, batch, actor=actor))}
+        except (ValueError, jde_ais.AisError) as exc:
+            return {"messages": [{"text": str(exc), "tone": "warn"}]}
+
+    return _api_job(request, "Posting to JD Edwards", work)
+
+
+@router.post("/exports/jde-api/retry")
+def jde_api_retry(request: Request) -> JSONResponse:
+    """The queue now: each voucher waiting is looked up in JD Edwards by its key first, then sent if it isn't there."""
+    store = get_store(request)
+    if not jde_post.waiting(store):
+        return message("Nothing is waiting for JD Edwards.", "info")
+    actor = current_reviewer()
+
+    def work(job: Any) -> dict[str, Any]:
+        job.step(0, 1, "Sending the queue to JD Edwards…")
+        return {"messages": _api_messages(jde_post.retry_queue(store, actor=actor))}
+
+    return _api_job(request, "Sending the JD Edwards queue", work)

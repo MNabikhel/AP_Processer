@@ -58,7 +58,7 @@ from .fx import (  # noqa: F401  (re-exported)
 # 16: bank_accounts, our company's bank accounts (by _SCHEMA, D-66), 17: feedback.final_tax_code, tax_source,
 # tax_province and tax_uncollected (filled from the approved invoices, D-70, D-80), template_snapshots (D-85),
 # invoice_drafts (by _SCHEMA: the review screen's edits not approved yet, kept over a restart, D-86),
-# 18: users, sessions, login_attempts (by _SCHEMA: server mode's accounts, D-97)
+# 18: users, sessions, login_attempts (by _SCHEMA: server mode's accounts, D-97), later vendors.erp_bank (D-104)
 SCHEMA_VERSION = 18
 # The one-off clean-ups of the learning memory ``_migrate`` has run on a database (settings.feedback_cleanup): a new
 # clean-up added there changes it, so it runs once on every database.
@@ -591,10 +591,10 @@ class StoreCore:
                 "WHERE e.action = 'autonomy_suspended' AND CASE WHEN json_valid(e.detail) THEN "
                 "json_extract(e.detail, '$.key') END = supplier_profiles.key), updated_at) WHERE state = 'suspended'"
             )
-        # The vendor list keeps each vendor's QST and PST numbers and province, to check the numbers an invoice
-        # prints against the vendor chosen (looked for whatever the version).
+        # The vendor list keeps each vendor's QST and PST numbers, province and the bank account JD Edwards pays it on
+        # (the JDE API's sync, D-104), to check what an invoice prints against the vendor (whatever the version).
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(vendors)")}
-        for column in ("qst_number", "pst_number", "province"):
+        for column in ("qst_number", "pst_number", "province", "erp_bank"):
             if columns and column not in columns:
                 conn.execute(f"ALTER TABLE vendors ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
         # An invoice made from a picture remembers the picture's SHA-256 (intake.py), so the same photo sent again is

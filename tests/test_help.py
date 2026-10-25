@@ -19,6 +19,7 @@ SOURCES = [
     "coding/banks.py",
     "web/invoice_view.py",
     "erp/jde.py",
+    "erp/jde_sync.py",
 ]
 
 

@@ -3,8 +3,10 @@
 AP Coder is an offline build: nothing it runs connects to the internet unless a developer or the bundle
 builder opts in with ``AP_ALLOW_INTERNET=1`` (:func:`internet_allowed`). The setup scripts check it before
 any package, model, git or Python download, and the model server's address (``local_llm.refuse_internet``): LM
-Studio on this computer or the office network, never a server on the internet. The one exception is the optional
-Azure check (``azure_check``), which contacts its configured endpoint only once AP has switched it on in Settings.
+Studio on this computer or the office network, never a server on the internet. The exceptions are the optional
+Azure check (``azure_check``), which contacts its configured endpoint only once AP has switched it on in Settings, and
+a named internal system an Admin enables: JD Edwards' AIS Server (``erp/jde_ais.py``, D-104), only its saved address
+on the company network.
 ``tests/test_offline_guard.py`` proves it: every flow runs with any connection but to this computer refused.
 
 RapidOCR 3 (the PP-OCRv5 reader) would download its model files into its own package folder the first time
