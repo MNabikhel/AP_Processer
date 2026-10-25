@@ -406,6 +406,8 @@ def describe(event: dict[str, Any]) -> str:
         if d.get("account") == "unknown":  # the text typed is not kept (D-101)
             words = _ACCOUNT_WORDS["login_failed_unknown" if action == "login_failed" else action]
             return words.format(user="an unknown account", name="", by=by, address="?", **roles)
+        if action == "address_unlocked" and d.get("username"):  # a username's pause there (B-1208)
+            return f"logins as {d['username']} from {d.get('unpaused') or 'this server'} are no longer paused"
         return _ACCOUNT_WORDS[action].format(user=d.get("username") or "?", name=d.get("name") or "", by=by,
                                              address=d.get("unpaused") or "?", **roles)  # fmt: skip
     if action == "jde_api_tested":

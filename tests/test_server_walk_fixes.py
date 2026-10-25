@@ -267,3 +267,35 @@ def test_a_new_hub_format_clears_the_old_formats_files_and_parquet_times_are_mil
         names = sorted(p.name for p in (share / table).iterdir())
         assert not [n for n in names if n.endswith(".parquet")] and [n for n in names if n.endswith(".csv")], names
         assert _json.loads((share / table / "_metadata.json").read_text())["fileFormat"] == "DelimitedText"
+
+
+# --- S10. Paused usernames on the Users page ----------------------------------------------------------------------
+
+
+def test_the_users_page_lists_paused_usernames_and_lifts_their_pause(tmp_path):
+    """B-1208: the Users page listed the paused addresses only: a username paused from one address (5 tries that
+    didn't match) was nowhere to see or lift. It is listed beside them, with "Lift the pause"."""
+    from ap_coder.core.store import Store, load_sample_setup
+
+    from .test_server_security import GOOD, WRONG_PASSWORD, account, app_for, client_of, log_in
+    from .webclient import PAGE
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(store)
+    account(store, "boss", "admin")
+    account(store, "ann")
+    app = app_for(store)
+    for _ in range(5):
+        log_in(client_of(app, "10.6.6.6"), "ann", WRONG_PASSWORD)
+    assert "paused" in log_in(client_of(app, "10.6.6.6"), "ann", GOOD).json()["error"]
+    boss = client_of(app, "10.0.0.7")
+    log_in(boss, "boss")
+    page = boss.get("/admin/users").text
+    assert "Paused usernames" in page and "ann" in page and "10.6.6.6" in page
+    lifted = boss.post("/admin/users/usernames/unlock", data={"username": "ann", "address": "10.6.6.6"},
+                       headers=PAGE)  # fmt: skip
+    assert lifted.status_code == 200, lifted.text
+    assert log_in(client_of(app, "10.6.6.6"), "ann", GOOD).status_code == 200
+    assert "Paused usernames" not in boss.get("/admin/users").text
+    event = store.events(actions=["address_unlocked"])[0]
+    assert (event["detail"]["username"], event["detail"]["unpaused"]) == ("ann", "10.6.6.6")

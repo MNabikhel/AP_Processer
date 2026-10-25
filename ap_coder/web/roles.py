@@ -145,6 +145,7 @@ RULES: dict[tuple[str, str], str] = {
         "GET /admin/users", "POST /admin/users/add", "POST /admin/users/{user_id:int}/reset",
         "POST /admin/users/{user_id:int}/role", "POST /admin/users/{user_id:int}/deactivate",
         "POST /admin/users/{user_id:int}/activate", "POST /admin/users/addresses/unlock",
+        "POST /admin/users/usernames/unlock",
     ),
 }  # fmt: skip
 
