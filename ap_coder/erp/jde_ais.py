@@ -336,6 +336,11 @@ def save(store: Any, *, base_url: str, environment: str, role: str, username: st
         raise ValueError("Choose how AP Coder signs in to AIS.")
     if new.base_url and (problem := address_problem(new.base_url)):
         raise ValueError(problem)
+    # The connection's own check (B-1200): an address on the internet is refused now. A name this computer can't look
+    # up now (the VPN off) is saved: the connection checks it when it is used.
+    found = [] if not new.base_url else _resolve(new.host)
+    if found and (problem := internal_problem(new.host, lambda _host: found, new.shared_network)):
+        raise ValueError(problem)
     if new.ca_file and not Path(new.ca_file).is_file():
         raise ValueError(f"The CA certificate file {new.ca_file} isn't there: give the full path of the .pem / .crt "
                          "file IT gave you, or leave it blank.")  # fmt: skip

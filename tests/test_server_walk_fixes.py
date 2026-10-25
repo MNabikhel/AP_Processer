@@ -72,3 +72,29 @@ def test_a_short_secret_is_scrubbed_as_a_whole_word_never_inside_other_words():
     assert scrub("sent password=x&user=jde", "x") == "sent password=••••&user=jde"
     assert scrub("Authorization: Basic eA==", "eA==") == "Authorization: Basic ••••"
     assert scrub('{"token": "ab1"} for ab12', "ab1") == '{"token": "••••"} for ab12'
+
+
+# --- S4. An AIS address on the internet is refused at save -------------------------------------------------------
+
+
+def test_an_ais_address_on_the_internet_is_refused_when_it_is_saved(tmp_path, monkeypatch):
+    """B-1200: an AIS address on the internet was saved without a word (refused only when connecting); it is refused
+    at save with the connection's own check. A name this computer can't look up now is saved (checked when used)."""
+    import pytest
+
+    from ap_coder.core.store import Store
+    from ap_coder.erp import jde_ais
+
+    monkeypatch.delenv("AP_ALLOW_INTERNET", raising=False)
+    monkeypatch.setattr(jde_ais, "env_path", lambda: tmp_path / ".env")
+    store = Store(tmp_path / "a.db")
+    looked_up = {"ais.example.com": ["93.184.216.34"], "ais.company.local": ["10.1.2.3"], "ais.vpn.local": []}
+    monkeypatch.setattr(jde_ais, "_resolve", lambda host: looked_up.get(host, [host]))  # an IP: itself
+    with pytest.raises(ValueError, match="on the internet"):
+        jde_ais.save(store, base_url="https://ais.example.com:9300", environment="JPD920", role="", username="JDE")
+    with pytest.raises(ValueError, match="on the internet"):
+        jde_ais.save(store, base_url="https://8.8.8.8:9300", environment="JPD920", role="", username="JDE")
+    assert jde_ais.load(store).base_url == ""  # refused: nothing saved
+    for host in ("ais.company.local", "ais.vpn.local"):
+        jde_ais.save(store, base_url=f"https://{host}:9300", environment="JPD920", role="", username="JDE")
+        assert jde_ais.load(store).host == host
