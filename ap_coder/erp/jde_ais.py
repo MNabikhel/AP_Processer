@@ -520,8 +520,12 @@ class AisClient:
                                "company's CA certificate file in the settings, or ask IT.") from None  # fmt: skip
             except ssl.SSLError as exc:
                 raise AisError(CERTIFICATE, f"The secure connection to {host} failed ({exc.reason or exc}).") from None
-            except TimeoutError:
-                raise AisError(TIMEOUT, f"{host} did not answer within {timeout:g} seconds.") from None
+            except TimeoutError:  # no connection opened, nothing sent (Windows waits ~2 s on a closed port)
+                raise AisError(
+                    UNREACHABLE,
+                    f"{host} can't be reached (no answer within {timeout:g} seconds): is the "
+                    "AIS Server running, and is this computer on the company network or VPN?",
+                ) from None
             except OSError as exc:
                 raise AisError(UNREACHABLE, f"{host} can't be reached ({type(exc).__name__}): is the AIS Server "
                                "running, and is this computer on the company network or VPN?") from None  # fmt: skip

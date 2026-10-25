@@ -132,6 +132,22 @@ def test_nobody_listening_is_unreachable_and_not_sent():
     assert "can't be reached" in str(err.value)
 
 
+def test_no_answer_while_connecting_is_unreachable_and_not_sent(monkeypatch):
+    """A connection that never opens (Windows waits about 2 seconds on a closed port before refusing it) sent
+    nothing: it is "can't be reached", not a timeout of a request JD Edwards may have taken (B-1179)."""
+    with FakeAis() as ais:
+        cfg = ais.settings()
+
+    def no_answer(*args, **kwargs):
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(jde_ais.socket, "create_connection", no_answer)
+    with pytest.raises(jde_ais.AisError) as err:
+        jde_ais.AisClient(cfg).call("voucher_create", {}, idempotent=False)
+    assert err.value.kind == jde_ais.UNREACHABLE and not err.value.sent
+    assert "can't be reached" in str(err.value)
+
+
 def test_https_with_the_company_ca_and_without_it():
     with FakeAis(https=True) as ais:
         assert jde_ais.AisClient(ais.settings()).call("suppliers", {})["Suppliers"]
