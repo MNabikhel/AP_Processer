@@ -284,3 +284,25 @@ def test_on_the_server_report_a_problem_shows_the_services_log(tmp_path):
     _, clients = _server(store)
     page = clients["admin"].get("/help/report").text
     assert short_path(service.log_path(data_dir(store))) in page and "launch.log" not in page
+
+
+# --- L10. The Add new vendor form ----------------------------------------------------------------------------------
+
+
+def test_in_a_browser_the_new_vendor_form_shows_no_error_before_anything_is_typed(browser, store):
+    """B-1193: on an invoice whose vendor is flagged (not in the vendor list), the Add new vendor form's boxes had the
+    flagged field's red border before anything was typed; only a refused add marks the name, until it is typed in."""
+    from .test_web_review_signoff import _review
+
+    page = _review(browser, store, "Cascade")
+    page.locator("[data-vendor-add] summary").click()
+    name = page.locator('[data-vendor-add] [data-new="name"]')
+    border = "(el) => getComputedStyle(el).borderTopColor"
+    plain = page.locator("[form=inv][name=invoice_number]").evaluate(border)
+    assert [page.locator(f'[data-vendor-add] [data-new="{k}"]').evaluate(border) for k in ("name", "gst")] == [plain] * 2
+    name.fill("")
+    page.locator("[data-new-go]").click()
+    page.wait_for_timeout(500)
+    assert name.get_attribute("aria-invalid") == "true" and name.evaluate(border) != plain
+    name.type("Cascade")
+    assert name.get_attribute("aria-invalid") is None
