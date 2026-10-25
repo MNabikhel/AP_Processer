@@ -74,10 +74,10 @@ def _vendor_rows(store: Any) -> dict[str, dict[str, Any]]:
     with store._conn() as conn:
         return {r["vendor_key"]: dict(r) for r in conn.execute(
             "SELECT vendor_key, display_name, erp_id, expected_gst, terms, status, qst_number, pst_number, province, "
-            "erp_bank FROM vendors WHERE in_master = 1")}  # fmt: skip
+            "erp_bank, erp_hold FROM vendors WHERE in_master = 1")}  # fmt: skip
 
 
-VENDOR_FIELDS = {"erp_id": "number", "expected_gst": "GST/HST number", "terms": "terms", "status": "hold",
+VENDOR_FIELDS = {"erp_id": "number", "expected_gst": "GST/HST number", "terms": "terms", "erp_hold": "hold",
                  "qst_number": "QST number", "pst_number": "PST number", "province": "province",
                  "erp_bank": "bank account"}  # fmt: skip
 
@@ -88,6 +88,9 @@ def sync_suppliers(store: Any, client: jde_ais.AisClient, actor: str | None) -> 
     found = client.rows("suppliers")
     records = []
     banks: dict[str, str] = {}
+    # JDE's hold is kept apart (``vendors.erp_hold``): a hold AP put on a vendor here is never lifted by the sync; the
+    # vendor is on hold if either is (D-105).
+    holds: dict[str, str] = {}
     for r in found:
         name, an8 = _text(r.get("name")), _text(r.get("an8"))
         if not name:
@@ -99,19 +102,20 @@ def sync_suppliers(store: Any, client: jde_ais.AisClient, actor: str | None) -> 
             "vendor_name": name, "erp_id": an8, "gst": _text(r.get("tax_id")),
             "qst": second if quebec else "", "pst": "" if quebec else second,
             "terms": _text(r.get("terms")) or by_code.get(code.upper(), code),
-            "status": "on hold" if _text(r.get("hold_code")) else "active", "province": province,
+            "province": province,
         })  # fmt: skip
+        if an8:
+            holds[an8] = _text(r.get("hold_code"))
         last4 = _text(r.get("bank_last4"))[-4:]
         if an8 and last4:
             banks[an8] = f"{_text(r.get('bank_transit'))} …{last4}".strip()
-    columns = {k: k for k in ("vendor_name", "erp_id", "gst", "qst", "pst", "terms", "status", "province")}
+    columns = {k: k for k in ("vendor_name", "erp_id", "gst", "qst", "pst", "terms", "province")}
     before = _vendor_rows(store)
     result = store.import_vendor_master(master_rows(records, columns), actor=actor)
     with store._conn() as conn:
         for an8 in {_text(r.get("an8")) for r in found} - {""}:
-            conn.execute(
-                "UPDATE vendors SET erp_bank = ? WHERE erp_id = ? AND in_master = 1", (banks.get(an8, ""), an8)
-            )
+            conn.execute("UPDATE vendors SET erp_bank = ?, erp_hold = ? WHERE erp_id = ? AND in_master = 1",
+                         (banks.get(an8, ""), holds.get(an8, ""), an8))  # fmt: skip
     after = _vendor_rows(store)
     added = sorted(after[k]["display_name"] for k in after.keys() - before.keys())
     changed = []
@@ -187,7 +191,11 @@ def _po_lines(store: Any, key: str) -> list[tuple[Any, ...]]:
              li["received_quantity"], li["gl_code"], li["cost_center"]) for li in found["lines"]]  # fmt: skip
 
 
-def sync_purchase_orders(store: Any, client: jde_ais.AisClient, actor: str | None) -> dict[str, Any]:
+MASS_CLOSE_SHARE = 0.5  # an answer that would close more than this share of the open synced POs, or all, is refused
+
+
+def sync_purchase_orders(store: Any, client: jde_ais.AisClient, actor: str | None,
+                         allow_mass_close: bool = False) -> dict[str, Any]:  # fmt: skip
     names = {v["erp_id"]: v["display_name"] for v in store.master_vendors() if v.get("erp_id")}
     found = client.rows("purchase_orders", {"order_type": client.cfg.po_order_type})
     records = []
@@ -211,14 +219,26 @@ def sync_purchase_orders(store: Any, client: jde_ais.AisClient, actor: str | Non
     store.import_purchase_orders(rows, actor=actor)
     added = [store.purchase_order(k)["po_number"] for k in keys if not before[k]]
     changed = [store.purchase_order(k)["po_number"] for k in keys if before[k] and before[k] != _po_lines(store, k)]
-    closed = []
-    for key in sorted(set(state(store).get("po_keys") or []) - set(keys)):
-        known = store.purchase_order(key)
-        if known and known["status"] == po_mod.OPEN:
+    closed, refused = [], ""
+    synced = set(state(store).get("po_keys") or [])
+    open_synced = {k: p for k in sorted(synced) if (p := store.purchase_order(k)) and p["status"] == po_mod.OPEN}
+    gone = [k for k in open_synced if k not in set(keys)]
+    if gone and not allow_mass_close and (len(gone) == len(open_synced)
+                                          or len(gone) > MASS_CLOSE_SHARE * len(open_synced)):  # fmt: skip
+        # Most or all of the open POs gone at once is more likely a wrong answer (a filter, a page lost, another
+        # order type) than a month's work: nothing is closed, and the next sync looks again.
+        refused = (
+            f"JD Edwards' answer would close {len(gone)} of the {len(open_synced)} open POs synced before: none "
+            "was closed. If that is right, sync again with --allow-mass-close (python -m ap_coder jde sync)."
+        )
+        log.warning("JD Edwards PO sync: %s", refused)
+        keys = sorted(set(keys) | set(gone))  # still known as synced, so a later sync can close them
+    else:
+        for key in gone:
             store.set_po_status(key, po_mod.CLOSED, actor=actor)
-            closed.append(known["po_number"])
+            closed.append(open_synced[key]["po_number"])
     return {"read": len(found), "added": added, "changed": changed, "closed": closed, "skipped": skipped,
-            "po_keys": keys}  # fmt: skip
+            "refused_close": refused, "po_keys": keys}  # fmt: skip
 
 
 def voucher_rows(found: list[dict[str, Any]], names: dict[str, str]) -> list[dict[str, Any]]:
@@ -249,9 +269,10 @@ SYNCS = {"suppliers": sync_suppliers, "gl_accounts": sync_gl_accounts, "business
 
 
 def sync(store: Any, *, parts: tuple[str, ...] = PARTS, client: jde_ais.AisClient | None = None,
-         actor: str | None = None) -> dict[str, Any]:  # fmt: skip
+         actor: str | None = None, allow_mass_close: bool = False) -> dict[str, Any]:  # fmt: skip
     """Read each part from JD Edwards into the store. {"ok", "at", "parts": {part: report}, "errors": {part: why}}.
-    Step 1 must be on (else ``AisOff``, nothing sent). JDE unreachable: the parts left are not tried."""
+    Step 1 must be on (else ``AisOff``, nothing sent). JDE unreachable: the parts left are not tried.
+    ``allow_mass_close``: close the POs JDE no longer lists even when that is most or all of them."""
     own = client is None
     client = client or jde_ais.client(store, need="step1")
     report: dict[str, Any] = {"at": _now().isoformat(timespec="seconds"), "parts": {}, "errors": {}}
@@ -259,7 +280,10 @@ def sync(store: Any, *, parts: tuple[str, ...] = PARTS, client: jde_ais.AisClien
     try:
         for part in parts:
             try:
-                report["parts"][part] = SYNCS[part](store, client, actor)
+                if part == "purchase_orders":
+                    report["parts"][part] = sync_purchase_orders(store, client, actor, allow_mass_close)
+                else:
+                    report["parts"][part] = SYNCS[part](store, client, actor)
             except jde_ais.AisError as exc:
                 report["errors"][part] = str(exc)
                 if exc.kind in jde_ais.DOWN or exc.kind in (jde_ais.AUTH, jde_ais.CERTIFICATE, jde_ais.ADDRESS):
@@ -292,6 +316,8 @@ def report_lines(report: dict[str, Any], shown: int = 10) -> list[str]:
             bits.append(f"{len(r.get('changed') or [])} changed")
         if r.get("closed"):
             bits.append(f"{len(r['closed'])} closed in JDE")
+        if r.get("refused_close"):
+            bits.append(r["refused_close"])
         if r.get("not_postable"):
             bits.append(f"{r['not_postable']} not postable, left out")
         line = f"{LABELS[part]}: " + ", ".join(bits)
@@ -325,6 +351,7 @@ def due(store: Any, now: dt.datetime | None = None) -> bool:
 CACHE_SECONDS = 300.0
 DOWN_SECONDS = 60.0
 LIVE_TIMEOUT = 5.0
+LIVE_PAGES = 40  # at most this many pages (of 500) of one supplier's vouchers
 _CACHE: dict[tuple[str, str, str], tuple[float, list[dict[str, Any]]]] = {}
 _DOWN: dict[str, tuple[float, str]] = {}
 _LOCK = threading.Lock()
@@ -342,10 +369,9 @@ def _ask(store: Any, an8: str, number: str) -> list[dict[str, Any]]:
     cfg.timeout = min(cfg.timeout, LIVE_TIMEOUT)
     with jde_ais.AisClient(cfg) as c:
         c.retries = 0
-        spec = jde_ais.spec_of(c.mapping, "vouchers")
-        inputs = {"supplier": an8} if an8 else {"invoice": number}
-        answer = c.call("vouchers", {**inputs, "max_rows": int(c.ais.get("page_size") or 500)})
-        return [jde_ais.fields_of(spec, r) for r in answer.get(spec.get("rows") or "rows") or [] if isinstance(r, dict)]
+        # Every page of the supplier's vouchers (the invoice numbers are compared here, written any way): a supplier
+        # with more vouchers than a page is checked to the last one.
+        return c.rows("vouchers", {"supplier": an8} if an8 else {"invoice": number}, max_pages=LIVE_PAGES)
 
 
 def live_findings(store: Any, coding: Any, exclude_invoice_id: int | None = None) -> list[tuple[str, str, str]]:

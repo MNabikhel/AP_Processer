@@ -594,7 +594,7 @@ class StoreCore:
         # The vendor list keeps each vendor's QST and PST numbers, province and the bank account JD Edwards pays it on
         # (the JDE API's sync, D-104), to check what an invoice prints against the vendor (whatever the version).
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(vendors)")}
-        for column in ("qst_number", "pst_number", "province", "erp_bank"):
+        for column in ("qst_number", "pst_number", "province", "erp_bank", "erp_hold"):  # erp_hold: JDE's (D-105)
             if columns and column not in columns:
                 conn.execute(f"ALTER TABLE vendors ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
         # An invoice made from a picture remembers the picture's SHA-256 (intake.py), so the same photo sent again is

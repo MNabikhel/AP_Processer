@@ -11,6 +11,7 @@ import re
 import sqlite3
 import threading
 import urllib.parse
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -306,6 +307,7 @@ class FakeOneLake(BaseHTTPRequestHandler):
     files: dict[str, bytes] = {}
     calls: list[tuple[str, str]] = []
     secret = "s3cret"
+    page_size = 0  # > 0: a listing is answered this many names at a time, with x-ms-continuation
 
     def log_message(self, *args):  # quiet
         pass
@@ -366,7 +368,17 @@ class FakeOneLake(BaseHTTPRequestHandler):
         names = [p[len(prefix) - 1 :] for p in self.files if p.startswith(prefix) and "/" not in p[len(prefix) :]]
         if not names:
             return self._answer(404, b'{"error": {"code": "PathNotFound"}}')
-        self._answer(200, json.dumps({"paths": [{"name": n, "isDirectory": "false"} for n in names]}).encode())
+        start = int((query.get("continuation") or ["0"])[0])
+        size = self.page_size or len(names)
+        page, more = sorted(names)[start : start + size], start + size < len(names)
+        body = json.dumps({"paths": [{"name": n, "isDirectory": "false"} for n in page]}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        if more:
+            self.send_header("x-ms-continuation", str(start + size))
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_DELETE(self):
         self.files.pop(urllib.parse.unquote(urllib.parse.urlsplit(self.path).path), None)
@@ -374,8 +386,9 @@ class FakeOneLake(BaseHTTPRequestHandler):
 
 
 @pytest.fixture
-def fake_onelake():
-    FakeOneLake.files, FakeOneLake.calls = {}, []
+def fake_onelake(monkeypatch):
+    monkeypatch.setattr(onelake, "ALLOW_TEST_HTTP", True)  # plain http to this computer: the tests' stand-in only
+    FakeOneLake.files, FakeOneLake.calls, FakeOneLake.page_size = {}, [], 0
     server = ThreadingHTTPServer(("127.0.0.1", 0), FakeOneLake)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -541,6 +554,78 @@ def test_the_finance_hub_is_an_admins_and_records_who_ran_it_on_the_server(store
     )
     client = TestClient(app, base_url="https://localhost", client=("10.0.0.5", 50000))
     client.cookies.set(SESSION_COOKIE, store.start_session(uid))
+    store.log_event("note", None, "Ada Admin", {"text": "work to send"})  # (account events are not sent, D-105)
     answer = post(client, "/settings/hub/run", {})
     assert answer.status_code == 200, answer.text
     assert store.events(actions=["hub_export"])[0]["actor"] == "Ada Admin"
+
+
+# --- D-105: the review's findings -----------------------------------------------------------------------------------
+
+
+def _marks(dest: MemoryDestination, table: str) -> list[tuple[str, str]]:
+    found = []
+    for name in dest.list(table):
+        if name.endswith(".csv"):
+            rows = csv.DictReader(io.StringIO(dest.files[f"{table}/{name}"].decode("utf-8")))
+            found += [(r[TABLES[table].key[0]], r["__rowMarker__"]) for r in rows]
+    return found
+
+
+def test_a_new_schema_version_at_the_same_destination_still_deletes_rows_gone(store, tmp_path, monkeypatch):
+    dest = MemoryDestination()
+    _approved(store, tmp_path, grand_total=500.0)
+    other = store.add_invoice(tmp_path / "b.pdf", {**gt(), "invoice_number": "B-1"}, {})
+    assert export(store, csv_config(), destination=dest).ok
+    store.reject_invoice(other, "Jane", "x")
+    store.delete_invoice(other, actor="Jane")
+    monkeypatch.setattr(run, "HUB_SCHEMA_VERSION", 2)
+    result = export(store, csv_config(), destination=dest)
+    assert result.ok and result.full and result.tables["invoices"]["deletes"] == 1
+    assert (str(other), "2") in _marks(dest, "invoices")
+
+
+def test_account_and_settings_events_stay_out_of_activity(store):
+    for action in ("user_added", "role_changed", "user_activated", "user_deactivated", "backup_restored",
+                   "settings_changed", "login", "logout", "login_failed", "login_mfa_failed"):  # fmt: skip
+        store.log_event(action, actor="Admin", detail={"username": "ann"})
+    store.log_event("note", 1, "Jane", {"text": "kept"})
+    assert [r["action"] for r in tables.build(store, "activity", tables.Context())] == ["note"]
+
+
+def test_a_gateway_copy_that_fails_is_a_warning_not_a_failed_run(store, tmp_path, monkeypatch):
+    _approved(store, tmp_path, grand_total=500.0)
+
+    def broken(*args, **kwargs):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(landing, "gateway_database", broken)
+    share = tmp_path / "share"
+    result = export(store, csv_config(folder=str(share)))
+    assert result.ok, result.error
+    assert any("Warning" in n and "SQLite" in n for n in result.notes) and "Warning" in result.summary()
+    assert any(p.name.endswith(".csv") for p in (share / "invoices").iterdir())
+    store.log_event("note", 1, "Jane", {"text": "more"})
+    second = export(store, csv_config(folder=str(share)))
+    assert second.ok and second.tables["invoices"]["upserts"] == 0  # the first run was recorded as sent
+
+
+def test_the_onelake_listing_follows_the_continuation(store, tmp_path, fake_onelake, monkeypatch):
+    monkeypatch.setenv("AP_ALLOW_INTERNET", "1")
+    dest = onelake_config(fake_onelake).destination()
+    for n in range(1, 6):
+        dest.write(f"activity/{n:020d}.csv", b"x")
+    FakeOneLake.page_size = 2
+    assert dest.list("activity") == [f"{n:020d}.csv" for n in range(1, 6)]
+    assert landing.last_sequence(dest.list("activity")) == 5
+
+
+def test_the_onelake_push_never_uses_a_proxy_nor_plain_http(monkeypatch):
+    monkeypatch.setenv("AP_ALLOW_INTERNET", "1")
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example.com:3128")
+    dest = onelake.OneLakeDestination("https://onelake.dfs.fabric.microsoft.com/ws/db/Files/LandingZone", "t", "c",
+                                      "s", opted_in=True)  # fmt: skip
+    assert not [h for h in dest._opener.handlers if isinstance(h, urllib.request.ProxyHandler) and h.proxies]
+    with pytest.raises(HubError, match="https://"):
+        onelake.OneLakeDestination("http://127.0.0.1:1/ws/db", "t", "c", "s", authority="https://127.0.0.1:1",
+                                   opted_in=True)  # fmt: skip

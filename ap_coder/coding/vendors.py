@@ -369,11 +369,12 @@ def vendor_findings(
              f"invoice #{other['id']} from {other['vendor_name']} has the same number and total: the same bill "
              "under two vendor names?")
         )  # fmt: skip
-    held = [v for v in (own, master) if v and v.get("status") == ON_HOLD]
+    held = [v for v in (own, master) if v and (v.get("status") == ON_HOLD or v.get("erp_hold"))]
     if held:
         notes = list(dict.fromkeys(v["notes"] for v in held if v.get("notes")))
         note = f": {'; '.join(notes)}" if notes else ""
-        findings.append((ERROR, "VENDOR_ON_HOLD", f"this vendor is on hold in the vendor list{note}"))
+        where = "in the vendor list" if any(v.get("status") == ON_HOLD for v in held) else "in JD Edwards"
+        findings.append((ERROR, "VENDOR_ON_HOLD", f"this vendor is on hold {where}{note}"))
 
     history = [h for h in store.vendor_invoices(key) if h["id"] != exclude_invoice_id]
     findings += _credit_note_findings(coding, store, history)
@@ -486,19 +487,34 @@ def _jde_live_findings(
 
 
 def _jde_bank_findings(coding: InvoiceCoding, vendor: dict[str, Any] | None) -> list[tuple[str, str, str]]:
-    """VENDOR_BANK_NOT_JDE: the account printed for payment does not end like the one JD Edwards pays this vendor on
-    (``vendors.erp_bank``, "transit …last 4", from the JDE API's supplier sync, D-104)."""
+    """VENDOR_BANK_NOT_JDE: the account printed for payment does not end like the one JD Edwards pays this vendor on,
+    or is at another transit (``vendors.erp_bank``, "transit …last 4", from the JDE API's supplier sync, D-104)."""
     jde_bank = str((vendor or {}).get("erp_bank") or "").strip()
     printed = coding.remit_bank_account
     if not jde_bank or not bank_digits(printed)[0]:
         return []
     shown = mask_account(printed)
-    if shown == "(none)" or shown[-4:] == jde_bank[-4:]:
+    if shown == "(none)" or (shown[-4:] == jde_bank[-4:] and _same_transit(jde_bank, printed)):
         return []
+    branch = bank_branch(printed)
+    shown = f"{branch} {shown}" if branch and not _same_transit(jde_bank, printed) else shown
     return [(WARNING, "VENDOR_BANK_NOT_JDE",
              f"the bank details printed for payment ({shown}) are not the account JD Edwards pays this vendor on "
              f"({jde_bank}): confirm by phone, on a number from your vendor file, not from the invoice, before paying "
              "or changing the vendor's banking")]  # fmt: skip
+
+
+def _same_transit(jde_bank: str, printed: Any) -> bool:
+    """Whether the transit and institution JD Edwards pays on ("00012-003 …4567": before the "…") are the ones printed
+    (each number, leading zeros aside, among the printed ones, or all the digits as one run); True when either side
+    gives none."""
+    theirs = re.findall(r"\d+", jde_bank.split("…", 1)[0])
+    ours = re.findall(r"\d+", bank_branch(printed))
+    if not theirs or not ours:
+        return True
+    norm = {n.lstrip("0") or "0" for n in ours}
+    joined = "".join(ours).lstrip("0")
+    return all((n.lstrip("0") or "0") in norm for n in theirs) or "".join(theirs).lstrip("0") == joined
 
 
 def _province_or_blank(value: str) -> str:

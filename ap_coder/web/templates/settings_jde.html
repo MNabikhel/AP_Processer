@@ -62,6 +62,8 @@
         <input type="text" name="device_name" value="{{ c.device_name }}" maxlength="30"></label>
     </div>
     {% if c.password_hint %}<label class="check"><input type="checkbox" name="forget_password" value="1"> Forget the saved password</label>{% endif %}
+    <label class="check"><input type="checkbox" name="shared_network" value="1"{% if c.shared_network %} checked{% endif %}> This address is on our network <span class="muted">(only for an AIS address in 100.64.0.0/10, used by some VPNs)</span></label>
+    <small class="muted">A new AIS address forgets the saved password: type it again.</small>
     <fieldset class="st-radios"><legend>Sign-in</legend>
       {% for key, text in api.auth_modes.items() %}
       <label class="check"><input type="radio" name="auth_mode" value="{{ key }}"{% if c.auth_mode == key %} checked{% endif %}> {{ text }}</label>

@@ -105,7 +105,7 @@
     },
     "voucher_create": {
       "name": "APC_Voucher_Create",
-      "inputs": {"key": "IdempotencyKey", "mode": "ProcessingMode", "pay_items": "PayItems", "gl_lines": "GLLines", "matches": "ReceiptMatches"},
+      "inputs": {"key": "IdempotencyKey", "mode": "ProcessingMode", "pay_items": "PayItems", "gl_lines": "GLLines", "matches": "ReceiptMatches", "fingerprint": "PayloadFingerprint"},
       "modes": {"proof": "PROOF", "final": "FINAL"},
       "fields": {
         "result": "Result",
@@ -113,6 +113,10 @@
         "doc_type": "DocumentType",
         "company": "DocumentCompany",
         "batch": "BatchNumber",
+        "an8": "SupplierNumber",
+        "invoice_number": "InvoiceNumber",
+        "gross": "GrossAmount",
+        "fingerprint": "PayloadFingerprint",
         "messages": "Messages"
       },
       "results": {"created": "CREATED", "exists": "EXISTS", "valid": "VALID", "error": "ERROR"}
@@ -125,7 +129,11 @@
         "document": "DocumentNumber",
         "doc_type": "DocumentType",
         "company": "DocumentCompany",
-        "batch": "BatchNumber"
+        "batch": "BatchNumber",
+        "an8": "SupplierNumber",
+        "invoice_number": "InvoiceNumber",
+        "gross": "GrossAmount",
+        "fingerprint": "PayloadFingerprint"
       }
     }
   }

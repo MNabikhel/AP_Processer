@@ -119,9 +119,9 @@ def jde_file(store: Store, batch: int) -> tuple[bytes, str, str]:
     batch holds the same vouchers every time (what the current settings would now refuse is listed in the README
     to check before loading); in another batch an invoice that does not pass the checks is left out."""
     invoices, left_out = jde_left_out(store, batch)
-    # Vouchers already posted through the API (D-104) are left out of the files: loaded again, they would be twice.
-    posted = jde_post.posted_ids(store, batch)
-    left_out = {**left_out, **{i: ["already posted to JD Edwards through the API"] for i in posted}}
+    # Vouchers JD Edwards has, or may have, through the API (D-104, D-105) are left out of the files: loaded again,
+    # they would be twice. The README lists them (the unknown ones: check in JD Edwards before loading).
+    left_out = {**left_out, **jde_post.left_out_of_files(store, batch)}
     settings, lookup = jde.load(store), store.vendor_ids()
     created = next((b["created_at"] for b in store.export_batches() if b["id"] == batch), "")
     kept = [i for i in invoices if i["id"] not in left_out]
@@ -454,13 +454,12 @@ def undo_batch(request: Request, batch: int) -> JSONResponse:
     known = next((b for b in store.export_batches() if b["id"] == batch), None)
     if known is None or known["undone_at"]:
         return refuse(f"Batch {batch} is not an export that can be undone.")
-    if problem := jde_post.undo_problem(store, batch):  # JD Edwards has (or may have) one of its vouchers (D-104)
-        return refuse(problem)
-    try:
-        count = store.undo_export_batch(batch, actor=current_reviewer())
+    try:  # refused in the same transaction when JD Edwards has (or may have) one of its vouchers (D-104, D-105)
+        count = jde_post.undo_batch(store, batch, actor=current_reviewer())
+    except jde_post.Locked as exc:
+        return refuse(str(exc))
     except ValueError:  # undone meanwhile (another click, another tab)
         return refuse(f"Batch {batch} is not an export that can be undone.")
-    jde_post.forget_batch(store, batch)
     return done(
         request,
         "/exports",

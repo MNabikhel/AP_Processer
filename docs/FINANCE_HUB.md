@@ -90,7 +90,8 @@ workflow_runs (run_id): import-<event> and hub_export-<event> are activity event
 - The invoice files (PDFs, pictures, emails): only `invoice_url`.
 - A vendor's bank details (in an event's detail they are shown as `(hidden)`), and the company's own bank accounts.
 - Sign-in events (logins, failed logins, passwords, unlocked addresses): the server's security record.
-- Settings, accounts and passwords, the learning memory's lessons, imported ERP history.
+- Settings, accounts and passwords (also their events in `activity`: user_added, role_changed, user_activated,
+  user_deactivated, backup_restored, settings_changed), the learning memory's lessons, imported ERP history.
 
 ## The tables
 
@@ -193,7 +194,7 @@ Key: `approval_id`. Changes: compared row by row with what was sent (a fingerpri
 
 ### `activity`
 
-The audit trail: every event AP Coder records (read, approved, exported, settings changed...), oldest first. Sign-in events are left out.
+The audit trail: every event AP Coder records (read, approved, exported...), oldest first. Sign-in, account and settings events are left out.
 
 Key: `event_id`. Changes: only ever added; sent by the last event id sent (the watermark).
 
@@ -201,7 +202,7 @@ Key: `event_id`. Changes: only ever added; sent by the last event id sent (the w
 |---|---|---|
 | `event_id` | int64 | The event's number, in the order recorded. Key. |
 | `invoice_id` | int64 | The invoice it is about, if any. |
-| `action` | string | What happened (processed, approved, final_approved, exported, parked, rejected, settings_changed, import_run, hub_export...). |
+| `action` | string | What happened (processed, approved, final_approved, exported, parked, rejected, import_run, hub_export...). |
 | `actor` | string | Who did it (a person, or AP Coder). |
 | `occurred_at` | timestamp | When. |
 | `detail_json` | string | What AP Coder recorded with it, as JSON (a vendor's bank details hidden). |

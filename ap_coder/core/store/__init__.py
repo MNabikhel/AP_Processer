@@ -18,7 +18,8 @@ approving, the ERP's register, the second approval), ``purchasing`` (POs, export
 (supplier learning, touchless, reader scores, the page-reader and Azure queues), ``lessons`` (lessons and the AI
 reviewer's queue), ``vendors``, ``backups``, ``learning`` (the feedback memory, metrics), ``ephemeral`` (messages
 and uploads kept for a short while), ``samples``, ``users`` (server mode's accounts, sessions and login attempts,
-D-97), ``hub`` (what the finance hub feed reads, D-103). A test that patches a module-level name (``_now``,
+D-97), ``hub`` (what the finance hub feed reads, D-103), ``postings`` (the JD Edwards postings ledger kept across a
+restore, D-105). A test that patches a module-level name (``_now``,
 ``json``...) patches it in the part that uses it.
 """
 

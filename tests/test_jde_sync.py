@@ -48,7 +48,7 @@ def test_a_first_sync_fills_every_table_through_the_imports(store, ais):
     assert acme["erp_id"] == "4001" and acme["expected_gst"] == "123456789RT0001" and acme["terms"] == "Net 30"
     assert acme["status"] == "active" and acme["province"] == "ON" and acme["erp_bank"] == "00012-003 …4567"
     courier = store.get_vendor("northern courier")
-    assert courier["status"] == "on_hold" and courier["qst_number"] == "1234567890TQ0001"  # the hold code: on hold
+    assert courier["erp_hold"] == "H" and courier["qst_number"] == "1234567890TQ0001"  # the hold code: on hold in JDE
     codes = {r["code"]: r["description"] for r in store.list_accounts("gl_accounts")}
     assert codes == {"6100": "Office supplies", "6200": "Courier and freight", "6200.01": "Courier - same day",
                      "1310": "GST/HST receivable"}  # the inactive 6999 left out  # fmt: skip
@@ -81,10 +81,10 @@ def test_a_second_sync_reports_what_changed_and_closes_pos_no_longer_open(store,
     assert parts["suppliers"]["changed"] == ["Acme Office Supplies Ltd. (bank account)", "Northern Courier Inc. (hold)"]
     assert parts["gl_accounts"]["changed"] == ["6100 (description)"]
     assert parts["purchase_orders"]["changed"] == ["4512"]
-    assert store.get_vendor("northern courier")["status"] == "active"
+    assert store.get_vendor("northern courier")["erp_hold"] == ""
     assert next(r for r in store.list_accounts("gl_accounts") if r["code"] == "6100")["category"] == "Office"  # kept
     ais.data["purchase_orders"] = []
-    report = jde_sync.sync(store)
+    report = jde_sync.sync(store, allow_mass_close=True)  # every open PO at once: only when asked (D-105)
     assert (
         report["parts"]["purchase_orders"]["closed"] == ["4512"] and store.purchase_order("4512")["status"] == "closed"
     )

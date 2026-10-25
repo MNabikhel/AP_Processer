@@ -22,10 +22,18 @@ outputs) and is specified for the JDE team in ``docs/JDE_ORCHESTRATIONS.md``.
   an answer that isn't JSON. ``sent`` says whether the request may have reached JDE: a voucher whose request timed out
   after it was sent is *unknown*, looked up before it is ever sent again (``jde_post``).
 * **Limited retries** of what is safe to repeat: the connection refused or reset before the request was sent, AIS busy
-  (502/503/504), and a timeout of a read (``idempotent``); a voucher's request is never repeated by the client.
+  (502/503/504), and a timeout of a read (``idempotent``); a voucher's request is never repeated by the client after
+  it may have reached JDE: 502 and 504 (a gateway that passed the request on and lost the answer) raise ``sent``. 503
+  is taken as refused before processing (AIS or its load balancer turning the request away): retried, not sent.
+* **The address checked is the address used**: the name is resolved once, each address must be on the company
+  network, and the connection goes to that address (with the name for the certificate and the Host header), so a
+  DNS answer that changes between the check and the connection (DNS rebinding) can't lead it elsewhere. 6to4
+  (2002::/16) and documentation (2001:db8::/32) addresses are not internal; 100.64.0.0/10 (carrier-grade NAT, some
+  VPNs) only when an Admin ticks "this address is on our network" (``shared_network``).
 * **No secrets in logs**: the password is kept in the data folder's .env (``JDE_AIS_PASSWORD``, as the Azure key is),
   never in the database or the repository; it, the token and the Basic header are cut out of any error text
-  (``scrub``), and log lines name the orchestration and the HTTP status only.
+  (``scrub``, whatever their length), and log lines name the orchestration and the HTTP status only. A new AIS
+  address forgets the saved password (it is typed again), so it is never sent to a host it was not given for.
 """
 
 from __future__ import annotations
@@ -143,6 +151,7 @@ class AisSettings:
     company: str = ""  # the company whose accounts and business units are read; blank: every company
     po_order_type: str = "OP"
     voucher_days: int = 730  # how far back the AP ledger is read for the duplicate check
+    shared_network: bool = False  # an Admin's tick: the AIS address in 100.64.0.0/10 is on the company network
     password: str = field(default="", repr=False, compare=False)  # from the .env, never stored with the rest
 
     @property
@@ -177,7 +186,7 @@ class AisSettings:
                      "po_order_type"):  # fmt: skip
             setattr(out, name, str(getattr(out, name) or "").strip())
         out.auth_mode = out.auth_mode if out.auth_mode in AUTH_MODES else TOKEN
-        out.step1, out.step2 = bool(out.step1), bool(out.step2)
+        out.step1, out.step2, out.shared_network = bool(out.step1), bool(out.step2), bool(out.shared_network)
         try:
             out.timeout = min(300.0, max(0.1, float(out.timeout)))
         except (TypeError, ValueError):
@@ -248,43 +257,53 @@ def _loopback(host: str) -> bool:
         return False
 
 
-def _private(address: str) -> bool:
+NOT_INTERNAL = (ipaddress.ip_network("2002::/16"), ipaddress.ip_network("2001:db8::/32"))  # 6to4, documentation
+SHARED = ipaddress.ip_network("100.64.0.0/10")  # carrier-grade NAT (some VPNs): only with the Admin's tick
+
+
+def _private(address: str, shared: bool = False) -> bool:
     try:
         ip = ipaddress.ip_address(address.split("%", 1)[0])
     except ValueError:
         return False
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    if any(ip in net for net in NOT_INTERNAL):
+        return False
+    if ip in SHARED:
+        return shared
     return ip.is_private or ip.is_loopback or ip.is_link_local
 
 
-def internal_problem(host: str, resolve: Callable[[str], list[str]] | None = None) -> str:
-    """Why ``host`` is not on the company's network ("" when it is): an IP address must be a private one; a name is
-    judged by the addresses it resolves to, all private. With ``AP_ALLOW_INTERNET=1`` (developers) anything goes."""
+def internal_address(host: str, resolve: Callable[[str], list[str]] | None = None,
+                     shared: bool = False) -> tuple[str, str]:  # fmt: skip
+    """(why ``host`` is not on the company's network or "", the one address to connect to). An IP address must be a
+    private one; a name is resolved once and judged by every address it resolves to, all private. With
+    ``AP_ALLOW_INTERNET=1`` (developers) any address goes, still resolved once and pinned."""
     from ..ops.offline import internet_allowed
 
-    if internet_allowed() or _loopback(host):
-        return ""
+    anything = internet_allowed()
+    bare = host.strip("[]")
     try:
-        ipaddress.ip_address(host.strip("[]"))
-        literal = True
+        ipaddress.ip_address(bare)
+        found = [bare]
     except ValueError:
-        literal = False
-    if literal:
-        return (
-            ""
-            if _private(host.strip("[]"))
-            else (
-                f"{host} is an address on the internet: AP Coder connects only to an AIS Server on your company's "
-                "network."
-            )
-        )
-    found = (resolve or _resolve)(host)
+        found = (resolve or _resolve)(host)
     if not found:
-        return f"{host} can't be found on the network (check the name, or the VPN)."
-    public = [a for a in found if not _private(a)]
-    if public:
-        return (f"{host} is an address on the internet ({public[0]}): AP Coder connects only to an AIS Server on your "
-                "company's network.")  # fmt: skip
-    return ""
+        return f"{host} can't be found on the network (check the name, or the VPN).", ""
+    public = [a for a in found if not _private(a, shared)]
+    if public and not anything:
+        where = "" if found == [bare] else f" ({public[0]})"
+        cgnat = (" (100.64.0.0/10: an Admin ticks \u201cthis address is on our network\u201d if it is)"
+                 if any(_private(a, True) for a in public) else "")  # fmt: skip
+        return (f"{host} is an address on the internet{where}: AP Coder connects only to an AIS Server on your "
+                f"company's network{cgnat}."), ""  # fmt: skip
+    return "", found[0]
+
+
+def internal_problem(host: str, resolve: Callable[[str], list[str]] | None = None, shared: bool = False) -> str:
+    """Why ``host`` is not on the company's network ("" when it is): ``internal_address``'s answer."""
+    return internal_address(host, resolve, shared)[0]
 
 
 def _resolve(host: str) -> list[str]:
@@ -297,10 +316,11 @@ def _resolve(host: str) -> list[str]:
 def save(store: Any, *, base_url: str, environment: str, role: str, username: str, password: str = "",
          forget_password: bool = False, device_name: str = "APCoder", auth_mode: str = TOKEN, ca_file: str = "",
          timeout: float = DEFAULT_TIMEOUT, step1: bool = False, step2: bool = False, sync_hour: int = 2,
-         company: str = "", po_order_type: str = "OP", voucher_days: int = 730,
+         company: str = "", po_order_type: str = "OP", voucher_days: int = 730, shared_network: bool = False,
          actor: str | None = None) -> list[str]:  # fmt: skip
     """Save the connection; the names of what changed (never the values of the password). An empty ``password`` keeps
-    the one saved. Raises ValueError, in plain words, for what can't be used. Switching a step on needs the address,
+    the one saved, unless the AIS address moved to another host: the saved password is then forgotten and asked for
+    again. Raises ValueError, in plain words, for what can't be used. Switching a step on needs the address,
     environment, user and password."""
     from ..core.envfile import one_line, write_env
 
@@ -309,7 +329,7 @@ def save(store: Any, *, base_url: str, environment: str, role: str, username: st
         "base_url": clean_base_url(base_url), "environment": environment, "role": role or "*ALL",
         "username": username, "device_name": device_name or "APCoder", "auth_mode": auth_mode, "ca_file": ca_file,
         "timeout": timeout, "step1": step1, "step2": step2, "sync_hour": sync_hour, "company": company,
-        "po_order_type": po_order_type or "OP", "voucher_days": voucher_days,
+        "po_order_type": po_order_type or "OP", "voucher_days": voucher_days, "shared_network": shared_network,
     }))  # fmt: skip
     if auth_mode not in AUTH_MODES:
         raise ValueError("Choose how AP Coder signs in to AIS.")
@@ -319,20 +339,24 @@ def save(store: Any, *, base_url: str, environment: str, role: str, username: st
         raise ValueError(f"The CA certificate file {new.ca_file} isn't there: give the full path of the .pem / .crt "
                          "file IT gave you, or leave it blank.")  # fmt: skip
     password = one_line(password or "")
+    moved = bool(before.base_url and new.base_url and _where(new.base_url) != _where(before.base_url))
+    if moved and not password and before.password:
+        forget_password = True  # never send the password saved for one host to another
     if new.on:
         missing = [label for label, value in (("the AIS address", new.base_url), ("the environment", new.environment),
                                               ("the user", new.username)) if not value]  # fmt: skip
-        if not (password or before.password) or forget_password:
-            missing.append("the password")
+        if not password and (not before.password or forget_password):
+            missing.append("the password (type it again for the new AIS address)" if moved else "the password")
         if missing:
             raise ValueError("To switch the connection on, fill in " + ", ".join(missing) + ".")
     changed = [name for name in ("base_url", "environment", "role", "username", "device_name", "auth_mode", "ca_file",
-                                 "timeout", "step1", "step2", "sync_hour", "company", "po_order_type", "voucher_days")
+                                 "timeout", "step1", "step2", "sync_hour", "company", "po_order_type", "voucher_days",
+                                 "shared_network")
                if getattr(new, name) != getattr(before, name)]  # fmt: skip
     if new.to_json() != store.get_setting(SETTING_KEY):
         store.set_setting(SETTING_KEY, new.to_json(), actor=actor)
     env: dict[str, str] = {}
-    if forget_password and before.password:
+    if forget_password and before.password and not password:
         env[PASSWORD_ENV] = ""
     elif password and password != before.password:
         env[PASSWORD_ENV] = password
@@ -343,6 +367,15 @@ def save(store: Any, *, base_url: str, environment: str, role: str, username: st
     if changed:
         store.log_event("settings_changed", actor=actor, detail={"jde_api": changed})
     return changed
+
+
+def _where(url: str) -> tuple[str, int | None]:
+    """The host and port an AIS address goes to."""
+    try:
+        parts = urlsplit(url)
+        return (parts.hostname or "").lower(), parts.port
+    except ValueError:
+        return url, None
 
 
 def status(cfg: AisSettings) -> tuple[bool, str]:
@@ -362,9 +395,8 @@ def status(cfg: AisSettings) -> tuple[bool, str]:
 def scrub(text: Any, *secrets: str) -> str:
     """``text`` with each secret (the password, the token, a Basic header) cut out, at most 500 characters."""
     out = str(text or "")
-    for secret in secrets:
-        if secret and len(secret) >= 4:
-            out = out.replace(secret, "••••")
+    for secret in sorted({s for s in secrets if s}, key=len, reverse=True):  # whatever its length
+        out = out.replace(secret, "••••")
     return out[:500]
 
 
@@ -418,9 +450,14 @@ class AisClient:
                  resolve: Callable[[str], list[str]] | None = None, allow_off: bool = False) -> None:  # fmt: skip
         if not cfg.on and not allow_off:
             raise AisOff()
-        problem = address_problem(cfg.base_url) or internal_problem(cfg.host, resolve)
+        problem, address = address_problem(cfg.base_url), ""
+        if not problem:
+            problem, address = internal_address(cfg.host, resolve, cfg.shared_network)
+        if not problem and urlsplit(cfg.base_url).scheme == "http" and not _loopback(address):
+            problem = "The AIS address must start with https:// (plain http only to this computer, for a test)."
         if problem:
             raise AisError(ADDRESS, problem)
+        self.address = address  # resolved once, checked, and the only address connected to
         if not cfg.username or not cfg.password:
             raise AisError(AUTH, "No JDE user or password saved (Settings → JD Edwards E1 → API connection).")
         self.cfg = cfg
@@ -454,10 +491,20 @@ class AisClient:
         return self._context
 
     def _connection(self, timeout: float) -> http.client.HTTPConnection:
+        # http.client uses no proxy: the AIS Server is asked directly, on the company network. The socket goes to the
+        # address checked (``self.address``); the name stays the certificate's (SNI) and the Host header's.
         if self.scheme == "https":
-            # http.client uses no proxy: the AIS Server is asked directly, on the company network.
-            return http.client.HTTPSConnection(self.netloc, timeout=timeout, context=self._ssl())
-        return http.client.HTTPConnection(self.netloc, timeout=timeout)
+            conn: http.client.HTTPConnection = http.client.HTTPSConnection(self.netloc, timeout=timeout,
+                                                                           context=self._ssl())  # fmt: skip
+        else:
+            conn = http.client.HTTPConnection(self.netloc, timeout=timeout)
+        address = self.address
+
+        def pinned(where: tuple[str, int], *args: Any, **kwargs: Any) -> socket.socket:
+            return socket.create_connection((address, where[1]), *args, **kwargs)
+
+        conn._create_connection = pinned  # type: ignore[attr-defined]
+        return conn
 
     def _once(self, method: str, path: str, body: Any, headers: dict[str, str],
               timeout: float) -> tuple[int, Any]:  # fmt: skip
@@ -521,6 +568,11 @@ class AisClient:
                     exc.args = (scrub(exc.args[0], *self._secrets()),)
                     raise
             else:
+                if status in (502, 504) and not idempotent:
+                    # A gateway passed the request on and lost the answer: the voucher may be made. Never repeated.
+                    raise AisError(UNREACHABLE, f"AIS answered HTTP {status} (a gateway that lost JD Edwards' "
+                                   "answer): it may have been made, so it is looked up by its key before anything "
+                                   "else.", status=status, sent=True)  # fmt: skip
                 if status not in BUSY or attempt >= self.retries:
                     return status, parsed
             attempt += 1
@@ -534,9 +586,9 @@ class AisClient:
         status, parsed = self._request("POST", self.ais.get("token_path", "/jderest/v2/tokenrequest"), body, {},
                                        idempotent=True)  # fmt: skip
         if status in (401, 403):
-            raise AisError(AUTH, f"AIS refused the JDE user {self.cfg.username} in {self.cfg.environment}: "
+            raise AisError(AUTH, scrub(f"AIS refused the JDE user {self.cfg.username} in {self.cfg.environment}: "
                            + self._why(parsed, "the user, password, environment or role is wrong"),
-                           status=status)  # fmt: skip
+                           *self._secrets()), status=status)  # fmt: skip
         if status != 200:
             raise self._failure(status, parsed, "the token request")
         token = ((parsed.get("userInfo") or {}).get("token") if isinstance(parsed, dict) else None) or ""

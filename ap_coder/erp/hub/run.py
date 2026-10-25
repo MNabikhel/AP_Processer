@@ -354,7 +354,9 @@ def _run(store: Any, config: HubConfig, dest: Destination, result: Result, folde
                 changes[name] = (new, [], {})
                 continue
             now = {_key(r, table.key): (r, _fingerprint(r)) for r in built[name]}
-            before = {} if fresh else state.sent(name)
+            # What this destination holds: a new format or schema version at the same destination still sends a delete
+            # for each row sent there before and gone since (a new destination holds nothing).
+            before = {} if state.get("destination") != dest.ident() else state.sent(name)
             upserts = [r for k, (r, h) in now.items() if full or before.get(k) != h]
             deletes = [k for k in before if k not in now]
             changes[name] = (upserts, deletes, {k: h for k, (_, h) in now.items()})
@@ -397,15 +399,7 @@ def _run(store: Any, config: HubConfig, dest: Destination, result: Result, folde
         info = {"at": started, "rows": result.rows, "full": full, "files": len(result.files)}
         dest.write(landing.HUB_FILE, landing.hub_json(result.format, info))
         if isinstance(dest, FolderDestination) and config.sqlite and config.mode == FOLDER:
-            made = landing.gateway_database(built, started)
-            try:
-                dest.put_file(f"{landing.GATEWAY_DIR}/{landing.GATEWAY_FILE}", made)
-                result.files.append(f"{landing.GATEWAY_DIR}/{landing.GATEWAY_FILE}")
-            except OSError as exc:  # e.g. held open by the gateway (Windows): the tables went out, the copy waits
-                result.notes.append(f"The gateway's SQLite copy was not replaced ({exc.strerror or exc}); the next "
-                                    "run tries again.")  # fmt: skip
-            finally:
-                shutil.rmtree(made.parent, ignore_errors=True)
+            _gateway(dest, built, started, result)
         state.set("destination", dest.ident())
         state.set("format", result.format)
         state.set("schema_version", HUB_SCHEMA_VERSION)
@@ -414,6 +408,24 @@ def _run(store: Any, config: HubConfig, dest: Destination, result: Result, folde
         state.conn.commit()
     finally:
         state.close()
+
+
+def _gateway(dest: FolderDestination, built: dict[str, list[dict[str, Any]]], started: str, result: Result) -> None:
+    """The gateway's SQLite copy, after the tables went out: whatever goes wrong making or placing it is a warning of
+    the run (the next run tries again), never a failed run (the data files are written and recorded)."""
+    made: Path | None = None
+    try:
+        made = landing.gateway_database(built, started)
+        dest.put_file(f"{landing.GATEWAY_DIR}/{landing.GATEWAY_FILE}", made)
+        result.files.append(f"{landing.GATEWAY_DIR}/{landing.GATEWAY_FILE}")
+    except Exception as exc:  # noqa: BLE001 - e.g. held open by the gateway (Windows), the disk full, a value SQLite refuses
+        why = getattr(exc, "strerror", None) or str(exc) or type(exc).__name__
+        result.notes.append(f"Warning: the gateway's SQLite copy was not replaced ({why}); the tables were sent, and "
+                            "the next run tries again.")  # fmt: skip
+        log.warning("finance hub: the gateway's SQLite copy was not made: %s", why)
+    finally:
+        if made is not None:
+            shutil.rmtree(made.parent, ignore_errors=True)
 
 
 def _delete_row(table: Any, key: str) -> dict[str, Any]:

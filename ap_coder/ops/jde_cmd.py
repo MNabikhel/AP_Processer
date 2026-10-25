@@ -20,6 +20,11 @@ def add_parser(sub: Any) -> None:
     p.add_argument("action", choices=["test", "sync", "status"])
     p.add_argument("--only", nargs="+", choices=list(jde_sync.PARTS), help="sync: only these parts")
     p.add_argument("--retry", action="store_true", help="status: send the vouchers waiting for JD Edwards now")
+    p.add_argument(
+        "--allow-mass-close",
+        action="store_true",
+        help="sync: close the POs JD Edwards no longer lists even when that is most or all of them",
+    )
 
 
 def main(args: argparse.Namespace) -> int:
@@ -32,7 +37,12 @@ def main(args: argparse.Namespace) -> int:
         return 0 if found.get("ok") else 1
     if args.action == "sync":
         try:
-            report = jde_sync.sync(store, parts=tuple(args.only or jde_sync.PARTS), actor=actor)
+            report = jde_sync.sync(
+                store,
+                parts=tuple(args.only or jde_sync.PARTS),
+                actor=actor,
+                allow_mass_close=bool(getattr(args, "allow_mass_close", False)),
+            )
         except jde_ais.AisError as exc:
             print(exc)
             return 1

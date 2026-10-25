@@ -407,7 +407,8 @@ async def save_api(request: Request) -> JSONResponse:
             auth_mode=text("auth_mode") or jde_ais.TOKEN, ca_file=text("ca_file"), timeout=timeout,
             step1=bool(form.get("step1")), step2=bool(form.get("step2")), sync_hour=int(number("sync_hour", 2)),
             company=text("company"), po_order_type=text("po_order_type").upper(),
-            voucher_days=int(number("voucher_days", 730)), actor=reviewer(),
+            voucher_days=int(number("voucher_days", 730)), shared_network=bool(form.get("shared_network")),
+            actor=reviewer(),
         )  # fmt: skip
     except ValueError as exc:
         return refuse(str(exc))

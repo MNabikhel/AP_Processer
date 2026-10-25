@@ -11,8 +11,9 @@ into place (``x-ms-rename-source``), so Fabric never picks up half a file.
 Network: nothing is sent unless the internet is allowed on this computer (``AP_ALLOW_INTERNET=1``) **and** an Admin
 turned the push on (Settings → Finance hub), as for the Azure check. Only two hosts are ever contacted, the sign-in
 host and the OneLake host of the URL given, over HTTPS (plain HTTP only to this computer, for tests), and no
-redirect is followed. The client secret is kept in the data folder's ``.env`` (``AP_HUB_CLIENT_SECRET``), never in
-the database, never shown back or logged.
+redirect is followed, and no proxy of the environment is used (``ProxyHandler({})``). Plain http is refused, but to
+this computer with ``ALLOW_TEST_HTTP`` set (the tests' stand-in). The client secret is kept in the data folder's
+``.env`` (``AP_HUB_CLIENT_SECRET``), never in the database, never shown back or logged.
 """
 
 from __future__ import annotations
@@ -34,7 +35,9 @@ DFS_VERSION = "2023-11-03"
 ONELAKE_HOSTS = (".dfs.fabric.microsoft.com", ".dfs.core.windows.net")
 AUTHORITY_HOSTS = ("login.microsoftonline.com", "login.microsoftonline.us", "login.partner.microsoftonline.cn")
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
+MAX_PAGES = 1000  # of a folder's listing
 TIMEOUT = 60.0
+ALLOW_TEST_HTTP = False  # the tests set it: plain http to a stand-in on this computer (never in use)
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -45,7 +48,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 def _check_url(url: str, hosts: tuple[str, ...], what: str, exact: bool = False) -> urllib.parse.SplitResult:
     parts = urllib.parse.urlsplit(url.strip())
     host = (parts.hostname or "").lower()
-    if host in LOOPBACK and parts.scheme in ("http", "https"):
+    if host in LOOPBACK and (parts.scheme == "https" or (parts.scheme == "http" and ALLOW_TEST_HTTP)):
         return parts  # a stand-in on this computer (tests)
     known = host in hosts if exact else any(host.endswith(h) for h in hosts)
     if parts.scheme != "https" or not known:
@@ -84,11 +87,8 @@ class OneLakeDestination:
         self.filesystem, self.folder = segments[0], "/".join(segments[1:])
         self.tenant, self.client_id, self._secret = tenant.strip(), client_id.strip(), secret
         self._token: tuple[str, float] | None = None
-        loopback = (self.parts.hostname or "") in LOOPBACK
-        handlers: list[Any] = [_NoRedirect()]
-        if loopback:
-            handlers.append(urllib.request.ProxyHandler({}))
-        self._opener = urllib.request.build_opener(*handlers)
+        # No proxy from the environment (HTTPS_PROXY...), ever: only the two hosts named here are contacted.
+        self._opener = urllib.request.build_opener(_NoRedirect(), urllib.request.ProxyHandler({}))
 
     # --- What the feed calls -----------------------------------------------------------------------------------
 
@@ -99,16 +99,26 @@ class OneLakeDestination:
         return f"{self.parts.scheme}://{self.parts.netloc}/{self.filesystem}/{self.folder}"
 
     def list(self, folder: str) -> list[str]:
+        """The files in ``folder``, every page of the answer (OneLake's ``x-ms-continuation``)."""
         directory = f"{self.folder}/{folder}".strip("/")
-        query = urllib.parse.urlencode({"resource": "filesystem", "directory": directory, "recursive": "false"})
-        url = f"{self._base()}/{urllib.parse.quote(self.filesystem)}?{query}"
-        try:
-            answer = self._call("GET", url)
-        except _NotFound:
-            return []
-        found = json.loads(answer or b"{}").get("paths") or []
-        return sorted(str(p.get("name", "")).rsplit("/", 1)[-1] for p in found
-                      if str(p.get("isDirectory", "false")).lower() != "true")  # fmt: skip
+        names: list[str] = []
+        continuation = ""
+        for _ in range(MAX_PAGES):
+            ask = {"resource": "filesystem", "directory": directory, "recursive": "false"}
+            if continuation:
+                ask["continuation"] = continuation
+            url = f"{self._base()}/{urllib.parse.quote(self.filesystem)}?{urllib.parse.urlencode(ask)}"
+            try:
+                answer, headers = self._call_full("GET", url)
+            except _NotFound:
+                return sorted(names)
+            found = json.loads(answer or b"{}").get("paths") or []
+            names += [str(p.get("name", "")).rsplit("/", 1)[-1] for p in found
+                      if str(p.get("isDirectory", "false")).lower() != "true"]  # fmt: skip
+            continuation = str(headers.get("x-ms-continuation") or "")
+            if not continuation:
+                return sorted(names)
+        raise HubError(f"OneLake listed more than {MAX_PAGES} pages of files in {directory}.")
 
     def write(self, path: str, data: bytes) -> None:
         name = path.rsplit("/", 1)[-1]
@@ -163,12 +173,16 @@ class OneLakeDestination:
         return self._opener.open(request, timeout=TIMEOUT)
 
     def _call(self, method: str, url: str, data: bytes | None = None, headers: dict[str, str] | None = None) -> bytes:
+        return self._call_full(method, url, data, headers)[0]
+
+    def _call_full(self, method: str, url: str, data: bytes | None = None,
+                   headers: dict[str, str] | None = None) -> tuple[bytes, Any]:  # fmt: skip
         sent = {"Authorization": f"Bearer {self.token()}", "x-ms-version": DFS_VERSION,
                 "Content-Length": str(len(data or b"")), **(headers or {})}  # fmt: skip
         request = urllib.request.Request(url, data=data if data is not None else b"", method=method, headers=sent)
         try:
             with self._open(request) as answer:
-                return answer.read()
+                return answer.read(), answer.headers
         except urllib.error.HTTPError as exc:
             if exc.code == 404 and method == "GET":
                 raise _NotFound() from exc

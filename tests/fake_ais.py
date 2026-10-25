@@ -10,7 +10,8 @@ answers as AIS does, as far as AP Coder uses it:
   answers), or HTTP Basic; a user without the orchestration in its role: 403; an unknown name: 404. The read
   orchestrations page their rows (``After...`` / ``MaxRows``); the voucher orchestration checks the supplier and each
   account, refuses a second voucher with the same supplier and invoice number (JDE's duplicate edit), keeps one
-  voucher per idempotency key, and answers JDE's errors in its shape (HTTP 500, ``message`` → form request → ``errors``
+  voucher per idempotency key (EXISTS and the status lookup say who it is for: supplier, invoice number, gross, the
+  fingerprint sent), and answers JDE's errors in its shape (HTTP 500, ``message`` → form request → ``errors``
   with CODE / TITLE / DESC, ``jde__status`` ERROR).
 * ``script(name, *steps)``: what the next calls of an orchestration (or "token") do instead: an HTTP status, "slow"
   (answer after ``slow_seconds``, longer than the client waits), "slow-after" (do the work, then answer late: the
@@ -410,8 +411,7 @@ class FakeAis:
             found = self.by_key.get(str(given.get("key") or ""))
             if not found:
                 return 200, self._out(key, {"found": "0"})
-            return 200, self._out(key, {"found": "1", **{k: found[k] for k in ("document", "doc_type", "company",
-                                                                             "batch")}})  # fmt: skip
+            return 200, self._out(key, {"found": "1", **found})
         if key == "voucher_create":
             return self._voucher(spec, given)
         return 404, {"message": "unknown", "status": "ERROR"}
@@ -423,8 +423,7 @@ class FakeAis:
         with self.lock:
             if key in self.by_key:
                 made = self.by_key[key]
-                return 200, self._out("voucher_create", {"result": results["exists"], **{
-                    k: made[k] for k in ("document", "doc_type", "company", "batch")}})  # fmt: skip
+                return 200, self._out("voucher_create", {"result": results["exists"], **made})
         if not key or not items:
             return 500, jde_error("Voucher_Entry", ("0001", "Error: No idempotency key or pay items"))
         head = items[0]
@@ -446,11 +445,23 @@ class FakeAis:
             self.next_doc += 1
             made = {"document": doc, "doc_type": head.get("VLDCT") or "PV", "company": head.get("VLCO") or "00001",
                     "batch": str(head.get("VLEDBT") or "")}  # fmt: skip
-            self.by_key[key] = made
             gross = sum(float(i.get("VLAG") or i.get("VLACR") or 0) for i in items) / 100
+            # Who the voucher is for, as the orchestration answers EXISTS and the status lookup (D-105).
+            made.update({"an8": an8, "invoice_number": number, "gross": gross})
+            if given.get("fingerprint"):
+                made["fingerprint"] = given["fingerprint"]
+            self.by_key[key] = made
             self.data["vouchers"].append({
-                "key": f"{made['company']}-{made['doc_type']}-{doc}-001", **made, "an8": an8,
+                "key": f"{made['company']}-{made['doc_type']}-{doc}-001",
+                **{k: made[k] for k in ("document", "doc_type", "company", "batch")}, "an8": an8,
                 "supplier_name": next(s["name"] for s in self.data["suppliers"] if s["an8"] == an8),
                 "invoice_number": number, "invoice_date": "", "gross": gross, "open_amount": gross, "pay_status": "A",
             })  # fmt: skip
-        return 200, self._out("voucher_create", {"result": results["created"], **made, "messages": []})
+        return 200, self._out(
+            "voucher_create",
+            {
+                "result": results["created"],
+                **{k: made[k] for k in ("document", "doc_type", "company", "batch")},
+                "messages": [],
+            },
+        )

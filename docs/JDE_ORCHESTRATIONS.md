@@ -126,7 +126,7 @@ Inputs `SupplierNumber` and / or `InvoiceNumber` (either may be blank), `FromInv
 added up): `Key` (KCO-DCT-DOC-SFX), `DocumentNumber` (RPDOC), `DocumentType` (RPDCT), `DocumentCompany` (RPKCO),
 `SupplierNumber` (RPAN8), `SupplierName`, `InvoiceNumber` (RPVINV), `InvoiceDate` (RPDIVJ), `GrossAmount` (RPAG),
 `OpenAmount` (RPAAP), `PayStatus` (RPPST: P paid, A approved, H held), `BatchNumber` (RPICU). Voided vouchers are left
-out. While an invoice is reviewed AP Coder asks with the supplier's number only and compares invoice numbers itself
+out. While an invoice is reviewed AP Coder asks with the supplier's number only, page after page (`AfterKey`), and compares invoice numbers itself
 (it ignores dashes, spaces and leading zeros), so the orchestration need not match numbers loosely.
 
 ## The voucher (step 2)
@@ -137,7 +137,8 @@ AP Coder sends one voucher per call:
 
 | Input | What |
 | --- | --- |
-| `IdempotencyKey` | `APC-<AP Coder invoice id>-<batch>`, unique per voucher |
+| `IdempotencyKey` | `APC-<installation id>-<AP Coder invoice id>-<batch>`, unique per voucher (the installation id: 10 random hex digits per AP Coder data folder, new after a restore; at most 30 characters in all) |
+| `PayloadFingerprint` | SHA-256 of the voucher's rows (64 hex digits): keep it with the key and answer it back (below) |
 | `ProcessingMode` | `PROOF` (the dry run: check everything, commit nothing) or `FINAL` |
 | `PayItems` | array: the voucher's **F0411Z1** rows, column for column as the batch files (docs/JDE_E1.md: VLEDUS, VLEDBT, VLEDTN, VLEDLN, VLDCT, VLCO, VLAN8, VLVINV, VLDIVJ, VLDGJ, VLAG / VLATXA…, VLTXA1, VLEXR1, VLCRCD, VLPTC, VLDDJ, VLPO…, VLRMK) |
 | `GLLines` | array: its **F0911Z1** rows (VNEDLN, VNANI or VNMCU / VNOBJ / VNSUB, VNAA / VNACR, VNEXA, VNEXR…) |
@@ -149,8 +150,14 @@ AP Coder batch) and transaction number (VLEDTN = APC + invoice id) are the Z-tab
 
 Outputs: `Result` (`VALID` after a proof that passed, `CREATED`, `EXISTS` for a key seen before: with the voucher it
 made, or `ERROR`), `DocumentNumber`, `DocumentType`, `DocumentCompany`, `BatchNumber`, `Messages` (JDE's warnings or
-errors, CODE / TITLE / DESC). A voucher JDE refuses: answer `Result` ERROR with the messages, or let the orchestration
-fail (HTTP 500, `jde__status` ERROR, the form request's errors): AP Coder reads both.
+errors, CODE / TITLE / DESC), and with EXISTS who that voucher is for: `SupplierNumber` (VLAN8), `InvoiceNumber`
+(VLVINV), `GrossAmount` (VLAG, in units) and the `PayloadFingerprint` kept with the key. AP Coder takes EXISTS as
+posted only when that record is this voucher (the same fingerprint, else the same supplier, invoice number and gross);
+otherwise it stops and asks a person. `ERROR` means nothing was made: AP Coder marks the voucher refused at once. A
+failed orchestration (HTTP 500, `jde__status` ERROR, the form request's errors) is looked up by its key first
+(`APC_Voucher_Status`) before it is marked refused. Anything else (`CREATED` without a document number, an answer AP
+Coder does not know, HTTP 502 / 504, a timeout) is "sent, being checked": looked up by its key, never sent blind.
+HTTP 503 is taken as AIS turning the request away before running it (CONFIRM for your load balancer) and retried.
 
 Two ways to build it; the JDE team picks one:
 
@@ -177,8 +184,9 @@ The batch files keep working with either route: the Exports page offers both.
 
 ### APC_Voucher_Status
 
-Input `IdempotencyKey`. Outputs `Found` (`1` / `0`) and, found, `DocumentNumber`, `DocumentType`, `DocumentCompany`,
-`BatchNumber`. AP Coder asks it before sending any voucher again, so a request whose answer was lost is never posted
+Input `IdempotencyKey`. Outputs `Found` (`1` / `0`: anything else is taken as "can't say") and, found,
+`DocumentNumber`, `DocumentType`, `DocumentCompany`, `BatchNumber`, `SupplierNumber`, `InvoiceNumber`, `GrossAmount`,
+`PayloadFingerprint`, as for EXISTS. AP Coder asks it before sending any voucher again, so a request whose answer was lost is never posted
 twice.
 
 ### Never twice

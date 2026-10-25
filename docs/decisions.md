@@ -1117,3 +1117,40 @@ that is reversed keeps its line, marked "replaced by D-NN".
   orchestrations. (`erp/jde_ais.py`, `erp/jde_sync.py`, `erp/jde_post.py`, `erp/jde_orchestrations.json`,
   `ops/jde_cmd.py`, `web/pages/settings_jde.py`, `web/pages/exports.py`; `tests/test_jde_ais.py`,
   `tests/test_jde_sync.py`, `tests/test_jde_post.py`, `tests/test_jde_api_web.py`)
+- **D-105** · Voucher posting safety (changes D-104 where it says otherwise). Posting moves money, so when AP Coder
+  can't be sure, it locks the voucher and asks JDE (or a person). (1) **Key**: `APC-<installation
+  id>-<invoice>-<batch>`; the installation id is 10 random hex digits in the data folder (`jde_installation_id`),
+  outside the database, so a second laptop never makes this one's keys; a restore starts a new one, so the invoice and
+  batch numbers a restored database hands out again never make a key JDE already holds. (2) **States**
+  (`erp/jde_post.py`): checked → sending only by a compare-and-set (`_claim`: the row's version unchanged, `maybe_sent`
+  0, no lookup owed, the batch not undone; one row changed or nothing is sent), used by the post, the queue and the
+  background tick alike. Sending → posted (CREATED with a number; EXISTS or a lookup only when JDE's record is this
+  voucher: the fingerprint sent with it, `PayloadFingerprint`, else supplier, invoice number and gross, all three),
+  failed (another voucher under the key: locked; or ERROR, or HTTP 500 followed by a lookup that says JDE has none),
+  unknown (timeout, 502 / 504, no document number, an answer not understood, a lookup that can't be made), queued only
+  when the request certainly never ran (not connected, 503, the sign-in or permission refused before the orchestration).
+  (3) **Locked** = posted, sending, unknown, or `maybe_sent` (set when a row becomes sending or unknown, cleared only by
+  a lookup by key that says JDE has nothing, `Found` 0; any other answer is "can't say"). A locked row never goes back
+  to queued or failed, is never sent blind, never written over by a dry run, never dropped by an undo (refused in the
+  same `BEGIN IMMEDIATE` transaction as the claim's), and is left out of the batch files (the unknown ones listed:
+  "check in JD Edwards before loading"); JDE down or no client leaves it as it is, its next try only. A row sending for
+  more than 15 minutes was left by a stop: looked up, never resent. A dry run never passes EXISTS ("already in JD
+  Edwards", locked). (4) **The client**: a voucher is never repeated on 502 / 504 (`sent`); 503 is taken as AIS turning
+  the request away before processing (retried, not sent), the assumption the JDE team confirms for their load balancer.
+  (5) **Restore**: every change of a postings row is appended to `jde_postings.jsonl` in the data folder; after a
+  restore it is merged back (with the rows the database had just before), for the invoices the restored database holds
+  (same file, same time added), as accounts are kept across a restore (D-101), and every row is looked up by its key
+  before anything is sent (`verify`). (6) **Sync**: JDE's hold is kept apart (`vendors.erp_hold`); a vendor is on hold
+  if AP Coder or JDE says so. The live duplicate check pages through all of a supplier's vouchers. An open-POs answer
+  that would close more than half, or all, of the open synced POs closes none and says so, unless `jde sync
+  --allow-mass-close`. VENDOR_BANK_NOT_JDE compares the transit too. (7) **Network and secrets**: the AIS name is
+  resolved once, every address checked, and the connection made to that address with the name for SNI and Host (no DNS
+  rebinding); 2002::/16 and 2001:db8::/32 are not internal; 100.64.0.0/10 only with the Admin's tick "this address is on
+  our network"; a new AIS host forgets the saved password; secrets of any length are scrubbed, the sign-in refusal too.
+  The OneLake push uses no environment proxy, and plain http only to this computer with the tests' flag. (8) **Finance
+  hub**: a new format or schema version at the same destination still sends deletes for the rows gone; account and
+  settings events stay out of `activity`; a failure of the gateway's SQLite copy is a warning once the data files are
+  written; the OneLake listing follows its continuation. Why: an independent review found ways a voucher could be posted
+  twice, or someone else's taken for it. (`erp/jde_post.py`, `core/store/postings.py`, `erp/jde_ais.py`,
+  `erp/jde_sync.py`, `erp/hub/`; `tests/test_jde_post_safety.py`, `tests/test_jde_ais_safety.py`,
+  `tests/test_jde_sync_safety.py`, `tests/test_finance_hub.py`)

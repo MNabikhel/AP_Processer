@@ -32,6 +32,16 @@ WITHDRAWN_BY = ("reopened", "sent_back")
 # security record, not the work on invoices (docs/FINANCE_HUB.md).
 SIGN_IN_ACTIONS = ("login", "logout", "login_failed", "login_locked", "password_changed", "password_reset",
                    "address_unlocked")  # fmt: skip
+# Accounts and settings stay out too (docs/FINANCE_HUB.md "What is left out"): who has an account and what role, a
+# backup put back, and settings changed are the company server's administration, not the work on invoices.
+ADMIN_ACTIONS = ("user_added", "role_changed", "user_activated", "user_deactivated", "backup_restored",
+                 "settings_changed")  # fmt: skip
+
+
+def left_out_of_activity(action: str) -> bool:
+    return action in SIGN_IN_ACTIONS or action in ADMIN_ACTIONS or action.startswith(("login", "logout"))
+
+
 HIDDEN = "(hidden)"  # a vendor's bank details in an event's detail: never sent to the hub
 
 
@@ -191,8 +201,8 @@ APPROVALS = Table(
 
 ACTIVITY = Table(
     "activity",
-    "The audit trail: every event AP Coder records (read, approved, exported, settings changed...), oldest first. "
-    "Sign-in events are left out.",
+    "The audit trail: every event AP Coder records (read, approved, exported...), oldest first. "
+    "Sign-in, account and settings events are left out.",
     ("event_id",),
     (
         _c("event_id", INT, "The event's number, in the order recorded. Key."),
@@ -201,7 +211,7 @@ ACTIVITY = Table(
             "action",
             STRING,
             "What happened (processed, approved, final_approved, exported, parked, rejected, "
-            "settings_changed, import_run, hub_export...).",
+            "import_run, hub_export...).",
         ),
         _c("actor", STRING, "Who did it (a person, or AP Coder)."),
         _c("occurred_at", TIMESTAMP, "When."),
@@ -507,7 +517,7 @@ def approvals(store: Any, ctx: Context, events: list[dict[str, Any]] | None = No
 def activity(store: Any, ctx: Context, after_id: int = 0) -> list[dict[str, Any]]:
     out = []
     for e in store.hub_events(after_id):
-        if e["action"] in SIGN_IN_ACTIONS:
+        if left_out_of_activity(str(e["action"] or "")):
             continue
         out.append({
             "event_id": int(e["id"]), "invoice_id": whole(e.get("invoice_id")), "action": text(e["action"]),

@@ -390,7 +390,7 @@ class VendorsMixin:
             master = masters.get(r["vendor_key"]) or {}
             r["status"] = master.get("status", "active")
             r["expected_gst"] = master.get("expected_gst", "")
-            for field in ("qst_number", "pst_number", "province"):
+            for field in ("qst_number", "pst_number", "province", "erp_hold"):  # erp_hold: JD Edwards' own hold
                 r[field] = master.get(field) or ""
             r["notes"] = master.get("notes", "")
             for field in ("erp_id", "terms", "default_gl"):
