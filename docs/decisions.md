@@ -1159,11 +1159,12 @@ that is reversed keeps its line, marked "replaced by D-NN".
   checks: a general Claude Code session starts every turn with ~36.6k tokens of context in a cloud session (its
   system prompt and ~39 tools: artifacts, schedules, plugins and the like) and ~15.9k with a typical local tool set;
   this repo's CLAUDE.md is ~1.2k of it. The developer agent carries Bash, Read, Edit, Write, WebFetch and WebSearch
-  and a short prompt with the rules that matter here, and starts at ~7.3k. Tokens over the 18 runs: 6.86M (cloud
-  session) and 3.94M (local tool set) against 2.47M, i.e. 64% and 37% fewer; cost 30% and 18% lower (written output
-  costs the same). Hidden tests, related tests and mutants killed are the same; in a blind review it scored the same
-  or higher on the feature and the two questions, and slightly lower on the bug fix (35.7 against 37.0 of 40: an
-  extra comment, a reply's side claim; every fix correct and tested). Its prompt states what the general one would:
-  a bug fix brings its own test, the smallest correct change, finish an ambiguous task and say the choice. It is a
-  profile, not a setting: lead sessions that publish documents, run workflows or talk to other agents keep every
-  tool. `tests/test_agent_profile.py` keeps its tool list deliberate.
+  and a short prompt with the rules that matter here, and starts at ~7.3k. Tokens over the 18 runs, with its final
+  prompt: 6.86M (cloud session) and 3.94M (local tool set) against 2.33M, i.e. 66% and 41% fewer; cost 34% and 23%
+  lower (written output costs the same). Hidden tests, related tests and mutants killed are the same. Blind review,
+  final prompt against the cloud session (mean of 3): feature 34.0 vs 31.3 of 40, the two questions 26.3 vs 26.3 and
+  27.7 vs 27.0 of 30, the bug fix 35.7 vs 37.0 of 40 (every fix correct and tested; an extra comment, a reply's side
+  claim). Its prompt states what the general one would: a bug fix brings its own test, the smallest correct change,
+  finish an ambiguous task and say the choice. It is a profile, not a setting: lead sessions that publish documents,
+  run workflows or talk to other agents keep every tool. `tests/test_agent_profile.py` keeps its tool list
+  deliberate.
