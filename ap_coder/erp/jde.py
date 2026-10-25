@@ -666,8 +666,8 @@ def _gross_problems(v: _Voucher, final: dict[str, Any]) -> list[str]:
         ):
             return [
                 f"line {li.get('line_number') or '?'} carries no tax (exempt or zero-rated): with the gross amount "
-                "only JD Edwards would tax it too. Ask the pilot tester to code the tax to G/L accounts or send tax "
-                "amounts (Settings → JD Edwards E1, Amounts)"
+                "only JD Edwards would tax it too. Code the tax to G/L accounts or send tax amounts (Amounts): set "
+                "it in Settings → JD Edwards E1, or ask whoever sets up AP Coder"
             ]
     rates = _rates()
     rate = Decimal(str(round(sum(rates.rate_for(t, v.province, on) or 0.0 for t in types), 6)))
@@ -1212,8 +1212,8 @@ def voucher_findings(output: dict[str, Any], settings: JdeSettings, an8: str) ->
     export for something the screen could have said (D-75). The duplicate check is the screen's own."""
     out: list[tuple[str, str, str, int | None]] = []
     for problem in settings_problems(settings):
-        out.append((ERROR, "JDE_SETTINGS", f"JD Edwards settings: {problem} Ask the pilot tester to fix it in "
-                    "Settings → JD Edwards E1", None))  # fmt: skip
+        out.append((ERROR, "JDE_SETTINGS", f"JD Edwards settings: {problem} Set it in "
+                    "Settings → JD Edwards E1, or ask whoever sets up AP Coder", None))  # fmt: skip
     v = _prepare({"id": 0, "final_output": output}, settings, str(an8 or "").strip())
     seen: set[tuple[str, int | None]] = set()
     unmapped: dict[str, list[int | None]] = {}  # "GL 6010 / CC400": the lines posting to it with no E1 account
@@ -1228,8 +1228,8 @@ def voucher_findings(output: dict[str, Any], settings: JdeSettings, an8: str) ->
                         "from the vendor list, or ask the pilot tester to add its number", None))  # fmt: skip
         elif code == "JDE_BAD_AN8":
             out.append((ERROR, "JDE_BAD_AN8", f"JD Edwards: the supplier number {an8} is not an address number (AN8: "
-                        "digits only, up to 8). Ask the pilot tester to set this vendor's AN8 in Settings → JD "
-                        "Edwards E1", None))  # fmt: skip
+                        "digits only, up to 8). Set this vendor's AN8 in Settings → JD Edwards E1, or ask whoever "
+                        "sets up AP Coder", None))  # fmt: skip
         elif code == "JDE_INVOICE_NUMBER_LONG":
             out.append((ERROR, "JDE_INVOICE_NUMBER_LONG", f"JD Edwards keeps 25 characters of the invoice number: "
                         f"this one has {len(number)}", None))  # fmt: skip

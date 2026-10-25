@@ -143,3 +143,24 @@ def test_an_email_whose_attachment_is_already_in_ap_coder_says_so_and_the_counts
     assert snap["result"]["label"] == "Processed 1 of 3: 2 already in AP Coder"
     (line,) = [entry["text"] for entry in snap["lines"] if entry["text"].startswith("again.eml")]
     assert "to the review queue" not in line and "1 attachment already in AP Coder" in line, line
+
+
+# --- L6. Who to ask about the JD Edwards settings ------------------------------------------------------------------
+
+
+def test_the_jd_edwards_setup_findings_say_where_to_set_it_or_whom_to_ask():
+    """B-1185: "Ask the pilot tester…" in JD Edwards findings a clerk can fix in Settings → JD Edwards E1 (and on the
+    server, where the pilot tester is no one): they say where to set it, or to ask whoever sets up AP Coder."""
+    from ap_coder.ops.help import CHECKS
+
+    from .test_jde_gl_mode import coded, doc, line, tl
+
+    told = "Settings → JD Edwards E1, or ask whoever sets up AP Coder"
+    exempt = coded(doc([line(1, 100.0, taxes=["HST"]), line(2, 50.0, exempt=["HST"], status="exempt")],
+                       [tl("HST", "ON", 0.13, 100.0, 13.0)]))["final_output"]  # fmt: skip
+    found = {code: text for _, code, text, _ in
+             jde.voucher_findings(exempt, jde.JdeSettings(company="x", amount_mode=jde.AMOUNT_GROSS), "V1")}  # fmt: skip
+    for code in ("JDE_SETTINGS", "JDE_BAD_AN8", "JDE_GROSS_TAX"):
+        assert told in found[code] and "pilot tester" not in found[code], found[code]
+    for code in ("JDE_SETTINGS", "JDE_BAD_AN8", "JDE_MEALS_GROSS"):
+        assert told in CHECKS[code].action and "pilot tester" not in CHECKS[code].action, CHECKS[code].action

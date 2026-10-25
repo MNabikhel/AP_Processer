@@ -45,7 +45,7 @@ CHECKS: dict[str, CheckHelp] = {
         ERP, "JD Edwards settings incomplete",
         "A setting every JD Edwards voucher needs (company, user ID, batch prefix, document type or currency) is not "
         "valid, so no voucher can be exported.",
-        "Ask the pilot tester to fix it in Settings → JD Edwards E1.",
+        "Set it in Settings → JD Edwards E1, or ask whoever sets up AP Coder.",
     ),
     "JDE_NO_AN8": CheckHelp(
         ERP, "No supplier number (AN8)",
@@ -57,7 +57,8 @@ CHECKS: dict[str, CheckHelp] = {
         ERP, "Supplier number is not an AN8",
         "The vendor's number is not a JD Edwards address number (digits only, up to 8), so E1 would refuse the "
         "voucher.",
-        "Ask the pilot tester to set the vendor's AN8 in Settings → JD Edwards E1 → Supplier address numbers.",
+        "Set the vendor's AN8 in Settings → JD Edwards E1, or ask whoever sets up AP Coder (Supplier address "
+        "numbers).",
     ),
     "JDE_INVOICE_NUMBER_LONG": CheckHelp(
         ERP, "Invoice number too long for JD Edwards",
@@ -94,8 +95,9 @@ CHECKS: dict[str, CheckHelp] = {
         "meal's expense line (D-90). With the gross amount only, JD Edwards works out the tax itself and would claim "
         "the full ITC, while the expense line already holds half of it: the GL and the ITC report would disagree. So "
         "the invoice can't be approved or exported to JD Edwards this way.",
-        "Ask the pilot tester to switch to sending tax amounts in Settings → JD Edwards E1 (Amounts: taxable / "
-        "non-taxable / tax amounts). If the meal is billed to a client or a staff event, code it to the other account.",
+        "Switch to sending tax amounts (Amounts: taxable / non-taxable / tax amounts): set it in Settings → JD "
+        "Edwards E1, or ask whoever sets up AP Coder. If the meal is billed to a client or a staff event, code it to "
+        "the other account.",
     ),
     "JDE_GL_PO": CheckHelp(
         ERP, "Tax on a PO-matched JD Edwards voucher",
