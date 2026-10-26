@@ -1147,6 +1147,16 @@ def duplicate_problems(
     def same(a: tuple[str, str], b: tuple[str, str]) -> bool:
         return (bool(a[0]) and a[0] == b[0]) or (bool(a[1]) and a[1] == b[1])
 
+    def by_number(rows: Iterable[dict[str, Any]], total: str) -> dict[tuple[str, bool], list[dict[str, Any]]]:
+        """``rows`` by (invoice number as compared, a credit), in their order: each number read once, not once an
+        invoice of the batch (thousands of rows already out)."""
+        found: dict[tuple[str, bool], list[dict[str, Any]]] = {}
+        for r in rows:
+            found.setdefault((norm_invoice_number(r.get("invoice_number")), _negative(r.get(total))), []).append(r)
+        return found
+
+    exported = by_number(prior.get("exported") or [], "grand_total")
+    register = by_number(prior.get("register") or [], "total")
     earlier: list[tuple[tuple[str, str], str, bool, int]] = []
     for inv in invoices:
         final = inv.get("final_output") or {}
@@ -1160,15 +1170,11 @@ def duplicate_problems(
             if other_number == number and other_credit == credit and same(who, other_who):
                 msgs.append(f"same supplier and invoice number as AP Coder #{other_id} in this batch")
                 break
-        for r in prior.get("exported") or []:
-            if norm_invoice_number(r.get("invoice_number")) != number or _negative(r.get("grand_total")) != credit:
-                continue
+        for r in exported.get((number, credit), []):
             if same(who, (an8_of(r), vendor_key(r.get("vendor_name") or ""))):
                 msgs.append(f"already exported: AP Coder #{r['id']} in batch {r['export_batch']}")
                 break
-        for r in prior.get("register") or []:
-            if norm_invoice_number(r.get("invoice_number")) != number or _negative(r.get("total")) != credit:
-                continue
+        for r in register.get((number, credit), []):
             key = r.get("vendor_key") or vendor_key(r.get("vendor_name") or "")
             if same(who, (an8_of(r), key)):  # (the register has no GST/HST number: by name)
                 when = f", dated {r['invoice_date']}" if r.get("invoice_date") else ""
