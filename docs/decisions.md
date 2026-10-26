@@ -1222,15 +1222,18 @@ that is reversed keeps its line, marked "replaced by D-NN".
   event, or to the tax setup (for `legacy` invoices) puts the invoice in `summary_dirty`, in the same transaction; the
   store works the dirty ones out before that transaction commits (`SummaryMixin._conn`), and a read of the summary does
   so first (`_summary_fresh`): the summary is the one source those pages read, never behind, with no second path. An
-  invoice whose JSON can't be read is kept `broken` (its listed columns still there) and read again from the invoice by
-  a report that needs it, failing as it did. Triggers on `feedback` keep its count by outcome (`feedback_counts`): the
+  invoice whose JSON can't be read keeps its listed columns and a `broken` bit for each part it could not work out
+  (`PARTS`: tax, self-assessment, spend, ...): only a report that reads that part reads it again from the invoice,
+  failing as it did; the others still draw. Triggers on `feedback` keep its count by outcome (`feedback_counts`): the
   review queue's accuracy (`line_metrics`) and the learning memory's stamp read it instead of counting 900,000
   lessons. The backup check accepts exactly these triggers (another one in a planted file is still refused). (3)
   **Schema 19**: the migration builds the summary in full (about 75 s at 120,000 invoices, 0.3 GB), and builds it
   again whenever `SUMMARY_RULES` (or the vendor-matching rules) change. (4) **What several pages read of every
   invoice** (the vendors' invoice dates for the regular bills, the batches' totals, the vendors' workload, the status
   counts of the rail) is kept per process until the part of the summary it reads changes (`summary_memo`, `TOPICS`),
-  one page working it out while the others wait: an approval changes no vendor's invoice dates. (5) **The quick
+  one page working it out while the others wait: an approval changes no vendor's invoice dates. Many rows come out
+  of SQLite as one JSON value (`fetch_rows`, REALs written exactly): CPython's sqlite3 lets go of the GIL for each row,
+  and with 50 people at once a page of thousands of rows waited behind every other page for each one. (5) **The quick
   search** finds its candidates by an FTS5 trigram index of the vendor and file names and of the invoice numbers
   (`invoice_search`), the invoice number, PO and amount by their indexes, then scores them as before (`_score`): every
   invoice it matched, and only those. A Python whose SQLite lacks FTS5 (CPython's own builds on Windows and macOS have
