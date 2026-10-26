@@ -98,3 +98,22 @@ def test_less_than_half_a_cent_either_way_is_shown_as_zero():
     that rounds to 0.00 is "0.00", and a credit is one of at least half a cent."""
     assert [ui.money(v) for v in (-0.0045, -0.0049, -0.004, 0.0, 0.004)] == ["0.00"] * 5
     assert [ui.money(v) for v in (-0.005, -0.006, -1234.5, 1234.5)] == ["(0.01)", "(0.01)", "(1,234.50)", "1,234.50"]
+
+
+# --- One vendor's lessons are read once a page --------------------------------------------------------------------
+
+
+def test_one_vendors_lessons_are_read_once_a_page_and_again_after_a_change(tmp_path):
+    """The review screen asks for the vendor's lessons three times (its checks, its accounts, its cost centers): read
+    once in a session while nothing changes, the same list each time, and read again after a new lesson."""
+    store = Store(tmp_path / "ap.db")
+    rows = [{"vendor_name": "Acme Supply", "description": f"Widget {i}", "gl_code": "6000", "amount": 1.0 + i,
+             "date": "2026-01-02"} for i in range(3)]  # fmt: skip
+    store.import_history(rows)
+    with store.session():
+        first = store.feedback_rows(vendor_name="Acme Supply")
+        assert len(first) == 3 and store.feedback_rows(vendor_name="Acme Supply") is first
+        store.import_history([{**rows[0], "description": "Gadget"}])
+        again = store.feedback_rows(vendor_name="Acme Supply")
+        assert again is not first and len(again) == 4
+    assert len(store.feedback_rows(vendor_name="Acme Supply")) == 4  # outside a session: read each time

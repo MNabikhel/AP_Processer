@@ -890,11 +890,13 @@ class StoreCore:
                 del held[key]
             conn.close()
 
-    def _session_memo(self, key: tuple[Any, ...], compute: Callable[[], list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    def _session_memo(
+        self, key: tuple[Any, ...], compute: Callable[[], list[dict[str, Any]]], shared: bool = False
+    ) -> list[dict[str, Any]]:
         """``compute()`` (rows), read once inside a session while the database does not change: a page that asks the
         same thing twice (the vendor checks and the tax-number notes) reads it once. Any change, on the session's
         connection (``total_changes``) or another one (``PRAGMA data_version``), reads it again. Outside a session,
-        always ``compute()``. Each caller gets rows of its own."""
+        always ``compute()``. Each caller gets rows of its own; ``shared``: the same list (read it, don't change it)."""
         held = _held_connections().get(str(self.path))
         if held is None:
             return compute()
@@ -902,7 +904,7 @@ class StoreCore:
         hit = held.memo.get(key)
         if hit is None or hit[0] != stamp:
             hit = held.memo[key] = (stamp, compute())
-        return [dict(r) for r in hit[1]]
+        return hit[1] if shared else [dict(r) for r in hit[1]]
 
     def _open(self) -> sqlite3.Connection:
         fresh = not self.path.exists()  # e.g. the file was deleted while the dashboard was running

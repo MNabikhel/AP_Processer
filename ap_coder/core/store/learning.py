@@ -39,28 +39,35 @@ class LearningMixin:
         for them, and years of imported ERP history take a third of a second to load on a laptop. The list is
         shared: read it, don't change it."""
         limit = FEEDBACK_READ if limit is None else limit
-        sql, args = "SELECT * FROM feedback", ()
+        # Reviewer decisions first, then imported history: a big history import never pushes them out.
+        order = " ORDER BY outcome = 'history', id DESC LIMIT ?"
         if vendor_name is not None:
-            # ``key``: the vendor's own, of two whose names read alike (``vendor_key_for``, B-1021)
-            sql, args = sql + " WHERE vendor_key = ?", (key or vendor_key(vendor_name),)
+            # One vendor's lessons are quick to read: read once a page (``_session_memo``: its checks, the review
+            # screen's accounts and cost centers all ask), not kept past it. ``key``: the vendor's own, of two whose
+            # names read alike (``vendor_key_for``, B-1021).
+            args = (key or vendor_key(vendor_name), limit)
+
+            def read() -> list[dict[str, Any]]:
+                with self._conn() as conn:
+                    return fetch_rows(conn, "SELECT * FROM feedback WHERE vendor_key = ?" + order, args)
+
+            return self._session_memo(("feedback_rows", *args), read, shared=True)
         with self._conn() as conn:
             # Lessons are only ever added or deleted, never changed: the highest id, the count and the newest lesson
             # itself tell whether the ones kept are still the ones in the database. (The id alone is not enough: a
             # database restored from a backup, or made again where one was deleted, gives its next lesson an id a
             # lesson it no longer has once had.)
             stamp = _feedback_stamp(conn)
-            key = (str(self.path.resolve()), limit, vendor_name, args)
+            kept_key = (str(self.path.resolve()), limit, None, ())
             with _FEEDBACK_LOCK:
-                kept = _FEEDBACK.get(key)
+                kept = _FEEDBACK.get(kept_key)
                 if kept is not None and kept[0] == stamp:
                     return kept[1]
-            # Reviewer decisions first, then imported history: a big history import never pushes them out.
-            rows = fetch_rows(conn, sql + " ORDER BY outcome = 'history', id DESC LIMIT ?", (*args, limit))
-        if vendor_name is None:  # one vendor's lessons are quick to read: only the whole memory is kept
-            with _FEEDBACK_LOCK:
-                _FEEDBACK[key] = (stamp, rows)
-                while len(_FEEDBACK) > 8:
-                    _FEEDBACK.pop(next(iter(_FEEDBACK)))
+            rows = fetch_rows(conn, "SELECT * FROM feedback" + order, (limit,))
+        with _FEEDBACK_LOCK:
+            _FEEDBACK[kept_key] = (stamp, rows)
+            while len(_FEEDBACK) > 8:
+                _FEEDBACK.pop(next(iter(_FEEDBACK)))
         return rows
 
     def learning_rows(self, vendor_name: str | None, key: str | None = None) -> list[dict[str, Any]]:
