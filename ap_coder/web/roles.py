@@ -54,7 +54,8 @@ RULES: dict[tuple[str, str], str] = {
     ),
     **_rules(
         SIGNED_IN,
-        "GET /logout", "POST /logout", "GET /account/password", "POST /account/password", "GET /",
+        "GET /logout", "POST /logout", "GET /account/password", "POST /account/password",
+        "POST /account/sessions/end-others", "GET /",
     ),
     **_rules(
         READ,

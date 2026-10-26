@@ -202,24 +202,24 @@ def test_only_the_tokens_sha256_is_stored(store, clock):
     assert store.session_user("made-up") is None and store.session_user("") is None
 
 
-def test_a_session_ends_after_8_idle_hours(store, clock):
+def test_a_session_ends_after_30_idle_minutes(store, clock):
     uid = store.add_user("ann", GOOD)
     token = store.start_session(uid)
-    clock.now += 7 * 3600
+    clock.now += 25 * 60
     assert store.session_user(token)  # used: the idle time starts again
-    clock.now += 7 * 3600
+    clock.now += 25 * 60
     assert store.session_user(token)
-    clock.now += 8 * 3600 + 1
+    clock.now += 30 * 60 + 1
     assert store.session_user(token) is None
 
 
-def test_a_session_ends_after_7_days_however_busy(store, clock):
+def test_a_session_ends_after_12_hours_however_busy(store, clock):
     uid = store.add_user("ann", GOOD)
     token = store.start_session(uid)
-    for _ in range(27):  # used every 6 hours: 6 days 18 hours
-        clock.now += 6 * 3600
+    for _ in range(35):  # used every 20 minutes: 11 hours 40 minutes
+        clock.now += 20 * 60
         assert store.session_user(token)
-    clock.now += 6 * 3600  # 7 days
+    clock.now += 20 * 60  # 12 hours
     assert store.session_user(token) is None
 
 
@@ -237,7 +237,7 @@ def test_logout_ends_the_session_and_a_password_change_ends_the_others(store, cl
     assert store.session_user(here) is None and store.session_user(there) is None  # a new token for this one
     assert fresh and store.session_user(fresh)["id"] == uid
     assert not store.user(uid)["must_change"]
-    assert [e["action"] for e in store.events()][:2] == ["password_changed", "logout"]
+    assert [e["action"] for e in store.events()][:3] == ["password_changed", "login_failed", "logout"]
 
 
 def test_sessions_survive_a_restart(tmp_path, clock):

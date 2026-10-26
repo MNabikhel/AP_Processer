@@ -652,3 +652,65 @@ def test_another_storage_account_is_refused_for_onelake(url):
 
     with pytest.raises(HubError):
         onelake._check_url(url, onelake.ONELAKE_HOSTS, "OneLake folder URL")
+
+
+# --- 13. Sessions and passwords --------------------------------------------------------------------------------------
+
+
+def test_a_login_lasts_30_idle_minutes_and_12_hours_unless_it_says_otherwise(tmp_path, clock):
+    store = Store(tmp_path / "ap_coder.db")
+    uid = store.add_user("ann", GOOD, must_change=False)
+    token = store.start_session(uid)
+    clock.now += 31 * 60
+    assert store.session_user(token) is None
+    service.write_config(tmp_path, session_idle_minutes=60, session_hours=4)
+    assert service.session_limits(tmp_path) == (3600.0, 4 * 3600.0)
+    service.write_config(tmp_path, session_idle_minutes=1, session_hours=10_000)
+    assert service.session_limits(tmp_path) == (5 * 60.0, 168 * 3600.0)  # kept within bounds
+
+
+def test_the_session_cookie_ends_with_the_browser(web):
+    from .test_server_security import log_in
+
+    answer = log_in(web["client"](), "clerk1")
+    cookie = answer.headers["set-cookie"].lower()
+    assert "ap_session=" in cookie and "max-age" not in cookie and "expires" not in cookie
+
+
+def test_a_temporary_password_expires_after_3_days(tmp_path):
+    from ap_coder.core.store.users import TEMPORARY_EXPIRED, LoginRefused
+
+    store = Store(tmp_path / "ap_coder.db")
+    store.add_user("ann", GOOD)  # temporary: must change
+    assert store.authenticate("ann", GOOD, "10.0.0.5")["must_change"]
+    with store._conn() as conn:
+        conn.execute("UPDATE events SET created_at = '2000-01-01T00:00:00' WHERE action = 'user_added'")
+    with pytest.raises(LoginRefused, match=TEMPORARY_EXPIRED[:30]):
+        store.authenticate("ann", GOOD, "10.0.0.5")
+    store.reset_password(store.find_user("ann")["id"], actor="boss", password="another good secret")
+    assert store.authenticate("ann", "another good secret", "10.0.0.5")
+
+
+def test_wrong_current_passwords_on_the_password_page_log_the_person_out(web):
+    from .test_server_security import log_in
+    from .webclient import PAGE
+
+    client = web["client"]()
+    assert log_in(client, "clerk1").status_code == 200
+    form = {"current": "not my password at all", "new": "a brand new secret", "again": "a brand new secret"}
+    for _ in range(4):
+        assert "doesn't match" in client.post("/account/password", data=form, headers=PAGE).json()["error"]
+    assert "logged out" in client.post("/account/password", data=form, headers=PAGE).json()["error"]
+    assert client.get("/review").status_code == 303  # the session ended
+    assert "paused" in log_in(client, "clerk1").json()["error"]
+
+
+def test_a_person_sees_and_ends_their_other_sessions(web):
+    from .test_server_security import log_in
+    from .webclient import PAGE
+
+    here, there = web["client"](), web["client"]("10.0.0.9")
+    assert log_in(here, "clerk1").status_code == 200 and log_in(there, "clerk1").status_code == 200
+    assert "also logged in on 1 other" in here.get("/account/password").text
+    assert here.post("/account/sessions/end-others", headers=PAGE).json()["ok"]
+    assert there.get("/review").status_code == 303 and here.get("/review").status_code == 200

@@ -168,6 +168,24 @@ def folder_refusal(folder: str, data: Path | None = None, server: bool | None = 
             "9).")  # fmt: skip
 
 
+def session_limits(data: Path) -> tuple[float, float]:
+    """(idle, absolute) seconds of a login session on the server: server.json's ``session_idle_minutes`` (default
+    30, from 5 to 480) and ``session_hours`` (default 12, from 1 to 168), set by IT (D-109)."""
+    try:
+        found = read_config(data)
+    except SettingsError:
+        found = {}
+
+    def number(key: str, default: float, low: float, high: float) -> float:
+        try:
+            value = float(found.get(key) or default)
+        except (TypeError, ValueError):
+            return default
+        return min(max(value, low), high) if value == value else default
+
+    return number("session_idle_minutes", 30, 5, 480) * 60, number("session_hours", 12, 1, 168) * 3600
+
+
 def settings(data: Path, env: dict | None = None, **overrides: Any) -> ServerSettings:
     """The settings in effect: the defaults, then server.json, then the environment (:data:`ENV_SETTINGS`), then
     ``overrides`` (the command line; None = not given)."""

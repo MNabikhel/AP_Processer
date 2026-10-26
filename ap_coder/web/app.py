@@ -155,6 +155,10 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     sends no HSTS; otherwise both, whatever scheme a request reports (D-101)."""
     store = store or default_store()
     server = offline.server_mode() if server is None else bool(server)
+    if server:  # how long a login lasts: server.json's, or 30 minutes unused and 12 hours (D-109)
+        from ap_coder.ops.service import session_limits
+
+        store.session_idle, store.session_absolute = session_limits(paths.private_dir())
     settings_factory: Callable[[], Settings] = (lambda: settings) if settings is not None else EnvSettings()
 
     @contextlib.asynccontextmanager

@@ -49,8 +49,14 @@ SCRYPT_N, SCRYPT_R, SCRYPT_P = 2**14, 8, 1
 SALT_BYTES, HASH_BYTES = 16, 64
 _SCRYPT_MAXMEM = 64 * 1024 * 1024
 TOKEN_BYTES = 32
-IDLE_SECONDS = 8 * 3600  # a session unused this long ends
-ABSOLUTE_SECONDS = 7 * 86400  # and any session this old
+# A session unused this long ends, and any session this old (D-109, finance's usual: 30 minutes, a working day). IT
+# may change them in server.json (session_idle_minutes, session_hours): the store's ``session_idle`` and
+# ``session_absolute``, set when the dashboard starts.
+IDLE_SECONDS = 30 * 60
+ABSOLUTE_SECONDS = 12 * 3600
+TEMPORARY_SECONDS = 72 * 3600  # a temporary password (a new account, a reset) not changed by then no longer logs in
+TEMPORARY_EXPIRED = ("Your temporary password has expired (it lasts 3 days): ask an Admin for a new one (Users → "
+                     "Reset password).")  # fmt: skip
 SEEN_EVERY = 60  # seconds between two writes of a session's last use
 MAX_FAILURES = 5  # tries that don't match within FAILURE_WINDOW for one username from one address...
 ADDRESS_FAILURES = 30  # ...or from one address, whatever the usernames...
@@ -269,6 +275,9 @@ def carry_accounts(conn: Any, saved: dict[str, tuple[list[str], list[str], list[
 class UsersMixin:
     """Accounts, sessions and login attempts (server mode, D-97)."""
 
+    session_idle: float = IDLE_SECONDS
+    session_absolute: float = ABSOLUTE_SECONDS
+
     # --- Accounts ---------------------------------------------------------------------------------------------------
 
     def add_user(self, username: str, password: str, role: str = CLERK, display_name: str = "", *,
@@ -371,13 +380,34 @@ class UsersMixin:
 
     # --- Passwords --------------------------------------------------------------------------------------------------
 
-    def change_password(self, user_id: int, current: str, new: str, *, keep: str | None = None) -> str:
+    def change_password(self, user_id: int, current: str, new: str, *, keep: str | None = None, ip: str = "") -> str:
         """The person's own change: ``current`` must match, ``new`` pass the policy and differ from it. Every session
         of theirs ends; the one they changed it from (``keep``, its token) goes on under a new token, returned ("" when
-        none was kept), so a token seen before the change is worth nothing after it (D-101)."""
+        none was kept), so a token seen before the change is worth nothing after it (D-101). A ``current`` that
+        doesn't match counts as a login try that didn't match (from ``ip``): at the ``MAX_FAILURES``-th, every session
+        of theirs ends and logins from there pause, as after wrong passwords at the login (D-109)."""
         with self._conn() as conn:
             row = self._account(conn, user_id)
         if not verify_password(current, row["pw_hash"]):
+            now, ip = _clock(), str(ip or "")[:64]
+            with self._conn() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                last_ok = conn.execute("SELECT MAX(at) FROM login_attempts WHERE username = ? AND ip = ? AND ok = 1",
+                                       (row["username"], ip)).fetchone()[0]  # fmt: skip
+                since = max(now - FAILURE_WINDOW, last_ok or 0)
+                tries = 1 + conn.execute("SELECT COUNT(*) FROM login_attempts WHERE username = ? AND ip = ? AND ok = 0 "
+                                         "AND at > ?", (row["username"], ip, since)).fetchone()[0]  # fmt: skip
+                lock = tries >= MAX_FAILURES
+                conn.execute("INSERT INTO login_attempts (username, ip, at, ok, user_locked_until) VALUES (?, ?, ?, 0, "
+                             "?)", (row["username"], ip, now, now + LOCK_SECONDS if lock else None))  # fmt: skip
+                self._log(conn, "login_failed", None, None, {"username": row["username"], "why": "password page"})
+                if lock:
+                    conn.execute("DELETE FROM sessions WHERE user_id = ?", (row["id"],))
+                    self._log(conn, "login_locked", None, None, {"username": row["username"], "by": "username",
+                                                                  "address": ip})  # fmt: skip
+            if lock:
+                raise ValueError(f"That was the {MAX_FAILURES}th current password that didn't match: you are logged "
+                                 "out, and logging in from here is paused for 15 minutes.")  # fmt: skip
             raise ValueError("Your current password doesn't match. Type it again.")
         if new == current:
             raise ValueError("Choose a new password, different from the current one.")
@@ -543,6 +573,22 @@ class UsersMixin:
             return 0.0
         return float(last) + min(60.0 * 2 ** min(count - ACCOUNT_FAILURES, 10), LOCK_SECONDS)
 
+    def _temporary_expired(self, row: Any) -> bool:
+        """Whether ``row``'s temporary password was given over ``TEMPORARY_SECONDS`` ago (its last ``user_added``
+        or ``password_reset`` event; else the account's creation)."""
+        with self._conn() as conn:
+            given = conn.execute(
+                "SELECT MAX(created_at) FROM events WHERE action IN ('user_added', 'password_reset') "
+                "AND json_extract(detail, '$.username') = ?",
+                (row["username"],),
+            ).fetchone()[0]
+
+        try:
+            when = dt.datetime.fromisoformat(given or row["created_at"]).timestamp()
+        except (TypeError, ValueError):
+            return False
+        return time.time() - when > TEMPORARY_SECONDS  # (the events' own clock)
+
     def _locked(self, conn: Any, key: str, ip: str, now: float, console: bool) -> bool:
         """Whether logins are paused for ``key`` (a username, or ``UNKNOWN`` and its hash) from ``ip``, or from
         ``ip`` whatever the username (never for the server's own console), or for ``key`` from anywhere. An address
@@ -601,6 +647,10 @@ class UsersMixin:
             ).lastrowid
             lock_account = not self._known(conn, key, ip, now) and self._account_paused_until(conn, key, now) > now
         matches = verify_password(password, row["pw_hash"] if row is not None else _dummy_hash())
+        if row is not None and row["active"] and matches and row["must_change"] and self._temporary_expired(row):
+            with self._conn() as conn:
+                self._log(conn, "login_failed", None, None, {"username": name, "why": "temporary password expired"})
+            raise LoginRefused(TEMPORARY_EXPIRED)
         with self._conn() as conn:
             conn.execute("BEGIN IMMEDIATE")
             if row is not None and row["active"] and matches:
@@ -627,7 +677,7 @@ class UsersMixin:
         with self._conn() as conn:
             conn.execute(
                 "DELETE FROM sessions WHERE created_at <= ? OR last_seen < ?",
-                (now - ABSOLUTE_SECONDS, now - IDLE_SECONDS),
+                (now - self.session_absolute, now - self.session_idle),
             )
             conn.execute(
                 "INSERT INTO sessions (token_hash, user_id, created_at, last_seen, ip, user_agent) "
@@ -653,8 +703,8 @@ class UsersMixin:
                 return None
             if (
                 not row["active"]
-                or now - row["session_created"] >= ABSOLUTE_SECONDS
-                or (now - row["last_seen"] > IDLE_SECONDS)
+                or now - row["session_created"] >= self.session_absolute
+                or (now - row["last_seen"] > self.session_idle)
             ):
                 conn.execute("DELETE FROM sessions WHERE token_hash = ?", (digest,))
                 return None
@@ -678,6 +728,22 @@ class UsersMixin:
             if row is not None and actor:
                 self._log(conn, "logout", None, actor, {"username": row["username"]})
         return row is not None
+
+    def other_sessions(self, user_id: int, keep: str | None) -> int:
+        """How many sessions of the account there are besides ``keep`` (this browser's), within their time."""
+        now = _clock()
+        with self._conn() as conn:
+            args = (
+                int(user_id),
+                token_hash(keep) if keep else "",
+                now - self.session_absolute,
+                now - self.session_idle,
+            )
+            return conn.execute(
+                "SELECT COUNT(*) FROM sessions WHERE user_id = ? AND token_hash != ? AND created_at > ? "
+                "AND last_seen >= ?",
+                args,
+            ).fetchone()[0]
 
     def end_sessions(self, user_id: int, *, keep: str | None = None) -> int:
         """End every session of an account (``keep``: but this token's); how many ended."""
