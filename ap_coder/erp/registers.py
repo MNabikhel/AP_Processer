@@ -3,6 +3,8 @@
 AP Coder only knows the invoices it has processed. Importing the ERP's invoice list (vendor, invoice
 number, date, total) lets the duplicate check also catch a bill that was already entered or paid in the
 ERP: DUPLICATE_IN_ERP.
+
+Entry points: ``map_columns`` and ``rows_from_records`` (the import; ``Store.import_erp_register`` keeps them).
 """
 
 from __future__ import annotations

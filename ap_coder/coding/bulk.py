@@ -7,6 +7,9 @@ always goes to a person (``ALWAYS_A_PERSON``: some, like a new vendor name, are 
 credit is always applied by a person, as the touchless rules say) and the AI's confidence is above the review
 threshold.
 Everything else is skipped with the reason, and still needs a person.
+
+Entry points: ``sort_for_bulk`` (the queue's clean invoices, and why each other is left), ``issues_today`` and
+``bulk_approve``.
 """
 
 from __future__ import annotations

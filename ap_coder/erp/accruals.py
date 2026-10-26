@@ -12,6 +12,9 @@ Three sources, none counted twice:
   long overdue: AP decides), one with no date is not accrued but listed (``undated``)
 * Expected recurring invoices: regular vendors whose next invoice was due by the period end and has not
   arrived, at their usual amount, on the GL account most used for them (an estimate)
+
+Entry points: ``build`` (with ``undated``: the invoices with no date, not accrued), ``by_gl_columns``,
+``summary`` and ``to_csv``.
 """
 
 from __future__ import annotations
@@ -257,7 +260,7 @@ def to_csv(accruals: list[Accrual], period_end: dt.date) -> bytes:
     for a in accruals:
         w.writerow(csv_row([a.source, a.vendor, a.reference, a.description, a.gl_code, a.cost_center,
                             f"{a.amount:.2f}", a.currency, a.note]))  # fmt: skip
-    return ("﻿" + out.getvalue()).encode("utf-8")
+    return ("\ufeff" + out.getvalue()).encode("utf-8")
 
 
 def default_period_end(today: dt.date | None = None) -> dt.date:

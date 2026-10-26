@@ -5,6 +5,9 @@ up, a price above the PO...). Internal controls are never mentioned: fraud and d
 would tip off a fraudster (bank account or GST/HST number changed, vendor on hold, unusual amount, not in
 the vendor master), GL coding, and how the document was read. A changed bank account is confirmed by
 phone, never by replying to an email.
+
+Entry points: ``draft`` (an invoice's email), ``points`` and ``statement_request`` (after a statement
+reconciliation).
 """
 
 from __future__ import annotations

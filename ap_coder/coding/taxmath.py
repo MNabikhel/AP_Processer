@@ -1,5 +1,8 @@
 """The math on an invoice, worked out again from its lines: the review screen shows it as the Tax check under the line
-items and on the approve bar, and the AI reviewer (verifier.py) is given it."""
+items and on the approve bar, and the AI reviewer (verifier.py) is given it.
+
+Entry point: ``math_check``; ``money`` writes an amount as the review screen's boxes do.
+"""
 
 from __future__ import annotations
 

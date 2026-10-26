@@ -19,6 +19,10 @@ The review screen shows a line's states as one choice, the **tax code**: "GST+PS
 exempt); "GST" (GST charged; where PST applies, PST due and not charged: self-assess); "PST~GST"; "EXEMPT", "ZERO",
 "OUT"; "NONE" (nothing charged, nothing said). ``options`` lists the codes that make sense where the invoice is
 supplied, in plain words ("GST only · PST exempt"); ``prefill`` works them out when an invoice is read.
+
+Entry points: ``tax_code_of``, ``parse_code`` and ``apply_tax_code`` (a line's code), ``options`` and
+``code_label`` (the dropdown), ``prefill`` (the codes worked out when an invoice is read), ``learned_codes`` and
+``tax_vote`` (learning from approvals).
 """
 
 from __future__ import annotations

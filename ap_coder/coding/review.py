@@ -1,6 +1,8 @@
 """Turning the dashboard's edited header fields and grids back into an ``InvoiceCoding``.
 
 Kept free of the web app so it can be unit-tested.
+
+Entry points: ``coding_from_inputs``, ``codes_to_pick`` (what approval still needs) and ``split_line``.
 """
 
 from __future__ import annotations

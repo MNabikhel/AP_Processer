@@ -34,6 +34,22 @@ left out of the batch, instead of E1 posting the PST twice or not at all.
 With the tax coded to G/L accounts (``AMOUNT_GL``, the default for a new setup, D-93) E1 posts no tax: the F0911Z1
 lines are AP Coder's distribution unfiltered (each recoverable tax on its own line to its tax account), the voucher
 goes with the gross, code E and no tax area, and ``sum(F0911Z1) == gross``.
+
+Where things are
+----------------
+Every part works from one voucher worked out once (``_prepare``: its amounts in cents, tax area and code, the
+distribution lines and why it can't go), so they stay in this one file, in this order:
+
+* the settings (``JdeSettings``, ``load``, ``save``, ``settings_problems``) and the formats (``julian``,
+  ``jde_amount``);
+* supplier numbers and accounts (``resolve_an8``, ``account_for``), then one voucher (``_prepare``, ``terms_code``,
+  ``sent_due``) and its rows (``voucher_rows``);
+* the checks over a batch (``validate``, ``duplicate_problems``) and before approval, on the review screen
+  (``voucher_findings``, ``voucher_view``);
+* the files (``export_batch``, ``readme``, ``build_zip``), the dry run (``dry_run``, ``dry_run_text``) and the
+  account mapping import (``gl_map_from_records``).
+
+The AIS API is ``jde_ais.py`` (the client), ``jde_sync.py`` (reading from JDE) and ``jde_post.py`` (posting).
 """
 
 from __future__ import annotations

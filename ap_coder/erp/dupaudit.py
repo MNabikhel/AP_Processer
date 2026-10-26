@@ -12,6 +12,8 @@ ERP's invoice register (Exports page), for pairs that are probably the same bill
 
 An exported AP Coder invoice and its own entry in the ERP register (same vendor, number and amount) are the same
 bill, not a duplicate. Credit notes are left out.
+
+Entry points: ``find`` (the pairs, strongest reason first) and ``to_csv``.
 """
 
 from __future__ import annotations
@@ -190,4 +192,4 @@ def to_csv(pairs: list[Pair]) -> bytes:
             f"AP Coder #{a.invoice_id}" if a.invoice_id else "ERP", b.vendor_name, b.number, b.date,
             f"AP Coder #{b.invoice_id}" if b.invoice_id else "ERP",
         ]))  # fmt: skip
-    return ("﻿" + out.getvalue()).encode("utf-8")
+    return ("\ufeff" + out.getvalue()).encode("utf-8")

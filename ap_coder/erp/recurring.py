@@ -3,6 +3,8 @@
 A vendor is recurring once it has billed at least three times at a steady interval (weekly to
 quarterly). A late invoice is worth chasing (a lost invoice means a late payment) and worth
 accruing at month-end, so the Vendors page lists them with the usual amount.
+
+Entry points: ``detected`` (the store's recurring vendors, worked out once an invoice changed) and ``detect``.
 """
 
 from __future__ import annotations

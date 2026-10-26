@@ -13,6 +13,9 @@ Three responsibilities, all deterministic (the LLM only reads what is printed):
   treatment: recoverable taxes (GST/HST ITCs, QST ITRs) go to their own GL
   account, while non-recoverable PST is added to the cost of the expense
   lines it applies to, or to its own expense account.
+
+Entry points: ``TaxRateTable`` and ``TaxSetup``, ``supply_source`` / ``place_of_supply``, ``check_taxes`` and
+``build_gl_distribution``; line by line, the tax codes are ``line_tax.py``'s.
 """
 
 from __future__ import annotations

@@ -4,6 +4,9 @@ Terms are read as printed ("Net 30", "2/10 Net 30", "1% 15 days, net 45", "Due o
 "Payable dans les 30 jours"...). The due date is the one printed on the invoice when there is one,
 otherwise the invoice date plus the net days of the terms, otherwise the organisation's default
 (Settings, 30 days unless changed).
+
+Entry points: ``parse_terms``, ``payment`` (due date and discount), ``payment_findings`` (the checks),
+``describe`` and ``terms_key`` (the standard wording, the key of the JD Edwards terms table).
 """
 
 from __future__ import annotations

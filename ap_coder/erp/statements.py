@@ -9,6 +9,8 @@ the invoices AP Coder holds for that vendor, by invoice number (compared the way
 * not received: on the statement but not in AP Coder (ask the vendor for a copy)
 * not on statement: in AP Coder for the statement period but not on the statement
 * payment / credit: without a number, or with an invoice's number and the opposite sign: shown for information
+
+Entry points: ``map_columns``, ``reconcile`` (a ``Reconciliation``) and ``to_csv``.
 """
 
 from __future__ import annotations
@@ -231,4 +233,4 @@ def to_csv(rec: Reconciliation) -> bytes:
             "" if li.difference is None else f"{li.difference:.2f}",
             li.invoice_id or "", li.ap_status, li.note,
         ]))  # fmt: skip
-    return ("﻿" + out.getvalue()).encode("utf-8")
+    return ("\ufeff" + out.getvalue()).encode("utf-8")

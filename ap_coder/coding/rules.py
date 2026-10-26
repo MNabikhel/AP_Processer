@@ -5,6 +5,8 @@ center) to use: "Purolator → 5200", "any line with 'freight' → 5200", "Bell 
 CC300". They are applied when an invoice is processed, after the AI; the review screen says which lines
 a rule changed, and the reviewer can still change them. The most specific rule wins (vendor and words,
 then words, then vendor); among equals, the longer words, then the older rule.
+
+Entry points: ``apply`` (an invoice's lines), ``rule_for``, ``describe`` and ``suggest`` (rules from the history).
 """
 
 from __future__ import annotations

@@ -7,6 +7,8 @@
   exports undone and backups restored
 * approvals per person, and how many were bulk approvals
 * invoices where one person did several of the steps: first approval, second approval, export, posting to JD Edwards
+
+Entry points: ``build`` (the sections of a period) and ``report_html``.
 """
 
 from __future__ import annotations

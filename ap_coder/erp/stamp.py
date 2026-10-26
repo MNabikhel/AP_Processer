@@ -3,6 +3,8 @@ page added at the end (GL lines, tax, approvals). Made to attach to the ERP entr
 
 PDFs keep their pages; an image invoice becomes a one-page PDF; a text invoice (or a missing file) gives
 the coding page alone.
+
+Entry points: ``stamped_pdf`` (one invoice), ``batch_zip`` (several) and ``can_stamp``.
 """
 
 from __future__ import annotations

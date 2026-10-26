@@ -16,6 +16,10 @@ The two CSV files are for the ERP's loader, like the JD Edwards files: their tex
 is, with no spreadsheet apostrophe (an invoice number ``'+A-100`` would miss the ERP's duplicate check).
 The xlsx workbook is opened by people, so its formula-looking text is stored as plain text.
 * ``jde``: JD Edwards E1 Z-table files (F0411Z1 / F0911Z1), built by ``jde.build_zip``.
+
+Entry points: ``build`` (one batch's file in a format), ``distribution`` (an approved invoice's posting lines,
+as stored or built again), ``line_rows`` / ``invoice_rows`` and ``entry_lines`` (the invoice line behind a
+posting line, which the JD Edwards files use too).
 """
 
 from __future__ import annotations

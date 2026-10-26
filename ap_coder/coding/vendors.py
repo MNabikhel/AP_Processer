@@ -21,6 +21,9 @@ expected GST/HST number, notes). ``vendor_findings`` turns that into checks on a
   credit note credits, found or not, and a credit larger than it
 * VENDOR_BANK_CHANGED (warning): the bank details printed for payment differ from the ones on this vendor's approved
   invoices, the most common payment fraud (a fake "our banking details have changed")
+
+Entry points: ``vendor_findings``, ``norm_invoice_number`` (how invoice numbers compare everywhere),
+``master_vendor_id``, and ``master_columns`` / ``master_rows`` (the vendor master import).
 """
 
 from __future__ import annotations

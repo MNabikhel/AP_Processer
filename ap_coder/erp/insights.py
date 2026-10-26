@@ -3,6 +3,10 @@
 Everything is computed from data AP Coder already keeps (invoices, their processing metadata with page
 counts and token usage, and the audit trail of approvals). Time and price figures are *assumptions* the
 AP team can edit on the Insights page; they are stored in the database (setting ``insights_assumptions``).
+
+Entry points: ``compute`` (the business case), ``report_html``, ``operations``, ``vendor_workload``,
+``approved_as_coded``; ``invoice_facts``, ``approval_facts``, ``workload_facts`` and ``payment_facts`` are what the
+invoices' summary keeps for them (D-110).
 """
 
 from __future__ import annotations

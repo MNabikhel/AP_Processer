@@ -1,11 +1,12 @@
-"""Deterministic post-inference controls.
+"""The checks of one coded invoice, and what they make of its confidence.
 
-The LLM's self-reported confidence is not enough on its own to decide
-straight-through processing. These checks reconcile the arithmetic, verify
-every code against the reference data, run the Canadian sales-tax checks,
-compare against reviewer history and cross-check prebuilt-invoice fields,
-then derive an adjusted confidence and a human-review flag that drives the
-dashboard review queue.
+The reader's or the model's own confidence is not enough to let an invoice through. ``validate_coding`` reconciles
+the arithmetic (lines, subtotal, tax, total, the GL posting to the cent), checks every GL account and cost center
+against the reference data, runs the Canadian sales-tax checks (``tax.check_taxes``), compares the lines with what
+reviewers coded before and with Azure's reading when there is one, and gathers the vendor, PO and JD Edwards findings
+made elsewhere. ``score`` then gives the two confidences (D-89): the Reading (the header) and the Coding (the lines'
+accounts, cost centers and tax codes, ``coding_confidence``), the invoice's being the lower, and whether it needs a
+person (``needs_review``): what the review queue sorts and flags on.
 """
 
 from __future__ import annotations

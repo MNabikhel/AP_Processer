@@ -3,6 +3,9 @@
 Spend is the cost to the company: each expense line's amount plus any sales tax that is not recovered
 (recoverable GST/HST/QST is left out, as it is claimed back). Credit notes reduce it. Amounts stay in
 each invoice's currency; currencies are never added together.
+
+Entry points: ``parts`` (the Spend page's lines, from the invoices' summary), ``total_by``,
+``by_month_and_category``, ``currencies``, ``in_cad``, and ``workbook`` (the full data download).
 """
 
 from __future__ import annotations
