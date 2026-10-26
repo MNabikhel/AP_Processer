@@ -1235,5 +1235,5 @@ that is reversed keeps its line, marked "replaced by D-NN".
   their default too), the shared ones an Admin's, shown beside them. Left for the roadmap: SSO/MFA, a SIEM feed, a
   hash-chained audit, DPAPI for secrets, encrypted backups, `pip --require-hashes` (the bundle's SHA-256 covers its
   wheelhouse). (`ops/server_update.py`, `ops/service.py`, `ops/cli.py`, `core/config.py`, `web/security.py`,
-  `web/identity.py`, `web/pages/process.py`, `core/store/users.py`, `core/store/invoices.py`, `erp/controls.py`,
+  `web/identity.py`, `web/pages/process.py`, `core/store/users.py` (`posting_refusal`, `vouched_for`), `core/store/invoices.py`, `erp/controls.py`,
   `erp/directory.py`, `web/roles.py`, `web/server.py`, `erp/hub/onelake.py`; `tests/test_server_hardening.py`)

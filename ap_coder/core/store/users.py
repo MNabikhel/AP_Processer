@@ -69,6 +69,7 @@ ACCOUNT_WINDOW = 3600
 KNOWN_ADDRESS_SECONDS = 30 * 86400  # an address the account logged in from this recently is "known"
 ANYWHERE = "*"  # the address of an account-wide pause (paused_usernames, unlock_username)
 VOUCH_DAYS = 7  # an account an Admin added or reset can't give the second approval of that Admin's invoice (D-109)
+POSTER_NOT_APPROVER = "poster_not_approver"  # the setting: who posts to JD Edwards can't be who approved (D-109)
 UNKNOWN = "?"  # how login_attempts keeps a username no account has: "?" and a hash, never the text typed
 USERNAME = re.compile(r"[a-z0-9][a-z0-9._@-]{0,63}")
 MAX_DISPLAY_NAME = 60
@@ -461,6 +462,28 @@ class UsersMixin:
             by = {"by_user": int(by_user)} if by_user is not None else {}
             self._log(conn, "password_reset", None, actor or None, {"username": row["username"], **by})
         return chosen
+
+    def poster_not_approver(self) -> bool:
+        """The Admin's separation of duties on the server (Settings → Review, off by default): the person who posts a
+        batch to JD Edwards can't be one who approved its invoices (D-109)."""
+        return self.get_setting(POSTER_NOT_APPROVER) == "1"
+
+    def posting_refusal(self, batch: int, user_id: int | None) -> str:
+        """Why account ``user_id`` may not post ``batch`` to JD Edwards ("" = it may): with ``poster_not_approver``
+        on, it gave the first or second approval of one of the batch's invoices."""
+        if user_id is None or not self.poster_not_approver():
+            return ""
+        with self._conn() as conn:
+            rows = conn.execute("SELECT e.invoice_id, e.detail FROM events e JOIN invoices i ON i.id = e.invoice_id "
+                                "WHERE i.export_batch = ? AND e.action IN ('approved', 'final_approved')",
+                                (int(batch),)).fetchall()  # fmt: skip
+        mine = sorted({int(r[0]) for r in rows if json.loads(r[1] or "{}").get("user_id") == int(user_id)})
+        if not mine:
+            return ""
+        which = ", ".join(f"#{i}" for i in mine[:5]) + (" and more" if len(mine) > 5 else "")
+        return (f"Not posted: you approved {which} in this batch, and here the person who posts to JD Edwards can't "
+                "be one who approved its invoices (Settings → Review, set by an Admin). Another Approver posts "
+                "it.")  # fmt: skip
 
     def vouched_for(self, admin_id: int, user_id: int, days: int = VOUCH_DAYS) -> bool:
         """Whether account ``admin_id`` added account ``user_id``, or reset its password, in the last ``days`` days:

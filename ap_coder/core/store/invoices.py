@@ -44,8 +44,6 @@ from ._base import (
 )
 from .users import VOUCH_DAYS, account_of, same_approver  # noqa: F401  (also used by the pages)
 
-POSTER_NOT_APPROVER = "poster_not_approver"  # the setting (D-109)
-
 
 class InvoicesMixin:
     # --- Invoices --------------------------------------------------------------------------------------
@@ -906,43 +904,17 @@ class InvoicesMixin:
         """Does this invoice need a second approver (``second_approval_reason``)?"""
         return bool(self.second_approval_reason(coding, limit, unknown_rate=unknown_rate))
 
-    def poster_not_approver(self) -> bool:
-        """The Admin's separation of duties on the server (Settings → Review, off by default): the person who posts a
-        batch to JD Edwards can't be one who approved its invoices (D-109)."""
-        return self.get_setting(POSTER_NOT_APPROVER) == "1"
-
-    def posting_refusal(self, batch: int, user_id: int | None) -> str:
-        """Why account ``user_id`` may not post ``batch`` to JD Edwards ("" = it may): with ``poster_not_approver``
-        on, it gave the first or second approval of one of the batch's invoices."""
-        if user_id is None or not self.poster_not_approver():
-            return ""
-        with self._conn() as conn:
-            rows = conn.execute("SELECT e.invoice_id, e.detail FROM events e JOIN invoices i ON i.id = e.invoice_id "
-                                "WHERE i.export_batch = ? AND e.action IN ('approved', 'final_approved')",
-                                (int(batch),)).fetchall()  # fmt: skip
-        mine = sorted({int(r[0]) for r in rows if json.loads(r[1] or "{}").get("user_id") == int(user_id)})
-        if not mine:
-            return ""
-        which = ", ".join(f"#{i}" for i in mine[:5]) + (" and more" if len(mine) > 5 else "")
-        return (f"Not posted: you approved {which} in this batch, and here the person who posts to JD Edwards can't "
-                "be one who approved its invoices (Settings → Review, set by an Admin). Another Approver posts "
-                "it.")  # fmt: skip
-
     def latest_approval_id(self, invoice_id: int) -> str:
-        """The id of the invoice's latest ``approved`` event ("" when none): what a page shows as the first approval
-        and posts back with the final approval (``final_approve``'s ``shown``)."""
+        """The latest ``approved`` event's id ("" when none): what a page posts as ``final_approve``'s ``shown``."""
         with self._conn() as conn:
-            found = conn.execute("SELECT MAX(id) FROM events WHERE invoice_id = ? AND action = 'approved'",
-                                 (invoice_id,)).fetchone()[0]  # fmt: skip
-        return str(found or "")
+            sql = "SELECT MAX(id) FROM events WHERE invoice_id = ? AND action = 'approved'"
+            return str(conn.execute(sql, (invoice_id,)).fetchone()[0] or "")
 
     def final_approve(self, invoice_id: int, approver: str, login: str = "", *, shown: str | None) -> None:
         """The second approval: by someone other than the first approver (another name and, when the
-        dashboard records it, another computer login; in server mode another account: ``same_approver``, and not
-        one the first approver added or reset the password of in the last ``VOUCH_DAYS`` days). The invoice can then
-        be exported. ``shown``, always given: the first approval the page showed (its ``approved`` event's id, as the
-        page posts it, ``latest_approval_id``): approved again since, or none given, it is refused
-        (``ApprovedAgain``), as the version now waiting may not be the one the approver looked at (B-654, D-109)."""
+        dashboard records it, another computer login; in server mode another account, ``same_approver``, not one the
+        first approver added or reset within ``VOUCH_DAYS`` days). ``shown``, always given: the approval the page
+        showed (``latest_approval_id``): approved again since, or none, it is refused (``ApprovedAgain``, B-654)."""
         inv = self.get_invoice(invoice_id)
         if inv is None or inv["status"] != PENDING:
             raise ValueError(f"invoice {invoice_id} is not waiting for a second approval")
