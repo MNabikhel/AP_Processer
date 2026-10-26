@@ -1,4 +1,14 @@
-"""Unified execution pipeline: extract -> code -> validate -> persist."""
+"""One invoice from its file to the review queue: read, code, check, decide, save.
+
+* ``InvoicePipeline.process``: a PDF, picture or text file read on this computer (the PDF's text layer or local OCR,
+  read by capture with the supplier's template), its lines coded from AP's approvals (``offline_coder``) and the chat
+  model for those left over, the checks, the touchless decision, then saved to the review queue and put in line for
+  the page reader and the AI reviewer. ``process_many`` runs a batch.
+* ``finalise_coding``: the checks and the output (target schema, GL distribution) of a coding, again each time a
+  reviewer edits the invoice.
+* ``invoice_files``, ``discover_inputs``, ``other_files``: which files in a folder are invoices; ``write_outputs``:
+  the command line's JSON files; ``plain_error``: what AP reads when a file can't be read.
+"""
 
 from __future__ import annotations
 
@@ -386,7 +396,6 @@ class InvoicePipeline:
         loaded in LM Studio can see pages (Qwen 3.5 can). Asked once per file and model: kept in the data folder
         (``.cache/model_reading``). Never fatal: without it the invoice is read as before."""
         import hashlib
-        import re
 
         from ..core.paths import private_dir
         from .inference import read_header
@@ -606,7 +615,7 @@ class InvoicePipeline:
                     result.autonomy = azure_check.hold(result.autonomy, azure)
                     # The AI reviewer (on by default): every invoice goes in line, and none is approved without a person
                     # until it agrees.
-                    reviewer_plan = verifier.prepare(self.store, invoice_id, result.autonomy)
+                    reviewer_plan = verifier.prepare(self.store, result.autonomy)
                     result.autonomy = verifier.hold(result.autonomy, reviewer_plan)
             except Exception:  # one bad invoice must not stop a batch: saved for a person, never touchless
                 log.exception("Checks after coding failed for %s", path)
@@ -636,10 +645,9 @@ class InvoicePipeline:
                 elif result.output is not None:  # the page reader reads every page of it in the background
                     from .page_worker import queue_new_invoice, skip_new_invoice, skip_reason
 
-                    source = result.capture.layout_source if result.capture is not None else ""
                     why = skip_reason(self.settings, result.capture, result.autonomy, path)  # (server: D-111)
                     if not why or not skip_new_invoice(self.store, result.invoice_id, result.capture.page_count, why):
-                        queue_new_invoice(self.store, self.settings, result.invoice_id, path, source)
+                        queue_new_invoice(self.store, result.invoice_id, path)
             except Exception as exc:  # a file that cannot be saved (locked, gone) must not stop the batch
                 log.exception("Could not save %s", path)
                 result.error = result.error or f"not saved: {type(exc).__name__}: {exc}"

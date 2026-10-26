@@ -11,13 +11,21 @@ import pytest
 from ap_coder.capture import analyze, build_layout, layout
 from ap_coder.capture.bridge import review_issues
 from ap_coder.capture.normalize import find_currency, same_value
-from ap_coder.capture.transcript import layout_from_transcript, transcript_fields, transcript_line_items
+from ap_coder.capture.reader import read_line_items
+from ap_coder.capture.transcript import layout_from_transcript, transcript_fields
 from ap_coder.capture.types import CHECK, MISSING, VERIFIED, CaptureResult, DocLayout, FieldResult, PageLayout
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "page_reader"
 OVIS = (FIXTURES / "s212-0000.md").read_text(encoding="utf-8")  # OvisOCR2's reading of the scan s212-0000.pdf
 TRUTH = json.loads((FIXTURES / "s212-0000.truth.json").read_text(encoding="utf-8"))
 TODAY = dt.date(2025, 7, 30)
+
+
+def _line_items(pages):
+    """The line items of the transcription's line-item table, as capture reads them (``reader.read_line_items``)."""
+    return read_line_items(layout_from_transcript(pages))
+
+
 AMOUNTS = [27.05, 336.06, 757.92, 351.28, 1010.63, 1239.24]
 
 
@@ -42,7 +50,7 @@ def test_ovisocr2_reading_gives_every_field():
 
 
 def test_ovisocr2_table_gives_the_line_items():
-    items = transcript_line_items([OVIS])
+    items = _line_items([OVIS])
     assert [li.amount for li in items] == AMOUNTS
     assert [li.quantity for li in items] == [1, 2, 2, 1, 10.5, 4]
     assert [li.unit_price for li in items] == [27.05, 168.03, 378.96, 351.28, 96.25, 309.81]
@@ -65,7 +73,7 @@ def test_markdown_tables_read_like_html_ones():
     md = _as_markdown_tables(OVIS)
     assert "<table" not in md and "| Code | Product / Service |" in md
     _assert_truth(transcript_fields([md]))
-    assert [li.amount for li in transcript_line_items([md])] == AMOUNTS
+    assert [li.amount for li in _line_items([md])] == AMOUNTS
 
 
 def test_html_header_grid_merged_cells_and_totals_rows():
@@ -84,7 +92,7 @@ def test_html_header_grid_merged_cells_and_totals_rows():
     assert _top(cands, "invoice_number") == "AC-1001" and cands["invoice_number"][0].method == "label-below"
     assert _top(cands, "invoice_date") == "2026-09-14" and _top(cands, "po_number") == "PO-7781"
     assert (_top(cands, "subtotal"), _top(cands, "gst_amount"), _top(cands, "grand_total")) == (1000.0, 50.0, 1050.0)
-    items = transcript_line_items([page])
+    items = _line_items([page])
     assert [li.amount for li in items] == [600.0, 400.0]  # the merged-down cell keeps the columns of the row below
     assert items[0].description == "Toner cartridges"
 
@@ -115,7 +123,7 @@ def test_layout_geometry_and_a_long_page():
     for page in long.pages:  # rows stay apart, and each page carries the table's heading row
         cys = sorted({round(ln.box.cy, 6) for ln in page.lines})
         assert min(b - a for a, b in zip(cys, cys[1:], strict=False)) > 0.006
-    items = transcript_line_items([f"| Description | Qty | Amount |\n|---|---|---|\n{rows}"])
+    items = _line_items([f"| Description | Qty | Amount |\n|---|---|---|\n{rows}"])
     assert len(items) == 300 and items[-1].amount == 300.0
 
 

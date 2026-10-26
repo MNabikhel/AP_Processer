@@ -16,9 +16,8 @@ from pathlib import Path
 import pytest
 
 from ap_coder.ai.pipeline import InvoicePipeline, finalise_coding
-from ap_coder.bench.coding import COST_CENTER, ITEM_GL
+from ap_coder.bench.coding import COST_CENTER, ITEM_GL, sample_reference
 from ap_coder.bench.generator import make_stream_case
-from ap_coder.bench.speed import _reference
 from ap_coder.core.config import Settings
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import Store
@@ -70,7 +69,7 @@ def pilot(tmp_path_factory):
     mp.setenv("AP_PRIVATE_DIR", str(tmp / "data"))
     try:
         store = Store(tmp / "data" / "ap_coder.db")
-        reference = _reference()
+        reference = sample_reference()
         settings = Settings()
         settings = replace(settings, llm=replace(settings.llm, provider="off"))
         cases = {(s, i): make_stream_case(tmp / "cases", SEED, s, i) for s in SUPPLIERS for i in range(PER_SUPPLIER)}

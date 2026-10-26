@@ -190,7 +190,7 @@ def test_teach_by_click_boxes_are_authoritative():
 
 def test_a_value_not_on_the_page_teaches_nothing():
     template = learn(None, _invoice(), {"po_number": ("PO-1", None), "invoice_number": ("NW-2026-0912", None)})
-    assert "po_number" not in template.learned_fields() and template.invoices == 1
+    assert not template.fields.get("po_number") and template.invoices == 1
     assert learn(None, _invoice(), {"po_number": ("PO-1", None)}).invoices == 0
 
 

@@ -22,6 +22,7 @@ template so the gain from learning is measured on the very same invoices. Writes
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import json
 import tempfile
@@ -144,8 +145,9 @@ def _simulate(job: Job) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     evidence: list[dict[str, Any]] = []  # for `bench calibrate`: what a template adds to the evidence
     t0 = time.perf_counter()
-    with tempfile.TemporaryDirectory(prefix="ap-learn-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="ap-learn-") as tmp, contextlib.ExitStack() as held:
         store = Store(Path(tmp) / "learn.db")
+        held.enter_context(store.session())  # one connection for the run, as the app holds one for each request
         # The stored state, since when it is touchless and when it was last suspended (as the store keeps them).
         stored, since, suspended_at = SUPERVISED, None, None
         key = ""
