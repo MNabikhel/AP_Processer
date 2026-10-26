@@ -189,8 +189,9 @@ def report_page(request: Request, codes: bool = False) -> HTMLResponse:
     store = get_store(request)
     logs = paths.user_settings_path().parent / "logs"
     shown = [logs / "launch.log", logs / "dashboard-errors.log"]
-    if server_mode(request):  # the service's log (D-100)
-        shown = [service.log_path(data_dir(store))]
+    admin_here = can(request, "/help/report/setup", "GET")  # an Admin's on the server (D-109)
+    if server_mode(request):  # the service's log (D-100), where it is on the server: an Admin's (B-1407)
+        shown = [service.log_path(data_dir(store))] if admin_here else []
     key = str(store.path)
     with _setup_lock:
         kept = _setup_cache.get(key)
@@ -201,7 +202,7 @@ def report_page(request: Request, codes: bool = False) -> HTMLResponse:
         "help",
         title="Report a problem",
         setup=ready,
-        setup_shown=can(request, "/help/report/setup", "GET"),  # an Admin's on the server: versions, names (D-109)
+        setup_shown=admin_here,  # an Admin's on the server: versions, names (D-109)
         activity=activity_report(store, codes),
         codes=codes,
         logs=[short_path(p) for p in shown],

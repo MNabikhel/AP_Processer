@@ -55,11 +55,15 @@
 
   <section class="card">
     <h4><span class="ms" aria-hidden="true">description</span> If AP Coder would not start, or a page went wrong</h4>
-    <p class="muted">The full details are kept in two log files on this computer. Attach them if you are asked to.</p>
+    {% if logs %}
+    <p class="muted">The full details are kept in {{ 'two log files' if logs|length > 1 else 'a log file' }} on this computer. Attach {{ 'them' if logs|length > 1 else 'it' }} if you are asked to.</p>
     <details class="st-forit">
       <summary><span class="ms" aria-hidden="true">engineering</span>For IT: where they are</summary>
       <ul>{% for path in logs %}<li><code>{{ path }}</code></li>{% endfor %}</ul>
     </details>
+    {% else %}
+    <p class="muted">The full details are kept in the server's log: an Admin can attach it if you are asked to.</p>
+    {% endif %}
   </section>
 </div>
 {% endblock %}

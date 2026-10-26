@@ -736,6 +736,17 @@ def test_the_setup_report_is_an_admins_on_the_server(web):
     assert 'data-url="/help/report/setup"' in admin.get("/help/report").text
 
 
+def test_where_the_servers_log_is_kept_is_shown_to_an_admin_only(web):
+    """B-1407: Report a problem showed every role the path of the server's log on the server."""
+    from ap_coder.ops import service
+
+    name = service.log_path(web["store"].path.parent).name
+    reader = _as(web, "reader", "readonly")
+    assert name not in reader.get("/help/report").text
+    admin = _as(web, "boss", "admin")
+    assert name in admin.get("/help/report").text
+
+
 def test_a_jobs_progress_is_shown_to_the_role_that_may_start_it(web):
     from ap_coder.web.roles import JOB_NEEDS
 
