@@ -420,7 +420,7 @@ def fitting_pythons() -> list[str]:
             elif found:
                 versions.add(f"3.{found.group(1)}")
         per_package.append(versions)
-    return sorted(set.intersection(*per_package), key=_version_key) if per_package else []
+    return sorted(set.intersection(*per_package), key=paths.version_key) if per_package else []
 
 
 def venv_fits() -> bool:
@@ -448,13 +448,6 @@ def venv_fits_probe() -> bool:
     except (OSError, subprocess.TimeoutExpired):
         return False
     return probe.returncode == 0
-
-
-def _version_key(version: str) -> tuple[int, ...]:
-    try:
-        return tuple(int(part) for part in version.split("."))
-    except ValueError:
-        return (0,)
 
 
 _ARCH = re.compile(r"(amd64|x86_64|arm64|aarch64|universal2|win32|i686)$")
@@ -488,7 +481,7 @@ def bundle_pythons(here_only: bool = True) -> list[str]:
         return []
     found = {t.rsplit("Python ", 1)[-1].strip(")").strip() for t in targets
              if isinstance(t, str) and "Python " in t and (not here_only or _for_this_computer(t))}  # fmt: skip
-    return sorted(found, key=_version_key)
+    return sorted(found, key=paths.version_key)
 
 
 def wheel_platform() -> str:
@@ -539,7 +532,8 @@ def bootstrap(argv: list[str]) -> int:
             except KeyboardInterrupt:
                 return 0
     made_with = venv_version()
-    too_old = bool(VENV_PY.exists() and made_with and not supported(_version_key(made_with)) and supported(version))
+    too_old = bool(VENV_PY.exists() and made_with and not supported(paths.version_key(made_with))
+                   and supported(version))  # fmt: skip
     rebuild = too_old or bool(VENV_PY.exists() and fitting and made_with and made_with not in fitting and shown in
                               fitting and not venv_fits_probe())  # fmt: skip
     if too_old:
@@ -776,7 +770,7 @@ def wheelhouse_misfit() -> str:
         return ""
     tags = [tag for found in wheels.values() for tag in found]
     systems = [s for s in SYSTEM_NAMES if s in {_computer_kind(p)[0] for _i, _a, p in tags}]
-    pythons = sorted({v for i, a, _p in tags if (v := _cpython(i, a))}, key=_version_key)
+    pythons = sorted({v for i, a, _p in tags if (v := _cpython(i, a))}, key=paths.version_key)
     built = " and ".join(SYSTEM_NAMES[s] for s in systems) or "another kind of computer"
     built += f", Python {'/'.join(pythons)}" if pythons else ""
     system, version = this_computer(), f"{sys.version_info[0]}.{sys.version_info[1]}"

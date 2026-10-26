@@ -31,13 +31,12 @@ def test_rejections_deletions_and_setup_changes_are_logged(tmp_path, ground_trut
     store.import_accounts("gl_accounts", [{"c": "6000", "d": "Office"}], "c", "d", actor="jane")
     store.save_accounts("gl_accounts", [{"code": "6000", "description": "Office supplies", "category": ""}],
                         actor="jane")  # fmt: skip
-    store.delete_accounts("gl_accounts", ["6000"], actor="sam")
     store.set_tax_treatment("HST", "recoverable", "2310", actor="jane")
     store.set_tax_treatment("HST", "recoverable", "2310", actor="jane")  # no change, no event
     store.set_setting("policy_notes", "- Laptops to 6010", actor="jane")
     actions = [e["action"] for e in reversed(store.events())]
     assert actions == ["processed", "failed", "rejected", "deleted", "accounts_imported", "accounts_edited",
-                       "accounts_deleted", "tax_setup_changed", "policy_changed"]  # fmt: skip
+                       "tax_setup_changed", "policy_changed"]  # fmt: skip
     deleted = store.events(b, actions=["deleted"])[0]
     assert deleted["actor"] == "sam" and deleted["detail"]["file"] == "b.pdf"
     assert describe(store.events(a, actions=["rejected"])[0]) == "reason: not ours"

@@ -151,7 +151,7 @@ def test_page_reader_settings_default(monkeypatch, tmp_path):
     settings = Settings.from_env(tmp_path / "missing.env")
     assert settings.page_reader == PageReaderSettings()
     assert settings.page_reader == Settings().page_reader
-    assert (settings.page_reader.mode, settings.page_reader.scope, settings.page_reader.model) == ("auto", "all", "")
+    assert settings.page_reader.model == ""
     assert (settings.page_reader.timeout_seconds, settings.page_reader.max_pages) == (1200.0, 5)
     assert settings.with_overrides(vision=True).page_reader == settings.page_reader  # kept by CLI overrides
 
@@ -166,17 +166,16 @@ def test_page_reader_settings_from_env(monkeypatch, tmp_path):
     monkeypatch.setenv("AP_PAGE_READER_TIMEOUT_SECONDS", "900,5")
     monkeypatch.setenv("AP_PAGE_READER_MAX_PAGES", "3")
     reader = Settings.from_env(tmp_path / "missing.env").page_reader
-    assert reader == PageReaderSettings(OVIS_KEY, "http://127.0.0.1:5678/v1", 900.5, 3)
-    assert (reader.mode, reader.scope) == ("auto", "all")
+    assert reader == PageReaderSettings(OVIS_KEY, "http://127.0.0.1:5678/v1", 900.5, 3)  # AP_PAGE_READER* ignored
 
 
 @pytest.mark.parametrize(
     "env, field, value",
     [
-        ({"AP_PAGE_READER": "sometimes"}, "mode", "auto"),
-        ({"AP_PAGE_READER": "false"}, "mode", "auto"),  # it can't be turned off any more
-        ({"AP_PAGE_READER": "Off"}, "mode", "auto"),
-        ({"AP_PAGE_READER_SCOPE": "scans"}, "scope", "all"),  # every invoice is read, digital PDFs too
+        ({"AP_PAGE_READER": "sometimes"}, None, None),  # an older AP Coder's settings change nothing:
+        ({"AP_PAGE_READER": "false"}, None, None),  # it can't be turned off any more
+        ({"AP_PAGE_READER": "Off"}, None, None),
+        ({"AP_PAGE_READER_SCOPE": "scans"}, None, None),  # every invoice is read, digital PDFs too
         ({"AP_PAGE_READER_MODEL": "Automatic"}, "model", ""),
         ({"AP_PAGE_READER_BASE_URL": "  "}, "base_url", ""),
         ({"AP_PAGE_READER_TIMEOUT_SECONDS": "ten minutes"}, "timeout_seconds", 1200.0),
@@ -191,7 +190,8 @@ def test_page_reader_settings_invalid_values_keep_the_default(monkeypatch, tmp_p
     _clear_env(monkeypatch)
     for key, text in env.items():
         monkeypatch.setenv(key, text)
-    assert getattr(Settings.from_env(tmp_path / "missing.env").page_reader, field) == value
+    reader = Settings.from_env(tmp_path / "missing.env").page_reader
+    assert reader == PageReaderSettings() if field is None else getattr(reader, field) == value
 
 
 # --- Readers ----------------------------------------------------------------------------------------------------

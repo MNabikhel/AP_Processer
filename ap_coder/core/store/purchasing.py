@@ -8,7 +8,6 @@ from typing import Any
 from ...coding.po import OPEN, po_key
 from ...coding.rules import Rule
 from ..memory import vendor_key
-from ..paths import PROJECT_DIR, default_db_path, find_moved_file, private_dir  # noqa: F401  (re-exported)
 from ._base import (
     _ACTIVE_IN,
     ACTIVE_STATUSES,

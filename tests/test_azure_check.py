@@ -286,8 +286,8 @@ def test_a_spot_checked_invoice_waits_for_azure_then_goes_touchless(store, monke
     _code_the_lines(store, result.invoice_id)
     _touchless_vendor(store, result.output)
     # As if touchless processing had approved it but for the spot-check (the page reader's decision).
-    store.update_after_azure_check(result.invoice_id, None, None, azure_check.ISSUE_CODE,
-                                   {"capture": {"state": AUTONOMOUS, "azure_hold": True}})  # fmt: skip
+    store.update_after_check(result.invoice_id, None, None, (azure_check.ISSUE_CODE,),
+                             {"capture": {"state": AUTONOMOUS, "azure_hold": True}})  # fmt: skip
     outcome = azure_check.check_one(_settings(), store, client=FakeClient(_raw_from(result.capture)))
     assert outcome.approved is True
     inv = store.get_invoice(result.invoice_id)
@@ -329,8 +329,8 @@ def test_a_held_invoice_is_not_approved_once_touchless_no_longer_applies(store, 
     result = _process(store)
     _code_the_lines(store, result.invoice_id)  # else its lines to code alone keep it for a person
     key = _touchless_vendor(store, result.output)
-    store.update_after_azure_check(result.invoice_id, None, None, azure_check.ISSUE_CODE,
-                                   {"capture": {"state": AUTONOMOUS, "azure_hold": True}})  # fmt: skip
+    store.update_after_check(result.invoice_id, None, None, (azure_check.ISSUE_CODE,),
+                             {"capture": {"state": AUTONOMOUS, "azure_hold": True}})  # fmt: skip
     if change == "switch off":
         store.set_touchless(False, "Bob")
     elif change == "vendor held":
@@ -412,8 +412,8 @@ def test_a_held_invoice_azure_disagrees_with_stays_for_a_person(store, monkeypat
     _turn_on(store, monkeypatch, rate=100)
     monkeypatch.setattr(azure_check, "low_confidence", lambda capture: False)
     result = _process(store)
-    store.update_after_azure_check(result.invoice_id, None, None, azure_check.ISSUE_CODE,
-                                   {"capture": {"state": AUTONOMOUS, "azure_hold": True}})  # fmt: skip
+    store.update_after_check(result.invoice_id, None, None, (azure_check.ISSUE_CODE,),
+                             {"capture": {"state": AUTONOMOUS, "azure_hold": True}})  # fmt: skip
     raw = _raw_from(result.capture, invoice_number="OTHER-1")
     assert azure_check.check_one(_settings(), store, client=FakeClient(raw)).approved is False
     inv = store.get_invoice(result.invoice_id)
@@ -427,8 +427,8 @@ def test_nothing_compared_is_not_nothing_differs(store, monkeypatch):
     monkeypatch.setattr(azure_check, "low_confidence", lambda capture: False)
     result = _process(store)
     _touchless_vendor(store, result.output)
-    store.update_after_azure_check(result.invoice_id, None, None, azure_check.ISSUE_CODE,
-                                   {"capture": {"state": AUTONOMOUS, "azure_hold": True}})  # fmt: skip
+    store.update_after_check(result.invoice_id, None, None, (azure_check.ISSUE_CODE,),
+                             {"capture": {"state": AUTONOMOUS, "azure_hold": True}})  # fmt: skip
     raw = {"modelId": "prebuilt-layout", "content": "", "pages": [{"pageNumber": 1, "words": []}], "documents": []}
     outcome = azure_check.check_one(_settings(), store, client=FakeClient(raw))
     assert outcome.status == "done" and outcome.approved is False

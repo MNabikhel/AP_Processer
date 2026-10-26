@@ -110,7 +110,7 @@ def test_bulk_approve_skips_an_invoice_flagged_after_the_page_listed_it(demo_sto
     ids = [c["id"] for c in clean_candidates(store)]
     victim = ids[0]
     issue = {"severity": "warning", "code": "AZURE_DI_DISAGREES", "message": "Azure read the total as 1,234.00"}
-    assert store.update_after_azure_check(victim, None, issue, "AZURE_DI_DISAGREES")
+    assert store.update_after_check(victim, None, issue, ("AZURE_DI_DISAGREES",))
     result = bulk_approve(store, store.reference_data(), Settings(), ids, "jane")
     assert [i for i, _ in result["skipped"]] == [victim] and "Azure read" in result["skipped"][0][1]
     assert store.get_invoice(victim)["status"] == REVIEW
@@ -304,7 +304,7 @@ def test_the_queue_says_clean_and_ready_by_todays_checks_after_a_setting_changes
     assert sorted(c["id"] for c in clean_candidates(store)) == sorted(ids)
     assert not set(attention(store, store.reference_data(), pending)) & set(ids)
     issue = {"severity": "warning", "code": "AZURE_DI_DISAGREES", "message": "Azure read the total as 1,234.00"}
-    assert store.update_after_azure_check(ids[0], None, issue, "AZURE_DI_DISAGREES")
+    assert store.update_after_check(ids[0], None, issue, ("AZURE_DI_DISAGREES",))
     store.set_setting(jde.SHOW_SETTING, "")
     assert ids[0] not in [c["id"] for c in clean_candidates(store)]
 

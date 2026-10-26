@@ -200,13 +200,6 @@ def _not_read(name: str, content_type: str) -> str:
     return "(not a PDF or image)"
 
 
-def attachments(raw: bytes) -> tuple[str, list[tuple[str, bytes]], list[str]]:
-    """(subject, [(file name, content)] of the invoice attachments, [skipped attachments]) of an email,
-    including the attachments of emails forwarded as attachments."""
-    mail = read_eml(raw)
-    return mail.subject, mail.found, mail.skipped
-
-
 def _email_kind(name: str, content_type: str) -> str:
     """The kind of email an attachment is (".eml" or ".msg": an email forwarded as an attachment), else ""."""
     suffix = Path(name).suffix.lower()

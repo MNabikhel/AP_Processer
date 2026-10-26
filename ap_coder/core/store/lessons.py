@@ -1,4 +1,7 @@
-"""Lessons (AP's corrections per situation) and the AI reviewer's queue."""
+"""Lessons (AP's corrections per situation: ``record_lesson``, ``lessons_for``), the AI reviewer's queue
+(``queue_verification``, ``next_verification``), the Azure check's figures, and what changes an open invoice after it
+was processed: a check folded in (``update_after_check``), the duplicates checked again (``_recheck_duplicates``) and
+the page reader's new reading (``replace_proposal``)."""
 
 from __future__ import annotations
 
@@ -11,7 +14,6 @@ from typing import Any
 from ...coding.po import po_key
 from ..audit import diff_coding
 from ..memory import vendor_key
-from ..paths import PROJECT_DIR, default_db_path, find_moved_file, private_dir  # noqa: F401  (re-exported)
 from ._base import (
     _VERIFY_IN_LINE,
     AZURE_CHECKING,
@@ -328,13 +330,6 @@ class LessonsMixin:
         counts.update({r["status"]: int(r["n"]) for r in rows})
         return counts
 
-    def update_after_azure_check(
-        self, invoice_id: int, capture: dict[str, Any] | None, issue: dict[str, Any] | None, code: str,
-        meta: dict[str, Any] | None = None, *, expect: tuple[Any, ...] | None = None,
-    ) -> bool:  # fmt: skip
-        """Fold an Azure check into an invoice still open: ``update_after_check``."""
-        return self.update_after_check(invoice_id, capture, issue, (code,), meta, expect=expect)
-
     def update_after_check(
         self, invoice_id: int, capture: dict[str, Any] | None, issue: dict[str, Any] | None, codes: tuple[str, ...],
         meta: dict[str, Any] | None = None, *, expect: tuple[Any, ...] | None = None,
@@ -423,7 +418,8 @@ class LessonsMixin:
             validation[CHECKS_STAMP_KEY] = self.checks_stamp()
         if capture is not None and hasattr(capture, "to_dict"):
             capture = capture.to_dict()
-        key = vendor_key(output.get("vendor_name", ""))
+        # The vendor's own key, of two whose names read alike (B-1021): as ``add_invoice`` keeps it (B-1311).
+        key = self.vendor_key_for(output.get("vendor_name", ""), output.get("gst_hst_registration_number"))
         due = _due(output, self.default_terms_days(), self.vendor_terms(key))
         with self._conn() as conn:
             conn.execute("BEGIN IMMEDIATE")  # checked and changed in one go: an approval cannot slip in between

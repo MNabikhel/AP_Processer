@@ -20,7 +20,8 @@ FRAUD_ACTION = "email_bank_change"
 
 
 def done_ids(store: Any) -> set[str]:
-    return {str((e.get("detail") or {}).get("id")) for e in store.events(actions=[DONE_ACTION], limit=20_000)}
+    """The emails marked done: every one, however long ago (B-1312)."""
+    return store.event_values(DONE_ACTION, "id")
 
 
 def _file(folder: Path, rel: str) -> Path | None:

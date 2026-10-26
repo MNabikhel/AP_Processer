@@ -120,7 +120,6 @@ Store.copy_backup
 Store.create_export_batch
 Store.credit_note_ids
 Store.default_terms_days
-Store.delete_accounts
 Store.delete_empty_batches
 Store.delete_feedback
 Store.delete_invoice
@@ -248,7 +247,6 @@ Store.touchless_summary
 Store.undo_export_batch
 Store.unexported_approved
 Store.unpark_invoice
-Store.update_after_azure_check
 Store.update_after_check
 Store.vendor_choices
 Store.vendor_gl_usage

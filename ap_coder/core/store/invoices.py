@@ -15,7 +15,7 @@ from ...coding.po import po_key
 from ...coding.terms import DEFAULT_TERMS_DAYS
 from ..audit import changed_since, diff_coding
 from ..memory import ACCEPTED, BULK, CODED, CORRECTED, pair_lines, vendor_key
-from ..paths import PROJECT_DIR, default_db_path, find_moved_file, private_dir  # noqa: F401  (re-exported)
+from ..paths import PROJECT_DIR, find_moved_file
 from ..reference_data import UNASSIGNED
 from ..schema import as_read
 from ._base import (
@@ -43,7 +43,7 @@ from ._base import (
     suggestion_kept,
 )
 from .summary import fetch_rows
-from .users import VOUCH_DAYS, account_of, same_approver  # noqa: F401  (also used by the pages)
+from .users import VOUCH_DAYS, account_of, same_approver
 
 
 class InvoicesMixin:
@@ -67,6 +67,7 @@ class InvoicesMixin:
         if validation:  # what it was checked against: the queue checks it again once that changes (B-815)
             validation = {CHECKS_STAMP_KEY: self.checks_stamp(), **validation}
         val = validation or {}
+        key = self.vendor_key_for(out.get("vendor_name", ""), out.get("gst_hst_registration_number"))  # B-1021
         with self._conn() as conn:
             if sha:  # a new attempt replaces earlier failed attempts at the same file
                 conn.execute("DELETE FROM invoices WHERE file_sha256 = ? AND status = ?", (sha, FAILED))
@@ -81,7 +82,7 @@ class InvoicesMixin:
                     sha,
                     FAILED if error else REVIEW,
                     out.get("vendor_name"),
-                    self.vendor_key_for(out.get("vendor_name", ""), out.get("gst_hst_registration_number")),
+                    key,
                     out.get("invoice_number"),
                     out.get("invoice_date"),
                     out.get("currency"),
@@ -96,9 +97,7 @@ class InvoicesMixin:
                     error,
                     _now(),
                     po_key(out.get("po_number") or ""),
-                    _due(out, self.default_terms_days(), self.vendor_terms(vendor_key(out.get("vendor_name", ""))))
-                    if out
-                    else None,
+                    _due(out, self.default_terms_days(), self.vendor_terms(key)) if out else None,  # its own (B-1311)
                 ),
             )
             invoice_id = int(cur.lastrowid)

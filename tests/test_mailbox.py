@@ -4,7 +4,7 @@ import time
 from email.message import EmailMessage
 from unittest.mock import patch
 
-from ap_coder.intake.mailbox import MAX_FORWARD_DEPTH, attachments, emails_in, safe_name, unpack, unpack_folder
+from ap_coder.intake.mailbox import MAX_FORWARD_DEPTH, emails_in, read_eml, safe_name, unpack, unpack_folder
 
 
 def _email(subject="Invoice INV-1"):
@@ -28,7 +28,8 @@ def test_invoice_attachments_only():
     inner.set_content("forwarded")
     inner.add_attachment(b"%PDF-1.4 forwarded", maintype="application", subtype="pdf", filename="INV-0.pdf")
     m.add_attachment(inner)  # an email forwarded as an attachment
-    subject, found, skipped = attachments(m.as_bytes())
+    mail = read_eml(m.as_bytes())
+    subject, found, skipped = mail.subject, mail.found, mail.skipped
     assert subject == "Invoice INV-1"
     assert [name for name, _ in found] == ["INV-1.pdf", "photo of receipt.jpg", "INV-0.pdf"]
     assert dict(found)["INV-1.pdf"] == b"%PDF-1.4 invoice"
@@ -89,7 +90,8 @@ def test_attachment_types_by_content_not_only_by_name():
     m.add_attachment(b"not a pdf at all", maintype="application", subtype="pdf", filename="fake.pdf")
     m.add_attachment(b"\x89PNG" + b"0" * 400_000, maintype="image", subtype="png", filename="photo.png",
                      cid="<photo1>", disposition="inline")  # fmt: skip
-    _, found, skipped = attachments(m.as_bytes())
+    mail = read_eml(m.as_bytes())
+    found, skipped = mail.found, mail.skipped
     assert [n for n, _ in found] == ["Invoice No. 12345.pdf", "scan.pdf", "photo.png"]  # a big inline photo is kept
     assert any("fake.pdf" in s and "not one" in s for s in skipped)
 
@@ -103,9 +105,9 @@ def nested_email(depth: int) -> bytes:
 
 
 def test_forwarded_emails_are_opened_only_so_deep():
-    assert attachments(nested_email(3))[1] == [("inv.pdf", b"%PDF-1.4 x")]
-    _, found, skipped = attachments(nested_email(MAX_FORWARD_DEPTH + 1))
-    assert found == [] and any("levels deep" in s for s in skipped)
+    assert read_eml(nested_email(3)).found == [("inv.pdf", b"%PDF-1.4 x")]
+    mail = read_eml(nested_email(MAX_FORWARD_DEPTH + 1))
+    assert mail.found == [] and any("levels deep" in s for s in mail.skipped)
 
 
 def test_an_email_that_cannot_be_read_is_filed_away_and_the_others_unpacked(tmp_path):
