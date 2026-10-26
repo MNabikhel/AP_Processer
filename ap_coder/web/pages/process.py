@@ -599,6 +599,15 @@ def process_files(store: Store, settings: Settings, paths: list[Path], *, alread
         label = f"Processed {ok} of {len(todo) + len(skipped)}" if todo else "Nothing new to read"
         if todo and skipped:  # every file of the run counted, the ones not read said (B-1184)
             label += f": {len(skipped)} already in AP Coder"
+        to_person = sum(1 for m in mails if m.error or (m.triage and m.triage.needs_person))
+        if to_person:  # every email counted, the ones sorted to a person too (B-1303)
+            files = len(todo) + len(skipped)
+            read = (f"{ui.plural(ok, 'invoice')} processed" if ok == files
+                    else f"{ok} of {ui.plural(files, 'file')} processed")  # fmt: skip
+            parts = [read] if files else []
+            parts += [f"{len(skipped)} already in AP Coder"] if skipped else []
+            parts.append(f"{to_person} sent to Emails that need a person")
+            label = f"{ui.plural(len(mails), 'email')}: {', '.join(parts)}"
         return {"processed": len(todo), "ok": ok, "failed": failed, "queued": queued, "messages": messages,
                 "label": label}  # fmt: skip
 

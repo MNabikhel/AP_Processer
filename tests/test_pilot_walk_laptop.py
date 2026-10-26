@@ -191,7 +191,7 @@ def test_the_why_not_list_says_an_unmapped_account_once_with_its_line_numbers(gr
                     "(BU.Object.Subsidiary)"], reasons  # fmt: skip
 
 
-# --- 6. watch --once ---------------------------------------------------------------------------------------------------
+# --- 6. watch --once ----------------------------------------------------------------------------------------------
 
 
 def test_watch_once_says_it_runs_once_and_counts_the_files_still_being_copied(tmp_path, capsys):
@@ -208,3 +208,34 @@ def test_watch_once_says_it_runs_once_and_counts_the_files_still_being_copied(tm
     err = capsys.readouterr().err
     assert "once" in err and "every 60s" not in err and "Ctrl+C" not in err, err
     assert "1 file still being copied, skipped" in err, err
+
+
+# --- 7. Emails uploaded -------------------------------------------------------------------------------------------
+
+
+def test_two_emails_uploaded_are_both_counted_one_read_one_sent_to_a_person(tmp_path):
+    """B-1303: uploading two emails, one a payment reminder sorted to a person, said "Processed 1 of 1"."""
+    from email.message import EmailMessage
+
+    from ap_coder.core.store import Store, load_sample_setup
+
+    from .conftest import SAMPLES
+    from .test_web_process import finished
+    from .webclient import client_for
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(store)
+    client = client_for(store)
+    pdf = SAMPLES / "harbourview_NS_HST_HPS-2026-0347.pdf"
+    invoice = EmailMessage()
+    invoice["Subject"], invoice["From"] = "Invoice HPS-2026-0347", "ar@vendor.example"
+    invoice.set_content("Attached.")
+    invoice.add_attachment(pdf.read_bytes(), maintype="application", subtype="pdf", filename=pdf.name)
+    reminder = EmailMessage()
+    reminder["Subject"], reminder["From"] = "Payment reminder: invoice overdue", "ar@other.example"
+    reminder.set_content("This is a reminder that our invoice is past due. Please pay at your earliest convenience.")
+    files = [("files", ("invoice.eml", invoice.as_bytes(), "message/rfc822")),
+             ("files", ("reminder.eml", reminder.as_bytes(), "message/rfc822"))]  # fmt: skip
+    client.post("/process/upload", files=files, headers=PAGE)
+    snap = finished(client.app, client)
+    assert snap["result"]["label"] == "2 emails: 1 invoice processed, 1 sent to Emails that need a person", snap
