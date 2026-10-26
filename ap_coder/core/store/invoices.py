@@ -42,6 +42,7 @@ from ._base import (
     parse_fx_rates,
     suggestion_kept,
 )
+from .summary import fetch_rows
 from .users import account_of, same_approver  # noqa: F401  (also used by the pages)
 
 
@@ -325,7 +326,7 @@ class InvoicesMixin:
         sql += " ORDER BY requires_review DESC, adjusted_confidence ASC, id ASC"
         with self._conn() as conn:
             self._summary_fresh(conn)
-            return [dict(r) for r in conn.execute(sql, args)]
+            return fetch_rows(conn, sql, args)
 
     def has_invoices(self) -> bool:
         """Whether there is any invoice at all (of any status)."""
@@ -615,12 +616,13 @@ class InvoicesMixin:
         """{id: (the stamp its stored checks were made against, the stamp of its queue re-check)} ("" for none),
         read by SQLite without decoding each validation (``Store.checks_stamp``, B-815)."""
         with self._conn() as conn:
-            rows = conn.execute(
-                "SELECT id, json_extract(validation, '$.checks_stamp'), json_extract(validation, '$.recheck.stamp') "
-                f"FROM invoices WHERE validation IS NOT NULL AND json_valid(validation) AND {_in_list('id')}",
+            rows = fetch_rows(
+                conn,
+                "SELECT id, json_extract(validation, '$.checks_stamp') a, json_extract(validation, '$.recheck.stamp') "
+                f"b FROM invoices WHERE validation IS NOT NULL AND json_valid(validation) AND {_in_list('id')}",
                 (json.dumps([int(i) for i in ids]),),
-            ).fetchall()
-        return {int(r[0]): (str(r[1] or ""), str(r[2] or "")) for r in rows}
+            )
+        return {int(r["id"]): (str(r["a"] or ""), str(r["b"] or "")) for r in rows}
 
     def save_recheck(self, invoice_id: int, stamp: str, issues: list[dict[str, Any]], seen: str | None) -> bool:
         """Keep the queue's re-check of an invoice in review (``coding.bulk.issues_today``) with its stored checks,
@@ -652,7 +654,7 @@ class InvoicesMixin:
             args.append(json.dumps([int(i) for i in ids]))
         sql = f"SELECT {', '.join(columns)} FROM invoices" + (" WHERE " + " AND ".join(where) if where else "")
         with self._conn() as conn:
-            rows = [dict(r) for r in conn.execute(sql + " ORDER BY id", args)]
+            rows = fetch_rows(conn, sql + " ORDER BY id", args)
         for r in rows if decode else []:
             for key in set(columns) & set(self._JSON_COLUMNS):
                 r[key] = json.loads(r[key]) if r[key] else None

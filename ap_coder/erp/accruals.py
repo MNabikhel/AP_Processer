@@ -28,6 +28,7 @@ from ..coding.vendors import norm_invoice_number
 from ..core.memory import vendor_key
 from ..core.safe import csv_row
 from ..core.store import APPROVED, PARKED, PENDING, REVIEW, Store
+from ..core.store.summary import broken, whole
 from . import recurring
 from .exports import distribution
 
@@ -139,12 +140,12 @@ def _exported_bills(store: Store, rows: list[dict]) -> set[tuple[str, str, bool]
         (r["bill_vendor"], r["bill_number"], bool(r["bill_credit"]))
         for r in store.summary_rows(
             "bill_number IN (SELECT value FROM json_each(?)) AND +status = ? AND export_batch IS NOT NULL AND "
-            "broken = 0",
+            f"{whole('spend')}",
             (json.dumps(sorted({b[1] for b in wanted})), APPROVED),
             "bill_vendor, bill_number, bill_credit",
         )
     }
-    for r in store.summary_rows("broken = 1 AND +status = ? AND export_batch IS NOT NULL", (APPROVED,), "id"):
+    for r in store.summary_rows(f"{broken('spend')} AND +status = ? AND export_batch IS NOT NULL", (APPROVED,), "id"):
         (inv,) = store.invoice_columns(("id", "final_output"), ids=[r["id"]])
         found.add(_bill(inv["final_output"] or {}))  # read again: fails as it did when every invoice was read
     return found & wanted

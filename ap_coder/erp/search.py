@@ -147,7 +147,7 @@ def _candidates(store: Store, words: list[str], numbers: list[str]) -> set[int]:
             where.append("grand_total BETWEEN ? AND ? OR grand_total BETWEEN ? AND ?")
             params += [size - 0.0051, size + 0.0051, -size - 0.0051, -size + 0.0051]
         if where:
-            ids |= {r[0] for r in store.summary_rows(" OR ".join(f"({w})" for w in where), params, "id")}
+            ids |= {r["id"] for r in store.summary_rows(" OR ".join(f"({w})" for w in where), params, "id")}
         found = _narrowed(found, ids)
         if not found:
             return set()

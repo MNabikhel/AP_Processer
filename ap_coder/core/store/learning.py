@@ -15,6 +15,7 @@ from ._base import (
     _clean_code,
     _iso_week,
 )
+from .summary import fetch_rows
 
 
 def _feedback_stamp(conn: Any) -> tuple[Any, ...]:
@@ -54,9 +55,7 @@ class LearningMixin:
                 if kept is not None and kept[0] == stamp:
                     return kept[1]
             # Reviewer decisions first, then imported history: a big history import never pushes them out.
-            rows = [
-                dict(r) for r in conn.execute(sql + " ORDER BY outcome = 'history', id DESC LIMIT ?", (*args, limit))
-            ]
+            rows = fetch_rows(conn, sql + " ORDER BY outcome = 'history', id DESC LIMIT ?", (*args, limit))
         if vendor_name is None:  # one vendor's lessons are quick to read: only the whole memory is kept
             with _FEEDBACK_LOCK:
                 _FEEDBACK[key] = (stamp, rows)

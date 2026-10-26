@@ -303,6 +303,22 @@ def test_a_capture_is_kept_compressed_and_read_either_way(year):
     assert invoice_id not in year.credit_note_ids(REVIEW)
 
 
+def test_a_damaged_part_leaves_the_other_reports_alone(year):
+    """A tax line that can't be read (a hand-edited database): the sales-tax report fails as it did when it read every
+    invoice; Insights, Vendors and Spend, which never read tax lines, still draw, and the same."""
+    invoice_id = next(r["id"] for r in ref.old_list_invoices(year, APPROVED))
+    with sqlite3.connect(year.path) as conn:
+        conn.execute("UPDATE invoices SET final_output = json_set(final_output, '$.tax_lines', json('[\"x\"]')) "
+                     "WHERE id = ?", (invoice_id,))  # fmt: skip
+    assert year.summary_query("SELECT broken FROM invoice_summary WHERE id = ?", (invoice_id,))[0][0]
+    with pytest.raises(AttributeError):
+        taxreturn.build(year, *YEAR)
+    with pytest.raises(AttributeError):
+        ref.tax_build(year, *YEAR)
+    assert insights.compute(year) == ref.insights_compute(year)
+    assert insights.vendor_workload(year) and spend.parts(year, *YEAR)
+
+
 def test_insights_counts_every_approval_past_a_hundred_thousand(tmp_path):
     """B-1251: Insights and Learning read only the newest 100,000 approval events: with more (a year at 10,000
     invoices a month), an invoice approved before them was no longer counted."""

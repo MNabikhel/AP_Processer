@@ -18,6 +18,7 @@ from ._base import (
     _in_list,
     _now,
 )
+from .summary import BIT, fetch_rows
 
 
 class PurchasingMixin:
@@ -114,7 +115,7 @@ class PurchasingMixin:
                 ACTIVE_STATUSES,
             ):
                 amount = r["po_billed"]
-                if r["broken"]:  # what the summary could not read: read again, failing as it did before
+                if r["broken"] & BIT["po"]:  # what the summary could not read: read again, failing as it did before
                     (inv,) = conn.execute("SELECT ai_output, final_output FROM invoices WHERE id = ?", (r["id"],))
                     amount = float(json.loads(inv["final_output"] or inv["ai_output"] or "{}").get("subtotal") or 0)
                 entry = billed.setdefault(r["po_key"], {"billed": 0.0, "invoices": 0, "in_review": 0})
@@ -205,15 +206,13 @@ class PurchasingMixin:
         """Approved invoices that have not been in an export batch yet (oldest approval first)."""
         with self._conn() as conn:
             self._summary_fresh(conn)
-            return [
-                dict(r)
-                for r in conn.execute(
-                    """SELECT id, vendor_name, invoice_number, invoice_date, currency, grand_total, reviewer,
-                              reviewed_at FROM invoice_summary WHERE status = ? AND export_batch IS NULL
-                       ORDER BY reviewed_at, id""",
-                    (APPROVED,),
-                )
-            ]
+            return fetch_rows(
+                conn,
+                """SELECT id, vendor_name, invoice_number, invoice_date, currency, grand_total, reviewer,
+                          reviewed_at FROM invoice_summary WHERE status = ? AND export_batch IS NULL
+                   ORDER BY reviewed_at, id""",
+                (APPROVED,),
+            )
 
     def ready_to_export_count(self) -> int:
         """How many invoices ``unexported_approved`` lists (counted on the summary's index)."""

@@ -18,6 +18,7 @@ from ..coding.tax import PLACE_OF_SUPPLY
 from ..core.reference_data import ReferenceData
 from ..core.safe import neutralise_sheet, xlsx_row
 from ..core.store import APPROVED, FAILED, Store
+from ..core.store.summary import broken, whole
 from .exports import distribution
 
 
@@ -74,23 +75,24 @@ def parts(store: Store, start: dt.date, end: dt.date) -> list[SpendLine]:
     cost center (``spend_parts``), from the invoices' summary (D-110): what the Spend page totals. ``total_by``,
     ``by_month_and_category``, ``currencies`` and ``in_cad`` give what they give for ``lines``."""
     first, last = start.isoformat(), end.isoformat()
-    rows = store.summary_query(
-        "SELECT s.id, substr(s.f_date, 1, 7), s.p_vendor, s.p_currency, p.gl_code, p.cost_center, p.amount, p.sizes, "
-        "p.cents, p.amounts FROM invoice_summary s JOIN summary_spend p ON p.invoice_id = s.id "
-        "WHERE s.f_date BETWEEN ? AND ? AND +s.status = ? AND s.broken = 0 ORDER BY s.id, p.part",
+    rows = store.summary_fetch(
+        "SELECT s.id, substr(s.f_date, 1, 7) month, s.p_vendor, s.p_currency, p.gl_code, p.cost_center, p.amount, "
+        "p.sizes, p.cents, p.amounts FROM invoice_summary s JOIN summary_spend p ON p.invoice_id = s.id "
+        f"WHERE s.f_date BETWEEN ? AND ? AND +s.status = ? AND s.{whole('spend')} ORDER BY s.id, p.part",
         (first, last, APPROVED),
     )
     out = [
-        SpendLine(r[0], r[1], r[2], r[4], r[5], r[6], r[3], r[7], r[8], tuple(json.loads(r[9])) if r[9] else None)
+        SpendLine(r["id"], r["month"], r["p_vendor"], r["gl_code"], r["cost_center"], r["amount"], r["p_currency"],
+                  r["sizes"], r["cents"], tuple(json.loads(r["amounts"])) if r["amounts"] else None)
         for r in rows
-    ]
+    ]  # fmt: skip
     out += [line for line in _broken_lines(store, first, last)]
     return out
 
 
 def _broken_lines(store: Store, first: str, last: str) -> list[SpendLine]:
     """``lines`` of the approved invoices the summary could not read (their JSON): read again from the invoice."""
-    ids = [r[0] for r in store.summary_rows("broken = 1 AND +status = ?", (APPROVED,), "id")]
+    ids = [r["id"] for r in store.summary_rows(f"{broken('spend')} AND +status = ?", (APPROVED,), "id")]
     return [line for line in _lines_of(store.invoice_columns(("id", "final_output"), ids=ids), store, first, last)
             ] if ids else []  # fmt: skip
 

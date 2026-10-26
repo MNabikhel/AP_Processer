@@ -18,7 +18,9 @@ from typing import Any
 from ..coding.terms import parse_terms, payment
 from ..core.memory import vendor_key
 from ..core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store, _in_list
-from ..core.store.summary import _code_rows, computed, summary_facts
+from ..core.store.summary import _code_rows, computed
+from ..core.store.summary import broken as summary_broken
+from ..core.store.summary import whole as summary_whole
 
 
 @dataclass
@@ -101,7 +103,7 @@ def latest_approvals(store: Store) -> list[dict[str, Any]]:
     out = []
     for r in store.summary_rows("+status IN (?, ?)", (APPROVED, PENDING), "id, broken, a_at, a_corrected, a_filled, "
                                 "a_bulk"):  # fmt: skip
-        a = computed(store, r)
+        a = computed(store, r, "approval")
         if a["a_at"] is not None:
             out.append({"invoice_id": r["id"], "created_at": a["a_at"], "corrected": bool(a["a_corrected"]),
                         "filled": bool(a["a_filled"]), "bulk": bool(a["a_bulk"])})  # fmt: skip
@@ -197,7 +199,7 @@ def compute(store: Store, a: Assumptions | None = None) -> dict[str, Any]:
     a = a or Assumptions.load(store)
     from ..ops.offline import internet_allowed
 
-    whole = "broken = 0"
+    whole = summary_whole("insights", "approval")
     tally = store.summary_query(
         f"SELECT status = '{FAILED}', COUNT(*), SUM(CASE WHEN requires_review THEN 1 ELSE 0 END) FROM invoice_summary "
         f"WHERE {whole} GROUP BY 1"
@@ -234,9 +236,9 @@ def compute(store: Store, a: Assumptions | None = None) -> dict[str, Any]:
         f"SELECT id, grand_total, currency FROM invoice_summary s WHERE status = '{REJECTED}' AND {whole} AND EXISTS "
         f"(SELECT 1 FROM summary_codes c WHERE c.id = s.id AND c.code IN ({duplicates})) ORDER BY id"))  # fmt: skip
     # What the summary could not read, read again from the invoice (failing as it did when every invoice was read).
-    for r in store.summary_rows("broken = 1", (), "id, status, grand_total, currency, created_at, requires_review, "
-                                "broken"):  # fmt: skip
-        f = computed(store, r)
+    for r in store.summary_rows(summary_broken("insights", "approval"), (), "id, status, grand_total, currency, "
+                                "created_at, requires_review, broken"):  # fmt: skip
+        f = computed(store, r, "insights", "approval")
         if r["status"] == FAILED:
             failed += 1
         else:
@@ -359,13 +361,13 @@ def operations(store: Store, today: dt.date | None = None) -> dict[str, Any]:
     default_days, vendor_terms = store.default_terms_days(), store.all_vendor_terms()
     # The coding's payment fields of those whose terms (or their vendor's) may give a discount: ``payment`` gives the
     # others none.
-    found = {r["id"]: computed(store, r) for r in approved}
+    found = {r["id"]: computed(store, r, "pay") for r in approved}
     maybe = [
         i
         for i, f in found.items()
         if f["pay_terms"] is None or _may_discount(f["pay_terms"], vendor_terms.get(f["pay_vendor"], ""))
     ]
-    pays = {r["id"]: (summary_facts(store, r["id"]) if r["broken"] else r)["pay"]
+    pays = {r["id"]: computed(store, r, "pay")["pay"]
             for r in store.summary_rows(_in_list("id"), (json.dumps(maybe),), "id, broken, pay")}  # fmt: skip
     for r in approved:
         if r["id"] not in pays:
@@ -522,7 +524,7 @@ def _vendor_workload(store: Store, min_invoices: int) -> list[dict[str, Any]]:
     rows = store.summary_rows("status NOT IN (?, ?)", (FAILED, REJECTED), "id, status, broken, w_name, w_key, w_codes, "
                               "w_corrected")  # fmt: skip
     for r in rows:
-        f = computed(store, r)
+        f = computed(store, r, "workload")
         key = f["w_key"]
         if not key:
             continue

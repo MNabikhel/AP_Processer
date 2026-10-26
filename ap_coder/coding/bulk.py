@@ -23,6 +23,7 @@ from ..core.reference_data import ReferenceData
 from ..core.schema import InvoiceCoding
 from ..core.store import REVIEW, Store
 from ..core.store._base import CHECKS_STAMP_KEY
+from ..core.store.summary import BIT
 
 
 def _received_on(inv: dict[str, Any]) -> dt.date | None:
@@ -170,7 +171,7 @@ def sort_for_bulk(
     # What the stored checks and metadata say, from the invoices' summary (``queue_facts``, D-110); one the summary
     # could not read is read again here.
     facts = {r["id"]: r for r in store.summary_rows("status = ?", (REVIEW,), "id, broken, q_audit, q_person")}
-    broken = [i for i, r in facts.items() if r["broken"]]
+    broken = [i for i, r in facts.items() if r["broken"] & BIT["queue"]]
     columns = store.invoice_columns(("id", "validation", "meta"), ids=broken) if broken else []
     validations = {r["id"]: r["validation"] or {} for r in columns}
     audited = {i for i, r in facts.items() if r["q_audit"]} | {r["id"] for r in columns if _audit_pick(r["meta"])}

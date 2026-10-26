@@ -28,7 +28,7 @@ from typing import Any
 from ..core.safe import csv_row
 from ..core.schema import FROM_VENDOR_LIST
 from ..core.store import APPROVED, PARKED, PENDING, REVIEW, Store
-from ..core.store.summary import computed
+from ..core.store.summary import broken, computed
 from .tax import (
     DEFAULT_TREATMENTS,
     RECOVERABLE,
@@ -207,11 +207,11 @@ def build(store: Store, start: dt.date, end: dt.date, treatments: dict[str, TaxT
     first, last = start.isoformat(), end.isoformat()
     claims, not_approved = [], 0
     # (an invoice the summary could not read is read again: failing as it did when every invoice was read)
-    rows = store.summary_rows("tax_date BETWEEN ? AND ? AND +status IN (?, ?, ?, ?) OR broken = 1",
+    rows = store.summary_rows(f"tax_date BETWEEN ? AND ? AND +status IN (?, ?, ?, ?) OR {broken('tax')}",
                               (first, last, APPROVED, REVIEW, PARKED, PENDING), "id, status, tax_date, export_batch, "
                               "broken, t_facts")  # fmt: skip
     for r in rows:
-        found = computed(store, r)
+        found = computed(store, r, "tax")
         date = found["tax_date"]
         if not (first <= date <= last):
             continue
@@ -403,11 +403,11 @@ def self_assessment(
     out = []
     accrued = _jde_accruing(store)
     first, last = start.isoformat(), end.isoformat()
-    rows = store.summary_rows("f_date BETWEEN ? AND ? AND +status = ? OR status = ? AND broken = 1",
+    rows = store.summary_rows(f"f_date BETWEEN ? AND ? AND +status = ? OR status = ? AND {broken('spend', 'sa')}",
                               (first, last, APPROVED, APPROVED),
                               "id, f_date, export_batch, broken, s_facts")  # fmt: skip
     for r in rows:
-        found = computed(store, r)
+        found = computed(store, r, "spend", "sa")
         f, date = _json(found["s_facts"]), found["f_date"]
         if f is None or not (first <= date <= last):
             continue

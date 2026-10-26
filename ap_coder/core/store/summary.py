@@ -231,8 +231,60 @@ _TOPIC_COLUMNS = ("id", "status", "vendor_key", "vendor_name", "invoice_date", "
 _MEMO: dict[tuple[str, str], tuple[Any, Any]] = {}  # ``summary_memo``: (database, name) -> (stamp, value)
 _MEMO_LOCK = threading.Lock()
 _COMPUTING: dict[tuple[str, str], threading.Lock] = {}  # one ``summary_memo`` worked out at a time, by name
+MEMO_WAIT = 600.0  # seconds a page waits for another one working the same value out (then works it out itself)
 _FTS: dict[str, bool] = {}  # whether this process's SQLite has FTS5 with the trigram tokenizer
 _FTS_LOCK = threading.Lock()
+
+
+# Reading many rows in one go (``fetch_rows``): Python's sqlite3 lets go of the GIL for every row it steps to and waits
+# to get it back; with a few pages at once each doing so, reading 1,500 rows took 30 times longer than alone (5 queries
+# a second for 4 threads, 160 for one). The rows come back as one JSON text instead: one step, however many rows. A
+# REAL is written by printf with 17 digits, read back exactly (checked once: ``_one_go``), a TEXT with its JSON
+# subtype dropped, a BLOB in hex.
+_ONE_GO: dict[str, bool] = {}
+_NAMES: dict[str, list[str]] = {}  # the columns of each SQL read in one go
+
+
+def _one_go() -> bool:
+    """Whether this SQLite writes a REAL with printf('%!.17g') that reads back as the same number (3.43+ does)."""
+    if "ok" not in _ONE_GO:
+        tricky = [0.1 + 0.2, 1 / 3, 2.0**-1074, 1.7976931348623157e308, 123456789.12345679, -0.0, 514.69, 1e-300]
+        try:
+            probe = sqlite3.connect(":memory:")
+            try:
+                written = [probe.execute("SELECT printf('%!.17g', ?)", (x,)).fetchone()[0] for x in tricky]
+                probe.execute("SELECT json_group_array(json_array(1))").fetchone()
+            finally:
+                probe.close()
+            _ONE_GO["ok"] = all(float(w) == x for w, x in zip(written, tricky, strict=True))
+        except (sqlite3.Error, ValueError):
+            _ONE_GO["ok"] = False
+    return _ONE_GO["ok"]
+
+
+def _cell(value: Any) -> Any:
+    if type(value) is dict:
+        return float(value["r"]) if "r" in value else bytes.fromhex(value["b"])
+    return value
+
+
+def fetch_rows(conn: sqlite3.Connection, sql: str, params: Any = ()) -> list[dict[str, Any]]:
+    """The rows of the SELECT ``sql`` as dicts, read in one step (see above), in its order: what
+    ``[dict(r) for r in conn.execute(sql, params)]`` gives, without the GIL handed back and forth for each row."""
+    if not _one_go():
+        return [dict(r) for r in conn.execute(sql, params)]
+    names = _NAMES.get(sql)
+    if names is None:
+        if len(_NAMES) > 512:  # SQL made up of a page's filters: kept within bounds
+            _NAMES.clear()
+        names = _NAMES[sql] = [d[0] for d in conn.execute(f"SELECT * FROM ({sql}) LIMIT 0", params).description]
+    cells = ", ".join(
+        f"CASE typeof(q.\"{n}\") WHEN 'real' THEN json_object('r', printf('%!.17g', q.\"{n}\")) WHEN 'text' THEN "
+        f"q.\"{n}\" || '' WHEN 'blob' THEN json_object('b', hex(q.\"{n}\")) ELSE q.\"{n}\" END"
+        for n in names
+    )
+    found = conn.execute(f"SELECT json_group_array(json_array({cells})) FROM ({sql}) AS q", params).fetchone()[0]
+    return [{n: _cell(v) for n, v in zip(names, row, strict=True)} for row in json.loads(found)]
 
 
 def fts_available() -> bool:
@@ -467,8 +519,9 @@ class SummaryMixin:
             computing = _COMPUTING.setdefault(key, threading.Lock())
         if hit is not None and hit[0] == stamp:
             return hit[1]
-        # One page works it out; the others asking meanwhile wait for it (not all at once, after each approval).
-        got = computing.acquire(timeout=30)
+        # One page works it out; the others asking meanwhile wait for it (not all at once, after each change: under
+        # load, many working out the same 100,000 rows at once each take many times longer).
+        got = computing.acquire(timeout=MEMO_WAIT)
         try:
             with _MEMO_LOCK:
                 hit = _MEMO.get(key)
@@ -485,12 +538,13 @@ class SummaryMixin:
                 computing.release()
 
     def summary_rows(self, where: str = "1", params: tuple[Any, ...] | list[Any] = (), columns: str = "*",
-                     order: str = "id") -> list[sqlite3.Row]:  # fmt: skip
-        """Rows of ``invoice_summary`` (fresh: ``_summary_fresh``); ``where`` and ``order``: the caller's SQL."""
+                     order: str = "id") -> list[dict[str, Any]]:  # fmt: skip
+        """Rows of ``invoice_summary`` (fresh: ``_summary_fresh``) as dicts; ``where`` and ``order``: the caller's
+        SQL."""
         with self._conn() as conn:
             self._summary_fresh(conn)
-            return conn.execute(f"SELECT {columns} FROM {_tables(columns)} WHERE {where} ORDER BY {order}",
-                                tuple(params)).fetchall()  # fmt: skip
+            return fetch_rows(conn, f"SELECT {columns} FROM {_tables(columns)} WHERE {where} ORDER BY {order}",
+                              tuple(params))  # fmt: skip
 
     def search_rows(self, ids: list[int] | None = None) -> list[dict[str, Any]]:
         """Every invoice's identifying fields and where it stands (for the invoice directory's quick search), with
@@ -500,17 +554,15 @@ class SummaryMixin:
         with self._conn() as conn:
             self._summary_fresh(conn)
             batches = {r["id"]: r["created_at"] for r in conn.execute("SELECT id, created_at FROM export_batches")}
-            rows = [
-                dict(r)
-                for r in conn.execute(
-                    f"""SELECT id, status, file_name, vendor_name, invoice_number, invoice_date, due_date, currency,
-                              grand_total, po_key, created_at, reviewed_at, reviewer, second_reviewer,
-                              second_reviewed_at, export_batch, parked_reason, follow_up, error,
-                              gst_number AS gst_hst_registration_number
-                       FROM invoice_summary WHERE {where} ORDER BY id DESC""",
-                    params,
-                )
-            ]
+            rows = fetch_rows(
+                conn,
+                f"""SELECT id, status, file_name, vendor_name, invoice_number, invoice_date, due_date, currency,
+                          grand_total, po_key, created_at, reviewed_at, reviewer, second_reviewer,
+                          second_reviewed_at, export_batch, parked_reason, follow_up, error,
+                          gst_number AS gst_hst_registration_number
+                   FROM invoice_summary WHERE {where} ORDER BY id DESC""",
+                params,
+            )
         for r in rows:
             r["exported_at"] = batches.get(r["export_batch"]) if r["export_batch"] else None
         return rows
@@ -519,11 +571,11 @@ class SummaryMixin:
         """The ``limit`` invoices approved last (``list_invoices(APPROVED)`` by approval time, latest first)."""
         with self._conn() as conn:
             self._summary_fresh(conn)
-            return [dict(r) for r in conn.execute(
+            return fetch_rows(conn,
                 "SELECT id, file_name, status, vendor_name, invoice_number, invoice_date, due_date, currency, "
                 "grand_total, model_confidence, adjusted_confidence, requires_review, error, created_at, reviewed_at, "
                 "reviewer, second_reviewer FROM invoice_summary WHERE status = ? ORDER BY COALESCE(reviewed_at, '') "
-                "DESC, requires_review DESC, adjusted_confidence ASC, id ASC LIMIT ?", (APPROVED, limit))]  # fmt: skip
+                "DESC, requires_review DESC, adjusted_confidence ASC, id ASC LIMIT ?", (APPROVED, limit))  # fmt: skip
 
     def status_counts(self) -> dict[str, int]:
         """{status: how many invoices}, from the invoices' summary (counted again once one changed its status: every
@@ -551,6 +603,12 @@ class SummaryMixin:
                 rows = conn.execute(f"SELECT id FROM invoice_summary WHERE instr({column}, ?) > 0", (text,))
             return {r[0] for r in rows}
 
+    def summary_fetch(self, sql: str, params: tuple[Any, ...] | list[Any] = ()) -> list[dict[str, Any]]:
+        """Any query of the summary's tables (fresh), its rows as dicts read in one go (``fetch_rows``)."""
+        with self._conn() as conn:
+            self._summary_fresh(conn)
+            return fetch_rows(conn, sql, tuple(params))
+
     def summary_query(self, sql: str, params: tuple[Any, ...] | list[Any] = ()) -> list[sqlite3.Row]:
         """Any query of the summary's tables (fresh)."""
         with self._conn() as conn:
@@ -558,86 +616,145 @@ class SummaryMixin:
             return conn.execute(sql, tuple(params)).fetchall()
 
 
+# What the summary works out of an invoice, by part: a part that can't be worked out (a damaged coding, check or
+# metadata) is marked in ``broken`` (its bit), and only the report that reads it reads the invoice again, failing as it
+# did before (``computed``): a damaged tax line still leaves Insights alone.
+PARTS = ("tax", "sa", "spend", "po", "insights", "workload", "approval", "pay", "queue")
+BIT = {part: 1 << n for n, part in enumerate(PARTS)}
+
+
 def _summary_row(r: dict[str, Any], approvals: list[Any],
                  treatments: dict[str, Any]) -> tuple[tuple[Any, ...], list[tuple[Any, ...]]]:  # fmt: skip
-    """(the ``invoice_summary`` row of invoice ``r``, its ``summary_spend`` rows). An invoice whose JSON can't be
-    read (or whose facts can't be worked out) is kept as ``broken``, its listed columns still there: a report reads
-    it again from the invoice (``summary_facts``), failing as it did before."""
+    """(the ``invoice_summary`` row of invoice ``r``, its ``summary_spend`` rows)."""
     from ...erp.search import search_keys
 
     plain, number, raw = search_keys(r)
     computed: dict[str, Any] = {name: None for name, _ in COMPUTED}
     computed.update(plain_name=plain, number_key=number, raw_number=raw, tax_date="", f_date="", i_codes="[]",
                     w_codes="[]", legacy=0, broken=0)  # fmt: skip
-    try:
-        found, parts = _worked_out(r, approvals, treatments)
-        computed.update(found)
-    except Exception:  # noqa: BLE001 - read again from the invoice by the report asking (``summary_facts``)
-        computed.update(broken=1)
-        parts = []
+    work = _Work(r, approvals, treatments)
+    parts: list[tuple[Any, ...]] = []
+    for part in PARTS:
+        try:
+            computed.update(work.part(part))
+        except Exception:  # noqa: BLE001 - read again from the invoice by the report asking (``computed``)
+            computed["broken"] |= BIT[part]
+    if not computed["broken"] & BIT["spend"]:
+        parts = work.parts
     values = tuple(r[c] for c in ("id", *MIRROR, *(name for name, _, _ in DERIVED))) + tuple(
         computed[name] for name, _ in COMPUTED
     )
     return values, parts
 
 
-def _worked_out(r: dict[str, Any], approvals: list[Any],
-                treatments: dict[str, Any]) -> tuple[dict[str, Any], list[tuple[Any, ...]]]:  # fmt: skip
+class _Work:
     """What the reports need of invoice ``r`` (its columns, the JSON ones as text; ``approvals``: its ``approved``
-    events, rows of id, created_at and detail), by the reports' own functions."""
-    from ...coding.bulk import queue_facts
-    from ...coding.taxreturn import self_assessment_facts, tax_facts
-    from ...erp.accruals import _bill
-    from ...erp.insights import approval_facts, invoice_facts, payment_facts, workload_facts
-    from ...erp.spend import spend_parts
+    events, rows of id, created_at and detail), part by part, by the reports' own functions."""
 
-    row = {**r, **{k: _decoded(r[k]) for k in ("ai_output", "final_output", "validation", "meta", "edits")}}
-    final, ai, status = row["final_output"], row["ai_output"], r["status"]
-    out: dict[str, Any] = {"tax_date": str((final or ai or {}).get("invoice_date") or r["invoice_date"] or "")}
-    if r["po_key"]:  # as ``purchase_orders`` reads it: the coding's text, as approved or else as read
-        out["po_billed"] = float(json.loads(r["final_output"] or r["ai_output"] or "{}").get("subtotal") or 0)
-    latest = max(approvals, key=lambda e: e["id"]) if approvals else None  # ``latest_events``
-    by_time = max(approvals, key=lambda e: (e["created_at"], e["id"])) if approvals else None
-    latest_detail = (_decoded(latest["detail"]) or {}) if latest is not None else None
-    signed = status in (APPROVED, PENDING)
-    out.update(invoice_facts(row))
-    out.update(queue_facts(row))
-    if status not in (FAILED, REJECTED):
-        out.update(workload_facts(row, latest_detail if signed else None))
-    if by_time is not None:
-        out.update(approval_facts(by_time["created_at"], _decoded(by_time["detail"]) or {}))
-    if signed and final:
-        out.update(payment_facts(final))
-    parts: list[tuple[Any, ...]] = []
-    if status == APPROVED:
-        doc = final or {}
-        out["f_date"] = str(doc.get("invoice_date") or "")
-        out["bill_vendor"], out["bill_number"], credit = _bill(doc)
-        out["bill_credit"] = int(credit)
-        out["legacy"] = int(not doc.get("gl_distribution"))
-        out["p_vendor"], out["p_currency"] = str(doc.get("vendor_name") or ""), str(doc.get("currency") or "CAD")
-        parts = spend_parts(doc, treatments)
-        if final:
-            tax = tax_facts(row, {"detail": latest_detail} if latest is not None else None)
-            out["t_facts"] = json.dumps(tax, separators=(",", ":"))
-            out["s_facts"] = json.dumps(self_assessment_facts(final), separators=(",", ":"))
-    return out, parts
+    def __init__(self, r: dict[str, Any], approvals: list[Any], treatments: dict[str, Any]) -> None:
+        self.r, self.approvals, self.treatments = r, approvals, treatments
+        self.decoded: dict[str, Any] = {}
+        self.parts: list[tuple[Any, ...]] = []
+
+    def __getitem__(self, key: str) -> Any:  # the invoice's columns, the JSON ones decoded as they are first read
+        if key in ("ai_output", "final_output", "validation", "meta", "edits"):
+            if key not in self.decoded:
+                self.decoded[key] = _decoded(self.r[key])
+            return self.decoded[key]
+        return self.r[key]
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self[key] if key in self.r else default
+
+    def latest(self, by_time: bool = False) -> Any:
+        """The latest ``approved`` event: by id (``latest_events``) or by time (``latest_approvals``)."""
+        if not self.approvals:
+            return None
+        return max(self.approvals, key=(lambda e: (e["created_at"], e["id"])) if by_time else (lambda e: e["id"]))
+
+    def part(self, part: str) -> dict[str, Any]:
+        from ...coding.bulk import queue_facts
+        from ...coding.taxreturn import self_assessment_facts, tax_facts
+        from ...erp.accruals import _bill
+        from ...erp.insights import approval_facts, invoice_facts, payment_facts, workload_facts
+        from ...erp.spend import spend_parts
+
+        r, status = self.r, self.r["status"]
+        signed, approved = status in (APPROVED, PENDING), status == APPROVED
+        final = self["final_output"] if part in ("tax", "sa", "spend", "pay") else None
+        if part == "tax":  # the date the sales-tax report files it under; what it claims of an approved invoice
+            out = {"tax_date": str((final or self["ai_output"] or {}).get("invoice_date") or r["invoice_date"] or "")}
+            if approved and final:
+                latest = self.latest()
+                approval = {"detail": _decoded(latest["detail"]) or {}} if latest is not None else None
+                out["t_facts"] = json.dumps(tax_facts(self, approval), separators=(",", ":"))
+            return out
+        if part == "sa":
+            sa = self_assessment_facts(final) if approved and final else None
+            return {"s_facts": json.dumps(sa, separators=(",", ":")) if sa is not None else None}
+        if part == "spend":
+            if not approved:
+                return {}
+            doc = final or {}
+            vendor, number, credit = _bill(doc)
+            self.parts = spend_parts(doc, self.treatments)
+            return {
+                "f_date": str(doc.get("invoice_date") or ""),
+                "bill_vendor": vendor,
+                "bill_number": number,
+                "bill_credit": int(credit),
+                "legacy": int(not doc.get("gl_distribution")),
+                "p_vendor": str(doc.get("vendor_name") or ""),
+                "p_currency": str(doc.get("currency") or "CAD"),
+            }
+        if part == "po":  # as ``purchase_orders`` reads it: the coding's text, as approved or else as read
+            if not r["po_key"]:
+                return {}
+            return {"po_billed": float(json.loads(r["final_output"] or r["ai_output"] or "{}").get("subtotal") or 0)}
+        if part == "insights":
+            return invoice_facts(self)
+        if part == "workload":
+            if status in (FAILED, REJECTED):
+                return {}
+            latest = self.latest() if signed else None
+            return workload_facts(self, (_decoded(latest["detail"]) or {}) if latest is not None else None)
+        if part == "approval":
+            latest = self.latest(by_time=True)
+            return approval_facts(latest["created_at"], _decoded(latest["detail"]) or {}) if latest is not None else {}
+        if part == "pay":
+            return payment_facts(final) if signed and final else {}
+        return queue_facts(self)
 
 
-def summary_facts(store: Any, invoice_id: int) -> dict[str, Any]:
-    """The worked-out columns (``COMPUTED``) of an invoice the summary keeps as ``broken``, worked out again from the
-    invoice: raises what reading it raises (a report reads them as it read the invoice before)."""
+def summary_facts(store: Any, invoice_id: int, *parts: str) -> dict[str, Any]:
+    """The worked-out columns of ``parts`` of an invoice whose summary could not work them out (``broken``), worked out
+    again from the invoice: raises what reading it raises (a report reads them as it read the invoice before)."""
     with store._conn() as conn:
         (r,) = conn.execute(_SELECT, (json.dumps([invoice_id]),)).fetchall()
         approvals = conn.execute("SELECT id, invoice_id, created_at, detail FROM events WHERE action = 'approved' "
                                  "AND invoice_id = ?", (invoice_id,)).fetchall()  # fmt: skip
         treatments = store.tax_treatments_in(conn)
     found = {name: None for name, _ in COMPUTED}
-    found.update(i_codes="[]", w_codes="[]")
-    found.update(_worked_out(dict(r), approvals, treatments)[0])
+    found.update(i_codes="[]", w_codes="[]", tax_date="", f_date="", legacy=0)
+    work = _Work(dict(r), approvals, treatments)
+    for part in parts or PARTS:
+        found.update(work.part(part))
     return found
 
 
-def computed(store: Any, row: Any) -> Any:
-    """A summary row's worked-out columns: its own, or worked out again from the invoice when it is ``broken``."""
-    return summary_facts(store, row["id"]) if row["broken"] else row
+def computed(store: Any, row: Any, *parts: str) -> Any:
+    """A summary row's worked-out columns of ``parts``: its own, or worked out again from the invoice when the summary
+    could not (``broken``)."""
+    if row["broken"] and any(row["broken"] & BIT[p] for p in parts):
+        return {**row, **summary_facts(store, row["id"], *parts)}
+    return row
+
+
+def broken(*parts: str) -> str:
+    """SQL: the summary could not work out one of ``parts`` (``broken``'s bits)."""
+    return f"(broken != 0 AND broken & {sum(BIT[p] for p in parts)})"
+
+
+def whole(*parts: str) -> str:
+    """SQL: the summary worked out all of ``parts``."""
+    return f"broken & {sum(BIT[p] for p in parts)} = 0"
