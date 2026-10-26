@@ -1,5 +1,6 @@
 import functools
 import json
+import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -7,6 +8,26 @@ import pytest
 
 from ap_coder.core.config import Settings
 from ap_coder.core.reference_data import load_reference_data
+
+# --- SQLite without disk syncs, in the test process only ---------------------------------------------------------
+
+_sqlite_connect = sqlite3.connect
+
+
+def _connect_without_syncing(*args, **kwargs):
+    """Every SQLite connection the tests open skips the disk sync (``PRAGMA synchronous=OFF``). No test can see what a
+    power cut would keep, and the syncs were half of the Windows run: a new database makes 53, the demo 215, the suite
+    about 236,000 (strace), several milliseconds each on Windows. Processes a test starts (``python -m ap_coder
+    serve``) sync as the app always does."""
+    conn = _sqlite_connect(*args, **kwargs)
+    try:
+        conn.execute("PRAGMA synchronous=OFF")
+    except sqlite3.DatabaseError:
+        pass  # a damaged file: the app's own first query says so, as it would have
+    return conn
+
+
+sqlite3.connect = _connect_without_syncing
 
 
 def _import_the_pages() -> None:
