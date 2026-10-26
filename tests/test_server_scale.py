@@ -267,7 +267,8 @@ def test_the_server_runs_several_workers_and_one_background_process_and_stops_th
             assert json.loads(answer.read())["stopping"]
         t0 = time.monotonic()
         proc.wait(40)
-        assert time.monotonic() - t0 < 30 and proc.returncode == 0
+        took = time.monotonic() - t0
+        assert took < 30 and proc.returncode == 0, f"{took:.1f} s, exit {proc.returncode}: {proc.stdout.read()}"
         assert not (data / ".ap_coder_server.json").exists()
         held = try_lock(data / ".ap_coder_background.lock")
         assert held is not None  # the background process ended with it
@@ -573,3 +574,20 @@ def test_a_connection_is_kept_open_longer_than_a_browsers_or_a_proxys_idle_time(
     on it as it closed was dropped (ReadError; a 502 behind IIS): kept 75 s."""
     config = server.server_config(object(), "127.0.0.1", 8501, None, None, None)
     assert config.timeout_keep_alive >= 60
+
+
+def test_the_background_work_stops_while_the_workers_do_not_after_them():
+    """B-1296: a stop ended the web workers first (up to 30 s with requests under way) and only then asked the
+    background process to stop (up to 15 s more), so a stop could take 45 s: over the 30 s a stop is given on a slow
+    Windows runner. The background process is asked as soon as the server is asked to stop."""
+    stopped = threading.Event()
+
+    class Background:
+        def stop(self):
+            stopped.set()
+
+    asked = threading.Event()
+    threading.Thread(target=server._stop_background_when_asked, args=(asked, Background()), daemon=True).start()
+    assert not stopped.wait(0.2)
+    asked.set()
+    assert stopped.wait(2)
