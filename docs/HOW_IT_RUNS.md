@@ -267,7 +267,7 @@ file is copied into `data/invoices/`, in one transaction after a backup (`_backe
 the older folder is kept.
 
 **The database** (`ap_coder/core/store/_base.py:StoreCore._before_migrating`, `_migrate`): `settings.schema_version`
-(now `SCHEMA_VERSION = 16`). Older: backed up first (`backups/ap_coder-<date>-before-update-from-schema-<n>.db`), then
+(now `SCHEMA_VERSION = 19`). Older: backed up first (`backups/ap_coder-<date>-before-update-from-schema-<n>.db`), then
 migrated step by step. Newer: refused (`DatabaseTooNew`) and never opened. The launcher checks this before starting
 the server (`scripts/launch.py:database_too_new`) and stops with "start the newer AP Coder".
 

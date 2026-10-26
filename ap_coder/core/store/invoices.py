@@ -13,7 +13,7 @@ from typing import Any
 from ...coding.line_tax import invoice_uncollected, supply_province, tax_vote
 from ...coding.po import po_key
 from ...coding.terms import DEFAULT_TERMS_DAYS
-from ..audit import diff_coding
+from ..audit import changed_since, diff_coding
 from ..memory import ACCEPTED, BULK, CODED, CORRECTED, pair_lines, vendor_key
 from ..paths import PROJECT_DIR, default_db_path, find_moved_file, private_dir  # noqa: F401  (re-exported)
 from ..reference_data import UNASSIGNED
@@ -728,6 +728,8 @@ class InvoicesMixin:
         # Lines a fixed coding rule set: the AI's own answer is what its accuracy is measured on.
         by_rule = {c["line_number"]: c for c in (inv.get("meta") or {}).get("rules_applied") or []}
         feedback_rows = []
+        approved_before = (inv.get("meta") or {}).get("reopened_coding") or {}  # before a reopen (B-1299, D-112)
+        reopen_changes: list[dict[str, str]] = []
 
         kept = suggestion_kept
         # Without a cost center list the review screen has none to show or keep: a cost center the AI copied from
@@ -768,6 +770,11 @@ class InvoicesMixin:
                 CODED if guess or nothing_proposed(s_gl, s_cc) else ACCEPTED if kept(s_gl, s_cc, f_gl, f_cc)
                 else CORRECTED
             )  # fmt: skip
+            prior = approved_before.get(str(li["line_number"]))
+            moved = changed_since(prior, li["line_number"], f_gl, f_cc, cost_centers) if outcome == CODED else []
+            if moved:  # AP's own coding, approved before a reopen, changed: a correction of it (B-1299)
+                outcome, s_gl, s_cc = CORRECTED, prior[0], prior[1] if cost_centers else ""
+                reviewer_changed, reopen_changes = reviewer_changed + 1, reopen_changes + moved
             if bulk and outcome == ACCEPTED:  # kept, but nobody looked at it: no confirmation (B-955)
                 outcome = BULK
             counts[outcome] += 1
@@ -842,7 +849,8 @@ class InvoicesMixin:
             self._log(conn, "approved", invoice_id, reviewer, {
                 "lines": len(final_output.get("line_items", [])), "corrected": counts[CORRECTED],
                 **({"coded": counts[CODED]} if counts[CODED] else {}),
-                "total": final_output.get("grand_total"), "changes": diff_coding(ai, final_output, cost_centers),
+                "total": final_output.get("grand_total"),
+                "changes": diff_coding(ai, final_output, cost_centers) + reopen_changes,
                 **({"bulk": True} if bulk else {}),
                 **({"needs_second": True, "second_reason": second_reason} if needs_second else {}),
                 **({"limit": limit, "rate": rate} if limit else {}),
@@ -984,6 +992,7 @@ class InvoicesMixin:
             )
             if cur.rowcount == 0:
                 raise ValueError(f"invoice {invoice_id} cannot be reopened (exported, or not approved or rejected)")
+            self._keep_approved_coding(conn, invoice_id)  # before its lessons go (B-1299)
             layout = self._forget_learning(conn, invoice_id)
             rejected = {"rejected": was["error"] or ""} if was["status"] == REJECTED else {}  # the rejection undone
             self._log(conn, "reopened", invoice_id, actor, {"reason": reason, **rejected, **layout})

@@ -427,6 +427,18 @@ def account_for(gl_code: str, cost_center: str, settings: JdeSettings) -> GlMap 
     return GlMap(gl_code, cost_center, bu, obj, row.sub.strip(), row.sbl.strip(), row.sblt.strip())
 
 
+def accounts_without_bu(settings: JdeSettings, gl_codes: Iterable[str], tax_codes: Iterable[str],
+                        cost_centers: bool) -> list[str]:  # fmt: skip
+    """The accounts a JD Edwards export would hold invoices back for, having no BU.Object for them: the tax accounts
+    (their lines carry no cost center) and, unless each line's cost center gives the BU (``bu_from_cost_center`` with a
+    cost center list), the GL accounts. None with a Default BU and the default rule (B-1300)."""
+    if settings.use_default_rule and settings.default_bu.strip():
+        return []
+    needed = list(tax_codes) + ([] if settings.bu_from_cost_center and cost_centers else list(gl_codes))
+    return [code for code in dict.fromkeys(c.strip() for c in needed if c.strip())
+            if account_for(code, "", settings) is None]  # fmt: skip
+
+
 def ani(account: GlMap) -> str:
     """VNANI in format 2: BU.Object.Subsidiary ("CC400.6010", "CC400.6010.01")."""
     return f"{account.bu}.{account.obj}" + (f".{account.sub}" if account.sub else "")
@@ -815,7 +827,7 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
         account = account_for(e.get("gl_code") or "", e.get("cost_center") or "", settings)
         if account is None:
             add(
-                f"{where} has no JDE account (BU.Object.Subsidiary): add it to the account mapping",
+                f"{where}{NO_ACCOUNT_SAID}",
                 "JDE_NO_ACCOUNT",
                 e.get("line_number"),
             )
@@ -1168,6 +1180,31 @@ def duplicate_problems(
     return out
 
 
+NO_ACCOUNT_SAID = " has no JDE account (BU.Object.Subsidiary): add it to the account mapping"
+
+
+def _accounts_once(v: _Voucher) -> list[str]:
+    """A voucher's problems, an account without a JDE account said once with the lines posting to it ("GL 1500 has no
+    JDE account (lines 1, 3): …"), not once a line (B-1301)."""
+    lines: dict[str, list[int]] = {}
+    for problem, (code, line) in zip(v.problems, v.codes, strict=True):
+        if code == "JDE_NO_ACCOUNT":
+            lines.setdefault(problem, []).extend([line] if line else [])
+    out: list[str] = []
+    for problem in dict.fromkeys(v.problems):
+        numbers = sorted(set(lines.get(problem) or []))
+        if not numbers:
+            out.append(problem)
+            continue
+        said = f"line{'s' if len(numbers) > 1 else ''} {', '.join(str(n) for n in numbers)}"
+        if problem.endswith(NO_ACCOUNT_SAID):
+            out.append(f"{problem.removesuffix(NO_ACCOUNT_SAID)} has no JDE account ({said}): add it to the account "
+                       "mapping (BU.Object.Subsidiary)")  # fmt: skip
+        else:
+            out.append(f"{problem} ({said})")
+    return out
+
+
 def validate(
     invoices: list[dict[str, Any]], settings: JdeSettings, vendor_lookup: VendorLookup = None,
     prior: Mapping[str, list[dict[str, Any]]] | None = None,
@@ -1175,9 +1212,9 @@ def validate(
     """{invoice id: blocking problems} for the invoices that cannot go out (the others are fine)."""
     out: dict[int, list[str]] = {}
     for inv in invoices:
-        problems = _prepare(inv, settings, resolve_an8(inv.get("final_output") or {}, vendor_lookup, settings)).problems
-        if problems:
-            out[int(inv.get("id") or 0)] = problems
+        v = _prepare(inv, settings, resolve_an8(inv.get("final_output") or {}, vendor_lookup, settings))
+        if v.problems:
+            out[int(inv.get("id") or 0)] = _accounts_once(v)
     for inv_id, msgs in duplicate_problems(invoices, settings, vendor_lookup, prior).items():
         out.setdefault(inv_id, []).extend(msgs)
     return out
@@ -1226,7 +1263,8 @@ def voucher_findings(output: dict[str, Any], settings: JdeSettings, an8: str) ->
         po = str(output.get("po_number") or "").strip()
         if code == "JDE_NO_AN8":
             out.append((ERROR, "JDE_NO_AN8", "JD Edwards: this vendor has no supplier number (AN8). Pick the vendor "
-                        "from the vendor list, or ask the pilot tester to add its number", None))  # fmt: skip
+                        "from the vendor list, or add its number in Settings → JD Edwards E1 → Supplier address "
+                        "numbers (on the company server, an Admin does)", None))  # fmt: skip
         elif code == "JDE_BAD_AN8":
             out.append((ERROR, "JDE_BAD_AN8", f"JD Edwards: the supplier number {an8} is not an address number (AN8: "
                         "digits only, up to 8). Set this vendor's AN8 in Settings → JD Edwards E1, or ask whoever "

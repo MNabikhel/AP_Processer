@@ -256,10 +256,13 @@ def test_502_or_504_on_a_voucher_is_never_sent_again_blind(tmp_path, ais, busy):
 def test_the_queue_never_picks_up_a_voucher_being_sent(tmp_path, ais):
     store, batch = batch_of(tmp_path, ais)
     jde_post.dry_run(store, batch)
-    ais.script("voucher_create", "slow-after")  # made at once, answered after 0.5 s (the client waits 2 s)
+    ais.slow_seconds = 1.5  # made at once, answered after 1.5 s (the client waits 2 s)
+    ais.script("voucher_create", "slow-after")
     posting = threading.Thread(target=jde_post.post, args=(store, batch))
     posting.start()
-    time.sleep(0.15)
+    deadline = time.monotonic() + 1.5  # a slow computer may take a while to start sending (B-1307)
+    while statuses(store, batch)[1] != jde_post.SENDING and time.monotonic() < deadline:
+        time.sleep(0.01)
     assert statuses(store, batch)[1] == jde_post.SENDING
     assert jde_post.waiting(store, due_only=True) == []
     jde_post.retry_queue(store)

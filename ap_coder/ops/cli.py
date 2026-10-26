@@ -30,6 +30,7 @@ from ..ai.pipeline import (
     write_outputs,
 )
 from ..coding.tax import TaxSetup, load_tax_mapping
+from ..core import ui
 from ..core.config import Settings
 from ..core.paths import PROJECT_DIR, env_path
 from ..core.reference_data import ReferenceData, load_reference_data, load_table, parse_policy_notes
@@ -528,6 +529,18 @@ def new_files(folder: Path, store: Store, now: float | None = None, fresh: Colle
     return found
 
 
+def still_copying(folder: Path, now: float, fresh: Collection[Path] = ()) -> int:
+    """How many invoice files and saved emails in ``folder`` changed in the last ``SETTLE_SECONDS``: left for the next
+    check, as ``new_files`` and ``unpack_folder`` leave them."""
+    if not folder.is_dir():
+        return 0
+    count = 0
+    for p in [*invoice_files(folder), *emails_in(folder)]:
+        with contextlib.suppress(OSError):
+            count += p not in fresh and abs(now - p.stat().st_mtime) < SETTLE_SECONDS
+    return count
+
+
 def _sorted_line(mail: Any) -> str:
     """What triage made of an email, in one line: its kind, where its attachments went, why it needs a person."""
     t = mail.triage
@@ -557,7 +570,13 @@ def watch_once(args: argparse.Namespace, settings: Settings, store: Store, folde
         print(f"{time.strftime('%H:%M:%S')} {mail.email}: {_sorted_line(mail)}", file=sys.stderr)
         log_sorted(store, mail)
         taken_out += mail.saved
-    files = new_files(folder, store, fresh=set(taken_out))
+    now = time.time()
+    files = new_files(folder, store, now=now, fresh=set(taken_out))
+    copying = still_copying(folder, now, fresh=set(taken_out))
+    if copying:  # waits for the next check, said (B-1302)
+        later = "run it again in a few seconds" if args.once else "the next check picks them up"
+        print(f"{time.strftime('%H:%M:%S')} {ui.plural(copying, 'file')} still being copied, skipped ({later})",
+              file=sys.stderr)  # fmt: skip
     if not files:
         return done, failed
     if not store.list_accounts("gl_accounts"):  # as the dashboard (B-1212): read once they are imported
@@ -627,8 +646,11 @@ def _watch(args: argparse.Namespace, settings: Settings) -> int:
     store = Store(args.db)
     folder = Path(args.folder) if args.folder else store.path.parent / "invoices"  # as web.core.invoice_dir
     folder.mkdir(parents=True, exist_ok=True)
-    print(f"Watching {folder} every {args.every}s. New invoices go to the review queue. Ctrl+C to stop.",
-          file=sys.stderr)  # fmt: skip
+    if args.once:
+        print(f"Checking {folder} once. New invoices go to the review queue.", file=sys.stderr)
+    else:
+        print(f"Watching {folder} every {args.every}s. New invoices go to the review queue. Ctrl+C to stop.",
+              file=sys.stderr)  # fmt: skip
     try:
         while True:
             try:

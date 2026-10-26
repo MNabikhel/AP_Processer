@@ -78,8 +78,8 @@
   <figure class="an-figure">{{ chart }}</figure>
   <details class="tech"><summary>Show as table</summary>
     <div class="table-wrap"><table class="apc-table">
-      <thead><tr><th>Week</th><th class="r">Processed</th><th class="r">Approved as coded</th><th class="r">Corrected</th></tr></thead>
-      <tbody>{% for w in s.weekly %}<tr><td>{{ w.week }}</td><td class="r">{{ w.processed }}</td><td class="r">{{ w.clean }}</td><td class="r">{{ w.changed }}</td></tr>{% endfor %}</tbody>
+      <thead><tr><th>Week</th><th class="r">Processed</th><th class="r">Approved as coded</th><th class="r">Blanks filled in by AP</th><th class="r">Corrected</th></tr></thead>
+      <tbody>{% for w in s.weekly %}<tr><td>{{ w.week }}</td><td class="r">{{ w.processed }}</td><td class="r">{{ w.clean }}</td><td class="r">{{ w.filled }}</td><td class="r">{{ w.changed }}</td></tr>{% endfor %}</tbody>
     </table></div>
   </details>
 </section>

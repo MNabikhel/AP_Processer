@@ -52,7 +52,12 @@ Process the week's invoices in AP Coder **and** code them the usual way. Do not 
       person* on Import invoices each day.
 - [ ] When JD Edwards is in scope: tick **Settings → About → Show JD Edwards settings**, send the JDE team the
       worksheet (**Settings → JD Edwards E1 → Download the worksheet**), import their answers, and read
-      **Exports → Dry run** before the first test load. (The pilot itself exports to Excel or CSV.)
+      **Exports → Dry run** before the first test load. (The pilot itself exports to Excel or CSV.) Once it is on,
+      every vendor needs its JD Edwards address number (AN8) before its invoices can be approved: import it as the
+      vendor master's ERP ID, or add it in **Settings → JD Edwards E1 → Supplier address numbers** (a vendor added
+      with *Add new vendor…* on the review screen can take it there). The JD Edwards export also needs a business
+      unit for every account: set a **Default BU**, or map every GL account, the tax accounts (e.g. GST/HST and QST
+      recoverable) included; the Welcome checklist says which are missing.
 - [ ] Look at **Vendors that make work** and ask the worst offenders for better invoices.
 - [ ] **Touchless, if ready:** when several regular vendors are close to the bar on *Learning & accuracy
       → Supplier learning* and corrections have settled, an AP lead turns on touchless processing in

@@ -51,7 +51,8 @@ CHECKS: dict[str, CheckHelp] = {
         ERP, "No supplier number (AN8)",
         "JD Edwards needs the supplier's address number (AN8): this vendor has none in the vendor list or in the "
         "JD Edwards settings.",
-        "Pick the vendor from the vendor list, or ask the pilot tester to add its AN8.",
+        "Pick the vendor from the vendor list, or add its AN8 in Settings → JD Edwards E1 → Supplier address numbers "
+        "(on the company server, an Admin does). A vendor added with “Add new vendor…” can take its AN8 there too.",
     ),
     "JDE_BAD_AN8": CheckHelp(
         ERP, "Supplier number is not an AN8",

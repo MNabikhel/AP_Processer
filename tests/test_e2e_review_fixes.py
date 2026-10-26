@@ -132,8 +132,8 @@ def test_read_only_is_not_offered_the_export_batch_downloads(tmp_path):
 
 def test_the_learning_headline_says_which_approvals_only_had_blanks_filled_in(tmp_path, ground_truth):
     """B-1215: Learning said "Approved as coded 100%, 2 of 2 needed no change" when AP had filled in every GL account
-    the AI left UNASSIGNED on one of them (the same page lists those lines as "coded by AP"). The figure keeps its
-    meaning (D-39); its line says how many only had blanks filled in by AP."""
+    the AI left UNASSIGNED on one of them (the same page lists those lines as "coded by AP"). Its line says how many
+    only had blanks filled in by AP, which are not in the figure (D-112)."""
     import copy
     import re
 
@@ -149,13 +149,13 @@ def test_the_learning_headline_says_which_approvals_only_had_blanks_filled_in(tm
     b = store.add_invoice(tmp_path / "b.pdf", blank, {"requires_review": True})
     store.approve_invoice(a, ground_truth, "jane")
     store.approve_invoice(b, {**ground_truth, "invoice_number": "X-2"}, "jane")
-    assert insights.approved_as_coded(store) == (2, 2)  # D-39: filling in a blank is no correction
+    assert insights.approved_as_coded(store) == (1, 2)  # D-112: filling in a blank is neither as coded nor corrected
     tiles = " ".join(str(t) for t in coding_context(store, "")["tiles"])
     text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", tiles))
     assert "2 of 2 needed no change" not in text
     assert "1 of 2 needed no change, 1 only had blanks filled in by AP" in text
     page = insights.compute(store)
-    assert (page["approved_clean"], page["approved_filled"]) == (2, 1)
+    assert (page["approved_clean"], page["approved_filled"]) == (1, 1)
 
 
 def test_the_hub_leaves_out_ap_s_reasons_and_tests_and_sample_setups_say_who(tmp_path, monkeypatch):

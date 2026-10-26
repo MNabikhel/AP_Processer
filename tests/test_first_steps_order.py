@@ -62,7 +62,7 @@ def test_the_next_step_walks_through_them_one_by_one(fresh):
     assert "Import your vendor master" in card() and f'href="{process.STEP_LINKS[process.VENDOR_STEP]}"' in card()
     fresh.import_vendor_master([{"vendor_name": "Northwind Supply", "erp_id": "1001", "status": "active"}])
     assert "JD Edwards settings" in card() and 'href="/settings/jde"' in card()
-    jde.save(fresh, jde.JdeSettings(company="00001"))
+    jde.save(fresh, jde.JdeSettings(company="00001", default_bu="100"))  # what the export needs (B-1300)
     assert "Teach AP Coder your past coding" in card() and WHY in card()
     assert f'href="{process.STEP_LINKS[process.HISTORY_STEP]}"' in card()
     fresh.import_history([{"vendor_name": "Northwind Supply", "description": "Copy paper", "gl_code": "6000",

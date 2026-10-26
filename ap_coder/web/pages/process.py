@@ -339,10 +339,22 @@ def pilot_steps(store: Store) -> list[tuple[str, str, str]]:
     if shown:
         saved = bool(store.get_setting(jde.SETTING_KEY))
         problems = jde.settings_problems(jde.load(store)) if saved else []
-        if saved and not problems:
-            settings = jde.load(store)
-            steps.append(("ok", JDE_STEP, f"company {settings.company_code}, "
-                          f"{ui.plural(len(settings.gl_map), 'account')} mapped"))  # fmt: skip
+        settings = jde.load(store)
+        missing = jde.accounts_without_bu(
+            settings, [a["code"] for a in store.list_accounts("gl_accounts")],
+            [t.gl_code for t in store.tax_treatments().values() if t.needs_gl and t.gl_code],
+            bool(store.list_accounts("cost_centers")),
+        ) if saved and not problems else []  # fmt: skip
+        if missing:  # the export would hold back every invoice posting to them (B-1300)
+            shown = ", ".join(missing[:4]) + (f" and {len(missing) - 4} more" if len(missing) > 4 else "")
+            verb = "has" if len(missing) == 1 else "have"
+            steps.append(("todo", JDE_STEP, f"company {settings.company_code} saved, but "
+                          f"{ui.plural(len(missing), 'account')} ({shown}) {verb} no JD Edwards business unit: set a "
+                          "Default BU, or map them, in Settings → JD Edwards E1"))  # fmt: skip
+        elif saved and not problems:
+            mapped = f"Default BU {settings.default_bu.strip()}" if settings.use_default_rule and \
+                settings.default_bu.strip() else ui.plural(len(settings.gl_map), "account") + " mapped"  # fmt: skip
+            steps.append(("ok", JDE_STEP, f"company {settings.company_code}, {mapped}"))
         else:
             steps.append(("todo", JDE_STEP, problems[0] if problems else
                           "company, document type, accounts and tax areas: Settings → JD Edwards E1"))  # fmt: skip
@@ -587,6 +599,15 @@ def process_files(store: Store, settings: Settings, paths: list[Path], *, alread
         label = f"Processed {ok} of {len(todo) + len(skipped)}" if todo else "Nothing new to read"
         if todo and skipped:  # every file of the run counted, the ones not read said (B-1184)
             label += f": {len(skipped)} already in AP Coder"
+        to_person = sum(1 for m in mails if m.error or (m.triage and m.triage.needs_person))
+        if to_person:  # every email counted, the ones sorted to a person too (B-1303)
+            files = len(todo) + len(skipped)
+            read = (f"{ui.plural(ok, 'invoice')} processed" if ok == files
+                    else f"{ok} of {ui.plural(files, 'file')} processed")  # fmt: skip
+            parts = [read] if files else []
+            parts += [f"{len(skipped)} already in AP Coder"] if skipped else []
+            parts.append(f"{to_person} sent to Emails that need a person")
+            label = f"{ui.plural(len(mails), 'email')}: {', '.join(parts)}"
         return {"processed": len(todo), "ok": ok, "failed": failed, "queued": queued, "messages": messages,
                 "label": label}  # fmt: skip
 

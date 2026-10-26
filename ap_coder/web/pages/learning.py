@@ -248,6 +248,7 @@ def coding_context(store: Store, mem_q: str, settings: Any = None) -> dict[str, 
     m = store.metrics()
     if not m["lines_reviewed"]:
         return {"metrics": None}
+    measured = m["line_accuracy"] is not None  # none: AP coded every line, the AI proposed none (no model, B-1298)
     accuracy = m["line_accuracy"] or 0.0
     clean, total = insights.approved_as_coded(store)  # as Insights counts them (D-39)
     weekly = []
@@ -261,7 +262,10 @@ def coding_context(store: Store, mem_q: str, settings: Any = None) -> dict[str, 
         ui.tile("Coding accuracy", f"{accuracy:.1%}", "", "green" if good else "violet",
                 (distance + (f" · {note}" if note else "")) if compared else note,
                 ("up" if good else "down") if compared else "note",
-                [w["accuracy"] or 0 for w in weekly] if len(weekly) > 1 else None),
+                [w["accuracy"] or 0 for w in weekly] if len(weekly) > 1 else None)
+        if measured else
+        ui.tile("Coding accuracy", "—", "", "violet", "AP coded every line: the AI proposed none to measure yet",
+                "note"),
         ui.tile("Lines reviewed", f"{m['lines_reviewed']:,}", "", "blue", f"{m['lines_accepted']:,} confirmed"),
         ui.tile("Corrections taught", f"{m['lines_corrected']:,}", "", "amber", "used on the next invoice"),
         ui.tile(insights.AS_CODED, "—" if not total else f"{clean / total:.0%}", "", "green",
@@ -325,6 +329,7 @@ def coding_context(store: Store, mem_q: str, settings: Any = None) -> dict[str, 
             if v["lines"]
         ],
         "corrections": corrections,
+        "ai_measured": measured,
         "memory": memory,
         "memory_total": len(rows),
         "memory_matching": len(matching),

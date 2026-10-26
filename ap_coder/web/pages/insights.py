@@ -100,14 +100,19 @@ def operation_kpis(ops: dict[str, Any]) -> list[tuple[str, str, str, str]]:
 def weekly_chart(weekly: list[dict[str, Any]]) -> Any:
     weeks = [w["week"] for w in weekly]
     clean = [w["clean"] for w in weekly]
+    filled = [w.get("filled", 0) for w in weekly]
     changed = [w["changed"] for w in weekly]
-    total = sum(clean) + sum(changed)
+    total = sum(clean) + sum(filled) + sum(changed)
+    series = [Series("Approved as coded", clean, OK_GREEN)]
+    if any(filled):  # blanks the AI left, filled in by AP: neither as coded nor corrected (D-112)
+        series.append(Series("Blanks filled in by AP", filled, SERIES[0]))
     return bar_chart(
         weeks,
-        [Series("Approved as coded", clean, OK_GREEN), Series("Corrected", changed, WARN_AMBER)],
+        [*series, Series("Corrected", changed, WARN_AMBER)],
         title="Approvals by week",
-        desc=f"Invoices approved each week, {sum(clean)} of {total} approved exactly as coded and {sum(changed)} "
-        f"corrected, over {ui.plural(len(weeks), 'week')} from {weeks[0]} to {weeks[-1]}.",
+        desc=f"Invoices approved each week, {sum(clean)} of {total} approved exactly as coded, "
+        + (f"{sum(filled)} with blanks filled in by AP and " if any(filled) else "")
+        + f"{sum(changed)} corrected, over {ui.plural(len(weeks), 'week')} from {weeks[0]} to {weeks[-1]}.",
         mode="stacked",
         y_format=lambda v: f"{v:,.0f}",
         width=1040,

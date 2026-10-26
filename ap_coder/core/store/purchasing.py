@@ -209,7 +209,7 @@ class PurchasingMixin:
             return fetch_rows(
                 conn,
                 """SELECT id, vendor_name, invoice_number, invoice_date, currency, grand_total, reviewer,
-                          reviewed_at FROM invoice_summary WHERE status = ? AND export_batch IS NULL
+                          reviewed_at, second_reviewer FROM invoice_summary WHERE status = ? AND export_batch IS NULL
                    ORDER BY reviewed_at, id""",
                 (APPROVED,),
             )

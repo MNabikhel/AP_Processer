@@ -70,7 +70,8 @@ def _old_list_invoices(store: Store, status: str | None = None) -> list[dict[str
 def _old_unexported(store: Store) -> list[dict[str, Any]]:
     with store._conn() as conn:
         sql = (
-            "SELECT id, vendor_name, invoice_number, invoice_date, currency, grand_total, reviewer, reviewed_at "
+            "SELECT id, vendor_name, invoice_number, invoice_date, currency, grand_total, reviewer, reviewed_at, "
+            "second_reviewer "
             "FROM invoices WHERE status = ? AND export_batch IS NULL ORDER BY reviewed_at, id"
         )
         return [dict(r) for r in conn.execute(sql, (APPROVED,))]
@@ -156,7 +157,8 @@ def insights_compute(store: Store, a: Assumptions | None = None) -> dict[str, An
     processed = [r for r in rows.values() if r["status"] != FAILED]
     failed = [r for r in rows.values() if r["status"] == FAILED]
     approvals = latest_approvals(store, rows)  # as approved_as_coded counts them (Learning shows the same pair)
-    clean = [e for e in approvals if not corrected(e)]
+    clean = [e for e in approvals if not corrected(e) and not filled_in(e)]  # D-112: blanks filled in are their own
+    filled = [e for e in approvals if filled_in(e)]
     changed = [e for e in approvals if corrected(e)]
 
     # Only a build that may use the internet can send anything to Azure. Offline, the tokens recorded are LM Studio's
@@ -172,7 +174,7 @@ def insights_compute(store: Store, a: Assumptions | None = None) -> dict[str, An
         if (metas.get(r["id"]) or {}).get("timings_seconds")
     ]
 
-    minutes_saved = len(clean) * (a.manual_minutes - a.clean_minutes) + len(changed) * (
+    minutes_saved = len(clean) * (a.manual_minutes - a.clean_minutes) + (len(changed) + len(filled)) * (
         a.manual_minutes - a.changed_minutes
     )
     stp = len(clean) / len(approvals) if approvals else None
@@ -196,11 +198,11 @@ def insights_compute(store: Store, a: Assumptions | None = None) -> dict[str, An
             stopped_count += 1
             stopped[inv["currency"] or "CAD"] += inv["grand_total"]
 
-    weekly: dict[str, dict[str, int]] = defaultdict(lambda: {"processed": 0, "clean": 0, "changed": 0})
+    weekly: dict[str, dict[str, int]] = defaultdict(lambda: {"processed": 0, "clean": 0, "filled": 0, "changed": 0})
     for r in processed:
         weekly[_week(r["created_at"])]["processed"] += 1
     for e in approvals:
-        weekly[_week(e["created_at"])]["changed" if corrected(e) else "clean"] += 1
+        weekly[_week(e["created_at"])]["changed" if corrected(e) else "filled" if filled_in(e) else "clean"] += 1
 
     projection = None
     if per_invoice_minutes is not None:
@@ -216,7 +218,7 @@ def insights_compute(store: Store, a: Assumptions | None = None) -> dict[str, An
         "failed": len(failed),
         "approved": len(approvals),
         "approved_clean": len(clean),
-        "approved_filled": sum(1 for e in clean if filled_in(e)),
+        "approved_filled": len(filled),
         "approved_changed": len(changed),
         "bulk_approved": sum(1 for e in approvals if (e["detail"] or {}).get("bulk")),
         "needs_attention_rate": (sum(1 for r in processed if r["requires_review"]) / len(processed))

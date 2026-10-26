@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from ..memory import ACCEPTED, BULK, CODED, CORRECTED, vendor_key
@@ -175,6 +176,16 @@ class LearningMixin:
         shows, from the counts the summary keeps (``feedback_counts``) instead of four scans of the learning memory."""
         with self._conn() as conn:
             return self._line_counts(conn)
+
+    @staticmethod
+    def _keep_approved_coding(conn: Any, invoice_id: int) -> None:
+        """An approved invoice reopened: keep its coding as approved, line by line (``meta.reopened_coding``, from its
+        lessons, before they are withdrawn), which a line changed at the next approval corrects (B-1299, D-112). A
+        rejected invoice has none."""
+        coding = {str(r[0]): [r[1], r[2] or ""] for r in conn.execute(
+            "SELECT line_number, final_gl, final_cc FROM feedback WHERE invoice_id = ?", (invoice_id,))}  # fmt: skip
+        conn.execute("UPDATE invoices SET meta = json_set(CASE WHEN json_valid(meta) THEN meta ELSE '{}' END, "
+                     "'$.reopened_coding', json(?)) WHERE id = ?", (json.dumps(coding), invoice_id))  # fmt: skip
 
     @staticmethod
     def _line_counts(conn: Any) -> dict[str, Any]:

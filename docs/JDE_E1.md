@@ -31,7 +31,12 @@ Edwards batch made) has it turned on by itself when it is updated: nothing is ta
    settings and shown on the page.
 2. **Supplier numbers**: each vendor's JDE address number (AN8) comes from the vendor master's ERP ID
    (Vendors page → import the vendor master from E1). A vendor whose ERP ID is not its address number can
-   be given one in Settings → JD Edwards E1 → *Supplier address numbers*.
+   be given one in Settings → JD Edwards E1 → *Supplier address numbers*. With JD Edwards on, an invoice whose
+   vendor has no AN8 cannot be approved (D-75, D-112: never approved only to be held back at export); a vendor
+   added with *Add new vendor…* on the review screen can be given its AN8 in that pop-up.
+   **Accounts**: every line needs a business unit. Set a *Default BU* (the default rule), or map every GL account
+   and the tax accounts (their lines carry no cost center): until then the export holds back every invoice posting
+   to an unmapped account, and the Welcome checklist's *JD Edwards settings* step lists them.
 3. **Exports**: pick the invoices, choose *JD Edwards E1* (offered once *Show JD Edwards settings* is on), and
    export. Invoices that fail the checks
    (below) are listed with the reasons and are **left out of the batch**; they stay in *Ready to export*.
