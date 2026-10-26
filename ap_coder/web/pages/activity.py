@@ -186,7 +186,8 @@ def activity_page(request: Request) -> HTMLResponse:
     people = sorted({e["actor"] for e in events if e["actor"]})
     tiles = [
         ("Events", len(events), "blue", f"{week} in the last 7 days"),
-        ("Invoices approved", approved, "green", f"{clean} approved as coded, {approved - clean} corrected"),
+        ("Invoices approved", approved, "green", insights.approvals_note(clean, insights.filled_in_count(store),
+                                                                         approved)),  # (D-112)
         ("People", len(people), "violet", (", ".join(people[:3]) + (f" and {len(people) - 3} more" if len(people) > 3
                                                                    else "")) or "none recorded yet"),  # (B-1009)
         ("Deletions", sum(1 for e in events if e["action"] in DELETIONS), "amber", "invoices, accounts, lessons"),

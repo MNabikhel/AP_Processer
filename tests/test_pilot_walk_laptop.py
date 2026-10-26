@@ -63,3 +63,39 @@ def test_a_vendor_with_no_address_number_is_told_where_to_add_it(client, store):
     sections = _plain(raw)
     assert "JDE_NO_AN8" in raw
     assert "Settings → JD Edwards E1 → Supplier address numbers" in sections and "ask the pilot tester" not in sections
+
+
+# --- 2. The learning figures without the model -----------------------------------------------------------------------
+
+
+def test_without_the_model_blanks_filled_in_are_neither_approved_as_coded_nor_corrected(tmp_path, ground_truth):
+    """B-1298: with no coding model (every GL account left blank), Learning said "Coding accuracy 0.0%" beside "No
+    corrections yet: the AI has matched every reviewer decision", and "Approved as coded 100%" beside "0 of 2 needed
+    no change, 2 only had blanks filled in by AP"; Activity said "2 approved as coded, 0 corrected". Blanks filled in
+    are their own count on all three pages (D-112)."""
+    import copy
+
+    from ap_coder.core.store import Store
+    from ap_coder.erp import insights
+
+    from .webclient import client_for
+
+    store = Store(tmp_path / "ap.db")
+    for n in (1, 2):
+        blank = copy.deepcopy({**ground_truth, "invoice_number": f"X-{n}"})
+        for li in blank["line_items"]:
+            li["predicted_gl_code"] = "UNASSIGNED"
+        invoice_id = store.add_invoice(tmp_path / f"{n}.pdf", blank, {"requires_review": True})
+        store.approve_invoice(invoice_id, {**ground_truth, "invoice_number": f"X-{n}"}, "jane")
+    assert insights.approved_as_coded(store) == (0, 2)
+    page = insights.compute(store)
+    assert (page["approved_clean"], page["approved_filled"], page["approved_changed"]) == (0, 2, 0)
+    assert page["straight_through"] == 0
+
+    client = client_for(store)
+    learning = _plain(client.get("/learning").text)
+    assert "Coding accuracy —" in learning and "0.0%" not in learning
+    assert "matched every reviewer decision" not in learning and "AP coded every line" in learning
+    assert "Approved as coded 0%" in learning and "0 of 2 needed no change, 2 only had blanks filled in by AP" in learning
+    activity = _plain(client.get("/activity").text)
+    assert "0 approved as coded, 2 had blanks filled in by AP, 0 corrected" in activity

@@ -67,8 +67,7 @@ NOT_CODING = frozenset({"place of supply"})
 def corrected(event: dict[str, Any]) -> bool:
     """Whether an approval (its ``approved`` event) changed what the coder proposed: a value it gave changed, a line
     added or removed. Filling in what it left blank (a cost center it could not pick, an UNASSIGNED account, an empty
-    field) completes the coding: it is in the audit trail, but it is not a change. The one definition of "approved as
-    coded" (D-39)."""
+    field) completes the coding: it is in the audit trail, but it is not a correction (``filled_in``, D-39, D-112)."""
     changes = (event.get("detail") or {}).get("changes") or []
     return any(
         str(c.get("what") or "").endswith(" added")
@@ -82,18 +81,25 @@ _corrected = corrected  # the name Insights' own tests use
 
 
 def filled_in(event: dict[str, Any]) -> bool:
-    """Whether an approval approved as coded (not ``corrected``) still had blanks filled in by AP: a cost center, an
-    UNASSIGNED account. Still "approved as coded" (D-39); the pages say how many of those only had blanks filled in, so
-    the figure doesn't read as if AP touched nothing (B-1215)."""
+    """Whether an approval not ``corrected`` still had blanks filled in by AP: a cost center, an UNASSIGNED account.
+    Neither "approved as coded" nor "corrected": its own count on every page (D-112), so the figure doesn't read 100%
+    when the AI coded nothing (B-1215, B-1298)."""
     changes = (event.get("detail") or {}).get("changes") or []
     return not corrected(event) and any(isinstance(c, dict) and c.get("what") not in NOT_CODING for c in changes)
 
 
 def as_coded_note(clean: int, filled: int, total: int) -> str:
-    """The line under the "Approved as coded" figure: how many needed nothing, how many only had blanks filled in."""
+    """The line under the "Approved as coded" figure: how many needed nothing (``clean``, the figure's own), how many
+    only had blanks filled in (``filled``, not in ``clean``: D-112)."""
     if not filled:
         return f"{clean} of {total} needed no change"
-    return f"{clean - filled} of {total} needed no change, {filled} only had blanks filled in by AP"
+    return f"{clean} of {total} needed no change, {filled} only had blanks filled in by AP"
+
+
+def approvals_note(clean: int, filled: int, total: int) -> str:
+    """The three counts of the approvals, as Activity and the report say them: as coded, blanks filled in, corrected."""
+    middle = f", {filled} had blanks filled in by AP" if filled else ""
+    return f"{clean} approved as coded{middle}, {total - clean - filled} corrected"
 
 
 def latest_approvals(store: Store) -> list[dict[str, Any]]:
@@ -120,9 +126,10 @@ def approval_facts(created_at: str, detail: dict[str, Any]) -> dict[str, Any]:
 
 def approved_as_coded(store: Store) -> tuple[int, int]:
     """(approved as coded, approved): the invoices of ``latest_approvals`` whose approval changed nothing the coder
-    proposed (``corrected``). Insights and Learning show this pair."""
+    proposed and filled in none of its blanks (neither ``corrected`` nor ``filled_in``, D-112). Insights and Learning
+    show this pair."""
     approvals = latest_approvals(store)
-    return sum(1 for e in approvals if not e["corrected"]), len(approvals)
+    return sum(1 for e in approvals if not e["corrected"] and not e["filled"]), len(approvals)
 
 
 def filled_in_count(store: Store) -> int:
@@ -256,13 +263,16 @@ def compute(store: Store, a: Assumptions | None = None) -> dict[str, Any]:
                     not in stopped_rows:  # fmt: skip
                 stopped_rows.append((r["id"], r["grand_total"], r["currency"]))
     approved = sum(n for *_, n in approvals)
-    clean = sum(n for _, c, *_, n in approvals if not c)
-    changed = approved - clean
+    clean = sum(n for _, c, f, _, n in approvals if not c and not f)  # approved as coded (D-112)
+    filled = sum(n for _, c, f, _, n in approvals if f and not c)
+    changed = approved - clean - filled  # corrected
 
     measured = [c for c, recorded in costs if recorded]
     cost_per_invoice_cad = (sum(measured) / len(measured) * a.usd_to_cad) if measured else None
 
-    minutes_saved = clean * (a.manual_minutes - a.clean_minutes) + changed * (a.manual_minutes - a.changed_minutes)
+    # AP filling in blanks works as on a corrected invoice
+    minutes_saved = clean * (a.manual_minutes - a.clean_minutes) + (approved - clean) * (a.manual_minutes -
+                                                                                         a.changed_minutes)
     stp = clean / approved if approved else None
     per_invoice_minutes = (
         (stp * (a.manual_minutes - a.clean_minutes) + (1 - stp) * (a.manual_minutes - a.changed_minutes))
@@ -278,11 +288,11 @@ def compute(store: Store, a: Assumptions | None = None) -> dict[str, Any]:
             stopped_count += 1
             stopped[currency or "CAD"] += total
 
-    weekly: dict[str, dict[str, int]] = defaultdict(lambda: {"processed": 0, "clean": 0, "changed": 0})
+    weekly: dict[str, dict[str, int]] = defaultdict(lambda: {"processed": 0, "clean": 0, "filled": 0, "changed": 0})
     for day, n in days:
         weekly[_week(day)]["processed"] += n
-    for day, corrected_, _, _, n in approvals:
-        weekly[_week(day)]["changed" if corrected_ else "clean"] += n
+    for day, corrected_, filled_, _, n in approvals:
+        weekly[_week(day)]["changed" if corrected_ else "filled" if filled_ else "clean"] += n
 
     projection = None
     if per_invoice_minutes is not None:
@@ -298,7 +308,7 @@ def compute(store: Store, a: Assumptions | None = None) -> dict[str, Any]:
         "failed": failed,
         "approved": approved,
         "approved_clean": clean,
-        "approved_filled": sum(n for _, c, f, _, n in approvals if f and not c),
+        "approved_filled": filled,
         "approved_changed": changed,
         "bulk_approved": sum(n for *_, b, n in approvals if b),
         "needs_attention_rate": (flagged / processed) if processed else None,
@@ -491,7 +501,7 @@ def report_html(s: dict[str, Any], organisation: str = "") -> str:
         row("Azure cost (Document Intelligence + Azure OpenAI)", f"{_money(p.get('azure_cost'))} / month"),
         row("Net benefit", f"{_money(net)} / month", "th"),
         "</table><h2>Pilot so far</h2><table>",
-        row("Approved", f"{s['approved']} ({s['approved_clean']} as coded, {s['approved_changed']} corrected)"),
+        row("Approved", f"{s['approved']} ({approvals_note(s['approved_clean'], s['approved_filled'], s['approved'])})"),
         row("Flagged by the checks when processed", _pct(s["needs_attention_rate"])),
         row("Could not be read", str(s["failed"])),
         row(

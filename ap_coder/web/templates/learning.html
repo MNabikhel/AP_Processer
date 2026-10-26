@@ -69,8 +69,12 @@
 <div class="grid-3-2">
   <section class="card" aria-labelledby="trend-title">
     <h4 id="trend-title">Accuracy by week</h4>
+    {% if ai_measured %}
     <figure class="an-figure">{{ chart }}</figure>
-    <details class="tech"><summary>Show as table</summary>
+    {% else %}
+    <p class="muted">Nothing to chart yet: the accuracy measures the lines the AI coded, and AP coded every line itself (no coding model).</p>
+    {% endif %}
+    <details class="tech"{% if not ai_measured %} hidden{% endif %}><summary>Show as table</summary>
       <div class="table-wrap"><table class="apc-table">
         <thead><tr><th>Week</th><th class="r">Confirmed</th><th class="r">Corrected</th><th class="r">Accuracy</th></tr></thead>
         <tbody>{% for w in weekly %}<tr><td>{{ w.week }}</td><td class="r">{{ w.accepted }}</td><td class="r">{{ w.corrected }}</td><td class="r">{{ w.accuracy | pct }}</td></tr>{% endfor %}</tbody>
@@ -107,7 +111,7 @@
   <section class="card" aria-labelledby="corrections-title">
     <h4 id="corrections-title">Most common corrections</h4>
     {% if not corrections %}
-    <p class="muted">No corrections yet: the AI has matched every reviewer decision.</p>
+    <p class="muted">{% if ai_measured %}No corrections yet: the AI has matched every reviewer decision.{% else %}No corrections yet: AP coded every line itself (the AI proposed no coding), so there is nothing to compare.{% endif %}</p>
     {% else %}
     <div class="table-wrap"><table class="apc-table">
       <thead><tr><th>AI suggested</th><th></th><th>Reviewer chose</th><th class="r">Times</th></tr></thead>
