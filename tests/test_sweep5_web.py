@@ -181,3 +181,22 @@ def test_replacing_the_erp_register_with_a_file_of_no_usable_row_keeps_it(store)
     assert answer.status_code == 400 and "nothing was imported" in answer.json()["error"]
     assert _register(client, "Supplier,Doc No,Amount\n", replace="1").status_code == 400  # no rows at all
     assert store.erp_register_count() == 2  # the duplicate checks still know the bills in the ERP
+
+
+# --- B-1406: replacing the purchase orders with a file of no usable row deleted them all ----------------------------
+
+
+def _purchase_orders(client, sheet: str, **form: str):
+    upload = client.post("/purchase-orders/upload", files={"file": ("pos.csv", sheet.encode())}, headers=PAGE)
+    token = upload.json()["redirect"].split("file=")[1].split("#")[0].split("&")[0]
+    data = {"file": token, "col_po_number": "PO", "col_description": "Item", "col_amount": "Amount", **form}
+    return post(client, "/purchase-orders/import", data)
+
+
+def test_replacing_the_purchase_orders_with_a_file_of_no_usable_row_keeps_them(store):
+    client = client_for(store)
+    good = "PO,Item,Amount\nPO-1,Gloves,100\nPO-2,Paper,50\n"
+    assert _purchase_orders(client, good).status_code == 200 and len(store.purchase_orders()) == 2
+    answer = _purchase_orders(client, "PO,Item,Amount\n,Gloves,100\n,Paper,50\n", replace="1")  # no PO numbers
+    assert answer.status_code == 400 and "nothing was imported" in answer.json()["error"]
+    assert len(store.purchase_orders()) == 2

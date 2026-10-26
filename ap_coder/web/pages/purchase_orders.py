@@ -255,6 +255,9 @@ async def po_import(request: Request) -> JSONResponse:
     if missing:
         return refuse("Pick the column for: " + ", ".join(missing))
     rows, skipped = po_mod.rows_from_records(df.to_dict("records"), chosen)
+    if not rows:  # "Replace" would delete every PO (B-1406)
+        return refuse(f"No row has a PO number and a description in the columns picked ({skipped} skipped): nothing "
+                      "was imported, the purchase orders are as they were.")  # fmt: skip
     result = store.import_purchase_orders(rows, replace_all=bool(form.get("replace")), actor=reviewer())
     drop_upload(token)
     text = (
