@@ -321,8 +321,8 @@ class InvoicesMixin:
         if status:
             statuses = (status,)
         if statuses:
-            sql += f" WHERE status IN ({', '.join('?' * len(statuses))})"
-            args = tuple(statuses)
+            sql += f" WHERE {_in_list('status')}"
+            args = (json.dumps(list(statuses)),)
         sql += " ORDER BY requires_review DESC, adjusted_confidence ASC, id ASC"
         with self._conn() as conn:
             self._summary_fresh(conn)

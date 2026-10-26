@@ -268,6 +268,9 @@ def _cell(value: Any) -> Any:
     return value
 
 
+_decode_rows = json.JSONDecoder().decode  # the rows' transport, apart from json.loads: not an invoice's coding
+
+
 def fetch_rows(conn: sqlite3.Connection, sql: str, params: Any = ()) -> list[dict[str, Any]]:
     """The rows of the SELECT ``sql`` as dicts, read in one step (see above), in its order: what
     ``[dict(r) for r in conn.execute(sql, params)]`` gives, without the GIL handed back and forth for each row."""
@@ -284,7 +287,7 @@ def fetch_rows(conn: sqlite3.Connection, sql: str, params: Any = ()) -> list[dic
         for n in names
     )
     found = conn.execute(f"SELECT json_group_array(json_array({cells})) FROM ({sql}) AS q", params).fetchone()[0]
-    return [{n: _cell(v) for n, v in zip(names, row, strict=True)} for row in json.loads(found)]
+    return [{n: _cell(v) for n, v in zip(names, row, strict=True)} for row in _decode_rows(found)]
 
 
 def fts_available() -> bool:
@@ -317,7 +320,7 @@ _SIDE = {t: [_COLUMNS.index("id"), *(_COLUMNS.index(c) for c in columns)] for t,
 _INSERT = (f"INSERT INTO invoice_summary ({', '.join(_COLUMNS[n] for n in _MAIN)}) "
            f"VALUES ({', '.join('?' * len(_MAIN))})")  # fmt: skip
 _INSERT_SIDE = {
-    t: f"INSERT INTO {t} (id, {', '.join(columns)}) VALUES ({', '.join('?' * (len(columns) + 1))})"
+    t: f"INSERT INTO {t} (id, {', '.join(columns)}) VALUES ({', '.join('?' * (len(columns) + 1))})"  # at most 5
     for t, columns in SIDE_TABLES.items()
 }
 

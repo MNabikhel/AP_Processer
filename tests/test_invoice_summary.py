@@ -69,7 +69,9 @@ def year(tmp_path):
                     {"code": "TAX_RATE_NONSTANDARD", "severity": "warning"}, {"code": "VENDOR_GST_MISSING"}],
                     login="sroy")  # fmt: skip
                 if (store.get_invoice(invoice_id) or {})["status"] == PENDING and n % 2:
-                    store.final_approve(invoice_id, "Alex Kim", login="akim")
+                    store.final_approve(
+                        invoice_id, "Alex Kim", login="akim", shown=store.latest_approval_id(invoice_id)
+                    )
             elif fate == (2, 0):
                 store.park_invoice(invoice_id, "Jordan Lee", "waiting for the buyer", "2026-11-02")
             elif fate == (2, 1):
