@@ -224,7 +224,7 @@ def self_test_detail(model: str, db_path: Path | None = None) -> tuple[str, str]
         return "pending", f"not checked ({type(exc).__name__})"
 
 
-def wants_reading(settings: Settings, path: Path, layout_source: str = "") -> bool:
+def wants_reading(path: Path) -> bool:
     """Whether a newly processed invoice goes to the page reader: every invoice but a text file (.md, .txt), which
     has no page to look at. Digital PDFs too: the page as printed is checked against the text hidden in the PDF."""
     return Path(path).suffix.lower() not in TEXT_EXTENSIONS
@@ -287,9 +287,9 @@ def skip_new_invoice(store: Any, invoice_id: int, pages: int, why: str) -> bool:
         return False
 
 
-def queue_new_invoice(store: Any, settings: Settings, invoice_id: int | None, path: Path, layout_source: str) -> bool:
+def queue_new_invoice(store: Any, invoice_id: int | None, path: Path) -> bool:
     """Queue a just-processed invoice for the page reader (every invoice but a text file). Never raises."""
-    if not invoice_id or store is None or not wants_reading(settings, path, layout_source):
+    if not invoice_id or store is None or not wants_reading(path):
         return False
     try:
         store.queue_page_read(invoice_id, "new invoice")

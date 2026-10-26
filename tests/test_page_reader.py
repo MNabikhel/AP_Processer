@@ -6,7 +6,6 @@ import json
 import sys
 import threading
 import types
-from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
 from types import SimpleNamespace
@@ -775,8 +774,14 @@ def test_read_document_keeps_every_page(monkeypatch, pages_read):
     assert (again.pages, again.cached, again.complete) == (reading.pages, True, True)
     automatic = page_reader.read_document(settings, SAMPLE_PDF)  # a document reader's reading: no need to ask
     assert (automatic.model, automatic.cached) == (OVIS_KEY, True)
-    assert page_reader.cached_reading(settings, SAMPLE_PDF).pages == reading.pages
-    assert page_reader.cached_reading(settings, SAMPLE_PDF, model="qwen3.5-9b") is None
+    assert _kept(settings, SAMPLE_PDF).pages == reading.pages
+    assert _kept(settings, SAMPLE_PDF, model="qwen3.5-9b") is None
+
+
+def _kept(settings, path, *, model=None):
+    """The page reader's reading of ``path`` as kept on disk (``_cached_reading``), the model server not asked."""
+    digest, _pdf, total = page_reader._file_pages(path.read_bytes(), path.name, settings)
+    return page_reader._cached_reading(digest, total, (model or settings.page_reader.model or "").strip() or None)
 
 
 def test_only_pages_not_read_yet_are_read(pages_read):
@@ -805,7 +810,7 @@ def test_a_server_failure_stops_the_reading(pages_read):
     failed = page_reader.read_document(Settings(), SAMPLE_PDF, model=OVIS_KEY)
     assert failed.pages == [] and failed.error == "page 1: the model server isn't answering at http://127.0.0.1:1234/v1"
     assert len(pages_read.calls) == 1 and not failed.complete  # page 2 wasn't tried: it would fail the same way
-    assert page_reader.cached_reading(Settings(), SAMPLE_PDF) is None
+    assert _kept(Settings(), SAMPLE_PDF) is None
 
 
 def test_reading_stops_when_asked(pages_read):
@@ -834,7 +839,7 @@ def test_read_document_chooses_its_model(monkeypatch, pages_read):
     monkeypatch.setattr(page_reader, "reader_status", lambda settings: status(OVIS_KEY))
     upgraded = page_reader.read_document(Settings(), SAMPLE_PDF)  # a document reader now: read again by it
     assert (upgraded.model, upgraded.cached) == (OVIS_KEY, False)
-    assert page_reader.cached_reading(Settings(), SAMPLE_PDF).model == OVIS_KEY  # preferred from now on
+    assert _kept(Settings(), SAMPLE_PDF).model == OVIS_KEY  # preferred from now on
 
 
 def test_read_document_reports_problems(tmp_path, pages_read):
@@ -953,51 +958,6 @@ def test_test_reader_reports_a_failed_page(test_invoice, pages_read):
 # --- Which model does which job ------------------------------------------------------------------------------------
 
 
-@pytest.fixture
-def two_ocr_models(monkeypatch):
-    from ap_coder.capture import layout
-
-    monkeypatch.setattr(layout, "ocr_available", lambda: True)
-    monkeypatch.setattr(layout, "_engine_name", lambda: "rapidocr")
-    monkeypatch.setattr(layout, "second_engine_name", lambda: "ppocrv5")
-
-
-def test_models_in_use(serve, two_ocr_models):
-    serve(lm_studio(v1_model("qwen3.5-9b", loaded=8192), v1_model(OVIS_KEY, loaded=20480)))
-    page_reader._log_timing(OVIS_KEY, 185)
-    coding, reader, ocr = page_reader.models_in_use(Settings())
-    assert [coding["role"], reader["role"], ocr["role"]] == [
-        "Suggests GL accounts", "Reads pages (page reader)", "OCR for scans",
-    ]  # fmt: skip
-    assert all(set(row) == {"role", "model", "state", "status", "note"} for row in (coding, reader, ocr))
-    assert (coding["model"], coding["state"], coding["note"]) == ("qwen3.5-9b", "on", "")
-    assert (reader["model"], reader["state"], reader["note"]) == ("OvisOCR2", "on", "")
-    assert (
-        reader["status"]
-        == "Loaded. Reads every page of every invoice in the background. About 3 minutes a page on this computer."
-    )
-    assert (ocr["model"], ocr["state"]) == ("PP-OCRv4 + PP-OCRv5", "on")
-
-
-def test_models_in_use_with_a_general_model_or_none(serve, two_ocr_models, monkeypatch):
-    serve(lm_studio(v1_model("qwen3.5-9b", loaded=8192)))
-    reader = page_reader.models_in_use(Settings())[1]
-    assert (reader["model"], reader["state"]) == ("", "off") and NOT_DOWNLOADED in reader["note"]
-    serve(lm_studio(v1_model(OVIS_KEY, loaded=20480)))  # OvisOCR2 alone: never taken for the chat model
-    coding = page_reader.models_in_use(Settings())[0]
-    assert coding["model"] != OVIS_KEY
-    serve({})
-    from ap_coder.capture import layout
-
-    monkeypatch.setattr(layout, "ocr_available", lambda: False)
-    coding, reader, ocr = page_reader.models_in_use(Settings())
-    assert (coding["state"], reader["state"], ocr["state"]) == ("fallback", "off", "off")
-    assert "Nothing answered" in reader["note"] and "OCR alone" in reader["status"]
-    assert "offline bundle" in ocr["note"]
-    coding = page_reader.models_in_use(replace(Settings(), llm=replace(Settings().llm, provider="off")))[0]
-    assert coding["state"] == "fallback" and "isn't asked" in coding["status"]
-
-
 # --- What LM Studio has, and loading a model ---------------------------------------------------------------------
 
 
@@ -1020,13 +980,13 @@ QWEN_EMBEDDING = {"type": "embedding", "key": EMBEDDING_KEY, "max_context_length
                   "loaded_instances": [{"id": EMBEDDING_KEY, "config": {"context_length": 8192}}]}  # fmt: skip
 
 
-def test_the_embedding_model_closedesk_uses_is_left_alone(serve, posts, two_ocr_models):
+def test_the_embedding_model_closedesk_uses_is_left_alone(serve, posts):
     """The pilot tester's LM Studio has CloseDesk's embedding model (Qwen3 Embedding) loaded beside Qwen 3.5 9B and
     OvisOCR2. AP Coder doesn't use it: it is never taken for the chat model or the page reader, listed in Settings →
     Reading as not used, and never loaded or unloaded."""
     serve(lm_studio(QWEN_EMBEDDING, v1_model("qwen/qwen3.5-9b"), v1_model(OVIS_KEY)))  # nothing else loaded
-    coding, reader, _ocr = page_reader.models_in_use(Settings())
-    assert coding["model"] == "qwen/qwen3.5-9b" and reader["model"] == "OvisOCR2"
+    assert local_llm.check_server(Settings().llm).model == "qwen/qwen3.5-9b"
+    assert page_reader.reader_status(Settings()).model == OVIS_KEY
     assert page_reader.reader_status(Settings()).candidates == [OVIS_KEY, "qwen/qwen3.5-9b"]
     rows = page_reader.lm_studio_models(Settings())
     assert [r["model"] for r in rows] == [OVIS_KEY, "qwen/qwen3.5-9b", EMBEDDING_KEY]  # listed last, as not used

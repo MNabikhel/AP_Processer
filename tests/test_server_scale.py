@@ -491,16 +491,16 @@ def test_on_the_server_the_ai_reviewer_reviews_only_what_could_be_approved_witho
     from ap_coder.ai import verifier
 
     monkeypatch.setenv(offline.SERVER_ENV, "0")
-    assert verifier.load_settings(store).scope == "all" and verifier.prepare(store, 1, {}).queue  # the laptop
+    assert verifier.load_settings(store).scope == "all" and verifier.prepare(store, {}).queue  # the laptop
     monkeypatch.setenv(offline.SERVER_ENV, "1")
     assert verifier.load_settings(store).scope == "touchless"
-    assert not verifier.prepare(store, 1, {"auto": False, "reason": "supplier is learning"}).queue
-    plan = verifier.prepare(store, 1, {"auto": True})
+    assert not verifier.prepare(store, {"auto": False, "reason": "supplier is learning"}).queue
+    plan = verifier.prepare(store, {"auto": True})
     assert plan.queue and plan.hold
     assert verifier.hold({"auto": True}, plan)["verifier_hold"]  # still held until it agrees
-    assert verifier.prepare(store, 1, {"auto": False, "azure_hold": True}).queue
+    assert verifier.prepare(store, {"auto": False, "azure_hold": True}).queue
     verifier.save_settings(store, on=True, rounds=3, minutes=5, scope="all")  # an Admin's choice
-    assert verifier.prepare(store, 1, {}).queue
+    assert verifier.prepare(store, {}).queue
 
 
 def test_an_admin_chooses_what_the_ai_reviewer_reviews_on_settings_reading(store, monkeypatch):

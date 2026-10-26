@@ -72,19 +72,18 @@ def _process(store, settings, path=None):
 
 
 @pytest.mark.parametrize(
-    ("name", "source", "wanted"),
+    ("name", "wanted"),
     [
-        ("scan.png", "", True),  # a photo or image
-        ("photo.HEIC", "", True),  # an iPhone's photo
-        ("scan.pdf", "ocr", True),  # a PDF that had to be OCR'd
-        ("scan.pdf", "mixed", True),
-        ("digital.pdf", "text", True),  # a digital PDF too: its hidden text is checked against the page
-        ("invoice.md", "", False),  # a text file has no page to look at
-        ("invoice.txt", "", False),
+        ("scan.png", True),  # a photo or image
+        ("photo.HEIC", True),  # an iPhone's photo
+        ("scan.pdf", True),  # a PDF that had to be OCR'd
+        ("digital.pdf", True),  # a digital PDF too: its hidden text is checked against the page
+        ("invoice.md", False),  # a text file has no page to look at
+        ("invoice.txt", False),
     ],
 )
-def test_every_invoice_is_read_but_a_text_file(name, source, wanted):
-    assert page_worker.wants_reading(_settings(), Path(name), source) is wanted
+def test_every_invoice_is_read_but_a_text_file(name, wanted):
+    assert page_worker.wants_reading(Path(name)) is wanted
 
 
 def test_the_old_settings_no_longer_turn_the_page_reader_off(monkeypatch, tmp_path):
@@ -93,7 +92,7 @@ def test_the_old_settings_no_longer_turn_the_page_reader_off(monkeypatch, tmp_pa
         monkeypatch.setenv(key, value)
     settings = Settings.from_env(tmp_path / "missing.env")
     assert (settings.page_reader.mode, settings.page_reader.scope, settings.page_reader.max_pages) == ("auto", "all", 3)
-    assert page_worker.wants_reading(settings, Path("digital.pdf"), "text")
+    assert page_worker.wants_reading(Path("digital.pdf"))
 
 
 def test_queueing_never_stops_processing():
@@ -101,10 +100,9 @@ def test_queueing_never_stops_processing():
         def queue_page_read(self, invoice_id, reason, requested_by=""):
             raise RuntimeError("database is locked")
 
-    settings = _settings()
-    assert page_worker.queue_new_invoice(Broken(), settings, 7, Path("a.pdf"), "text") is False
-    assert page_worker.queue_new_invoice(None, settings, 7, Path("a.pdf"), "text") is False
-    assert page_worker.queue_new_invoice(Broken(), settings, None, Path("a.pdf"), "text") is False
+    assert page_worker.queue_new_invoice(Broken(), 7, Path("a.pdf")) is False
+    assert page_worker.queue_new_invoice(None, 7, Path("a.pdf")) is False
+    assert page_worker.queue_new_invoice(Broken(), None, Path("a.pdf")) is False
 
 
 def test_processing_queues_every_invoice_but_a_text_file(store):

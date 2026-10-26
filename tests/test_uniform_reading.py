@@ -235,7 +235,7 @@ def test_iphone_photos_are_read_like_any_photo(tmp_path, monkeypatch):
     doc = layout.build_layout(photo)
     assert doc.source == "ocr" and len(doc.pages) == 1 and registered == [1]
     assert page_reader.render_pages(photo, page_reader.OVIS, 1) and registered == [1]  # registered once
-    assert page_worker.wants_reading(Settings(), photo)
+    assert page_worker.wants_reading(photo)
 
 
 def test_the_review_screen_shows_an_iphone_photo(tmp_path, monkeypatch):

@@ -177,10 +177,6 @@ def team_chat_rank(model_id: str) -> int | None:
     return next((rank for rank, pattern in enumerate(_TEAM_CHAT) if pattern.search(plain)), None)
 
 
-def team_chat_model(model_id: str) -> bool:
-    return team_chat_rank(model_id) is not None
-
-
 def looks_like_vision(model_id: str) -> bool:
     plain = model_id.lower()
     return any(hint in plain for hint in _VISION_HINTS)
@@ -290,7 +286,7 @@ def forget_status() -> None:
 # --- Which AI codes the invoices ------------------------------------------------------------------------------
 
 
-def resolve_provider(settings: Settings, *, probe: bool = True) -> str:
+def resolve_provider(settings: Settings) -> str:
     """How invoices are coded: ``local`` always in this offline build, whether or not LM Studio answers right now,
     so an invoice is coded the same way every time: the header, lines and taxes from the local readers, GL accounts
     from what AP approved before and the coding rules, and the chat model's suggestion for a line left over when it
@@ -298,7 +294,7 @@ def resolve_provider(settings: Settings, *, probe: bool = True) -> str:
 
     ``azure`` only when the internet is allowed (AP_ALLOW_INTERNET=1) and Azure OpenAI's endpoint is set. ``off``
     only when code or a test sets ``settings.llm.provider`` to it (the same coding, the chat model never asked).
-    ``probe`` is kept for callers that pass it: nothing is asked any more."""
+    Nothing is asked of the server."""
     from ..ops.offline import internet_allowed
 
     provider = settings.llm.provider

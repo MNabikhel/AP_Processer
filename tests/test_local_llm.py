@@ -241,7 +241,7 @@ def test_pick_model(requested, ids, loaded, lm, expected):
 )  # fmt: skip
 def test_recognises_the_team_chat_model_in_every_build(model_id):
     """The ids LM Studio gives Qwen 3.5 9B: by publisher, MLX or GGUF, with a quantization; Ollama's tag."""
-    assert local_llm.team_chat_model(model_id) and local_llm.is_chat_model(model_id)
+    assert local_llm.team_chat_rank(model_id) == 1 and local_llm.is_chat_model(model_id)
 
 
 @pytest.mark.parametrize(
@@ -252,7 +252,7 @@ def test_recognises_the_team_chat_model_in_every_build(model_id):
     ],
 )  # fmt: skip
 def test_other_models_are_not_the_team_chat_model(model_id):
-    assert not local_llm.team_chat_model(model_id)
+    assert local_llm.team_chat_rank(model_id) is None
 
 
 @pytest.mark.parametrize(
@@ -272,7 +272,7 @@ def test_recognises_gemma_4_12b_in_every_build(model_id):
     "model_id", ["gemma-4-e4b-it", "gemma-4-26b-a4b-it", "gemma-4-31b-it", "gemma-3-12b-it", "gemma-4-112b"]
 )
 def test_other_gemma_models_are_not_the_team_chat_model(model_id):
-    assert not local_llm.team_chat_model(model_id)
+    assert local_llm.team_chat_rank(model_id) is None
 
 
 @pytest.mark.parametrize(

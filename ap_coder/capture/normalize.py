@@ -515,9 +515,6 @@ def norm_name(text: str | None) -> str:
     return " ".join(s.split())
 
 
-CURRENCIES = ("CAD", "USD", "EUR", "GBP")
-
-
 _CODE = r"(?<![A-Z])(CAD|USD|EUR|GBP)(?![A-Z])"  # also glued by OCR: "TOTALCAD"
 # "All amounts in USD", "Prices are quoted in CAD", "Currency: USD", "Montants en dollars CAD", "Devise : CAD".
 _CURRENCY_STATEMENT = re.compile(

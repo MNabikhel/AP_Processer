@@ -16,7 +16,7 @@ do when something is wrong.
 AP Coder finds both models on its own (no names to type), however LM Studio spells them: `google/gemma-4-12b`,
 `gemma-4-12b-it-qat`, `lmstudio-community/gemma-4-12B-it-QAT-GGUF`, `gemma4:12b`; `qwen/qwen3.5-9b`,
 `qwen3.5-9b-mlx`, `lmstudio-community/Qwen3.5-9B-GGUF`, `qwen3.5-9b@q4_k_m`; `ath-maas_ovisocr2`, `ovis-ocr2`,
-`OvisOCR2-GGUF` (`local_llm.team_chat_model`, `local_llm.is_chat_model`, `page_reader.document_reader`). Whichever
+`OvisOCR2-GGUF` (`local_llm.team_chat_rank`, `local_llm.is_chat_model`, `page_reader.document_reader`). Whichever
 chat model is **loaded** is the one used, so switching between Gemma and Qwen is only a matter of which one you load.
 
 ## Limits AP Coder follows (aligned with CloseDesk)
