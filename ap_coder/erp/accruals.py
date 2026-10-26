@@ -56,6 +56,12 @@ class Accrual:
 
 def _received_not_invoiced(store: Store, period_end: dt.date) -> list[Accrual]:
     out = []
+    end = period_end.isoformat()
+
+    def by_end(invoices: list[dict]) -> list[dict]:
+        return [i for i in invoices if str(i.get("invoice_date") or i["coding"].get("invoice_date") or "") <= end]
+
+    without_po: dict[str, list[dict]] = {}  # by vendor: read once, not once for each of its POs
     for po in store.purchase_orders():
         if po["status"] == CLOSED or not po["received_lines"]:
             continue
@@ -65,12 +71,10 @@ def _received_not_invoiced(store: Store, period_end: dt.date) -> list[Accrual]:
         # Returns are assumed to be reflected in the ERP's received quantity, so credits do not count here;
         # the vendor's invoices that quote no PO may still bill these lines ("PO-90155" in a description).
         # Invoices dated after the period end do not count: the goods were received, not yet invoiced, by then.
-        end = period_end.isoformat()
-        invoices = [
-            inv
-            for inv in store.po_invoices(po["po_key"]) + store.vendor_invoices_without_po(full["vendor_key"])
-            if str(inv.get("invoice_date") or inv["coding"].get("invoice_date") or "") <= end
-        ]
+        vendor = full["vendor_key"]
+        if vendor not in without_po:
+            without_po[vendor] = by_end(store.vendor_invoices_without_po(vendor))
+        invoices = by_end(store.po_invoices(po["po_key"])) + without_po[vendor]
         billed = billed_by_line(full, invoices, positive_only=True)
         for li in full["lines"]:
             if li["received_quantity"] is None or li.get("amount_only"):
