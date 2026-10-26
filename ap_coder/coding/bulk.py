@@ -167,9 +167,13 @@ def sort_for_bulk(
     invoices in review as ``store.list_invoices`` gives them, when the caller has them already. ``today``:
     ``issues_today`` of the queue, when the caller has it already. The checks are today's: an invoice whose stored
     checks were made against other settings is checked again (B-815)."""
-    columns = store.invoice_columns(("id", "validation", "meta"), REVIEW)
+    # What the stored checks and metadata say, from the invoices' summary (``queue_facts``, D-110); one the summary
+    # could not read is read again here.
+    facts = {r["id"]: r for r in store.summary_rows("status = ?", (REVIEW,), "id, broken, q_audit, q_person")}
+    broken = [i for i, r in facts.items() if r["broken"]]
+    columns = store.invoice_columns(("id", "validation", "meta"), ids=broken) if broken else []
     validations = {r["id"]: r["validation"] or {} for r in columns}
-    audited = {r["id"] for r in columns if _audit_pick(r["meta"])}
+    audited = {i for i, r in facts.items() if r["q_audit"]} | {r["id"] for r in columns if _audit_pick(r["meta"])}
     titled = store.credit_note_ids(REVIEW)
     queue = store.list_invoices(REVIEW) if queue is None else queue
     if today is None:
@@ -178,16 +182,28 @@ def sort_for_bulk(
     for inv in queue:
         if inv["requires_review"]:
             continue
-        issues = today[inv["id"]] if inv["id"] in today else validations.get(inv["id"], {}).get("issues") or []
+        if inv["id"] in today or inv["id"] in validations:
+            issues = today[inv["id"]] if inv["id"] in today else validations[inv["id"]].get("issues") or []
+            person = any(_needs_a_person(i.get("severity"), i.get("code")) for i in issues)
+        else:
+            person = bool((facts.get(inv["id"]) or {"q_person": False})["q_person"])
         if _credit_note(inv["id"] in titled, inv["grand_total"]):
             left[inv["id"]] = "credit note"
         elif inv["id"] in audited:
             left[inv["id"]] = "audit"
-        elif any(_needs_a_person(i.get("severity"), i.get("code")) for i in issues):
+        elif person:
             left[inv["id"]] = "warning"
         else:
             candidates.append(inv)
     return candidates, left
+
+
+def queue_facts(row: dict[str, Any]) -> dict[str, int]:
+    """What ``sort_for_bulk`` reads of an invoice (its columns, the JSON ones decoded): picked for the audit sample,
+    and a stored finding that needs a person. Kept in the invoices' summary (D-110)."""
+    issues = (row["validation"] or {}).get("issues") or []
+    return {"q_audit": int(_audit_pick(row["meta"])),
+            "q_person": int(any(_needs_a_person(i.get("severity"), i.get("code")) for i in issues))}  # fmt: skip
 
 
 def bulk_approve(

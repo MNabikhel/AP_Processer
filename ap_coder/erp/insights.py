@@ -512,7 +512,8 @@ def vendor_workload(store: Store, min_invoices: int = 2) -> list[dict[str, Any]]
     out, and an approved one counts what was still open when it was approved: a finding the reviewer cleared by
     correcting what AP Coder read was AP Coder's misread, not the vendor's doing (B-1183). Worked out again once an
     invoice or the audit trail changed (``summary_memo``, D-110)."""
-    found = store.summary_memo(f"vendor_workload/{min_invoices}", lambda: _vendor_workload(store, min_invoices))
+    found = store.summary_memo(f"vendor_workload/{min_invoices}", lambda: _vendor_workload(store, min_invoices),
+                               "workload")  # fmt: skip
     return [{**v, "top_codes": list(v["top_codes"])} for v in found]
 
 

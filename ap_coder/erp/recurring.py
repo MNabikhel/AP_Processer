@@ -95,3 +95,11 @@ def detect(rows: list[dict[str, Any]], today: dt.date | None = None) -> list[Rec
         )
     order = {LATE: 0, DUE_SOON: 1, ON_TRACK: 2}
     return sorted(found, key=lambda r: (order[r.status], r.next_date))
+
+
+def detected(store: Any, today: dt.date | None = None) -> list[Recurring]:
+    """``detect`` of the store's invoices (``vendor_invoice_dates``), worked out again only once an invoice changed
+    (``Store.summary_memo``, D-110): the queue, Vendors and Month-end ask it on every visit. Shared: don't change it."""
+    today = today or dt.date.today()
+    return store.summary_memo(f"recurring/{today.isoformat()}", lambda: detect(store.vendor_invoice_dates(), today),
+                              "dates")  # fmt: skip

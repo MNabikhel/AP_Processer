@@ -205,16 +205,21 @@ class VendorsMixin:
                 known = {r["vendor_key"] for r in rows}
                 # the tax numbers AP gave such a vendor on the Vendors page come along (the review screen fills them)
                 own = {r["vendor_key"]: dict(r) for r in conn.execute("SELECT * FROM vendors WHERE in_master = 0")}
-                for r in conn.execute(
-                    "SELECT vendor_key, MAX(vendor_name) name FROM invoice_summary WHERE status = 'approved' AND "
-                    "vendor_key != '' GROUP BY vendor_key"
-                ):
+                for r in self.summary_memo("approved_vendors", self._approved_vendors, "approved_vendors"):
                     if r["vendor_key"] not in known:
                         numbers = {c: own.get(r["vendor_key"], {}).get(c) or ""
                                    for c in ("expected_gst", "qst_number", "pst_number")}  # fmt: skip
                         rows.append({"vendor_key": r["vendor_key"], "display_name": r["name"], "in_master": 0,
                                      **numbers})  # fmt: skip
         return sorted(rows, key=lambda r: str(r.get("display_name") or "").lower())
+
+    def _approved_vendors(self) -> list[dict[str, Any]]:
+        """Every vendor with an approved invoice, its name (``vendor_choices``)."""
+        with self._conn() as conn:
+            self._summary_fresh(conn)
+            return [dict(r) for r in conn.execute(
+                "SELECT vendor_key, MAX(vendor_name) name FROM invoice_summary WHERE status = 'approved' AND "
+                "vendor_key != '' GROUP BY vendor_key")]  # fmt: skip
 
     def add_vendor_here(
         self, name: str, *, gst: str = "", qst: str = "", pst: str = "", province: str = "", actor: str | None = None,
@@ -332,7 +337,7 @@ class VendorsMixin:
     def vendor_invoice_dates(self) -> list[dict[str, Any]]:
         """Vendor, date and total of every invoice in review or approved (for ``recurring.detect``): read again once
         an invoice changed (``summary_memo``). Shared: read it, don't change it."""
-        return self.summary_memo("vendor_invoice_dates", self._vendor_invoice_dates)
+        return self.summary_memo("vendor_invoice_dates", self._vendor_invoice_dates, "dates")
 
     def _vendor_invoice_dates(self) -> list[dict[str, Any]]:
         with self._conn() as conn:

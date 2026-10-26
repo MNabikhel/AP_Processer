@@ -315,7 +315,7 @@ def today_pills(store: Store, invoices: list[dict[str, Any]]) -> list[tuple[str,
     follow_ups = sum(1 for i in store.parked() if i.get("follow_up") and i["follow_up"] <= today)
     second = sum(1 for i in invoices if i["status"] == PENDING and (i["reviewer"] or "").strip().lower() != me)
     to_export = len(store.unexported_approved())
-    late = [r for r in recurring.detect(store.vendor_invoice_dates()) if r.status == recurring.LATE]
+    late = [r for r in recurring.detected(store) if r.status == recurring.LATE]
     pills = [
         (f"{overdue} past due, not approved yet", "err") if overdue else None,
         (f"{due_soon} due within {DUE_SOON_DAYS} days", "warn") if due_soon else None,

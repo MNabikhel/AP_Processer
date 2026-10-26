@@ -9,6 +9,7 @@ import statistics
 from collections import Counter, defaultdict
 from typing import Any
 
+from ap_coder.coding.bulk import _audit_pick, _credit_note, _needs_a_person, issues_today
 from ap_coder.coding.taxreturn import (
     DEFAULT_TREATMENTS,
     FOREIGN,
@@ -558,3 +559,36 @@ rows AS (
          {_GL} AS gl_codes, doc
   FROM coded)
 """
+
+
+# The review queue's bulk approval candidates (``coding/bulk.py``).
+def bulk_sort_for_bulk(
+    store: Store, queue: list[dict[str, Any]] | None = None, today: dict[int, list[dict[str, Any]]] | None = None
+) -> tuple[list[dict[str, Any]], dict[int, str]]:
+    """(``clean_candidates``, why each other invoice of the queue not flagged when processed is left for a person:
+    "credit note", "audit" for one picked for the touchless audit sample, or "warning" for an error, a warning or a
+    finding that always goes to a person). ``queue``: the
+    invoices in review as ``store.list_invoices`` gives them, when the caller has them already. ``today``:
+    ``issues_today`` of the queue, when the caller has it already. The checks are today's: an invoice whose stored
+    checks were made against other settings is checked again (B-815)."""
+    columns = store.invoice_columns(("id", "validation", "meta"), REVIEW)
+    validations = {r["id"]: r["validation"] or {} for r in columns}
+    audited = {r["id"] for r in columns if _audit_pick(r["meta"])}
+    titled = store.credit_note_ids(REVIEW)
+    queue = store.list_invoices(REVIEW) if queue is None else queue
+    if today is None:
+        today = issues_today(store, [i["id"] for i in queue if not i["requires_review"]])
+    candidates, left = [], {}
+    for inv in queue:
+        if inv["requires_review"]:
+            continue
+        issues = today[inv["id"]] if inv["id"] in today else validations.get(inv["id"], {}).get("issues") or []
+        if _credit_note(inv["id"] in titled, inv["grand_total"]):
+            left[inv["id"]] = "credit note"
+        elif inv["id"] in audited:
+            left[inv["id"]] = "audit"
+        elif any(_needs_a_person(i.get("severity"), i.get("code")) for i in issues):
+            left[inv["id"]] = "warning"
+        else:
+            candidates.append(inv)
+    return candidates, left

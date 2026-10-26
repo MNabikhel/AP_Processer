@@ -209,7 +209,7 @@ def _not_in_erp(store: Store, period_end: dt.date, no_date: list[Accrual] | None
 
 def _expected_recurring(store: Store, period_end: dt.date) -> list[Accrual]:
     out = []
-    for r in recurring.detect(store.vendor_invoice_dates(), today=period_end):
+    for r in recurring.detected(store, today=period_end):
         if r.next_date > period_end:
             continue
         usage = store.vendor_gl_usage(r.vendor_key)

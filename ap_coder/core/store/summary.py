@@ -105,6 +105,9 @@ COMPUTED = (
     ("w_key", "TEXT"),
     ("w_codes", "TEXT NOT NULL DEFAULT '[]'"),
     ("w_corrected", "INTEGER"),
+    # The review queue's bulk approval (``bulk.queue_facts``)
+    ("q_audit", "INTEGER"),
+    ("q_person", "INTEGER"),
     # Sales tax (``taxreturn.tax_facts``, ``self_assessment_facts``), JSON
     ("t_facts", "TEXT"),
     ("s_facts", "TEXT"),
@@ -203,8 +206,31 @@ SUMMARY_TRIGGERS = {
 }  # fmt: skip
 
 FTS_SCHEMA = "CREATE VIRTUAL TABLE invoice_search USING fts5(plain_name, raw_number, tokenize = 'trigram')"
+# What a ``summary_memo`` may depend on alone, so that it is worked out again only when that changed (an approval
+# changes no vendor's invoice dates): a topic's key of an invoice's summary row (None: not in it).
+_ACTIVE = ("review", "parked", "pending_approval", "approved")
+TOPICS: dict[str, Callable[[dict[str, Any] | None], Any]] = {
+    "dates": lambda r: (
+        (r["vendor_key"], r["vendor_name"], r["invoice_date"], r["grand_total"], r["currency"])
+        if r and r["status"] in _ACTIVE and r["vendor_key"]
+        else None
+    ),
+    "batches": lambda r: (
+        (r["export_batch"], r["currency"], r["grand_total"]) if r and r["export_batch"] is not None else None
+    ),
+    "status": lambda r: r["status"] if r else None,
+    "approved_vendors": lambda r: (r["vendor_key"], r["vendor_name"]) if r and r["status"] == APPROVED else None,
+    "workload": lambda r: (
+        (r["status"] in (APPROVED, PENDING), r["w_key"], r["w_name"], r["w_codes"], r["w_corrected"])
+        if r and r["status"] not in (FAILED, REJECTED)
+        else None
+    ),
+}
+_TOPIC_COLUMNS = ("id", "status", "vendor_key", "vendor_name", "invoice_date", "grand_total", "currency",
+                  "export_batch", "w_key", "w_name", "w_codes", "w_corrected")  # fmt: skip
 _MEMO: dict[tuple[str, str], tuple[Any, Any]] = {}  # ``summary_memo``: (database, name) -> (stamp, value)
 _MEMO_LOCK = threading.Lock()
+_COMPUTING: dict[tuple[str, str], threading.Lock] = {}  # one ``summary_memo`` worked out at a time, by name
 _FTS: dict[str, bool] = {}  # whether this process's SQLite has FTS5 with the trigram tokenizer
 _FTS_LOCK = threading.Lock()
 
@@ -342,23 +368,26 @@ class SummaryMixin:
             self._refresh_summary(conn)
 
     def _refresh_summary(self, conn: sqlite3.Connection) -> None:
-        """Work out again every invoice in ``summary_dirty``, in the transaction under way; the summary's generation
-        (``summary_memo``) is one more."""
-        treatments = None
+        """Work out again every invoice in ``summary_dirty``, in the transaction under way; the generation of each
+        part of the summary that changed (``TOPICS``, and ``all``) is one more (``summary_memo``)."""
+        treatments, changed = None, set()
         while True:
             ids = [r[0] for r in conn.execute(f"SELECT id FROM summary_dirty LIMIT {CHUNK}")]
             if not ids:
-                if treatments is not None:
-                    conn.execute("INSERT INTO settings (key, value) VALUES ('summary_generation', '1') "
-                                 "ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1")  # fmt: skip
+                for topic in sorted(changed | {"all"}) if treatments is not None else ():
+                    conn.execute("INSERT INTO settings (key, value) VALUES (?, '1') ON CONFLICT(key) DO UPDATE SET "
+                                 "value = CAST(value AS INTEGER) + 1", (f"summary_generation/{topic}",))  # fmt: skip
                 return
             if treatments is None:
                 treatments = self.tax_treatments_in(conn)
-            self._summarize(conn, ids, treatments)
+            changed |= self._summarize(conn, ids, treatments)
             conn.execute(f"DELETE FROM summary_dirty WHERE {_in_list('id')}", (json.dumps(ids),))
 
-    def _summarize(self, conn: sqlite3.Connection, ids: list[int], treatments: dict[str, Any]) -> None:
+    def _summarize(self, conn: sqlite3.Connection, ids: list[int], treatments: dict[str, Any]) -> set[str]:
+        """Work out ``ids`` again; returns the ``TOPICS`` they changed."""
         listed = json.dumps(ids)
+        before = {r[0]: r for r in conn.execute(f"SELECT {', '.join(_TOPIC_COLUMNS)} FROM invoice_summary WHERE "
+                                                f"{_in_list('id')}", (listed,))}  # fmt: skip
         conn.execute(f"DELETE FROM invoice_summary WHERE {_in_list('id')}", (listed,))
         conn.execute(f"DELETE FROM summary_spend WHERE {_in_list('invoice_id')}", (listed,))
         for table in (*SIDE_TABLES, "summary_codes"):
@@ -396,6 +425,13 @@ class SummaryMixin:
         )
         if fts:
             conn.executemany("INSERT INTO invoice_search (rowid, plain_name, raw_number) VALUES (?, ?, ?)", search)
+        after = {v[0]: tuple(v[_COLUMNS.index(c)] for c in _TOPIC_COLUMNS) for v in summary}
+
+        def row(values: Any) -> dict[str, Any] | None:
+            return None if values is None else dict(zip(_TOPIC_COLUMNS, values, strict=True))
+
+        return {topic for topic, key in TOPICS.items() for i in ids
+                if key(row(before.get(i))) != key(row(after.get(i)))}  # fmt: skip
 
     @staticmethod
     def tax_treatments_in(conn: sqlite3.Connection) -> dict[str, Any]:
@@ -413,27 +449,40 @@ class SummaryMixin:
             )
         return out
 
-    def summary_memo(self, name: str, compute: Callable[[], Any]) -> Any:
-        """``compute()``, worked out again only once the invoices (the summary's generation) or the audit trail
-        changed since it was last, in this process: what several pages read of every invoice (the vendors' invoice
-        dates, the batches' totals). The value is shared: read it, don't change it."""
+    def summary_memo(self, name: str, compute: Callable[[], Any], topic: str = "all", events: str = "") -> Any:
+        """``compute()``, worked out again only once the invoices changed since it was last, in this process (only
+        what of them ``topic`` names, ``TOPICS``; with ``events``, or once an event of that action was added): what
+        several pages read of every invoice (the vendors' invoice dates, the batches' totals). The value is shared:
+        read it, don't change it."""
         with self._conn() as conn:
             self._summary_fresh(conn)
             stamp = conn.execute(
                 "SELECT (SELECT value FROM settings WHERE key = 'summary_id'), (SELECT value FROM settings WHERE key = "
-                "'summary_generation'), (SELECT MAX(id) FROM events)"
+                "?), (SELECT COUNT(*) || '/' || COALESCE(MAX(id), '') FROM events WHERE action = ?)",
+                (f"summary_generation/{topic}", events),
             ).fetchone()[:]
         key = (str(self.path), name)
         with _MEMO_LOCK:
             hit = _MEMO.get(key)
+            computing = _COMPUTING.setdefault(key, threading.Lock())
         if hit is not None and hit[0] == stamp:
             return hit[1]
-        value = compute()
-        with _MEMO_LOCK:
-            _MEMO[key] = (stamp, value)
-            while len(_MEMO) > 64:
-                _MEMO.pop(next(iter(_MEMO)))
-        return value
+        # One page works it out; the others asking meanwhile wait for it (not all at once, after each approval).
+        got = computing.acquire(timeout=30)
+        try:
+            with _MEMO_LOCK:
+                hit = _MEMO.get(key)
+            if hit is not None and hit[0] == stamp:
+                return hit[1]
+            value = compute()
+            with _MEMO_LOCK:
+                _MEMO[key] = (stamp, value)
+                while len(_MEMO) > 64:
+                    _MEMO.pop(next(iter(_MEMO)))
+            return value
+        finally:
+            if got:
+                computing.release()
 
     def summary_rows(self, where: str = "1", params: tuple[Any, ...] | list[Any] = (), columns: str = "*",
                      order: str = "id") -> list[sqlite3.Row]:  # fmt: skip
@@ -477,7 +526,11 @@ class SummaryMixin:
                 "DESC, requires_review DESC, adjusted_confidence ASC, id ASC LIMIT ?", (APPROVED, limit))]  # fmt: skip
 
     def status_counts(self) -> dict[str, int]:
-        """{status: how many invoices}, from the invoices' summary."""
+        """{status: how many invoices}, from the invoices' summary (counted again once one changed its status: every
+        page's rail shows two of them)."""
+        return dict(self.summary_memo("status_counts", self._status_counts, "status"))
+
+    def _status_counts(self) -> dict[str, int]:
         with self._conn() as conn:
             self._summary_fresh(conn)
             return {r[0]: r[1] for r in conn.execute("SELECT status, COUNT(*) FROM invoice_summary GROUP BY status")}
@@ -532,6 +585,7 @@ def _worked_out(r: dict[str, Any], approvals: list[Any],
                 treatments: dict[str, Any]) -> tuple[dict[str, Any], list[tuple[Any, ...]]]:  # fmt: skip
     """What the reports need of invoice ``r`` (its columns, the JSON ones as text; ``approvals``: its ``approved``
     events, rows of id, created_at and detail), by the reports' own functions."""
+    from ...coding.bulk import queue_facts
     from ...coding.taxreturn import self_assessment_facts, tax_facts
     from ...erp.accruals import _bill
     from ...erp.insights import approval_facts, invoice_facts, payment_facts, workload_facts
@@ -547,6 +601,7 @@ def _worked_out(r: dict[str, Any], approvals: list[Any],
     latest_detail = (_decoded(latest["detail"]) or {}) if latest is not None else None
     signed = status in (APPROVED, PENDING)
     out.update(invoice_facts(row))
+    out.update(queue_facts(row))
     if status not in (FAILED, REJECTED):
         out.update(workload_facts(row, latest_detail if signed else None))
     if by_time is not None:

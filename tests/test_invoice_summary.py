@@ -170,6 +170,12 @@ def test_the_sales_tax_report_gives_what_it_gave(year):
     )
 
 
+def test_the_queue_offers_the_same_invoices_for_bulk_approval(year):
+    from ap_coder.coding.bulk import sort_for_bulk
+
+    assert sort_for_bulk(year) == ref.bulk_sort_for_bulk(year) and sort_for_bulk(year)[1]
+
+
 def test_month_end_gives_what_it_gave(year):
     for end in (dt.date(2026, 3, 31), dt.date(2026, 9, 30), dt.date(2027, 1, 31)):
         old_undated, new_undated = [], []
@@ -237,6 +243,22 @@ def test_a_change_made_without_the_store_is_read_in_step(year):
     with sqlite3.connect(year.path) as conn:
         conn.execute("DELETE FROM invoices WHERE id = ?", (invoice_id,))
     assert invoice_id not in {i["id"] for i in year.list_invoices()}
+
+
+def test_what_several_pages_read_is_read_again_only_once_it_changed(year):
+    """``summary_memo``: an approval changes no vendor's invoice dates (the queue's late regular bills keep theirs);
+    a date changed, by the store or plain SQL, is read again; an export changes the batches' totals."""
+    dates, totals = year.vendor_invoice_dates(), year.batch_totals()
+    invoice = year.list_invoices(REVIEW)[0]
+    year.approve_invoice(invoice["id"], year.get_invoice(invoice["id"])["ai_output"], "Jordan Lee")
+    assert year.vendor_invoice_dates() is dates and year.batch_totals() is totals
+    with sqlite3.connect(year.path) as conn:
+        conn.execute("UPDATE invoices SET invoice_date = '2026-02-02' WHERE id = ?", (invoice["id"],))
+    assert year.vendor_invoice_dates() is not dates
+    assert year.vendor_invoice_dates() == year._vendor_invoice_dates()
+    year.create_export_batch([invoice["id"]], "csv", actor="Jordan Lee")
+    assert year.batch_totals() is not totals and year.batch_totals() == year._batch_totals()
+    assert year.exported_totals() == year._exported_totals()
 
 
 def test_an_older_database_gets_its_summary(year):

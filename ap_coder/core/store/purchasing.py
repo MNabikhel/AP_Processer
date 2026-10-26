@@ -215,6 +215,13 @@ class PurchasingMixin:
                 )
             ]
 
+    def ready_to_export_count(self) -> int:
+        """How many invoices ``unexported_approved`` lists (counted on the summary's index)."""
+        with self._conn() as conn:
+            self._summary_fresh(conn)
+            return conn.execute("SELECT COUNT(*) FROM invoice_summary WHERE status = ? AND export_batch IS NULL",
+                                (APPROVED,)).fetchone()[0]  # fmt: skip
+
     def create_export_batch(self, invoice_ids: list[int], fmt: str, actor: str | None = None) -> int:
         """Mark approved, not yet exported invoices as one batch. Returns the batch number. Two people exporting
         at once never put the same invoice in two batches: the write lock is taken before the invoices are
@@ -324,7 +331,7 @@ class PurchasingMixin:
     def batch_totals(self) -> dict[int, dict[str, float]]:
         """{batch: {currency: total}} of the invoices in each batch (an undone batch has none any more): read again once
         an invoice changed (``summary_memo``). Shared: read it, don't change it."""
-        return self.summary_memo("batch_totals", self._batch_totals)
+        return self.summary_memo("batch_totals", self._batch_totals, "batches")
 
     def _batch_totals(self) -> dict[int, dict[str, float]]:
         with self._conn() as conn:
@@ -344,7 +351,7 @@ class PurchasingMixin:
         export recorded by an older version (without the amount) counts the invoice's amount as it is now; a
         batch with such an invoice since deleted is left out (its total is not known). Read again once an invoice or
         the audit trail changed (``summary_memo``). Shared: read it, don't change it."""
-        return self.summary_memo("exported_totals", self._exported_totals)
+        return self.summary_memo("exported_totals", self._exported_totals, "batches", "exported")
 
     def _exported_totals(self) -> dict[int, dict[str, float]]:
         with self._conn() as conn:
