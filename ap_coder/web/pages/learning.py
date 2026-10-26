@@ -16,13 +16,9 @@ waiting for its columns are in the address.
 from __future__ import annotations
 
 import datetime as dt
-import io
 import json
 import re
-import secrets
 import tempfile
-import threading
-import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -34,7 +30,6 @@ from markupsafe import Markup
 
 from ap_coder.ai import history
 from ap_coder.core import ui
-from ap_coder.core.reference_data import short_name
 from ap_coder.core.store import Store
 from ap_coder.erp import insights
 from ap_coder.web.charts import SERIES, Series, line_chart, percent
@@ -52,7 +47,8 @@ from ap_coder.web.core import (
     render,
     reviewer,
 )
-from ap_coder.web.files import SheetError, read_excel
+from ap_coder.web.files import TOO_BIG, SheetError, read_capped, read_csv, read_excel
+from ap_coder.web.invoice_view import gl_name
 
 router = APIRouter()
 
@@ -100,13 +96,6 @@ def reader_label(reader: str) -> str:
     return READER_LABELS.get(reader, reader)
 
 
-def gl_name(reference: Any, code: str) -> str:
-    if reference is None:
-        return ""
-    row = reference.chart_of_accounts.get(code)
-    return short_name((row or {}).get("description", "")) if row else ""
-
-
 def short(text: str, n: int = 42) -> str:
     text = str(text or "")
     return text if len(text) <= n else text[: n - 1].rstrip() + "…"
@@ -139,37 +128,23 @@ def _url(**params: Any) -> str:
 
 
 # --- Uploaded AP line history, waiting for its columns ------------------------------------------------------------
-# The upload is read once and kept under a one-off token until the columns are matched: in the dashboard's database
-# while a request is answered (a restart of the server keeps it, D-99), else in memory; an hour later, or after
-# teaching, it is forgotten.
+# The upload is read once and kept under a one-off token until the columns are matched, in the dashboard's database
+# (a restart of the server keeps it, D-99); an hour later, or after teaching, it is forgotten.
 
 _UPLOAD_TTL = 3600
 _MAX_UPLOADS = 4
 HISTORY_KIND = "ap-history"  # its kind in the database's short-lived table (``Store.keep_ephemeral``)
-_uploads: dict[str, tuple[float, str, dict[str, tuple[list[str], list[dict[str, Any]]]]]] = {}
-_uploads_lock = threading.Lock()
 
 
 def read_sheets(name: str, data: bytes) -> dict[str, tuple[list[str], list[dict[str, Any]]]]:
     """The uploaded file's sheets as (columns, rows of text cells). Raises ValueError (in plain words) when it is not
     a spreadsheet AP Coder can read."""
-    import pandas as pd
-
     if not data:
         raise ValueError("The file is empty.")
     frames: dict[str, Any] = {}
-    try:
-        if name.lower().endswith((".xlsx", ".xls")):
-            frames = read_excel(data)
-        else:
-            for encoding in ("utf-8-sig", "cp1252"):  # Excel "CSV" exports are often Windows-1252
-                try:
-                    frames = {"CSV": pd.read_csv(io.BytesIO(data), dtype=str, keep_default_na=False,
-                                                 encoding=encoding, sep=None, engine="python")}  # fmt: skip
-                    break
-                except UnicodeDecodeError:
-                    continue
-    except SheetError:  # a workbook that unzips to too much: its message says so
+    try:  # a CSV as every page reads one: Windows-1252 and semicolon files too (B-1400)
+        frames = read_excel(data) if name.lower().endswith((".xlsx", ".xls")) else {"CSV": read_csv(data)}
+    except SheetError:  # a workbook that unzips to too much, a CSV in no encoding it reads: its message says so
         raise
     except Exception as exc:  # noqa: BLE001 - empty, damaged or not a spreadsheet at all
         raise ValueError(
@@ -190,40 +165,20 @@ def read_sheets(name: str, data: bytes) -> dict[str, tuple[list[str], list[dict[
 
 
 def keep_upload(name: str, sheets: dict[str, tuple[list[str], list[dict[str, Any]]]]) -> str:
-    store = current_store()
-    if store is not None:
-        value = json.dumps({"name": name, "sheets": sheets}, default=str).encode("utf-8")
-        return store.keep_ephemeral(HISTORY_KIND, value, _UPLOAD_TTL, keep=_MAX_UPLOADS)
-    token = secrets.token_urlsafe(9)
-    now = time.monotonic()
-    with _uploads_lock:
-        for key in [k for k, (at, _, _) in _uploads.items() if now - at > _UPLOAD_TTL]:
-            del _uploads[key]
-        while len(_uploads) >= _MAX_UPLOADS:
-            del _uploads[min(_uploads, key=lambda k: _uploads[k][0])]
-        _uploads[token] = (now, name, sheets)
-    return token
+    value = json.dumps({"name": name, "sheets": sheets}, default=str).encode("utf-8")
+    return current_store().keep_ephemeral(HISTORY_KIND, value, _UPLOAD_TTL, keep=_MAX_UPLOADS)
 
 
 def get_upload(token: str | None) -> tuple[str, dict[str, tuple[list[str], list[dict[str, Any]]]]] | None:
-    store = current_store()
-    if store is not None:
-        kept = store.ephemeral(HISTORY_KIND, token)
-        if kept is None:
-            return None
-        found = json.loads(kept)
-        return found["name"], {sheet: (columns, rows) for sheet, (columns, rows) in found["sheets"].items()}
-    with _uploads_lock:
-        found = _uploads.get(token or "")
-    return (found[1], found[2]) if found else None
+    kept = current_store().ephemeral(HISTORY_KIND, token)
+    if kept is None:
+        return None
+    found = json.loads(kept)
+    return found["name"], {sheet: (columns, rows) for sheet, (columns, rows) in found["sheets"].items()}
 
 
 def drop_upload(token: str) -> None:
-    store = current_store()
-    if store is not None:
-        store.drop_ephemeral(HISTORY_KIND, token)
-    with _uploads_lock:
-        _uploads.pop(token, None)
+    current_store().drop_ephemeral(HISTORY_KIND, token)
 
 
 # --- Coding accuracy ----------------------------------------------------------------------------------------------
@@ -606,8 +561,11 @@ async def history_upload(request: Request, file: UploadFile = File(...)) -> JSON
     name = Path(file.filename or "history.csv").name
     if not name.lower().endswith((".csv", ".xlsx", ".xls", ".txt")):
         return refuse("Upload the AP line history as a CSV or an Excel workbook (.xlsx).")
+    content = await read_capped(file)  # never read whole, however large (B-1401)
+    if content is None:
+        return refuse(TOO_BIG)
     try:
-        sheets = read_sheets(name, await file.read())
+        sheets = read_sheets(name, content)
     except ValueError as exc:
         return refuse(str(exc))
     token = keep_upload(name, sheets)

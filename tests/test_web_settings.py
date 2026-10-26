@@ -303,14 +303,14 @@ def test_review_settings_are_written_to_the_env_and_logged(client, store, env_fi
 
 def test_approval_settings_are_saved(client, store):
     data = {"approval_limit": "25000", "terms_days": "45", "fx_rates": "USD=1.37"}
-    text = follow(client, post(client, "/settings/review/approval", data))
+    text = follow(client, post(client, "/settings/review", data))
     saved = html.unescape(text).split("Saved ", 1)[1].split("</div>", 1)[0]
     assert all(w in saved for w in ("the days to pay", "the exchange rates", "the second-approval limit"))
     assert store.approval_limit() == 25000.0 and store.default_terms_days() == 45
     assert store.get_setting("fx_rates") == "USD=1.37"
-    assert "Nothing changed." in follow(client, post(client, "/settings/review/approval", data))
-    assert post(client, "/settings/review/approval", {"terms_days": "400"}).status_code == 400
-    assert post(client, "/settings/review/approval", {"approval_limit": "-1"}).status_code == 400
+    assert "Nothing changed." in follow(client, post(client, "/settings/review", data))
+    assert post(client, "/settings/review", {"terms_days": "400"}).status_code == 400
+    assert post(client, "/settings/review", {"approval_limit": "-1"}).status_code == 400
 
 
 # --- JD Edwards E1 ------------------------------------------------------------------------------------------------
@@ -480,12 +480,12 @@ def test_where_invoices_are_delivered_to_us(client, store):
 
     page = client.get("/settings/review").text
     assert "Your province (where goods are delivered to you)" in page and 'name="our_province"' in page
-    bad = client.post("/settings/review/supply", data={"our_province": "XX"}, headers=HEADERS)
+    bad = client.post("/settings/review", data={"our_province": "XX"}, headers=HEADERS)
     assert bad.status_code == 400
-    bad = client.post("/settings/review/supply", data={"our_province": "BC", "site_provinces": "CC400 BC"},
+    bad = client.post("/settings/review", data={"our_province": "BC", "site_provinces": "CC400 BC"},
                       headers=HEADERS)  # fmt: skip
     assert bad.status_code == 400 and "CC400 BC" in bad.json()["error"]
-    ok = client.post("/settings/review/supply", data={"our_province": "bc", "site_provinces": "CC400 = on\nCC500=AB"},
+    ok = client.post("/settings/review", data={"our_province": "bc", "site_provinces": "CC400 = on\nCC500=AB"},
                      headers=HEADERS)  # fmt: skip
     assert ok.status_code == 200
     assert store.our_province() == "BC" and store.site_provinces() == {"CC400": "ON", "CC500": "AB"}

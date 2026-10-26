@@ -180,9 +180,9 @@ def test_the_question_threshold_in_settings(client_store):
     client, store, _ = client_store
     assert 'name="why_after"' in client.get("/settings/review").text
     data = {"approval_limit": "0", "terms_days": "30", "fx_rates": "", "why_after": "5"}
-    assert client.post("/settings/review/approval", data=data, headers=PAGE).status_code == 200
+    assert client.post("/settings/review", data=data, headers=PAGE).status_code == 200
     assert lessons.why_after(store) == 5
-    assert client.post("/settings/review/approval", data={**data, "why_after": "99"}, headers=PAGE).status_code == 400
+    assert client.post("/settings/review", data={**data, "why_after": "99"}, headers=PAGE).status_code == 400
 
 
 def test_a_lesson_reaches_the_ai_after_two_agreeing_corrections_or_one_with_a_reason(tmp_path, ground_truth):

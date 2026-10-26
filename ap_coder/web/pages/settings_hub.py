@@ -28,7 +28,6 @@ from ap_coder.erp.hub.run import (
     save_config,
 )
 from ap_coder.erp.hub.tables import HUB_SCHEMA_VERSION, TABLES
-from ap_coder.ops import offline
 from ap_coder.web.core import done, get_store, posted_form, refuse, reviewer, server_mode
 
 router = APIRouter()
@@ -51,7 +50,6 @@ def hub_context(request: Request) -> dict[str, Any]:
         "hub_parquet": landing.parquet_available(),
         "hub_format_now": landing.choose_format("auto") if config.format == "auto" else config.format,
         "hub_push_blocked": onelake.push_allowed(True),
-        "hub_internet": offline.internet_allowed(),
         "hub_tables": list(TABLES.values()),
         "hub_version": HUB_SCHEMA_VERSION,
         "hub_on_server": server_mode(request),

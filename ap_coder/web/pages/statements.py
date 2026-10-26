@@ -1,6 +1,7 @@
 """Vendor statements: reconcile a vendor's statement of account with the invoices AP Coder holds.
 
-The statement is uploaded (``POST /statements/upload``, kept in memory for an hour, never stored), then
+The statement is uploaded (``POST /statements/upload``, or picked from the emails triage set aside:
+``POST /statements/emailed/<entry>/<n>``) and waits an hour (``files.keep_upload``: never kept with the invoices), then
 ``GET /statements?vendor=&file=&col_<field>=`` shows its columns and the reconciliation, the email asking the vendor
 for what is missing (``&lang=``) and ``GET /statements/reconciliation.csv`` (same address) downloads
 ``statements.to_csv``.
@@ -21,6 +22,7 @@ from ap_coder.intake import inbox
 from ap_coder.web.core import done, get_store, invoice_dir, money, refuse, render, reviewer
 from ap_coder.web.files import (
     _MAX_BYTES,
+    NO_ROWS,
     TOO_BIG,
     SheetError,
     download,
@@ -91,7 +93,7 @@ def statements_page(
             chosen = picked_columns(request.query_params, FIELD_LABELS, columns, stm.map_columns(columns))
             context["s"] = sheet_context(file, upload, df, sheets, sheet, FIELD_LABELS, chosen, ("number",))
             if df.empty:
-                context["error"] = "This file has no rows under its header line."
+                context["error"] = NO_ROWS
             elif not mapping_ready(chosen):
                 context["error"] = "Pick the invoice number column and an amount or balance column."
             else:
@@ -132,7 +134,7 @@ def statements_page(
 
 @router.post("/statements/upload")
 async def statements_upload(request: Request, vendor: str = Form(""), file: UploadFile = File(...)) -> JSONResponse:  # noqa: B008
-    """Keep the statement for the page (in memory for an hour; nothing is stored) and show its reconciliation."""
+    """Keep the statement for the page (an hour, ``files.keep_upload``) and show its reconciliation."""
     token, problem = await receive_sheet(file)
     if problem:
         return refuse(problem)

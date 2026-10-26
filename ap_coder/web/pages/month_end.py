@@ -14,8 +14,9 @@ from fastapi.responses import HTMLResponse, Response
 from ap_coder.core import ui
 from ap_coder.core.reference_data import UNASSIGNED, ReferenceData, short_name
 from ap_coder.erp import accruals
-from ap_coder.web.core import clamp_day, get_store, money, reference_or_none, render
+from ap_coder.web.core import address_day, get_store, money, reference_or_none, render
 from ap_coder.web.files import download
+from ap_coder.web.invoice_view import NEEDS_CC, NEEDS_GL
 
 router = APIRouter()
 
@@ -25,16 +26,6 @@ TITLES = {
     accruals.RECURRING: "Expected recurring invoices",
 }
 _ROW_ID = re.compile(r"\s*\(#\d+\)$")  # "Invoice SIL-4471 (#4)": the row id stays in the CSV, not on screen
-NEEDS_GL, NEEDS_CC = "Needs an account", "Needs a cost center"
-
-
-def day(value: str | None, default: dt.date) -> dt.date:
-    """A YYYY-MM-DD from the address (kept within ``clamp_day``'s years), or ``default`` when it is missing or not a
-    date."""
-    try:
-        return clamp_day(dt.date.fromisoformat(str(value or "").strip()[:10]))
-    except ValueError:
-        return default
 
 
 def gl_cell(reference: ReferenceData | None, code: str) -> dict[str, Any]:
@@ -60,7 +51,7 @@ def tile_text(n: int, by_currency: dict[str, float], rates: dict[str, float]) ->
 @router.get("/month-end", response_class=HTMLResponse)
 def month_end_page(request: Request, end: str = "") -> HTMLResponse:
     store = get_store(request)
-    period_end = day(end, accruals.default_period_end())
+    period_end = address_day(end, accruals.default_period_end())
     no_date: list[accruals.Accrual] = []  # the invoices with no date: read with the accruals, not again
     items = accruals.build(store, period_end, no_date)
     rates = store.fx_rates()
@@ -134,6 +125,6 @@ def month_end_page(request: Request, end: str = "") -> HTMLResponse:
 
 @router.get("/month-end/accruals.csv")
 def accruals_csv(request: Request, end: str = "") -> Response:
-    period_end = day(end, accruals.default_period_end())
+    period_end = address_day(end, accruals.default_period_end())
     items = accruals.build(get_store(request), period_end)
     return download(accruals.to_csv(items, period_end), f"accruals_{period_end}.csv", "text/csv")

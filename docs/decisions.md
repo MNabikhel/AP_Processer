@@ -977,8 +977,9 @@ that is reversed keeps its line, marked "replaced by D-NN".
   restart the files are in the invoices folder, listed as new. The folder pick-up still says it is busy (409). (7)
   **Restart-safe state:** messages waiting for their page and spreadsheets waiting for their columns (imports, AP line
   history) are kept in the database's `ephemeral` table (kind, token, value, expiry; `CREATE TABLE IF NOT EXISTS`, no
-  schema bump), deleted once used or expired; outside a request, in memory as before. An upload therefore sits in the
-  database (and a backup made in that hour) instead of only in memory: the same data the database holds anyway. (8)
+  schema bump), deleted once used or expired; outside a request, in memory as before *(that way is gone: nothing
+  used it, sweep 5)*. An upload therefore sits in the database (and a backup made in that hour) instead of only in
+  memory: the same data the database holds anyway. (8)
   **Drafts** are keyed by `access.person_key` (one key, `key_of`): the account's id on the server, else the colleague's
   (name, browser) as before. `is_admin` is the logged-in account's role (`identity.person()`), always yes on a laptop;
   the rail says "Data stays on this server". Why: staff open the server from their own PCs over the company network, by

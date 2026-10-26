@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-import math
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
@@ -62,7 +61,7 @@ from ap_coder.web.core import (
     server_mode,
 )
 from ap_coder.web.identity import shown_path
-from ap_coder.web.invoice_view import document_kind
+from ap_coder.web.invoice_view import confidence_pct, document_kind
 
 router = APIRouter()
 
@@ -99,17 +98,6 @@ def sort_queue(rows: list[dict[str, Any]], order: str) -> list[dict[str, Any]]:
     if order == "vendor":
         return sorted(rows, key=lambda r: fold_text(r.get("vendor_name") or r.get("file_name") or ""))
     return rows
-
-
-def confidence_pct(value: float, threshold: float) -> str:
-    """The invoice's confidence as a percentage, rounded the usual way, so the queue and the messages agree. Where
-    that rounding would mislead (84.9% shown as the 85% threshold it is below, or 99.6% as certainty) it keeps one
-    decimal, rounded down."""
-    value = max(0.0, min(1.0, value or 0.0))
-    whole = int(f"{value * 100:.0f}")
-    if (value < threshold and whole >= int(f"{threshold * 100:.0f}")) or (value < 1 and whole >= 100):
-        return f"{math.floor(value * 1000 + 1e-9) / 10:.1f}%"
-    return f"{whole}%"
 
 
 def due_note(ai: dict[str, Any], default_days: int, vendor_terms: str = "") -> tuple[str, str]:
@@ -314,7 +302,7 @@ def today_pills(store: Store, invoices: list[dict[str, Any]]) -> list[tuple[str,
     due_soon = sum(1 for i in active if i["due_date"] and today <= i["due_date"] <= soon)
     follow_ups = sum(1 for i in store.parked() if i.get("follow_up") and i["follow_up"] <= today)
     second = sum(1 for i in invoices if i["status"] == PENDING and (i["reviewer"] or "").strip().lower() != me)
-    to_export = len(store.unexported_approved())
+    to_export = store.ready_to_export_count()  # counted, not read: a year of approvals not exported yet
     late = [r for r in recurring.detected(store) if r.status == recurring.LATE]
     pills = [
         (f"{overdue} past due, not approved yet", "err") if overdue else None,
@@ -329,8 +317,7 @@ def today_pills(store: Store, invoices: list[dict[str, Any]]) -> list[tuple[str,
 
 
 def kpis(store: Store, pending: list[dict[str, Any]], flagged: list[dict[str, Any]],
-         approved: list[dict[str, Any]], awaiting: list[dict[str, Any]] = (),
-         settings: Any = None) -> list[dict[str, Any]]:  # fmt: skip
+         awaiting: list[dict[str, Any]] = (), settings: Any = None) -> list[dict[str, Any]]:  # fmt: skip
     """The four figures at the top: waiting, approved today, coding accuracy, the coding memory (B-512). Approved today
     counts this reviewer's approvals, a first approval waiting for its second (``awaiting``) included, and says so in
     plain words (B-517)."""
@@ -423,7 +410,7 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
     unnamed = reviewer() if name_step()[0] != "ok" else ""  # approvals carry the computer login until a name is given
     context: dict[str, Any] = {"tab": tab, "tabs": tabs, "lead": lead, "show": show, "q": q, "sort": sort,
                                "unnamed": unnamed,
-                               "kpis": kpis(store, pending, flagged, approved, awaiting, settings),
+                               "kpis": kpis(store, pending, flagged, awaiting, settings),
                                "today": today_pills(store, invoices),
                                "shows": SHOWS, "sorts": SORTS, "view_url": view_url}  # fmt: skip
     if tab == "review":
@@ -443,7 +430,7 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
         )  # fmt: skip
     elif tab == "approved":
         recent = store.recently_approved(APPROVED_SHOWN)
-        context.update(approved=recent, approved_total=approved, to_export=len(store.unexported_approved()),
+        context.update(approved=recent, approved_total=approved, to_export=store.ready_to_export_count(),
                        awaiting_count=len(awaiting))  # fmt: skip
     elif tab == "other":
         context.update(others=[_other(i) for i in store.list_invoices(statuses=(FAILED, REJECTED))])

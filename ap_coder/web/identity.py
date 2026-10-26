@@ -59,7 +59,7 @@ SESSION_ENDED = "You are not logged in (or your session ended): log in again."
 CHANGE_FIRST = "Choose a new password first (Your password), then carry on."
 THIS_COMPUTER = {"127.0.0.1", "localhost", "::1"}
 # Settings (all of it: the approval limit and rates, Data's backups and restore, the Azure check) are changed only on
-# the computer running AP Coder when it is shared on the office network (B-972); logins come later.
+# the computer running AP Coder when it is shared on the office network (B-972); on the server, by an Admin's role.
 THIS_COMPUTER_ONLY = ("/settings",)
 # The setup and its imports, changed only from this computer too (B-1030): the account lists, the tax setup, the
 # policy notes and coding rules (all under /accounts), and the vendor master's import. Looking at them stays open.
@@ -138,12 +138,6 @@ def from_cookie(secret: bytes, value: str | None) -> tuple[str, str] | None:
     except (binascii.Error, UnicodeDecodeError, ValueError):
         return None
     return (clean_name(name), browser) if clean_name(name) else None
-
-
-def name_from_cookie(secret: bytes, value: str | None) -> str | None:
-    """The name a cookie holds, or None when it was not made by this start of the server (made up, changed, old)."""
-    found = from_cookie(secret, value)
-    return found[0] if found else None
 
 
 _QUOTED_PATH = re.compile(r"""(['"])[^'"]*[\\/]([^'"\\/]*)\1""")  # 'C:\\Users\\x\\a.db', "/home/x/a.db"

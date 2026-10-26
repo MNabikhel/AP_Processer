@@ -141,14 +141,14 @@ def test_exchange_rates_that_cannot_be_read_are_refused_not_saved(client, store,
     compared with the approval limit at 1 CAD per USD."""
     store.set_setting("fx_rates", "USD=1.37")
     data = {"approval_limit": "1000", "terms_days": "30", "fx_rates": typed}
-    response = client.post("/settings/review/approval", data=data, headers=PAGE)
+    response = client.post("/settings/review", data=data, headers=PAGE)
     assert response.status_code == 400 and "USD=1.37" in response.json()["error"]
     assert store.get_setting("fx_rates") == "USD=1.37" and store.approval_limit() == 0
 
 
 def test_exchange_rates_written_as_the_page_shows_are_saved(client, store):
     data = {"approval_limit": "0", "terms_days": "30", "fx_rates": "USD=1.37, EUR 1,50; gbp: 1.85"}
-    assert client.post("/settings/review/approval", data=data, headers=PAGE).json()["ok"]
+    assert client.post("/settings/review", data=data, headers=PAGE).json()["ok"]
     assert store.fx_rates() == {"CAD": 1.0, "USD": 1.37, "EUR": 1.5, "GBP": 1.85}
 
 
@@ -218,8 +218,8 @@ def test_a_limit_that_is_not_a_real_amount_is_refused_not_saved(client, store, v
     """Posted directly (a browser's number box can't send them), "1e309" and "nan" were saved as infinity and NaN:
     no approval limit and no touchless limit at all. The days to pay overflowed into a server error."""
     before = (store.get_setting("approval_limit"), store.touchless_limit())
-    approval = client.post("/settings/review/approval", data={"approval_limit": value}, headers=PAGE)
-    days = client.post("/settings/review/approval", data={"terms_days": value}, headers=PAGE)
+    approval = client.post("/settings/review", data={"approval_limit": value}, headers=PAGE)
+    days = client.post("/settings/review", data={"terms_days": value}, headers=PAGE)
     touchless = client.post("/settings/automation/limit", data={"limit": value}, headers=PAGE)
     assert approval.status_code == days.status_code == touchless.status_code == 400
     assert (store.get_setting("approval_limit"), store.touchless_limit()) == before

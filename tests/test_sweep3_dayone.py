@@ -419,7 +419,7 @@ def test_the_approved_today_tile_says_how_many_wait_for_a_second_approval():
     review_page.approved_today = lambda store: 2
     try:
         mine = {"id": 2, "reviewer": review_page.reviewer(), "reviewed_at": dt.datetime.now().isoformat()}
-        tile = kpis(FakeStore(), [], [], [{"id": 1}], awaiting=[mine, {"id": 3, "reviewer": "Someone else"}])[1]
+        tile = kpis(FakeStore(), [], [], awaiting=[mine, {"id": 3, "reviewer": "Someone else"}])[1]
     finally:
         review_page.approved_today = original
     assert tile["value"] == "2"

@@ -30,13 +30,21 @@ from ap_coder.coding.vendors import (
     vendor_number_problems,
 )
 from ap_coder.core import ui
-from ap_coder.core.reference_data import short_name
 from ap_coder.core.store import PARKED, REVIEW, Store
 from ap_coder.erp import recurring
 from ap_coder.erp.insights import vendor_workload
 from ap_coder.ops.help import help_for
 from ap_coder.web.core import done, flash_message, get_store, posted_form, reference_or_none, refuse, render, reviewer
-from ap_coder.web.files import SheetError, drop_upload, picked_columns, read_upload, receive_sheet, sheet_context
+from ap_coder.web.files import (
+    NO_ROWS,
+    SheetError,
+    drop_upload,
+    picked_columns,
+    read_upload,
+    receive_sheet,
+    sheet_context,
+)
+from ap_coder.web.invoice_view import gl_name
 
 router = APIRouter()
 
@@ -146,11 +154,6 @@ def vendor_detail(store: Store, v: dict[str, Any], language: str) -> dict[str, A
     key = v["vendor_key"]
     invoices = store.vendor_invoices(key)
     reference = reference_or_none(store)
-
-    def gl_name(code: str) -> str:
-        row = reference.chart_of_accounts.get(code) if reference else None
-        return short_name((row or {}).get("description", "")) if row else ""
-
     numbers = sorted({i["gst_hst_number"] for i in invoices if i["gst_hst_number"]})
     suggested = vendor_mail.ENGLISH
     for inv in invoices[:1]:
@@ -160,7 +163,7 @@ def vendor_detail(store: Store, v: dict[str, Any], language: str) -> dict[str, A
     return {
         "v": v,
         "has_master": store.has_vendor_master(),
-        "usage": [{**u, "name": gl_name(u["gl_code"])} for u in store.vendor_gl_usage(key)[:8]],
+        "usage": [{**u, "name": gl_name(reference, u["gl_code"])} for u in store.vendor_gl_usage(key)[:8]],
         "numbers": numbers,
         "recent": [{**i, "pill": ui.STATUS_PILLS.get(i["status"], (i["status"], "gray", ""))} for i in invoices[:8]],
         "tax_history": history(invoices, "gst_hst_number", lambda a, b: norm_tax_number(a) == norm_tax_number(b), str),
@@ -233,7 +236,7 @@ def vendors_page(
             upload, df, sheets = read_upload(file, sheet or None)
             columns = list(df.columns)
             if df.empty:
-                master_error = "This file has no rows under its header line."
+                master_error = NO_ROWS
             chosen = picked_columns({}, MASTER_LABELS, columns, master_columns(columns))
             master = sheet_context(file, upload, df, sheets, sheet, MASTER_LABELS, chosen, ("vendor_name",))
         except SheetError as exc:
@@ -328,7 +331,7 @@ async def master_import(request: Request) -> JSONResponse:
     except SheetError as exc:
         return refuse(str(exc))
     if df.empty:
-        return refuse("This file has no rows under its header line.")
+        return refuse(NO_ROWS)
     chosen = picked_columns(form, MASTER_LABELS, list(df.columns), {})
     if "vendor_name" not in chosen:
         return refuse("Pick the column with the vendor name.")

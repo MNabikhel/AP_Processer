@@ -1,14 +1,26 @@
 """AP Coder's dashboard as a local web app (FastAPI + Jinja templates + a little plain JavaScript), the way CloseDesk
-does it. Start it with ``python -m ap_coder serve`` (``web/server.py``): it listens on 127.0.0.1 and opens the
-browser. Nothing is loaded from the internet: fonts, icons, styles and scripts are all in this package.
+does it. Start it with ``python -m ap_coder serve`` (``web/server.py``): on a laptop it listens on 127.0.0.1 and
+opens the browser; as the company's server (``AP_SERVER_MODE``, D-97) it serves HTTPS to people who log in, in
+several web workers beside one background process (D-111). Nothing is loaded from the internet: fonts, icons,
+styles and scripts are all in this package.
 
 Layout
 ------
-* ``app.py``: ``create_app(settings=None, store=None)``, the security middleware, /healthz, /shutdown, /jobs/<name>.
+* ``app.py``: ``create_app(settings=None, store=None)``, the middleware in order, /healthz, /shutdown, /jobs/<name>;
+  ``EnvSettings`` (the .env read again when it changes).
+* ``server.py``: ``serve`` (uvicorn, the server file the launcher reads), the server's workers and background process.
 * ``core.py``: what pages share: ``render``, ``get_store`` / ``get_settings``, the rail, messages after an action
-  (``done`` / ``message`` / ``refuse``), ``reviewer``, ``money``, the ``ui`` helpers in templates.
+  (``done`` / ``message`` / ``refuse``), ``reviewer`` / ``login``, ``can`` (what the role may do), ``money``, the
+  ``ui`` helpers in templates.
+* ``security.py``: only this computer's (or the server's) names; only AP Coder's own pages may POST; the security
+  headers, request sizes and access log of the server.
+* ``identity.py``: who is asking (a colleague on the office network, a logged-in account); ``roles.py``: what each
+  route needs (``RULES``); ``access.py``: ``is_admin`` and whose drafts.
 * ``jobs.py``: long work in a background thread, polled by the page (``Job.start``, ``GET /jobs/<name>``).
-* ``security.py``: only this computer's addresses; only AP Coder's own pages may POST.
+* ``files.py``: downloads (``download``) and spreadsheets uploaded to be imported; ``errors.py``: the page for an
+  error no page expected; ``document.py``: an invoice's page pictures and words; ``charts.py``: SVG charts;
+  ``minimd.py``: a little Markdown for AP Coder's own texts.
+* ``invoice_view.py``: what the review screen shows (``Draft``, ``analyse``); ``pages/invoice.py`` has its routes.
 * ``pages/__init__.py``: ``PAGES``, the one list of pages, in rail order. ``pages/<name>.py``: one module per page.
 * ``templates/``: ``base.html`` (rail, header, messages), one template per page, ``_*.html`` partials.
 * ``static/``: ``app.css`` (the Ledger look of ap_coder/core/ui.py), ``js/app.js`` (POSTs, messages, jobs), page

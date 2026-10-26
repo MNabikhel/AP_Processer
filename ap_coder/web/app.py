@@ -1,10 +1,11 @@
 """The dashboard's web app: ``create_app`` builds it, ``ap_coder/web/server.py`` runs it (``python -m ap_coder serve``).
 
-Every page is a module of ``ap_coder/web/pages`` listed in ``pages.PAGES``; pages not built yet answer with the
-placeholder template. Besides the pages:
+Every page is a module of ``ap_coder/web/pages`` listed in ``pages.PAGES`` (or ``pages.MORE_MODULES``). Besides the
+pages:
 
-* ``GET /healthz``: {"ok", "app", "version", "folder", "pid", "port"} for the launcher (no secrets); to this
-  computer, also "user" (the account running it).
+* ``GET /healthz``: {"ok", "app", "version", "build", "folder", "pid", "port"} for the launcher (no secrets); to this
+  computer, also "user" (the account running it); to another computer, or past the server's own console, only
+  {"ok", "app"}.
 * ``POST /shutdown``: stops the server cleanly; only from this computer, with the token ``serve`` wrote to the
   data folder's ``.ap_coder_server.json`` (header ``X-AP-Coder-Token``).
 * ``GET /jobs/<name>``: how far a background job got (``ap_coder/web/jobs.py``).
@@ -17,6 +18,7 @@ import contextlib
 import getpass
 import hmac
 import importlib
+import io
 import logging
 import os
 import secrets
@@ -26,21 +28,22 @@ from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
 
+from dotenv import dotenv_values
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ap_coder import __version__
-from ap_coder.core import paths
-from ap_coder.core.config import Settings
+from ap_coder.core import envfile, paths
+from ap_coder.core.config import Settings, process_var
 from ap_coder.core.store import Store, default_db_path
 from ap_coder.ops import offline
 from ap_coder.web import core, identity, roles
 from ap_coder.web.errors import FriendlyErrors
 from ap_coder.web.identity import THIS_COMPUTER, Identity, from_this_computer, is_this_computer
 from ap_coder.web.jobs import Jobs
-from ap_coder.web.pages import MORE_MODULES, PAGES, Page
+from ap_coder.web.pages import MORE_MODULES, PAGES
 from ap_coder.web.security import TOKEN_HEADER, AccessLog, LocalOnly, SecurityHeaders, allowed_hosts
 
 CODE_FOLDER = core.WEB_DIR.parent.parent  # the folder holding ap_coder/ (the launcher checks it is its own)
@@ -117,11 +120,17 @@ def default_store() -> Store:
 
 class EnvSettings:
     """The settings from the .env and the environment, read again only when either changed (the .env's time and
-    size, the environment's values): every request asks for them, and the Settings page saves to the .env."""
+    size, the environment's values): every request asks for them, and the Settings page saves to the .env.
+
+    A value the environment took from the .env (when AP Coder started, or saved here since) gives way to the .env's
+    new one: with several web workers (D-111) another worker saved it there, and only its own environment had it
+    (B-1404). A value the environment was given otherwise (the service's own) still wins, as ``Settings.from_env``
+    has it."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._kept: tuple[Any, Settings] | None = None
+        self._file: tuple[tuple[Any, ...], dict[str, str]] | None = None  # the .env's stamp and values, last read
 
     @staticmethod
     def _stamp() -> tuple[Any, ...]:
@@ -134,10 +143,24 @@ class EnvSettings:
         file = (str(path), seen.st_mtime_ns, seen.st_size) if seen is not None else (str(path), None, None)
         return (*file, frozenset(os.environ.items()))
 
+    def _follow_the_file(self) -> None:
+        """Take out of the environment each value the .env gave it that the .env no longer has (B-1404)."""
+        stamp = self._stamp()[:3]
+        if self._file is not None and self._file[0] == stamp:
+            return
+        path = Path(stamp[0]) if stamp[1] is not None else None
+        values = dotenv_values(stream=io.StringIO(envfile.read_text(path)), interpolate=False) if path else {}
+        now = {name: value for name, value in values.items() if value is not None and not process_var(name)}
+        for name, value in (self._file[1] if self._file is not None else {}).items():
+            if os.environ.get(name) == value and now.get(name) != value:
+                del os.environ[name]  # Settings.from_env puts the .env's new value in its place
+        self._file = (stamp, now)
+
     def __call__(self) -> Settings:
         with self._lock:
             if self._kept is not None and self._kept[0] == self._stamp():
                 return self._kept[1]
+            self._follow_the_file()
             read = Settings.from_env(os.environ.get("AP_ENV_FILE"))
             self._kept = (self._stamp(), read)  # after reading: the .env's values are in the environment now
             return read
@@ -239,10 +262,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     for module in MORE_MODULES:
         app.include_router(importlib.import_module(f"ap_coder.web.pages.{module}").router)
     for page in PAGES:
-        if page.module:
-            app.include_router(importlib.import_module(f"ap_coder.web.pages.{page.module}").router)
-        else:
-            app.add_api_route(page.path, _placeholder(page), methods=["GET"], response_class=HTMLResponse)
+        app.include_router(importlib.import_module(f"ap_coder.web.pages.{page.module}").router)
 
     @app.get("/", include_in_schema=False)
     def home() -> RedirectResponse:
@@ -317,11 +337,3 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
         return await http_error(request, StarletteHTTPException(404, "Nothing in AP Coder has that number."))
 
     return app
-
-
-def _placeholder(page: Page) -> Callable[[Request], HTMLResponse]:
-    def placeholder(request: Request) -> HTMLResponse:
-        return core.render(request, "placeholder.html", page.key)
-
-    placeholder.__name__ = f"placeholder_{page.key}"
-    return placeholder

@@ -465,7 +465,7 @@ def test_queue_accuracy_note_counts_measured_lines_not_guesses(tmp_path, monkeyp
     monkeypatch.setattr(store, "line_metrics", lambda: {**real(), "line_accuracy": 0.95, "lines_reviewed": 400,
                                                    "lines_measured": 10})  # fmt: skip
     s = Settings()
-    accuracy = review.kpis(store, [], [], [], settings=replace(s, llm=replace(s.llm, provider="off")))[2]
+    accuracy = review.kpis(store, [], [], settings=replace(s, llm=replace(s.llm, provider="off")))[2]
     assert accuracy["delta"] == "" and "improve as you approve" in accuracy["sub"]
 
 

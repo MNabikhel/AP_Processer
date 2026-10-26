@@ -16,12 +16,12 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from ap_coder.core.safe import csv_row
 from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW
-from ap_coder.erp import directory, search, stamp
+from ap_coder.erp import directory, search
 from ap_coder.web.access import is_admin
-from ap_coder.web.core import done, get_store, local_url, reference_or_none, refuse, render, reviewer, server_mode
-from ap_coder.web.files import download
+from ap_coder.web.core import done, get_store, local_url, refuse, render, reviewer, server_mode
+from ap_coder.web.files import XLSX, download
 from ap_coder.web.identity import person
-from ap_coder.web.pages.invoice import changed_meanwhile
+from ap_coder.web.pages.invoice import approved_pdf_download, changed_meanwhile
 
 router = APIRouter()
 
@@ -169,8 +169,7 @@ def export_xlsx(request: Request) -> Response:
     _sheet(wb.active, "Invoices", columns, rows)
     buf = io.BytesIO()
     wb.save(buf)
-    mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    return download(buf.getvalue(), "invoice_directory.xlsx", mime)
+    return download(buf.getvalue(), "invoice_directory.xlsx", XLSX)
 
 
 @router.post("/search/presets")
@@ -216,14 +215,7 @@ def approved_pdf(request: Request, invoice_id: int) -> Response:
     inv = store.get_invoice(invoice_id)
     if inv is None:
         raise HTTPException(status_code=404, detail="That invoice is not in AP Coder.")
-    if not stamp.can_stamp(inv):
-        raise HTTPException(status_code=409, detail="No longer fully approved: no approved PDF.")
-    reference = reference_or_none(store)
-    names = (
-        {row["gl_code"]: row.get("description", "") for row in reference.chart_of_accounts.rows} if reference else {}
-    )
-    pdf = stamp.stamped_pdf(inv, names, store.tax_treatments())
-    return download(pdf, stamp.file_name(inv), "application/pdf")
+    return approved_pdf_download(store, inv)
 
 
 @router.post("/search/{invoice_id:int}/unpark")

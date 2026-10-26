@@ -9,8 +9,9 @@ duplicate payment audit.
   just made (``?made=<batch>``), the custom CSV layout, the ERP's invoice register, past batches (``?batch=&bfmt=``
   picks one to download again, stamp or undo) and the duplicate audit (``?audit=1``).
 * Downloads (GET): ``/exports/batches/<n>/download?fmt=``, ``/exports/batches/<n>/approved-pdfs.zip``,
-  ``/exports/duplicates.csv``. The files are the ones ``exports.build`` / ``jde.build_zip`` / ``stamp.batch_zip`` /
-  ``dupaudit.to_csv`` make.
+  ``/exports/duplicates.csv``, ``/exports/jde/dry-run.txt`` (what a JD Edwards batch of the ready invoices would
+  load). The files are the ones ``exports.build`` / ``jde.build_zip`` / ``stamp.batch_zip`` / ``dupaudit.to_csv`` /
+  ``jde.dry_run_text`` make.
 """
 
 from __future__ import annotations
@@ -41,6 +42,7 @@ from ap_coder.web.core import (
 )
 from ap_coder.web.core import reviewer as current_reviewer
 from ap_coder.web.files import (
+    NO_ROWS,
     SheetError,
     download,
     drop_upload,
@@ -186,9 +188,11 @@ def batch_total(b: dict[str, Any], totals: dict[int, dict[str, float]], exported
     return sorted(amounts.items())
 
 
-def layout_preview(store: Store, new: export_layout.Layout) -> str:
-    """The first lines of a custom CSV in layout ``new``, from invoices ready to export (else batch 1's)."""
-    sample = store.unexported_approved()[:3] or [{"id": i} for i in store.batch_invoice_ids(1)[:3]]
+def layout_preview(store: Store, new: export_layout.Layout, ready: list[dict[str, Any]] | None = None) -> str:
+    """The first lines of a custom CSV in layout ``new``, from invoices ready to export (``ready``, when the page has
+    read them already), else batch 1's."""
+    ready = store.unexported_approved() if ready is None else ready
+    sample = ready[:3] or [{"id": i} for i in store.batch_invoice_ids(1)[:3]]
     invoices = store.get_invoices([i["id"] for i in sample])
     rows = exports.custom_rows(invoices, gl_names(store), "", store.vendor_ids(), store.tax_treatments(),
                                bank_accounts(store))  # fmt: skip
@@ -323,7 +327,7 @@ def exports_page(
         layout_fields={**export_layout.FIELDS, export_layout.FIXED: "Fixed text…"},
         date_formats=list(export_layout.DATE_FORMATS),
         delimiters=export_layout.DELIMITERS,
-        csv_preview=layout_preview(store, current),
+        csv_preview=layout_preview(store, current, ready),
         register_count=store.erp_register_count(),
         reg=reg,
         reg_error=reg_error,
@@ -513,11 +517,17 @@ async def register_import(request: Request) -> JSONResponse:
         _upload, df, _sheets = read_upload(token, sheet or None)
     except SheetError as exc:
         return refuse(str(exc))
+    if df.empty:
+        return refuse(NO_ROWS)
     chosen = picked_columns(form, REGISTER_LABELS, list(df.columns), {})
     missing = [REGISTER_LABELS[f] for f in registers.REQUIRED if f not in chosen]
     if missing:
         return refuse("Pick the column for: " + ", ".join(missing))
     rows, skipped = registers.rows_from_records(df.to_dict("records"), chosen)
+    if not rows:  # "Replace" would empty the list the duplicate checks look in (B-1405)
+        return refuse(f"No row has a vendor, an invoice number and an amount in the columns picked ({skipped} "
+                      "skipped): nothing was imported, the list is as it was. Check the columns, then import "
+                      "again.")  # fmt: skip
     total = store.import_erp_register(rows, replace_all=bool(form.get("replace")), actor=current_reviewer())
     drop_upload(token)
     text = f"{total:,} ERP invoices known" + (f"; {ui.plural(skipped, 'row')} skipped." if skipped else ".")

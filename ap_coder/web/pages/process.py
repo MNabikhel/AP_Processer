@@ -667,14 +667,22 @@ def folder_files(store: Store) -> list[dict[str, Any]]:
     return rows
 
 
+RECENT = 6  # the newest invoices the page lists
+NEWEST = "created_at DESC, id DESC"
+RECENT_COLUMNS = ("id, file_name, status, vendor_name, invoice_number, invoice_date, due_date, currency, grand_total, "
+                  "model_confidence, adjusted_confidence, requires_review, error, created_at, reviewed_at, reviewer, "
+                  "second_reviewer")  # (as ``Store.list_invoices`` has them)  # fmt: skip
+
+
 @router.get("/process", response_class=HTMLResponse)
 def process_page(request: Request) -> HTMLResponse:
     from ap_coder.ops.demo import demo_available
 
     store, settings = get_store(request), get_settings(request)
-    invoices = store.list_invoices()
-    steps, steps_done, steps_needed = first_steps(store, settings, bool(invoices))
-    recent = sorted(invoices, key=lambda i: (i["created_at"] or "", i["id"]), reverse=True)[:6]
+    total = sum(store.status_counts().values())  # counted, not read: a year of invoices is not read (D-110)
+    steps, steps_done, steps_needed = first_steps(store, settings, bool(total))
+    recent = store.summary_rows(f"id IN (SELECT id FROM invoice_summary ORDER BY {NEWEST} LIMIT ?)", (RECENT,),
+                                RECENT_COLUMNS, NEWEST)  # fmt: skip
     waiting = [i for i in recent if i["status"] == REVIEW]
     reasons = attention(store, reference_or_none(store), waiting) if waiting else {}
     recent = [{**i, "needs_attention": i["id"] in reasons} for i in recent]  # its pill says what the queue says
@@ -684,7 +692,7 @@ def process_page(request: Request) -> HTMLResponse:
         request, "process.html", "process",
         # The demo still loaded and none of your own invoices yet: asked to remove it first, so its reviewer, lessons
         # and vendors don't mix into your numbers (B-468).
-        demo_first=bool(demo_count) and demo_count >= len(invoices),
+        demo_first=bool(demo_count) and demo_count >= total,
         steps=steps,
         step_links=links,
         steps_done=steps_done,
@@ -699,7 +707,6 @@ def process_page(request: Request) -> HTMLResponse:
         set_aside=inbox.needs_person(store, invoice_dir(store)),
         folder=short_path(invoice_dir(store)) if is_admin(request) else "",
         accept=",".join(ACCEPT),
-        accept_text=", ".join(e.lstrip(".").upper() for e in ACCEPT),
         job=jobs(request).get(JOB).snapshot(),
         waiting=import_queue(request).files(),
         waiting_text=waiting_text(import_queue(request).files()),

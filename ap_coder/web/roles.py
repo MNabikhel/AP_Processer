@@ -71,7 +71,7 @@ RULES: dict[tuple[str, str], str] = {
         "GET /statements", "GET /statements/reconciliation.csv",
         "GET /spend", "GET /spend/data.xlsx",
         "GET /insights", "GET /insights/business-case",
-        "GET /activity", "GET /activity/events.csv", "GET /activity/controls-report", "GET /activity/duplicates.csv",
+        "GET /activity", "GET /activity/events.csv", "GET /activity/controls-report",
         "GET /help", "GET /help/quick-start", "GET /help/report",
         "GET /jobs/{name}",  # how far a job got: the job's own role besides (JOB_NEEDS)
     ),
@@ -132,8 +132,8 @@ RULES: dict[tuple[str, str], str] = {
         "POST /learning/history/teach", "POST /learning/history/forget", "GET /learning/training.zip",
         "POST /insights/assumptions",
         "GET /settings", "GET /settings/{tab}", "GET /settings/azure-check", "POST /settings/azure-check",
-        "POST /settings/azure-check/test", "POST /settings/review", "POST /settings/review/approval",
-        "POST /settings/review/supply", "POST /settings/data/open-folder", "POST /settings/data/backup",
+        "POST /settings/azure-check/test", "POST /settings/review",
+        "POST /settings/data/open-folder", "POST /settings/data/backup",
         "POST /settings/data/backup-copy", "GET /settings/data/backups/{name}", "POST /settings/data/restore",
         "POST /settings/about/show", "POST /settings/reading/reviewer", "POST /settings/reading/check",
         "POST /settings/reading/self-test", "GET /settings/reading/self-test", "POST /settings/reading/load-model",
@@ -201,8 +201,18 @@ def need_for(app: Any, scope: dict[str, Any]) -> str:
     return ADMIN
 
 
+NEEDS_KEPT = 4096  # (method, path) needs ``can`` remembers per app: the rail's, the buttons', each invoice opened
+
+
 def can(app: Any, role: str | None, method: str, path: str) -> bool:
-    """Whether ``role`` may send ``method`` to ``path`` (for the pages, to hide what can't be used)."""
-    scope = {"type": "http", "method": method.upper(), "path": path, "root_path": "", "query_string": b"",
-             "headers": []}  # fmt: skip
-    return allowed(role, need_for(app, scope))
+    """Whether ``role`` may send ``method`` to ``path`` (for the pages, to hide what can't be used). What the path
+    needs is remembered per app: a page asks it for every rail entry and button it draws, and each answer walks the
+    routes."""
+    key = (method.upper(), path)
+    kept = getattr(app.state, "_needs", None)
+    if kept is None or len(kept) > NEEDS_KEPT:
+        kept = app.state._needs = {}
+    if key not in kept:
+        scope = {"type": "http", "method": key[0], "path": path, "root_path": "", "query_string": b"", "headers": []}
+        kept[key] = need_for(app, scope)
+    return allowed(role, kept[key])
