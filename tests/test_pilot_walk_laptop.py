@@ -239,3 +239,21 @@ def test_two_emails_uploaded_are_both_counted_one_read_one_sent_to_a_person(tmp_
     client.post("/process/upload", files=files, headers=PAGE)
     snap = finished(client.app, client)
     assert snap["result"]["label"] == "2 emails: 1 invoice processed, 1 sent to Emails that need a person", snap
+
+
+# --- 8. The second approver on Exports ---------------------------------------------------------------------------
+
+
+def test_exports_approved_by_shows_both_approvers(tmp_path, ground_truth):
+    """B-1304: the Exports list's "Approved by" showed only the first approver of an invoice approved twice."""
+    from ap_coder.core.store import Store
+
+    from .webclient import client_for
+
+    store = Store(tmp_path / "ap.db")
+    store.set_setting("approval_limit", "10")
+    invoice_id = store.add_invoice(tmp_path / "a.pdf", ground_truth, {"requires_review": True})
+    store.approve_invoice(invoice_id, ground_truth, "Jane Clerk")
+    store.final_approve(invoice_id, "Sam Approver", shown=store.latest_approval_id(invoice_id))
+    page = _plain(client_for(store).get("/exports").text)
+    assert "Jane Clerk, then Sam Approver" in page, page[page.find("Approved by"):][:400]

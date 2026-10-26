@@ -40,7 +40,7 @@
             {% if export %}<td><input type="checkbox" name="ids" value="{{ r.id }}" class="export-pick" aria-label="Export {{ r.vendor_name }} {{ r.invoice_number }}"
                        {% if r.blocked %}disabled{% else %}checked{% endif %}></td>{% endif %}
             <td class="w">{{ r.vendor_name }}</td><td>{{ r.invoice_number }}</td><td>{{ r.invoice_date }}</td>
-            <td>{{ r.currency }}</td><td class="r">{{ r.grand_total | money }}</td><td>{{ r.reviewer }}</td>
+            <td>{{ r.currency }}</td><td class="r">{{ r.grand_total | money }}</td><td>{{ r.reviewer }}{% if r.second_reviewer %}, then {{ r.second_reviewer }}{% endif %}</td>
           </tr>
           {% endfor %}
         </tbody>
