@@ -183,8 +183,6 @@ def test_the_reference_data_is_built_again_only_when_it_changes(tmp_path, monkey
     os.utime(rates, ns=(stamp, stamp))  # the rate table edited: read again
     store.reference_data()
     assert len(loads) == before + 1
-    given = tax.TaxRateTable.load()
-    assert store.reference_data(given).tax.rates is given  # rates given: always those
 
 
 def test_the_metrics_read_the_learning_memory_again_only_when_it_changes(tmp_path, monkeypatch):

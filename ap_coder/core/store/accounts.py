@@ -12,7 +12,6 @@ from typing import Any
 
 from ...coding import tax as _tax
 from ...coding.tax import DEFAULT_TREATMENTS, TAX_TYPES, TREATMENTS, TaxRateTable, TaxSetup, TaxTreatment
-from ..paths import PROJECT_DIR, default_db_path, find_moved_file, private_dir  # noqa: F401  (re-exported)
 from ..reference_data import ReferenceData, ReferenceTable, marks_meals, parse_policy_notes
 from ._base import (
     ACCOUNT_TABLES,
@@ -233,15 +232,6 @@ class AccountsMixin:
         if changed:
             self.log_event("accounts_edited", actor=actor, detail={"table": table, "codes": changed})
 
-    def delete_accounts(self, table: str, codes: list[str], actor: str | None = None) -> int:
-        if table not in ACCOUNT_TABLES:
-            raise ValueError(f"unknown table {table!r}")
-        with self._conn() as conn:
-            cur = conn.executemany(f"DELETE FROM {table} WHERE code = ?", [(c,) for c in codes])
-            if codes:
-                self._log(conn, "accounts_deleted", actor=actor, detail={"table": table, "codes": list(codes)})
-            return cur.rowcount
-
     # --- Our bank accounts ("Pay from", D-66) -------------------------------------------------------------
 
     def bank_accounts(self, active_only: bool = False) -> list[dict[str, Any]]:
@@ -396,12 +386,10 @@ class AccountsMixin:
         with self._conn() as conn:
             return conn.execute("SELECT COUNT(*) FROM gl_accounts").fetchone()[0] > 0
 
-    def reference_data(self, rates: TaxRateTable | None = None) -> ReferenceData:
-        """The GL accounts, cost centers, tax setup and policy notes, as the coder and the checks use them. Without
-        ``rates``, kept and shared until one of them, or the tax-rate file, changes: every page and every invoice
-        read asks for it, and the rate file was parsed each time. Read it, don't change it."""
-        if rates is not None:
-            return self._reference_data(rates)
+    def reference_data(self) -> ReferenceData:
+        """The GL accounts, cost centers, tax setup and policy notes, as the coder and the checks use them: kept and
+        shared until one of them, or the tax-rate file, changes (every page and every invoice read asks for it, and the
+        rate file was parsed each time). Read it, don't change it."""
         path = _tax.rates_path()
         try:
             seen = path.stat()

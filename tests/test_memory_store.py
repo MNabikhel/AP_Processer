@@ -264,7 +264,7 @@ def test_import_view_delete_accounts(tmp_path):
         "category": "Opex",
         "meals": False,
     }  # D-90
-    assert store.delete_accounts("gl_accounts", ["6020"]) == 1
+    store.save_accounts("gl_accounts", [a for a in store.list_accounts("gl_accounts") if a["code"] != "6020"])
     assert [a["code"] for a in store.list_accounts("gl_accounts")] == ["2310", "6010"]
     again = store.import_accounts("gl_accounts", [{"c": "6010", "d": "Hardware (renamed)"}], "c", "d")
     assert again["updated"] == 1

@@ -15,7 +15,7 @@ from ...coding.po import po_key
 from ...coding.terms import DEFAULT_TERMS_DAYS
 from ..audit import changed_since, diff_coding
 from ..memory import ACCEPTED, BULK, CODED, CORRECTED, pair_lines, vendor_key
-from ..paths import PROJECT_DIR, default_db_path, find_moved_file, private_dir  # noqa: F401  (re-exported)
+from ..paths import PROJECT_DIR, find_moved_file
 from ..reference_data import UNASSIGNED
 from ..schema import as_read
 from ._base import (
@@ -43,7 +43,7 @@ from ._base import (
     suggestion_kept,
 )
 from .summary import fetch_rows
-from .users import VOUCH_DAYS, account_of, same_approver  # noqa: F401  (also used by the pages)
+from .users import VOUCH_DAYS, account_of, same_approver
 
 
 class InvoicesMixin:

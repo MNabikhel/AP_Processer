@@ -11,7 +11,6 @@ from typing import Any
 from ...coding.po import po_key
 from ..audit import diff_coding
 from ..memory import vendor_key
-from ..paths import PROJECT_DIR, default_db_path, find_moved_file, private_dir  # noqa: F401  (re-exported)
 from ._base import (
     _VERIFY_IN_LINE,
     AZURE_CHECKING,
@@ -327,13 +326,6 @@ class LessonsMixin:
         counts = dict.fromkeys((AZURE_WAITING, AZURE_CHECKING, AZURE_DONE, AZURE_FAILED, AZURE_SKIPPED), 0)
         counts.update({r["status"]: int(r["n"]) for r in rows})
         return counts
-
-    def update_after_azure_check(
-        self, invoice_id: int, capture: dict[str, Any] | None, issue: dict[str, Any] | None, code: str,
-        meta: dict[str, Any] | None = None, *, expect: tuple[Any, ...] | None = None,
-    ) -> bool:  # fmt: skip
-        """Fold an Azure check into an invoice still open: ``update_after_check``."""
-        return self.update_after_check(invoice_id, capture, issue, (code,), meta, expect=expect)
 
     def update_after_check(
         self, invoice_id: int, capture: dict[str, Any] | None, issue: dict[str, Any] | None, codes: tuple[str, ...],

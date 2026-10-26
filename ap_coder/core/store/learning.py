@@ -6,7 +6,6 @@ import json
 from typing import Any
 
 from ..memory import ACCEPTED, BULK, CODED, CORRECTED, vendor_key
-from ..paths import PROJECT_DIR, default_db_path, find_moved_file, private_dir  # noqa: F401  (re-exported)
 from ._base import (
     _FEEDBACK,
     _FEEDBACK_LOCK,

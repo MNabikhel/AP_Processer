@@ -1,57 +1,29 @@
-"""Local SQLite store behind the dashboard (``private/ap_coder.db``).
+"""The store's foundation (D-69): the schema (``_SCHEMA``, ``SCHEMA_VERSION``), the migrations of an older database
+(``StoreCore._migrate``), the connections (``StoreCore._conn``, ``StoreCore.session``) and the helpers the other parts
+share: the statuses and queues' names, ``_now``, ``_in_list``, ``fold_text`` (the SQL function ``ap_fold``), and what
+an approval counts as coded, kept or guessed (``suggestion_kept``, ``proposed_coding``, ``line_guessed``)."""
 
-Holds everything the prototype needs to run without any enterprise data
-leaving the machine:
-
-* GL accounts ("cost codes") and optional cost centers, imported by the user
-  with their own choice of code / description / category columns.
-* Tax setup: how each tax type (GST, HST, PST, QST) is posted and to which GL.
-* Coding policy notes.
-* Processed invoices with the AI output, the reviewer's final version and the
-  validation report.
-* Feedback: one row per approved invoice line, recording whether the reviewer
-  accepted or corrected the AI's coding. This is the learning memory.
-"""
-
-# ruff: noqa: F401  (the old module's imports stay importable from here: ap_coder.core.store re-exports them)
 from __future__ import annotations
 
 import contextvars
 import datetime as dt
-import hashlib
 import json
-import math
 import re
-import shutil
 import sqlite3
 import threading
-import time
 import unicodedata
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from ...coding.po import OPEN, po_key
-from ...coding.rules import Rule
-from ...coding.tax import DEFAULT_TREATMENTS, TAX_TYPES, TREATMENTS, TaxRateTable, TaxSetup, TaxTreatment
+from ...coding.po import po_key
 from ...coding.terms import DEFAULT_TERMS_DAYS, payment
 from ...coding.vendors import norm_invoice_number
-from ..audit import diff_coding
-from ..memory import ACCEPTED, CODED, CORRECTED, VENDOR_KEY_RULES, pair_lines, refresh_vendor_key, vendor_key
-from ..paths import PROJECT_DIR, default_db_path, find_moved_file, private_dir  # noqa: F401  (re-exported)
-from ..reference_data import UNASSIGNED, ReferenceData, ReferenceTable, parse_policy_notes
-from ..schema import as_read
-from .fx import (  # noqa: F401  (re-exported)
-    _FX_RATE,
-    APPROVAL_CONTROLS,
-    LOW_UNIT_FX_RATES,
-    MIN_FX_RATE,
-    min_fx_rate,
-    parse_fx_rates,
-    tiny_fx_rates,
-    unread_fx_text,
-)
+from ..memory import CODED, CORRECTED, VENDOR_KEY_RULES, pair_lines, refresh_vendor_key, vendor_key
+from ..paths import default_db_path, private_dir  # noqa: F401  (private_dir: re-exported by the package)
+from ..reference_data import UNASSIGNED
+from .fx import _FX_RATE, APPROVAL_CONTROLS, parse_fx_rates, tiny_fx_rates, unread_fx_text  # noqa: F401  (re-exported)
 
 # 10: erp_invoices, 11: coding_rules (by _SCHEMA), 12: currency, 13: credit notes not due,
 # 14: invoice_capture, supplier_profiles, supplier_outcomes (by _SCHEMA), 15: reader_outcomes, page_reads (by _SCHEMA),
