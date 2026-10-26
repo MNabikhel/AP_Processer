@@ -356,11 +356,7 @@ def read_msg(data: bytes) -> MsgEmail:
         name = _text(cf, 0, SENDER_NAME)
         address = _text(cf, 0, SENDER_SMTP) or _text(cf, 0, SENDER_EMAIL)
         out.sender = f"{name} <{address}>" if name and address else name or address
-        out.body = _text(cf, 0, BODY)
-        if not out.body:
-            i = cf.entries[0].children.get(f"__SUBSTG1.0_{HTML_BODY}0102")
-            if i is not None:
-                out.body = html_to_text(cf.stream(i).decode("utf-8", "replace"))
+        out.body = _text(cf, 0, BODY) or html_to_text(_html(cf, 0))
         _message(cf, 0, out, 0)
     except MsgError:
         raise
