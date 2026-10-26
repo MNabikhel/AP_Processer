@@ -255,14 +255,15 @@ def test_the_settings_are_read_again_only_when_the_env_file_changes(tmp_path, mo
     monkeypatch.setattr(envfile, "read_text", lambda path, *a, **k: reads.append(path) or real(path, *a, **k))
     app = create_app(None, Store(tmp_path / "ap.db"), start_reader=False)
     first = app.state.settings_factory()
-    assert app.state.settings_factory() is first and len(reads) == 1
+    once = len(reads)  # (the .env's values are read, then its settings: B-1404)
+    assert app.state.settings_factory() is first and len(reads) == once
     stamp = env.stat().st_mtime_ns + 5_000_000_000
     os.utime(env, ns=(stamp, stamp))  # saved again (the Settings page)
     app.state.settings_factory()
-    assert len(reads) == 2
+    assert len(reads) == 2 * once
     monkeypatch.setenv("AP_REVIEWER", "Someone else")  # the environment changed: read again too
     app.state.settings_factory()
-    assert len(reads) == 3
+    assert len(reads) > 2 * once
 
 
 def test_a_list_of_invoices_does_not_look_for_each_file_every_time(tmp_path, monkeypatch):

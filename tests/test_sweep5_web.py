@@ -114,3 +114,48 @@ def test_the_words_of_a_missing_file_name_it_without_its_folder_to_a_colleague(s
     answer = _colleague(app).get(f"/review/{invoice_id}/words").json()
     assert not answer["ok"] and answer["words"] == []
     assert "Supplier 123.pdf" in answer["error"] and "Secret Folder" not in answer["error"]
+
+
+# --- B-1404: a setting another web worker saved never applied in this one ---------------------------------------------
+
+
+def _saved_elsewhere(env, updates: dict[str, str]) -> None:
+    """Another web worker of the server saved Settings: its .env changed, not this process's environment."""
+    import os
+
+    from ap_coder.core.envfile import write_env
+
+    write_env(env, updates)
+    later = env.stat().st_mtime_ns + 5_000_000_000
+    os.utime(env, ns=(later, later))
+
+
+def test_a_setting_another_web_worker_saved_applies_in_this_one(tmp_path, monkeypatch):
+    from ap_coder.core.config import Settings
+    from ap_coder.web.app import EnvSettings
+
+    env = tmp_path / ".env"
+    env.write_text("AP_REVIEW_THRESHOLD=0.80\nAP_CONSTRAIN_CODES=true\n", encoding="utf-8")
+    monkeypatch.setenv("AP_ENV_FILE", str(env))
+    for name in ("AP_REVIEW_THRESHOLD", "AP_CONSTRAIN_CODES"):
+        monkeypatch.setenv(name, "")  # (put back as it was after the test)
+        monkeypatch.delenv(name)
+    Settings.from_env()  # as `serve` starts: the .env read into this process's environment
+    settings = EnvSettings()
+    assert settings().engine.review_threshold == 0.80
+    _saved_elsewhere(env, {"AP_REVIEW_THRESHOLD": "0.90", "AP_CONSTRAIN_CODES": "false"})
+    now = settings()
+    assert now.engine.review_threshold == 0.90 and now.engine.constrain_codes is False
+
+
+def test_a_setting_given_to_the_process_still_wins_over_the_env_file(tmp_path, monkeypatch):
+    from ap_coder.web.app import EnvSettings
+
+    env = tmp_path / ".env"
+    env.write_text("AP_REVIEW_THRESHOLD=0.80\n", encoding="utf-8")
+    monkeypatch.setenv("AP_ENV_FILE", str(env))
+    monkeypatch.setenv("AP_REVIEW_THRESHOLD", "0.70")  # set for the service itself
+    settings = EnvSettings()
+    assert settings().engine.review_threshold == 0.70
+    _saved_elsewhere(env, {"AP_REVIEW_THRESHOLD": "0.90"})
+    assert settings().engine.review_threshold == 0.70

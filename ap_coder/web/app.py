@@ -17,6 +17,7 @@ import contextlib
 import getpass
 import hmac
 import importlib
+import io
 import logging
 import os
 import secrets
@@ -26,14 +27,15 @@ from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
 
+from dotenv import dotenv_values
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ap_coder import __version__
-from ap_coder.core import paths
-from ap_coder.core.config import Settings
+from ap_coder.core import envfile, paths
+from ap_coder.core.config import Settings, process_var
 from ap_coder.core.store import Store, default_db_path
 from ap_coder.ops import offline
 from ap_coder.web import core, identity, roles
@@ -117,11 +119,17 @@ def default_store() -> Store:
 
 class EnvSettings:
     """The settings from the .env and the environment, read again only when either changed (the .env's time and
-    size, the environment's values): every request asks for them, and the Settings page saves to the .env."""
+    size, the environment's values): every request asks for them, and the Settings page saves to the .env.
+
+    A value the environment took from the .env (when AP Coder started, or saved here since) gives way to the .env's
+    new one: with several web workers (D-111) another worker saved it there, and only its own environment had it
+    (B-1404). A value the environment was given otherwise (the service's own) still wins, as ``Settings.from_env``
+    has it."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._kept: tuple[Any, Settings] | None = None
+        self._file: tuple[tuple[Any, ...], dict[str, str]] | None = None  # the .env's stamp and values, last read
 
     @staticmethod
     def _stamp() -> tuple[Any, ...]:
@@ -134,10 +142,24 @@ class EnvSettings:
         file = (str(path), seen.st_mtime_ns, seen.st_size) if seen is not None else (str(path), None, None)
         return (*file, frozenset(os.environ.items()))
 
+    def _follow_the_file(self) -> None:
+        """Take out of the environment each value the .env gave it that the .env no longer has (B-1404)."""
+        stamp = self._stamp()[:3]
+        if self._file is not None and self._file[0] == stamp:
+            return
+        path = Path(stamp[0]) if stamp[1] is not None else None
+        values = dotenv_values(stream=io.StringIO(envfile.read_text(path)), interpolate=False) if path else {}
+        now = {name: value for name, value in values.items() if value is not None and not process_var(name)}
+        for name, value in (self._file[1] if self._file is not None else {}).items():
+            if os.environ.get(name) == value and now.get(name) != value:
+                del os.environ[name]  # Settings.from_env puts the .env's new value in its place
+        self._file = (stamp, now)
+
     def __call__(self) -> Settings:
         with self._lock:
             if self._kept is not None and self._kept[0] == self._stamp():
                 return self._kept[1]
+            self._follow_the_file()
             read = Settings.from_env(os.environ.get("AP_ENV_FILE"))
             self._kept = (self._stamp(), read)  # after reading: the .env's values are in the environment now
             return read
