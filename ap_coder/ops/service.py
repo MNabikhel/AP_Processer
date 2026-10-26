@@ -724,14 +724,18 @@ def remove(data: Path, s: ServerSettings, say: Say = print) -> int:
     return 0
 
 
+def _task_state(done: subprocess.CompletedProcess) -> str:
+    """The task's state in ``schtasks /query /v /fo LIST``'s answer ("Ready", "Running"...; "?" when it says none)."""
+    return next((line.split(":", 1)[1].strip() for line in (done.stdout or "").splitlines()
+                 if line.strip().lower().startswith("status:")), "?")  # fmt: skip
+
+
 def status(data: Path, s: ServerSettings, say: Say = print) -> int:
     done = run_command(["schtasks", "/query", "/tn", s.task_name, "/v", "/fo", "LIST"], capture_output=True)
     if done.returncode:
         say(f'The task "{s.task_name}" is not installed: python -m ap_coder service install')
         return 1
-    state = next((line.split(":", 1)[1].strip() for line in (done.stdout or "").splitlines()
-                  if line.strip().lower().startswith("status:")), "?")  # fmt: skip
-    say(f'Scheduled task "{s.task_name}": {state} (runs as {s.account})')
+    say(f'Scheduled task "{s.task_name}": {_task_state(done)} (runs as {s.account})')
     host = _read_json(host_record(data))
     if host and process_alive(int(host.get("pid") or 0)):
         say(f"Service host: running since {host.get('started', '?')} (process {host.get('pid')}, AP Coder "
@@ -809,10 +813,9 @@ def doctor_checks(data: Path, env: dict | None = None, *, windows: bool = WINDOW
     if done.returncode:
         return [*out, ("server service", "WARN", f'the task "{s.task_name}" is not installed: python -m ap_coder '
                        "service install")]  # fmt: skip
-    state = next((line.split(":", 1)[1].strip() for line in (done.stdout or "").splitlines()
-                  if line.strip().lower().startswith("status:")), "?")  # fmt: skip
     stopped = " (stopped on purpose: service start)" if stop_flag(data).exists() else ""
-    return [*out, ("server service", "PASS", f'task "{s.task_name}": {state}, runs as {s.account}{stopped}')]
+    task = f'task "{s.task_name}": {_task_state(done)}, runs as {s.account}{stopped}'
+    return [*out, ("server service", "PASS", task)]
 
 
 def add_parser(sub: Any) -> None:

@@ -35,14 +35,11 @@ from ..core.config import Settings
 from ..core.paths import PROJECT_DIR, env_path
 from ..core.reference_data import ReferenceData, load_reference_data, load_table, parse_policy_notes
 from ..core.schema import build_json_schema
-from ..core.store import Store, default_db_path, private_dir
+from ..core.store import SAMPLE_DATA_DIR, Store, default_db_path, private_dir
 from ..intake.mailbox import EMAIL_EXTENSIONS, emails_in, unpack, unpack_folder
 from . import server_update, service
 from .doctor import FAIL, Check, exit_code, format_checks, run_checks
 from .share_report import build_share_report
-
-SAMPLE_DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
-# Everything enterprise-specific lives under ./private, which is git-ignored.
 
 _REFERENCE_FILES = {
     "coa": ("chart_of_accounts", (".csv", ".json")),
@@ -872,8 +869,6 @@ def _say_left_out(counts: dict) -> None:
 
 
 def cmd_export_training(args: argparse.Namespace) -> int:
-    import datetime as dt
-
     from ..ai.training_export import export_training_set, training_invoices
 
     store = Store(args.db)

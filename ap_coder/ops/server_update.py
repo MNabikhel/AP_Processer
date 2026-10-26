@@ -42,6 +42,7 @@ from typing import Any
 from ..core import paths
 from ..core.paths import PROJECT_DIR, private_dir
 from . import service
+from .offline import sha256 as file_sha256
 
 Say = Callable[[str], None]
 REQUIRED = ("bundle_manifest.json", "pyproject.toml", "ap_coder/__init__.py", "scripts/launch.py")
@@ -313,12 +314,6 @@ def outside_install(folder: Path) -> str:
     return (f"server.json names {folder} as the previous version, which is not beside this AP Coder folder "
             f"({here.parent}): AP Coder won't run it. If nobody moved it, server.json was changed by someone: "
             "check it. Nothing was changed.")  # fmt: skip
-
-
-def file_sha256(path: Path) -> str:
-    from .offline import sha256
-
-    return sha256(path)
 
 
 def hash_refusal(copy: Path, given: str | None, check: bool, say: Say) -> str:

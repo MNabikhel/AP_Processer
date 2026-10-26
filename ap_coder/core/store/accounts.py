@@ -8,10 +8,11 @@ import json
 import math
 import sqlite3
 import threading
+from pathlib import Path
 from typing import Any
 
 from ...coding import tax as _tax
-from ...coding.tax import DEFAULT_TREATMENTS, TAX_TYPES, TREATMENTS, TaxRateTable, TaxSetup, TaxTreatment
+from ...coding.tax import TAX_TYPES, TREATMENTS, TaxRateTable, TaxSetup, TaxTreatment
 from ..reference_data import ReferenceData, ReferenceTable, marks_meals, parse_policy_notes
 from ._base import (
     ACCOUNT_TABLES,
@@ -48,6 +49,16 @@ _CHECKS_STAMP = """SELECT
     (SELECT COUNT(*) FROM export_batches WHERE format = 'jde'),
     (SELECT group_concat(code || '|' || currency || '|' || gl_account || '|' || is_default || '|' || active, char(10))
      FROM (SELECT * FROM bank_accounts ORDER BY code))"""
+
+
+def _file_stamp(path: Path) -> tuple[str, tuple[int, int] | None]:
+    """(the tax-rate file, its time and size: None when it can't be read), as the stamps above compare it."""
+    try:
+        seen = path.stat()
+    except OSError:
+        return str(path), None
+    return str(path), (seen.st_mtime_ns, seen.st_size)
+
 
 # The audit events of a change to the vendor master or the POs: each one counts (``count_masters_change``).
 MASTERS_CHANGES = frozenset({"vendor_updated", "vendors_imported", "vendor_added", "vendors_deleted", "pos_imported",
@@ -318,17 +329,9 @@ class AccountsMixin:
     # --- Tax setup and policy ---------------------------------------------------------------------
 
     def tax_treatments(self) -> dict[str, TaxTreatment]:
+        """How each tax type is posted (the default treatment for one not set up): ``tax_treatments_in``."""
         with self._conn() as conn:
-            stored = {r["tax_type"]: r for r in conn.execute("SELECT * FROM tax_treatments")}
-        result = {}
-        for tax_type in TAX_TYPES:
-            r = stored.get(tax_type)
-            result[tax_type] = (
-                TaxTreatment(tax_type, r["treatment"], r["gl_code"])
-                if r
-                else TaxTreatment(tax_type, DEFAULT_TREATMENTS[tax_type])
-            )
-        return result
+            return self.tax_treatments_in(conn)
 
     def set_tax_treatment(self, tax_type: str, treatment: str, gl_code: str = "", actor: str | None = None) -> None:
         if tax_type not in TAX_TYPES or treatment not in TREATMENTS:
@@ -402,13 +405,8 @@ class AccountsMixin:
         shared until one of them, or the tax-rate file, changes (every page and every invoice read asks for it, and the
         rate file was parsed each time). Read it, don't change it."""
         path = _tax.rates_path()
-        try:
-            seen = path.stat()
-            mtime: tuple[int, int] | None = (seen.st_mtime_ns, seen.st_size)
-        except OSError:
-            mtime = None
         with self._conn() as conn:
-            stamp = (str(path), mtime, *conn.execute(_REFERENCE_STAMP).fetchone())
+            stamp = (*_file_stamp(path), *conn.execute(_REFERENCE_STAMP).fetchone())
         key = str(self.path.resolve())
         with _REFERENCE_LOCK:
             kept = _REFERENCE.get(key)
@@ -426,14 +424,8 @@ class AccountsMixin:
         accounts, cost centers, tax setup and rate file, our province and sites, the policy notes, JD Edwards, the
         days to pay, and any change to the vendor master or the POs. A validation stored with another one may say
         what today's checks would not (B-815)."""
-        path = _tax.rates_path()
-        try:
-            seen = path.stat()
-            mtime: tuple[int, int] | None = (seen.st_mtime_ns, seen.st_size)
-        except OSError:
-            mtime = None
         with self._conn() as conn:
-            parts = (str(path), mtime, *conn.execute(_REFERENCE_STAMP).fetchone(),
+            parts = (*_file_stamp(_tax.rates_path()), *conn.execute(_REFERENCE_STAMP).fetchone(),
                      *conn.execute(_CHECKS_STAMP).fetchone())  # fmt: skip
         return hashlib.sha256(repr(parts).encode("utf-8")).hexdigest()[:20]
 
