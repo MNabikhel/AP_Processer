@@ -1,6 +1,6 @@
-"""The fixes from an end-to-end review (B-1211 on): the UNASSIGNED cost center in the ERP files, the command line's setup
-gate, the doctor in server mode, the Exports buttons for Read-only, the Learning page's headline, the hub's activity
-and the duplicate-in-JD-Edwards message."""
+"""The fixes from an end-to-end review (B-1211 on): the UNASSIGNED cost center in the ERP files, the command line's
+setup gate, the doctor in server mode, the Exports buttons for Read-only, the Learning page's headline and the hub's
+activity."""
 
 from __future__ import annotations
 
@@ -65,3 +65,122 @@ def test_process_and_watch_refuse_until_the_gl_accounts_are_imported(tmp_path, m
     load_sample_setup(Store(tmp_path / "a.db"))  # the sample setup (the demo) is a setup: it reads
     assert cli.main(_cli_args(tmp_path, "process", str(folder), *out)) == 0
     assert len(Store(tmp_path / "a.db").list_invoices()) == 1
+
+
+def test_the_doctor_checks_the_server_accounts_the_jd_edwards_api_and_the_hub_feed(tmp_path, monkeypatch, capsys):
+    """B-1213: with AP_SERVER_MODE=1 and no accounts the doctor said 0 failures (nobody can log in), and it had no line
+    for the JD Edwards API (on, password, last test, vouchers waiting) nor the finance hub feed (on, folder, last
+    run)."""
+    import json
+
+    from ap_coder.core.store import Store
+    from ap_coder.erp import jde_ais
+    from ap_coder.ops import cli, offline
+
+    data = tmp_path / "data"
+    data.mkdir()
+    db = data / "ap_coder.db"
+    store = Store(db)
+    monkeypatch.setenv("AP_PRIVATE_DIR", str(data))
+    monkeypatch.setenv(offline.SERVER_ENV, "1")
+    monkeypatch.delenv(jde_ais.PASSWORD_ENV, raising=False)
+    args = ["--env-file", str(tmp_path / "none.env"), "--db", str(db), "doctor"]
+    assert cli.main(args) == 1
+    out = capsys.readouterr().out
+    assert "[FAIL] server accounts" in out and "python -m ap_coder users add --admin <name>" in out
+    assert "[SKIP] JD Edwards API" in out and "[SKIP] finance hub feed" in out
+
+    store.add_user("jsmith", "a long enough password 1", role="admin")
+    store.set_setting(jde_ais.SETTING_KEY, json.dumps({"base_url": "https://jde.company.local:9300", "step2": True}))
+    store.set_setting("hub_enabled", "on")
+    store.set_setting("hub_folder", str(tmp_path / "nowhere"))
+    assert cli.main(args) == 1
+    out = capsys.readouterr().out
+    assert "[PASS] server accounts" in out and "1 account" in out
+    assert "[FAIL] JD Edwards API" in out and "No password saved" in out
+    assert "JD Edwards API test" in out and "never tested" in out
+    assert "[PASS] JD Edwards API queue" in out and "nothing waiting" in out
+    assert "finance hub feed" in out and "nowhere" in out and "never run" in out
+
+
+def test_read_only_is_not_offered_the_export_batch_downloads(tmp_path):
+    """B-1214: the Exports page showed "Download again" and "Approved PDFs (ZIP)" to Read-only: both are refused
+    (403)."""
+    from fastapi.testclient import TestClient
+
+    from ap_coder.core.store import Store, load_sample_setup
+    from ap_coder.ops.demo import load_demo
+    from ap_coder.web.app import create_app
+
+    from .test_server_role_pages import GOOD
+    from .webclient import PAGE, web_settings
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(store)
+    load_demo(store)
+    batch = store.create_export_batch([i["id"] for i in store.list_invoices("approved")][:1], "xlsx")
+    app = create_app(web_settings(), store, start_reader=False, server=True)
+    uid = store.add_user("viewer", GOOD, role="readonly")
+    with store._conn() as conn:
+        conn.execute("UPDATE users SET must_change = 0 WHERE id = ?", (uid,))
+    client = TestClient(app, base_url="https://localhost", client=("10.0.0.5", 50000), follow_redirects=False)
+    assert client.post("/login", data={"username": "viewer", "password": GOOD}, headers=PAGE).status_code in (200, 303)
+    page = client.get(f"/exports?batch={batch}", headers={"Accept": "text/html"}).text
+    assert f"/exports/batches/{batch}/download" not in page and "approved-pdfs.zip" not in page
+    assert client.get(f"/exports/batches/{batch}/download").status_code == 403
+
+
+def test_the_learning_headline_says_which_approvals_only_had_blanks_filled_in(tmp_path, ground_truth):
+    """B-1215: Learning said "Approved as coded 100%, 2 of 2 needed no change" when AP had filled in every GL account
+    the AI left UNASSIGNED on one of them (the same page lists those lines as "coded by AP"). The figure keeps its
+    meaning (D-39); its line says how many only had blanks filled in by AP."""
+    import copy
+    import re
+
+    from ap_coder.core.store import Store
+    from ap_coder.erp import insights
+    from ap_coder.web.pages.learning import coding_context
+
+    store = Store(tmp_path / "ap.db")
+    a = store.add_invoice(tmp_path / "a.pdf", ground_truth, {"requires_review": True})
+    blank = copy.deepcopy({**ground_truth, "invoice_number": "X-2"})
+    for li in blank["line_items"]:
+        li["predicted_gl_code"] = "UNASSIGNED"
+    b = store.add_invoice(tmp_path / "b.pdf", blank, {"requires_review": True})
+    store.approve_invoice(a, ground_truth, "jane")
+    store.approve_invoice(b, {**ground_truth, "invoice_number": "X-2"}, "jane")
+    assert insights.approved_as_coded(store) == (2, 2)  # D-39: filling in a blank is no correction
+    tiles = " ".join(str(t) for t in coding_context(store, "")["tiles"])
+    text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", tiles))
+    assert "2 of 2 needed no change" not in text
+    assert "1 of 2 needed no change, 1 only had blanks filled in by AP" in text
+    page = insights.compute(store)
+    assert (page["approved_clean"], page["approved_filled"]) == (2, 1)
+
+
+def test_the_hub_leaves_out_ap_s_reasons_and_tests_and_sample_setups_say_who(tmp_path, monkeypatch):
+    """B-1216: the finance hub's `activity` sent AP's reason for a lesson (lesson_explained) in detail_json, although
+    FINANCE_HUB.md leaves the learning memory's lessons out; jde_api_tested and the sample setup's accounts_imported
+    were recorded without who did it."""
+    import json
+
+    from ap_coder.core.store import Store, load_sample_setup
+    from ap_coder.erp import jde_ais
+    from ap_coder.erp.hub import tables
+
+    from .fake_ais import PASSWORD, FakeAis
+
+    store = Store(tmp_path / "ap_coder.db")
+    store.log_event("lesson_explained", actor="jane", detail={"situation": "acme|gl", "reason": "Rent goes to 6100"})
+    (row,) = [r for r in tables.activity(store, tables.Context()) if r["action"] == "lesson_explained"]
+    assert row["actor"] == "jane" and "Rent goes to 6100" not in row["detail_json"]
+    assert "acme|gl" not in row["detail_json"]
+
+    load_sample_setup(store, cost_centers=False, actor="jane")
+    assert {e["actor"] for e in store.events(actions=["accounts_imported"])} == {"jane"}
+    with FakeAis() as ais:
+        store.set_setting(jde_ais.SETTING_KEY, ais.settings().to_json())
+        monkeypatch.setenv(jde_ais.PASSWORD_ENV, PASSWORD)
+        assert jde_ais.connection_test(store, actor="jane")["ok"]
+    (tested,) = store.events(actions=["jde_api_tested"])
+    assert tested["actor"] == "jane", json.dumps(tested)

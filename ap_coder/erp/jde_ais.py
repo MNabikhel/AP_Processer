@@ -768,7 +768,7 @@ def client(store: Any, *, need: str = "", allow_off: bool = False) -> AisClient:
     return AisClient(cfg, allow_off=allow_off)
 
 
-def connection_test(store: Any) -> dict[str, Any]:
+def connection_test(store: Any, actor: str | None = None) -> dict[str, Any]:
     """Test connection (Settings → JD Edwards E1 → API connection) and ``jde test``: only once the connection is on
     (an Admin switched a step on)."""
     cfg = load(store)
@@ -780,7 +780,7 @@ def connection_test(store: Any) -> dict[str, Any]:
     except AisError as exc:
         found = {"ok": False, "error": scrub(str(exc), cfg.password), "kind": exc.kind}
     store.set_setting(SETTING_KEY + "_tested", json.dumps({**found, "at": _now()}))
-    store.log_event("jde_api_tested", detail={"ok": found.get("ok"), "kind": found.get("kind", "")})
+    store.log_event("jde_api_tested", actor=actor, detail={"ok": found.get("ok"), "kind": found.get("kind", "")})
     return found
 
 

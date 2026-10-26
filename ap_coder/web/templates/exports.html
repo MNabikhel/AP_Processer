@@ -260,11 +260,15 @@
   </div>
   {% endif %}
   <div class="row">
+    {% if can("/exports/batches/1/download", "GET") %}
     <a class="btn primary" href="/exports/batches/{{ chosen.id }}/download?fmt={{ again_fmt }}" download>
       <span class="ms" aria-hidden="true">download</span>{{ "Download" if just and just.id == chosen.id else "Download again" }}</a>
+    {% endif %}
+    {% if can("/exports/batches/1/approved-pdfs.zip", "GET") %}
     <a class="btn" href="/exports/batches/{{ chosen.id }}/approved-pdfs.zip" download
        title="Each invoice of the batch with an APPROVED stamp and its coding page: to attach in the ERP.">
       <span class="ms" aria-hidden="true">approval</span>Approved PDFs (ZIP)</a>
+    {% endif %}
     {% if can("/exports/batches/1/undo") %}
     <details class="pop">
       <summary class="btn"><span class="ms" aria-hidden="true">undo</span>Undo this batch…</summary>

@@ -319,6 +319,14 @@ def cmd_doctor(args: argparse.Namespace, settings: Settings) -> int:
         checks.append(Check("database", FAIL, f"{db} cannot be opened ({exc}): it is damaged or not an AP Coder "
                             "database. Put back a copy from the backups folder next to it."))  # fmt: skip
         source = "none (the database cannot be opened)"
+    else:
+        from .doctor import store_checks
+        from .service import is_server_here
+
+        db = Path(getattr(args, "db", None) or default_db_path())
+        server = is_server_here(private_dir())
+        if db.exists() or server:  # a laptop not set up yet has no database: nothing to look at
+            checks.extend(store_checks(Store(db), server))
     report = format_checks(checks)
     print(report.replace("\n\n", f"\n\nreference data source: {source}\n\n", 1))
     return exit_code(checks)
@@ -414,8 +422,10 @@ def _inputs(paths: list[str], store: Store | None = None) -> tuple[list[Path], b
     return list(unique.values()), unread, sorted_emails
 
 
-NO_GL_ACCOUNTS = ("Finish the setup first: import your GL accounts in the dashboard (GL accounts & tax). Invoices "
-                  "coded before that could not be checked or approved.")
+NO_GL_ACCOUNTS = (
+    "Finish the setup first: import your GL accounts in the dashboard (GL accounts & tax). Invoices "
+    "coded before that could not be checked or approved."
+)
 
 
 def cmd_process(args: argparse.Namespace, settings: Settings) -> int:

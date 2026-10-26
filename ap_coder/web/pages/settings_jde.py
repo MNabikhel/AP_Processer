@@ -424,7 +424,7 @@ def test_api(request: Request) -> JSONResponse:
     store = get_store(request)
     if not jde_ais.load(store).on:
         return refuse(str(jde_ais.AisOff()) + " Switch step 1 or step 2 on (and save) to test the connection.")
-    found = jde_ais.connection_test(store)
+    found = jde_ais.connection_test(store, actor=reviewer())
     if found.get("ok"):
         return done(request, API_URL, found["summary"])
     return refuse(found.get("error") or "The connection test failed.")

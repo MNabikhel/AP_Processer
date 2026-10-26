@@ -288,6 +288,67 @@ def run_checks(
     return checks
 
 
+def store_checks(store: Any, server: bool) -> list[Check]:
+    """What the database holds that the rest of the doctor can't see (B-1213): the accounts on the company server (none:
+    nobody can log in), the JD Edwards API (on, its password, the last test, the vouchers waiting) and the finance
+    hub feed (on, its folder, the last run)."""
+    from pathlib import Path
+
+    from ..erp import jde_ais, jde_post
+    from ..erp.hub.run import FOLDER, HubConfig, last_run
+
+    checks: list[Check] = []
+    if server:
+        count = store.user_count()
+        if count:
+            admins = sum(1 for u in store.list_users() if u["role"] == "admin" and u["active"])
+            checks.append(Check("server accounts", PASS if admins else FAIL,
+                                f"{count} account(s), {admins} active Admin(s)" if admins else f"{count} account(s), "
+                                "but no active Admin: python -m ap_coder users add --admin <name>"))  # fmt: skip
+        else:
+            checks.append(Check("server accounts", FAIL, "no accounts: nobody can log in: python -m ap_coder users add "
+                                "--admin <name>"))  # fmt: skip
+    cfg = jde_ais.load(store)
+    if not cfg.on:
+        checks.append(Check("JD Edwards API", SKIP, "off: JD Edwards gets the batch files (Exports)"))
+    else:
+        usable, state = jde_ais.status(cfg)
+        detail = state if usable else f"on, but: {state} (Settings → JD Edwards E1 → API connection)"
+        checks.append(Check("JD Edwards API", PASS if usable else FAIL, detail))
+        tested = jde_ais.last_test(store)
+        if not tested:
+            checks.append(Check("JD Edwards API test", WARN, "never tested: Settings → JD Edwards E1 → API connection "
+                                "→ Test connection (or python -m ap_coder jde test)"))  # fmt: skip
+        elif tested.get("ok"):
+            checks.append(Check("JD Edwards API test", PASS, f"passed {tested.get('at', '')}".strip()))
+        else:
+            error = jde_ais.scrub(tested.get("error") or "", cfg.password)
+            checks.append(Check("JD Edwards API test", WARN, f"failed {tested.get('at', '')}: {error}"))
+        queue = jde_post.waiting(store)
+        checks.append(Check("JD Edwards API queue", WARN if queue else PASS,
+                            f"{len(queue)} voucher(s) waiting to be sent (Exports → the batch → JD Edwards API)"
+                            if queue else "nothing waiting"))  # fmt: skip
+    hub = HubConfig.load(store)
+    if not hub.enabled:
+        checks.append(Check("finance hub feed", SKIP, "off"))
+    else:
+        where = hub.folder if hub.mode == FOLDER else hub.onelake_url
+        if not where:
+            checks.append(Check("finance hub feed", FAIL, f"on, but no {hub.mode} is set (Settings → Finance hub)"))
+        elif hub.mode == FOLDER and not Path(where).is_dir():
+            checks.append(Check("finance hub feed", WARN, f"on: the folder {where} can't be reached from here"))
+        else:
+            checks.append(Check("finance hub feed", PASS, f"on: {hub.mode} {where}"))
+        last = last_run(store)
+        if not last:
+            checks.append(Check("finance hub last run", WARN, "never run: python -m ap_coder hub export"))
+        else:
+            ok = bool(last.get("ok"))
+            checks.append(Check("finance hub last run", PASS if ok else WARN,
+                                f"{last.get('at')}: {last.get('summary') or last.get('error') or ''}"))  # fmt: skip
+    return checks
+
+
 def _provider_detail(settings: Settings, provider: str) -> str:
     if provider == "azure":
         return "Azure OpenAI (the internet is allowed: AP_ALLOW_INTERNET=1)"

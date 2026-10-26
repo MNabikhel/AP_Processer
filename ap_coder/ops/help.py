@@ -185,8 +185,10 @@ CHECKS: dict[str, CheckHelp] = {
     ),
     "DUPLICATE_IN_ERP": CheckHelp(
         FRAUD, "Already in the ERP",
-        "The ERP's invoice register (imported on the Exports page) already has this vendor's invoice with the "
-        "same number: it was entered, and maybe paid, before or outside AP Coder.",
+        "The ERP already has this vendor's invoice with the same number: it was entered, and maybe paid, before or "
+        "outside AP Coder. AP Coder looks in the ERP invoice register (imported on the Exports page, or filled by the "
+        "JD Edwards API's nightly sync) and, with the JD Edwards API on, asks JD Edwards itself as the invoice is "
+        "checked: then the message names the voucher and whether it is paid.",
         "Check the ERP. If it is the same bill, reject this one so it is not paid twice.",
     ),
     "JDE_NOT_REACHED": CheckHelp(
