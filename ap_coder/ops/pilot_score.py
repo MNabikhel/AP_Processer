@@ -33,6 +33,7 @@ from typing import Any
 
 from ..bench.scoring import values_match
 from ..coding.vendors import norm_invoice_number
+from ..core import ui
 from ..core.headers import match_columns
 from ..core.memory import vendor_key
 from ..core.reference_data import UNASSIGNED
@@ -269,9 +270,11 @@ def posted_vouchers(
     out = list(found.values())
     for name, what, column in (("grand_total", "gross", "RPACR"), ("tax_total", "tax", "RPCTAM")):
         if domestic_only[name]:
-            notes.append(f"{domestic_only[name]} foreign-currency vouchers have no foreign {what} amount ({column}) in "
-                         f"the export: their {what} is in {domestic.upper()}, so it is not compared. Add {column} to "
-                         "the export to compare it.")  # fmt: skip
+            one = domestic_only[name] == 1
+            many = ui.plural(domestic_only[name], "foreign-currency voucher")
+            notes.append(f"{many} {'has' if one else 'have'} no foreign {what} amount ({column}) in the export: "
+                         f"{'its' if one else 'their'} {what} is in {domestic.upper()}, so it is not compared. Add "
+                         f"{column} to the export to compare it.")  # fmt: skip
     if distribution:
         notes += _attach_lines(out, distribution, implied_decimals, domestic)
     return out, notes
@@ -711,9 +714,10 @@ def score(ours: list[Ours], posted: list[Posted], notes: list[str] | None = None
         diff(None, p, "not in AP Coder", "Voucher", "", p.gross, "posted in JD Edwards, not approved in AP Coder")
 
     untaxed = [
-        f"{tax_not_compared} vouchers' tax is not compared: with the tax coded to G/L accounts the voucher (F0411) "
-        "carries no tax, and the G/L export (F0911) was not given or their tax accounts are not in the account "
-        "mapping (Settings → JD Edwards). Give the F0911 export to compare the tax with its tax account lines."
+        ("1 voucher's" if tax_not_compared == 1 else f"{tax_not_compared} vouchers'")
+        + " tax is not compared: with the tax coded to G/L accounts the voucher (F0411) carries no tax, and the G/L "
+        "export (F0911) was not given or their tax accounts are not in the account mapping (Settings → JD Edwards). "
+        "Give the F0911 export to compare the tax with its tax account lines."
     ] if tax_not_compared else []  # fmt: skip
     return {
         "invoices": {
@@ -940,8 +944,10 @@ def run(
         lo, hi = start or (dates[0] if dates else ""), end or (dates[-1] if dates else "")
         kept = [p for p in posted if in_window(p.invoice_date, lo, hi)]
         if len(kept) < len(posted):
-            notes.append(f"{len(posted) - len(kept)} vouchers dated outside {lo or '…'} to {hi or '…'} (the invoices "
-                         "approved in AP Coder) are left out; --all keeps them.")  # fmt: skip
+            left = len(posted) - len(kept)
+            notes.append(f"{ui.plural(left, 'voucher')} dated outside {lo or '…'} to {hi or '…'} (the invoices "
+                         f"approved in AP Coder) {'is' if left == 1 else 'are'} left out; --all keeps "
+                         f"{'it' if left == 1 else 'them'}.")  # fmt: skip
         posted = kept
     report = score(ours, posted, notes)
     report["made"] = dt.datetime.now().isoformat(timespec="minutes").replace("T", " ")

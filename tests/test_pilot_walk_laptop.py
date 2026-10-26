@@ -12,10 +12,11 @@ from ap_coder.core.memory import vendor_key
 from ap_coder.core.store import REVIEW
 from ap_coder.erp import jde
 
+from .test_pilot_score import pilot
 from .test_web_invoice import PAGE, check
 from .test_web_review_signoff import _jde_on, client, demo_db, me, store
 
-__all__ = ["client", "demo_db", "me", "store"]  # the fixtures, shared
+__all__ = ["client", "demo_db", "me", "pilot", "store"]  # the fixtures, shared
 
 
 def _plain(html: str) -> str:
@@ -279,3 +280,28 @@ def test_activity_counts_a_renamed_person_once(tmp_path):
     tile = _plain(client_for(store).get("/activity").text)
     tile = tile[tile.index("People") :][:120]
     assert tile.startswith("People 2 Jordan Lee, Sam Reviewer"), tile
+
+
+# --- 10. pilot-score's plurals -----------------------------------------------------------------------------------
+
+
+def test_pilot_score_says_one_voucher_dated_outside_in_the_singular(pilot, tmp_path):
+    """B-1306: pilot-score said "1 vouchers dated outside…"."""
+    import csv
+
+    from ap_coder.erp.jde import julian
+    from ap_coder.ops import pilot_score
+
+    from .test_pilot_score import _posted
+
+    store, done = pilot
+    f0411, f0911 = _posted(done, tmp_path)
+    rows = list(csv.DictReader(f0411.read_text(encoding="utf-8").splitlines()))
+    rows.append({**rows[0], "RPDOC": "70001", "RPVINV": "OLD-1", "RPDIVJ": julian("2001-01-05")})
+    with f0411.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+    report, _ = pilot_score.run(store, f0411, f0911, tmp_path / "out")
+    notes = " ".join(report["notes"])
+    assert "1 voucher dated outside" in notes and "1 vouchers" not in notes, notes
