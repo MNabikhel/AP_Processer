@@ -209,12 +209,13 @@ def _read_rows(path: Path) -> list[tuple[int, dict[str, Any]]]:
     from openpyxl import load_workbook
 
     wb = load_workbook(path, data_only=True, read_only=True)
-    ws = wb[SHEET] if SHEET in wb.sheetnames else wb.worksheets[0]
-    it = ws.iter_rows(values_only=True)
-    header = [str(h).strip() if h is not None else "" for h in next(it)]
-    rows = [(i, dict(zip(header, values, strict=False))) for i, values in enumerate(it, start=2)]
-    wb.close()
-    return rows
+    try:
+        ws = wb[SHEET] if SHEET in wb.sheetnames else wb.worksheets[0]
+        it = ws.iter_rows(values_only=True)
+        header = [str(h).strip() if h is not None else "" for h in next(it, ())]  # an empty sheet: no rows (B-1341)
+        return [(i, dict(zip(header, values, strict=False))) for i, values in enumerate(it, start=2)]
+    finally:
+        wb.close()
 
 
 def _from_csv(value: Any) -> Any:

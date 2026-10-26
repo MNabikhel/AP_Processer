@@ -49,3 +49,18 @@ def test_the_date_s_box_covers_the_whole_date_after_leaders(tmp_path):
     (box,) = date.boxes
     covered = [w.text for w in words if w.box.x0 >= box.x0 - 0.001 and w.box.x1 <= box.x1 + 0.001]
     assert covered == ["Oct", "15,", "2026"]
+
+
+def test_an_empty_labels_workbook_reads_as_no_invoices(tmp_path):
+    """B-1341: an empty labels workbook stopped ``evaluate`` with a bare StopIteration (an empty CSV reads as no
+    invoices), and the workbook was left open."""
+    from openpyxl import Workbook
+
+    from ap_coder.ai.labels import SHEET, load_labels
+
+    wb = Workbook()
+    wb.active.title = SHEET
+    wb.save(tmp_path / "labels.xlsx")
+    assert load_labels(tmp_path / "labels.xlsx") == ({}, [])
+    (tmp_path / "labels.csv").write_text("", encoding="utf-8")
+    assert load_labels(tmp_path / "labels.csv") == ({}, [])
