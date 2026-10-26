@@ -201,8 +201,18 @@ def need_for(app: Any, scope: dict[str, Any]) -> str:
     return ADMIN
 
 
+NEEDS_KEPT = 4096  # (method, path) needs ``can`` remembers per app: the rail's, the buttons', each invoice opened
+
+
 def can(app: Any, role: str | None, method: str, path: str) -> bool:
-    """Whether ``role`` may send ``method`` to ``path`` (for the pages, to hide what can't be used)."""
-    scope = {"type": "http", "method": method.upper(), "path": path, "root_path": "", "query_string": b"",
-             "headers": []}  # fmt: skip
-    return allowed(role, need_for(app, scope))
+    """Whether ``role`` may send ``method`` to ``path`` (for the pages, to hide what can't be used). What the path
+    needs is remembered per app: a page asks it for every rail entry and button it draws, and each answer walks the
+    routes."""
+    key = (method.upper(), path)
+    kept = getattr(app.state, "_needs", None)
+    if kept is None or len(kept) > NEEDS_KEPT:
+        kept = app.state._needs = {}
+    if key not in kept:
+        scope = {"type": "http", "method": key[0], "path": path, "root_path": "", "query_string": b"", "headers": []}
+        kept[key] = need_for(app, scope)
+    return allowed(role, kept[key])
