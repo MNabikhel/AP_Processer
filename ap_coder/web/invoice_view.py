@@ -606,8 +606,9 @@ def cc_display(code: str | None) -> str:
     return NEEDS_CC if code == UNASSIGNED else (code or "")
 
 
-def gl_name(reference: ReferenceData, code: str) -> str:
-    row = reference.chart_of_accounts.get(code)
+def gl_name(reference: ReferenceData | None, code: str) -> str:
+    """A GL account's short name ("" for a code not in the list, or before any list is imported)."""
+    row = reference.chart_of_accounts.get(code) if reference is not None else None
     return short_name((row or {}).get("description", "")) if row else ""
 
 
@@ -1575,7 +1576,7 @@ def distribution(output: dict[str, Any], reference: ReferenceData | None, js: An
             "account": account,
             "kind": "Tax" if e["kind"] == "tax" else f"Line {e['line_number']}",
             "gl": gl_display(e["gl_code"]) if e["gl_code"] else "⚠ not mapped",
-            "gl_name": gl_name(reference, e["gl_code"]) if reference is not None else "",
+            "gl_name": gl_name(reference, e["gl_code"]),
             "todo": e["gl_code"] in (UNASSIGNED, ""),
             "cc": cc_display(e.get("cost_center")),
             "description": e.get("description") or "",

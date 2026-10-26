@@ -30,7 +30,6 @@ from markupsafe import Markup
 
 from ap_coder.ai import history
 from ap_coder.core import ui
-from ap_coder.core.reference_data import short_name
 from ap_coder.core.store import Store
 from ap_coder.erp import insights
 from ap_coder.web.charts import SERIES, Series, line_chart, percent
@@ -49,6 +48,7 @@ from ap_coder.web.core import (
     reviewer,
 )
 from ap_coder.web.files import TOO_BIG, SheetError, read_capped, read_csv, read_excel
+from ap_coder.web.invoice_view import gl_name
 
 router = APIRouter()
 
@@ -94,13 +94,6 @@ def built(html: str) -> Markup:
 
 def reader_label(reader: str) -> str:
     return READER_LABELS.get(reader, reader)
-
-
-def gl_name(reference: Any, code: str) -> str:
-    if reference is None:
-        return ""
-    row = reference.chart_of_accounts.get(code)
-    return short_name((row or {}).get("description", "")) if row else ""
 
 
 def short(text: str, n: int = 42) -> str:
