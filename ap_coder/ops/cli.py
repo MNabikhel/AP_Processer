@@ -319,6 +319,14 @@ def cmd_doctor(args: argparse.Namespace, settings: Settings) -> int:
         checks.append(Check("database", FAIL, f"{db} cannot be opened ({exc}): it is damaged or not an AP Coder "
                             "database. Put back a copy from the backups folder next to it."))  # fmt: skip
         source = "none (the database cannot be opened)"
+    else:
+        from .doctor import store_checks
+        from .service import is_server_here
+
+        db = Path(getattr(args, "db", None) or default_db_path())
+        server = is_server_here(private_dir())
+        if db.exists() or server:  # a laptop not set up yet has no database: nothing to look at
+            checks.extend(store_checks(Store(db), server))
     report = format_checks(checks)
     print(report.replace("\n\n", f"\n\nreference data source: {source}\n\n", 1))
     return exit_code(checks)
@@ -414,6 +422,12 @@ def _inputs(paths: list[str], store: Store | None = None) -> tuple[list[Path], b
     return list(unique.values()), unread, sorted_emails
 
 
+NO_GL_ACCOUNTS = (
+    "Finish the setup first: import your GL accounts in the dashboard (GL accounts & tax). Invoices "
+    "coded before that could not be checked or approved."
+)
+
+
 def cmd_process(args: argparse.Namespace, settings: Settings) -> int:
     settings = settings.with_overrides(
         di_model=args.extraction_model,
@@ -431,6 +445,9 @@ def cmd_process(args: argparse.Namespace, settings: Settings) -> int:
             print(f"No invoices to read: {sorted_emails} email(s) sorted.", file=sys.stderr)
             return 1 if unread else 0
         print("No supported invoice files found.", file=sys.stderr)
+        return 2
+    if store is not None and not store.list_accounts("gl_accounts"):  # as the dashboard (B-1212)
+        print(NO_GL_ACCOUNTS, file=sys.stderr)
         return 2
     source = reference_source(args)
     if source.startswith("BUNDLED"):
@@ -531,6 +548,9 @@ def watch_once(args: argparse.Namespace, settings: Settings, store: Store, folde
     files = new_files(folder, store, fresh=set(taken_out))
     if not files:
         return done, failed
+    if not store.list_accounts("gl_accounts"):  # as the dashboard (B-1212): read once they are imported
+        print(f"{time.strftime('%H:%M:%S')} {len(files)} file(s) not read yet: {NO_GL_ACCOUNTS}", file=sys.stderr)
+        return done + len(files), failed + len(files)
     reference = _load_reference(args)  # picks up GL accounts edited in the dashboard meanwhile
     pipeline = InvoicePipeline(settings, reference, cache_dir=args.cache_dir or None, store=store)
     started, clock, read, errors = dt.datetime.now().isoformat(timespec="seconds"), time.monotonic(), 0, []

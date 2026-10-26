@@ -82,6 +82,8 @@ def servers(tmp_path_factory):
     load_sample_setup(full)
     load_demo(full)
     full.set_setting(SHOW_JDE, "1")
+    approved = [i["id"] for i in full.list_invoices("approved")]  # a batch: the Exports page shows its card (B-1214)
+    full.create_export_batch(approved[:1], "xlsx")
     empty = Store(tmp_path_factory.mktemp("role-pages-empty") / "private" / "ap_coder.db")
     return {"full": (full, *_server(full)), "empty": (empty, *_server(empty))}
 

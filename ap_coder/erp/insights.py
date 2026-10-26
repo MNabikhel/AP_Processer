@@ -78,6 +78,21 @@ def corrected(event: dict[str, Any]) -> bool:
 _corrected = corrected  # the name Insights' own tests use
 
 
+def filled_in(event: dict[str, Any]) -> bool:
+    """Whether an approval approved as coded (not ``corrected``) still had blanks filled in by AP: a cost center, an
+    UNASSIGNED account. Still "approved as coded" (D-39); the pages say how many of those only had blanks filled in, so
+    the figure doesn't read as if AP touched nothing (B-1215)."""
+    changes = (event.get("detail") or {}).get("changes") or []
+    return not corrected(event) and any(isinstance(c, dict) and c.get("what") not in NOT_CODING for c in changes)
+
+
+def as_coded_note(clean: int, filled: int, total: int) -> str:
+    """The line under the "Approved as coded" figure: how many needed nothing, how many only had blanks filled in."""
+    if not filled:
+        return f"{clean} of {total} needed no change"
+    return f"{clean - filled} of {total} needed no change, {filled} only had blanks filled in by AP"
+
+
 def latest_approvals(store: Store, rows: dict[int, dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     """The latest approval of each invoice still approved (or waiting for its second approval): one sent back and
     approved again counts once. ``rows``: the invoices by id, when already read."""
@@ -93,6 +108,11 @@ def approved_as_coded(store: Store) -> tuple[int, int]:
     proposed (``corrected``). Insights and Learning show this pair."""
     approvals = latest_approvals(store)
     return sum(1 for e in approvals if not corrected(e)), len(approvals)
+
+
+def filled_in_count(store: Store) -> int:
+    """Of ``approved_as_coded``'s, the approvals that only had blanks filled in by AP (``filled_in``)."""
+    return sum(1 for e in latest_approvals(store) if filled_in(e))
 
 
 def _issues(validation: Any) -> list[dict[str, Any]]:
@@ -185,6 +205,7 @@ def compute(store: Store, a: Assumptions | None = None) -> dict[str, Any]:
         "failed": len(failed),
         "approved": len(approvals),
         "approved_clean": len(clean),
+        "approved_filled": sum(1 for e in clean if filled_in(e)),
         "approved_changed": len(changed),
         "bulk_approved": sum(1 for e in approvals if (e["detail"] or {}).get("bulk")),
         "needs_attention_rate": (sum(1 for r in processed if r["requires_review"]) / len(processed))

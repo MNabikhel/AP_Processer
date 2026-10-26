@@ -22,7 +22,7 @@ from ap_coder.ai import labels
 from ap_coder.ai.extraction import DocumentExtractor
 from ap_coder.core import envfile, paths
 from ap_coder.core.config import DocumentIntelligenceSettings, Settings
-from ap_coder.core.store import Store
+from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.erp import jde
 from ap_coder.ops import cli
 from ap_coder.ops.doctor import run_checks
@@ -215,6 +215,7 @@ def test_process_codes_each_invoice_once(tmp_path, monkeypatch):
     text = (SAMPLES / f"{SAMPLE_STEM}.md").read_text(encoding="utf-8")
     (folder / "a.md").write_text(text, encoding="utf-8")
     (folder / "copy of a.md").write_text(text, encoding="utf-8")
+    load_sample_setup(Store(tmp_path / "a.db"))  # the GL accounts imported: process reads only then (B-1212)
     assert _cli(tmp_path, "process", str(folder), str(folder / "a.md"), "-o", str(tmp_path / "out"),
                 "--cache-dir", "") == 0  # fmt: skip
     assert len(Store(tmp_path / "a.db").list_invoices()) == 1
@@ -235,6 +236,7 @@ def test_process_takes_the_invoice_out_of_a_saved_email(tmp_path, monkeypatch, c
     folder = tmp_path / "mail"
     folder.mkdir()
     _email(folder / "supplier mail.eml", SAMPLES / f"{SAMPLE_STEM}.pdf")
+    load_sample_setup(Store(tmp_path / "a.db"))
     assert _cli(tmp_path, "process", str(folder / "supplier mail.eml"), "-o", str(tmp_path / "out"),
                 "--cache-dir", "") == 0  # fmt: skip
     invoices = Store(tmp_path / "a.db").list_invoices()

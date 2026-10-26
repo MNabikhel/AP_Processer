@@ -47,7 +47,7 @@ def test_watch_works_offline_without_azure_or_a_model(tmp_path, monkeypatch):
     import os
     import shutil
 
-    from ap_coder.core.store import Store
+    from ap_coder.core.store import Store, load_sample_setup
 
     for key in [k for k in os.environ if k.startswith(("AZURE_", "AP_LLM_"))]:
         monkeypatch.delenv(key)
@@ -57,6 +57,7 @@ def test_watch_works_offline_without_azure_or_a_model(tmp_path, monkeypatch):
     os.utime(pdf, (1_700_000_000, 1_700_000_000))  # copied in long ago: settled
     db = tmp_path / "ap.db"
     env = tmp_path / "none.env"
+    load_sample_setup(Store(db))  # the GL accounts imported: watch reads only then (B-1212)
     assert cli.main(["--env-file", str(env), "--db", str(db), "watch", str(folder), "--once", "--cache-dir", ""]) == 0
     assert [i["status"] for i in Store(db).list_invoices()] == ["review"]
 

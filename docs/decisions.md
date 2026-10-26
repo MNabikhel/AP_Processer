@@ -1187,3 +1187,18 @@ that is reversed keeps its line, marked "replaced by D-NN".
   hub's invoice links** default to the server's own address in server mode (server.json and the environment; the
   computer's name when no name is set). (`erp/jde_post.py`, `erp/jde_ais.py`, `erp/insights.py`, `coding/review.py`,
   `ops/service.py`, `erp/hub/run.py`; `tests/test_walk_fixes.py`, `tests/test_server_walk_fixes.py`)
+- **D-108** · Fixes of an end-to-end review (B-1211 to B-1217), with the choices they made. (1) **UNASSIGNED is no
+  cost center**: `exports.distribution` gives every ERP file (CSV, Excel, Custom, JD Edwards files and API, the stamp,
+  spend and accruals) a blank cost center for a line still UNASSIGNED, as the hub feed does, and `jde.account_for`
+  never takes it as a business unit: the default business unit applies, else the line is held back. (2) **The command
+  line's setup gate**: `process` and `watch` read invoices into a data folder only once its GL accounts are imported
+  (the sample setup counts), as the dashboard; `process --no-db` (JSON files only, no queue) still reads against the
+  bundled sample. (3) **The doctor reads the database** for what only it holds: on the company server, no accounts (or
+  no active Admin) fails; the JD Edwards API on without a password or a usable address fails, never tested or vouchers
+  waiting warn; the hub feed on without a folder fails. (4) **"Approved as coded" keeps D-39's meaning**; its line
+  splits off the approvals that only had blanks filled in by AP. (5) **The hub's activity leaves out a lesson's
+  situation and AP's reason** (`lesson_explained`): the lessons stay out, as FINANCE_HUB.md says. (6) **JD Edwards'
+  live answer replaces the register's** DUPLICATE_IN_ERP for the same invoice: it names the voucher and its paid
+  status; the register's message stays when JD Edwards can't be asked. (`erp/exports.py`, `erp/jde.py`, `ops/cli.py`,
+  `ops/doctor.py`, `erp/insights.py`, `erp/hub/tables.py`, `coding/vendors.py`, `erp/jde_sync.py`;
+  `tests/test_e2e_review_fixes.py`, `tests/test_jde_sync.py`)

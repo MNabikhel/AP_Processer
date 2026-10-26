@@ -19,7 +19,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from ap_coder.core import ui
 from ap_coder.core.store import APPROVED
-from ap_coder.erp.insights import AS_CODED, Assumptions, compute, operations, report_html
+from ap_coder.erp.insights import AS_CODED, Assumptions, as_coded_note, compute, operations, report_html
 from ap_coder.ops.offline import internet_allowed
 from ap_coder.web.charts import OK_GREEN, SERIES, WARN_AMBER, Series, bar_chart
 from ap_coder.web.core import done, get_store, posted_form, refuse, render, reviewer
@@ -75,7 +75,7 @@ def kpis(s: dict[str, Any], cloud: bool = False) -> list[tuple[str, str, str, st
     return [
         ("Invoices processed", f"{s['processed']:,}", "blue", f"{s['approved']} approved · {s['failed']} unreadable"),
         (AS_CODED, pct(s["straight_through"]), "green",
-         f"{s['approved_clean']} of {s['approved']} needed no change"),
+         as_coded_note(s["approved_clean"], s["approved_filled"], s["approved"])),
         ("Hours saved", f"{s['hours_saved']:,.1f}", "violet", f"≈ ${s['value_saved']:,.0f} of AP time"),
         last,
     ]  # fmt: skip
