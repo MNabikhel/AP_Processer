@@ -41,6 +41,7 @@ from ap_coder.web.core import (
 )
 from ap_coder.web.core import reviewer as current_reviewer
 from ap_coder.web.files import (
+    NO_ROWS,
     SheetError,
     download,
     drop_upload,
@@ -513,11 +514,17 @@ async def register_import(request: Request) -> JSONResponse:
         _upload, df, _sheets = read_upload(token, sheet or None)
     except SheetError as exc:
         return refuse(str(exc))
+    if df.empty:
+        return refuse(NO_ROWS)
     chosen = picked_columns(form, REGISTER_LABELS, list(df.columns), {})
     missing = [REGISTER_LABELS[f] for f in registers.REQUIRED if f not in chosen]
     if missing:
         return refuse("Pick the column for: " + ", ".join(missing))
     rows, skipped = registers.rows_from_records(df.to_dict("records"), chosen)
+    if not rows:  # "Replace" would empty the list the duplicate checks look in (B-1405)
+        return refuse(f"No row has a vendor, an invoice number and an amount in the columns picked ({skipped} "
+                      "skipped): nothing was imported, the list is as it was. Check the columns, then import "
+                      "again.")  # fmt: skip
     total = store.import_erp_register(rows, replace_all=bool(form.get("replace")), actor=current_reviewer())
     drop_upload(token)
     text = f"{total:,} ERP invoices known" + (f"; {ui.plural(skipped, 'row')} skipped." if skipped else ".")

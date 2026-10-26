@@ -159,3 +159,25 @@ def test_a_setting_given_to_the_process_still_wins_over_the_env_file(tmp_path, m
     assert settings().engine.review_threshold == 0.70
     _saved_elsewhere(env, {"AP_REVIEW_THRESHOLD": "0.90"})
     assert settings().engine.review_threshold == 0.70
+
+
+# --- B-1405: replacing the ERP register with a file of no usable row emptied it -------------------------------------
+
+
+def _register(client, sheet: str, **form: str):
+    upload = client.post("/exports/register/upload", files={"file": ("erp.csv", sheet.encode())}, headers=PAGE)
+    token = upload.json()["redirect"].split("register=")[1].split("#")[0].split("&")[0]
+    data = {"file": token, "col_vendor_name": "Supplier", "col_invoice_number": "Doc No", "col_total": "Amount",
+            **form}  # fmt: skip
+    return post(client, "/exports/register/import", data)
+
+
+def test_replacing_the_erp_register_with_a_file_of_no_usable_row_keeps_it(store):
+    client = client_for(store)
+    good = "Supplier,Doc No,Amount\nAcme Ltd,A-1,100.00\nBeta Inc,B-7,55.10\n"
+    assert _register(client, good).status_code == 200 and store.erp_register_count() == 2
+    unreadable = "Supplier,Doc No,Amount\nAcme Ltd,A-2,n/a\nBeta Inc,B-8,—\n"  # the wrong column picked, say
+    answer = _register(client, unreadable, replace="1")
+    assert answer.status_code == 400 and "nothing was imported" in answer.json()["error"]
+    assert _register(client, "Supplier,Doc No,Amount\n", replace="1").status_code == 400  # no rows at all
+    assert store.erp_register_count() == 2  # the duplicate checks still know the bills in the ERP
