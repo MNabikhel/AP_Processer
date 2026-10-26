@@ -1,6 +1,7 @@
 """Vendor statements: reconcile a vendor's statement of account with the invoices AP Coder holds.
 
-The statement is uploaded (``POST /statements/upload``, kept in memory for an hour, never stored), then
+The statement is uploaded (``POST /statements/upload``, or picked from the emails triage set aside:
+``POST /statements/emailed/<entry>/<n>``) and waits an hour (``files.keep_upload``: never kept with the invoices), then
 ``GET /statements?vendor=&file=&col_<field>=`` shows its columns and the reconciliation, the email asking the vendor
 for what is missing (``&lang=``) and ``GET /statements/reconciliation.csv`` (same address) downloads
 ``statements.to_csv``.
@@ -133,7 +134,7 @@ def statements_page(
 
 @router.post("/statements/upload")
 async def statements_upload(request: Request, vendor: str = Form(""), file: UploadFile = File(...)) -> JSONResponse:  # noqa: B008
-    """Keep the statement for the page (in memory for an hour; nothing is stored) and show its reconciliation."""
+    """Keep the statement for the page (an hour, ``files.keep_upload``) and show its reconciliation."""
     token, problem = await receive_sheet(file)
     if problem:
         return refuse(problem)

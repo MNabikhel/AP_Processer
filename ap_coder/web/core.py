@@ -25,11 +25,8 @@ import getpass
 import hashlib
 import json
 import os
-import secrets
 import subprocess
 import sys
-import threading
-import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -296,19 +293,21 @@ def reading_status_or_none(settings: Settings, store: Store, *, use_cache: bool 
 
 # --- Messages after an action (flash) ----------------------------------------------------------------------------
 # A POST answers with where to go next; the message waits under a one-off token in the address (?flash=...) and is
-# shown once by the page it leads to. It waits in the database (``Store.keep_ephemeral``), so a restart of the server
-# between the action and its page does not lose it (D-99); outside a request (a script, a test), in memory.
+# shown once by the page it leads to. It waits in the dashboard's database (``Store.keep_ephemeral``), so a restart
+# of the server between the action and its page does not lose it (D-99).
 
 _FLASH_TTL = 600  # seconds a message waits for its page
-_flashes: dict[str, tuple[float, list[dict[str, Any]]]] = {}
-_flash_lock = threading.Lock()
 
 CURRENT_STORE: contextvars.ContextVar[Store | None] = contextvars.ContextVar("ap_coder_store", default=None)
 
 
-def current_store() -> Store | None:
-    """The database of the request being answered (set by ``StoreContext``); None outside a request."""
-    return CURRENT_STORE.get()
+def current_store() -> Store:
+    """The database of the request being answered (set by ``StoreContext``; ``using_store`` outside a request), where
+    messages and uploads wait. RuntimeError outside both: they wait nowhere else."""
+    store = CURRENT_STORE.get()
+    if store is None:
+        raise RuntimeError("not answering a request to the dashboard: wrap the call in core.using_store(store)")
+    return store
 
 
 @contextlib.contextmanager
@@ -344,32 +343,18 @@ def flash_message(text: str, tone: str = "ok", details: list[str] | None = None,
 
 def keep_flash(messages: list[dict[str, Any]]) -> str:
     """Keep ``messages`` for the next page; returns their token."""
-    store = current_store()
-    if store is not None:
-        return store.keep_ephemeral("flash", json.dumps(messages).encode("utf-8"), _FLASH_TTL)
-    token = secrets.token_urlsafe(8)
-    now = time.monotonic()
-    with _flash_lock:
-        for key in [k for k, (at, _) in _flashes.items() if now - at > _FLASH_TTL]:
-            del _flashes[key]
-        _flashes[token] = (now, messages)
-    return token
+    return current_store().keep_ephemeral("flash", json.dumps(messages).encode("utf-8"), _FLASH_TTL)
 
 
 def take_flash(token: str | None) -> list[dict[str, Any]]:
     """The messages kept under ``token`` (once: they are forgotten)."""
     if not token:
         return []
-    store = current_store()
-    if store is not None:
-        try:
-            kept = store.ephemeral("flash", token, take=True)
-            return list(json.loads(kept)) if kept else []
-        except ValueError:  # (never written so: a page shows without its message rather than an error)
-            return []
-    with _flash_lock:
-        _, messages = _flashes.pop(token, (0.0, []))
-    return messages
+    try:
+        kept = current_store().ephemeral("flash", token, take=True)
+        return list(json.loads(kept)) if kept else []
+    except ValueError:  # (never written so: a page shows without its message rather than an error)
+        return []
 
 
 def with_flash(url: str, messages: list[dict[str, Any]]) -> str:

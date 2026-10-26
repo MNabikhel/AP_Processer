@@ -7,14 +7,12 @@ which column holds what before anything is imported. The uploaded file waits und
 (``keep_upload``) for an hour; the page reads it again with ``read_upload`` (``?file=<token>``) to show its first rows
 and the column choices (``sheet_context``), and the import POST names the token. It waits in the dashboard's
 database (a restart of the server keeps it), never as a file of its own, and is deleted after the hour (D-99).
+Uploads larger than ``_MAX_BYTES`` are not read (``read_capped``); every page reads a CSV with ``read_csv``.
 """
 
 from __future__ import annotations
 
 import io
-import secrets
-import threading
-import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -70,53 +68,24 @@ UPLOAD_KIND = "upload"  # its kind in the database's short-lived table (``Store.
 class Upload:
     name: str
     content: bytes
-    at: float
-
-
-_uploads: dict[str, Upload] = {}
-_lock = threading.Lock()
 
 
 def keep_upload(name: str, content: bytes) -> str:
-    """Keep an uploaded file for the next page; returns its token. In the dashboard's database while a request is
-    answered (a restart of the server keeps it, D-99), else in memory."""
-    store = current_store()
-    if store is not None:
-        return store.keep_ephemeral(UPLOAD_KIND, name.encode("utf-8") + b"\0" + content, _TTL, keep=_MAX)
-    token = secrets.token_urlsafe(12)
-    now = time.monotonic()
-    with _lock:
-        for key in [k for k, u in _uploads.items() if now - u.at > _TTL]:
-            del _uploads[key]
-        while len(_uploads) >= _MAX:
-            del _uploads[min(_uploads, key=lambda k: _uploads[k].at)]
-        _uploads[token] = Upload(name, content, now)
-    return token
+    """Keep an uploaded file for the next page, in the dashboard's database (a restart of the server keeps it, D-99);
+    returns its token."""
+    return current_store().keep_ephemeral(UPLOAD_KIND, name.encode("utf-8") + b"\0" + content, _TTL, keep=_MAX)
 
 
 def get_upload(token: str | None) -> Upload | None:
-    if not token:
+    kept = current_store().ephemeral(UPLOAD_KIND, token) if token else None
+    if kept is None:
         return None
-    store = current_store()
-    if store is not None:
-        kept = store.ephemeral(UPLOAD_KIND, token)
-        if kept is None:
-            return None
-        name, _, content = kept.partition(b"\0")
-        return Upload(name.decode("utf-8", "replace"), content, time.monotonic())
-    with _lock:
-        upload = _uploads.get(token)
-    if upload is None or time.monotonic() - upload.at > _TTL:
-        return None
-    return upload
+    name, _, content = kept.partition(b"\0")
+    return Upload(name.decode("utf-8", "replace"), content)
 
 
 def drop_upload(token: str | None) -> None:
-    store = current_store()
-    if store is not None:
-        store.drop_ephemeral(UPLOAD_KIND, token)
-    with _lock:
-        _uploads.pop(token or "", None)
+    current_store().drop_ephemeral(UPLOAD_KIND, token)
 
 
 async def read_capped(file: UploadFile) -> bytes | None:
