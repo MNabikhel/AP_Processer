@@ -920,6 +920,8 @@ def voucher_rows(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:  # fmt: skip
     """(F0411Z1 rows, F0911Z1 rows, match rows) of one approved invoice, as {column: value}. Check it with
     ``validate`` first: an invoice with problems gives incomplete rows."""
+    from .exports import entry_lines
+
     v = _prepare(invoice, settings, str(vendor_an8 or "").strip())
     final = v.final
     keys = _keys("VL", settings, batch, v.inv_id)
@@ -952,8 +954,6 @@ def voucher_rows(
     }  # fmt: skip
     if settings.bank_glba:  # the G/L bank account of the Pay from account (D-66); blank: E1's AAI PB
         common["VLGLBA"] = glba(final, settings)
-
-    from .exports import entry_lines
 
     def amounts(gross: int, stam: int, atxa: int, code: str | None = None) -> dict[str, Any]:
         out: dict[str, Any] = {}
