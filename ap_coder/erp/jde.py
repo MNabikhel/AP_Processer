@@ -827,7 +827,7 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
         account = account_for(e.get("gl_code") or "", e.get("cost_center") or "", settings)
         if account is None:
             add(
-                f"{where} has no JDE account (BU.Object.Subsidiary): add it to the account mapping",
+                f"{where}{NO_ACCOUNT_SAID}",
                 "JDE_NO_ACCOUNT",
                 e.get("line_number"),
             )
@@ -1180,6 +1180,31 @@ def duplicate_problems(
     return out
 
 
+NO_ACCOUNT_SAID = " has no JDE account (BU.Object.Subsidiary): add it to the account mapping"
+
+
+def _accounts_once(v: _Voucher) -> list[str]:
+    """A voucher's problems, an account without a JDE account said once with the lines posting to it ("GL 1500 has no
+    JDE account (lines 1, 3): …"), not once a line (B-1301)."""
+    lines: dict[str, list[int]] = {}
+    for problem, (code, line) in zip(v.problems, v.codes, strict=True):
+        if code == "JDE_NO_ACCOUNT":
+            lines.setdefault(problem, []).extend([line] if line else [])
+    out: list[str] = []
+    for problem in dict.fromkeys(v.problems):
+        numbers = sorted(set(lines.get(problem) or []))
+        if not numbers:
+            out.append(problem)
+            continue
+        said = f"line{'s' if len(numbers) > 1 else ''} {', '.join(str(n) for n in numbers)}"
+        if problem.endswith(NO_ACCOUNT_SAID):
+            out.append(f"{problem.removesuffix(NO_ACCOUNT_SAID)} has no JDE account ({said}): add it to the account "
+                       "mapping (BU.Object.Subsidiary)")  # fmt: skip
+        else:
+            out.append(f"{problem} ({said})")
+    return out
+
+
 def validate(
     invoices: list[dict[str, Any]], settings: JdeSettings, vendor_lookup: VendorLookup = None,
     prior: Mapping[str, list[dict[str, Any]]] | None = None,
@@ -1187,9 +1212,9 @@ def validate(
     """{invoice id: blocking problems} for the invoices that cannot go out (the others are fine)."""
     out: dict[int, list[str]] = {}
     for inv in invoices:
-        problems = _prepare(inv, settings, resolve_an8(inv.get("final_output") or {}, vendor_lookup, settings)).problems
-        if problems:
-            out[int(inv.get("id") or 0)] = problems
+        v = _prepare(inv, settings, resolve_an8(inv.get("final_output") or {}, vendor_lookup, settings))
+        if v.problems:
+            out[int(inv.get("id") or 0)] = _accounts_once(v)
     for inv_id, msgs in duplicate_problems(invoices, settings, vendor_lookup, prior).items():
         out.setdefault(inv_id, []).extend(msgs)
     return out

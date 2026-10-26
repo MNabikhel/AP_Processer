@@ -171,3 +171,21 @@ def test_the_jd_edwards_step_is_done_only_when_the_export_has_a_business_unit_fo
     rows = [jde.GlMap(code, "", "100", code) for code in dict.fromkeys(accounts + taxes)]
     jde.save(store, jde.JdeSettings(company="00001", gl_map=rows))
     assert step()[0] == "ok"
+
+
+# --- 5. The JD Edwards "Why not" list --------------------------------------------------------------------------------
+
+
+def test_the_why_not_list_says_an_unmapped_account_once_with_its_line_numbers(ground_truth):
+    """B-1301: the export's "Why not" list repeated "GL 1500 has no JDE account" once per line, without the lines."""
+    import copy
+
+    output = copy.deepcopy(ground_truth)
+    for li in output["line_items"]:
+        li["predicted_gl_code"], li["predicted_cost_center"] = "1500", ""
+    numbers = [str(li["line_number"]) for li in output["line_items"]]
+    assert len(numbers) > 1
+    reasons = jde.validate([{"id": 1, "final_output": output}], jde.JdeSettings(company="00001"), lambda _f: "4012")[1]
+    said = [r for r in reasons if r.startswith("GL 1500 ")]
+    assert said == [f"GL 1500 has no JDE account (lines {', '.join(numbers)}): add it to the account mapping "
+                    "(BU.Object.Subsidiary)"], reasons  # fmt: skip
