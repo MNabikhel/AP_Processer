@@ -12,6 +12,7 @@ import pytest
 from ap_coder.core import config
 from ap_coder.core.store import Store
 from ap_coder.ops import cli, server_update, service
+from ap_coder.web.identity import SESSION_COOKIE
 
 from .test_server_update import FakeServer, _bundle, _folder
 
@@ -199,3 +200,104 @@ def test_the_package_minimums_leave_out_the_versions_with_known_vulnerabilities(
     assert "pillow>=13" in deps and "certifi>=2026.10.19" in deps
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "pip-audit" in workflow
+
+
+# --- 4. and 5. Request sizes, and uploads on the server ---------------------------------------------------------------
+
+
+@pytest.fixture
+def web(tmp_path):
+    from ap_coder.core.store import load_sample_setup
+
+    from .test_server_security import account, app_for, client_of
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(store)
+    account(store, "clerk1", "clerk")
+    app = app_for(store)
+    return {"store": store, "app": app, "client": lambda ip="10.0.0.5": client_of(app, ip)}
+
+
+def _signed_in(web, username: str = "clerk1"):
+    from .test_server_security import log_in
+
+    client = web["client"]()
+    assert log_in(client, username).status_code == 200
+    return client
+
+
+def test_a_large_login_request_is_refused_before_it_is_read(web):
+    from .webclient import PAGE
+
+    client = web["client"]()
+    big = {"username": "x", "password": "y" * 100_000}
+    assert client.post("/login", data=big, headers=PAGE).status_code == 413
+    chunks = (b"username=x&password=" + b"y" * 50_000 for _ in range(3))  # no Content-Length: streamed
+    answer = client.post(
+        "/login", content=chunks, headers={**PAGE, "content-type": "application/x-www-form-urlencoded"}
+    )
+    assert answer.status_code == 413
+
+
+def test_the_login_takes_no_multipart(web):
+    from .webclient import PAGE
+
+    client = web["client"]()
+    answer = client.post("/login", files={"username": (None, "clerk1"), "password": (None, GOOD)}, headers=PAGE)
+    assert answer.status_code == 415 and SESSION_COOKIE not in answer.cookies
+
+
+def test_a_signed_in_request_has_a_generous_limit_too(web, monkeypatch):
+    from ap_coder.web import security
+
+    from .webclient import PAGE
+
+    client = _signed_in(web)
+    monkeypatch.setattr(security, "BODY_LIMIT", 200_000)
+    files = [("files", ("a.pdf", b"%PDF-1.4 " + b"x" * 300_000, "application/pdf"))]
+    assert client.post("/process/upload", files=files, headers=PAGE).status_code == 413
+
+
+def test_the_login_page_sends_its_form_urlencoded():
+    page = (ROOT / "ap_coder" / "web" / "templates" / "login.html").read_text(encoding="utf-8")
+    script = (ROOT / "ap_coder" / "web" / "static" / "js" / "app.js").read_text(encoding="utf-8")
+    assert "data-urlencoded" in page and "URLSearchParams(body)" in script
+
+
+def test_an_upload_reads_no_file_before_its_checks_and_one_at_a_time(web, monkeypatch):
+    from ap_coder.web.pages import process
+
+    from .webclient import PAGE
+
+    client = _signed_in(web)
+    read = []
+    monkeypatch.setattr(process, "ready_to_read", lambda steps: False)
+    real = process._read_upload
+    monkeypatch.setattr(process, "_read_upload", lambda upload: read.append(upload.filename) or real(upload))
+    files = [("files", (f"{n}.pdf", b"%PDF-1.4 x", "application/pdf")) for n in range(3)]
+    answer = client.post("/process/upload", files=files, headers=PAGE)
+    assert answer.status_code == 400 and read == []  # the setup isn't done: no file read at all
+
+
+def test_an_upload_of_too_many_files_is_refused_on_the_server(web, monkeypatch):
+    from ap_coder.web.pages import process
+
+    from .webclient import PAGE
+
+    client = _signed_in(web)
+    monkeypatch.setattr(process, "MAX_REQUEST_FILES", 2)
+    files = [("files", (f"{n}.pdf", b"%PDF-1.4 x", "application/pdf")) for n in range(3)]
+    answer = client.post("/process/upload", files=files, headers=PAGE)
+    assert answer.status_code == 413 and "up to 2 per upload" in answer.json()["error"]
+
+
+def test_each_account_has_an_hourly_upload_allowance(monkeypatch):
+    from ap_coder.web.pages import process
+
+    monkeypatch.setattr(process, "_uploads", __import__("collections").defaultdict(__import__("collections").deque))
+    monkeypatch.setattr(process, "MAX_BYTES_PER_WINDOW", 1000)
+    assert process.upload_refusal(7, 1, 600, now=10.0) == ("", 0)
+    text, status = process.upload_refusal(7, 1, 600, now=20.0)
+    assert status == 429 and "last hour" in text
+    assert process.upload_refusal(8, 1, 600, now=20.0) == ("", 0)  # another account
+    assert process.upload_refusal(7, 1, 600, now=10.0 + process.UPLOAD_WINDOW + 1) == ("", 0)  # an hour later

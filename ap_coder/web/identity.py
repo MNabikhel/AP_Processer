@@ -44,6 +44,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from ap_coder.core.store import EVENT_ACTOR, EVENT_ORIGIN
+from ap_coder.web import security
 
 COOKIE = "ap_coder_person"
 MAX_NAME = 60  # characters kept of a name
@@ -327,11 +328,15 @@ class Identity:
         try:
             if refusal is None and user is not None and not roles.allowed(user["role"], need):
                 refusal = await run_in_threadpool(_not_allowed, scope, receive, user, page)
+            if refusal is None and path == LOGIN_PATH and not page and security.multipart(scope):
+                refusal = JSONResponse({"ok": False, "error": security.NO_MULTIPART}, status_code=415)
             if refusal is not None:
                 refusal.headers["Cache-Control"] = "no-store"
                 await refusal(scope, receive, send)
                 return
-            await self.app(scope, receive, send if need == roles.OPEN else _no_store(send))
+            # Before a login, a few fields at most; after it, the largest upload (D-109).
+            limit = security.OPEN_BODY_LIMIT if user is None else security.BODY_LIMIT
+            await security.limit_body(self.app, scope, receive, send if need == roles.OPEN else _no_store(send), limit)
         finally:
             PERSON.reset(tokens[0])
             EVENT_ORIGIN.reset(tokens[1])

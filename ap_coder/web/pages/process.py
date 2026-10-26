@@ -80,6 +80,36 @@ STILL_SAVING_SECONDS = 60  # a file changed this recently whose end is missing i
 ACCEPT = sorted(SUPPORTED_EXTENSIONS | EMAIL_EXTENSIONS)  # what the upload takes: PDFs, scans, photos, saved emails
 # The largest invoice uploaded (B-981): as a spreadsheet (web/files.py); a saved email up to what the mailbox reads.
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+# On the server, one upload (D-109): at most this many files and bytes, and each account at most this much an hour
+# (a person drops a day's invoices at once; a script filling the server's disk is stopped).
+MAX_REQUEST_FILES = 200
+MAX_REQUEST_BYTES = 250 * 1024 * 1024
+UPLOAD_WINDOW = 3600.0
+MAX_BYTES_PER_WINDOW = 2 * 1024 * 1024 * 1024
+MAX_UPLOADS_PER_WINDOW = 120
+_uploads: dict[Any, collections.deque] = collections.defaultdict(collections.deque)  # account → (time, bytes)
+_uploads_lock = threading.Lock()
+
+
+def upload_refusal(user: Any, count: int, size: int, now: float | None = None) -> tuple[str, int]:
+    """Why the server takes no more uploads from ``user`` now, with the status (("", 0) = it does), counting this one
+    when taken."""
+    if count > MAX_REQUEST_FILES:
+        return (f"That is {count} files at once: AP Coder on the server takes up to {MAX_REQUEST_FILES} per upload. "
+                "Send them in a few goes.", 413)  # fmt: skip
+    if size > MAX_REQUEST_BYTES:
+        return (f"Those files are {size / 1e6:,.0f} MB together: AP Coder on the server takes up to "
+                f"{MAX_REQUEST_BYTES // (1024 * 1024)} MB per upload. Send them in a few goes.", 413)  # fmt: skip
+    now = time.monotonic() if now is None else now
+    with _uploads_lock:
+        recent = _uploads[user]
+        while recent and recent[0][0] <= now - UPLOAD_WINDOW:
+            recent.popleft()
+        if len(recent) >= MAX_UPLOADS_PER_WINDOW or sum(b for _, b in recent) + size > MAX_BYTES_PER_WINDOW:
+            return ("You have uploaded a lot in the last hour: AP Coder on the server takes more in a while. If this "
+                    "is a real batch, ask an Admin to put the files in the invoices folder.", 429)  # fmt: skip
+        recent.append((now, size))
+    return "", 0
 
 
 # --- Saving uploads -----------------------------------------------------------------------------------------------
@@ -744,23 +774,32 @@ def _start_or_queue(request: Request, build: Callable[[], tuple[Any, int]], file
 
 @router.post("/process/upload")
 async def process_upload(request: Request, files: list[UploadFile] = File(...)) -> JSONResponse:  # noqa: B008
-    """Save the uploaded files to the invoices folder, then read and code the new ones in the background."""
-    received = []
-    for upload in files:
-        name = upload.filename or "invoice"
-        limit = MAX_EMAIL_BYTES if Path(name).suffix.lower() in EMAIL_EXTENSIONS else MAX_UPLOAD_BYTES
-        content = await upload.read(limit + 1)  # never more than the limit read: the rest stays in the spool file
-        received.append((name, content if len(content) <= limit else None))
-    return await run_in_threadpool(_save_and_start, request, received)
+    """Save the uploaded files to the invoices folder, then read and code the new ones in the background. Each file
+    is read from its spool file (on disk past 1 MB) only when it is saved, one at a time: never all in memory."""
+    if server_mode(request):
+        who = person()
+        refused, status = upload_refusal(who.user_id if who else None, len(files), sum(u.size or 0 for u in files))
+        if refused:
+            return refuse(refused, status=status)
+    return await run_in_threadpool(_save_and_start, request, files)
 
 
-def _save_and_start(request: Request, received: list[tuple[str, bytes | None]]) -> JSONResponse:
+def _read_upload(upload: UploadFile) -> tuple[str, bytes | None]:
+    """An upload's name and bytes (None when over its limit: never more than the limit read)."""
+    name = upload.filename or "invoice"
+    limit = MAX_EMAIL_BYTES if Path(name).suffix.lower() in EMAIL_EXTENSIONS else MAX_UPLOAD_BYTES
+    content = upload.file.read(limit + 1)
+    return name, content if len(content) <= limit else None
+
+
+def _save_and_start(request: Request, files: list[UploadFile]) -> JSONResponse:
     store, settings = get_store(request), get_settings(request)
     if not ready_to_read(setup_steps(store, settings)):
         return refuse("Finish the setup first: import your GL accounts (GL accounts & tax).")
     folder = invoice_dir(store)
     saved, mails, notes = [], [], []
-    for name, content in received:
+    for upload in files:
+        name, content = _read_upload(upload)
         if content is None:  # over the limit (B-981): an invoice is never this large
             email = Path(name).suffix.lower() in EMAIL_EXTENSIONS
             notes.append(flash_message(f"{name} was not read: it is larger than {'100' if email else '50'} MB. An "

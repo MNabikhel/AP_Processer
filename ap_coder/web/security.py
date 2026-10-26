@@ -23,7 +23,8 @@ import socket
 from collections.abc import Iterable
 from typing import Any
 
-from starlette.responses import PlainTextResponse
+from starlette.exceptions import HTTPException
+from starlette.responses import JSONResponse, PlainTextResponse
 
 from ap_coder.ops.offline import server_mode
 
@@ -217,3 +218,73 @@ class SecurityHeaders:
             await send(message)
 
         await self.app(scope, receive, sending)
+
+
+# --- Request sizes on the server (D-109) ------------------------------------------------------------------------------
+
+OPEN_BODY_LIMIT = 64 * 1024  # a request anyone may send (the login, before a session): a form of a few fields
+# Any other request, from a person logged in: the largest upload AP Coder takes (Import invoices: 250 MB in all,
+# process.MAX_REQUEST_BYTES), with room for the form around it.
+BODY_LIMIT = 260 * 1024 * 1024
+TOO_LARGE = "This is more than AP Coder takes in one go: send fewer or smaller files."
+NO_MULTIPART = "Log in from AP Coder's login page."
+
+
+class BodyTooLarge(HTTPException):
+    """The request's body went past its limit while it was read (FastAPI passes an HTTPException on as it is)."""
+
+    def __init__(self) -> None:
+        super().__init__(status_code=413, detail=TOO_LARGE)
+
+
+def declared_length(headers: list[tuple[bytes, bytes]]) -> int | None:
+    for name, value in headers:
+        if name.lower() == b"content-length":
+            try:
+                return int(value)
+            except ValueError:
+                return -1  # not a number: refused
+    return None
+
+
+def _too_large() -> JSONResponse:
+    headers = {"Cache-Control": "no-store", "Connection": "close"}
+    return JSONResponse({"ok": False, "error": TOO_LARGE}, status_code=413, headers=headers)
+
+
+async def limit_body(app: Any, scope: dict[str, Any], receive: Any, send: Any, limit: int) -> None:
+    """Run ``app`` with at most ``limit`` bytes of request body: a larger Content-Length is refused before anything
+    is read (413), and a body that goes past it while it streams in (chunked, or a false length) stops being read
+    there, so it is never spooled to disk in full."""
+    length = declared_length(scope.get("headers") or [])
+    if length is not None and not 0 <= length <= limit:
+        await _too_large()(scope, receive, send)
+        return
+    seen, started = 0, False
+
+    async def receiving() -> dict[str, Any]:
+        nonlocal seen
+        message = await receive()
+        if message["type"] == "http.request":
+            seen += len(message.get("body") or b"")
+            if seen > limit:
+                raise BodyTooLarge()
+        return message
+
+    async def sending(message: dict[str, Any]) -> None:
+        nonlocal started
+        started = started or message["type"] == "http.response.start"
+        await send(message)
+
+    try:
+        await app(scope, receiving, sending)
+    except BodyTooLarge:
+        if started:
+            raise
+        await _too_large()(scope, receive, send)
+
+
+def multipart(scope: dict[str, Any]) -> bool:
+    return any(
+        k.lower() == b"content-type" and v.lower().startswith(b"multipart/") for k, v in scope.get("headers") or []
+    )
