@@ -5,8 +5,35 @@ the demo: start AP Coder and click **Load demo invoices** (no Azure needed). The
 [Getting started guide](GETTING_STARTED.md#step-4-try-the-dashboard-with-the-sample-data-no-enterprise-data)
 has a short tour, and the [pilot plan](PILOT_PLAN.md) suggests four weeks to a decision.
 
-Your existing data is safe. On first start the database upgrades itself (schema version 18), and a
+Your existing data is safe. On first start the database upgrades itself (schema version 19), and a
 backup of the database is made automatically once a day when AP Coder starts (the newest 14 are kept).
+
+## This release: fixes, safer server mode and faster pages (D-108 to D-112)
+
+What changes for the pilot tester:
+
+- **Faster lists, reports and search (D-110).** AP Coder keeps a short summary of each invoice, so the review queue,
+  the Invoice directory, the quick search and reports such as Month-end, Sales tax, Vendors and Insights open quickly
+  even with a year of invoices. The first start after the update builds it (the database moves to schema version 19,
+  backed up first): about a minute on a large database, seconds on a pilot's.
+- **Fixes from end-to-end tests (D-108).** A line whose cost center is still to pick goes out with a blank cost
+  center (never "UNASSIGNED"); `process` and `watch` on the command line read invoices only once the GL accounts are
+  imported, as the dashboard does; `python -m ap_coder doctor` also checks what the database holds.
+- **Learning & accuracy tells the AI's work from AP's (D-112).** An invoice where AP only filled in what the AI left
+  blank (no coding model, or a cost center it could not pick) is counted on its own, neither "approved as coded" nor
+  "corrected", on Insights, Learning and Activity; without the coding model, Coding accuracy shows "—" instead of 0%.
+  A line changed after **Reopen for correction** counts as a correction of what was approved before, and is taught.
+- **JD Edwards, clearer (D-112).** With JD Edwards settings on, each vendor needs its address number (AN8): *Add new
+  vendor…* on the review screen takes it, and the check says where else to add it (Settings → JD Edwards E1 →
+  Supplier address numbers). The Welcome checklist ticks *JD Edwards settings* only once the export would work (a
+  Default BU, or every account it needs mapped, tax accounts included), and the export's *Why not* list names an
+  unmapped account once, with its lines.
+- **Smaller things.** `watch --once` says it checks once and how many files were still being copied; an upload of
+  emails counts each one ("2 emails: 1 invoice processed, 1 sent to Emails that need a person"); Exports shows both
+  approvers of an invoice approved twice; Activity counts a person who saved their name once.
+- **On the company server only (D-109, D-111).** A second security review (stricter limits on uploads and folders,
+  lockouts, an option that the person posting to JD Edwards is not the one who approved, safer sessions and HTTPS) and
+  several web workers so ~50 people can work at once. Nothing changes on a laptop.
 
 ## This release: AP Coder on a company server, each person with their own account (D-97 to D-102)
 

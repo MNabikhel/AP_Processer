@@ -236,7 +236,9 @@ bundle with the internet cut off, on Windows and on a Mac that has only Python 3
    (the first time) or *CSV, one row per GL line* → download the batch and import it into the ERP. Exports opens
    on the format used last. **JD Edwards E1** (a ZIP of F0411Z1 / F0911Z1 CSVs to load with R04110ZA) is hidden
    for the pilot: *Settings → About → Show JD Edwards settings* shows its settings tab and export format again
-   ([JDE_E1.md](JDE_E1.md)).
+   ([JDE_E1.md](JDE_E1.md)). With it on, each vendor needs its address number (AN8) before its invoices can be
+   approved (Settings → JD Edwards E1 → *Supplier address numbers*, or the vendor master's ERP ID; *Add new
+   vendor…* takes it too), and the export needs a *Default BU* or every account mapped, tax accounts included.
 
 ## Touchless processing: when to turn it on
 

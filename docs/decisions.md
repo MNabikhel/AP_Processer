@@ -527,7 +527,8 @@ that is reversed keeps its line, marked "replaced by D-NN".
   approval of each invoice still approved or waiting for its second approval, once per invoice (B-212). "Coding
   accuracy" stays a line figure (a line the coder left blank counts as not right: it gave no answer) and is written to
   one decimal wherever it shows. Why: the pilot tester saw 75%, 1 of 3, "4 with reviewer changes" and 88% vs 87.5% for
-  the same four approvals. (`ap_coder/erp/insights.py` `corrected`, `approved_as_coded`)
+  the same four approvals. (`ap_coder/erp/insights.py` `corrected`, `approved_as_coded`) *Changed by D-112 (2): an
+  approval that only had blanks filled in is no longer "approved as coded", but a count of its own.*
 - **D-41** · Line items read without column headings to go by (a table read by its amount column, a receipt's list of
   amounts, a summary of charges) are kept only when they prove themselves: they add up to a sum printed with them, to
   the subtotal, or to the total less the taxes; otherwise none are returned and the invoice is coded as one line for its
@@ -1357,3 +1358,35 @@ that is reversed keeps its line, marked "replaced by D-NN".
   `start_background_work`, `web/jobs.py`, `core/store/ephemeral.py`, `web/pages/process.py`, `web/pages/users.py`,
   `web/pages/invoice.py`, `core/store/backups.py`, `web/security.py`, `ai/local_llm.py` `Slots`, `ai/page_worker.py`,
   `ai/verifier.py`, `ai/pipeline.py`, `ops/service.py`; `tests/test_server_scale.py`)
+- **D-112** · A pilot tester's walk of laptop mode (B-1297 to B-1306), with the choices it made (changes D-39 and
+  D-108 (4) where it says otherwise). (1) **A vendor with no JD Edwards address number (AN8) still blocks approval**,
+  not only the export: D-75 holds (an approved voucher is never held back at export for something the review screen
+  could have said), an AN8 is wanted before the invoice is in an export batch anyway, and the export's own hold
+  would leave approved invoices waiting with the fix one page away. The blocking is made fixable where it is met:
+  *Add new vendor…* takes the AN8 when JD Edwards is on (saved as Settings → JD Edwards E1's address number for that
+  vendor, `jde.an8_overrides`; digits only, up to 8; an Admin's, as that Settings section is on the company server),
+  and the check (JDE_NO_AN8) names *Settings → JD Edwards E1 → Supplier address numbers* instead of "ask the pilot
+  tester". The pop-up says what approving such a vendor's invoice needs ("Approve anyway"), where it said "needs a
+  person". (2) **Three outcomes of an approval**, on Insights, Learning and Activity alike: *approved as coded*
+  (nothing changed, no blank filled in), *blanks filled in by AP* (`insights.filled_in`: only what the AI left blank,
+  a GL account or cost center, filled in) and *corrected* (`insights.corrected`). "Approved as coded" counts only the
+  first: without the coding model every approval only had blanks filled in, and 100% "as coded" read as if the AI
+  had coded them. Insights' time saved counts blanks filled in at the corrected invoice's minutes; its weekly chart
+  shows them as their own series. *Coding accuracy* measures only the lines the AI proposed (B-475): with none, it
+  reads "—", the chart and "matched every reviewer decision" give way to "AP coded every line itself". (3) **A line
+  changed after a reopen corrects what was approved before** (not only what the AI suggested): the reopen keeps the
+  coding approved (`meta.reopened_coding`, line by line, from its lessons before they are withdrawn), and at the next
+  approval a line the AI proposed nothing for (a guess or a blank) and AP changed from that coding is recorded as
+  *corrected* from it (`feedback.suggested_gl` = the coding approved before), counted in "Corrections taught", in
+  the approval's changes (`since: reopened`) and so in "corrected"; a line the AI did propose keeps being measured
+  against the AI, so its accuracy is the AI's own. A line approved again as it was stays AP's own coding. (4) **The
+  JD Edwards setup step is done when the export would work**: saved settings without problems and a business unit
+  for every account it needs (`jde.accounts_without_bu`: the tax accounts, and the GL accounts unless the cost center
+  gives the BU), which a *Default BU* with the default rule covers; else it names the accounts missing one. (5)
+  Smaller: the export's *Why not* names an unmapped account once with its lines; `watch --once` says it checks once
+  and counts the files still copying; an upload counts every email; Exports shows both approvers; Activity's People
+  counts a renamed person once (`activity.distinct_people`, following `settings_changed` renames); pilot-score's notes
+  in the singular for one. (`erp/jde.py`, `web/pages/invoice.py`, `web/templates/invoice.html`, `erp/insights.py`,
+  `web/pages/learning.py`, `web/pages/activity.py`, `web/pages/insights.py`, `core/store/invoices.py`,
+  `web/pages/process.py`, `ops/cli.py`, `ops/pilot_score.py`, `core/store/purchasing.py`;
+  `tests/test_pilot_walk_laptop.py`)

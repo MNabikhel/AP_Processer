@@ -160,11 +160,12 @@ Things to try:
   *Ask the vendor for the missing invoices*.
 - **Month-end** shows what to accrue; **Sales tax** totals the GST/HST and QST to claim back (set
   the dates to include the demo invoices, dated mid-2026); **Help** explains every check.
-- *Remove demo invoices* on the **Import invoices** page removes the demo invoices (and any batch
+- *Remove demo invoices* on the **Import invoices** page (tick *Yes, remove the demo invoices* first: the button
+  stays greyed out until then) removes the demo invoices (and any batch
   exported from them), sample POs and the sample vendor list again. The sample GL accounts and tax
   setup stay (replace them when you import yours: tick *Replace my current list*).
 
-**Reading the samples for real:** first click *Remove demo invoices* if you loaded the demo (the same
+**Reading the samples for real:** first tick *Yes, remove the demo invoices* and click *Remove demo invoices* if you loaded the demo (the same
 sample files would otherwise be recognised as already processed).
 
 1. **GL accounts & tax** → *Use the sample GL accounts* (skip this if you tried the demo: the sample setup is
@@ -172,7 +173,8 @@ sample files would otherwise be recognised as already processed).
 2. Copy the sample PDFs from `samples\` into your invoices folder (**Import invoices** →
    *Open folder* shows it). `samples\README.md` lists what each one shows: HST, GST+PST,
    TPS/TVQ, GST only, a US invoice and a credit note.
-3. **Import invoices** → *Process 10 file(s)* (or copy only a few to start).
+3. **Import invoices** → *Process 10 files* (the button counts the files waiting; or copy only a few to start).
+   *Upload invoices* and *Process N files* stay greyed out until GL accounts exist (step 1).
 4. **Review queue** → open each invoice. Change a GL code in the grid and watch the checks and
    the GL distribution update. Approve, and look at **Learning & accuracy**.
 
