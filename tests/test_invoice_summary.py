@@ -251,8 +251,13 @@ def test_what_several_pages_read_is_read_again_only_once_it_changed(year):
     """``summary_memo``: an approval changes no vendor's invoice dates (the queue's late regular bills keep theirs);
     a date changed, by the store or plain SQL, is read again; an export changes the batches' totals."""
     dates, totals = year.vendor_invoice_dates(), year.batch_totals()
-    invoice = year.list_invoices(REVIEW)[0]
+    # One under the approval limit (15,000), so it is approved and can be exported (the queue's first one is not
+    # always: its order depends on the confidences).
+    invoice = min(
+        (i for i in year.list_invoices(REVIEW) if float(i["grand_total"] or 0) < 15000), key=lambda i: i["id"]
+    )
     year.approve_invoice(invoice["id"], year.get_invoice(invoice["id"])["ai_output"], "Jordan Lee")
+    assert year.get_invoice(invoice["id"])["status"] == "approved"
     assert year.vendor_invoice_dates() is dates and year.batch_totals() is totals
     with sqlite3.connect(year.path) as conn:
         conn.execute("UPDATE invoices SET invoice_date = '2026-02-02' WHERE id = ?", (invoice["id"],))
