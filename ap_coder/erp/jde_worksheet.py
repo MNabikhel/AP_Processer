@@ -258,7 +258,6 @@ BY_ID = {q.id: q for q in QUESTIONS}
 UPPER = {"document_type", "credit_document_type", "po_document_type", "domestic_currency", "self_assessed_code",
          "exempt_code"}  # fmt: skip
 YES, NO = {"yes", "y", "true", "1", "oui", "o", "x"}, {"no", "n", "false", "0", "non"}
-SHEETS = ("Read me", "Questions", "Tax areas", "Account mapping", "Suppliers")
 
 
 def _current(q: Question, settings: jde.JdeSettings) -> str:

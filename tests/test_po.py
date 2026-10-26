@@ -10,9 +10,9 @@ from ap_coder.ai.pipeline import finalise_coding
 from ap_coder.coding.po import (
     map_columns,
     match_invoice,
-    pair_with_po,
     po_key,
     po_label,
+    po_lines_billed,
     rows_from_records,
     similarity,
     template_csv,
@@ -130,10 +130,9 @@ def test_reimport_replaces_the_lines_of_that_po_only(store):
 
 def test_lines_pair_with_the_po_line_they_bill(store):
     po = store.purchase_order(po_key("PO-88213"))
-    pairs = pair_with_po(_gt(NW)["line_items"], po["lines"])
-    assert pairs == {1: 1, 2: 2, 3: 3, 4: 4, 5: 5}
-    credit = pair_with_po(_gt(CN)["line_items"], po["lines"])
-    assert credit == {1: 1, 2: 4}  # "Return - Dell Latitude..." and "Credit - implementation consulting..."
+    assert po_lines_billed(_gt(NW)["line_items"], po["lines"]) == [1, 2, 3, 4, 5]
+    credit = po_lines_billed(_gt(CN)["line_items"], po["lines"])
+    assert credit == [1, 4]  # "Return - Dell Latitude..." and "Credit - implementation consulting..."
     assert similarity("Office chair", "Dell PowerEdge server") < 0.45
 
 

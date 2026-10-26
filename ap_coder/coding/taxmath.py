@@ -19,7 +19,7 @@ def money(value: Any) -> str:
         amount = float(value)
     except (TypeError, ValueError):
         return "—"
-    return f"-{-amount:,.2f}" if amount < -0.004 else f"{abs(amount) if amount > -0.005 else 0.0:,.2f}"
+    return f"-{-amount:,.2f}" if amount < -0.004 else f"{abs(amount):,.2f}"
 
 
 def _short(text: str, size: int = 28) -> str:

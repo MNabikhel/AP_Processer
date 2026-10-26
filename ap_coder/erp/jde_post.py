@@ -225,10 +225,6 @@ def documents_of(store: Any, invoice_id: int | None) -> list[str]:
                                            "AND document != ''", (invoice_id, POSTED))]  # fmt: skip
 
 
-def posted_ids(store: Any, batch: int) -> set[int]:
-    return {p["invoice_id"] for p in postings(store, batch, (POSTED,))}
-
-
 def locked(store: Any, batch: int) -> list[dict[str, Any]]:
     """The batch's rows JDE has, or may have (``LOCKED_SQL``)."""
     with _conn(store) as conn:

@@ -517,9 +517,10 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
         not_charged.add(tax_type)
         name = tax_name(tax_type, prov)
         if tax_type == "PST":
-            todo = (f"if they are taxable, the {name} is due: choose “{_other_only(tax_type, prov)} · {name} not "
+            # "GST only": the province's other tax, as the dropdown says it
+            todo = (f"if they are taxable, the {name} is due: choose “GST only · {name} not "
                     f"charged (self-assess)” and self-assess it ({SELF_ASSESS_LAW.get(prov, 'the provincial act')}); "
-                    f"if they are exempt, choose “{_other_only(tax_type, prov)} · {name} exempt”")  # fmt: skip
+                    f"if they are exempt, choose “GST only · {name} exempt”")  # fmt: skip
         elif tax_type == "QST":
             todo = (f"choose “GST only · QST not charged” if they are taxable ({QST_NOT_CHARGED}), or “GST only · "
                     "QST exempt” if they are exempt")  # fmt: skip
@@ -716,11 +717,6 @@ def _which_lines(lines: list[Any], all_of: list[Any] | None = None) -> str:
         return "every line"
     numbers = [str(li.line_number) for li in lines]
     return f"line {numbers[0]}" if len(numbers) == 1 else f"lines {', '.join(numbers)}"
-
-
-def _other_only(tax_type: str, province: str) -> str:
-    """ "GST only": the other tax of a GST + PST (or QST) province, as the dropdown says it."""
-    return "GST only"
 
 
 def _short(text: str, size: int = 32) -> str:

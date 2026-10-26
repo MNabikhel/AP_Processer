@@ -77,9 +77,6 @@ def corrected(event: dict[str, Any]) -> bool:
     )
 
 
-_corrected = corrected  # the name Insights' own tests use
-
-
 def filled_in(event: dict[str, Any]) -> bool:
     """Whether an approval not ``corrected`` still had blanks filled in by AP: a cost center, an UNASSIGNED account.
     Neither "approved as coded" nor "corrected": its own count on every page (D-112), so the figure doesn't read 100%

@@ -185,7 +185,7 @@ def test_month_end_gives_what_it_gave(year):
         assert new_undated == old_undated
         undated: list = []
         assert accruals.build(year, end, undated) == accruals.build(year, end)
-        assert undated == accruals.undated(year, end)
+        assert undated == new_undated
 
 
 def test_insights_and_vendors_give_what_they_gave(year):

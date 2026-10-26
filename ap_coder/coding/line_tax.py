@@ -32,7 +32,6 @@ from typing import Any
 from .tax import CANADIAN_TAX_TYPES, LAWFUL_OTHER_RATES, REGIME, TAX_TYPES
 
 EXEMPT, ZERO_RATED, OUT_OF_SCOPE = "exempt", "zero_rated", "out_of_scope"
-TAX_STATUSES = ("", EXEMPT, ZERO_RATED, OUT_OF_SCOPE)
 CODE_EXEMPT, CODE_ZERO, CODE_OUT, CODE_NONE = "EXEMPT", "ZERO", "OUT", "NONE"
 STATUS_CODES = {EXEMPT: CODE_EXEMPT, ZERO_RATED: CODE_ZERO, OUT_OF_SCOPE: CODE_OUT}
 CODE_STATUSES = {code: status for status, code in STATUS_CODES.items()}
@@ -1073,7 +1072,7 @@ def tax_guessed(line: Any) -> bool:
 
 
 __all__ = [
-    "CANADIAN_TAX_TYPES", "CODE_EXEMPT", "CODE_NONE", "CODE_OUT", "CODE_ZERO", "EXEMPT", "OUT_OF_SCOPE", "TAX_STATUSES",
+    "CANADIAN_TAX_TYPES", "CODE_EXEMPT", "CODE_NONE", "CODE_OUT", "CODE_ZERO", "EXEMPT", "OUT_OF_SCOPE",
     "ZERO_RATED", "all_labels", "apply_tax_code", "code_for", "code_label", "learned_codes", "options", "parse_code",
     "parse_legend", "prefill", "read_flags", "solve", "tax_code_of", "tax_learned",
 ]  # fmt: skip

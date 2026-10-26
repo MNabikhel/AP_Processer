@@ -96,10 +96,6 @@ def build(store: Store, start: dt.date, end: dt.date, *, duties: bool = False) -
     }  # fmt: skip
 
 
-def exceptions(report: dict[str, Any]) -> int:
-    return len(report["overrides"]) + len(report["signals"])
-
-
 REPORT_CSS = """
 body {font-family: Segoe UI, Inter, Arial, sans-serif; color: #142033; max-width: 980px; margin: 2rem auto;
       padding: 0 1rem;}

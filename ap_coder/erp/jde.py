@@ -60,7 +60,6 @@ from ..core.reference_data import UNASSIGNED
 
 SETTING_KEY = "jde_e1"
 FORMAT = "jde"
-LABEL = "JD Edwards E1 (F0411Z1 / F0911Z1)"
 # The two reasons an invoice is held back for its supplier number: the Exports page links them to Settings → JD
 # Edwards E1 → Supplier address numbers (``an8_problem``).
 NO_AN8 = "no JDE supplier number (AN8)"

@@ -126,13 +126,6 @@ def _unguessed(doc: dict, ai: dict) -> dict:
     return {k: v for k, v in doc.items() if k != "gl_distribution"} | {"line_items": lines}
 
 
-def undated(store: Store, period_end: dt.date) -> list[Accrual]:
-    """Invoices not in the ERP yet with no invoice date: not accrued until they have one, listed (B-474)."""
-    out: list[Accrual] = []
-    _not_in_erp(store, period_end, out)
-    return out
-
-
 def _exported_bills(store: Store, rows: list[dict]) -> set[tuple[str, str, bool]]:
     """The bills (``_bill``) of the exported invoices, of those that one of ``rows`` (invoices not in the ERP yet)
     may be a copy of: from the invoices' summary (D-110)."""
@@ -235,20 +228,13 @@ def _expected_recurring(store: Store, period_end: dt.date) -> list[Accrual]:
 
 
 def build(store: Store, period_end: dt.date, undated: list[Accrual] | None = None) -> list[Accrual]:
-    """The accruals at ``period_end``; ``undated``: filled with the invoices ``undated`` lists, read in the same go."""
+    """The accruals at ``period_end``; ``undated``: filled with the invoices not in the ERP yet that have no invoice
+    date, not accrued until they have one (B-474), read in the same go."""
     return (
         _received_not_invoiced(store, period_end)
         + _not_in_erp(store, period_end, undated)
         + _expected_recurring(store, period_end)
     )
-
-
-def by_gl(accruals: list[Accrual]) -> list[tuple[str, str, float]]:
-    """(GL account, currency, total) largest first."""
-    totals: dict[tuple[str, str], float] = defaultdict(float)
-    for a in accruals:
-        totals[(a.gl_code or "(no GL)", a.currency)] += a.amount
-    return sorted(((gl, cur, round(t, 2)) for (gl, cur), t in totals.items()), key=lambda x: -x[2])
 
 
 def by_gl_columns(accruals: list[Accrual]) -> tuple[list[str], list[tuple[str, dict[str, float]]]]:

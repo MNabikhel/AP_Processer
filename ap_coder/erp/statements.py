@@ -128,10 +128,6 @@ class Reconciliation:
     def total(self, status: str) -> float:
         return round(sum((li.statement_amount or li.ap_amount or 0) for li in self.lines if li.status == status), 2)
 
-    @property
-    def statement_total(self) -> float:
-        return round(sum(li.statement_amount or 0 for li in self.lines if li.status != NOT_ON_STATEMENT), 2)
-
 
 def reconcile(records: list[dict[str, Any]], columns: dict[str, str], invoices: list[dict[str, Any]]) -> Reconciliation:
     """``records``: statement rows; ``columns``: ``map_columns`` output (number and amount or balance needed);

@@ -38,7 +38,7 @@ def test_controls_report_lists_the_exceptions(tmp_path):
     assert [e["invoice_id"] for e in r["signals"]] == [b]
     assert len(r["finals"]) == 1 and len(r["sent_back"]) == 1 and r["waiting"] == []
     assert any(e["action"] == "settings_changed" for e in r["setup"])
-    assert r["by_person"] == [("Jane", 2, 0)] and controls.exceptions(r) == 2
+    assert r["by_person"] == [("Jane", 2, 0)]
     page = controls.report_html(r)
     assert "Approved despite an error (1)" in page and "check the GST number" in page
     assert "Total doesn&#x27;t add up" in page  # the error's title, not its code (B-991)

@@ -35,7 +35,8 @@ def test_demo_accruals(tmp_path):
     assert "Invoice INV-30981" not in not_in_erp  # Cascade is dated October 1, after the period end
     totals = accruals.summary(items)
     assert totals[accruals.RECEIVED] == (1, {"CAD": 210.0})
-    assert sum(t for _, _, t in accruals.by_gl(items)) == pytest.approx(round(sum(a.amount for a in items), 2))
+    by_gl = [t for _, totals in accruals.by_gl_columns(items)[1] for t in totals.values()]
+    assert sum(by_gl) == pytest.approx(round(sum(a.amount for a in items), 2))
     assert "PO-89904 line 5" in accruals.to_csv(items, END).decode("utf-8-sig")
 
 

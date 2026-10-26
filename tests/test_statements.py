@@ -45,7 +45,6 @@ def test_reconcile_finds_matches_differences_and_gaps():
     differs = next(li for li in rec.lines if li.status == stm.DIFFERS)
     assert differs.difference == 5.0 and differs.invoice_id == 2
     assert rec.lines[0].status == stm.DIFFERS  # problems first
-    assert rec.statement_total == 825.0
     assert "Amount differs" in stm.to_csv(rec).decode("utf-8-sig")
 
 

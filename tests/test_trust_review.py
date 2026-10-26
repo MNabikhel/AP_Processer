@@ -149,7 +149,9 @@ def test_month_end_flags_an_invoice_dated_over_a_year_back_and_lists_one_with_no
     (old,) = accruals.build(store, end)
     assert old.old and old.amount == 500.0 and accruals.OLD_NOTE in old.note
     assert accruals.OLD_NOTE in accruals.to_csv([old], end).decode("utf-8-sig")
-    (undated,) = accruals.undated(store, end)
+    no_date: list = []
+    accruals.build(store, end, no_date)
+    (undated,) = no_date
     assert "B-2" in undated.reference and "None" not in undated.description
     page = html.unescape(client_for(store).get("/month-end?end=2026-09-30").text)
     assert "1 invoice dated more than a year before 2026-09-30: 500.00 CAD included" in page and "Check date" in page

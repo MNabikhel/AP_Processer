@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 from ap_coder.coding import taxreturn
 from ap_coder.core.config import Settings
 from ap_coder.core.store import APPROVED, PARKED, REJECTED, REVIEW, Store, load_sample_setup
-from ap_coder.erp import accruals, dupaudit, export_layout, exports, jde, stamp
+from ap_coder.erp import accruals, dupaudit, export_layout, exports, stamp
 from ap_coder.erp import statements as stm
 from ap_coder.ops.demo import load_demo
 from ap_coder.web.app import create_app
@@ -249,7 +249,7 @@ def test_jde_download_is_the_zip_jde_builds(client, busy):
 def test_the_jde_check_leaves_out_what_cannot_go(client, busy):
     ok, problems, blocking = export_page.jde_check(busy, [i["id"] for i in busy.unexported_approved()])
     text = client.get("/exports?fmt=jde").text
-    assert jde.LABEL.split(" (")[0] in text or "JD Edwards E1" in text
+    assert "JD Edwards E1" in text
     for p in blocking:
         assert p.split(".")[0] in text
     if blocking or not ok:

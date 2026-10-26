@@ -61,7 +61,7 @@ def tile_text(n: int, by_currency: dict[str, float], rates: dict[str, float]) ->
 def month_end_page(request: Request, end: str = "") -> HTMLResponse:
     store = get_store(request)
     period_end = day(end, accruals.default_period_end())
-    no_date: list[accruals.Accrual] = []  # read with the accruals, not again (``accruals.undated``)
+    no_date: list[accruals.Accrual] = []  # the invoices with no date: read with the accruals, not again
     items = accruals.build(store, period_end, no_date)
     rates = store.fx_rates()
     tiles = []

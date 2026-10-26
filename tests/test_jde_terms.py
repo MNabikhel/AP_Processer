@@ -72,11 +72,11 @@ def _terms_findings(final, settings):
 def test_terms_without_a_code_are_a_note_once_the_table_is_in_use():
     """A note, not a warning: a blank VLPTC has E1 take the supplier's own terms, so it holds back no bulk approval
     (B-896)."""
-    from ap_coder.coding.bulk import _needs_a_person
+    from ap_coder.coding.bulk import needs_a_person
 
     final = _invoice(ON, payment_terms="2/10 Net 45")["final_output"]
     (finding,) = _terms_findings(final, jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, terms_codes={"Net 30": "N30"}))
-    assert finding[0] == "info" and not _needs_a_person(finding[0], finding[1])
+    assert finding[0] == "info" and not needs_a_person(finding[0], finding[1])
     assert finding[2] == ("Payment terms 2/10 Net 45 have no JD Edwards code: add it in Settings → JD Edwards E1 "
                           "(or ask the pilot tester)")  # fmt: skip
     assert not _terms_findings(

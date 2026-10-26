@@ -200,15 +200,6 @@ def po_lines_billed(invoice_lines: list[dict[str, Any]], po_lines: list[dict[str
     return out
 
 
-def pair_with_po(invoice_lines: list[dict[str, Any]], po_lines: list[dict[str, Any]]) -> dict[int, int]:
-    """{invoice line_number: PO line_number} (see ``po_lines_billed``)."""
-    return {
-        int(li["line_number"]): po_line
-        for li, po_line in zip(invoice_lines, po_lines_billed(invoice_lines, po_lines), strict=True)
-        if po_line is not None
-    }
-
-
 @dataclass
 class LineMatch:
     invoice_line: int
