@@ -131,6 +131,18 @@ def _tax_signature(doc: dict[str, Any]) -> list[tuple]:
 _ACCOUNTS = ("predicted_gl_code", "predicted_cost_center")
 
 
+def changed_since(
+    prior: list[str] | None, line_number: Any, gl: str, cc: str, cost_centers: bool
+) -> list[dict[str, str]]:
+    """The changes of a line from ``prior``, its [GL account, cost center] approved before a reopen (the invoice's
+    ``meta.reopened_coding``): none when nothing was approved there or nothing changed (B-1299, D-112)."""
+    if not prior or prior[0] in ("", "UNASSIGNED"):
+        return []
+    pairs = [("GL", prior[0], gl)] + ([("cost center", prior[1] or "", cc or "")] if cost_centers else [])
+    return [{"what": f"line {line_number} {label}", "before": before, "after": after, "since": "reopened"}
+            for label, before, after in pairs if before != after]  # fmt: skip
+
+
 def diff_coding(ai: dict[str, Any], final: dict[str, Any], cost_centers: bool = True) -> list[dict[str, str]]:
     """Every change a reviewer made: header fields, line fields, added/removed lines, tax lines. An account or cost
     center blank either way is no change, nor is any cost center when no cost center list is in use
