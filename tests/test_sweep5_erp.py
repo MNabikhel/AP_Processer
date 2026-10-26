@@ -57,3 +57,19 @@ def test_jde_api_checks_a_yen_vouchers_record_against_its_gross_in_yen():
     row = {"expect": json.dumps(expect)}
     assert jde_post.mismatch({"an8": "10023", "invoice_number": "T-1", "gross": "10000"}, row) == ""
     assert "gross" in jde_post.mismatch({"an8": "10023", "invoice_number": "T-1", "gross": "100.00"}, row)
+
+
+def test_the_hub_gives_an_old_lines_tax_code_as_the_review_screen_reads_it():
+    """B-1373: a line stored before tax codes kept their exemptions was read in the hub against every tax line
+    printed ("PST 0.00" too): "GST~PST" (PST exempt), where the review screen and the exports say "GST" (PST due,
+    not charged)."""
+    from ap_coder.coding.line_tax import legacy_basis, tax_code_of
+    from ap_coder.erp.hub import tables
+
+    lines = [{"line_number": 1, "description": "Toner", "amount": 100.0, "taxes_applied": ["GST"]},
+             {"line_number": 2, "description": "Paper", "amount": 50.0, "taxes_applied": []}]  # fmt: skip
+    taxes = [{"tax_type": "GST", "rate": 0.05, "taxable_amount": 100.0, "tax_amount": 5.0},
+             {"tax_type": "PST", "province": "BC", "rate": 0.07, "taxable_amount": 0.0, "tax_amount": 0.0}]  # fmt: skip
+    row = {"id": 1, "status": "approved", "final_output": {"line_items": lines, "tax_lines": taxes}}
+    got = [r["tax_code"] for r in tables.invoice_lines(None, tables.Context(), rows=[row])]
+    assert got == [tax_code_of(li, legacy_basis(lines, taxes)) for li in lines] == ["GST", "NONE~GST"]
