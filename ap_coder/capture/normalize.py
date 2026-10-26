@@ -206,15 +206,16 @@ _ISO = re.compile(rf"\b(20\d{{2}}|19\d{{2}})[-/.](\d{{1,2}})[-/.](\d{{1,2}})(?:\
 _NUMERIC = re.compile(
     rf"\b(\d{{1,2}})[-/.](\d{{1,2}})[-/.](\d{{4}}{_TIME_NEXT}|\d{{2}}{_TIME_NEXT}|\d{{2}}\b|\d{{4}}\b|\d{{4}}(?=[a-z]{{3}}))"
 )
-# Spaces optional: OCR often drops them ("May14,2026", "20Jul2026"); the month name is looked up.
+# Spaces optional: OCR often drops them ("May14,2026", "20Jul2026"); the month name is looked up (three to ten
+# letters: "septiembre" has ten, B-1343).
 # Between the day and the year, a comma and a speck OCR read as a point: "October 23, . 2026"; a receipt's slashes:
 # "Jun14/2017", "Jul/15/2017".
 _WORDY_MDY = re.compile(
-    rf"\b([a-z]{{3,9}})\.?[\s/-]*(\d{{1,2}})(?:st|nd|rd|th)?(?:\s*[,./]){{0,2}}\s*(\d{{4}})(?:\b|{_TIME_NEXT})"
+    rf"\b([a-z]{{3,10}})\.?[\s/-]*(\d{{1,2}})(?:st|nd|rd|th)?(?:\s*[,./]){{0,2}}\s*(\d{{4}})(?:\b|{_TIME_NEXT})"
 )
 # Spanish and Portuguese put "de" between the parts: "10 de febrero de 2022".
 _WORDY_DMY = re.compile(
-    r"\b(\d{1,2})(?:er|st|nd|rd|th)?[\s.]*(?:de\s+)?([a-z]{3,9})(?:\s*[,.]){0,2}\s*(?:del?\s+)?(\d{4})(?:\b|"
+    r"\b(\d{1,2})(?:er|st|nd|rd|th)?[\s.]*(?:de\s+)?([a-z]{3,10})(?:\s*[,.]){0,2}\s*(?:del?\s+)?(\d{4})(?:\b|"
     + _TIME_NEXT
     + ")"
 )
@@ -253,10 +254,10 @@ _SPECK_BY_SEP = re.compile(
 )
 
 
-_WORDY_DMY_DASH = re.compile(r"\b(\d{1,2})[-\s]([a-z]{3,9})[-\s](\d{2,4})\b")
+_WORDY_DMY_DASH = re.compile(r"\b(\d{1,2})[-\s]([a-z]{3,10})[-\s](\d{2,4})\b")
 # Compact forms: "Oct-15-26" (the month, day and year by dashes) and "15OCT26" (all run together, a two-digit year).
 # Not inside a number ("INV-12MAR26", "PO-OCT-15-26").
-_WORDY_MDY_DASH = re.compile(r"(?<![\w/-])([a-z]{3,9})\.?-(\d{1,2})-(\d{2}|\d{4})(?![\w/-])")
+_WORDY_MDY_DASH = re.compile(r"(?<![\w/-])([a-z]{3,10})\.?-(\d{1,2})-(\d{2}|\d{4})(?![\w/-])")
 _GLUED_DMY = re.compile(r"(?<![\w/-])(\d{1,2})([a-z]{3,4})(\d{2})(?![\w/-])")
 
 

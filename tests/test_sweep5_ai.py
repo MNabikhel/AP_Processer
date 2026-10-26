@@ -98,3 +98,14 @@ def test_a_later_batch_the_model_fails_keeps_the_accounts_it_suggested_before(re
 
     got = suggest_accounts(OddRows(reference), "Staples", [(1, "Filter", 10.0), (2, "Hose", 5.0)])
     assert got == {1: ("6000", "", "filters")}
+
+
+@pytest.mark.parametrize(
+    "text", ["30 de septiembre de 2026", "septiembre 30, 2026", "30 septiembre 2026", "30-septiembre-2026"]
+)
+def test_a_spanish_september_is_read(text):
+    """B-1343: "septiembre" is the one month name of ten letters; the date patterns took nine at most, so a Spanish
+    invoice dated in September had no date read."""
+    from ap_coder.capture.normalize import parse_date
+
+    assert parse_date(text) == "2026-09-30"
