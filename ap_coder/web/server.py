@@ -298,6 +298,8 @@ def _serve_workers(host: str, port: int, store: Store | None, certfile: str | No
     background = BackgroundWork(store.path)
     background.start()
     threading.Thread(target=_stop_when_asked, args=(supervisor, data, token), daemon=True).start()
+    threading.Thread(target=_stop_background_when_asked, args=(supervisor.should_exit, background),
+                     daemon=True).start()  # fmt: skip
     url = browser_url(host, port, bool(certfile and keyfile))
     threading.Thread(target=_announce_when_up, args=(url, False), daemon=True).start()
     try:
@@ -311,6 +313,13 @@ def _serve_workers(host: str, port: int, store: Store | None, certfile: str | No
         os.environ.pop(WORKER_ENV, None)
         os.environ.pop(SLOTS_ENV, None)
     return 1 if supervisor.failed else 0
+
+
+def _stop_background_when_asked(should_exit: threading.Event, background: Any) -> None:
+    """The background process is asked to stop as soon as the server is, while the workers finish their requests,
+    not after them: a stop takes the longer of the two, not both (B-1296)."""
+    should_exit.wait()
+    background.stop()
 
 
 def _asked_to_stop(data: Path, token: str) -> bool:
