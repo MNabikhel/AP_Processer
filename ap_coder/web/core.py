@@ -10,6 +10,10 @@ A page module uses these::
     return message("Copied.")                                     # stay, show a message
     return refuse("That file is not a CSV.")                      # stay, show the problem
 
+``can(request, path)`` says whether the person asking may use a route (always on a laptop; their role's say on the
+server), ``reviewer()`` / ``login()`` who they are, ``current_store()`` the database of the request (where messages
+and uploads wait, D-99).
+
 Templates are escaped automatically (Jinja autoescape). The ``ui`` global gives the HTML helpers of
 ``ap_coder/core/ui.py`` (they escape what they are given), e.g. ``{{ ui.pill("Ready", "ok") }}``. Never mark text from
 an invoice or a file as safe yourself.
@@ -427,9 +431,6 @@ def stale_page(form: Any, shown: Any) -> JSONResponse | None:
     return refuse(STALE_PAGE, 409)
 
 
-# --- Drawing a page ----------------------------------------------------------------------------------------------
-
-
 # --- What this pilot shows (Settings → About, D-52) -----------------------------------------------------------------
 SHOW_JDE = "show_jde_settings"  # "1": Settings → JD Edwards E1 is a tab, and JD Edwards E1 an export format
 DEVELOPER_TOOLS = "show_developer_tools"  # "1": Learning → Readers, the training data, What's new for developers
@@ -473,6 +474,9 @@ def developer_tools(store: Store) -> bool:
     """Whether the developer tools show (Learning → Readers, the training data export, the developer changelog):
     the switch on Settings → About, or AP_DEVELOPER_TOOLS=1."""
     return developer_env_on() or _switch(store, DEVELOPER_TOOLS)
+
+
+# --- Drawing a page ----------------------------------------------------------------------------------------------
 
 
 def nav_counts(store: Store) -> dict[str, int]:

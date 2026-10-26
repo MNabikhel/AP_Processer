@@ -8,6 +8,10 @@ The server runs in this process (uvicorn). Once it answers, it prints ``AP Coder
 While it runs, ``<data folder>/.ap_coder_server.json`` says which server this is: {"pid", "port", "folder",
 "version", "token", "user" (the computer account running it), "started"}. The launcher stops it with
 ``POST /shutdown`` and the header ``X-AP-Coder-Token: <token>``; the file is removed when the server stops.
+
+On the company server with ``workers`` > 1 (D-111): uvicorn's supervisor runs that many web workers
+(``worker_app``), and ``BackgroundWork`` keeps one ``serve --background-work`` process (``run_background``) beside
+them; a stop file asks them all to stop.
 """
 
 from __future__ import annotations
@@ -453,8 +457,8 @@ class BackgroundWork:
 
 def run_background(store: Store) -> int:
     """The server's background process (D-111): the page reader and the AI reviewer, the Azure check, JD Edwards,
-    the daily backup and the finance hub's schedule (every minute, not at each page), until its input closes. One per
-    data folder (an OS lock): a second one waits for the first to end."""
+    the daily backup and the finance hub's schedule (looked at every 30 seconds, not at each page), until its input
+    closes. One per data folder (an OS lock): a second one waits for the first to end."""
     from ap_coder.web.app import DailyBackup, EnvSettings, start_background_work
 
     halt = threading.Event()

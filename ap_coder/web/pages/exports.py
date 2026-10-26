@@ -9,8 +9,9 @@ duplicate payment audit.
   just made (``?made=<batch>``), the custom CSV layout, the ERP's invoice register, past batches (``?batch=&bfmt=``
   picks one to download again, stamp or undo) and the duplicate audit (``?audit=1``).
 * Downloads (GET): ``/exports/batches/<n>/download?fmt=``, ``/exports/batches/<n>/approved-pdfs.zip``,
-  ``/exports/duplicates.csv``. The files are the ones ``exports.build`` / ``jde.build_zip`` / ``stamp.batch_zip`` /
-  ``dupaudit.to_csv`` make.
+  ``/exports/duplicates.csv``, ``/exports/jde/dry-run.txt`` (what a JD Edwards batch of the ready invoices would
+  load). The files are the ones ``exports.build`` / ``jde.build_zip`` / ``stamp.batch_zip`` / ``dupaudit.to_csv`` /
+  ``jde.dry_run_text`` make.
 """
 
 from __future__ import annotations

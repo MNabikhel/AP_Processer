@@ -7,13 +7,14 @@ Reject, Delete). Any other invoice opens read-only, with what can be done in its
 sending it back, bringing a parked one back, reopening an approved (for correction) or a rejected one.
 
 Every edit is checked as the reviewer types (``POST /review/<id>/check`` answers the sections again) and kept as a
-draft for this dashboard's lifetime, so moving to another invoice and back keeps it.
+draft, per person and in the store too (D-86), so moving to another invoice and back keeps it, a restart too.
 What is worked out lives in ``ap_coder/web/invoice_view.py``; the page script is ``static/js/invoice.js`` with the
 page viewer ``static/js/invoice_viewer.js``.
 
 Routes (all under ``/review/<id>``): GET the screen, ``page/<n>.png`` (a page's picture), ``words`` (the words on
 the pages, to teach a field), ``reader`` (OvisOCR2's progress on it), ``approved.pdf``; POST ``check``,
-``approve``, ``park``, ``reject``, ``note``, ``teach``, ``split``, ``apply-rules``, ``po-coding``,
+``approve``, ``undo-approve`` (the approval banner's Undo), ``park``, ``reject``, ``note``, ``teach``, ``split``,
+``apply-rules``, ``po-coding``,
 ``suggestion``, ``fill-lines`` (Apply to all lines), ``vendor`` (add the printed vendor), ``read-pages``,
 ``review-again`` (the AI reviewer), ``start-over``, ``resume`` (a parked invoice), ``restore`` (a rejected one),
 ``correct`` (an approved one).

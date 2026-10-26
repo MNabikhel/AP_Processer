@@ -9,6 +9,14 @@
 * The grid actions (split a line, the coding rules, the PO's coding, a suggested GL account) return new grid rows.
 
 The store calls and the rules for what may be approved and what is learned are the store's and the pipeline's own.
+
+The file, in order (each part under its ``# ---`` heading): the form (``Draft``, what the server fills in:
+``settle_header``, the words taught on the page), labels and choices for codes (``grid``, ``tax_choices``), what
+was read from the page (``capture_of``, ``shown_sure``), OvisOCR2 and the AI reviewer for this invoice
+(``reader_state``, ``reviewer_state``), the checks as the screen says them (``checks_summary``, ``learn_text``),
+the sections (``summary``, ``po_section``, ``tax_check``, ``distribution``), the analysis (``analyse``), dates,
+currency and what is never approved anyway (``settle_dates``, ``HARD_CODES``, ``ordered_blockers``), and the grid
+actions.
 """
 
 from __future__ import annotations

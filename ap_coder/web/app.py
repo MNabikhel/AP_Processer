@@ -3,8 +3,9 @@
 Every page is a module of ``ap_coder/web/pages`` listed in ``pages.PAGES`` (or ``pages.MORE_MODULES``). Besides the
 pages:
 
-* ``GET /healthz``: {"ok", "app", "version", "folder", "pid", "port"} for the launcher (no secrets); to this
-  computer, also "user" (the account running it).
+* ``GET /healthz``: {"ok", "app", "version", "build", "folder", "pid", "port"} for the launcher (no secrets); to this
+  computer, also "user" (the account running it); to another computer, or past the server's own console, only
+  {"ok", "app"}.
 * ``POST /shutdown``: stops the server cleanly; only from this computer, with the token ``serve`` wrote to the
   data folder's ``.ap_coder_server.json`` (header ``X-AP-Coder-Token``).
 * ``GET /jobs/<name>``: how far a background job got (``ap_coder/web/jobs.py``).
