@@ -423,7 +423,8 @@ class LessonsMixin:
             validation[CHECKS_STAMP_KEY] = self.checks_stamp()
         if capture is not None and hasattr(capture, "to_dict"):
             capture = capture.to_dict()
-        key = vendor_key(output.get("vendor_name", ""))
+        # The vendor's own key, of two whose names read alike (B-1021): as ``add_invoice`` keeps it (B-1311).
+        key = self.vendor_key_for(output.get("vendor_name", ""), output.get("gst_hst_registration_number"))
         due = _due(output, self.default_terms_days(), self.vendor_terms(key))
         with self._conn() as conn:
             conn.execute("BEGIN IMMEDIATE")  # checked and changed in one go: an approval cannot slip in between

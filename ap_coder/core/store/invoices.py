@@ -67,6 +67,7 @@ class InvoicesMixin:
         if validation:  # what it was checked against: the queue checks it again once that changes (B-815)
             validation = {CHECKS_STAMP_KEY: self.checks_stamp(), **validation}
         val = validation or {}
+        key = self.vendor_key_for(out.get("vendor_name", ""), out.get("gst_hst_registration_number"))  # B-1021
         with self._conn() as conn:
             if sha:  # a new attempt replaces earlier failed attempts at the same file
                 conn.execute("DELETE FROM invoices WHERE file_sha256 = ? AND status = ?", (sha, FAILED))
@@ -81,7 +82,7 @@ class InvoicesMixin:
                     sha,
                     FAILED if error else REVIEW,
                     out.get("vendor_name"),
-                    self.vendor_key_for(out.get("vendor_name", ""), out.get("gst_hst_registration_number")),
+                    key,
                     out.get("invoice_number"),
                     out.get("invoice_date"),
                     out.get("currency"),
@@ -96,9 +97,7 @@ class InvoicesMixin:
                     error,
                     _now(),
                     po_key(out.get("po_number") or ""),
-                    _due(out, self.default_terms_days(), self.vendor_terms(vendor_key(out.get("vendor_name", ""))))
-                    if out
-                    else None,
+                    _due(out, self.default_terms_days(), self.vendor_terms(key)) if out else None,  # its own (B-1311)
                 ),
             )
             invoice_id = int(cur.lastrowid)

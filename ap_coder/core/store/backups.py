@@ -8,6 +8,7 @@ import os
 import shutil
 import sqlite3
 import time
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -276,6 +277,10 @@ class BackupsMixin:
             carry_postings(conn, self.path, postings)
             restored_dir = conn.execute("SELECT value FROM settings WHERE key = 'backup_copy_dir'").fetchone()
             conn.execute("DELETE FROM settings WHERE key IN ('backup_copy_dir', 'backup_copy_status')")
+            # What the pages share (``summary_memo``) was worked out on the database as it was: the summary gets a new
+            # id, so every process works it out again, whatever the restored generations' numbers (B-1310).
+            conn.execute("INSERT INTO settings (key, value) VALUES ('summary_id', ?) ON CONFLICT(key) DO UPDATE SET "
+                         "value = excluded.value", (uuid.uuid4().hex,))  # fmt: skip
             detail = {"file": Path(backup).name, "safety_copy": safety.name}
             if copy_dir or (restored_dir and str(restored_dir[0]).strip()):
                 detail["note"] = "second backup folder cleared: set it again in Settings (Data & backups)"
