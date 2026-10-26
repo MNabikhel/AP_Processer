@@ -1390,3 +1390,8 @@ that is reversed keeps its line, marked "replaced by D-NN".
   `web/pages/learning.py`, `web/pages/activity.py`, `web/pages/insights.py`, `core/store/invoices.py`,
   `web/pages/process.py`, `ops/cli.py`, `ops/pilot_score.py`, `core/store/purchasing.py`;
   `tests/test_pilot_walk_laptop.py`)
+- **D-115** · The rule reader's package (`ap_coder/capture/reader/`) re-exports only the names used outside it (42 of
+  them), no longer every name its parts define (changes D-69 for the reader; the store keeps its full re-export). Why:
+  260 of the 315 names it re-exported (private patterns and helpers) were named nowhere outside their own part, and a
+  300-line import list was the first thing an agent read to find the reader's entry points. A name needed elsewhere is
+  imported from its part (`from .reader.values import ...`) or added to the list. (`capture/reader/__init__.py`)
