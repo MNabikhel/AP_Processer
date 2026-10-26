@@ -20,8 +20,8 @@ FRAUD_ACTION = "email_bank_change"
 
 
 def done_ids(store: Any) -> set[str]:
-    """The emails marked done: every one, however long ago (``limit=-1``: SQLite's no limit, B-1312)."""
-    return {str((e.get("detail") or {}).get("id")) for e in store.events(actions=[DONE_ACTION], limit=-1)}
+    """The emails marked done: every one, however long ago (B-1312)."""
+    return store.event_values(DONE_ACTION, "id")
 
 
 def _file(folder: Path, rel: str) -> Path | None:

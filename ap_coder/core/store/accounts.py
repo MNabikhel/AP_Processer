@@ -117,6 +117,17 @@ class AccountsMixin:
             r["detail"] = json.loads(r["detail"]) if r["detail"] else {}
         return rows
 
+    def event_values(self, action: str, field: str) -> set[str]:
+        """The ``field`` of every ``action`` event's detail, as text (the emails marked done: their ids), read by
+        SQLite in one query rather than every event decoded (``events``)."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT CAST(json_extract(detail, ?) AS TEXT) FROM events WHERE action = ? AND "
+                "json_valid(detail)",
+                (f"$.{field}", action),
+            )
+            return {str(r[0]) for r in rows}
+
     def latest_events(self, action: str, invoice_ids: list[int]) -> dict[int, dict[str, Any]]:
         """{invoice: its newest ``action`` event} for each of ``invoice_ids`` that has one, in one query (what
         ``events(invoice_id, [action])[0]`` gives for each, without a query per invoice)."""

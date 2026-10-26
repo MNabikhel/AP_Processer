@@ -286,8 +286,8 @@ def test_the_doctor_warns_when_iphone_photos_cannot_be_read(monkeypatch):
 
 
 class _NoEvents:
-    def events(self, actions=None, limit=0):
-        return []
+    def event_values(self, action, field):
+        return set()
 
     def log_event(self, *args, **kwargs):
         pass
