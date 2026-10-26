@@ -51,8 +51,10 @@ def pytest_collection_modifyitems(config, items):
 
 def _shard(items, spec: str) -> set:
     """CI splits the slow Windows run over parallel jobs: whole files (their fixtures set up once) go to N groups of
-    about equal time, the heaviest first into the lightest group. A file's time is its slow tests at
-    ``SLOW_SECONDS`` each plus the rest at ``FAST_SECONDS``: rough, but every test lands in exactly one group."""
+    about equal time, the heaviest first into the lightest group. A file's time is the one measured in
+    tests/test_times.json (a whole run on Linux; refresh it with ``--junitxml`` when the split grows uneven), else its
+    slow tests at ``SLOW_SECONDS`` each plus the rest at ``FAST_SECONDS``. Rough, but every test lands in exactly one
+    group."""
     k, n = (int(part) for part in spec.split("/"))
     if not 1 <= k <= n:
         raise pytest.UsageError(f"--shard {spec}: K must be 1 to N")
@@ -61,6 +63,7 @@ def _shard(items, spec: str) -> set:
         path = item.nodeid.split("::", 1)[0]
         slow = item.get_closest_marker("slow") is not None
         weight[path] = weight.get(path, 0.0) + (SLOW_SECONDS if slow else FAST_SECONDS)
+    weight.update({path: seconds for path, seconds in _TIMES.items() if path in weight})
     groups = [0.0] * n
     mine = set()
     for path in sorted(weight, key=lambda p: (-weight[p], p)):
@@ -72,6 +75,8 @@ def _shard(items, spec: str) -> set:
 
 
 SLOW_SECONDS, FAST_SECONDS = 2.0, 0.05  # rough per-test times for _shard (tests/slow_tests.txt: over 0.5 s)
+_TIMES_FILE = Path(__file__).parent / "test_times.json"
+_TIMES = json.loads(_TIMES_FILE.read_text(encoding="utf-8")) if _TIMES_FILE.is_file() else {}
 
 
 DATA = ROOT / "data"
