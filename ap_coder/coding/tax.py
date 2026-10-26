@@ -420,7 +420,7 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
                            _gap_line([li for li in coding.line_items if li not in marked], gap, tol, sign))  # fmt: skip
             name = tax_name(tl.tax_type, tl.province or prov)
             if suspect is not None:
-                said = f"line {suspect.line_number} ({_short(suspect.description)}, {suspect.amount:,.2f})"
+                said = f"line {suspect.line_number} ({short(suspect.description)}, {suspect.amount:,.2f})"
                 hint = f": {said} may be exempt from {name}" if gap < 0 else f": {said} may carry {name} too"
             else:
                 hint, explained = _unexplained(coding.line_items, tl.tax_type, tl.tax_amount, tl.rate, name)
@@ -490,7 +490,7 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
                 else _gap_line([li for li in coding.line_items if tax_type not in li.taxes_applied], gap, tol, sign)
             )
             if suspect is not None:
-                said = f"line {suspect.line_number} ({_short(suspect.description)}, {suspect.amount:,.2f})"
+                said = f"line {suspect.line_number} ({short(suspect.description)}, {suspect.amount:,.2f})"
                 hint = f": {said} may be exempt from {name}" if gap < 0 else f": {said} may carry {name} too"
             else:
                 charged_amount = round(sum(t.tax_amount for t in tax_lines if t.tax_type == tax_type), 2)
@@ -677,10 +677,15 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
     return findings
 
 
+def gap_lines(lines: list[Any], gap: float, tol: float, sign: int = 1) -> list[Any]:
+    """The lines whose amount is ``gap`` (within ``tol``; ``sign`` -1 on a credit note, whose amounts are negative):
+    the lines a tax that does not add up may be missing, or carry wrongly (the Tax check's too, ``taxmath``)."""
+    return [li for li in lines if abs(sign * li.amount - gap) <= tol + 1e-9 and abs(li.amount) > 0.004]
+
+
 def _gap_line(lines: list[Any], gap: float, tol: float, sign: int = 1) -> Any:
-    """The one line whose amount is ``gap`` (within ``tol``; ``sign`` -1 on a credit note, whose amounts are
-    negative), None when none or several are."""
-    found = [li for li in lines if abs(sign * li.amount - gap) <= tol + 1e-9 and abs(li.amount) > 0.004]
+    """The one line of ``gap_lines``, None when none or several are."""
+    found = gap_lines(lines, gap, tol, sign)
     return found[0] if len(found) == 1 else None
 
 
@@ -719,7 +724,8 @@ def _which_lines(lines: list[Any], all_of: list[Any] | None = None) -> str:
     return f"line {numbers[0]}" if len(numbers) == 1 else f"lines {', '.join(numbers)}"
 
 
-def _short(text: str, size: int = 32) -> str:
+def short(text: Any, size: int = 32) -> str:
+    """``text`` on one line, cut to ``size`` characters with "…" (a line's description in a finding)."""
     text = " ".join(str(text or "").split())
     return text if len(text) <= size else text[: size - 1].rstrip() + "…"
 

@@ -18,7 +18,7 @@ import re
 from collections.abc import Iterable
 from typing import Any
 
-from ..core.headers import header_key
+from ..core.headers import match_columns
 
 ERROR, WARNING, INFO = "error", "warning", "info"
 PICK = "Pick the bank account to pay this invoice from"
@@ -96,14 +96,7 @@ def _number(value: Any) -> str:
 
 def columns_for(headers: Iterable[str]) -> dict[str, str]:
     """{field: header} for the headers of a spreadsheet, recognised by ``ALIASES`` (accents and spacing aside)."""
-    found: dict[str, str] = {}
-    keyed = {header_key(h): h for h in headers}
-    for target, aliases in ALIASES.items():
-        for alias in (header_key(target), *aliases):
-            if alias in keyed and keyed[alias] not in found.values():
-                found[target] = keyed[alias]
-                break
-    return found
+    return match_columns(list(headers), ALIASES)
 
 
 def clean_rows(

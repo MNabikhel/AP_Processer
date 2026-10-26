@@ -813,12 +813,7 @@ def _prefill(
         elif k in learned_exempt:
             exempt = [] if status else [t for t in learned_exempt[k] if t not in taxes]
             if how[k] == "learned":
-                reason = str(_get(items[k], "reasoning_justification") or "")
-                reason = reason if LEARNED_NOTE in reason else f"{reason} {LEARNED_NOTE}".strip()
-                if isinstance(items[k], dict):
-                    items[k]["reasoning_justification"] = reason
-                else:
-                    items[k] = items[k].model_copy(update={"reasoning_justification": reason})
+                items[k] = _with_note(items[k], LEARNED_NOTE)
         elif status:
             exempt = []
         else:
@@ -835,26 +830,14 @@ def _prefill(
                     check.add(k)
             # A PST exemption inferred, not printed: a person confirms it (exempt, or missed and to self-assess).
             if "PST" in canadian and "PST" not in taxes and collects_now("PST") and how[k] != "printed":
-                reason = str(_get(items[k], "reasoning_justification") or "")
-                note = inferred_note(pst_name)
-                if note not in reason:
-                    reason = f"{reason} {note}".strip()
-                if isinstance(items[k], dict):
-                    items[k]["reasoning_justification"] = reason
-                else:
-                    items[k] = items[k].model_copy(update={"reasoning_justification": reason})
+                items[k] = _with_note(items[k], inferred_note(pst_name))
         update = {"taxes_applied": taxes, "tax_status": status, "tax_exempt": exempt}
         if isinstance(items[k], dict):
             items[k].update(update)
         else:
             items[k] = items[k].model_copy(update=update)
         if k in check:
-            reason = str(_get(items[k], "reasoning_justification") or "")
-            note = f"{reason} {GUESS_NOTE}".strip() if GUESS_NOTE not in reason else reason
-            if isinstance(items[k], dict):
-                items[k]["reasoning_justification"] = note
-            else:
-                items[k] = items[k].model_copy(update={"reasoning_justification": note})
+            items[k] = _with_note(items[k], GUESS_NOTE)
     return Prefill(items, how, check, unallocated, ambiguous)
 
 
