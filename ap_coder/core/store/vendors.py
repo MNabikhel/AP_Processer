@@ -1,4 +1,7 @@
-"""The vendor master."""
+"""The vendor list: the vendor master imported from the ERP (``import_vendor_master``), the vendors added on the review
+screen, how an invoice's vendor is found among those whose names read alike (``find_vendor``, ``vendor_key_for``),
+each vendor's invoices and terms, the Vendors page's summaries, and where we are (``our_province``,
+``site_provinces``)."""
 
 from __future__ import annotations
 

@@ -1,4 +1,7 @@
-"""GL accounts, cost centers, the audit trail, our bank accounts, tax setup."""
+"""GL accounts and cost centers (``import_accounts``, ``save_accounts``), the audit trail (``_log``, ``events``), our
+bank accounts, the tax setup, the settings table (``get_setting``, ``set_setting``), the second approval's controls
+in force (``approval_controls``) and the reference data the coder and the checks use (``reference_data``,
+``checks_stamp``)."""
 
 from __future__ import annotations
 

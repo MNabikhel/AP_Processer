@@ -9,16 +9,18 @@ that did not match.
   or the name, nor easy to guess (``password_problem``, D-101).
 * **Lockout** (D-101): 5 tries that don't match within 15 minutes for one username from one address pause logins
   for that username from that address for 15 minutes; 30 from one address, whatever the usernames, pause that
-  address (a shared NAT, RDS or proxy address is not paused by five people mistyping). Someone elsewhere can't lock a
-  person out; the server's own console is never paused by address. An unknown username is counted the same way (by
-  a hash: the text typed is never kept), and every refusal says the same words, so nothing tells whether a username
-  exists. A try is recorded before its password is checked, in one transaction with the check of the pause, so
-  guesses sent in parallel get no more checks than guesses sent one by one.
+  address (a shared NAT, RDS or proxy address is not paused by five people mistyping); from the 10th within an hour
+  from anywhere, a username's logins pause for 1 minute, then longer, from every address but those it logged in from
+  lately (D-109). Someone elsewhere can't lock a person out; the server's own console is never paused by address. An
+  unknown username is counted the same way (by a hash: the text typed is never kept), and every refusal says the same
+  words, so nothing tells whether a username exists. A try is recorded before its password is checked, in one
+  transaction with the check of the pause, so guesses sent in parallel get no more checks than guesses sent one by one.
 * **Sessions** (``sessions``): a random 32-byte token in the browser's cookie; only its SHA-256 is stored, so a copy
-  of the database logs nobody in. A session ends after 8 hours unused or 7 days in all, at logout, and when the
-  person changes their password (their other sessions; the one they changed it from gets a new token) or an Admin
-  resets it or turns the account off (all of them). They are kept in the database: a restart of AP Coder logs
-  nobody out; a restore of a backup logs everybody out (``carry_accounts``).
+  of the database logs nobody in. A session ends after 30 minutes unused or 12 hours in all (IT may change both in
+  server.json, ``session_idle_minutes`` and ``session_hours``: the store's ``session_idle`` and ``session_absolute``,
+  D-109), at logout, and when the person changes their password (their other sessions; the one they changed it from
+  gets a new token) or an Admin resets it or turns the account off (all of them). They are kept in the database: a
+  restart of AP Coder logs nobody out; a restore of a backup logs everybody out (``carry_accounts``).
 
 Every login, refusal, lockout, logout, password change, account added, role change and account turned off or on is
 an event of the audit trail (``core/audit.py`` says each in words).
@@ -711,8 +713,9 @@ class UsersMixin:
         return token
 
     def session_user(self, token: str | None) -> dict[str, Any] | None:
-        """The active account a session token stands for, or None (no such session, unused for 8 hours, older than
-        7 days, or its account turned off). Its last use is recorded (at most once a minute)."""
+        """The active account a session token stands for, or None (no such session, unused for ``session_idle``
+        seconds, older than ``session_absolute``, or its account turned off). Its last use is recorded (at most once
+        a minute)."""
         if not token:
             return None
         digest, now = token_hash(token), _clock()

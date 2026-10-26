@@ -1,4 +1,6 @@
-"""Command-line entry point: ``python -m ap_coder <command>``."""
+"""Command-line entry point: ``python -m ap_coder <command>``. ``build_parser`` lists the commands and their options,
+``main`` runs one (its table of ``cmd_<command>`` functions); the company server's own commands are in
+``service.py`` and ``server_update.py``, ``jde`` in ``jde_cmd.py``."""
 
 from __future__ import annotations
 

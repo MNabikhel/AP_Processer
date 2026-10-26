@@ -1,4 +1,7 @@
-"""Lessons (AP's corrections per situation) and the AI reviewer's queue."""
+"""Lessons (AP's corrections per situation: ``record_lesson``, ``lessons_for``), the AI reviewer's queue
+(``queue_verification``, ``next_verification``), the Azure check's figures, and what changes an open invoice after it
+was processed: a check folded in (``update_after_check``), the duplicates checked again (``_recheck_duplicates``) and
+the page reader's new reading (``replace_proposal``)."""
 
 from __future__ import annotations
 

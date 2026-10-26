@@ -1,6 +1,6 @@
-"""Local SQLite store behind the dashboard (``private/ap_coder.db``).
+"""Local SQLite store behind the dashboard (``ap_coder.db`` in the data folder, ``paths.private_dir``).
 
-Holds everything the prototype needs to run without any enterprise data
+Holds everything AP Coder needs to run without any enterprise data
 leaving the machine:
 
 * GL accounts ("cost codes") and optional cost centers, imported by the user

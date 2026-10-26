@@ -1,4 +1,6 @@
-"""Runtime configuration, loaded from environment variables (and an optional .env file)."""
+"""Runtime configuration, loaded from environment variables and the data folder's .env (``Settings.from_env``): the
+local model server (``LocalLLMSettings``), the page reader, the engine, and Azure's (only with the internet allowed).
+``load_env_file`` never takes a variable that decides which code runs (``process_var``)."""
 
 from __future__ import annotations
 
