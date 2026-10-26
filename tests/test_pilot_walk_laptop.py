@@ -189,3 +189,22 @@ def test_the_why_not_list_says_an_unmapped_account_once_with_its_line_numbers(gr
     said = [r for r in reasons if r.startswith("GL 1500 ")]
     assert said == [f"GL 1500 has no JDE account (lines {', '.join(numbers)}): add it to the account mapping "
                     "(BU.Object.Subsidiary)"], reasons  # fmt: skip
+
+
+# --- 6. watch --once ---------------------------------------------------------------------------------------------------
+
+
+def test_watch_once_says_it_runs_once_and_counts_the_files_still_being_copied(tmp_path, capsys):
+    """B-1302: ``watch --once`` printed "every 60s… Ctrl+C to stop", and a file copied in during the last 5 s was
+    skipped without a word."""
+    from ap_coder.ops import cli
+
+    from .test_controls_watch import _watch_args
+
+    inbox = tmp_path / "in"
+    inbox.mkdir()
+    (inbox / "copying.pdf").write_bytes(b"%PDF-1.4 still coming")
+    assert cli.main(_watch_args(tmp_path, "--once")) == 0
+    err = capsys.readouterr().err
+    assert "once" in err and "every 60s" not in err and "Ctrl+C" not in err, err
+    assert "1 file still being copied, skipped" in err, err
