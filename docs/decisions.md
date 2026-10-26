@@ -1252,3 +1252,60 @@ that is reversed keeps its line, marked "replaced by D-NN".
   wheelhouse). (`ops/server_update.py`, `ops/service.py`, `ops/cli.py`, `core/config.py`, `web/security.py`,
   `web/identity.py`, `web/pages/process.py`, `core/store/users.py` (`posting_refusal`, `vouched_for`), `core/store/invoices.py`, `erp/controls.py`,
   `erp/directory.py`, `web/roles.py`, `web/server.py`, `erp/hub/onelake.py`; `tests/test_server_hardening.py`)
+- **D-111** · The company server's runtime for ~500 accounts (~50 at once) and 5,000 to 10,000 invoices a month (changes
+  D-99 (6), D-100 and D-109 (4) where they say otherwise). (1) **Web workers**: one Python process answers about 1.6
+  pages a second (the GIL), so `serve --server --workers N` (`server.json` `workers`, `service install --workers`,
+  `AP_SERVER_WORKERS`; the service's default one per core, at most 8; `serve` alone 1) runs uvicorn's own supervisor
+  (`server._serve_workers`): the port opened once and handed to N workers started with "spawn" (fresh Pythons, so
+  Windows and Linux alike; no fork, no gunicorn), each building the app with `worker_app` from `AP_SERVE_WORKER`
+  (database, address, port, token, and the identity key the workers share, made at each start); a stopped worker is
+  started again, and one silent for 30 s (`timeout_worker_healthcheck`) is taken for hung. TLS, the ciphers, the
+  proxy setting and the size limits are per request, as before; each worker writes `logs/access-<n>.log` (the first
+  number no running worker holds, an OS lock: a file another process writes can't be rotated on Windows). (2) **One
+  background process** (`serve --background-work`, `server.run_background`), started by the server and started again
+  when it stops (5 s doubling to 60 s): the page reader and the AI reviewer, the Azure check, JD Edwards, the daily
+  backup and the hub's schedule (each minute, not at each page); `<data>/.ap_coder_background.lock` keeps it one per
+  data folder; it stops when its input pipe closes (the server stopping, or ending in any way). Not a leader election
+  among workers: the reader's OCR and model calls would slow the pages of the worker holding it. The workers run none
+  of that. (3) **What lived in a process's memory**: jobs and their progress are `ephemeral` rows (`job-running:<pid
+  token>` claimed in one statement, renewed each second, a worker's row not renewed for 30 s is a stopped worker's;
+  then `job` with the last snapshot for a day), so one import runs at a time whichever worker is asked, and an import
+  queued in one worker starts when another's ends (polled every 2 s; the count queued in every worker shown); the
+  hourly upload allowance is counted in the database (server mode, one worker too); a temporary password on its way
+  from the Users page to the page showing it waits in `ephemeral`, sealed (HMAC-SHA256 stream and tag) with the
+  workers' in-memory key, so a backup made meanwhile holds nothing readable (with one worker, memory as before); the
+  review screen's drafts are read from the database at each request; a restore under way is also
+  `<db>.restoring` with its process id, so the background process waits for it; flash messages, uploads waiting for
+  columns, sessions and login attempts were already in the database. Per worker, and harmless: the caches whose
+  stamps are read from the database, the live JDE answers (5 minutes), the computer's names. `POST /shutdown` to a
+  worker writes the token in `<data>/.ap_coder_server.stop`; the server and each worker watch it (Windows has no
+  SIGTERM, and its CTRL_BREAK reaches a worker only in a console of its own), a worker also stops when the server is
+  gone. (4) **Stop**: `timeout_graceful_shutdown` 25 s (B-1272), a worker still running 30 s after the stop is ended;
+  `service stop` waits 45 s before ending the server. Measured under 100 people: 32 s with one worker, 27 s with 4.
+  (5) **`llm_parallel`** (`AP_LLM_PARALLEL`, `service install --llm-parallel`; default 1 everywhere): `CHAT_LOCK` and
+  `READ_LOCK` are `local_llm.Slots`, N holders at once, and on the server across all its processes (one of N lock
+  files in `<data>/llm`); the background reader starts N readers, each claiming the next invoice (the queue's claim
+  is one row changed), marked `<pid>:<token>.<n>:<start>` (`reader_mark`), and a mark of this process stands while a
+  reader thread reads under it (`reading_as`), so one thread putting interrupted reads back in line never takes
+  another's; only the first runs the self-test. 1 keeps the laptop's one-at-a-time (LM Studio shared with
+  CloseDesk). Which server to run on the GPU: LM Studio 0.4 with *Max concurrent predictions*, or llama.cpp's
+  `llama-server --parallel N` (docs/SERVER.md step 8); vLLM is Linux only. (6) **Less GPU time**, on by default on the
+  server, off on a laptop: OvisOCR2 leaves out a new digital PDF (every page its own text, none left out, the four
+  header fields `verified`, TOTALS_ADD_UP and no check failed) that goes to a person anyway (supplier not
+  autonomous): `page_reads` `skipped` with the reason (a person can still queue it), counted in
+  `page_reader_skipped` and on Settings → Reading; 10% of them are read all the same (`AP_PAGE_READER_SAMPLE`,
+  chosen by the file's hash as the audit sample is), so its accuracy on digital PDFs stays measured. A touchless
+  supplier's invoices are always read by every reader (reading.py's rule 4 holds). `AP_PAGE_READER_SKIP_CLEAN`. The
+  AI reviewer's scope (Settings → Reading, `verifier.ReviewerSettings.scope`): "touchless" on the server, only
+  invoices touchless processing passed (or a check holds); the hold is unchanged, so none is approved without a
+  person before it agrees; "all" on a laptop. (7) **Measured** (12,000 invoices, 4 cores shared with another load
+  test, logged-in people clicking every 10 s on the core mix, before the data-layer work of the same release):
+  1 worker: 25 people p50 6.9 s / p95 39 s, 50 people p50 45 s with 22 of 119 requests over 120 s, 100 people 0.6
+  requests/s with 82 over 120 s; 4 workers: 25 people p50 0.38 s / p95 1.5 s (2.1 req/s), 50 people p50 0.99 s /
+  p95 5.9 s (2.9 req/s), 100 people p50 6.9 s / p95 22 s (4.3 req/s, the 4 cores busy); 2 to 5 GB for the server's
+  processes. Why: the load test showed one process cannot carry the planned team; everything stays one service, one
+  port, nothing new to install. Left: the GPU figures in SERVER.md are estimates; Windows runs of the multi-process
+  mode are CI's (spawn, the stop file and the job object are the Windows paths). (`web/server.py`, `web/app.py`
+  `start_background_work`, `web/jobs.py`, `core/store/ephemeral.py`, `web/pages/process.py`, `web/pages/users.py`,
+  `web/pages/invoice.py`, `core/store/backups.py`, `web/security.py`, `ai/local_llm.py` `Slots`, `ai/page_worker.py`,
+  `ai/verifier.py`, `ai/pipeline.py`, `ops/service.py`; `tests/test_server_scale.py`)
