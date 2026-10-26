@@ -17,7 +17,7 @@ from typing import Any
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from ap_coder.core.store.users import ROLE_LABELS, ROLES
+from ap_coder.core.store.users import ANYWHERE, ROLE_LABELS, ROLES
 from ap_coder.web import identity
 from ap_coder.web.core import done, flash_message, get_store, refuse, render, reviewer, server_mode
 
@@ -123,9 +123,10 @@ def unlock_address(request: Request, address: str = Form("")) -> JSONResponse:
 def unlock_username(request: Request, username: str = Form(""), address: str = Form("")) -> JSONResponse:
     """Lift the pause of a username from an address (5 tries that didn't match: someone forgot their password)."""
     _server_only(request)
+    where = "anywhere" if address == ANYWHERE else address
     if not get_store(request).unlock_username(username, address, actor=reviewer()):
-        return refuse(f"Logins as {username or 'that username'} from {address or 'that address'} are not paused.")
-    return done(request, PATH, f"Logins as {username} from {address} are no longer paused.")
+        return refuse(f"Logins as {username or 'that username'} from {where or 'that address'} are not paused.")
+    return done(request, PATH, f"Logins as {username} from {where} are no longer paused.")
 
 
 def _clock_text(epoch: float) -> str:

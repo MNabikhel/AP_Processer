@@ -54,6 +54,12 @@ MAX_FAILURES = 5  # tries that don't match within FAILURE_WINDOW for one usernam
 ADDRESS_FAILURES = 30  # ...or from one address, whatever the usernames...
 FAILURE_WINDOW = 15 * 60
 LOCK_SECONDS = 15 * 60  # ...pause logins (that username there, or that address) for this long
+# Tries that don't match for one username from anywhere (D-109): from the 10th within an hour, each pauses that
+# username's logins for 1, 2, 4, 8, then 15 minutes, from every address but those it logged in from lately.
+ACCOUNT_FAILURES = 10
+ACCOUNT_WINDOW = 3600
+KNOWN_ADDRESS_SECONDS = 30 * 86400  # an address the account logged in from this recently is "known"
+ANYWHERE = "*"  # the address of an account-wide pause (paused_usernames, unlock_username)
 UNKNOWN = "?"  # how login_attempts keeps a username no account has: "?" and a hash, never the text typed
 USERNAME = re.compile(r"[a-z0-9][a-z0-9._@-]{0,63}")
 MAX_DISPLAY_NAME = 60
@@ -448,16 +454,30 @@ class UsersMixin:
                 "AND username NOT LIKE ? GROUP BY username, ip ORDER BY username, ip",
                 (_clock(), UNKNOWN + "%"),
             ).fetchall()
-        return [{"username": r["username"], "address": r["ip"], "until": float(r["until"])} for r in rows]
+            names = conn.execute("SELECT DISTINCT username FROM login_attempts WHERE ok = 0 AND at > ? AND username "
+                                 "NOT LIKE ?", (_clock() - ACCOUNT_WINDOW, UNKNOWN + "%")).fetchall()  # fmt: skip
+            anywhere = [(r[0], self._account_paused_until(conn, r[0], _clock())) for r in names]
+        found = [{"username": r["username"], "address": r["ip"], "until": float(r["until"])} for r in rows]
+        found += [
+            {"username": name, "address": ANYWHERE, "until": until} for name, until in anywhere if until > _clock()
+        ]
+        return sorted(found, key=lambda p: (p["username"], p["address"]))
 
     def unlock_username(self, username: str, ip: str, *, actor: str = "") -> bool:
         """An Admin lifts the pause of a username from an address (True when it was paused), its count started again;
-        recorded as ``address_unlocked`` with the username."""
+        recorded as ``address_unlocked`` with the username. ``ANYWHERE``: its account-wide pause, every address's
+        count started again."""
         name, ip = fold_username(username)[:200], str(ip or "").strip()[:64]
         if not name:
             return False
         with self._conn() as conn:
             conn.execute("BEGIN IMMEDIATE")
+            if ip == ANYWHERE:
+                lifted = self._account_paused_until(conn, name, _clock()) > _clock()
+                if lifted:
+                    conn.execute("DELETE FROM login_attempts WHERE username = ? AND ok = 0", (name,))
+                    self._log(conn, "address_unlocked", None, actor or None, {"unpaused": "anywhere", "username": name})
+                return lifted
             paused = conn.execute("SELECT MAX(user_locked_until) FROM login_attempts WHERE username = ? AND ip = ?",
                                   (name, ip)).fetchone()[0]  # fmt: skip
             lifted = (paused or 0) > _clock()
@@ -481,12 +501,37 @@ class UsersMixin:
     # --- Logging in -------------------------------------------------------------------------------------------------
 
     @staticmethod
-    def _locked(conn: Any, key: str, ip: str, now: float, console: bool) -> bool:
+    def _known(conn: Any, key: str, ip: str, now: float) -> bool:
+        """Whether ``key`` logged in from ``ip`` within ``KNOWN_ADDRESS_SECONDS``: the person's own computer, or
+        their office's shared address."""
+        found = conn.execute("SELECT 1 FROM login_attempts WHERE username = ? AND ip = ? AND ok = 1 AND at > ? "
+                             "LIMIT 1", (key, ip, now - KNOWN_ADDRESS_SECONDS)).fetchone()  # fmt: skip
+        return found is not None
+
+    @staticmethod
+    def _account_paused_until(conn: Any, key: str, now: float) -> float:
+        """Until when ``key``'s logins are paused from anywhere (0 = they are not): its tries that didn't match within
+        ``ACCOUNT_WINDOW`` (since its last login), from the ``ACCOUNT_FAILURES``-th on, pause it for a minute,
+        doubling each time up to ``LOCK_SECONDS`` after the last one (D-109)."""
+        last_ok = conn.execute("SELECT MAX(at) FROM login_attempts WHERE username = ? AND ok = 1", (key,)).fetchone()[0]
+        count, last = conn.execute("SELECT COUNT(*), MAX(at) FROM login_attempts WHERE username = ? AND ok = 0 AND "
+                                   "at > ?", (key, max(now - ACCOUNT_WINDOW, last_ok or 0))).fetchone()  # fmt: skip
+        if count < ACCOUNT_FAILURES:
+            return 0.0
+        return float(last) + min(60.0 * 2 ** min(count - ACCOUNT_FAILURES, 10), LOCK_SECONDS)
+
+    def _locked(self, conn: Any, key: str, ip: str, now: float, console: bool) -> bool:
         """Whether logins are paused for ``key`` (a username, or ``UNKNOWN`` and its hash) from ``ip``, or from
-        ``ip`` whatever the username (never for the server's own console)."""
+        ``ip`` whatever the username (never for the server's own console), or for ``key`` from anywhere. An address
+        ``key`` logged in from lately is paused for it by its own tries only: neither a shared address paused by
+        others' tries nor an account-wide pause by tries elsewhere keeps a person out of their own office (D-109)."""
         found = conn.execute("SELECT MAX(user_locked_until) FROM login_attempts WHERE username = ? AND ip = ?",
                              (key, ip))  # fmt: skip
         if (found.fetchone()[0] or 0) > now:
+            return True
+        if self._known(conn, key, ip, now):
+            return False
+        if self._account_paused_until(conn, key, now) > now:
             return True
         if ip and not console:
             found = conn.execute("SELECT MAX(ip_locked_until) FROM login_attempts WHERE ip = ?", (ip,))
@@ -531,6 +576,7 @@ class UsersMixin:
                 "VALUES (?, ?, ?, 0, ?, ?)",
                 (key, ip, now, now + LOCK_SECONDS if lock_pair else None, now + LOCK_SECONDS if lock_ip else None),
             ).lastrowid
+            lock_account = not self._known(conn, key, ip, now) and self._account_paused_until(conn, key, now) > now
         matches = verify_password(password, row["pw_hash"] if row is not None else _dummy_hash())
         with self._conn() as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -543,9 +589,10 @@ class UsersMixin:
                 return _public(fresh) or {}
             who = {"username": name} if row is not None else {"username": "", "account": "unknown"}
             self._log(conn, "login_failed", None, None, who)
-            if lock_pair or lock_ip:
-                self._log(conn, "login_locked", None, None, {**who, "by": "username" if lock_pair else "address"})
-        raise LoginRefused(LOCKED if lock_pair or lock_ip else WRONG)
+            if lock_pair or lock_ip or lock_account:
+                by = "username" if lock_pair else "address" if lock_ip else "account"
+                self._log(conn, "login_locked", None, None, {**who, "by": by, "address": ip})
+        raise LoginRefused(LOCKED if lock_pair or lock_ip or lock_account else WRONG)
 
     # --- Sessions ---------------------------------------------------------------------------------------------------
 

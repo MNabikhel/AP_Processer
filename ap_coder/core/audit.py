@@ -400,8 +400,11 @@ def describe(event: dict[str, Any]) -> str:
         def role(key: Any) -> str:
             return ROLE_LABELS.get(str(key or ""), str(key or "?"))
 
-        by = ("30 tries that didn't match from one address" if d.get("by") == "address"
-              else "5 tries that didn't match for this username from one address")  # fmt: skip
+        by = {"address": "30 tries that didn't match from one address",
+              "account": "10 tries that didn't match for this username from anywhere within an hour"}.get(
+            str(d.get("by")), "5 tries that didn't match for this username from one address")  # fmt: skip
+        if action == "login_locked" and d.get("by") == "account":  # (D-109) a few minutes at first, from anywhere
+            return f"{by} ({d.get('username') or 'an unknown account'}): logging in paused from new addresses"
         roles = {"role": role(d.get("role")), "was": role(d.get("from")), "now": role(d.get("to"))}
         if d.get("account") == "unknown":  # the text typed is not kept (D-101)
             words = _ACCOUNT_WORDS["login_failed_unknown" if action == "login_failed" else action]

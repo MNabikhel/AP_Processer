@@ -301,3 +301,87 @@ def test_each_account_has_an_hourly_upload_allowance(monkeypatch):
     assert status == 429 and "last hour" in text
     assert process.upload_refusal(8, 1, 600, now=20.0) == ("", 0)  # another account
     assert process.upload_refusal(7, 1, 600, now=10.0 + process.UPLOAD_WINDOW + 1) == ("", 0)  # an hour later
+
+
+# --- 6. Lockouts: from anywhere, and a shared address that keeps its people ------------------------------------------
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    from ap_coder.core.store import users
+
+    class Clock:
+        now = 1_800_000_000.0
+
+        def __call__(self) -> float:
+            return self.now
+
+    found = Clock()
+    monkeypatch.setattr(users, "_clock", found)
+    return found
+
+
+def _fail(store, username, ip, times=1):
+    from ap_coder.core.store.users import LoginRefused
+
+    for _ in range(times):
+        with pytest.raises(LoginRefused):
+            store.authenticate(username, "wrong wrong wrong", ip)
+
+
+def test_guesses_at_one_account_from_many_addresses_pause_it(tmp_path, clock):
+    from ap_coder.core.store.users import LOCKED, LoginRefused
+
+    store = Store(tmp_path / "ap_coder.db")
+    store.add_user("boss", GOOD, role="admin", must_change=False)
+    for n in range(10):  # 10 addresses, one guess each: no address is paused for it, the account is
+        _fail(store, "boss", f"10.9.0.{n}")
+    with pytest.raises(LoginRefused, match=LOCKED[:20]):
+        store.authenticate("boss", GOOD, "10.9.1.1")
+    assert any(e["action"] == "login_locked" and e["detail"].get("by") == "account" for e in store.events())
+    clock.now += 61  # a minute, then twice as long after each further guess
+    _fail(store, "boss", "10.9.1.2")
+    clock.now += 61
+    with pytest.raises(LoginRefused, match=LOCKED[:20]):
+        store.authenticate("boss", GOOD, "10.9.1.3")
+    clock.now += 60
+    assert store.authenticate("boss", GOOD, "10.9.1.3")["username"] == "boss"
+
+
+def test_an_account_paused_from_anywhere_still_logs_in_from_its_own_address(tmp_path, clock):
+    store = Store(tmp_path / "ap_coder.db")
+    store.add_user("ann", GOOD, must_change=False)
+    assert store.authenticate("ann", GOOD, "10.8.8.8")  # her desk
+    clock.now += 60
+    for n in range(12):
+        _fail(store, "ann", f"203.0.113.{n}")
+    assert store.authenticate("ann", GOOD, "10.8.8.8")["username"] == "ann"
+    names = store.paused_usernames()
+    assert names == [] or all(p["address"] != "*" for p in names)  # her login ended the account-wide count
+
+
+def test_a_shared_address_paused_by_guesses_keeps_the_people_who_log_in_there(tmp_path, clock):
+    from ap_coder.core.store.users import LoginRefused
+
+    store = Store(tmp_path / "ap_coder.db")
+    store.add_user("ann", GOOD, must_change=False)
+    store.add_user("cleo", GOOD, must_change=False)
+    assert store.authenticate("ann", GOOD, "10.1.1.1")  # the office's NAT
+    for n in range(30):
+        _fail(store, f"spray{n}", "10.1.1.1")
+    assert store.authenticate("ann", GOOD, "10.1.1.1")["username"] == "ann"
+    with pytest.raises(LoginRefused):  # someone who never logged in from there waits, as before
+        store.authenticate("cleo", GOOD, "10.1.1.1")
+
+
+def test_an_admin_lifts_an_account_wide_pause(tmp_path, clock):
+    from ap_coder.core.store.users import ANYWHERE
+
+    store = Store(tmp_path / "ap_coder.db")
+    store.add_user("ann", GOOD, must_change=False)
+    for n in range(10):
+        _fail(store, "ann", f"10.7.0.{n}")
+    assert {"username": "ann", "address": ANYWHERE} in [{k: p[k] for k in ("username", "address")}
+                                                         for p in store.paused_usernames()]  # fmt: skip
+    assert store.unlock_username("ann", ANYWHERE, actor="boss")
+    assert store.authenticate("ann", GOOD, "10.7.1.1")["username"] == "ann"
