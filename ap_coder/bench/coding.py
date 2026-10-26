@@ -20,6 +20,7 @@ lines given the right one. Writes ``report.json``, ``report.md`` and ``lines.jso
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import json
 import random
@@ -491,8 +492,9 @@ def simulate(
     seen_texts: dict[int, set[str]] = defaultdict(set)  # vendor -> line wordings AP approved for it
     sold_by: dict[str, set[int]] = defaultdict(set)  # item -> vendors AP approved it for
     rows: list[dict[str, Any]] = []
-    with tempfile.TemporaryDirectory(prefix="ap-coding-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="ap-coding-") as tmp, contextlib.ExitStack() as held:
         store = Store(Path(tmp) / "coding.db")
+        held.enter_context(store.session())  # one connection for the run, as the app holds one for each request
         store.import_vendor_master(
             [{"vendor_name": v.name, "default_gl": v.default_gl, "status": "active"} for v in company]
         )
