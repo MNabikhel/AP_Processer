@@ -271,8 +271,9 @@ def compute(store: Store, a: Assumptions | None = None) -> dict[str, Any]:
     cost_per_invoice_cad = (sum(measured) / len(measured) * a.usd_to_cad) if measured else None
 
     # AP filling in blanks works as on a corrected invoice
-    minutes_saved = clean * (a.manual_minutes - a.clean_minutes) + (approved - clean) * (a.manual_minutes -
-                                                                                         a.changed_minutes)
+    minutes_saved = clean * (a.manual_minutes - a.clean_minutes) + (approved - clean) * (
+        a.manual_minutes - a.changed_minutes
+    )
     stp = clean / approved if approved else None
     per_invoice_minutes = (
         (stp * (a.manual_minutes - a.clean_minutes) + (1 - stp) * (a.manual_minutes - a.changed_minutes))
@@ -501,7 +502,9 @@ def report_html(s: dict[str, Any], organisation: str = "") -> str:
         row("Azure cost (Document Intelligence + Azure OpenAI)", f"{_money(p.get('azure_cost'))} / month"),
         row("Net benefit", f"{_money(net)} / month", "th"),
         "</table><h2>Pilot so far</h2><table>",
-        row("Approved", f"{s['approved']} ({approvals_note(s['approved_clean'], s['approved_filled'], s['approved'])})"),
+        row(
+            "Approved", f"{s['approved']} ({approvals_note(s['approved_clean'], s['approved_filled'], s['approved'])})"
+        ),
         row("Flagged by the checks when processed", _pct(s["needs_attention_rate"])),
         row("Could not be read", str(s["failed"])),
         row(

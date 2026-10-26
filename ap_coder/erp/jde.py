@@ -427,6 +427,18 @@ def account_for(gl_code: str, cost_center: str, settings: JdeSettings) -> GlMap 
     return GlMap(gl_code, cost_center, bu, obj, row.sub.strip(), row.sbl.strip(), row.sblt.strip())
 
 
+def accounts_without_bu(settings: JdeSettings, gl_codes: Iterable[str], tax_codes: Iterable[str],
+                        cost_centers: bool) -> list[str]:  # fmt: skip
+    """The accounts a JD Edwards export would hold invoices back for, having no BU.Object for them: the tax accounts
+    (their lines carry no cost center) and, unless each line's cost center gives the BU (``bu_from_cost_center`` with a
+    cost center list), the GL accounts. None with a Default BU and the default rule (B-1300)."""
+    if settings.use_default_rule and settings.default_bu.strip():
+        return []
+    needed = list(tax_codes) + ([] if settings.bu_from_cost_center and cost_centers else list(gl_codes))
+    return [code for code in dict.fromkeys(c.strip() for c in needed if c.strip())
+            if account_for(code, "", settings) is None]  # fmt: skip
+
+
 def ani(account: GlMap) -> str:
     """VNANI in format 2: BU.Object.Subsidiary ("CC400.6010", "CC400.6010.01")."""
     return f"{account.bu}.{account.obj}" + (f".{account.sub}" if account.sub else "")

@@ -1004,7 +1004,8 @@ class InvoicesMixin:
             # The coding approved before, line by line: a line changed from it at the next approval is a correction
             # of it (B-1299, D-112). A rejection kept none.
             approved_lines = {str(r[0]): [r[1], r[2] or ""] for r in conn.execute(
-                "SELECT line_number, final_gl, final_cc FROM feedback WHERE invoice_id = ?", (invoice_id,))}  # fmt: skip
+                "SELECT line_number, final_gl, final_cc FROM feedback WHERE invoice_id = ?",
+                (invoice_id,))}  # fmt: skip
             conn.execute(
                 "UPDATE invoices SET meta = json_set(CASE WHEN json_valid(meta) THEN meta ELSE '{}' END, "
                 "'$.reopened_coding', json(?)) WHERE id = ?", (json.dumps(approved_lines), invoice_id))  # fmt: skip

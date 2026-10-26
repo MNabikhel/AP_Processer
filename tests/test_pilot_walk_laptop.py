@@ -37,7 +37,7 @@ def test_a_new_vendor_with_jd_edwards_on_can_be_given_its_address_number_where_i
     _jde_on(store)
     cascade = _cascade(store)
     page = client.get(f"/review/{cascade['id']}").text
-    pop = re.search(r'data-vendor-add>(.*?)</details>', page, re.S).group(1)
+    pop = re.search(r"data-vendor-add>(.*?)</details>", page, re.S).group(1)
     assert 'data-new="an8"' in pop and "Its invoices need a person" not in pop
     assert "Supplier address numbers" in _plain(pop)
 
@@ -96,7 +96,9 @@ def test_without_the_model_blanks_filled_in_are_neither_approved_as_coded_nor_co
     learning = _plain(client.get("/learning").text)
     assert "Coding accuracy —" in learning and "0.0%" not in learning
     assert "matched every reviewer decision" not in learning and "AP coded every line" in learning
-    assert "Approved as coded 0%" in learning and "0 of 2 needed no change, 2 only had blanks filled in by AP" in learning
+    assert (
+        "Approved as coded 0%" in learning and "0 of 2 needed no change, 2 only had blanks filled in by AP" in learning
+    )
     activity = _plain(client.get("/activity").text)
     assert "0 approved as coded, 2 had blanks filled in by AP, 0 corrected" in activity
 
@@ -135,3 +137,37 @@ def test_a_line_changed_after_a_reopen_is_a_correction_of_what_was_approved_befo
     assert store.metrics()["lines_corrected"] == 1
     assert "line_coding" in store.get_invoice(invoice_id)["edits"]
     assert insights.approved_as_coded(store) == (0, 1) and insights.filled_in_count(store) == 0  # corrected
+
+
+# --- 4. The Welcome checklist's JD Edwards line ----------------------------------------------------------------------
+
+
+def test_the_jd_edwards_step_is_done_only_when_the_export_has_a_business_unit_for_its_accounts(tmp_path):
+    """B-1300: the Welcome checklist ticked "JD Edwards settings ✓ company 00001, 0 accounts mapped" once the defaults
+    were saved; the first JD Edwards export then held back every invoice (the tax accounts and, without cost centers,
+    every GL account had no BU). It is done with a Default BU, or every account it needs mapped, and says what's
+    missing."""
+    from ap_coder.core.config import Settings
+    from ap_coder.core.store import Store, load_sample_setup
+    from ap_coder.web.pages import process
+
+    store = Store(tmp_path / "ap.db")
+    load_sample_setup(store)
+    _jde_on(store)
+    jde.save(store, jde.JdeSettings(company="00001"))
+
+    def step() -> tuple[str, str]:
+        return next((s[0], s[2]) for s in process.setup_steps(store, Settings()) if s[1] == process.JDE_STEP)
+
+    state, detail = step()
+    assert state == "todo" and "Default BU" in detail and "2310" in detail, detail
+    assert "no JD Edwards business unit" in detail
+    jde.save(store, jde.JdeSettings(company="00001", default_bu="100"))
+    state, detail = step()
+    assert state == "ok" and "Default BU 100" in detail, detail
+    # without a default BU, every account it needs mapped
+    accounts = [a["code"] for a in store.list_accounts("gl_accounts")]
+    taxes = [t.gl_code for t in store.tax_treatments().values() if t.needs_gl and t.gl_code]
+    rows = [jde.GlMap(code, "", "100", code) for code in dict.fromkeys(accounts + taxes)]
+    jde.save(store, jde.JdeSettings(company="00001", gl_map=rows))
+    assert step()[0] == "ok"
