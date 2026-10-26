@@ -9,9 +9,8 @@ from ap_coder.coding.tax import EXPENSE_TO_LINE
 from ap_coder.core.config import Settings
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import Store, load_sample_setup
-from ap_coder.ops.demo import load_demo
 
-from .conftest import SAMPLES
+from .conftest import SAMPLES, copy_database
 
 Q3 = (dt.date(2026, 7, 1), dt.date(2026, 9, 30))
 YEAR = (dt.date(2020, 1, 1), dt.date(2030, 12, 31))
@@ -130,9 +129,8 @@ def test_registration_number_needed_from_100_dollars_since_2021(tmp_path):
     assert taxreturn.document_threshold("2021-04-21") == 100.0 and taxreturn.document_threshold("2021-04-20") == 30.0
 
 
-def test_demo_and_default_period(tmp_path):
-    store = Store(tmp_path / "t.db")
-    load_demo(store)
+def test_demo_and_default_period(tmp_path, demo_template):
+    store = copy_database(demo_template, tmp_path / "t.db")
     report = taxreturn.build(store, *Q3)
     assert report.totals()[taxreturn.ITC]["CAD"] > 0 and report.not_approved > 0
     assert taxreturn.default_period(dt.date(2026, 10, 7)) == Q3

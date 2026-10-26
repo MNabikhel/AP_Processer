@@ -15,8 +15,7 @@ from ap_coder.ai.inference import MODEL_SUGGESTED
 from ap_coder.core.config import Settings
 from ap_coder.core.memory import ACCEPTED, CODED, CORRECTED
 from ap_coder.core.reference_data import UNASSIGNED
-from ap_coder.core.store import REVIEW, Store, load_sample_cost_centers
-from ap_coder.ops.demo import load_demo
+from ap_coder.core.store import REVIEW, Store
 from ap_coder.web import invoice_view
 from ap_coder.web.app import create_app
 
@@ -27,11 +26,9 @@ LAPTOP = {"width": 1366, "height": 768}
 
 
 @pytest.fixture(scope="module")
-def demo_db(tmp_path_factory):
-    path = tmp_path_factory.mktemp("demo") / "private" / "ap_coder.db"
-    load_sample_cost_centers(Store(path))  # the line grid's cost centers are picked too
-    load_demo(Store(path), Settings())
-    return path
+def demo_db(cost_centers_demo_template):
+    """The demo invoices and the sample cost centers (the demo has none: D-53), made once a run (tests/conftest.py)."""
+    return cost_centers_demo_template
 
 
 @pytest.fixture

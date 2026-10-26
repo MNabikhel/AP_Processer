@@ -15,7 +15,6 @@ from fastapi.testclient import TestClient
 
 from ap_coder.core.config import Settings
 from ap_coder.core.store import REVIEW, Store
-from ap_coder.ops.demo import load_demo
 from ap_coder.web import invoice_view
 from ap_coder.web.app import create_app
 from ap_coder.web.invoice_view import Draft
@@ -34,10 +33,9 @@ def _cascade(store) -> int:
 
 
 @pytest.fixture(scope="module")
-def demo_db(tmp_path_factory):
-    path = tmp_path_factory.mktemp("demo") / "private" / "ap_coder.db"
-    load_demo(Store(path), Settings())
-    return path
+def demo_db(demo_template):
+    """The demo invoices, made once a run (tests/conftest.py)."""
+    return demo_template
 
 
 @pytest.fixture

@@ -329,12 +329,9 @@ def fresh(tmp_path):
 
 
 @pytest.fixture
-def demo_db(tmp_path_factory):
-    from ap_coder.ops.demo import load_demo
-
-    path = tmp_path_factory.mktemp("demo") / "private" / "ap_coder.db"
-    load_demo(Store(path), Settings())
-    return path
+def demo_db(demo_template):
+    """The demo invoices, made once a run (tests/conftest.py)."""
+    return demo_template
 
 
 # --- Reporting a problem, without a command line ---------------------------------------------------------------

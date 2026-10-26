@@ -19,10 +19,10 @@ from ap_coder.coding.tax import (
 )
 from ap_coder.core.memory import vendor_key
 from ap_coder.core.schema import InvoiceCoding
-from ap_coder.core.store import Store, load_sample_cost_centers
+from ap_coder.core.store import Store
 from ap_coder.erp import jde
 
-from .conftest import DATA, ROOT, SAMPLES
+from .conftest import DATA, ROOT, SAMPLES, copy_database
 
 ON, QC, BC, AB = (
     "northwind_ON_HST_NW-2026-0912",
@@ -582,15 +582,14 @@ def db(tmp_path):
     return tmp_path / "private" / "ap_coder.db"
 
 
-def test_exports_page_jde_flow(db):
-    from ap_coder.ops.demo import load_demo
+def test_exports_page_jde_flow(db, cost_centers_demo_template):
     from ap_coder.web.pages.exports import batch_file
 
     from .webclient import client_for, follow, post
 
-    store = Store(db)
-    load_sample_cost_centers(store)  # JD Edwards' business units come from cost centers (the demo has none: D-53)
-    load_demo(store)
+    store = copy_database(
+        cost_centers_demo_template, db
+    )  # JD Edwards' business units come from cost centers (the demo has none: D-53)
     client = client_for(store)
     ready = {i["vendor_name"]: i["id"] for i in store.unexported_approved()}
     northwind = next(i for n, i in ready.items() if n.startswith("Northwind"))
@@ -630,15 +629,14 @@ def test_exports_page_jde_flow(db):
     assert client.get("/exports").status_code == 200  # the undone batch is listed, nothing breaks
 
 
-def test_a_jde_batch_downloads_again_with_the_same_vouchers(db):
-    from ap_coder.ops.demo import load_demo
+def test_a_jde_batch_downloads_again_with_the_same_vouchers(db, cost_centers_demo_template):
     from ap_coder.web.pages.exports import jde_file, jde_left_out
 
     from .webclient import client_for, follow, post
 
-    store = Store(db)
-    load_sample_cost_centers(store)  # JD Edwards' business units come from cost centers (the demo has none: D-53)
-    load_demo(store)
+    store = copy_database(
+        cost_centers_demo_template, db
+    )  # JD Edwards' business units come from cost centers (the demo has none: D-53)
     client = client_for(store)
     northwind = next(i for i in store.unexported_approved() if i["vendor_name"].startswith("Northwind"))
     settings = jde.load(store)
@@ -675,13 +673,10 @@ def test_a_jde_batch_downloads_again_with_the_same_vouchers(db):
 
 
 def _one_jde_batch(store, send_due_date=True, **final_changes):
-    """A JD Edwards batch of the demo's Northwind invoice (its coding changed by ``final_changes`` first)."""
-    from ap_coder.ops.demo import load_demo
-
+    """A JD Edwards batch of the demo's Northwind invoice (its coding changed by ``final_changes`` first), on a copy of
+    ``cost_centers_demo_template``: JD Edwards' business units come from cost centers (the demo has none: D-53)."""
     from .webclient import client_for, follow, post
 
-    load_sample_cost_centers(store)  # JD Edwards' business units come from cost centers (the demo has none: D-53)
-    load_demo(store)
     northwind = next(i for i in store.unexported_approved() if i["vendor_name"].startswith("Northwind"))
     if final_changes:
         with store._conn() as conn:
@@ -700,9 +695,9 @@ def _one_jde_batch(store, send_due_date=True, **final_changes):
     return client, settings, batch["id"], northwind["id"]
 
 
-def test_a_due_date_jde_cannot_hold_leaves_vlddj_blank_in_a_batch_downloaded_again(db):
+def test_a_due_date_jde_cannot_hold_leaves_vlddj_blank_in_a_batch_downloaded_again(db, cost_centers_demo_template):
     """The batch was made with "send due date" off; switched on later, a due date of 3026 must not break the file."""
-    store = Store(db)
+    store = copy_database(cost_centers_demo_template, db)
     client, settings, batch, inv_id = _one_jde_batch(store, send_due_date=False, due_date="3026-10-14")
     settings.send_due_date = True
     jde.save(store, settings)
@@ -715,9 +710,9 @@ def test_a_due_date_jde_cannot_hold_leaves_vlddj_blank_in_a_batch_downloaded_aga
     assert "check before loading" in readme and "due date 3026-10-14" in readme
 
 
-def test_a_jde_batch_is_not_downloaded_while_a_setting_stops_every_export(db):
+def test_a_jde_batch_is_not_downloaded_while_a_setting_stops_every_export(db, cost_centers_demo_template):
     """A Z-file with no User ID cannot load, and its own dry run says so: the download says what to fix instead."""
-    store = Store(db)
+    store = copy_database(cost_centers_demo_template, db)
     client, settings, batch, _inv_id = _one_jde_batch(store)
     settings.user = ""
     jde.save(store, settings)

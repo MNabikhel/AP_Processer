@@ -10,20 +10,16 @@ from urllib.parse import parse_qsl
 import pytest
 from openpyxl import load_workbook
 
-from ap_coder.core.store import APPROVED, PARKED, REVIEW, Store, load_sample_setup
+from ap_coder.core.store import APPROVED, PARKED, REVIEW, Store
 from ap_coder.erp import directory as d
-from ap_coder.ops.demo import load_demo
 
-from .conftest import SAMPLE_STEM, SAMPLES
+from .conftest import SAMPLE_STEM, SAMPLES, copy_database
 from .webclient import PAGE, client_for, follow
 
 
 @pytest.fixture
-def store(tmp_path):
-    s = Store(tmp_path / "private" / "ap.db")
-    load_sample_setup(s)
-    load_demo(s)
-    return s
+def store(tmp_path, setup_demo_template):
+    return copy_database(setup_demo_template, tmp_path / "private" / "ap.db")  # sample setup, then demo
 
 
 def ids(store, **filters):

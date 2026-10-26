@@ -13,7 +13,6 @@ from fastapi.testclient import TestClient
 
 from ap_coder.core.config import Settings
 from ap_coder.core.store import Store
-from ap_coder.ops.demo import load_demo
 from ap_coder.web.app import create_app
 from ap_coder.web.pages import PAGES
 from ap_coder.web.pages import exports as exports_page
@@ -42,10 +41,9 @@ def client(store):
 
 
 @pytest.fixture(scope="module")
-def demo_db(tmp_path_factory):
-    path = tmp_path_factory.mktemp("demo") / "private" / "ap_coder.db"
-    load_demo(Store(path), Settings())
-    return path
+def demo_db(demo_template):
+    """The demo invoices, made once a run (tests/conftest.py)."""
+    return demo_template
 
 
 @pytest.fixture

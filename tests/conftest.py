@@ -1,3 +1,4 @@
+import contextlib
 import functools
 import json
 import sqlite3
@@ -105,19 +106,14 @@ SAMPLES = ROOT / "samples"
 SAMPLE_STEM = "northwind_ON_HST_NW-2026-0912"
 
 
-@pytest.fixture(autouse=True)
-def isolated_private_dir(monkeypatch, tmp_path):
-    """Never let a test touch the real private/ folder (database, invoices, outputs)."""
-    monkeypatch.setenv("AP_PRIVATE_DIR", str(tmp_path / "private"))
-    monkeypatch.setenv("AP_USER_SETTINGS", str(tmp_path / "user_settings.json"))  # not the real ~/.ap_coder
+def _isolate(monkeypatch, folder: Path) -> None:
+    monkeypatch.setenv("AP_PRIVATE_DIR", str(folder / "private"))
+    monkeypatch.setenv("AP_USER_SETTINGS", str(folder / "user_settings.json"))  # not the real ~/.ap_coder
     monkeypatch.delenv("AP_ALLOW_INTERNET", raising=False)  # the offline default, even in an online CI job
     monkeypatch.delenv("AP_LAUNCH_LOCK_HELD", raising=False)
 
 
-@pytest.fixture(autouse=True)
-def fresh_reading_memory():
-    """The tables found per file and the learning memory are remembered for the life of the process: each test
-    starts with none."""
+def _clear_reading_memory() -> None:
     from ap_coder.capture import layout, table_finder
     from ap_coder.core import store
 
@@ -125,6 +121,33 @@ def fresh_reading_memory():
     layout._pruned.clear()
     layout._SCAN_PNGS.clear()
     store._FEEDBACK.clear()
+
+
+def _no_local_model(monkeypatch) -> None:
+    from ap_coder.ai import local_llm
+
+    def refused(url, api_key, timeout):
+        raise ConnectionRefusedError(f"no local model in tests ({url})")
+
+    monkeypatch.setattr(local_llm, "_fetch_json", refused)
+    local_llm.forget_status()
+    local_llm._mode_by_model.clear()
+
+
+@pytest.fixture(autouse=True)
+def isolated_private_dir(monkeypatch, tmp_path):
+    """Never let a test touch the real private/ folder (database, invoices, outputs)."""
+    _isolate(monkeypatch, tmp_path)
+
+
+@pytest.fixture(autouse=True)
+def fresh_reading_memory():
+    """The tables found per file and the learning memory are remembered for the life of the process: each test
+    starts with none."""
+    from ap_coder.capture import table_finder
+    from ap_coder.core import store
+
+    _clear_reading_memory()
     yield
     table_finder._found.clear()
     store._FEEDBACK.clear()
@@ -149,14 +172,107 @@ def no_local_model(monkeypatch):
     (tests/test_local_llm.py restores the real fetch for that)."""
     from ap_coder.ai import local_llm
 
-    def refused(url, api_key, timeout):
-        raise ConnectionRefusedError(f"no local model in tests ({url})")
-
-    monkeypatch.setattr(local_llm, "_fetch_json", refused)
-    local_llm.forget_status()
-    local_llm._mode_by_model.clear()
+    _no_local_model(monkeypatch)
     yield
     local_llm.forget_status()
+
+
+# --- Databases made once per run, copied for each test -----------------------------------------------------------
+# Loading the demo reads, codes and captures ten PDFs (1.5 s, several on Windows); the sample setup imports four
+# lists. Each is made once per run here and copied for a test (a few milliseconds): every test still has a database
+# of its own.
+
+
+@contextlib.contextmanager
+def isolated(folder: Path):
+    """What every test runs in (the autouse fixtures above), for work done outside a test: the run's database
+    templates, a module's own. Made under no test's patches and none of its leftovers (B-581)."""
+    from ap_coder.ai import local_llm
+
+    with pytest.MonkeyPatch.context() as mp:
+        _isolate(mp, folder)
+        _no_local_model(mp)
+        _clear_reading_memory()
+        try:
+            yield mp
+        finally:
+            _clear_reading_memory()
+            local_llm.forget_status()
+
+
+def _template(tmp_path_factory, name: str, *steps) -> Path:
+    from ap_coder.core.store import Store
+
+    folder = tmp_path_factory.mktemp(f"template-{name}")
+    with isolated(folder):
+        store = Store(folder / "private" / "ap_coder.db")
+        for step in steps:
+            step(store)
+    return store.path
+
+
+def _sample_setup(store) -> None:
+    from ap_coder.core.store import load_sample_setup
+
+    load_sample_setup(store)
+
+
+def _sample_cost_centers(store) -> None:
+    from ap_coder.core.store import load_sample_cost_centers
+
+    load_sample_cost_centers(store)
+
+
+def _demo(store) -> None:
+    from ap_coder.ops.demo import load_demo
+
+    load_demo(store, Settings())
+
+
+@pytest.fixture(scope="session")
+def demo_template(tmp_path_factory) -> Path:
+    """A database with the demo loaded (``load_demo`` on a new one)."""
+    return _template(tmp_path_factory, "demo", _demo)
+
+
+@pytest.fixture(scope="session")
+def setup_demo_template(tmp_path_factory) -> Path:
+    """A database with the sample setup (``load_sample_setup``), then the demo."""
+    return _template(tmp_path_factory, "setup-demo", _sample_setup, _demo)
+
+
+@pytest.fixture(scope="session")
+def cost_centers_demo_template(tmp_path_factory) -> Path:
+    """A database with the sample cost centers (``load_sample_cost_centers``; the demo has none: D-53), then the
+    demo."""
+    return _template(tmp_path_factory, "cost-centers-demo", _sample_cost_centers, _demo)
+
+
+def copy_database(template: Path, target: Path):
+    """A Store at ``target`` holding a copy of ``template`` (one of the fixtures above)."""
+    from ap_coder.core.store import Store
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    _copy(template, target)
+    return Store(target)
+
+
+def fill_from(store, template: Path):
+    """``store``, a database with no invoices yet (new, or holding only what the template's first steps put in it),
+    now holds a copy of ``template``: what those steps would have given it. A dashboard or a client made on it before
+    needs nothing new: neither writes to the database."""
+    assert not store.list_invoices(), "fill_from takes a database without invoices"
+    _copy(template, store.path)
+    return store
+
+
+def _copy(template: Path, target: Path) -> None:
+    source, copy = sqlite3.connect(template), sqlite3.connect(target)
+    try:
+        source.backup(copy)
+    finally:
+        copy.close()
+        source.close()
 
 
 @pytest.fixture

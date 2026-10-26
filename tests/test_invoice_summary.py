@@ -22,7 +22,7 @@ from ap_coder.core.store.samples import load_sample_purchase_orders
 from ap_coder.erp import accruals, directory, insights, search, spend
 
 from . import summary_reference as ref
-from .conftest import SAMPLES
+from .conftest import SAMPLES, copy_database, isolated
 
 YEAR = (dt.date(2025, 10, 1), dt.date(2026, 12, 31))
 PERIODS = [YEAR, (dt.date(2026, 1, 1), dt.date(2026, 3, 31)), (dt.date(2026, 7, 1), dt.date(2026, 9, 30))]
@@ -40,10 +40,24 @@ def _add(store: Store, tmp_path, name: str, doc: dict, meta: dict | None = None)
     return store.add_invoice(tmp_path / f"{name}.pdf", output, report.to_dict(), meta=meta), output
 
 
+@pytest.fixture(scope="module")
+def year_template(tmp_path_factory):
+    """A year of the sample invoices, in every state an invoice can be in: 40 invoices coded, approved, exported...
+    made once for the module (5 s), copied for each test (``year``)."""
+    folder = tmp_path_factory.mktemp("year")
+    with isolated(folder):
+        store = Store(folder / "ap.db")
+        _fill_year(store, folder)
+    return store.path
+
+
 @pytest.fixture
-def year(tmp_path):
-    """A year of the sample invoices, in every state an invoice can be in."""
-    store = Store(tmp_path / "ap.db")
+def year(tmp_path, year_template):
+    """A copy of the year for this test (it may change it)."""
+    return copy_database(year_template, tmp_path / "ap.db")
+
+
+def _fill_year(store: Store, tmp_path) -> None:
     load_sample_setup(store)
     load_sample_purchase_orders(store)
     store.set_setting("fx_rates", "USD=1.37")
@@ -96,7 +110,6 @@ def year(tmp_path):
     store.approve_invoice(sa_id, sa_output, "Jordan Lee")
     store.add_invoice(tmp_path / "bad.pdf", None, None, error="could not be read")
     store.add_invoice(tmp_path / "demo.pdf", first, {}, meta={"demo": True})
-    return store
 
 
 def _pairs(rows):

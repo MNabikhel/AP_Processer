@@ -15,8 +15,7 @@ from fastapi.testclient import TestClient
 
 from ap_coder.core.config import Settings
 from ap_coder.core.reference_data import UNASSIGNED
-from ap_coder.core.store import REVIEW, Store, load_sample_cost_centers, load_sample_setup
-from ap_coder.ops.demo import load_demo
+from ap_coder.core.store import REVIEW, Store, load_sample_setup
 from ap_coder.web.app import create_app
 from ap_coder.web.pages import MORE_MODULES, PAGES
 
@@ -29,12 +28,9 @@ for _module in [*MORE_MODULES, *(p.module for p in PAGES if p.module)]:
 
 
 @pytest.fixture(scope="module")
-def demo_db(tmp_path_factory):
-    """The demo invoices, loaded once (copied for each test: loading reads ten PDFs)."""
-    path = tmp_path_factory.mktemp("demo") / "private" / "ap_coder.db"
-    load_sample_cost_centers(Store(path))  # the demo has none (D-53): these tests are about cost centers
-    load_demo(Store(path), Settings())
-    return path
+def demo_db(cost_centers_demo_template):
+    """The demo invoices and the sample cost centers (the demo has none: D-53), made once a run (tests/conftest.py)."""
+    return cost_centers_demo_template
 
 
 @pytest.fixture

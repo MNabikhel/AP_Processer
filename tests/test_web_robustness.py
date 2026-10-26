@@ -9,8 +9,9 @@ from fastapi.testclient import TestClient
 
 from ap_coder.core.config import Settings
 from ap_coder.core.store import REVIEW, Store
-from ap_coder.ops.demo import load_demo
 from ap_coder.web.app import create_app
+
+from .conftest import fill_from
 
 PAGE = {"X-AP-Coder": "1"}
 
@@ -52,11 +53,11 @@ def test_a_redirect_never_leaves_this_server_through_a_control_character(url):
     assert core.local_url("/review?tab=parked&q=a%20b") == "/review?tab=parked&q=a%20b"
 
 
-def test_approving_in_a_second_tab_says_plainly_it_was_approved_meanwhile(client, store):
+def test_approving_in_a_second_tab_says_plainly_it_was_approved_meanwhile(client, store, demo_template):
     """The same invoice open in two tabs: approved in the first, the second's Approve says what happened."""
     from tests.test_web_invoice import clean_invoice, flash_text, form_of
 
-    load_demo(store, Settings())
+    fill_from(store, demo_template)
     inv_id = clean_invoice(client, store)
     data = form_of(store, inv_id)
     assert client.post(f"/review/{inv_id}/approve", data=data, headers=PAGE).json()["ok"]
@@ -67,12 +68,12 @@ def test_approving_in_a_second_tab_says_plainly_it_was_approved_meanwhile(client
     assert "is already approved)" not in text
 
 
-def test_acting_on_an_invoice_deleted_meanwhile_goes_back_to_the_queue(client, store):
+def test_acting_on_an_invoice_deleted_meanwhile_goes_back_to_the_queue(client, store, demo_template):
     """Parked, then deleted in another tab: "Back to the queue" on the stale page leads to the queue with a plain
     message, not to a "Not found" page."""
     from tests.test_web_invoice import flash_text
 
-    load_demo(store, Settings())
+    fill_from(store, demo_template)
     inv_id = store.list_invoices(REVIEW)[0]["id"]
     store.park_invoice(inv_id, "Jordan Lee", "waiting for the buyer")
     store.delete_invoice(inv_id, actor="Jordan Lee")
@@ -81,13 +82,13 @@ def test_acting_on_an_invoice_deleted_meanwhile_goes_back_to_the_queue(client, s
     assert "this invoice was deleted meanwhile" in flash_text(client, answer)
 
 
-def test_approving_an_invoice_deleted_while_it_was_checked_says_so(client, store, monkeypatch):
+def test_approving_an_invoice_deleted_while_it_was_checked_says_so(client, store, monkeypatch, demo_template):
     """Deleted in another tab after Approve read the invoice but before it was stored: the store's "not found"
     answered 500 ("That didn't work") instead of the plain "deleted meanwhile"."""
     from ap_coder.web import invoice_view
     from tests.test_web_invoice import clean_invoice, flash_text, form_of
 
-    load_demo(store, Settings())
+    fill_from(store, demo_template)
     inv_id = clean_invoice(client, store)
     data = form_of(store, inv_id)
     real = invoice_view.analyse
@@ -104,12 +105,14 @@ def test_approving_an_invoice_deleted_while_it_was_checked_says_so(client, store
 
 @pytest.mark.parametrize("typed", ["1e309", "-1e309", "abc"])
 @pytest.mark.parametrize("field", ["line_amount", "line_quantity", "line_unit_price", "tax_rate_pct", "tax_amount"])
-def test_a_number_cell_that_is_not_a_finite_number_never_breaks_the_review_screen(client, store, field, typed):
+def test_a_number_cell_that_is_not_a_finite_number_never_breaks_the_review_screen(
+    client, store, field, typed, demo_template
+):
     """A cell posted as "1e309" (infinite once read) or as text: checking, splitting and approving answered 500
     ("That didn't work"). Such a cell counts as empty and the checks say what is off."""
     from tests.test_web_invoice import form_of
 
-    load_demo(store, Settings())
+    fill_from(store, demo_template)
     inv_id = store.list_invoices(REVIEW)[0]["id"]
     data = form_of(store, inv_id)
     data[field] = [typed] * len(data[field])

@@ -14,8 +14,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from ap_coder.core.config import Settings
-from ap_coder.core.store import REVIEW, Store, load_sample_cost_centers
-from ap_coder.ops.demo import load_demo
+from ap_coder.core.store import REVIEW, Store
 from ap_coder.web import document
 from ap_coder.web.app import create_app
 
@@ -26,11 +25,9 @@ ZOOM_KEY = "apc-invoice-viewer-zoom"
 
 
 @pytest.fixture(scope="module")
-def demo_db(tmp_path_factory):
-    path = tmp_path_factory.mktemp("demo") / "private" / "ap_coder.db"
-    load_sample_cost_centers(Store(path))
-    load_demo(Store(path), Settings())
-    return path
+def demo_db(cost_centers_demo_template):
+    """The demo invoices and the sample cost centers (the demo has none: D-53), made once a run (tests/conftest.py)."""
+    return cost_centers_demo_template
 
 
 @pytest.fixture

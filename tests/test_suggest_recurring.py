@@ -7,8 +7,8 @@ from ap_coder.ai.suggest import suggest_gl
 from ap_coder.core.reference_data import UNASSIGNED
 from ap_coder.core.store import Store
 from ap_coder.erp import recurring
-from ap_coder.ops.demo import load_demo
 
+from .conftest import copy_database
 from .webclient import client_for, draft_form, follow, post
 
 
@@ -77,11 +77,10 @@ def test_late_vendors_are_listed_first():
     assert [r.vendor_key for r in found] == ["late", "fine"]
 
 
-def test_suggestion_button_codes_the_line(tmp_path):
+def test_suggestion_button_codes_the_line(tmp_path, demo_template):
     from .test_web_invoice import check, form_of
 
-    store = Store(tmp_path / "private" / "ap_coder.db")
-    load_demo(store)
+    store = copy_database(demo_template, tmp_path / "private" / "ap_coder.db")
     client = client_for(store)
     harbour = next(i for i in store.list_invoices() if i["vendor_name"].startswith("Harbourview"))
     invoice_id = harbour["id"]

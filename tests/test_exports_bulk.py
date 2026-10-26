@@ -12,16 +12,13 @@ from ap_coder.core.config import Settings
 from ap_coder.core.memory import vendor_key
 from ap_coder.core.store import APPROVED, REVIEW, Store
 from ap_coder.erp import exports
-from ap_coder.ops.demo import load_demo
 
-from .conftest import SAMPLE_STEM, SAMPLES
+from .conftest import SAMPLE_STEM, SAMPLES, copy_database
 
 
 @pytest.fixture
-def demo_store(tmp_path):
-    store = Store(tmp_path / "ap.db")
-    load_demo(store)
-    return store
+def demo_store(tmp_path, demo_template):
+    return copy_database(demo_template, tmp_path / "ap.db")
 
 
 def test_export_batch_lifecycle(demo_store):

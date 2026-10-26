@@ -13,13 +13,13 @@ from urllib.parse import urlsplit
 import pytest
 from fastapi.testclient import TestClient
 
-from ap_coder.core.store import Store, load_sample_setup
+from ap_coder.core.store import Store
 from ap_coder.core.store.users import ADMIN, ROLES
-from ap_coder.ops.demo import load_demo
 from ap_coder.web import roles
 from ap_coder.web.app import create_app
 from ap_coder.web.core import SHOW_JDE
 
+from .conftest import copy_database
 from .webclient import PAGE, web_settings
 
 GOOD = "correct horse battery"
@@ -76,11 +76,9 @@ def _server(store: Store) -> tuple:
 
 
 @pytest.fixture(scope="module")
-def servers(tmp_path_factory):
+def servers(tmp_path_factory, setup_demo_template):
     """Two servers: one with the demo invoices, JD Edwards shown and an export batch made; one just set up, empty."""
-    full = Store(tmp_path_factory.mktemp("role-pages") / "private" / "ap_coder.db")
-    load_sample_setup(full)
-    load_demo(full)
+    full = copy_database(setup_demo_template, tmp_path_factory.mktemp("role-pages") / "private" / "ap_coder.db")
     full.set_setting(SHOW_JDE, "1")
     approved = [i["id"] for i in full.list_invoices("approved")]  # a batch: the Exports page shows its card (B-1214)
     full.create_export_batch(approved[:1], "xlsx")

@@ -15,7 +15,7 @@ from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.web.pages import settings_reading
 from ap_coder.web.pages.settings import TAB_KEYS
 
-from .conftest import ROOT, SAMPLES
+from .conftest import ROOT, SAMPLES, fill_from
 from .test_web_invoice import form_of
 from .webclient import client_for, follow, post, web_settings
 
@@ -335,10 +335,9 @@ def test_the_banner_shows_on_the_process_page_from_the_cache(client, status):
     assert status.asked and all(status.asked)  # from the cache: cheap
 
 
-def test_the_banner_shows_on_the_review_queue_with_a_link_to_settings(client, store, status):
-    from ap_coder.ops.demo import load_demo
+def test_the_banner_shows_on_the_review_queue_with_a_link_to_settings(client, store, status, demo_template):
 
-    load_demo(store)
+    fill_from(store, demo_template)
     status.now = broken()
     page = client.get("/review").text
     banner = page.split(BANNER, 1)[1].split("</div>", 1)[0]

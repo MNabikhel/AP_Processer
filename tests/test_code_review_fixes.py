@@ -66,16 +66,13 @@ def test_a_launcher_state_that_is_not_a_json_object_is_read_as_empty(launch, tex
 
 
 @pytest.fixture
-def demo(tmp_path, monkeypatch):
+def demo(tmp_path, monkeypatch, demo_template):
     """The dashboard on a database with the demo invoices loaded."""
-    from ap_coder.core.config import Settings
-    from ap_coder.core.store import Store
-    from ap_coder.ops.demo import load_demo
+    from tests.conftest import copy_database
     from tests.webclient import client_for
 
     monkeypatch.setenv("AP_REVIEWER", "Jordan Lee")
-    store = Store(tmp_path / "private" / "ap_coder.db")
-    load_demo(store, Settings())
+    store = copy_database(demo_template, tmp_path / "private" / "ap_coder.db")
     return store, client_for(store)
 
 

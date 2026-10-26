@@ -10,9 +10,10 @@ from fastapi.testclient import TestClient
 
 from ap_coder.core.config import Settings
 from ap_coder.core.store import APPROVED, PARKED, PENDING, REJECTED, REVIEW, Store
-from ap_coder.ops.demo import load_demo
 from ap_coder.web.app import create_app
 from ap_coder.web.pages.review import confidence_pct, filter_queue, sort_queue
+
+from .conftest import fill_from
 
 PAGE = {"X-AP-Coder": "1"}
 
@@ -29,9 +30,8 @@ def client(store):
 
 
 @pytest.fixture
-def demo(store):
-    load_demo(store, Settings())
-    return store
+def demo(store, demo_template):
+    return fill_from(store, demo_template)
 
 
 def test_an_empty_queue_shows_getting_started(client, store):

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from ap_coder.erp import exports, jde
 
+from .conftest import copy_database
 from .test_jde import AN8, ON, _files, _invoice
 
 
@@ -103,21 +104,17 @@ def test_the_doctor_checks_the_server_accounts_the_jd_edwards_api_and_the_hub_fe
     assert "finance hub feed" in out and "nowhere" in out and "never run" in out
 
 
-def test_read_only_is_not_offered_the_export_batch_downloads(tmp_path):
+def test_read_only_is_not_offered_the_export_batch_downloads(tmp_path, setup_demo_template):
     """B-1214: the Exports page showed "Download again" and "Approved PDFs (ZIP)" to Read-only: both are refused
     (403)."""
     from fastapi.testclient import TestClient
 
-    from ap_coder.core.store import Store, load_sample_setup
-    from ap_coder.ops.demo import load_demo
     from ap_coder.web.app import create_app
 
     from .test_server_role_pages import GOOD
     from .webclient import PAGE, web_settings
 
-    store = Store(tmp_path / "private" / "ap_coder.db")
-    load_sample_setup(store)
-    load_demo(store)
+    store = copy_database(setup_demo_template, tmp_path / "private" / "ap_coder.db")  # sample setup, then the demo
     batch = store.create_export_batch([i["id"] for i in store.list_invoices("approved")][:1], "xlsx")
     app = create_app(web_settings(), store, start_reader=False, server=True)
     uid = store.add_user("viewer", GOOD, role="readonly")

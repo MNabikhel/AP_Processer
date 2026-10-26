@@ -19,7 +19,7 @@ from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.erp import accruals
 
-from .conftest import SAMPLES
+from .conftest import SAMPLES, copy_database
 from .webclient import client_for
 
 SAMPLE_PDF = SAMPLES / "harbourview_NS_HST_HPS-2026-0347.pdf"
@@ -233,11 +233,9 @@ def test_what_keeps_approve_closed_is_its_own_group_before_the_errors_and_warnin
 # --- B-468: the demo before the first real import ---------------------------------------------------------------------
 
 
-def test_the_import_page_asks_to_remove_the_demo_before_the_first_real_invoice(tmp_path):
-    from ap_coder.ops.demo import load_demo
+def test_the_import_page_asks_to_remove_the_demo_before_the_first_real_invoice(tmp_path, demo_template):
 
-    store = Store(tmp_path / "private" / "ap.db")
-    load_demo(store, Settings())
+    store = copy_database(demo_template, tmp_path / "private" / "ap.db")
     client = client_for(store)
     assert "Remove the demo invoices before you import your own" in client.get("/process").text
     line = {"description": "Audit", "amount": 50.0, "predicted_gl_code": "6100", "reasoning_justification": "x"}

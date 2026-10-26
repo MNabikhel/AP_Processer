@@ -4,14 +4,12 @@ import json
 
 from ap_coder.core.store import Store
 from ap_coder.erp import search
-from ap_coder.ops.demo import load_demo
 
-from .conftest import SAMPLES
+from .conftest import SAMPLES, copy_database
 
 
-def test_find_by_vendor_number_po_and_amount(tmp_path):
-    store = Store(tmp_path / "s.db")
-    load_demo(store)
+def test_find_by_vendor_number_po_and_amount(tmp_path, demo_template):
+    store = copy_database(demo_template, tmp_path / "s.db")
     assert [h.row["invoice_number"] for h in search.find(store, "northwind 0912")] == ["NW-2026-0912"]
     assert search.find(store, "NW 2026 0912")[0].row["invoice_number"] == "NW-2026-0912"
     assert search.find(store, "18,017.85")[0].row["invoice_number"] == "NW-2026-0912"
@@ -48,9 +46,8 @@ def test_the_erp_register_is_searched_too(tmp_path):
     assert hit.source == "ERP" and hit.row["invoice_number"] == "A-77"
 
 
-def test_french_amounts_zeros_accents_and_punctuation(tmp_path):
-    store = Store(tmp_path / "s.db")
-    load_demo(store)
+def test_french_amounts_zeros_accents_and_punctuation(tmp_path, demo_template):
+    store = copy_database(demo_template, tmp_path / "s.db")
 
     def numbers(query):
         return [h.row["invoice_number"] for h in search.find(store, query)]

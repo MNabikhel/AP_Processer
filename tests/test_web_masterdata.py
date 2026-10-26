@@ -21,8 +21,9 @@ from ap_coder.coding.vendors import ON_HOLD
 from ap_coder.core.config import Settings
 from ap_coder.core.safe import csv_cell
 from ap_coder.core.store import Store, load_sample_setup
-from ap_coder.ops.demo import load_demo
 from ap_coder.web.app import create_app
+
+from .conftest import fill_from
 
 PAGE = {"X-AP-Coder": "1"}
 MASTER_PAGES = [
@@ -53,10 +54,8 @@ def client(store):
 
 
 @pytest.fixture
-def busy(store):
-    load_sample_setup(store)
-    load_demo(store, Settings())
-    return store
+def busy(store, setup_demo_template):
+    return fill_from(store, setup_demo_template)  # the sample setup, then the demo
 
 
 def follow(client, response):

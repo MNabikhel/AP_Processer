@@ -11,7 +11,7 @@ import pytest
 from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.web.core import STATIC_DIR
 
-from .conftest import SAMPLE_STEM, SAMPLES
+from .conftest import SAMPLE_STEM, SAMPLES, fill_from
 from .test_web_invoice import check, form_of
 from .webclient import add_clean, client_for, follow, gt, known_vendors, post, web_settings
 
@@ -213,14 +213,15 @@ def test_tables_scroll_in_their_card_at_a_narrow_width(client, store):
     assert found >= 5
 
 
-def test_insights_charge_no_cloud_cost_for_invoices_read_and_coded_on_this_computer(client, store, monkeypatch):
+def test_insights_charge_no_cloud_cost_for_invoices_read_and_coded_on_this_computer(
+    client, store, monkeypatch, setup_demo_template
+):
     """The offline build sends nothing to Azure, yet Insights priced the tokens LM Studio (or the demo) recorded at
     Azure's rates: "Cloud cost / invoice $0.040 · Azure, measured on 10 invoices", and a cloud cost taken off the
     business case's net benefit."""
     from ap_coder.erp.insights import compute
-    from ap_coder.ops.demo import load_demo
 
-    load_demo(store)
+    fill_from(store, setup_demo_template)  # its store has the sample setup
     assert compute(store)["cost_per_invoice_cad"] is None
     assert compute(store)["projection"]["azure_cost"] == 0
     page = client.get("/insights").text  # (no cloud cost shown at all offline: B-515)

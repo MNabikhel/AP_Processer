@@ -3,11 +3,9 @@
 import csv
 
 from ap_coder.core.memory import vendor_key
-from ap_coder.core.store import Store
 from ap_coder.erp import statements as stm
-from ap_coder.ops.demo import load_demo
 
-from .conftest import DATA
+from .conftest import DATA, copy_database
 
 
 def _inv(i, number, total, date="2026-09-10", status="approved"):
@@ -96,9 +94,8 @@ def test_the_same_invoice_is_not_matched_twice():
     assert [li.status for li in rec.lines] == [stm.NOT_RECEIVED, stm.MATCHED]
 
 
-def test_sample_statement_against_the_demo(tmp_path):
-    store = Store(tmp_path / "a.db")
-    load_demo(store)
+def test_sample_statement_against_the_demo(tmp_path, demo_template):
+    store = copy_database(demo_template, tmp_path / "a.db")
     with (DATA / "sample_statement_northwind.csv").open(encoding="utf-8") as fh:
         records = list(csv.DictReader(fh))
     invoices = store.vendor_invoices(vendor_key("Northwind IT Solutions Inc."))

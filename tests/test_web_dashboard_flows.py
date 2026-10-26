@@ -17,10 +17,9 @@ import pytest
 
 from ap_coder.coding.rules import Rule
 from ap_coder.core.store import APPROVED, PENDING, REJECTED, Store, load_sample_setup
-from ap_coder.ops.demo import load_demo
 from ap_coder.web.core import invoice_dir
 
-from .conftest import SAMPLE_STEM, SAMPLES
+from .conftest import SAMPLE_STEM, SAMPLES, fill_from
 from .test_web_invoice import check, form_of
 from .webclient import add_clean, client_for, follow, gt, known_vendors, post
 
@@ -69,8 +68,8 @@ def test_an_impossible_date_is_said_and_approval_waits_but_reject_stays(client, 
     assert store.get_invoice(invoice_id)["status"] == REJECTED
 
 
-def test_the_pos_coding_is_applied_on_the_review_screen(client, store):
-    load_demo(store)
+def test_the_pos_coding_is_applied_on_the_review_screen(client, store, setup_demo_template):
+    fill_from(store, setup_demo_template)
     redriver = next(i for i in store.list_invoices() if i["vendor_name"].startswith("Red River"))
     invoice_id = redriver["id"]
     assert f"/review/{invoice_id}/po-coding" in check(client, invoice_id)["sections"]["po"]
@@ -119,8 +118,8 @@ def test_a_rule_added_after_processing_is_applied_and_taught_as_the_reviewers_ch
     assert (line5["suggested_gl"], line5["outcome"]) == ("6800", "corrected")  # the AI's own answer was 6800
 
 
-def test_a_credit_note_is_not_shown_as_due(client, store):
-    load_demo(store)
+def test_a_credit_note_is_not_shown_as_due(client, store, setup_demo_template):
+    fill_from(store, setup_demo_template)
     credit = next(i for i in store.list_invoices() if (i["grand_total"] or 0) < 0)
     summary = check(client, credit["id"])["sections"]["summary"]
     assert "Credit" in summary and "Due in" not in summary and "Overdue" not in summary
@@ -404,8 +403,8 @@ def test_host_allowed_only_for_this_computer():
 # --- The other pages -------------------------------------------------------------------------------------------------
 
 
-def test_the_queue_says_what_is_ready_to_export(client, store):
-    load_demo(store)
+def test_the_queue_says_what_is_ready_to_export(client, store, setup_demo_template):
+    fill_from(store, setup_demo_template)
     assert "ready to export" in client.get("/review").text  # the demo's approved invoices are not exported yet
 
 
@@ -444,17 +443,17 @@ def test_vendors_named_like_the_pages_own_words_open(client, store):
         assert client.get("/vendors", params={"open": key}).status_code == 200
 
 
-def test_vendors_page_with_the_demo_shows_the_vendors_that_make_work(client, store):
+def test_vendors_page_with_the_demo_shows_the_vendors_that_make_work(client, store, setup_demo_template):
     from ap_coder.erp.insights import vendor_workload
 
-    load_demo(store)
+    fill_from(store, setup_demo_template)
     page = client.get("/vendors").text
     if vendor_workload(store):
         assert "Vendors that make work" in page
 
 
-def test_spend_all_currencies_in_cad(client, store):
-    load_demo(store)
+def test_spend_all_currencies_in_cad(client, store, setup_demo_template):
+    fill_from(store, setup_demo_template)
     cascade = next(i for i in store.list_invoices() if i["currency"] == "USD")
     store.approve_invoice(cascade["id"], store.get_invoice(cascade["id"])["ai_output"], "Jane")
     store.set_setting("fx_rates", "USD=1.37")

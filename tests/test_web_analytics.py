@@ -20,13 +20,12 @@ from ap_coder.capture.workflow import learn_from_approval
 from ap_coder.core.config import Settings
 from ap_coder.core.store import REVIEW, Store, load_sample_setup
 from ap_coder.erp.insights import Assumptions
-from ap_coder.ops.demo import load_demo
 from ap_coder.web import charts
 from ap_coder.web.app import create_app
 from ap_coder.web.pages.activity import controls_period, filter_events
 from ap_coder.web.pages.learning import read_sheets
 
-from .conftest import SAMPLE_STEM, SAMPLES
+from .conftest import SAMPLE_STEM, SAMPLES, fill_from
 
 PAGE = {"X-AP-Coder": "1"}
 SVG = "{http://www.w3.org/2000/svg}"
@@ -50,10 +49,9 @@ def _approve(store, invoice_id, final, reviewer="Ann"):
 
 
 @pytest.fixture
-def busy(store, tmp_path, ground_truth):
+def busy(store, tmp_path, ground_truth, setup_demo_template):
     """Sample setup, the demo invoices, a few approvals (one corrected) and one real approved invoice."""
-    load_sample_setup(store)
-    load_demo(store, Settings())
+    fill_from(store, setup_demo_template)  # the sample setup, then the demo
     waiting = store.list_invoices(REVIEW)
     for n, row in enumerate(waiting[:3]):
         inv = store.get_invoice(row["id"])

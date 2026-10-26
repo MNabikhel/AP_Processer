@@ -10,9 +10,8 @@ from ap_coder.core.config import Settings
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import Store, load_sample_purchase_orders, load_sample_setup
 from ap_coder.erp import accruals
-from ap_coder.ops.demo import load_demo
 
-from .conftest import SAMPLES
+from .conftest import SAMPLES, copy_database
 
 END = dt.date(2026, 9, 30)
 
@@ -23,9 +22,8 @@ def _coded(store, stem, **changes):
     return output
 
 
-def test_demo_accruals(tmp_path):
-    store = Store(tmp_path / "a.db")
-    load_demo(store)
+def test_demo_accruals(tmp_path, demo_template):
+    store = copy_database(demo_template, tmp_path / "a.db")
     items = accruals.build(store, END)
     received = [a for a in items if a.source == accruals.RECEIVED]
     # Only the mount kits: the returned laptop and the freight billed without the PO number are not accrued.

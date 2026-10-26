@@ -7,14 +7,14 @@ from openpyxl import load_workbook
 
 from ap_coder.core.store import Store
 from ap_coder.erp import spend
-from ap_coder.ops.demo import load_demo
+
+from .conftest import copy_database
 
 YEAR = (dt.date(2020, 1, 1), dt.date(2030, 12, 31))
 
 
-def test_spend_from_the_demo(tmp_path):
-    store = Store(tmp_path / "s.db")
-    load_demo(store)
+def test_spend_from_the_demo(tmp_path, demo_template):
+    store = copy_database(demo_template, tmp_path / "s.db")
     rows = spend.lines(store, *YEAR)
     assert rows and {r.currency for r in rows} == {"CAD"}  # only approved invoices: the demo's two are in CAD
     approved = [i for i in store.list_invoices("approved")]
@@ -49,9 +49,8 @@ def test_default_period_is_the_last_twelve_months():
     assert spend.default_period(dt.date(2026, 12, 31)) == (dt.date(2026, 1, 1), dt.date(2026, 12, 31))
 
 
-def test_workbook(tmp_path):
-    store = Store(tmp_path / "s.db")
-    load_demo(store)
+def test_workbook(tmp_path, demo_template):
+    store = copy_database(demo_template, tmp_path / "s.db")
     first = store.list_invoices()[0]["id"]
     wb = load_workbook(io.BytesIO(spend.workbook(store, store.reference_data())))
     assert wb.sheetnames == ["Invoices", "Lines", "Posting"]
@@ -63,9 +62,8 @@ def test_workbook(tmp_path):
     assert wb["Posting"].tables and wb["Lines"].tables
 
 
-def test_workbook_text_cannot_run_as_a_formula(tmp_path):
-    store = Store(tmp_path / "s.db")
-    load_demo(store)
+def test_workbook_text_cannot_run_as_a_formula(tmp_path, demo_template):
+    store = copy_database(demo_template, tmp_path / "s.db")
     inv = store.list_invoices()[0]
     doc = store.get_invoice(inv["id"])["ai_output"]
     store.add_invoice(tmp_path / "x.pdf", {**doc, "vendor_name": '=HYPERLINK("http://x")'}, {})
@@ -97,11 +95,10 @@ def test_non_recoverable_tax_on_its_own_account_is_spend(tmp_path):
     assert any(r.gl_code == "5900" for r in rows)
 
 
-def test_control_characters_do_not_break_the_workbooks(tmp_path):
+def test_control_characters_do_not_break_the_workbooks(tmp_path, demo_template):
     from ap_coder.erp import exports
 
-    store = Store(tmp_path / "s.db")
-    load_demo(store)
+    store = copy_database(demo_template, tmp_path / "s.db")
     inv = store.list_invoices()[0]
     doc = store.get_invoice(inv["id"])["ai_output"]
     doc = {**doc, "vendor_name": "Bad\x0bVendor\x01", "line_items": [{**doc["line_items"][0], "description": "a\x0cb"}]}

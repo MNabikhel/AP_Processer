@@ -8,7 +8,7 @@ from ap_coder.capture.types import Box, CaptureResult, FieldResult
 from ap_coder.capture.workflow import learn_from_approval, reader_outcome_rows
 from ap_coder.core.store import PENDING, REVIEW, SCHEMA_VERSION, Store
 
-from .conftest import SAMPLE_STEM, SAMPLES
+from .conftest import SAMPLE_STEM, SAMPLES, copy_database
 
 PDF = SAMPLES / f"{SAMPLE_STEM}.pdf"
 BOX = [Box(1, 0.6, 0.2, 0.8, 0.22)]
@@ -233,13 +233,13 @@ def test_learn_from_approval_records_the_readers(tmp_path, ground_truth, monkeyp
     assert {r["invoices"] for r in store.reader_scorecard()} == {1}
 
 
-def test_bulk_approval_scores_the_readers_too(tmp_path):
+def test_bulk_approval_scores_the_readers_too(tmp_path, demo_template):
     from ap_coder.coding.bulk import bulk_approve, clean_candidates
     from ap_coder.core.config import Settings
-    from ap_coder.ops.demo import load_demo
 
-    store = Store(tmp_path / "ap.db")
-    load_demo(store)  # the demo's pre-approved invoices record no reader rows: nobody approved them here
+    store = copy_database(
+        demo_template, tmp_path / "ap.db"
+    )  # the demo's pre-approved invoices record no reader rows: nobody approved them here
     assert store.reader_scorecard() == []
     candidates = [c["id"] for c in clean_candidates(store)]
     result = bulk_approve(store, store.reference_data(), Settings(), candidates, "jane")
@@ -249,16 +249,14 @@ def test_bulk_approval_scores_the_readers_too(tmp_path):
     assert all(store.get_invoice(i)["status"] != REVIEW for i in result["approved"])
 
 
-def test_a_bulk_approval_does_not_feed_the_calibration(tmp_path):
+def test_a_bulk_approval_does_not_feed_the_calibration(tmp_path, demo_template):
     """An untouched bulk approval is scored on the Readers tab, but nobody checked its fields: its values agreeing
     with AP's (which bulk approval requires) are no proof the reading was right, so they do not move the local
     calibration of confidence towards verified."""
     from ap_coder.coding.bulk import bulk_approve, clean_candidates
     from ap_coder.core.config import Settings
-    from ap_coder.ops.demo import load_demo
 
-    store = Store(tmp_path / "ap.db")
-    load_demo(store)
+    store = copy_database(demo_template, tmp_path / "ap.db")
     before = store.evidence_counts()
     result = bulk_approve(store, store.reference_data(), Settings(), [c["id"] for c in clean_candidates(store)], "jane")
     assert result["approved"] and {r["reader"] for r in store.reader_scorecard()} >= {"fused", "rules"}
