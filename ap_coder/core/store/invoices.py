@@ -137,12 +137,9 @@ class InvoicesMixin:
         grand_total: float | None = None,
         key: str | None = None,
     ) -> list[int]:
-        """Other invoices with the same vendor and invoice number (possible duplicate payment).
-
-        With ``grand_total``, a credit note (negative) is not a duplicate of the invoice it reverses. ``key``: the
-        vendor's own key (``vendor_key_for``: the second of two vendors by one name has its own, B-1408), else the
-        name's.
-        """
+        """Other invoices with the same vendor and invoice number (possible duplicate payment). With ``grand_total``,
+        a credit note (negative) is not a duplicate of the invoice it reverses. ``key``: the vendor's own
+        (``vendor_key_for``: the second of two vendors by one name has its own, B-1408), else the name's."""
         key, number = key or vendor_key(vendor_name), _norm_number(invoice_number)
         if not key or not number:
             return []
@@ -299,8 +296,7 @@ class InvoicesMixin:
         key: str | None = None,
     ) -> list[dict[str, Any]]:  # fmt: skip
         """Invoices from ANOTHER vendor with the same invoice number and total: the same bill entered under a
-        second vendor record (a common cause of duplicate payments). ``key``: the vendor's own, as in
-        :meth:`find_duplicates`."""
+        second vendor record (a common cause of duplicate payments). ``key``: as in :meth:`find_duplicates`."""
         key, number = key or vendor_key(vendor_name), _norm_number(invoice_number)
         if not number or not grand_total:
             return []
