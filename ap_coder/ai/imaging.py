@@ -1,9 +1,8 @@
-"""Page rendering for vision-capable models.
+"""Page images for a chat model that can see (``render_page_images``): the AI reviewer's pages, the chat model's own
+reading of the header, Azure OpenAI's vision mode and the training export.
 
-When vision mode is on, page images are sent alongside the Document
-Intelligence Markdown so the model can resolve layout ambiguities (stamps,
-handwritten approvals, rotated tables). Rendering relies on optional
-dependencies: PyMuPDF for PDFs, Pillow for multi-frame TIFF/BMP, and pillow-heif for an iPhone's HEIC/HEIF photos.
+A PDF's pages are rendered at 150 dpi (PyMuPDF), a PNG or JPEG is sent as it is, a TIFF, BMP or iPhone photo
+(HEIC/HEIF, with pillow-heif) frame by frame as PNG (Pillow). The page reader renders its own (``page_reader``).
 """
 
 from __future__ import annotations

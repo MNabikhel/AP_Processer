@@ -1,4 +1,14 @@
-"""Unified execution pipeline: extract -> code -> validate -> persist."""
+"""One invoice from its file to the review queue: read, code, check, decide, save.
+
+* ``InvoicePipeline.process``: a PDF, picture or text file read on this computer (the PDF's text layer or local OCR,
+  read by capture with the supplier's template), its lines coded from AP's approvals (``offline_coder``) and the chat
+  model for those left over, the checks, the touchless decision, then saved to the review queue and put in line for
+  the page reader and the AI reviewer. ``process_many`` runs a batch.
+* ``finalise_coding``: the checks and the output (target schema, GL distribution) of a coding, again each time a
+  reviewer edits the invoice.
+* ``invoice_files``, ``discover_inputs``, ``other_files``: which files in a folder are invoices; ``write_outputs``:
+  the command line's JSON files; ``plain_error``: what AP reads when a file can't be read.
+"""
 
 from __future__ import annotations
 

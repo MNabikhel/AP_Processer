@@ -1,8 +1,10 @@
 """python -m ap_coder.bench run --n 300 --seed 1 --scanned 0.3 [--out bench_out] [--workers 4]
+python -m ap_coder.bench generate --n 300 --seed 1 --scanned 0.3 [--out bench_out]
 python -m ap_coder.bench calibrate RUN_DIR [RUN_DIR ...]
 python -m ap_coder.bench learn --suppliers 30 --invoices 40 [--scanned 0.0]
 python -m ap_coder.bench speed --n 20 --scanned 0.5 [--history 30000]
-python -m ap_coder.bench coding --vendors 30 --invoices 30 --seed 1 [--out bench_coding] [--realistic] [--ai]"""
+python -m ap_coder.bench coding --vendors 30 --invoices 30 --seed 1 [--out bench_coding] [--realistic] [--ai]
+python -m ap_coder.bench triage --n 300 --seed 1 [--msg-share 0.4] [--out bench_triage]"""
 
 from __future__ import annotations
 
