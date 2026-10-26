@@ -24,7 +24,7 @@ from ap_coder.core.store import Store
 from ap_coder.erp import jde, jde_ais, jde_sync, jde_worksheet
 from ap_coder.web import minimd
 from ap_coder.web.core import done, get_store, jobs, posted_form, refuse, reviewer
-from ap_coder.web.files import TOO_BIG, SheetError, read_capped, read_csv, read_excel
+from ap_coder.web.files import TOO_BIG, XLSX, SheetError, download, read_capped, read_csv, read_excel
 
 router = APIRouter()
 
@@ -336,9 +336,7 @@ def jde_worksheet_download(request: Request) -> Response:
         js, store.list_accounts("gl_accounts"), store.vendor_summaries(),
         lambda name: jde.resolve_an8({"vendor_name": name}, lookup, js),
     )  # fmt: skip
-    name = "AP Coder - questions for the JDE team.xlsx"
-    return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    headers={"Content-Disposition": f'attachment; filename="{name}"'})  # fmt: skip
+    return download(data, "AP Coder - questions for the JDE team.xlsx", XLSX)
 
 
 @router.post("/settings/jde/worksheet")

@@ -1075,9 +1075,14 @@ GOTO_BOX = {
 
 
 def confidence_pct(value: float, threshold: float) -> str:
-    from ap_coder.web.pages.review import confidence_pct as pct
-
-    return pct(value, threshold)
+    """The invoice's confidence as a percentage, rounded the usual way, so the screen, the queue and the messages
+    agree. Where that rounding would mislead (84.9% shown as the 85% threshold it is below, or 99.6% as certainty) it
+    keeps one decimal, rounded down."""
+    value = max(0.0, min(1.0, value or 0.0))
+    whole = int(f"{value * 100:.0f}")
+    if (value < threshold and whole >= int(f"{threshold * 100:.0f}")) or (value < 1 and whole >= 100):
+        return f"{math.floor(value * 1000 + 1e-9) / 10:.1f}%"
+    return f"{whole}%"
 
 
 METER_ABOUT = {

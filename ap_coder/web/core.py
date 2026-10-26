@@ -398,8 +398,12 @@ def refuse(text: str, status: int = 400, **extra: Any) -> JSONResponse:
 OLDEST_DAY, LATEST_DAY = dt.date(1900, 1, 1), dt.date(2999, 12, 31)
 
 
-def clamp_day(day: dt.date) -> dt.date:
-    return min(max(day, OLDEST_DAY), LATEST_DAY)
+def address_day(value: Any, default: dt.date) -> dt.date:
+    """A YYYY-MM-DD from the address, kept within those years, or ``default`` when it is missing or not a date."""
+    try:
+        return min(max(dt.date.fromisoformat(str(value or "").strip()[:10]), OLDEST_DAY), LATEST_DAY)
+    except ValueError:
+        return default
 
 
 # A form that saves a whole list or page posts a stamp of what it showed (``page_version``, in a hidden "version"

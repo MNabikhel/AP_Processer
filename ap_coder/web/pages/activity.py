@@ -22,7 +22,8 @@ from ap_coder.core.audit import ACTIONS, describe
 from ap_coder.core.safe import csv_row
 from ap_coder.erp import controls, insights
 from ap_coder.web.access import is_admin
-from ap_coder.web.core import clamp_day, get_store, render, server_mode
+from ap_coder.web.core import address_day, get_store, render, server_mode
+from ap_coder.web.files import download
 
 router = APIRouter()
 
@@ -61,7 +62,8 @@ def invoice_label(event: dict[str, Any]) -> str:
 
 
 def timeline_items(events: list[dict[str, Any]], with_invoice: bool = True) -> list[dict[str, str]]:
-    """Events as ``ui.timeline`` items (plain text; the timeline escapes it), newest first."""
+    """Events as ``ui.timeline`` items (plain text; the timeline escapes it), newest first; ``with_invoice``: each
+    title names its invoice (not on the invoice's own screen, ``invoice.history``)."""
     items = []
     for e in events:
         icon_name, tone, label = ACTIONS.get(e["action"], ("circle", "gray", e["action"]))
@@ -118,17 +120,10 @@ def events_csv(events: list[dict[str, Any]]) -> bytes:
     return ("﻿" + out.getvalue()).encode("utf-8")
 
 
-def _date(text: str | None, default: dt.date) -> dt.date:
-    try:
-        return clamp_day(dt.date.fromisoformat(str(text or "")[:10]))  # not past the calendar's ends (B-659)
-    except ValueError:
-        return default
-
-
 def controls_period(start: str | None, end: str | None, today: dt.date | None = None) -> tuple[dt.date, dt.date]:
     """The controls report's period: from the address, else this month so far (never after today)."""
     today = today or dt.date.today()
-    first, last = _date(start, today.replace(day=1)), _date(end, today)
+    first, last = address_day(start, today.replace(day=1)), address_day(end, today)  # (B-659)
     return first, min(last, today)
 
 
@@ -175,10 +170,6 @@ def distinct_people(events: list[dict[str, Any]]) -> list[str]:
         return name
 
     return sorted({now(e["actor"]) for e in events if e["actor"]})
-
-
-def _attachment(data: bytes, filename: str, media_type: str) -> Response:
-    return Response(data, media_type=media_type, headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 @router.get("/activity", response_class=HTMLResponse)
@@ -247,7 +238,7 @@ def activity_csv(request: Request) -> Response:
     """The events the page shows with the same filters, all of them (not only the newest 200)."""
     group, person, query, _ = _filters(request)
     shown = filter_events(_events(request), group, person, query)
-    return _attachment(events_csv(shown), f"ap_coder_activity_{dt.date.today()}.csv", "text/csv; charset=utf-8")
+    return download(events_csv(shown), f"ap_coder_activity_{dt.date.today()}.csv", "text/csv; charset=utf-8")
 
 
 @router.get("/activity/controls-report")
@@ -256,4 +247,4 @@ def activity_controls_report(request: Request, start: str = "", end: str = "") -
     if first > last:
         first, last = last, first
     html = controls.report_html(controls.build(get_store(request), first, last, duties=server_mode(request)))
-    return _attachment(html.encode("utf-8"), f"ap_coder_controls_{first}_{last}.html", "text/html; charset=utf-8")
+    return download(html.encode("utf-8"), f"ap_coder_controls_{first}_{last}.html", "text/html; charset=utf-8")

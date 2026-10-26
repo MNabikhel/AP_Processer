@@ -68,6 +68,7 @@ from ap_coder.web.core import (
 )
 from ap_coder.web.files import download
 from ap_coder.web.identity import shown_path
+from ap_coder.web.pages.activity import timeline_items
 from ap_coder.web.pages.review import attention, filter_queue, sort_queue
 
 router = APIRouter()
@@ -316,16 +317,8 @@ NOTE_ACTIONS = ("note", "parked", "sent_back")  # what the notes card lists
 
 
 def history(events: list[dict[str, Any]]) -> list[dict[str, str]]:
-    """Audit events as timeline items (``ui.timeline``), newest first."""
-    from ap_coder.core.audit import ACTIONS, describe
-
-    items = []
-    for e in events:
-        icon_name, tone, label = ACTIONS.get(e["action"], ("circle", "gray", e["action"]))
-        when = f"{ui.time_ago(e['created_at'])} · {e['created_at'].replace('T', ' ')[:16]}"
-        items.append({"icon": icon_name, "tone": tone, "title": label, "text": describe(e),
-                      "who": e.get("actor") or "", "when": when})  # fmt: skip
-    return items
+    """The invoice's audit events as timeline items (``ui.timeline``), newest first, as Activity draws them."""
+    return timeline_items(events, with_invoice=False)
 
 
 def _lesson_hints(store: Store, inv: dict[str, Any]) -> list[str]:
@@ -702,16 +695,19 @@ def reader_progress(request: Request, invoice_id: int) -> JSONResponse:
 @router.get("/review/{invoice_id:int}/approved.pdf")
 def approved_pdf(request: Request, invoice_id: int) -> Response:
     store = get_store(request)
-    inv = _invoice(store, invoice_id)
+    return approved_pdf_download(store, _invoice(store, invoice_id))
+
+
+def approved_pdf_download(store: Store, inv: dict[str, Any]) -> Response:
+    """The approved invoice with its APPROVED stamp and coding page, as a download (here and from the invoice
+    directory); 409 for one not fully approved (never before the second approval)."""
+    if not stamp.can_stamp(inv):
+        raise HTTPException(status_code=409, detail="No longer fully approved: no approved PDF.")
     reference = reference_or_none(store)
     names = {row[reference.chart_of_accounts.key_column]: row.get("description", "")
              for row in reference.chart_of_accounts.rows} if reference is not None else {}  # fmt: skip
-    try:
-        pdf = stamp.stamped_pdf(inv, names, store.tax_treatments())
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
     # (files.download: a vendor named "Bœuf" is not Latin-1, the only characters a plain filename= header takes)
-    return download(pdf, stamp.file_name(inv), "application/pdf")
+    return download(stamp.stamped_pdf(inv, names, store.tax_treatments()), stamp.file_name(inv), "application/pdf")
 
 
 # --- Checking the edits ---------------------------------------------------------------------------------------------

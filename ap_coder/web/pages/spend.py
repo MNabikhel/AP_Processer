@@ -17,6 +17,7 @@ from ap_coder.core import ui
 from ap_coder.erp import spend
 from ap_coder.web.charts import SERIES, Series, bar_chart, compact, legend_items
 from ap_coder.web.core import get_store, money, reference_or_none, render
+from ap_coder.web.files import XLSX, download
 
 router = APIRouter()
 
@@ -165,9 +166,4 @@ def spend_page(request: Request) -> HTMLResponse:
 def spend_workbook(request: Request) -> Response:
     """Every invoice, its lines and its GL posting, as three Excel tables that join on AP Coder #."""
     store = get_store(request)
-    data = spend.workbook(store, reference_or_none(store))
-    return Response(
-        data,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="ap_coder_data_{dt.date.today()}.xlsx"'},
-    )
+    return download(spend.workbook(store, reference_or_none(store)), f"ap_coder_data_{dt.date.today()}.xlsx", XLSX)

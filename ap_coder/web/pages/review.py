@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-import math
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
@@ -62,7 +61,7 @@ from ap_coder.web.core import (
     server_mode,
 )
 from ap_coder.web.identity import shown_path
-from ap_coder.web.invoice_view import document_kind
+from ap_coder.web.invoice_view import confidence_pct, document_kind
 
 router = APIRouter()
 
@@ -99,17 +98,6 @@ def sort_queue(rows: list[dict[str, Any]], order: str) -> list[dict[str, Any]]:
     if order == "vendor":
         return sorted(rows, key=lambda r: fold_text(r.get("vendor_name") or r.get("file_name") or ""))
     return rows
-
-
-def confidence_pct(value: float, threshold: float) -> str:
-    """The invoice's confidence as a percentage, rounded the usual way, so the queue and the messages agree. Where
-    that rounding would mislead (84.9% shown as the 85% threshold it is below, or 99.6% as certainty) it keeps one
-    decimal, rounded down."""
-    value = max(0.0, min(1.0, value or 0.0))
-    whole = int(f"{value * 100:.0f}")
-    if (value < threshold and whole >= int(f"{threshold * 100:.0f}")) or (value < 1 and whole >= 100):
-        return f"{math.floor(value * 1000 + 1e-9) / 10:.1f}%"
-    return f"{whole}%"
 
 
 def due_note(ai: dict[str, Any], default_days: int, vendor_terms: str = "") -> tuple[str, str]:

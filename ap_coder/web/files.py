@@ -46,6 +46,8 @@ TOO_BIG = "This file is larger than 50 MB. Export fewer rows, or only the column
 
 # --- Downloads ---------------------------------------------------------------------------------------------------
 
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
 
 def download(data: bytes, name: str, mime: str) -> Response:
     """``data`` as a file download called ``name`` (any characters: the plain-ASCII name is a fallback)."""
