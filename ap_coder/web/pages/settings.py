@@ -502,6 +502,11 @@ def save_backup_copy(request: Request, folder: str = Form("")) -> JSONResponse:
     folder = folder.strip().strip('"')
     if folder == store.get_setting("backup_copy_dir"):
         return done(request, tab_url("data"), "Nothing changed.")
+    from ap_coder.ops.service import folder_refusal
+
+    refused = folder_refusal(folder, server=server_mode(request))  # before the folder is asked anything (D-109)
+    if refused:
+        return refuse(refused)
     try:  # a name the computer refuses (too long, a character it does not allow) is a folder that does not exist
         exists = Path(folder).expanduser().is_dir() if folder else True
     except (OSError, ValueError):

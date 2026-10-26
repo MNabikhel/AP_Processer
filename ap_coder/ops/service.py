@@ -83,6 +83,7 @@ class ServerSettings:
     account: str = DEFAULT_ACCOUNT
     task_name: str = TASK_NAME
     folder: str = ""  # the AP Coder folder the service runs ("" = this one); server-update changes it
+    allowed_folders: tuple[str, ...] = ()  # the folders an Admin may name on the Settings pages (D-109)
 
     @property
     def code_folder(self) -> Path:
@@ -133,6 +134,40 @@ def _hosts(value: Any) -> tuple[str, ...]:
     return tuple(str(h).strip() for h in items if str(h).strip())
 
 
+def _folders(value: Any) -> tuple[str, ...]:
+    items = value.split(";") if isinstance(value, str) else list(value or [])
+    return tuple(str(f).strip().strip('"') for f in items if str(f).strip().strip('"'))
+
+
+def _norm(path: str) -> str:
+    return os.path.normcase(os.path.normpath(path.strip().strip('"')))
+
+
+def folder_refusal(folder: str, data: Path | None = None, server: bool | None = None) -> str:
+    """Why a folder an Admin typed (the backups' second copy, the finance hub's folder) can't be used ("" = it can).
+    On the server it must be one of server.json's ``allowed_folders``, set by IT (``service install
+    --allowed-folders``), or inside one, compared as text before anything is asked of it: a network path from the web
+    would make the server's account sign in there (its password hash sent), or copy the invoices out (D-109). Laptop:
+    any folder, as before."""
+    from .offline import server_mode
+
+    if not (server_mode() if server is None else server) or not str(folder or "").strip():
+        return ""
+    try:
+        allowed = _folders(read_config(data or private_dir()).get("allowed_folders"))
+    except SettingsError:
+        allowed = ()
+    target = _norm(str(folder))
+    for root in allowed:
+        base = _norm(root).rstrip("\\/")
+        if base and (target == base or target.startswith(base + os.sep)):
+            return ""
+    listed = "; ".join(allowed) if allowed else "none yet"
+    return (f"On the server, AP Coder writes only to the folders IT allows ({listed}): {folder} is not one of them, "
+            "nor inside one. Ask IT to add it (service install --allowed-folders, docs/SERVER.md section "
+            "9).")  # fmt: skip
+
+
 def settings(data: Path, env: dict | None = None, **overrides: Any) -> ServerSettings:
     """The settings in effect: the defaults, then server.json, then the environment (:data:`ENV_SETTINGS`), then
     ``overrides`` (the command line; None = not given)."""
@@ -143,6 +178,7 @@ def settings(data: Path, env: dict | None = None, **overrides: Any) -> ServerSet
             values[name] = env[var].strip()
     values.update({k: v for k, v in overrides.items() if v is not None})
     values["allowed_hosts"] = _hosts(values.get("allowed_hosts"))
+    values["allowed_folders"] = _folders(values.get("allowed_folders"))
     try:
         values["port"] = int(values.get("port", DEFAULT_PORT))
     except (TypeError, ValueError):
@@ -171,6 +207,7 @@ def problems(s: ServerSettings, check_files: bool = True) -> list[str]:
 def save_settings(data: Path, s: ServerSettings) -> Path:
     values = dataclasses.asdict(s)
     values["allowed_hosts"] = list(s.allowed_hosts)
+    values["allowed_folders"] = list(s.allowed_folders)
     values["folder"] = str(s.code_folder)
     return write_config(data, **values)
 
@@ -607,8 +644,8 @@ def install(data: Path, s: ServerSettings, args: argparse.Namespace, say: Say = 
     folder = s.code_folder
     if args.dry_run:
         say(f"1. Save the settings in {config_path(data)}:")
-        say(json.dumps({**dataclasses.asdict(s), "allowed_hosts": list(s.allowed_hosts), "folder": str(folder)},
-                       indent=2))  # fmt: skip
+        say(json.dumps({**dataclasses.asdict(s), "allowed_hosts": list(s.allowed_hosts),
+                        "allowed_folders": list(s.allowed_folders), "folder": str(folder)}, indent=2))  # fmt: skip
         say(f"2. Write {runner_path(data)}:")
         say(runner_text(folder, data).replace("\r\n", "\n"))
         say(f"3. Write the task {task_file(data)}:")
@@ -764,6 +801,8 @@ def add_parser(sub: Any) -> None:
     p.add_argument("--proxy", default=None, help="A reverse proxy's IP address, when one is in front (IIS)")
     p.add_argument("--insecure-http", action="store_true", default=None, help="No HTTPS: for a first test only")
     p.add_argument("--folder", default=None, help="The AP Coder folder to run (default: this one)")
+    p.add_argument("--allowed-folders", default=None,
+                   help="The folders Admins may name for backup copies and the finance hub, ;-separated")  # fmt: skip
     p.add_argument("--no-start", action="store_true", help="install: don't start it yet")
     p.add_argument("--dry-run", action="store_true", help="install: show what it would do, change nothing")
 
@@ -789,6 +828,7 @@ def main(args: argparse.Namespace) -> int:
                 "allowed_hosts",
                 "proxy",
                 "insecure_http",
+                "allowed_folders",
             )
         }
         if args.folder:

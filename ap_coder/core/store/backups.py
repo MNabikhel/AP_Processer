@@ -96,6 +96,12 @@ class BackupsMixin:
         folder = self.get_setting("backup_copy_dir").strip()
         if not folder:
             return None
+        from ...ops.service import folder_refusal
+
+        refused = folder_refusal(folder)  # a folder saved before IT's list, or brought back by a restore (D-109)
+        if refused:
+            self.set_setting("backup_copy_status", f"failed {_now()[:16]}: {refused}")
+            return None
         try:
             target = Path(folder).expanduser()
             if not target.is_dir():

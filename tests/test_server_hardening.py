@@ -498,3 +498,74 @@ def test_the_controls_report_lists_one_person_at_several_steps_on_the_server(tmp
     assert "One person at several steps (1)" in controls.report_html(report)
     laptop = controls.build(store, today, today)
     assert laptop["same_person"] is None and "One person at several steps" not in controls.report_html(laptop)
+
+
+# --- 8. The folders an Admin types: on the server, only those IT allows -----------------------------------------------
+
+
+def test_on_the_server_a_typed_folder_must_be_one_it_allows(tmp_path, monkeypatch):
+    data = tmp_path / "data"
+    data.mkdir()
+    allowed = tmp_path / "share" / "APCoder"
+    allowed.mkdir(parents=True)
+    service.write_config(data, allowed_folders=[str(allowed)])
+    refuse = lambda folder: service.folder_refusal(folder, data, server=True)  # noqa: E731
+    assert refuse(str(allowed)) == "" and refuse(str(allowed / "backups")) == ""
+    assert refuse("\\\\attacker\\share") and refuse(str(tmp_path / "share")) and refuse(str(allowed) + "-evil")
+    assert refuse(str(allowed / ".." / "other"))
+    assert service.folder_refusal("\\\\attacker\\share", data, server=False) == ""  # the laptop: as before
+    service.write_config(data, allowed_folders=[])
+    assert "none yet" in refuse(str(allowed))
+
+
+def test_the_backup_copy_folder_is_refused_before_it_is_asked_anything(web, tmp_path, monkeypatch):
+    from pathlib import Path as RealPath
+
+    from .test_server_security import account, log_in
+    from .webclient import PAGE
+
+    data = tmp_path / "private"
+    monkeypatch.setenv("AP_PRIVATE_DIR", str(data))
+    store = web["store"]
+    account(store, "boss", "admin")
+    admin = web["client"]()
+    assert log_in(admin, "boss").status_code == 200
+    asked = []
+    real = RealPath.is_dir
+    monkeypatch.setattr(RealPath, "is_dir", lambda self: asked.append(str(self)) or real(self))
+    answer = admin.post("/settings/data/backup-copy", data={"folder": "\\\\attacker\\share"}, headers=PAGE).json()
+    assert not answer["ok"] and "IT allows" in answer["error"]
+    assert not [a for a in asked if "attacker" in a] and store.get_setting("backup_copy_dir") == ""
+
+
+def test_a_backup_copy_folder_saved_before_is_not_used_on_the_server(tmp_path, monkeypatch):
+    monkeypatch.setenv("AP_SERVER_MODE", "1")
+    monkeypatch.setenv("AP_PRIVATE_DIR", str(tmp_path))
+    store = Store(tmp_path / "ap_coder.db")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    store.set_setting("backup_copy_dir", str(elsewhere))
+    store.backup_now()
+    assert list(elsewhere.iterdir()) == [] and "IT allows" in store.get_setting("backup_copy_status")
+
+
+def test_service_install_keeps_the_allowed_folders(tmp_path):
+    s = service.settings(tmp_path, allowed_folders="D:\\Backups;\\\\fileserver\\APCoder")
+    assert s.allowed_folders == ("D:\\Backups", "\\\\fileserver\\APCoder")
+    service.save_settings(tmp_path, s)
+    assert service.read_config(tmp_path)["allowed_folders"] == ["D:\\Backups", "\\\\fileserver\\APCoder"]
+
+
+def test_the_finance_hub_folder_is_refused_unless_it_allows_it(web, tmp_path, monkeypatch):
+    from .test_server_security import account, log_in
+    from .webclient import PAGE
+
+    monkeypatch.setenv("AP_PRIVATE_DIR", str(tmp_path / "private"))
+    store = web["store"]
+    account(store, "boss", "admin")
+    admin = web["client"]()
+    assert log_in(admin, "boss").status_code == 200
+    form = {"enabled": "1", "mode": "folder", "folder": "\\\\attacker\\share", "every_hours": "24", "format": "csv",
+            "link_base": "https://apcoder.company.local"}  # fmt: skip
+    answer = admin.post("/settings/hub", data=form, headers=PAGE).json()
+    assert not answer["ok"] and "IT allows" in answer["error"]
