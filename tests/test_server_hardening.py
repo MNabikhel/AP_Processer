@@ -629,3 +629,26 @@ def test_the_https_server_takes_only_modern_ciphers_and_says_nothing_of_uvicorn(
         assert _get(f"https://localhost:{port}/healthz", modern)[0] == 200
     finally:
         _stop(proc)
+
+
+# --- 12. OneLake: its own endpoints only ------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("url", ["https://onelake.dfs.fabric.microsoft.com/ws/item/Files",
+                                 "https://westus-onelake.dfs.fabric.microsoft.com/ws/item/Files"])  # fmt: skip
+def test_onelake_and_its_regional_endpoints_are_taken(url):
+    from ap_coder.erp.hub import onelake
+
+    assert onelake._check_url(url, onelake.ONELAKE_HOSTS, "OneLake folder URL").hostname in url
+
+
+@pytest.mark.parametrize("url", ["https://attacker.dfs.core.windows.net/x", "https://evil.dfs.fabric.microsoft.com/x",
+                                 "https://onelake.dfs.fabric.microsoft.com.evil.net/x",
+                                 "https://a.b-onelake.dfs.fabric.microsoft.com/x",
+                                 "http://onelake.dfs.fabric.microsoft.com/x"])  # fmt: skip
+def test_another_storage_account_is_refused_for_onelake(url):
+    from ap_coder.erp.hub import onelake
+    from ap_coder.erp.hub.landing import HubError
+
+    with pytest.raises(HubError):
+        onelake._check_url(url, onelake.ONELAKE_HOSTS, "OneLake folder URL")
