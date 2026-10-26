@@ -606,7 +606,7 @@ class InvoicePipeline:
                     result.autonomy = azure_check.hold(result.autonomy, azure)
                     # The AI reviewer (on by default): every invoice goes in line, and none is approved without a person
                     # until it agrees.
-                    reviewer_plan = verifier.prepare(self.store, invoice_id)
+                    reviewer_plan = verifier.prepare(self.store, invoice_id, result.autonomy)
                     result.autonomy = verifier.hold(result.autonomy, reviewer_plan)
             except Exception:  # one bad invoice must not stop a batch: saved for a person, never touchless
                 log.exception("Checks after coding failed for %s", path)
@@ -634,10 +634,12 @@ class InvoicePipeline:
                 if result.autonomy.get("auto") and result.output is not None:
                     self.store.approve_invoice(result.invoice_id, result.output, AUTONOMOUS_REVIEWER, login="ap-coder")
                 elif result.output is not None:  # the page reader reads every page of it in the background
-                    from .page_worker import queue_new_invoice
+                    from .page_worker import queue_new_invoice, skip_new_invoice, skip_reason
 
                     source = result.capture.layout_source if result.capture is not None else ""
-                    queue_new_invoice(self.store, self.settings, result.invoice_id, path, source)
+                    why = skip_reason(self.settings, result.capture, result.autonomy, path)  # (server: D-111)
+                    if not why or not skip_new_invoice(self.store, result.invoice_id, result.capture.page_count, why):
+                        queue_new_invoice(self.store, self.settings, result.invoice_id, path, source)
             except Exception as exc:  # a file that cannot be saved (locked, gone) must not stop the batch
                 log.exception("Could not save %s", path)
                 result.error = result.error or f"not saved: {type(exc).__name__}: {exc}"

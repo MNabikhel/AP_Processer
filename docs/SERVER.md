@@ -45,6 +45,28 @@ Why these numbers:
 - **Disk**: each AP Coder version is 2 to 3 GB (its packages and OCR models), and two are kept (the current one and
   the previous one, to go back to). The models are about 10 GB. The data grows with the invoices (about 0.5 MB each,
   kept with the database) and 14 daily copies of the database.
+- **How many people and invoices** (D-111). *Measured*: a 12,000-invoice database, a load test of logged-in people
+  each clicking every 10 seconds on average through the review queue, invoices, their pages, approvals, search and
+  exports, on a 4-core test machine (shared with other work, so on the slow side), before the database speed-ups
+  of the same release:
+
+  | People at once | 1 web worker | 4 web workers |
+  |---|---|---|
+  | 25 | half the pages in 6.9 s, 95% in 39 s | half in 0.4 s, 95% in 1.5 s |
+  | 50 | half in 45 s; 22 pages gave up after 2 minutes | half in 1.0 s, 95% in 5.9 s |
+  | 100 | 82 pages gave up after 2 minutes | half in 6.9 s, 95% in 22 s (all 4 cores busy) |
+
+  Memory: 2 GB for the 4 workers and the background process with 25 people, 5 GB with 100. *Estimated* (the
+  processor and memory from that measurement; the graphics card from an assumed 15 s a page, not measured here):
+
+  | | 5,000 invoices a month, 25 people | 10,000 invoices a month, 50 people at once |
+  |---|---|---|
+  | Processor | 8 cores, `--workers 8` (the default) | 16 cores, `--workers 8` (8 for OCR and the rest) |
+  | Memory | 32 GB | 64 GB |
+  | Graphics card | 16 GB of VRAM, `--llm-parallel 2` | 24 GB of VRAM or more, `--llm-parallel 4` (step 8) |
+  | The graphics card's day | 2 to 3 hours of reading (about 500 pages a working day, every invoice read) | 4 to 6 hours; about half with clean digital PDFs left out (step 6) |
+
+  The reading runs in the background: nobody waits on it, but invoices come into the queue later on a busy day.
 - **Python**: the offline bundle has packages for Python 3.11 to 3.14. Install Python 3.12 from python.org's offline
   installer (copy it in): *Customize installation* → *Install for all users*, and *Add Python to environment
   variables*.
@@ -184,7 +206,36 @@ Windows asks for `APCoderService`'s password once and keeps it for the task. `se
 `SYSTEM`, `"LOCAL SERVICE"` and `"NETWORK SERVICE"` need no password), `--port` (default 8501), `--host` (default
 `0.0.0.0`: every network card), `--certfile`, `--keyfile`, `--allowed-hosts`, `--proxy`, `--insecure-http`,
 `--task-name` (default `AP Coder`), `--folder` (the AP Coder folder the service runs; default: the one the command
-runs in; `server-update` changes it), `--allowed-folders` (the folders Admins may name, step 9), `--no-start`.
+runs in; `server-update` changes it), `--allowed-folders` (the folders Admins may name, step 9), `--workers`
+and `--llm-parallel` (below), `--no-start`.
+
+**Workers** (`--workers N`, kept in `server.json` as `"workers"`; default one per processor core, at most 8): one
+Python process answers about 1.6 pages a second however many cores the server has, so the service runs N *web
+workers*, all answering on the same port, and one *background process* beside them for the work nobody waits on
+(OvisOCR2's reading, the AI reviewer, the Azure check, JD Edwards, the daily backup, the finance hub's schedule). A
+worker or the background process that stops is started again on its own. Each worker uses about 300 to 600 MB of
+memory (measured on a 12,000-invoice database), so 8 workers need 4 to 5 GB. `--workers 1` runs everything in one
+process, as before. Stopping (`service stop`) gives the requests under way 25 seconds, then ends them: the service
+is stopped within 30 seconds.
+
+**Requests to LM Studio at once** (`--llm-parallel N`, `server.json` `"llm_parallel"`, or `AP_LLM_PARALLEL`;
+default 1): how many pages OvisOCR2 reads, and how many questions the chat model answers, at the same time, for all
+of AP Coder's processes together. 1 is strictly one at a time, the safe choice with LM Studio's defaults. Raise it
+only once the model server is set to answer that many together (step 8): the background process then reads that
+many invoices at once.
+
+**Less work for the graphics card** (both on by default on the server, off on a laptop):
+
+- A digital PDF whose own text the rule reader read in full (every page with its text layer, the supplier, invoice
+  number, date and total all verified, the totals adding up) and that goes to a person anyway (its supplier is not
+  touchless) is not read by OvisOCR2: the invoice page says so, and *Add it to OvisOCR2's queue* still reads it.
+  One in ten of them is read all the same, so OvisOCR2's accuracy stays measured; *Settings* → *Reading* counts the
+  invoices and pages left out. Invoices a touchless supplier sent are always read by every reader. Turn it off with
+  `AP_PAGE_READER_SKIP_CLEAN=0` in the machine's environment (`setx /M`); `AP_PAGE_READER_SAMPLE=0.2` reads one in
+  five.
+- The AI reviewer reviews only the invoices AP Coder could approve without a person (*Settings* → *Reading* → *AI
+  reviewer* → *What it reviews*; an Admin may choose *Every invoice*). None is approved without a person until it
+  agrees, as before; the others go to a person anyway.
 
 | To | Run |
 |---|---|
@@ -198,12 +249,14 @@ What it does: the task runs `run.cmd`, which runs AP Coder's *service host* (`py
 host starts the dashboard (`python -m ap_coder serve --server ...` with the settings of `server.json`) and starts it
 again if it stops (after 5 seconds, then longer, up to 5 minutes). The task itself comes back within 5 minutes if the
 host was ended. Settings can also come from environment variables, which win over `server.json`: `AP_SERVER_PORT`,
-`AP_DASHBOARD_ADDRESS`, `AP_TLS_CERT`, `AP_TLS_KEY`, `AP_ALLOWED_HOSTS`, `AP_SERVER_PROXY`.
+`AP_DASHBOARD_ADDRESS`, `AP_TLS_CERT`, `AP_TLS_KEY`, `AP_ALLOWED_HOSTS`, `AP_SERVER_PROXY`, `AP_SERVER_WORKERS`,
+`AP_LLM_PARALLEL`.
 
 **Logs**: `D:\APCoderData\logs\service.log` (what the host and the dashboard say; 5 MB, then up to 5 older files,
 `service.log.1` to `.5`), and `D:\APCoderData\logs\access.log`, a line per request: the time, the address, the
 user name (`-` before a login), the method, the path (without what follows `?`), the status, the bytes and the
-milliseconds (10 MB, then up to 9 older files). Each download (a batch's files or ZIP, the directory's export, a
+milliseconds (10 MB, then up to 9 older files); with several workers, one file per worker, `access-1.log`,
+`access-2.log`... Each download (a batch's files or ZIP, the directory's export, a
 backup, a report) is also in *Activity* → *Logins*, with the person. The daily database backup runs as on a laptop
 (step 9).
 
@@ -261,6 +314,21 @@ window, started at boot like AP Coder.
 
 5. **Check it**: `lms server status` and `lms ps` (as that account) show the server and the loaded model; in AP Coder,
    *Settings* → *Reading* → *Check again*. AP Coder finds LM Studio at `http://127.0.0.1:1234/v1`, its usual place.
+6. **Several requests at once** (for 5,000 invoices a month and more). One request at a time leaves most of a
+   graphics card idle; a server that answers several together (continuous batching) reads 2 to 4 pages in about
+   the time of one and a half (estimated, from llama.cpp's published batching figures; not measured here). Two
+   ways, both offline and both on Windows Server:
+   - **LM Studio** (0.4 or newer): load each model with *Max concurrent predictions* (`--parallel` with `lms load`)
+     set to 4, and give each model 4 times its context (`--context-length 65536` for the chat model): the context is
+     shared by the requests answered together. Then `service install --llm-parallel 4`.
+   - **llama.cpp's `llama-server`** (a single program, its CUDA build copied in): one per model, for example
+     `llama-server -m gemma-4-12B-it-QAT.gguf --port 1234 -ngl 99 --parallel 4 -c 65536 --cache-type-k q8_0
+     --cache-type-v q8_0`, and OvisOCR2 with its `--mmproj` file on another port (`AP_PAGE_READER_BASE_URL`). Then
+     `--llm-parallel 4`.
+
+   vLLM batches best but runs on Linux only (WSL2 on Windows Server is possible, not covered here). The KV cache of 4
+   requests needs memory: with 16 GB of VRAM keep 4 for the chat model and 2 for OvisOCR2 (`--llm-parallel 2`), with
+   24 GB or more, 4 for both.
 
 ## 9. Backups
 
@@ -424,6 +492,8 @@ installs in the administrator's `%USERPROFILE%\.ap_coder\settings.json`, as on a
 | `server-update` says the bundle is not newer | It is the version running, or older. To go back to the previous version: `server-update --back`. |
 | `server-update --back` says "Nothing to go back to" | No update was made with `server-update` since the last `--back`. To install an older version, ask for its bundle and the backup made before the update. |
 | Someone forgot their password, or is locked out | An Admin: *Users* → *Reset password*; or on the console `users reset <username>`. A lockout ends by itself after 15 minutes. |
+| Pages are slow when many people work at once | `service status`, then Task Manager: when every core is busy, the server needs more cores (step 1); when they are not, `service install --workers N` with N up to the cores. The log names a worker started again after it stopped. |
+| Invoices wait long for OvisOCR2 | Set the model server to answer several requests together and raise `--llm-parallel` (step 8, point 6). |
 | Anything else | `.venv\Scripts\python.exe -m ap_coder doctor`, and the log. *Help* → *Report a problem* makes a report without invoice data. |
 
 **What `doctor` checks on the server** (when `AP_SERVER_MODE=1`, or `server.json` is in the data folder), besides

@@ -297,14 +297,35 @@ USER_KEY = "ap_coder.user"  # scope["state"][USER_KEY]: the username the Identit
 NAME_KEY = "ap_coder.name"  # and the person's name, as their events name them
 
 
-def access_logger(folder: Any) -> Any:
-    """``<folder>/access.log``, rotated (10 MB × 10), one line per request."""
+_SLOT: list[Any] = []  # (number, lock) of this web worker's own access log, the lock held while it runs
+
+
+def _worker_slot(folder: Any) -> int:
+    """This web worker's number among those running (1, 2...): the first whose lock no other process holds."""
+    from ap_coder.core.paths import try_lock
+
+    for number in range(1, 65):
+        if _SLOT:
+            break
+        lock = try_lock(folder / f"access-{number}.lock")
+        if lock is not None:
+            _SLOT.append((number, lock))
+    return _SLOT[0][0] if _SLOT else 0
+
+
+def access_logger(folder: Any, shared: bool = False) -> Any:
+    """``<folder>/access.log``, rotated (10 MB × 10), one line per request. ``shared``: one of several web workers
+    (D-111), each with a file of its own, ``access-1.log``, ``access-2.log``... (a file another process writes can't be
+    renamed on Windows to rotate it): the first number no running worker holds, so a worker started again takes its
+    place."""
     import logging
     import logging.handlers
     from pathlib import Path
 
     log = logging.getLogger("ap_coder.access")
     path = Path(folder) / ACCESS_LOG
+    if shared:
+        path = Path(folder) / f"access-{_worker_slot(Path(folder))}.log"
     if not any(getattr(h, "baseFilename", "") == str(path.resolve()) for h in log.handlers):
         for handler in list(log.handlers):
             log.removeHandler(handler)
@@ -336,9 +357,9 @@ class AccessLog:
     without its query, status, bytes, milliseconds), and each download (a response sent as an attachment: the
     directory's export, a batch's files or ZIP, a backup, a report) as a ``downloaded`` event with the person."""
 
-    def __init__(self, app: Any, folder: Any, store: Any = None) -> None:
+    def __init__(self, app: Any, folder: Any, store: Any = None, shared: bool = False) -> None:
         self.app = app
-        self.log = access_logger(folder)
+        self.log = access_logger(folder, shared)
         self.store = store
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:

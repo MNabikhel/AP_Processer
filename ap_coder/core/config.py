@@ -221,6 +221,11 @@ class LocalLLMSettings:
     # Document text sent to a local model, so a small context window is not overrun (start and end are kept).
     max_prompt_chars: int = 24_000
     temperature: float = 0.0
+    # Requests sent to the model server at once (chat and page reader alike, D-111): 1 = strictly one at a time
+    # (LM Studio on a laptop is shared with CloseDesk); more for a server that answers several together (LM Studio's
+    # parallel requests, llama.cpp's --parallel, vLLM). AP_LLM_PARALLEL; the company server's ``service install
+    # --llm-parallel``.
+    parallel: int = 1
 
 
 @dataclass(frozen=True)
@@ -238,6 +243,11 @@ class PageReaderSettings:
     base_url: str = ""
     timeout_seconds: float = 1200.0  # a laptop CPU takes minutes a page, most of it looking before the first word
     max_pages: int = 5
+    # Leave out a digital PDF whose own text the rule reader read in full (D-111): AP_PAGE_READER_SKIP_CLEAN, on by
+    # default on the company server only; ``skip_sample`` of those are read all the same, so its accuracy stays
+    # measured (AP_PAGE_READER_SAMPLE).
+    skip_clean: bool = False
+    skip_sample: float = 0.1
 
     @property
     def mode(self) -> str:
@@ -324,6 +334,7 @@ class Settings:
             vision=vision_mode if vision_mode in LLM_VISION_MODES else "auto",
             max_prompt_chars=_env_int("AP_LLM_MAX_PROMPT_CHARS", 24_000),
             temperature=_env_float("AP_LLM_TEMPERATURE", 0.0),
+            parallel=min(32, max(1, _env_int("AP_LLM_PARALLEL", 1) or 1)),
         )
         return cls(document_intelligence=di, openai=oai, engine=engine, llm=llm, page_reader=_page_reader_from_env())
 
@@ -357,7 +368,11 @@ def _page_reader_from_env() -> PageReaderSettings:
     base_url = _env("AP_PAGE_READER_BASE_URL")
     timeout = _env_float("AP_PAGE_READER_TIMEOUT_SECONDS", default.timeout_seconds)
     max_pages = _env_int("AP_PAGE_READER_MAX_PAGES", default.max_pages)
+    on_server = (os.environ.get("AP_SERVER_MODE") or "").strip().lower() in ("1", "true", "yes", "on")
+    sample = _env_float("AP_PAGE_READER_SAMPLE", default.skip_sample)
     return PageReaderSettings(
+        skip_clean=_env_bool("AP_PAGE_READER_SKIP_CLEAN", on_server),
+        skip_sample=min(1.0, max(0.0, sample)) if sample == sample else default.skip_sample,
         model="" if model.lower() in {"auto", "automatic"} else model,
         base_url=normalise_base_url(base_url) if base_url else "",
         timeout_seconds=timeout if timeout and 0 < timeout < float("inf") else default.timeout_seconds,

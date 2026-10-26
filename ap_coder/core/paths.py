@@ -381,3 +381,25 @@ def env_file() -> Path | None:
         if candidate.is_file():
             return candidate
     return None
+
+
+def try_lock(path: Path) -> object | None:
+    """An exclusive lock on ``path`` held by this process (the open file: keep it, close it to release), or None when
+    another process holds it. The operating system's own lock (``msvcrt.locking`` on Windows, ``flock`` elsewhere):
+    released when the process ends, crashed or not. Used by the company server's processes (D-111)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(path, "a+b")  # noqa: SIM115 - kept open on purpose: the lock lasts as long as the file
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return None
+    return handle

@@ -278,6 +278,7 @@ def page_reader_context(settings: Settings, store: Store, status: Any, server: b
     testing = testing_snapshot(store)
     test = page_worker.saved_test(store, model) if model else None
     same, seen = page_worker.figure_totals(store).get("scans", (0, 0))
+    skipped = page_worker.skipped_totals(store)
     try:
         vlm = {row["reader"]: row for row in store.reader_scorecard()}.get("vlm")
     except Exception:  # noqa: BLE001 - the scorecard is a bonus line
@@ -303,6 +304,14 @@ def page_reader_context(settings: Settings, store: Store, status: Any, server: b
             f"On scans and photos, OvisOCR2 and OCR read {same:,} of {seen:,} figures the same ({same / seen:.0%}); "
             "where they differ on a field, the field is marked Check."
             if seen
+            else ""
+        ),
+        "skipped": (
+            f"Left out as clean digital PDFs (their own text read in full by the rule reader, on the server): "
+            f"{ui.plural(skipped['invoices'], 'invoice')}, {ui.plural(skipped['pages'], 'page')} OvisOCR2 did not "
+            f"have to read. {settings.page_reader.skip_sample:.0%} of such invoices are read all the same, to keep "
+            "its accuracy measured."
+            if skipped["invoices"]
             else ""
         ),
         "scorecard": (
@@ -382,9 +391,9 @@ def reading_context(request: Request, *, fresh: bool = False) -> dict[str, Any]:
 
 @router.post("/settings/reading/reviewer")
 def save_reviewer(
-    request: Request, on: str = Form(""), rounds: str = Form("3"), minutes: str = Form("5")
+    request: Request, on: str = Form(""), rounds: str = Form("3"), minutes: str = Form("5"), scope: str = Form("")
 ) -> JSONResponse:
-    """The AI reviewer: on or off, how many rounds and how long an invoice at most."""
+    """The AI reviewer: on or off, which invoices, how many rounds and how long an invoice at most."""
     from ap_coder.ai import verifier
 
     try:
@@ -395,7 +404,8 @@ def save_reviewer(
         return refuse(f"Rounds from 1 to {verifier.MAX_ROUNDS}, minutes from 0.5 to {verifier.MAX_MINUTES:g}.")
     store = get_store(request)
     before = verifier.load_settings(store)
-    after = verifier.save_settings(store, on=on in ("1", "on", "true"), rounds=n, minutes=m, actor=reviewer())
+    after = verifier.save_settings(store, on=on in ("1", "on", "true"), rounds=n, minutes=m, actor=reviewer(),
+                                   scope=scope or None)  # fmt: skip
     changed = before != after
     if changed:
         store.log_event("settings_changed", actor=reviewer(), detail={"keys": ["verifier"]})

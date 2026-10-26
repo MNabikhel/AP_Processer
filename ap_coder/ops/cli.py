@@ -172,6 +172,10 @@ def build_parser() -> argparse.ArgumentParser:
         )
         p.add_argument("--insecure-http", action="store_true",
                        help="Server mode on plain HTTP, for a first test on a trusted network only")  # fmt: skip
+        p.add_argument("--workers", type=int, default=None, metavar="N",
+                       help="Server mode: N web worker processes and one for the background work (default 1, or "
+                       "AP_SERVER_WORKERS; the service: server.json's workers)")  # fmt: skip
+        p.add_argument("--background-work", action="store_true", help=argparse.SUPPRESS)  # (the server's own)
 
     p = sub.add_parser("doctor", help="Check configuration, reference data and (with --online) the models")
     p.add_argument(
@@ -343,6 +347,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     if args.server:
         os.environ[SERVER_ENV] = "1"  # (the pages ask server_mode())
+    if args.background_work:  # the company server's background process, started by its serve (D-111)
+        return server.run_background(Store(Path(args.db)))
 
     certfile = args.certfile or os.environ.get(server.CERT_ENV) or None
     keyfile = args.keyfile or os.environ.get(server.KEY_ENV) or None
@@ -370,6 +376,12 @@ def cmd_serve(args: argparse.Namespace) -> int:
                   "name first, with no password: anyone who can reach this address can see the invoices. For logins, "
                   "run it as the company server (server mode).", file=sys.stderr)  # fmt: skip
     network = {"certfile": certfile, "keyfile": keyfile, "proxy": args.proxy, "insecure_http": args.insecure_http}
+    try:
+        workers = args.workers or int((os.environ.get(server.WORKERS_ENV) or "1").strip())
+    except ValueError:
+        workers = 1  # a typo never stops the server: one worker, as before
+    if server_mode() and workers > 1:
+        network["workers"] = workers
     extra = network if server_mode() or any(network.values()) else {}  # (the laptop's call is as before)
     return server.serve(host, port, open_browser=not args.no_browser, store=Store(Path(args.db)), **extra)
 
