@@ -19,7 +19,7 @@ from array import array
 from dataclasses import dataclass, field
 
 SIGNATURE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
-_FREE, _END, _FAT, _DIFAT = 0xFFFFFFFF, 0xFFFFFFFE, 0xFFFFFFFD, 0xFFFFFFFC
+_FREE, _END = 0xFFFFFFFF, 0xFFFFFFFE  # a sector chain's free and end marks
 _NOSTREAM = 0xFFFFFFFF
 _STORAGE, _STREAM, _ROOT = 1, 2, 5
 MAX_ENTRIES = 50_000  # directory entries read from one file
@@ -28,10 +28,10 @@ MAX_ATTACHMENTS = 500
 
 # Property tags (MS-OXPROPS): the stream "__substg1.0_<tag><type>" holds the value.
 SUBJECT, BODY, HTML_BODY, RTF_COMPRESSED = "0037", "1000", "1013", "1009"
-SENDER_NAME, SENDER_EMAIL, SENDER_SMTP, SENT_REPRESENTING = "0C1A", "0C1F", "5D01", "0065"
+SENDER_NAME, SENDER_EMAIL, SENDER_SMTP = "0C1A", "0C1F", "5D01"
 ATTACH_DATA, ATTACH_NAME, ATTACH_LONG_NAME, ATTACH_MIME, ATTACH_CONTENT_ID = "3701", "3704", "3707", "370E", "3712"
 ATTACH_HIDDEN = 0x7FFE000B  # PidTagAttachmentHidden (a boolean): Outlook hides the pictures shown in the text
-_ATTACH_PREFIX, _RECIP_PREFIX = "__attach_version1.0_", "__recip_version1.0_"
+_ATTACH_PREFIX = "__attach_version1.0_"
 MAX_RTF_BYTES = 20_000_000  # a rich-text body decompressed: at most this long
 # MS-OXRTFCP: the dictionary of compressed RTF starts with these 207 bytes.
 _RTF_START = (

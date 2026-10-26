@@ -92,7 +92,7 @@ def test_the_old_settings_no_longer_turn_the_page_reader_off(monkeypatch, tmp_pa
     for key, value in (("AP_PAGE_READER", "off"), ("AP_PAGE_READER_SCOPE", "scans"), ("AP_PAGE_READER_MAX_PAGES", "3")):
         monkeypatch.setenv(key, value)
     settings = Settings.from_env(tmp_path / "missing.env")
-    assert (settings.page_reader.mode, settings.page_reader.scope, settings.page_reader.max_pages) == ("auto", "all", 3)
+    assert settings.page_reader.max_pages == 3
     assert page_worker.wants_reading(settings, Path("digital.pdf"), "text")
 
 

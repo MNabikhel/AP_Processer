@@ -249,16 +249,6 @@ class PageReaderSettings:
     skip_clean: bool = False
     skip_sample: float = 0.1
 
-    @property
-    def mode(self) -> str:
-        """Always "auto": every invoice is read in the background (AP_PAGE_READER is no longer read)."""
-        return "auto"
-
-    @property
-    def scope(self) -> str:
-        """Always "all": digital PDFs too (AP_PAGE_READER_SCOPE is no longer read)."""
-        return "all"
-
 
 @dataclass(frozen=True)
 class EngineSettings:
