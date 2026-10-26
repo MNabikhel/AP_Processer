@@ -106,6 +106,14 @@ Why these numbers:
    later (`C:\APCoder\APProcessor-<version>`, step 11) are made inside `C:\APCoder`, so they get the same three
    permissions and nothing else. Check with `icacls C:\APCoder\APProcessor`: only those three lines.
 
+   The code folder must stay this way: `server-update` runs, as you, what is in it. It trusts only the folder it is
+   run from (and, for `--back`, a folder beside it in `C:\APCoder`): `server.json` is in the data folder, which the
+   service's account can change, so a `folder` there that is not the one you run `server-update` from is refused.
+   The administrator's commands (`server-update`, `service install|start|stop|status|remove`) read nothing from the
+   data folder's `.env`, the Pythons `server-update` starts get a clean environment (`-E -s`, no `PYTHON*` or
+   `PIP_*` variable), and no `.env` ever sets `PATH`, `PYTHON*`, `PIP_*` and the like. Put AP Coder's settings for
+   the service in `server.json` (`service install`) or in the machine's environment (`setx /M`), not in `.env`.
+
 ## 3. The HTTPS certificate
 
 Staff sign in with a password, so AP Coder is served over HTTPS only. Ask your company's certificate authority (CA)
@@ -304,17 +312,26 @@ common password, not one character or a short pattern repeated. Every sign-in, l
 
 ## 11. Updating and going back
 
-A new version comes as a new offline bundle. Copy it to the server, then, in the current AP Coder folder:
+A new version comes as a new offline bundle, with its SHA-256: the bundle builder prints it and writes it beside the
+ZIP (`APProcessor-offline-<version>.zip.sha256`). Get that value from whoever built the bundle **by another way than
+the ZIP** (e-mail, chat, read over the phone): it proves the ZIP is the one they built, so a ZIP changed on a share
+or on its way is refused before anything of it runs. Copy the ZIP to the server, then, in the current AP Coder
+folder (the one `service status` names: `server-update` refuses to run from another):
 
 ```bat
-.venv\Scripts\python.exe -m ap_coder server-update D:\Install\APProcessor-offline-0.5.0-20261201.zip --dry-run
-.venv\Scripts\python.exe -m ap_coder server-update D:\Install\APProcessor-offline-0.5.0-20261201.zip
+.venv\Scripts\python.exe -m ap_coder server-update D:\Install\APProcessor-offline-0.5.0-20261201.zip --sha256 <the 64 digits> --dry-run
+.venv\Scripts\python.exe -m ap_coder server-update D:\Install\APProcessor-offline-0.5.0-20261201.zip --sha256 <the 64 digits>
 ```
+
+Without `--sha256` it refuses. `--no-hash-check` installs without the check: it warns, and `server.json`'s
+`history` records it (`"bundle_hash": "not checked (--no-hash-check)"`). Use it only for a bundle you built
+yourself on this server. (`certutil -hashfile <zip> SHA256` shows a file's SHA-256 too.)
 
 The first line shows the steps with the folders and files, and changes nothing (on a server where the service isn't
 installed yet, it says there is no service to stop or start). The second does them, in order:
 
-1. checks the bundle: one AP Coder folder, every file it lists, nothing damaged, and newer than the one running;
+1. checks the bundle: its SHA-256 is the one given, one AP Coder folder, every file it lists, nothing damaged, and
+   newer than the one running;
 2. stops the service (staff see AP Coder as closed for a few minutes: pick a quiet time);
 3. backs up the database: `backups\ap_coder-<date>-<time>-before-update-0.5.0.db`;
 4. unzips the bundle next to the current folder: `C:\APCoder\APProcessor-0.5.0`;

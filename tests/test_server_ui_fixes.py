@@ -332,7 +332,10 @@ def test_a_dry_run_without_the_service_says_there_is_nothing_to_stop(tmp_path, m
     service.write_config(data, folder=str(current), insecure_http=True)
     db = data / "ap_coder.db"
     Store(db)
-    assert server_update.update(_bundle(tmp_path), data, db, server=NoService(), dry_run=True) == 0
+    monkeypatch.setattr(server_update, "running_folder", lambda: current)
+    bundle = _bundle(tmp_path)
+    sha = server_update.file_sha256(bundle)
+    assert server_update.update(bundle, data, db, server=NoService(), dry_run=True, sha256=sha) == 0
     out = capsys.readouterr().out
     assert "Stop the service" not in out and "nothing to stop" in out and "Start the service" not in out
 
