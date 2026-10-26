@@ -119,13 +119,19 @@ def drop_upload(token: str | None) -> None:
         _uploads.pop(token or "", None)
 
 
+async def read_capped(file: UploadFile) -> bytes | None:
+    """An uploaded spreadsheet's bytes, or None when it is larger than ``_MAX_BYTES`` (never more than that read)."""
+    content = await file.read(_MAX_BYTES + 1)
+    return None if len(content) > _MAX_BYTES else content
+
+
 async def receive_sheet(file: UploadFile) -> tuple[str, str]:
     """(token, "") for an uploaded spreadsheet that can be read, else ("", the problem in plain words)."""
     name = file.filename or "upload.csv"
     if not name.lower().endswith(SHEET_TYPES):
         return "", NOT_A_SHEET
-    content = await file.read(_MAX_BYTES + 1)
-    if len(content) > _MAX_BYTES:
+    content = await read_capped(file)
+    if content is None:
         return "", TOO_BIG
     try:
         read_sheet(name, content)
@@ -151,6 +157,21 @@ def read_excel(content: bytes, sheet_name: int | None = None) -> Any:
     return pd.read_excel(io.BytesIO(content), sheet_name=sheet_name, dtype=str, keep_default_na=False, na_filter=False)
 
 
+def read_csv(content: bytes) -> pd.DataFrame:
+    """An uploaded CSV as text cells, as every page reads one: UTF-8 (with or without its mark) or Windows-1252
+    (Excel's "CSV"), its delimiter found from several lines (``sniff_delimiter``: a semicolon file whose header has a
+    comma in a cell too, B-1400). Raises SheetError when it is neither encoding; pandas' own error for a file that
+    is no CSV."""
+    for encoding in ("utf-8-sig", "cp1252"):
+        try:
+            text = content.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+        return pd.read_csv(io.StringIO(text), dtype=str, keep_default_na=False, sep=sniff_delimiter(text),
+                           engine="python")  # fmt: skip
+    raise SheetError("Could not read this file. In Excel, use Save As → CSV UTF-8 and upload it again.")
+
+
 def read_sheet(name: str, content: bytes, sheet: str | None = None) -> tuple[pd.DataFrame, list[str]]:
     """(the sheet as text cells, the workbook's sheet names) of an uploaded CSV or Excel file. ``sheet``: the
     workbook sheet to read (default the first). Semicolon CSVs and Windows-1252 CSVs (Excel's "CSV") are read too."""
@@ -164,22 +185,7 @@ def read_sheet(name: str, content: bytes, sheet: str | None = None) -> tuple[pd.
             key = next((k for k in sheets if str(k) == sheet), next(iter(sheets)))
             df = sheets[key]
         else:
-            df = None
-            for encoding in ("utf-8-sig", "cp1252"):
-                try:
-                    text = content.decode(encoding)
-                except UnicodeDecodeError:
-                    continue
-                df = pd.read_csv(
-                    io.StringIO(text),
-                    dtype=str,
-                    keep_default_na=False,
-                    sep=sniff_delimiter(text),  # as the reference files are read: several lines, not the header alone
-                    engine="python",
-                )
-                break
-            if df is None:
-                raise SheetError("Could not read this file. In Excel, use Save As → CSV UTF-8 and upload it again.")
+            df = read_csv(content)
     except SheetError:
         raise
     except Exception as exc:  # noqa: BLE001 - empty file, not really a spreadsheet, damaged workbook...

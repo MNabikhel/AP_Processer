@@ -11,10 +11,8 @@ per row); a row without a GL code (or vendor) is dropped, which is how a row is 
 
 from __future__ import annotations
 
-import io
 from typing import Any
 
-import pandas as pd
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 
@@ -26,7 +24,7 @@ from ap_coder.core.store import Store
 from ap_coder.erp import jde, jde_ais, jde_sync, jde_worksheet
 from ap_coder.web import minimd
 from ap_coder.web.core import done, get_store, jobs, posted_form, refuse, reviewer
-from ap_coder.web.files import SheetError, read_excel
+from ap_coder.web.files import TOO_BIG, SheetError, read_capped, read_csv, read_excel
 
 router = APIRouter()
 
@@ -218,20 +216,8 @@ def read_sheet(name: str, content: bytes) -> list[dict[str, Any]]:
     read."""
     if not content:
         raise ValueError("the file is empty")
-    try:
-        if name.lower().endswith((".xlsx", ".xls")):
-            frame = read_excel(content, 0)
-        else:
-            frame = None
-            for encoding in ("utf-8-sig", "cp1252"):  # Excel "CSV" exports are often Windows-1252
-                try:  # sep=None: also semicolon CSVs from French-Canadian Excel
-                    frame = pd.read_csv(io.BytesIO(content), dtype=str, keep_default_na=False, encoding=encoding,
-                                        sep=None, engine="python")  # fmt: skip
-                    break
-                except UnicodeDecodeError:
-                    continue
-            if frame is None:
-                raise ValueError("In Excel, use Save As → CSV UTF-8 and upload it again")
+    try:  # a CSV as every page reads one: Windows-1252 and semicolon files too (B-1400)
+        frame = read_excel(content, 0) if name.lower().endswith((".xlsx", ".xls")) else read_csv(content)
     except ValueError:
         raise
     except Exception as exc:  # noqa: BLE001 - empty, damaged or not a spreadsheet
@@ -250,8 +236,11 @@ async def import_gl_map(
     name = file.filename or ""
     if not name.lower().endswith((".csv", ".xlsx", ".xls")):
         return refuse("Upload a CSV or Excel file (GL code, Cost center, BU, Object, Subsidiary).")
+    content = await read_capped(file)  # never read whole, however large (B-1401)
+    if content is None:
+        return refuse(TOO_BIG)
     try:
-        records = read_sheet(name, await file.read())
+        records = read_sheet(name, content)
     except SheetError as exc:  # already a whole sentence
         return refuse(str(exc))
     except ValueError as exc:

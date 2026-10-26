@@ -16,7 +16,6 @@ waiting for its columns are in the address.
 from __future__ import annotations
 
 import datetime as dt
-import io
 import json
 import re
 import secrets
@@ -52,7 +51,7 @@ from ap_coder.web.core import (
     render,
     reviewer,
 )
-from ap_coder.web.files import SheetError, read_excel
+from ap_coder.web.files import TOO_BIG, SheetError, read_capped, read_csv, read_excel
 
 router = APIRouter()
 
@@ -153,23 +152,12 @@ _uploads_lock = threading.Lock()
 def read_sheets(name: str, data: bytes) -> dict[str, tuple[list[str], list[dict[str, Any]]]]:
     """The uploaded file's sheets as (columns, rows of text cells). Raises ValueError (in plain words) when it is not
     a spreadsheet AP Coder can read."""
-    import pandas as pd
-
     if not data:
         raise ValueError("The file is empty.")
     frames: dict[str, Any] = {}
-    try:
-        if name.lower().endswith((".xlsx", ".xls")):
-            frames = read_excel(data)
-        else:
-            for encoding in ("utf-8-sig", "cp1252"):  # Excel "CSV" exports are often Windows-1252
-                try:
-                    frames = {"CSV": pd.read_csv(io.BytesIO(data), dtype=str, keep_default_na=False,
-                                                 encoding=encoding, sep=None, engine="python")}  # fmt: skip
-                    break
-                except UnicodeDecodeError:
-                    continue
-    except SheetError:  # a workbook that unzips to too much: its message says so
+    try:  # a CSV as every page reads one: Windows-1252 and semicolon files too (B-1400)
+        frames = read_excel(data) if name.lower().endswith((".xlsx", ".xls")) else {"CSV": read_csv(data)}
+    except SheetError:  # a workbook that unzips to too much, a CSV in no encoding it reads: its message says so
         raise
     except Exception as exc:  # noqa: BLE001 - empty, damaged or not a spreadsheet at all
         raise ValueError(
@@ -606,8 +594,11 @@ async def history_upload(request: Request, file: UploadFile = File(...)) -> JSON
     name = Path(file.filename or "history.csv").name
     if not name.lower().endswith((".csv", ".xlsx", ".xls", ".txt")):
         return refuse("Upload the AP line history as a CSV or an Excel workbook (.xlsx).")
+    content = await read_capped(file)  # never read whole, however large (B-1401)
+    if content is None:
+        return refuse(TOO_BIG)
     try:
-        sheets = read_sheets(name, await file.read())
+        sheets = read_sheets(name, content)
     except ValueError as exc:
         return refuse(str(exc))
     token = keep_upload(name, sheets)
