@@ -472,8 +472,7 @@ def invoice_lines(store: Any, ctx: Context, rows: list[dict[str, Any]] | None = 
                 continue
             gl = text(li.get("predicted_gl_code"))
             try:
-                code = (tax_code_of(li, basis or ()) if basis is not None or li.get("tax_exempt") is not None
-                        else None)
+                code = tax_code_of(li, basis or ()) if basis is not None or li.get("tax_exempt") is not None else None
             except Exception:  # noqa: BLE001 - a line stored oddly still goes out, without its code
                 code = None
             out.append({
