@@ -302,7 +302,7 @@ def today_pills(store: Store, invoices: list[dict[str, Any]]) -> list[tuple[str,
     due_soon = sum(1 for i in active if i["due_date"] and today <= i["due_date"] <= soon)
     follow_ups = sum(1 for i in store.parked() if i.get("follow_up") and i["follow_up"] <= today)
     second = sum(1 for i in invoices if i["status"] == PENDING and (i["reviewer"] or "").strip().lower() != me)
-    to_export = len(store.unexported_approved())
+    to_export = store.ready_to_export_count()  # counted, not read: a year of approvals not exported yet
     late = [r for r in recurring.detected(store) if r.status == recurring.LATE]
     pills = [
         (f"{overdue} past due, not approved yet", "err") if overdue else None,
@@ -430,7 +430,7 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
         )  # fmt: skip
     elif tab == "approved":
         recent = store.recently_approved(APPROVED_SHOWN)
-        context.update(approved=recent, approved_total=approved, to_export=len(store.unexported_approved()),
+        context.update(approved=recent, approved_total=approved, to_export=store.ready_to_export_count(),
                        awaiting_count=len(awaiting))  # fmt: skip
     elif tab == "other":
         context.update(others=[_other(i) for i in store.list_invoices(statuses=(FAILED, REJECTED))])

@@ -187,9 +187,11 @@ def batch_total(b: dict[str, Any], totals: dict[int, dict[str, float]], exported
     return sorted(amounts.items())
 
 
-def layout_preview(store: Store, new: export_layout.Layout) -> str:
-    """The first lines of a custom CSV in layout ``new``, from invoices ready to export (else batch 1's)."""
-    sample = store.unexported_approved()[:3] or [{"id": i} for i in store.batch_invoice_ids(1)[:3]]
+def layout_preview(store: Store, new: export_layout.Layout, ready: list[dict[str, Any]] | None = None) -> str:
+    """The first lines of a custom CSV in layout ``new``, from invoices ready to export (``ready``, when the page has
+    read them already), else batch 1's."""
+    ready = store.unexported_approved() if ready is None else ready
+    sample = ready[:3] or [{"id": i} for i in store.batch_invoice_ids(1)[:3]]
     invoices = store.get_invoices([i["id"] for i in sample])
     rows = exports.custom_rows(invoices, gl_names(store), "", store.vendor_ids(), store.tax_treatments(),
                                bank_accounts(store))  # fmt: skip
@@ -324,7 +326,7 @@ def exports_page(
         layout_fields={**export_layout.FIELDS, export_layout.FIXED: "Fixed text…"},
         date_formats=list(export_layout.DATE_FORMATS),
         delimiters=export_layout.DELIMITERS,
-        csv_preview=layout_preview(store, current),
+        csv_preview=layout_preview(store, current, ready),
         register_count=store.erp_register_count(),
         reg=reg,
         reg_error=reg_error,
