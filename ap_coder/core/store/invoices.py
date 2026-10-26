@@ -728,6 +728,10 @@ class InvoicesMixin:
         # Lines a fixed coding rule set: the AI's own answer is what its accuracy is measured on.
         by_rule = {c["line_number"]: c for c in (inv.get("meta") or {}).get("rules_applied") or []}
         feedback_rows = []
+        # After a reopen, the coding approved before (``reopen``): a line AP changes from it, where the AI proposed
+        # nothing, corrects that approval (B-1299, D-112).
+        approved_before = (inv.get("meta") or {}).get("reopened_coding") or {}
+        reopen_changes: list[dict[str, str]] = []
 
         kept = suggestion_kept
         # Without a cost center list the review screen has none to show or keep: a cost center the AI copied from
@@ -768,6 +772,18 @@ class InvoicesMixin:
                 CODED if guess or nothing_proposed(s_gl, s_cc) else ACCEPTED if kept(s_gl, s_cc, f_gl, f_cc)
                 else CORRECTED
             )  # fmt: skip
+            prior = approved_before.get(str(li["line_number"]))
+            if outcome == CODED and prior and prior[0] not in ("", UNASSIGNED) and (
+                prior[0] != f_gl or (cost_centers and (prior[1] or "") != (f_cc or ""))
+            ):  # fmt: skip
+                outcome, s_gl, s_cc = CORRECTED, prior[0], prior[1] if cost_centers else ""
+                reviewer_changed += 1
+                if prior[0] != f_gl:
+                    reopen_changes.append({"what": f"line {li['line_number']} GL", "before": prior[0], "after": f_gl,
+                                           "since": "reopened"})  # fmt: skip
+                if cost_centers and (prior[1] or "") != (f_cc or ""):
+                    reopen_changes.append({"what": f"line {li['line_number']} cost center", "before": prior[1] or "",
+                                           "after": f_cc or "", "since": "reopened"})  # fmt: skip
             if bulk and outcome == ACCEPTED:  # kept, but nobody looked at it: no confirmation (B-955)
                 outcome = BULK
             counts[outcome] += 1
@@ -842,7 +858,8 @@ class InvoicesMixin:
             self._log(conn, "approved", invoice_id, reviewer, {
                 "lines": len(final_output.get("line_items", [])), "corrected": counts[CORRECTED],
                 **({"coded": counts[CODED]} if counts[CODED] else {}),
-                "total": final_output.get("grand_total"), "changes": diff_coding(ai, final_output, cost_centers),
+                "total": final_output.get("grand_total"),
+                "changes": diff_coding(ai, final_output, cost_centers) + reopen_changes,
                 **({"bulk": True} if bulk else {}),
                 **({"needs_second": True, "second_reason": second_reason} if needs_second else {}),
                 **({"limit": limit, "rate": rate} if limit else {}),
@@ -984,6 +1001,13 @@ class InvoicesMixin:
             )
             if cur.rowcount == 0:
                 raise ValueError(f"invoice {invoice_id} cannot be reopened (exported, or not approved or rejected)")
+            # The coding approved before, line by line: a line changed from it at the next approval is a correction
+            # of it (B-1299, D-112). A rejection kept none.
+            approved_lines = {str(r[0]): [r[1], r[2] or ""] for r in conn.execute(
+                "SELECT line_number, final_gl, final_cc FROM feedback WHERE invoice_id = ?", (invoice_id,))}  # fmt: skip
+            conn.execute(
+                "UPDATE invoices SET meta = json_set(CASE WHEN json_valid(meta) THEN meta ELSE '{}' END, "
+                "'$.reopened_coding', json(?)) WHERE id = ?", (json.dumps(approved_lines), invoice_id))  # fmt: skip
             layout = self._forget_learning(conn, invoice_id)
             rejected = {"rejected": was["error"] or ""} if was["status"] == REJECTED else {}  # the rejection undone
             self._log(conn, "reopened", invoice_id, actor, {"reason": reason, **rejected, **layout})
