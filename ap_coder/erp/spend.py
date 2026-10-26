@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime as dt
 import io
+import json
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
@@ -29,33 +30,88 @@ class SpendLine:
     cost_center: str
     amount: float
     currency: str
+    # A row of ``parts`` sums one invoice's lines on one GL account and cost center (in the order of the first of
+    # them): ``sizes`` sums the sizes of their amounts (``currencies``), ``cents`` their amounts each rounded to the
+    # cent and ``amounts`` lists them, for ``in_cad`` (None: a single line, ``amount``).
+    sizes: float | None = None
+    cents: float | None = None
+    amounts: tuple[float, ...] | None = None
+
+
+def spend_lines(doc: dict[str, Any], treatments: dict[str, Any]) -> list[tuple[str, str, float]]:
+    """(GL account, cost center, amount) of each cost line of an approved invoice's coding ``doc``: its expense
+    lines, and non-recoverable tax posted to its own GL account (a cost too)."""
+    out = []
+    for e in distribution(doc, treatments):  # an invoice approved by an older version: built again
+        if e.get("kind") != "expense" and not e.get("non_recoverable_tax"):
+            continue
+        out.append((str(e.get("gl_code") or ""), str(e.get("cost_center") or ""), float(e.get("amount") or 0)))
+    return out
+
+
+def spend_parts(doc: dict[str, Any], treatments: dict[str, Any]) -> list[tuple[Any, ...]]:
+    """``spend_lines`` by GL account and cost center, in the order of the first line of each, as the summary keeps
+    them (``summary_spend``): (GL account, cost center, amount, sizes, cents, amounts as JSON or None). The amounts
+    are summed line by line as the report sums them; each line's amount is listed for an invoice not in CAD, which
+    ``in_cad`` converts line by line."""
+    parts: dict[tuple[str, str], list[float]] = {}
+    for gl, cc, amount in spend_lines(doc, treatments):
+        parts.setdefault((gl, cc), []).append(amount)
+    listed = str(doc.get("currency") or "CAD") != "CAD"
+    out = []
+    for (gl, cc), amounts in parts.items():
+        total = sizes = cents = 0.0
+        for a in amounts:
+            total += a
+            sizes += abs(a)
+            cents += round(a, 2)
+        out.append((gl, cc, total, sizes, cents, json.dumps(amounts) if listed else None))
+    return out
+
+
+def parts(store: Store, start: dt.date, end: dt.date) -> list[SpendLine]:
+    """The cost lines of approved invoices dated from ``start`` to ``end`` (inclusive), by invoice, GL account and
+    cost center (``spend_parts``), from the invoices' summary (D-110): what the Spend page totals. ``total_by``,
+    ``by_month_and_category``, ``currencies`` and ``in_cad`` give what they give for ``lines``."""
+    first, last = start.isoformat(), end.isoformat()
+    rows = store.summary_query(
+        "SELECT s.id, substr(s.f_date, 1, 7), s.p_vendor, s.p_currency, p.gl_code, p.cost_center, p.amount, p.sizes, "
+        "p.cents, p.amounts FROM invoice_summary s JOIN summary_spend p ON p.invoice_id = s.id "
+        "WHERE s.f_date BETWEEN ? AND ? AND +s.status = ? AND s.broken = 0 ORDER BY s.id, p.part",
+        (first, last, APPROVED),
+    )
+    out = [
+        SpendLine(r[0], r[1], r[2], r[4], r[5], r[6], r[3], r[7], r[8], tuple(json.loads(r[9])) if r[9] else None)
+        for r in rows
+    ]
+    out += [line for line in _broken_lines(store, first, last)]
+    return out
+
+
+def _broken_lines(store: Store, first: str, last: str) -> list[SpendLine]:
+    """``lines`` of the approved invoices the summary could not read (their JSON): read again from the invoice."""
+    ids = [r[0] for r in store.summary_rows("broken = 1 AND +status = ?", (APPROVED,), "id")]
+    return [line for line in _lines_of(store.invoice_columns(("id", "final_output"), ids=ids), store, first, last)
+            ] if ids else []  # fmt: skip
 
 
 def lines(store: Store, start: dt.date, end: dt.date) -> list[SpendLine]:
     """Expense postings of approved invoices dated from ``start`` to ``end`` (inclusive)."""
-    first, last = start.isoformat(), end.isoformat()
+    return _lines_of(store.invoice_columns(("id", "final_output"), APPROVED), store, start.isoformat(),
+                     end.isoformat())  # fmt: skip
+
+
+def _lines_of(rows: list[dict[str, Any]], store: Store, first: str, last: str) -> list[SpendLine]:
     treatments = store.tax_treatments()
     out = []
-    for r in store.invoice_columns(("id", "final_output"), APPROVED):
+    for r in rows:
         doc = r["final_output"] or {}
         date = str(doc.get("invoice_date") or "")
         if not (first <= date <= last):
             continue
-        for e in distribution(doc, treatments):  # an invoice approved by an older version: built again
-            # Expense lines, and non-recoverable tax posted to its own GL account (a cost too).
-            if e.get("kind") != "expense" and not e.get("non_recoverable_tax"):
-                continue
-            out.append(
-                SpendLine(
-                    r["id"],
-                    date[:7],
-                    str(doc.get("vendor_name") or ""),
-                    str(e.get("gl_code") or ""),
-                    str(e.get("cost_center") or ""),
-                    float(e.get("amount") or 0),
-                    str(doc.get("currency") or "CAD"),
-                )  # fmt: skip
-            )
+        vendor, currency = str(doc.get("vendor_name") or ""), str(doc.get("currency") or "CAD")
+        out += [SpendLine(r["id"], date[:7], vendor, gl, cc, amount, currency)
+                for gl, cc, amount in spend_lines(doc, treatments)]  # fmt: skip
     return out
 
 
@@ -63,19 +119,26 @@ def currencies(rows: list[SpendLine]) -> list[str]:
     """Currencies by total spend, largest first."""
     totals: dict[str, float] = defaultdict(float)
     for r in rows:
-        totals[r.currency] += abs(r.amount)
+        totals[r.currency] += abs(r.amount) if r.sizes is None else r.sizes
     return sorted(totals, key=lambda c: -totals[c])
 
 
 def in_cad(rows: list[SpendLine], rates: dict[str, float]) -> list[SpendLine]:
     """The lines in CAD at ``rates`` (CAD per unit); lines in a currency without a rate are left out."""
     return [
-        SpendLine(
-            r.invoice_id, r.month, r.vendor, r.gl_code, r.cost_center, round(r.amount * rates[r.currency], 2), "CAD"
-        )
+        SpendLine(r.invoice_id, r.month, r.vendor, r.gl_code, r.cost_center, _in_cad(r, rates[r.currency]), "CAD")
         for r in rows
         if r.currency in rates
     ]
+
+
+def _in_cad(r: SpendLine, rate: float) -> float:
+    """``r``'s amount in CAD, line by line rounded to the cent (a row of ``parts``: each of its lines)."""
+    if r.amounts is not None:
+        return sum(round(a * rate, 2) for a in r.amounts)
+    if r.cents is not None and rate == 1.0:  # a * 1.0 is a: each line rounded to the cent, summed
+        return r.cents
+    return round(r.amount * rate, 2)
 
 
 def total_by(rows: list[SpendLine], key: str, currency: str) -> list[tuple[str, float, int]]:

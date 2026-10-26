@@ -133,7 +133,7 @@ def insights_page(request: Request) -> HTMLResponse:
     store = get_store(request)
     s = compute(store)
     a: Assumptions = s["assumptions"]
-    fully = len(store.list_invoices(APPROVED))  # fully approved (a second approval waiting doesn't count yet)
+    fully = store.status_counts().get(APPROVED, 0)  # fully approved (a second approval waiting doesn't count yet)
     if fully < MIN_APPROVALS:
         return render(request, "insights.html", "insights", s=s, fields=assumption_fields(a), early=True,
                       min_approvals=MIN_APPROVALS, fully=fully, pilot=pilot_card(store))  # fmt: skip

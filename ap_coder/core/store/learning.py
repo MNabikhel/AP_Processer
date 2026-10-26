@@ -18,11 +18,12 @@ from ._base import (
 
 
 def _feedback_stamp(conn: Any) -> tuple[Any, ...]:
-    """What tells whether the lessons kept are still the ones in the database (``feedback_rows``, ``metrics``)."""
+    """What tells whether the lessons kept are still the ones in the database (``feedback_rows``, ``metrics``): their
+    count as the summary keeps it (``feedback_counts``, D-110), not counted again each time."""
     return tuple(conn.execute(
-        "SELECT MAX(id), COUNT(*), (SELECT created_at || '|' || COALESCE(vendor_key, '') || '|' || "
-        "COALESCE(description, '') || '|' || COALESCE(final_gl, '') FROM feedback ORDER BY id DESC LIMIT 1) "
-        "FROM feedback"
+        "SELECT (SELECT MAX(id) FROM feedback), (SELECT TOTAL(n) FROM feedback_counts), (SELECT created_at || '|' || "
+        "COALESCE(vendor_key, '') || '|' || COALESCE(description, '') || '|' || COALESCE(final_gl, '') FROM feedback "
+        "ORDER BY id DESC LIMIT 1)"
     ).fetchone())  # fmt: skip
 
 
@@ -152,12 +153,13 @@ class LearningMixin:
                     _METRICS[key] = (stamp, learned)
                     while len(_METRICS) > 8:
                         _METRICS.pop(next(iter(_METRICS)))
-            statuses = conn.execute("SELECT status, COUNT(*) n FROM invoices GROUP BY status").fetchall()
+            self._summary_fresh(conn)  # the invoices' summary (D-110): its status and edits
+            statuses = conn.execute("SELECT status, COUNT(*) n FROM invoice_summary GROUP BY status").fetchall()
             untouched = conn.execute(
-                "SELECT COUNT(*) FROM invoices WHERE status = ? AND edits = '[]'", (APPROVED,)
+                "SELECT COUNT(*) FROM invoice_summary WHERE status = ? AND edits = '[]'", (APPROVED,)
             ).fetchone()[0]
             coded_by_hand = conn.execute(
-                "SELECT COUNT(*) FROM invoices WHERE status = ? AND edits LIKE '%\"line_coded\"%'", (APPROVED,)
+                "SELECT COUNT(*) FROM invoice_summary WHERE status = ? AND edits LIKE '%\"line_coded\"%'", (APPROVED,)
             ).fetchone()[0]
         return {
             **{k: v for k, v in learned.items() if k not in ("weekly", "by_vendor", "top_corrections")},
@@ -169,12 +171,34 @@ class LearningMixin:
             "top_corrections": [dict(r) for r in learned["top_corrections"]],
         }
 
+    def line_metrics(self) -> dict[str, Any]:
+        """``metrics()``'s counts of the lines AP reviewed (``lines_*``, ``line_accuracy``) alone: what the review queue
+        shows, from the counts the summary keeps (``feedback_counts``) instead of four scans of the learning memory."""
+        with self._conn() as conn:
+            return self._line_counts(conn)
+
     @staticmethod
-    def _learning_metrics(conn: Any) -> dict[str, Any]:
+    def _line_counts(conn: Any) -> dict[str, Any]:
         # Imported ERP history is memory, not a reviewer decision: it never counts towards accuracy.
-        lines = conn.execute(
-            "SELECT outcome, COUNT(*) n FROM feedback WHERE outcome != 'history' GROUP BY outcome"
+        lines = conn.execute(  # counted as lessons are added and removed (the summary's ``feedback_counts``, D-110)
+            "SELECT outcome, n FROM feedback_counts WHERE outcome != 'history' AND n > 0"
         ).fetchall()
+        outcome = {r["outcome"]: r["n"] for r in lines}
+        # Every line AP reviewed (and AP Coder learns from), the ones it coded over a guess too (B-479); the accuracy
+        # measures only what the AI proposed: confirmed or corrected (B-475).
+        measured = outcome.get(ACCEPTED, 0) + outcome.get(CORRECTED, 0)
+        return {
+            "lines_reviewed": sum(outcome.values()),
+            "lines_measured": measured,
+            "lines_coded": outcome.get(CODED, 0),
+            "lines_bulk": outcome.get(BULK, 0),  # approved in bulk as proposed: not measured (B-955)
+            "lines_accepted": outcome.get(ACCEPTED, 0),
+            "lines_corrected": outcome.get(CORRECTED, 0),
+            "line_accuracy": round(outcome.get(ACCEPTED, 0) / measured, 4) if measured else None,
+        }
+
+    @classmethod
+    def _learning_metrics(cls, conn: Any) -> dict[str, Any]:
         daily = conn.execute(
             """SELECT substr(created_at, 1, 10) day,
                       SUM(outcome = 'accepted') accepted, SUM(outcome = 'corrected') corrected
@@ -197,18 +221,8 @@ class LearningMixin:
             week = weeks.setdefault(_iso_week(r["day"]), {"week": _iso_week(r["day"]), "accepted": 0, "corrected": 0})
             week["accepted"] += r["accepted"] or 0
             week["corrected"] += r["corrected"] or 0
-        outcome = {r["outcome"]: r["n"] for r in lines}
-        # Every line AP reviewed (and AP Coder learns from), the ones it coded over a guess too (B-479); the accuracy
-        # measures only what the AI proposed: confirmed or corrected (B-475).
-        measured = outcome.get(ACCEPTED, 0) + outcome.get(CORRECTED, 0)
         return {
-            "lines_reviewed": sum(outcome.values()),
-            "lines_measured": measured,
-            "lines_coded": outcome.get(CODED, 0),
-            "lines_bulk": outcome.get(BULK, 0),  # approved in bulk as proposed: not measured (B-955)
-            "lines_accepted": outcome.get(ACCEPTED, 0),
-            "lines_corrected": outcome.get(CORRECTED, 0),
-            "line_accuracy": round(outcome.get(ACCEPTED, 0) / measured, 4) if measured else None,
+            **cls._line_counts(conn),
             "weekly": [weeks[w] for w in sorted(weeks)],
             "by_vendor": [dict(r) for r in by_vendor],
             "top_corrections": [dict(r) for r in corrections],

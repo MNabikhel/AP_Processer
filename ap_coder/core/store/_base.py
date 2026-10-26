@@ -59,7 +59,7 @@ from .fx import (  # noqa: F401  (re-exported)
 # tax_province and tax_uncollected (filled from the approved invoices, D-70, D-80), template_snapshots (D-85),
 # invoice_drafts (by _SCHEMA: the review screen's edits not approved yet, kept over a restart, D-86),
 # 18: users, sessions, login_attempts (by _SCHEMA: server mode's accounts, D-97), later vendors.erp_bank (D-104)
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19  # 19: the invoices' summary and its triggers (summary.py, ``_summary_migrate``, D-110)
 # The one-off clean-ups of the learning memory ``_migrate`` has run on a database (settings.feedback_cleanup): a new
 # clean-up added there changes it, so it runs once on every database.
 FEEDBACK_CLEANUP = "1"

@@ -434,7 +434,7 @@ def data_context(store: Store) -> dict[str, Any]:
     return {
         "data_path": str(data_dir(store)),
         "db_size": size_text(store.path),
-        "invoice_count": len(store.list_invoices()),
+        "invoice_count": sum(store.status_counts().values()),
         "file_count": len(list(folder.glob("*"))) if folder.exists() else 0,
         "lesson_count": f"{store.metrics()['lines_reviewed']:,}",  # one definition: AP's own reviewed lines (B-532)
         "history_count": store.history_count(),  # past coding imported from the ERP, counted apart

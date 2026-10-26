@@ -19,6 +19,7 @@ from __future__ import annotations
 import csv
 import datetime as dt
 import io
+import json
 from collections import defaultdict
 from dataclasses import dataclass, field
 from types import SimpleNamespace
@@ -27,6 +28,7 @@ from typing import Any
 from ..core.safe import csv_row
 from ..core.schema import FROM_VENDOR_LIST
 from ..core.store import APPROVED, PARKED, PENDING, REVIEW, Store
+from ..core.store.summary import computed
 from .tax import (
     DEFAULT_TREATMENTS,
     RECOVERABLE,
@@ -192,7 +194,8 @@ def province(tax_type: str, tax_line: dict[str, Any], doc: dict[str, Any], setup
 
 
 def build(store: Store, start: dt.date, end: dt.date, treatments: dict[str, TaxTreatment] | None = None) -> Report:
-    """The claimable tax on approved invoices dated from ``start`` to ``end`` (inclusive)."""
+    """The claimable tax on approved invoices dated from ``start`` to ``end`` (inclusive), from the invoices' summary
+    (``tax_facts``, D-110)."""
     treatments = treatments if treatments is not None else store.tax_treatments()
 
     def recoverable(tax_type: str) -> bool:
@@ -200,62 +203,106 @@ def build(store: Store, start: dt.date, end: dt.date, treatments: dict[str, TaxT
         return (t.treatment if t else DEFAULT_TREATMENTS[tax_type]) == RECOVERABLE
 
     setup = supply_setup(store)
+    supply = _supply_memo(setup)
     first, last = start.isoformat(), end.isoformat()
     claims, not_approved = [], 0
-    rows = store.invoice_columns(("id", "status", "invoice_date", "export_batch", "ai_output", "final_output",
-                                  "validation"))  # fmt: skip
-    approvals = store.latest_events("approved", [r["id"] for r in rows if r["status"] == APPROVED])
+    # (an invoice the summary could not read is read again: failing as it did when every invoice was read)
+    rows = store.summary_rows("tax_date BETWEEN ? AND ? AND +status IN (?, ?, ?, ?) OR broken = 1",
+                              (first, last, APPROVED, REVIEW, PARKED, PENDING), "id, status, tax_date, export_batch, "
+                              "broken, t_facts")  # fmt: skip
     for r in rows:
-        doc = r["final_output"] or r["ai_output"] or {}
-        date = str(doc.get("invoice_date") or r["invoice_date"] or "")
+        found = computed(store, r)
+        date = found["tax_date"]
         if not (first <= date <= last):
             continue
         if r["status"] in (REVIEW, PARKED, PENDING):
             not_approved += 1
             continue
-        if r["status"] != APPROVED or not r["final_output"]:
+        f = _json(found["t_facts"]) if r["status"] == APPROVED else None
+        if f is None:  # approved without the reviewer's coding: nothing to claim
             continue
-        doc = r["final_output"]
-        currency = str(doc.get("currency") or "CAD").upper()
-        total = float(doc.get("grand_total") or 0)
-        meals = meals_by_tax_line(doc)
-        in_error = charged_in_error(r, approvals.get(r["id"]))
-        for position, tl in enumerate(doc.get("tax_lines") or []):
-            tax_type = str(tl.get("tax_type") or "").upper()
-            amount = round(float(tl.get("tax_amount") or 0), 2)
-            if tax_type not in GROUPS or abs(amount) < 0.005 or not recoverable(tax_type):
+        for tax_type, amount, not_claimed, rate, province_text, number, issue in f["lines"]:
+            if not recoverable(tax_type):
                 continue
-            not_claimed = meals.get(position, 0.0)
-            amount = round(amount - not_claimed, 2)
-            number, issue = _registration_issue(tax_type, doc)
-            issues = [issue] if issue and abs(total) >= document_threshold(date) else []
-            issues += in_error
+            issues = [issue] if issue and abs(f["total"]) >= document_threshold(date) else []
+            issues += f["err"]
             if not_claimed:
                 issues.append(MEALS)
-            if currency != "CAD":
+            if f["cur"] != "CAD":
                 issues.append(FOREIGN)
             if r["export_batch"] is None:
                 issues.append(NOT_EXPORTED)
-            claims.append(
-                Claim(
-                    r["id"],
-                    str(doc.get("vendor_name") or ""),
-                    str(doc.get("invoice_number") or ""),
-                    date,
-                    currency,
-                    total,
-                    tax_type,
-                    province(tax_type, tl, doc, setup),
-                    float(tl.get("rate") or 0),
-                    amount,
-                    number,
-                    issues,
-                    not_claimed,
-                )  # fmt: skip
-            )
+            place = "" if tax_type == "GST" else str(province_text or supply(f["supply"]))
+            claims.append(Claim(r["id"], f["vendor"], f["number"], date, f["cur"], f["total"], tax_type, place,
+                                float(rate), amount, number, issues, not_claimed))  # fmt: skip
     claims.sort(key=lambda c: (c.invoice_date, c.invoice_id))
     not_recoverable = [t for t in GROUPS if not recoverable(t)]
     return Report(start, end, claims, not_approved, not_recoverable)
+
+
+def tax_facts(row: dict[str, Any], approval: dict[str, Any] | None) -> dict[str, Any]:
+    """What ``build`` needs of an approved invoice (``row``: its columns, the JSON ones decoded; ``approval``: its
+    latest ``approved`` event), whatever the tax setup: kept in the invoices' summary (D-110). Each tax line that may
+    be claimed: (tax type, the amount claimed, the meals' half not claimed, rate, province printed, registration
+    number, its issue)."""
+    doc = row["final_output"]
+    meals = meals_by_tax_line(doc)
+    lines = []
+    for position, tl in enumerate(doc.get("tax_lines") or []):
+        tax_type = str(tl.get("tax_type") or "").upper()
+        amount = round(float(tl.get("tax_amount") or 0), 2)
+        if tax_type not in GROUPS or abs(amount) < 0.005:
+            continue
+        not_claimed = meals.get(position, 0.0)
+        number, issue = _registration_issue(tax_type, doc)
+        rate = tl.get("rate") or 0
+        lines.append([tax_type, round(amount - not_claimed, 2), not_claimed, _float_or(rate), tl.get("province"),
+                      number, issue])  # fmt: skip
+    return {"cur": str(doc.get("currency") or "CAD").upper(), "total": float(doc.get("grand_total") or 0),
+            "vendor": str(doc.get("vendor_name") or ""), "number": str(doc.get("invoice_number") or ""),
+            "err": charged_in_error(row, approval), "lines": lines, "supply": supply_inputs(doc)}  # fmt: skip
+
+
+def _json(text: str | None) -> Any:
+    return json.loads(text) if text is not None else None
+
+
+def _float_or(value: Any) -> Any:
+    """``float(value)``, or ``value`` itself when it is not a number: converted where it is used, which then fails
+    as it did before (a tax setup that never claims that tax never reads it)."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return value
+
+
+def supply_inputs(doc: dict[str, Any]) -> list[Any]:
+    """What ``supply_province`` reads of an invoice's coding: its ship-to, its vendor's province, its lines' cost
+    centers."""
+    lines = [li for li in doc.get("line_items") or [] if isinstance(li, dict)]
+    return [str(doc.get("ship_to_province") or ""), str(doc.get("supplier_province") or ""),
+            [li.get("predicted_cost_center") or "" for li in lines]]  # fmt: skip
+
+
+def _supply_memo(setup: TaxSetup) -> Any:
+    """``supply_province`` of ``supply_inputs``, worked out once per different inputs."""
+    known: dict[str, str] = {}
+
+    def supply(inputs: list[Any]) -> str:
+        key = json.dumps(inputs)
+        if key not in known:
+            ship, supplier, centers = inputs
+            known[key] = supply_province(
+                {
+                    "ship_to_province": ship,
+                    "supplier_province": supplier,
+                    "line_items": [{"predicted_cost_center": c} for c in centers],
+                },
+                setup,
+            )
+        return known[key]
+
+    return supply
 
 
 def charged_in_error(row: dict[str, Any], approval: dict[str, Any] | None) -> list[str]:
@@ -334,11 +381,11 @@ def _jde_accruing(store: Store) -> Any:
         return lambda batch, doc: ""
     settings = jde.load(store)
 
-    def note(batch: Any, doc: dict[str, Any]) -> str:
+    def note(batch: Any, doc: Any) -> str:  # ``doc``: the coding, read when it is needed
         if batch in batches:
-            return JDE_ACCRUES if jde.accrues_use_tax(doc, settings) else ""
+            return JDE_ACCRUES if jde.accrues_use_tax(doc(), settings) else ""
         if batch is None and pending:
-            return JDE_WILL_ACCRUE if jde.accrues_use_tax(doc, settings) else ""
+            return JDE_WILL_ACCRUE if jde.accrues_use_tax(doc(), settings) else ""
         return ""
 
     return note
@@ -349,48 +396,57 @@ def self_assessment(
 ) -> list[SelfAssessment]:
     """Approved invoices for a supply in a PST or QST province with lines the PST / QST is due on and not charged (an
     out-of-province or unregistered vendor, or a line the vendor missed): the buyer self-assesses it (BC PSTA s.49 and
-    the SK, MB and QST acts alike), at the official rate on those lines (``self_assessed_base``, line by line, D-64)."""
+    the SK, MB and QST acts alike), at the official rate on those lines (``self_assessed_base``, line by line, D-64).
+    From the invoices' summary (``self_assessment_facts``, D-110)."""
     rates = rates or TaxRateTable.load()
-    setup = supply_setup(store, rates)
-    first, last = start.isoformat(), end.isoformat()
+    supply = _supply_memo(supply_setup(store, rates))
     out = []
     accrued = _jde_accruing(store)
-    for r in store.invoice_columns(("id", "final_output", "export_batch"), APPROVED):
-        doc = r["final_output"] or {}
-        date = str(doc.get("invoice_date") or "")
-        if not (first <= date <= last):
+    first, last = start.isoformat(), end.isoformat()
+    rows = store.summary_rows("f_date BETWEEN ? AND ? AND +status = ? OR status = ? AND broken = 1",
+                              (first, last, APPROVED, APPROVED),
+                              "id, f_date, export_batch, broken, s_facts")  # fmt: skip
+    for r in rows:
+        found = computed(store, r)
+        f, date = _json(found["s_facts"]), found["f_date"]
+        if f is None or not (first <= date <= last):
             continue
-        province = supply_province(doc, setup)
-        # A printed "PST 0.00" is not a charge (as in the tax checks): that PST may still be owed.
-        charged = {str(tl.get("tax_type") or "").upper() for tl in doc.get("tax_lines") or [] if _charged(tl)}
-        items = doc.get("line_items") or []
+        province = supply(f["supply"])
         try:
             on = dt.date.fromisoformat(date)
         except ValueError:
             on = None
         for tax_type in sorted(regime_on(province, on, rates) & {"PST", "QST"}):
-            base = self_assessed_base(doc, items, tax_type, charged)
+            base = f["base"][tax_type]
             if abs(base) < 0.005:
                 continue
             rate = rates.rate_for(tax_type, province, on) if on else None
             if not rate:
                 continue
-            out.append(
-                SelfAssessment(
-                    r["id"],
-                    str(doc.get("vendor_name") or ""),
-                    str(doc.get("invoice_number") or ""),
-                    date,
-                    province,
-                    tax_type,
-                    round(base, 2),
-                    rate,
-                    round(base * rate, 2),
-                    str(doc.get("currency") or "CAD").upper(),
-                    accrued(r["export_batch"], doc) if tax_type == "PST" else "",
-                )  # fmt: skip
-            )
+            note = accrued(r["export_batch"], lambda r=r: _final(store, r["id"])) if tax_type == "PST" else ""
+            out.append(SelfAssessment(r["id"], f["vendor"], f["number"], date, province, tax_type, round(base, 2),
+                                      rate, round(base * rate, 2), f["cur"], note))  # fmt: skip
     return sorted(out, key=lambda s: (s.province, s.invoice_date, s.invoice_id))
+
+
+def self_assessment_facts(doc: dict[str, Any]) -> dict[str, Any]:
+    """What ``self_assessment`` needs of an approved invoice's coding, whatever the settings: kept in the invoices'
+    summary (D-110)."""
+    # A printed "PST 0.00" is not a charge (as in the tax checks): that PST may still be owed.
+    charged = {str(tl.get("tax_type") or "").upper() for tl in doc.get("tax_lines") or [] if _charged(tl)}
+    items = doc.get("line_items") or []
+    return {
+        "supply": supply_inputs(doc),
+        "base": {t: self_assessed_base(doc, items, t, charged) for t in ("PST", "QST")},
+        "vendor": str(doc.get("vendor_name") or ""),
+        "number": str(doc.get("invoice_number") or ""),
+        "cur": str(doc.get("currency") or "CAD").upper(),
+    }
+
+
+def _final(store: Store, invoice_id: int) -> dict[str, Any]:
+    rows = store.invoice_columns(("id", "final_output"), ids=[invoice_id])
+    return (rows[0]["final_output"] if rows else None) or {}
 
 
 def self_assessed_base(doc: dict[str, Any], items: list[dict[str, Any]], tax_type: str,

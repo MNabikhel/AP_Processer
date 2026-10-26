@@ -12,7 +12,8 @@ Each column has a filter box. What is typed there is read by the column's kind:
 
 The filters become SQL ``WHERE`` clauses with parameters (never text pasted into the SQL). Rows are sorted by any
 column (empty values last) and paged. The PO, subtotal, tax and GL accounts come from the invoice's coding (the
-reviewer's when approved, else AP Coder's), read with SQLite's JSON functions.
+reviewer's when approved, else AP Coder's), read with SQLite's JSON functions when it changes (the invoices' summary,
+D-110).
 
 The chosen columns, filters and sort are a URL query (``query_string``), so a layout can be bookmarked, and saved
 by name as a preset (Settings: ``directory_presets``, one of them the default).
@@ -39,17 +40,13 @@ DEFAULT_SETTING = "directory_default"
 MAX_PRESETS = 30
 MAX_PRESET_NAME = 60
 
-# The coding an invoice is filtered on: the reviewer's once approved, else AP Coder's (never malformed JSON).
-_DOC = "CASE WHEN json_valid(COALESCE(final_output, ai_output)) THEN COALESCE(final_output, ai_output) END"
-_GL = (
-    "(SELECT group_concat(g, ', ') FROM (SELECT DISTINCT json_extract(l.value, '$.predicted_gl_code') AS g "
-    "FROM json_each(doc, '$.line_items') AS l WHERE g IS NOT NULL AND g NOT IN ('', 'UNASSIGNED') ORDER BY g))"
-)
-# The lowest GL account of an invoice's lines: what "GL accounts" sorts on (the list itself is slow to sort).
-_FIRST_GL = "(SELECT MIN(json_extract(l.value, '$.predicted_gl_code')) FROM json_each(doc, '$.line_items') AS l " \
-            "WHERE json_extract(l.value, '$.predicted_gl_code') NOT IN ('', 'UNASSIGNED'))"  # fmt: skip
-# A line's GL account, for the GL filter: an invoice matches when one of its lines does.
-_LINE_GL = "json_extract(l.value, '$.predicted_gl_code')"
+# The lowest GL account of an invoice's lines: what "GL accounts" sorts on (the list itself is slow to sort). It, the
+# PO, subtotal, tax and GL accounts are worked out of the coding (the reviewer's once approved, else AP Coder's, never
+# malformed JSON) with SQLite's JSON functions when the invoice changes: the invoices' summary (D-110,
+# ``core/store/summary.py``).
+_FIRST_GL = "first_gl"
+# A line's GL account, for the GL filter (the summary's ``line_gls``): an invoice matches when one of its lines does.
+_LINE_GL = "l.value"
 
 
 @dataclass(frozen=True)
@@ -86,18 +83,13 @@ COLUMNS: dict[str, Column] = {c.key: c for c in (
 DEFAULT_COLUMNS = ("vendor", "invoice_number", "invoice_date", "due_date", "total", "currency", "status", "where")
 DEFAULT_SORT = "received"
 
-# Every invoice with the values the directory shows, filters and sorts on (one row per invoice).
-ROWS_SQL = f"""
-WITH coded AS (SELECT *, {_DOC} AS doc FROM invoices),
-rows AS (
+# Every invoice with the values the directory shows, filters and sorts on (one row per invoice): the summary's.
+ROWS_SQL = """
+WITH rows AS (
   SELECT id, status, file_name, vendor_name, invoice_number, invoice_date, due_date, currency, grand_total,
          created_at, reviewed_at, reviewer, second_reviewer, second_reviewed_at, export_batch, parked_reason,
-         follow_up, error,
-         NULLIF(TRIM(CAST(json_extract(doc, '$.po_number') AS TEXT)), '') AS po_number,
-         CAST(json_extract(doc, '$.subtotal') AS REAL) AS subtotal,
-         CAST(json_extract(doc, '$.tax_total') AS REAL) AS tax_total,
-         {_GL} AS gl_codes, doc
-  FROM coded)
+         follow_up, error, po_number, subtotal, tax_total, gl_codes, first_gl, line_gls
+  FROM invoice_summary)
 """
 
 
@@ -271,7 +263,7 @@ def condition(key: str, typed: str) -> tuple[str, list[Any]]:
         return f"status IN ({', '.join('?' * len(statuses))})", statuses  # at most len(STATUSES)
     if key == "gl":  # any one line's account ("6*": a line coded to a 6000 account)
         sql, params = _text(_LINE_GL, typed.lstrip("!"))
-        each = f"EXISTS (SELECT 1 FROM json_each(doc, '$.line_items') AS l WHERE {sql})"
+        each = f"EXISTS (SELECT 1 FROM json_each(line_gls) AS l WHERE {sql})"
         return (f"NOT {each}", params) if typed.startswith("!") else (each, params)
     if col.kind == TEXT:
         return _text(col.sql, typed)
