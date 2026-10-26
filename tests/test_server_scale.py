@@ -275,6 +275,33 @@ def test_the_server_runs_several_workers_and_one_background_process_and_stops_th
         proc.communicate()
 
 
+def test_a_worker_asked_to_stop_is_no_startup_failure_even_with_windows_exit_code(monkeypatch):
+    """B-1292: on Windows a worker stopped through the stop file re-raises SIGTERM after its graceful stop (uvicorn),
+    which ends it with exit code 3, uvicorn's STARTUP_FAILURE: the server then said it failed (exit code 1). A
+    worker that ends once the server was asked to stop is no startup failure; one that fails at start still is."""
+    from uvicorn.config import STARTUP_FAILURE
+
+    class Done:
+        def __init__(self, code):
+            self.exitcode = code
+            self.process = self
+
+        def join(self, _timeout=None):
+            pass
+
+        def is_alive(self):
+            return False
+
+    supervisor = server._supervisor_class().__new__(server._supervisor_class())
+    supervisor.processes = [Done(STARTUP_FAILURE), Done(0)]
+    supervisor.asked_to_stop = True
+    supervisor.join_all()
+    assert not supervisor.failed
+    supervisor.asked_to_stop = False
+    supervisor.join_all()
+    assert supervisor.failed
+
+
 def test_the_service_starts_one_worker_per_core_at_most_8_unless_server_json_says(tmp_path, monkeypatch):
     from ap_coder.ops import service
 

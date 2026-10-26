@@ -318,6 +318,7 @@ def _stop_when_asked(supervisor: Any, data: Path, token: str) -> None:
     """The server's side of ``POST /shutdown`` answered by a worker: the token in the stop file."""
     while not supervisor.should_exit.wait(0.5):
         if _asked_to_stop(data, token):
+            supervisor.asked_to_stop = True
             supervisor.should_exit.set()
 
 
@@ -331,6 +332,7 @@ def _supervisor_class() -> Any:
         GRACEFUL_SECONDS + 5 seconds later is ended."""
 
         failed = False
+        asked_to_stop = False  # /shutdown or the service: a worker ending now is no startup failure (B-1292)
 
         def terminate_all(self) -> None:
             spec = json.loads(os.environ.get(WORKER_ENV) or "{}")
@@ -350,7 +352,9 @@ def _supervisor_class() -> Any:
                 if process.process.is_alive():
                     process.kill()
                     process.process.join(5)
-            self.failed = any(p.exitcode == STARTUP_FAILURE for p in self.processes)
+            # On Windows a worker stopped gracefully re-raises SIGTERM (uvicorn) and ends with exit code 3, the
+            # same number as STARTUP_FAILURE: once asked to stop, that is no failure.
+            self.failed = not self.asked_to_stop and any(p.exitcode == STARTUP_FAILURE for p in self.processes)
 
     return _Supervisor
 
