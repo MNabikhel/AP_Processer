@@ -256,4 +256,26 @@ def test_exports_approved_by_shows_both_approvers(tmp_path, ground_truth):
     store.approve_invoice(invoice_id, ground_truth, "Jane Clerk")
     store.final_approve(invoice_id, "Sam Approver", shown=store.latest_approval_id(invoice_id))
     page = _plain(client_for(store).get("/exports").text)
-    assert "Jane Clerk, then Sam Approver" in page, page[page.find("Approved by"):][:400]
+    assert "Jane Clerk, then Sam Approver" in page, page[page.find("Approved by") :][:400]
+
+
+# --- 9. The people on Activity -----------------------------------------------------------------------------------
+
+
+def test_activity_counts_a_renamed_person_once(tmp_path):
+    """B-1305: Activity said "People 4" for two people: saving your name is recorded under the old one (the computer
+    login, then a first name), each counted as a person of its own."""
+    from ap_coder.core.store import Store
+
+    from .webclient import client_for
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    for old, new in (("root", "jordan"), ("jordan", "Jordan Lee")):
+        store.log_event(
+            "settings_changed", actor=old, detail={"keys": ["reviewer"], "reviewer": {"from": old, "to": new}}
+        )
+    store.log_event("note", actor="Jordan Lee", detail={})
+    store.log_event("note", actor="Sam Reviewer", detail={})
+    tile = _plain(client_for(store).get("/activity").text)
+    tile = tile[tile.index("People") :][:120]
+    assert tile.startswith("People 2 Jordan Lee, Sam Reviewer"), tile

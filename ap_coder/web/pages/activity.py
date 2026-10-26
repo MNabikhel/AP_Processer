@@ -157,6 +157,26 @@ def _groups(request: Request) -> list[str]:
     return ["All", *(g for g in GROUPS if g != ACCOUNT_GROUP or is_admin(request))]
 
 
+def distinct_people(events: list[dict[str, Any]]) -> list[str]:
+    """The people the events are by, a renamed one once under the name it has now: saving your name in Settings is
+    recorded under the old one (the computer login, before a name was saved), ``{"reviewer": {"from", "to"}}``
+    (B-1305)."""
+    renamed: dict[str, str] = {}
+    for e in sorted(events, key=lambda e: e["id"]):
+        rename = (e.get("detail") or {}).get("reviewer") if e["action"] == "settings_changed" else None
+        if isinstance(rename, dict) and rename.get("from") and rename.get("to") and rename["from"] != rename["to"]:
+            renamed[str(rename["from"])] = str(rename["to"])
+
+    def now(name: str) -> str:
+        seen = {name}
+        while name in renamed and renamed[name] not in seen:  # a name taken back later stops the chain
+            name = renamed[name]
+            seen.add(name)
+        return name
+
+    return sorted({now(e["actor"]) for e in events if e["actor"]})
+
+
 def _attachment(data: bytes, filename: str, media_type: str) -> Response:
     return Response(data, media_type=media_type, headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
@@ -183,13 +203,14 @@ def activity_page(request: Request) -> HTMLResponse:
     # Each invoice's standing approval once, as on Insights and Learning (D-39): one taken back and given again is
     # one, one taken back and not given again is none.
     clean, approved = insights.approved_as_coded(store)
-    people = sorted({e["actor"] for e in events if e["actor"]})
+    people = sorted({e["actor"] for e in events if e["actor"]})  # the Person filter: every name events carry
+    persons = distinct_people(events)
     tiles = [
         ("Events", len(events), "blue", f"{week} in the last 7 days"),
         ("Invoices approved", approved, "green", insights.approvals_note(clean, insights.filled_in_count(store),
                                                                          approved)),  # (D-112)
-        ("People", len(people), "violet", (", ".join(people[:3]) + (f" and {len(people) - 3} more" if len(people) > 3
-                                                                   else "")) or "none recorded yet"),  # (B-1009)
+        ("People", len(persons), "violet", (", ".join(persons[:3]) + (
+            f" and {len(persons) - 3} more" if len(persons) > 3 else "")) or "none recorded yet"),  # (B-1009, B-1305)
         ("Deletions", sum(1 for e in events if e["action"] in DELETIONS), "amber", "invoices, accounts, lessons"),
     ]  # fmt: skip
 
