@@ -36,7 +36,7 @@ from ap_coder.core import paths
 from ap_coder.core.config import Settings
 from ap_coder.core.store import Store, default_db_path
 from ap_coder.ops import offline
-from ap_coder.web import core
+from ap_coder.web import core, identity, roles
 from ap_coder.web.errors import FriendlyErrors
 from ap_coder.web.identity import THIS_COMPUTER, Identity, from_this_computer, is_this_computer
 from ap_coder.web.jobs import Jobs
@@ -280,6 +280,9 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     @app.get("/jobs/{name}")
     def job_status(name: str, request: Request) -> JSONResponse:
         registry = core.jobs(request)
+        me = identity.person()
+        if server and me is not None and not roles.allowed(me.role, roles.JOB_NEEDS.get(name, roles.ADMIN)):
+            raise HTTPException(status_code=404, detail="No such job.")  # (as if there were none: D-109)
         if not registry.known(name):
             raise HTTPException(status_code=404, detail="No such job.")
         return JSONResponse(registry.get(name).snapshot(), headers={"Cache-Control": "no-store"})

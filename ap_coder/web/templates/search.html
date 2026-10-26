@@ -32,7 +32,7 @@
             <a href="/search?{{ p.query }}#directory"><b>{{ p.name }}</b></a>{% if p.name == default_preset %} {{ ui.pill("Opens first", "ok") }}{% endif %}
             <span class="dir-preset-actions">
               {% if p.name != default_preset %}<button class="link" type="submit" form="preset-default-{{ loop.index }}">Open first</button>{% endif %}
-              <button class="link danger" type="submit" form="preset-delete-{{ loop.index }}" aria-label="Delete the layout {{ p.name }}">Delete</button>
+              {% if p.shared %}{{ ui.pill("Shared", "gray") }}{% else %}<button class="link danger" type="submit" form="preset-delete-{{ loop.index }}" aria-label="Delete the layout {{ p.name }}">Delete</button>{% endif %}
             </span>
           </li>
           {% endfor %}
@@ -98,7 +98,7 @@
   <form id="preset-standard" method="post" action="/search/presets/default" hidden><input type="hidden" name="name" value=""></form>
   {% for p in presets %}
   <form id="preset-default-{{ loop.index }}" method="post" action="/search/presets/default" hidden><input type="hidden" name="name" value="{{ p.name }}"></form>
-  <form id="preset-delete-{{ loop.index }}" method="post" action="/search/presets/delete" data-confirm="Delete this saved layout?" hidden><input type="hidden" name="name" value="{{ p.name }}"></form>
+  {% if not p.shared %}<form id="preset-delete-{{ loop.index }}" method="post" action="/search/presets/delete" data-confirm="Delete this saved layout?" hidden><input type="hidden" name="name" value="{{ p.name }}"></form>{% endif %}
   {% endfor %}
   {% endif %}
 

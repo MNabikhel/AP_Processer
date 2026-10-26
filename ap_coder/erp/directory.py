@@ -374,10 +374,18 @@ def _clean(query_string: str) -> str:
     return q.query_string()
 
 
-def presets(store: Any) -> list[dict[str, str]]:
-    """The saved layouts: [{name, query}], in the order saved."""
+STANDARD = "(standard)"  # a person's own choice of the standard layout (``set_default``), over the shared default
+
+
+def _keys(owner: str) -> tuple[str, str]:
+    """The settings of ``owner``'s own layouts and default (a person's on the server, D-109), else the shared ones."""
+    return (f"{PRESETS_SETTING}:{owner}", f"{DEFAULT_SETTING}:{owner}") if owner else (PRESETS_SETTING, DEFAULT_SETTING)
+
+
+def presets(store: Any, owner: str = "") -> list[dict[str, str]]:
+    """The saved layouts: [{name, query}], in the order saved (``owner``'s own; "" the shared ones)."""
     try:
-        data = json.loads(store.get_setting(PRESETS_SETTING) or "[]")
+        data = json.loads(store.get_setting(_keys(owner)[0]) or "[]")
     except ValueError:
         return []
     out = []
@@ -387,40 +395,52 @@ def presets(store: Any) -> list[dict[str, str]]:
     return out
 
 
-def default_preset(store: Any) -> dict[str, str] | None:
-    name = store.get_setting(DEFAULT_SETTING) or ""
-    return next((p for p in presets(store) if p["name"] == name), None)
+def shown_presets(store: Any, owner: str = "") -> list[dict[str, Any]]:
+    """The layouts a person sees: their own, then the shared ones (``shared``) they have none of the same name of."""
+    own = [{**p, "shared": False} for p in presets(store, owner)] if owner else []
+    names = {p["name"].lower() for p in own}
+    return own + [{**p, "shared": bool(owner)} for p in presets(store) if p["name"].lower() not in names]
 
 
-def save_preset(store: Any, name: str, query_string: str, make_default: bool = False) -> str:
+def default_preset(store: Any, owner: str = "") -> dict[str, str] | None:
+    """The layout the directory opens with: ``owner``'s own choice (``STANDARD``: none), else the shared one."""
+    name = store.get_setting(_keys(owner)[1]) or "" if owner else ""
+    if owner and name == STANDARD:
+        return None
+    name = name or store.get_setting(DEFAULT_SETTING) or ""
+    return next((p for p in shown_presets(store, owner) if p["name"] == name), None)
+
+
+def save_preset(store: Any, name: str, query_string: str, make_default: bool = False, owner: str = "") -> str:
     """Save (or replace) a layout by name; returns the name kept. Raises ValueError with what is wrong."""
     name = " ".join(str(name or "").split())[:MAX_PRESET_NAME]
     if not name:
         raise ValueError("Give the layout a name.")
-    kept = [p for p in presets(store) if p["name"].lower() != name.lower()]
+    kept = [p for p in presets(store, owner) if p["name"].lower() != name.lower()]
     if len(kept) >= MAX_PRESETS:
         raise ValueError(f"At most {MAX_PRESETS} saved layouts: delete one first.")
     kept.append({"name": name, "query": _clean(query_string)})
-    store.set_setting(PRESETS_SETTING, json.dumps(kept))
+    store.set_setting(_keys(owner)[0], json.dumps(kept))
     if make_default:
-        store.set_setting(DEFAULT_SETTING, name)
+        store.set_setting(_keys(owner)[1], name)
     return name
 
 
-def delete_preset(store: Any, name: str) -> bool:
-    before = presets(store)
+def delete_preset(store: Any, name: str, owner: str = "") -> bool:
+    before = presets(store, owner)
     kept = [p for p in before if p["name"] != name]
     if len(kept) == len(before):
         return False
-    store.set_setting(PRESETS_SETTING, json.dumps(kept))
-    if (store.get_setting(DEFAULT_SETTING) or "") == name:
-        store.set_setting(DEFAULT_SETTING, "")
+    store.set_setting(_keys(owner)[0], json.dumps(kept))
+    if (store.get_setting(_keys(owner)[1]) or "") == name:
+        store.set_setting(_keys(owner)[1], "")
     return True
 
 
-def set_default(store: Any, name: str) -> bool:
-    """Make a saved layout the one the directory opens with ("" for none)."""
-    if name and not any(p["name"] == name for p in presets(store)):
+def set_default(store: Any, name: str, owner: str = "") -> bool:
+    """Make a saved layout the one the directory opens with ("" for none): ``owner``'s own choice, among their
+    layouts and the shared ones; "" the shared default."""
+    if name and not any(p["name"] == name for p in shown_presets(store, owner)):
         return False
-    store.set_setting(DEFAULT_SETTING, name)
+    store.set_setting(_keys(owner)[1], name or (STANDARD if owner else ""))
     return True

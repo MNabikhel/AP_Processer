@@ -714,3 +714,62 @@ def test_a_person_sees_and_ends_their_other_sessions(web):
     assert "also logged in on 1 other" in here.get("/account/password").text
     assert here.post("/account/sessions/end-others", headers=PAGE).json()["ok"]
     assert there.get("/review").status_code == 303 and here.get("/review").status_code == 200
+
+
+# --- 14. What each role sees: the setup report, jobs, saved layouts --------------------------------------------------
+
+
+def _as(web, username, role):
+    from .test_server_security import account, log_in
+
+    account(web["store"], username, role)
+    client = web["client"]()
+    assert log_in(client, username).status_code == 200
+    return client
+
+
+def test_the_setup_report_is_an_admins_on_the_server(web):
+    reader = _as(web, "reader", "readonly")
+    assert reader.get("/help/report/setup").status_code == 403
+    assert 'data-url="/help/report/setup"' not in reader.get("/help/report").text
+    admin = _as(web, "boss", "admin")
+    assert 'data-url="/help/report/setup"' in admin.get("/help/report").text
+
+
+def test_a_jobs_progress_is_shown_to_the_role_that_may_start_it(web):
+    from ap_coder.web.roles import JOB_NEEDS
+
+    web["app"].state.jobs.get("settings-doctor")  # an Admin's check, run once
+    web["app"].state.jobs.get("process")
+    clerk = web["client"]()
+    from .test_server_security import log_in
+
+    assert log_in(clerk, "clerk1").status_code == 200
+    assert clerk.get("/jobs/settings-doctor").status_code == 404
+    assert clerk.get("/jobs/process").status_code == 200
+    assert JOB_NEEDS["settings-doctor"] == "admin"
+    admin = _as(web, "boss", "admin")
+    assert admin.get("/jobs/settings-doctor").status_code == 200
+
+
+def test_a_clerks_saved_layouts_are_their_own_and_the_shared_default_an_admins(web):
+    from ap_coder.erp import directory
+
+    from .webclient import PAGE
+
+    store = web["store"]
+    admin = _as(web, "boss", "admin")
+    assert admin.post("/search/presets", data={"name": "Team", "query": "col=vendor", "make_default": "1"},
+                      headers=PAGE).json()["ok"]  # fmt: skip
+    clerk = web["client"]()
+    from .test_server_security import log_in
+
+    assert log_in(clerk, "clerk1").status_code == 200
+    assert clerk.post("/search/presets", data={"name": "Mine", "query": "col=total", "make_default": "1"},
+                      headers=PAGE).json()["ok"]  # fmt: skip
+    assert clerk.post("/search/presets/delete", data={"name": "Team"}, headers=PAGE).status_code == 403
+    assert [p["name"] for p in directory.presets(store)] == ["Team"]  # the shared ones: unchanged
+    assert directory.default_preset(store)["name"] == "Team"  # everyone else's default too
+    assert directory.default_preset(store, f"user:{store.find_user('clerk1')['id']}")["name"] == "Mine"
+    page = clerk.get("/search").text
+    assert "Mine" in page and "Team" in page

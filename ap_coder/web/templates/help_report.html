@@ -18,6 +18,7 @@
     </ul>
   </section>
 
+  {% if setup_shown %}
   <section class="card">
     <div class="card-head"><div>
       <h4><span class="ms" aria-hidden="true">fact_check</span> 2. The setup report</h4>
@@ -27,6 +28,12 @@
     <textarea id="setup-report" class="hp-report" rows="12" readonly aria-label="The setup report"
               data-url="/help/report/setup"{% if not setup %} aria-busy="true" placeholder="Gathering the setup report… (a few seconds)"{% endif %}>{{ setup }}</textarea>
   </section>
+  {% else %}
+  <section class="card">
+    <h4><span class="ms" aria-hidden="true">fact_check</span> 2. The setup report</h4>
+    <p class="muted">An Admin copies it from this page: it says which versions and settings the server runs.</p>
+  </section>
+  {% endif %}
 
   <section class="card">
     <div class="card-head"><div>
