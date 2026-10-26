@@ -192,7 +192,9 @@ def reconcile(records: list[dict[str, Any]], columns: dict[str, str], invoices: 
         if not candidates:
             result.lines.append(Line(NOT_RECEIVED, raw_number, date, amount))
             continue
-        same = [i for i in candidates if amount is not None and abs((i["grand_total"] or 0) - amount) <= TOLERANCE]
+        # (a float a hair over the cent is still the cent: 100.01 - 100.00 is 0.010000000000005116, B-1371)
+        same = [i for i in candidates
+                if amount is not None and abs((i["grand_total"] or 0) - amount) <= TOLERANCE + 1e-9]  # fmt: skip
         inv = (same or candidates)[0]
         seen.add(inv["id"])
         status = MATCHED if same else DIFFERS
