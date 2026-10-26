@@ -245,7 +245,8 @@ def test_the_server_runs_several_workers_and_one_background_process_and_stops_th
         while True:
             try:
                 with direct.open(f"http://127.0.0.1:{port}/healthz", timeout=2) as answer:
-                    assert json.loads(answer.read())["pid"] != proc.pid  # a worker answers, not the server itself
+                    worker = json.loads(answer.read())["pid"]
+                    assert worker != proc.pid  # a worker answers, not the server itself
                     break
             except OSError:
                 assert time.monotonic() < deadline and proc.poll() is None
@@ -257,7 +258,9 @@ def test_the_server_runs_several_workers_and_one_background_process_and_stops_th
             assert time.monotonic() < deadline
             time.sleep(0.3)
         record = json.loads((data / ".ap_coder_server.json").read_text(encoding="utf-8"))
-        assert record["pid"] == proc.pid
+        # The server's own process: Popen's, or (a venv's python.exe on Windows is a launcher that starts the real
+        # interpreter as its child) that child; never a worker.
+        assert record["pid"] != worker and (record["pid"] == proc.pid or os.name == "nt")
         stop = urllib.request.Request(f"http://127.0.0.1:{port}/shutdown", data=b"", method="POST",
                                       headers={"X-AP-Coder-Token": record["token"]})  # fmt: skip
         with direct.open(stop, timeout=10) as answer:
