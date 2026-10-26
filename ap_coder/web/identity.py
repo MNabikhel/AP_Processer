@@ -140,12 +140,6 @@ def from_cookie(secret: bytes, value: str | None) -> tuple[str, str] | None:
     return (clean_name(name), browser) if clean_name(name) else None
 
 
-def name_from_cookie(secret: bytes, value: str | None) -> str | None:
-    """The name a cookie holds, or None when it was not made by this start of the server (made up, changed, old)."""
-    found = from_cookie(secret, value)
-    return found[0] if found else None
-
-
 _QUOTED_PATH = re.compile(r"""(['"])[^'"]*[\\/]([^'"\\/]*)\1""")  # 'C:\\Users\\x\\a.db', "/home/x/a.db"
 
 

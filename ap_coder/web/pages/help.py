@@ -204,7 +204,6 @@ def report_page(request: Request, codes: bool = False) -> HTMLResponse:
         setup_shown=can(request, "/help/report/setup", "GET"),  # an Admin's on the server: versions, names (D-109)
         activity=activity_report(store, codes),
         codes=codes,
-        key_file=short_path(data_dir(store) / "share_report_key.csv"),
         logs=[short_path(p) for p in shown],
     )
 
@@ -241,7 +240,6 @@ def help_page(request: Request, q: str = "", area: str = "") -> HTMLResponse:
         quick_start=quick_start(server_mode(request)),
         how_it_reads=how_it_reads(server_mode(request)),
         routine=[(when, [(task, link(key)) for task, key in tasks]) for when, tasks in ROUTINE],
-        areas=AREAS,
         area=area,
         q=q,
         checks=checks,

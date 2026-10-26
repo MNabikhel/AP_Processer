@@ -699,7 +699,6 @@ def process_page(request: Request) -> HTMLResponse:
         set_aside=inbox.needs_person(store, invoice_dir(store)),
         folder=short_path(invoice_dir(store)) if is_admin(request) else "",
         accept=",".join(ACCEPT),
-        accept_text=", ".join(e.lstrip(".").upper() for e in ACCEPT),
         job=jobs(request).get(JOB).snapshot(),
         waiting=import_queue(request).files(),
         waiting_text=waiting_text(import_queue(request).files()),

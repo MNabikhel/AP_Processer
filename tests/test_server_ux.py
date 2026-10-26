@@ -256,10 +256,10 @@ def as_person(**fields):
 def test_a_draft_is_keyed_by_the_account_on_the_server():
     token = as_person(user_id=7, username="pat", role="clerk")
     try:
-        assert access.person_key(_Request()) == ("", "user:7")
+        assert access.person_key() == ("", "user:7")
     finally:
         identity.PERSON.reset(token)
-    assert access.person_key(_Request()) is None  # this computer's own person, as before
+    assert access.person_key() is None  # this computer's own person, as before
 
 
 def test_two_accounts_keep_drafts_of_their_own(store):

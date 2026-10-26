@@ -22,6 +22,7 @@ from ap_coder.core import ui
 from ap_coder.core.store import Store, load_sample_purchase_orders
 from ap_coder.web.core import done, flash_message, get_store, message, posted_form, refuse, render, reviewer
 from ap_coder.web.files import (
+    NO_ROWS,
     SheetError,
     download,
     drop_upload,
@@ -187,7 +188,7 @@ def purchase_orders_page(
             upload, df, sheets = read_upload(file, sheet or None)
             columns = list(df.columns)
             if df.empty:
-                imp_error = "This file has no rows under its header line."
+                imp_error = NO_ROWS
             chosen = picked_columns({}, FIELD_LABELS, columns, po_mod.map_columns(columns))
             missing = missing_columns(chosen)
             imp = sheet_context(file, upload, df, sheets, sheet, FIELD_LABELS, chosen, po_mod.REQUIRED_COLUMNS)
@@ -248,7 +249,7 @@ async def po_import(request: Request) -> JSONResponse:
     except SheetError as exc:
         return refuse(str(exc))
     if df.empty:
-        return refuse("This file has no rows under its header line.")
+        return refuse(NO_ROWS)
     chosen = picked_columns(form, FIELD_LABELS, list(df.columns), {})
     missing = missing_columns(chosen)
     if missing:

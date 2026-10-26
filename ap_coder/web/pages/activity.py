@@ -1,9 +1,9 @@
 """Activity: the audit trail of everything that changed data, with a search and filters, the controls report for
 internal audit, and a link to the duplicate payment audit (on Exports: one place for it, B-513).
 
-Everything here only reads: the filters (``?group=Backups&person=Ann&q=northwind&view=table``), the controls
-report's period (``?start=…&end=…``) and the duplicate audit (``?audit=1``) are in the address, and the downloads
-(CSV of the filtered events, the controls report, the duplicate pairs) are GETs.
+Everything here only reads: the filters (``?group=Backups&person=Ann&q=northwind&view=table``) and the controls
+report's period (``?start=…&end=…``) are in the address, and the downloads (``/activity/events.csv``, the filtered
+events; ``/activity/controls-report``) are GETs. The duplicate pairs download from Exports (``/exports?audit=1``).
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from fastapi.responses import HTMLResponse, Response
 from ap_coder.core import ui
 from ap_coder.core.audit import ACTIONS, describe
 from ap_coder.core.safe import csv_row
-from ap_coder.erp import controls, dupaudit, insights
+from ap_coder.erp import controls, insights
 from ap_coder.web.access import is_admin
 from ap_coder.web.core import clamp_day, get_store, render, server_mode
 
@@ -257,9 +257,3 @@ def activity_controls_report(request: Request, start: str = "", end: str = "") -
         first, last = last, first
     html = controls.report_html(controls.build(get_store(request), first, last, duties=server_mode(request)))
     return _attachment(html.encode("utf-8"), f"ap_coder_controls_{first}_{last}.html", "text/html; charset=utf-8")
-
-
-@router.get("/activity/duplicates.csv")
-def activity_duplicates_csv(request: Request) -> Response:
-    pairs = dupaudit.find(get_store(request))
-    return _attachment(dupaudit.to_csv(pairs), f"duplicate_audit_{dt.date.today()}.csv", "text/csv; charset=utf-8")

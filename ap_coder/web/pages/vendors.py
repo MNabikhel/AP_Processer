@@ -36,7 +36,15 @@ from ap_coder.erp import recurring
 from ap_coder.erp.insights import vendor_workload
 from ap_coder.ops.help import help_for
 from ap_coder.web.core import done, flash_message, get_store, posted_form, reference_or_none, refuse, render, reviewer
-from ap_coder.web.files import SheetError, drop_upload, picked_columns, read_upload, receive_sheet, sheet_context
+from ap_coder.web.files import (
+    NO_ROWS,
+    SheetError,
+    drop_upload,
+    picked_columns,
+    read_upload,
+    receive_sheet,
+    sheet_context,
+)
 
 router = APIRouter()
 
@@ -233,7 +241,7 @@ def vendors_page(
             upload, df, sheets = read_upload(file, sheet or None)
             columns = list(df.columns)
             if df.empty:
-                master_error = "This file has no rows under its header line."
+                master_error = NO_ROWS
             chosen = picked_columns({}, MASTER_LABELS, columns, master_columns(columns))
             master = sheet_context(file, upload, df, sheets, sheet, MASTER_LABELS, chosen, ("vendor_name",))
         except SheetError as exc:
@@ -328,7 +336,7 @@ async def master_import(request: Request) -> JSONResponse:
     except SheetError as exc:
         return refuse(str(exc))
     if df.empty:
-        return refuse("This file has no rows under its header line.")
+        return refuse(NO_ROWS)
     chosen = picked_columns(form, MASTER_LABELS, list(df.columns), {})
     if "vendor_name" not in chosen:
         return refuse("Pick the column with the vendor name.")

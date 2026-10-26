@@ -21,6 +21,7 @@ from ap_coder.intake import inbox
 from ap_coder.web.core import done, get_store, invoice_dir, money, refuse, render, reviewer
 from ap_coder.web.files import (
     _MAX_BYTES,
+    NO_ROWS,
     TOO_BIG,
     SheetError,
     download,
@@ -91,7 +92,7 @@ def statements_page(
             chosen = picked_columns(request.query_params, FIELD_LABELS, columns, stm.map_columns(columns))
             context["s"] = sheet_context(file, upload, df, sheets, sheet, FIELD_LABELS, chosen, ("number",))
             if df.empty:
-                context["error"] = "This file has no rows under its header line."
+                context["error"] = NO_ROWS
             elif not mapping_ready(chosen):
                 context["error"] = "Pick the invoice number column and an amount or balance column."
             else:

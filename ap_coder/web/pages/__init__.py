@@ -1,7 +1,6 @@
 """Every page of the dashboard, in the order of the left rail (see ``ap_coder/web/__init__.py`` for how to add one).
 
-``PAGES`` is the single list: the rail is drawn from it, and ``create_app`` includes each page's module. A page with
-no ``module`` yet is answered by the placeholder template, so every link in the rail works while pages are built.
+``PAGES`` is the single list: the rail is drawn from it, and ``create_app`` includes each page's module.
 ``MORE_MODULES`` are modules with routes but no place in the rail (the invoice review screen opens from the queue).
 
 The rail shows the pages a pilot tester uses every day (``more=False``) at the top, Settings and Help pinned at its
@@ -21,7 +20,7 @@ class Page:
     icon: str  # a Material Symbols name for the rail
     section: str  # the page header's breadcrumb
     subtitle: str = ""  # the one-line description under the page title
-    module: str = ""  # ap_coder.web.pages.<module>, which has a ``router``; "" until the page is built
+    module: str = ""  # ap_coder.web.pages.<module>, which has a ``router``
     more: bool = False  # folded under "More" in the rail
 
 
@@ -182,12 +181,6 @@ PAGES: list[Page] = [
 # (/admin/users).
 MORE_MODULES: list[str] = ["invoice", "azure", "who", "login", "users"]
 
-SECTIONS: list[str] = list(dict.fromkeys(p.section for p in PAGES))
 BY_KEY: dict[str, Page] = {p.key: p for p in PAGES}
 PINNED = {"settings", "help"}  # at the rail's foot, always on screen
 BANNER_PAGES = {"process", "review"}  # where OvisOCR2's one-line warning shows under the page header
-
-
-def page(key: str) -> Page:
-    """The page called ``key`` (KeyError for a page that does not exist)."""
-    return BY_KEY[key]

@@ -135,7 +135,7 @@ def api_context(store: Store) -> dict[str, Any]:
         "synced_at": str(synced.get("at") or "")[:16].replace("T", " "),
         "tried_at": str(synced.get("tried") or "")[:16].replace("T", " "),
         "report": jde_sync.report_lines(synced.get("report") or {}), "mapping": str(copy_path or own),
-        "mapping_copy": copy_path is not None, "syncing": False,
+        "mapping_copy": copy_path is not None,
     }  # fmt: skip
 
 

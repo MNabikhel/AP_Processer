@@ -341,7 +341,7 @@ def test_every_response_behind_the_login_is_not_stored_by_the_browser(store):
     invoice_id = add_clean(store)
     client = client_of(app_for(store))
     log_in(client, "boss")
-    for path in (f"/review/{invoice_id}/page/1.png", "/review", "/activity/events.csv", "/activity/duplicates.csv",
+    for path in (f"/review/{invoice_id}/page/1.png", "/review", "/activity/events.csv", "/exports/duplicates.csv",
                  "/activity/controls-report", "/spend/data.xlsx", "/insights/business-case",
                  "/settings/jde/worksheet.xlsx", f"/review/{invoice_id}/words"):  # fmt: skip
         answer = client.get(path)

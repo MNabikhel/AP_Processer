@@ -61,7 +61,7 @@ from ap_coder.coding.tax import (
     province_label,
     stored_supply,
 )
-from ap_coder.coding.taxmath import math_check  # noqa: F401 - the review screen's math, shown with the tax lines
+from ap_coder.coding.taxmath import math_check
 from ap_coder.coding.terms import describe as terms_describe
 from ap_coder.coding.terms import payment
 from ap_coder.core.config import Settings

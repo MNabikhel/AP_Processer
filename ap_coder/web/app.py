@@ -1,7 +1,7 @@
 """The dashboard's web app: ``create_app`` builds it, ``ap_coder/web/server.py`` runs it (``python -m ap_coder serve``).
 
-Every page is a module of ``ap_coder/web/pages`` listed in ``pages.PAGES``; pages not built yet answer with the
-placeholder template. Besides the pages:
+Every page is a module of ``ap_coder/web/pages`` listed in ``pages.PAGES`` (or ``pages.MORE_MODULES``). Besides the
+pages:
 
 * ``GET /healthz``: {"ok", "app", "version", "folder", "pid", "port"} for the launcher (no secrets); to this
   computer, also "user" (the account running it).
@@ -29,7 +29,7 @@ from typing import Any
 
 from dotenv import dotenv_values
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -42,7 +42,7 @@ from ap_coder.web import core, identity, roles
 from ap_coder.web.errors import FriendlyErrors
 from ap_coder.web.identity import THIS_COMPUTER, Identity, from_this_computer, is_this_computer
 from ap_coder.web.jobs import Jobs
-from ap_coder.web.pages import MORE_MODULES, PAGES, Page
+from ap_coder.web.pages import MORE_MODULES, PAGES
 from ap_coder.web.security import TOKEN_HEADER, AccessLog, LocalOnly, SecurityHeaders, allowed_hosts
 
 CODE_FOLDER = core.WEB_DIR.parent.parent  # the folder holding ap_coder/ (the launcher checks it is its own)
@@ -261,10 +261,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     for module in MORE_MODULES:
         app.include_router(importlib.import_module(f"ap_coder.web.pages.{module}").router)
     for page in PAGES:
-        if page.module:
-            app.include_router(importlib.import_module(f"ap_coder.web.pages.{page.module}").router)
-        else:
-            app.add_api_route(page.path, _placeholder(page), methods=["GET"], response_class=HTMLResponse)
+        app.include_router(importlib.import_module(f"ap_coder.web.pages.{page.module}").router)
 
     @app.get("/", include_in_schema=False)
     def home() -> RedirectResponse:
@@ -339,11 +336,3 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
         return await http_error(request, StarletteHTTPException(404, "Nothing in AP Coder has that number."))
 
     return app
-
-
-def _placeholder(page: Page) -> Callable[[Request], HTMLResponse]:
-    def placeholder(request: Request) -> HTMLResponse:
-        return core.render(request, "placeholder.html", page.key)
-
-    placeholder.__name__ = f"placeholder_{page.key}"
-    return placeholder

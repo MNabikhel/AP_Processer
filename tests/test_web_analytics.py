@@ -237,7 +237,7 @@ def test_activity_controls_report_and_duplicate_audit(client, busy):
     audit = client.get("/exports?audit=1").text  # the audit is on Exports, Activity links there (B-513)
     assert "Results of" in audit and ("No likely duplicates found" in audit or "Possible duplicate" in audit)
     assert 'href="/exports?audit=1#audit"' in client.get("/activity").text
-    dup_csv = client.get("/activity/duplicates.csv")
+    dup_csv = client.get("/exports/duplicates.csv")  # (the audit's one download: Activity links to Exports)
     assert dup_csv.status_code == 200 and dup_csv.text.lstrip("﻿").startswith("Why,Amount")
 
 

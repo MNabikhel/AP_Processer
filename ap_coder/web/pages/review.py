@@ -329,8 +329,7 @@ def today_pills(store: Store, invoices: list[dict[str, Any]]) -> list[tuple[str,
 
 
 def kpis(store: Store, pending: list[dict[str, Any]], flagged: list[dict[str, Any]],
-         approved: list[dict[str, Any]], awaiting: list[dict[str, Any]] = (),
-         settings: Any = None) -> list[dict[str, Any]]:  # fmt: skip
+         awaiting: list[dict[str, Any]] = (), settings: Any = None) -> list[dict[str, Any]]:  # fmt: skip
     """The four figures at the top: waiting, approved today, coding accuracy, the coding memory (B-512). Approved today
     counts this reviewer's approvals, a first approval waiting for its second (``awaiting``) included, and says so in
     plain words (B-517)."""
@@ -423,7 +422,7 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
     unnamed = reviewer() if name_step()[0] != "ok" else ""  # approvals carry the computer login until a name is given
     context: dict[str, Any] = {"tab": tab, "tabs": tabs, "lead": lead, "show": show, "q": q, "sort": sort,
                                "unnamed": unnamed,
-                               "kpis": kpis(store, pending, flagged, approved, awaiting, settings),
+                               "kpis": kpis(store, pending, flagged, awaiting, settings),
                                "today": today_pills(store, invoices),
                                "shows": SHOWS, "sorts": SORTS, "view_url": view_url}  # fmt: skip
     if tab == "review":

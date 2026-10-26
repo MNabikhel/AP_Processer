@@ -145,9 +145,6 @@ def spend_page(request: Request) -> HTMLResponse:
     chart, legend = month_chart(data, months, order, shown_currency)
     centers = spend.total_by(rows, "cost_center", shown_currency)
     cc_names = {code: row.get("description", "") for code, row in spend.accounts_by_code(reference, True).items()}
-    month_totals: dict[str, float] = {}
-    for row in data:
-        month_totals[row["month"]] = month_totals.get(row["month"], 0.0) + row["amount"]
     return render(
         request,
         "spend.html",
@@ -157,7 +154,6 @@ def spend_page(request: Request) -> HTMLResponse:
         chart=chart,
         legend=legend,
         month_rows=[{"month": d["month"], "category": d["category"], "amount": money(d["amount"])} for d in data],
-        month_totals=[(m, money(month_totals.get(m, 0.0))) for m in months],
         gl_rows=ranked(spend.total_by(rows, "gl_code", shown_currency), names, total),
         vendor_rows=ranked(vendors, {}, total),
         cc_rows=ranked(centers, cc_names, total) if any(key for key, _, _ in centers) else [],
