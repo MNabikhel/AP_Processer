@@ -678,11 +678,16 @@ def page_picture(request: Request, invoice_id: int, number: int, scale: str = "1
 
 @router.get("/review/{invoice_id:int}/words")
 def page_words(request: Request, invoice_id: int) -> JSONResponse:
+    """The words on the invoice's pages, to teach a field by clicking them (``document.page_words``)."""
     inv = _invoice(get_store(request), invoice_id)
+    if not Path(inv.get("source_path") or "").is_file():  # its name alone to a colleague (B-979, B-1403)
+        gone = f"This invoice's file is no longer at {shown_path(inv.get('source_path'))}."
+        return JSONResponse({"ok": False, "error": gone, "words": []})
     try:
         words = document.page_words(inv["source_path"])
     except Exception as exc:  # noqa: BLE001 - no OCR on this computer, a damaged file...
-        return JSONResponse({"ok": False, "error": f"The words on the page can't be read here ({exc}).",
+        said = identity.without_folders(str(exc))
+        return JSONResponse({"ok": False, "error": f"The words on the page can't be read here ({said}).",
                              "words": []})  # fmt: skip
     return JSONResponse({"ok": True, "words": words})
 
@@ -1042,6 +1047,8 @@ async def split(request: Request, invoice_id: int) -> JSONResponse:
     """Split one line across several GL accounts / cost centers by percentage (shared costs)."""
     store = get_store(request)
     inv = _invoice(store, invoice_id)
+    if inv["status"] != REVIEW:  # approved in another tab meanwhile: no draft is kept for it (B-1402)
+        return refuse("This invoice is no longer in the review queue: reload the page.", 409)
     reference = _reference(store)
     form, draft = await _posted(request, inv)
     number = view._line_number(form.get("split_line"))
