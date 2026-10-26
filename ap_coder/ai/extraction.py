@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from ..core.config import DocumentIntelligenceSettings
+from .figures import PAGE_BREAK
 
 log = logging.getLogger(__name__)
 
@@ -173,7 +174,7 @@ def result_from_text(path: str | Path) -> ExtractionResult:
         source=str(path),
         model_id="pre-extracted",
         content=content,
-        page_count=max(1, content.count("<!-- PageBreak -->") + 1),
+        page_count=max(1, content.count(PAGE_BREAK) + 1),
         table_count=content.count("<table"),
     )
 

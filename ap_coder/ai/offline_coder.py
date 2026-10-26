@@ -609,11 +609,13 @@ def text_layout(text: str) -> DocLayout:
 
 def local_extraction(path: str | Path, layout: DocLayout | None = None) -> ExtractionResult:
     """The page text as the local reader saw it (text layer, or OCR for scans), for search and the review page."""
+    from .figures import PAGE_BREAK
+
     path = Path(path)
     layout = layout or build_layout(path)
     words = list(layout.words())
     ocr_conf = [w.conf for w in words if w.source == "ocr"]
-    content = "\n\n<!-- PageBreak -->\n\n".join("\n".join(line.text for line in page.lines) for page in layout.pages)
+    content = f"\n\n{PAGE_BREAK}\n\n".join("\n".join(line.text for line in page.lines) for page in layout.pages)
     return ExtractionResult(
         source=str(path),
         model_id=f"local-{layout.source}",

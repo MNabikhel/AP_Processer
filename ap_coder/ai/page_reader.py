@@ -447,17 +447,14 @@ def _post_json(url: str, body: dict[str, Any], api_key: str, timeout: float) -> 
     """POST JSON to LM Studio's own routes (a server on this computer or network: no proxy). Raises
     ``PageReaderError`` with LM Studio's own reason (not enough memory, say) when it refuses, and for a server on
     the internet in the offline build (``local_llm.refused_address``: nothing is sent)."""
-    refused = local_llm.refused_address(url)
-    if refused:
-        raise PageReaderError(refused)
-    request = urllib.request.Request(
-        url, data=json.dumps(body).encode("utf-8"), method="POST",
-        headers={"Authorization": f"Bearer {api_key or 'lm-studio'}", "Content-Type": "application/json"},
-    )  # fmt: skip
     try:
         local = local_llm.refuse_internet(url)
     except ConnectionRefusedError as exc:
         raise PageReaderError(str(exc)) from exc
+    request = urllib.request.Request(
+        url, data=json.dumps(body).encode("utf-8"), method="POST",
+        headers={"Authorization": f"Bearer {api_key or 'lm-studio'}", "Content-Type": "application/json"},
+    )  # fmt: skip
     try:
         with local_llm.opener(local).open(request, timeout=timeout) as response:  # no proxy here, no redirect
             raw = response.read()

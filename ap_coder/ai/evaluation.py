@@ -11,11 +11,11 @@ from __future__ import annotations
 
 import json
 import re
-import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ..capture.normalize import _plain
 from ..core.memory import pair_lines
 
 HEADER_TEXT_FIELDS = ("vendor_name", "invoice_number", "invoice_date", "currency")
@@ -24,14 +24,9 @@ LINE_FIELDS = ("amount", "predicted_gl_code", "predicted_cost_center")
 AMOUNT_TOLERANCE = 0.01
 
 
-# Letters Unicode does not decompose: dropped with the accents, "Œuvres" became "uvres".
-_LIGATURES = str.maketrans({"œ": "oe", "Œ": "OE", "æ": "ae", "Æ": "AE", "ß": "ss"})
-
-
 def _norm_text(value: Any) -> str:
     """Letters and digits only, accents folded to plain letters ("Ltée" -> "ltee", "Cœur" -> "coeur")."""
-    decomposed = unicodedata.normalize("NFKD", str(value or "").translate(_LIGATURES))
-    return re.sub(r"[^0-9a-z]", "", "".join(c for c in decomposed if not unicodedata.combining(c)).lower())
+    return re.sub(r"[^0-9a-z]", "", _plain(str(value or "")))
 
 
 def _amount_eq(a: Any, b: Any) -> bool:
@@ -89,7 +84,8 @@ class EvaluationReport:
         }
 
 
-def _is_prediction_file(p: Path) -> bool:
+def is_prediction_file(p: Path) -> bool:
+    """An engine output (``<stem>.json``), not its validation, Document Intelligence result or the batch summary."""
     return not p.name.endswith((".validation.json", ".di.json")) and p.name != "batch_summary.json"
 
 
@@ -100,7 +96,7 @@ def load_ground_truth(path: str | Path) -> tuple[dict[str, dict[str, Any]], list
         docs = {
             p.stem: json.loads(p.read_text(encoding="utf-8"))
             for p in sorted(path.glob("*.json"))
-            if _is_prediction_file(p)
+            if is_prediction_file(p)
         }
         return docs, []
     if path.suffix.lower() in {".xlsx", ".csv"}:

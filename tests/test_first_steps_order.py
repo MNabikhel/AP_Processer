@@ -104,9 +104,8 @@ def test_past_coding_codes_the_first_invoice_from_a_new_vendor(tmp_path, monkeyp
     """The history step's why, measured: through the app's pipeline with no AI model, the first invoice of a vendor
     AP Coder never saw gets no GL account; with the vendor's past coding imported, its lines are coded."""
     from ap_coder.ai.pipeline import InvoicePipeline
-    from ap_coder.bench.coding import COST_CENTER, ITEM_GL
+    from ap_coder.bench.coding import COST_CENTER, ITEM_GL, sample_reference
     from ap_coder.bench.generator import make_stream_case
-    from ap_coder.bench.speed import _reference
 
     monkeypatch.setenv("AP_PRIVATE_DIR", str(tmp_path / "data"))
     settings = replace(Settings(), llm=replace(Settings().llm, provider="off"))
@@ -122,7 +121,7 @@ def test_past_coding_codes_the_first_invoice_from_a_new_vendor(tmp_path, monkeyp
         store = Store(tmp_path / f"{history}.db")
         if history:
             store.import_history(rows)
-        pipeline = InvoicePipeline(settings, _reference(), store=store)
+        pipeline = InvoicePipeline(settings, sample_reference(), store=store)
         lines = suggested = 0
         for case in firsts:
             output = store.get_invoice(pipeline.process(case.path).invoice_id)["ai_output"]

@@ -7,7 +7,7 @@ from dataclasses import replace
 
 from openpyxl import load_workbook
 
-from ap_coder.ai.evaluation import _is_prediction_file
+from ap_coder.ai.evaluation import is_prediction_file
 from ap_coder.ai.labels import _prediction_files, export_labels
 from ap_coder.ai.pipeline import discover_inputs
 from ap_coder.coding.tax import TaxRateTable, load_tax_mapping
@@ -136,7 +136,7 @@ def test_extraction_dumps_are_not_predictions(tmp_path, ground_truth):
     for name in ("inv.json", "inv.di.json", "inv.validation.json", "batch_summary.json"):
         (out / name).write_text(json.dumps(ground_truth))
     assert [p.name for p in _prediction_files(out)] == ["inv.json"]
-    assert [p.name for p in sorted(out.iterdir()) if _is_prediction_file(p)] == ["inv.json"]
+    assert [p.name for p in sorted(out.iterdir()) if is_prediction_file(p)] == ["inv.json"]
 
 
 def test_text_copy_next_to_a_pdf_is_not_processed_twice(tmp_path):

@@ -35,6 +35,19 @@ from ap_coder.bench import content as C
 from ap_coder.bench.harness import _pct, _table
 
 DATA = Path(__file__).resolve().parent.parent.parent / "data"
+
+
+def sample_reference() -> Any:
+    """The bundled sample company's GL accounts, cost centers, tax set-up and coding policy (``data/``), as every
+    benchmark codes with them."""
+    from ap_coder.core.reference_data import load_reference_data
+
+    return load_reference_data(
+        DATA / "chart_of_accounts.csv", DATA / "cost_centers.csv", DATA / "tax_gl_mapping.csv",
+        DATA / "coding_policy.md",
+    )  # fmt: skip
+
+
 REVIEWER = "AP clerk (benchmark)"
 
 # The true account of each catalog item in data/chart_of_accounts.csv, as an AP clerk would code it.
@@ -467,15 +480,12 @@ def simulate(
     from ap_coder.coding.line_tax import apply_tax_code, confirm_line, tax_code_of, tax_learned
     from ap_coder.coding.validation import coding_confidence, line_coding_confidence
     from ap_coder.core.memory import _normalise, compare_with_history, format_examples, select_examples
-    from ap_coder.core.reference_data import UNASSIGNED, load_reference_data
+    from ap_coder.core.reference_data import UNASSIGNED
     from ap_coder.core.store import Store
     from ap_coder.web.invoice_view import suggestions
 
     realism = realism or Realism()
-    reference = load_reference_data(
-        DATA / "chart_of_accounts.csv", DATA / "cost_centers.csv", DATA / "tax_gl_mapping.csv",
-        DATA / "coding_policy.md",
-    )  # fmt: skip
+    reference = sample_reference()
     company = make_company(seed, vendors)
     seen_items: dict[int, set[str]] = defaultdict(set)  # vendor -> items AP approved for it
     seen_texts: dict[int, set[str]] = defaultdict(set)  # vendor -> line wordings AP approved for it
@@ -952,12 +962,8 @@ def ai_coder(settings: Any = None) -> Any:
     ``CodingError`` when it isn't answering, with what to do."""
     from ap_coder.ai.inference import InvoiceCoder
     from ap_coder.core.config import Settings
-    from ap_coder.core.reference_data import load_reference_data
 
-    reference = load_reference_data(
-        DATA / "chart_of_accounts.csv", DATA / "cost_centers.csv", DATA / "tax_gl_mapping.csv",
-        DATA / "coding_policy.md",
-    )  # fmt: skip
+    reference = sample_reference()
     coder = InvoiceCoder(settings or Settings.from_env(), reference, provider="local")
     coder._prepare_local()
     return coder

@@ -61,11 +61,9 @@ INSTRUCTIONS = [
 
 
 def _prediction_files(output_dir: Path) -> list[Path]:
-    return sorted(
-        p
-        for p in output_dir.glob("*.json")
-        if not p.name.endswith((".validation.json", ".di.json")) and p.name != "batch_summary.json"
-    )
+    from .evaluation import is_prediction_file
+
+    return sorted(p for p in output_dir.glob("*.json") if is_prediction_file(p))
 
 
 def _fmt_num(value: Any) -> str:
