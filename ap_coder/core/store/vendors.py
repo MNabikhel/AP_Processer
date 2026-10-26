@@ -16,6 +16,8 @@ from ._base import (
     _in_list,
     _now,
 )
+from .capture import capture_lookup
+from .summary import fetch_rows
 
 
 def _distinct(first: dict[str, Any], row: dict[str, Any]) -> bool:
@@ -199,21 +201,25 @@ class VendorsMixin:
         """The vendors a reviewer picks from on the review screen: the vendor master's and the ones added there; with
         no vendor master, every vendor with an approved invoice too. Sorted by name."""
         with self._conn() as conn:
-            rows = [dict(r) for r in conn.execute("SELECT * FROM vendors WHERE in_master IN (1, 2)")]
+            rows = fetch_rows(conn, "SELECT * FROM vendors WHERE in_master IN (1, 2)")
             if not any(r["in_master"] == 1 for r in rows):
                 known = {r["vendor_key"] for r in rows}
                 # the tax numbers AP gave such a vendor on the Vendors page come along (the review screen fills them)
-                own = {r["vendor_key"]: dict(r) for r in conn.execute("SELECT * FROM vendors WHERE in_master = 0")}
-                for r in conn.execute(
-                    "SELECT vendor_key, MAX(vendor_name) name FROM invoices WHERE status = 'approved' AND vendor_key "
-                    "!= '' GROUP BY vendor_key"
-                ):
+                own = {r["vendor_key"]: r for r in fetch_rows(conn, "SELECT * FROM vendors WHERE in_master = 0")}
+                for r in self.summary_memo("approved_vendors", self._approved_vendors, "approved_vendors"):
                     if r["vendor_key"] not in known:
                         numbers = {c: own.get(r["vendor_key"], {}).get(c) or ""
                                    for c in ("expected_gst", "qst_number", "pst_number")}  # fmt: skip
                         rows.append({"vendor_key": r["vendor_key"], "display_name": r["name"], "in_master": 0,
                                      **numbers})  # fmt: skip
         return sorted(rows, key=lambda r: str(r.get("display_name") or "").lower())
+
+    def _approved_vendors(self) -> list[dict[str, Any]]:
+        """Every vendor with an approved invoice, its name (``vendor_choices``)."""
+        with self._conn() as conn:
+            self._summary_fresh(conn)
+            return fetch_rows(conn, "SELECT vendor_key, MAX(vendor_name) name FROM invoice_summary WHERE status = "
+                                    "'approved' AND vendor_key != '' GROUP BY vendor_key")  # fmt: skip
 
     def add_vendor_here(
         self, name: str, *, gst: str = "", qst: str = "", pst: str = "", province: str = "", actor: str | None = None,
@@ -329,16 +335,44 @@ class VendorsMixin:
         return rows
 
     def vendor_invoice_dates(self) -> list[dict[str, Any]]:
-        """Vendor, date and total of every invoice in review or approved (for ``recurring.detect``)."""
+        """Vendor, date and total of every invoice in review or approved (for ``recurring.detect``): read again once
+        an invoice changed (``summary_memo``). Shared: read it, don't change it."""
+        return self.summary_memo("vendor_invoice_dates", self._vendor_invoice_dates, "dates")
+
+    def _vendor_invoice_dates(self) -> list[dict[str, Any]]:
         with self._conn() as conn:
-            return [
-                dict(r)
-                for r in conn.execute(
-                    "SELECT vendor_key, vendor_name, invoice_date, grand_total, currency FROM invoices "
-                    "WHERE vendor_key != '' AND status IN " + _ACTIVE_IN,
-                    ACTIVE_STATUSES,
-                )
-            ]
+            self._summary_fresh(conn)
+            return fetch_rows(
+                conn,
+                "SELECT vendor_key, vendor_name, invoice_date, grand_total, currency FROM invoice_summary "
+                "WHERE vendor_key != '' AND +status IN " + _ACTIVE_IN + " ORDER BY id",  # as the invoices are kept
+                ACTIVE_STATUSES,
+            )
+
+    def _vendor_totals(self) -> tuple[list[dict[str, Any]], dict[str, dict[str, float]]]:
+        """(each vendor's invoice counts and dates, {vendor: {currency: approved spend}}): the invoices' part of
+        ``vendor_summaries``, from the invoices' summary."""
+        with self._conn() as conn:
+            self._summary_fresh(conn)
+            rows = fetch_rows(
+                conn,
+                """SELECT vendor_key, MAX(vendor_name) vendor_name, COUNT(*) invoices,
+                              SUM(status = 'approved') approved, SUM(status = 'review') to_review,
+                              SUM(CASE WHEN status = 'approved' AND COALESCE(NULLIF(currency, ''), 'CAD') = 'CAD'
+                                       THEN grand_total ELSE 0 END) spend_cad,
+                              MIN(invoice_date) first_invoice, MAX(invoice_date) last_invoice,
+                              MIN(created_at) first_seen
+                       FROM invoice_summary WHERE vendor_key != '' AND status != 'failed' GROUP BY vendor_key""",
+            )
+            spend: dict[str, dict[str, float]] = {}
+            for r in fetch_rows(
+                conn,
+                """SELECT vendor_key, COALESCE(NULLIF(UPPER(TRIM(currency)), ''), 'CAD') currency,
+                          SUM(grand_total) total
+                   FROM invoice_summary WHERE vendor_key != '' AND status = 'approved' GROUP BY vendor_key, 2""",
+            ):
+                spend.setdefault(r["vendor_key"], {})[r["currency"]] = round(r["total"] or 0, 2)
+        return rows, spend
 
     def has_other_vendors(self, key: str) -> bool:
         with self._conn() as conn:
@@ -350,19 +384,9 @@ class VendorsMixin:
 
     def vendor_summaries(self) -> list[dict[str, Any]]:
         """One row per vendor seen on an invoice: counts, spend, dates, AI accuracy and AP's settings."""
+        totals, spend = self.summary_memo("vendor_totals", self._vendor_totals)  # read again once an invoice changed
+        rows = [dict(r) for r in totals]
         with self._conn() as conn:
-            rows = [
-                dict(r)
-                for r in conn.execute(
-                    """SELECT vendor_key, MAX(vendor_name) vendor_name, COUNT(*) invoices,
-                              SUM(status = 'approved') approved, SUM(status = 'review') to_review,
-                              SUM(CASE WHEN status = 'approved' AND COALESCE(NULLIF(currency, ''), 'CAD') = 'CAD'
-                                       THEN grand_total ELSE 0 END) spend_cad,
-                              MIN(invoice_date) first_invoice, MAX(invoice_date) last_invoice,
-                              MIN(created_at) first_seen
-                       FROM invoices WHERE vendor_key != '' AND status != 'failed' GROUP BY vendor_key"""
-                )
-            ]
             lessons = {
                 r["vendor_key"]: dict(r)
                 for r in conn.execute(
@@ -371,13 +395,6 @@ class VendorsMixin:
                 )
             }
             masters = {r["vendor_key"]: dict(r) for r in conn.execute("SELECT * FROM vendors")}
-            spend: dict[str, dict[str, float]] = {}
-            for r in conn.execute(
-                """SELECT vendor_key, COALESCE(NULLIF(UPPER(TRIM(currency)), ''), 'CAD') currency,
-                          SUM(grand_total) total
-                   FROM invoices WHERE vendor_key != '' AND status = 'approved' GROUP BY vendor_key, 2"""
-            ):
-                spend.setdefault(r["vendor_key"], {})[r["currency"]] = round(r["total"] or 0, 2)
         rates = self.fx_rates()
         for r in rows:
             # Per currency: dollars and euros do not add up, and a USD-only vendor did not spend 0.00 CAD.
@@ -407,8 +424,8 @@ class VendorsMixin:
             return {}
         with self._conn() as conn:
             rows = conn.execute(
-                "SELECT invoice_id, json_extract(capture_json, '$.fields.vendor_name.status') FROM invoice_capture "
-                f"WHERE {_in_list('invoice_id')}",
+                f"SELECT invoice_id, {capture_lookup('$.fields.vendor_name.status', 'name_status')} "
+                f"FROM invoice_capture WHERE {_in_list('invoice_id')}",
                 (json.dumps([int(i) for i in ids]),),
             ).fetchall()
         return {int(r[0]): str(r[1] or "") for r in rows}

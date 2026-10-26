@@ -353,14 +353,18 @@ def vendor_findings(
                  "new vendor")
             )  # fmt: skip
     in_master = bool(master and master.get("in_master") == IN_ERP)
-    for posted in store.in_erp(coding.vendor_name, coding.invoice_number, coding.grand_total)[:2]:
+    live = _jde_live_findings(coding, store, exclude_invoice_id)
+    # JD Edwards' own answer says more (the voucher, paid or not) than the register the sync filled: said instead
+    # of it (B-1217)
+    jde_said = any(code == "DUPLICATE_IN_ERP" for _, code, _ in live)
+    for posted in [] if jde_said else store.in_erp(coding.vendor_name, coding.invoice_number, coding.grand_total)[:2]:
         findings.append(
             (ERROR, "DUPLICATE_IN_ERP",
              f"invoice {posted['invoice_number']} from this vendor is already in the ERP"
              f"{' (dated ' + posted['invoice_date'] + ')' if posted['invoice_date'] else ''}, total "
              f"{posted['total']:,.2f}: possible duplicate payment")
         )  # fmt: skip
-    findings += _jde_live_findings(coding, store, exclude_invoice_id)
+    findings += live
     for other in store.duplicates_elsewhere(
         coding.vendor_name, coding.invoice_number, coding.grand_total, exclude_invoice_id
     )[:3]:

@@ -17,8 +17,10 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from ap_coder.core.safe import csv_row
 from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW
 from ap_coder.erp import directory, search, stamp
-from ap_coder.web.core import done, get_store, local_url, reference_or_none, refuse, render, reviewer
+from ap_coder.web.access import is_admin
+from ap_coder.web.core import done, get_store, local_url, reference_or_none, refuse, render, reviewer, server_mode
 from ap_coder.web.files import download
+from ap_coder.web.identity import person
 from ap_coder.web.pages.invoice import changed_meanwhile
 
 router = APIRouter()
@@ -61,11 +63,20 @@ def hit_view(hit: search.Hit) -> dict[str, Any]:
     }
 
 
+def _owner(request: Request) -> str:
+    """Whose saved layouts a person changes: on the server, their own (the shared ones are an Admin's, D-109); on a
+    laptop, and for an Admin, the shared ones ("")."""
+    me = person()
+    if not server_mode(request) or me is None or is_admin(request):
+        return ""
+    return f"user:{me.user_id}"
+
+
 def _query(request: Request) -> directory.Query:
     """The directory's query: the page's own, else (nothing asked) the default saved layout."""
     params = request.query_params
     if not params:
-        preset = directory.default_preset(get_store(request))
+        preset = directory.default_preset(get_store(request), _owner(request))
         if preset:
             from urllib.parse import parse_qsl
 
@@ -103,8 +114,8 @@ def search_page(request: Request) -> HTMLResponse:
         rows=[row_view(r, query.columns) for r in result.rows],
         erp=[hit_view(h) for h in result.erp],
         statuses=STATUS,
-        presets=directory.presets(store),
-        default_preset=(directory.default_preset(store) or {}).get("name", ""),
+        presets=directory.shown_presets(store, _owner(request)),
+        default_preset=(directory.default_preset(store, _owner(request)) or {}).get("name", ""),
         here=query.query_string(),
         filtered=bool(query.filters or query.q),
         kinds={"money": directory.MONEY, "date": directory.DATE, "number": directory.NUMBER},
@@ -169,11 +180,11 @@ def save_preset(
     """Save the layout shown (its columns, filters and sort) by name."""
     store = get_store(request)
     try:
-        kept = directory.save_preset(store, name, query, make_default=bool(make_default))
+        kept = directory.save_preset(store, name, query, make_default=bool(make_default), owner=_owner(request))
     except ValueError as exc:
         return refuse(str(exc))
     store.log_event("directory_preset_saved", None, reviewer(), {"name": kept})
-    preset = next(p for p in directory.presets(store) if p["name"] == kept)
+    preset = next(p for p in directory.presets(store, _owner(request)) if p["name"] == kept)
     return done(request, local_url(f"/search?{preset['query']}"), f"Layout “{kept}” saved.")
 
 
@@ -181,7 +192,7 @@ def save_preset(
 def default_preset(request: Request, name: str = Form("")) -> JSONResponse:
     """The saved layout the directory opens with ("" for the standard one)."""
     store = get_store(request)
-    if not directory.set_default(store, name):
+    if not directory.set_default(store, name, _owner(request)):
         return refuse("That layout is not saved any more.", 404)
     text = f"The directory now opens with “{name}”." if name else "The directory now opens with the standard layout."
     return done(request, "/search", text)
@@ -190,7 +201,9 @@ def default_preset(request: Request, name: str = Form("")) -> JSONResponse:
 @router.post("/search/presets/delete")
 def delete_preset(request: Request, name: str = Form("")) -> JSONResponse:
     store = get_store(request)
-    if not directory.delete_preset(store, name):
+    if not directory.delete_preset(store, name, _owner(request)):
+        if _owner(request) and any(p["name"] == name for p in directory.presets(store)):
+            return refuse("That layout is shared with everyone: an Admin deletes it.", 403)
         return refuse("That layout is not saved any more.", 404)
     store.log_event("directory_preset_deleted", None, reviewer(), {"name": name})
     return done(request, "/search", f"Layout “{name}” deleted.")

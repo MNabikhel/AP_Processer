@@ -45,6 +45,28 @@ Why these numbers:
 - **Disk**: each AP Coder version is 2 to 3 GB (its packages and OCR models), and two are kept (the current one and
   the previous one, to go back to). The models are about 10 GB. The data grows with the invoices (about 0.5 MB each,
   kept with the database) and 14 daily copies of the database.
+- **How many people and invoices** (D-111). *Measured*: a 12,000-invoice database, a load test of logged-in people
+  each clicking every 10 seconds on average through the review queue, invoices, their pages, approvals, search and
+  exports, on a 4-core test machine (shared with other work, so on the slow side), before the database speed-ups
+  of the same release:
+
+  | People at once | 1 web worker | 4 web workers |
+  |---|---|---|
+  | 25 | half the pages in 6.9 s, 95% in 39 s | half in 0.4 s, 95% in 1.5 s |
+  | 50 | half in 45 s; 22 pages gave up after 2 minutes | half in 1.0 s, 95% in 5.9 s |
+  | 100 | 82 pages gave up after 2 minutes | half in 6.9 s, 95% in 22 s (all 4 cores busy) |
+
+  Memory: 2 GB for the 4 workers and the background process with 25 people, 5 GB with 100. *Estimated* (the
+  processor and memory from that measurement; the graphics card from an assumed 15 s a page, not measured here):
+
+  | | 5,000 invoices a month, 25 people | 10,000 invoices a month, 50 people at once |
+  |---|---|---|
+  | Processor | 8 cores, `--workers 8` (the default) | 16 cores, `--workers 8` (8 for OCR and the rest) |
+  | Memory | 32 GB | 64 GB |
+  | Graphics card | 16 GB of VRAM, `--llm-parallel 2` | 24 GB of VRAM or more, `--llm-parallel 4` (step 8) |
+  | The graphics card's day | 2 to 3 hours of reading (about 500 pages a working day, every invoice read) | 4 to 6 hours; about half with clean digital PDFs left out (step 6) |
+
+  The reading runs in the background: nobody waits on it, but invoices come into the queue later on a busy day.
 - **Python**: the offline bundle has packages for Python 3.11 to 3.14. Install Python 3.12 from python.org's offline
   installer (copy it in): *Customize installation* → *Install for all users*, and *Add Python to environment
   variables*.
@@ -106,6 +128,14 @@ Why these numbers:
    later (`C:\APCoder\APProcessor-<version>`, step 11) are made inside `C:\APCoder`, so they get the same three
    permissions and nothing else. Check with `icacls C:\APCoder\APProcessor`: only those three lines.
 
+   The code folder must stay this way: `server-update` runs, as you, what is in it. It trusts only the folder it is
+   run from (and, for `--back`, a folder beside it in `C:\APCoder`): `server.json` is in the data folder, which the
+   service's account can change, so a `folder` there that is not the one you run `server-update` from is refused.
+   The administrator's commands (`server-update`, `service install|start|stop|status|remove`) read nothing from the
+   data folder's `.env`, the Pythons `server-update` starts get a clean environment (`-E -s`, no `PYTHON*` or
+   `PIP_*` variable), and no `.env` ever sets `PATH`, `PYTHON*`, `PIP_*` and the like. Put AP Coder's settings for
+   the service in `server.json` (`service install`) or in the machine's environment (`setx /M`), not in `.env`.
+
 ## 3. The HTTPS certificate
 
 Staff sign in with a password, so AP Coder is served over HTTPS only. Ask your company's certificate authority (CA)
@@ -146,7 +176,10 @@ the service with `--port 443` when nothing else on the server uses that port (II
 
 **Behind IIS** (optional, if your policy wants every web site in IIS): IIS with URL Rewrite and ARR forwards to
 `https://127.0.0.1:8501`, and the service is installed with `--proxy <the IIS server's IP address>` (`127.0.0.1` when IIS
-is on this server), so AP Coder believes the forwarded client address from that one address only.
+is on this server), so AP Coder believes the forwarded client address from that one address only. IIS must then
+*replace* `X-Forwarded-For` with the client's address (not append to one the browser sent): the logins' pauses
+(step 10) and the access log go by that address. Without `--proxy`, everyone behind IIS has IIS's address: they
+share its pauses, and the server refuses such requests anyway.
 
 ## 5. The firewall
 
@@ -173,7 +206,36 @@ Windows asks for `APCoderService`'s password once and keeps it for the task. `se
 `SYSTEM`, `"LOCAL SERVICE"` and `"NETWORK SERVICE"` need no password), `--port` (default 8501), `--host` (default
 `0.0.0.0`: every network card), `--certfile`, `--keyfile`, `--allowed-hosts`, `--proxy`, `--insecure-http`,
 `--task-name` (default `AP Coder`), `--folder` (the AP Coder folder the service runs; default: the one the command
-runs in; `server-update` changes it), `--no-start`.
+runs in; `server-update` changes it), `--allowed-folders` (the folders Admins may name, step 9), `--workers`
+and `--llm-parallel` (below), `--no-start`.
+
+**Workers** (`--workers N`, kept in `server.json` as `"workers"`; default one per processor core, at most 8): one
+Python process answers about 1.6 pages a second however many cores the server has, so the service runs N *web
+workers*, all answering on the same port, and one *background process* beside them for the work nobody waits on
+(OvisOCR2's reading, the AI reviewer, the Azure check, JD Edwards, the daily backup, the finance hub's schedule). A
+worker or the background process that stops is started again on its own. Each worker uses about 300 to 600 MB of
+memory (measured on a 12,000-invoice database), so 8 workers need 4 to 5 GB. `--workers 1` runs everything in one
+process, as before. Stopping (`service stop`) gives the requests under way 25 seconds, then ends them: the service
+is stopped within 30 seconds.
+
+**Requests to LM Studio at once** (`--llm-parallel N`, `server.json` `"llm_parallel"`, or `AP_LLM_PARALLEL`;
+default 1): how many pages OvisOCR2 reads, and how many questions the chat model answers, at the same time, for all
+of AP Coder's processes together. 1 is strictly one at a time, the safe choice with LM Studio's defaults. Raise it
+only once the model server is set to answer that many together (step 8): the background process then reads that
+many invoices at once.
+
+**Less work for the graphics card** (both on by default on the server, off on a laptop):
+
+- A digital PDF whose own text the rule reader read in full (every page with its text layer, the supplier, invoice
+  number, date and total all verified, the totals adding up) and that goes to a person anyway (its supplier is not
+  touchless) is not read by OvisOCR2: the invoice page says so, and *Add it to OvisOCR2's queue* still reads it.
+  One in ten of them is read all the same, so OvisOCR2's accuracy stays measured; *Settings* → *Reading* counts the
+  invoices and pages left out. Invoices a touchless supplier sent are always read by every reader. Turn it off with
+  `AP_PAGE_READER_SKIP_CLEAN=0` in the machine's environment (`setx /M`); `AP_PAGE_READER_SAMPLE=0.2` reads one in
+  five.
+- The AI reviewer reviews only the invoices AP Coder could approve without a person (*Settings* → *Reading* → *AI
+  reviewer* → *What it reviews*; an Admin may choose *Every invoice*). None is approved without a person until it
+  agrees, as before; the others go to a person anyway.
 
 | To | Run |
 |---|---|
@@ -187,10 +249,24 @@ What it does: the task runs `run.cmd`, which runs AP Coder's *service host* (`py
 host starts the dashboard (`python -m ap_coder serve --server ...` with the settings of `server.json`) and starts it
 again if it stops (after 5 seconds, then longer, up to 5 minutes). The task itself comes back within 5 minutes if the
 host was ended. Settings can also come from environment variables, which win over `server.json`: `AP_SERVER_PORT`,
-`AP_DASHBOARD_ADDRESS`, `AP_TLS_CERT`, `AP_TLS_KEY`, `AP_ALLOWED_HOSTS`, `AP_SERVER_PROXY`.
+`AP_DASHBOARD_ADDRESS`, `AP_TLS_CERT`, `AP_TLS_KEY`, `AP_ALLOWED_HOSTS`, `AP_SERVER_PROXY`, `AP_SERVER_WORKERS`,
+`AP_LLM_PARALLEL`.
 
 **Logs**: `D:\APCoderData\logs\service.log` (what the host and the dashboard say; 5 MB, then up to 5 older files,
-`service.log.1` to `.5`). The daily database backup runs as on a laptop (step 9).
+`service.log.1` to `.5`), and `D:\APCoderData\logs\access.log`, a line per request: the time, the address, the
+user name (`-` before a login), the method, the path (without what follows `?`), the status, the bytes and the
+milliseconds (10 MB, then up to 9 older files); with several workers, one file per worker, `access-1.log`,
+`access-2.log`... Each download (a batch's files or ZIP, the directory's export, a
+backup, a report) is also in *Activity* → *Logins*, with the person. The daily database backup runs as on a laptop
+(step 9).
+
+**HTTPS**: TLS 1.2 and 1.3 only; on TLS 1.2 only ECDHE with AES-GCM or ChaCha20 (no AES-CBC, no SHA-1 ciphers).
+Browsers from the last ten years have them. Answers carry no `server:` header.
+
+**Sizes**: a request before a login takes at most 64 KB (the login form); after it, 260 MB. *Import invoices* takes
+up to 200 files and 250 MB per upload, each file up to 50 MB (a saved email 100 MB), and each person up to 2 GB or
+120 uploads an hour; more is refused with a plain message. A larger batch: an Admin puts the files in the invoices
+folder.
 
 Don't double-click `APProcessor.bat` on the server once the service runs: it would start a second AP Coder on the same
 data. Use `service stop` / `service start`.
@@ -203,8 +279,8 @@ On the server's console (nobody can sign up from a browser):
 .venv\Scripts\python.exe -m ap_coder users add --admin jsmith
 ```
 
-It asks for a password, twice (at least 12 characters, not the user name). That password is a temporary one: tell it
-to the person, who must choose their own the first time they sign in at `https://apcoder.company.local:8501`, before
+It asks for a password, twice (at least 12 characters, not the user name). That password is a temporary one (it
+works for 3 days): tell it to the person, who must choose their own the first time they sign in at `https://apcoder.company.local:8501`, before
 anything else. They then add everyone else (step 10).
 
 ## 8. LM Studio on the same server
@@ -238,14 +314,35 @@ window, started at boot like AP Coder.
 
 5. **Check it**: `lms server status` and `lms ps` (as that account) show the server and the loaded model; in AP Coder,
    *Settings* → *Reading* → *Check again*. AP Coder finds LM Studio at `http://127.0.0.1:1234/v1`, its usual place.
+6. **Several requests at once** (for 5,000 invoices a month and more). One request at a time leaves most of a
+   graphics card idle; a server that answers several together (continuous batching) reads 2 to 4 pages in about
+   the time of one and a half (estimated, from llama.cpp's published batching figures; not measured here). Two
+   ways, both offline and both on Windows Server:
+   - **LM Studio** (0.4 or newer): load each model with *Max concurrent predictions* (`--parallel` with `lms load`)
+     set to 4, and give each model 4 times its context (`--context-length 65536` for the chat model): the context is
+     shared by the requests answered together. Then `service install --llm-parallel 4`.
+   - **llama.cpp's `llama-server`** (a single program, its CUDA build copied in): one per model, for example
+     `llama-server -m gemma-4-12B-it-QAT.gguf --port 1234 -ngl 99 --parallel 4 -c 65536 --cache-type-k q8_0
+     --cache-type-v q8_0`, and OvisOCR2 with its `--mmproj` file on another port (`AP_PAGE_READER_BASE_URL`). Then
+     `--llm-parallel 4`.
+
+   vLLM batches best but runs on Linux only (WSL2 on Windows Server is possible, not covered here). The KV cache of 4
+   requests needs memory: with 16 GB of VRAM keep 4 for the chat model and 2 for OvisOCR2 (`--llm-parallel 2`), with
+   24 GB or more, 4 for both.
 
 ## 9. Backups
 
 - **Every day, automatically**: a copy of the database in `D:\APCoderData\backups` (`ap_coder-<date>-<time>.db`), when
   AP Coder starts and once a day while it runs; the newest 14 are kept. An update adds its own
   (`...-before-update-<version>.db`), kept until you delete it.
+- **The folders an Admin may name** (the backups' second copy, the finance hub's folder): on the server only those IT
+  lists, or a folder inside one. Give them when installing the service, separated by `;`:
+  `service install --allowed-folders "\\fileserver\Backups\APCoder;\\fileserver\FinanceHub"` (kept in
+  `server.json` as `allowed_folders`; the other settings are kept). Any other folder typed on a page is refused before
+  AP Coder touches it, so a page can't make the server's account sign in to another computer's share (its password
+  hash sent there) or copy the invoices out. With none listed, both settings are refused.
 - **A copy elsewhere**: an Admin sets *Settings* → *Data & backups* → *Also copy each backup to* a network share, for
-  example `\\fileserver\Backups\APCoder` (the `backup_copy_dir` setting). Each daily backup is then copied there too
+  example `\\fileserver\Backups\APCoder` (the `backup_copy_dir` setting; one of the allowed folders above). Each daily backup is then copied there too
   (the newest 14 kept), and the page says when the last copy was made or why it failed. The service's account must be
   able to write there: a domain account (step 2), with *Modify* on that share folder.
 - **The server's own backup** (Windows Server Backup, Veeam...): include `D:\APCoderData`, but restore from the
@@ -293,28 +390,61 @@ From the server's console, the same:
 you type, twice (`add` and `reset`); the person changes it at their first sign-in. `activate` turns an account that
 was turned off on again, with its password as it was.
 
-Five wrong passwords within 15 minutes for one username from one computer pause that username's logins from that
-computer for 15 minutes; from anywhere else the person can still log in, so nobody can lock someone else out.
-Thirty from one address, whatever the usernames, pause that address (an office's internet connection or a remote
-desktop server is shared: five people mistyping don't pause it). The server's own console (127.0.0.1, no `--proxy`) is
-never paused by address. Resetting a person's password lifts what pauses them, their address too; the *Users* page
-lists paused addresses with *Lift the pause*. Passwords: at least 12 characters, not the username or the name, not a
-common password, not one character or a short pattern repeated. Every sign-in, lockout and change to a user is in
-*Activity*, shown to Admins only.
+Logins that don't match pause, in three ways:
+
+- **One username from one address**: five wrong passwords within 15 minutes pause that username's logins from that
+  address for 15 minutes (five wrong *current* passwords on *Your password* count the same, and also log the person
+  out).
+- **One username from anywhere**: from the 10th wrong password within an hour, from any addresses, that username's
+  logins pause for 1 minute, then 2, 4, 8, and 15 minutes after each further one, from every address except those the
+  person logged in from in the last 30 days. Someone guessing from many computers gets a few tries an hour; the
+  person at their own desk is not kept out.
+- **One address, whatever the usernames**: thirty pause that address for 15 minutes (an office's internet connection
+  or a remote desktop server is shared: five people mistyping don't pause it). The people who logged in from that
+  address in the last 30 days can still log in from it: the pause stops guesses at other names, not the office.
+
+The server's own console (127.0.0.1, no `--proxy`) is never paused by address. Resetting a person's password lifts
+what pauses them, their address too; the *Users* page lists paused addresses and usernames ("from anywhere" too) with
+*Lift the pause*. Every pause is in *Activity* → *Logins*.
+
+Passwords: at least 12 characters, not the username or the name, not a common password, not one character or a short
+pattern repeated. A temporary password (a new account, a reset) works for 3 days: after that, reset it again. Every
+sign-in, lockout, change to a user and download is in *Activity*, shown to Admins only.
+
+**Sessions**: a login ends after 30 minutes unused, after 12 hours whatever, and when the browser is closed. IT can
+change the first two in `server.json`: `"session_idle_minutes": 30` (5 to 480) and `"session_hours": 12` (1 to 168),
+applied when the service starts again. *Your password* shows where else the person is logged in and logs them out
+there.
+
+**Separation of duties**: the second approval is always another account than the first, and never an account the
+first approver added or reset the password of in the last 7 days (an Admin can't approve their own invoice twice
+through an account they made). An Admin can also tick *Settings* → *Review* → *The person who posts a batch to JD
+Edwards can't be one who approved its invoices* (off by default). *Activity* → *Controls report* lists the invoices
+where one person did several steps (approved, gave the second approval, exported, posted). *Help* → *Report a
+problem*'s setup report (versions, settings, the server's names) is an Admin's.
 
 ## 11. Updating and going back
 
-A new version comes as a new offline bundle. Copy it to the server, then, in the current AP Coder folder:
+A new version comes as a new offline bundle, with its SHA-256: the bundle builder prints it and writes it beside the
+ZIP (`APProcessor-offline-<version>.zip.sha256`). Get that value from whoever built the bundle **by another way than
+the ZIP** (e-mail, chat, read over the phone): it proves the ZIP is the one they built, so a ZIP changed on a share
+or on its way is refused before anything of it runs. Copy the ZIP to the server, then, in the current AP Coder
+folder (the one `service status` names: `server-update` refuses to run from another):
 
 ```bat
-.venv\Scripts\python.exe -m ap_coder server-update D:\Install\APProcessor-offline-0.5.0-20261201.zip --dry-run
-.venv\Scripts\python.exe -m ap_coder server-update D:\Install\APProcessor-offline-0.5.0-20261201.zip
+.venv\Scripts\python.exe -m ap_coder server-update D:\Install\APProcessor-offline-0.5.0-20261201.zip --sha256 <the 64 digits> --dry-run
+.venv\Scripts\python.exe -m ap_coder server-update D:\Install\APProcessor-offline-0.5.0-20261201.zip --sha256 <the 64 digits>
 ```
+
+Without `--sha256` it refuses. `--no-hash-check` installs without the check: it warns, and `server.json`'s
+`history` records it (`"bundle_hash": "not checked (--no-hash-check)"`). Use it only for a bundle you built
+yourself on this server. (`certutil -hashfile <zip> SHA256` shows a file's SHA-256 too.)
 
 The first line shows the steps with the folders and files, and changes nothing (on a server where the service isn't
 installed yet, it says there is no service to stop or start). The second does them, in order:
 
-1. checks the bundle: one AP Coder folder, every file it lists, nothing damaged, and newer than the one running;
+1. checks the bundle: its SHA-256 is the one given, one AP Coder folder, every file it lists, nothing damaged, and
+   newer than the one running;
 2. stops the service (staff see AP Coder as closed for a few minutes: pick a quiet time);
 3. backs up the database: `backups\ap_coder-<date>-<time>-before-update-0.5.0.db`;
 4. unzips the bundle next to the current folder: `C:\APCoder\APProcessor-0.5.0`;
@@ -355,9 +485,15 @@ installs in the administrator's `%USERPROFILE%\.ap_coder\settings.json`, as on a
 | The log repeats "The dashboard stopped (exit code 1)" | The lines before it say why: often the port in use (another program on 8501: `netstat -ano \| findstr :8501`), or a certificate file it can't read (the account's rights on `D:\APCoderData\tls`). |
 | "LM Studio isn't running" in AP Coder | `schtasks /run /tn "LM Studio server"`, then `lms server status` as its account; *Settings* → *Reading* → *Check again*. |
 | The second backup copy fails | The account can't write to the share: use a domain account with *Modify* there (step 9). |
+| `server-update` asks for the SHA-256, or says it is not the bundle that was built | Get the SHA-256 from whoever built the bundle (the `.sha256` file beside the ZIP), by another way than the ZIP, and give it with `--sha256`. A different one: copy the ZIP again; still different, ask for the bundle again (it may have been changed). |
+| `server-update` says "this command runs from" another folder | Run it in the folder `service status` names (`cd /d` there). If server.json names a folder nobody installed, someone changed it: check, then `service install --folder <the right folder>`. |
+| "AP Coder writes only to the folders IT allows" | Add the folder: `service install --allowed-folders "..."` (step 9). |
+| "Your temporary password has expired" | An Admin resets it again (*Users* → *Reset password*). |
 | `server-update` says the bundle is not newer | It is the version running, or older. To go back to the previous version: `server-update --back`. |
 | `server-update --back` says "Nothing to go back to" | No update was made with `server-update` since the last `--back`. To install an older version, ask for its bundle and the backup made before the update. |
 | Someone forgot their password, or is locked out | An Admin: *Users* → *Reset password*; or on the console `users reset <username>`. A lockout ends by itself after 15 minutes. |
+| Pages are slow when many people work at once | `service status`, then Task Manager: when every core is busy, the server needs more cores (step 1); when they are not, `service install --workers N` with N up to the cores. The log names a worker started again after it stopped. |
+| Invoices wait long for OvisOCR2 | Set the model server to answer several requests together and raise `--llm-parallel` (step 8, point 6). |
 | Anything else | `.venv\Scripts\python.exe -m ap_coder doctor`, and the log. *Help* → *Report a problem* makes a report without invoice data. |
 
 **What `doctor` checks on the server** (when `AP_SERVER_MODE=1`, or `server.json` is in the data folder), besides

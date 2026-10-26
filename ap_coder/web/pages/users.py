@@ -3,12 +3,18 @@ role; add a person (with a temporary password shown once), reset a password, cha
 back on. The last active Admin can't be demoted or turned off (``core/store/users.py``). Every change is in the
 Activity log.
 
-A temporary password is never put in a message kept for the next page or in the database: it waits in this
-process's memory under a one-off key, for the Admin who made it, and is shown once.
+A temporary password is never put in a message kept for the next page or in the database as it is: it waits in
+this process's memory under a one-off key, for the Admin who made it, and is shown once. With several web workers
+(D-111) the page that shows it may be another worker's: it then waits in the database's short-lived table, sealed
+with the key the workers hold in memory only (made at each start), so a backup made in those minutes holds nothing
+readable.
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import secrets
 import threading
 import time
@@ -17,7 +23,7 @@ from typing import Any
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from ap_coder.core.store.users import ROLE_LABELS, ROLES
+from ap_coder.core.store.users import ANYWHERE, ROLE_LABELS, ROLES
 from ap_coder.web import identity
 from ap_coder.web.core import done, flash_message, get_store, refuse, render, reviewer, server_mode
 
@@ -33,8 +39,42 @@ _waiting: dict[str, tuple[float, int, str, str]] = {}  # key -> (when, the Admin
 _lock = threading.Lock()
 
 
-def _keep(username: str, password: str) -> str:
+TEMPORARY_KIND = "temporary-password"  # its kind in the short-lived table (several web workers only)
+
+
+def _shared(request: Request) -> bool:
+    return getattr(request.app.state, "processes", 1) > 1
+
+
+def _stream(secret: bytes, nonce: bytes, size: int) -> bytes:
+    key = hmac.new(secret, b"temporary-password-stream", hashlib.sha256).digest()
+    return b"".join(hmac.new(key, nonce + n.to_bytes(4, "big"), hashlib.sha256).digest() for n in range(size // 32 + 1))
+
+
+def _seal(secret: bytes, data: bytes) -> bytes:
+    """``data`` encrypted and authenticated with ``secret`` (HMAC-SHA256 as the stream and the tag)."""
+    nonce = secrets.token_bytes(16)
+    body = bytes(a ^ b for a, b in zip(data, _stream(secret, nonce, len(data)), strict=False))
+    tag = hmac.new(hmac.new(secret, b"temporary-password-tag", hashlib.sha256).digest(), nonce + body,
+                   hashlib.sha256).digest()  # fmt: skip
+    return nonce + tag + body
+
+
+def _unseal(secret: bytes, sealed: bytes) -> bytes | None:
+    nonce, tag, body = sealed[:16], sealed[16:48], sealed[48:]
+    want = hmac.new(hmac.new(secret, b"temporary-password-tag", hashlib.sha256).digest(), nonce + body,
+                    hashlib.sha256).digest()  # fmt: skip
+    if not hmac.compare_digest(tag, want):
+        return None
+    return bytes(a ^ b for a, b in zip(body, _stream(secret, nonce, len(body)), strict=False))
+
+
+def _keep(request: Request, username: str, password: str) -> str:
     found = identity.person()
+    if _shared(request):
+        data = json.dumps({"by": found.user_id if found else 0, "username": username, "password": password})
+        sealed = _seal(request.app.state.identity_secret, data.encode("utf-8"))
+        return get_store(request).keep_ephemeral(TEMPORARY_KIND, sealed, SHOWN_FOR)
     key = secrets.token_urlsafe(12)
     now = time.monotonic()
     with _lock:
@@ -44,10 +84,19 @@ def _keep(username: str, password: str) -> str:
     return key
 
 
-def _take(key: str | None) -> dict[str, str] | None:
+def _take(request: Request, key: str | None) -> dict[str, str] | None:
     found = identity.person()
     if not key or found is None:
         return None
+    if _shared(request):
+        store = get_store(request)
+        sealed = store.ephemeral(TEMPORARY_KIND, key)
+        opened = _unseal(request.app.state.identity_secret, sealed) if sealed else None
+        kept = json.loads(opened) if opened else None
+        if not kept or kept.get("by") != found.user_id:
+            return None
+        store.drop_ephemeral(TEMPORARY_KIND, key)
+        return {"username": kept["username"], "password": kept["password"]}
     with _lock:
         kept = _waiting.get(key)
         if kept is None or kept[1] != found.user_id or time.monotonic() - kept[0] > SHOWN_FOR:
@@ -73,7 +122,7 @@ def users_page(request: Request, shown: str = "") -> HTMLResponse:
     _server_only(request)
     me = identity.person()
     return render(request, "admin_users.html", "", title="Users", users=get_store(request).list_users(),
-                  roles=[(r, ROLE_LABELS[r]) for r in ROLES], temporary=_take(shown),
+                  roles=[(r, ROLE_LABELS[r]) for r in ROLES], temporary=_take(request, shown),
                   paused=[{**p, "until": _clock_text(p["until"])} for p in get_store(request).paused_addresses()],
                   paused_names=[{**p, "until": _clock_text(p["until"])}
                                 for p in get_store(request).paused_usernames()],
@@ -90,10 +139,13 @@ def add_user(
 
     password = temporary_password()
     try:
-        store.add_user(username, password, role=role, display_name=name, actor=reviewer())
+        me = identity.person()
+        store.add_user(
+            username, password, role=role, display_name=name, actor=reviewer(), by_user=me.user_id if me else None
+        )  # (D-109: it can't give that Admin's second approval)
     except ValueError as exc:
         return refuse(str(exc))
-    key = _keep(fold_username(username), password)
+    key = _keep(request, fold_username(username), password)
     return done(request, f"{PATH}?shown={key}", flash_message(f"Account {fold_username(username)} added.", "ok"))
 
 
@@ -104,8 +156,8 @@ def reset(request: Request, user_id: int) -> JSONResponse:
     me = identity.person()
     if me is not None and me.user_id == found["id"]:  # it would log you out before the password is shown (D-101)
         return refuse(OWN_RESET)
-    password = get_store(request).reset_password(user_id, actor=reviewer())
-    key = _keep(found["username"], password)
+    password = get_store(request).reset_password(user_id, actor=reviewer(), by_user=me.user_id if me else None)
+    key = _keep(request, found["username"], password)
     said = f"Password of {found['username']} reset: they are logged out everywhere."
     return done(request, f"{PATH}?shown={key}", flash_message(said, "ok"))
 
@@ -123,9 +175,10 @@ def unlock_address(request: Request, address: str = Form("")) -> JSONResponse:
 def unlock_username(request: Request, username: str = Form(""), address: str = Form("")) -> JSONResponse:
     """Lift the pause of a username from an address (5 tries that didn't match: someone forgot their password)."""
     _server_only(request)
+    where = "anywhere" if address == ANYWHERE else address
     if not get_store(request).unlock_username(username, address, actor=reviewer()):
-        return refuse(f"Logins as {username or 'that username'} from {address or 'that address'} are not paused.")
-    return done(request, PATH, f"Logins as {username} from {address} are no longer paused.")
+        return refuse(f"Logins as {username or 'that username'} from {where or 'that address'} are not paused.")
+    return done(request, PATH, f"Logins as {username} from {where} are no longer paused.")
 
 
 def _clock_text(epoch: float) -> str:

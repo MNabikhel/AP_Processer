@@ -409,8 +409,6 @@ def live_findings(store: Any, coding: Any, exclude_invoice_id: int | None = None
 
     own = set(jde_post.documents_of(store, exclude_invoice_id)) if exclude_invoice_id else set()
     credit = float(coding.grand_total or 0) < 0
-    said = {norm_invoice_number(r["invoice_number"]) for r in store.in_erp(coding.vendor_name, coding.invoice_number,
-                                                                            coding.grand_total)}  # fmt: skip
     out = []
     for r in rows:
         if norm_invoice_number(r.get("invoice_number")) != number or _text(r.get("document")) in own:
@@ -420,8 +418,6 @@ def live_findings(store: Any, coding: Any, exclude_invoice_id: int | None = None
         gross = parse_amount(r.get("gross"))
         if gross is not None and (gross < 0) != credit:
             continue
-        if number in said and not own:
-            continue  # the register (the last sync) said so already
         paid = PAID.get(_text(r.get("pay_status")).upper(), "")
         if parse_amount(r.get("open_amount")) == 0 and gross:
             paid = "paid"

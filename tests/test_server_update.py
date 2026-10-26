@@ -41,6 +41,11 @@ def _bundle(tmp_path: Path, version: str = "0.4.0", extra: dict | None = None) -
     return dest
 
 
+def _install(bundle: Path, data: Path, db: Path, **kwargs) -> int:
+    """``server-update`` with the bundle's SHA-256, as IT is given it apart from the ZIP (D-109)."""
+    return server_update.update(bundle, data, db, sha256=server_update.file_sha256(bundle), **kwargs)
+
+
 class FakeServer(server_update.Server):
     """The Windows service, the launcher's setup and the self-check, recorded."""
 
@@ -85,6 +90,8 @@ def server(tmp_path, monkeypatch):
     current = _folder(tmp_path / "apps" / "APProcessor", "0.3.0")
     service.write_config(data, folder=str(current), insecure_http=True)
     service.write_runner(data, current)
+    # The administrator runs server-update from the folder the service runs (D-109).
+    monkeypatch.setattr(server_update, "running_folder", lambda: service.settings(data).code_folder)
     db = data / "ap_coder.db"
     Store(db).set_setting("marker", "as before the update")
     return {"data": data, "current": current, "db": db, "tmp": tmp_path}
@@ -96,7 +103,7 @@ def _marker(db: Path) -> str:
 
 def test_dry_run_prints_the_steps_and_changes_nothing(server, capsys):
     bundle = _bundle(server["tmp"])
-    code = server_update.update(bundle, server["data"], server["db"], server=FakeServer(), dry_run=True)
+    code = _install(bundle, server["data"], server["db"], server=FakeServer(), dry_run=True)
     out = capsys.readouterr().out
     assert code == 0
     for step in ("Check the bundle", "Stop the service", "Back up the database", "Unzip", "Update the database",
@@ -109,7 +116,7 @@ def test_dry_run_prints_the_steps_and_changes_nothing(server, capsys):
 
 def test_an_update_backs_up_switches_folders_and_keeps_the_previous_one(server, capsys):
     fake = FakeServer()
-    assert server_update.update(_bundle(server["tmp"]), server["data"], server["db"], server=fake) == 0
+    assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=fake) == 0
     new = server["current"].parent / "APProcessor-0.4.0"
     assert fake.calls == ["stop", "set up APProcessor-0.4.0", "migrate", "self-check", "start", "up APProcessor-0.4.0"]
     assert (new / "README.md").read_text() == "AP Coder" and server["current"].is_dir()
@@ -125,7 +132,7 @@ def test_an_update_backs_up_switches_folders_and_keeps_the_previous_one(server, 
 
 def test_a_failed_self_check_restores_the_backup_and_starts_the_old_version(server, capsys):
     fake = FakeServer(check_ok=False)
-    assert server_update.update(_bundle(server["tmp"]), server["data"], server["db"], server=fake) == 1
+    assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=fake) == 1
     assert fake.calls[-2:] == ["start", "up APProcessor"]  # the old version, started again
     assert "start" not in fake.calls[:-2]
     assert _marker(server["db"]) == "as before the update"  # the migrated database put back
@@ -139,14 +146,14 @@ def test_a_failed_self_check_restores_the_backup_and_starts_the_old_version(serv
 
 def test_a_new_version_that_does_not_answer_is_rolled_back_too(server):
     fake = FakeServer(up_ok=False)
-    assert server_update.update(_bundle(server["tmp"]), server["data"], server["db"], server=fake) == 1
+    assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=fake) == 1
     assert fake.calls[-4:] == ["up APProcessor-0.4.0", "stop", "start", "up APProcessor"]
     assert _marker(server["db"]) == "as before the update"
     assert service.read_config(server["data"])["folder"] == str(server["current"])
 
 
 def test_back_restores_the_pre_update_backup_and_the_previous_folder(server, capsys):
-    assert server_update.update(_bundle(server["tmp"]), server["data"], server["db"], server=FakeServer()) == 0
+    assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=FakeServer()) == 0
     Store(server["db"]).set_setting("marker", "work done on the new version")
     fake = FakeServer()
     assert server_update.go_back(server["data"], server["db"], server=fake, yes=True) == 0
@@ -163,7 +170,7 @@ def test_back_restores_the_pre_update_backup_and_the_previous_folder(server, cap
 
 
 def test_back_dry_run_changes_nothing(server, capsys):
-    assert server_update.update(_bundle(server["tmp"]), server["data"], server["db"], server=FakeServer()) == 0
+    assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=FakeServer()) == 0
     fake = FakeServer()
     assert server_update.go_back(server["data"], server["db"], server=fake, dry_run=True) == 0
     assert fake.calls == [] and "Nothing was changed (dry run)" in capsys.readouterr().out
@@ -173,13 +180,13 @@ def test_back_dry_run_changes_nothing(server, capsys):
 @pytest.mark.parametrize("version", ["0.3.0", "0.2.0"])
 def test_the_same_or_an_older_version_is_refused_before_anything_stops(server, version, capsys):
     fake = FakeServer()
-    assert server_update.update(_bundle(server["tmp"], version), server["data"], server["db"], server=fake) == 1
+    assert _install(_bundle(server["tmp"], version), server["data"], server["db"], server=fake) == 1
     assert fake.calls == [] and "--back" in capsys.readouterr().err
 
 
 def test_a_bundle_with_a_path_out_of_its_folder_is_refused(server, capsys):
     bundle = _bundle(server["tmp"], extra={"../evil.txt": "x"})
-    assert server_update.update(bundle, server["data"], server["db"], server=FakeServer()) == 1
+    assert _install(bundle, server["data"], server["db"], server=FakeServer()) == 1
     assert "not an AP Coder offline bundle" in capsys.readouterr().err
     assert not (server["tmp"] / "apps" / "evil.txt").exists()
 
@@ -187,7 +194,7 @@ def test_a_bundle_with_a_path_out_of_its_folder_is_refused(server, capsys):
 def test_a_file_that_is_not_a_zip_is_refused(server, capsys):
     bogus = server["tmp"] / "bundle.zip"
     bogus.write_text("not a zip")
-    assert server_update.update(bogus, server["data"], server["db"], server=FakeServer()) == 1
+    assert _install(bogus, server["data"], server["db"], server=FakeServer()) == 1
     assert "bundle.zip" in capsys.readouterr().err
 
 
@@ -214,7 +221,7 @@ def test_back_keeps_the_accounts_and_the_lockouts_and_ends_every_session(server,
     store = Store(server["db"])
     boss = store.add_user("boss", GOOD, role="admin")
     fired = store.add_user("fired", GOOD)
-    assert server_update.update(_bundle(server["tmp"]), server["data"], server["db"], server=FakeServer()) == 0
+    assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=FakeServer()) == 0
     token = store.start_session(fired)
     store.deactivate_user(fired, actor="boss")
     store.reset_password(boss, actor="boss", password="brand new secret 1")
@@ -248,7 +255,7 @@ def test_a_failed_update_puts_the_backup_back_with_the_current_accounts(server):
     store = Store(server["db"])
     uid = store.add_user("boss", GOOD, role="admin")
     token = store.start_session(uid)
-    assert server_update.update(_bundle(server["tmp"]), server["data"], server["db"],
+    assert _install(_bundle(server["tmp"]), server["data"], server["db"],
                                 server=FakeServer(check_ok=False)) == 1  # fmt: skip
     assert Store(server["db"]).session_user(token) is None and Store(server["db"]).find_user("boss")
 
@@ -272,7 +279,7 @@ def test_the_bundle_is_checked_and_unzipped_from_a_private_copy(server, monkeypa
 
     monkeypatch.setattr(server_update, "check_bundle", check)
     monkeypatch.setattr(server_update, "unzip", unzip)
-    assert server_update.update(bundle, server["data"], server["db"], server=FakeServer()) == 0
+    assert _install(bundle, server["data"], server["db"], server=FakeServer()) == 0
     assert checked == unzipped and checked[0] != bundle
     assert not (server["current"].parent / "APProcessor-0.4.0" / "evil.txt").exists()
     assert not checked[0].exists()  # the private copy is removed afterwards

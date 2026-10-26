@@ -50,6 +50,22 @@ UP_WAIT = 180.0  # seconds the new dashboard has to answer
 CHECK_TIMEOUT = 900  # the self-check: about 10 s, much longer on a busy server's first OCR
 
 
+# What the new folder's Pythons, run as the administrator, keep of the administrator's environment: what Windows and
+# Python need to start, nothing that decides which code runs (no PYTHON*, PIP_*), and never anything the data folder's
+# .env said (D-109). They also run with -E -s: no PYTHON* variable, no user site-packages.
+KEPT_ENV = ("SYSTEMROOT", "WINDIR", "COMSPEC", "PATH", "PATHEXT", "TEMP", "TMP", "USERPROFILE", "HOMEDRIVE",
+            "HOMEPATH", "HOME", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "PROGRAMFILES", "PROGRAMFILES(X86)",
+            "PROGRAMW6432", "COMMONPROGRAMFILES", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE", "OS",
+            "COMPUTERNAME", "USERNAME", "USERDOMAIN", "LANG", "LC_ALL", "TERM", "AP_PRIVATE_DIR")  # fmt: skip
+SAFE_PYTHON = ("-E", "-s")
+
+
+def child_env(data: Path) -> dict[str, str]:
+    """The environment of the Pythons ``server-update`` starts: :data:`KEPT_ENV` and server mode's own."""
+    kept = {k: v for k, v in os.environ.items() if k.upper() in KEPT_ENV}
+    return {**kept, "AP_PRIVATE_DIR": str(data), "AP_SERVER_MODE": "1", "AP_NO_PAUSE": "1"}
+
+
 class BundleError(ValueError):
     """The ZIP is not an AP Coder offline bundle that can be installed: said in plain words."""
 
@@ -228,18 +244,18 @@ class Server:
         return False
 
     def _env(self) -> dict[str, str]:
-        return {**os.environ, "AP_PRIVATE_DIR": str(self.data), "AP_SERVER_MODE": "1", "AP_NO_PAUSE": "1"}
+        return child_env(self.data)
 
     def set_up(self, folder: Path) -> bool:
         """The new folder's own launcher: its .venv and packages from its wheelhouse (offline), the OCR models."""
-        cmd = [_upgrade().base_python(), str(folder / "scripts" / "launch.py"), "--no-start", "--yes"]
+        cmd = [_upgrade().base_python(), *SAFE_PYTHON, str(folder / "scripts" / "launch.py"), "--no-start", "--yes"]
         done = subprocess.run(cmd, cwd=folder, env=self._env(), check=False)  # noqa: S603  (its window shows it)
         return done.returncode == 0 and service.folder_python(folder).exists()
 
     def migrate(self, folder: Path, db: Path) -> bool:
         code = "import sys; from ap_coder.core.store import Store; Store(sys.argv[1])"
         done = subprocess.run(
-            [str(service.folder_python(folder)), "-c", code, str(db)],
+            [str(service.folder_python(folder)), *SAFE_PYTHON, "-c", code, str(db)],
             cwd=folder,  # noqa: S603
             env=self._env(),
             capture_output=True,
@@ -252,7 +268,7 @@ class Server:
         return done.returncode == 0
 
     def self_check(self, folder: Path) -> tuple[bool, str]:
-        cmd = [str(service.folder_python(folder)), str(folder / "scripts" / "pilot_check.py")]
+        cmd = [str(service.folder_python(folder)), *SAFE_PYTHON, str(folder / "scripts" / "pilot_check.py")]
         try:
             done = subprocess.run(cmd, cwd=folder, env=self._env(), capture_output=True, text=True,  # noqa: S603
                                   errors="replace", timeout=CHECK_TIMEOUT, check=False)  # fmt: skip
@@ -263,6 +279,71 @@ class Server:
             return True, "Self-check OK: " + (lines[-1] if lines else "the sample invoices read right")
         wrong = [t.strip() for t in lines if t.startswith("FAIL")] or lines[-3:] or ["?"]
         return False, "Self-check FAILED: " + "; ".join(wrong[:5])
+
+
+# --- Which folders it may trust, and the bundle's SHA-256 (D-109) ----------------------------------------------------
+
+
+def running_folder() -> Path:
+    """The AP Coder folder this command runs from (the administrator's ``cd``)."""
+    return PROJECT_DIR
+
+
+def wrong_folder(s: service.ServerSettings) -> str:
+    """Why server.json's ``folder`` can't be trusted ("" = it can): it must be the folder this command runs from.
+    server.json is in the data folder, which the service's account can write; the code folder only the
+    administrators can (docs/SERVER.md step 5). Trusting another folder would run what is beside it as the
+    administrator."""
+    here = running_folder()
+    if paths.same_folder(s.code_folder, here):
+        return ""
+    return (f"server.json says the service runs {s.code_folder}, but this command runs from {here}. Run "
+            "server-update from the folder the service runs (cd /d into it, then .venv\\Scripts\\python.exe -m "
+            "ap_coder server-update ...). If nobody moved it, server.json was changed by someone: check it, then "
+            "install the service again from the right folder (service install --folder). Nothing was "
+            "changed.")  # fmt: skip
+
+
+def outside_install(folder: Path) -> str:
+    """Why ``folder`` (server.json's ``previous_folder``) can't be trusted ("" = it can): it must be beside the
+    folder this command runs from, inside the code folder only the administrators can change."""
+    here = running_folder()
+    if paths.same_folder(Path(folder).resolve().parent, here.resolve().parent):
+        return ""
+    return (f"server.json names {folder} as the previous version, which is not beside this AP Coder folder "
+            f"({here.parent}): AP Coder won't run it. If nobody moved it, server.json was changed by someone: "
+            "check it. Nothing was changed.")  # fmt: skip
+
+
+def file_sha256(path: Path) -> str:
+    from .offline import sha256
+
+    return sha256(path)
+
+
+def hash_refusal(copy: Path, given: str | None, check: bool, say: Say) -> str:
+    """Why the bundle can't be installed ("" = it can): the SHA-256 IT was given with it, by another way than the
+    ZIP (the builder's ``.sha256`` file, sent apart), must be the copy's. Without one, only ``--no-hash-check``."""
+    if not check:
+        print("WARNING: --no-hash-check: the bundle's SHA-256 is NOT checked. Anyone who could change the ZIP on its "
+              "way here can run their code on this server as the administrator. Give --sha256 instead.",
+              file=sys.stderr)  # fmt: skip
+        say("The bundle's SHA-256 was not checked (--no-hash-check): the update's record in server.json says so.")
+        return ""
+    want = (given or "").strip().lower()
+    if not want:
+        return ("Give the bundle's SHA-256: server-update <bundle.zip> --sha256 <64 hexadecimal digits>. The person "
+                "who built the bundle has it (the .sha256 file made beside the ZIP): get it from them by another way "
+                "than the ZIP (e-mail, chat, phone). Nothing was changed.")  # fmt: skip
+    if len(want) != 64 or any(c not in "0123456789abcdef" for c in want):
+        return f"--sha256 {given} is not a SHA-256 (64 hexadecimal digits). Nothing was changed."
+    found = file_sha256(copy)
+    if found != want:
+        return (f"{copy.name}'s SHA-256 is {found}, not the {want} given: it is not the bundle that was built (copied "
+                "wrong, or changed on its way). Nothing was changed. Copy it again, or ask for the right "
+                "one.")  # fmt: skip
+    say(f"Bundle SHA-256 checked: {found}")
+    return ""
 
 
 # --- The record in server.json ----------------------------------------------------------------------------------------
@@ -290,8 +371,10 @@ def _version(folder: Path) -> str:
 
 
 def update(bundle: Path, data: Path, db: Path, *, server: Server | None = None, dry_run: bool = False,
-           force: bool = False, say: Say = print) -> int:  # fmt: skip
-    """Install ``bundle``: checked and unzipped from a copy in a private temporary folder, removed at the end."""
+           force: bool = False, sha256: str | None = None, hash_check: bool = True,
+           say: Say = print) -> int:  # fmt: skip
+    """Install ``bundle``: checked (its SHA-256 against ``sha256``, given apart) and unzipped from a copy in a private
+    temporary folder, removed at the end."""
     bundle = Path(bundle)
     if not bundle.is_file():
         print(f"{bundle} is not a ZIP file: give the offline bundle (APProcessor-offline-<version>.zip).",
@@ -303,11 +386,16 @@ def update(bundle: Path, data: Path, db: Path, *, server: Server | None = None, 
         except OSError as exc:
             print(f"{bundle} could not be copied to check it ({exc}): nothing was changed.", file=sys.stderr)
             return 1
-        return _update(copy, data, db, server=server, dry_run=dry_run, force=force, say=say)
+        refused = hash_refusal(copy, sha256, hash_check, say)
+        if refused:
+            print(refused, file=sys.stderr)
+            return 1
+        return _update(copy, data, db, server=server, dry_run=dry_run, force=force, say=say,
+                       checked="sha256" if hash_check else "not checked (--no-hash-check)")  # fmt: skip
 
 
 def _update(bundle: Path, data: Path, db: Path, *, server: Server | None, dry_run: bool, force: bool,
-            say: Say) -> int:  # fmt: skip
+            say: Say, checked: str = "sha256") -> int:  # fmt: skip
     def refuse(message: str) -> int:
         print(message, file=sys.stderr)
         return 1
@@ -317,6 +405,8 @@ def _update(bundle: Path, data: Path, db: Path, *, server: Server | None, dry_ru
         info = check_bundle(Path(bundle))
     except (service.SettingsError, BundleError) as exc:
         return refuse(str(exc))
+    if wrong_folder(s):
+        return refuse(wrong_folder(s))
     current = s.code_folder
     theirs, mine = info["identity"], paths.install_identity(current)
     new_version, old_version = theirs["version"], mine.get("version") or "?"
@@ -381,7 +471,7 @@ def _update(bundle: Path, data: Path, db: Path, *, server: Server | None, dry_ru
                 "they are, and everyone logs in again.")  # fmt: skip
         switch_to(data, current)
         _record(data, {"from": old_version, "to": new_version, "result": f"rolled back: {reason}",
-                       "backup": str(backup or "")})  # fmt: skip
+                       "backup": str(backup or ""), "bundle_hash": checked})  # fmt: skip
         if installed:
             server.start()
             if not server.up(current):
@@ -414,7 +504,13 @@ def _update(bundle: Path, data: Path, db: Path, *, server: Server | None, dry_ru
             return back("The new version does not answer (python -m ap_coder service status; the log).")
     _record(
         data,
-        {"from": old_version, "to": new_version, "result": "updated", "backup": str(backup or "")},
+        {
+            "from": old_version,
+            "to": new_version,
+            "result": "updated",
+            "backup": str(backup or ""),
+            "bundle_hash": checked,
+        },
         previous_folder=str(current),
         previous_version=old_version,
         pre_update_backup=str(backup or ""),
@@ -441,6 +537,9 @@ def go_back(data: Path, db: Path, *, server: Server | None = None, dry_run: bool
     previous, backup = Path(saved.get("previous_folder") or "."), Path(saved.get("pre_update_backup") or ".")
     if not saved.get("previous_folder") or not saved.get("pre_update_backup"):
         print("Nothing to go back to: no update was made with server-update since the last --back.", file=sys.stderr)
+        return 1
+    if wrong_folder(s) or outside_install(previous):
+        print(wrong_folder(s) or outside_install(previous), file=sys.stderr)
         return 1
     if not _upgrade().is_install(previous):
         print(f"The previous version's folder {previous} is gone (or not an AP Coder folder): AP Coder can't go back "
@@ -511,6 +610,8 @@ def add_parser(sub: Any) -> None:
     p.add_argument("--dry-run", action="store_true", help="Show the steps, change nothing")
     p.add_argument("--yes", action="store_true", help="--back: don't ask first")
     p.add_argument("--force", action="store_true", help="Install even when the bundle is not certainly newer")
+    p.add_argument("--sha256", default=None, help="The bundle's SHA-256, from its builder by another way than the ZIP")
+    p.add_argument("--no-hash-check", action="store_true", help="Don't check the SHA-256 (unsafe; warned and recorded)")
 
 
 def main(args: argparse.Namespace) -> int:
@@ -520,4 +621,12 @@ def main(args: argparse.Namespace) -> int:
     if not args.bundle:
         print("Give the offline bundle (server-update APProcessor-offline-<version>.zip), or --back.", file=sys.stderr)
         return 2
-    return update(Path(args.bundle), data, db, dry_run=args.dry_run, force=args.force)
+    return update(
+        Path(args.bundle),
+        data,
+        db,
+        dry_run=args.dry_run,
+        force=args.force,
+        sha256=args.sha256,
+        hash_check=not args.no_hash_check,
+    )

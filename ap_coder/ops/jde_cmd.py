@@ -32,7 +32,7 @@ def main(args: argparse.Namespace) -> int:
     actor = "the console (jde)"
     cfg = jde_ais.load(store)
     if args.action == "test":
-        found = jde_ais.connection_test(store)
+        found = jde_ais.connection_test(store, actor=actor)
         print(found.get("summary") if found.get("ok") else f"Not connected: {found.get('error')}")
         return 0 if found.get("ok") else 1
     if args.action == "sync":

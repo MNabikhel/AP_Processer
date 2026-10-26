@@ -19,6 +19,7 @@ from __future__ import annotations
 import csv
 import datetime as dt
 import io
+import json
 from collections import defaultdict
 from dataclasses import dataclass
 
@@ -27,6 +28,7 @@ from ..coding.vendors import norm_invoice_number
 from ..core.memory import vendor_key
 from ..core.safe import csv_row
 from ..core.store import APPROVED, PARKED, PENDING, REVIEW, Store
+from ..core.store.summary import broken, whole
 from . import recurring
 from .exports import distribution
 
@@ -127,19 +129,42 @@ def undated(store: Store, period_end: dt.date) -> list[Accrual]:
     return out
 
 
+def _exported_bills(store: Store, rows: list[dict]) -> set[tuple[str, str, bool]]:
+    """The bills (``_bill``) of the exported invoices, of those that one of ``rows`` (invoices not in the ERP yet)
+    may be a copy of: from the invoices' summary (D-110)."""
+    flagged = [r for r in rows if "DUPLICATE_INVOICE" in _flags(r["validation"])]
+    if not flagged:
+        return set()
+    wanted = {_bill(r["final_output"] or r["ai_output"] or {}) for r in flagged}
+    found = {
+        (r["bill_vendor"], r["bill_number"], bool(r["bill_credit"]))
+        for r in store.summary_rows(
+            "bill_number IN (SELECT value FROM json_each(?)) AND +status = ? AND export_batch IS NOT NULL AND "
+            f"{whole('spend')}",
+            (json.dumps(sorted({b[1] for b in wanted})), APPROVED),
+            "bill_vendor, bill_number, bill_credit",
+        )
+    }
+    for r in store.summary_rows(f"{broken('spend')} AND +status = ? AND export_batch IS NOT NULL", (APPROVED,), "id"):
+        (inv,) = store.invoice_columns(("id", "final_output"), ids=[r["id"]])
+        found.add(_bill(inv["final_output"] or {}))  # read again: fails as it did when every invoice was read
+    return found & wanted
+
+
 def _not_in_erp(store: Store, period_end: dt.date, no_date: list[Accrual] | None = None) -> list[Accrual]:
     end = period_end.isoformat()
     oldest = (period_end - dt.timedelta(days=OLD_DAYS)).isoformat()
-    rows = store.invoice_columns(("id", "status", "ai_output", "final_output", "validation"))
-    exported = {r["id"] for r in store.list_invoices(APPROVED)} - {r["id"] for r in store.unexported_approved()}
+    # Only invoices not in the ERP yet are read (the summary says which, D-110): in review, parked, waiting for a
+    # second approval, or approved and not exported.
+    ids = [r["id"] for r in store.summary_rows("status IN (?, ?, ?) OR (status = ? AND export_batch IS NULL)",
+                                               (REVIEW, PARKED, PENDING, APPROVED), "id")]  # fmt: skip
+    rows = store.invoice_columns(("id", "status", "ai_output", "final_output", "validation"), ids=ids)
     # A copy flagged as a duplicate of a bill already in the ERP (exported) or already accrued is not accrued
     # again; one flagged as already in the ERP's invoice register is in the ERP.
-    counted = {_bill(r["final_output"] or {}) for r in rows if r["id"] in exported}
+    counted = _exported_bills(store, rows)
     treatments = store.tax_treatments()
     out = []
     for r in rows:
-        if r["status"] not in (REVIEW, PARKED, PENDING, APPROVED) or r["id"] in exported:
-            continue
         doc = r["final_output"] or r["ai_output"] or {}
         date = str(doc.get("invoice_date") or "").strip() if doc else ""
         if doc and not date:  # no date: when it was incurred is not known (B-474)
@@ -185,7 +210,7 @@ def _not_in_erp(store: Store, period_end: dt.date, no_date: list[Accrual] | None
 
 def _expected_recurring(store: Store, period_end: dt.date) -> list[Accrual]:
     out = []
-    for r in recurring.detect(store.vendor_invoice_dates(), today=period_end):
+    for r in recurring.detected(store, today=period_end):
         if r.next_date > period_end:
             continue
         usage = store.vendor_gl_usage(r.vendor_key)
@@ -205,10 +230,11 @@ def _expected_recurring(store: Store, period_end: dt.date) -> list[Accrual]:
     return out
 
 
-def build(store: Store, period_end: dt.date) -> list[Accrual]:
+def build(store: Store, period_end: dt.date, undated: list[Accrual] | None = None) -> list[Accrual]:
+    """The accruals at ``period_end``; ``undated``: filled with the invoices ``undated`` lists, read in the same go."""
     return (
         _received_not_invoiced(store, period_end)
-        + _not_in_erp(store, period_end)
+        + _not_in_erp(store, period_end, undated)
         + _expected_recurring(store, period_end)
     )
 

@@ -85,16 +85,17 @@ def test_a_stranger_elsewhere_cannot_lock_a_person_out(store, clock):
 
 def test_one_address_is_paused_after_30_failures_across_usernames_not_after_5(store, clock):
     account(store, "boss", "admin")
+    account(store, "cleo")
     for n in range(5):  # a shared NAT, RDS or proxy address: five people mistyping
         fail(store, f"nobody{n}", "10.1.1.1")
     assert store.authenticate("boss", GOOD, "10.1.1.1")["username"] == "boss"
     for n in range(25):
         fail(store, f"guess{n}", "10.1.1.1")
-    with pytest.raises(LoginRefused, match="paused"):
-        store.authenticate("boss", GOOD, "10.1.1.1")
-    assert store.authenticate("boss", GOOD, "10.1.1.2")["username"] == "boss"
+    with pytest.raises(LoginRefused, match="paused"):  # cleo never logged in from there (boss did: D-109)
+        store.authenticate("cleo", GOOD, "10.1.1.1")
+    assert store.authenticate("cleo", GOOD, "10.1.1.2")["username"] == "cleo"
     clock.now += 15 * 60 + 1
-    assert store.authenticate("boss", GOOD, "10.1.1.1")["username"] == "boss"
+    assert store.authenticate("cleo", GOOD, "10.1.1.1")["username"] == "cleo"
 
 
 def test_the_servers_console_is_never_locked_by_address(store, clock):
@@ -113,9 +114,10 @@ def test_logins_from_the_console_through_the_page_are_not_locked_by_address(stor
     behind = app_for(store)
     behind.state.proxy = "127.0.0.1"  # --proxy: a loopback address is the proxy, not the console
     proxied = client_of(behind, ip="127.0.0.1")
+    account(store, "ann")  # (boss logged in from there: an address it knows is not paused for it, D-109)
     for n in range(30):
         log_in(proxied, f"other{n}", WRONG_PASSWORD)
-    assert "paused" in log_in(proxied, "boss").json()["error"]
+    assert "paused" in log_in(proxied, "ann").json()["error"]
 
 
 def test_users_reset_clears_the_locks(store, clock):
@@ -394,7 +396,7 @@ def test_a_password_change_gives_this_browser_a_new_session_and_ends_the_others(
 
 def test_resetting_a_user_lifts_the_pause_on_their_address(store, clock):
     uid = account(store, "ann")
-    assert store.authenticate("ann", GOOD, "10.4.4.4")  # ann's usual address: a shared NAT
+    fail(store, "ann", "10.4.4.4")  # ann tried from there (a shared NAT), but never logged in from it
     for n in range(30):
         fail(store, f"guess{n}", "10.4.4.4")
     with pytest.raises(LoginRefused, match="paused"):

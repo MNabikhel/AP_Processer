@@ -27,7 +27,7 @@ from ap_coder.ops.offline import internet_allowed, setup_contact
 from ap_coder.ops.service import log_path as service_log
 from ap_coder.web import minimd
 from ap_coder.web.access import is_admin
-from ap_coder.web.core import data_dir, developer_tools, get_store, render, server_mode, short_path
+from ap_coder.web.core import can, data_dir, developer_tools, get_store, render, server_mode, short_path
 from ap_coder.web.pages import BY_KEY
 from ap_coder.web.pages.settings_reading import azure_check_on, how_it_reads
 
@@ -201,6 +201,7 @@ def report_page(request: Request, codes: bool = False) -> HTMLResponse:
         "help",
         title="Report a problem",
         setup=ready,
+        setup_shown=can(request, "/help/report/setup", "GET"),  # an Admin's on the server: versions, names (D-109)
         activity=activity_report(store, codes),
         codes=codes,
         key_file=short_path(data_dir(store) / "share_report_key.csv"),

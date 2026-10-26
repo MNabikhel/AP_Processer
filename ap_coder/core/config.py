@@ -11,7 +11,7 @@ import socket
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 
 from . import envfile, paths
 
@@ -22,6 +22,25 @@ LLM_VISION_MODES = ("auto", "on", "off")
 # Settings an older AP Coder had, read no more: every invoice is read the same way now (an old .env that still has
 # them works as before, they are simply ignored).
 RETIRED_SETTINGS = ("AP_PAGE_READER", "AP_PAGE_READER_SCOPE", "AP_LLM_PROVIDER")
+# What a .env never sets: the variables that decide which code a process (or one it starts) runs. The data folder's
+# .env can be written by the account AP Coder runs as; on the company server an administrator's commands read it too,
+# so a PYTHONPATH= line there would run that account's code as the administrator (D-109).
+PROCESS_VARS = ("PATH", "PATHEXT", "COMSPEC", "SYSTEMROOT", "WINDIR", "VIRTUAL_ENV", "__PYVENV_LAUNCHER__")
+PROCESS_PREFIXES = ("PYTHON", "PIP_", "LD_", "DYLD_", "UV_")
+
+
+def process_var(name: str) -> bool:
+    """Whether ``name`` is a variable that decides which code runs (never taken from a .env)."""
+    upper = name.strip().upper()
+    return upper in PROCESS_VARS or upper.startswith(PROCESS_PREFIXES)
+
+
+def load_env_file(path: Path) -> None:
+    """The .env's settings into the environment, those already set winning, and never :func:`process_var` ones."""
+    values = dotenv_values(stream=io.StringIO(envfile.read_text(path)), interpolate=False)
+    for name, value in values.items():
+        if value is not None and not process_var(name) and name not in os.environ:
+            os.environ[name] = value
 
 
 _PLACEHOLDER = re.compile(r"<[^<>]+>")  # "https://<your-resource>.openai.azure.com/" in .env.example
@@ -202,6 +221,11 @@ class LocalLLMSettings:
     # Document text sent to a local model, so a small context window is not overrun (start and end are kept).
     max_prompt_chars: int = 24_000
     temperature: float = 0.0
+    # Requests sent to the model server at once (chat and page reader alike, D-111): 1 = strictly one at a time
+    # (LM Studio on a laptop is shared with CloseDesk); more for a server that answers several together (LM Studio's
+    # parallel requests, llama.cpp's --parallel, vLLM). AP_LLM_PARALLEL; the company server's ``service install
+    # --llm-parallel``.
+    parallel: int = 1
 
 
 @dataclass(frozen=True)
@@ -219,6 +243,11 @@ class PageReaderSettings:
     base_url: str = ""
     timeout_seconds: float = 1200.0  # a laptop CPU takes minutes a page, most of it looking before the first word
     max_pages: int = 5
+    # Leave out a digital PDF whose own text the rule reader read in full (D-111): AP_PAGE_READER_SKIP_CLEAN, on by
+    # default on the company server only; ``skip_sample`` of those are read all the same, so its accuracy stays
+    # measured (AP_PAGE_READER_SAMPLE).
+    skip_clean: bool = False
+    skip_sample: float = 0.1
 
     @property
     def mode(self) -> str:
@@ -257,7 +286,7 @@ class Settings:
         # .env in any folder above AP Coder's code. Values are taken as written: a saved key or password with "$" in
         # it is never expanded like a shell variable.
         if env_file is not None and Path(env_file).is_file():
-            load_dotenv(stream=io.StringIO(envfile.read_text(Path(env_file))), override=False, interpolate=False)
+            load_env_file(Path(env_file))
 
         di = DocumentIntelligenceSettings(
             endpoint=_env("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT"),
@@ -305,6 +334,7 @@ class Settings:
             vision=vision_mode if vision_mode in LLM_VISION_MODES else "auto",
             max_prompt_chars=_env_int("AP_LLM_MAX_PROMPT_CHARS", 24_000),
             temperature=_env_float("AP_LLM_TEMPERATURE", 0.0),
+            parallel=min(32, max(1, _env_int("AP_LLM_PARALLEL", 1) or 1)),
         )
         return cls(document_intelligence=di, openai=oai, engine=engine, llm=llm, page_reader=_page_reader_from_env())
 
@@ -338,7 +368,11 @@ def _page_reader_from_env() -> PageReaderSettings:
     base_url = _env("AP_PAGE_READER_BASE_URL")
     timeout = _env_float("AP_PAGE_READER_TIMEOUT_SECONDS", default.timeout_seconds)
     max_pages = _env_int("AP_PAGE_READER_MAX_PAGES", default.max_pages)
+    on_server = (os.environ.get("AP_SERVER_MODE") or "").strip().lower() in ("1", "true", "yes", "on")
+    sample = _env_float("AP_PAGE_READER_SAMPLE", default.skip_sample)
     return PageReaderSettings(
+        skip_clean=_env_bool("AP_PAGE_READER_SKIP_CLEAN", on_server),
+        skip_sample=min(1.0, max(0.0, sample)) if sample == sample else default.skip_sample,
         model="" if model.lower() in {"auto", "automatic"} else model,
         base_url=normalise_base_url(base_url) if base_url else "",
         timeout_seconds=timeout if timeout and 0 < timeout < float("inf") else default.timeout_seconds,

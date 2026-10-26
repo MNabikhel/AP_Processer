@@ -98,7 +98,7 @@ def test_the_approval_limit_applies_in_cad_to_a_foreign_currency_invoice(tmp_pat
     assert store.second_approval_reason(eur) == "" and not store.over_approval_limit(eur)
     store.set_setting("approval_limit", "10000")
     # The controls report sees the USD invoice over the limit too (had it been approved by one person).
-    store.final_approve(invoice_id, "Sam")
+    store.final_approve(invoice_id, "Sam", shown=store.latest_approval_id(invoice_id))
     with store._conn() as conn:
         conn.execute("UPDATE invoices SET second_reviewer = NULL WHERE id = ?", (invoice_id,))
     import datetime as dt

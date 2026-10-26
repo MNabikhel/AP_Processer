@@ -614,12 +614,12 @@ def _open_picture(data: bytes) -> Any:
     HEIC/HEIF photo is opened with pillow-heif; without it, that is said plainly."""
     from PIL import Image
 
-    from ..capture.layout import NO_HEIF, register_heif
+    from ..capture.layout import NO_HEIF, picture_formats, register_heif
 
     if not register_heif() and data[4:8] == b"ftyp" and data[8:12] in _HEIF_BRANDS:
         raise PageReaderError(NO_HEIF)
     try:
-        return Image.open(io.BytesIO(data))
+        return Image.open(io.BytesIO(data), formats=picture_formats())
     except Image.DecompressionBombError as exc:
         pixels = re.search(r"\((\d+) pixels\)", str(exc))
         megapixels = int(pixels.group(1)) / 1e6 if pixels else 0.0
@@ -705,9 +705,10 @@ RETRY_SAMPLING = {"temperature": 0.7, "top_p": 0.8, "top_k": 20, "presence_penal
 _EXTRA_SAMPLING = ("top_k", "presence_penalty")  # not OpenAI parameters: sent in the request body as they are
 # A looped reading shorter than this (once the loop is cut) stopped near the top of the page.
 MIN_LOOPED_TEXT = 200
-# One page read at a time from this process (the background reader, a self-test, a person's Read now): CloseDesk
-# reads its scans with the same OvisOCR2 in the same LM Studio, one page at a time too (local_llm.CHAT_LOCK).
-READ_LOCK = threading.Lock()
+# One page read at a time from this process by default (the background reader, a self-test, a person's Read now):
+# CloseDesk reads its scans with the same OvisOCR2 in the same LM Studio, one page at a time too
+# (local_llm.CHAT_LOCK). ``llm_parallel`` pages at once on a model server that reads several together (D-111).
+READ_LOCK = local_llm.Slots("page")
 
 
 def _attr(obj: Any, name: str) -> Any:
@@ -801,7 +802,7 @@ def transcribe(settings: Settings, png: bytes, *, model: str | None = None,
         }
     ]
     client = _client(settings)
-    with READ_LOCK:  # one page at a time: LM Studio is shared with CloseDesk, which reads its scans with OvisOCR2 too
+    with READ_LOCK.held(settings.llm.parallel):  # one page at a time by default: LM Studio is shared with CloseDesk
         text, looped = _transcribe_once(settings, client, model, reader, messages, None, should_stop)
         if not looped:
             return text

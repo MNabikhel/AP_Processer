@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
+import os
 import shutil
 import sqlite3
 import time
@@ -22,6 +24,7 @@ from ._base import (
     _store_class,
 )
 from .postings import carry_postings, saved_postings
+from .summary import SUMMARY_TRIGGERS
 from .users import carry_accounts, saved_accounts
 
 
@@ -96,6 +99,12 @@ class BackupsMixin:
         folder = self.get_setting("backup_copy_dir").strip()
         if not folder:
             return None
+        from ...ops.service import folder_refusal
+
+        refused = folder_refusal(folder)  # a folder saved before IT's list, or brought back by a restore (D-109)
+        if refused:
+            self.set_setting("backup_copy_status", f"failed {_now()[:16]}: {refused}")
+            return None
         try:
             target = Path(folder).expanduser()
             if not target.is_dir():
@@ -151,8 +160,8 @@ class BackupsMixin:
     @staticmethod
     def check_backup(backup: str | Path) -> None:
         """Raise ValueError (in plain words) unless ``backup`` is an AP Coder database this version can open:
-        a ``schema_version`` setting no newer than this version's, and no triggers or views (AP Coder makes
-        none; one in a planted file would run on every later change)."""
+        a ``schema_version`` setting no newer than this version's, and no views or triggers but the summary's own
+        (``summary.SUMMARY_TRIGGERS``, D-110; another one in a planted file would run on every later change)."""
         with _store_class()._local_copy(backup) as copy:
             _store_class()._check_backup_file(copy, Path(backup).name)
 
@@ -163,7 +172,12 @@ class BackupsMixin:
         except sqlite3.Error as exc:
             raise ValueError(f"{name} could not be opened ({exc})") from None
         try:
-            kinds = {r[0] for r in conn.execute("SELECT type FROM sqlite_master WHERE type IN ('trigger', 'view')")}
+            # The summary's own triggers (D-110), exactly as this version makes them, are AP Coder's; any other is not.
+            kinds = {
+                r[0]
+                for r in conn.execute("SELECT type, name, sql FROM sqlite_master WHERE type IN ('trigger', 'view')")
+                if r[0] == "view" or SUMMARY_TRIGGERS.get(r[1]) != r[2]
+            }
             tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
             row = (
                 conn.execute("SELECT value FROM settings WHERE key = 'schema_version'").fetchone()
@@ -199,18 +213,35 @@ class BackupsMixin:
         return (row["file_sha256"], row["created_at"]) if row else None
 
     def restoring(self) -> bool:
-        """A backup is being restored into this database (in this process): the background workers wait."""
+        """A backup is being restored into this database: the background workers wait. In this process, or in
+        another one (``<database>.restoring`` beside it, with that process's id: the company server's web worker
+        restoring while its background process reads, D-111)."""
         with _RESTORING_LOCK:
-            return str(self.path.resolve()) in _RESTORING
+            if str(self.path.resolve()) in _RESTORING:
+                return True
+        marker = self.path.with_name(self.path.name + ".restoring")
+        try:
+            pid = int(marker.read_text(encoding="utf-8").strip() or 0)
+            fresh = time.time() - marker.stat().st_mtime < 2 * 3600  # (a restore takes minutes, not hours)
+        except (OSError, ValueError):
+            return False
+        from ap_coder.ai.page_worker import _pid_alive
+
+        return fresh and pid != os.getpid() and _pid_alive(pid)
 
     def restore_from(self, backup: str | Path, *, keep_accounts: bool = False) -> Path:
         """``_restore_from`` with the background workers paused meanwhile (``restoring``)."""
         key = str(self.path.resolve())
+        marker = self.path.with_name(self.path.name + ".restoring")
         with _RESTORING_LOCK:
             _RESTORING.add(key)
         try:
+            with contextlib.suppress(OSError):
+                marker.write_text(str(os.getpid()), encoding="utf-8")
             return self._restore_from(backup, keep_accounts=keep_accounts)
         finally:
+            with contextlib.suppress(OSError):
+                marker.unlink()
             with _RESTORING_LOCK:
                 _RESTORING.discard(key)
 

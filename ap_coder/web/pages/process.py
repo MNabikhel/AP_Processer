@@ -47,6 +47,7 @@ from ap_coder.intake.mailbox import (
 from ap_coder.intake.pictures import looks_incomplete
 from ap_coder.ops.help import SERVER_LM_STUDIO
 from ap_coder.web import identity
+from ap_coder.web import jobs as jobs_module
 from ap_coder.web.access import is_admin
 from ap_coder.web.core import (
     cache_dir,
@@ -80,6 +81,41 @@ STILL_SAVING_SECONDS = 60  # a file changed this recently whose end is missing i
 ACCEPT = sorted(SUPPORTED_EXTENSIONS | EMAIL_EXTENSIONS)  # what the upload takes: PDFs, scans, photos, saved emails
 # The largest invoice uploaded (B-981): as a spreadsheet (web/files.py); a saved email up to what the mailbox reads.
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+# On the server, one upload (D-109): at most this many files and bytes, and each account at most this much an hour
+# (a person drops a day's invoices at once; a script filling the server's disk is stopped).
+MAX_REQUEST_FILES = 200
+MAX_REQUEST_BYTES = 250 * 1024 * 1024
+UPLOAD_WINDOW = 3600.0
+MAX_BYTES_PER_WINDOW = 2 * 1024 * 1024 * 1024
+MAX_UPLOADS_PER_WINDOW = 120
+_uploads: dict[Any, collections.deque] = collections.defaultdict(collections.deque)  # account → (time, bytes)
+_uploads_lock = threading.Lock()
+
+
+def upload_refusal(user: Any, count: int, size: int, now: float | None = None,
+                   store: Store | None = None) -> tuple[str, int]:  # fmt: skip
+    """Why the server takes no more uploads from ``user`` now, with the status (("", 0) = it does), counting this one
+    when taken. ``store``: counted in the database, as every web worker sees it (D-111); else in this process."""
+    if count > MAX_REQUEST_FILES:
+        return (f"That is {count} files at once: AP Coder on the server takes up to {MAX_REQUEST_FILES} per upload. "
+                "Send them in a few goes.", 413)  # fmt: skip
+    if size > MAX_REQUEST_BYTES:
+        return (f"Those files are {size / 1e6:,.0f} MB together: AP Coder on the server takes up to "
+                f"{MAX_REQUEST_BYTES // (1024 * 1024)} MB per upload. Send them in a few goes.", 413)  # fmt: skip
+    busy = ("You have uploaded a lot in the last hour: AP Coder on the server takes more in a while. If this is a real "
+            "batch, ask an Admin to put the files in the invoices folder.", 429)  # fmt: skip
+    if store is not None:
+        most = (MAX_UPLOADS_PER_WINDOW, MAX_BYTES_PER_WINDOW)
+        return ("", 0) if store.take_upload_allowance(str(user), size, UPLOAD_WINDOW, *most) else busy
+    now = time.monotonic() if now is None else now
+    with _uploads_lock:
+        recent = _uploads[user]
+        while recent and recent[0][0] <= now - UPLOAD_WINDOW:
+            recent.popleft()
+        if len(recent) >= MAX_UPLOADS_PER_WINDOW or sum(b for _, b in recent) + size > MAX_BYTES_PER_WINDOW:
+            return busy
+        recent.append((now, size))
+    return "", 0
 
 
 # --- Saving uploads -----------------------------------------------------------------------------------------------
@@ -661,6 +697,7 @@ def process_page(request: Request) -> HTMLResponse:
 class ImportQueue:
     def __init__(self) -> None:
         self.lock = threading.Lock()
+        self.watching = False  # several web workers: a thread starts what waits here once another's import ends
         self.waiting: collections.deque[tuple[contextvars.Context, Callable[[], tuple[Any, int]], int]] = (
             collections.deque()
         )
@@ -681,8 +718,41 @@ def import_queue(request: Request) -> ImportQueue:
         return state.import_queue
 
 
+def _publish(queue: ImportQueue, job: Job) -> None:
+    """Several web workers: how many files this one holds queued, for every worker's progress (the caller holds
+    ``queue.lock``)."""
+    if job.shared is not None:
+        try:
+            job.shared.set_job_waiting(job.name, jobs_module.OWNER, queue.files(), jobs_module.STALE)
+        except Exception:  # noqa: BLE001 - a busy database: said again in a moment
+            pass
+
+
+def _watch(queue: ImportQueue, job: Job) -> None:
+    """Several web workers (D-111): an import another worker runs ends without telling this one, so what waits here
+    is started once the job is free (looked at every 2 seconds)."""
+    while True:
+        time.sleep(2.0)
+        with queue.lock:
+            _start_next(queue, job)
+            _publish(queue, job)
+            if not queue.waiting:
+                queue.watching = False
+                return
+
+
 def waiting_text(files: int) -> str:
     return f"Waiting: {ui.plural(files, 'file')} queued behind the import in progress."
+
+
+def _waiting_files(queue: ImportQueue, job: Job) -> int:
+    """The files queued behind the import in progress: in every web worker's queue when there are several."""
+    if job.shared is None:
+        return queue.files()
+    try:
+        return job.shared.jobs_waiting(job.name)
+    except Exception:  # noqa: BLE001 - a busy database: this worker's own
+        return queue.files()
 
 
 def _next_import(queue: ImportQueue, job: Job) -> None:
@@ -690,6 +760,7 @@ def _next_import(queue: ImportQueue, job: Job) -> None:
     meanwhile is skipped)."""
     with queue.lock:
         _start_next(queue, job)
+        _publish(queue, job)
 
 
 def _start_next(queue: ImportQueue, job: Job) -> None:
@@ -739,28 +810,44 @@ def _start_or_queue(request: Request, build: Callable[[], tuple[Any, int]], file
         if not any(b is batch for b in queue.waiting):
             return JSONResponse(started)
         waiting = queue.files()
+        if job.shared is not None:
+            _publish(queue, job)
+            waiting = _waiting_files(queue, job)
+            if not queue.watching:
+                queue.watching = True
+                threading.Thread(target=_watch, args=(queue, job), name="ap-coder-import-queue", daemon=True).start()
     return JSONResponse({**started, "queued": waiting, "toast": flash_message(waiting_text(waiting), "info")})
 
 
 @router.post("/process/upload")
 async def process_upload(request: Request, files: list[UploadFile] = File(...)) -> JSONResponse:  # noqa: B008
-    """Save the uploaded files to the invoices folder, then read and code the new ones in the background."""
-    received = []
-    for upload in files:
-        name = upload.filename or "invoice"
-        limit = MAX_EMAIL_BYTES if Path(name).suffix.lower() in EMAIL_EXTENSIONS else MAX_UPLOAD_BYTES
-        content = await upload.read(limit + 1)  # never more than the limit read: the rest stays in the spool file
-        received.append((name, content if len(content) <= limit else None))
-    return await run_in_threadpool(_save_and_start, request, received)
+    """Save the uploaded files to the invoices folder, then read and code the new ones in the background. Each file
+    is read from its spool file (on disk past 1 MB) only when it is saved, one at a time: never all in memory."""
+    if server_mode(request):
+        who = person()
+        refused, status = upload_refusal(who.user_id if who else None, len(files), sum(u.size or 0 for u in files),
+                                         store=get_store(request))  # fmt: skip
+        if refused:
+            return refuse(refused, status=status)
+    return await run_in_threadpool(_save_and_start, request, files)
 
 
-def _save_and_start(request: Request, received: list[tuple[str, bytes | None]]) -> JSONResponse:
+def _read_upload(upload: UploadFile) -> tuple[str, bytes | None]:
+    """An upload's name and bytes (None when over its limit: never more than the limit read)."""
+    name = upload.filename or "invoice"
+    limit = MAX_EMAIL_BYTES if Path(name).suffix.lower() in EMAIL_EXTENSIONS else MAX_UPLOAD_BYTES
+    content = upload.file.read(limit + 1)
+    return name, content if len(content) <= limit else None
+
+
+def _save_and_start(request: Request, files: list[UploadFile]) -> JSONResponse:
     store, settings = get_store(request), get_settings(request)
     if not ready_to_read(setup_steps(store, settings)):
         return refuse("Finish the setup first: import your GL accounts (GL accounts & tax).")
     folder = invoice_dir(store)
     saved, mails, notes = [], [], []
-    for name, content in received:
+    for upload in files:
+        name, content = _read_upload(upload)
         if content is None:  # over the limit (B-981): an invoice is never this large
             email = Path(name).suffix.lower() in EMAIL_EXTENSIONS
             notes.append(flash_message(f"{name} was not read: it is larger than {'100' if email else '50'} MB. An "
@@ -827,7 +914,8 @@ def process_folder(request: Request) -> JSONResponse:
 @router.get("/process/status")
 def process_status(request: Request) -> JSONResponse:
     """How far reading and coding got (the page polls this)."""
-    snap = {**jobs(request).get(JOB).snapshot(), "waiting": import_queue(request).files()}
+    job = jobs(request).get(JOB)
+    snap = {**job.snapshot(), "waiting": _waiting_files(import_queue(request), job)}
     return JSONResponse(snap, headers={"Cache-Control": "no-store"})
 
 

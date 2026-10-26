@@ -96,7 +96,7 @@ def test_the_data_dictionary_describes_every_table_and_column():
 
 def test_each_table_is_built_from_the_store(store, tmp_path):
     first = _approved(store, tmp_path)  # 18,017.85: over the limit, waits for a second approval
-    store.final_approve(first, "Sam")
+    store.final_approve(first, "Sam", shown=store.latest_approval_id(first))
     small = store.add_invoice(tmp_path / "b.pdf", {**gt(), "invoice_number": "X-2", "grand_total": 50.0}, {})
     store.park_invoice(small, "Jane", "waiting for the buyer")
     store.create_export_batch([first], "csv", actor="Jane")
@@ -497,8 +497,10 @@ def test_hub_export_on_the_command_line(store, tmp_path, capsys):
 
 
 def test_imports_are_recorded_as_runs(store, tmp_path, monkeypatch):
+    from ap_coder.core.store import load_sample_setup
     from ap_coder.ops.cli import main
 
+    load_sample_setup(store)  # the GL accounts imported: process reads only then (B-1212)
     folder = tmp_path / "in"
     folder.mkdir()
     (folder / "x.md").write_text((SAMPLES / "northwind_ON_HST_NW-2026-0912.md").read_text(encoding="utf-8"),

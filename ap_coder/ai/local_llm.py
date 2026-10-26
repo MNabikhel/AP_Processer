@@ -14,12 +14,16 @@ Standard library only for detection, so a check costs no imports and works with 
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 import re
 import threading
 import time
 import urllib.request
+from collections.abc import Iterator
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
@@ -328,11 +332,60 @@ def provider_status(settings: Settings) -> ProviderStatus:
     return ProviderStatus("local", False, "Local model", status.describe())
 
 
-# One chat request at a time from this process, however many invoices are processed at once (``--workers``, the
-# dashboard's jobs): LM Studio on the pilot tester's Mac also answers CloseDesk, and a burst of parallel requests would
+SLOTS_ENV = "AP_LLM_SLOTS_DIR"  # the company server's folder of slot locks, which all its processes share (D-111)
+
+
+class Slots:
+    """At most ``limit`` requests to the model server at once (``with slots.held(limit):``). ``limit`` is
+    the ``llm_parallel`` setting (AP_LLM_PARALLEL, default 1: strictly one at a time, as LM Studio on a laptop is
+    shared with CloseDesk). On the company server (AP_LLM_SLOTS_DIR set by its ``serve``) the limit holds across its
+    processes too: each request holds one of ``limit`` lock files there (D-111)."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self._cond = threading.Condition()
+        self._busy = 0
+
+    @contextlib.contextmanager
+    def held(self, limit: int = 1) -> Iterator[None]:
+        limit = max(1, int(limit or 1))
+        with self._cond:
+            while self._busy >= limit:
+                self._cond.wait()
+            self._busy += 1
+        lock = None
+        try:
+            lock = self._across_processes(limit)
+            yield
+        finally:
+            if lock is not None:
+                lock.close()
+            with self._cond:
+                self._busy -= 1
+                self._cond.notify_all()
+
+    def _across_processes(self, limit: int) -> Any:
+        folder = (os.environ.get(SLOTS_ENV) or "").strip()
+        if not folder:
+            return None
+        from ..core.paths import try_lock
+
+        while True:
+            for number in range(limit):
+                try:
+                    lock = try_lock(Path(folder) / f"{self.name}-{number + 1}.lock")
+                except OSError:
+                    return None  # a folder that can't be written: this process's limit only
+                if lock is not None:
+                    return lock
+            time.sleep(0.2)
+
+
+# The chat requests, however many invoices are processed at once (``--workers``, the dashboard's jobs): one at a time
+# by default, since LM Studio on the pilot tester's Mac also answers CloseDesk, and a burst of parallel requests would
 # queue CloseDesk's questions behind AP Coder's. The page reader has its own (page_reader.READ_LOCK): it is another
 # model, which LM Studio runs beside the chat model.
-CHAT_LOCK = threading.Lock()
+CHAT_LOCK = Slots("chat")
 
 
 NO_MODEL_MESSAGE = (

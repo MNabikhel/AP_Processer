@@ -59,7 +59,7 @@ from .fx import (  # noqa: F401  (re-exported)
 # tax_province and tax_uncollected (filled from the approved invoices, D-70, D-80), template_snapshots (D-85),
 # invoice_drafts (by _SCHEMA: the review screen's edits not approved yet, kept over a restart, D-86),
 # 18: users, sessions, login_attempts (by _SCHEMA: server mode's accounts, D-97), later vendors.erp_bank (D-104)
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19  # 19: the invoices' summary and its triggers (summary.py, ``_summary_migrate``, D-110)
 # The one-off clean-ups of the learning memory ``_migrate`` has run on a database (settings.feedback_cleanup): a new
 # clean-up added there changes it, so it runs once on every database.
 FEEDBACK_CLEANUP = "1"
@@ -691,17 +691,17 @@ class StoreCore:
     def _reading_as_d89(conn: sqlite3.Connection) -> None:
         """Once per database (``settings.reading_d89``): the invoices still to approve that the local readers read
         before D-89 had a confidence multiplied by the share of lines coded; their ``confidence_score`` becomes the
-        Reading of their stored capture, as it is read now. The queue's confidence and review flag follow, from their
-        stored findings and a Coding worked out from their lines (``validation.score``; the accounts' lists are
-        checked again in the queue: their checks stamp is cleared, so ``bulk.issues_today`` checks them again, D-88),
-        so the queue is sorted and flagged by the new figures at once (B-895). One read by a chat model (or without a
-        stored capture) keeps its own confidence as its Reading, but its queue figure is worked out again the same
-        way: it showed the old one beside a lower Coding (B-956)."""
+        Reading of their stored capture. The queue's confidence and review flag follow, from their stored findings and a
+        Coding worked out from their lines (``validation.score``; the accounts' lists are checked again in the queue:
+        their checks stamp is cleared for ``bulk.issues_today``, D-88), so the queue is sorted and flagged by the new
+        figures (B-895). One read by a chat model (or without a stored capture) keeps its own confidence as its Reading,
+        its queue figure worked out again the same way (it showed the old one beside a lower Coding, B-956)."""
         if conn.execute("SELECT 1 FROM settings WHERE key = 'reading_d89'").fetchone():
             return
         from ...ai.offline_coder import MODEL_NAME
         from ...capture.confidence import reading_confidence
         from ...capture.types import FieldResult
+        from .capture import capture_value
 
         rows = conn.execute(
             """SELECT i.id, i.ai_output, i.meta, i.validation, c.capture_json FROM invoices i LEFT JOIN
@@ -713,7 +713,7 @@ class StoreCore:
                 output = json.loads(r["ai_output"])
                 local = (json.loads(r["meta"] or "{}").get("inference") or {}).get("model") == MODEL_NAME
                 if local and r["capture_json"]:
-                    fields = (json.loads(r["capture_json"]) or {}).get("fields") or {}
+                    fields = (capture_value(r["capture_json"]) or {}).get("fields") or {}
                     reading = reading_confidence({k: FieldResult.from_dict(v) for k, v in fields.items()})
                 else:  # read by a chat model or the demo: its own confidence
                     reading, local = float(output.get("confidence_score") or 0.0), False

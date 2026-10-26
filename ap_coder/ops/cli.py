@@ -172,6 +172,10 @@ def build_parser() -> argparse.ArgumentParser:
         )
         p.add_argument("--insecure-http", action="store_true",
                        help="Server mode on plain HTTP, for a first test on a trusted network only")  # fmt: skip
+        p.add_argument("--workers", type=int, default=None, metavar="N",
+                       help="Server mode: N web worker processes and one for the background work (default 1, or "
+                       "AP_SERVER_WORKERS; the service: server.json's workers)")  # fmt: skip
+        p.add_argument("--background-work", action="store_true", help=argparse.SUPPRESS)  # (the server's own)
 
     p = sub.add_parser("doctor", help="Check configuration, reference data and (with --online) the models")
     p.add_argument(
@@ -319,6 +323,14 @@ def cmd_doctor(args: argparse.Namespace, settings: Settings) -> int:
         checks.append(Check("database", FAIL, f"{db} cannot be opened ({exc}): it is damaged or not an AP Coder "
                             "database. Put back a copy from the backups folder next to it."))  # fmt: skip
         source = "none (the database cannot be opened)"
+    else:
+        from .doctor import store_checks
+        from .service import is_server_here
+
+        db = Path(getattr(args, "db", None) or default_db_path())
+        server = is_server_here(private_dir())
+        if db.exists() or server:  # a laptop not set up yet has no database: nothing to look at
+            checks.extend(store_checks(Store(db), server))
     report = format_checks(checks)
     print(report.replace("\n\n", f"\n\nreference data source: {source}\n\n", 1))
     return exit_code(checks)
@@ -335,6 +347,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     if args.server:
         os.environ[SERVER_ENV] = "1"  # (the pages ask server_mode())
+    if args.background_work:  # the company server's background process, started by its serve (D-111)
+        return server.run_background(Store(Path(args.db)))
 
     certfile = args.certfile or os.environ.get(server.CERT_ENV) or None
     keyfile = args.keyfile or os.environ.get(server.KEY_ENV) or None
@@ -362,6 +376,12 @@ def cmd_serve(args: argparse.Namespace) -> int:
                   "name first, with no password: anyone who can reach this address can see the invoices. For logins, "
                   "run it as the company server (server mode).", file=sys.stderr)  # fmt: skip
     network = {"certfile": certfile, "keyfile": keyfile, "proxy": args.proxy, "insecure_http": args.insecure_http}
+    try:
+        workers = args.workers or int((os.environ.get(server.WORKERS_ENV) or "1").strip())
+    except ValueError:
+        workers = 1  # a typo never stops the server: one worker, as before
+    if server_mode() and workers > 1:
+        network["workers"] = workers
     extra = network if server_mode() or any(network.values()) else {}  # (the laptop's call is as before)
     return server.serve(host, port, open_browser=not args.no_browser, store=Store(Path(args.db)), **extra)
 
@@ -414,6 +434,12 @@ def _inputs(paths: list[str], store: Store | None = None) -> tuple[list[Path], b
     return list(unique.values()), unread, sorted_emails
 
 
+NO_GL_ACCOUNTS = (
+    "Finish the setup first: import your GL accounts in the dashboard (GL accounts & tax). Invoices "
+    "coded before that could not be checked or approved."
+)
+
+
 def cmd_process(args: argparse.Namespace, settings: Settings) -> int:
     settings = settings.with_overrides(
         di_model=args.extraction_model,
@@ -431,6 +457,9 @@ def cmd_process(args: argparse.Namespace, settings: Settings) -> int:
             print(f"No invoices to read: {sorted_emails} email(s) sorted.", file=sys.stderr)
             return 1 if unread else 0
         print("No supported invoice files found.", file=sys.stderr)
+        return 2
+    if store is not None and not store.list_accounts("gl_accounts"):  # as the dashboard (B-1212)
+        print(NO_GL_ACCOUNTS, file=sys.stderr)
         return 2
     source = reference_source(args)
     if source.startswith("BUNDLED"):
@@ -531,6 +560,9 @@ def watch_once(args: argparse.Namespace, settings: Settings, store: Store, folde
     files = new_files(folder, store, fresh=set(taken_out))
     if not files:
         return done, failed
+    if not store.list_accounts("gl_accounts"):  # as the dashboard (B-1212): read once they are imported
+        print(f"{time.strftime('%H:%M:%S')} {len(files)} file(s) not read yet: {NO_GL_ACCOUNTS}", file=sys.stderr)
+        return done + len(files), failed + len(files)
     reference = _load_reference(args)  # picks up GL accounts edited in the dashboard meanwhile
     pipeline = InvoicePipeline(settings, reference, cache_dir=args.cache_dir or None, store=store)
     started, clock, read, errors = dt.datetime.now().isoformat(timespec="seconds"), time.monotonic(), 0, []
@@ -1029,7 +1061,10 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.reconfigure(errors="replace")  # file name or vendor: "?", never a crash (stderr escapes them)
     configure_logging(args.verbose)
 
-    settings = Settings.from_env(args.env_file)
+    # An administrator's commands on the company server read no .env: the service's account can write the data
+    # folder's (D-109). They need none of its settings.
+    admin = args.command == "server-update" or (args.command == "service" and args.action != "run")
+    settings = Settings() if admin else Settings.from_env(args.env_file)
     commands = {
         "serve": lambda: cmd_serve(args),
         "dashboard": lambda: cmd_serve(args),

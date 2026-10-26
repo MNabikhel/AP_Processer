@@ -95,7 +95,7 @@ def spend_page(request: Request) -> HTMLResponse:
     default_start, default_end = spend.default_period()
     start, start_ok = _date(q.get("start"), default_start)
     end, end_ok = _date(q.get("end"), default_end)
-    rows = spend.lines(store, start, end) if start <= end else []
+    rows = spend.parts(store, start, end) if start <= end else []
     currencies = spend.currencies(rows) or ["CAD"]
     rates = store.fx_rates()
     if len(currencies) > 1 and all(c in rates for c in currencies):

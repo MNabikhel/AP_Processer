@@ -355,6 +355,22 @@ service install` registers a **scheduled task** that starts at boot under its ow
 dashboard, starts it again when it stops, and writes what it says to `<data folder>\logs\service.log`. Updates are
 `python -m ap_coder server-update <bundle>` (`--back` to go back), not the launcher.
 
+  **Several processes on the server** (D-111; `serve --server --workers N`, which the service host passes from
+  `server.json`'s `workers`, default one per core, at most 8): `ap_coder/web/server.py:_serve_workers` opens the port
+  and runs uvicorn's own supervisor, which starts N web workers with "spawn" (Windows and Linux alike: each is a fresh
+  Python, `worker_app` builds the app from `AP_SERVE_WORKER`, the port handed over), and starts again a worker that
+  stops. Beside them one **background process** (`serve --background-work`, `server.run_background`, started again
+  when it stops, 5 s doubling to a minute) does what the laptop's dashboard does in its own process: the page
+  reader and the AI reviewer, the Azure check, JD Edwards, the daily backup and the finance hub's schedule (each
+  minute instead of at each page), holding `<data>/.ap_coder_background.lock` (one per data folder). It stops when
+  its input closes (the server stopping or ending). The workers share what they know through the database: jobs
+  and their progress (`ephemeral` rows `job-running:<process>`, renewed each second), the queued imports' count, the
+  hourly upload allowance, a temporary password on its way to its page (sealed with the key the workers hold in
+  memory), the review screen's drafts (read afresh at each request), a restore under way (`<db>.restoring`). Each
+  worker writes `logs/access-<n>.log`. `POST /shutdown` to any worker writes `<data>/.ap_coder_server.stop`: the
+  server and every worker stop (25 s grace for requests under way, then ended). With `--workers 1` (and on a laptop
+  always) everything runs in the one process, as before.
+
 ## 9. The data folder and everything AP Coder writes
 
 Default data folder `~/APCoder` (`C:\Users\<you>\APCoder`); `AP_PRIVATE_DIR` overrides it, the record

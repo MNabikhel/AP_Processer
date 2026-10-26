@@ -146,6 +146,16 @@ def test_the_live_check_finds_a_voucher_already_in_jde(store, ais):
     assert "DUPLICATE_IN_ERP" in codes  # through the review screen's vendor checks
 
 
+def test_a_voucher_the_sync_put_in_the_register_is_said_with_its_voucher_number_and_paid(store, ais):
+    """B-1217: once the nightly sync had put the voucher in the register, the review screen said only "already in the
+    ERP (dated ...), total ...": the live check's voucher number and paid status were left out. JD Edwards' own answer
+    is said instead, once."""
+    connect(store, ais)
+    jde_sync.sync(store)  # the register holds INV-7001 from the sync
+    found = [m for _, c, m in vendor_findings(_coding(), store) if c == "DUPLICATE_IN_ERP"]
+    assert len(found) == 1 and "voucher 90001 PV" in found[0] and "paid" in found[0], found
+
+
 def test_the_live_check_degrades_when_jde_is_down(store, ais):
     connect(store, ais)
     jde_sync.sync(store)  # the register holds INV-7001 from the sync

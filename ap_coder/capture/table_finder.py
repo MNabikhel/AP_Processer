@@ -90,7 +90,9 @@ def _find(session: Any, png: bytes, page: int) -> list[tuple[Box, float]]:
     import numpy as np
     from PIL import Image
 
-    with Image.open(io.BytesIO(png)) as image:
+    from .layout import picture_formats
+
+    with Image.open(io.BytesIO(png), formats=picture_formats()) as image:
         squeezed = image.convert("RGB").resize((SIDE, SIDE), Image.BILINEAR)
     pixels = np.asarray(squeezed, dtype=np.float32)[:, :, ::-1] / 255.0  # as the model was run in its project: BGR
     batch = np.ascontiguousarray(pixels.transpose(2, 0, 1)[np.newaxis, ...])

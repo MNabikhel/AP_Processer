@@ -459,8 +459,8 @@ def test_queue_accuracy_note_counts_measured_lines_not_guesses(tmp_path, monkeyp
     from ap_coder.web.pages import review
 
     store = Store(tmp_path / "ap.db")
-    real = store.metrics
-    monkeypatch.setattr(store, "metrics", lambda: {**real(), "line_accuracy": 0.95, "lines_reviewed": 400,
+    real = store.line_metrics  # the queue's counts (D-110)
+    monkeypatch.setattr(store, "line_metrics", lambda: {**real(), "line_accuracy": 0.95, "lines_reviewed": 400,
                                                    "lines_measured": 10})  # fmt: skip
     s = Settings()
     accuracy = review.kpis(store, [], [], [], settings=replace(s, llm=replace(s.llm, provider="off")))[2]

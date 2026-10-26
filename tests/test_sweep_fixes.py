@@ -151,7 +151,7 @@ def test_final_approval_rechecks_the_first_approver(tmp_path):
     real_get = store.get_invoice
     store.get_invoice = lambda i: stale  # Bob's page still shows Alice's first approval
     with pytest.raises(ValueError):
-        store.final_approve(invoice_id, "Bob")
+        store.final_approve(invoice_id, "Bob", shown=store.latest_approval_id(invoice_id))
     store.get_invoice = real_get
     assert store.get_invoice(invoice_id)["status"] == "pending_approval"
 
@@ -210,8 +210,9 @@ def test_second_approval_needs_another_computer_login(tmp_path):
     invoice_id = store.add_invoice(tmp_path / "a.pdf", _gt(), {})
     store.approve_invoice(invoice_id, _gt(), "Alex", login="amartin")
     with pytest.raises(PermissionError):
-        store.final_approve(invoice_id, "Jordan Lee", login="AMartin")  # renamed, same Windows account
-    store.final_approve(invoice_id, "Jordan Lee", login="jlee")
+        shown = store.latest_approval_id(invoice_id)
+        store.final_approve(invoice_id, "Jordan Lee", login="AMartin", shown=shown)  # renamed, same Windows account
+    store.final_approve(invoice_id, "Jordan Lee", login="jlee", shown=store.latest_approval_id(invoice_id))
     assert store.get_invoice(invoice_id)["status"] == "approved"
 
 
@@ -342,7 +343,7 @@ def test_operations_count_the_second_approval(tmp_path):
     doc = _gt(invoice_date="2026-09-01", payment_terms="2/10 Net 30", due_date="")
     invoice_id = store.add_invoice(tmp_path / "a.pdf", doc, {})
     store.approve_invoice(invoice_id, doc, "Alex")
-    store.final_approve(invoice_id, "Sam")
+    store.final_approve(invoice_id, "Sam", shown=store.latest_approval_id(invoice_id))
     with sqlite3.connect(path) as conn:
         conn.execute("UPDATE invoices SET reviewed_at = '2026-09-03T10:00:00', second_reviewed_at = "
                      "'2026-10-07T10:00:00' WHERE id = ?", (invoice_id,))  # fmt: skip

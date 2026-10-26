@@ -412,6 +412,7 @@ def resolve_an8(final: dict[str, Any], vendor_lookup: VendorLookup, settings: Jd
 def account_for(gl_code: str, cost_center: str, settings: JdeSettings) -> GlMap | None:
     """The E1 account of an AP Coder GL code (+ cost center), or None when it is not mapped."""
     gl, cc = _norm(gl_code), _norm(cost_center)
+    cc = "" if cc == UNASSIGNED else cc  # a cost center still to pick is not a business unit (B-1211)
     if not gl or gl == UNASSIGNED:  # a line still to code has no object account (B-830)
         return None
     exact = next((m for m in settings.gl_map if _norm(m.gl_code) == gl and _norm(m.cost_center) == cc), None)

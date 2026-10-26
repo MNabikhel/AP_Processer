@@ -103,6 +103,19 @@ class ReviewerSettings:
     on: bool = True
     rounds: int = DEFAULT_ROUNDS
     minutes: float = DEFAULT_MINUTES
+    # Which invoices it reviews (D-111): "all" (the laptop's default), or "touchless", only those AP Coder could
+    # approve without a person (the company server's default: the rest go to a person anyway, and the chat model's
+    # time is the server's scarce resource). Either way none is approved without a person until it agrees.
+    scope: str = "all"
+
+
+SCOPES = ("all", "touchless")
+
+
+def default_scope() -> str:
+    from ..ops.offline import server_mode
+
+    return "touchless" if server_mode() else "all"
 
 
 def load_settings(store: Any) -> ReviewerSettings:
@@ -118,12 +131,15 @@ def load_settings(store: Any) -> ReviewerSettings:
         minutes = min(MAX_MINUTES, max(0.5, float(data.get("minutes", DEFAULT_MINUTES))))
     except (TypeError, ValueError):
         rounds, minutes = DEFAULT_ROUNDS, DEFAULT_MINUTES
-    return ReviewerSettings(on=bool(data.get("on", True)), rounds=rounds, minutes=minutes)
+    scope = data.get("scope") if data.get("scope") in SCOPES else default_scope()
+    return ReviewerSettings(on=bool(data.get("on", True)), rounds=rounds, minutes=minutes, scope=scope)
 
 
-def save_settings(store: Any, *, on: bool, rounds: int, minutes: float, actor: str | None = None) -> ReviewerSettings:
+def save_settings(store: Any, *, on: bool, rounds: int, minutes: float, actor: str | None = None,
+                  scope: str | None = None) -> ReviewerSettings:  # fmt: skip
     cfg = ReviewerSettings(on=bool(on), rounds=min(MAX_ROUNDS, max(1, int(rounds))),
-                           minutes=min(MAX_MINUTES, max(0.5, float(minutes))))  # fmt: skip
+                           minutes=min(MAX_MINUTES, max(0.5, float(minutes))),
+                           scope=scope if scope in SCOPES else load_settings(store).scope)  # fmt: skip
     store.set_setting(SETTING, json.dumps(dataclasses.asdict(cfg)), actor=actor)
     return cfg
 
@@ -412,16 +428,18 @@ class Plan:
     hold: bool = False
 
 
-def prepare(store: Any, invoice_id: int | None) -> Plan:
-    """Before the touchless decision: with the reviewer on, every invoice is put in line and waits for it. Never
-    raises."""
+def prepare(store: Any, invoice_id: int | None, autonomy: dict[str, Any] | None = None) -> Plan:
+    """Before the touchless decision: with the reviewer on, every invoice is put in line and waits for it; with its
+    scope "touchless" (D-111), only one touchless processing passed (``autonomy``), which waits for it; the others
+    go to a person anyway (one read again by the page reader is asked again then). Never raises."""
     if store is None:
         return Plan()
     try:
         cfg = load_settings(store)
     except Exception:  # noqa: BLE001
         return Plan()
-    return Plan(queue=cfg.on, hold=cfg.on)
+    wanted = cfg.scope != "touchless" or bool((autonomy or {}).get("auto")) or held(autonomy or {})
+    return Plan(queue=cfg.on and wanted, hold=cfg.on)
 
 
 HOLDS = ("azure_hold", "verifier_hold")  # what an invoice touchless processing passed may still be waiting for
@@ -462,26 +480,28 @@ class Outcome:
 
 
 def verify_one(settings: Any, store: Any, *, coder: Any = None, clock: Callable[[], float] = time.monotonic,
-               after_page_reader: bool = True) -> Outcome | None:  # fmt: skip
+               after_page_reader: bool = True, reader: str = "") -> Outcome | None:  # fmt: skip
     """Review the next invoice in line. None when the reviewer is off or nothing waits. The chat model not
-    answering leaves the invoice in line (postponed)."""
+    answering leaves the invoice in line (postponed). ``reader``: who marks it (``page_worker.READER_ID``, or one
+    of this process's reader threads with ``llm_parallel``)."""
     if store.restoring():
         return None
     cfg = load_settings(store)
     if not cfg.on:
         return None
-    from .page_worker import READER_ID
+    from .page_worker import READER_ID, reading_as
 
-    row = store.next_verification(after_page_reader=after_page_reader, reader=READER_ID)
-    if not row:
-        return None
-    iid = int(row["invoice_id"])
-    try:
-        return _verify(settings, store, row, cfg, coder, clock)
-    except Exception as exc:  # noqa: BLE001 - one invoice must never stop the queue
-        log.warning("%s: invoice %s failed (%s)", NAME, iid, exc)
-        _end(store, row, "failed", error=f"{type(exc).__name__}: {str(exc)[:300]}")
-        return Outcome(iid, "failed", str(exc)[:300])
+    with reading_as(reader or READER_ID) as mark:
+        row = store.next_verification(after_page_reader=after_page_reader, reader=mark)
+        if not row:
+            return None
+        iid = int(row["invoice_id"])
+        try:
+            return _verify(settings, store, row, cfg, coder, clock)
+        except Exception as exc:  # noqa: BLE001 - one invoice must never stop the queue
+            log.warning("%s: invoice %s failed (%s)", NAME, iid, exc)
+            _end(store, row, "failed", error=f"{type(exc).__name__}: {str(exc)[:300]}")
+            return Outcome(iid, "failed", str(exc)[:300])
 
 
 def _end(store: Any, row: dict[str, Any], status: str, **how: Any) -> bool:

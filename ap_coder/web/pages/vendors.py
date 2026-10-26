@@ -172,7 +172,7 @@ def vendor_detail(store: Store, v: dict[str, Any], language: str) -> dict[str, A
 
 
 def recurring_rows(store: Store) -> tuple[list[Any], list[Any]]:
-    found = recurring.detect(store.vendor_invoice_dates())
+    found = recurring.detected(store)
     return found, [r for r in found if r.status == recurring.LATE]
 
 

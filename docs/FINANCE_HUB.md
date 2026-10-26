@@ -92,7 +92,8 @@ workflow_runs (run_id): import-<event> and hub_export-<event> are activity event
 - Sign-in events (logins, failed logins, passwords, unlocked addresses): the server's security record.
 - Settings, accounts and passwords (also their events in `activity`: user_added, role_changed, user_activated,
   user_deactivated, backup_restored, settings_changed, tax_setup_changed, policy_changed), the learning memory's
-  lessons, imported ERP history.
+  lessons (a `lesson_explained` event in `activity` says who explained one and when, without the situation or AP's
+  reason), imported ERP history.
 - The computer address a change was made from: it is not in `activity`'s details.
 
 ## The tables
@@ -196,7 +197,7 @@ Key: `approval_id`. Changes: compared row by row with what was sent (a fingerpri
 
 ### `activity`
 
-The audit trail: every event AP Coder records (read, approved, exported...), oldest first. Sign-in, account and settings events (`tax_setup_changed` and `policy_changed` too) are left out, and so is the computer address in an event's detail.
+The audit trail: every event AP Coder records (read, approved, exported...), oldest first. Sign-in, account and settings events (`tax_setup_changed` and `policy_changed` too) are left out, and so is the computer address in an event's detail and a lesson's situation and reason (`lesson_explained`).
 
 Key: `event_id`. Changes: only ever added; sent by the last event id sent (the watermark).
 

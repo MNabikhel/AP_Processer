@@ -265,7 +265,7 @@ def coding_context(store: Store, mem_q: str, settings: Any = None) -> dict[str, 
         ui.tile("Lines reviewed", f"{m['lines_reviewed']:,}", "", "blue", f"{m['lines_accepted']:,} confirmed"),
         ui.tile("Corrections taught", f"{m['lines_corrected']:,}", "", "amber", "used on the next invoice"),
         ui.tile(insights.AS_CODED, "—" if not total else f"{clean / total:.0%}", "", "green",
-                f"{clean} of {total} needed no change"),
+                insights.as_coded_note(clean, insights.filled_in_count(store), total)),
     ]  # fmt: skip
     tiles = [built(tile) for tile in tiles]
     weeks = [w["week"] for w in weekly]

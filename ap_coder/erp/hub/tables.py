@@ -31,7 +31,7 @@ WITHDRAWN_BY = ("reopened", "sent_back")
 # Sign-in events (logins, failed logins, passwords, unlocked addresses) stay out of ``activity``: they are the server's
 # security record, not the work on invoices (docs/FINANCE_HUB.md).
 SIGN_IN_ACTIONS = ("login", "logout", "login_failed", "login_locked", "password_changed", "password_reset",
-                   "address_unlocked")  # fmt: skip
+                   "address_unlocked", "downloaded")  # fmt: skip
 # Accounts and settings stay out too (docs/FINANCE_HUB.md "What is left out"): who has an account and what role, a
 # backup put back, and settings changed (the tax setup and the policy notes too, B-1206) are the company server's
 # administration, not the work on invoices.
@@ -515,16 +515,23 @@ def approvals(store: Any, ctx: Context, events: list[dict[str, Any]] | None = No
     return out
 
 
+# The learning memory's lessons stay out of the hub (FINANCE_HUB.md): an explained lesson's event is sent without
+# the situation and AP's reason, who and when only (B-1216).
+LESSON_DETAIL = {"lesson_explained": ("situation", "reason")}
+
+
 def activity(store: Any, ctx: Context, after_id: int = 0) -> list[dict[str, Any]]:
     out = []
     for e in store.hub_events(after_id):
-        if left_out_of_activity(str(e["action"] or "")):
+        action = str(e["action"] or "")
+        if left_out_of_activity(action):
             continue
+        # the computer it was done from stays out, as the sign-in events do (B-1206)
+        hidden = {"address", *LESSON_DETAIL.get(action, ())}
         out.append({
             "event_id": int(e["id"]), "invoice_id": whole(e.get("invoice_id")), "action": text(e["action"]),
             "actor": text(e.get("actor")), "occurred_at": stamp(e.get("created_at")),
-            # the computer it was done from stays out, as the sign-in events do (B-1206)
-            "detail_json": json.dumps(_hide_bank({k: v for k, v in (e.get("detail") or {}).items() if k != "address"}),
+            "detail_json": json.dumps(_hide_bank({k: v for k, v in (e.get("detail") or {}).items() if k not in hidden}),
                                       ensure_ascii=False, sort_keys=True, default=str),
         })  # fmt: skip
     return out

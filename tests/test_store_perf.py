@@ -198,13 +198,13 @@ def test_the_metrics_read_the_learning_memory_again_only_when_it_changes(tmp_pat
     def scans() -> int:
         return len([s for s in seen if "FROM feedback WHERE outcome" in s])
 
-    first = store.metrics()
-    assert scans() == 4 and first["lines_reviewed"] > 0
-    assert store.metrics() == first and scans() == 4
+    first = store.metrics()  # three scans: the lines by outcome are counted as lessons come and go (D-110)
+    assert scans() == 3 and first["lines_reviewed"] > 0
+    assert store.metrics() == first and scans() == 3
     store.reject_invoice(ids[1], "Ann", "duplicate")  # no lesson: the memory is kept, the invoice counts are not
-    assert store.metrics()["invoices_by_status"] == {"approved": 1, "rejected": 1, "review": 1} and scans() == 4
+    assert store.metrics()["invoices_by_status"] == {"approved": 1, "rejected": 1, "review": 1} and scans() == 3
     store.approve_invoice(ids[2], {**gt(), "invoice_number": "N-2"}, "Ann")
-    assert store.metrics()["lines_reviewed"] == 2 * first["lines_reviewed"] and scans() == 8
+    assert store.metrics()["lines_reviewed"] == 2 * first["lines_reviewed"] and scans() == 6
 
 
 def test_bulk_sorting_reuses_the_queue_the_page_read(tmp_path, monkeypatch):

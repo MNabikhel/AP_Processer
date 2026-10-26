@@ -126,17 +126,22 @@ def invoice_rows(
 def distribution(final: dict[str, Any], tax_treatments: dict[str, TaxTreatment] | None = None) -> list[dict[str, Any]]:
     """An approved invoice's posting lines: as stored when it was coded, else (an invoice approved by an older
     version) built again from its coding, with ``tax_treatments`` (``Store.tax_treatments()``; without them the
-    default treatments, and a recoverable tax line has no GL account)."""
+    default treatments, and a recoverable tax line has no GL account). A cost center left UNASSIGNED is blank: it is
+    not a cost center the ERP knows (B-1211)."""
     dist = final.get("gl_distribution")
-    if dist:
-        return list(dist)
-    from ..core.schema import InvoiceCoding
+    if not dist:
+        from ..core.schema import InvoiceCoding
 
-    try:
-        coding = InvoiceCoding.model_validate({k: v for k, v in final.items() if k != "gl_distribution"})
-    except ValueError:
-        return []
-    return build_gl_distribution(coding, TaxSetup(TaxRateTable(()), dict(tax_treatments or {})))
+        try:
+            coding = InvoiceCoding.model_validate({k: v for k, v in final.items() if k != "gl_distribution"})
+        except ValueError:
+            return []
+        dist = build_gl_distribution(coding, TaxSetup(TaxRateTable(()), dict(tax_treatments or {})))
+    return [{**e, "cost_center": ""} if _unassigned(e.get("cost_center")) else e for e in dist]
+
+
+def _unassigned(cost_center: Any) -> bool:
+    return str(cost_center or "").strip().upper() == "UNASSIGNED"
 
 
 def line_rows(

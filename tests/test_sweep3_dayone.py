@@ -410,7 +410,7 @@ def test_the_approved_today_tile_says_how_many_wait_for_a_second_approval():
     from ap_coder.web.pages.review import kpis
 
     class FakeStore:
-        def metrics(self):
+        def line_metrics(self):
             return {"line_accuracy": None, "lines_corrected": 0, "lines_reviewed": 0}
 
     import ap_coder.web.pages.review as review_page

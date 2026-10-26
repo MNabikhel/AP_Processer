@@ -261,6 +261,17 @@ def _zip(stage: Path, dest: Path) -> None:
     os.replace(tmp, dest)
 
 
+def write_checksum(zip_path: Path) -> tuple[str, Path]:
+    """The ZIP's SHA-256, written beside it as ``<zip>.sha256`` (``sha256sum``'s format). It is sent to IT apart from
+    the ZIP: ``server-update <zip> --sha256 <it>`` refuses a ZIP that isn't this one (D-109)."""
+    from ap_coder.ops.offline import sha256
+
+    digest = sha256(zip_path)
+    path = zip_path.with_name(zip_path.name + ".sha256")
+    path.write_text(f"{digest}  {zip_path.name}\n", encoding="utf-8")
+    return digest, path
+
+
 def file_list(stage: Path) -> dict[str, str]:
     """Every file in the bundle folder ``stage`` (but the manifest itself), by its path, with its SHA-256."""
     from ap_coder.ops.offline import sha256
@@ -360,6 +371,8 @@ def build(args: argparse.Namespace) -> int:
     _zip(stage, dest)
     size = dest.stat().st_size / 1e6
     print(f"Done: {dest} ({size:,.0f} MB, {len(wheels)} wheels, {len(models)} models)")
+    digest, checksum = write_checksum(dest)
+    print(f"SHA-256: {digest}  (also in {checksum.name}): send it to IT apart from the ZIP, for server-update --sha256")
     if without_ocr:
         print(f"Without the OCR add-on (a package of it has no wheel there): {'; '.join(without_ocr)}")
     return 0

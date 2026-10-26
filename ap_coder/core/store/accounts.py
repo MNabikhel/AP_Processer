@@ -293,8 +293,9 @@ class AccountsMixin:
         """(approvals, the latest) of invoices approved or waiting for a second approval: changes when one is, so what
         depends on past approvals (a vendor's last Pay from account) is worked out again (the queue, B-690)."""
         with self._conn() as conn:
+            self._summary_fresh(conn)
             row = conn.execute(
-                "SELECT COUNT(*), MAX(reviewed_at), MAX(id) FROM invoices "
+                "SELECT COUNT(*), MAX(reviewed_at), MAX(id) FROM invoice_summary "
                 "WHERE status IN ('approved', 'pending_approval')"
             ).fetchone()
         return tuple(row)

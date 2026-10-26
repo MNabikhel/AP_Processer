@@ -93,6 +93,11 @@
     Check; when it is not sure, a person looks. With it on, no invoice is approved without a person until it agrees.</p>
   <form method="post" action="/settings/reading/reviewer" class="stack" data-busy="Saving…">
     <label class="check"><input type="checkbox" name="on" value="1"{% if ai_reviewer.on %} checked{% endif %}> On (recommended)</label>
+    <label class="field">What it reviews
+      <select name="scope">
+        <option value="all"{% if ai_reviewer.scope == "all" %} selected{% endif %}>Every invoice</option>
+        <option value="touchless"{% if ai_reviewer.scope == "touchless" %} selected{% endif %}>Only those AP Coder could approve without a person</option>
+      </select></label>
     <details class="st-details">
       <summary>For IT: how long it may take</summary>
       <div class="row">
@@ -158,6 +163,7 @@
     <code>python -m ap_coder read-pages --minutes 240</code>.</p>{% endif %}
   {% if reader.figures %}<p>{{ reader.figures }}</p>{% endif %}
   {% if reader.scans %}<p>{{ reader.scans }}</p>{% endif %}
+  {% if reader.skipped %}<p>{{ reader.skipped }}</p>{% endif %}
   {% if reader.scorecard %}<p>{{ reader.scorecard }}</p>{% endif %}
   {% endif %}
 

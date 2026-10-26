@@ -56,7 +56,8 @@ DEFAULT_HOST = "0.0.0.0"  # every network card of the server: staff open it from
 SERVER_FILE = ".ap_coder_server.json"  # written by the running dashboard (web/server.py)
 # The environment variables that override server.json (the TLS and host names are those `serve --server` reads too).
 ENV_SETTINGS = {"port": "AP_SERVER_PORT", "host": "AP_DASHBOARD_ADDRESS", "certfile": "AP_TLS_CERT",
-                "keyfile": "AP_TLS_KEY", "allowed_hosts": "AP_ALLOWED_HOSTS", "proxy": "AP_SERVER_PROXY"}  # fmt: skip
+                "keyfile": "AP_TLS_KEY", "allowed_hosts": "AP_ALLOWED_HOSTS", "proxy": "AP_SERVER_PROXY",
+                "workers": "AP_SERVER_WORKERS", "llm_parallel": "AP_LLM_PARALLEL"}  # fmt: skip
 # Windows' own accounts: no password; the task names them by their SID.
 BUILT_IN = {"system": "S-1-5-18", "localsystem": "S-1-5-18", "nt authority\\system": "S-1-5-18",
             "local service": "S-1-5-19", "localservice": "S-1-5-19", "nt authority\\local service": "S-1-5-19",
@@ -83,6 +84,9 @@ class ServerSettings:
     account: str = DEFAULT_ACCOUNT
     task_name: str = TASK_NAME
     folder: str = ""  # the AP Coder folder the service runs ("" = this one); server-update changes it
+    allowed_folders: tuple[str, ...] = ()  # the folders an Admin may name on the Settings pages (D-109)
+    workers: int = 0  # web worker processes (D-111); 0: one per core, at most 8 (``server.default_workers``)
+    llm_parallel: int = 1  # requests sent to LM Studio (or another model server) at once (D-111)
 
     @property
     def code_folder(self) -> Path:
@@ -133,6 +137,58 @@ def _hosts(value: Any) -> tuple[str, ...]:
     return tuple(str(h).strip() for h in items if str(h).strip())
 
 
+def _folders(value: Any) -> tuple[str, ...]:
+    items = value.split(";") if isinstance(value, str) else list(value or [])
+    return tuple(str(f).strip().strip('"') for f in items if str(f).strip().strip('"'))
+
+
+def _norm(path: str) -> str:
+    return os.path.normcase(os.path.normpath(path.strip().strip('"')))
+
+
+def folder_refusal(folder: str, data: Path | None = None, server: bool | None = None) -> str:
+    """Why a folder an Admin typed (the backups' second copy, the finance hub's folder) can't be used ("" = it can).
+    On the server it must be one of server.json's ``allowed_folders``, set by IT (``service install
+    --allowed-folders``), or inside one, compared as text before anything is asked of it: a network path from the web
+    would make the server's account sign in there (its password hash sent), or copy the invoices out (D-109). Laptop:
+    any folder, as before."""
+    from .offline import server_mode
+
+    if not (server_mode() if server is None else server) or not str(folder or "").strip():
+        return ""
+    try:
+        allowed = _folders(read_config(data or private_dir()).get("allowed_folders"))
+    except SettingsError:
+        allowed = ()
+    target = _norm(str(folder))
+    for root in allowed:
+        base = _norm(root).rstrip("\\/")
+        if base and (target == base or target.startswith(base + os.sep)):
+            return ""
+    listed = "; ".join(allowed) if allowed else "none yet"
+    return (f"On the server, AP Coder writes only to the folders IT allows ({listed}): {folder} is not one of them, "
+            "nor inside one. Ask IT to add it (service install --allowed-folders, docs/SERVER.md section "
+            "9).")  # fmt: skip
+
+
+def session_limits(data: Path) -> tuple[float, float]:
+    """(idle, absolute) seconds of a login session on the server: server.json's ``session_idle_minutes`` (default
+    30, from 5 to 480) and ``session_hours`` (default 12, from 1 to 168), set by IT (D-109)."""
+    try:
+        found = read_config(data)
+    except SettingsError:
+        found = {}
+
+    def number(key: str, default: float, low: float, high: float) -> float:
+        try:
+            value = float(found.get(key) or default)
+        except (TypeError, ValueError):
+            return default
+        return min(max(value, low), high) if value == value else default
+
+    return number("session_idle_minutes", 30, 5, 480) * 60, number("session_hours", 12, 1, 168) * 3600
+
+
 def settings(data: Path, env: dict | None = None, **overrides: Any) -> ServerSettings:
     """The settings in effect: the defaults, then server.json, then the environment (:data:`ENV_SETTINGS`), then
     ``overrides`` (the command line; None = not given)."""
@@ -143,11 +199,17 @@ def settings(data: Path, env: dict | None = None, **overrides: Any) -> ServerSet
             values[name] = env[var].strip()
     values.update({k: v for k, v in overrides.items() if v is not None})
     values["allowed_hosts"] = _hosts(values.get("allowed_hosts"))
+    values["allowed_folders"] = _folders(values.get("allowed_folders"))
     try:
         values["port"] = int(values.get("port", DEFAULT_PORT))
     except (TypeError, ValueError):
         raise SettingsError(f"The port {values.get('port')!r} is not a number.") from None
     values["insecure_http"] = values.get("insecure_http") in (True, "1", "true", "yes", "on")
+    for name, low, high in (("workers", 0, 64), ("llm_parallel", 1, 32)):
+        try:
+            values[name] = min(high, max(low, int(values.get(name, getattr(ServerSettings, name)))))
+        except (TypeError, ValueError):
+            raise SettingsError(f"{name} {values.get(name)!r} is not a number.") from None
     for name in ("host", "certfile", "keyfile", "proxy", "account", "task_name", "folder"):
         values[name] = str(values.get(name) or getattr(ServerSettings, name)).strip()
     return ServerSettings(**values)
@@ -171,6 +233,7 @@ def problems(s: ServerSettings, check_files: bool = True) -> list[str]:
 def save_settings(data: Path, s: ServerSettings) -> Path:
     values = dataclasses.asdict(s)
     values["allowed_hosts"] = list(s.allowed_hosts)
+    values["allowed_folders"] = list(s.allowed_folders)
     values["folder"] = str(s.code_folder)
     return write_config(data, **values)
 
@@ -195,7 +258,9 @@ def serve_command(s: ServerSettings, python: str | Path) -> list[str]:
         cmd += ["--proxy", s.proxy]
     if s.insecure_http:
         cmd.append("--insecure-http")
-    return cmd
+    from ap_coder.web.server import default_workers
+
+    return [*cmd, "--workers", str(s.workers or default_workers())]
 
 
 def serve_env(s: ServerSettings, data: Path) -> dict[str, str]:
@@ -203,6 +268,7 @@ def serve_env(s: ServerSettings, data: Path) -> dict[str, str]:
     env = {"AP_PRIVATE_DIR": str(data), "AP_SERVER_MODE": "1", "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8"}
     if s.allowed_hosts:
         env["AP_ALLOWED_HOSTS"] = ",".join(s.allowed_hosts)
+    env["AP_LLM_PARALLEL"] = str(s.llm_parallel)
     return env
 
 
@@ -417,9 +483,10 @@ def dashboard_health(data: Path, s: ServerSettings, timeout: float = 3.0) -> dic
     return None
 
 
-def dashboard_stopped(data: Path, s: ServerSettings, wait: float = 20.0) -> bool:
+def dashboard_stopped(data: Path, s: ServerSettings, wait: float = 45.0) -> bool:
     """Ask the running dashboard to stop (``POST /shutdown`` with its token) and wait for its process to end; ended
-    when it won't. True when no dashboard of this data folder runs any more."""
+    when it won't (its web workers give the requests under way 25 seconds, its background process the page under
+    way 10 more: D-111). True when no dashboard of this data folder runs any more."""
     record = _read_json(data / SERVER_FILE)
     pid, token, port = int(record.get("pid") or 0), str(record.get("token") or ""), int(record.get("port") or s.port)
     if not process_alive(pid):
@@ -607,8 +674,8 @@ def install(data: Path, s: ServerSettings, args: argparse.Namespace, say: Say = 
     folder = s.code_folder
     if args.dry_run:
         say(f"1. Save the settings in {config_path(data)}:")
-        say(json.dumps({**dataclasses.asdict(s), "allowed_hosts": list(s.allowed_hosts), "folder": str(folder)},
-                       indent=2))  # fmt: skip
+        say(json.dumps({**dataclasses.asdict(s), "allowed_hosts": list(s.allowed_hosts),
+                        "allowed_folders": list(s.allowed_folders), "folder": str(folder)}, indent=2))  # fmt: skip
         say(f"2. Write {runner_path(data)}:")
         say(runner_text(folder, data).replace("\r\n", "\n"))
         say(f"3. Write the task {task_file(data)}:")
@@ -764,6 +831,12 @@ def add_parser(sub: Any) -> None:
     p.add_argument("--proxy", default=None, help="A reverse proxy's IP address, when one is in front (IIS)")
     p.add_argument("--insecure-http", action="store_true", default=None, help="No HTTPS: for a first test only")
     p.add_argument("--folder", default=None, help="The AP Coder folder to run (default: this one)")
+    p.add_argument("--allowed-folders", default=None,
+                   help="The folders Admins may name for backup copies and the finance hub, ;-separated")  # fmt: skip
+    p.add_argument("--workers", type=int, default=None,
+                   help="Web worker processes (default: one per core, at most 8; 1: all in one process)")  # fmt: skip
+    p.add_argument("--llm-parallel", type=int, default=None,
+                   help="Requests sent to LM Studio at once (default 1; docs/SERVER.md, step 8)")  # fmt: skip
     p.add_argument("--no-start", action="store_true", help="install: don't start it yet")
     p.add_argument("--dry-run", action="store_true", help="install: show what it would do, change nothing")
 
@@ -789,6 +862,9 @@ def main(args: argparse.Namespace) -> int:
                 "allowed_hosts",
                 "proxy",
                 "insecure_http",
+                "allowed_folders",
+                "workers",
+                "llm_parallel",
             )
         }
         if args.folder:

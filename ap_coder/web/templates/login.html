@@ -22,7 +22,7 @@
     <section class="card">
       <h1 class="apc-title">Log in</h1>
       <p class="muted">Use the username and password your AP Coder Admin gave you.</p>
-      <form method="post" action="/login" class="stack" data-busy="Logging in…">
+      <form method="post" action="/login" class="stack" data-busy="Logging in…" data-urlencoded>
         <input type="hidden" name="next" value="{{ next }}">
         <label class="field">Username
           <input type="text" name="username" autocomplete="username" autocapitalize="none" spellcheck="false"

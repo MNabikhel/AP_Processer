@@ -395,7 +395,11 @@ def learn_from_approval(store: Any, invoice_id: int, final: dict[str, Any], *, a
     if path.suffix.lower() in TEXT_EXTENSIONS or not path.exists():
         return learned
     try:
-        layout = build_layout(path)
+        from ..core.paths import private_dir
+        from .layout import ocr_cache
+
+        with ocr_cache(private_dir() / ".cache" / "ocr"):  # the pages the pipeline OCR'd on arrival (B-1294)
+            layout = build_layout(path)
         profile = store.get_supplier_profile(key) or {}
         template = learn(profile.get("template") or None, layout, confirmed_values(final, taught),
                          document=str(inv.get("file_sha256") or ""))  # fmt: skip

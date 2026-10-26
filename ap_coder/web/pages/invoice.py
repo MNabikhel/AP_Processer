@@ -92,8 +92,17 @@ def _person(key: tuple[str, ...] | None) -> str:
     return "" if key is None else json.dumps(list(key))
 
 
+def _holder(request: Request) -> Any:
+    """Where the drafts are held: the app's state (one process, read from the store once), or, with several web
+    workers (the company server, D-111), this request's, read from the store afresh: a draft another worker kept or
+    dropped is seen at once."""
+    if getattr(request.app.state, "processes", 1) > 1:
+        return request.state
+    return request.app.state
+
+
 def _all_drafts(request: Request) -> list[dict[int, dict[str, Any]]]:
-    state = request.app.state
+    state = _holder(request)
     with _drafts_lock:
         if not hasattr(state, "invoice_drafts"):  # AP Coder (re)started: the drafts kept in the store
             state.invoice_drafts, state.person_drafts = {}, {}
@@ -123,9 +132,9 @@ def _drafts(request: Request) -> dict[int, dict[str, Any]]:
     _all_drafts(request)
     key = _my_key(request)
     if key is None:
-        return request.app.state.invoice_drafts
+        return _holder(request).invoice_drafts
     with _drafts_lock:
-        return request.app.state.person_drafts.setdefault(key, {})
+        return _holder(request).person_drafts.setdefault(key, {})
 
 
 def _draft_key(found: identity.Person) -> tuple[str, str]:
@@ -136,7 +145,7 @@ def rename_drafts(request: Request, found: identity.Person, now: identity.Person
     """A colleague gave a new name on /who: their edits go with them (else they would be no one's, and bulk approval
     would leave those invoices alone until a restart)."""
     _all_drafts(request)
-    everyone = request.app.state.person_drafts
+    everyone = _holder(request).person_drafts
     with _drafts_lock:
         kept = everyone.pop(_draft_key(found), None) if _draft_key(found) != _draft_key(now) else None
         if kept:
@@ -861,11 +870,11 @@ def _approve(request: Request, invoice_id: int, form: Any) -> JSONResponse:
         messages.append(flash_message(f"Thanks: {ui.plural(explained, 'reason')} kept. The AI reads "
                                       f"{'it' if explained == 1 else 'them'} with this vendor's next invoices.", "ok",
                                       icon="psychology"))  # fmt: skip
-    left = store.list_invoices(REVIEW)
+    left = store.status_counts().get(REVIEW, 0)  # counted, not read (D-110)
     if not left:
         messages.append(flash_message("Your queue is clear: every invoice has been reviewed.", "ok", icon="task_alt"))
     elif not form.get("next_id"):  # the last one of the list as shown: the rest are ones passed over
-        messages.append(flash_message(f"That was the last one in the list. {ui.plural(len(left), 'invoice')} still "
+        messages.append(flash_message(f"That was the last one in the list. {ui.plural(left, 'invoice')} still "
                                       "to review: back to the first of them.", "info", icon="replay"))  # fmt: skip
     return done(request, after, *messages)
 

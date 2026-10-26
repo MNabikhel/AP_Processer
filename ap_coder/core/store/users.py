@@ -28,10 +28,13 @@ from __future__ import annotations
 
 import base64
 import binascii
+import datetime as dt
 import hashlib
 import hmac
+import json
 import re
 import secrets
+import sqlite3
 import time
 import unicodedata
 from typing import Any
@@ -47,13 +50,27 @@ SCRYPT_N, SCRYPT_R, SCRYPT_P = 2**14, 8, 1
 SALT_BYTES, HASH_BYTES = 16, 64
 _SCRYPT_MAXMEM = 64 * 1024 * 1024
 TOKEN_BYTES = 32
-IDLE_SECONDS = 8 * 3600  # a session unused this long ends
-ABSOLUTE_SECONDS = 7 * 86400  # and any session this old
+# A session unused this long ends, and any session this old (D-109, finance's usual: 30 minutes, a working day). IT
+# may change them in server.json (session_idle_minutes, session_hours): the store's ``session_idle`` and
+# ``session_absolute``, set when the dashboard starts.
+IDLE_SECONDS = 30 * 60
+ABSOLUTE_SECONDS = 12 * 3600
+TEMPORARY_SECONDS = 72 * 3600  # a temporary password (a new account, a reset) not changed by then no longer logs in
+TEMPORARY_EXPIRED = ("Your temporary password has expired (it lasts 3 days): ask an Admin for a new one (Users → "
+                     "Reset password).")  # fmt: skip
 SEEN_EVERY = 60  # seconds between two writes of a session's last use
 MAX_FAILURES = 5  # tries that don't match within FAILURE_WINDOW for one username from one address...
 ADDRESS_FAILURES = 30  # ...or from one address, whatever the usernames...
 FAILURE_WINDOW = 15 * 60
 LOCK_SECONDS = 15 * 60  # ...pause logins (that username there, or that address) for this long
+# Tries that don't match for one username from anywhere (D-109): from the 10th within an hour, each pauses that
+# username's logins for 1, 2, 4, 8, then 15 minutes, from every address but those it logged in from lately.
+ACCOUNT_FAILURES = 10
+ACCOUNT_WINDOW = 3600
+KNOWN_ADDRESS_SECONDS = 30 * 86400  # an address the account logged in from this recently is "known"
+ANYWHERE = "*"  # the address of an account-wide pause (paused_usernames, unlock_username)
+VOUCH_DAYS = 7  # an account an Admin added or reset can't give the second approval of that Admin's invoice (D-109)
+POSTER_NOT_APPROVER = "poster_not_approver"  # the setting: who posts to JD Edwards can't be who approved (D-109)
 UNKNOWN = "?"  # how login_attempts keeps a username no account has: "?" and a hash, never the text typed
 USERNAME = re.compile(r"[a-z0-9][a-z0-9._@-]{0,63}")
 MAX_DISPLAY_NAME = 60
@@ -260,12 +277,16 @@ def carry_accounts(conn: Any, saved: dict[str, tuple[list[str], list[str], list[
 class UsersMixin:
     """Accounts, sessions and login attempts (server mode, D-97)."""
 
+    session_idle: float = IDLE_SECONDS
+    session_absolute: float = ABSOLUTE_SECONDS
+
     # --- Accounts ---------------------------------------------------------------------------------------------------
 
     def add_user(self, username: str, password: str, role: str = CLERK, display_name: str = "", *,
-                 actor: str = "", must_change: bool = True) -> int:  # fmt: skip
+                 actor: str = "", must_change: bool = True, by_user: int | None = None) -> int:  # fmt: skip
         """A new account; ValueError (in words) for a username taken or not allowed, a role that is not one of
-        ``ROLES`` or a password the policy refuses."""
+        ``ROLES`` or a password the policy refuses. ``by_user``: the account of the Admin adding it (recorded, for
+        ``vouched_for``)."""
         name = fold_username(username)
         if not USERNAME.fullmatch(name):
             raise ValueError(
@@ -288,7 +309,8 @@ class UsersMixin:
                 "VALUES (?, ?, ?, ?, 1, ?, ?)",
                 (name, shown, role, hashed, int(must_change), _now()),
             )
-            self._log(conn, "user_added", None, actor or None, {"username": name, "name": shown, "role": role})
+            by = {"by_user": int(by_user)} if by_user is not None else {}
+            self._log(conn, "user_added", None, actor or None, {"username": name, "name": shown, "role": role, **by})
             return int(cur.lastrowid)
 
     def user(self, user_id: int) -> dict[str, Any] | None:
@@ -360,13 +382,34 @@ class UsersMixin:
 
     # --- Passwords --------------------------------------------------------------------------------------------------
 
-    def change_password(self, user_id: int, current: str, new: str, *, keep: str | None = None) -> str:
+    def change_password(self, user_id: int, current: str, new: str, *, keep: str | None = None, ip: str = "") -> str:
         """The person's own change: ``current`` must match, ``new`` pass the policy and differ from it. Every session
         of theirs ends; the one they changed it from (``keep``, its token) goes on under a new token, returned ("" when
-        none was kept), so a token seen before the change is worth nothing after it (D-101)."""
+        none was kept), so a token seen before the change is worth nothing after it (D-101). A ``current`` that
+        doesn't match counts as a login try that didn't match (from ``ip``): at the ``MAX_FAILURES``-th, every session
+        of theirs ends and logins from there pause, as after wrong passwords at the login (D-109)."""
         with self._conn() as conn:
             row = self._account(conn, user_id)
         if not verify_password(current, row["pw_hash"]):
+            now, ip = _clock(), str(ip or "")[:64]
+            with self._conn() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                last_ok = conn.execute("SELECT MAX(at) FROM login_attempts WHERE username = ? AND ip = ? AND ok = 1",
+                                       (row["username"], ip)).fetchone()[0]  # fmt: skip
+                since = max(now - FAILURE_WINDOW, last_ok or 0)
+                tries = 1 + conn.execute("SELECT COUNT(*) FROM login_attempts WHERE username = ? AND ip = ? AND ok = 0 "
+                                         "AND at > ?", (row["username"], ip, since)).fetchone()[0]  # fmt: skip
+                lock = tries >= MAX_FAILURES
+                conn.execute("INSERT INTO login_attempts (username, ip, at, ok, user_locked_until) VALUES (?, ?, ?, 0, "
+                             "?)", (row["username"], ip, now, now + LOCK_SECONDS if lock else None))  # fmt: skip
+                self._log(conn, "login_failed", None, None, {"username": row["username"], "why": "password page"})
+                if lock:
+                    conn.execute("DELETE FROM sessions WHERE user_id = ?", (row["id"],))
+                    self._log(conn, "login_locked", None, None, {"username": row["username"], "by": "username",
+                                                                  "address": ip})  # fmt: skip
+            if lock:
+                raise ValueError(f"That was the {MAX_FAILURES}th current password that didn't match: you are logged "
+                                 "out, and logging in from here is paused for 15 minutes.")  # fmt: skip
             raise ValueError("Your current password doesn't match. Type it again.")
         if new == current:
             raise ValueError("Choose a new password, different from the current one.")
@@ -394,7 +437,8 @@ class UsersMixin:
                       {"username": row["username"]})  # fmt: skip
         return fresh
 
-    def reset_password(self, user_id: int, *, actor: str = "", password: str | None = None) -> str:
+    def reset_password(self, user_id: int, *, actor: str = "", password: str | None = None,
+                       by_user: int | None = None) -> str:  # fmt: skip
         """A new password for someone who forgot theirs (``password``, else a temporary one made here, returned to
         be given to them once): they choose their own at the next login, every session of theirs ends, and what
         would refuse them is lifted: their username's pauses, and the pause of every address they logged in or tried
@@ -416,8 +460,47 @@ class UsersMixin:
             for ip in theirs:
                 self._lift_address(conn, ip)
             conn.execute("DELETE FROM login_attempts WHERE username = ? AND ok = 0", (row["username"],))
-            self._log(conn, "password_reset", None, actor or None, {"username": row["username"]})
+            by = {"by_user": int(by_user)} if by_user is not None else {}
+            self._log(conn, "password_reset", None, actor or None, {"username": row["username"], **by})
         return chosen
+
+    def poster_not_approver(self) -> bool:
+        """The Admin's separation of duties on the server (Settings → Review, off by default): the person who posts a
+        batch to JD Edwards can't be one who approved its invoices (D-109)."""
+        return self.get_setting(POSTER_NOT_APPROVER) == "1"
+
+    def posting_refusal(self, batch: int, user_id: int | None) -> str:
+        """Why account ``user_id`` may not post ``batch`` to JD Edwards ("" = it may): with ``poster_not_approver``
+        on, it gave the first or second approval of one of the batch's invoices."""
+        if user_id is None or not self.poster_not_approver():
+            return ""
+        with self._conn() as conn:
+            rows = conn.execute("SELECT e.invoice_id, e.detail FROM events e JOIN invoices i ON i.id = e.invoice_id "
+                                "WHERE i.export_batch = ? AND e.action IN ('approved', 'final_approved')",
+                                (int(batch),)).fetchall()  # fmt: skip
+        mine = sorted({int(r[0]) for r in rows if json.loads(r[1] or "{}").get("user_id") == int(user_id)})
+        if not mine:
+            return ""
+        which = ", ".join(f"#{i}" for i in mine[:5]) + (" and more" if len(mine) > 5 else "")
+        return (f"Not posted: you approved {which} in this batch, and here the person who posts to JD Edwards can't "
+                "be one who approved its invoices (Settings → Review, set by an Admin). Another Approver posts "
+                "it.")  # fmt: skip
+
+    def vouched_for(self, admin_id: int, user_id: int, days: int = VOUCH_DAYS) -> bool:
+        """Whether account ``admin_id`` added account ``user_id``, or reset its password, in the last ``days`` days:
+        it knew that account's password then, so the two are not two people for a second approval (D-109)."""
+        since = (dt.datetime.now() - dt.timedelta(days=days)).isoformat(timespec="seconds")
+        with self._conn() as conn:
+            row = conn.execute("SELECT username FROM users WHERE id = ?", (int(user_id),)).fetchone()
+            if row is None:
+                return False
+            found = conn.execute("SELECT detail FROM events WHERE action IN ('user_added', 'password_reset') AND "
+                                 "created_at >= ?", (since,)).fetchall()  # fmt: skip
+        for (detail,) in found:
+            d = json.loads(detail or "{}")
+            if d.get("username") == row["username"] and d.get("by_user") == int(admin_id):
+                return True
+        return False
 
     # --- Paused addresses (D-101) ---------------------------------------------------------------------------------
 
@@ -448,16 +531,30 @@ class UsersMixin:
                 "AND username NOT LIKE ? GROUP BY username, ip ORDER BY username, ip",
                 (_clock(), UNKNOWN + "%"),
             ).fetchall()
-        return [{"username": r["username"], "address": r["ip"], "until": float(r["until"])} for r in rows]
+            names = conn.execute("SELECT DISTINCT username FROM login_attempts WHERE ok = 0 AND at > ? AND username "
+                                 "NOT LIKE ?", (_clock() - ACCOUNT_WINDOW, UNKNOWN + "%")).fetchall()  # fmt: skip
+            anywhere = [(r[0], self._account_paused_until(conn, r[0], _clock())) for r in names]
+        found = [{"username": r["username"], "address": r["ip"], "until": float(r["until"])} for r in rows]
+        found += [
+            {"username": name, "address": ANYWHERE, "until": until} for name, until in anywhere if until > _clock()
+        ]
+        return sorted(found, key=lambda p: (p["username"], p["address"]))
 
     def unlock_username(self, username: str, ip: str, *, actor: str = "") -> bool:
         """An Admin lifts the pause of a username from an address (True when it was paused), its count started again;
-        recorded as ``address_unlocked`` with the username."""
+        recorded as ``address_unlocked`` with the username. ``ANYWHERE``: its account-wide pause, every address's
+        count started again."""
         name, ip = fold_username(username)[:200], str(ip or "").strip()[:64]
         if not name:
             return False
         with self._conn() as conn:
             conn.execute("BEGIN IMMEDIATE")
+            if ip == ANYWHERE:
+                lifted = self._account_paused_until(conn, name, _clock()) > _clock()
+                if lifted:
+                    conn.execute("DELETE FROM login_attempts WHERE username = ? AND ok = 0", (name,))
+                    self._log(conn, "address_unlocked", None, actor or None, {"unpaused": "anywhere", "username": name})
+                return lifted
             paused = conn.execute("SELECT MAX(user_locked_until) FROM login_attempts WHERE username = ? AND ip = ?",
                                   (name, ip)).fetchone()[0]  # fmt: skip
             lifted = (paused or 0) > _clock()
@@ -481,12 +578,53 @@ class UsersMixin:
     # --- Logging in -------------------------------------------------------------------------------------------------
 
     @staticmethod
-    def _locked(conn: Any, key: str, ip: str, now: float, console: bool) -> bool:
+    def _known(conn: Any, key: str, ip: str, now: float) -> bool:
+        """Whether ``key`` logged in from ``ip`` within ``KNOWN_ADDRESS_SECONDS``: the person's own computer, or
+        their office's shared address."""
+        found = conn.execute("SELECT 1 FROM login_attempts WHERE username = ? AND ip = ? AND ok = 1 AND at > ? "
+                             "LIMIT 1", (key, ip, now - KNOWN_ADDRESS_SECONDS)).fetchone()  # fmt: skip
+        return found is not None
+
+    @staticmethod
+    def _account_paused_until(conn: Any, key: str, now: float) -> float:
+        """Until when ``key``'s logins are paused from anywhere (0 = they are not): its tries that didn't match within
+        ``ACCOUNT_WINDOW`` (since its last login), from the ``ACCOUNT_FAILURES``-th on, pause it for a minute,
+        doubling each time up to ``LOCK_SECONDS`` after the last one (D-109)."""
+        last_ok = conn.execute("SELECT MAX(at) FROM login_attempts WHERE username = ? AND ok = 1", (key,)).fetchone()[0]
+        count, last = conn.execute("SELECT COUNT(*), MAX(at) FROM login_attempts WHERE username = ? AND ok = 0 AND "
+                                   "at > ?", (key, max(now - ACCOUNT_WINDOW, last_ok or 0))).fetchone()  # fmt: skip
+        if count < ACCOUNT_FAILURES:
+            return 0.0
+        return float(last) + min(60.0 * 2 ** min(count - ACCOUNT_FAILURES, 10), LOCK_SECONDS)
+
+    def _temporary_expired(self, row: Any) -> bool:
+        """Whether ``row``'s temporary password was given over ``TEMPORARY_SECONDS`` ago (its last ``user_added``
+        or ``password_reset`` event; else the account's creation)."""
+        with self._conn() as conn:
+            given = conn.execute(
+                "SELECT MAX(created_at) FROM events WHERE action IN ('user_added', 'password_reset') "
+                "AND json_extract(detail, '$.username') = ?",
+                (row["username"],),
+            ).fetchone()[0]
+
+        try:
+            when = dt.datetime.fromisoformat(given or row["created_at"]).timestamp()
+        except (TypeError, ValueError):
+            return False
+        return time.time() - when > TEMPORARY_SECONDS  # (the events' own clock)
+
+    def _locked(self, conn: Any, key: str, ip: str, now: float, console: bool) -> bool:
         """Whether logins are paused for ``key`` (a username, or ``UNKNOWN`` and its hash) from ``ip``, or from
-        ``ip`` whatever the username (never for the server's own console)."""
+        ``ip`` whatever the username (never for the server's own console), or for ``key`` from anywhere. An address
+        ``key`` logged in from lately is paused for it by its own tries only: neither a shared address paused by
+        others' tries nor an account-wide pause by tries elsewhere keeps a person out of their own office (D-109)."""
         found = conn.execute("SELECT MAX(user_locked_until) FROM login_attempts WHERE username = ? AND ip = ?",
                              (key, ip))  # fmt: skip
         if (found.fetchone()[0] or 0) > now:
+            return True
+        if self._known(conn, key, ip, now):
+            return False
+        if self._account_paused_until(conn, key, now) > now:
             return True
         if ip and not console:
             found = conn.execute("SELECT MAX(ip_locked_until) FROM login_attempts WHERE ip = ?", (ip,))
@@ -531,7 +669,12 @@ class UsersMixin:
                 "VALUES (?, ?, ?, 0, ?, ?)",
                 (key, ip, now, now + LOCK_SECONDS if lock_pair else None, now + LOCK_SECONDS if lock_ip else None),
             ).lastrowid
+            lock_account = not self._known(conn, key, ip, now) and self._account_paused_until(conn, key, now) > now
         matches = verify_password(password, row["pw_hash"] if row is not None else _dummy_hash())
+        if row is not None and row["active"] and matches and row["must_change"] and self._temporary_expired(row):
+            with self._conn() as conn:
+                self._log(conn, "login_failed", None, None, {"username": name, "why": "temporary password expired"})
+            raise LoginRefused(TEMPORARY_EXPIRED)
         with self._conn() as conn:
             conn.execute("BEGIN IMMEDIATE")
             if row is not None and row["active"] and matches:
@@ -543,9 +686,10 @@ class UsersMixin:
                 return _public(fresh) or {}
             who = {"username": name} if row is not None else {"username": "", "account": "unknown"}
             self._log(conn, "login_failed", None, None, who)
-            if lock_pair or lock_ip:
-                self._log(conn, "login_locked", None, None, {**who, "by": "username" if lock_pair else "address"})
-        raise LoginRefused(LOCKED if lock_pair or lock_ip else WRONG)
+            if lock_pair or lock_ip or lock_account:
+                by = "username" if lock_pair else "address" if lock_ip else "account"
+                self._log(conn, "login_locked", None, None, {**who, "by": by, "address": ip})
+        raise LoginRefused(LOCKED if lock_pair or lock_ip or lock_account else WRONG)
 
     # --- Sessions ---------------------------------------------------------------------------------------------------
 
@@ -557,7 +701,7 @@ class UsersMixin:
         with self._conn() as conn:
             conn.execute(
                 "DELETE FROM sessions WHERE created_at <= ? OR last_seen < ?",
-                (now - ABSOLUTE_SECONDS, now - IDLE_SECONDS),
+                (now - self.session_absolute, now - self.session_idle),
             )
             conn.execute(
                 "INSERT INTO sessions (token_hash, user_id, created_at, last_seen, ip, user_agent) "
@@ -583,13 +727,16 @@ class UsersMixin:
                 return None
             if (
                 not row["active"]
-                or now - row["session_created"] >= ABSOLUTE_SECONDS
-                or (now - row["last_seen"] > IDLE_SECONDS)
+                or now - row["session_created"] >= self.session_absolute
+                or (now - row["last_seen"] > self.session_idle)
             ):
                 conn.execute("DELETE FROM sessions WHERE token_hash = ?", (digest,))
                 return None
             if now - row["last_seen"] >= SEEN_EVERY:
-                conn.execute("UPDATE sessions SET last_seen = ? WHERE token_hash = ?", (now, digest))
+                try:  # best effort: a busy database fails no page over it, the next request records it (B-1293)
+                    conn.execute("UPDATE sessions SET last_seen = ? WHERE token_hash = ?", (now, digest))
+                except sqlite3.OperationalError:
+                    pass
         found = _public(row) or {}
         for key in ("session_created", "last_seen"):
             found.pop(key, None)
@@ -608,6 +755,22 @@ class UsersMixin:
             if row is not None and actor:
                 self._log(conn, "logout", None, actor, {"username": row["username"]})
         return row is not None
+
+    def other_sessions(self, user_id: int, keep: str | None) -> int:
+        """How many sessions of the account there are besides ``keep`` (this browser's), within their time."""
+        now = _clock()
+        with self._conn() as conn:
+            args = (
+                int(user_id),
+                token_hash(keep) if keep else "",
+                now - self.session_absolute,
+                now - self.session_idle,
+            )
+            return conn.execute(
+                "SELECT COUNT(*) FROM sessions WHERE user_id = ? AND token_hash != ? AND created_at > ? "
+                "AND last_seen >= ?",
+                args,
+            ).fetchone()[0]
 
     def end_sessions(self, user_id: int, *, keep: str | None = None) -> int:
         """End every session of an account (``keep``: but this token's); how many ended."""

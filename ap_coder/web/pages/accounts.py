@@ -216,7 +216,7 @@ def use_sample(request: Request) -> JSONResponse:
     store = get_store(request)
     if store.list_accounts("gl_accounts"):
         return refuse("You already have GL accounts: the sample setup is only for an empty list.")
-    load_sample_setup(store, cost_centers=False)
+    load_sample_setup(store, cost_centers=False, actor=reviewer())
     return done(
         request,
         "/accounts",

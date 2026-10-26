@@ -18,7 +18,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
-from ap_coder.core.store.users import ABSOLUTE_SECONDS, LoginRefused
+from ap_coder.core.store.users import LoginRefused
 from ap_coder.web import identity
 from ap_coder.web.core import (
     done,
@@ -66,8 +66,10 @@ def from_console(request: Request) -> bool:
 
 
 def set_session_cookie(request: Request, response: Response, token: str) -> None:
-    response.set_cookie(identity.SESSION_COOKIE, token, max_age=ABSOLUTE_SECONDS, httponly=True, samesite="strict",
-                        secure=secure_cookie(request), path="/")  # fmt: skip
+    # A browser-session cookie (no lifetime): closing the browser ends it; the server ends the session anyway after
+    # its idle time or its hours (D-109).
+    response.set_cookie(identity.SESSION_COOKIE, token, httponly=True, samesite="strict", secure=secure_cookie(request),
+                        path="/")  # fmt: skip
 
 
 @router.api_route(identity.LOGIN_PATH, methods=["GET", "HEAD"], response_class=HTMLResponse)  # HEAD: monitors
@@ -128,14 +130,19 @@ def logout(request: Request) -> JSONResponse:
     return answer
 
 
+SESSIONS_PATH = "/account/sessions/end-others"
+
+
 @router.get(identity.PASSWORD_PATH, response_class=HTMLResponse)
 def password_page(request: Request, next: str = HOME) -> Response:  # noqa: A002
     found = identity.person()
     if not server_mode(request) or found is None:
         return RedirectResponse(HOME, status_code=303)
-    user = get_store(request).user(found.user_id) or {}
+    store = get_store(request)
+    user = store.user(found.user_id) or {}
     return render(request, "account_password.html", "", title="Your password", next=_next(next),
-                  must_change=bool(user.get("must_change")), username=found.username)  # fmt: skip
+                  must_change=bool(user.get("must_change")), username=found.username,
+                  others=store.other_sessions(found.user_id, _token(request)))  # fmt: skip
 
 
 @router.post(identity.PASSWORD_PATH)
@@ -147,7 +154,8 @@ def password_save(request: Request, current: str = Form(""), new: str = Form("")
     if new != again:
         return refuse("The two new passwords are not the same: type it twice the same way.")
     try:
-        fresh = get_store(request).change_password(found.user_id, current, new, keep=_token(request))
+        ip = request.client.host if request.client else ""
+        fresh = get_store(request).change_password(found.user_id, current, new, keep=_token(request), ip=ip)
     except ValueError as exc:
         return refuse(str(exc))
     answer = done(
@@ -160,3 +168,15 @@ def password_save(request: Request, current: str = Form(""), new: str = Form("")
     if fresh:  # this browser goes on under a new token (D-101)
         set_session_cookie(request, answer, fresh)
     return answer
+
+
+@router.post(SESSIONS_PATH)
+def end_other_sessions(request: Request) -> JSONResponse:
+    """Log out everywhere else: every other session of this account ends; this browser's goes on (D-109)."""
+    found = identity.person()
+    if not server_mode(request) or found is None:
+        return refuse(NO_LOGINS)
+    ended = get_store(request).end_sessions(found.user_id, keep=_token(request))
+    said = f"Logged out on {ended} other computer{'s' if ended != 1 else ''} or browser{'s' if ended != 1 else ''}."
+    return done(request, identity.PASSWORD_PATH, flash_message(said if ended else "You were logged in nowhere else.",
+                                                               "ok", icon="logout"))  # fmt: skip

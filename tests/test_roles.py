@@ -121,7 +121,14 @@ def test_what_each_role_may_do(setup):
         return roles.can(app, role, method, path)
 
     for route in app_routes(app):  # Read-only changes nothing (its own password and logout aside)
-        if route[0] != "GET" and route[1] not in ("/logout", "/account/password", "/login", "/who", "/shutdown"):
+        if route[0] != "GET" and route[1] not in (
+            "/logout",
+            "/account/password",
+            "/account/sessions/end-others",
+            "/login",
+            "/who",
+            "/shutdown",
+        ):
             assert not may("readonly", f"{route[0]} {concrete(route[1])}"), route
         assert may("admin", f"{route[0]} {concrete(route[1])}"), route
     for route in (

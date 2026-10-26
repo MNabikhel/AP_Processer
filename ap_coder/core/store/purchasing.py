@@ -18,6 +18,7 @@ from ._base import (
     _in_list,
     _now,
 )
+from .summary import BIT, fetch_rows
 
 
 class PurchasingMixin:
@@ -106,14 +107,19 @@ class PurchasingMixin:
                 )
             ]
             billed: dict[str, dict[str, Any]] = {}
+            self._summary_fresh(conn)  # each invoice's subtotal billed, from the invoices' summary (D-110)
             for r in conn.execute(
-                "SELECT id, po_key, status, ai_output, final_output FROM invoices "
-                "WHERE po_key != '' AND status IN " + _ACTIVE_IN,
+                "SELECT id, po_key, status, po_billed, broken FROM invoice_summary WHERE po_key != '' AND status IN "
+                + _ACTIVE_IN
+                + " AND po_key IN (SELECT po_key FROM purchase_orders) ORDER BY id",  # a PO we have
                 ACTIVE_STATUSES,
             ):
-                coding = json.loads(r["final_output"] or r["ai_output"] or "{}")
+                amount = r["po_billed"]
+                if r["broken"] & BIT["po"]:  # what the summary could not read: read again, failing as it did before
+                    (inv,) = conn.execute("SELECT ai_output, final_output FROM invoices WHERE id = ?", (r["id"],))
+                    amount = float(json.loads(inv["final_output"] or inv["ai_output"] or "{}").get("subtotal") or 0)
                 entry = billed.setdefault(r["po_key"], {"billed": 0.0, "invoices": 0, "in_review": 0})
-                entry["billed"] += float(coding.get("subtotal") or 0)
+                entry["billed"] += amount
                 entry["invoices"] += 1
                 entry["in_review"] += r["status"] == REVIEW
         for r in rows:
@@ -199,15 +205,21 @@ class PurchasingMixin:
     def unexported_approved(self) -> list[dict[str, Any]]:
         """Approved invoices that have not been in an export batch yet (oldest approval first)."""
         with self._conn() as conn:
-            return [
-                dict(r)
-                for r in conn.execute(
-                    """SELECT id, vendor_name, invoice_number, invoice_date, currency, grand_total, reviewer,
-                              reviewed_at FROM invoices WHERE status = ? AND export_batch IS NULL
-                       ORDER BY reviewed_at, id""",
-                    (APPROVED,),
-                )
-            ]
+            self._summary_fresh(conn)
+            return fetch_rows(
+                conn,
+                """SELECT id, vendor_name, invoice_number, invoice_date, currency, grand_total, reviewer,
+                          reviewed_at FROM invoice_summary WHERE status = ? AND export_batch IS NULL
+                   ORDER BY reviewed_at, id""",
+                (APPROVED,),
+            )
+
+    def ready_to_export_count(self) -> int:
+        """How many invoices ``unexported_approved`` lists (counted on the summary's index)."""
+        with self._conn() as conn:
+            self._summary_fresh(conn)
+            return conn.execute("SELECT COUNT(*) FROM invoice_summary WHERE status = ? AND export_batch IS NULL",
+                                (APPROVED,)).fetchone()[0]  # fmt: skip
 
     def create_export_batch(self, invoice_ids: list[int], fmt: str, actor: str | None = None) -> int:
         """Mark approved, not yet exported invoices as one batch. Returns the batch number. Two people exporting
@@ -316,11 +328,16 @@ class PurchasingMixin:
         return removed
 
     def batch_totals(self) -> dict[int, dict[str, float]]:
-        """{batch: {currency: total}} of the invoices in each batch (an undone batch has none any more)."""
+        """{batch: {currency: total}} of the invoices in each batch (an undone batch has none any more): read again once
+        an invoice changed (``summary_memo``). Shared: read it, don't change it."""
+        return self.summary_memo("batch_totals", self._batch_totals, "batches")
+
+    def _batch_totals(self) -> dict[int, dict[str, float]]:
         with self._conn() as conn:
+            self._summary_fresh(conn)
             rows = conn.execute(
                 "SELECT export_batch, COALESCE(NULLIF(currency, ''), 'CAD') AS cur, SUM(grand_total) AS total "
-                "FROM invoices WHERE export_batch IS NOT NULL GROUP BY export_batch, cur"
+                "FROM invoice_summary WHERE export_batch IS NOT NULL GROUP BY export_batch, cur"
             ).fetchall()
         out: dict[int, dict[str, float]] = {}
         for r in rows:
@@ -331,11 +348,16 @@ class PurchasingMixin:
         """{batch: {currency: total}} of what each batch held when it was exported, from the audit trail: an
         undone batch's invoices are back in the ready list, but what went out is still shown per currency. An
         export recorded by an older version (without the amount) counts the invoice's amount as it is now; a
-        batch with such an invoice since deleted is left out (its total is not known)."""
+        batch with such an invoice since deleted is left out (its total is not known). Read again once an invoice or
+        the audit trail changed (``summary_memo``). Shared: read it, don't change it."""
+        return self.summary_memo("exported_totals", self._exported_totals, "batches", "exported")
+
+    def _exported_totals(self) -> dict[int, dict[str, float]]:
         with self._conn() as conn:
+            self._summary_fresh(conn)
             rows = conn.execute(
                 "SELECT e.detail, i.id, i.currency, i.grand_total FROM events e "
-                "LEFT JOIN invoices i ON i.id = e.invoice_id WHERE e.action = 'exported'"
+                "LEFT JOIN invoice_summary i ON i.id = e.invoice_id WHERE e.action = 'exported'"
             ).fetchall()
         out: dict[int, dict[str, float]] = {}
         unknown: set[int] = set()
@@ -357,8 +379,10 @@ class PurchasingMixin:
 
     def batch_invoice_ids(self, batch: int) -> list[int]:
         with self._conn() as conn:
+            self._summary_fresh(conn)
             return [
-                r["id"] for r in conn.execute("SELECT id FROM invoices WHERE export_batch = ? ORDER BY id", (batch,))
+                r["id"]
+                for r in conn.execute("SELECT id FROM invoice_summary WHERE export_batch = ? ORDER BY id", (batch,))
             ]
 
     def undo_export_batch(self, batch: int, actor: str | None = None, guard: Any = None) -> int:

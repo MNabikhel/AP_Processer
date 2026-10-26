@@ -325,7 +325,8 @@ def test_second_approval_and_send_back(client, store, me):
     me.update(name="Jordan Lee", login="jlee")
     client.post(f"/review/{inv_id}/approve", data=form_of(store, inv_id), headers=PAGE)
     me.update(name="Sam Rivera", login="srivera")
-    client.post(f"/review/{inv_id}/final-approve", headers=PAGE)
+    shown = {"approval": store.latest_approval_id(inv_id)}  # the first approval the page showed (D-109)
+    client.post(f"/review/{inv_id}/final-approve", data=shown, headers=PAGE)
     assert (
         store.get_invoice(inv_id)["status"] == APPROVED and store.get_invoice(inv_id)["second_reviewer"] == "Sam Rivera"
     )

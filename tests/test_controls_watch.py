@@ -27,7 +27,7 @@ def test_controls_report_lists_the_exceptions(tmp_path):
     store.approve_invoice(
         b, _gt("B"), "Jane", open_issues=[{"code": "VENDOR_TAX_NUMBER_CHANGED", "severity": "warning"}]
     )
-    store.final_approve(a, "Sam")
+    store.final_approve(a, "Sam", shown=store.latest_approval_id(a))
     store.send_back(b, "Sam", "check the GST number")
     store.set_setting("approval_limit", "5000", actor="Sam")  # not logged by itself...
     store.log_event("settings_changed", actor="Sam", detail={"keys": ["approval_limit"]})  # ...the page logs it
@@ -101,6 +101,9 @@ def test_identical_files_dropped_together_are_one_invoice(tmp_path):
 
 
 def _watch_args(tmp_path, *extra):
+    from ap_coder.core.store import load_sample_setup
+
+    load_sample_setup(Store(tmp_path / "a.db"))  # the GL accounts imported: watch reads only then (B-1212)
     return ["--env-file", str(tmp_path / "none.env"), "--db", str(tmp_path / "a.db"), "watch", str(tmp_path / "in"),
             "--cache-dir", "", *extra]  # fmt: skip
 

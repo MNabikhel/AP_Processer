@@ -98,6 +98,10 @@ async def save_hub(request: Request) -> JSONResponse:
                       "https://<the server's name>.")  # fmt: skip
     if config.enabled and mode == FOLDER and not config.folder:
         return refuse("Give the folder the finance hub reads from (a network share), or turn the feed off.")
+    from ap_coder.ops.service import folder_refusal
+
+    if mode == FOLDER and folder_refusal(config.folder, server=server_mode(request)):  # (D-109)
+        return refuse(folder_refusal(config.folder, server=True))
     if mode == ONELAKE and (config.onelake_url or config.enabled):
         try:
             onelake._check_url(config.onelake_url, onelake.ONELAKE_HOSTS, "OneLake folder URL")

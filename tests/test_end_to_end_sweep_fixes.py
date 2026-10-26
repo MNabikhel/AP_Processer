@@ -48,7 +48,7 @@ def test_an_invoice_waiting_for_its_second_approver_gets_no_approved_stamp(tmp_p
         stamp.stamped_pdf(waiting)
     with zipfile.ZipFile(io.BytesIO(stamp.batch_zip([waiting]))) as z:
         assert z.namelist() == []  # left out of a ZIP too
-    store.final_approve(invoice_id, "Sam")
+    store.final_approve(invoice_id, "Sam", shown=store.latest_approval_id(invoice_id))
     approved = store.get_invoice(invoice_id)
     assert approved["status"] == APPROVED and stamp.stamped_pdf(approved)[:4] == b"%PDF"
 
