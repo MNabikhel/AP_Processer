@@ -16,6 +16,7 @@ from ._base import (
     _in_list,
     _now,
 )
+from .capture import capture_lookup
 
 
 def _distinct(first: dict[str, Any], row: dict[str, Any]) -> bool:
@@ -421,8 +422,8 @@ class VendorsMixin:
             return {}
         with self._conn() as conn:
             rows = conn.execute(
-                "SELECT invoice_id, json_extract(capture_json, '$.fields.vendor_name.status') FROM invoice_capture "
-                f"WHERE {_in_list('invoice_id')}",
+                f"SELECT invoice_id, {capture_lookup('$.fields.vendor_name.status', 'name_status')} "
+                f"FROM invoice_capture WHERE {_in_list('invoice_id')}",
                 (json.dumps([int(i) for i in ids]),),
             ).fetchall()
         return {int(r[0]): str(r[1] or "") for r in rows}

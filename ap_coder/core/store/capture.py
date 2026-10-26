@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import sqlite3
+import zlib
 from collections.abc import Callable
 from typing import Any
 
@@ -36,6 +37,16 @@ from ._base import (
 )
 
 
+def capture_value(stored: str | bytes) -> Any:
+    """A stored capture (``invoice_capture.capture_json``): compressed JSON, or the JSON text an older version kept."""
+    return json.loads(zlib.decompress(stored) if isinstance(stored, bytes) else stored)
+
+
+# A stored capture's value at a JSON path, whether it is kept compressed or as text (``capture_value``).
+def capture_lookup(path: str, column: str) -> str:
+    return f"CASE WHEN typeof(capture_json) = 'text' THEN json_extract(capture_json, '{path}') ELSE {column} END"
+
+
 class CaptureMixin:
     # --- Capture and supplier learning (see capture/supplier.py) --------------------------------------
 
@@ -46,19 +57,34 @@ class CaptureMixin:
 
     @staticmethod
     def _save_capture(conn: sqlite3.Connection, invoice_id: int, capture: dict[str, Any]) -> None:
+        """Kept compressed (D-110: about 7 KB of JSON an invoice, read whole and only on its own), with the two
+        values the queue looks up in it (``name_status``, ``credit_note``) beside it, as SQLite's JSON reads them."""
+        text = json.dumps(capture, default=str)
         conn.execute(
-            """INSERT INTO invoice_capture (invoice_id, capture_json, layout_source, created_at)
-               VALUES (?, ?, ?, ?) ON CONFLICT(invoice_id) DO UPDATE SET capture_json = excluded.capture_json,
-               layout_source = excluded.layout_source, created_at = excluded.created_at""",
-            (invoice_id, json.dumps(capture, default=str), str(capture.get("layout_source") or ""), _now()),
-        )
+            """INSERT INTO invoice_capture (invoice_id, capture_json, layout_source, created_at, name_status,
+               credit_note) VALUES (?, ?, ?, ?, json_extract(?, '$.fields.vendor_name.status'),
+               json_extract(?, '$.credit_note')) ON CONFLICT(invoice_id) DO UPDATE SET
+               capture_json = excluded.capture_json, layout_source = excluded.layout_source,
+               created_at = excluded.created_at, name_status = excluded.name_status,
+               credit_note = excluded.credit_note""",
+            (invoice_id, zlib.compress(text.encode("utf-8")), str(capture.get("layout_source") or ""), _now(), text,
+             text),
+        )  # fmt: skip
+
+    @staticmethod
+    def _capture_migrate(conn: sqlite3.Connection) -> None:
+        """The columns a compressed capture keeps beside it (``_save_capture``), on a database made before them."""
+        columns = {r[1] for r in conn.execute("PRAGMA table_info(invoice_capture)")}
+        for column in ("name_status", "credit_note"):
+            if column not in columns:
+                conn.execute(f"ALTER TABLE invoice_capture ADD COLUMN {column}")
 
     def get_capture(self, invoice_id: int) -> dict[str, Any] | None:
         with self._conn() as conn:
             row = conn.execute(
                 "SELECT capture_json FROM invoice_capture WHERE invoice_id = ?", (invoice_id,)
             ).fetchone()
-        return json.loads(row[0]) if row else None
+        return capture_value(row[0]) if row else None
 
     def layout_sources(self, ids: list[int]) -> dict[int, str]:
         """{invoice id: how its pages were read} ("text", "ocr", "di", "mixed"), in one query; an invoice with no
@@ -77,7 +103,8 @@ class CaptureMixin:
         with self._conn() as conn:
             rows = conn.execute(
                 """SELECT c.invoice_id FROM invoice_capture c JOIN invoices i ON i.id = c.invoice_id
-                   WHERE i.status = ? AND json_extract(c.capture_json, '$.credit_note')""",
+                   WHERE i.status = ? AND CASE WHEN typeof(c.capture_json) = 'text' THEN
+                   json_extract(c.capture_json, '$.credit_note') ELSE c.credit_note END""",
                 (status,),
             ).fetchall()
         return {r[0] for r in rows}

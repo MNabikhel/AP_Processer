@@ -264,6 +264,23 @@ def test_a_backup_with_the_summary_restores_and_one_with_another_trigger_is_refu
         Store.check_backup(copy)
 
 
+def test_a_capture_is_kept_compressed_and_read_either_way(year):
+    invoice_id = year.list_invoices(REVIEW)[0]["id"]
+    capture = {"fields": {"vendor_name": {"value": "X", "status": "check"}}, "credit_note": True, "text": "a" * 5000}
+    year.save_capture(invoice_id, capture)
+    with sqlite3.connect(year.path) as conn:
+        stored = conn.execute("SELECT capture_json FROM invoice_capture WHERE invoice_id = ?", (invoice_id,)).fetchone()
+    assert isinstance(stored[0], bytes) and len(stored[0]) < 500
+    assert year.get_capture(invoice_id) == capture
+    assert year.vendor_name_checks([invoice_id]) == {invoice_id: "check"}
+    assert invoice_id in year.credit_note_ids(REVIEW)
+    with sqlite3.connect(year.path) as conn:  # as an older version kept it
+        conn.execute("UPDATE invoice_capture SET capture_json = ?, name_status = NULL, credit_note = NULL "
+                     "WHERE invoice_id = ?", (json.dumps({**capture, "credit_note": False}), invoice_id))  # fmt: skip
+    assert year.vendor_name_checks([invoice_id]) == {invoice_id: "check"}
+    assert invoice_id not in year.credit_note_ids(REVIEW)
+
+
 def test_insights_counts_every_approval_past_a_hundred_thousand(tmp_path):
     """B-1251: Insights and Learning read only the newest 100,000 approval events: with more (a year at 10,000
     invoices a month), an invoice approved before them was no longer counted."""

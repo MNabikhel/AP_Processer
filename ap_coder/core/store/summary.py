@@ -319,6 +319,7 @@ class SummaryMixin:
 
     def _migrate(self, conn: sqlite3.Connection) -> None:
         super()._migrate(conn)  # type: ignore[misc]  (StoreCore's)
+        self._capture_migrate(conn)  # type: ignore[attr-defined]  (capture.py: kept compressed, D-110)
         self._summary_migrate(conn)
 
     @contextmanager
