@@ -70,7 +70,8 @@ def _old_list_invoices(store: Store, status: str | None = None) -> list[dict[str
 def _old_unexported(store: Store) -> list[dict[str, Any]]:
     with store._conn() as conn:
         sql = (
-            "SELECT id, vendor_name, invoice_number, invoice_date, currency, grand_total, reviewer, reviewed_at "
+            "SELECT id, vendor_name, invoice_number, invoice_date, currency, grand_total, reviewer, reviewed_at, "
+            "second_reviewer "
             "FROM invoices WHERE status = ? AND export_batch IS NULL ORDER BY reviewed_at, id"
         )
         return [dict(r) for r in conn.execute(sql, (APPROVED,))]
