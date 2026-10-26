@@ -257,6 +257,13 @@ def _sheet(ws: Any, title: str, columns: list[tuple[str, str]], rows: list[dict[
     neutralise_sheet(ws)  # vendor names and descriptions come from documents: never formulas
 
 
+def csv_amount(value: Any) -> Any:
+    """An amount as a CSV shows it: two decimals (4350.00, not 4350.0); anything else as it is ("" for none)."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return f"{value:.2f}"
+    return "" if value is None else value
+
+
 def build_csv(
     invoices: list[dict[str, Any]], gl_names: dict[str, str] | None = None, batch: int | str = "",
     vendor_ids: dict[str, str] | None = None, tax_treatments: dict[str, TaxTreatment] | None = None,
@@ -267,7 +274,8 @@ def build_csv(
     writer.writerow([label for _, label in LINE_COLUMNS])
     for r in line_rows(invoices, gl_names, batch, vendor_ids, tax_treatments, bank_accounts):
         # for the ERP's loader: text as it is, no spreadsheet apostrophe (see the module docstring)
-        writer.writerow([r.get(key) if r.get(key) is not None else "" for key, _ in LINE_COLUMNS])
+        writer.writerow([csv_amount(r.get(key)) if label in MONEY_HEADERS else r.get(key) if r.get(key) is not None
+                         else "" for key, label in LINE_COLUMNS])  # fmt: skip
     return buf.getvalue().encode("utf-8-sig")  # BOM: Excel shows accents correctly
 
 

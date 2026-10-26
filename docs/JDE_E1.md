@@ -403,14 +403,15 @@ currency). Keep RPDOC and RPSFX: without them a voucher entered twice, or a cred
 can only be told apart by its date and sign, and the report says so. Without RPACR and RPCTAM a foreign voucher's
 gross and tax are in CAD and are not compared. CSV or Excel (a large export as CSV: an Excel file over 20 MB once
 unzipped is not opened); E1's Julian dates (0 for no date) and implied decimals are read as they are (add
-`--implied-decimals` for amounts without a decimal point). The pilot tester runs on the pilot laptop:
+`--implied-decimals` for amounts without a decimal point). The pilot tester runs, where AP Coder runs (the pilot
+laptop, or the company server):
 
 ```
 python -m ap_coder pilot-score --vouchers F0411.xlsx --distribution F0911.xlsx
 ```
 
 It writes `pilot_score.md` and `pilot_score_differences.csv` into the data folder's `pilot_score` folder; these
-stay on the laptop. Insights shows the headline figures.
+stay in the data folder. Insights shows the headline figures.
 
 ## Open questions for the JDE team
 
@@ -447,8 +448,9 @@ inputs and outputs are in `ap_coder/erp/jde_orchestrations.json`.
 * **Step 2 (vouchers)**: on Exports, a JD Edwards batch gets a *JD Edwards API* part: **Dry run through the API**
   (a Clerk or more: the same rows as the files, checked here and by JDE's proof mode, nothing posted), then **Post
   to JD Edwards** (an Approver or Admin). Each invoice keeps JDE's voucher number, or JDE's own error; a voucher that
-  could not reach JDE waits in a queue that is tried again every few minutes (or *Try again now*, `python -m
-  ap_coder jde status --retry`). A voucher is never posted twice: the key `APC-<invoice>-<batch>` is asked for
+  could not reach JDE waits in a queue that is tried again after 5, 15 and 60 minutes, then hourly (or *Try again
+  now*, `python -m ap_coder jde status --retry`). A voucher is never posted twice: the key
+  `APC-<installation id>-<invoice>-<batch>` is asked for
   before anything is sent again, the batch can't be undone once one of its vouchers is in JDE, and its ZIP of files
   leaves the posted vouchers out. The files stay the fallback at any time.
 * `python -m ap_coder jde test` tests the connection; `jde status` shows the settings, the last test and sync, and

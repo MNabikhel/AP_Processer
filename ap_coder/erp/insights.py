@@ -365,14 +365,17 @@ def report_html(s: dict[str, Any], organisation: str = "") -> str:
 def vendor_workload(store: Store, min_invoices: int = 2) -> list[dict[str, Any]]:
     """Vendors whose invoices make work: how often an invoice arrived with a problem only the vendor can fix
     (amounts that don't add up, no GST/HST number, PO issues...: the checks *Ask the vendor* covers), and how
-    often AP had to correct the coding. Worst first; vendors without problems are left out."""
+    often AP had to correct the coding. Worst first; vendors without problems are left out. A rejected invoice is left
+    out, and an approved one counts what was still open when it was approved: a finding the reviewer cleared by
+    correcting what AP Coder read was AP Coder's misread, not the vendor's doing (B-1183)."""
     from ..coding.vendor_mail import ASKABLE
     from ..core.memory import vendor_key
 
     stats: dict[str, dict[str, Any]] = {}
-    for r in store.invoice_columns(("id", "status", "validation", "edits", "ai_output", "final_output")):
-        if r["status"] == FAILED:
-            continue
+    rows = [r for r in store.invoice_columns(("id", "status", "validation", "edits", "ai_output", "final_output"))
+            if r["status"] not in (FAILED, REJECTED)]  # fmt: skip
+    approvals = store.latest_events("approved", [r["id"] for r in rows if r["status"] in (APPROVED, PENDING)])
+    for r in rows:
         doc = r["final_output"] or r["ai_output"] or {}
         name = str(doc.get("vendor_name") or "")
         key = vendor_key(name)
@@ -382,6 +385,8 @@ def vendor_workload(store: Store, min_invoices: int = 2) -> list[dict[str, Any]]
                                    "approved": 0, "codes": Counter()})  # fmt: skip
         s["invoices"] += 1
         codes = {i.get("code") for i in _issues(r["validation"])} & ASKABLE
+        if r["id"] in approvals:
+            codes &= {i.get("code") for i in (approvals[r["id"]]["detail"] or {}).get("open_issues") or []}
         if codes:
             s["with_problems"] += 1
             s["codes"].update(codes)

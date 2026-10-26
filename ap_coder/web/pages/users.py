@@ -75,6 +75,8 @@ def users_page(request: Request, shown: str = "") -> HTMLResponse:
     return render(request, "admin_users.html", "", title="Users", users=get_store(request).list_users(),
                   roles=[(r, ROLE_LABELS[r]) for r in ROLES], temporary=_take(shown),
                   paused=[{**p, "until": _clock_text(p["until"])} for p in get_store(request).paused_addresses()],
+                  paused_names=[{**p, "until": _clock_text(p["until"])}
+                                for p in get_store(request).paused_usernames()],
                   me=me.user_id if me else 0)  # fmt: skip
 
 
@@ -115,6 +117,15 @@ def unlock_address(request: Request, address: str = Form("")) -> JSONResponse:
     if not get_store(request).unlock_address(address, actor=reviewer()):
         return refuse(f"Logins from {address or 'that address'} are not paused.")
     return done(request, PATH, f"Logins from {address} are no longer paused.")
+
+
+@router.post(PATH + "/usernames/unlock")
+def unlock_username(request: Request, username: str = Form(""), address: str = Form("")) -> JSONResponse:
+    """Lift the pause of a username from an address (5 tries that didn't match: someone forgot their password)."""
+    _server_only(request)
+    if not get_store(request).unlock_username(username, address, actor=reviewer()):
+        return refuse(f"Logins as {username or 'that username'} from {address or 'that address'} are not paused.")
+    return done(request, PATH, f"Logins as {username} from {address} are no longer paused.")
 
 
 def _clock_text(epoch: float) -> str:

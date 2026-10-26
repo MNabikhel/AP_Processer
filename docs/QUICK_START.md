@@ -18,7 +18,8 @@ For the pilot tester on the laptop, and AP staff on the company server (to print
 
 ## The first steps
 
-The welcome page's checklist ticks steps 0 to 3 off, and its *Next step* says what comes next.
+The welcome page's checklist ticks off its ten rows (eleven with JD Edwards), LM Studio first; *Next step* says
+what's next.
 
 0. Start LM Studio: open LM Studio, click *Developer* → *Start server*, then in AP Coder press **Check again** (on
    the welcome page, or **Settings** → **Reading**). Without it every invoice waits for you.

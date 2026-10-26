@@ -596,12 +596,12 @@ def test_exports_page_jde_flow(db):
     northwind = next(i for n, i in ready.items() if n.startswith("Northwind"))
     chinook = next(i for n, i in ready.items() if n.startswith("Chinook"))
     page = client.get("/exports", params={"fmt": jde.FORMAT}).text
-    # The demo vendor master's ERP IDs (V10023, …) are not JDE address numbers: nothing can go out yet.
+    # No business unit for the tax accounts yet: nothing can go out.
     assert re.search(r'<button[^>]*id="export-go"[^>]*disabled', page)
     assert "cannot go to JD Edwards yet" in page
     settings = jde.load(store)
     settings.default_bu = "HQ"  # the tax accounts' business unit (the tax coded to G/L accounts: D-93)
-    settings.an8_overrides = {vendor_key(store.get_invoice(northwind)["vendor_name"]): "10023"}
+    settings.an8_overrides = {vendor_key(store.get_invoice(chinook)["vendor_name"]): "C10041"}  # not an AN8
     jde.save(store, settings)
     page = client.get("/exports", params={"fmt": jde.FORMAT}).text
     assert "Export 1 invoice<" in page
@@ -661,7 +661,7 @@ def test_a_jde_batch_downloads_again_with_the_same_vouchers(db):
     assert vouchers() == first
     assert jde_left_out(store, batch["id"])[1] == {}
     # The JD Edwards settings change after the batch was made: the batch still holds its invoice.
-    settings.an8_overrides = {}
+    settings.an8_overrides = {vendor_key(northwind["vendor_name"]): "N10023"}  # not an AN8
     jde.save(store, settings)
     again = vouchers()
     assert [r["VLEDTN"] for r in _csv(again[jde.HEADER_FILE])] == [f"APC{northwind['id']}"]

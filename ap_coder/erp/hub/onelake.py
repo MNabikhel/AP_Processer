@@ -138,6 +138,12 @@ class OneLakeDestination:
                 pass
             raise
 
+    def remove(self, path: str) -> None:
+        try:
+            self._call("DELETE", self._url(f"{self.folder}/{path}"))
+        except _NotFound:
+            pass
+
     # --- HTTP -------------------------------------------------------------------------------------------------
 
     def _base(self) -> str:
@@ -184,7 +190,7 @@ class OneLakeDestination:
             with self._open(request) as answer:
                 return answer.read(), answer.headers
         except urllib.error.HTTPError as exc:
-            if exc.code == 404 and method == "GET":
+            if exc.code == 404 and method in ("GET", "DELETE"):  # not there: nothing to list, nothing to remove
                 raise _NotFound() from exc
             if exc.code in (401, 403):
                 raise HubError(f"OneLake refused the files ({exc.code}): give the app registration access to the "

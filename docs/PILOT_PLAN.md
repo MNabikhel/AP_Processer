@@ -1,13 +1,14 @@
 # Pilot plan: four weeks to a decision
 
 A suggested way to run the AP Coder pilot so that, after a month, you can show leadership real
-numbers from your own invoices. Everything stays on the AP computer: invoices are read on the laptop,
-by OCR and by OvisOCR2 in LM Studio.
+numbers from your own invoices. Everything stays on the AP computer (or a company server:
+[SERVER.md](SERVER.md)): invoices are read on the laptop, by OCR and by OvisOCR2 in LM Studio.
 
 ## Before week 1: set up (half a day)
 
-- [ ] IT installs LM Studio with OvisOCR2 (and, optionally, the chat model); start its server, then
-      install AP Coder (GETTING_STARTED.md, steps 1 to 3). AP Coder finds OvisOCR2 and runs its
+- [ ] IT installs LM Studio with OvisOCR2 and the chat model (AP Coder starts without LM Studio, but the pilot
+      runs with it: without OvisOCR2 every invoice waits for a person, and the chat model reviews each invoice);
+      start its server, then install AP Coder (GETTING_STARTED.md, steps 1 to 3). AP Coder finds OvisOCR2 and runs its
       self-test on its own (10 to 20 minutes the first time): check *Settings → Reading* shows it passed.
 - [ ] Try the demo for 15 minutes (*Load demo invoices*), then *Remove demo invoices*.
 - [ ] **GL accounts & tax:** import your chart of accounts (and cost centers if you code to them);
@@ -63,7 +64,8 @@ Process the week's invoices in AP Coder **and** code them the usual way. Do not 
 - [ ] **Month-end:** the accruals schedule for the close.
 - [ ] **Sales tax:** the ITCs and ITRs for the period, and the PST/QST to self-assess, checked
       against the GL.
-- [ ] **Activity:** run the **duplicate payment audit** and download the **controls report**.
+- [ ] **Exports:** run the **duplicate payment audit** (*Run the audit*).
+- [ ] **Activity:** download the **controls report**.
 - [ ] **Insights:** edit the assumptions (minutes per invoice, hourly cost, monthly volume) and
       download the **one-page business case** (totals only, safe to share).
 

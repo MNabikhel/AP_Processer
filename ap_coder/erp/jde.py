@@ -666,8 +666,8 @@ def _gross_problems(v: _Voucher, final: dict[str, Any]) -> list[str]:
         ):
             return [
                 f"line {li.get('line_number') or '?'} carries no tax (exempt or zero-rated): with the gross amount "
-                "only JD Edwards would tax it too. Ask the pilot tester to code the tax to G/L accounts or send tax "
-                "amounts (Settings → JD Edwards E1, Amounts)"
+                "only JD Edwards would tax it too. Code the tax to G/L accounts or send tax amounts (Amounts): set "
+                "it in Settings → JD Edwards E1, or ask whoever sets up AP Coder"
             ]
     rates = _rates()
     rate = Decimal(str(round(sum(rates.rate_for(t, v.province, on) or 0.0 for t in types), 6)))
@@ -1212,8 +1212,8 @@ def voucher_findings(output: dict[str, Any], settings: JdeSettings, an8: str) ->
     export for something the screen could have said (D-75). The duplicate check is the screen's own."""
     out: list[tuple[str, str, str, int | None]] = []
     for problem in settings_problems(settings):
-        out.append((ERROR, "JDE_SETTINGS", f"JD Edwards settings: {problem} Ask the pilot tester to fix it in "
-                    "Settings → JD Edwards E1", None))  # fmt: skip
+        out.append((ERROR, "JDE_SETTINGS", f"JD Edwards settings: {problem} Set it in "
+                    "Settings → JD Edwards E1, or ask whoever sets up AP Coder", None))  # fmt: skip
     v = _prepare({"id": 0, "final_output": output}, settings, str(an8 or "").strip())
     seen: set[tuple[str, int | None]] = set()
     unmapped: dict[str, list[int | None]] = {}  # "GL 6010 / CC400": the lines posting to it with no E1 account
@@ -1228,8 +1228,8 @@ def voucher_findings(output: dict[str, Any], settings: JdeSettings, an8: str) ->
                         "from the vendor list, or ask the pilot tester to add its number", None))  # fmt: skip
         elif code == "JDE_BAD_AN8":
             out.append((ERROR, "JDE_BAD_AN8", f"JD Edwards: the supplier number {an8} is not an address number (AN8: "
-                        "digits only, up to 8). Ask the pilot tester to set this vendor's AN8 in Settings → JD "
-                        "Edwards E1", None))  # fmt: skip
+                        "digits only, up to 8). Set this vendor's AN8 in Settings → JD Edwards E1, or ask whoever "
+                        "sets up AP Coder", None))  # fmt: skip
         elif code == "JDE_INVOICE_NUMBER_LONG":
             out.append((ERROR, "JDE_INVOICE_NUMBER_LONG", f"JD Edwards keeps 25 characters of the invoice number: "
                         f"this one has {len(number)}", None))  # fmt: skip
@@ -1421,13 +1421,18 @@ def export_batch(
     return files
 
 
+UNDO_TEXT = "in AP Coder, Exports → Past batches → Undo this batch, fix, and export again."
+
+
 def readme(
     files: dict[str, bytes], settings: JdeSettings, batch: int | str, invoices: list[dict[str, Any]],
     left_out: Mapping[int, list[str]] | None = None, to_check: Mapping[int, list[str]] | None = None,
+    no_undo: str = "",
 ) -> str:  # fmt: skip
     """README.txt of the ZIP: what is in it and how to load it. ``left_out``: invoices not in the file;
     ``to_check``: invoices in it that the current settings would refuse (a batch downloaded again); the invoices whose
-    Pay from account has no VLGLBA mapped are listed too (``bank_notes``)."""
+    Pay from account has no VLGLBA mapped are listed too (``bank_notes``). ``no_undo``: why the batch can't be undone
+    (vouchers JD Edwards has, or may have), said instead of the undo (B-1203)."""
     totals: dict[str, float] = {}
     for inv in invoices:
         final = inv.get("final_output") or {}
@@ -1477,7 +1482,7 @@ def readme(
         "3. Run R04110ZA in FINAL mode. The Z-rows are marked processed (VLEDSP = 1) and the vouchers are created.",
         "4. Post the voucher batch (P0011 / R09801) as usual.",
         "",
-        "If the load fails: in AP Coder, Exports → Past batches → Undo this batch, fix, and export again.",
+        f"If the load fails: {no_undo or UNDO_TEXT}",
         "Each voucher's transaction number (EDTN) is APC + the AP Coder invoice number.",
         "",
         "To confirm with your JDE team before the first live load: "
@@ -1512,22 +1517,27 @@ def build_zip(
     invoices: list[dict[str, Any]], settings: JdeSettings, vendor_lookup: VendorLookup = None, *,
     batch: int | str = "", fx_rates: Mapping[str, float] | None = None, on: dt.date | None = None,
     left_out: Mapping[int, list[str]] | None = None, to_check: Mapping[int, list[str]] | None = None,
+    left_invoices: list[dict[str, Any]] = (), no_undo: str = "",
 ) -> tuple[bytes, str, str]:  # fmt: skip
-    """(ZIP bytes, file name, mime type): the CSVs and a README.txt."""
+    """(ZIP bytes, file name, mime type): the CSVs and a README.txt. ``left_invoices``: the invoices of ``left_out``,
+    for their vendor, number and date in DRY_RUN.txt (B-1197); ``no_undo``: why it can't be undone (``readme``)."""
     files = export_batch(invoices, settings, vendor_lookup, batch=batch, fx_rates=fx_rates, on=on)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for name, data in files.items():
             zf.writestr(name, data)
-        zf.writestr("README.txt", readme(files, settings, batch, invoices, left_out, to_check))
+        zf.writestr("README.txt", readme(files, settings, batch, invoices, left_out, to_check, no_undo))
         report = dry_run(invoices, settings, vendor_lookup, batch=batch, fx_rates=fx_rates, on=on)
         for h in report["held"]:
             if h["id"] in (to_check or {}):  # the files hold it: it passed the checks when the batch was made
                 h["reasons"] = ["it IS in this batch's files (checked when the batch was made): check it before "
                                 "loading", *h["reasons"]]  # fmt: skip
-        report["held"] += [
-            {"id": i, "vendor": "", "number": "", "date": "", "reasons": r} for i, r in (left_out or {}).items()
-        ]
+        finals = {int(i.get("id") or 0): i.get("final_output") or {} for i in left_invoices}
+        for inv_id, reasons in (left_out or {}).items():
+            final = finals.get(inv_id, {})
+            report["held"].append({"id": inv_id, "vendor": final.get("vendor_name") or "",
+                                   "number": final.get("invoice_number") or "",
+                                   "date": final.get("invoice_date") or "", "reasons": reasons})  # fmt: skip
         zf.writestr("DRY_RUN.txt", dry_run_text(report))
     name = f"ap_coder_jde_batch_{batch}.zip" if batch != "" else "ap_coder_jde.zip"
     return buf.getvalue(), name, "application/zip"

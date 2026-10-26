@@ -21,6 +21,7 @@ Settings: in the database (``hub_*``, Settings → Finance hub, an Admin's), the
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import datetime as dt
 import hashlib
 import json
@@ -93,7 +94,7 @@ class HubConfig:
         return cls(
             enabled=_on(get(KEYS["enabled"])), mode=mode if mode in MODES else FOLDER, folder=get(KEYS["folder"]),
             every_hours=every if every in EVERY_HOURS else DEFAULT_EVERY, format=fmt if fmt in FORMATS else "auto",
-            sqlite=get(KEYS["sqlite"], "on") != "off", link_base=get(KEYS["link_base"]) or DEFAULT_LINK,
+            sqlite=get(KEYS["sqlite"], "on") != "off", link_base=get(KEYS["link_base"]) or default_link(store),
             onelake_url=get(KEYS["onelake_url"]), tenant_id=get(KEYS["tenant_id"]),
             client_id=get(KEYS["client_id"]), authority=get(KEYS["authority"]),
             push_opt_in=_on(get(KEYS["push_opt_in"])), secret=client_secret(store),
@@ -126,6 +127,26 @@ class HubConfig:
 
 def data_folder(store: Any) -> Path:
     return Path(store.path).parent
+
+
+def default_link(store: Any) -> str:
+    """Where the invoice links go when none is set: this computer's dashboard on a laptop; on the company server its
+    own address (server.json and the environment: the first name staff type, the port, https with a certificate),
+    which colleagues can open (B-1205)."""
+    import platform
+
+    from ...ops import service
+
+    data = data_folder(store)
+    if not service.is_server_here(data):
+        return DEFAULT_LINK
+    try:
+        found = service.settings(data)
+    except service.SettingsError:
+        return DEFAULT_LINK
+    if not found.allowed_hosts:  # no name set: the server's own
+        found = dataclasses.replace(found, allowed_hosts=(platform.node().lower(),))
+    return service.address(found)
 
 
 def env_file(store: Any) -> Path:
@@ -372,11 +393,16 @@ def _run(store: Any, config: HubConfig, dest: Destination, result: Result, folde
         if result.dry_run or not (real or full):
             return
 
+        # Parquet to CSV or back at the same destination: the old format's files go before the full rebuild (B-1207)
+        old_format = state.get("format") if state.get("destination") == dest.ident() else ""
         if fresh:
             state.forget(everything=state.get("destination") != dest.ident())
         for name, table in TABLES.items():
             ups, dels, prints = changes[name]
             existing = dest.list(name)
+            if old_format and old_format != result.format:
+                for old in [n for n in existing if n.endswith(f".{old_format}")]:
+                    dest.remove(f"{name}/{old}")
             if full or landing.METADATA_FILE not in existing:  # every table's folder, rows or none yet
                 dest.write(f"{name}/{landing.METADATA_FILE}", landing.metadata(table, result.format))
                 dest.write(f"{name}/{landing.SCHEMA_FILE}", landing.schema_json(table, result.format))

@@ -1,17 +1,21 @@
 # AP Coder
 
-**Invoice capture, GL coding and Canadian sales-tax checks for Accounts Payable, on one laptop.**
+**Invoice capture, GL coding and Canadian sales-tax checks for Accounts Payable, on one laptop (or a company
+server: [docs/SERVER.md](docs/SERVER.md)).**
 AP Coder reads each invoice, checks every number, proposes the GL split and learns from what AP approves.
 It then exports approved invoices to JD Edwards E1. It runs fully offline: every invoice is read on the
-laptop by OCR and by OvisOCR2, a small page-reading model in [LM Studio](https://lmstudio.ai/). A chat model
-(Gemma 4 12B or Qwen 3.5 9B) is optional, and no data leaves the laptop.
+laptop by OCR and by OvisOCR2, a small page-reading model in [LM Studio](https://lmstudio.ai/), and a chat model
+(Gemma 4 12B, else Qwen 3.5 9B) reviews each invoice. AP Coder starts without LM Studio, but the pilot runs with it:
+without OvisOCR2 every invoice waits for a person. No data leaves the laptop unless you switch on one of the
+exceptions in [What leaves the laptop](#what-leaves-the-laptop).
 
 ![Review queue: today's work, KPIs and the invoices waiting for review](docs/screenshots/review-queue.png)
 
 ## Set up: start LM Studio, double-click
 
 1. **Start LM Studio's server** (*Developer → Start server*) with the chat model loaded (**Gemma 4 12B**, or Qwen
-   3.5 9B) and OvisOCR2 downloaded. Both are optional, and AP Coder reads invoices without them. Links and settings:
+   3.5 9B) and OvisOCR2 downloaded. AP Coder starts without LM Studio, but the pilot runs with it: without OvisOCR2
+   every invoice waits for a person, and the chat model reviews each invoice. Links and settings:
    [docs/LM_STUDIO.md](docs/LM_STUDIO.md).
 2. **Unzip AP Coder** to a folder that OneDrive does not sync (e.g. `C:\APCoder\app`): GitHub's ZIP (**Code →
    Download ZIP**), or the offline bundle IT gives you for a laptop with no internet.
@@ -45,9 +49,10 @@ while you work; close it to stop AP Coder.
 - **OvisOCR2** (about 1 GB) reads every page of every invoice as a second reader. AP Coder finds it in LM Studio
   and tests it by itself (10 to 20 minutes the first time; *Settings → Reading* shows how it is doing). You can use
   AP Coder meanwhile: invoices are read by OCR and wait for a person until it passes.
-- **The chat model** suggests GL accounts for lines nothing was learned for, and, as it can see pages, reads each
-  invoice's header from the page images as one more reader. Without it, lines are coded from what AP approved
-  before and from fixed rules ([docs/CODING.md](docs/CODING.md)).
+- **The chat model** reviews each invoice (the AI reviewer), suggests GL accounts for lines nothing was learned
+  for, and, as it can see pages, reads each invoice's header from the page images as one more reader. Without it,
+  invoices wait for a person, and lines are coded from what AP approved before and from fixed rules
+  ([docs/CODING.md](docs/CODING.md)).
 
 This is an offline enterprise build: AP Coder itself never connects to the internet; only the setup from GitHub's
 ZIP downloads its packages and models, once. For IT (the offline bundle, `--installer`, what CI checks on clean
@@ -55,7 +60,7 @@ Windows and Mac machines): [docs/PILOT.md](docs/PILOT.md). Real data, step by st
 [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md); its one-page summary for the pilot tester, to print:
 [docs/QUICK_START.md](docs/QUICK_START.md) (also under Help → Quick start). Updating from an older version:
 [docs/UPGRADING.md](docs/UPGRADING.md).
-On a company Windows Server for the whole AP team (a service, HTTPS, logins and roles, updates with a way back):
+On a company Windows Server for the whole AP team (a scheduled task, HTTPS, logins and roles, updates with a way back):
 [docs/SERVER.md](docs/SERVER.md).
 
 ## Screens
@@ -123,11 +128,55 @@ invoice (PDF, scan, photo, .eml/.msg) ─► local reader: text layer or OCR ─
             GL distribution ─► review dashboard ─► approve ─► learning memory ─► ERP / JDE E1 export
 ```
 
+## What leaves the laptop
+
 Everything stays in a local data folder outside the code (default `~/APCoder`). The dashboard listens only
-on `127.0.0.1` (unless IT sets `AP_DASHBOARD_ADDRESS`), and a test fails if any page tries to connect to the
-internet. Only redacted reports (`doctor`, `share-report`) are meant to leave the laptop. How the launcher, the
-update and the server work, what is written where, and every place the network could be touched:
-[docs/HOW_IT_RUNS.md](docs/HOW_IT_RUNS.md).
+on `127.0.0.1` (unless IT sets `AP_DASHBOARD_ADDRESS`, or runs server mode), and a test fails if any page tries to
+connect to the internet. Only redacted reports (`doctor`, `share-report`) are meant to leave the laptop.
+
+The exceptions, each off by default and switched on by someone on purpose:
+
+- **The Azure check** (*Settings → Reading*): its own switch, no `AP_ALLOW_INTERNET` needed. It sends the
+  invoices AP Coder isn't sure of, and a small share of the others, to your organisation's Azure resource for a
+  second opinion. Azure as the reader or the coder is for developers only, behind `AP_ALLOW_INTERNET=1`.
+- **The finance hub feed** (*Settings → Finance hub*): tables written to a shared folder, or to OneLake only
+  with `AP_ALLOW_INTERNET=1`.
+- **The JD Edwards AIS connection** (*Settings → JD Edwards E1*): your company's own JD Edwards server on the
+  internal network, a named internal system (D-104).
+- **Server mode**: the dashboard listens on the office network, over HTTPS with logins.
+
+How the launcher, the update and the server work, what is written where, and every place the network could be
+touched: [docs/HOW_IT_RUNS.md](docs/HOW_IT_RUNS.md).
+
+## The AI reviewer
+
+The chat model in LM Studio reviews every invoice before it can be approved without a person: it looks at the
+page images and the values AP Coder settled on, and an invoice it disagrees with goes to a person with its reason.
+It is on by default (*Settings → Reading*); with no chat model running, invoices wait for a person. It never
+changes a value: a person decides. Models and settings:
+[docs/LM_STUDIO.md](docs/LM_STUDIO.md).
+
+## The finance hub feed
+
+Off by default. Once an Admin turns it on (*Settings → Finance hub*), AP Coder sends six tables (invoices, their
+lines, approvals, the Activity log, accuracy and runs) to the company's finance hub on Microsoft Fabric on a
+schedule, only what changed: to a shared folder Fabric reads, or to OneLake where the internet is allowed. The
+invoice files and vendors' bank details stay in AP Coder. Tables, schedule and setup:
+[docs/FINANCE_HUB.md](docs/FINANCE_HUB.md).
+
+## Posting to JD Edwards through the API
+
+Besides the Z-file batch, AP Coder can post approved vouchers to JD Edwards E1 through its AIS server (the
+orchestrations in [docs/JDE_ORCHESTRATIONS.md](docs/JDE_ORCHESTRATIONS.md)). Off until an Admin sets it up
+(*Settings → JD Edwards E1 → API connection*). Each voucher carries a key (`APC-<installation id>-<invoice>-<batch>`), so a retry never posts it
+twice; a voucher that did not reach JD Edwards is tried again after 5, 15 and 60 minutes, then hourly. Turning
+JD Edwards on also adds the JD Edwards checks on every invoice. Setup: [docs/JDE_E1.md](docs/JDE_E1.md).
+
+## Server mode
+
+For a team, AP Coder can run on a company server instead of one laptop: HTTPS, logins and four roles, each person
+with their own account. It runs as a scheduled task (`python -m ap_coder service`) and updates with
+`python -m ap_coder server-update`. Setup and questions: [docs/SERVER.md](docs/SERVER.md).
 
 ## How every invoice is read
 
@@ -164,7 +213,7 @@ training its vendor.
 - **One switch, one bar.** With the switch on, a vendor goes touchless by itself once it meets the same
   fixed bar as every other vendor: at least 20 reviewed invoices, header fields read right at least 99% of
   the time with 95% confidence over its last 200 invoices, and the last 10 without a correction. With
-  about 13 header fields an invoice, that usually takes about 30 clean invoices.
+  about 13 header fields an invoice, that usually takes about 30 to 40 clean invoices.
 - **Checked as it goes.** 5% of touchless invoices still go to a person. One correction, or a touchless
   invoice reopened, suspends the vendor until it has a fresh clean streak. An AP lead can *Keep supervised*
   any vendor (*Learning & accuracy → Supplier learning*).
@@ -208,9 +257,10 @@ python scripts/pilot_check.py        # reads the ten samples offline and compare
 
 Every invoice is coded the same way, with nothing to choose: the header, lines and taxes come from the local
 readers, each line's GL account from what AP approved before and the coding rules, and the chat model in LM
-Studio (found on its own: the chat model loaded, by AP Coder or CloseDesk, else Qwen 3.5 9B when it is
-downloaded, never just the first model on LM Studio's list; never OvisOCR2 or an embedding model) suggests an account for a
-line nothing was learned for. When LM Studio isn't running, that line is left for AP; nothing else changes.
+Studio (found on its own: the chat model loaded, by AP Coder or CloseDesk, else Gemma 4 12B when it is
+downloaded, else Qwen 3.5 9B, never just the first model on LM Studio's list; never OvisOCR2 or an embedding model)
+suggests an account for a line nothing was learned for, and reviews each invoice. When LM Studio isn't running, that
+line is left for AP and the invoice waits for a person.
 
 **Settings → Reading** shows what was found: each reader's state (the GL coding model among them, e.g.
 *qwen3.5-9b in LM Studio*), with a **Check again** button, and *Models in LM Studio* with **Load**.
@@ -306,7 +356,7 @@ opened in a second tab.
 | Analytics | **Spend** | Spend by month (by GL category), top GL accounts, vendors and cost centers, net of recoverable tax; **all invoice data as Excel** (invoices, lines, GL posting) for pivot tables or Power BI. |
 | Analytics | **Insights** | From 20 approvals on: straight-through rate, hours saved, a monthly projection; AP operations (queue ageing, days to approve, discounts approved in time); a one-page business case to download. |
 | Analytics | **Activity** | The audit trail (who did what, with every change to the AI's coding), filterable, CSV; the **controls report** for internal audit; a link to the **duplicate payment audit**, which is on Exports (number typos, same bill under two vendor names, same amount days apart, also against the ERP register). |
-| System | **Settings** | Opens on **Review:** one form, one Save: your name (per Windows user), your province, approval limit, default payment days, exchange rates, and under *Advanced* the review threshold, only-my-GL-codes and when to ask why. **Reading:** whether LM Studio runs (with **Check again**), OvisOCR2's self-test and queue, the AI reviewer; under *For IT* how every invoice is read, each reader's state and the models in LM Studio with **Load**. **Automation:** the touchless switch (leave it off during the pilot), the largest invoice approved without a person, the bar every vendor must meet, what always goes to a person, touchless rate and errors found. **Data & backups** (backups and restore, with an optional second backup folder, e.g. OneDrive), **About** (what this pilot shows: *Show JD Edwards settings* adds the **JD Edwards E1** tab and export format, *Show developer tools* adds Learning → Readers and the training data; folders for IT). The optional Azure Document Intelligence check has a card of its own under Reading, shown where the internet is allowed or once it is on. |
+| System | **Settings** | Opens on **Review:** one form, one Save: your name (per Windows user), your province, approval limit, default payment days, exchange rates, and under *Advanced* the review threshold, only-my-GL-codes and when to ask why. **Reading:** whether LM Studio runs (with **Check again**), OvisOCR2's self-test and queue, the AI reviewer; under *For IT* how every invoice is read, each reader's state and the models in LM Studio with **Load**. **Automation:** the touchless switch (leave it off during the pilot), the largest invoice approved without a person, the bar every vendor must meet, what always goes to a person, touchless rate and errors found. **Data & backups** (backups and restore, with an optional second backup folder, e.g. OneDrive), **About** (what this pilot shows: *Show JD Edwards settings* adds the **JD Edwards E1** tab, its export format and the JD Edwards checks on every invoice, *Show developer tools* adds Learning → Readers and the training data; folders for IT), **Finance hub** (the feed for the finance hub, off by default: [docs/FINANCE_HUB.md](docs/FINANCE_HUB.md)). Seven tabs in all, with JD Edwards E1 shown. The optional Azure Document Intelligence check has a card of its own under Reading, shown where the internet is allowed or once it is on. |
 | System | **Help** | Quick start, every check explained, questions, shortcuts. |
 
 ## Canadian sales tax
@@ -352,11 +402,17 @@ This is a memory of your team's decisions. No model is retrained.
 
 | Command | Purpose |
 |---|---|
-| `serve [--port] [--host] [--no-browser]` | The dashboard: a local web app on `127.0.0.1` (default port 8501, or the next free one), opened in the browser. `dashboard` is the same command. |
+| `serve [--port] [--host] [--no-browser]` | The dashboard: a local web app on `127.0.0.1` (default port 8501, or the next free one), opened in the browser. `dashboard` is the same command. Server mode: `--server`, with `--certfile` and `--keyfile` (HTTPS), `--proxy` (a reverse proxy's address) or `--insecure-http` (a first test only); see [docs/SERVER.md](docs/SERVER.md). |
+| `service install\|remove\|start\|stop\|status` | The company server: run AP Coder as a scheduled task (not a Windows service). |
+| `server-update [bundle] [--back]` | The company server: install a new offline bundle, or go back to the previous version. |
+| `users add\|list\|reset\|deactivate\|activate\|role` | Server mode: the people who log in, and their roles. |
+| `jde test\|sync\|status [--retry]` | The JD Edwards API connection (AIS): test it, sync the master data, show the vouchers waiting (and send them now). See [docs/JDE_E1.md](docs/JDE_E1.md). |
+| `hub export\|status [--full] [--dry-run]` | The finance hub feed: send what changed, or show how the last run went. See [docs/FINANCE_HUB.md](docs/FINANCE_HUB.md). |
+| `pilot-score --vouchers FILE [--distribution FILE]` | Shadow pilot: compare what AP Coder approved with what AP posted in JD Edwards. |
 | `demo [--remove]` | Load (or remove) the demo invoices and sample POs; no Azure needed. |
 | `watch [folder] [--every 60] [--once]` | Keep processing new files dropped in the invoices folder (scanner, mail rule, Task Scheduler). |
-| `doctor [--online]` | Setup, reference-data, tax-mapping and connectivity check. No secrets or URLs in the output. |
-| `read-pages [--minutes 60] [--invoice ID]` | Read the invoices waiting for the page reader, then stop (Task Scheduler overnight). |
+| `doctor [--online]` | Setup, reference-data and tax-mapping check; with `--online`, also the LM Studio dry run (Azure only with `AP_ALLOW_INTERNET=1`). No secrets or URLs in the output. |
+| `read-pages [--minutes 60] [--invoice ID] [--test]` | Read the invoices waiting for the page reader, then stop (Task Scheduler overnight); `--test` runs its self-test again. |
 | `export-training [--out PATH] [--since DATE]` | ZIP of approved invoices (page images and approved fields) to train a vision model on; stays local. |
 | `process <files/dirs…>` | Batch pipeline. Results go to `<data folder>/output` **and** the dashboard queue (`--no-db` to skip). Uses the learning memory. Skips files already processed (`--force` to redo). |
 | `share-report [--include-codes]` | Redacted summary of the dashboard database (or an output folder): no vendor names, amounts, descriptions or file names. |
@@ -503,13 +559,15 @@ ap_coder/            the package; old flat imports (ap_coder.store...) still wor
     review.py        grid edits → InvoiceCoding
     bulk.py · rules.py · taxmath.py · taxreturn.py · vendor_mail.py
   erp/               ERP files and reports
-    jde.py           JD Edwards E1 F0411Z1/F0911Z1 export
+    jde.py           JD Edwards E1 F0411Z1/F0911Z1 export;  jde_ais.py · jde_post.py · jde_sync.py: the AIS API
+    hub/             the finance hub feed (tables, landing folder, OneLake)
     statements.py    vendor statement reconciliation;  accruals.py: month-end accruals
     recurring.py     recurring vendors
     exports.py · insights.py · controls.py · export_layout.py · jde_worksheet.py · registers.py · stamp.py ·
     directory.py · search.py · spend.py · dupaudit.py
   intake/            pictures.py (pictures to PDF) · mailbox.py · msgfile.py · triage.py · inbox.py
-  ops/               cli.py · doctor.py · offline.py · demo.py · help.py · share_report.py
+  ops/               cli.py · doctor.py · offline.py · demo.py · help.py · share_report.py · pilot_score.py ·
+                     service.py (server mode as a scheduled task) · server_update.py · jde_cmd.py
   capture/           invoice capture: layout (text/OCR), rule reader, locate, confidence + checks, supplier
                      templates and autonomy, calibration.json (measured confidence), transcript.py (reads
                      the page reader's transcription as one more reader)
@@ -531,20 +589,28 @@ docs/                PILOT.md (offline pilot), GETTING_STARTED.md (step by step 
                      (launcher, update, server, files, network), UPGRADING.md (from each older version),
                      WHATS_NEW.md, PILOT_PLAN.md, CODING.md (GL coding without an AI model), SALES_TAX.md
                      (place of supply, taxes per line, the math), SERVER.md (a company Windows Server, for IT),
+                     FINANCE_HUB.md (the hub feed), JDE_E1.md (JD Edwards: Z-files and the API),
+                     JDE_ORCHESTRATIONS.md (the AIS orchestrations), LM_STUDIO.md (models and settings),
+                     MAILBOX_SETUP.md (the AP mailbox), CAPTURE_DESIGN.md (how invoices are read, measured),
                      screenshots/
 private/             git-ignored: default data folder when the installer is not used
 tests/               offline test suite (Azure clients and LM Studio mocked)
 ```
 
 Check a change with `python scripts/check.py`. `pytest` runs all but the slow tests, `pytest -m ""` runs everything
-(as CI does); lint with `ruff check . && ruff format --check .`.
+(as CI does); lint with `ruff check ap_coder tests scripts && ruff format --check ap_coder tests scripts`.
 
 ## Phase 2 hooks (beyond the laptop pilot)
+
+Built since: **a shared dashboard with sign-in** (server mode: HTTPS, logins and four roles,
+[docs/SERVER.md](docs/SERVER.md)), **posting to the ERP** (the JD Edwards AIS API, [docs/JDE_E1.md](docs/JDE_E1.md))
+and **reporting tables** (the finance hub feed for Microsoft Fabric, [docs/FINANCE_HUB.md](docs/FINANCE_HUB.md)).
+Still ideas:
 
 - **Ingestion:** Logic Apps / Power Automate → Blob Storage → a Service Bus message → a worker
   calling `InvoicePipeline.process()`. Locally, `watch` already processes a shared folder.
 - **Throughput:** Service Bus absorbs month-end spikes. Set worker concurrency to the Azure OpenAI
   tokens-per-minute quota.
 - **Human-in-the-loop at scale:** the store's invoice, feedback and metrics tables map directly to
-  Dataverse, either for a Power Apps version of the review screen or for hosting this dashboard
-  behind Entra ID sign-in.
+  Dataverse, for a Power Apps version of the review screen, or Entra ID sign-in in place of server mode's own
+  logins.

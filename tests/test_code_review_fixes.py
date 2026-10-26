@@ -163,7 +163,7 @@ def test_correcting_an_exported_touchless_invoice_does_not_suspend_its_supplier(
     with store._conn() as conn:  # the supplier is touchless (how its invoice was approved without review)
         conn.execute("UPDATE supplier_profiles SET state = 'autonomous' WHERE key = ?", (key,))
     answer = client.post(f"/review/{inv['id']}/correct", data={"reason": "wrong GL"}, headers=PAGE).json()
-    assert "changed meanwhile" in client.get(answer["redirect"]).text
+    assert "exported in batch" in client.get(answer["redirect"]).text  # the real reason since B-1201
     assert store.get_supplier_profile(key)["state"] == "autonomous"
     assert store.get_invoice(inv["id"])["status"] == APPROVED
 

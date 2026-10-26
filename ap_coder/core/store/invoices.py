@@ -484,6 +484,9 @@ class InvoicesMixin:
                 )
             layout = self._forget_learning(conn, invoice_id)
             self._log(conn, "rejected", invoice_id, reviewer, {"reason": reason, **layout})
+            row = conn.execute("SELECT vendor_name, invoice_number FROM invoices WHERE id = ?",
+                               (invoice_id,)).fetchone()  # fmt: skip
+        self._recheck_duplicates(row["vendor_name"] or "", row["invoice_number"] or "")
 
     @staticmethod
     def _forget_learning(conn: sqlite3.Connection, invoice_id: int) -> dict[str, Any]:
@@ -560,6 +563,8 @@ class InvoicesMixin:
                 self._withdraw_template(conn, invoice_id)
             else:
                 conn.execute("DELETE FROM template_snapshots WHERE invoice_id = ?", (invoice_id,))
+        if row is not None:
+            self._recheck_duplicates(row["vendor_name"] or "", row["invoice_number"] or "")
 
     # --- The review screen's drafts: edits not approved yet (D-86) ---------------------------------------------------
     # One row per invoice and person ("" this computer, else a colleague's key on the office network: web/pages/
@@ -971,6 +976,7 @@ class InvoicesMixin:
         reopened and approved since must not reopen that approval)."""
         approved = "" if only_rejected else f"status IN ('{APPROVED}', '{PENDING}') AND export_batch IS NULL OR "
         with self._conn() as conn:
+            was = conn.execute("SELECT status, error FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
             cur = conn.execute(
                 f"""UPDATE invoices SET status = ?, reviewer = NULL, reviewed_at = NULL, second_reviewer = NULL,
                    second_reviewed_at = NULL, error = NULL WHERE id = ? AND ({approved}status = ?)""",
@@ -979,4 +985,5 @@ class InvoicesMixin:
             if cur.rowcount == 0:
                 raise ValueError(f"invoice {invoice_id} cannot be reopened (exported, or not approved or rejected)")
             layout = self._forget_learning(conn, invoice_id)
-            self._log(conn, "reopened", invoice_id, actor, {"reason": reason, **layout})
+            rejected = {"rejected": was["error"] or ""} if was["status"] == REJECTED else {}  # the rejection undone
+            self._log(conn, "reopened", invoice_id, actor, {"reason": reason, **rejected, **layout})

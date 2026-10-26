@@ -498,8 +498,27 @@ def _getting_started(request: Request, store: Store, invoices: list[dict[str, An
 # --- Actions -------------------------------------------------------------------------------------------------------
 
 
-def changed_meanwhile(request: Request, exc: Exception, back: str = "/review") -> JSONResponse:
-    """Someone else acted on the invoice after the page was drawn: say so, and show where it stands now."""
+def exported_reason(store: Store, inv: dict[str, Any] | None) -> str:
+    """Why an exported invoice can't be reopened or deleted ("" when it isn't exported): posted to JD Edwards, or
+    in its export batch (B-1201)."""
+    if not inv or not inv.get("export_batch"):
+        return ""
+    from ap_coder.erp import jde_post
+
+    batch = inv["export_batch"]
+    if any(p["invoice_id"] == inv["id"] for p in jde_post.postings(store, batch, (jde_post.POSTED,))):
+        return f"it was posted to JD Edwards (batch {batch}): it stays approved in AP Coder"
+    return f"it was exported in batch {batch}: undo the batch on the Exports page first"
+
+
+def changed_meanwhile(request: Request, exc: Exception, back: str = "/review",
+                      invoice_id: int | None = None) -> JSONResponse:  # fmt: skip
+    """Someone else acted on the invoice after the page was drawn: say so, and show where it stands now. An invoice
+    exported, or posted to JD Edwards, says that instead (B-1201)."""
+    store = get_store(request)
+    why = exported_reason(store, store.get_invoice(invoice_id) if invoice_id is not None else None)
+    if why:
+        return done(request, back, f"Not done: {why}.", tone="warn")
     return done(request, back, f"Not done: someone else changed this invoice meanwhile ({exc}).", tone="warn")
 
 
@@ -588,7 +607,7 @@ def review_delete(request: Request, invoice_id: int, back: str = Form("/review?t
     try:
         delete_invoice(store, invoice_id)
     except ValueError as exc:  # approved by someone else since this Delete button was shown
-        return changed_meanwhile(request, exc, back)
+        return changed_meanwhile(request, exc, back, invoice_id)
     forget_everyones_draft(request, invoice_id)
     return done(request, back, flash_message("Deleted. The file moved to invoices/deleted.", "ok", icon="delete"))
 
@@ -598,7 +617,7 @@ def review_reopen(request: Request, invoice_id: int) -> JSONResponse:
     try:
         get_store(request).reopen(invoice_id, reviewer(), only_rejected=True)
     except ValueError as exc:
-        return changed_meanwhile(request, exc, "/review?tab=other")
+        return changed_meanwhile(request, exc, "/review?tab=other", invoice_id)
     return done(request, "/review?tab=other", flash_message("Back in the review queue.", "ok", icon="undo"))
 
 

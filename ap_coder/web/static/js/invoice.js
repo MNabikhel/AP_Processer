@@ -795,6 +795,8 @@ vendorAdd?.addEventListener("toggle", () => {
   vendorAdd.querySelector('[data-new="name"]')?.focus();
 });
 
+vendorAdd?.addEventListener("input", (e) => e.target.removeAttribute?.("aria-invalid"));
+
 vendorAdd?.querySelector("[data-new-go]")?.addEventListener("click", async (e) => {
   const button = e.currentTarget;
   const body = new FormData();
@@ -803,6 +805,8 @@ vendorAdd?.querySelector("[data-new-go]")?.addEventListener("click", async (e) =
   const answer = await post(`${base}/vendor`, body);
   button.disabled = false;
   if (!answer.ok) {
+    const name = vendorAdd.querySelector('[data-new="name"]');
+    if (name && !name.value.trim()) name.setAttribute("aria-invalid", "true"); // shown once refused (B-1193)
     toast({ text: answer.error || "That didn't work.", tone: "err" }, 9000);
     return;
   }

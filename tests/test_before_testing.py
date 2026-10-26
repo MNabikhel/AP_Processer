@@ -363,7 +363,11 @@ def test_insights_has_no_cloud_cost_offline_and_waits_for_twenty_approvals(demo_
     assert answer["ok"]
 
 
-def test_vendors_say_where_ask_the_vendor_is(demo_store):
+def test_vendors_say_where_ask_the_vendor_is(demo_store, tmp_path):
+    doc = demo_store.get_invoice(demo_store.list_invoices()[0]["id"])["ai_output"]
+    for n in (1, 2):  # a vendor that makes work, still to review (B-1183)
+        demo_store.add_invoice(tmp_path / f"{n}.pdf", {**doc, "invoice_number": f"W-{n}"},
+                               {"issues": [{"severity": "error", "code": "GST_HST_NUMBER_MISSING"}]})  # fmt: skip
     page = _demo_client(demo_store).get("/vendors").text
     assert "Ask the vendor</i> above drafts" not in page and "open a vendor in the list above" in page
 

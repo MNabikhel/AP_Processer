@@ -228,10 +228,18 @@ SAVED_WORDS = {
 }
 
 
+# Not a setting: the approval limit was raised, said after what was saved (B-1187).
+LIMIT_RAISED = "approval_limit_raised"
+LIMIT_RAISED_TEXT = ("Invoices already in AP Coder keep the strictest limit in force since they arrived: the higher "
+                     "limit applies to invoices that come in from now on.")  # fmt: skip
+
+
 def saved_text(changed: list[str]) -> str:
     """What was saved, in words (B-507): "Saved your name." / "Saved your province: invoices read from now on use
     it." / "Saved your name and your province; your province applies to invoices read from now on." / "Nothing
-    changed." """
+    changed." A raised approval limit (``LIMIT_RAISED``) says the invoices already in keep the strictest (B-970)."""
+    if LIMIT_RAISED in changed:
+        return f"{saved_text([key for key in changed if key != LIMIT_RAISED])} {LIMIT_RAISED_TEXT}"
     if not changed:
         return "Nothing changed."
     words = [SAVED_WORDS.get(key, (key, False)) for key in changed]
@@ -336,12 +344,15 @@ def _approval_part(
         if why is not None and why != lessons.why_after(store):
             store.set_setting(lessons.SETTING, str(why), actor=reviewer())
             changed.append(lessons.SETTING)
-        if limit is not None and limit != store.approval_limit():
+        before = store.approval_limit()
+        if limit is not None and limit != before:
             store.set_setting("approval_limit", f"{limit:.2f}", actor=reviewer())
             changed.append("approval_limit")
         others = [key for key in changed if key not in APPROVAL_CONTROLS]  # those the store logs with old and new
         if others:
             store.log_event("settings_changed", actor=reviewer(), detail={"keys": others})
+        if "approval_limit" in changed and before and (not limit or limit > before):
+            changed.append(LIMIT_RAISED)
         return changed
 
     return save

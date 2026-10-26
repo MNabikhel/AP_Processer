@@ -1,5 +1,5 @@
-"""AP Coder as a Windows service on the company server (D-100): ``python -m ap_coder service install|remove|start|
-stop|status``.
+"""AP Coder run by a Windows scheduled task on the company server (D-100): ``python -m ap_coder service
+install|remove|start|stop|status``.
 
 How it runs, with nothing to download and no pywin32: a **Windows scheduled task** (Task Scheduler is part of every
 Windows Server) that starts at boot under a dedicated local account, whether anyone is logged on or not. The task runs
@@ -718,9 +718,11 @@ def doctor_checks(data: Path, env: dict | None = None, *, windows: bool = WINDOW
     if s.insecure_http:
         out.append(("server HTTPS", "WARN", "off (--insecure-http): passwords cross the network unencrypted; for a "
                     "first test only"))  # fmt: skip
-    elif not s.certfile or not s.keyfile:
-        out.append(("server HTTPS", "FAIL", "the certificate and its key are not set (AP_TLS_CERT and AP_TLS_KEY, or "
-                    "service install --certfile --keyfile): the server doesn't start without them"))  # fmt: skip
+    elif not s.certfile or not s.keyfile:  # a server started with them on its command line has them (B-1196)
+        out.append(("server HTTPS", "WARN", "the certificate and its key are not in server.json nor AP_TLS_CERT and "
+                    "AP_TLS_KEY: the service doesn't start without them (service install --certfile --keyfile). The "
+                    "doctor can't see a running server's command line: one started with serve --certfile --keyfile "
+                    "has them"))  # fmt: skip
     else:
         for what, path in (("certificate", s.certfile), ("private key", s.keyfile)):
             why = _readable(path)
@@ -747,7 +749,7 @@ def doctor_checks(data: Path, env: dict | None = None, *, windows: bool = WINDOW
 
 
 def add_parser(sub: Any) -> None:
-    p = sub.add_parser("service", help="The company server: run AP Coder as a Windows service (docs/SERVER.md)")
+    p = sub.add_parser("service", help="The company server: run AP Coder as a scheduled task (docs/SERVER.md)")
     p.add_argument("action", choices=["install", "remove", "start", "stop", "status", "run"],
                    help="run: what the scheduled task runs (the service host)")  # fmt: skip
     p.add_argument("--account", default=None, help=f"The Windows account it runs as (default {DEFAULT_ACCOUNT})")

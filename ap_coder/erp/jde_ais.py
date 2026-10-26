@@ -44,6 +44,7 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import socket
 import ssl
 import time
@@ -335,6 +336,17 @@ def save(store: Any, *, base_url: str, environment: str, role: str, username: st
         raise ValueError("Choose how AP Coder signs in to AIS.")
     if new.base_url and (problem := address_problem(new.base_url)):
         raise ValueError(problem)
+    # The connection's own check (B-1200): an address on the internet is refused now. A name is looked up only once a
+    # step is on (nothing is asked of the network before); one this computer can't look up now (the VPN off) is saved:
+    # the connection checks it when it is used.
+    if new.base_url:
+        try:
+            ipaddress.ip_address(new.host.strip("[]"))
+            found: list[str] | None = None  # an IP address: judged as it is, nothing looked up
+        except ValueError:
+            found = _resolve(new.host) if new.on else []
+        if found != [] and (problem := internal_problem(new.host, lambda _host: found or [], new.shared_network)):
+            raise ValueError(problem)
     if new.ca_file and not Path(new.ca_file).is_file():
         raise ValueError(f"The CA certificate file {new.ca_file} isn't there: give the full path of the .pem / .crt "
                          "file IT gave you, or leave it blank.")  # fmt: skip
@@ -392,11 +404,19 @@ def status(cfg: AisSettings) -> tuple[bool, str]:
 # --- The client ------------------------------------------------------------------------------------------------------
 
 
+# Where a secret is cut out whatever comes after it: the value of password= / token: / an Authorization header.
+_SECRET_AFTER = r"""((?:password|passwd|pwd|token|secret|authorization)["']?\s*[:=]\s*["']?(?:(?:Basic|Bearer)\s+)?)"""
+
+
 def scrub(text: Any, *secrets: str) -> str:
-    """``text`` with each secret (the password, the token, a Basic header) cut out, at most 500 characters."""
+    """``text`` with each secret (the password, the token, a Basic header) cut out, at most 500 characters. Whatever
+    its length, as a whole word or as the value of password= / token: / Authorization, never inside another word: a
+    password "x" leaves "example.com" as it is (B-1199)."""
     out = str(text or "")
     for secret in sorted({s for s in secrets if s}, key=len, reverse=True):  # whatever its length
-        out = out.replace(secret, "••••")
+        found = re.escape(secret)
+        out = re.sub(_SECRET_AFTER + found, lambda m: m.group(1) + "••••", out, flags=re.IGNORECASE)
+        out = re.sub(rf"(?<![A-Za-z0-9]){found}(?![A-Za-z0-9])", "••••", out)
     return out[:500]
 
 

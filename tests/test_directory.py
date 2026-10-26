@@ -226,7 +226,7 @@ def test_export_has_the_columns_shown_and_every_row_kept(store):
     rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig"))))
     approved = sorted(store.list_invoices(APPROVED), key=lambda r: r["grand_total"])
     assert rows == [["Vendor", "Total", "Status"]] + [
-        [r["vendor_name"], str(r["grand_total"]), APPROVED] for r in approved
+        [r["vendor_name"], f"{r['grand_total']:.2f}", "Approved"] for r in approved
     ]
     book = load_workbook(io.BytesIO(client.get(f"/search/export.xlsx?{query}").content))
     sheet = book.active

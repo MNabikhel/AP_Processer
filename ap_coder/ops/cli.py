@@ -89,6 +89,15 @@ def reference_source(args: argparse.Namespace) -> str:
     )
 
 
+def bundled_reference(args: argparse.Namespace) -> bool:
+    """Whether the reference data is the sample bundled in data/ (nothing imported yet); False when that can't be
+    told (a damaged database: the doctor says so itself)."""
+    try:
+        return reference_source(args).startswith("BUNDLED")
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _load_reference(args: argparse.Namespace) -> ReferenceData:
     if reference_source(args) == "dashboard database":
         reference = Store(args.db).reference_data()
@@ -128,7 +137,9 @@ def build_parser() -> argparse.ArgumentParser:
     private = private_dir()
     db_path, out_dir, cache_dir = private / "ap_coder.db", private / "output", private / ".cache" / "extraction"
     db_path = env_path("AP_DB_PATH") or db_path  # the database the dashboard uses, as it chooses it
-    parser = argparse.ArgumentParser(prog="ap_coder", description="Enterprise AP Invoice Coder Engine (PoC)")
+    parser = argparse.ArgumentParser(
+        prog="ap_coder", description="AP Coder: offline AP invoice coding for Canadian invoices"
+    )
     parser.add_argument(
         "--env-file", default=None, help="Path to a .env file (default: the data folder's, else ./.env)"
     )
@@ -162,8 +173,13 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--insecure-http", action="store_true",
                        help="Server mode on plain HTTP, for a first test on a trusted network only")  # fmt: skip
 
-    p = sub.add_parser("doctor", help="Check configuration, reference data and (with --online) Azure connectivity")
-    p.add_argument("--online", action="store_true", help="Call both Azure services (costs about one invoice)")
+    p = sub.add_parser("doctor", help="Check configuration, reference data and (with --online) the models")
+    p.add_argument(
+        "--online",
+        action="store_true",
+        help="Also ask the local model in LM Studio for two lines' accounts (the dry run); Azure only with "
+        "AP_ALLOW_INTERNET=1 (costs about one invoice)",
+    )
     _add_reference_args(p)
     _add_server_ops(sub)
 
@@ -295,7 +311,7 @@ def _add_server_ops(sub: Any) -> None:
 
 
 def cmd_doctor(args: argparse.Namespace, settings: Settings) -> int:
-    checks = run_checks(settings, lambda: _load_reference(args), online=args.online)
+    checks = run_checks(settings, lambda: _load_reference(args), online=args.online, bundled=bundled_reference(args))
     try:
         source = reference_source(args)
     except Exception as exc:  # noqa: BLE001 - a damaged database file: the doctor reports it, it never crashes
@@ -342,8 +358,9 @@ def cmd_serve(args: argparse.Namespace) -> int:
         opens = "" if args.no_browser else "it opens in your browser; "  # (the launcher opens it, and says so itself)
         print(f"Dashboard: {url}  ({opens}Ctrl+C here to stop)", file=sys.stderr)
         if not is_loopback(host if host not in ("", "localhost") else "127.0.0.1"):
-            print(f"Listening on {host}: other computers on the network can open the dashboard. There is no login: "
-                  "anyone who can reach this address can see the invoices.", file=sys.stderr)  # fmt: skip
+            print(f"Listening on {host}: other computers on the network can open the dashboard. Colleagues give their "
+                  "name first, with no password: anyone who can reach this address can see the invoices. For logins, "
+                  "run it as the company server (server mode).", file=sys.stderr)  # fmt: skip
     network = {"certfile": certfile, "keyfile": keyfile, "proxy": args.proxy, "insecure_http": args.insecure_http}
     extra = network if server_mode() or any(network.values()) else {}  # (the laptop's call is as before)
     return server.serve(host, port, open_browser=not args.no_browser, store=Store(Path(args.db)), **extra)

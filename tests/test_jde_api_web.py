@@ -118,3 +118,21 @@ def test_the_go_ahead_needs_a_dry_run_and_step_2(tmp_path, ais, monkeypatch):
     store.set_setting(jde_ais.SETTING_KEY, ais.settings(step2=False).to_json())
     assert "Step 2" in post(client, f"/exports/batches/{batch}/jde-api/post").json()["error"]
     assert 'id="jde-api"' not in client.get(f"/exports?batch={batch}").text  # off and nothing sent: not shown
+
+
+def test_a_dry_run_without_jde_s_proof_says_so_and_never_ready_in_green(tmp_path, ais, monkeypatch):
+    """B-1209: a dry run whose JD Edwards proof call timed out said "1 of 1 voucher ready to post" in green (and the
+    reason in a second line): it says it was checked here only, JD Edwards' proof not received, as a warning first;
+    posting stays allowed."""
+    from .test_jde_post import connect
+
+    store, batch = batch_of(tmp_path, ais)
+    monkeypatch.setenv(jde_ais.PASSWORD_ENV, PASSWORD)
+    connect(store, ais, timeout=0.15)
+    ais.script("voucher_create", "slow")
+    client = client_for(store)
+    post(client, f"/exports/batches/{batch}/jde-api/dry-run")
+    first = _wait(client, "jde-api")["messages"][0]
+    assert first["tone"] == "warn" and "ready to post" not in first["text"], first
+    assert "checked here only" in first["text"] and "proof wasn't received" in first["text"], first
+    assert "Post 1 voucher to JD Edwards" in client.get(f"/exports?batch={batch}").text  # posting stays allowed

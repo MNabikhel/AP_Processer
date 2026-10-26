@@ -71,6 +71,7 @@ ACTIONS = {
     "jde_voucher_posted": ("cloud_done", "ok", "Posted to JD Edwards"),
     "jde_voucher_refused": ("cloud_off", "err", "Refused by JD Edwards"),
     "jde_voucher_mismatch": ("gpp_bad", "err", "JD Edwards holds another voucher under this key"),
+    "jde_voucher_released": ("lock_open", "warn", "Voucher released after a check in JD Edwards"),
     "parked": ("pause_circle", "warn", "Parked"),
     "unparked": ("play_circle", "info", "Back in the queue"),
     "note": ("sticky_note_2", "violet", "Note"),
@@ -355,6 +356,8 @@ def describe(event: dict[str, Any]) -> str:
         return f"approved after {d.get('first_approver') or '?'} ({second_reason(d)})"  # the stored reason (B-1024)
     if action in ("sent_back", "reopened"):
         layout = f" · vendor's layout {d['layout']}" if d.get("layout") else ""  # what it taught, taken back (D-71)
+        if "rejected" in d:  # a rejected invoice back in the queue: the rejection undone
+            return f"rejection undone, back to the review queue · rejected for: {d['rejected'] or 'no reason given'}"
         return f"back to the review queue · reason: {d.get('reason') or 'none given'}{layout}"
     if action == "erp_register_imported":
         return (
@@ -403,6 +406,8 @@ def describe(event: dict[str, Any]) -> str:
         if d.get("account") == "unknown":  # the text typed is not kept (D-101)
             words = _ACCOUNT_WORDS["login_failed_unknown" if action == "login_failed" else action]
             return words.format(user="an unknown account", name="", by=by, address="?", **roles)
+        if action == "address_unlocked" and d.get("username"):  # a username's pause there (B-1208)
+            return f"logins as {d['username']} from {d.get('unpaused') or 'this server'} are no longer paused"
         return _ACCOUNT_WORDS[action].format(user=d.get("username") or "?", name=d.get("name") or "", by=by,
                                              address=d.get("unpaused") or "?", **roles)  # fmt: skip
     if action == "jde_api_tested":
@@ -418,6 +423,8 @@ def describe(event: dict[str, Any]) -> str:
             " (checked here only: JD Edwards not reached)" if d.get("jde") is False else "")  # fmt: skip
     if action == "jde_voucher_mismatch":
         return f"batch {d.get('batch', '')}: JD Edwards' voucher {d.get('document', '')} is not this invoice"
+    if action == "jde_voucher_released":
+        return f"batch {d.get('batch', '')}: taken as not sent · {d.get('note', '')}"
     if action in ("jde_voucher_posted", "jde_voucher_refused"):
         voucher = f": voucher {d['voucher']}" if d.get("voucher") else ""
         return f"batch {d.get('batch', '')}{voucher}"

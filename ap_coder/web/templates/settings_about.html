@@ -22,7 +22,9 @@
     hidden.{% endif %} Nothing is removed: tick or untick them here.</p>
   <form method="post" action="/settings/about/show" class="stack" data-busy="Saving…">
     <label class="check"><input type="checkbox" name="show_jde" value="1"{% if show_jde %} checked{% endif %}>
-      Show JD Edwards settings (a Settings tab, and JD Edwards E1 as an export format)</label>
+      Show JD Edwards settings (a Settings tab, and JD Edwards E1 as an export format). Turning it on also
+      adds the JD Edwards checks to every invoice: each needs its supplier's address number and a JD Edwards account
+      for each line, set in Settings → JD Edwards E1</label>
     {% if developer_env %}
     <p class="check"><span class="ms" aria-hidden="true">check_box</span> Show developer tools:
       on (set by AP_DEVELOPER_TOOLS), {{ "on the server" if server_mode else "on this computer" }} only</p>

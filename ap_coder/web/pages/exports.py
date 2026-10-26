@@ -18,7 +18,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from ap_coder.core import ui
@@ -134,6 +134,8 @@ def jde_file(store: Store, batch: int) -> tuple[bytes, str, str]:
         on=dt.date.fromisoformat(created[:10]) if created else None,
         left_out=left_out,
         to_check=jde.validate(kept, settings, lookup),
+        left_invoices=[i for i in invoices if i["id"] in left_out],
+        no_undo=jde_post.undo_problem(store, batch),
     )
 
 
@@ -584,15 +586,13 @@ def jde_api_dry_run(request: Request, batch: int) -> JSONResponse:
         found = jde_post.dry_run(store, batch, actor=actor)
         rows = found["rows"]
         ok = sum(r["status"] == jde_post.CHECKED for r in rows)
-        out = [
-            {
-                "text": f"Dry run of batch {batch}: {ok} of {ui.plural(len(rows), 'voucher')} ready to post.",
-                "tone": "ok" if ok == len(rows) else "warn",
-            }
-        ]
-        if found["jde"]:
-            out.append({"text": f"Checked here only, not by JD Edwards: {found['jde']}", "tone": "warn"})
-        return {"messages": out}
+        if found["jde"]:  # JD Edwards' proof not received: never "ready" in green (B-1209)
+            return {"messages": [{"text": f"Dry run of batch {batch}: {ok} of {ui.plural(len(rows), 'voucher')} "
+                                  "checked here only: JD Edwards' proof wasn't received "
+                                  f"({found['jde']}). They can still be posted; JD Edwards checks each one then.",
+                                  "tone": "warn"}]}  # fmt: skip
+        return {"messages": [{"text": f"Dry run of batch {batch}: {ok} of {ui.plural(len(rows), 'voucher')} ready "
+                              "to post.", "tone": "ok" if ok == len(rows) else "warn"}]}  # fmt: skip
 
     return _api_job(request, "Dry run through the JD Edwards API", work)
 
@@ -616,6 +616,19 @@ def jde_api_post(request: Request, batch: int) -> JSONResponse:
             return {"messages": [{"text": str(exc), "tone": "warn"}]}
 
     return _api_job(request, "Posting to JD Edwards", work)
+
+
+@router.post("/exports/batches/{batch:int}/jde-api/release")
+def jde_api_release(request: Request, batch: int, invoice_id: int = Form(0), note: str = Form("")) -> JSONResponse:
+    """An Admin's "I've checked in JD Edwards: release this voucher" (D-107): a voucher held here (JD Edwards answered
+    EXISTS for another invoice, say) is marked not sent, with the Admin's name and note in the history."""
+    try:
+        jde_post.release(get_store(request), batch, invoice_id, current_reviewer(), note)
+    except ValueError as exc:
+        return refuse(str(exc))
+    return done(request, f"/exports?batch={batch}#jde-api", flash_message(
+        f"AP Coder #{invoice_id} released: it is not sent, so the batch files hold it again and the batch can be "
+        "undone.", "ok", icon="lock_open"))  # fmt: skip
 
 
 @router.post("/exports/jde-api/retry")

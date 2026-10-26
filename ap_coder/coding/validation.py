@@ -92,6 +92,12 @@ def _rounding_tolerance(line_count: int) -> float:
     return max(_CENT_TOLERANCE, 0.01 * line_count)
 
 
+def duplicate_message(duplicate_of: list[int]) -> str:
+    """DUPLICATE_INVOICE's words: the other invoices with the same vendor and invoice number."""
+    ids = ", ".join(f"#{i}" for i in duplicate_of)
+    return f"same vendor and invoice number as invoice {ids}: possible duplicate payment"
+
+
 def validate_coding(
     coding: InvoiceCoding,
     reference: ReferenceData,
@@ -111,8 +117,7 @@ def validate_coding(
         issues.append(Issue(severity, code, message, line))
 
     if duplicate_of:
-        ids = ", ".join(f"#{i}" for i in duplicate_of)
-        add(ERROR, "DUPLICATE_INVOICE", f"same vendor and invoice number as invoice {ids}: possible duplicate payment")
+        add(ERROR, "DUPLICATE_INVOICE", duplicate_message(duplicate_of))
     for severity, code, message in vendor_findings or []:  # vendor master / fraud signals (vendors.py)
         add(severity, code, message)
     for severity, code, message, line in po_findings or []:  # purchase order match (po.py)
@@ -132,7 +137,7 @@ def validate_coding(
 
     # --- Line items -------------------------------------------------------
     numbers = [li.line_number for li in coding.line_items]
-    if numbers != list(range(1, len(numbers) + 1)):
+    if sorted(numbers) != list(range(1, len(numbers) + 1)):  # the parts of a split line sit under it (B-1188)
         add(WARNING, "LINE_NUMBERING", f"The line numbers don't run 1, 2, 3…: {', '.join(map(str, numbers))}")
 
     tax_gls = reference.tax.tax_gl_codes()
@@ -266,14 +271,17 @@ def score(
             reading *= penalty
     reading, coded = round(reading, 4), round(coded, 4)
     adjusted = min(reading, coded)
+    return reading, coded, adjusted, needs_review(adjusted, findings, review_threshold)
+
+
+def needs_review(adjusted: float, findings: list[tuple[str, str]], review_threshold: float) -> bool:
+    """Whether an invoice of confidence ``adjusted`` with these findings ``(severity, code)`` needs a person."""
     # A line to code, a business finding and a doubt about the coding (a person looks at it, whatever the numbers:
     # taken off the Coding alone, a warning no longer brings a well-read invoice under the threshold, B-892) keep it
     # for a person.
-    requires_review = (adjusted < review_threshold or any(sev == ERROR for sev, _ in findings)
-                       or any(code in COUNTED_IN_CODING
-                              or (sev != INFO and (business(code) or code in ABOUT_CODING))
-                              for sev, code in findings))  # fmt: skip
-    return reading, coded, adjusted, requires_review
+    return (adjusted < review_threshold or any(sev == ERROR for sev, _ in findings)
+            or any(code in COUNTED_IN_CODING or (sev != INFO and (business(code) or code in ABOUT_CODING))
+                   for sev, code in findings))  # fmt: skip
 
 
 def business(code: str) -> bool:

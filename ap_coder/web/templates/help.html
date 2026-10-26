@@ -18,8 +18,10 @@
       </li>
       {% endfor %}
     </ol>
-    <p class="muted">The same steps as the <a href="/help/quick-start">Quick start</a>; the welcome page's checklist
-      ticks steps 0 to 3 off.</p>
+    <p class="muted">The same steps as the <a href="/help/quick-start">Quick start</a>. The welcome page's checklist
+      ticks off its rows as you go: LM Studio, reading invoices, your name, your province, GL accounts, sales tax
+      accounts, bank accounts (optional), the vendor master, the JD Edwards settings (with JD Edwards on), your past
+      coding and your first invoices.</p>
   </section>
 
   <div class="col">
@@ -113,12 +115,15 @@
     <section class="card">
       <h4>Where your data is</h4>
       {% if server_mode %}
-      <p class="muted">Nothing is sent anywhere: invoices are read, coded and kept on the server, in its data folder
-        (backed up every day{% if is_admin %}; Settings → Data &amp; backups{% endif %}).</p>
+      <p class="muted">Invoices are read, coded and kept on the server, in its data folder (backed up every
+        day{% if is_admin %}; Settings → Data &amp; backups{% endif %}). Your browser shows them over the company network.</p>
       {% else %}
-      <p class="muted">Nothing is sent anywhere: invoices are read, coded and kept on this computer, in the data folder
-        (backed up every day; Settings → Data &amp; backups).</p>
+      <p class="muted">Invoices are read, coded and kept on this computer, in the data folder (backed up every day;
+        Settings → Data &amp; backups).</p>
       {% endif %}
+      <p class="muted">Nothing is sent anywhere unless someone switches on one of these, each off by default: the Azure
+        check (Settings → Reading), the finance hub feed (Settings → Finance hub){{ " and" if server_mode else "," }} the JD Edwards connection (your
+        company's own JD Edwards server){% if not server_mode %} and server mode (AP Coder on a company server){% endif %}.</p>
       {% if is_admin %}{# the server's own paths: an Admin's only (D-99) #}
       <details class="st-forit">
         <summary><span class="ms" aria-hidden="true">engineering</span>For IT: the folders</summary>

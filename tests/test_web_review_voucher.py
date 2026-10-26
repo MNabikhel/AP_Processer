@@ -40,7 +40,9 @@ def test_with_jd_edwards_in_use_the_screen_says_what_its_batch_would_hold_back(c
     before = check(client, invoice_id, form_of(store, invoice_id))
     assert "JD Edwards" not in json.dumps(before["sections"]) and before["header"]["an8"] is None  # not in use
 
-    _jde_on(store, bu_from_cost_center=False)  # no business unit for the lines: none from the cost center
+    vendor = store.get_invoice(invoice_id)["ai_output"]["vendor_name"]
+    # no business unit for the lines (none from the cost center), and a supplier number that isn't an AN8
+    _jde_on(store, bu_from_cost_center=False, an8_overrides={jde.vendor_key(vendor): "V10104"})
     answer = check(client, invoice_id, form_of(store, invoice_id))
     checks = answer["sections"]["checks"]
     assert "JD Edwards: the supplier number V10104 is not an address number" in checks
@@ -71,7 +73,6 @@ def test_with_jd_edwards_in_use_the_screen_says_what_its_batch_would_hold_back(c
     assert "Not sent: JD Edwards uses the supplier&#39;s own terms" in block
 
     # The pilot tester sets the AN8 and a default business unit: nothing holds it back, the accounts show.
-    vendor = store.get_invoice(invoice_id)["ai_output"]["vendor_name"]
     _jde_on(store, an8_overrides={jde.vendor_key(vendor): "10104"}, default_bu="CC400", bu_from_cost_center=False)
     answer = check(client, invoice_id, form_of(store, invoice_id))
     assert "JD Edwards" not in answer["sections"]["checks"] and answer["header"]["an8"] == "10104"
@@ -104,8 +105,8 @@ def test_bulk_approval_asks_the_same_jd_edwards_questions(store):
     from ap_coder.core.config import Settings
     from ap_coder.core.schema import InvoiceCoding
 
-    _jde_on(store, bu_from_cost_center=False)
     inv = store.get_invoice(_id(store, "Prairie"))
+    _jde_on(store, bu_from_cost_center=False, an8_overrides={jde.vendor_key(inv["vendor_name"]): "V10104"})
     coded = {k: v for k, v in inv["ai_output"].items() if k != "gl_distribution"}
     _, report = finalise_coding(InvoiceCoding.model_validate(coded), store.reference_data(), Settings(), store=store)
     assert {"JDE_BAD_AN8", "JDE_NO_ACCOUNT"} <= {i.code for i in report.issues}

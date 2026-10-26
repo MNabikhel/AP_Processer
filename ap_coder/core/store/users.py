@@ -439,6 +439,33 @@ class UsersMixin:
             ).fetchall()
         return [{"address": r["ip"], "until": float(r["until"])} for r in rows]
 
+    def paused_usernames(self) -> list[dict[str, Any]]:
+        """The usernames logins are paused for now from an address (5 tries that didn't match), with until when (epoch
+        seconds); an unknown username (kept as a hash) is left out: there is no one to tell (B-1208)."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT username, ip, MAX(user_locked_until) AS until FROM login_attempts WHERE user_locked_until > ? "
+                "AND username NOT LIKE ? GROUP BY username, ip ORDER BY username, ip",
+                (_clock(), UNKNOWN + "%"),
+            ).fetchall()
+        return [{"username": r["username"], "address": r["ip"], "until": float(r["until"])} for r in rows]
+
+    def unlock_username(self, username: str, ip: str, *, actor: str = "") -> bool:
+        """An Admin lifts the pause of a username from an address (True when it was paused), its count started again;
+        recorded as ``address_unlocked`` with the username."""
+        name, ip = fold_username(username)[:200], str(ip or "").strip()[:64]
+        if not name:
+            return False
+        with self._conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            paused = conn.execute("SELECT MAX(user_locked_until) FROM login_attempts WHERE username = ? AND ip = ?",
+                                  (name, ip)).fetchone()[0]  # fmt: skip
+            lifted = (paused or 0) > _clock()
+            if lifted:
+                conn.execute("DELETE FROM login_attempts WHERE username = ? AND ip = ? AND ok = 0", (name, ip))
+                self._log(conn, "address_unlocked", None, actor or None, {"unpaused": ip, "username": name})
+        return lifted
+
     def unlock_address(self, ip: str, *, actor: str = "") -> bool:
         """An Admin lifts the pause of an address (True when it was paused); recorded as ``address_unlocked``."""
         ip = str(ip or "").strip()[:64]

@@ -425,12 +425,15 @@ UNDONE = "undone right after approving"  # the reason an approval undone from it
 
 
 def _sent_back(store: Store, invoice_id: int) -> dict[str, str] | None:
-    back = next((e for e in store.events(invoice_id)
-                 if e["action"] in ("sent_back", "reopened", "approved", "rejected")), None)  # fmt: skip
+    events = [e for e in store.events(invoice_id) if e["action"] in ("sent_back", "reopened", "approved", "rejected")]
+    back = events[0] if events else None
     if not back or back["action"] not in ("sent_back", "reopened"):
         return None
     if (back["detail"] or {}).get("reason") == UNDONE:  # the banner's Undo says it already (B-828)
         return None
+    if len(events) > 1 and events[1]["action"] == "rejected":  # a rejection undone: never approved (B-1181)
+        return {"verb": "Rejected", "actor": events[1]["actor"] or "?", "reopened_by": back["actor"] or "?",
+                "reason": (events[1]["detail"] or {}).get("reason") or "no reason given"}  # fmt: skip
     return {"verb": "Sent back" if back["action"] == "sent_back" else "Reopened", "actor": back["actor"] or "?",
             "reason": (back["detail"] or {}).get("reason") or "no reason given"}  # fmt: skip
 
@@ -1177,6 +1180,11 @@ def correct(request: Request, invoice_id: int, reason: str = Form("")) -> JSONRe
     try:
         store.reopen(invoice_id, me, reason.strip())
     except ValueError as exc:  # exported meanwhile, say: nothing reopened, no vendor suspended
+        from ap_coder.web.pages.review import exported_reason
+
+        why = exported_reason(store, store.get_invoice(invoice_id))
+        if why:  # exported, or posted to JD Edwards: the real reason (B-1201)
+            return done(request, f"/review/{invoice_id}", flash_message(f"Not done: {why}.", "warn", icon="undo"))
         return changed_meanwhile(request, invoice_id, exc)
     on_reopen(store, invoice_id, me, reason.strip(), before=before)
     forget_everyones_draft(request, invoice_id)

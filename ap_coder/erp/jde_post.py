@@ -249,15 +249,52 @@ def left_out_of_files(store: Any, batch: int) -> dict[int, list[str]]:
     return out
 
 
-def _locked_message(batch: int, count: int) -> str:
-    return (f"Batch {batch} can't be undone: {count} of its vouchers {'is' if count == 1 else 'are'} in JD Edwards "
-            "(or being sent or checked). Reverse them in JD Edwards (void the voucher) instead.")  # fmt: skip
+def _locked_message(batch: int, found: list[str]) -> str:
+    """Why batch ``batch`` can't be undone, from the statuses of its rows JDE has or may have, each said as it is: a
+    voucher posted is voided in JD Edwards; one being sent or checked waits; any other may be there (B-1202)."""
+    posted = found.count(POSTED)
+    checked = sum(1 for status in found if status in (SENDING, UNKNOWN))
+    other = len(found) - posted - checked
+
+    def vouchers(n: int) -> str:
+        return f"{n} voucher{'' if n == 1 else 's'}"
+
+    parts = ([f"{vouchers(posted)} posted to JD Edwards: reverse {'it' if posted == 1 else 'them'} there (void the "
+              "voucher)"] if posted else [])  # fmt: skip
+    if checked:
+        parts.append(f"{vouchers(checked)} sent, answer not received: being checked in JD Edwards (the queue does it)")
+    if other:
+        parts.append(f"{vouchers(other)} may be in JD Edwards (it refused or didn't answer): check there first")
+    return f"Batch {batch} can't be undone: {'; '.join(parts)}."
+
+
+def release(store: Any, batch: int, invoice_id: int, actor: str | None, note: str) -> None:
+    """An Admin checked in JD Edwards that a voucher locked here isn't there (JDE answered EXISTS for another
+    invoice, say): the row is marked not sent, so the invoice goes in the batch files again or the batch can be
+    undone, and an event says who released it and why (D-107). ValueError, in plain words, when it can't be: no
+    note, not locked, being sent, or posted (that one is voided in JD Edwards, never released)."""
+    note = " ".join((note or "").split())
+    if not note:
+        raise ValueError("Say what you checked in JD Edwards.")
+    row = next((p for p in postings(store, batch) if p["invoice_id"] == invoice_id), None)
+    if row is None or not (row["status"] in LOCKED or row.get("maybe_sent")):
+        raise ValueError(f"AP Coder #{invoice_id} isn't held for JD Edwards in batch {batch}: nothing to release.")
+    if row["status"] == POSTED:
+        raise ValueError(f"AP Coder #{invoice_id} is posted to JD Edwards: reverse it there (void the voucher).")
+    if row["status"] == SENDING:
+        raise ValueError(f"AP Coder #{invoice_id} is being sent to JD Edwards: wait for its answer.")
+    error = f"Released by {actor or 'an Admin'} after checking in JD Edwards: {note}"[:500]
+    if not _put(store, row["idem_key"], invoice_id, batch, rev=row["rev"], status=FAILED, maybe_sent=0, verify=0,
+                next_try=None, error=error):  # fmt: skip
+        raise ValueError(f"AP Coder #{invoice_id} changed meanwhile: look at it again.")
+    store.log_event("jde_voucher_released", invoice_id=invoice_id, actor=actor,
+                    detail={"batch": batch, "key": row["idem_key"], "was": row["status"], "note": note})  # fmt: skip
 
 
 def undo_problem(store: Any, batch: int) -> str:
     """Why the batch can't be undone ("" when it can): JDE has, or may have, one of its vouchers."""
     found = locked(store, batch)
-    return _locked_message(batch, len(found)) if found else ""
+    return _locked_message(batch, [p["status"] for p in found]) if found else ""
 
 
 def undo_batch(store: Any, batch: int, actor: str | None = None) -> int:
@@ -267,9 +304,10 @@ def undo_batch(store: Any, batch: int, actor: str | None = None) -> int:
 
     def guard(conn: Any) -> None:
         ledger.ensure(conn)
-        count = conn.execute(f"SELECT COUNT(*) FROM jde_postings WHERE batch = ? AND {LOCKED_SQL}", (batch,)).fetchone()
-        if count[0]:
-            raise Locked(_locked_message(batch, count[0]))
+        found = [r[0] for r in conn.execute(f"SELECT status FROM jde_postings WHERE batch = ? AND {LOCKED_SQL}",
+                                            (batch,))]  # fmt: skip
+        if found:
+            raise Locked(_locked_message(batch, found))
 
     count = store.undo_export_batch(batch, actor=actor, guard=guard)
     forget_batch(store, batch)
@@ -462,19 +500,23 @@ def _take(store: Any, row: dict[str, Any], found: dict[str, Any], actor: str | N
     return _record(store, row, found, actor)
 
 
-def _later(attempts: int) -> str:
-    wait = RETRY_MINUTES[min(attempts, len(RETRY_MINUTES)) - 1] if attempts else RETRY_MINUTES[0]
+def _later(attempts: int, sent: bool = True) -> str:
+    """When to try again after ``attempts`` tries: a voucher never sent stays on the short waits (5, then 15
+    minutes), one that may be in JD Edwards goes on to hourly (B-1198)."""
+    steps = RETRY_MINUTES if sent else RETRY_MINUTES[:2]
+    wait = steps[min(max(attempts, 1), len(steps)) - 1]
     return (dt.datetime.now() + dt.timedelta(minutes=wait)).isoformat(timespec="seconds")
 
 
 def _wait(store: Any, row: dict[str, Any], attempts: int) -> str:
     """JDE can't be asked now: an approved voucher never sent is queued; any other row stays as it is (its next try
     only)."""
+    later = _later(attempts, bool(row.get("maybe_sent")))
     if row["status"] == CHECKED and not row.get("maybe_sent"):
         _put(store, row["idem_key"], row["invoice_id"], row["batch"], only_from=(CHECKED,), status=QUEUED,
-             attempts=attempts, next_try=_later(attempts))  # fmt: skip
+             attempts=attempts, next_try=later)  # fmt: skip
         return QUEUED
-    _put(store, row["idem_key"], row["invoice_id"], row["batch"], attempts=attempts, next_try=_later(attempts))
+    _put(store, row["idem_key"], row["invoice_id"], row["batch"], attempts=attempts, next_try=later)
     return row["status"]
 
 
@@ -494,8 +536,8 @@ def _deliver(store: Any, client: jde_ais.AisClient | None, row: dict[str, Any], 
              actor: str | None, look_first: bool) -> tuple[str, jde_ais.AisError | None]:  # fmt: skip
     """Send one approved voucher (asking first whether JDE has it already, when it may have); its new status."""
     attempts = int(row.get("attempts") or 0) + 1
-    if client is None:
-        return _wait(store, row, attempts), None
+    if client is None:  # the run never reached it (JDE not asked): its tries and its place stay (B-1198)
+        return _wait(store, row, attempts - 1), None
     if look_first or row.get("maybe_sent") or row.get("verify") or row["status"] != CHECKED:
         try:
             status, cleared = _lookup(store, client, row, actor)

@@ -608,6 +608,11 @@ html:has(.inv-actionbar) {scroll-padding-bottom: 104px; scroll-padding-top: 12px
 .inv-details .is-flagged.is-error input, .inv-details .is-flagged.is-error select {border-color: var(--rv-danger);
   background: var(--rv-danger-weak);}
 .inv-details .is-flagged.is-error > .inv-flag {color: var(--rv-danger);}
+/* The Add new vendor form sits in the vendor's field: its boxes are not the flagged field's, and show an error only
+   once an add was refused, until typed in (B-1193). */
+.inv-details .is-flagged .inv-vendor-add input, .inv-details .is-flagged .inv-vendor-add select {
+  border-color: var(--lg-border); background: var(--lg-surface);}
+.inv-details .inv-vendor-add .field input[aria-invalid="true"] {border-color: var(--rv-danger); background: var(--rv-danger-weak);}
 /* The lines in one row a line (1920): the GL account takes its share of the room with the description, the tax code
    shows "GST + QST", the amount is as wide as an amount (B-800). */
 @container lines (min-width: 640px) {
