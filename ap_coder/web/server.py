@@ -12,6 +12,7 @@ While it runs, ``<data folder>/.ap_coder_server.json`` says which server this is
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import errno
 import json
@@ -19,6 +20,7 @@ import os
 import secrets
 import socket
 import ssl
+import subprocess
 import sys
 import threading
 import time
@@ -190,6 +192,9 @@ def _announce_when_up(url: str, open_browser: bool, timeout: float = 60.0) -> No
 
 
 GRACEFUL_SECONDS = 25  # a stop waits this long for the requests under way, then ends them (B-1272)
+WORKERS_ENV = "AP_SERVER_WORKERS"  # how many web workers (server.json's ``workers``; ``serve --workers``)
+WORKER_ENV = "AP_SERVE_WORKER"  # what the server gives each of its web workers (JSON: worker_app)
+STOP_FILE = ".ap_coder_server.stop"  # with several web workers: /shutdown writes the token here, and all stop
 
 
 def server_config(app: Any, host: str, port: int, certfile: str | None, keyfile: str | None, proxy: str | None,
@@ -203,12 +208,19 @@ def server_config(app: Any, host: str, port: int, certfile: str | None, keyfile:
                           **more)  # fmt: skip
 
 
+def default_workers() -> int:
+    """How many web workers the company server runs when nothing says (D-111): one per core, at most 8."""
+    return max(1, min(os.cpu_count() or 1, 8))
+
+
 def serve(host: str = "127.0.0.1", port: int = 8501, open_browser: bool = True, store: Store | None = None, *,
           certfile: str | None = None, keyfile: str | None = None, proxy: str | None = None,
-          insecure_http: bool = False) -> int:  # fmt: skip
+          insecure_http: bool = False, workers: int = 1) -> int:  # fmt: skip
     """Run the dashboard until Ctrl+C or ``POST /shutdown`` (on the server, until its service is stopped). 1 when it
     could not start (the port is in use), 2 when it may not start so (the server without HTTPS: ``tls_refusal``).
-    ``certfile``/``keyfile``: HTTPS (PEM); ``proxy``: the reverse proxy's address, whose X-Forwarded-For is believed."""
+    ``certfile``/``keyfile``: HTTPS (PEM); ``proxy``: the reverse proxy's address, whose X-Forwarded-For is believed.
+    ``workers``: on the company server, that many web worker processes and one background process (D-111); the
+    laptop always runs everything in this one process."""
     import uvicorn
 
     refusal = tls_refusal(server_mode(), certfile, keyfile, insecure_http)
@@ -227,6 +239,8 @@ def serve(host: str = "127.0.0.1", port: int = 8501, open_browser: bool = True, 
         print("On plain HTTP (--insecure-http): passwords and invoices cross the network unencrypted. Only for a "
               "first test: give the certificate (--certfile and --keyfile) before AP staff use it.",
               file=sys.stderr)  # fmt: skip
+    if server_mode() and workers > 1:
+        return _serve_workers(host, port, store, certfile, keyfile, proxy, insecure_http, workers)
     app = create_app(store=store, address=host, insecure_http=insecure_http)
     app.state.proxy = proxy or None  # behind a proxy, a loopback address is not the console (pages/login.py)
     token = secrets.token_urlsafe(24)
@@ -242,3 +256,224 @@ def serve(host: str = "127.0.0.1", port: int = 8501, open_browser: bool = True, 
     finally:
         remove_server_file(token)
     return 0 if server.started else 1
+
+
+# --- Several web workers and a background process: the company server (D-111) -------------------------------------
+# One Python process answers about 1.6 requests a second whatever the cores (the GIL). On the server, ``workers``
+# processes answer, all on the one port (uvicorn's own supervisor, which works on Windows: the port is opened here
+# and handed to each worker, started afresh with "spawn"); a worker that stops is started again. The work the
+# dashboard does on its own (page reader, AI reviewer, Azure check, JD Edwards, daily backup, hub schedule) runs in
+# one background process beside them, also started again when it stops. What the workers share is in the database.
+
+
+def stop_file(data: Path | None = None) -> Path:
+    return (data or paths.private_dir()) / STOP_FILE
+
+
+def _serve_workers(host: str, port: int, store: Store | None, certfile: str | None, keyfile: str | None,
+                   proxy: str | None, insecure_http: bool, workers: int) -> int:  # fmt: skip
+    store = store or Store(paths.env_path("AP_DB_PATH") or paths.default_db_path())  # (its upgrade runs here, once)
+    token = secrets.token_urlsafe(24)
+    data = paths.private_dir()
+    stop_file(data).unlink(missing_ok=True)
+    from ap_coder.ai.local_llm import SLOTS_ENV
+
+    os.environ[SLOTS_ENV] = str(data / "llm")  # llm_parallel holds for all the server's processes together
+    os.environ[WORKER_ENV] = json.dumps({"db": str(store.path), "address": host, "insecure_http": insecure_http,
+                                         "proxy": proxy or "", "port": port, "token": token, "workers": workers,
+                                         "secret": secrets.token_hex(32), "parent": os.getpid(),
+                                         "data": str(data)})  # fmt: skip
+    # A worker busy with a long report still answers the supervisor's "alive?" (a thread of its own), but give it
+    # time: one taken for hung is ended and started again.
+    config = server_config("ap_coder.web.server:worker_app", host, port, certfile, keyfile, proxy, factory=True,
+                           workers=workers, timeout_worker_healthcheck=30)  # fmt: skip
+    supervisor = Supervisor(config, sockets=[config.bind_socket()])
+    write_server_file(port, token)
+    background = BackgroundWork(store.path)
+    background.start()
+    threading.Thread(target=_stop_when_asked, args=(supervisor, data, token), daemon=True).start()
+    url = browser_url(host, port, bool(certfile and keyfile))
+    threading.Thread(target=_announce_when_up, args=(url, False), daemon=True).start()
+    try:
+        supervisor.run()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        background.stop()
+        stop_file(data).unlink(missing_ok=True)
+        remove_server_file(token)
+        os.environ.pop(WORKER_ENV, None)
+        os.environ.pop(SLOTS_ENV, None)
+    return 1 if supervisor.failed else 0
+
+
+def _asked_to_stop(data: Path, token: str) -> bool:
+    try:
+        return stop_file(data).read_text(encoding="utf-8").strip() == token
+    except OSError:
+        return False
+
+
+def _stop_when_asked(supervisor: Any, data: Path, token: str) -> None:
+    """The server's side of ``POST /shutdown`` answered by a worker: the token in the stop file."""
+    while not supervisor.should_exit.wait(0.5):
+        if _asked_to_stop(data, token):
+            supervisor.should_exit.set()
+
+
+def _supervisor_class() -> Any:
+    from uvicorn.config import STARTUP_FAILURE
+    from uvicorn.supervisors.multiprocess import Multiprocess
+
+    class _Supervisor(Multiprocess):
+        """uvicorn's supervisor, made sure to stop: the stop file asks every worker to stop (Windows has no SIGTERM,
+        and its CTRL_BREAK reaches a worker only in a console of its own), and a worker still running
+        GRACEFUL_SECONDS + 5 seconds later is ended."""
+
+        failed = False
+
+        def terminate_all(self) -> None:
+            spec = json.loads(os.environ.get(WORKER_ENV) or "{}")
+            if spec.get("data"):
+                with contextlib.suppress(OSError):
+                    stop_file(Path(spec["data"])).write_text(str(spec.get("token") or ""), encoding="utf-8")
+            if os.name == "nt":
+                return  # the stop file reaches them; CTRL_BREAK could reach the whole console instead
+            for process in self.processes:
+                with contextlib.suppress(OSError):
+                    process.terminate()
+
+        def join_all(self) -> None:
+            deadline = time.monotonic() + GRACEFUL_SECONDS + 5
+            for process in self.processes:
+                process.process.join(max(0.1, deadline - time.monotonic()))
+                if process.process.is_alive():
+                    process.kill()
+                    process.process.join(5)
+            self.failed = any(p.exitcode == STARTUP_FAILURE for p in self.processes)
+
+    return _Supervisor
+
+
+def Supervisor(config: Any, sockets: list[Any]) -> Any:  # noqa: N802 - built when used: uvicorn is imported late
+    return _supervisor_class()(config, sockets=sockets)
+
+
+def worker_app() -> Any:
+    """One web worker of the company server (uvicorn's factory, in a process of its own): the app on the database
+    the server opened, without the background work, with the server's token and the key the workers share."""
+    spec = json.loads(os.environ[WORKER_ENV])
+    store = Store(Path(spec["db"]))
+    app = create_app(store=store, address=spec["address"], insecure_http=bool(spec["insecure_http"]),
+                     background=False, processes=int(spec["workers"]),
+                     secret=bytes.fromhex(spec["secret"]))  # fmt: skip
+    app.state.proxy = spec["proxy"] or None
+    app.state.port, app.state.shutdown_token = int(spec["port"]), spec["token"]
+    app.state.stop_file = stop_file(Path(spec["data"]))
+    threading.Thread(target=_stop_worker_when_asked, args=(Path(spec["data"]), spec["token"], int(spec["parent"])),
+                     name="ap-coder-worker-stop", daemon=True).start()  # fmt: skip
+    return app
+
+
+def _stop_worker_when_asked(data: Path, token: str, parent: int) -> None:
+    """A worker stops as uvicorn's SIGTERM would stop it (gracefully) when the server asks (the stop file) or is gone
+    (ended without stopping it: nothing is left running for nobody)."""
+    import signal
+
+    from ap_coder.ai.page_worker import _pid_alive
+
+    while True:
+        time.sleep(1.0)
+        if _asked_to_stop(data, token) or not _pid_alive(parent):
+            signal.raise_signal(signal.SIGTERM)
+            return
+
+
+class BackgroundWork:
+    """The server's background process (``serve --background-work``), started again when it stops (5 s, doubling
+    up to a minute). It stops when its input closes: this process stopping, or ending in any way."""
+
+    def __init__(self, db: Path) -> None:
+        self.command = [sys.executable, "-m", "ap_coder", "--db", str(db), "serve", "--background-work"]
+        self.process: subprocess.Popen | None = None
+        self._halt = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="ap-coder-background", daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def _run(self) -> None:
+        delay = 5.0
+        while not self._halt.is_set():
+            started = time.monotonic()
+            try:
+                self.process = subprocess.Popen(self.command, stdin=subprocess.PIPE)
+                code = self.process.wait()
+            except OSError as exc:
+                code = f"not started: {exc}"
+            if self._halt.is_set():
+                return
+            delay = 5.0 if time.monotonic() - started > 600 else min(delay * 2, 60.0)
+            print(f"AP Coder's background work stopped (exit code {code}): started again in {delay:.0f} s",
+                  file=sys.stderr, flush=True)  # fmt: skip
+            self._halt.wait(delay)
+
+    def stop(self) -> None:
+        self._halt.set()
+        process = self.process
+        if process is None or process.poll() is not None:
+            return
+        with contextlib.suppress(OSError):
+            process.stdin.close()  # its signal to stop: it finishes the page under way, at most 15 seconds
+        try:
+            process.wait(15)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(5)
+
+
+def run_background(store: Store) -> int:
+    """The server's background process (D-111): the page reader and the AI reviewer, the Azure check, JD Edwards,
+    the daily backup and the finance hub's schedule (every minute, not at each page), until its input closes. One per
+    data folder (an OS lock): a second one waits for the first to end."""
+    from ap_coder.web.app import DailyBackup, EnvSettings, start_background_work
+
+    halt = threading.Event()
+
+    def until_input_closes() -> None:
+        with contextlib.suppress(OSError, ValueError):
+            sys.stdin.buffer.read()
+        halt.set()
+
+    threading.Thread(target=until_input_closes, name="ap-coder-background-input", daemon=True).start()
+    lock = None
+    while lock is None and not halt.is_set():
+        lock = paths.try_lock(store.path.parent / ".ap_coder_background.lock")
+        if lock is None:
+            halt.wait(5.0)
+    if lock is None:
+        return 0
+    from ap_coder.erp.hub.run import HubSchedule
+
+    try:
+        store.auto_backup()
+    except OSError:
+        pass
+    workers = start_background_work(EnvSettings(), store)
+    backup, hub = DailyBackup(store), HubSchedule(store)
+    try:
+        while not halt.wait(30.0):
+            backup.check()
+            hub.check()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        for worker in workers:
+            worker.stop()
+        deadline = time.monotonic() + 15  # the page under way is finished, or kept to be read again
+        for worker in workers:
+            thread = worker if isinstance(worker, threading.Thread) else getattr(worker, "thread", None)
+            if isinstance(thread, threading.Thread):
+                thread.join(max(0.1, deadline - time.monotonic()))
+        lock.close()
+    return 0

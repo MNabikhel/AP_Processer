@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
+import os
 import shutil
 import sqlite3
 import time
@@ -205,18 +207,35 @@ class BackupsMixin:
         return (row["file_sha256"], row["created_at"]) if row else None
 
     def restoring(self) -> bool:
-        """A backup is being restored into this database (in this process): the background workers wait."""
+        """A backup is being restored into this database: the background workers wait. In this process, or in
+        another one (``<database>.restoring`` beside it, with that process's id: the company server's web worker
+        restoring while its background process reads, D-111)."""
         with _RESTORING_LOCK:
-            return str(self.path.resolve()) in _RESTORING
+            if str(self.path.resolve()) in _RESTORING:
+                return True
+        marker = self.path.with_name(self.path.name + ".restoring")
+        try:
+            pid = int(marker.read_text(encoding="utf-8").strip() or 0)
+            fresh = time.time() - marker.stat().st_mtime < 2 * 3600  # (a restore takes minutes, not hours)
+        except (OSError, ValueError):
+            return False
+        from ap_coder.ai.page_worker import _pid_alive
+
+        return fresh and pid != os.getpid() and _pid_alive(pid)
 
     def restore_from(self, backup: str | Path, *, keep_accounts: bool = False) -> Path:
         """``_restore_from`` with the background workers paused meanwhile (``restoring``)."""
         key = str(self.path.resolve())
+        marker = self.path.with_name(self.path.name + ".restoring")
         with _RESTORING_LOCK:
             _RESTORING.add(key)
         try:
+            with contextlib.suppress(OSError):
+                marker.write_text(str(os.getpid()), encoding="utf-8")
             return self._restore_from(backup, keep_accounts=keep_accounts)
         finally:
+            with contextlib.suppress(OSError):
+                marker.unlink()
             with _RESTORING_LOCK:
                 _RESTORING.discard(key)
 

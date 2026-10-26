@@ -343,7 +343,7 @@ class InvoiceCoder:
                 kwargs["timeout"] = timeout
             sent = messages if kind == "json_schema" else self._with_json_instructions(messages, schema)
             try:
-                with local_llm.CHAT_LOCK:  # one request at a time: LM Studio is shared with CloseDesk
+                with local_llm.CHAT_LOCK.held(self.settings.llm.parallel):  # llm_parallel at once (default one)
                     return self.client.chat.completions.create(messages=sent, **kwargs)
             except Exception as exc:  # noqa: BLE001 - every failure becomes a CodingError the reviewer can read
                 if "extra_body" in kwargs and local_llm.refuses_extra_fields(exc):

@@ -647,6 +647,18 @@ class CaptureMixin:
             taken = conn.execute("SELECT * FROM page_reads WHERE invoice_id = ?", (row[0],)).fetchone()
         return dict(taken)
 
+    def skip_page_read(self, invoice_id: int, reason: str, why: str) -> bool:
+        """Record that the page reader leaves a new invoice out (``skipped``, ``why``), never put in line (D-111); an
+        invoice already in line is left as it is. False then."""
+        now = _now()
+        with self._conn() as conn:
+            cur = conn.execute(
+                "INSERT INTO page_reads (invoice_id, status, reason, error, created_at, updated_at) VALUES "
+                "(?, 'skipped', ?, ?, ?, ?) ON CONFLICT(invoice_id) DO NOTHING",
+                (invoice_id, reason or "", why or "", now, now),
+            )
+            return cur.rowcount > 0
+
     def finish_page_read(
         self, invoice_id: int, status: str, model: str = "", pages: int = 0, seconds: float = 0.0, error: str = "",
         *, tries: int | None = None, only_if_reading: bool = False,

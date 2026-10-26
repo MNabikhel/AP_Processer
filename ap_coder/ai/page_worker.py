@@ -13,6 +13,7 @@ run on its own the first time a model is found, and again a day after a failure 
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import datetime as dt
 import json
@@ -22,7 +23,7 @@ import secrets
 import subprocess
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -79,6 +80,30 @@ def _process_started(pid: int) -> str:
 # This process, as it marks the invoice it reads (``store.next_page_read``): its id, a token of its own and when it
 # started, so a process id used again by another program later is not taken for it.
 READER_ID = f"{os.getpid()}:{secrets.token_hex(4)}:{_process_started(os.getpid())}"
+_READING: set[str] = set()  # the marks of this process's readings under way (one per reader thread, D-111)
+_READING_LOCK = threading.Lock()
+
+
+def reader_mark(slot: int) -> str:
+    """The mark of this process's reader thread ``slot``: READER_ID for the first (as before), then the same with
+    ``.<slot>`` after its token (``reader_alive`` reads the process id and its start the same way)."""
+    if not slot:
+        return READER_ID
+    pid, token, started = READER_ID.split(":", 2)
+    return f"{pid}:{token}.{slot}:{started}"
+
+
+@contextlib.contextmanager
+def reading_as(mark: str) -> Iterator[str]:
+    """While a reading or a review marked ``mark`` is under way: another reader thread of this process, putting
+    interrupted reads back in line meanwhile, leaves it alone."""
+    with _READING_LOCK:
+        _READING.add(mark)
+    try:
+        yield mark
+    finally:
+        with _READING_LOCK:
+            _READING.discard(mark)
 
 
 def saved_tests(store: Any) -> dict[str, dict[str, Any]]:
@@ -203,6 +228,63 @@ def wants_reading(settings: Settings, path: Path, layout_source: str = "") -> bo
     """Whether a newly processed invoice goes to the page reader: every invoice but a text file (.md, .txt), which
     has no page to look at. Digital PDFs too: the page as printed is checked against the text hidden in the PDF."""
     return Path(path).suffix.lower() not in TEXT_EXTENSIONS
+
+
+SKIPPED_KEY = "page_reader_skipped"  # {"invoices": n, "pages": n} left out as clean digital PDFs (D-111)
+SKIP_TEXT = ("not read: a digital PDF whose own text the rule reader read in full (every field verified, the "
+             "totals add up), on the company server (AP_PAGE_READER_SKIP_CLEAN). Add it to OvisOCR2's queue to have "
+             "it read")  # fmt: skip
+
+
+def skip_reason(settings: Settings, capture: Any, autonomy: dict[str, Any] | None, path: Path) -> str:
+    """Why OvisOCR2 need not read this new invoice ("" when it reads it, as it reads every invoice by default). Only
+    with ``skip_clean`` (the company server's default), and only an invoice that goes to a person anyway: every page
+    a PDF's own text (exact), none left out, the rule reader's header fields all found and verified, the totals
+    proven, no check failed, and its supplier not touchless (a touchless supplier's invoices are read by every reader
+    before any is approved without a person, D-111 keeps that). One in ``skip_sample`` is read all the same
+    (chosen by the file's content), so OvisOCR2's accuracy on digital PDFs stays measured."""
+    from ..capture.supplier import AUTONOMOUS, REQUIRED_FIELDS
+    from ..capture.workflow import audit_pick
+
+    reader = settings.page_reader
+    if not reader.skip_clean or capture is None or (autonomy or {}).get("state") == AUTONOMOUS:
+        return ""
+    if capture.layout_source != "text" or capture.pages_left_out or not capture.page_count:
+        return ""
+    fields = capture.fields or {}
+    if any(fields.get(name) is None or fields[name].status != "verified" for name in REQUIRED_FIELDS):
+        return ""
+    checks = capture.checks or []
+    if any(not c.get("ok", True) for c in checks) or not any(
+        c.get("code") == "TOTALS_ADD_UP" and c.get("ok") for c in checks
+    ):
+        return ""
+    if audit_pick(path, reader.skip_sample):
+        return ""
+    return SKIP_TEXT
+
+
+def skipped_totals(store: Any) -> dict[str, int]:
+    """{"invoices", "pages"} OvisOCR2 left out as clean digital PDFs so far (D-111)."""
+    try:
+        found = json.loads(store.get_setting(SKIPPED_KEY) or "{}")
+        return {"invoices": int(found.get("invoices") or 0), "pages": int(found.get("pages") or 0)}
+    except (ValueError, TypeError, AttributeError):
+        return {"invoices": 0, "pages": 0}
+
+
+def skip_new_invoice(store: Any, invoice_id: int, pages: int, why: str) -> bool:
+    """Leave a new invoice out of OvisOCR2's queue, saying why, and count it. Never raises."""
+    try:
+        if not store.skip_page_read(invoice_id, "new invoice", why):
+            return False
+        totals = skipped_totals(store)
+        store.set_setting(SKIPPED_KEY, json.dumps({"invoices": totals["invoices"] + 1,
+                                                   "pages": totals["pages"] + max(0, pages)}))  # fmt: skip
+        return True
+    except Exception as exc:  # noqa: BLE001 - the queue is an extra: processing must not fail over it
+        log.warning("invoice %s: not left out of the page reader's queue (%s)", invoice_id, exc)
+        return False
 
 
 def queue_new_invoice(store: Any, settings: Settings, invoice_id: int | None, path: Path, layout_source: str) -> bool:
@@ -369,8 +451,8 @@ class _BetweenPages:
 
 
 def read_one(settings: Settings, store: Any, *, cache_dir: Path | None = None, invoice_id: int | None = None,
-             should_stop: Callable[[], bool] | None = None,
-             finish_page: bool = False) -> ReadOutcome | None:  # fmt: skip
+             should_stop: Callable[[], bool] | None = None, finish_page: bool = False,
+             reader: str = "") -> ReadOutcome | None:  # fmt: skip
     """Read the next waiting invoice (or ``invoice_id``) with the page reader and fold the reading in. None when
     nothing is waiting or nothing can be read yet (the queue is left as it is).
 
@@ -380,14 +462,21 @@ def read_one(settings: Settings, store: Any, *, cache_dir: Path | None = None, i
 
     A reading cut off by the model server (LM Studio stopped, the model unloaded, no answer in time) is the server's
     trouble, not the invoice's: it waits in line again ("postponed"), and only after MAX_TRIES such reads does it
-    leave the queue as failed. Interrupted (Ctrl+C, the app closing), the invoice goes back in line at once."""
+    leave the queue as failed. Interrupted (Ctrl+C, the app closing), the invoice goes back in line at once.
+    ``reader``: the mark of the reader thread (``reader_mark``; default this process's READER_ID)."""
+    with reading_as(reader or READER_ID) as mark:
+        return _read_one(settings, store, cache_dir, invoice_id, should_stop, finish_page, mark)
+
+
+def _read_one(settings: Settings, store: Any, cache_dir: Path | None, invoice_id: int | None,
+              should_stop: Callable[[], bool] | None, finish_page: bool, mark: str) -> ReadOutcome | None:  # fmt: skip
     if store.restoring():  # AP is restoring a backup: nothing is taken from a database being replaced
         return None
     model, why = ready(settings, store)
     if not model:
         log.debug("page reader idle: %s", why)
         return None
-    row = store.next_page_read(invoice_id, reader=READER_ID)
+    row = store.next_page_read(invoice_id, reader=mark)
     if not row:
         return None
     iid = int(row["invoice_id"])
@@ -591,17 +680,20 @@ def _pid_alive(pid: int) -> bool:
 
 
 def reader_alive(reader: str) -> bool:
-    """Whether the process that marked an invoice as being read (``READER_ID``) is still reading it. This process
-    calls it between readings only, so a mark of its own is left over (a reading cut short); another process's mark
-    stands while that process runs (``read-pages`` beside the dashboard) and has the start the mark noted (another
-    start: the process id is now another program's)."""
+    """Whether the process that marked an invoice as being read (``READER_ID``) is still reading it. A mark of this
+    process's stands while one of its reader threads reads under it (``reading_as``), else it is left over (a
+    reading cut short); another process's mark stands while that process runs (``read-pages`` beside the dashboard)
+    and has the start the mark noted (another start: the process id is now another program's)."""
     pid, _, rest = (reader or "").partition(":")
     started = rest.partition(":")[2]  # "" in a mark of an older AP Coder: judged by its process id alone
     try:
         number = int(pid)
     except ValueError:
         return False  # marked by an older AP Coder, or not at all
-    if number == os.getpid() or not _pid_alive(number):
+    if number == os.getpid():
+        with _READING_LOCK:
+            return reader in _READING
+    if not _pid_alive(number):
         return False
     now = _process_started(number) if started else ""
     return not now or now == started  # another start: its process id is now another program's
@@ -625,11 +717,17 @@ class BackgroundReader(threading.Thread):
     """Reads waiting invoices one at a time while the dashboard runs. Settings are read again each round, so a
     change in LM Studio (OvisOCR2 downloaded, loaded) is found without a restart. Before the first invoice it runs
     OvisOCR2's self-test on its own when that model has none that passed (``self_test_if_due``). While the page
-    reader is tested it waits: two readings at once would each take twice as long."""
+    reader is tested it waits: two readings at once would each take twice as long.
+
+    With ``llm_parallel`` above 1 (D-111) it starts that many readers in all, each taking the next invoice in line
+    (the queue's claim is one row changed, so no two take the same one) under a mark of its own (``reader_mark``);
+    only the first runs the self-test. The number is read when it starts (a change applies at the next start)."""
 
     def __init__(self, settings_factory: Callable[[], Settings], store_factory: Callable[[], Any],
-                 cache_dir: Path | None = None) -> None:  # fmt: skip
-        super().__init__(name="ap-coder-page-reader", daemon=True)
+                 cache_dir: Path | None = None, slot: int = 0) -> None:  # fmt: skip
+        super().__init__(name=f"ap-coder-page-reader{'-' + str(slot) if slot else ''}", daemon=True)
+        self.slot, self.mark = slot, reader_mark(slot)
+        self.helpers: list[BackgroundReader] = []  # the other readers (the first reader's, with llm_parallel)
         self._settings_factory = settings_factory
         self._store_factory = store_factory
         self._store: Any = None  # the store, built at the first round (a Store() runs the schema and its upgrade)
@@ -642,6 +740,14 @@ class BackgroundReader(threading.Thread):
 
     def stop(self) -> None:
         self._halt.set()
+        for helper in self.helpers:
+            helper.stop()
+
+    def join(self, timeout: float | None = None) -> None:
+        deadline = None if timeout is None else time.monotonic() + timeout
+        super().join(timeout)
+        for helper in self.helpers:
+            helper.join(None if deadline is None else max(0.0, deadline - time.monotonic()))
 
     def _review_one(self, settings: Settings, store: Any) -> float:
         """Nothing for the page reader to read: the AI reviewer reviews the next invoice in line (verifier.py), here
@@ -651,7 +757,8 @@ class BackgroundReader(threading.Thread):
         try:
             # With OvisOCR2 running, an invoice it hasn't read yet waits: it is reviewed as the page reader leaves it.
             after = bool(ready(settings, store)[0])
-            outcome = verifier.verify_one(settings, store, after_page_reader=after)
+            mark = {"reader": self.mark} if self.slot else {}  # (the first reader marks with READER_ID, as before)
+            outcome = verifier.verify_one(settings, store, after_page_reader=after, **mark)
         except Exception:  # noqa: BLE001 - the reviewer is an extra: never the page reader's undoing
             log.exception("AI reviewer round failed")
             return OFF_SECONDS
@@ -663,6 +770,15 @@ class BackgroundReader(threading.Thread):
         return OFF_SECONDS if outcome.status == "postponed" else 0.0
 
     def run(self) -> None:
+        if not self.slot:
+            try:
+                parallel = int(self._settings_factory().llm.parallel)
+            except Exception:  # noqa: BLE001 - one reader, as before
+                parallel = 1
+            for slot in range(1, max(1, parallel)):
+                helper = BackgroundReader(self._settings_factory, self._store_factory, self._cache_dir, slot)
+                self.helpers.append(helper)
+                helper.start()
         while not self._halt.is_set():
             pause = IDLE_SECONDS
             try:
@@ -672,12 +788,13 @@ class BackgroundReader(threading.Thread):
                 if test_under_way(store):
                     pause = IDLE_SECONDS
                 else:
-                    tested = self_test_if_due(settings, store)
+                    tested = self_test_if_due(settings, store) if not self.slot else None
                     if tested is not None:  # the test took the round; reading starts next round when it passed
                         self.last_test = tested
                         pause = 0.0 if tested.get("ok") else OFF_SECONDS
                     else:
-                        outcome = read_one(settings, store, cache_dir=self._cache_dir, should_stop=self._halt.is_set)
+                        outcome = read_one(settings, store, cache_dir=self._cache_dir, should_stop=self._halt.is_set,
+                                           **({"reader": self.mark} if self.slot else {}))  # fmt: skip
                         if outcome is not None:
                             self.last = outcome
                             log.info("page reader: invoice %s %s (%s page(s), %.0f s)", outcome.invoice_id,

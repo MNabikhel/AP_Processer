@@ -56,7 +56,8 @@ DEFAULT_HOST = "0.0.0.0"  # every network card of the server: staff open it from
 SERVER_FILE = ".ap_coder_server.json"  # written by the running dashboard (web/server.py)
 # The environment variables that override server.json (the TLS and host names are those `serve --server` reads too).
 ENV_SETTINGS = {"port": "AP_SERVER_PORT", "host": "AP_DASHBOARD_ADDRESS", "certfile": "AP_TLS_CERT",
-                "keyfile": "AP_TLS_KEY", "allowed_hosts": "AP_ALLOWED_HOSTS", "proxy": "AP_SERVER_PROXY"}  # fmt: skip
+                "keyfile": "AP_TLS_KEY", "allowed_hosts": "AP_ALLOWED_HOSTS", "proxy": "AP_SERVER_PROXY",
+                "workers": "AP_SERVER_WORKERS", "llm_parallel": "AP_LLM_PARALLEL"}  # fmt: skip
 # Windows' own accounts: no password; the task names them by their SID.
 BUILT_IN = {"system": "S-1-5-18", "localsystem": "S-1-5-18", "nt authority\\system": "S-1-5-18",
             "local service": "S-1-5-19", "localservice": "S-1-5-19", "nt authority\\local service": "S-1-5-19",
@@ -84,6 +85,8 @@ class ServerSettings:
     task_name: str = TASK_NAME
     folder: str = ""  # the AP Coder folder the service runs ("" = this one); server-update changes it
     allowed_folders: tuple[str, ...] = ()  # the folders an Admin may name on the Settings pages (D-109)
+    workers: int = 0  # web worker processes (D-111); 0: one per core, at most 8 (``server.default_workers``)
+    llm_parallel: int = 1  # requests sent to LM Studio (or another model server) at once (D-111)
 
     @property
     def code_folder(self) -> Path:
@@ -202,6 +205,11 @@ def settings(data: Path, env: dict | None = None, **overrides: Any) -> ServerSet
     except (TypeError, ValueError):
         raise SettingsError(f"The port {values.get('port')!r} is not a number.") from None
     values["insecure_http"] = values.get("insecure_http") in (True, "1", "true", "yes", "on")
+    for name, low, high in (("workers", 0, 64), ("llm_parallel", 1, 32)):
+        try:
+            values[name] = min(high, max(low, int(values.get(name, getattr(ServerSettings, name)))))
+        except (TypeError, ValueError):
+            raise SettingsError(f"{name} {values.get(name)!r} is not a number.") from None
     for name in ("host", "certfile", "keyfile", "proxy", "account", "task_name", "folder"):
         values[name] = str(values.get(name) or getattr(ServerSettings, name)).strip()
     return ServerSettings(**values)
@@ -250,7 +258,9 @@ def serve_command(s: ServerSettings, python: str | Path) -> list[str]:
         cmd += ["--proxy", s.proxy]
     if s.insecure_http:
         cmd.append("--insecure-http")
-    return cmd
+    from ap_coder.web.server import default_workers
+
+    return [*cmd, "--workers", str(s.workers or default_workers())]
 
 
 def serve_env(s: ServerSettings, data: Path) -> dict[str, str]:
@@ -258,6 +268,7 @@ def serve_env(s: ServerSettings, data: Path) -> dict[str, str]:
     env = {"AP_PRIVATE_DIR": str(data), "AP_SERVER_MODE": "1", "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8"}
     if s.allowed_hosts:
         env["AP_ALLOWED_HOSTS"] = ",".join(s.allowed_hosts)
+    env["AP_LLM_PARALLEL"] = str(s.llm_parallel)
     return env
 
 
@@ -472,9 +483,10 @@ def dashboard_health(data: Path, s: ServerSettings, timeout: float = 3.0) -> dic
     return None
 
 
-def dashboard_stopped(data: Path, s: ServerSettings, wait: float = 20.0) -> bool:
+def dashboard_stopped(data: Path, s: ServerSettings, wait: float = 45.0) -> bool:
     """Ask the running dashboard to stop (``POST /shutdown`` with its token) and wait for its process to end; ended
-    when it won't. True when no dashboard of this data folder runs any more."""
+    when it won't (its web workers give the requests under way 25 seconds, its background process the page under
+    way 10 more: D-111). True when no dashboard of this data folder runs any more."""
     record = _read_json(data / SERVER_FILE)
     pid, token, port = int(record.get("pid") or 0), str(record.get("token") or ""), int(record.get("port") or s.port)
     if not process_alive(pid):
@@ -821,6 +833,10 @@ def add_parser(sub: Any) -> None:
     p.add_argument("--folder", default=None, help="The AP Coder folder to run (default: this one)")
     p.add_argument("--allowed-folders", default=None,
                    help="The folders Admins may name for backup copies and the finance hub, ;-separated")  # fmt: skip
+    p.add_argument("--workers", type=int, default=None,
+                   help="Web worker processes (default: one per core, at most 8; 1: all in one process)")  # fmt: skip
+    p.add_argument("--llm-parallel", type=int, default=None,
+                   help="Requests sent to LM Studio at once (default 1; docs/SERVER.md, step 8)")  # fmt: skip
     p.add_argument("--no-start", action="store_true", help="install: don't start it yet")
     p.add_argument("--dry-run", action="store_true", help="install: show what it would do, change nothing")
 
@@ -847,6 +863,8 @@ def main(args: argparse.Namespace) -> int:
                 "proxy",
                 "insecure_http",
                 "allowed_folders",
+                "workers",
+                "llm_parallel",
             )
         }
         if args.folder:

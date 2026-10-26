@@ -19,22 +19,32 @@ result the page shows when it is done). An exception becomes the job's error, sh
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import datetime as dt
+import json
 import logging
+import os
+import secrets
 import threading
 from collections.abc import Callable
 from typing import Any
 
 IDLE, RUNNING, DONE, ERROR = "idle", "running", "done", "error"
 MAX_LINES = 500  # log lines kept per job (a page shows the newest)
+# Several web workers (the company server, D-111): a job runs in the worker that started it, and every worker sees
+# it through the database. Its row is renewed every RENEW seconds; one not renewed for STALE seconds is a worker that
+# stopped. A finished job's last snapshot is kept for KEEP seconds.
+RENEW, STALE, KEEP = 1.0, 30.0, 86400.0
+OWNER = f"{os.getpid()}:{secrets.token_hex(4)}"  # this process, as its job rows name it
 
 
 class Job:
     """One kind of background work (e.g. "process"): its state, progress, log lines and result."""
 
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, shared: Any = None) -> None:
         self.name = name
+        self.shared = shared  # the Store every web worker sees the job in (D-111); None: this process only
         self._lock = threading.Lock()
         self._finished = threading.Event()
         self._finished.set()
@@ -52,7 +62,21 @@ class Job:
 
     @property
     def running(self) -> bool:
-        return self.state == RUNNING
+        """Running here, or (several web workers) in another worker."""
+        if self.state == RUNNING:
+            return True
+        found = self._elsewhere()
+        return found is not None and found.get("state") == RUNNING
+
+    def _elsewhere(self) -> dict[str, Any] | None:
+        """The job as the database has it (another worker's run, or the last one finished), when shared."""
+        if self.shared is None:
+            return None
+        try:
+            row = self.shared.job_row(self.name)
+            return None if row is None else json.loads(row[1])
+        except Exception:  # noqa: BLE001 - a busy database: as this process sees it
+            return None
 
     def start(self, work: Callable[[Job], dict[str, Any] | None], *, total: int = 0, note: str = "",
               about: dict[str, Any] | None = None, then: Callable[[], Any] | None = None) -> bool:  # fmt: skip
@@ -64,12 +88,25 @@ class Job:
             self.state, self.stage, self.done, self.total, self.note = RUNNING, "starting", 0, total, note
             self.lines, self.result, self.error, self.about = [], None, "", dict(about or {})
             self.started_at, self.finished_at = _now(), ""
+            claimed = self.shared is None or self.shared.claim_job(self.name, OWNER, self._encoded(False), STALE)
+            if not claimed:
+                self.state = IDLE  # another web worker runs it
+                return False
             self._finished.clear()
         # The thread sees what the request saw: who started the job (web/identity.py) is who its events name.
         context = contextvars.copy_context()
         threading.Thread(target=context.run, args=(self._run, work, then), name=f"ap-coder-job-{self.name}",
                          daemon=True).start()  # fmt: skip
+        if self.shared is not None:
+            threading.Thread(target=self._renew, name=f"ap-coder-job-{self.name}-renew", daemon=True).start()
         return True
+
+    def _renew(self) -> None:
+        while not self._finished.wait(RENEW):
+            try:
+                self.shared.renew_job(self.name, OWNER, self._encoded(), STALE)
+            except Exception:  # noqa: BLE001 - a busy database: renewed next time
+                pass
 
     def step(self, done: int, total: int | None = None, note: str = "", stage: str = "") -> None:
         """How far the work got: ``done`` of ``total``, and what it is doing now."""
@@ -87,8 +124,19 @@ class Job:
             del self.lines[:-MAX_LINES]
 
     def snapshot(self) -> dict[str, Any]:
-        """Everything a page needs to draw the job, as JSON-ready data."""
-        with self._lock:
+        """Everything a page needs to draw the job, as JSON-ready data: with several web workers, the run of
+        whichever worker ran it last."""
+        if self.state != RUNNING:
+            found = self._elsewhere()
+            if found is not None:
+                return found
+        return self._own()
+
+    def _encoded(self, locked: bool = True) -> bytes:
+        return json.dumps(self._own(locked=locked), default=str).encode("utf-8")
+
+    def _own(self, locked: bool = True) -> dict[str, Any]:
+        with self._lock if locked else contextlib.nullcontext():
             return {
                 "name": self.name,
                 "state": self.state,
@@ -117,6 +165,11 @@ class Job:
             self.state, self.result, self.error, self.finished_at = state, result, error, _now()
             if state == DONE and self.total:
                 self.done = self.total
+        if self.shared is not None:
+            try:
+                self.shared.finish_job(self.name, OWNER, self._encoded(), KEEP)
+            except Exception:  # noqa: BLE001 - its row then ends as a stopped worker's would
+                logging.getLogger(__name__).warning("the %s job's end was not recorded", self.name, exc_info=True)
         self._finished.set()
         if then is not None:
             try:
@@ -126,21 +179,28 @@ class Job:
 
 
 class Jobs:
-    """The app's jobs by name (``request.app.state.jobs``), made on first use."""
+    """The app's jobs by name (``request.app.state.jobs``), made on first use. ``shared``: the Store through which
+    several web workers see each other's jobs (D-111)."""
 
-    def __init__(self) -> None:
+    def __init__(self, shared: Any = None) -> None:
         self._lock = threading.Lock()
         self._jobs: dict[str, Job] = {}
+        self.shared = shared
 
     def get(self, name: str) -> Job:
         with self._lock:
             if name not in self._jobs:
-                self._jobs[name] = Job(name)
+                self._jobs[name] = Job(name, self.shared)
             return self._jobs[name]
 
     def known(self, name: str) -> bool:
         with self._lock:
-            return name in self._jobs
+            if name in self._jobs:
+                return True
+        try:
+            return self.shared is not None and self.shared.job_row(name) is not None
+        except Exception:  # noqa: BLE001 - a busy database
+            return False
 
 
 def _now() -> str:
