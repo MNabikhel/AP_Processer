@@ -101,6 +101,9 @@ def test_identical_files_dropped_together_are_one_invoice(tmp_path):
 
 
 def _watch_args(tmp_path, *extra):
+    from ap_coder.core.store import load_sample_setup
+
+    load_sample_setup(Store(tmp_path / "a.db"))  # the GL accounts imported: watch reads only then (B-1212)
     return ["--env-file", str(tmp_path / "none.env"), "--db", str(tmp_path / "a.db"), "watch", str(tmp_path / "in"),
             "--cache-dir", "", *extra]  # fmt: skip
 

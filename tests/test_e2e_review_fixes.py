@@ -32,3 +32,36 @@ def test_an_unassigned_cost_center_is_blank_in_every_erp_file():
     assert jde.account_for("1500", "UNASSIGNED", settings).bu == "100"
     # Without a default business unit the line is held back, never sent with UNASSIGNED.
     assert jde.account_for("1500", "UNASSIGNED", jde.JdeSettings()) is None
+
+
+def _cli_args(tmp_path, *args):
+    return ["--env-file", str(tmp_path / "none.env"), "--db", str(tmp_path / "a.db"), *args]
+
+
+def test_process_and_watch_refuse_until_the_gl_accounts_are_imported(tmp_path, monkeypatch, capsys):
+    """B-1212: `process` and `watch --once` read and queued invoices on a fresh data folder, coded against the bundled
+    sample GL accounts, while the dashboard refuses until the GL accounts are imported; the queued invoices then could
+    not be checked ("Import your GL accounts first")."""
+    import os
+    import shutil
+
+    from ap_coder.core.store import Store, load_sample_setup
+    from ap_coder.ops import cli
+
+    from .conftest import SAMPLES
+
+    for key in [k for k in os.environ if k.startswith(("AZURE_", "AP_LLM_"))]:
+        monkeypatch.delenv(key)
+    folder = tmp_path / "in"
+    folder.mkdir()
+    shutil.copy(SAMPLES / f"{ON}.md", folder / "a.md")
+    os.utime(folder / "a.md", (1_700_000_000, 1_700_000_000))
+    out = ["-o", str(tmp_path / "out"), "--cache-dir", ""]
+    assert cli.main(_cli_args(tmp_path, "process", str(folder), *out)) == 2
+    assert "import your GL accounts" in capsys.readouterr().err
+    assert cli.main(_cli_args(tmp_path, "watch", str(folder), "--once", "--cache-dir", "")) == 1
+    assert "import your GL accounts" in capsys.readouterr().err
+    assert Store(tmp_path / "a.db").list_invoices() == []
+    load_sample_setup(Store(tmp_path / "a.db"))  # the sample setup (the demo) is a setup: it reads
+    assert cli.main(_cli_args(tmp_path, "process", str(folder), *out)) == 0
+    assert len(Store(tmp_path / "a.db").list_invoices()) == 1

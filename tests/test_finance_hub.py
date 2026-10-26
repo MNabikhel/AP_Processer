@@ -497,8 +497,10 @@ def test_hub_export_on_the_command_line(store, tmp_path, capsys):
 
 
 def test_imports_are_recorded_as_runs(store, tmp_path, monkeypatch):
+    from ap_coder.core.store import load_sample_setup
     from ap_coder.ops.cli import main
 
+    load_sample_setup(store)  # the GL accounts imported: process reads only then (B-1212)
     folder = tmp_path / "in"
     folder.mkdir()
     (folder / "x.md").write_text((SAMPLES / "northwind_ON_HST_NW-2026-0912.md").read_text(encoding="utf-8"),
