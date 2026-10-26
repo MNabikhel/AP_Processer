@@ -163,9 +163,9 @@ def test_server_mode_listens_on_the_network_unless_told_otherwise(server_on, mon
 
 
 def test_proxy_headers_are_off_unless_a_proxy_is_named():
-    assert server.uvicorn_options(None, None, None) == {"proxy_headers": False}
+    assert server.uvicorn_options(None, None, None) == {"proxy_headers": False, "server_header": False}
     on = server.uvicorn_options(None, None, "10.0.0.5")
-    assert on == {"proxy_headers": True, "forwarded_allow_ips": "10.0.0.5"}
+    assert on == {"proxy_headers": True, "forwarded_allow_ips": "10.0.0.5", "server_header": False}
     tls = server.uvicorn_options(str(CERT), str(KEY), None)
     assert tls["ssl_certfile"] == str(CERT) and tls["ssl_keyfile"] == str(KEY)
 

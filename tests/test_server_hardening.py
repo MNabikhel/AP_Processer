@@ -603,3 +603,29 @@ def test_the_laptop_keeps_no_access_log(tmp_path):
     assert client_for(store).get("/activity/events.csv").status_code == 200
     assert not (store.path.parent / "logs" / "access.log").exists()
     assert store.events(actions=["downloaded"]) == []
+
+
+# --- 11. TLS ciphers and the server header ----------------------------------------------------------------------------
+
+
+def test_the_https_server_takes_only_modern_ciphers_and_says_nothing_of_uvicorn(tmp_path):
+    import ssl
+
+    from .test_server_https import CERT, KEY, _get, _start, _stop
+
+    proc, port = _start(tmp_path, "--server", "--certfile", str(CERT), "--keyfile", str(KEY))
+    try:
+        trusted = ssl.create_default_context(cafile=str(CERT))
+        status, headers = _get(f"https://localhost:{port}/healthz", trusted)
+        assert status == 200 and "server" not in headers
+        old = ssl.create_default_context(cafile=str(CERT))
+        old.maximum_version = ssl.TLSVersion.TLSv1_2
+        old.set_ciphers("AES128-SHA")  # TLS 1.2 without forward secrecy, CBC with SHA-1
+        with pytest.raises(OSError):
+            _get(f"https://localhost:{port}/healthz", old, timeout=2)
+        modern = ssl.create_default_context(cafile=str(CERT))
+        modern.maximum_version = ssl.TLSVersion.TLSv1_2
+        modern.set_ciphers("ECDHE+AESGCM")
+        assert _get(f"https://localhost:{port}/healthz", modern)[0] == 200
+    finally:
+        _stop(proc)
