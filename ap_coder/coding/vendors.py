@@ -371,7 +371,7 @@ def vendor_findings(
         )  # fmt: skip
     findings += live
     for other in store.duplicates_elsewhere(
-        coding.vendor_name, coding.invoice_number, coding.grand_total, exclude_invoice_id
+        coding.vendor_name, coding.invoice_number, coding.grand_total, exclude_invoice_id, key=key
     )[:3]:
         findings.append(
             (WARNING, "DUPLICATE_OTHER_VENDOR",

@@ -165,7 +165,11 @@ def finalise_coding(
     history = compare_with_history(coding, feedback, key) if feedback else None
     duplicates = (
         store.find_duplicates(
-            coding.vendor_name, coding.invoice_number, exclude_id=exclude_invoice_id, grand_total=coding.grand_total
+            coding.vendor_name,
+            coding.invoice_number,
+            exclude_id=exclude_invoice_id,
+            grand_total=coding.grand_total,
+            key=key,
         )
         if store is not None
         else None

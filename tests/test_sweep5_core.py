@@ -117,3 +117,30 @@ def test_one_vendors_lessons_are_read_once_a_page_and_again_after_a_change(tmp_p
         again = store.feedback_rows(vendor_name="Acme Supply")
         assert again is not first and len(again) == 4
     assert len(store.feedback_rows(vendor_name="Acme Supply")) == 4  # outside a session: read each time
+
+
+# --- B-1408: the second of two vendors by one name: its repeated invoice is a duplicate, not "another vendor's" ----
+
+
+def test_the_limiteds_repeated_invoice_is_a_duplicate_of_its_own(tmp_path, reference):
+    """B-1408: the duplicate checks looked the vendor up by its name alone: the Limited's own invoice entered again
+    (kept under "great lakes mechanical #40120", B-1021) gave no DUPLICATE_INVOICE, only DUPLICATE_OTHER_VENDOR (a
+    warning) as if the Limited were another vendor."""
+    from ap_coder.ai.pipeline import finalise_coding
+    from ap_coder.core.config import Settings
+
+    from .test_recheck_sweep4 import _coding
+    from .webclient import add_clean
+
+    store = _two_great_lakes(tmp_path)
+    first = add_clean(store, vendor_name="Great Lakes Mechanical Limited", gst_hst_registration_number=LTD,
+                      invoice_number="L-7")  # fmt: skip
+    again = _coding("Great Lakes Mechanical Limited", LTD, "L-7")
+    _, report = finalise_coding(again, reference, Settings(), store=store)
+    codes = {i.code for i in report.issues}
+    assert "DUPLICATE_INVOICE" in codes and "DUPLICATE_OTHER_VENDOR" not in codes
+    # the Inc.'s invoice with the same number and total is another vendor's, as before
+    inc = _coding("Great Lakes Mechanical Inc.", INC, "L-7")
+    codes = {i.code for i in finalise_coding(inc, reference, Settings(), store=store)[1].issues}
+    assert "DUPLICATE_INVOICE" not in codes and "DUPLICATE_OTHER_VENDOR" in codes
+    assert store.get_invoice(first)["vendor_key"] == "great lakes mechanical #40120"

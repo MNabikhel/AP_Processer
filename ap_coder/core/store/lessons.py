@@ -363,13 +363,13 @@ class LessonsMixin:
                 self._save_capture(conn, invoice_id, capture)
         return True
 
-    def _recheck_duplicates(self, vendor_name: str, invoice_number: str) -> None:
+    def _recheck_duplicates(self, vendor_name: str, invoice_number: str, key: str | None = None) -> None:
         """The open invoices (in review or parked) with this vendor and invoice number, after one of them was rejected
         or deleted, checked again for duplicates: DUPLICATE_INVOICE dropped, or said with the invoices left, and
         whether a person must look worked out again; the rest of their checks stand (B-1182)."""
         from ...coding.validation import ERROR, duplicate_message, needs_review
 
-        for other in self.find_duplicates(vendor_name, invoice_number):
+        for other in self.find_duplicates(vendor_name, invoice_number, key=key):
             with self._conn() as conn:
                 conn.execute("BEGIN IMMEDIATE")
                 row = conn.execute("SELECT status, validation, grand_total, adjusted_confidence FROM invoices "
@@ -382,7 +382,7 @@ class LessonsMixin:
                 if len(kept) == len(issues):
                     continue  # never flagged a duplicate
                 still = self.find_duplicates(
-                    vendor_name, invoice_number, exclude_id=other, grand_total=row["grand_total"]
+                    vendor_name, invoice_number, exclude_id=other, grand_total=row["grand_total"], key=key
                 )
                 if still:
                     kept.insert(0, {"severity": ERROR, "code": "DUPLICATE_INVOICE", "line_number": None,

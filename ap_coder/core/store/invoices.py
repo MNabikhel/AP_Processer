@@ -135,12 +135,15 @@ class InvoicesMixin:
         invoice_number: str,
         exclude_id: int | None = None,
         grand_total: float | None = None,
+        key: str | None = None,
     ) -> list[int]:
         """Other invoices with the same vendor and invoice number (possible duplicate payment).
 
-        With ``grand_total``, a credit note (negative) is not a duplicate of the invoice it reverses.
+        With ``grand_total``, a credit note (negative) is not a duplicate of the invoice it reverses. ``key``: the
+        vendor's own key (``vendor_key_for``: the second of two vendors by one name has its own, B-1408), else the
+        name's.
         """
-        key, number = vendor_key(vendor_name), _norm_number(invoice_number)
+        key, number = key or vendor_key(vendor_name), _norm_number(invoice_number)
         if not key or not number:
             return []
         with self._conn() as conn:
@@ -292,11 +295,13 @@ class InvoicesMixin:
         return [r for r in rows if (r["total"] < 0) == (grand_total < 0)]
 
     def duplicates_elsewhere(
-        self, vendor_name: str, invoice_number: str, grand_total: float, exclude_id: int | None = None
-    ) -> list[dict[str, Any]]:
+        self, vendor_name: str, invoice_number: str, grand_total: float, exclude_id: int | None = None,
+        key: str | None = None,
+    ) -> list[dict[str, Any]]:  # fmt: skip
         """Invoices from ANOTHER vendor with the same invoice number and total: the same bill entered under a
-        second vendor record (a common cause of duplicate payments)."""
-        key, number = vendor_key(vendor_name), _norm_number(invoice_number)
+        second vendor record (a common cause of duplicate payments). ``key``: the vendor's own, as in
+        :meth:`find_duplicates`."""
+        key, number = key or vendor_key(vendor_name), _norm_number(invoice_number)
         if not number or not grand_total:
             return []
         with self._conn() as conn:
@@ -471,9 +476,9 @@ class InvoicesMixin:
                 )
             layout = self._forget_learning(conn, invoice_id)
             self._log(conn, "rejected", invoice_id, reviewer, {"reason": reason, **layout})
-            row = conn.execute("SELECT vendor_name, invoice_number FROM invoices WHERE id = ?",
+            row = conn.execute("SELECT vendor_name, vendor_key, invoice_number FROM invoices WHERE id = ?",
                                (invoice_id,)).fetchone()  # fmt: skip
-        self._recheck_duplicates(row["vendor_name"] or "", row["invoice_number"] or "")
+        self._recheck_duplicates(row["vendor_name"] or "", row["invoice_number"] or "", row["vendor_key"])
 
     @staticmethod
     def _forget_learning(conn: sqlite3.Connection, invoice_id: int) -> dict[str, Any]:
@@ -521,7 +526,8 @@ class InvoicesMixin:
             if keep_approved:
                 conn.execute("BEGIN IMMEDIATE")  # checked and deleted in one go: an approval cannot slip in between
             row = conn.execute(
-                "SELECT file_name, vendor_name, invoice_number, status FROM invoices WHERE id = ?", (invoice_id,)
+                "SELECT file_name, vendor_name, vendor_key, invoice_number, status FROM invoices WHERE id = ?",
+                (invoice_id,),
             ).fetchone()
             if keep_approved and row is not None and row["status"] in (APPROVED, PENDING):
                 raise ValueError(f"invoice {invoice_id} was approved meanwhile: reopen it before deleting it")
@@ -551,7 +557,7 @@ class InvoicesMixin:
             else:
                 conn.execute("DELETE FROM template_snapshots WHERE invoice_id = ?", (invoice_id,))
         if row is not None:
-            self._recheck_duplicates(row["vendor_name"] or "", row["invoice_number"] or "")
+            self._recheck_duplicates(row["vendor_name"] or "", row["invoice_number"] or "", row["vendor_key"])
 
     # --- The review screen's drafts: edits not approved yet (D-86) ---------------------------------------------------
     # One row per invoice and person ("" this computer, else a colleague's key on the office network: web/pages/
