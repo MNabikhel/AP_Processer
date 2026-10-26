@@ -405,11 +405,13 @@ def blank_pages(settings: Settings, path: Path) -> tuple[set[int], int]:
     scan can't be told from a blank page then) or the file can't be read here. OCR takes seconds a page, the page
     reader minutes."""
     from ..capture import layout as capture_layout
+    from ..core.paths import private_dir
 
     if not capture_layout.ocr_available():
         return set(), 0
     try:
-        doc = capture_layout.build_layout(path, max_pages=settings.page_reader.max_pages)
+        with capture_layout.ocr_cache(private_dir() / ".cache" / "ocr"):  # the OCR kept on arrival (B-1344)
+            doc = capture_layout.build_layout(path, max_pages=settings.page_reader.max_pages)
     except Exception as exc:  # noqa: BLE001 - the page reader reads every page then, as before
         log.info("%s: pages not checked for blanks (%s)", path.name, exc)
         return set(), 0

@@ -109,3 +109,24 @@ def test_a_spanish_september_is_read(text):
     from ap_coder.capture.normalize import parse_date
 
     assert parse_date(text) == "2026-09-30"
+
+
+def test_the_page_reader_finds_blank_pages_in_the_ocr_kept_when_the_invoice_was_read(monkeypatch, tmp_path):
+    """B-1344: before OvisOCR2 reads a scanned invoice, its pages are looked at for blanks with OCR; that OCR ran
+    without the data folder's OCR cache, so every page was OCR'd again (seconds a page, beside LM Studio), each time
+    the invoice was taken from the queue. It reads the OCR the pipeline kept when the invoice came in, as B-1294."""
+    from ap_coder.ai import page_worker
+    from ap_coder.capture import layout
+    from ap_coder.core.config import Settings
+    from ap_coder.core.paths import private_dir
+
+    seen = []
+
+    def fake_build_layout(path, **_kw):
+        seen.append(layout._ocr_cache_folder.get())
+        raise layout.CannotRead("stop here")
+
+    monkeypatch.setattr(layout, "ocr_available", lambda: True)
+    monkeypatch.setattr(layout, "build_layout", fake_build_layout)
+    assert page_worker.blank_pages(Settings(), tmp_path / "scan.pdf") == (set(), 0)
+    assert seen == [private_dir() / ".cache" / "ocr"]
