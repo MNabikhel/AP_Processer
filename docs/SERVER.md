@@ -154,7 +154,10 @@ the service with `--port 443` when nothing else on the server uses that port (II
 
 **Behind IIS** (optional, if your policy wants every web site in IIS): IIS with URL Rewrite and ARR forwards to
 `https://127.0.0.1:8501`, and the service is installed with `--proxy <the IIS server's IP address>` (`127.0.0.1` when IIS
-is on this server), so AP Coder believes the forwarded client address from that one address only.
+is on this server), so AP Coder believes the forwarded client address from that one address only. IIS must then
+*replace* `X-Forwarded-For` with the client's address (not append to one the browser sent): the logins' pauses
+(step 10) and the access log go by that address. Without `--proxy`, everyone behind IIS has IIS's address: they
+share its pauses, and the server refuses such requests anyway.
 
 ## 5. The firewall
 
@@ -181,7 +184,7 @@ Windows asks for `APCoderService`'s password once and keeps it for the task. `se
 `SYSTEM`, `"LOCAL SERVICE"` and `"NETWORK SERVICE"` need no password), `--port` (default 8501), `--host` (default
 `0.0.0.0`: every network card), `--certfile`, `--keyfile`, `--allowed-hosts`, `--proxy`, `--insecure-http`,
 `--task-name` (default `AP Coder`), `--folder` (the AP Coder folder the service runs; default: the one the command
-runs in; `server-update` changes it), `--no-start`.
+runs in; `server-update` changes it), `--allowed-folders` (the folders Admins may name, step 9), `--no-start`.
 
 | To | Run |
 |---|---|
@@ -198,7 +201,19 @@ host was ended. Settings can also come from environment variables, which win ove
 `AP_DASHBOARD_ADDRESS`, `AP_TLS_CERT`, `AP_TLS_KEY`, `AP_ALLOWED_HOSTS`, `AP_SERVER_PROXY`.
 
 **Logs**: `D:\APCoderData\logs\service.log` (what the host and the dashboard say; 5 MB, then up to 5 older files,
-`service.log.1` to `.5`). The daily database backup runs as on a laptop (step 9).
+`service.log.1` to `.5`), and `D:\APCoderData\logs\access.log`, a line per request: the time, the address, the
+user name (`-` before a login), the method, the path (without what follows `?`), the status, the bytes and the
+milliseconds (10 MB, then up to 9 older files). Each download (a batch's files or ZIP, the directory's export, a
+backup, a report) is also in *Activity* → *Logins*, with the person. The daily database backup runs as on a laptop
+(step 9).
+
+**HTTPS**: TLS 1.2 and 1.3 only; on TLS 1.2 only ECDHE with AES-GCM or ChaCha20 (no AES-CBC, no SHA-1 ciphers).
+Browsers from the last ten years have them. Answers carry no `server:` header.
+
+**Sizes**: a request before a login takes at most 64 KB (the login form); after it, 260 MB. *Import invoices* takes
+up to 200 files and 250 MB per upload, each file up to 50 MB (a saved email 100 MB), and each person up to 2 GB or
+120 uploads an hour; more is refused with a plain message. A larger batch: an Admin puts the files in the invoices
+folder.
 
 Don't double-click `APProcessor.bat` on the server once the service runs: it would start a second AP Coder on the same
 data. Use `service stop` / `service start`.
@@ -211,8 +226,8 @@ On the server's console (nobody can sign up from a browser):
 .venv\Scripts\python.exe -m ap_coder users add --admin jsmith
 ```
 
-It asks for a password, twice (at least 12 characters, not the user name). That password is a temporary one: tell it
-to the person, who must choose their own the first time they sign in at `https://apcoder.company.local:8501`, before
+It asks for a password, twice (at least 12 characters, not the user name). That password is a temporary one (it
+works for 3 days): tell it to the person, who must choose their own the first time they sign in at `https://apcoder.company.local:8501`, before
 anything else. They then add everyone else (step 10).
 
 ## 8. LM Studio on the same server
@@ -252,8 +267,14 @@ window, started at boot like AP Coder.
 - **Every day, automatically**: a copy of the database in `D:\APCoderData\backups` (`ap_coder-<date>-<time>.db`), when
   AP Coder starts and once a day while it runs; the newest 14 are kept. An update adds its own
   (`...-before-update-<version>.db`), kept until you delete it.
+- **The folders an Admin may name** (the backups' second copy, the finance hub's folder): on the server only those IT
+  lists, or a folder inside one. Give them when installing the service, separated by `;`:
+  `service install --allowed-folders "\\fileserver\Backups\APCoder;\\fileserver\FinanceHub"` (kept in
+  `server.json` as `allowed_folders`; the other settings are kept). Any other folder typed on a page is refused before
+  AP Coder touches it, so a page can't make the server's account sign in to another computer's share (its password
+  hash sent there) or copy the invoices out. With none listed, both settings are refused.
 - **A copy elsewhere**: an Admin sets *Settings* → *Data & backups* → *Also copy each backup to* a network share, for
-  example `\\fileserver\Backups\APCoder` (the `backup_copy_dir` setting). Each daily backup is then copied there too
+  example `\\fileserver\Backups\APCoder` (the `backup_copy_dir` setting; one of the allowed folders above). Each daily backup is then copied there too
   (the newest 14 kept), and the page says when the last copy was made or why it failed. The service's account must be
   able to write there: a domain account (step 2), with *Modify* on that share folder.
 - **The server's own backup** (Windows Server Backup, Veeam...): include `D:\APCoderData`, but restore from the
@@ -301,14 +322,38 @@ From the server's console, the same:
 you type, twice (`add` and `reset`); the person changes it at their first sign-in. `activate` turns an account that
 was turned off on again, with its password as it was.
 
-Five wrong passwords within 15 minutes for one username from one computer pause that username's logins from that
-computer for 15 minutes; from anywhere else the person can still log in, so nobody can lock someone else out.
-Thirty from one address, whatever the usernames, pause that address (an office's internet connection or a remote
-desktop server is shared: five people mistyping don't pause it). The server's own console (127.0.0.1, no `--proxy`) is
-never paused by address. Resetting a person's password lifts what pauses them, their address too; the *Users* page
-lists paused addresses with *Lift the pause*. Passwords: at least 12 characters, not the username or the name, not a
-common password, not one character or a short pattern repeated. Every sign-in, lockout and change to a user is in
-*Activity*, shown to Admins only.
+Logins that don't match pause, in three ways:
+
+- **One username from one address**: five wrong passwords within 15 minutes pause that username's logins from that
+  address for 15 minutes (five wrong *current* passwords on *Your password* count the same, and also log the person
+  out).
+- **One username from anywhere**: from the 10th wrong password within an hour, from any addresses, that username's
+  logins pause for 1 minute, then 2, 4, 8, and 15 minutes after each further one, from every address except those the
+  person logged in from in the last 30 days. Someone guessing from many computers gets a few tries an hour; the
+  person at their own desk is not kept out.
+- **One address, whatever the usernames**: thirty pause that address for 15 minutes (an office's internet connection
+  or a remote desktop server is shared: five people mistyping don't pause it). The people who logged in from that
+  address in the last 30 days can still log in from it: the pause stops guesses at other names, not the office.
+
+The server's own console (127.0.0.1, no `--proxy`) is never paused by address. Resetting a person's password lifts
+what pauses them, their address too; the *Users* page lists paused addresses and usernames ("from anywhere" too) with
+*Lift the pause*. Every pause is in *Activity* → *Logins*.
+
+Passwords: at least 12 characters, not the username or the name, not a common password, not one character or a short
+pattern repeated. A temporary password (a new account, a reset) works for 3 days: after that, reset it again. Every
+sign-in, lockout, change to a user and download is in *Activity*, shown to Admins only.
+
+**Sessions**: a login ends after 30 minutes unused, after 12 hours whatever, and when the browser is closed. IT can
+change the first two in `server.json`: `"session_idle_minutes": 30` (5 to 480) and `"session_hours": 12` (1 to 168),
+applied when the service starts again. *Your password* shows where else the person is logged in and logs them out
+there.
+
+**Separation of duties**: the second approval is always another account than the first, and never an account the
+first approver added or reset the password of in the last 7 days (an Admin can't approve their own invoice twice
+through an account they made). An Admin can also tick *Settings* → *Review* → *The person who posts a batch to JD
+Edwards can't be one who approved its invoices* (off by default). *Activity* → *Controls report* lists the invoices
+where one person did several steps (approved, gave the second approval, exported, posted). *Help* → *Report a
+problem*'s setup report (versions, settings, the server's names) is an Admin's.
 
 ## 11. Updating and going back
 
@@ -372,6 +417,10 @@ installs in the administrator's `%USERPROFILE%\.ap_coder\settings.json`, as on a
 | The log repeats "The dashboard stopped (exit code 1)" | The lines before it say why: often the port in use (another program on 8501: `netstat -ano \| findstr :8501`), or a certificate file it can't read (the account's rights on `D:\APCoderData\tls`). |
 | "LM Studio isn't running" in AP Coder | `schtasks /run /tn "LM Studio server"`, then `lms server status` as its account; *Settings* → *Reading* → *Check again*. |
 | The second backup copy fails | The account can't write to the share: use a domain account with *Modify* there (step 9). |
+| `server-update` asks for the SHA-256, or says it is not the bundle that was built | Get the SHA-256 from whoever built the bundle (the `.sha256` file beside the ZIP), by another way than the ZIP, and give it with `--sha256`. A different one: copy the ZIP again; still different, ask for the bundle again (it may have been changed). |
+| `server-update` says "this command runs from" another folder | Run it in the folder `service status` names (`cd /d` there). If server.json names a folder nobody installed, someone changed it: check, then `service install --folder <the right folder>`. |
+| "AP Coder writes only to the folders IT allows" | Add the folder: `service install --allowed-folders "..."` (step 9). |
+| "Your temporary password has expired" | An Admin resets it again (*Users* → *Reset password*). |
 | `server-update` says the bundle is not newer | It is the version running, or older. To go back to the previous version: `server-update --back`. |
 | `server-update --back` says "Nothing to go back to" | No update was made with `server-update` since the last `--back`. To install an older version, ask for its bundle and the backup made before the update. |
 | Someone forgot their password, or is locked out | An Admin: *Users* → *Reset password*; or on the console `users reset <username>`. A lockout ends by itself after 15 minutes. |
