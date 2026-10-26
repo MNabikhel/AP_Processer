@@ -315,7 +315,7 @@ def today_pills(store: Store, invoices: list[dict[str, Any]]) -> list[tuple[str,
     follow_ups = sum(1 for i in store.parked() if i.get("follow_up") and i["follow_up"] <= today)
     second = sum(1 for i in invoices if i["status"] == PENDING and (i["reviewer"] or "").strip().lower() != me)
     to_export = len(store.unexported_approved())
-    late = [r for r in recurring.detect(store.vendor_invoice_dates()) if r.status == recurring.LATE]
+    late = [r for r in recurring.detected(store) if r.status == recurring.LATE]
     pills = [
         (f"{overdue} past due, not approved yet", "err") if overdue else None,
         (f"{due_soon} due within {DUE_SOON_DAYS} days", "warn") if due_soon else None,
@@ -334,7 +334,7 @@ def kpis(store: Store, pending: list[dict[str, Any]], flagged: list[dict[str, An
     """The four figures at the top: waiting, approved today, coding accuracy, the coding memory (B-512). Approved today
     counts this reviewer's approvals, a first approval waiting for its second (``awaiting``) included, and says so in
     plain words (B-517)."""
-    metrics = store.metrics()
+    metrics = store.line_metrics()  # the lessons' counts: the whole metrics() is four scans of them (D-110)
     done_today = approved_today(store)
     total_today = done_today + len(pending)
     accuracy = metrics["line_accuracy"]
@@ -382,9 +382,12 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
                 limit: int = QUEUE_PAGE) -> HTMLResponse:  # fmt: skip
     store, settings = get_store(request), get_settings(request)
     reference = reference_or_none(store)
-    invoices = store.list_invoices()
-    if reference is None or not invoices:
-        return _getting_started(request, store, invoices)
+    # The queue's invoices only (in review, parked, waiting for a second approval), and the others counted: a year of
+    # approved invoices is not read on every visit (D-110).
+    counts = store.status_counts()
+    if reference is None or not counts:
+        return _getting_started(request, store, counts)
+    invoices = store.list_invoices(statuses=(REVIEW, PARKED, PENDING))
     tab = tab if tab in TABS else "review"
     show = show if show in SHOWS else "all"
     sort = sort if sort in SORTS else "priority"
@@ -397,10 +400,10 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
     reasons = attention(store, reference, pending, threshold, today)  # Ready means its Approve is open
     reasons.update(draft_reasons(request, pending))  # an invoice with edits kept: what its screen says (B-996)
     flagged = [i for i in pending if i["id"] in reasons]
-    approved = [i for i in invoices if i["status"] == APPROVED]
+    approved = counts.get(APPROVED, 0)
     awaiting = [i for i in invoices if i["status"] == PENDING]
     parked = [i for i in invoices if i["status"] == PARKED]
-    others = [i for i in invoices if i["status"] in (FAILED, REJECTED)]
+    others = counts.get(FAILED, 0) + counts.get(REJECTED, 0)
     minutes = len(flagged) * 2 + (len(pending) - len(flagged))
     hello = f"{ui.greeting()}, {first_name()}"
     waiting = f"{ui.plural(len(pending), 'invoice')} waiting, about {ui.plural(minutes, 'minute')} of review"
@@ -411,7 +414,7 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
         tabs.append(("second", f"Second approval · {len(awaiting)}"))
     if parked:
         tabs.append(("parked", f"Parked · {len(parked)}"))
-    tabs += [("approved", f"Approved · {len(approved)}"), ("other", f"Failed / rejected · {len(others)}")]
+    tabs += [("approved", f"Approved · {approved}"), ("other", f"Failed / rejected · {others}")]
     if tab not in dict(tabs):
         tab = "review"
 
@@ -439,11 +442,11 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
             candidates_left=left_out(pending, reasons, left),
         )  # fmt: skip
     elif tab == "approved":
-        recent = sorted(approved, key=lambda i: i["reviewed_at"] or "", reverse=True)[:APPROVED_SHOWN]
-        context.update(approved=recent, approved_total=len(approved), to_export=len(store.unexported_approved()),
+        recent = store.recently_approved(APPROVED_SHOWN)
+        context.update(approved=recent, approved_total=approved, to_export=len(store.unexported_approved()),
                        awaiting_count=len(awaiting))  # fmt: skip
     elif tab == "other":
-        context.update(others=[_other(i) for i in others])
+        context.update(others=[_other(i) for i in store.list_invoices(statuses=(FAILED, REJECTED))])
     elif tab == "parked":
         today = dt.date.today().isoformat()
         context.update(parked=[{**i, "late": bool(i["follow_up"] and i["follow_up"] <= today)} for i in store.parked()])
@@ -473,11 +476,11 @@ def _second(inv: dict[str, Any], first: dict[str, Any] | None, me: str, my_login
             "approved_over": audit.approved_over(detail)}  # fmt: skip
 
 
-def _getting_started(request: Request, store: Store, invoices: list[dict[str, Any]]) -> HTMLResponse:
+def _getting_started(request: Request, store: Store, counts: dict[str, int]) -> HTMLResponse:
     from ap_coder.ops.demo import demo_available
     from ap_coder.web.pages.process import first_steps, next_step, shown_setup, step_state
 
-    steps, done_steps, needed = first_steps(store, get_settings(request), bool(invoices))  # as Import invoices counts
+    steps, done_steps, needed = first_steps(store, get_settings(request), bool(counts))  # as Import invoices counts
     named = step_state(steps, "Your name") == "ok"  # (before it, first_name() is the login: "Good morning, root")
     steps, coming, links = shown_setup(request, steps, next_step(steps))
     return render(
@@ -488,7 +491,7 @@ def _getting_started(request: Request, store: Store, invoices: list[dict[str, An
         steps=steps,
         ring_value=done_steps / needed,
         ring_label=f"{done_steps}/{needed}",
-        waiting=sum(1 for i in invoices if i["status"] == REVIEW) if reference_or_none(store) is None else 0,
+        waiting=counts.get(REVIEW, 0) if reference_or_none(store) is None else 0,
         demo_available=demo_available(),
         demo_count=store.demo_count(),
         where="/review",

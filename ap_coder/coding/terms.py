@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import calendar
 import datetime as dt
+import functools
 import re
 from dataclasses import dataclass, replace
 from typing import Any
@@ -192,6 +193,7 @@ class Payment:
         return self.discount_by is not None and self.discount_by >= (today or dt.date.today())
 
 
+@functools.lru_cache(maxsize=4096)  # a report reads the terms of every approved invoice: most say the same (D-110)
 def parse_terms(text: str | None) -> Terms:
     text = (text or "").strip()
     if not text:

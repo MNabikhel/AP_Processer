@@ -42,6 +42,7 @@ from ._base import (
     parse_fx_rates,
     suggestion_kept,
 )
+from .summary import fetch_rows
 from .users import VOUCH_DAYS, account_of, same_approver  # noqa: F401  (also used by the pages)
 
 
@@ -218,29 +219,10 @@ class InvoicesMixin:
             conn.execute("DELETE FROM erp_invoices")
             self._log(conn, "erp_register_imported", actor=actor, detail={"rows": 0, "total": 0, "cleared": True})
 
-    def search_rows(self) -> list[dict[str, Any]]:
-        """Every invoice's identifying fields and where it stands (for the invoice directory's quick search), with
-        the date of its export batch and its GST/HST number (the JD Edwards duplicate check finds a supplier by
-        it)."""
-        with self._conn() as conn:
-            batches = {r["id"]: r["created_at"] for r in conn.execute("SELECT id, created_at FROM export_batches")}
-            rows = [
-                dict(r)
-                for r in conn.execute(
-                    """SELECT id, status, file_name, vendor_name, invoice_number, invoice_date, due_date, currency,
-                              grand_total, po_key, created_at, reviewed_at, reviewer, second_reviewer,
-                              second_reviewed_at, export_batch, parked_reason, follow_up, error,
-                              json_extract(final_output, '$.gst_hst_registration_number') AS gst_hst_registration_number
-                       FROM invoices ORDER BY id DESC"""
-                )
-            ]
-        for r in rows:
-            r["exported_at"] = batches.get(r["export_batch"]) if r["export_batch"] else None
-        return rows
-
     def directory_count(self, rows_sql: str, where: str, params: list[Any]) -> int:
         """How many invoices the invoice directory's filters keep (``directory.py`` builds the SQL, with parameters)."""
         with self._conn() as conn:
+            self._summary_fresh(conn)
             return int(conn.execute(f"{rows_sql} SELECT COUNT(*) FROM rows WHERE {where}", params).fetchone()[0])
 
     def directory_rows(
@@ -250,6 +232,7 @@ class InvoicesMixin:
         first (SQLite then reads only what the filters and the sort need), then their rows: reading every invoice's
         coding to sort the whole table would take most of a second with tens of thousands of invoices."""
         with self._conn() as conn:
+            self._summary_fresh(conn)
             ids = [
                 r[0]
                 for r in conn.execute(
@@ -325,20 +308,25 @@ class InvoicesMixin:
             ).fetchall()
         return [dict(r) for r in rows if r["id"] != exclude_id and _norm_number(r["invoice_number"]) == number]
 
-    def list_invoices(self, status: str | None = None) -> list[dict[str, Any]]:
+    def list_invoices(self, status: str | None = None, statuses: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
+        """The invoices (only ``status``'s, or ``statuses``'), the ones to review first, from the invoices' summary
+        (D-110)."""
         sql = (
             "SELECT id, file_name, status, vendor_name, invoice_number, invoice_date, due_date, currency, grand_total, "
             "model_confidence, adjusted_confidence, requires_review, error, created_at, reviewed_at, reviewer, "
             "second_reviewer "
-            "FROM invoices"
+            "FROM invoice_summary"
         )
         args: tuple[Any, ...] = ()
         if status:
-            sql += " WHERE status = ?"
-            args = (status,)
+            statuses = (status,)
+        if statuses:
+            sql += f" WHERE status IN ({', '.join('?' * len(statuses))})"
+            args = tuple(statuses)
         sql += " ORDER BY requires_review DESC, adjusted_confidence ASC, id ASC"
         with self._conn() as conn:
-            return [dict(r) for r in conn.execute(sql, args)]
+            self._summary_fresh(conn)
+            return fetch_rows(conn, sql, args)
 
     def has_invoices(self) -> bool:
         """Whether there is any invoice at all (of any status)."""
@@ -628,12 +616,13 @@ class InvoicesMixin:
         """{id: (the stamp its stored checks were made against, the stamp of its queue re-check)} ("" for none),
         read by SQLite without decoding each validation (``Store.checks_stamp``, B-815)."""
         with self._conn() as conn:
-            rows = conn.execute(
-                "SELECT id, json_extract(validation, '$.checks_stamp'), json_extract(validation, '$.recheck.stamp') "
-                f"FROM invoices WHERE validation IS NOT NULL AND json_valid(validation) AND {_in_list('id')}",
+            rows = fetch_rows(
+                conn,
+                "SELECT id, json_extract(validation, '$.checks_stamp') a, json_extract(validation, '$.recheck.stamp') "
+                f"b FROM invoices WHERE validation IS NOT NULL AND json_valid(validation) AND {_in_list('id')}",
                 (json.dumps([int(i) for i in ids]),),
-            ).fetchall()
-        return {int(r[0]): (str(r[1] or ""), str(r[2] or "")) for r in rows}
+            )
+        return {int(r["id"]): (str(r["a"] or ""), str(r["b"] or "")) for r in rows}
 
     def save_recheck(self, invoice_id: int, stamp: str, issues: list[dict[str, Any]], seen: str | None) -> bool:
         """Keep the queue's re-check of an invoice in review (``coding.bulk.issues_today``) with its stored checks,
@@ -665,7 +654,7 @@ class InvoicesMixin:
             args.append(json.dumps([int(i) for i in ids]))
         sql = f"SELECT {', '.join(columns)} FROM invoices" + (" WHERE " + " AND ".join(where) if where else "")
         with self._conn() as conn:
-            rows = [dict(r) for r in conn.execute(sql + " ORDER BY id", args)]
+            rows = fetch_rows(conn, sql + " ORDER BY id", args)
         for r in rows if decode else []:
             for key in set(columns) & set(self._JSON_COLUMNS):
                 r[key] = json.loads(r[key]) if r[key] else None
@@ -674,17 +663,19 @@ class InvoicesMixin:
     def demo_count(self) -> int:
         """How many demo invoices are loaded (see ``demo.py``), without reading every invoice."""
         with self._conn() as conn:
-            return int(conn.execute("SELECT COUNT(*) FROM invoices WHERE meta LIKE '%\"demo\": true%'").fetchone()[0])
+            self._summary_fresh(conn)
+            return int(conn.execute("SELECT COUNT(*) FROM invoice_summary WHERE demo = 1").fetchone()[0])
 
     def approved_since(self, since_iso: str, reviewer: str | None = None) -> int:
         """Invoices approved since ``since_iso`` (and still approved, or waiting for a second approver). With
         ``reviewer``: only those this person approved, first or second approval (names compared without case)."""
         with self._conn() as conn:
+            self._summary_fresh(conn)
             if reviewer is None:
-                sql = "SELECT COUNT(*) FROM invoices WHERE status IN (?, ?) AND reviewed_at >= ?"
+                sql = "SELECT COUNT(*) FROM invoice_summary WHERE status IN (?, ?) AND reviewed_at >= ?"
                 return int(conn.execute(sql, (APPROVED, PENDING, since_iso)).fetchone()[0])
             rows = conn.execute(
-                "SELECT reviewer, reviewed_at >= ?, second_reviewer, second_reviewed_at >= ? FROM invoices "
+                "SELECT reviewer, reviewed_at >= ?, second_reviewer, second_reviewed_at >= ? FROM invoice_summary "
                 "WHERE status IN (?, ?) AND (reviewed_at >= ? OR second_reviewed_at >= ?)",
                 (since_iso, since_iso, APPROVED, PENDING, since_iso, since_iso),
             ).fetchall()

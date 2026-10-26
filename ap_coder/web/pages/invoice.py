@@ -861,11 +861,11 @@ def _approve(request: Request, invoice_id: int, form: Any) -> JSONResponse:
         messages.append(flash_message(f"Thanks: {ui.plural(explained, 'reason')} kept. The AI reads "
                                       f"{'it' if explained == 1 else 'them'} with this vendor's next invoices.", "ok",
                                       icon="psychology"))  # fmt: skip
-    left = store.list_invoices(REVIEW)
+    left = store.status_counts().get(REVIEW, 0)  # counted, not read (D-110)
     if not left:
         messages.append(flash_message("Your queue is clear: every invoice has been reviewed.", "ok", icon="task_alt"))
     elif not form.get("next_id"):  # the last one of the list as shown: the rest are ones passed over
-        messages.append(flash_message(f"That was the last one in the list. {ui.plural(len(left), 'invoice')} still "
+        messages.append(flash_message(f"That was the last one in the list. {ui.plural(left, 'invoice')} still "
                                       "to review: back to the first of them.", "info", icon="replay"))  # fmt: skip
     return done(request, after, *messages)
 

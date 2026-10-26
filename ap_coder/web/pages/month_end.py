@@ -61,13 +61,13 @@ def tile_text(n: int, by_currency: dict[str, float], rates: dict[str, float]) ->
 def month_end_page(request: Request, end: str = "") -> HTMLResponse:
     store = get_store(request)
     period_end = day(end, accruals.default_period_end())
-    items = accruals.build(store, period_end)
+    no_date: list[accruals.Accrual] = []  # read with the accruals, not again (``accruals.undated``)
+    items = accruals.build(store, period_end, no_date)
     rates = store.fx_rates()
     tiles = []
     for source, (n, by_currency) in accruals.summary(items).items():
         value, hint = tile_text(n, by_currency, rates)
         tiles.append((TITLES[source], value, hint))
-    no_date = accruals.undated(store, period_end)
     reference = reference_or_none(store) if items or no_date else None
     flagged: dict[str, float] = {}  # dated over a year before the period end: accrued, flagged (B-474)
     for a in items:

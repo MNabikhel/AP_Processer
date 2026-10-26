@@ -15,9 +15,12 @@ from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, fields
 from typing import Any
 
-from ..coding.terms import payment
+from ..coding.terms import parse_terms, payment
 from ..core.memory import vendor_key
-from ..core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store
+from ..core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store, _in_list
+from ..core.store.summary import _code_rows, computed
+from ..core.store.summary import broken as summary_broken
+from ..core.store.summary import whole as summary_whole
 
 
 @dataclass
@@ -93,26 +96,38 @@ def as_coded_note(clean: int, filled: int, total: int) -> str:
     return f"{clean - filled} of {total} needed no change, {filled} only had blanks filled in by AP"
 
 
-def latest_approvals(store: Store, rows: dict[int, dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+def latest_approvals(store: Store) -> list[dict[str, Any]]:
     """The latest approval of each invoice still approved (or waiting for its second approval): one sent back and
-    approved again counts once. ``rows``: the invoices by id, when already read."""
-    rows = rows if rows is not None else {r["id"]: r for r in store.list_invoices()}
-    latest: dict[int, dict[str, Any]] = {}
-    for e in sorted(store.events(actions=["approved"], limit=100_000), key=lambda e: (e["created_at"], e["id"])):
-        latest[e["invoice_id"]] = e
-    return [e for i, e in latest.items() if i in rows and rows[i]["status"] in (APPROVED, PENDING)]
+    approved again counts once. From the invoices' summary (``approval_facts``, D-110): {invoice_id, created_at,
+    corrected, filled, bulk}, by invoice."""
+    out = []
+    for r in store.summary_rows("+status IN (?, ?)", (APPROVED, PENDING), "id, broken, a_at, a_corrected, a_filled, "
+                                "a_bulk"):  # fmt: skip
+        a = computed(store, r, "approval")
+        if a["a_at"] is not None:
+            out.append({"invoice_id": r["id"], "created_at": a["a_at"], "corrected": bool(a["a_corrected"]),
+                        "filled": bool(a["a_filled"]), "bulk": bool(a["a_bulk"])})  # fmt: skip
+    return out
+
+
+def approval_facts(created_at: str, detail: dict[str, Any]) -> dict[str, Any]:
+    """What Insights and Learning count of an invoice's latest approval (its ``approved`` event's time and detail):
+    kept in the invoices' summary (D-110)."""
+    event = {"detail": detail}
+    return {"a_at": created_at, "a_corrected": int(corrected(event)), "a_filled": int(filled_in(event)),
+            "a_bulk": int(bool((detail or {}).get("bulk")))}  # fmt: skip
 
 
 def approved_as_coded(store: Store) -> tuple[int, int]:
     """(approved as coded, approved): the invoices of ``latest_approvals`` whose approval changed nothing the coder
     proposed (``corrected``). Insights and Learning show this pair."""
     approvals = latest_approvals(store)
-    return sum(1 for e in approvals if not corrected(e)), len(approvals)
+    return sum(1 for e in approvals if not e["corrected"]), len(approvals)
 
 
 def filled_in_count(store: Store) -> int:
     """Of ``approved_as_coded``'s, the approvals that only had blanks filled in by AP (``filled_in``)."""
-    return sum(1 for e in latest_approvals(store) if filled_in(e))
+    return sum(1 for e in latest_approvals(store) if e["filled"])
 
 
 def _issues(validation: Any) -> list[dict[str, Any]]:
@@ -134,62 +149,140 @@ def invoice_cost_usd(meta: dict[str, Any], a: Assumptions) -> tuple[float, bool]
     return cost, bool(usage)
 
 
+def _cost(facts: dict[str, Any], a: Assumptions) -> tuple[float, bool]:
+    """``invoice_cost_usd`` of an invoice's ``invoice_facts``."""
+    meta = {"extraction": {"page_count": facts["pages"]}, "inference": {"usage": facts["usage"]}}
+    return invoice_cost_usd(meta, a)[0], facts["used"]
+
+
 DUPLICATE_CODES = {"DUPLICATE_INVOICE", "DUPLICATE_IN_ERP", "DUPLICATE_OTHER_VENDOR", "POSSIBLE_DUPLICATE_AMOUNT"}
 
 
-def compute(store: Store, a: Assumptions | None = None) -> dict[str, Any]:
-    a = a or Assumptions.load(store)
-    rows = {r["id"]: r for r in store.list_invoices()}
-    light = store.invoice_columns(("id", "meta", "validation"))
-    metas = {r["id"]: r["meta"] or {} for r in light}
-    processed = [r for r in rows.values() if r["status"] != FAILED]
-    failed = [r for r in rows.values() if r["status"] == FAILED]
-    approvals = latest_approvals(store, rows)  # as approved_as_coded counts them (Learning shows the same pair)
-    clean = [e for e in approvals if not corrected(e)]
-    changed = [e for e in approvals if corrected(e)]
+def invoice_facts(row: dict[str, Any]) -> dict[str, Any]:
+    """What ``compute`` reads of an invoice (``row``: its columns, the JSON ones decoded), whatever the assumptions:
+    kept in the invoices' summary (D-110). Its pages and token usage (``invoice_cost_usd``), its processing seconds,
+    the codes of its errors and warnings (one per finding)."""
+    meta = row["meta"] or {}
+    usage = (meta.get("inference") or {}).get("usage") or {}
+    timings = meta.get("timings_seconds")
+    cost = {
+        "pages": ((meta.get("extraction") or {}).get("page_count")) or 1,
+        "usage": {k: usage[k] for k in ("prompt_tokens", "cached_prompt_tokens", "completion_tokens") if k in usage},
+        "used": bool(usage),
+    }
+    return {
+        "i_seconds": sum((timings or {}).values()) if timings else None,
+        "i_codes": json.dumps(
+            [i["code"] for i in _issues(row["validation"]) if i.get("severity") in ("error", "warning")]
+        ),
+        "i_cost": json.dumps(cost),
+    }
 
-    # Only a build that may use the internet can send anything to Azure. Offline, the tokens recorded are LM Studio's
-    # (or the demo's) on this computer: no cloud cost, whatever Azure would have charged for them.
+
+def workload_facts(row: dict[str, Any], approval: dict[str, Any] | None) -> dict[str, Any]:
+    """What ``vendor_workload`` reads of an invoice not failed nor rejected (``approval``: the detail of its latest
+    ``approved`` event, when it is approved or waiting for its second approval): kept in the invoices' summary."""
+    from ..coding.vendor_mail import ASKABLE
+
+    doc = row["final_output"] or row["ai_output"] or {}
+    name = str(doc.get("vendor_name") or "")
+    codes = {i.get("code") for i in _issues(row["validation"])} & ASKABLE
+    if approval is not None:
+        codes &= {i.get("code") for i in approval.get("open_issues") or []}
+    return {"w_name": name, "w_key": vendor_key(name), "w_codes": json.dumps(sorted(codes)),
+            "w_corrected": int(bool({"line_coding", "line_count"} & set(row["edits"] or [])))}  # fmt: skip
+
+
+def compute(store: Store, a: Assumptions | None = None) -> dict[str, Any]:
+    """The business case, from the invoices' summary (``invoice_facts``, ``approval_facts``, D-110): counted by
+    SQLite, by day, then by week here; an invoice the summary could not read is read again (``computed``)."""
+    a = a or Assumptions.load(store)
     from ..ops.offline import internet_allowed
 
-    costs = [invoice_cost_usd(metas.get(r["id"]) or {}, a) for r in processed] if internet_allowed() else []
+    whole = summary_whole("insights", "approval")
+    tally = store.summary_query(
+        f"SELECT status = '{FAILED}', COUNT(*), SUM(CASE WHEN requires_review THEN 1 ELSE 0 END) FROM invoice_summary "
+        f"WHERE {whole} GROUP BY 1"
+    )
+    counts = {bool(r[0]): (r[1], r[2]) for r in tally}
+    processed, flagged = counts.get(False, (0, 0))
+    failed = counts.get(True, (0, 0))[0]
+    days = store.summary_query(
+        f"SELECT substr(created_at, 1, 10), COUNT(*) FROM invoice_summary WHERE +status != '{FAILED}' AND {whole} "
+        "GROUP BY 1"
+    )
+    # (day, corrected, filled, bulk, how many) of the latest approvals (``latest_approvals``)
+    signed = store.summary_query(
+        "SELECT substr(a_at, 1, 10), a_corrected, a_filled, a_bulk, COUNT(*) FROM invoice_summary WHERE +status IN "
+        f"('{APPROVED}', '{PENDING}') AND a_at IS NOT NULL AND {whole} GROUP BY 1, 2, 3, 4"
+    )
+    approvals = [(r[0], bool(r[1]), bool(r[2]), bool(r[3]), r[4]) for r in signed]
+    seconds = [r[0] for r in store.summary_query(
+        f"SELECT i_seconds FROM invoice_summary WHERE +status != '{FAILED}' AND i_seconds IS NOT NULL AND {whole} "
+        "ORDER BY id")]  # fmt: skip
+    costs = []
+    if internet_allowed():  # only a build that may use the internet can send anything to Azure
+        costs = [_cost(json.loads(r[0]), a) for r in store.summary_query(
+            f"SELECT i_cost FROM invoice_summary JOIN summary_facts USING (id) WHERE +status != '{FAILED}' AND "
+            f"{whole} ORDER BY id")]  # fmt: skip
+    # {code: [times, where it first appears]}: most_common breaks a tie by the order the codes came in
+    codes = {r[0]: [r[1], (r[2], r[3])] for r in store.summary_query(
+        "SELECT c.code, SUM(c.n), MIN(c.id), MIN(c.pos) FROM summary_codes c JOIN (SELECT code, MIN(id) first FROM "
+        "summary_codes GROUP BY code) f ON f.code = c.code AND c.id = f.first GROUP BY c.code")}  # fmt: skip
+    for r in store.summary_query("SELECT code, SUM(n) FROM summary_codes GROUP BY code"):
+        codes[r[0]][0] = r[1]
+    duplicates = ", ".join(f"'{c}'" for c in sorted(DUPLICATE_CODES))
+    stopped_rows = list(store.summary_query(
+        f"SELECT id, grand_total, currency FROM invoice_summary s WHERE status = '{REJECTED}' AND {whole} AND EXISTS "
+        f"(SELECT 1 FROM summary_codes c WHERE c.id = s.id AND c.code IN ({duplicates})) ORDER BY id"))  # fmt: skip
+    # What the summary could not read, read again from the invoice (failing as it did when every invoice was read).
+    for r in store.summary_rows(summary_broken("insights", "approval"), (), "id, status, grand_total, currency, "
+                                "created_at, requires_review, broken"):  # fmt: skip
+        f = computed(store, r, "insights", "approval")
+        if r["status"] == FAILED:
+            failed += 1
+        else:
+            processed, flagged = processed + 1, flagged + bool(r["requires_review"])
+            days.append(((r["created_at"] or "")[:10] if r["created_at"] is not None else None, 1))
+            seconds += [f["i_seconds"]] if f["i_seconds"] is not None else []
+            costs += [_cost(json.loads(f["i_cost"]), a)] if internet_allowed() else []
+        if r["status"] in (APPROVED, PENDING) and f["a_at"] is not None:
+            approvals.append((f["a_at"][:10], bool(f["a_corrected"]), bool(f["a_filled"]), bool(f["a_bulk"]), 1))
+        for invoice_id, code, n, position in _code_rows(r["id"], f["i_codes"]):
+            seen = codes.setdefault(code, [0, (invoice_id, position)])
+            seen[0] += n
+            seen[1] = min(seen[1], (invoice_id, position))
+            if code in DUPLICATE_CODES and r["status"] == REJECTED and (r["id"], r["grand_total"], r["currency"]) \
+                    not in stopped_rows:  # fmt: skip
+                stopped_rows.append((r["id"], r["grand_total"], r["currency"]))
+    approved = sum(n for *_, n in approvals)
+    clean = sum(n for _, c, *_, n in approvals if not c)
+    changed = approved - clean
+
     measured = [c for c, recorded in costs if recorded]
     cost_per_invoice_cad = (sum(measured) / len(measured) * a.usd_to_cad) if measured else None
-    seconds = [
-        sum(((metas.get(r["id"]) or {}).get("timings_seconds") or {}).values())
-        for r in processed
-        if (metas.get(r["id"]) or {}).get("timings_seconds")
-    ]
 
-    minutes_saved = len(clean) * (a.manual_minutes - a.clean_minutes) + len(changed) * (
-        a.manual_minutes - a.changed_minutes
-    )
-    stp = len(clean) / len(approvals) if approvals else None
+    minutes_saved = clean * (a.manual_minutes - a.clean_minutes) + changed * (a.manual_minutes - a.changed_minutes)
+    stp = clean / approved if approved else None
     per_invoice_minutes = (
         (stp * (a.manual_minutes - a.clean_minutes) + (1 - stp) * (a.manual_minutes - a.changed_minutes))
         if stp is not None
         else None
     )
 
-    issue_counts: Counter[str] = Counter()
+    issue_counts: Counter[str] = Counter({code: n for code, (n, _) in sorted(codes.items(), key=lambda c: c[1][1])})
     stopped: dict[str, float] = defaultdict(float)  # duplicates caught and rejected: {currency: total}
     stopped_count = 0
-    for r in light:
-        codes = set()
-        for issue in _issues(r["validation"]):
-            if issue.get("severity") in ("error", "warning"):
-                issue_counts[issue["code"]] += 1
-                codes.add(issue["code"])
-        inv = rows.get(r["id"])
-        if inv and inv["status"] == REJECTED and codes & DUPLICATE_CODES and (inv["grand_total"] or 0) > 0:
+    for _, total, currency in sorted(stopped_rows):
+        if (total or 0) > 0:
             stopped_count += 1
-            stopped[inv["currency"] or "CAD"] += inv["grand_total"]
+            stopped[currency or "CAD"] += total
 
     weekly: dict[str, dict[str, int]] = defaultdict(lambda: {"processed": 0, "clean": 0, "changed": 0})
-    for r in processed:
-        weekly[_week(r["created_at"])]["processed"] += 1
-    for e in approvals:
-        weekly[_week(e["created_at"])]["changed" if corrected(e) else "clean"] += 1
+    for day, n in days:
+        weekly[_week(day)]["processed"] += n
+    for day, corrected_, _, _, n in approvals:
+        weekly[_week(day)]["changed" if corrected_ else "clean"] += n
 
     projection = None
     if per_invoice_minutes is not None:
@@ -201,16 +294,14 @@ def compute(store: Store, a: Assumptions | None = None) -> dict[str, Any]:
         }
     return {
         "assumptions": a,
-        "processed": len(processed),
-        "failed": len(failed),
-        "approved": len(approvals),
-        "approved_clean": len(clean),
-        "approved_filled": sum(1 for e in clean if filled_in(e)),
-        "approved_changed": len(changed),
-        "bulk_approved": sum(1 for e in approvals if (e["detail"] or {}).get("bulk")),
-        "needs_attention_rate": (sum(1 for r in processed if r["requires_review"]) / len(processed))
-        if processed
-        else None,
+        "processed": processed,
+        "failed": failed,
+        "approved": approved,
+        "approved_clean": clean,
+        "approved_filled": sum(n for _, c, f, _, n in approvals if f and not c),
+        "approved_changed": changed,
+        "bulk_approved": sum(n for *_, b, n in approvals if b),
+        "needs_attention_rate": (flagged / processed) if processed else None,
         "straight_through": stp,
         "hours_saved": minutes_saved / 60,
         "value_saved": minutes_saved / 60 * a.hourly_cost,
@@ -240,7 +331,11 @@ def operations(store: Store, today: dt.date | None = None) -> dict[str, Any]:
     """AP operations: how old the queue is, how long approval takes, approvals after the due date, and
     early-payment discounts approved in time to take them (or not)."""
     today = today or dt.date.today()
-    rows = store.list_invoices()
+    rows = store.summary_rows(
+        "+status IN (?, ?, ?, ?)",  # (most invoices: read in order, not by the index)
+        (REVIEW, PARKED, APPROVED, PENDING),
+        "id, status, created_at, reviewed_at, second_reviewed_at, due_date, broken, pay_terms, pay_vendor",
+    )
     waiting = [r for r in rows if r["status"] in (REVIEW, PARKED)]
     ageing = {label: 0 for label, _, _ in AGE_BUCKETS}
     for r in waiting:
@@ -250,14 +345,9 @@ def operations(store: Store, today: dt.date | None = None) -> dict[str, Any]:
             if low <= age <= high:
                 ageing[label] += 1
     approved = [r for r in rows if r["status"] in (APPROVED, PENDING) and r["reviewed_at"]]
-    detail = {
-        r["id"]: r
-        for status in (APPROVED, PENDING)
-        for r in store.invoice_columns(("id", "second_reviewed_at", "final_output"), status)
-    }
 
-    def done(r: dict[str, Any]) -> str:  # fully approved: after the second approval when one was needed
-        return ((detail.get(r["id"]) or {}).get("second_reviewed_at") or r["reviewed_at"] or "")[:10]
+    def done(r: Any) -> str:  # fully approved: after the second approval when one was needed
+        return (r["second_reviewed_at"] or r["reviewed_at"] or "")[:10]
 
     cycle = [
         (_day(r["reviewed_at"]) - _day(r["created_at"])).days
@@ -265,13 +355,24 @@ def operations(store: Store, today: dt.date | None = None) -> dict[str, Any]:
         if _day(r["reviewed_at"]) and _day(r["created_at"])
     ]
     late = sum(1 for r in approved if r["status"] == APPROVED and r["due_date"] and done(r) > r["due_date"])
-    finals = {i: (r["final_output"] or {}) for i, r in detail.items()}
     taken = missed = 0
     taken_amount: Counter[str] = Counter()  # per currency: a yen discount is not dollars
     missed_amount: Counter[str] = Counter()
     default_days, vendor_terms = store.default_terms_days(), store.all_vendor_terms()
+    # The coding's payment fields of those whose terms (or their vendor's) may give a discount: ``payment`` gives the
+    # others none.
+    found = {r["id"]: computed(store, r, "pay") for r in approved}
+    maybe = [
+        i
+        for i, f in found.items()
+        if f["pay_terms"] is None or _may_discount(f["pay_terms"], vendor_terms.get(f["pay_vendor"], ""))
+    ]
+    pays = {r["id"]: computed(store, r, "pay")["pay"]
+            for r in store.summary_rows(_in_list("id"), (json.dumps(maybe),), "id, broken, pay")}  # fmt: skip
     for r in approved:
-        final = finals.get(r["id"]) or {}
+        if r["id"] not in pays:
+            continue  # no discount in its terms nor in its vendor's
+        final = json.loads(pays[r["id"]]) if pays[r["id"]] is not None else {}
         p = payment(final, default_days, vendor_terms.get(vendor_key(final.get("vendor_name") or ""), ""))
         if p.discount_by is None:
             continue
@@ -293,6 +394,29 @@ def operations(store: Store, today: dt.date | None = None) -> dict[str, Any]:
         "discounts_in_time": (taken, {c: round(t, 2) for c, t in sorted(taken_amount.items())}),
         "discounts_missed": (missed, {c: round(t, 2) for c, t in sorted(missed_amount.items())}),
     }
+
+
+PAYMENT_FIELDS = ("payment_terms", "invoice_date", "due_date", "grand_total", "subtotal", "vendor_name", "currency")
+
+
+def payment_facts(final: dict[str, Any]) -> dict[str, Any]:
+    """What ``operations`` reads of an approved invoice's coding (``terms.payment``, its vendor and currency), its
+    printed terms and its vendor: kept in the invoices' summary (D-110)."""
+    return {"pay": json.dumps({k: final[k] for k in PAYMENT_FIELDS if k in final}),
+            "pay_terms": (final.get("payment_terms") or "").strip(),
+            "pay_vendor": vendor_key(final.get("vendor_name") or "")}  # fmt: skip
+
+
+def _may_discount(printed: str, vendor_terms: str) -> bool:
+    """Whether ``terms.payment`` can find an early-payment discount: in the printed terms, or in the vendor master's
+    when they take their place (none printed, or none understood)."""
+    terms = parse_terms(printed)
+    if terms.discount_pct:
+        return True
+    if vendor_terms and terms.net_days is None and not terms.on_receipt:
+        vendor = parse_terms(vendor_terms)
+        return bool((vendor.net_days is not None or vendor.on_receipt) and vendor.discount_pct)
+    return False
 
 
 def _week(iso: str | None) -> str:
@@ -388,32 +512,31 @@ def vendor_workload(store: Store, min_invoices: int = 2) -> list[dict[str, Any]]
     (amounts that don't add up, no GST/HST number, PO issues...: the checks *Ask the vendor* covers), and how
     often AP had to correct the coding. Worst first; vendors without problems are left out. A rejected invoice is left
     out, and an approved one counts what was still open when it was approved: a finding the reviewer cleared by
-    correcting what AP Coder read was AP Coder's misread, not the vendor's doing (B-1183)."""
-    from ..coding.vendor_mail import ASKABLE
-    from ..core.memory import vendor_key
+    correcting what AP Coder read was AP Coder's misread, not the vendor's doing (B-1183). Worked out again once an
+    invoice or the audit trail changed (``summary_memo``, D-110)."""
+    found = store.summary_memo(f"vendor_workload/{min_invoices}", lambda: _vendor_workload(store, min_invoices),
+                               "workload")  # fmt: skip
+    return [{**v, "top_codes": list(v["top_codes"])} for v in found]
 
+
+def _vendor_workload(store: Store, min_invoices: int) -> list[dict[str, Any]]:
     stats: dict[str, dict[str, Any]] = {}
-    rows = [r for r in store.invoice_columns(("id", "status", "validation", "edits", "ai_output", "final_output"))
-            if r["status"] not in (FAILED, REJECTED)]  # fmt: skip
-    approvals = store.latest_events("approved", [r["id"] for r in rows if r["status"] in (APPROVED, PENDING)])
+    rows = store.summary_rows("status NOT IN (?, ?)", (FAILED, REJECTED), "id, status, broken, w_name, w_key, w_codes, "
+                              "w_corrected")  # fmt: skip
     for r in rows:
-        doc = r["final_output"] or r["ai_output"] or {}
-        name = str(doc.get("vendor_name") or "")
-        key = vendor_key(name)
+        f = computed(store, r, "workload")
+        key = f["w_key"]
         if not key:
             continue
-        s = stats.setdefault(key, {"vendor_name": name, "invoices": 0, "with_problems": 0, "corrected": 0,
+        s = stats.setdefault(key, {"vendor_name": f["w_name"], "invoices": 0, "with_problems": 0, "corrected": 0,
                                    "approved": 0, "codes": Counter()})  # fmt: skip
         s["invoices"] += 1
-        codes = {i.get("code") for i in _issues(r["validation"])} & ASKABLE
-        if r["id"] in approvals:
-            codes &= {i.get("code") for i in (approvals[r["id"]]["detail"] or {}).get("open_issues") or []}
-        if codes:
+        if f["w_codes"] != "[]":
             s["with_problems"] += 1
-            s["codes"].update(codes)
+            s["codes"].update(json.loads(f["w_codes"]))
         if r["status"] in (APPROVED, PENDING):
             s["approved"] += 1
-            s["corrected"] += bool({"line_coding", "line_count"} & set(r["edits"] or []))  # the GL coding, not a date
+            s["corrected"] += bool(f["w_corrected"])  # the GL coding, not a date
     out = []
     for key, s in stats.items():
         if s["invoices"] < min_invoices or not (s["with_problems"] or s["corrected"]):

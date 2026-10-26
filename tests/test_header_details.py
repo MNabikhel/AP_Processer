@@ -345,12 +345,14 @@ def _blank_reading(store: Store, invoice_id: int, *fields: str) -> None:
     """As if ``fields`` had not been read on the invoice (its coding and its capture)."""
     import sqlite3
 
+    from ap_coder.core.store.capture import capture_value
+
     path = ", ".join(f"'$.{f}', ''" for f in fields)
     with sqlite3.connect(store.path) as conn:
         conn.execute(f"UPDATE invoices SET ai_output = json_set(ai_output, {path}) WHERE id = ?", (invoice_id,))
         row = conn.execute("SELECT capture_json FROM invoice_capture WHERE invoice_id = ?", (invoice_id,)).fetchone()
         if row:
-            capture = json.loads(row[0])
+            capture = capture_value(row[0])  # kept compressed (D-110)
             for f in fields:
                 (capture.get("fields") or {}).pop(f, None)
             conn.execute("UPDATE invoice_capture SET capture_json = ? WHERE invoice_id = ?",

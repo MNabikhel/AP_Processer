@@ -1252,3 +1252,50 @@ that is reversed keeps its line, marked "replaced by D-NN".
   wheelhouse). (`ops/server_update.py`, `ops/service.py`, `ops/cli.py`, `core/config.py`, `web/security.py`,
   `web/identity.py`, `web/pages/process.py`, `core/store/users.py` (`posting_refusal`, `vouched_for`), `core/store/invoices.py`, `erp/controls.py`,
   `erp/directory.py`, `web/roles.py`, `web/server.py`, `erp/hub/onelake.py`; `tests/test_server_hardening.py`)
+- **D-110** · **The invoices' summary: the lists, the search and the reports read one narrow row per invoice, worked
+  out when the invoice changes** (server mode at a year of invoices, 120,000, and 50 people at once). Every report
+  read and decoded every invoice's JSON on each visit (Month-end 84 s, Sales tax 57 s, Vendors 45 s, Insights 36 s,
+  Spend 22 s at 120,000; 7 GB of memory for one Vendors page), and every page scanned the whole table twice (the demo
+  count's LIKE, today's approvals): the columns added over the years sit after the JSON on disk, so reading them read
+  it. (1) **`invoice_summary`** (`core/store/summary.py`): the columns the lists show, copied; what the directory works
+  out of the coding, by the same SQL; the quick search's keys; and what each report needs of the coding, the checks
+  and the latest approval (`COMPUTED`), made by the reports' own functions (`taxreturn.tax_facts` and
+  `self_assessment_facts`, `insights.invoice_facts`, `workload_facts`, `approval_facts`, `payment_facts`,
+  `bulk.queue_facts`, `accruals._bill`, `spend.spend_parts` into **`summary_spend`**; the longer values in
+  `summary_facts`, the checks' codes in `summary_codes`): the report then does with them what it did with the invoice,
+  so its results are the same. `tests/test_invoice_summary.py` checks every report, list, the search, the directory and
+  the bulk candidates against the code as it was (`tests/summary_reference.py`) on a year of the sample invoices in
+  every state; the pages of a 12,000-invoice database were also compared, as HTML, with the code before. Nothing in it
+  depends on a setting but the posting lines of an invoice approved by an older version, built with the tax setup
+  (`legacy`). Sums of many lines are added in another order (per invoice first): equal to the cent. (2) **Kept in step
+  by triggers**, the first AP Coder makes: any change to an invoice (by the store or plain SQL), to an `approved`
+  event, or to the tax setup (for `legacy` invoices) puts the invoice in `summary_dirty`, in the same transaction; the
+  store works the dirty ones out before that transaction commits (`SummaryMixin._conn`), and a read of the summary does
+  so first (`_summary_fresh`): the summary is the one source those pages read, never behind, with no second path. An
+  invoice whose JSON can't be read keeps its listed columns and a `broken` bit for each part it could not work out
+  (`PARTS`: tax, self-assessment, spend, ...): only a report that reads that part reads it again from the invoice,
+  failing as it did; the others still draw. Triggers on `feedback` keep its count by outcome (`feedback_counts`): the
+  review queue's accuracy (`line_metrics`) and the learning memory's stamp read it instead of counting 900,000
+  lessons. The backup check accepts exactly these triggers (another one in a planted file is still refused). (3)
+  **Schema 19**: the migration builds the summary in full (about 75 s at 120,000 invoices, 0.3 GB), and builds it
+  again whenever `SUMMARY_RULES` (or the vendor-matching rules) change. (4) **What several pages read of every
+  invoice** (the vendors' invoice dates for the regular bills, the batches' totals, the vendors' workload, the status
+  counts of the rail) is kept per process until the part of the summary it reads changes (`summary_memo`, `TOPICS`),
+  one page working it out while the others wait: an approval changes no vendor's invoice dates. Many rows come out
+  of SQLite as one JSON value (`fetch_rows`, REALs written exactly): CPython's sqlite3 lets go of the GIL for each row,
+  and with 50 people at once a page of thousands of rows waited behind every other page for each one. (5) **The quick
+  search** finds its candidates by an FTS5 trigram index of the vendor and file names and of the invoice numbers
+  (`invoice_search`), the invoice number, PO and amount by their indexes, then scores them as before (`_score`): every
+  invoice it matched, and only those. A Python whose SQLite lacks FTS5 (CPython's own builds on Windows and macOS have
+  it) reads the summary's columns instead; a database changed there has its index built again on the next computer
+  that has it. (6) **The review queue** reads only the invoices in review, parked or waiting for a second approval (the
+  others counted; the Approved tab reads its last ones). Month-end reads only the invoices not in the ERP yet, once for
+  both of its lists. (7) **A capture is kept compressed** (zlib, 7.6 KB of JSON to 1.7 KB), with the two values the
+  queue looks up in it beside it; an older version's text is still read (an existing database shrinks only once
+  compacted: a follow-up). The coding, checks and metadata stay JSON text: SQLite's JSON functions read them (a
+  follow-up: JSONB, or the coding's lines in a table). One change of results: Insights and Learning counted only the
+  newest 100,000 approvals (B-1251). (`core/store/summary.py`, `core/store/invoices.py`, `capture.py`,
+  `purchasing.py`, `vendors.py`, `learning.py`, `backups.py`, `coding/taxreturn.py`, `coding/bulk.py`,
+  `coding/terms.py`, `erp/spend.py`, `erp/insights.py`, `erp/accruals.py`, `erp/search.py`, `erp/directory.py`,
+  `erp/recurring.py`, `web/core.py`, `web/pages/review.py`, `invoice.py`, `spend.py`, `month_end.py`;
+  `tests/test_invoice_summary.py`)
