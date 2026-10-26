@@ -34,6 +34,7 @@ import hmac
 import json
 import re
 import secrets
+import sqlite3
 import time
 import unicodedata
 from typing import Any
@@ -732,7 +733,10 @@ class UsersMixin:
                 conn.execute("DELETE FROM sessions WHERE token_hash = ?", (digest,))
                 return None
             if now - row["last_seen"] >= SEEN_EVERY:
-                conn.execute("UPDATE sessions SET last_seen = ? WHERE token_hash = ?", (now, digest))
+                try:  # best effort: a busy database fails no page over it, the next request records it (B-1293)
+                    conn.execute("UPDATE sessions SET last_seen = ? WHERE token_hash = ?", (now, digest))
+                except sqlite3.OperationalError:
+                    pass
         found = _public(row) or {}
         for key in ("session_created", "last_seen"):
             found.pop(key, None)

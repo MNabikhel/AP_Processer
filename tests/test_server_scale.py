@@ -516,3 +516,60 @@ def test_an_admin_chooses_what_the_ai_reviewer_reviews_on_settings_reading(store
 
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__])
+
+
+def test_a_busy_database_does_not_fail_a_request_over_the_sessions_last_use(store, monkeypatch):
+    """B-1293: under load a write lock held past the busy timeout made the session's last-use update raise "database
+    is locked", and the person got a 500 for any page; the last use is best effort (a minute late at most)."""
+    import sqlite3
+
+    from ap_coder.core.store import users
+
+    uid = store.add_user("ann", "a long enough password 1", users.CLERK)
+    token = store.start_session(uid)
+    later = users._clock() + users.SEEN_EVERY + 1
+    monkeypatch.setattr(users, "_clock", lambda: later)
+    real_open = store._open
+
+    class Locked:
+        def __init__(self, conn):
+            self.conn = conn
+
+        def execute(self, sql, *args):
+            if sql.startswith("UPDATE sessions SET last_seen"):
+                raise sqlite3.OperationalError("database is locked")
+            return self.conn.execute(sql, *args)
+
+        def __getattr__(self, name):
+            return getattr(self.conn, name)
+
+    monkeypatch.setattr(store, "_open", lambda: Locked(real_open()))
+    assert store.session_user(token)["username"] == "ann"
+
+
+def test_an_approval_learns_the_suppliers_template_from_the_ocr_kept_when_it_was_read(store, monkeypatch, tmp_path):
+    """B-1294: approving a scanned invoice OCR'd its pages again inside the web request (learn_from_approval's
+    build_layout, without the data folder's OCR cache): 4-5 s each, 50-150 s under load. It reads them from the cache
+    the pipeline filled when the invoice was read."""
+    from ap_coder.capture import layout, workflow
+
+    seen = []
+
+    def fake_build_layout(path, **_kw):
+        seen.append(layout._ocr_cache_folder.get())
+        raise layout.CannotRead("stop here")
+
+    monkeypatch.setattr(workflow, "build_layout", fake_build_layout)
+    scan = tmp_path / "scan.png"
+    scan.write_bytes(b"not really a picture")
+    invoice = {"id": 1, "source_path": str(scan), "ai_output": {}, "meta": {}, "file_sha256": "x", "status": "approved"}
+    monkeypatch.setattr(store, "get_invoice", lambda _id: invoice)
+    workflow.learn_from_approval(store, 1, {"vendor_name": "Acme"}, actor="ann")
+    assert seen and seen[0] is not None and seen[0].name == "ocr"
+
+
+def test_a_connection_is_kept_open_longer_than_a_browsers_or_a_proxys_idle_time():
+    """B-1295: uvicorn closed an idle connection after 5 s, the same as many clients, so under load a request sent
+    on it as it closed was dropped (ReadError; a 502 behind IIS): kept 75 s."""
+    config = server.server_config(object(), "127.0.0.1", 8501, None, None, None)
+    assert config.timeout_keep_alive >= 60

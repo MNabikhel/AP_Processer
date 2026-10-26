@@ -197,6 +197,11 @@ WORKER_ENV = "AP_SERVE_WORKER"  # what the server gives each of its web workers 
 STOP_FILE = ".ap_coder_server.stop"  # with several web workers: /shutdown writes the token here, and all stop
 
 
+# Above browsers' and IIS ARR's idle limits: uvicorn's 5 s, the same as many clients', closed a connection just as it
+# was used again, a dropped request under load (B-1295).
+KEEP_ALIVE_SECONDS = 75
+
+
 def server_config(app: Any, host: str, port: int, certfile: str | None, keyfile: str | None, proxy: str | None,
                   **more: Any) -> Any:  # fmt: skip
     """uvicorn's settings for the dashboard: a stop (Ctrl+C, the service's, ``POST /shutdown``) waits at most
@@ -204,7 +209,8 @@ def server_config(app: Any, host: str, port: int, certfile: str | None, keyfile:
     import uvicorn
 
     return uvicorn.Config(app, host=host, port=port, log_level="warning", access_log=False, lifespan="on",
-                          timeout_graceful_shutdown=GRACEFUL_SECONDS, **uvicorn_options(certfile, keyfile, proxy),
+                          timeout_graceful_shutdown=GRACEFUL_SECONDS, timeout_keep_alive=KEEP_ALIVE_SECONDS,
+                          **uvicorn_options(certfile, keyfile, proxy),
                           **more)  # fmt: skip
 
 
