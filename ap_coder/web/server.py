@@ -13,9 +13,11 @@ While it runs, ``<data folder>/.ap_coder_server.json`` says which server this is
 from __future__ import annotations
 
 import datetime as dt
+import errno
 import json
 import os
 import secrets
+import socket
 import ssl
 import sys
 import threading
@@ -28,7 +30,7 @@ from typing import Any
 from ap_coder import __version__
 from ap_coder.core import paths
 from ap_coder.core.store import Store
-from ap_coder.ops.offline import ADDRESS_ENV, browser_wanted, dashboard_address, listening, server_mode
+from ap_coder.ops.offline import ADDRESS_ENV, browser_wanted, dashboard_address, server_mode
 from ap_coder.web.app import CODE_FOLDER, create_app, os_user
 
 SERVER_FILE = ".ap_coder_server.json"
@@ -80,12 +82,36 @@ def tls_refusal(server: bool, certfile: str | None, keyfile: str | None, insecur
     return ""
 
 
+IN_USE = {errno.EADDRINUSE, 10048} | ({10013} if os.name == "nt" else set())  # 10013: held exclusively (Windows)
+
+
+def port_taken(host: str, port: int) -> bool:
+    """Whether another program listens on ``port`` at ``host``: a bind test, as uvicorn binds (SO_REUSEADDR off
+    Windows, SO_EXCLUSIVEADDRUSE on it), never a connection, which an office proxy or an endpoint agent that
+    intercepts connections answers on any port (B-1271). A network this computer lacks (no IPv6) or a port it
+    may not use is not "in use": uvicorn says what is wrong then."""
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    try:
+        probe = socket.socket(family, socket.SOCK_STREAM)
+    except OSError:
+        return False
+    with probe:
+        if os.name == "nt" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        elif os.name != "nt":
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind(({"": "0.0.0.0", "localhost": "127.0.0.1"}.get(host, host), port))
+        except OSError as exc:
+            return exc.errno in IN_USE or getattr(exc, "winerror", None) in IN_USE
+    return False
+
+
 def port_refusal(host: str, port: int, https: bool = False) -> str:
     """Why the dashboard can't listen on ``port`` ("" when nothing answers there): an AP Coder started earlier, or
     another program. Its address as staff would open it (https on the server). On the company server the port is the
     one IT gave staff, so it is never swapped for another (D-102)."""
-    probe = {"": "127.0.0.1", "0.0.0.0": "127.0.0.1", "localhost": "127.0.0.1", "::": "::1"}.get(host, host)
-    if not listening(port, probe):
+    if not port_taken(host, port):
         return ""
     if server_mode():
         return (f"Port {port} is in use by another program (an AP Coder started earlier?): nothing was started. Staff "
@@ -163,6 +189,20 @@ def _announce_when_up(url: str, open_browser: bool, timeout: float = 60.0) -> No
             pass
 
 
+GRACEFUL_SECONDS = 25  # a stop waits this long for the requests under way, then ends them (B-1272)
+
+
+def server_config(app: Any, host: str, port: int, certfile: str | None, keyfile: str | None, proxy: str | None,
+                  **more: Any) -> Any:  # fmt: skip
+    """uvicorn's settings for the dashboard: a stop (Ctrl+C, the service's, ``POST /shutdown``) waits at most
+    GRACEFUL_SECONDS for the requests under way (a long report), so the service stops within 30 seconds."""
+    import uvicorn
+
+    return uvicorn.Config(app, host=host, port=port, log_level="warning", access_log=False, lifespan="on",
+                          timeout_graceful_shutdown=GRACEFUL_SECONDS, **uvicorn_options(certfile, keyfile, proxy),
+                          **more)  # fmt: skip
+
+
 def serve(host: str = "127.0.0.1", port: int = 8501, open_browser: bool = True, store: Store | None = None, *,
           certfile: str | None = None, keyfile: str | None = None, proxy: str | None = None,
           insecure_http: bool = False) -> int:  # fmt: skip
@@ -190,9 +230,7 @@ def serve(host: str = "127.0.0.1", port: int = 8501, open_browser: bool = True, 
     app = create_app(store=store, address=host, insecure_http=insecure_http)
     app.state.proxy = proxy or None  # behind a proxy, a loopback address is not the console (pages/login.py)
     token = secrets.token_urlsafe(24)
-    config = uvicorn.Config(app, host=host, port=port, log_level="warning", access_log=False, lifespan="on",
-                            **uvicorn_options(certfile, keyfile, proxy))  # fmt: skip
-    server = uvicorn.Server(config)
+    server = uvicorn.Server(server_config(app, host, port, certfile, keyfile, proxy))
     app.state.port, app.state.shutdown_token, app.state.server = port, token, server
     write_server_file(port, token)
     url = browser_url(host, port, https)
