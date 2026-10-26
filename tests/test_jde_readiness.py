@@ -52,7 +52,7 @@ def test_the_worksheet_asks_every_open_question_of_the_jde_doc():
         assert key, f"no worksheet question checked for: {bullet[:60]}"
         assert needles[key] in asked, bullet[:60]
     wb = _sheet(accounts=[{"code": "6100", "description": "Office supplies"}], vendors=[{"vendor_name": "Acme"}])
-    assert wb.sheetnames == list(jde_worksheet.SHEETS)
+    assert wb.sheetnames == ["Read me", "Questions", "Tax areas", "Account mapping", "Suppliers"]
     assert [c.value or "" for c in wb["Account mapping"][2]][:3] == ["6100", "", "Office supplies"]
     assert wb["Suppliers"]["A2"].value == "Acme" and wb["Tax areas"]["A2"].value
 

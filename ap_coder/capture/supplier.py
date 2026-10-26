@@ -1701,7 +1701,7 @@ def should_auto_approve(
     if "CC_UNASSIGNED" in codes:
         return False, "a line has no cost center yet"
     warnings = [i.get("code") or "warning" for i in issues if str(i.get("severity", "")).lower() == "warning"]
-    if warnings:  # what bulk approval refuses too (``bulk._needs_a_person``)
+    if warnings:  # what bulk approval refuses too (``bulk.needs_a_person``)
         from ..ops.help import help_for
 
         about = help_for(str(warnings[0]))

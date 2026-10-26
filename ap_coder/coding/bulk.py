@@ -7,6 +7,9 @@ always goes to a person (``ALWAYS_A_PERSON``: some, like a new vendor name, are 
 credit is always applied by a person, as the touchless rules say) and the AI's confidence is above the review
 threshold.
 Everything else is skipped with the reason, and still needs a person.
+
+Entry points: ``sort_for_bulk`` (the queue's clean invoices, and why each other is left), ``issues_today`` and
+``bulk_approve``.
 """
 
 from __future__ import annotations
@@ -50,9 +53,6 @@ def needs_a_person(severity: Any, code: Any) -> bool:
     """An error, a warning, or a finding that always goes to a person whatever its severity: bulk approval leaves the
     invoice for a person, and the queue does not call it Ready (B-1027)."""
     return severity in ("error", "warning") or str(code or "") in ALWAYS_A_PERSON
-
-
-_needs_a_person = needs_a_person
 
 
 AUDIT_PICK = "picked for the audit sample: a person checks it"
@@ -185,7 +185,7 @@ def sort_for_bulk(
             continue
         if inv["id"] in today or inv["id"] in validations:
             issues = today[inv["id"]] if inv["id"] in today else validations[inv["id"]].get("issues") or []
-            person = any(_needs_a_person(i.get("severity"), i.get("code")) for i in issues)
+            person = any(needs_a_person(i.get("severity"), i.get("code")) for i in issues)
         else:
             person = bool((facts.get(inv["id"]) or {"q_person": False})["q_person"])
         if _credit_note(inv["id"] in titled, inv["grand_total"]):
@@ -204,7 +204,7 @@ def queue_facts(row: dict[str, Any]) -> dict[str, int]:
     and a stored finding that needs a person. Kept in the invoices' summary (D-110)."""
     issues = (row["validation"] or {}).get("issues") or []
     return {"q_audit": int(_audit_pick(row["meta"])),
-            "q_person": int(any(_needs_a_person(i.get("severity"), i.get("code")) for i in issues))}  # fmt: skip
+            "q_person": int(any(needs_a_person(i.get("severity"), i.get("code")) for i in issues))}  # fmt: skip
 
 
 def bulk_approve(
@@ -238,7 +238,7 @@ def _bulk_approve(
         found = validation.get("issues") or []
         if validation.get(CHECKS_STAMP_KEY) != stamp:  # checked against other settings (B-815)
             found = _kept(found)  # the coding's own checks are done again below, as they come out today
-        stored = [i for i in found if _needs_a_person(i.get("severity"), i.get("code"))]
+        stored = [i for i in found if needs_a_person(i.get("severity"), i.get("code"))]
         if stored:
             skipped.append((invoice_id, _plain(stored[0].get("message"), stored[0].get("code"))))
             continue
@@ -254,7 +254,7 @@ def _bulk_approve(
             continue
         output, report = finalise_coding(coding, reference, settings, store=store, exclude_invoice_id=invoice_id,
                                          received=_received_on(inv))  # fmt: skip
-        blocking = [i for i in report.issues if _needs_a_person(i.severity, i.code)]
+        blocking = [i for i in report.issues if needs_a_person(i.severity, i.code)]
         if blocking:
             skipped.append((invoice_id, _plain(blocking[0].message, blocking[0].code)))
             continue

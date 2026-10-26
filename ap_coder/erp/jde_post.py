@@ -103,13 +103,15 @@ def _expect(inv: dict[str, Any], headers: list[dict[str, Any]], settings: jde.Jd
     total = parse_amount((inv.get("final_output") or {}).get("grand_total"))
     if total is not None:
         gross.append(round(total, 2))
+    # Implied decimals are the currency's own: whole yen are written as they are (B-1372).
+    places = jde.NO_DECIMAL_CURRENCIES.get(str(head.get("VLCRCD") or "").upper(), 2)
     for foreign in (False, True):
         try:
             raw = sum(float(jde._gross_of(h, foreign) or 0) for h in headers)
         except (TypeError, ValueError):
             continue
         if raw:
-            gross.append(round(raw / 100 if settings.decimals == jde.IMPLIED else raw, 2))
+            gross.append(round(raw / 10**places if settings.decimals == jde.IMPLIED else raw, 2))
     return {"an8": str(head.get("VLAN8") or ""), "invoice_number": str(head.get("VLVINV") or ""),
             "gross": sorted(set(gross))}  # fmt: skip
 
@@ -221,10 +223,6 @@ def documents_of(store: Any, invoice_id: int | None) -> list[str]:
     with _conn(store) as conn:
         return [r[0] for r in conn.execute("SELECT document FROM jde_postings WHERE invoice_id = ? AND status = ? "
                                            "AND document != ''", (invoice_id, POSTED))]  # fmt: skip
-
-
-def posted_ids(store: Any, batch: int) -> set[int]:
-    return {p["invoice_id"] for p in postings(store, batch, (POSTED,))}
 
 
 def locked(store: Any, batch: int) -> list[dict[str, Any]]:

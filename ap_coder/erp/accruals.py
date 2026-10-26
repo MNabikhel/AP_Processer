@@ -12,6 +12,9 @@ Three sources, none counted twice:
   long overdue: AP decides), one with no date is not accrued but listed (``undated``)
 * Expected recurring invoices: regular vendors whose next invoice was due by the period end and has not
   arrived, at their usual amount, on the GL account most used for them (an estimate)
+
+Entry points: ``build`` (with ``undated``: the invoices with no date, not accrued), ``by_gl_columns``,
+``summary`` and ``to_csv``.
 """
 
 from __future__ import annotations
@@ -56,6 +59,12 @@ class Accrual:
 
 def _received_not_invoiced(store: Store, period_end: dt.date) -> list[Accrual]:
     out = []
+    end = period_end.isoformat()
+
+    def by_end(invoices: list[dict]) -> list[dict]:
+        return [i for i in invoices if str(i.get("invoice_date") or i["coding"].get("invoice_date") or "") <= end]
+
+    without_po: dict[str, list[dict]] = {}  # by vendor: read once, not once for each of its POs
     for po in store.purchase_orders():
         if po["status"] == CLOSED or not po["received_lines"]:
             continue
@@ -65,12 +74,10 @@ def _received_not_invoiced(store: Store, period_end: dt.date) -> list[Accrual]:
         # Returns are assumed to be reflected in the ERP's received quantity, so credits do not count here;
         # the vendor's invoices that quote no PO may still bill these lines ("PO-90155" in a description).
         # Invoices dated after the period end do not count: the goods were received, not yet invoiced, by then.
-        end = period_end.isoformat()
-        invoices = [
-            inv
-            for inv in store.po_invoices(po["po_key"]) + store.vendor_invoices_without_po(full["vendor_key"])
-            if str(inv.get("invoice_date") or inv["coding"].get("invoice_date") or "") <= end
-        ]
+        vendor = full["vendor_key"]
+        if vendor not in without_po:
+            without_po[vendor] = by_end(store.vendor_invoices_without_po(vendor))
+        invoices = by_end(store.po_invoices(po["po_key"])) + without_po[vendor]
         billed = billed_by_line(full, invoices, positive_only=True)
         for li in full["lines"]:
             if li["received_quantity"] is None or li.get("amount_only"):
@@ -120,13 +127,6 @@ def _unguessed(doc: dict, ai: dict) -> dict:
         return doc
     lines = [{**li, "predicted_gl_code": UNASSIGNED} if id(li) in guesses else li for li in lines]
     return {k: v for k, v in doc.items() if k != "gl_distribution"} | {"line_items": lines}
-
-
-def undated(store: Store, period_end: dt.date) -> list[Accrual]:
-    """Invoices not in the ERP yet with no invoice date: not accrued until they have one, listed (B-474)."""
-    out: list[Accrual] = []
-    _not_in_erp(store, period_end, out)
-    return out
 
 
 def _exported_bills(store: Store, rows: list[dict]) -> set[tuple[str, str, bool]]:
@@ -231,20 +231,13 @@ def _expected_recurring(store: Store, period_end: dt.date) -> list[Accrual]:
 
 
 def build(store: Store, period_end: dt.date, undated: list[Accrual] | None = None) -> list[Accrual]:
-    """The accruals at ``period_end``; ``undated``: filled with the invoices ``undated`` lists, read in the same go."""
+    """The accruals at ``period_end``; ``undated``: filled with the invoices not in the ERP yet that have no invoice
+    date, not accrued until they have one (B-474), read in the same go."""
     return (
         _received_not_invoiced(store, period_end)
         + _not_in_erp(store, period_end, undated)
         + _expected_recurring(store, period_end)
     )
-
-
-def by_gl(accruals: list[Accrual]) -> list[tuple[str, str, float]]:
-    """(GL account, currency, total) largest first."""
-    totals: dict[tuple[str, str], float] = defaultdict(float)
-    for a in accruals:
-        totals[(a.gl_code or "(no GL)", a.currency)] += a.amount
-    return sorted(((gl, cur, round(t, 2)) for (gl, cur), t in totals.items()), key=lambda x: -x[2])
 
 
 def by_gl_columns(accruals: list[Accrual]) -> tuple[list[str], list[tuple[str, dict[str, float]]]]:
@@ -267,7 +260,7 @@ def to_csv(accruals: list[Accrual], period_end: dt.date) -> bytes:
     for a in accruals:
         w.writerow(csv_row([a.source, a.vendor, a.reference, a.description, a.gl_code, a.cost_center,
                             f"{a.amount:.2f}", a.currency, a.note]))  # fmt: skip
-    return ("﻿" + out.getvalue()).encode("utf-8")
+    return ("\ufeff" + out.getvalue()).encode("utf-8")
 
 
 def default_period_end(today: dt.date | None = None) -> dt.date:

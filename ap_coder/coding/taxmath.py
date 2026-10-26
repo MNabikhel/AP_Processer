@@ -1,5 +1,8 @@
 """The math on an invoice, worked out again from its lines: the review screen shows it as the Tax check under the line
-items and on the approve bar, and the AI reviewer (verifier.py) is given it."""
+items and on the approve bar, and the AI reviewer (verifier.py) is given it.
+
+Entry point: ``math_check``; ``money`` writes an amount as the review screen's boxes do.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +12,7 @@ from typing import Any
 from ..core.schema import InvoiceCoding
 from ..core.ui import plural
 from .line_tax import tax_name
-from .tax import PROVINCES, REGIME, TAX_TYPES, currency_places, supply_source
+from .tax import PROVINCES, REGIME, TAX_TYPES, currency_places, gap_lines, short, supply_source
 
 
 def money(value: Any) -> str:
@@ -19,16 +22,7 @@ def money(value: Any) -> str:
         amount = float(value)
     except (TypeError, ValueError):
         return "—"
-    return f"-{-amount:,.2f}" if amount < -0.004 else f"{abs(amount) if amount > -0.005 else 0.0:,.2f}"
-
-
-def _short(text: str, size: int = 28) -> str:
-    text = " ".join(str(text or "").split())
-    return text if len(text) <= size else text[: size - 1].rstrip() + "…"
-
-
-def _gap_lines(lines: list[Any], gap: float, tol: float, sign: int = 1) -> list[Any]:
-    return [li for li in lines if abs(sign * li.amount - gap) <= tol + 1e-9 and abs(li.amount) > 0.004]
+    return f"-{-amount:,.2f}" if amount < -0.004 else f"{abs(amount):,.2f}"
 
 
 def math_check(coding: InvoiceCoding, setup: Any = None) -> dict[str, Any]:
@@ -133,15 +127,15 @@ def math_check(coding: InvoiceCoding, setup: Any = None) -> dict[str, Any]:
                 suspects = flagged
                 why = f"Marked {label}, but no {label} is charged"
             elif base_gap < 0:
-                suspects = _gap_lines(flagged, -base_gap, tol, sign)
+                suspects = gap_lines(flagged, -base_gap, tol, sign)
                 why = f"May not carry {label}: the {label} charged adds up without it"
             else:
                 unmarked = [li for li in items if tax_type not in li.taxes_applied]
-                suspects = _gap_lines(unmarked, base_gap, tol, sign)
+                suspects = gap_lines(unmarked, base_gap, tol, sign)
                 why = f"May carry {label} too: the {label} charged adds up with it"
             if len(suspects) == 1 and abs(charged) >= 0.005:
                 li = suspects[0]
-                row["named"] = f"Line {li.line_number} ({_short(li.description)}, {money(li.amount)})"
+                row["named"] = f"Line {li.line_number} ({short(li.description, 28)}, {money(li.amount)})"
                 row["why"] = (f"may not carry {label}: the {label} charged adds up without it." if base_gap < 0
                               else f"may carry {label} too: the {label} charged adds up with it.")  # fmt: skip
             elif abs(charged) >= 0.005:

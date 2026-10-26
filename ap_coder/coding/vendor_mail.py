@@ -5,6 +5,9 @@ up, a price above the PO...). Internal controls are never mentioned: fraud and d
 would tip off a fraudster (bank account or GST/HST number changed, vendor on hold, unusual amount, not in
 the vendor master), GL coding, and how the document was read. A changed bank account is confirmed by
 phone, never by replying to an email.
+
+Entry points: ``draft`` (an invoice's email), ``points`` and ``statement_request`` (after a statement
+reconciliation).
 """
 
 from __future__ import annotations
@@ -14,7 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
 
-from .tax import stored_supply
+from .tax import short, stored_supply
 
 ENGLISH, FRENCH = "en", "fr"
 LANGUAGES = {ENGLISH: "English", FRENCH: "Français"}
@@ -184,11 +187,6 @@ def suggested_language(coding: dict[str, Any]) -> str:
     return FRENCH if (coding.get("supplier_province") or "") == "QC" else ENGLISH
 
 
-def _short(text: Any, limit: int = 60) -> str:
-    text = " ".join(str(text or "").split())
-    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
-
-
 def points(coding: dict[str, Any], issues: Iterable[Any], language: str = ENGLISH) -> list[str]:
     """One request per problem, in the order a vendor would read the invoice."""
     t = _TEXT[language]
@@ -237,7 +235,7 @@ def points(coding: dict[str, Any], issues: Iterable[Any], language: str = ENGLIS
         seen.add((code, n))
         li = lines_by_number.get(n) or {}
         price = _amount(li.get("unit_price"), language)
-        out.append(t[keys[code]].format(line=n or "?", item=_short(li.get("description")), price=price, po=po))
+        out.append(t[keys[code]].format(line=n or "?", item=short(li.get("description"), 60), price=price, po=po))
     original = (coding.get("original_invoice_number") or "").strip() or "?"
     if "CREDIT_NOTE_ORIGINAL_UNKNOWN" in codes:
         out.append(t["credit_unknown"].format(original=original))
