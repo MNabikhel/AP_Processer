@@ -1226,7 +1226,8 @@ def voucher_findings(output: dict[str, Any], settings: JdeSettings, an8: str) ->
         po = str(output.get("po_number") or "").strip()
         if code == "JDE_NO_AN8":
             out.append((ERROR, "JDE_NO_AN8", "JD Edwards: this vendor has no supplier number (AN8). Pick the vendor "
-                        "from the vendor list, or ask the pilot tester to add its number", None))  # fmt: skip
+                        "from the vendor list, or add its number in Settings → JD Edwards E1 → Supplier address "
+                        "numbers (on the company server, an Admin does)", None))  # fmt: skip
         elif code == "JDE_BAD_AN8":
             out.append((ERROR, "JDE_BAD_AN8", f"JD Edwards: the supplier number {an8} is not an address number (AN8: "
                         "digits only, up to 8). Set this vendor's AN8 in Settings → JD Edwards E1, or ask whoever "

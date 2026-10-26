@@ -140,7 +140,7 @@
           <details class="pop inv-vendor-add" data-vendor-add>
             <summary class="btn sm ghost"><span class="ms" aria-hidden="true">person_add</span>Add new vendor…</summary>
             <div class="pop-body stack">
-              <p class="small muted">A vendor not in the vendor list. Its invoices need a person until it is set up in JD Edwards and the vendor list is imported again.</p>
+              <p class="small muted">A vendor not in the vendor list. AP Coder never approves its invoices on its own: each one is checked by a person, who approves it with “Approve anyway”, until the vendor is set up in JD Edwards and the vendor list is imported again.</p>
               <label class="field">Vendor name<input type="text" data-new="name" autocomplete="off"></label>
               <div class="row">
                 <label class="field grow">GST/HST #<input type="text" data-new="gst" placeholder="123456789RT0001"></label>
@@ -150,6 +150,12 @@
                 <label class="field grow">PST #<input type="text" data-new="pst" placeholder="PST-1234-5678"></label>
                 <label class="field">Province<select data-new="province"><option value="">—</option>{% for code, label in provinces %}{% if code %}<option value="{{ code }}">{{ label }}</option>{% endif %}{% endfor %}</select></label>
               </div>
+              {% if live.jde and is_admin %}
+              <label class="field">JD Edwards address number (AN8)<input type="text" data-new="an8" inputmode="numeric" maxlength="8" placeholder="e.g. 40123" autocomplete="off">
+                <small class="muted">JD Edwards needs it before this vendor's invoices can be approved. You can also add it later in Settings → JD Edwards E1 → Supplier address numbers.</small></label>
+              {% elif live.jde %}
+              <p class="small muted">JD Edwards needs this vendor's address number (AN8) before its invoices can be approved: an Admin adds it in Settings → JD Edwards E1 → Supplier address numbers.</p>
+              {% endif %}
               <button class="btn primary sm" type="button" data-new-go><span class="ms" aria-hidden="true">person_add</span>Add to the vendor list</button>
             </div>
           </details>

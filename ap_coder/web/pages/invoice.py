@@ -25,6 +25,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import threading
+from copy import copy
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
@@ -43,10 +44,10 @@ from ap_coder.core.memory import ACCEPTED, CODED, CORRECTED, vendor_key
 from ap_coder.core.reference_data import ReferenceData
 from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store, coded_blanks
 from ap_coder.core.store.users import same_approver
-from ap_coder.erp import stamp
+from ap_coder.erp import jde, stamp
 from ap_coder.web import document, identity
 from ap_coder.web import invoice_view as view
-from ap_coder.web.access import key_of, person_key
+from ap_coder.web.access import is_admin, key_of, person_key
 from ap_coder.web.core import (
     can,
     done,
@@ -582,10 +583,11 @@ def vendor_options(store: Store) -> dict[str, Any]:
 @router.post("/review/{invoice_id:int}/vendor")
 def add_vendor(
     request: Request, invoice_id: int, name: str = Form(""), gst: str = Form(""), qst: str = Form(""),
-    pst: str = Form(""), province: str = Form(""),
+    pst: str = Form(""), province: str = Form(""), an8: str = Form(""),
 ) -> JSONResponse:  # fmt: skip
-    """Add new vendor: a vendor not in the vendor list, added from the review screen. Its invoices need a person
-    (VENDOR_ADDED_HERE) until it is set up in JD Edwards and the vendor list is imported again."""
+    """Add new vendor: a vendor not in the vendor list, added from the review screen. Its invoices need a person's
+    "Approve anyway" (VENDOR_ADDED_HERE) until it is set up in JD Edwards and the vendor list is imported again. With
+    JD Edwards on, its address number (AN8) can be given here (an Admin's, as in Settings → JD Edwards E1, D-112)."""
     store = get_store(request)
     inv = _invoice(store, invoice_id)
     if inv["status"] != REVIEW:
@@ -593,13 +595,25 @@ def add_vendor(
     name = " ".join(name.split())
     if province and province not in PROVINCE_NAMES and province != OUTSIDE_CANADA:
         return refuse("Choose a province from the list.")
+    an8 = an8.strip()
+    if an8 and not is_admin(request):
+        return refuse("Only an Admin sets a vendor's JD Edwards address number (Settings → JD Edwards E1).", 403)
+    if an8 and (not an8.isdigit() or len(an8) > 8):
+        return refuse(f"“{an8}” is not a JD Edwards address number (AN8): digits only, up to 8.")
     try:
         store.add_vendor_here(name, gst=gst, qst=qst, pst=pst, province=province, actor=reviewer(),
                               invoice_id=invoice_id)  # fmt: skip
     except ValueError as exc:
         return refuse(str(exc))
-    return message(f"Added {name} to the vendor list. Set it up in JD Edwards before it is paid: its invoices need a "
-                   "person until then.", "ok", icon="person_add", vendor=name, key=vendor_key(name))  # fmt: skip
+    said = f"Added {name} to the vendor list"
+    if an8:
+        settings = copy(jde.load(store))
+        settings.an8_overrides = {**settings.an8_overrides, vendor_key(name): an8}
+        jde.save(store, settings, actor=reviewer())
+        said += f", with JD Edwards address number {an8}"
+    return message(f"{said}. Set it up in JD Edwards before it is paid: until then a person approves each of its "
+                   "invoices with “Approve anyway”.", "ok", icon="person_add", vendor=name,
+                   key=vendor_key(name))  # fmt: skip
 
 
 def _mode(inv: dict[str, Any], reference: ReferenceData | None) -> str:
