@@ -116,10 +116,12 @@ def page_pngs(path: str | Path, max_pages: int = MAX_PAGES) -> list[bytes]:
     at most ``MAX_SIDE`` pixels. [] for a file without pages (a text file)."""
     from PIL import Image, ImageOps
 
+    from ..capture.layout import picture_formats
+
     path = Path(path)
     out = []
     for page in render_page_images(path, max_pages):
-        with Image.open(io.BytesIO(page.data)) as img:
+        with Image.open(io.BytesIO(page.data), formats=picture_formats()) as img:
             upright = img.getexif().get(0x0112, 1) in (0, 1)  # EXIF orientation: a phone photo may be turned
             if page.mime_type == "image/png" and upright and max(img.size) <= MAX_SIDE:
                 out.append(page.data)

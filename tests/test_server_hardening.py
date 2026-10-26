@@ -148,3 +148,54 @@ def test_the_bundle_builder_writes_the_zips_sha256_beside_it(tmp_path):
     assert path == tmp_path / f"{zip_path.name}.sha256"
     assert path.read_text(encoding="utf-8") == f"{digest}  {zip_path.name}\n"
     assert digest == server_update.file_sha256(zip_path)
+
+
+# --- 3. Pillow opens only the picture formats AP Coder takes in -------------------------------------------------------
+
+
+def _picture(fmt: str) -> bytes:
+    import io
+
+    from PIL import Image
+
+    out = io.BytesIO()
+    Image.new("RGB", (40, 30), "white").save(out, format=fmt)
+    return out.getvalue()
+
+
+@pytest.mark.parametrize("fmt", ["PCX", "ICO", "TGA"])
+def test_a_picture_in_another_format_is_never_decoded(fmt):
+    import io
+
+    from PIL import UnidentifiedImageError
+
+    from ap_coder.ai import page_reader
+    from ap_coder.capture import layout
+
+    data = _picture(fmt)
+    with pytest.raises(UnidentifiedImageError):
+        layout.open_image(io.BytesIO(data), "invoice.png")
+    with pytest.raises(page_reader.PageReaderError):
+        page_reader._open_picture(data)
+
+
+@pytest.mark.parametrize("fmt", ["JPEG", "PNG", "TIFF", "WEBP", "GIF", "BMP"])
+def test_the_picture_formats_taken_in_still_open(fmt):
+    import io
+
+    from ap_coder.ai import page_reader
+    from ap_coder.capture import layout
+
+    data = _picture(fmt)
+    with layout.open_image(io.BytesIO(data), f"invoice.{fmt.lower()}") as img:
+        assert img.size == (40, 30)
+    assert page_reader._open_picture(data).size == (40, 30)
+
+
+def test_the_package_minimums_leave_out_the_versions_with_known_vulnerabilities():
+    import tomllib
+
+    deps = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["dependencies"]
+    assert "pillow>=13" in deps and "certifi>=2026.10.19" in deps
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert "pip-audit" in workflow

@@ -614,12 +614,12 @@ def _open_picture(data: bytes) -> Any:
     HEIC/HEIF photo is opened with pillow-heif; without it, that is said plainly."""
     from PIL import Image
 
-    from ..capture.layout import NO_HEIF, register_heif
+    from ..capture.layout import NO_HEIF, picture_formats, register_heif
 
     if not register_heif() and data[4:8] == b"ftyp" and data[8:12] in _HEIF_BRANDS:
         raise PageReaderError(NO_HEIF)
     try:
-        return Image.open(io.BytesIO(data))
+        return Image.open(io.BytesIO(data), formats=picture_formats())
     except Image.DecompressionBombError as exc:
         pixels = re.search(r"\((\d+) pixels\)", str(exc))
         megapixels = int(pixels.group(1)) / 1e6 if pixels else 0.0
