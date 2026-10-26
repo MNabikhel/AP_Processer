@@ -28,8 +28,10 @@ from __future__ import annotations
 
 import base64
 import binascii
+import datetime as dt
 import hashlib
 import hmac
+import json
 import re
 import secrets
 import time
@@ -60,6 +62,7 @@ ACCOUNT_FAILURES = 10
 ACCOUNT_WINDOW = 3600
 KNOWN_ADDRESS_SECONDS = 30 * 86400  # an address the account logged in from this recently is "known"
 ANYWHERE = "*"  # the address of an account-wide pause (paused_usernames, unlock_username)
+VOUCH_DAYS = 7  # an account an Admin added or reset can't give the second approval of that Admin's invoice (D-109)
 UNKNOWN = "?"  # how login_attempts keeps a username no account has: "?" and a hash, never the text typed
 USERNAME = re.compile(r"[a-z0-9][a-z0-9._@-]{0,63}")
 MAX_DISPLAY_NAME = 60
@@ -269,9 +272,10 @@ class UsersMixin:
     # --- Accounts ---------------------------------------------------------------------------------------------------
 
     def add_user(self, username: str, password: str, role: str = CLERK, display_name: str = "", *,
-                 actor: str = "", must_change: bool = True) -> int:  # fmt: skip
+                 actor: str = "", must_change: bool = True, by_user: int | None = None) -> int:  # fmt: skip
         """A new account; ValueError (in words) for a username taken or not allowed, a role that is not one of
-        ``ROLES`` or a password the policy refuses."""
+        ``ROLES`` or a password the policy refuses. ``by_user``: the account of the Admin adding it (recorded, for
+        ``vouched_for``)."""
         name = fold_username(username)
         if not USERNAME.fullmatch(name):
             raise ValueError(
@@ -294,7 +298,8 @@ class UsersMixin:
                 "VALUES (?, ?, ?, ?, 1, ?, ?)",
                 (name, shown, role, hashed, int(must_change), _now()),
             )
-            self._log(conn, "user_added", None, actor or None, {"username": name, "name": shown, "role": role})
+            by = {"by_user": int(by_user)} if by_user is not None else {}
+            self._log(conn, "user_added", None, actor or None, {"username": name, "name": shown, "role": role, **by})
             return int(cur.lastrowid)
 
     def user(self, user_id: int) -> dict[str, Any] | None:
@@ -400,7 +405,8 @@ class UsersMixin:
                       {"username": row["username"]})  # fmt: skip
         return fresh
 
-    def reset_password(self, user_id: int, *, actor: str = "", password: str | None = None) -> str:
+    def reset_password(self, user_id: int, *, actor: str = "", password: str | None = None,
+                       by_user: int | None = None) -> str:  # fmt: skip
         """A new password for someone who forgot theirs (``password``, else a temporary one made here, returned to
         be given to them once): they choose their own at the next login, every session of theirs ends, and what
         would refuse them is lifted: their username's pauses, and the pause of every address they logged in or tried
@@ -422,8 +428,25 @@ class UsersMixin:
             for ip in theirs:
                 self._lift_address(conn, ip)
             conn.execute("DELETE FROM login_attempts WHERE username = ? AND ok = 0", (row["username"],))
-            self._log(conn, "password_reset", None, actor or None, {"username": row["username"]})
+            by = {"by_user": int(by_user)} if by_user is not None else {}
+            self._log(conn, "password_reset", None, actor or None, {"username": row["username"], **by})
         return chosen
+
+    def vouched_for(self, admin_id: int, user_id: int, days: int = VOUCH_DAYS) -> bool:
+        """Whether account ``admin_id`` added account ``user_id``, or reset its password, in the last ``days`` days:
+        it knew that account's password then, so the two are not two people for a second approval (D-109)."""
+        since = (dt.datetime.now() - dt.timedelta(days=days)).isoformat(timespec="seconds")
+        with self._conn() as conn:
+            row = conn.execute("SELECT username FROM users WHERE id = ?", (int(user_id),)).fetchone()
+            if row is None:
+                return False
+            found = conn.execute("SELECT detail FROM events WHERE action IN ('user_added', 'password_reset') AND "
+                                 "created_at >= ?", (since,)).fetchall()  # fmt: skip
+        for (detail,) in found:
+            d = json.loads(detail or "{}")
+            if d.get("username") == row["username"] and d.get("by_user") == int(admin_id):
+                return True
+        return False
 
     # --- Paused addresses (D-101) ---------------------------------------------------------------------------------
 

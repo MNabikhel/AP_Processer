@@ -90,7 +90,10 @@ def add_user(
 
     password = temporary_password()
     try:
-        store.add_user(username, password, role=role, display_name=name, actor=reviewer())
+        me = identity.person()
+        store.add_user(
+            username, password, role=role, display_name=name, actor=reviewer(), by_user=me.user_id if me else None
+        )  # (D-109: it can't give that Admin's second approval)
     except ValueError as exc:
         return refuse(str(exc))
     key = _keep(fold_username(username), password)
@@ -104,7 +107,7 @@ def reset(request: Request, user_id: int) -> JSONResponse:
     me = identity.person()
     if me is not None and me.user_id == found["id"]:  # it would log you out before the password is shown (D-101)
         return refuse(OWN_RESET)
-    password = get_store(request).reset_password(user_id, actor=reviewer())
+    password = get_store(request).reset_password(user_id, actor=reviewer(), by_user=me.user_id if me else None)
     key = _keep(found["username"], password)
     said = f"Password of {found['username']} reset: they are logged out everywhere."
     return done(request, f"{PATH}?shown={key}", flash_message(said, "ok"))

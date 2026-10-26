@@ -385,3 +385,116 @@ def test_an_admin_lifts_an_account_wide_pause(tmp_path, clock):
                                                          for p in store.paused_usernames()]  # fmt: skip
     assert store.unlock_username("ann", ANYWHERE, actor="boss")
     assert store.authenticate("ann", GOOD, "10.7.1.1")["username"] == "ann"
+
+
+# --- 7. Separation of duties ------------------------------------------------------------------------------------------
+
+
+def _waiting(store, approver_id: int, name: str = "Boss") -> int:
+    from ap_coder.core.store import PENDING
+
+    from .webclient import add_clean
+
+    store.set_setting("approval_limit", "100")
+    invoice_id = add_clean(store)
+    store.approve_invoice(invoice_id, store.get_invoice(invoice_id)["ai_output"], name, login=f"user:{approver_id}")
+    assert store.get_invoice(invoice_id)["status"] == PENDING
+    return invoice_id
+
+
+def test_the_final_approval_always_checks_the_approval_shown(tmp_path):
+    from ap_coder.core.store import ApprovedAgain
+
+    store = Store(tmp_path / "ap_coder.db")
+    invoice_id = _waiting(store, 1)
+    with pytest.raises(ApprovedAgain):
+        store.final_approve(invoice_id, "Ann", login="user:2", shown=None)
+    with pytest.raises(TypeError):
+        store.final_approve(invoice_id, "Ann", login="user:2")  # noqa  (shown must be given)
+    assert store.get_invoice(invoice_id)["status"] == "pending_approval"
+
+
+def test_the_final_approval_page_that_posts_no_approval_is_refused(web):
+    from .test_server_security import account, log_in
+    from .webclient import PAGE
+
+    store = web["store"]
+    first = account(store, "ann", "approver")
+    second = account(store, "bob", "approver")
+    assert first != second
+    invoice_id = _waiting(store, first, "Ann")
+    client = web["client"]()
+    assert log_in(client, "bob").status_code == 200
+    client.post(f"/review/{invoice_id}/final-approve", headers=PAGE)
+    assert store.get_invoice(invoice_id)["status"] == "pending_approval"
+
+
+def test_an_admin_cant_give_the_second_approval_through_an_account_they_made(web):
+    from .test_server_security import account, log_in
+    from .webclient import PAGE
+
+    store = web["store"]
+    boss = account(store, "boss", "admin")
+    admin = web["client"]()
+    assert log_in(admin, "boss").status_code == 200
+    assert admin.post("/admin/users/add", data={"username": "puppet", "name": "Puppet", "role": "approver"},
+                      headers=PAGE).json()["ok"]  # fmt: skip
+    puppet = store.find_user("puppet")["id"]
+    invoice_id = _waiting(store, boss)
+    with pytest.raises(PermissionError, match="added or reset"):
+        store.final_approve(invoice_id, "Puppet", login=f"user:{puppet}", shown=store.latest_approval_id(invoice_id))
+    other = account(store, "mlee", "approver")
+    admin.post(f"/admin/users/{other}/reset", headers=PAGE)  # a reset too
+    with pytest.raises(PermissionError, match="added or reset"):
+        store.final_approve(invoice_id, "M Lee", login=f"user:{other}", shown=store.latest_approval_id(invoice_id))
+    with store._conn() as conn:  # 8 days later
+        conn.execute("UPDATE events SET created_at = '2000-01-01T00:00:00' WHERE action IN ('user_added', "
+                     "'password_reset')")  # fmt: skip
+    store.final_approve(invoice_id, "Puppet", login=f"user:{puppet}", shown=store.latest_approval_id(invoice_id))
+    assert store.get_invoice(invoice_id)["status"] == "approved"
+
+
+def test_the_poster_can_be_kept_apart_from_the_approvers(tmp_path):
+    store = Store(tmp_path / "ap_coder.db")
+    invoice_id = _waiting(store, 1)
+    store.final_approve(invoice_id, "Ann", login="user:2", shown=store.latest_approval_id(invoice_id))
+    with store._conn() as conn:
+        conn.execute("UPDATE invoices SET export_batch = 7 WHERE id = ?", (invoice_id,))
+    assert store.posting_refusal(7, 2) == ""  # off by default
+    store.set_setting("poster_not_approver", "1")
+    assert f"#{invoice_id}" in store.posting_refusal(7, 2) and f"#{invoice_id}" in store.posting_refusal(7, 1)
+    assert store.posting_refusal(7, 3) == ""  # someone who approved none of them
+
+
+def test_the_setting_is_an_admins_on_the_review_tab(web):
+    from .test_server_security import account, log_in
+    from .webclient import PAGE
+
+    store = web["store"]
+    account(store, "boss", "admin")
+    admin = web["client"]()
+    assert log_in(admin, "boss").status_code == 200
+    page = admin.get("/settings/review").text
+    assert 'name="poster_not_approver"' in page
+    version = __import__("re").search(r'name="version" value="([^"]*)"', page)
+    data = {"duties_shown": "1", "poster_not_approver": "1", **({"version": version.group(1)} if version else {})}
+    assert admin.post("/settings/review", data=data, headers=PAGE).json()["ok"]
+    assert store.poster_not_approver()
+
+
+def test_the_controls_report_lists_one_person_at_several_steps_on_the_server(tmp_path):
+    import datetime as dt
+
+    from ap_coder.erp import controls
+
+    store = Store(tmp_path / "ap_coder.db")
+    invoice_id = _waiting(store, 1, "Ann")
+    store.log_event("exported", invoice_id=invoice_id, actor="Ann", detail={"batch": 1})
+    today = dt.date.today()
+    report = controls.build(store, today, today, duties=True)
+    assert [(s["invoice_id"], s["person"], s["steps"]) for s in report["same_person"]] == [
+        (invoice_id, "Ann", ["approved", "exported"])
+    ]
+    assert "One person at several steps (1)" in controls.report_html(report)
+    laptop = controls.build(store, today, today)
+    assert laptop["same_person"] is None and "One person at several steps" not in controls.report_html(laptop)

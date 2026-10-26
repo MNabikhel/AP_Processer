@@ -276,7 +276,7 @@ def test_second_approval_on_an_invoice_someone_else_just_handled(client, store, 
     store.approve_invoice(invoice_id, store.get_invoice(invoice_id)["ai_output"], "Sam")
     assert store.get_invoice(invoice_id)["status"] == PENDING
     assert f"/review/{invoice_id}/final-approve" in client.get("/review?tab=second").text
-    store.final_approve(invoice_id, "Lee")
+    store.final_approve(invoice_id, "Lee", shown=store.latest_approval_id(invoice_id))
     response = post(client, f"/review/{invoice_id}/final-approve")
     assert "someone else changed this invoice meanwhile" in client.get(response.json()["redirect"]).text
     assert store.get_invoice(invoice_id)["second_reviewer"] == "Lee"

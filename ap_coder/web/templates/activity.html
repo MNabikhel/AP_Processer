@@ -27,6 +27,7 @@
     {{ ui.tile("Risk signals approved", report.signals | length, "", "amber" if report.signals else "green", "duplicates, vendor, PO") }}
     {{ ui.tile("Second approvals", report.finals | length, "", "violet", (report.sent_back | length) ~ " sent back or reopened · " ~ (report.waiting | length) ~ " waiting") }}
     {{ ui.tile("Setup changes", report.setup | length, "", "blue", "accounts, tax, vendors, POs") }}
+    {% if report.same_person is not none %}{{ ui.tile("One person, several steps", report.same_person | length, "", "amber" if report.same_person else "green", "approved, exported, posted") }}{% endif %}
   </div>
   <a class="btn" href="/activity/controls-report?start={{ start.isoformat() }}&amp;end={{ end.isoformat() }}" download>
     <span class="ms" aria-hidden="true">download</span>Download the controls report</a>

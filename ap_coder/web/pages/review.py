@@ -652,7 +652,8 @@ def review_unpark(request: Request, invoice_id: int) -> JSONResponse:
 
 @router.post("/review/{invoice_id}/final-approve")
 def review_final_approve(request: Request, invoice_id: int, approval: str | None = Form(None)) -> JSONResponse:
-    """``approval``: the first approval the page showed (B-654); a page that posts none is not checked."""
+    """``approval``: the first approval the page showed (B-654); a page that posts none is refused as one shown an
+    older approval (D-109)."""
     from ap_coder.core.store import ApprovedAgain
 
     store = get_store(request)

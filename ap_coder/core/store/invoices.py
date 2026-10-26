@@ -42,7 +42,9 @@ from ._base import (
     parse_fx_rates,
     suggestion_kept,
 )
-from .users import account_of, same_approver  # noqa: F401  (also used by the pages)
+from .users import VOUCH_DAYS, account_of, same_approver  # noqa: F401  (also used by the pages)
+
+POSTER_NOT_APPROVER = "poster_not_approver"  # the setting (D-109)
 
 
 class InvoicesMixin:
@@ -904,12 +906,43 @@ class InvoicesMixin:
         """Does this invoice need a second approver (``second_approval_reason``)?"""
         return bool(self.second_approval_reason(coding, limit, unknown_rate=unknown_rate))
 
-    def final_approve(self, invoice_id: int, approver: str, login: str = "", shown: str | None = None) -> None:
+    def poster_not_approver(self) -> bool:
+        """The Admin's separation of duties on the server (Settings → Review, off by default): the person who posts a
+        batch to JD Edwards can't be one who approved its invoices (D-109)."""
+        return self.get_setting(POSTER_NOT_APPROVER) == "1"
+
+    def posting_refusal(self, batch: int, user_id: int | None) -> str:
+        """Why account ``user_id`` may not post ``batch`` to JD Edwards ("" = it may): with ``poster_not_approver``
+        on, it gave the first or second approval of one of the batch's invoices."""
+        if user_id is None or not self.poster_not_approver():
+            return ""
+        with self._conn() as conn:
+            rows = conn.execute("SELECT e.invoice_id, e.detail FROM events e JOIN invoices i ON i.id = e.invoice_id "
+                                "WHERE i.export_batch = ? AND e.action IN ('approved', 'final_approved')",
+                                (int(batch),)).fetchall()  # fmt: skip
+        mine = sorted({int(r[0]) for r in rows if json.loads(r[1] or "{}").get("user_id") == int(user_id)})
+        if not mine:
+            return ""
+        which = ", ".join(f"#{i}" for i in mine[:5]) + (" and more" if len(mine) > 5 else "")
+        return (f"Not posted: you approved {which} in this batch, and here the person who posts to JD Edwards can't "
+                "be one who approved its invoices (Settings → Review, set by an Admin). Another Approver posts "
+                "it.")  # fmt: skip
+
+    def latest_approval_id(self, invoice_id: int) -> str:
+        """The id of the invoice's latest ``approved`` event ("" when none): what a page shows as the first approval
+        and posts back with the final approval (``final_approve``'s ``shown``)."""
+        with self._conn() as conn:
+            found = conn.execute("SELECT MAX(id) FROM events WHERE invoice_id = ? AND action = 'approved'",
+                                 (invoice_id,)).fetchone()[0]  # fmt: skip
+        return str(found or "")
+
+    def final_approve(self, invoice_id: int, approver: str, login: str = "", *, shown: str | None) -> None:
         """The second approval: by someone other than the first approver (another name and, when the
-        dashboard records it, another computer login; in server mode another account: ``same_approver``). The
-        invoice can then be exported. ``shown``: the first approval the page showed (its ``approved`` event's id, as
-        the page posts it): approved again since, it is refused (``ApprovedAgain``), as the version now waiting is not
-        the one the approver looked at (B-654)."""
+        dashboard records it, another computer login; in server mode another account: ``same_approver``, and not
+        one the first approver added or reset the password of in the last ``VOUCH_DAYS`` days). The invoice can then
+        be exported. ``shown``, always given: the first approval the page showed (its ``approved`` event's id, as the
+        page posts it, ``latest_approval_id``): approved again since, or none given, it is refused
+        (``ApprovedAgain``), as the version now waiting may not be the one the approver looked at (B-654, D-109)."""
         inv = self.get_invoice(invoice_id)
         if inv is None or inv["status"] != PENDING:
             raise ValueError(f"invoice {invoice_id} is not waiting for a second approval")
@@ -921,12 +954,16 @@ class InvoicesMixin:
             if (approver or "").strip().casefold() == (inv["reviewer"] or "").strip().casefold():
                 raise PermissionError("the second approval must come from someone other than the first approver")
             raise PermissionError("the second approval must come from another computer login than the first")
+        first_user = ((first or {}).get("detail") or {}).get("user_id")
+        if first_user is not None and account_of(login) is not None and self.vouched_for(first_user, account_of(login)):
+            raise PermissionError(f"the second approval can't come from an account the first approver added or reset "
+                                  f"the password of in the last {VOUCH_DAYS} days")  # fmt: skip
         with self._conn() as conn:
             conn.execute("BEGIN IMMEDIATE")  # checked and approved in one go: no new first approval in between
             latest = conn.execute(
                 "SELECT MAX(id) FROM events WHERE invoice_id = ? AND action = 'approved'", (invoice_id,)
             ).fetchone()[0]
-            if shown is not None and str(shown).strip() != str(latest or ""):
+            if str(shown or "").strip() != str(latest or ""):
                 raise ApprovedAgain(f"invoice {invoice_id} was approved again since the page was opened")
             cur = conn.execute(
                 # Same first approval as checked above: it may have been sent back and re-approved meanwhile.

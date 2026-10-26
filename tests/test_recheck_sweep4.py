@@ -173,7 +173,7 @@ def test_activity_says_the_stored_reason_on_the_second_approval(client, store):
     from .test_web_ui_sweep4 import _waiting_for_second
 
     invoice_id = _waiting_for_second(store, client)
-    store.final_approve(invoice_id, "Sam Second", login="ssecond")
+    store.final_approve(invoice_id, "Sam Second", login="ssecond", shown=store.latest_approval_id(invoice_id))
     event = next(e for e in store.events(invoice_id) if e["action"] == "final_approved")
     text = audit.describe(event)
     assert "no CAD exchange rate for USD" in text and "over the approval limit" not in text
