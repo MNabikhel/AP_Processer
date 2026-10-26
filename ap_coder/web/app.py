@@ -41,7 +41,7 @@ from ap_coder.web.errors import FriendlyErrors
 from ap_coder.web.identity import THIS_COMPUTER, Identity, from_this_computer, is_this_computer
 from ap_coder.web.jobs import Jobs
 from ap_coder.web.pages import MORE_MODULES, PAGES, Page
-from ap_coder.web.security import TOKEN_HEADER, LocalOnly, SecurityHeaders, allowed_hosts
+from ap_coder.web.security import TOKEN_HEADER, AccessLog, LocalOnly, SecurityHeaders, allowed_hosts
 
 CODE_FOLDER = core.WEB_DIR.parent.parent  # the folder holding ap_coder/ (the launcher checks it is its own)
 
@@ -212,6 +212,8 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     )  # + the server's names (AP_ALLOWED_HOSTS)
     # Outermost: a refusal carries the headers too.
     app.add_middleware(SecurityHeaders, server=server, hsts=server and not insecure_http)
+    if server:  # every request in logs/access.log, and each download in the audit trail (D-109)
+        app.add_middleware(AccessLog, folder=store.path.parent / "logs", store=store)
     app.mount("/static", CheckedStaticFiles(directory=str(core.STATIC_DIR)), name="static")
     app.mount("/fonts", StaticFiles(directory=str(core.FONTS_DIR)), name="fonts")
     app.mount("/assets", StaticFiles(directory=str(core.ASSETS_DIR)), name="assets")

@@ -98,6 +98,7 @@ ACTIONS = {
     "login": ("login", "info", "Logged in"),
     "login_failed": ("password", "warn", "Login didn't match"),
     "login_locked": ("lock_clock", "err", "Logins paused"),
+    "downloaded": ("download", "info", "Downloaded"),
     "logout": ("logout", "gray", "Logged out"),
     "password_changed": ("key", "info", "Password changed"),
     "password_reset": ("lock_reset", "warn", "Password reset"),
@@ -431,6 +432,8 @@ def describe(event: dict[str, Any]) -> str:
     if action in ("jde_voucher_posted", "jde_voucher_refused"):
         voucher = f": voucher {d['voucher']}" if d.get("voucher") else ""
         return f"batch {d.get('batch', '')}{voucher}"
+    if action == "downloaded":  # on the server (D-109)
+        return f"{d.get('file', '?')} ({d.get('path', '')})"
     if action in ("backup_made", "backup_restored"):
         return str(d.get("file", "")) + (f" · {d['note']}" if d.get("note") else "")
     return ""

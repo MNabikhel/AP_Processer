@@ -569,3 +569,37 @@ def test_the_finance_hub_folder_is_refused_unless_it_allows_it(web, tmp_path, mo
             "link_base": "https://apcoder.company.local"}  # fmt: skip
     answer = admin.post("/settings/hub", data=form, headers=PAGE).json()
     assert not answer["ok"] and "IT allows" in answer["error"]
+
+
+# --- 9. The access log, and downloads in the audit trail --------------------------------------------------------------
+
+
+def test_the_server_logs_each_request_and_records_each_download(web):
+    from .test_server_security import account, log_in
+
+    store = web["store"]
+    account(store, "boss", "admin")
+    admin = web["client"]()
+    assert log_in(admin, "boss").status_code == 200
+    backup = store.backup_now("manual")
+    assert admin.get(f"/settings/data/backups/{backup.name}").status_code == 200
+    assert admin.get("/activity/events.csv").status_code == 200
+    log = (store.path.parent / "logs" / "access.log").read_text(encoding="utf-8")
+    assert f"10.0.0.5 boss GET /settings/data/backups/{backup.name} 200" in log
+    assert "10.0.0.5 - POST /login 200" in log  # before the login: no user yet
+    downloads = store.events(actions=["downloaded"])
+    assert {e["detail"]["file"] for e in downloads} >= {backup.name}
+    assert all(e["actor"] == "Boss" for e in downloads)
+    assert len(downloads) == 2
+
+
+def test_the_laptop_keeps_no_access_log(tmp_path):
+    from ap_coder.core.store import load_sample_setup
+
+    from .webclient import client_for
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(store)
+    assert client_for(store).get("/activity/events.csv").status_code == 200
+    assert not (store.path.parent / "logs" / "access.log").exists()
+    assert store.events(actions=["downloaded"]) == []

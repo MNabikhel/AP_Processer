@@ -42,7 +42,7 @@ GROUPS = {
     "Emails": ["email_sorted", "email_bank_change", "email_triage_done", "email_attachment_to_queue"],
     "Backups": ["backup_made", "backup_restored"],
     "Logins": ["login", "login_failed", "login_locked", "logout", "password_changed", "password_reset", "user_added",
-               "role_changed", "user_deactivated", "user_activated", "address_unlocked"],
+               "role_changed", "user_deactivated", "user_activated", "address_unlocked", "downloaded"],
 }  # fmt: skip
 EVENTS_READ = 5000  # the newest events the page works on
 TIMELINE_SHOWN = 200

@@ -288,3 +288,88 @@ def multipart(scope: dict[str, Any]) -> bool:
     return any(
         k.lower() == b"content-type" and v.lower().startswith(b"multipart/") for k, v in scope.get("headers") or []
     )
+
+
+# --- The server's access log and downloads (D-109) -------------------------------------------------------------------
+
+ACCESS_LOG = "access.log"  # in the data folder's logs: 10 MB, then 9 older ones
+USER_KEY = "ap_coder.user"  # scope["state"][USER_KEY]: the username the Identity middleware found for the request
+NAME_KEY = "ap_coder.name"  # and the person's name, as their events name them
+
+
+def access_logger(folder: Any) -> Any:
+    """``<folder>/access.log``, rotated (10 MB × 10), one line per request."""
+    import logging
+    import logging.handlers
+    from pathlib import Path
+
+    log = logging.getLogger("ap_coder.access")
+    path = Path(folder) / ACCESS_LOG
+    if not any(getattr(h, "baseFilename", "") == str(path.resolve()) for h in log.handlers):
+        for handler in list(log.handlers):
+            log.removeHandler(handler)
+            handler.close()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handler = logging.handlers.RotatingFileHandler(path, maxBytes=10_000_000, backupCount=9, encoding="utf-8")
+        handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+        log.addHandler(handler)
+    log.setLevel(logging.INFO)
+    log.propagate = False
+    return log
+
+
+def _filename(headers: list[tuple[bytes, bytes]]) -> str | None:
+    """The file name of an ``attachment`` (a download), else None."""
+    for name, value in headers:
+        if name.lower() == b"content-disposition":
+            text = value.decode("latin-1")
+            if text.lower().startswith("attachment"):
+                found = text.split("filename*=UTF-8''")[-1] if "filename*=" in text else text.partition("filename=")[2]
+                from urllib.parse import unquote
+
+                return unquote(found.split(";")[0].strip().strip('"'))[:200] or "?"
+    return None
+
+
+class AccessLog:
+    """ASGI middleware, server mode: a line per request in ``logs/access.log`` (time, address, user, method, path
+    without its query, status, bytes, milliseconds), and each download (a response sent as an attachment: the
+    directory's export, a batch's files or ZIP, a backup, a report) as a ``downloaded`` event with the person."""
+
+    def __init__(self, app: Any, folder: Any, store: Any = None) -> None:
+        self.app = app
+        self.log = access_logger(folder)
+        self.store = store
+
+    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        import time
+
+        from starlette.concurrency import run_in_threadpool
+
+        scope.setdefault("state", {})
+        started, status, size, download = time.monotonic(), 0, 0, None
+
+        async def sending(message: dict[str, Any]) -> None:
+            nonlocal status, size, download
+            if message["type"] == "http.response.start":
+                status = int(message.get("status") or 0)
+                download = _filename(message.get("headers") or [])
+            elif message["type"] == "http.response.body":
+                size += len(message.get("body") or b"")
+            await send(message)
+
+        try:
+            await self.app(scope, receive, sending)
+        finally:
+            user = scope["state"].get(USER_KEY) or "-"
+            client = (scope.get("client") or ("-", 0))[0] or "-"
+            path = scope.get("path") or "/"
+            self.log.info("%s %s %s %s %s %d %d", client, user, scope.get("method", "GET"), path, status or 500, size,
+                          int((time.monotonic() - started) * 1000))  # fmt: skip
+            if download is not None and status == 200 and self.store is not None:
+                detail = {"file": download, "path": path, "address": client}
+                actor = scope["state"].get(NAME_KEY) or (None if user == "-" else user)
+                await run_in_threadpool(self.store.log_event, "downloaded", actor=actor, detail=detail)

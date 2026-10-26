@@ -320,6 +320,9 @@ class Identity:
             else:
                 refusal = JSONResponse({"ok": False, "error": CHANGE_FIRST}, status_code=403)
         signed_in = _account_person(user, client) if user is not None else None
+        if user is not None:  # for the access log, outside this middleware (D-109)
+            scope.setdefault("state", {})[security.USER_KEY] = user["username"]
+            scope["state"][security.NAME_KEY] = signed_in.name
         tokens = (
             PERSON.set(signed_in),
             EVENT_ORIGIN.set(client or None),
