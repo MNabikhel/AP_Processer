@@ -200,3 +200,24 @@ def test_replacing_the_purchase_orders_with_a_file_of_no_usable_row_keeps_them(s
     answer = _purchase_orders(client, "PO,Item,Amount\n,Gloves,100\n,Paper,50\n", replace="1")  # no PO numbers
     assert answer.status_code == 400 and "nothing was imported" in answer.json()["error"]
     assert len(store.purchase_orders()) == 2
+
+
+def test_teaching_by_click_reads_a_scans_words_from_the_ocr_kept_on_arrival(tmp_path, monkeypatch):
+    """B-1409: the words of a scan, for teaching a field by clicking them (/review/<id>/words), were OCR'd again each
+    time the invoice was opened, outside the data folder's OCR cache (as B-1294, B-1344)."""
+    from ap_coder.capture import layout
+    from ap_coder.core.paths import private_dir
+    from ap_coder.web import document
+
+    seen = []
+
+    def fake_build_layout(path, **_kw):
+        seen.append(layout._ocr_cache_folder.get())
+        raise layout.CannotRead("stop here")
+
+    scan = tmp_path / "scan.png"
+    scan.write_bytes(b"not read: build_layout is faked")
+    monkeypatch.setattr(layout, "build_layout", fake_build_layout)
+    with pytest.raises(layout.CannotRead):
+        document.page_words(scan)
+    assert seen == [private_dir() / ".cache" / "ocr"]
