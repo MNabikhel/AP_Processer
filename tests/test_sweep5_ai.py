@@ -64,3 +64,37 @@ def test_an_empty_labels_workbook_reads_as_no_invoices(tmp_path):
     assert load_labels(tmp_path / "labels.xlsx") == ({}, [])
     (tmp_path / "labels.csv").write_text("", encoding="utf-8")
     assert load_labels(tmp_path / "labels.csv") == ({}, [])
+
+
+def test_a_later_batch_the_model_fails_keeps_the_accounts_it_suggested_before(reference):
+    """B-1342: an invoice of more than 40 lines is asked in batches; the chat model timing out on the second (or
+    writing a row that is not an object) threw away the first batch's accounts too: every line was left for AP."""
+    import json
+
+    from ap_coder.ai.inference import SUGGEST_BATCH_LINES, CodingError, suggest_accounts
+
+    from .test_local_llm import _PromptCoder, make_completion
+
+    class FailsAfter(_PromptCoder):
+        def __init__(self, reference, answered):
+            super().__init__(reference)
+            self.answered = answered
+
+        def _local_create(self, model, messages, schema=None, **kw):
+            if len(self.prompts) >= self.answered:
+                raise CodingError("The local model took longer than 300s.", temporary=True)
+            return super()._local_create(model, messages, schema, **kw)
+
+    lines = [(n, f"Filter cartridge {n}", 10.0 * n) for n in range(1, SUGGEST_BATCH_LINES + 6)]
+    picks = suggest_accounts(FailsAfter(reference, 1), "Staples", lines)
+    assert sorted(picks) == list(range(1, SUGGEST_BATCH_LINES + 1))
+    with pytest.raises(CodingError):  # no answer at all is still said
+        suggest_accounts(FailsAfter(reference, 0), "Staples", lines)
+
+    class OddRows(_PromptCoder):
+        def _local_create(self, model, messages, schema=None, **kw):
+            rows = [7, "6000", {"line_number": 1, "gl_code": "6000", "cost_center": "", "reason": "filters"}]
+            return make_completion(json.dumps({"lines": rows}))
+
+    got = suggest_accounts(OddRows(reference), "Staples", [(1, "Filter", 10.0), (2, "Hose", 5.0)])
+    assert got == {1: ("6000", "", "filters")}

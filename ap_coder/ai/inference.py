@@ -484,7 +484,14 @@ def suggest_accounts(coder: InvoiceCoder, vendor: str, lines: list[tuple[int, st
     asked = lines[:SUGGEST_MAX_LINES]
     for first in range(0, len(asked), SUGGEST_BATCH_LINES):
         batch = asked[first : first + SUGGEST_BATCH_LINES]
-        out.update(_suggest_batch(coder, model, schema, system, vendor, batch, history, valid_gl, valid_cc))
+        try:
+            out.update(_suggest_batch(coder, model, schema, system, vendor, batch, history, valid_gl, valid_cc))
+        except Exception as exc:  # the batches answered before keep their accounts (B-1342); the rest stay for AP
+            if not out:
+                raise
+            log.info("the local model suggested accounts for %d lines, then failed (%s): the rest left for AP",
+                     len(out), exc)  # fmt: skip
+            break
     return out
 
 
@@ -511,6 +518,8 @@ def _suggest_batch(coder: InvoiceCoder, model: str, schema: dict[str, Any], syst
     wanted = {n for n, _, _ in lines}
     out: dict[int, tuple[str, str, str]] = {}
     for row in data.get("lines") or []:
+        if not isinstance(row, dict):  # a row that is not an object (a small model's slip): that line stays for AP
+            continue
         try:
             n = int(row.get("line_number"))
         except (TypeError, ValueError):
