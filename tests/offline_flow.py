@@ -308,7 +308,7 @@ def wait_for_job(base: str, report: Report, path: str = "/process/status", timeo
         snap = request(base, "GET", path).json()
         if snap.get("state") in ("done", "failed", "idle", None) and snap.get("state") != "running":
             return snap
-        time.sleep(0.5)
+        time.sleep(0.1)  # a poll: the job says when it is done
     report.errors.append(f"{path} still running after {timeout:.0f} s: {snap}")
     return snap
 
@@ -524,7 +524,7 @@ class Server:
                 if request(self.base, "GET", "/healthz", timeout=2).status == 200:
                     break
             except OSError:
-                time.sleep(0.3)
+                time.sleep(0.1)  # a poll: the server is starting
         else:
             self.stop()
             raise RuntimeError("the server did not start:\n" + "\n".join(self.output[-40:]))

@@ -5,7 +5,6 @@ error pages, Windows reserved file names, upload sizes and the .xlsx export's fo
 from __future__ import annotations
 
 import shutil
-import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,6 +13,7 @@ from ap_coder.ai import local_llm
 from ap_coder.core.store import APPROVED, PENDING, Store
 from ap_coder.web.app import create_app
 
+from .conftest import next_second
 from .webclient import PAGE, add_clean, web_settings
 
 REAL_FETCH = local_llm._fetch_json  # conftest replaces it for every test (no real LM Studio)
@@ -63,7 +63,7 @@ def test_lowering_the_limit_just_before_approving_does_not_skip_a_second_approva
 def test_a_lower_exchange_rate_set_after_the_invoice_came_in_does_not_skip_its_second_approval(store):
     store.set_setting("approval_limit", "1000.00")
     store.set_setting("fx_rates", "USD=1.37")
-    time.sleep(1.1)  # the events' times are to the second: a change in the invoice's own second counts
+    next_second()  # the events' times are to the second (B-970)
     invoice_id = _usd(store)
     store.set_setting("fx_rates", "USD=0.05")
     store.approve_invoice(invoice_id, store.get_invoice(invoice_id)["ai_output"], "Clerk", login="clerk")
@@ -75,7 +75,7 @@ def test_a_lower_exchange_rate_set_after_the_invoice_came_in_does_not_skip_its_s
 def test_an_invoice_that_came_in_after_the_change_follows_the_new_limit(store):
     store.set_setting("approval_limit", "1.00")
     store.set_setting("approval_limit", "0.00")
-    time.sleep(1.1)  # the events' times are to the second
+    next_second()  # the events' times are to the second (B-970)
     invoice_id = add_clean(store)
     store.approve_invoice(invoice_id, store.get_invoice(invoice_id)["ai_output"], "Clerk", login="clerk")
     assert store.get_invoice(invoice_id)["status"] == APPROVED

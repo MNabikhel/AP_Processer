@@ -50,12 +50,14 @@ def _parse_amount(raw: str) -> float:
 
 
 def test_generator_is_deterministic(tmp_path):
-    a = generate(tmp_path / "a", 8, seed=5, scanned_fraction=0.25)
-    b = generate(tmp_path / "b", 8, seed=5, scanned_fraction=0.25)
+    """Four invoices, one of them scanned (the scans are the slow part), are enough to show the same seed gives the
+    same files and another seed others."""
+    a = generate(tmp_path / "a", 4, seed=5, scanned_fraction=0.25)
+    b = generate(tmp_path / "b", 4, seed=5, scanned_fraction=0.25)
     assert [c.truth for c in a] == [c.truth for c in b]
     assert [c.path.read_bytes() for c in a] == [c.path.read_bytes() for c in b]
-    assert sum(c.scanned for c in a) == 2
-    c = generate(tmp_path / "c", 8, seed=6, scanned_fraction=0.25)
+    assert sum(c.scanned for c in a) == 1
+    c = generate(tmp_path / "c", 4, seed=6, scanned_fraction=0.25)
     assert [x.truth["fields"] for x in a] != [x.truth["fields"] for x in c]
 
 

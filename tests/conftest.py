@@ -2,6 +2,7 @@ import contextlib
 import functools
 import json
 import sqlite3
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -99,6 +100,15 @@ def _shard(items, spec: str) -> set:
 SLOW_SECONDS, FAST_SECONDS = 2.0, 0.05  # rough per-test times for _shard (tests/slow_tests.txt: over 0.5 s)
 _TIMES_FILE = Path(__file__).parent / "test_times.json"
 _TIMES = json.loads(_TIMES_FILE.read_text(encoding="utf-8")) if _TIMES_FILE.is_file() else {}
+
+
+def next_second() -> None:
+    """Until the clock's second changes: the events' times are to the second, so what a test does next is in a later
+    second than what it did before (B-970: a change in the invoice's own second counts as in force when it came in).
+    Half a second on average, where a fixed sleep took 1.1."""
+    start = int(time.time())
+    while int(time.time()) == start:
+        time.sleep(0.01)
 
 
 DATA = ROOT / "data"

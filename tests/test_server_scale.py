@@ -147,11 +147,16 @@ def test_a_job_one_worker_runs_is_seen_and_not_started_again_by_another(store):
 
 
 def test_a_job_whose_worker_stopped_does_not_block_the_next(store, monkeypatch):
+    from types import SimpleNamespace
+
+    from ap_coder.core.store import ephemeral
     from ap_coder.web import jobs
 
+    clock = [time.time()]  # the leases' clock, moved on by hand (a slow runner took over 0.2 s between two lines)
+    monkeypatch.setattr(ephemeral, "time", SimpleNamespace(time=lambda: clock[0]))
     assert store.claim_job("process", "999999:gone", b'{"state": "running"}', 0.2)  # a worker that then stopped
     assert jobs.Jobs(store).get("process").running
-    time.sleep(0.3)
+    clock[0] += 0.3
     assert not jobs.Jobs(store).get("process").running
     assert jobs.Jobs(store).get("process").start(lambda job: {})
 
