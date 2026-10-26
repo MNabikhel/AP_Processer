@@ -31,13 +31,47 @@ _SLOW = {
 }
 
 
+def pytest_addoption(parser):
+    parser.addoption("--shard", default="", metavar="K/N", help="run only the K-th of N groups of test files (CI)")
+
+
 def pytest_collection_modifyitems(config, items):
     """The slow tests (a browser, or over half a second: tests/slow_tests.txt) are marked ``slow``: the default run
-    leaves them out (pyproject.toml), ``python -m pytest -m ""`` and CI run everything."""
+    leaves them out (pyproject.toml), ``python -m pytest -m ""`` and CI run everything. ``--shard K/N`` keeps the
+    K-th of N groups of whole test files (see :func:`_shard`)."""
     for item in items:
         base = item.nodeid.split("[", 1)[0]
         if base in _SLOW or "in_a_browser" in item.name:
             item.add_marker(pytest.mark.slow)
+    if config.getoption("shard"):
+        keep = _shard(items, config.getoption("shard"))
+        config.hook.pytest_deselected(items=[item for item in items if item not in keep])
+        items[:] = [item for item in items if item in keep]
+
+
+def _shard(items, spec: str) -> set:
+    """CI splits the slow Windows run over parallel jobs: whole files (their fixtures set up once) go to N groups of
+    about equal time, the heaviest first into the lightest group. A file's time is its slow tests at
+    ``SLOW_SECONDS`` each plus the rest at ``FAST_SECONDS``: rough, but every test lands in exactly one group."""
+    k, n = (int(part) for part in spec.split("/"))
+    if not 1 <= k <= n:
+        raise pytest.UsageError(f"--shard {spec}: K must be 1 to N")
+    weight: dict[str, float] = {}
+    for item in items:
+        path = item.nodeid.split("::", 1)[0]
+        slow = item.get_closest_marker("slow") is not None
+        weight[path] = weight.get(path, 0.0) + (SLOW_SECONDS if slow else FAST_SECONDS)
+    groups = [0.0] * n
+    mine = set()
+    for path in sorted(weight, key=lambda p: (-weight[p], p)):
+        group = groups.index(min(groups))
+        groups[group] += weight[path]
+        if group == k - 1:
+            mine.add(path)
+    return {item for item in items if item.nodeid.split("::", 1)[0] in mine}
+
+
+SLOW_SECONDS, FAST_SECONDS = 2.0, 0.05  # rough per-test times for _shard (tests/slow_tests.txt: over 0.5 s)
 
 
 DATA = ROOT / "data"

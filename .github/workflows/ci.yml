@@ -15,13 +15,28 @@ concurrency:
 
 jobs:
   tests:
-    name: Tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    name: Tests (${{ matrix.os }}, Python ${{ matrix.python }}${{ matrix.shard && format(', part {0}', matrix.shard) || '' }}${{ matrix.tier == 'fast' && ', fast tier' || '' }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        python: ["3.11", "3.12", "3.13", "3.14"]
+        # The whole suite on every Python on Ubuntu (about 10 minutes). Windows runs it about four times slower, so
+        # there the whole suite runs on the oldest and the newest Python, each split into three parts run side by side
+        # (--shard, tests/conftest.py), and the fast tier on the two between. Windows 3.11 also installs the OCR
+        # engine, so the tests that read scans run on Windows (they skip without it).
+        include:
+          - {os: ubuntu-latest, python: "3.11"}
+          - {os: ubuntu-latest, python: "3.12"}
+          - {os: ubuntu-latest, python: "3.13"}
+          - {os: ubuntu-latest, python: "3.14"}
+          - {os: windows-latest, python: "3.11", extras: "ocr,dev", shard: "1/3"}
+          - {os: windows-latest, python: "3.11", extras: "ocr,dev", shard: "2/3"}
+          - {os: windows-latest, python: "3.11", extras: "ocr,dev", shard: "3/3"}
+          - {os: windows-latest, python: "3.14", shard: "1/3"}
+          - {os: windows-latest, python: "3.14", shard: "2/3"}
+          - {os: windows-latest, python: "3.14", shard: "3/3"}
+          - {os: windows-latest, python: "3.12", tier: fast}
+          - {os: windows-latest, python: "3.13", tier: fast}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -29,9 +44,10 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: pip
       - name: Install
-        run: python -m pip install -e ".[dev]"
+        run: python -m pip install -e ".[${{ matrix.extras || 'dev' }}]"
       - name: Tests
-        run: python -m pytest -q -m ""
+        # the slowest 15 tests are listed at the end, so a test that grows slow shows up in the log
+        run: python -m pytest -q ${{ matrix.tier != 'fast' && '-m ""' || '' }} ${{ matrix.shard && format('--shard {0}', matrix.shard) || '' }} --durations=15
 
   lint:
     # ruff gives the same answer on every OS and Python, so it runs once (it ran in each of the 8 test cells).
@@ -118,9 +134,10 @@ jobs:
           if ($out -notmatch 'all \d+ in place' -or $out -match 'Collecting|Installing collected') { throw 'packages were reinstalled' }
           $count = (Get-ChildItem ([Environment]::GetFolderPath('Desktop')) -Filter 'AP Coder*.lnk').Count
           if ($count -ne 1) { throw "expected 1 desktop shortcut, found $count" }
-      - name: Self-test inside the installed environment
+      - name: Sample invoices read right inside the installed environment
+        # The whole suite runs in the Tests jobs (on Windows too); here, the installed packages read every sample.
         shell: cmd
-        run: .venv\Scripts\python.exe -m pytest -q -m "" -p no:cacheprovider
+        run: .venv\Scripts\python.exe scripts\pilot_check.py
       - name: The server starts and says who it is
         shell: pwsh
         run: |

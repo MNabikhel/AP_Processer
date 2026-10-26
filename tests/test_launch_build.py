@@ -338,7 +338,10 @@ def test_one_python_version_everywhere():
     assert project["tool"]["ruff"]["target-version"] == "py311"
     ci = ROOT / ".github" / "workflows" / "ci.yml"
     if ci.is_file():
-        tested = yaml.safe_load(ci.read_text(encoding="utf-8"))["jobs"]["tests"]["strategy"]["matrix"]["python"]
+        tested = [
+            cell["python"]
+            for cell in yaml.safe_load(ci.read_text(encoding="utf-8"))["jobs"]["tests"]["strategy"]["matrix"]["include"]
+        ]
         assert min(tested, key=lambda v: tuple(map(int, v.split(".")))) == "3.11"
     spec = importlib.util.spec_from_file_location("ap_script_launch_py", ROOT / "scripts" / "launch.py")
     launch = importlib.util.module_from_spec(spec)

@@ -51,7 +51,7 @@ def test_the_workflow_tests_skip_where_there_is_no_workflow(tmp_path):
     copy.mkdir()
     shutil.copy(__file__, copy / "test_ci_workflow.py")
     out = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-k",
-                          "not looked_up_once and not where_there_is_no_workflow", str(copy)],
+                          "not looked_up_once and not where_there_is_no_workflow and not one_shard", str(copy)],
                          cwd=tmp_path, capture_output=True, text=True, encoding="utf-8")  # fmt: skip
     assert out.returncode == 0, out.stdout[-2000:]
 
@@ -146,3 +146,24 @@ def test_the_update_check_finds_the_schema_the_new_version_writes():
     from ap_coder.core.store import SCHEMA_VERSION
 
     assert old_versions.schema_of(Path(__file__).resolve().parents[1]) == str(SCHEMA_VERSION)
+
+
+def test_every_test_runs_in_exactly_one_shard():
+    """CI splits the Windows run with --shard K/N (tests/conftest.py): whole files, each in one part, none left out."""
+    from tests.conftest import _shard
+
+    class item:  # the two things _shard reads off a pytest item
+        def __init__(self, nodeid, slow=False):
+            self.nodeid, self.slow = nodeid, slow
+
+        def get_closest_marker(self, name):
+            return self.slow or None
+
+    items = [item(f"tests/test_{f}.py::test_{t}", slow=t % 3 == 0) for f in range(9) for t in range(f + 2)]
+    parts = [_shard(items, f"{k}/3") for k in (1, 2, 3)]
+    assert sum(len(p) for p in parts) == len(items) and set().union(*parts) == set(items)
+    for part in parts:
+        files = {i.nodeid.split("::")[0] for i in part}
+        assert all(i in part for i in items if i.nodeid.split("::")[0] in files)  # a file is never split
+    with pytest.raises(pytest.UsageError):
+        _shard(items, "4/3")
