@@ -73,3 +73,15 @@ def test_the_hub_gives_an_old_lines_tax_code_as_the_review_screen_reads_it():
     row = {"id": 1, "status": "approved", "final_output": {"line_items": lines, "tax_lines": taxes}}
     got = [r["tax_code"] for r in tables.invoice_lines(None, tables.Context(), rows=[row])]
     assert got == [tax_code_of(li, legacy_basis(lines, taxes)) for li in lines] == ["GST", "NONE~GST"]
+
+
+def test_a_qst_number_kept_as_its_ten_digits_is_not_warned_about():
+    """B-1374: the Vendors page warned a QST number kept as its 10 digits alone ("not in the format"), the number the
+    comparison with an invoice takes as the vendor's, as it takes the GST/HST Business Number alone."""
+    from ap_coder.coding.vendors import same_qst_number, vendor_number_problems
+
+    assert same_qst_number("1234567890", "1234567890 TQ 0001")
+    assert vendor_number_problems({"qst_number": "1234567890"}) == []
+    assert vendor_number_problems({"qst_number": "12345TQ"}) == [
+        "QST number 12345TQ is not in the format 1234567890 TQ0001"
+    ]

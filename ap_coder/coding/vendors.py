@@ -283,7 +283,8 @@ def tax_number_findings(
 def vendor_number_problems(vendor: dict[str, Any]) -> list[str]:
     """What is wrong with the tax numbers the vendor list holds for a vendor (the Vendors page warns, D-65): a GST/HST
     number not in the format 123456789 RT0001 (a 9-digit Business Number alone is fine) or failing the CRA's check
-    digit, a QST number not in the format 1234567890 TQ0001. The review screen fills these numbers in."""
+    digit, a QST number not in the format 1234567890 TQ0001 (its 10 digits alone are fine). The review screen fills
+    these numbers in."""
     from .tax import gst_check_digit_ok, normalise_registration, valid_gst_number, valid_qst_number
 
     out = []
@@ -294,7 +295,8 @@ def vendor_number_problems(vendor: dict[str, Any]) -> list[str]:
         elif not gst_check_digit_ok(gst):
             out.append(f"GST/HST number {gst} fails the CRA check digit: mistyped, or not a real number")
     qst = str(vendor.get("qst_number") or "").strip()
-    if qst and not valid_qst_number(qst):
+    # The 10-digit identification number alone is fine, as the Business Number alone is (``same_qst_number``, B-1374).
+    if qst and not (valid_qst_number(qst) or re.fullmatch(r"\d{10}", normalise_registration(qst))):
         out.append(f"QST number {qst} is not in the format 1234567890 TQ0001")
     return out
 
