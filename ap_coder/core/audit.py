@@ -98,6 +98,7 @@ ACTIONS = {
     "login": ("login", "info", "Logged in"),
     "login_failed": ("password", "warn", "Login didn't match"),
     "login_locked": ("lock_clock", "err", "Logins paused"),
+    "downloaded": ("download", "info", "Downloaded"),
     "logout": ("logout", "gray", "Logged out"),
     "password_changed": ("key", "info", "Password changed"),
     "password_reset": ("lock_reset", "warn", "Password reset"),
@@ -400,8 +401,11 @@ def describe(event: dict[str, Any]) -> str:
         def role(key: Any) -> str:
             return ROLE_LABELS.get(str(key or ""), str(key or "?"))
 
-        by = ("30 tries that didn't match from one address" if d.get("by") == "address"
-              else "5 tries that didn't match for this username from one address")  # fmt: skip
+        by = {"address": "30 tries that didn't match from one address",
+              "account": "10 tries that didn't match for this username from anywhere within an hour"}.get(
+            str(d.get("by")), "5 tries that didn't match for this username from one address")  # fmt: skip
+        if action == "login_locked" and d.get("by") == "account":  # (D-109) a few minutes at first, from anywhere
+            return f"{by} ({d.get('username') or 'an unknown account'}): logging in paused from new addresses"
         roles = {"role": role(d.get("role")), "was": role(d.get("from")), "now": role(d.get("to"))}
         if d.get("account") == "unknown":  # the text typed is not kept (D-101)
             words = _ACCOUNT_WORDS["login_failed_unknown" if action == "login_failed" else action]
@@ -428,6 +432,8 @@ def describe(event: dict[str, Any]) -> str:
     if action in ("jde_voucher_posted", "jde_voucher_refused"):
         voucher = f": voucher {d['voucher']}" if d.get("voucher") else ""
         return f"batch {d.get('batch', '')}{voucher}"
+    if action == "downloaded":  # on the server (D-109)
+        return f"{d.get('file', '?')} ({d.get('path', '')})"
     if action in ("backup_made", "backup_restored"):
         return str(d.get("file", "")) + (f" · {d['note']}" if d.get("note") else "")
     return ""

@@ -22,7 +22,7 @@ from ap_coder.core.audit import ACTIONS, describe
 from ap_coder.core.safe import csv_row
 from ap_coder.erp import controls, dupaudit, insights
 from ap_coder.web.access import is_admin
-from ap_coder.web.core import clamp_day, get_store, render
+from ap_coder.web.core import clamp_day, get_store, render, server_mode
 
 router = APIRouter()
 
@@ -42,7 +42,7 @@ GROUPS = {
     "Emails": ["email_sorted", "email_bank_change", "email_triage_done", "email_attachment_to_queue"],
     "Backups": ["backup_made", "backup_restored"],
     "Logins": ["login", "login_failed", "login_locked", "logout", "password_changed", "password_reset", "user_added",
-               "role_changed", "user_deactivated", "user_activated", "address_unlocked"],
+               "role_changed", "user_deactivated", "user_activated", "address_unlocked", "downloaded"],
 }  # fmt: skip
 EVENTS_READ = 5000  # the newest events the page works on
 TIMELINE_SHOWN = 200
@@ -193,7 +193,7 @@ def activity_page(request: Request) -> HTMLResponse:
     ]  # fmt: skip
 
     shown = filter_events(events, group, person, query)
-    report = controls.build(store, start, end) if start <= end else None
+    report = controls.build(store, start, end, duties=server_mode(request)) if start <= end else None
     return render(
         request,
         "activity.html",
@@ -233,7 +233,7 @@ def activity_controls_report(request: Request, start: str = "", end: str = "") -
     first, last = controls_period(start, end)
     if first > last:
         first, last = last, first
-    html = controls.report_html(controls.build(get_store(request), first, last))
+    html = controls.report_html(controls.build(get_store(request), first, last, duties=server_mode(request)))
     return _attachment(html.encode("utf-8"), f"ap_coder_controls_{first}_{last}.html", "text/html; charset=utf-8")
 
 

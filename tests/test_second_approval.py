@@ -30,14 +30,14 @@ def test_over_the_limit_waits_for_a_second_approver(store, tmp_path):
     assert store.unexported_approved() == []  # not exportable yet
     assert len(store.feedback_rows()) == 5  # the coding decision is learned on the first approval
     with pytest.raises(PermissionError):
-        store.final_approve(invoice_id, " jane ")
-    store.final_approve(invoice_id, "Sam")
+        store.final_approve(invoice_id, " jane ", shown=store.latest_approval_id(invoice_id))
+    store.final_approve(invoice_id, "Sam", shown=store.latest_approval_id(invoice_id))
     inv = store.get_invoice(invoice_id)
     assert inv["status"] == APPROVED and inv["second_reviewer"] == "Sam" and inv["reviewer"] == "Jane"
     assert [i["id"] for i in store.unexported_approved()] == [invoice_id]
     assert [e["action"] for e in store.events(invoice_id)][:2] == ["final_approved", "approved"]
     with pytest.raises(ValueError):
-        store.final_approve(invoice_id, "Sam")
+        store.final_approve(invoice_id, "Sam", shown=store.latest_approval_id(invoice_id))
     with pytest.raises(ValueError):
         store.approve_invoice(invoice_id, _gt(), "Sam")
 
@@ -95,7 +95,8 @@ def test_second_approval_tab(tmp_path, monkeypatch):
     page = client.get("/review?tab=second").text
     button = re.search(rf'action="/review/{invoice_id}/final-approve">\s*<button[^>]*>', page).group(0)
     assert "disabled" not in button  # Sam did not approve it first
-    follow(client, post(client, f"/review/{invoice_id}/final-approve"))
+    shown = {"approval": store.latest_approval_id(invoice_id)}
+    follow(client, post(client, f"/review/{invoice_id}/final-approve", shown))
     assert store.get_invoice(invoice_id)["status"] == APPROVED
 
 

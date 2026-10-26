@@ -313,6 +313,12 @@ def export(
     folder = data_folder(store) / STATE_DIR
     try:
         with _run_lock(folder):
+            if destination is None and config.mode != ONELAKE:
+                from ...ops.service import folder_refusal
+
+                refused = folder_refusal(config.folder)  # on the server, only a folder IT allows (D-109)
+                if refused:
+                    raise HubError(refused)
             dest = destination or (_dry_destination(config) if dry_run else config.destination())
             result.target = dest.describe()
             result.mode = getattr(dest, "kind", config.mode)

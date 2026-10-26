@@ -169,6 +169,7 @@ def review_context(request: Request, stamped: bool = True) -> dict[str, Any]:
         "threshold": round(float(settings.engine.review_threshold) * 100),
         "constrain": bool(settings.engine.constrain_codes),
         "approval_limit": store.approval_limit(),
+        "poster_not_approver": store.poster_not_approver(),
         "terms_days": store.default_terms_days(),
         "fx_rates": store.get_setting("fx_rates"),
         "our_province": store.our_province(),
@@ -206,7 +207,7 @@ async def save_review(request: Request) -> JSONResponse:
     supply_part = _supply_part(request, our_province, site_provinces)
     if isinstance(supply_part, JSONResponse):
         return supply_part
-    saved = name_part() + approval_part() + supply_part()
+    saved = name_part() + approval_part() + supply_part() + _duties_part(request, form)
     if saved:
         from ap_coder.web.pages.help import forget_setup_report
 
@@ -220,6 +221,7 @@ SAVED_WORDS = {
     "AP_REVIEW_THRESHOLD": ("the confidence threshold", True),
     "AP_CONSTRAIN_CODES": ("the GL account list rule", True),
     "approval_limit": ("the second-approval limit", False),
+    "poster_not_approver": ("who may post to JD Edwards", False),
     "default_terms_days": ("the days to pay", False),
     "fx_rates": ("the exchange rates", False),
     lessons.SETTING: ("when to ask why", False),
@@ -301,6 +303,20 @@ def _review_part(request: Request, reviewer_name: str | None, threshold: str | N
         return changed + save_env(store, updates)
 
     return save
+
+
+def _duties_part(request: Request, form: Any) -> list[str]:
+    """The server's separation of duties (D-109): "the person who posts to JD Edwards can't be one who approved",
+    saved when the form shows it (a checkbox not ticked posts nothing)."""
+    store = get_store(request)
+    if not server_mode(request) or form.get("duties_shown") is None:
+        return []
+    on = str(form.get("poster_not_approver") or "") == "1"
+    if on == store.poster_not_approver():
+        return []
+    store.set_setting("poster_not_approver", "1" if on else "0", actor=reviewer())
+    store.log_event("settings_changed", actor=reviewer(), detail={"keys": ["poster_not_approver"]})
+    return ["poster_not_approver"]
 
 
 def _approval_part(
@@ -486,6 +502,11 @@ def save_backup_copy(request: Request, folder: str = Form("")) -> JSONResponse:
     folder = folder.strip().strip('"')
     if folder == store.get_setting("backup_copy_dir"):
         return done(request, tab_url("data"), "Nothing changed.")
+    from ap_coder.ops.service import folder_refusal
+
+    refused = folder_refusal(folder, server=server_mode(request))  # before the folder is asked anything (D-109)
+    if refused:
+        return refuse(refused)
     try:  # a name the computer refuses (too long, a character it does not allow) is a folder that does not exist
         exists = Path(folder).expanduser().is_dir() if folder else True
     except (OSError, ValueError):

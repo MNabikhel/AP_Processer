@@ -147,8 +147,9 @@ export function watchJob(statusUrl, onUpdate) {
 async function submitForm(form, submitter) {
   if (form.dataset.sending) return; // already sent (a double click, Enter twice): never the same action twice
   if (form.dataset.confirm && !confirm(form.dataset.confirm)) return;
-  const body = new FormData(form);
+  let body = new FormData(form);
   if (submitter && submitter.name) body.append(submitter.name, submitter.value);
+  if (form.hasAttribute("data-urlencoded")) body = new URLSearchParams(body); // the login: the server takes no multipart there
   form.dataset.sending = "1";
   setBusy(form, true, submitter);
   const answer = await post(form.action, body);

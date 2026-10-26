@@ -54,7 +54,8 @@ RULES: dict[tuple[str, str], str] = {
     ),
     **_rules(
         SIGNED_IN,
-        "GET /logout", "POST /logout", "GET /account/password", "POST /account/password", "GET /",
+        "GET /logout", "POST /logout", "GET /account/password", "POST /account/password",
+        "POST /account/sessions/end-others", "GET /",
     ),
     **_rules(
         READ,
@@ -71,8 +72,8 @@ RULES: dict[tuple[str, str], str] = {
         "GET /spend", "GET /spend/data.xlsx",
         "GET /insights", "GET /insights/business-case",
         "GET /activity", "GET /activity/events.csv", "GET /activity/controls-report", "GET /activity/duplicates.csv",
-        "GET /help", "GET /help/quick-start", "GET /help/report", "GET /help/report/setup",
-        "GET /jobs/{name}",  # how far a job got (the job's own page decided who may start it)
+        "GET /help", "GET /help/quick-start", "GET /help/report",
+        "GET /jobs/{name}",  # how far a job got: the job's own role besides (JOB_NEEDS)
     ),
     **_rules(
         CLERK,
@@ -146,8 +147,12 @@ RULES: dict[tuple[str, str], str] = {
         "POST /admin/users/{user_id:int}/role", "POST /admin/users/{user_id:int}/deactivate",
         "POST /admin/users/{user_id:int}/activate", "POST /admin/users/addresses/unlock",
         "POST /admin/users/usernames/unlock",
+        "GET /help/report/setup",  # the server's versions, settings and names (D-109)
     ),
 }  # fmt: skip
+
+# What seeing a job's progress needs (GET /jobs/{name}): the role that may start it (D-109). Any other job: an Admin.
+JOB_NEEDS = {"process": READ, "jde-api": CLERK, "jde-sync": ADMIN, "settings-doctor": ADMIN, "azure-test": ADMIN}
 
 
 def allowed(role: str | None, need: str) -> bool:

@@ -48,6 +48,13 @@
         colleague open AP Coder from their computer over the office network (IT sets that up). An invoice waiting for it can always be sent back
         to the review queue with Send back.</p>
       {% endif %}
+      {% if account %}
+      <input type="hidden" name="duties_shown" value="1">
+      <label class="check"><input type="checkbox" name="poster_not_approver" value="1"{% if poster_not_approver %} checked{% endif %}>
+        The person who posts a batch to JD Edwards can't be one who approved its invoices</label>
+      <p class="muted">Off by default. On, posting through the JD Edwards API is refused to an account that gave the
+        first or second approval of an invoice in the batch: another Approver posts it.</p>
+      {% endif %}
       <label class="field">Days to pay when an invoice prints no due date and no terms
         <input type="number" name="terms_days" min="0" max="180" step="1" value="{{ terms_days }}"
                title="Used to show when an invoice is due, to sort the queue by due date and in exports."></label>

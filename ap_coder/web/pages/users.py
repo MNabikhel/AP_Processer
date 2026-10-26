@@ -17,7 +17,7 @@ from typing import Any
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from ap_coder.core.store.users import ROLE_LABELS, ROLES
+from ap_coder.core.store.users import ANYWHERE, ROLE_LABELS, ROLES
 from ap_coder.web import identity
 from ap_coder.web.core import done, flash_message, get_store, refuse, render, reviewer, server_mode
 
@@ -90,7 +90,10 @@ def add_user(
 
     password = temporary_password()
     try:
-        store.add_user(username, password, role=role, display_name=name, actor=reviewer())
+        me = identity.person()
+        store.add_user(
+            username, password, role=role, display_name=name, actor=reviewer(), by_user=me.user_id if me else None
+        )  # (D-109: it can't give that Admin's second approval)
     except ValueError as exc:
         return refuse(str(exc))
     key = _keep(fold_username(username), password)
@@ -104,7 +107,7 @@ def reset(request: Request, user_id: int) -> JSONResponse:
     me = identity.person()
     if me is not None and me.user_id == found["id"]:  # it would log you out before the password is shown (D-101)
         return refuse(OWN_RESET)
-    password = get_store(request).reset_password(user_id, actor=reviewer())
+    password = get_store(request).reset_password(user_id, actor=reviewer(), by_user=me.user_id if me else None)
     key = _keep(found["username"], password)
     said = f"Password of {found['username']} reset: they are logged out everywhere."
     return done(request, f"{PATH}?shown={key}", flash_message(said, "ok"))
@@ -123,9 +126,10 @@ def unlock_address(request: Request, address: str = Form("")) -> JSONResponse:
 def unlock_username(request: Request, username: str = Form(""), address: str = Form("")) -> JSONResponse:
     """Lift the pause of a username from an address (5 tries that didn't match: someone forgot their password)."""
     _server_only(request)
+    where = "anywhere" if address == ANYWHERE else address
     if not get_store(request).unlock_username(username, address, actor=reviewer()):
-        return refuse(f"Logins as {username or 'that username'} from {address or 'that address'} are not paused.")
-    return done(request, PATH, f"Logins as {username} from {address} are no longer paused.")
+        return refuse(f"Logins as {username or 'that username'} from {where or 'that address'} are not paused.")
+    return done(request, PATH, f"Logins as {username} from {where} are no longer paused.")
 
 
 def _clock_text(epoch: float) -> str:

@@ -42,7 +42,7 @@ from ._base import (
     parse_fx_rates,
     suggestion_kept,
 )
-from .users import account_of, same_approver  # noqa: F401  (also used by the pages)
+from .users import VOUCH_DAYS, account_of, same_approver  # noqa: F401  (also used by the pages)
 
 
 class InvoicesMixin:
@@ -904,12 +904,17 @@ class InvoicesMixin:
         """Does this invoice need a second approver (``second_approval_reason``)?"""
         return bool(self.second_approval_reason(coding, limit, unknown_rate=unknown_rate))
 
-    def final_approve(self, invoice_id: int, approver: str, login: str = "", shown: str | None = None) -> None:
+    def latest_approval_id(self, invoice_id: int) -> str:
+        """The latest ``approved`` event's id ("" when none): what a page posts as ``final_approve``'s ``shown``."""
+        with self._conn() as conn:
+            sql = "SELECT MAX(id) FROM events WHERE invoice_id = ? AND action = 'approved'"
+            return str(conn.execute(sql, (invoice_id,)).fetchone()[0] or "")
+
+    def final_approve(self, invoice_id: int, approver: str, login: str = "", *, shown: str | None) -> None:
         """The second approval: by someone other than the first approver (another name and, when the
-        dashboard records it, another computer login; in server mode another account: ``same_approver``). The
-        invoice can then be exported. ``shown``: the first approval the page showed (its ``approved`` event's id, as
-        the page posts it): approved again since, it is refused (``ApprovedAgain``), as the version now waiting is not
-        the one the approver looked at (B-654)."""
+        dashboard records it, another computer login; in server mode another account, ``same_approver``, not one the
+        first approver added or reset within ``VOUCH_DAYS`` days). ``shown``, always given: the approval the page
+        showed (``latest_approval_id``): approved again since, or none, it is refused (``ApprovedAgain``, B-654)."""
         inv = self.get_invoice(invoice_id)
         if inv is None or inv["status"] != PENDING:
             raise ValueError(f"invoice {invoice_id} is not waiting for a second approval")
@@ -921,12 +926,16 @@ class InvoicesMixin:
             if (approver or "").strip().casefold() == (inv["reviewer"] or "").strip().casefold():
                 raise PermissionError("the second approval must come from someone other than the first approver")
             raise PermissionError("the second approval must come from another computer login than the first")
+        first_user = ((first or {}).get("detail") or {}).get("user_id")
+        if first_user is not None and account_of(login) is not None and self.vouched_for(first_user, account_of(login)):
+            raise PermissionError(f"the second approval can't come from an account the first approver added or reset "
+                                  f"the password of in the last {VOUCH_DAYS} days")  # fmt: skip
         with self._conn() as conn:
             conn.execute("BEGIN IMMEDIATE")  # checked and approved in one go: no new first approval in between
             latest = conn.execute(
                 "SELECT MAX(id) FROM events WHERE invoice_id = ? AND action = 'approved'", (invoice_id,)
             ).fetchone()[0]
-            if shown is not None and str(shown).strip() != str(latest or ""):
+            if str(shown or "").strip() != str(latest or ""):
                 raise ApprovedAgain(f"invoice {invoice_id} was approved again since the page was opened")
             cur = conn.execute(
                 # Same first approval as checked above: it may have been sent back and re-approved meanwhile.

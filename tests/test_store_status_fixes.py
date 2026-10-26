@@ -78,7 +78,7 @@ def test_a_stale_reject_keeps_a_finished_second_approval(tmp_path):
     assert store.get_invoice(invoice_id)["status"] == PENDING
     with pytest.raises(ValueError):  # waiting for the second approval: not from the review queue either
         store.reject_invoice(invoice_id, "Carol", "dup?")
-    store.final_approve(invoice_id, "Bob")
+    store.final_approve(invoice_id, "Bob", shown=store.latest_approval_id(invoice_id))
     lessons = len(store.feedback_rows())
     with pytest.raises(ValueError):  # Carol's screen was opened before Ann approved it
         store.reject_invoice(invoice_id, "Carol", "dup?")

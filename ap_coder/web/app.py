@@ -36,12 +36,12 @@ from ap_coder.core import paths
 from ap_coder.core.config import Settings
 from ap_coder.core.store import Store, default_db_path
 from ap_coder.ops import offline
-from ap_coder.web import core
+from ap_coder.web import core, identity, roles
 from ap_coder.web.errors import FriendlyErrors
 from ap_coder.web.identity import THIS_COMPUTER, Identity, from_this_computer, is_this_computer
 from ap_coder.web.jobs import Jobs
 from ap_coder.web.pages import MORE_MODULES, PAGES, Page
-from ap_coder.web.security import TOKEN_HEADER, LocalOnly, SecurityHeaders, allowed_hosts
+from ap_coder.web.security import TOKEN_HEADER, AccessLog, LocalOnly, SecurityHeaders, allowed_hosts
 
 CODE_FOLDER = core.WEB_DIR.parent.parent  # the folder holding ap_coder/ (the launcher checks it is its own)
 
@@ -155,6 +155,10 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     sends no HSTS; otherwise both, whatever scheme a request reports (D-101)."""
     store = store or default_store()
     server = offline.server_mode() if server is None else bool(server)
+    if server:  # how long a login lasts: server.json's, or 30 minutes unused and 12 hours (D-109)
+        from ap_coder.ops.service import session_limits
+
+        store.session_idle, store.session_absolute = session_limits(paths.private_dir())
     settings_factory: Callable[[], Settings] = (lambda: settings) if settings is not None else EnvSettings()
 
     @contextlib.asynccontextmanager
@@ -212,6 +216,8 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     )  # + the server's names (AP_ALLOWED_HOSTS)
     # Outermost: a refusal carries the headers too.
     app.add_middleware(SecurityHeaders, server=server, hsts=server and not insecure_http)
+    if server:  # every request in logs/access.log, and each download in the audit trail (D-109)
+        app.add_middleware(AccessLog, folder=store.path.parent / "logs", store=store)
     app.mount("/static", CheckedStaticFiles(directory=str(core.STATIC_DIR)), name="static")
     app.mount("/fonts", StaticFiles(directory=str(core.FONTS_DIR)), name="fonts")
     app.mount("/assets", StaticFiles(directory=str(core.ASSETS_DIR)), name="assets")
@@ -274,6 +280,9 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     @app.get("/jobs/{name}")
     def job_status(name: str, request: Request) -> JSONResponse:
         registry = core.jobs(request)
+        me = identity.person()
+        if server and me is not None and not roles.allowed(me.role, roles.JOB_NEEDS.get(name, roles.ADMIN)):
+            raise HTTPException(status_code=404, detail="No such job.")  # (as if there were none: D-109)
         if not registry.known(name):
             raise HTTPException(status_code=404, detail="No such job.")
         return JSONResponse(registry.get(name).snapshot(), headers={"Cache-Control": "no-store"})

@@ -32,7 +32,9 @@ from .landing import STAGING, HubError
 DEFAULT_AUTHORITY = "https://login.microsoftonline.com"
 SCOPE = "https://storage.azure.com/.default"
 DFS_VERSION = "2023-11-03"
-ONELAKE_HOSTS = (".dfs.fabric.microsoft.com", ".dfs.core.windows.net")
+# OneLake's DFS endpoint, and its regional ones (<region>-onelake.dfs.fabric.microsoft.com, e.g. westus-onelake...):
+# never any other storage account on *.dfs.core.windows.net or *.dfs.fabric.microsoft.com (D-109).
+ONELAKE_HOSTS = ("onelake.dfs.fabric.microsoft.com",)
 AUTHORITY_HOSTS = ("login.microsoftonline.com", "login.microsoftonline.us", "login.partner.microsoftonline.cn")
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
 MAX_PAGES = 1000  # of a folder's listing
@@ -50,10 +52,13 @@ def _check_url(url: str, hosts: tuple[str, ...], what: str, exact: bool = False)
     host = (parts.hostname or "").lower()
     if host in LOOPBACK and (parts.scheme == "https" or (parts.scheme == "http" and ALLOW_TEST_HTTP)):
         return parts  # a stand-in on this computer (tests)
-    known = host in hosts if exact else any(host.endswith(h) for h in hosts)
-    if parts.scheme != "https" or not known:
-        raise HubError(f"The {what} must be an https:// address on {' or '.join(h.lstrip('.') for h in hosts)}: "
-                       f"“{url}” is not.")  # fmt: skip
+    regional = not exact and any(
+        host.endswith("-" + h) and host[: -len(h) - 1].isalnum() and host[: -len(h) - 1].isascii() for h in hosts
+    )
+    if parts.scheme != "https" or not (host in hosts or regional):
+        also = "" if exact else " (or a regional <region>-" + hosts[0] + ")"
+        raise HubError(f"The {what} must be an https:// address on {' or '.join(hosts)}{also}: “{url}” is "
+                       "not.")  # fmt: skip
     return parts
 
 

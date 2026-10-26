@@ -27,7 +27,7 @@ def test_controls_report_lists_the_exceptions(tmp_path):
     store.approve_invoice(
         b, _gt("B"), "Jane", open_issues=[{"code": "VENDOR_TAX_NUMBER_CHANGED", "severity": "warning"}]
     )
-    store.final_approve(a, "Sam")
+    store.final_approve(a, "Sam", shown=store.latest_approval_id(a))
     store.send_back(b, "Sam", "check the GST number")
     store.set_setting("approval_limit", "5000", actor="Sam")  # not logged by itself...
     store.log_event("settings_changed", actor="Sam", detail={"keys": ["approval_limit"]})  # ...the page logs it

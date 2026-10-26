@@ -31,7 +31,7 @@ WITHDRAWN_BY = ("reopened", "sent_back")
 # Sign-in events (logins, failed logins, passwords, unlocked addresses) stay out of ``activity``: they are the server's
 # security record, not the work on invoices (docs/FINANCE_HUB.md).
 SIGN_IN_ACTIONS = ("login", "logout", "login_failed", "login_locked", "password_changed", "password_reset",
-                   "address_unlocked")  # fmt: skip
+                   "address_unlocked", "downloaded")  # fmt: skip
 # Accounts and settings stay out too (docs/FINANCE_HUB.md "What is left out"): who has an account and what role, a
 # backup put back, and settings changed (the tax setup and the policy notes too, B-1206) are the company server's
 # administration, not the work on invoices.

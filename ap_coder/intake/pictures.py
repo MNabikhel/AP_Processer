@@ -40,6 +40,7 @@ from ..capture.layout import (
     IMAGE_EXTENSIONS,
     ONE_FRAME_EXTENSIONS,
     open_image,
+    picture_formats,
     within_pixel_limit,
 )
 
@@ -418,7 +419,7 @@ def page_picture(doc: Any, page: Any) -> Any | None:
     try:
         picture = _stored_pixels(doc, xref)
         if picture is None:
-            picture = Image.open(io.BytesIO(doc.extract_image(xref)["image"]))
+            picture = Image.open(io.BytesIO(doc.extract_image(xref)["image"]), formats=picture_formats())
             picture.load()
     except Exception:  # noqa: BLE001 - an image PyMuPDF stores another way: rendered instead
         return None

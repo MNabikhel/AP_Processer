@@ -1049,7 +1049,10 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.reconfigure(errors="replace")  # file name or vendor: "?", never a crash (stderr escapes them)
     configure_logging(args.verbose)
 
-    settings = Settings.from_env(args.env_file)
+    # An administrator's commands on the company server read no .env: the service's account can write the data
+    # folder's (D-109). They need none of its settings.
+    admin = args.command == "server-update" or (args.command == "service" and args.action != "run")
+    settings = Settings() if admin else Settings.from_env(args.env_file)
     commands = {
         "serve": lambda: cmd_serve(args),
         "dashboard": lambda: cmd_serve(args),

@@ -6,6 +6,7 @@
 * changes to setup (accounts, tax, policy, settings, vendors, purchase orders), lessons forgotten,
   exports undone and backups restored
 * approvals per person, and how many were bulk approvals
+* invoices where one person did several of the steps: first approval, second approval, export, posting to JD Edwards
 """
 
 from __future__ import annotations
@@ -33,13 +34,34 @@ SETUP_ACTIONS = (
 )  # fmt: skip
 
 
+# The steps of an invoice that separation of duties keeps apart (D-109), by their audit event.
+DUTY_STEPS = {"approved": "approved", "final_approved": "gave the second approval", "exported": "exported",
+              "jde_voucher_posted": "posted to JD Edwards"}  # fmt: skip
+
+
+def same_person_steps(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Invoices where one person (by name) did two or more of :data:`DUTY_STEPS`, with the steps."""
+    steps: dict[tuple[int, str], dict[str, Any]] = {}
+    for e in events:
+        if e["action"] in DUTY_STEPS and e["invoice_id"] and (e["actor"] or "").strip():
+            key = (int(e["invoice_id"]), e["actor"].strip().casefold())
+            found = steps.setdefault(key, {"invoice_id": key[0], "person": e["actor"].strip(), "steps": [],
+                                           "vendor": e.get("invoice_vendor") or ""})  # fmt: skip
+            if DUTY_STEPS[e["action"]] not in found["steps"]:
+                found["steps"].append(DUTY_STEPS[e["action"]])
+    order = list(DUTY_STEPS.values())
+    found = [{**f, "steps": sorted(f["steps"], key=order.index)} for f in steps.values() if len(f["steps"]) > 1]
+    return sorted(found, key=lambda f: (f["invoice_id"], f["person"]))
+
+
 def _codes(event: dict[str, Any], severity: str | None = None) -> list[str]:
     issues = (event["detail"] or {}).get("open_issues") or []
     return [i["code"] for i in issues if severity is None or i.get("severity") == severity]
 
 
-def build(store: Store, start: dt.date, end: dt.date) -> dict[str, Any]:
-    """Sections of the report for events from ``start`` to ``end`` (inclusive)."""
+def build(store: Store, start: dt.date, end: dt.date, *, duties: bool = False) -> dict[str, Any]:
+    """Sections of the report for events from ``start`` to ``end`` (inclusive). ``duties``: also the invoices where
+    one person did several steps (the company server; on a laptop one person does them all)."""
     first, last = start.isoformat(), (end + dt.timedelta(days=1)).isoformat()
     events = [e for e in store.events(limit=1_000_000) if first <= e["created_at"] < last]
     approvals = [e for e in events if e["action"] == "approved"]
@@ -70,7 +92,7 @@ def build(store: Store, start: dt.date, end: dt.date) -> dict[str, Any]:
         "overrides": overrides, "signals": signals, "finals": finals, "sent_back": sent_back,
         "waiting": waiting, "setup": setup, "one_person": one_person,
         "by_person": [(p, n, bulk.get(p, 0)) for p, n in by_person.most_common()],
-        "limit": store.approval_limit(),
+        "limit": store.approval_limit(), "same_person": same_person_steps(events) if duties else None,
     }  # fmt: skip
 
 
@@ -150,6 +172,18 @@ def report_html(r: dict[str, Any]) -> str:
             f"<h2>Waiting for a second approval now ({len(r['waiting'])})</h2><table><tr><th>#</th><th>Vendor</th>"
             f"<th>Invoice</th><th class='n'>Total</th><th>First approver</th></tr>{waiting}</table>"
         )
+    same = r.get("same_person")
+    if same:
+        rows = "".join(f"<tr><td>#{s['invoice_id']}</td><td>{e(s['vendor'])}</td><td>{e(s['person'])}</td>"
+                       f"<td>{e(', '.join(s['steps']))}</td></tr>" for s in same)  # fmt: skip
+        parts.append(
+            f"<h2>One person at several steps ({len(same)})</h2><p class='muted'>The same person approved, gave the "
+            "second approval, exported or posted to JD Edwards more than one of these for an invoice.</p><table>"
+            f"<tr><th>#</th><th>Vendor</th><th>Person</th><th>Steps</th></tr>{rows}</table>"
+        )
+    elif same is not None:
+        parts.append("<h2>One person at several steps</h2><p class='none'>None: each step of each invoice was done "
+                     "by a different person.</p>")  # fmt: skip
     parts += [
         _section("Changes to setup, vendors, purchase orders and learning", r["setup"], "None."),
         "<h2>Approvals by person</h2><table><tr><th>Person</th><th class='n'>Invoices approved</th>"

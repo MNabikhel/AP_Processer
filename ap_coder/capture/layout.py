@@ -33,6 +33,10 @@ log = logging.getLogger(__name__)
 HEIF_EXTENSIONS = {".heic", ".heif"}  # an iPhone's photos
 ONE_FRAME_EXTENSIONS = {".gif", ".webp"}  # a picture that may be animated: its first frame is the page
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"} | HEIF_EXTENSIONS | ONE_FRAME_EXTENSIONS
+# The picture formats Pillow may open (``Image.open(formats=...)``): those AP Coder takes in (MPO is how Pillow names a
+# camera's JPEG holding a second picture; HEIF is pillow-heif's). Every other decoder Pillow has (PSD, PCX, ICO, EPS,
+# JPEG 2000, ...) stays shut: a file named .png is never handed to them (D-109).
+PICTURE_FORMATS = ("JPEG", "MPO", "PNG", "TIFF", "WEBP", "GIF", "BMP", "HEIF")
 MIN_TEXT_WORDS = 5  # fewer words than this on a page means it is a scan
 OCR_DPI = 200
 READ_PAGES = 20  # a file's pages read on this computer (``build_layout``): the rest are said not read (B-267)
@@ -86,6 +90,15 @@ def within_pixel_limit(frame: Any) -> None:
         raise CannotRead(too_large(width, height))
 
 
+def picture_formats() -> tuple[str, ...]:
+    """:data:`PICTURE_FORMATS` that this Pillow has (HEIF once pillow-heif is registered): ``Image.open`` fails on a
+    format it doesn't know."""
+    from PIL import Image
+
+    Image.init()
+    return tuple(f for f in PICTURE_FORMATS if f in Image.OPEN)
+
+
 def open_image(source: Any, name: str = "") -> Any:
     """Pillow's ``Image.open`` for a picture (a path or a file object), HEIC/HEIF photos included. Raises
     ``CannotRead`` for a HEIC photo when pillow-heif isn't installed, and for a picture over ``MAX_PICTURE_PIXELS``
@@ -96,7 +109,8 @@ def open_image(source: Any, name: str = "") -> Any:
     heif = Path(name or str(source)).suffix.lower() in HEIF_EXTENSIONS
     if not register_heif() and heif:
         raise CannotRead(NO_HEIF)
-    img = Image.open(source)  # over twice Pillow's own limit, DecompressionBombError (said plainly: plain_error)
+    # Over twice Pillow's own limit, DecompressionBombError (said plainly: plain_error).
+    img = Image.open(source, formats=picture_formats())
     width, height = img.size
     if width * height <= MAX_PICTURE_PIXELS:
         return img
@@ -506,7 +520,7 @@ def ocr_image(png_bytes: bytes, number: int, engine: str | None = None) -> PageL
     import numpy as np
     from PIL import Image
 
-    picture = Image.open(io.BytesIO(png_bytes))
+    picture = Image.open(io.BytesIO(png_bytes), formats=picture_formats())
     stated = _stated_dpi(picture)
     img = _on_paper(picture)
     width, height = img.size
@@ -984,7 +998,7 @@ def _prepared(png_bytes: bytes) -> bytes:
 
     from PIL import Image, ImageFilter
 
-    img = Image.open(io.BytesIO(png_bytes)).convert("L")
+    img = Image.open(io.BytesIO(png_bytes), formats=picture_formats()).convert("L")
     angle = _deskew_angle(img)
     if abs(angle) >= 0.2:
         img = img.rotate(angle, resample=Image.BICUBIC, fillcolor=255, expand=False)

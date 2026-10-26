@@ -31,14 +31,14 @@ def test_the_approval_records_the_account_that_gave_it(waiting):
 def test_the_same_account_under_another_name_cannot_give_the_second_approval(waiting):
     store, invoice_id = waiting
     with pytest.raises(PermissionError, match="another account"):
-        store.final_approve(invoice_id, "Somebody Else", login="user:1")
+        store.final_approve(invoice_id, "Somebody Else", login="user:1", shown=store.latest_approval_id(invoice_id))
     assert store.get_invoice(invoice_id)["status"] == PENDING
 
 
 def test_another_account_with_the_same_name_may_give_it(waiting):
     """Two people called Ann Lee: two accounts, two people."""
     store, invoice_id = waiting
-    store.final_approve(invoice_id, "Ann Lee", login="user:2")
+    store.final_approve(invoice_id, "Ann Lee", login="user:2", shown=store.latest_approval_id(invoice_id))
     final = store.events(invoice_id, ["final_approved"])[0]["detail"]
     assert final["user_id"] == 2 and final["first_approver"] == "Ann Lee"
     assert store.get_invoice(invoice_id)["status"] == "approved"

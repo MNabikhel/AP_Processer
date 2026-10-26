@@ -90,14 +90,16 @@
 <section class="card" id="paused-names">
   <h4><span class="ms" aria-hidden="true">lock_clock</span> Paused usernames</h4>
   <p class="muted">After 5 tries that didn't match for one username from one address, logins as that username from
-    there pause for 15 minutes. Someone may have forgotten their password: lift it once you know why.</p>
+    there pause for 15 minutes; after 10 within an hour from anywhere, from every address but those the person
+    logged in from lately, for a few minutes at first. Someone may have forgotten their password: lift it once you know
+    why.</p>
   <div class="table-wrap">
     <table class="table">
       <thead><tr><th>Username</th><th>From</th><th>Paused until</th><th></th></tr></thead>
       <tbody>
         {% for p in paused_names %}
-        <tr><td>{{ p.username }}</td><td>{{ p.address or "this server" }}</td><td>{{ p.until }}</td>
-          <td class="r"><form method="post" action="/admin/users/usernames/unlock" data-confirm="Let logins as {{ p.username }} from {{ p.address or 'this server' }} go on now?">
+        <tr><td>{{ p.username }}</td><td>{{ "anywhere" if p.address == "*" else (p.address or "this server") }}</td><td>{{ p.until }}</td>
+          <td class="r"><form method="post" action="/admin/users/usernames/unlock" data-confirm="Let logins as {{ p.username }} from {{ 'anywhere' if p.address == '*' else (p.address or 'this server') }} go on now?">
             <input type="hidden" name="username" value="{{ p.username }}"><input type="hidden" name="address" value="{{ p.address }}">
             <button class="btn" type="submit"><span class="ms" aria-hidden="true">lock_open</span>Lift the pause</button></form></td></tr>
         {% endfor %}

@@ -606,6 +606,12 @@ def jde_api_post(request: Request, batch: int) -> JSONResponse:
                       "Edwards E1 → API connection.")  # fmt: skip
     if not any(p["status"] == jde_post.CHECKED for p in jde_post.postings(store, batch)):
         return refuse("Run the dry run first: only the vouchers that passed it are posted.")
+    from ap_coder.web.identity import person
+
+    who = person()
+    refused = store.posting_refusal(batch, who.user_id if who else None)  # separation of duties (D-109)
+    if refused:
+        return refuse(refused, 403)
     actor = current_reviewer()
 
     def work(job: Any) -> dict[str, Any]:

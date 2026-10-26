@@ -102,7 +102,8 @@ def test_two_colleagues_give_the_two_approvals_and_the_audit_trail_names_each(ap
     ana2 = colleague(app, "10.0.0.5", "Someone Else")
     ana2.post(f"/review/{invoice_id}/final-approve", headers=PAGE)
     assert store.get_invoice(invoice_id)["status"] == PENDING
-    answer = ben.post(f"/review/{invoice_id}/final-approve", headers=PAGE).json()
+    shown = {"approval": store.latest_approval_id(invoice_id)}  # the first approval the page showed (D-109)
+    answer = ben.post(f"/review/{invoice_id}/final-approve", data=shown, headers=PAGE).json()
     assert answer["ok"], answer
     done = store.get_invoice(invoice_id)
     assert done["status"] == APPROVED and done["reviewer"] == "Ana" and done["second_reviewer"] == "Ben"

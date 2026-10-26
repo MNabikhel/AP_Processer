@@ -96,15 +96,21 @@ def port_refusal(host: str, port: int, https: bool = False) -> str:
             f"{browser_url(host, port, https)}, or start with another --port.")  # fmt: skip
 
 
+# TLS 1.2's ciphers (TLS 1.3 has its own, all strong): forward secrecy and AEAD only, never AES-CBC with SHA-1
+# (AES128-SHA, which uvicorn's default "TLSv1" allows). Python's own minimum is TLS 1.2 (D-109).
+TLS_CIPHERS = "ECDHE+AESGCM:ECDHE+CHACHA20:!aNULL:!eNULL:!MD5:!DSS"
+
+
 def uvicorn_options(certfile: str | None, keyfile: str | None, proxy: str | None) -> dict[str, Any]:
     """The server's HTTPS files and its proxy setting. The X-Forwarded-For and -Proto headers are believed only from
     the reverse proxy named with ``--proxy`` (its address): never otherwise, not even from this computer (uvicorn's
-    own default trusts 127.0.0.1)."""
-    options: dict[str, Any] = {"proxy_headers": bool(proxy)}
+    own default trusts 127.0.0.1). No ``server: uvicorn`` header: nothing says what serves the pages (D-109)."""
+    options: dict[str, Any] = {"proxy_headers": bool(proxy), "server_header": False}
     if proxy:
         options["forwarded_allow_ips"] = proxy
     if certfile and keyfile:
         options["ssl_certfile"], options["ssl_keyfile"] = certfile, keyfile
+        options["ssl_ciphers"] = TLS_CIPHERS
     return options
 
 

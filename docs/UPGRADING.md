@@ -12,6 +12,11 @@ the new offline bundle anywhere (a new folder, or over the old one), then double
 Linux: `APProcessor.command`). Leaving the old AP Coder open is fine, and even helps: the new version finds an old
 one that runs, stops it and cleans its folder up.
 
+**On the company server** (docs/SERVER.md step 11) the update is `server-update <bundle.zip> --sha256 <hex>`: the
+bundle builder prints the ZIP's SHA-256 and writes it beside the ZIP (`<zip>.sha256`); whoever built it sends that
+value to IT by another way than the ZIP (e-mail, chat), and `server-update` refuses a ZIP whose SHA-256 differs, or
+none given (`--no-hash-check` skips the check, with a warning, recorded in `server.json`).
+
 The new version has one file to open per computer: `APProcessor.bat` (Windows) or `APProcessor.command` (Mac,
 Linux). Older folders also had `install.bat`, `install.sh`, `start.bat`, `start.sh` and `terminal.bat`. When the new
 bundle is unzipped over such a folder, those files are removed on its first start. Nothing to do by hand. The

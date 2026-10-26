@@ -1202,3 +1202,53 @@ that is reversed keeps its line, marked "replaced by D-NN".
   status; the register's message stays when JD Edwards can't be asked. (`erp/exports.py`, `erp/jde.py`, `ops/cli.py`,
   `ops/doctor.py`, `erp/insights.py`, `erp/hub/tables.py`, `coding/vendors.py`, `erp/jde_sync.py`;
   `tests/test_e2e_review_fixes.py`, `tests/test_jde_sync.py`)
+- **D-109** · Second security review of server mode (B-1231 to B-1243; changes D-97, D-100, D-101 and D-103 where it
+  says otherwise). (1) **What an administrator's command trusts**: no `.env` sets a variable that decides which code
+  runs (`PATH`, `PATHEXT`, `COMSPEC`, `SYSTEMROOT`, `WINDIR`, `VIRTUAL_ENV`, `PYTHON*`, `PIP_*`, `LD_*`, `DYLD_*`,
+  `UV_*`: `config.process_var`), on a laptop too (nobody sets them there); `server-update` and `service
+  install|start|stop|status|remove` read no `.env` at all; the Pythons `server-update` starts get a clean environment
+  (`server_update.KEPT_ENV`: what Windows needs, server mode's own) and run with `-E -s` (not `-I`: the launcher and
+  the self-check import beside them). `server.json` is in the data folder, which the service's account can write, so
+  its `folder` is trusted only when it is the folder the command runs from, and `previous_folder` only beside it; the
+  code folder's ACLs (Administrators and SYSTEM only, SERVER.md step 5) are what make that folder trustworthy. (2)
+  **The bundle's SHA-256**, given apart from the ZIP: the builder writes `<zip>.sha256` (`sha256sum`'s format) and
+  prints it; `server-update --sha256 <hex>` checks the private copy before anything else and refuses without one;
+  `--no-hash-check` warns on stderr and is kept in `server.json`'s history (`bundle_hash`). The manifest and CRCs
+  inside the ZIP stay, as a check of the copy, not of who made it. No signing key: nothing to keep secret on IT's
+  side. (3) **Pillow** opens only JPEG, MPO, PNG, TIFF, WEBP, GIF, BMP and HEIF (`layout.picture_formats`, filtered
+  by what this Pillow has); `pillow>=13`, `certifi>=2026.10.19`; CI's lint job runs `pip-audit` on the packages with
+  the OCR and Azure add-ons. (4) **Sizes**, server mode only: 64 KB before a login, 260 MB after it (a larger
+  Content-Length refused before reading, a streamed body stopped at the limit, 413); `/login` refuses multipart (415)
+  and its form is sent urlencoded (`data-urlencoded`). Import invoices reads each file from its spool file when it is
+  saved (laptop too); on the server at most 200 files and 250 MB per upload and 2 GB or 120 uploads an hour per
+  account, in memory (a restart forgets). (5) **Lockouts**: besides D-101's two, 10 failures for a username within an
+  hour (since its last login) from anywhere pause it for 1, 2, 4, 8, then 15 minutes after each further one, computed
+  from `login_attempts` (no schema change); an address the account logged in from in the last 30 days is exempt from
+  that and from an address-wide pause, but not from the (username, address) pause, so an insider on the office's
+  shared address gets at most 5 tries per 15 minutes per account. Lockouts by account are `login_locked` (by
+  `account`), listed and lifted on the Users page ("anywhere"). (6) **Separation of duties**: `final_approve` takes
+  `shown` always (none is refused as changed); `user_added` and `password_reset` record `by_user`, and a second
+  approval from an account the first approver added or reset within 7 days is refused (events, not the users table:
+  a restore can bring back an older trail, accepted); Settings → Review's `poster_not_approver` (server, Admin, off)
+  refuses the JD Edwards API post to an account that approved an invoice of the batch (by account id); the controls
+  report adds, on the server, invoices where one name did two or more of approved, second approval, exported, posted.
+  (7) **Folders an Admin types** on the server must be one of `server.json`'s `allowed_folders` (`service install
+  --allowed-folders`, `;`-separated) or inside one, compared as text before the path is touched (no SMB sign-in to a
+  typed share); the copy and the hub run check again at use; the laptop is unchanged. (8) **Audit**: `logs/access.log`
+  in the data folder (10 MB × 10; address, username, method, path without query, status, bytes, ms), and a
+  `downloaded` event for every attachment response (one place for every download, no route left out), Admins only,
+  kept out of the hub's `activity`. (9) **TLS**: `ECDHE+AESGCM:ECDHE+CHACHA20` on TLS 1.2 (1.3 unchanged), no
+  `server` header (laptop too). (10) **OneLake**: `onelake.dfs.fabric.microsoft.com` and `<region>-onelake...` only.
+  (11) **Sessions**: 30 minutes unused and 12 hours in all by default (finance's usual for a shared server; D-97's 8
+  hours and 7 days were a laptop's day), `server.json` `session_idle_minutes` (5–480) and `session_hours` (1–168), read
+  when the dashboard starts; the cookie has no lifetime (ends with the browser); a temporary password stops working
+  after 72 hours (its last `user_added` / `password_reset` event, else the account's creation); a wrong current
+  password on Your password counts as a login failure, the 5th ends every session and pauses that address; Your
+  password lists the other sessions and ends them (`POST /account/sessions/end-others`). (12) **Roles**:
+  `/help/report/setup` is an Admin's; `/jobs/{name}` needs the job's role (`roles.JOB_NEEDS`, unknown: Admin; a 404
+  otherwise); the directory's saved layouts: on the server a non-Admin's are their own (`directory_presets:user:<id>`,
+  their default too), the shared ones an Admin's, shown beside them. Left for the roadmap: SSO/MFA, a SIEM feed, a
+  hash-chained audit, DPAPI for secrets, encrypted backups, `pip --require-hashes` (the bundle's SHA-256 covers its
+  wheelhouse). (`ops/server_update.py`, `ops/service.py`, `ops/cli.py`, `core/config.py`, `web/security.py`,
+  `web/identity.py`, `web/pages/process.py`, `core/store/users.py` (`posting_refusal`, `vouched_for`), `core/store/invoices.py`, `erp/controls.py`,
+  `erp/directory.py`, `web/roles.py`, `web/server.py`, `erp/hub/onelake.py`; `tests/test_server_hardening.py`)

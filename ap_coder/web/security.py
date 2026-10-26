@@ -23,7 +23,8 @@ import socket
 from collections.abc import Iterable
 from typing import Any
 
-from starlette.responses import PlainTextResponse
+from starlette.exceptions import HTTPException
+from starlette.responses import JSONResponse, PlainTextResponse
 
 from ap_coder.ops.offline import server_mode
 
@@ -217,3 +218,158 @@ class SecurityHeaders:
             await send(message)
 
         await self.app(scope, receive, sending)
+
+
+# --- Request sizes on the server (D-109) ------------------------------------------------------------------------------
+
+OPEN_BODY_LIMIT = 64 * 1024  # a request anyone may send (the login, before a session): a form of a few fields
+# Any other request, from a person logged in: the largest upload AP Coder takes (Import invoices: 250 MB in all,
+# process.MAX_REQUEST_BYTES), with room for the form around it.
+BODY_LIMIT = 260 * 1024 * 1024
+TOO_LARGE = "This is more than AP Coder takes in one go: send fewer or smaller files."
+NO_MULTIPART = "Log in from AP Coder's login page."
+
+
+class BodyTooLarge(HTTPException):
+    """The request's body went past its limit while it was read (FastAPI passes an HTTPException on as it is)."""
+
+    def __init__(self) -> None:
+        super().__init__(status_code=413, detail=TOO_LARGE)
+
+
+def declared_length(headers: list[tuple[bytes, bytes]]) -> int | None:
+    for name, value in headers:
+        if name.lower() == b"content-length":
+            try:
+                return int(value)
+            except ValueError:
+                return -1  # not a number: refused
+    return None
+
+
+def _too_large() -> JSONResponse:
+    headers = {"Cache-Control": "no-store", "Connection": "close"}
+    return JSONResponse({"ok": False, "error": TOO_LARGE}, status_code=413, headers=headers)
+
+
+async def limit_body(app: Any, scope: dict[str, Any], receive: Any, send: Any, limit: int) -> None:
+    """Run ``app`` with at most ``limit`` bytes of request body: a larger Content-Length is refused before anything
+    is read (413), and a body that goes past it while it streams in (chunked, or a false length) stops being read
+    there, so it is never spooled to disk in full."""
+    length = declared_length(scope.get("headers") or [])
+    if length is not None and not 0 <= length <= limit:
+        await _too_large()(scope, receive, send)
+        return
+    seen, started = 0, False
+
+    async def receiving() -> dict[str, Any]:
+        nonlocal seen
+        message = await receive()
+        if message["type"] == "http.request":
+            seen += len(message.get("body") or b"")
+            if seen > limit:
+                raise BodyTooLarge()
+        return message
+
+    async def sending(message: dict[str, Any]) -> None:
+        nonlocal started
+        started = started or message["type"] == "http.response.start"
+        await send(message)
+
+    try:
+        await app(scope, receiving, sending)
+    except BodyTooLarge:
+        if started:
+            raise
+        await _too_large()(scope, receive, send)
+
+
+def multipart(scope: dict[str, Any]) -> bool:
+    return any(
+        k.lower() == b"content-type" and v.lower().startswith(b"multipart/") for k, v in scope.get("headers") or []
+    )
+
+
+# --- The server's access log and downloads (D-109) -------------------------------------------------------------------
+
+ACCESS_LOG = "access.log"  # in the data folder's logs: 10 MB, then 9 older ones
+USER_KEY = "ap_coder.user"  # scope["state"][USER_KEY]: the username the Identity middleware found for the request
+NAME_KEY = "ap_coder.name"  # and the person's name, as their events name them
+
+
+def access_logger(folder: Any) -> Any:
+    """``<folder>/access.log``, rotated (10 MB × 10), one line per request."""
+    import logging
+    import logging.handlers
+    from pathlib import Path
+
+    log = logging.getLogger("ap_coder.access")
+    path = Path(folder) / ACCESS_LOG
+    if not any(getattr(h, "baseFilename", "") == str(path.resolve()) for h in log.handlers):
+        for handler in list(log.handlers):
+            log.removeHandler(handler)
+            handler.close()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handler = logging.handlers.RotatingFileHandler(path, maxBytes=10_000_000, backupCount=9, encoding="utf-8")
+        handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+        log.addHandler(handler)
+    log.setLevel(logging.INFO)
+    log.propagate = False
+    return log
+
+
+def _filename(headers: list[tuple[bytes, bytes]]) -> str | None:
+    """The file name of an ``attachment`` (a download), else None."""
+    for name, value in headers:
+        if name.lower() == b"content-disposition":
+            text = value.decode("latin-1")
+            if text.lower().startswith("attachment"):
+                found = text.split("filename*=UTF-8''")[-1] if "filename*=" in text else text.partition("filename=")[2]
+                from urllib.parse import unquote
+
+                return unquote(found.split(";")[0].strip().strip('"'))[:200] or "?"
+    return None
+
+
+class AccessLog:
+    """ASGI middleware, server mode: a line per request in ``logs/access.log`` (time, address, user, method, path
+    without its query, status, bytes, milliseconds), and each download (a response sent as an attachment: the
+    directory's export, a batch's files or ZIP, a backup, a report) as a ``downloaded`` event with the person."""
+
+    def __init__(self, app: Any, folder: Any, store: Any = None) -> None:
+        self.app = app
+        self.log = access_logger(folder)
+        self.store = store
+
+    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        import time
+
+        from starlette.concurrency import run_in_threadpool
+
+        scope.setdefault("state", {})
+        started, status, size, download = time.monotonic(), 0, 0, None
+
+        async def sending(message: dict[str, Any]) -> None:
+            nonlocal status, size, download
+            if message["type"] == "http.response.start":
+                status = int(message.get("status") or 0)
+                download = _filename(message.get("headers") or [])
+            elif message["type"] == "http.response.body":
+                size += len(message.get("body") or b"")
+            await send(message)
+
+        try:
+            await self.app(scope, receive, sending)
+        finally:
+            user = scope["state"].get(USER_KEY) or "-"
+            client = (scope.get("client") or ("-", 0))[0] or "-"
+            path = scope.get("path") or "/"
+            self.log.info("%s %s %s %s %s %d %d", client, user, scope.get("method", "GET"), path, status or 500, size,
+                          int((time.monotonic() - started) * 1000))  # fmt: skip
+            if download is not None and status == 200 and self.store is not None:
+                detail = {"file": download, "path": path, "address": client}
+                actor = scope["state"].get(NAME_KEY) or (None if user == "-" else user)
+                await run_in_threadpool(self.store.log_event, "downloaded", actor=actor, detail=detail)
