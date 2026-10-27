@@ -51,7 +51,8 @@ def test_the_workflow_tests_skip_where_there_is_no_workflow(tmp_path):
     copy.mkdir(parents=True)
     shutil.copy(__file__, copy / "test_ci_workflow.py")
     out = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-k",
-                          "not looked_up_once and not where_there_is_no_workflow and not one_shard", str(copy)],
+                          "not looked_up_once and not where_there_is_no_workflow and not one_shard"
+                          " and not older_versions", str(copy)],
                          cwd=tmp_path, capture_output=True, text=True, encoding="utf-8")  # fmt: skip
     assert out.returncode == 0, out.stdout[-2000:]
 
@@ -167,3 +168,18 @@ def test_every_test_runs_in_exactly_one_shard():
         assert all(i in part for i in items if i.nodeid.split("::")[0] in files)  # a file is never split
     with pytest.raises(pytest.UsageError):
         _shard(items, "4/3")
+
+
+def test_an_older_versions_test_file_left_in_tests_is_not_run(tmp_path):
+    """B-1411: the tests live in folders since D-116. Unzipping a newer GitHub ZIP over an older copy (no manifest, so
+    nothing is pruned) left the older version's tests/test_*.py, and pytest ran them against the new code."""
+    from tests import conftest
+
+    tests = tmp_path / "tests"
+    (tests / "core").mkdir(parents=True)
+    (tests / "conftest.py").write_text(f"collect_ignore_glob = {conftest.collect_ignore_glob!r}\n")
+    (tests / "test_left_by_an_older_version.py").write_text("def test_old():\n    assert False\n")
+    (tests / "core" / "test_this_version.py").write_text("def test_new():\n    assert True\n")
+    out = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"],
+                         cwd=tmp_path, capture_output=True, text=True, encoding="utf-8")  # fmt: skip
+    assert out.returncode == 0 and "1 passed" in out.stdout, out.stdout[-2000:]

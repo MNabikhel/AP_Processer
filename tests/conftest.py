@@ -48,6 +48,9 @@ def _import_the_pages() -> None:
 _import_the_pages()
 
 ROOT = Path(__file__).resolve().parent.parent
+# The tests live in folders (D-116): a test file directly in tests/ is an older version's, left when a newer GitHub
+# ZIP was unzipped over it (only the offline bundle prunes what it no longer ships), never run (B-1411).
+collect_ignore_glob = ["test_*.py"]
 _SLOW = {
     line.strip()
     for line in (Path(__file__).parent / "slow_tests.txt").read_text(encoding="utf-8").splitlines()
