@@ -106,6 +106,29 @@ def test_a_kept_guess_is_the_reviewers_coding_not_coded_as_suggested(tmp_path):
     assert [r["proposed"] for r in outcomes(ai, changed) if r["field"] == "line_gl"] == ["6000"]  # the learned one only
 
 
+def test_a_blank_line_coded_by_ap_is_not_called_a_guess_on_learning(tmp_path):
+    """B-1412: the demo's Harbourview line 4 (no account; AP picked 6800 from the suggestions) read "coded … (the AI
+    only guessed)" in Learning's feed and in the coding memory: the AI had proposed nothing. A kept guess still says
+    it was a guess."""
+    import re
+
+    store = Store(tmp_path / "ap.db")
+    load_sample_setup(store)
+    ai = _invoice([{"description": "Courier and document delivery", "amount": 84.5, "predicted_gl_code": UNASSIGNED,
+                    "reasoning_justification": "Not sure"},
+                   {"description": "Copy paper", "amount": 20.0, "predicted_gl_code": "6000",
+                    "reasoning_justification": f"{MODEL_SUGGESTED}: office supplies"}])  # fmt: skip
+    iid = store.add_invoice(tmp_path / "a.pdf", ai, {"requires_review": True})
+    final = {**ai, "line_items": [dict(ai["line_items"][0], predicted_gl_code="6800"), ai["line_items"][1]]}
+    assert store.approve_invoice(iid, final, "Pat")[CODED] == 2
+    page = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html.unescape(client_for(store).get("/learning").text)))
+    feed = page.split("Latest in the coding memory", 1)[1].split("Accuracy by vendor", 1)[0]
+    assert re.search(r"Pat coded Courier and document delivery → 6800 \(it had no account\)", feed), feed
+    assert re.search(r"Pat coded Copy paper → 6000 \(the AI only guessed\)", feed), feed
+    memory = page.split("Coding memory: every line", 1)[1]
+    assert "✎ coded by AP (it had no account)" in memory and "✎ coded by AP (the AI only guessed)" in memory
+
+
 def test_the_review_screen_marks_a_guess_and_does_not_call_it_as_suggested(tmp_path):
     store = Store(tmp_path / "ap.db")
     load_sample_setup(store)
