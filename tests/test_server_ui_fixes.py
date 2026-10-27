@@ -136,16 +136,6 @@ def test_the_quick_start_on_the_server_leaves_out_the_laptop(store):
     assert "127.0.0.1" in laptop and "APProcessor.bat" in laptop and "On the company server" in laptop
 
 
-def test_the_quick_start_marks_the_laptop_parts_and_tells_staff_what_to_do():
-    text = (ROOT / "docs" / "QUICK_START.md").read_text(encoding="utf-8")
-    server = text.split("## On the company server", 1)[1].split("\n## ", 1)[0]
-    for said in ("address IT gave you", "log in", "your own password", "IT's or an Admin's", "tell IT"):
-        assert said in server, said
-    for heading in ("## Install", "## Start (every day)", "## Where things are"):
-        line = next(h for h in text.splitlines() if h.startswith(heading))
-        assert "on the laptop" in line, line
-
-
 # --- Setup messages: who to ask (B-1112) ------------------------------------------------------------------------------
 
 

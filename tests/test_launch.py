@@ -482,14 +482,6 @@ def test_a_free_port_is_found_when_the_next_fifty_are_refused(launch, monkeypatc
     assert port not in refused and port > 0
 
 
-def test_browser_none_opens_nothing(launch, monkeypatch):
-    import webbrowser
-
-    monkeypatch.setenv("BROWSER", "none")
-    monkeypatch.setattr(webbrowser, "open", lambda url: pytest.fail("opened"))
-    launch.open_browser("http://localhost:8501")
-
-
 # --- Readiness and the self-check ------------------------------------------------------------------------------
 
 

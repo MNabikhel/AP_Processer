@@ -3,7 +3,7 @@ import json
 from ap_coder.ai.evaluation import evaluate
 from ap_coder.ai.extraction import DocumentExtractor
 from ap_coder.ai.inference import InvoiceCoder
-from ap_coder.ai.pipeline import InvoicePipeline, discover_inputs, write_outputs
+from ap_coder.ai.pipeline import InvoicePipeline, write_outputs
 from ap_coder.core.config import Settings
 
 from .conftest import SAMPLE_STEM, SAMPLES, FakeDIClient, FakeOpenAI, make_completion
@@ -60,13 +60,6 @@ def test_failure_is_captured_not_raised(tmp_path, settings, reference, sample_ma
     meta = json.loads((tmp_path / f"{SAMPLE_STEM}.validation.json").read_text())
     assert meta["status"] == "failed"
     assert result.summary()["status"] == "failed"
-
-
-def test_discover_inputs(tmp_path):
-    (tmp_path / "a.pdf").write_bytes(b"")
-    (tmp_path / "b.TIFF").write_bytes(b"")
-    (tmp_path / "notes.docx").write_bytes(b"")
-    assert [p.name for p in discover_inputs([tmp_path])] == ["a.pdf", "b.TIFF"]
 
 
 def test_process_many_parallel(settings, reference, ground_truth, sample_markdown_path):

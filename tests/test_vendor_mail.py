@@ -96,12 +96,17 @@ def test_french_wording_numbers_and_taxes():
 
 
 def test_credit_note_wording():
+    """A credit note's mail says so in its subject (both languages) and its body: apply it, not pay it, its amount
+    without the minus sign."""
     doc = _doc("northwind_ON_HST_CN-2026-0047")
     assert doc["grand_total"] < 0
-    body = vendor_mail.draft(doc, [Issue("error", "GST_HST_NUMBER_MISSING", "x")]).body
+    issues = [Issue("error", "GST_HST_NUMBER_MISSING", "x")]
+    body = vendor_mail.draft(doc, issues).body
     assert (
         "credit note" in body and "apply it" in body and "pay it" not in body and "-" not in body.split("for ")[1][:3]
     )
+    assert vendor_mail.draft(doc, issues).subject.startswith("Credit note CN-2026-0047")
+    assert vendor_mail.draft(doc, issues, vendor_mail.FRENCH).subject.startswith("Note de crédit")
 
 
 def test_credit_note_questions():
@@ -110,13 +115,6 @@ def test_credit_note_questions():
     assert "refers to invoice NW-2026-0912, which we cannot find" in body
     french = vendor_mail.draft(doc, [Issue("warning", "CREDIT_EXCEEDS_INVOICE", "x")], vendor_mail.FRENCH).body
     assert "dépasse le montant de la facture NW-2026-0912" in french
-
-
-def test_credit_note_subject():
-    doc = _doc("northwind_ON_HST_CN-2026-0047")
-    issues = [Issue("error", "GST_HST_NUMBER_MISSING", "x")]
-    assert vendor_mail.draft(doc, issues).subject.startswith("Credit note CN-2026-0047")
-    assert vendor_mail.draft(doc, issues, vendor_mail.FRENCH).subject.startswith("Note de crédit")
 
 
 def test_a_gst_number_failing_its_check_digit_is_asked_about():

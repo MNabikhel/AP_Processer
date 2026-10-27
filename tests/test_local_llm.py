@@ -673,8 +673,15 @@ def test_thinking_until_the_token_limit_is_a_clear_error(lm_studio, reference, s
     assert len(server.chats) == calls + 1  # no repair turn: it would be cut off the same way
 
 
-def test_a_cut_off_json_answer_says_so(lm_studio, reference):
-    server = lm_studio(["qwen3.5-9b"], QWEN35_V0, reply=lambda body: chat_reply('{"lines": [{"line_', "length"))
+@pytest.mark.parametrize(
+    "answer",
+    ['{"lines": [{"line_', json.dumps(PICKS)[:-60]],  # cut in its first line; the first line whole, the second cut
+    ids=["in-the-first-line", "after-the-first-line"],
+)
+def test_a_cut_off_json_answer_says_so(lm_studio, reference, answer):
+    """An answer cut off at the token limit is an error that says how to give it more room, never its first lines
+    read as a suggestion."""
+    server = lm_studio(["qwen3.5-9b"], QWEN35_V0, reply=lambda body: chat_reply(answer, "length"))
     with pytest.raises(CodingError, match="cut off before the JSON was complete.*AP_LLM_MAX_TOKENS"):
         ask_accounts(server, reference)
 
@@ -694,13 +701,6 @@ def test_a_reply_cut_off_at_the_token_limit_is_not_read_as_one_of_its_line_items
     assert reply.data is None and reply.cut_off and "cut off before the JSON was complete" in reply.problem
     closed = read_reply(SimpleNamespace(message=SimpleNamespace(content=content + '"]}'), finish_reason="length"))
     assert closed.data is None and closed.cut_off  # stopped at the limit: not trusted even when it closes
-
-
-def test_a_cut_off_suggestion_is_an_error_not_just_its_first_line(lm_studio, reference):
-    cut = json.dumps(PICKS)[:-60]  # the first line complete, the second cut
-    server = lm_studio(["qwen3.5-9b"], QWEN35_V0, reply=lambda body: chat_reply(cut, "length"))
-    with pytest.raises(CodingError, match="cut off before the JSON was complete"):
-        ask_accounts(server, reference)
 
 
 def test_an_answer_without_json_is_an_error_not_an_empty_suggestion(lm_studio, reference):

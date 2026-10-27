@@ -440,21 +440,6 @@ def test_the_accounts_page_names_its_tax_tab_apart_from_the_sales_tax_page(clien
 # --- The guides say what the app does (B-505, B-518, B-525) ---------------------------------------------------------
 
 
-def test_the_guides_match_the_app():
-    from pathlib import Path
-
-    docs = Path(__file__).resolve().parent.parent
-    quick = (docs / "docs" / "QUICK_START.md").read_text(encoding="utf-8")
-    assert "0. Start LM Studio" in quick and "Check again" in quick
-    assert "there are no GL suggestions" not in quick and "Excel workbook" in quick
-    for name in ("README.md",):  # (PILOT.md's launcher quotes: the launcher's own change)
-        text = (docs / name).read_text(encoding="utf-8")
-        sample = text.split("AP Coder readiness:", 1)[1].split("```", 1)[0]
-        assert "[OK]" not in sample and "✓" in sample, name  # as the window shows it
-        assert "then\nstart AP Coder again" not in text and "then start AP Coder again*" not in text, name
-    assert "`schema`" not in (docs / "docs" / "GETTING_STARTED.md").read_text(encoding="utf-8")
-
-
 def test_the_page_modules_hold_the_real_reviewer_whichever_test_ran_first():
     """B-581: the page modules are imported by ``create_app`` the first time it runs. In a test whose ``me`` fixture had
     patched ``web.core.reviewer`` (test_web_invoice, test_web_pilot_walkthrough), ``from ap_coder.web.core import

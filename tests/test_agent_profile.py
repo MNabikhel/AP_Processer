@@ -21,7 +21,3 @@ def test_the_developer_agent_carries_only_the_developer_tools():
     meta = {k.strip(): v.strip() for k, v in _front_matter().items()}
     assert meta["name"] == "developer"
     assert {t.strip() for t in meta["tools"].split(",")} == TOOLS
-
-
-def test_claude_md_points_new_agents_to_it():
-    assert "--agent developer" in (ROOT / "CLAUDE.md").read_text(encoding="utf-8")

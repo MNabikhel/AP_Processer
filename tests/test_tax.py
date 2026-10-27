@@ -50,6 +50,22 @@ def _codes(coding_dict, reference):
         ("QST", "QC", "2026-01-01", 0.09975),
         ("PST", "ON", "2026-01-01", None),
         ("HST", "AB", "2026-01-01", None),
+        # history: Saskatchewan's PST, BC's HST years, Manitoba's 8%
+        ("PST", "SK", "2017-03-22", 0.05),
+        ("PST", "SK", "2017-03-23", 0.06),
+        ("HST", "BC", "2012-06-01", 0.12),
+        ("PST", "BC", "2012-06-01", None),
+        ("PST", "BC", "2010-06-30", 0.07),
+        ("PST", "BC", "2013-04-01", 0.07),
+        ("HST", "BC", "2013-04-01", None),
+        ("PST", "MB", "2013-06-30", 0.07),
+        ("PST", "MB", "2013-07-01", 0.08),
+        # the Atlantic HST's past rates
+        ("HST", "NB", "2009-05-01", 0.13),
+        ("HST", "NL", "2012-05-01", 0.13),
+        ("HST", "NS", "2009-05-01", 0.13),
+        ("HST", "NS", "2011-05-01", 0.15),
+        ("HST", "NS", "2025-05-01", 0.14),
     ],
 )
 def test_effective_dated_rates(tax_type, province, date, rate):
@@ -274,24 +290,6 @@ def test_tax_overcharge_is_never_passed_silently(reference, amounts, hst, severi
 )
 def test_correctly_rounded_tax_passes(reference, amounts, hst):
     assert _codes(_on_lines(amounts, hst), reference) == set()
-
-
-@pytest.mark.parametrize(
-    ("tax_type", "province", "date", "rate"),
-    [
-        ("PST", "SK", "2017-03-22", 0.05),
-        ("PST", "SK", "2017-03-23", 0.06),
-        ("HST", "BC", "2012-06-01", 0.12),
-        ("PST", "BC", "2012-06-01", None),
-        ("PST", "BC", "2010-06-30", 0.07),
-        ("PST", "BC", "2013-04-01", 0.07),
-        ("HST", "BC", "2013-04-01", None),
-        ("PST", "MB", "2013-06-30", 0.07),
-        ("PST", "MB", "2013-07-01", 0.08),
-    ],
-)
-def test_historical_rates(tax_type, province, date, rate):
-    assert TaxRateTable.load().rate_for(tax_type, province, dt.date.fromisoformat(date)) == rate
 
 
 def test_older_invoices_check_against_the_rates_of_their_day(reference):

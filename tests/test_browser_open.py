@@ -61,8 +61,10 @@ def test_windows_and_macs_always_open_the_browser(launch, opened, monkeypatch, p
     assert opened == ["http://localhost:8501"]
 
 
-def test_browser_none_still_opens_nothing_anywhere(launch, opened, monkeypatch):
-    monkeypatch.setattr(sys, "platform", "darwin")
+@pytest.mark.parametrize("platform", ["this computer's", "darwin"])
+def test_browser_none_still_opens_nothing_anywhere(launch, opened, monkeypatch, platform):
+    if platform == "darwin":
+        monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setenv("BROWSER", "none")
     launch.open_browser("http://localhost:8501")
     assert opened == []

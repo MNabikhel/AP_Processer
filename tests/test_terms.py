@@ -146,8 +146,9 @@ def test_a_date_at_the_end_of_the_calendar_has_no_due_date_instead_of_crashing(i
         assert isinstance(payment_findings(coding), list)
 
 
-def test_2_10_eom_counts_the_discount_and_the_net_from_month_end():
-    p = payment({"payment_terms": "2/10 EOM", "invoice_date": "2026-09-15", "grand_total": 113.0, "subtotal": 100.0})
+@pytest.mark.parametrize("terms", ["2/10 EOM", "2/10 EOM net 30"])  # with or without the net days printed
+def test_2_10_eom_counts_the_discount_and_the_net_from_month_end(terms):
+    p = payment({"payment_terms": terms, "invoice_date": "2026-09-15", "grand_total": 113.0, "subtotal": 100.0})
     assert p.source == "terms" and p.discount_amount == 2.0
     assert p.discount_by == dt.date(2026, 10, 10) and p.due == dt.date(2026, 10, 30)
 

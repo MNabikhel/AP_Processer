@@ -42,11 +42,6 @@ def test_terms_misreads(text, expected):
     assert parse_terms(text) == expected
 
 
-def test_eom_terms_count_from_the_end_of_the_month():
-    p = payment({"invoice_date": "2026-09-20", "payment_terms": "2/10 EOM net 30", "grand_total": 100, "subtotal": 100})
-    assert p.due == dt.date(2026, 10, 30) and p.discount_by == dt.date(2026, 10, 10)
-
-
 @pytest.mark.parametrize(
     "text, value",
     [("-150.00", -150.0), ("$-150", -150.0), ("150,00", 150.0), ("1 234,56", 1234.56), ("(2,316.50)", -2316.5)],

@@ -52,17 +52,19 @@ def test_coding_policy_saved_with_a_byte_order_mark_keeps_its_comment_line(tmp_p
     assert store.get_setting("policy_notes") == "# Coding policy notes\n- Rule one\n"
 
 
-def test_duplicate_codes_rejected(tmp_path):
+@pytest.mark.parametrize(
+    ("table", "said"),
+    [
+        ("gl_code,account_name\n6000,A\n6000,B\n", "duplicate"),
+        ("code,account_name\n6000,A\n", "missing required column"),
+        ("Ledger,Name\n6000,A\n", "Found columns: Ledger, Name"),  # the columns it did find, named
+    ],
+    ids=["duplicate-codes", "missing-key-column", "missing-key-column-names-the-columns-found"],
+)
+def test_a_table_that_cannot_be_imported_says_why(tmp_path, table, said):
     p = tmp_path / "coa.csv"
-    p.write_text("gl_code,account_name\n6000,A\n6000,B\n")
-    with pytest.raises(ValueError, match="duplicate"):
-        load_table(p, "GL account", "gl_code")
-
-
-def test_missing_key_column_rejected(tmp_path):
-    p = tmp_path / "coa.csv"
-    p.write_text("code,account_name\n6000,A\n")
-    with pytest.raises(ValueError, match="missing required column"):
+    p.write_text(table)
+    with pytest.raises(ValueError, match=said):
         load_table(p, "GL account", "gl_code")
 
 

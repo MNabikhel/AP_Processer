@@ -1,7 +1,6 @@
 """Edge cases found in code review: real-world files, repeated line numbers, large charts of accounts."""
 
 import copy
-import datetime as dt
 import json
 from dataclasses import replace
 
@@ -10,7 +9,7 @@ from openpyxl import load_workbook
 from ap_coder.ai.evaluation import is_prediction_file
 from ap_coder.ai.labels import _prediction_files, export_labels
 from ap_coder.ai.pipeline import discover_inputs
-from ap_coder.coding.tax import TaxRateTable, load_tax_mapping
+from ap_coder.coding.tax import load_tax_mapping
 from ap_coder.core.config import DocumentIntelligenceSettings, OpenAISettings, Settings
 from ap_coder.core.memory import CORRECTED, pair_lines
 from ap_coder.core.reference_data import load_reference_data
@@ -142,19 +141,11 @@ def test_extraction_dumps_are_not_predictions(tmp_path, ground_truth):
 def test_text_copy_next_to_a_pdf_is_not_processed_twice(tmp_path):
     for name in ("a.pdf", "a.md", "b.md", "c.PNG", "c.txt", "notes.docx", "README.md"):
         (tmp_path / name).write_bytes(b"x")
-    assert [p.name for p in discover_inputs([tmp_path])] == ["a.pdf", "b.md", "c.PNG"]
+    (tmp_path / "d.TIFF").write_bytes(b"")  # a picture's extension in capitals, an empty file: listed too
+    assert [p.name for p in discover_inputs([tmp_path])] == ["a.pdf", "b.md", "c.PNG", "d.TIFF"]
 
 
 # --- Tax rates over time -------------------------------------------------------------------------------
-
-
-def test_historic_hst_rates():
-    rates = TaxRateTable.load()
-    assert rates.rate_for("HST", "NB", dt.date(2009, 5, 1)) == 0.13
-    assert rates.rate_for("HST", "NL", dt.date(2012, 5, 1)) == 0.13
-    assert rates.rate_for("HST", "NS", dt.date(2009, 5, 1)) == 0.13
-    assert rates.rate_for("HST", "NS", dt.date(2011, 5, 1)) == 0.15
-    assert rates.rate_for("HST", "NS", dt.date(2025, 5, 1)) == 0.14
 
 
 # --- Command line: explicit files on top of the dashboard database -----------------------------------------

@@ -884,7 +884,7 @@ def test_the_test_pages_are_a_deterministic_scan():
 
 
 @pytest.fixture
-def test_invoice(monkeypatch, pages_read):
+def faked_test_invoice(monkeypatch, pages_read):
     """The test pages stood in for (rendering is tested above), and capture.transcript (built separately) faked:
     it returns what ``found`` holds, as a rule reader's readings."""
     monkeypatch.setattr(page_reader, "test_pages", lambda reader=OVIS: [b"\x89PNG page 1", b"\x89PNG page 2"])
@@ -905,7 +905,7 @@ def test_invoice(monkeypatch, pages_read):
     return SimpleNamespace(found=found, given=given)
 
 
-def test_test_reader_compares_with_the_ground_truth(test_invoice, pages_read):
+def test_test_reader_compares_with_the_ground_truth(faked_test_invoice, pages_read):
     result = page_reader.test_reader(Settings(), model=OVIS_KEY)
     assert (result.model, result.ok, result.problem) == (OVIS_KEY, True, "")
     assert (result.fields_right, result.fields_total) == (9, 9)
@@ -915,7 +915,10 @@ def test_test_reader_compares_with_the_ground_truth(test_invoice, pages_read):
     ]  # fmt: skip
     tax = next(row for row in result.rows if row["field"] == "tax_total")
     assert (tax["label"], tax["expected"], tax["read"], tax["match"]) == ("Total tax", 2072.85, 2072.85, True)
-    assert test_invoice.given == [["text of page 1", "text of page 2"]] and result.pages == test_invoice.given[0]
+    assert (
+        faked_test_invoice.given == [["text of page 1", "text of page 2"]]
+        and result.pages == faked_test_invoice.given[0]
+    )
     assert result.when and result.seconds >= 0
     # No reading kept (the caller keeps the result), but each page's time is noted, as for any page read, so the
     # next wait shown is this computer's.
@@ -923,30 +926,30 @@ def test_test_reader_compares_with_the_ground_truth(test_invoice, pages_read):
     assert page_reader.page_seconds_estimate(Settings(), model=OVIS_KEY) is not None
 
 
-def test_test_reader_passes_with_one_field_wrong(test_invoice):
-    test_invoice.found["due_date"] = "2026-10-15"
+def test_test_reader_passes_with_one_field_wrong(faked_test_invoice):
+    faked_test_invoice.found["due_date"] = "2026-10-15"
     result = page_reader.test_reader(Settings(), model=OVIS_KEY)
     assert result.ok and (result.fields_right, result.fields_total) == (8, 9)
     assert result.problem == "8 of 9 fields right; Due date was read wrong or not found."
 
 
-def test_test_reader_fails_on_an_amount_or_too_many_fields(test_invoice):
-    test_invoice.found["grand_total"] = 18071.85
+def test_test_reader_fails_on_an_amount_or_too_many_fields(faked_test_invoice):
+    faked_test_invoice.found["grand_total"] = 18071.85
     result = page_reader.test_reader(Settings(), model=OVIS_KEY)
     assert not result.ok and "an amount was read wrong or not found (Total)" in result.problem
-    test_invoice.found.update(grand_total=18017.85, due_date="2026-10-15", po_number="PO-88218")
-    del test_invoice.found["vendor_name"]
+    faked_test_invoice.found.update(grand_total=18017.85, due_date="2026-10-15", po_number="PO-88218")
+    del faked_test_invoice.found["vendor_name"]
     result = page_reader.test_reader(Settings(), model=OVIS_KEY)
     assert not result.ok and result.fields_right == 6
     assert result.problem == "Only 6 of 9 fields right (Supplier, Due date, PO number read wrong or not found)."
-    test_invoice.found.pop("hst_amount")
-    test_invoice.found["tax_total"] = 2072.85  # a total tax read stands for the tax amounts
+    faked_test_invoice.found.pop("hst_amount")
+    faked_test_invoice.found["tax_total"] = 2072.85  # a total tax read stands for the tax amounts
     assert next(r for r in page_reader.test_reader(Settings(), model=OVIS_KEY).rows if r["field"] == "tax_total")[
         "match"
     ]
 
 
-def test_test_reader_reports_a_failed_page(test_invoice, pages_read):
+def test_test_reader_reports_a_failed_page(faked_test_invoice, pages_read):
     pages_read.outcomes = ["first page", PageReaderError("no word from the model in 1200 s")]
     result = page_reader.test_reader(Settings(), model=OVIS_KEY)
     assert not result.ok and result.problem == "Page 2 of the test invoice: no word from the model in 1200 s."
@@ -1124,7 +1127,7 @@ def test_blank_pages_are_not_shown_to_the_model(pages_read):
     assert again.pages[0].startswith("The quick") and cached.pages[0] == "" and cached.cached
 
 
-def test_the_test_notes_its_page_times(test_invoice, pages_read):
+def test_the_test_notes_its_page_times(faked_test_invoice, pages_read):
     """Before any page was read here, the wait is a laptop's; the test's own pages then teach the estimate."""
     assert page_reader.page_seconds_estimate(Settings(), model=OVIS_KEY) is None
     page_reader.test_reader(Settings(), model=OVIS_KEY)

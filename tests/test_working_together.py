@@ -31,13 +31,6 @@ def test_canonical_column_wins_over_alias(tmp_path):
     assert load_table(p, "GL account", "gl_code").codes == ["6000"]
 
 
-def test_missing_key_column_lists_found_columns(tmp_path):
-    p = tmp_path / "coa.csv"
-    p.write_text("Ledger,Name\n6000,A\n")
-    with pytest.raises(ValueError, match="Found columns: Ledger, Name"):
-        load_table(p, "GL account", "gl_code")
-
-
 # --- Labels round trip ------------------------------------------------------------------
 
 

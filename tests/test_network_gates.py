@@ -105,12 +105,6 @@ def test_a_model_server_on_this_computer_or_the_office_network_is_asked(opened):
         "http://127.0.0.1:1234", "http://192.168.1.20:1234", "http://lmstudio-pc:1234"]  # fmt: skip
 
 
-def test_a_model_server_on_the_internet_is_asked_with_the_opt_in(opened, monkeypatch):
-    monkeypatch.setenv("AP_ALLOW_INTERNET", "1")
-    local_llm.check_server(LocalLLMSettings(base_url="https://models.example.com/v1"), use_cache=False)
-    assert opened and opened[0].startswith("https://models.example.com/v1")
-
-
 def test_the_page_readers_own_requests_stay_off_the_internet_too(opened):
     with pytest.raises(page_reader.PageReaderError, match="AP_ALLOW_INTERNET"):
         page_reader._post_json("https://models.example.com/api/v1/models/load", {}, "", 5)

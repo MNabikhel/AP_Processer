@@ -180,9 +180,23 @@ def test_source_paths_are_stored_absolute(tmp_path, ground_truth, monkeypatch):
 # --- Batch runs -------------------------------------------------------------------------------------------------
 
 
-def test_same_named_files_from_different_folders_get_their_own_outputs():
-    paths = [Path("a/Invoice.pdf"), Path("b/Invoice.pdf"), Path("c/invoice.md"), Path("d/Other.pdf")]
-    assert output_stems(paths) == ["Invoice", "Invoice_2", "invoice_3", "Other"]
+@pytest.mark.parametrize(
+    ("names", "stems"),
+    [
+        (
+            ["a/Invoice.pdf", "b/Invoice.pdf", "c/invoice.md", "d/Other.pdf"],
+            ["Invoice", "Invoice_2", "invoice_3", "Other"],
+        ),
+        # a file already named like a numbered copy keeps its own name; the names differ ignoring case too
+        (
+            ["a/Invoice.pdf", "b/Invoice.pdf", "c/Invoice_2.pdf", "d/INVOICE.pdf"],
+            ["Invoice", "Invoice_3", "Invoice_2", "INVOICE_4"],
+        ),
+    ],
+)
+def test_same_named_files_from_different_folders_get_their_own_outputs(names, stems):
+    found = output_stems([Path(n) for n in names])
+    assert found == stems and len({s.lower() for s in found}) == len(names)
 
 
 @pytest.mark.parametrize("workers", [1, 3])

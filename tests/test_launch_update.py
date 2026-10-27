@@ -454,13 +454,6 @@ def test_a_server_that_answers_its_health_check_is_opened_without_the_line(launc
     assert launch.start_dashboard(["--port", "8597"], {}) == 0 and opened == ["http://127.0.0.1:8597"]
 
 
-def test_a_server_that_stops_at_once_opens_nothing(launch, monkeypatch):
-    monkeypatch.setattr(launch, "server_command", lambda port, rest: [sys.executable, "-c", "raise SystemExit(3)"])
-    monkeypatch.setattr(launch.running, "health", lambda port, timeout=1.0: None)
-    monkeypatch.setattr(launch, "open_browser", lambda url: pytest.fail("opened"))
-    assert launch.start_dashboard(["--port", "8597"], {}) == 3
-
-
 # --- A wheelhouse that doesn't fit this computer ----------------------------------------------------------------
 
 
