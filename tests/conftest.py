@@ -1,6 +1,7 @@
 import contextlib
 import functools
 import json
+import os
 import sqlite3
 import time
 from pathlib import Path
@@ -146,8 +147,16 @@ def _no_local_model(monkeypatch) -> None:
 
 @pytest.fixture(autouse=True)
 def isolated_private_dir(monkeypatch, tmp_path):
-    """Never let a test touch the real private/ folder (database, invoices, outputs)."""
+    """Never let a test touch the real private/ folder (database, invoices, outputs), nor leave a variable behind for
+    the tests after it: a .env file read (``Settings.from_env``) writes os.environ (B-1410)."""
+    before = dict(os.environ)
     _isolate(monkeypatch, tmp_path)
+    yield
+    for name in set(os.environ) - set(before):
+        del os.environ[name]
+    for name, value in before.items():
+        if os.environ.get(name) != value:
+            os.environ[name] = value
 
 
 @pytest.fixture(autouse=True)
