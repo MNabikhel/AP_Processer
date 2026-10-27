@@ -22,6 +22,7 @@ from ap_coder.web import invoice_view
 from ap_coder.web.app import create_app
 from ap_coder.web.invoice_view import Draft
 
+from .browser import browser_on, wait_until
 from .conftest import chromium_path
 
 PAGE = {"X-AP-Coder": "1"}
@@ -733,37 +734,13 @@ def _chromium() -> str | None:
 
 
 @pytest.fixture
-def browser(store):
+def browser(chromium, store):
     """The dashboard served on this computer (a free port) and a Chromium to open it: (browser, base URL)."""
-    if _chromium() is None:
-        pytest.skip("Playwright with Chromium isn't installed")
-    import socket
-    import threading
-    import time
-
-    import uvicorn
-    from playwright.sync_api import sync_playwright
-
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
     s = Settings()
-    app = create_app(replace(s, llm=replace(s.llm, provider="off")), store, start_reader=False)
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    for _ in range(200):
-        if server.started:
-            break
-        time.sleep(0.05)
-    try:
-        with sync_playwright() as p:
-            chromium = p.chromium.launch(executable_path=_chromium(), args=["--no-proxy-server"])
-            yield chromium, f"http://127.0.0.1:{port}"
-            chromium.close()
-    finally:
-        server.should_exit = True
-        thread.join(5)
+    with browser_on(
+        chromium, create_app(replace(s, llm=replace(s.llm, provider="off")), store, start_reader=False)
+    ) as opened:
+        yield opened
 
 
 def _open_review(browser, store, vendor, **context):
@@ -842,7 +819,7 @@ def test_in_a_browser_the_approve_anyway_box_keeps_the_focus_when_ticked_with_th
     page.locator("[name=override]").focus()
     with page.expect_response(lambda r: r.url.endswith("/check")):
         page.keyboard.press("Space")
-    page.wait_for_timeout(300)
+    wait_until(page, lambda: page.is_checked("[name=override]"))
     assert page.is_checked("[name=override]")
     assert page.evaluate("document.activeElement.name") == "override_reason" and errors == []
 
@@ -1021,7 +998,7 @@ def test_in_a_browser_a_refused_export_reloads_and_the_count_follows_the_ticks(b
     # refused and staying on the page: nothing ticked
     page.evaluate("() => document.querySelectorAll('input.export-pick').forEach((p) => (p.checked = false))")
     page.evaluate("() => { const b = document.getElementById('export-go'); b.disabled = false; b.click(); }")
-    page.wait_for_timeout(800)
+    wait_until(page, lambda: "create" in page.posts)
     assert "create" in page.posts
     page.locator("input.export-pick:not(:disabled)").first.check()
     assert page.inner_text("#export-go").split("\n")[-1].strip() == "Export 1 invoice"

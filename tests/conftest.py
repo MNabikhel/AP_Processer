@@ -455,3 +455,20 @@ def chromium_path() -> str | None:
     if found is None and os.environ.get("AP_REQUIRE_BROWSER") == "1":
         pytest.fail("AP_REQUIRE_BROWSER=1 but no Chromium for Playwright was found")
     return found
+
+
+@pytest.fixture(scope="module")
+def chromium():
+    """One Chromium for the test file (tests/browser.py, ``browser_on``), launched after its path is looked up (B-127).
+    The browser tests skip without one, unless ``AP_REQUIRE_BROWSER=1`` (``chromium_path``)."""
+    path = chromium_path()
+    if path is None:
+        pytest.skip("Playwright with Chromium isn't installed")
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(executable_path=path, args=["--no-proxy-server"])
+        try:
+            yield browser
+        finally:
+            browser.close()

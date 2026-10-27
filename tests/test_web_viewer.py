@@ -18,7 +18,7 @@ from ap_coder.core.store import REVIEW, Store
 from ap_coder.web import document
 from ap_coder.web.app import create_app
 
-from .conftest import chromium_path
+from .browser import browser_on, wait_until
 
 LAPTOP = {"width": 1366, "height": 768}
 ZOOM_KEY = "apc-invoice-viewer-zoom"
@@ -116,34 +116,9 @@ def test_the_page_tells_the_viewer_the_address_without_a_scale(client, store):
 
 
 @pytest.fixture
-def browser(store):
-    if chromium_path() is None:
-        pytest.skip("Playwright with Chromium isn't installed")
-    import socket
-    import threading
-    import time
-
-    import uvicorn
-    from playwright.sync_api import sync_playwright
-
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
-    server = uvicorn.Server(uvicorn.Config(_app(store), host="127.0.0.1", port=port, log_level="warning"))
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    for _ in range(200):
-        if server.started:
-            break
-        time.sleep(0.05)
-    try:
-        with sync_playwright() as p:
-            chromium = p.chromium.launch(executable_path=chromium_path(), args=["--no-proxy-server"])
-            yield chromium, f"http://127.0.0.1:{port}"
-            chromium.close()
-    finally:
-        server.should_exit = True
-        thread.join(5)
+def browser(chromium, store):
+    with browser_on(chromium, _app(store)) as opened:
+        yield opened
 
 
 def _open(browser, store, vendor="Cascade", zoom=None, viewport=LAPTOP, **context):
@@ -250,7 +225,7 @@ def test_in_a_browser_fit_page_shows_the_whole_page(browser, store):
     # The fit follows the window.
     fit = _readout(page)
     page.set_viewport_size({"width": 1366, "height": 640})
-    page.wait_for_timeout(300)
+    wait_until(page, lambda: _readout(page) < fit)
     assert _readout(page) < fit
     assert errors == []
 
@@ -515,7 +490,7 @@ def test_in_a_browser_space_elsewhere_on_the_review_screen_scrolls_as_usual(brow
     page.mouse.move(lines["x"] + 20, lines["y"] + 20)  # over the line items, the focus on the page's body
     page.evaluate("document.activeElement && document.activeElement.blur()")
     page.keyboard.press(" ")
-    page.wait_for_timeout(400)
+    page.wait_for_timeout(400)  # the smooth scroll ends (the next lines read where it stopped)
     assert page.evaluate("window.scrollY") > start  # the dashboard page scrolled
     assert not page.evaluate("document.querySelector('.iv').classList.contains('hand')")
     # The focus in the Document card (the page clicked, say), the pointer elsewhere: Space holds the Hand.

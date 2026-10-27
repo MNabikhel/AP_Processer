@@ -10,6 +10,7 @@ from ap_coder.core.store import REVIEW
 from ap_coder.web import invoice_view
 
 from . import test_web_ctxmenu as ctxmenu
+from .browser import wait_until
 from .test_web_ctxmenu import _item, _menu, _review, _taxable
 from .test_web_invoice import check, form_of
 
@@ -148,9 +149,13 @@ def test_in_a_browser_the_dropdown_follows_the_place_of_supply(browser, store, p
     with page.expect_response(lambda r: r.url.endswith("/check")):
         page.locator('select[name="ship_to_province"]').select_option(province)
     page.wait_for_load_state("networkidle")
-    options = page.eval_on_selector_all("[data-grid=lines] select[data-tax-code] >> nth=0 >> option",
-                                        "o => o.map(x => x.textContent)")  # fmt: skip
-    assert options[0] == first, options
+
+    def options():
+        return page.eval_on_selector_all("[data-grid=lines] select[data-tax-code] >> nth=0 >> option",
+                                         "o => o.map(x => x.textContent)")  # fmt: skip
+
+    wait_until(page, lambda: options()[0] == first)  # the grid is drawn again after the check's answer
+    assert options()[0] == first, options()
     assert _codes(page)[0] == "GST+PST"  # each line keeps its own code, listed or not
     assert errors == []
 

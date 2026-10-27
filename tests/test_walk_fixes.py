@@ -11,6 +11,7 @@ import pytest
 from ap_coder.core.store import REVIEW
 from ap_coder.erp import jde
 
+from .browser import wait_until
 from .test_web_review_signoff import _jde_on, browser, client, demo_db, me, store
 
 __all__ = ["browser", "client", "demo_db", "me", "store"]  # the fixtures, shared
@@ -303,7 +304,7 @@ def test_in_a_browser_the_new_vendor_form_shows_no_error_before_anything_is_type
     assert [box.evaluate(border) for box in boxes] == [plain] * 2
     name.fill("")
     page.locator("[data-new-go]").click()
-    page.wait_for_timeout(500)
+    wait_until(page, lambda: name.get_attribute("aria-invalid") == "true")
     assert name.get_attribute("aria-invalid") == "true" and name.evaluate(border) != plain
     name.type("Cascade")
     assert name.get_attribute("aria-invalid") is None

@@ -21,7 +21,8 @@ from ap_coder.web.app import create_app
 from ap_coder.web.pages import invoice as _invoice_page  # noqa: F401 - imported before `me` patches web.core (below)
 from ap_coder.web.pages import review as _review_page  # noqa: F401
 
-from .conftest import SAMPLES, chromium_path
+from .browser import browser_on
+from .conftest import SAMPLES
 
 PAGE = {"X-AP-Coder": "1"}
 LAPTOP = {"width": 1366, "height": 768}
@@ -262,34 +263,9 @@ def test_a_line_picked_where_nothing_was_suggested_is_not_shown_as_unassigned(cl
 
 
 @pytest.fixture
-def browser(store):
-    if chromium_path() is None:
-        pytest.skip("Playwright with Chromium isn't installed")
-    import socket
-    import threading
-    import time
-
-    import uvicorn
-    from playwright.sync_api import sync_playwright
-
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
-    server = uvicorn.Server(uvicorn.Config(_app(store), host="127.0.0.1", port=port, log_level="warning"))
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    for _ in range(200):
-        if server.started:
-            break
-        time.sleep(0.05)
-    try:
-        with sync_playwright() as p:
-            chromium = p.chromium.launch(executable_path=chromium_path(), args=["--no-proxy-server"])
-            yield chromium, f"http://127.0.0.1:{port}"
-            chromium.close()
-    finally:
-        server.should_exit = True
-        thread.join(5)
+def browser(chromium, store):
+    with browser_on(chromium, _app(store)) as opened:
+        yield opened
 
 
 def _open(browser, path, viewport=LAPTOP):

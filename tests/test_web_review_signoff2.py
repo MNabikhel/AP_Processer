@@ -10,6 +10,7 @@ import re
 from ap_coder.core.store import APPROVED, REVIEW
 from ap_coder.erp import jde
 
+from .browser import wait_until
 from .test_web_invoice import PAGE, check, form_of
 from .test_web_review_signoff import _id, _jde_on, _open, _overlap, _review, browser, client, demo_db, me, store
 
@@ -230,7 +231,7 @@ def test_in_a_browser_alt_up_to_the_queue_focuses_the_invoice_left(browser, stor
     page.keyboard.press("Alt+ArrowUp")
     page.wait_for_url(re.compile(r"/review(\?|$)"))
     page.wait_for_load_state("networkidle")
-    page.wait_for_timeout(300)
+    wait_until(page, lambda: page.evaluate("document.activeElement.getAttribute('href')") == f"/review/{invoice_id}")
     assert page.evaluate("document.activeElement.getAttribute('href')") == f"/review/{invoice_id}"
     assert page.errors == []
     store.approve_invoice(invoice_id, store.get_invoice(invoice_id)["ai_output"], "Jordan Lee")
@@ -239,7 +240,7 @@ def test_in_a_browser_alt_up_to_the_queue_focuses_the_invoice_left(browser, stor
     page.keyboard.press("Alt+ArrowUp")
     page.wait_for_url(re.compile(r"/review(\?|$)"))
     page.wait_for_load_state("networkidle")
-    page.wait_for_timeout(300)
+    wait_until(page, lambda: page.evaluate("document.activeElement.matches('.rq-list a.rq-row')"))
     assert page.evaluate("document.activeElement.matches('.rq-list a.rq-row')")  # no longer listed: the first row
 
 

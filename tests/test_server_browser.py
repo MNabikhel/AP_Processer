@@ -8,7 +8,8 @@ import pytest
 from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.web.app import create_app
 
-from .conftest import SAMPLE_STEM, chromium_path
+from .browser import browser_on
+from .conftest import SAMPLE_STEM
 from .webclient import add_clean, known_vendors, web_settings
 
 GOOD = "correct horse battery"
@@ -32,35 +33,9 @@ def store(tmp_path):
 
 
 @pytest.fixture
-def browser(store):
-    if chromium_path() is None:
-        pytest.skip("Playwright with Chromium isn't installed")
-    import socket
-    import threading
-    import time
-
-    import uvicorn
-    from playwright.sync_api import sync_playwright
-
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
-    app = create_app(web_settings(), store, start_reader=False, server=True)
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    for _ in range(200):
-        if server.started:
-            break
-        time.sleep(0.05)
-    try:
-        with sync_playwright() as p:
-            chromium = p.chromium.launch(executable_path=chromium_path(), args=["--no-proxy-server"])
-            yield chromium, f"http://127.0.0.1:{port}"
-            chromium.close()
-    finally:
-        server.should_exit = True
-        thread.join(5)
+def browser(chromium, store):
+    with browser_on(chromium, create_app(web_settings(), store, start_reader=False, server=True)) as opened:
+        yield opened
 
 
 def _log_in(browser, username: str, password: str = GOOD, path: str = "/review", lands: str = ""):
