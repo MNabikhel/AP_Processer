@@ -2,7 +2,7 @@
 
 Each table is a ``Table``: its name, its key columns and its columns, each with a stable name, a type and a meaning.
 ``build(store, name, ...)`` gives its rows as dicts with exactly those columns, in that order. Names and types never
-change within a ``HUB_SCHEMA_VERSION``: a column added is a new version (``tests/test_finance_hub.py`` holds the
+change within a ``HUB_SCHEMA_VERSION``: a column added is a new version (``tests/erp/test_finance_hub.py`` holds the
 columns of this one, and checks the data dictionary describes every one of them).
 
 Types (``TYPES``): string, int64, decimal(18,2) (money), float64, date (YYYY-MM-DD), timestamp (local time, to the

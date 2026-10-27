@@ -73,5 +73,5 @@ Rules
   polls its status (``pollJob`` in app.js). Today that is reading invoices, the settings doctor and the Azure test;
   backups, exports and the other downloads run inside the request.
 * Tests: ``TestClient(create_app(settings, store), base_url="http://localhost")`` (the Host check refuses the
-  default "testserver"), and ``headers={"X-AP-Coder": "1"}`` on POSTs. See tests/test_web_*.py.
+  default "testserver"), and ``headers={"X-AP-Coder": "1"}`` on POSTs. See tests/web/test_web_*.py.
 """

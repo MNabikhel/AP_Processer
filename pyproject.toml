@@ -58,7 +58,7 @@ testpaths = ["tests"]
 addopts = ["-m", "not slow"]
 markers = [
     "slow: a browser, or over half a second (tests/conftest.py, tests/slow_tests.txt); run with -m \"\"",
-    "upgrade: the real update over each older version (AP_UPGRADE_TESTS=1, tests/test_update_from_old_versions.py)",
+    "upgrade: the real update over each older version (AP_UPGRADE_TESTS=1, tests/launcher/test_update_from_old_versions.py)",
 ]
 
 [tool.ruff]

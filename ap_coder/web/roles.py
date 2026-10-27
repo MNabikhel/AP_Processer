@@ -16,7 +16,7 @@ The roles, each able to do everything the one before it can (``core/store/users.
 
 ``OPEN`` routes answer anyone (the login page, ``/healthz``, the styles and scripts); ``SIGNED_IN`` ones anyone
 logged in, also while they must still choose a new password (logging out, changing it). A route not in ``RULES``
-needs an Admin: a route added without a rule is closed, and ``tests/test_roles.py`` fails until it gets one.
+needs an Admin: a route added without a rule is closed, and ``tests/web/test_roles.py`` fails until it gets one.
 Hiding a button a role can't use is only for the eye; this table is what is enforced.
 """
 
