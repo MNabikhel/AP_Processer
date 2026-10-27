@@ -18,7 +18,7 @@ plan that turns the pilot into a decision, see [PILOT_PLAN.md](PILOT_PLAN.md).
 - **LM Studio with OvisOCR2** (IT installs it, 0.4.8 or newer, with the models already in it; nothing is
   downloaded on the laptop). OvisOCR2 is part of how every invoice is read: a small page-reading model that
   reads every page of every invoice (digital PDFs, scans and photos) on its own, as a second reader next to
-  the PDF's text or OCR (see [How every invoice is read](../README.md#how-every-invoice-is-read)). IT copies
+  the PDF's text or OCR (see [How every invoice is read](REFERENCE.md#how-every-invoice-is-read)). IT copies
   the *bartowski* build at **Q8_0** (`ATH-MaaS_OvisOCR2-Q8_0.gguf`, 813 MB, and its 205 MB vision file
   `mmproj-ATH-MaaS_OvisOCR2-f16.gguf`) into LM Studio's models folder under
   `bartowski/ATH-MaaS_OvisOCR2-GGUF`. Leave it unloaded: AP Coder has LM Studio load it, with the context it
