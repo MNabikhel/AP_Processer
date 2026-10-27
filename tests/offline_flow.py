@@ -1,8 +1,8 @@
 """The offline proof's walk through a running AP Coder, over HTTP on 127.0.0.1, as AP would use it: every page and
 static file the pages name, the setup, every sample invoice (text PDFs, a scan, a photo, an emailed invoice), approval,
-an export and its download, the Settings tabs, their checks and Help. Used by tests/test_offline_guard.py, against a
-real ``python -m ap_coder serve`` under the network guard and inside a Linux network namespace with no network at
-all (``python -m tests.offline_flow --netns``, run under ``unshare -rn``).
+an export and its download, the Settings tabs, their checks and Help. Used by tests/offline/test_offline_guard.py,
+against a real ``python -m ap_coder serve`` under the network guard and inside a Linux network namespace with no
+network at all (``python -m tests.offline_flow --netns``, run under ``unshare -rn``).
 
 It also collects every address a page refers to (links, scripts, styles, images, fonts, form actions, CSS ``url()``):
 anything that is not this server is reported, as a page that loads or links to the internet would be.

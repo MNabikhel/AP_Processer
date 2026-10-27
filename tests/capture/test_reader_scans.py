@@ -1,0 +1,454 @@
+"""Wrong values a scan benchmark showed as right (seed 9102), each fixed and kept fixed: a partnership's name taken for
+the customer's, "ltée" read right made "Itée", and a header grid's PO taken from the label beside it."""
+
+from __future__ import annotations
+
+import datetime as dt
+
+import pymupdf
+
+from ap_coder.capture import analyze
+from ap_coder.capture.reader import _ocr_name_fix
+from tests.pdfs import text_pdf as _pdf
+
+TODAY = dt.date(2026, 10, 13)
+
+
+_TOTALS = [
+    (60, 300, "Description"), (480, 300, "Amount"), (60, 316, "Technician on site"), (480, 316, "1,000.00"),
+    (380, 500, "Subtotal"), (480, 500, "1,000.00"), (380, 515, "HST 13%"), (480, 515, "130.00"),
+    (380, 530, "Total"), (480, 530, "1,130.00"),
+]  # fmt: skip
+
+
+def test_a_partnership_at_the_top_is_the_supplier_not_the_customers_corp_below(tmp_path):
+    lines = [
+        (60, 55, "True North Office Products LP"), (60, 70, "6287 Barrington St"), (60, 84, "Hamilton, ON L0C 4V8"),
+        (60, 98, "HST No.: 950589770RT0003"), (380, 55, "TAX INVOICE"), (380, 75, "Bill No."), (470, 75, "26/2688"),
+        (380, 90, "Date"), (470, 90, "2026-06-10"),
+        (60, 150, "Northline Energy Corp."), (60, 164, "7124 Victoria Ave"), (60, 178, "Barrie, ON L7L 6V2"),
+        *_TOTALS,
+    ]  # fmt: skip
+    result = analyze(_pdf(tmp_path, lines), today=TODAY)
+    assert result.fields["vendor_name"].value == "True North Office Products LP"
+
+
+def test_ltee_read_right_by_ocr_stays_ltee():
+    assert _ocr_name_fix("Plomberie Gagnon ltée") == "Plomberie Gagnon ltée"
+    assert _ocr_name_fix("Plomberie Gagnon Itée") == "Plomberie Gagnon ltée"  # the slip is still undone
+    assert _ocr_name_fix("Plomberie Gagnon ltee") == "Plomberie Gagnon ltée"
+    assert _ocr_name_fix("Acme Supply ltd") == "Acme Supply ltd"  # never "Itd"
+    assert _ocr_name_fix("lronwood Supply") == "Ironwood Supply"  # an English word does not start "lr"
+
+
+def test_a_po_in_a_header_grid_is_read_under_its_label_not_beside_it(tmp_path):
+    # As a scan prints a grid of boxed fields, the rows a little off: "Purchase Order No." sits lower than the other
+    # labels of its row, level with the values printed under "Order No." and "Ship Date".
+    lines = [
+        (60, 55, "Lakeshore Plumbing Ltd."), (60, 70, "12 Main St, Toronto, ON M5V 1A1"), (380, 55, "INVOICE"),
+        (380, 75, "Invoice No."), (470, 75, "FA97024"), (380, 90, "Date"), (470, 90, "2026-04-10"),
+        (230, 141, "Ship Date"), (400, 141, "Order No."), (60, 149, "Purchase Order No."),
+        (230, 154, "2026-04-13"), (400, 154, "SO-28797"), (60, 164, "P70-7926"),
+        *_TOTALS,
+    ]  # fmt: skip
+    result = analyze(_pdf(tmp_path, lines), today=TODAY)
+    assert result.fields["po_number"].value == "P70-7926"
+
+
+def test_a_speck_read_as_a_period_before_cr_or_a_percent_sign_or_in_a_gst_number():
+    from ap_coder.capture.normalize import find_amounts, find_gst_numbers, parse_amount
+
+    assert parse_amount("$442.91.CR") == -442.91  # still a credit
+    assert (-442.91, 13, 24) in find_amounts("GST/HST(14%): $442.91.CR")
+    assert [g[0] for g in find_gst_numbers("Business Number 57165.3898 RT 0001")] == ["571653898RT0001"]
+
+
+def test_a_qst_rate_with_a_speck_before_its_percent_sign_is_not_the_qst(tmp_path):
+    lines = [
+        (60, 55, "Plomberie Gagnon ltée"), (60, 70, "1200 rue Principale, Laval (QC) H7N 1A1"),
+        (60, 85, "TPS/TVH: 226689644RT0001"), (60, 100, "TVQ: 1627777827TQ0001"),
+        (380, 55, "FACTURE"), (380, 75, "Facture n°"), (470, 75, "F-20417"), (380, 90, "Date"), (470, 90, "2026-05-02"),
+        (60, 300, "Description"), (480, 300, "Montant"), (60, 316, "Calibration of pressure gauges"),
+        (480, 316, "4 055,93 $"),
+        (380, 500, "Sous-total:"), (480, 500, "4 055,93 $"), (380, 515, "T.P.S. (5 %):"), (480, 515, "202,80 $"),
+        (380, 530, "T.V.Q. (9,975.%):"), (480, 530, "404,58 $"), (380, 545, "TOTAL:"), (480, 545, "4 663,31 $"),
+    ]  # fmt: skip
+    result = analyze(_pdf(tmp_path, lines), today=TODAY)
+    assert result.fields["qst_amount"].value == 404.58
+    assert result.fields["grand_total"].value == 4663.31
+
+
+def test_terms_with_a_speck_between_the_words_are_still_read():
+    from ap_coder.capture.reader import _terms
+
+    assert _terms("Payable on.receipt") == "Due on receipt"  # fresh scan seed 9301: was missing
+    assert _terms("Due upon. receipt") == "Due on receipt"
+    assert _terms("Payable à.réception") == "Due on receipt"
+
+
+def _x_of(prefix: str, x: float = 60, size: float = 10) -> float:
+    """Where a word starts in a line printed at ``x``: after ``prefix``."""
+    return x + pymupdf.get_text_length(prefix, fontsize=size)
+
+
+def test_bilingual_labels_set_one_space_apart_each_find_their_value(tmp_path):
+    # A header grid whose labels the PDF's own text joins into one line (fresh seed 9301): the second label was lost.
+    head = "Invoice No. / N° de facture "
+    row = head + "PO / Votre commande "
+    lines = [
+        (60, 55, "Lakeshore Plumbing Ltd."), (60, 70, "12 Main St, Toronto, ON M5V 1A1"), (380, 55, "INVOICE"),
+        (60, 130, row + "Terms of Payment / Conditions"),
+        (60, 145, "INV-97361"), (_x_of(head), 145, "PO-47389"), (_x_of(row), 145, "NET 15"),
+        (380, 90, "Date"), (470, 90, "2026-04-10"),
+        *_TOTALS,
+    ]  # fmt: skip
+    fields = analyze(_pdf(tmp_path, lines), today=TODAY).fields
+    assert fields["invoice_number"].value == "INV-97361"
+    assert fields["po_number"].value == "PO-47389"
+    assert fields["payment_terms"].value == "Net 15"
+
+
+def test_delivery_date_stays_one_label_not_a_delivery_and_a_date(tmp_path):
+    lines = [
+        (60, 55, "Lakeshore Plumbing Ltd."), (60, 70, "12 Main St, Toronto, ON M5V 1A1"), (380, 55, "TAX INVOICE"),
+        (380, 75, "Invoice #"), (470, 75, "006534"), (380, 90, "Date"), (470, 90, "12-Apr-2026"),
+        (380, 105, "Delivery Date:"), (470, 105, "07-Apr-2026"),
+        *_TOTALS,
+    ]  # fmt: skip
+    assert analyze(_pdf(tmp_path, lines), today=TODAY).fields["invoice_date"].value == "2026-04-12"
+
+
+def test_inv_date_is_not_an_invoice_number_label_and_a_title_reads_no_value_under_another_label(tmp_path):
+    # Fresh seed 9301: "Inv. Date" was taken for the invoice number's label, and the big "INVOICE" title took the
+    # account number printed under "Account #" below it.
+    lines = [
+        (60, 55, "Lakeshore Plumbing Ltd."), (60, 70, "12 Main St, Toronto, ON M5V 1A1"),
+        (60, 279, "Invoice"), (190, 279, "Inv. Date"), (257, 279, "Account #"), (390, 279, "PO Date"),
+        (60, 291, "63-18513"), (185, 291, "06/20/2025"), (257, 291, "C-97134"), (385, 291, "06/02/2025"),
+        *_TOTALS,
+    ]  # fmt: skip
+    path = _pdf(tmp_path, lines)
+    with pymupdf.open(path) as doc:
+        doc[0].insert_text((257, 190), "INVOICE", fontsize=26)
+        doc.saveIncr()
+    assert analyze(path, today=TODAY).fields["invoice_number"].value == "63-18513"
+
+
+def test_due_on_receipt_is_the_terms_not_a_due_date_label(tmp_path):
+    lines = [
+        (60, 55, "Lakeshore Plumbing Ltd."), (60, 70, "12 Main St, Toronto, ON M5V 1A1"), (380, 55, "SALES INVOICE"),
+        (60, 219, "Inv #"), (160, 219, "Date of issue"), (257, 219, "Terms"), (459, 219, "Ship Date"),
+        (60, 233, "8306705"), (160, 233, "2025-10-07"), (257, 233, "Due on receipt"), (459, 233, "2025-10-06"),
+        *_TOTALS,
+    ]  # fmt: skip
+    fields = analyze(_pdf(tmp_path, lines), today=TODAY).fields
+    assert fields["due_date"].value is None  # was the ship date, right of "Due on receipt"
+    assert fields["payment_terms"].value == "Due on receipt"
+
+
+def _titled(tmp_path, lines, title: str, at: tuple[float, float]):
+    path = _pdf(tmp_path, lines)
+    with pymupdf.open(path) as doc:
+        doc[0].insert_text(at, title, fontsize=22)
+        doc.saveIncr()
+    return path
+
+
+def test_a_title_never_reads_a_line_with_its_own_label_as_the_number(tmp_path):
+    # Fresh seed 9701: the "INVOICE" title read "Inv 7" under it as the invoice number, shown as likely.
+    lines = [(60, 55, "Courier Express Ltd."), (60, 70, "9 Dock Rd, Halifax, NS B3H 1A1"), (526, 79, "Inv 7"),
+             (380, 110, "Date"), (470, 110, "2026-04-10"), *_TOTALS]  # fmt: skip
+    number = analyze(_titled(tmp_path, lines, "INVOICE", (490, 55)), today=TODAY).fields["invoice_number"]
+    assert number.value != "Inv 7"
+
+
+def test_the_day_of_a_date_is_not_an_invoice_number(tmp_path):
+    # Fresh seed 9701: "30" of "30 Jun 2025" under a bilingual title was taken for the invoice number.
+    lines = [
+        (60, 55, "Northwind Fournitures inc."), (60, 70, "1200 rue Principale, Laval (QC) H7N 1A1"),
+        (520, 74, "30 Jun 2025"), (337, 89, "Invoice / Numéro de facture:"), (532, 89, "34-90735"),
+        *_TOTALS,
+    ]  # fmt: skip
+    number = analyze(_titled(tmp_path, lines, "INVOICE / FACTURE", (373, 45)), today=TODAY).fields["invoice_number"]
+    assert number.value == "34-90735"
+
+
+def test_french_first_of_the_month_as_ocr_reads_it():
+    from ap_coder.capture.normalize import parse_dates
+
+    # Fresh scan seed 9501: OCR read "1er octobre 2026" as "ler octobre 2026" (and "Ier" happens too).
+    assert [d.isoformat() for d, *_ in parse_dates("ler octobre 2026")] == ["2026-10-01"]
+    assert [d.isoformat() for d, *_ in parse_dates("Ier mai 2026")] == ["2026-05-01"]
+    assert parse_dates("Atelier 3") == []
+    # Seed 9102: a comma and a speck between the day and the year.
+    assert [d.isoformat() for d, *_ in parse_dates("October 23，.2026")] == ["2026-10-23"]
+    assert [d.isoformat() for d, *_ in parse_dates("October 23, . 2026")] == ["2026-10-23"]
+    assert parse_dates("Total Oct 23 1,234.56") == []
+
+
+def test_a_due_date_label_with_a_speck_is_still_not_the_invoice_date():
+    from ap_coder.capture.reader import _distracted
+
+    assert _distracted("invoice_date", "date. limite de paiement")  # OCR's "Date. limite de paiement"
+    assert not _distracted("invoice_date", "date")
+
+
+def test_one_pound_sign_among_dollar_amounts_is_not_the_currency():
+    from ap_coder.capture.normalize import currency_evidence
+
+    assert currency_evidence("Subtotal $100.00\nTax $5.00\nTotal $105.00\nFreight £66") is None  # OCR's "$66"
+    assert currency_evidence("Subtotal £1,000.00\nTotal £1,200.00") == ("GBP", 0.8)
+    assert currency_evidence("Montant 1.000,00 €") == ("EUR", 0.8)
+
+
+def test_a_prefixed_number_with_ocrs_space_before_the_hyphen_is_one_number():
+    from ap_coder.capture.reader import _distracted, _id_from
+
+    # Fresh scan seed 9601: "PO -20203" under "Your PO No." was read as a "PO" label and the value "20203".
+    assert _id_from("PO -20203", 0)[0] == "PO-20203"
+    assert _id_from("INV- 4471", 0)[0] == "INV-4471"
+    assert _distracted("po_number", "po -20203") and not _distracted("po_number", "po # 20203")
+    assert _distracted("invoice_number", "inv -4471")
+    assert _id_from("Net -30", 0) is None  # not a capitalised prefix: left alone
+
+
+def test_a_gst_hst_rate_whose_percent_sign_ocr_read_as_an_8():
+    from ap_coder.capture.reader import _combined_tax_fields
+
+    # Fresh scan seed 9601: "GST/HST @58" (5%) was taken for HST, the other engine's "@5%" for GST: the tax doubled.
+    assert _combined_tax_fields("gst/hst@58") == ("gst_amount",)
+    assert _combined_tax_fields("gst/hst (138)") == ("hst_amount",)
+    assert _combined_tax_fields("gst/hst@5%") == ("gst_amount",)
+
+
+def test_terms_with_ocrs_full_width_comma_keep_their_discount():
+    from ap_coder.capture.reader import _terms
+
+    # Fresh scan seed 9702: "2%10，Net30" lost its early-payment discount ("Net 30", shown as likely).
+    assert _terms("2%10，Net30") == "2% 10 Net 30"
+    assert _terms("Net·30") == _terms("Net ·30") == "Net 30"  # scan seed 9102: a speck read as a middle dot
+
+
+def test_a_registration_number_line_never_labels_a_tax_amount(tmp_path):
+    # Fresh scan seed 9702: "GST/HST Reg. No.: ... RT0003" took a stray "0" further down the page as the HST (0.00).
+    lines = [
+        (60, 55, "Lakeshore Plumbing Ltd."), (60, 70, "12 Main St, Toronto, ON M5V 1A1"), (380, 55, "INVOICE"),
+        (380, 75, "Invoice No."), (470, 75, "FA97024"), (380, 90, "Date"), (470, 90, "2026-04-10"),
+        (60, 300, "Description"), (480, 300, "Amount"), (60, 316, "Technician on site"), (480, 316, "1,000.00"),
+        (380, 500, "Subtotal"), (480, 500, "1,000.00"), (380, 515, "GST 5%"), (480, 515, "50.00"),
+        (380, 530, "Total"), (480, 530, "1,050.00"),
+        (60, 600, "GST/HST Reg. No.: 988130969 RT0003"), (75, 616, "0"),
+    ]  # fmt: skip
+    fields = analyze(_pdf(tmp_path, lines), today=TODAY).fields
+    assert fields["hst_amount"].value is None and fields["gst_amount"].value == 50.0
+
+
+def test_month_names_and_years_as_ocr_misreads_them():
+    from ap_coder.capture.normalize import parse_dates
+
+    # Fresh scan seed 9702: each left the date unread.
+    for text, iso in (("28Apr 2.025", "2025-04-28"), ("15Eeb.2025", "2025-02-15"), ("Apri1 15,2026", "2026-04-15")):
+        assert [d.isoformat() for d, *_ in parse_dates(text)] == [iso], text
+    assert parse_dates("Total 2.025") == []  # a number, not a year
+
+
+def test_a_total_label_with_ocrs_1_for_its_l_is_still_the_total(tmp_path):
+    lines = [
+        (60, 55, "Lakeshore Plumbing Ltd."), (60, 70, "12 Main St, Toronto, ON M5V 1A1"), (380, 55, "INVOICE"),
+        (380, 75, "Invoice No."), (470, 75, "FA97024"), (380, 90, "Date"), (470, 90, "2026-04-10"),
+        (60, 300, "Description"), (480, 300, "Amount"), (60, 316, "Technician on site"), (480, 316, "1,000.00"),
+        (380, 500, "Total before tax"), (480, 500, "1,000.00"), (380, 515, "HST 13%"), (480, 515, "130.00"),
+        (420, 530, "Tota1CAD1,130.00"),
+    ]  # fmt: skip
+    assert analyze(_pdf(tmp_path, lines), today=TODAY).fields["grand_total"].value == 1130.0
+
+
+def test_a_street_number_under_the_invoice_title_is_not_the_invoice_number(tmp_path):
+    # Fresh digital seed 9801: the "Invoice" title read "2565 av. du Parc" below it as the invoice number.
+    lines = [
+        (60, 120, "Bill To"), (60, 160, "2565 av. du Parc"), (60, 175, "Montreal (QC) H2V 4H6"),
+        (180, 200, "Invoice"), (180, 213, "IN-2026-39513"), (380, 200, "Date"), (380, 213, "2026-04-10"),
+        *_TOTALS,
+    ]  # fmt: skip
+    path = _pdf(tmp_path, lines)
+    with pymupdf.open(path) as doc:
+        doc[0].insert_text((50, 60), "Invoice", fontsize=40)
+        doc.saveIncr()
+    assert analyze(path, today=TODAY).fields["invoice_number"].value == "IN-2026-39513"
+
+
+def test_a_bilingual_label_after_another_labels_colon_finds_its_value(tmp_path):
+    # Digital seed 9101: "... livraison: Payment Terms / Conditions de paiement:" left the terms for a person.
+    lines = [
+        (60, 55, "Lakeshore Plumbing Ltd."), (60, 70, "12 Main St, Toronto, ON M5V 1A1"), (380, 55, "INVOICE"),
+        (380, 75, "Invoice No."), (470, 75, "FA97024"), (380, 90, "Date"), (470, 90, "2026-04-10"),
+        (60, 122, "Service Address / Adresse de livraison: Payment Terms / Conditions de paiement:"),
+        (500, 122, "30 days"),
+        *_TOTALS,
+    ]  # fmt: skip
+    assert analyze(_pdf(tmp_path, lines, size=8), today=TODAY).fields["payment_terms"].value == "Net 30"
+
+
+def test_logo_initials_ph_are_not_a_phone_line_and_account_headings_are_not_the_supplier(tmp_path):
+    # Fresh digital seed 9901 (a utility bill): "PH Pinecrest Hydro" was skipped as a phone line ("Ph:") and the
+    # account heading "Payments received" was shown as the supplier, likely.
+    lines = [
+        (60, 55, "PH Pinecrest Hydro"), (60, 85, "2118 King St W"), (60, 97, "Barrie, ON L4T 5G7"),
+        (430, 50, "Billing Statement"), (360, 160, "Bill Number:"), (520, 160, "46839-B"),
+        (60, 245, "Payments received"), (300, 245, "-1,315.69"), (60, 260, "Balance Forward"), (300, 260, "0.00"),
+        *_TOTALS,
+    ]  # fmt: skip
+    assert analyze(_pdf(tmp_path, lines), today=TODAY).fields["vendor_name"].value == "Pinecrest Hydro"
+
+
+def test_an_address_unit_is_never_an_invoice_or_po_number():
+    from ap_coder.capture.reader import _value_reading
+    from ap_coder.capture.types import Box, Line, Word
+
+    w = Word("Unit 7", Box(1, 0.06, 0.1, 0.12, 0.11))
+    assert _value_reading("po_number", Line([w], w.box, w.text), 0, 1.0, "label-below") is None
+
+
+def test_ocrs_full_width_qst_rate_with_an_8_for_its_percent_sign_is_not_an_amount():
+    from ap_coder.capture.reader import _PERCENT
+
+    # Fresh scan seed 9811: "QST/TVQ（9,9758）" was read as the amount -9.98.
+    assert _PERCENT.search("QST/TVQ（9,9758）") and _PERCENT.search("TVQ (9,975 %)")
+    assert not _PERCENT.search("(37.98)")  # a credit's amount, not a rate
+
+
+def test_a_logo_initial_after_the_legal_form_is_not_part_of_the_name():
+    from ap_coder.capture.reader import _without_logo_initials
+    from ap_coder.capture.types import Box, Word
+
+    words = [
+        Word(t, Box(1, 0.1 * i, 0.05, 0.1 * i + 0.08, 0.06))
+        for i, t in enumerate(["Prairie", "Landscaping", "LP", "P"])
+    ]
+    assert [w.text for w in _without_logo_initials(words)] == ["Prairie", "Landscaping", "LP"]
+
+
+def test_a_bilingual_label_after_a_fax_number_on_the_same_line(tmp_path):
+    # Digital seed 9921: "Fax / Téléc.: 905.555.2439 Issued / Date de facturation:" left the invoice date unread.
+    lines = [
+        (60, 55, "Lakeshore Plumbing Ltd."), (60, 70, "12 Main St, Toronto, ON M5V 1A1"), (380, 55, "INVOICE"),
+        (380, 75, "Invoice No."), (470, 75, "FA97024"),
+        (190, 100, "Fax / Téléc.: 905.555.2439 Issued / Date de facturation:"), (510, 100, "2026-04-10"),
+        *_TOTALS,
+    ]  # fmt: skip
+    assert analyze(_pdf(tmp_path, lines, size=8), today=TODAY).fields["invoice_date"].value == "2026-04-10"
+
+
+def test_a_product_named_shipping_cartons_is_not_the_freight(tmp_path):
+    from ap_coder.capture.layout import build_layout
+    from ap_coder.capture.reader import read_fields
+
+    # Scan seed 9811: "Shipping cartons 18x12x12" took the quantity beside it (100, read "1.00") as the freight.
+    lines = [
+        (60, 300, "Description"), (330, 300, "Qty"), (400, 300, "Unit price"), (480, 300, "Amount"),
+        (60, 316, "Shipping cartons 18x12x12"), (330, 316, "100"), (400, 316, "47.04"), (480, 316, "4,704.00"),
+        (380, 500, "Shipping"), (480, 500, "25.00"),
+    ]  # fmt: skip
+    charges = read_fields(build_layout(_pdf(tmp_path, lines), ocr=False))["other_charges"]
+    assert [r.value for r in charges] == [25.0]  # the freight in the totals is still read
+
+
+def test_a_percent_sign_ocr_read_as_hao_is_a_percent_sign(monkeypatch):
+    import io
+
+    from PIL import Image
+
+    from ap_coder.capture import layout
+
+    # Scan seed 9811: "QST/ TVQ (9,975号)" made the rate 9,975.00 the QST.
+    quad = [[10, 10], [200, 10], [200, 30], [10, 30]]
+    found = [(quad, "QST/ TVQ (9,975号)", 0.9), (quad, "(19.56号% per annum)", 0.9)]
+    monkeypatch.setattr(layout, "_ocr_cached", lambda *a, **k: found)
+    png = io.BytesIO()
+    Image.new("RGB", (400, 400), "white").save(png, format="PNG")
+    page = layout.ocr_image(png.getvalue(), 1)
+    assert " ".join(w.text for w in page.words) == "QST/ TVQ (9,975%) (19.56% per annum)"
+
+
+def test_a_date_that_reads_both_ways_is_not_taken_as_after_the_day_it_arrived(tmp_path):
+    from ap_coder.capture.layout import build_layout
+    from ap_coder.capture.reader import read_fields
+
+    # Fresh seeds 9821 and 9931: "03/02/2026" arrived on 27 Feb; 2 March (three days after it came in) was preferred
+    # to 3 February (24 days before) and shown as likely.
+    lines = [(60, 55, "Lakeshore Plumbing Ltd."), (380, 55, "INVOICE"), (380, 75, "Invoice No."), (470, 75, "FA97024"),
+             (380, 90, "Date"), (470, 90, "03/02/2026"), *_TOTALS]  # fmt: skip
+    layout = build_layout(_pdf(tmp_path, lines), ocr=False)
+    assert read_fields(layout, received=dt.date(2026, 2, 27))["invoice_date"][0].value == "2026-02-03"
+    assert read_fields(layout, received=dt.date(2026, 3, 3))["invoice_date"][0].value == "2026-03-02"
+
+
+def test_terms_with_two_specks_before_net_keep_their_discount():
+    from ap_coder.capture.reader import _terms
+
+    # Fresh scan seed 9821: "2%10,.Net45" lost its early-payment discount, shown as likely "Net 45".
+    assert _terms("Terms of Payment:2%10,.Net45") == _terms("2% 10,. Net 45") == "2% 10 Net 45"
+
+
+def test_a_street_number_with_a_comma_under_logo_initials_is_not_a_po(tmp_path):
+    from ap_coder.capture.layout import build_layout
+    from ap_coder.capture.reader import read_fields
+
+    # Fresh seed 9931: the logo's initials "PO" (Plomberie Outaouais) over "9777, boul. des Laurentides" made 9777 a
+    # purchase order number, shown as likely.
+    lines = [(290, 50, "PO"), (210, 75, "Plomberie Outaouais S.E.N.C."), (250, 92, "9777, boul. des Laurentides"),
+             (250, 106, "Montréal (QC) H4V 0L7"), (380, 140, "Facture"), (380, 160, "No."), (470, 160, "FA-6926"),
+             *_TOTALS]  # fmt: skip
+    assert not read_fields(build_layout(_pdf(tmp_path, lines), ocr=False))["po_number"]
+
+
+def test_an_invoice_number_both_ocr_reads_print_like_a_decimal_goes_to_a_person():
+    from ap_coder.capture.confidence import fuse
+    from ap_coder.capture.types import CHECK, Box, Reading
+
+    # Fresh scan seed 9821: "No. 46" read "No.4.6" by both OCR engines, shown as likely.
+    box = [Box(1, 0.8, 0.08, 0.9, 0.1)]
+    both = {s: {"invoice_number": [Reading("invoice_number", "4.6", "4.6", box, 1.0, "label-inline")]}
+            for s in ("rules", "ocr2")}  # fmt: skip
+    assert fuse(both, [], fields=("invoice_number",), layout_source="ocr")[0]["invoice_number"].status == CHECK
+    # A text PDF prints what it prints; a longer number with a dot is a format ("2025.0142"), not a speck.
+    assert fuse(both, [], fields=("invoice_number",), layout_source="text")[0]["invoice_number"].status != CHECK
+    dotted = {s: {"invoice_number": [Reading("invoice_number", "2025.0142", "2025.0142", box, 1.0, "label-inline")]}
+              for s in ("rules", "ocr2")}  # fmt: skip
+    assert fuse(dotted, [], fields=("invoice_number",), layout_source="ocr")[0]["invoice_number"].status != CHECK
+
+
+def test_a_logo_mark_ocr_read_as_a_character_is_not_part_of_the_name():
+    from ap_coder.capture.reader import _without_logo_initials
+    from ap_coder.capture.types import Box, Word
+
+    def words(*texts: str) -> list[Word]:
+        return [Word(t, Box(1, 0.1 + 0.1 * i, 0.05, 0.18 + 0.1 * i, 0.07), 0.9, "ocr") for i, t in enumerate(texts)]
+
+    def name(*texts: str) -> str:
+        return " ".join(w.text for w in _without_logo_initials(words(*texts)))
+
+    # End-to-end sweep: a phone photo's diamond logo became "■ Birchmount Logistics Limited".
+    assert name("■", "Birchmount", "Logistics", "Limited") == "Birchmount Logistics Limited"
+    assert name("•Acme", "Supply", "Ltd.") == "Acme Supply Ltd."
+    assert name("Smith", "&", "Sons", "Ltd.", "|") == "Smith & Sons Ltd."  # "&" inside the name stays
+
+
+def test_a_number_before_words_that_only_look_like_a_street_is_still_read():
+    from ap_coder.capture.reader import _STREET, _value_reading
+    from ap_coder.capture.types import Box, Line, Word
+
+    def line(text: str) -> Line:
+        words = [Word(t, Box(1, 0.5 + 0.05 * i, 0.1, 0.54 + 0.05 * i, 0.12), 0.95, "ocr")
+                 for i, t in enumerate(text.split())]  # fmt: skip
+        return Line(words, Box(1, 0.5, 0.1, 0.5 + 0.05 * len(words), 0.12), text)
+
+    # Sweep: "Dr." or "Ct" right after a number is not a street ("30125 Dr. Patel"); a street's kind follows its name
+    # in English and comes first in French and for highways.
+    for street in (" Barrington St", " Main Street, Toronto", ", boul. des Laurentides", " av. du Parc",
+                   " rue Sainte-Catherine O", " Hwy 7 S"):  # fmt: skip
+        assert _STREET.search(street), street
+    for value_line in ("30125 Dr. Patel", "556677 Ct 4"):
+        got = _value_reading("invoice_number", line(value_line), 0, 1.0, "label-right")
+        assert got is not None and got.value == value_line.split()[0], value_line
+    assert _value_reading("invoice_number", line("Page - 1"), 0, 1.0, "label-right") is None

@@ -7,7 +7,7 @@ Studio on this computer or the office network, never a server on the internet. T
 Azure check (``azure_check``), which contacts its configured endpoint only once AP has switched it on in Settings, and
 a named internal system an Admin enables: JD Edwards' AIS Server (``erp/jde_ais.py``, D-104), only its saved address
 on the company network.
-``tests/test_offline_guard.py`` proves it: every flow runs with any connection but to this computer refused.
+``tests/offline/test_offline_guard.py`` proves it: every flow runs with any connection but to this computer refused.
 
 RapidOCR 3 (the PP-OCRv5 reader) would download its model files into its own package folder the first time
 it is used. AP Coder never lets it: ``scripts/fetch_models.py`` copies them from the ``models/`` folder of

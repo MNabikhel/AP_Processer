@@ -1,5 +1,5 @@
 """The reports, lists and search as they were computed before the invoices' summary (D-110, schema 18): every
-invoice read and decoded on each call. ``tests/test_invoice_summary.py`` checks the summary's results against these,
+invoice read and decoded on each call. ``tests/erp/test_invoice_summary.py`` checks the summary's results against these,
 on realistic data; the bodies are the old code as it was (only renamed, and pointed at the old queries below)."""
 
 from __future__ import annotations

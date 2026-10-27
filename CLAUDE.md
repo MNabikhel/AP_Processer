@@ -20,7 +20,7 @@ guides, the bug log (BUGS.md) and decisions (decisions.md). Search the code to f
 - Checks (findings with a code): `coding/validation.py` (`validate_coding` gathers them), payment terms
   `coding/terms.py`, tax `coding/tax.py` (`check_taxes`, `place_of_supply`), the Tax check `coding/taxmath.py`, line
   tax codes `coding/line_tax.py`, ITCs and self-assessment `coding/taxreturn.py`, vendors `coding/vendors.py`. Every
-  check code needs a `CheckHelp` in `ops/help.py` (`tests/test_help.py` enforces it).
+  check code needs a `CheckHelp` in `ops/help.py` (`tests/ops/test_help.py` enforces it).
 - Exports: `erp/exports.py` (Excel/CSV), `erp/jde.py` (JD Edwards; its AIS API: `erp/jde_ais.py`, `jde_sync.py`,
   `jde_post.py`). Reports: the rest of `erp/`.
 - The review screen: routes `web/pages/invoice.py`, view `web/invoice_view.py`, `web/templates/invoice.html`,
@@ -29,8 +29,10 @@ guides, the bug log (BUGS.md) and decisions (decisions.md). Search the code to f
   is the line grid's edits).
 - Amounts and dates: `capture/normalize.py` for what is read off an invoice, `core/safe.py` / `core/csvio.py` for
   imported files; column headers: `core/headers.py` (`match_columns`).
-- Tests: `tests/test_<module>.py` for most modules; fixtures `tests/conftest.py` (`reference`, `ground_truth`), web
-  helpers `tests/webclient.py` (`client_for`, `add_clean`).
+- Tests: `tests/<folder>/test_<module>.py`, the folders mirroring `ap_coder/` (`core`, `coding`, `capture`, `ai`,
+  `erp`, `intake`, `ops`, `web`, `bench`) plus `launcher` (scripts/), `offline` and `meta` (CI, docs, code rules);
+  fixtures `tests/conftest.py` (`store`, `client`, `reference`, `ground_truth`, the demo templates); helpers
+  `tests/webclient.py` (`client_for`, `add_clean`), `tests/pdfs.py`, `tests/scripts.py`, `tests/browser.py`.
 
 ## Rules
 - Fully offline at run time: nothing connects to the internet unless `AP_ALLOW_INTERNET=1` (developers, the bundle

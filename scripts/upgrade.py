@@ -55,7 +55,7 @@ GENERATED = {".venv", "__pycache__", ".pytest_cache", ".ruff_cache", ".cache", M
 # What an AP Coder bundle folder holds (for a folder whose manifest has no file list: AP Coder 0.1). The older
 # versions' install.bat / install.sh / start.bat / start.sh / terminal.bat stay listed: the bundle no longer ships them,
 # so unzipped over an older folder they are removed (prune_stale), and an older folder is still recognised. Every
-# top-level name git tracks is here too: GitHub's ZIP holds them all (tests/test_update.py checks it).
+# top-level name git tracks is here too: GitHub's ZIP holds them all (tests/launcher/test_update.py checks it).
 BUNDLE_TOP = {"ap_coder", "scripts", "tests", "docs", "data", "samples", "static", "wheelhouse", "models", "private",
               ".streamlit", ".github", ".claude", "APProcessor.bat", "APProcessor.command", "install.bat",
               "install.sh", "start.bat", "start.sh", "terminal.bat", "README.md", "CLAUDE.md", "pyproject.toml",

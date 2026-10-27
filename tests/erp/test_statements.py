@@ -1,0 +1,136 @@
+"""Vendor statement reconciliation."""
+
+import csv
+
+from ap_coder.core.memory import vendor_key
+from ap_coder.erp import statements as stm
+from tests.conftest import DATA, copy_database
+
+
+def _inv(i, number, total, date="2026-09-10", status="approved"):
+    return {"id": i, "invoice_number": number, "grand_total": total, "invoice_date": date, "status": status}
+
+
+def test_columns_are_recognised():
+    cols = stm.map_columns(["Doc Date", "Invoice No.", "Amount", "Open Balance", "Type"])
+    assert cols == {"number": "Invoice No.", "date": "Doc Date", "amount": "Amount", "balance": "Open Balance",
+                    "type": "Type"}  # fmt: skip
+
+
+def test_reconcile_finds_matches_differences_and_gaps():
+    statement = [
+        {"No": "INV-00101", "Date": "2026-09-01", "Amt": "1,000.00"},
+        {"No": "102", "Date": "2026-09-05", "Amt": "250.00"},
+        {"No": "103", "Date": "2026-09-20", "Amt": "75.00"},
+        {"No": "", "Date": "2026-09-25", "Amt": "(500.00)", "Kind": "Payment"},
+        {"No": "", "Date": "", "Amt": ""},  # blank row
+    ]
+    invoices = [
+        _inv(1, "101", 1000.0),
+        _inv(2, "INV-102", 245.0),
+        _inv(3, "104", 60.0, "2026-09-12"),
+        _inv(4, "105", 80.0, "2026-12-01"),  # outside the statement period
+        _inv(5, "103", 75.0, status="rejected"),  # a rejected invoice does not count
+    ]
+    cols = {"number": "No", "date": "Date", "amount": "Amt", "type": "Kind"}
+    rec = stm.reconcile(statement, cols, invoices)
+    got = {(li.status, li.number) for li in rec.lines}
+    assert got == {
+        (stm.MATCHED, "INV-00101"), (stm.DIFFERS, "102"), (stm.NOT_RECEIVED, "103"), (stm.PAYMENT, ""),
+        (stm.NOT_ON_STATEMENT, "104"),
+    }  # fmt: skip
+    differs = next(li for li in rec.lines if li.status == stm.DIFFERS)
+    assert differs.difference == 5.0 and differs.invoice_id == 2
+    assert rec.lines[0].status == stm.DIFFERS  # problems first
+    assert "Amount differs" in stm.to_csv(rec).decode("utf-8-sig")
+
+
+def test_negative_amount_formats():
+    assert stm._number("(1,234.50)") == -1234.5
+    assert stm._number("1234.50-") == -1234.5
+    assert stm._number("99.00 CR") == -99.0
+    assert stm._number("$1,000") == 1000.0
+    assert stm._number("n/a") is None and stm._number(float("nan")) is None
+
+
+def test_a_payment_word_in_a_description_does_not_turn_an_invoice_into_a_payment():
+    statement = [
+        {"Date": "2026-09-14", "Invoice": "E-5521", "Description": "14/2 NMD90 wire, 75 m", "Amount": "412.50"},
+        {"Date": "2026-09-16", "Invoice": "E-5530", "Description": "Brass check valves", "Amount": "96.00"},
+        {"Date": "2026-09-25", "Invoice": "88120", "Description": "Payment - thank you", "Amount": "-300.00"},
+        {"Date": "2026-09-26", "Invoice": "", "Description": "EFT received", "Amount": "-200.00"},
+    ]
+    cols = stm.map_columns(list(statement[0]))
+    rec = stm.reconcile(statement, cols, [_inv(11, "E-5521", 412.5), _inv(12, "E-5530", 96.0)])
+    assert sorted((li.status, li.number) for li in rec.lines) == [
+        (stm.MATCHED, "E-5521"), (stm.MATCHED, "E-5530"), (stm.PAYMENT, ""), (stm.PAYMENT, "88120"),
+    ]  # fmt: skip
+    # A real Type column still says what a line is, even with an invoice's number.
+    typed = [{"No": "E-5521", "Type": "Payment", "Amt": "-412.50"}]
+    (line,) = stm.reconcile(typed, {"number": "No", "type": "Type", "amount": "Amt"}, [_inv(11, "E-5521", 412.5)]).lines
+    assert line.status == stm.PAYMENT
+
+
+def test_a_payment_line_with_the_invoices_number_is_a_payment():
+    """Statements often print the invoice's number on its payment line: with a payment word and the opposite sign
+    of that invoice (or the invoice already matched) it is a payment, not an invoice AP never received."""
+    statement = [
+        {"Date": "2026-09-01", "Invoice": "1001", "Description": "Brass check valves", "Amount": "500.00"},
+        {"Date": "2026-09-20", "Invoice": "1001", "Description": "Payment - thank you", "Amount": "-500.00"},
+        {"Date": "2026-09-21", "Invoice": "1002", "Description": "Payment received", "Amount": "-80.00"},
+    ]
+    cols = stm.map_columns(list(statement[0]))
+    rec = stm.reconcile(statement, cols, [_inv(7, "1001", 500.0), _inv(8, "1002", 80.0)])
+    assert sorted((li.status, li.number) for li in rec.lines) == [
+        (stm.MATCHED, "1001"), (stm.NOT_ON_STATEMENT, "1002"), (stm.PAYMENT, "1001"), (stm.PAYMENT, "1002"),
+    ]  # fmt: skip
+    assert rec.count(stm.NOT_RECEIVED) == 0
+
+
+def test_the_same_invoice_is_not_matched_twice():
+    statement = [{"n": "7", "a": "10"}, {"n": "7", "a": "10"}]
+    rec = stm.reconcile(statement, {"number": "n", "amount": "a"}, [_inv(1, "7", 10.0)])
+    assert [li.status for li in rec.lines] == [stm.NOT_RECEIVED, stm.MATCHED]
+
+
+def test_sample_statement_against_the_demo(tmp_path, demo_template):
+    store = copy_database(demo_template, tmp_path / "a.db")
+    with (DATA / "sample_statement_northwind.csv").open(encoding="utf-8") as fh:
+        records = list(csv.DictReader(fh))
+    invoices = store.vendor_invoices(vendor_key("Northwind IT Solutions Inc."))
+    rec = stm.reconcile(records, stm.map_columns(list(records[0])), invoices)
+    assert {li.number: li.status for li in rec.lines if li.number} == {
+        "NW-2026-0912": stm.MATCHED, "CN-2026-0047": stm.MATCHED, "NW-2026-0938": stm.NOT_RECEIVED,
+    }  # fmt: skip
+    assert rec.count(stm.PAYMENT) == 1
+
+
+def test_a_payment_line_carrying_the_invoice_number_never_takes_the_invoice():
+    """A payment or credit applied to an invoice often carries its number, with its own Type (PMT, CHQ) or in a
+    Credit column, before or after the invoice: its sign, opposite to the invoice's, makes it the payment."""
+    invoices = [_inv(1, "1001", 500.0, "2026-09-02"), _inv(2, "1002", 250.0, "2026-09-09")]
+    typed = [
+        {"Date": "2026-09-20", "Type": "PMT", "Ref": "1001", "Amount": "-500.00"},  # newest first
+        {"Date": "2026-09-02", "Type": "INV", "Ref": "1001", "Amount": "500.00"},
+        {"Date": "2026-09-09", "Type": "INV", "Ref": "1002", "Amount": "250.00"},
+        {"Date": "2026-09-25", "Type": "PMT", "Ref": "CHQ 88123", "Amount": "-250.00"},
+    ]
+    debit_credit = [
+        {"Date": "2026-09-20", "Invoice": "1001", "Debit": "", "Credit": "500.00"},
+        {"Date": "2026-09-02", "Invoice": "1001", "Debit": "500.00", "Credit": ""},
+        {"Date": "2026-09-09", "Invoice": "1002", "Debit": "250.00", "Credit": ""},
+    ]
+    described = [
+        {"Date": "2026-09-20", "Invoice": "1001", "Description": "Payment - thank you", "Amount": "-500.00"},
+        {"Date": "2026-09-02", "Invoice": "1001", "Description": "Brass check valves", "Amount": "500.00"},
+        {"Date": "2026-09-09", "Invoice": "1002", "Description": "Brass check valves", "Amount": "250.00"},
+    ]
+    for statement in (typed, debit_credit, described):
+        rec = stm.reconcile(statement, stm.map_columns(list(statement[0])), invoices)
+        assert {(li.status, li.invoice_id) for li in rec.lines if li.status != stm.PAYMENT} == {
+            (stm.MATCHED, 1), (stm.MATCHED, 2),
+        }, statement  # fmt: skip
+        assert rec.count(stm.NOT_RECEIVED) == rec.count(stm.DIFFERS) == 0
+    # A credit note AP holds under the same number still matches the credit line.
+    rec = stm.reconcile(debit_credit, stm.map_columns(list(debit_credit[0])), [*invoices, _inv(3, "1001", -500.0)])
+    assert {(li.status, li.invoice_id) for li in rec.lines} == {(stm.MATCHED, 1), (stm.MATCHED, 2), (stm.MATCHED, 3)}

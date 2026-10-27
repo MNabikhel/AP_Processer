@@ -380,7 +380,7 @@ section (the Azure check, the finance hub feed, the JD Edwards connection or ser
   laptop and changes nothing for a page that is not its own.
 - OCR runs on the laptop with local models; OvisOCR2 and the chat model run in LM Studio on the
   laptop too and are reached over `localhost`.
-- A test (`tests/test_offline.py`) reads an invoice, runs every dashboard page and builds a JD Edwards
+- A test (`tests/offline/test_offline.py`) reads an invoice, runs every dashboard page and builds a JD Edwards
   batch with all outside connections blocked, and fails if anything tries to connect.
 
 The only outside connections are the ones someone chooses:

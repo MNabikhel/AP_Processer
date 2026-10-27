@@ -148,7 +148,7 @@ traced (`strace`): none may leave the computer.
 - `AP_UPGRADE_TESTS=1 AP_UPGRADE_BUNDLE=<the bundle ZIP> python -m pytest -m upgrade` runs every version, both
   ways, plus a version closed before the update (found beside the new folder), two old windows open (8501 and
   8502), and, with `AP_UPGRADE_PYTHON310` naming one, a `.venv` made with Python 3.10
-  (`tests/test_update_from_old_versions.py`; Linux and Mac; a few minutes per version).
+  (`tests/launcher/test_update_from_old_versions.py`; Linux and Mac; a few minutes per version).
 - CI's *Update from ...* job runs the first version (unzipped over), PR #1 (run by hand, data in `private/`) and
   PR #8 on Windows, macOS and Linux, through `APProcessor.bat` / `APProcessor.command`, with every proxy pointing
   at a closed port.

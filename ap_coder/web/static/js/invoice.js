@@ -479,7 +479,7 @@ try {
 /* A vendor name's key, exactly as memory.vendor_key gives it (accents, ligatures, punctuation, "&"/"and", a leading
    "the" and the legal forms at the end aside: "The Northwind IT Solutions Inc." -> "northwind it solutions"). The
    vendor list comes with each vendor's key from the server; this keys the name being typed. Keep it in step with
-   memory.py: tests/test_web_invoice.py compares the two on many spellings. */
+   memory.py: tests/web/test_web_invoice.py compares the two on many spellings. */
 const LEGAL_SUFFIXES = new Set(
   ("inc incorporated incorporee ltd ltee limited limitee corp corporation co company cie llc llp lp plc ulc pc pllc " +
     "enr senc sencrl sec srl gmbh ag kg sa sas sarl bv nv pty spa ltda and").split(" "),

@@ -11,7 +11,7 @@ Each sample has three files with the same name:
   Document Intelligence.
 - `ground_truth/<name>.json`: the correct coded output (`InvoiceCoding`): GL code, cost center and
   taxes per line, tax lines and totals. Use it for evaluation (`ap-coder evaluate`) and regression
-  tests (`tests/test_samples.py` checks every sample).
+  tests (`tests/coding/test_samples.py` checks every sample).
 
 | Sample | Province | Taxes | What it shows |
 | --- | --- | --- | --- |
@@ -38,5 +38,5 @@ python scripts/make_sample_pdf.py <name> ... # only these
 
 The invoice content lives in `INVOICES` in `scripts/make_sample_pdf.py`. To add a sample, add an entry
 there, generate it, then write `ground_truth/<name>.json` by hand. The new sample is picked up by
-`tests/test_samples.py` automatically. Regenerating writes a new PDF file ID and creation date, so
+`tests/coding/test_samples.py` automatically. Regenerating writes a new PDF file ID and creation date, so
 the PDF bytes change even when the content does not.

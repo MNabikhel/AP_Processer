@@ -3,11 +3,12 @@
     python scripts/check.py              the files changed since the last commit (and new ones)
     python scripts/check.py FILE...      these files instead
 
-The tests picked for a changed module are its own (``tests/test_<module>*.py``) and the test files that import it by
-name (a script: those that load it); a changed test file runs itself; a changed template, page script or stylesheet
-runs the tests named after it, in a browser too; a file every test uses (conftest.py, pyproject.toml...) runs the
-whole default run. Other slow tests are left to CI and ``python -m pytest -m ""`` (pyproject.toml). Exit code 0 when
-everything passes, 2 outside a git checkout without files named.
+The tests picked for a changed module are its own (``tests/<folder>/test_<module>*.py``, the folders mirror
+ap_coder/) and the test files that import it by name (a script: those that load it); a changed test file runs itself;
+a changed template, page script or stylesheet runs the tests named after it, in a browser too; a file every test uses
+(conftest.py, pyproject.toml, the shared helpers...) runs the whole default run. Other slow tests are left to CI and
+``python -m pytest -m ""`` (pyproject.toml). Exit code 0 when everything passes, 2 outside a git checkout without
+files named.
 """
 
 from __future__ import annotations
@@ -23,8 +24,9 @@ WIDE = 12  # a module imported by more test files than this (the store, the sche
 
 
 # Files every test leans on: a change to one runs the whole default run.
-SHARED = {"tests/conftest.py", "tests/webclient.py", "tests/slow_tests.txt", "pyproject.toml"}
-OWN = {"ap_coder/__init__.py": ["tests/test_moved_modules.py"]}  # the package itself: its own tests by name
+SHARED = {"tests/conftest.py", "tests/webclient.py", "tests/pdfs.py", "tests/scripts.py", "tests/browser.py",
+          "tests/slow_tests.txt", "pyproject.toml"}  # fmt: skip
+OWN = {"ap_coder/__init__.py": ["tests/meta/test_moved_modules.py"]}  # the package itself: its own tests by name
 
 
 def changed_files() -> list[str] | None:
@@ -58,7 +60,7 @@ def tests_for(files: list[str]) -> list[str] | None:
     """The test files to run for these changed files; None means the whole default run."""
     if any(f in SHARED for f in files):
         return None
-    test_texts = {p: p.read_text(encoding="utf-8", errors="replace") for p in TESTS.glob("test_*.py")}
+    test_texts = {p: p.read_text(encoding="utf-8", errors="replace") for p in TESTS.rglob("test_*.py")}
     picked: set[Path] = set()
     for f in files:
         path = Path(f)
@@ -70,7 +72,7 @@ def tests_for(files: list[str]) -> list[str] | None:
                 picked.add(ROOT / path)
             continue
         stem = path.parent.name if path.name == "__init__.py" else path.stem.lstrip("_")
-        own = set(TESTS.glob(f"test_{stem}*.py")) | set(TESTS.glob(f"test_web_{stem}*.py"))
+        own = set(TESTS.rglob(f"test_{stem}*.py")) | set(TESTS.rglob(f"test_web_{stem}*.py"))
         users: list[Path] = []
         if path.parts[:1] == ("ap_coder",) and path.suffix == ".py" and path.name != "__main__.py":
             parts = path.parent.parts if path.name == "__init__.py" else path.with_suffix("").parts
@@ -78,7 +80,7 @@ def tests_for(files: list[str]) -> list[str] | None:
             if not users and path.name != "__init__.py" and (path.parent / "__init__.py").is_file():
                 # A part of a package that re-exports it (core/store/invoices.py): tests import the package.
                 users = importers(".".join(path.parent.parts), test_texts)
-                own |= set(TESTS.glob(f"test_{path.parent.name}*.py"))
+                own |= set(TESTS.rglob(f"test_{path.parent.name}*.py"))
         elif path.parts[:1] == ("scripts",) and path.suffix == ".py":
             users = script_users(path.stem, test_texts)
         picked |= own | (set(users) if len(users) <= WIDE else set())

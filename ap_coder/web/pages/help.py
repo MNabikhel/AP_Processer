@@ -73,7 +73,7 @@ def shortcut_keys(spec: str) -> list[dict[str, Any]]:
 
 
 # The review screen's G, shown with the invoice keys; kept out of SHORTCUT_ROWS, whose rows after the first four are
-# the page viewer's, the menus', Undo's, Park's and Reject's (tests/test_web_help.py).
+# the page viewer's, the menus', Undo's, Park's and Reject's (tests/web/test_web_help.py).
 GO_TO_LINE = ("[G]", "Go to the line still to code")
 SHORTCUTS = [(shortcut_keys(spec), what) for spec, what in [*SHORTCUT_ROWS[:4], GO_TO_LINE, *SHORTCUT_ROWS[4:]]]
 

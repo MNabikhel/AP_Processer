@@ -184,7 +184,7 @@ class LocalOnly:
 
 # --- Security headers (D-99) --------------------------------------------------------------------------------------
 
-# Scripts only from AP Coder's own files (no inline script runs: tests/test_server_https.py checks the templates);
+# Scripts only from AP Coder's own files (no inline script runs: tests/web/test_server_https.py checks the templates);
 # inline styles are allowed, as the pages set a bar's width or a column's size in style="...". Nothing is loaded from
 # another site, and no other site may show AP Coder in a frame.
 CONTENT_SECURITY_POLICY = (

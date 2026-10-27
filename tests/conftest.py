@@ -188,7 +188,7 @@ def no_dashboard_page_reader(monkeypatch):
 @pytest.fixture(autouse=True)
 def no_local_model(monkeypatch):
     """Never ask a real LM Studio on this computer: every test sees no local model unless it starts a fake one
-    (tests/test_local_llm.py restores the real fetch for that)."""
+    (tests/ai/test_local_llm.py restores the real fetch for that)."""
     from ap_coder.ai import local_llm
 
     _no_local_model(monkeypatch)
