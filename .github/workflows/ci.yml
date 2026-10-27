@@ -20,22 +20,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The whole suite on every Python on Ubuntu (about 10 minutes). Windows runs it about four times slower, so
-        # there the whole suite runs on the oldest and the newest Python, each split into three parts run side by side
-        # (--shard, tests/conftest.py), and the fast tier on the two between. Windows 3.11 also installs the OCR
-        # engine, so the tests that read scans run on Windows (they skip without it).
+        # The whole suite on every Python on Ubuntu (about 5 minutes). Windows runs it several times slower, so there
+        # the whole suite runs on 3.12 (the Python APProcessor.bat installs first, with the OCR engine, so the tests
+        # that read scans run on Windows; they skip without it) and on the newest, each split into three parts run
+        # side by side (--shard, tests/conftest.py), and the fast tier on the other two.
         include:
           - {os: ubuntu-latest, python: "3.11"}
           - {os: ubuntu-latest, python: "3.12"}
           - {os: ubuntu-latest, python: "3.13"}
           - {os: ubuntu-latest, python: "3.14"}
-          - {os: windows-latest, python: "3.11", extras: "ocr,dev", shard: "1/3"}
-          - {os: windows-latest, python: "3.11", extras: "ocr,dev", shard: "2/3"}
-          - {os: windows-latest, python: "3.11", extras: "ocr,dev", shard: "3/3"}
+          - {os: windows-latest, python: "3.12", extras: "ocr,dev", shard: "1/3"}
+          - {os: windows-latest, python: "3.12", extras: "ocr,dev", shard: "2/3"}
+          - {os: windows-latest, python: "3.12", extras: "ocr,dev", shard: "3/3"}
           - {os: windows-latest, python: "3.14", shard: "1/3"}
           - {os: windows-latest, python: "3.14", shard: "2/3"}
           - {os: windows-latest, python: "3.14", shard: "3/3"}
-          - {os: windows-latest, python: "3.12", tier: fast}
+          - {os: windows-latest, python: "3.11", tier: fast}
           - {os: windows-latest, python: "3.13", tier: fast}
     steps:
       - uses: actions/checkout@v4
@@ -92,7 +92,7 @@ jobs:
       - name: Browser tests
         env:
           AP_REQUIRE_BROWSER: "1"
-        run: python -m pytest -q -m "" -k "in_a_browser" tests/web/test_web_invoice.py tests/offline/test_offline_guard.py
+        run: python -m pytest -q -m "" -k "in_a_browser" tests/ --durations=15
 
   windows-installer:
     # The installer (APProcessor.bat --installer) on a clean Windows machine, then a second run.
