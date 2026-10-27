@@ -182,6 +182,8 @@ def test_the_order_of_directory_entries_never_drops_an_attachment():
         ("Packing slip and invoice", _pdf("ACME", "INVOICE 77", "Packing slip enclosed", "Total 80.00")),
         ("Order confirmation", _pdf("ACME", "Order 4471 confirmed", "Total 1,200.00")),  # says nothing: the queue
     ],
+    ids=["Invoice", "Your hydro bill", "Statement", "Scan", "no subject", "Packing slip and invoice",
+         "Order confirmation"],  # by subject: a PDF's bytes hold a new random ID each run
 )  # fmt: skip
 def test_anything_that_may_be_an_invoice_goes_to_the_queue(subject, doc):
     t = _kind(subject, "", ("doc.pdf", doc))
