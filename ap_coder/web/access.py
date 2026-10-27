@@ -5,7 +5,7 @@ Two small answers the pages ask, kept here so they change in one place:
 * ``is_admin(request)``: whether the person asking is an Admin. On a laptop (no accounts) the person at the
   computer runs AP Coder, so yes. On the company server, only the account logged in with the Admin role
   (``identity.person()``, set by the login middleware, D-97).
-* ``person_key(request)``: whose edits a draft on the review screen is. None for this computer's own person; a
+* ``person_key()``: whose edits a draft on the review screen is. None for this computer's own person; a
   logged-in account's id on the server; a colleague's (name, browser id) on the office network.
 """
 
@@ -44,7 +44,7 @@ def key_of(found: identity.Person) -> tuple[str, str]:
     return found.name.casefold(), found.browser or found.address
 
 
-def person_key(request: Any = None) -> tuple[str, str] | None:
+def person_key() -> tuple[str, str] | None:
     """Whose drafts: None for this computer's own person (one set of drafts), else ``key_of`` the person asking."""
     found = identity.person()
     return None if found is None else key_of(found)

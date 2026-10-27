@@ -37,6 +37,7 @@ from functools import lru_cache
 from typing import Any
 
 from ..core.memory import vendor_key
+from .normalize import normalize_value as shared_value
 from .types import (
     AMOUNT_FIELDS,
     DATE_FIELDS,
@@ -104,7 +105,7 @@ def supplier_key(vendor_name: str | None, gst_number: str | None = None, vendor_
     return f"name:{name}" if name else ""
 
 
-# --- Normalizing (local; ``ap_coder.capture.normalize`` is used when it exists) --------------------------------
+# --- Normalizing: how a template reads what is printed (``normalize`` gives the comparison keys) --------------
 
 
 def _fold(text: Any) -> str:
@@ -230,25 +231,15 @@ def _local_normalize(name: str, raw: Any, date_order: str | None = None) -> Any:
     return " ".join(str(raw or "").split()).strip(" :") or None
 
 
-@lru_cache(maxsize=1)
-def _external_normalizer() -> Any:
-    try:
-        from . import normalize  # written separately; optional here
-    except Exception:
-        return None
-    return getattr(normalize, "normalize_value", None)
-
-
 def normalize_value(name: str, raw: Any, date_order: str | None = None) -> Any:
     """The normalized value of ``raw`` for field ``name`` (float amount, ISO date, tidy id...), or None."""
     if name in DATE_FIELDS and date_order in ("dmy", "mdy") and re.fullmatch(r"\s*\d{1,2}[-/. ]\d{1,2}[-/. ]\d+\s*",
                                                                              str(raw or "")):  # fmt: skip
         return parse_date(raw, date_order)  # the order this supplier prints its dates in
-    ext = _external_normalizer()
     # The shared normalizer gives comparison keys; ids, names and terms keep their printed form here.
-    if ext is not None and (name in AMOUNT_FIELDS or name in DATE_FIELDS or name.endswith("registration_number")):
+    if name in AMOUNT_FIELDS or name in DATE_FIELDS or name.endswith("registration_number"):
         try:
-            value = ext(name, raw)
+            value = shared_value(name, raw)
         except Exception:
             value = None
         if value not in (None, ""):
@@ -500,9 +491,6 @@ class Template:
             documents={str(k): {f: [x] if isinstance(x, str) else [str(y) for y in x or []] for f, x in v.items()}
                        for k, v in documents.items() if isinstance(v, dict)},
         )  # fmt: skip
-
-    def learned_fields(self) -> list[str]:
-        return [f for f, vs in self.fields.items() if vs]
 
 
 # --- Layout helpers --------------------------------------------------------------------------------------------
@@ -1701,7 +1689,7 @@ def should_auto_approve(
     if "CC_UNASSIGNED" in codes:
         return False, "a line has no cost center yet"
     warnings = [i.get("code") or "warning" for i in issues if str(i.get("severity", "")).lower() == "warning"]
-    if warnings:  # what bulk approval refuses too (``bulk._needs_a_person``)
+    if warnings:  # what bulk approval refuses too (``bulk.needs_a_person``)
         from ..ops.help import help_for
 
         about = help_for(str(warnings[0]))

@@ -5,7 +5,7 @@ Each column has a filter box. What is typed there is read by the column's kind:
 * text (vendor, invoice #, PO, GL account, people...): ``north`` contains "north"; ``north*`` starts with it,
   ``*0912`` ends with it (``*`` is any run of characters, ``?`` one character); ``=TELUS`` is exactly that;
   ``!credit`` does not contain it. Case and accents are ignored ("energir" finds "Énergir"): both sides are
-  compared through the SQL function ``ap_fold`` that store.py gives each connection.
+  compared through the SQL function ``ap_fold`` that the Store gives each connection.
 * amounts: ``1250``, ``>1000``, ``<=500``, ``100..250`` (a range, both ends included), ``!0``.
 * dates: ``2026-09-14``, ``>2026-09-01``, ``2026-09`` (the month), ``2026`` (the year), ``2026-07..2026-09``.
 * numbers (AP Coder #, export batch): like amounts; ``*`` alone is "has one", ``!*`` "has none".
@@ -17,6 +17,9 @@ D-110).
 
 The chosen columns, filters and sort are a URL query (``query_string``), so a layout can be bookmarked, and saved
 by name as a preset (Settings: ``directory_presets``, one of them the default).
+
+Entry points: ``Query.from_params`` (the page's address), ``run`` (a page of rows, or all for an export),
+``cell``, and the presets (``presets``, ``save_preset``, ``set_default``...).
 """
 
 from __future__ import annotations

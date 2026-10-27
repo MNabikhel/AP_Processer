@@ -27,8 +27,8 @@ from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from typing import Any
 
-from .reader import read_fields, read_line_items
-from .types import Box, DocLayout, Line, LineReading, PageLayout, Reading, Word
+from .reader import read_fields
+from .types import Box, DocLayout, Line, PageLayout, Reading, Word
 
 LEFT, WIDTH = 0.05, 0.9  # the text area across the page
 TOP, SPAN = 0.03, 0.94  # ... and down it
@@ -74,11 +74,6 @@ def made_up(text: str) -> bool:
 def transcript_fields(pages: list[str], received: dt.date | None = None) -> dict[str, list[Reading]]:
     """Candidate readings of every header field in the transcription, best first (``reader.read_fields``)."""
     return read_fields(layout_from_transcript(pages), received=received)
-
-
-def transcript_line_items(pages: list[str]) -> list[LineReading]:
-    """The line items of the transcription's line-item table (``reader.read_line_items``)."""
-    return read_line_items(layout_from_transcript(pages))
 
 
 # ---------------------------------------------------------------- rows

@@ -84,7 +84,7 @@ def reading_status(settings: Any, store: Any, *, use_cache: bool = True) -> Read
         ReaderLine(CHECKS, OK, CHECKS_DETAIL),
         _safe(GL_MODEL, lambda: _gl_model(settings, use_cache, out)),
     ]
-    out.readers.append(_safe(REVIEWER, lambda: _reviewer(settings, store, out)))  # after the chat model's row
+    out.readers.append(_safe(REVIEWER, lambda: _reviewer(store, out)))  # after the chat model's row
     _queue(settings, store, out)
     out.banner = _banner(out)
     return out
@@ -203,7 +203,7 @@ def _gl_model(settings: Any, use_cache: bool, out: ReadingStatus) -> ReaderLine:
                                           "rules; a line nothing was learned for is left for AP to code.")  # fmt: skip
 
 
-def _reviewer(settings: Any, store: Any, out: ReadingStatus) -> ReaderLine:
+def _reviewer(store: Any, out: ReadingStatus) -> ReaderLine:
     """The AI reviewer (verifier.py): the chat model checks each invoice against its pages, in the background."""
     from . import verifier
 

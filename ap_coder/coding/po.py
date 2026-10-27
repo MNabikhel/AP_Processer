@@ -17,6 +17,9 @@ compare what is billed with what was ordered (and received):
 * PO_MATCHED (info): everything is within tolerance
 
 Matching is local and deterministic; nothing here calls Azure.
+
+Entry points: ``po_findings`` (the checks of an invoice), ``match_invoice`` (the line by line match the review
+screen shows), ``rows_from_records`` and ``map_columns`` (the import), ``billed_by_line``.
 """
 
 from __future__ import annotations
@@ -198,15 +201,6 @@ def po_lines_billed(invoice_lines: list[dict[str, Any]], po_lines: list[dict[str
                 best, best_score = pl, score
         out.append(int(best["line_number"]) if best is not None and best_score >= MATCH_THRESHOLD else None)
     return out
-
-
-def pair_with_po(invoice_lines: list[dict[str, Any]], po_lines: list[dict[str, Any]]) -> dict[int, int]:
-    """{invoice line_number: PO line_number} (see ``po_lines_billed``)."""
-    return {
-        int(li["line_number"]): po_line
-        for li, po_line in zip(invoice_lines, po_lines_billed(invoice_lines, po_lines), strict=True)
-        if po_line is not None
-    }
 
 
 @dataclass
@@ -462,4 +456,4 @@ def template_csv() -> bytes:
         "PO-1001", "Example Supplier Ltd.", "1", "Example item or service", "10", "25.00", "250.00", "10",
         "6000", "", "open",
     ]  # fmt: skip
-    return ("﻿" + ",".join(TEMPLATE_COLUMNS) + "\r\n" + ",".join(example) + "\r\n").encode("utf-8")
+    return ("\ufeff" + ",".join(TEMPLATE_COLUMNS) + "\r\n" + ",".join(example) + "\r\n").encode("utf-8")

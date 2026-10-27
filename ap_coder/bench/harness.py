@@ -1,8 +1,9 @@
 """Run a reader over generated invoices and report its accuracy.
 
-`run(...)` generates (or reuses) the cases, reads each one with `ap_coder.capture.analyze` (or, until
-that exists, a trivial stub reader so the harness itself can be tested), scores every field and
-writes `report.json`, `report.md` and `failures.jsonl` into the output folder.
+`run(...)` generates (or reuses) the cases, reads each one with `ap_coder.capture.analyze` (or the harness's own
+naive reader, `--reader stub`, which tests the harness itself), scores every field and writes `report.json`,
+`report.md` and `failures.jsonl` into the output folder. `fit_calibration` fits capture's confidence table from the
+runs' `evidence.jsonl`.
 """
 
 from __future__ import annotations

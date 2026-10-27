@@ -25,18 +25,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from .coding import DATA, sample_reference
 from .harness import default_workers, prepare_cases
-
-DATA = Path(__file__).resolve().parents[2] / "data"
-
-
-def _reference() -> Any:
-    from ap_coder.core.reference_data import load_reference_data
-
-    return load_reference_data(
-        DATA / "chart_of_accounts.csv", DATA / "cost_centers.csv", DATA / "tax_gl_mapping.csv",
-        DATA / "coding_policy.md",
-    )  # fmt: skip
 
 
 def _teach_history(store: Any, n: int, seed: int) -> None:
@@ -87,7 +77,7 @@ def run_speed(n: int, seed: int, scanned: float, out: str | Path, history: int =
         if history:
             _teach_history(store, history, seed)
         settings = Settings()
-        pipeline = InvoicePipeline(replace(settings, llm=replace(settings.llm, provider="off")), _reference(),
+        pipeline = InvoicePipeline(replace(settings, llm=replace(settings.llm, provider="off")), sample_reference(),
                                    store=store)  # fmt: skip
         times: dict[str, dict[str, list[float]]] = {"digital": {"arrival": [], "page_reader": []},
                                                     "scanned": {"arrival": [], "page_reader": []}}  # fmt: skip

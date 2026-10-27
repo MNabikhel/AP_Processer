@@ -139,10 +139,6 @@ def as_its_kind(path: str | Path) -> Path:
     return target
 
 
-def file_sha256(path: str | Path) -> str:
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
-
-
 def _free_name(folder: Path, name: str, content: bytes | None = None) -> Path:
     """``folder/name``, or ``stem_1``, ``stem_2``... when that name is taken (by other content, when given)."""
     target = folder / name

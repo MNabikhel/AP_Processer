@@ -19,6 +19,10 @@ The review screen shows a line's states as one choice, the **tax code**: "GST+PS
 exempt); "GST" (GST charged; where PST applies, PST due and not charged: self-assess); "PST~GST"; "EXEMPT", "ZERO",
 "OUT"; "NONE" (nothing charged, nothing said). ``options`` lists the codes that make sense where the invoice is
 supplied, in plain words ("GST only · PST exempt"); ``prefill`` works them out when an invoice is read.
+
+Entry points: ``tax_code_of``, ``parse_code`` and ``apply_tax_code`` (a line's code), ``options`` and
+``code_label`` (the dropdown), ``prefill`` (the codes worked out when an invoice is read), ``learned_codes`` and
+``tax_vote`` (learning from approvals).
 """
 
 from __future__ import annotations
@@ -32,7 +36,6 @@ from typing import Any
 from .tax import CANADIAN_TAX_TYPES, LAWFUL_OTHER_RATES, REGIME, TAX_TYPES
 
 EXEMPT, ZERO_RATED, OUT_OF_SCOPE = "exempt", "zero_rated", "out_of_scope"
-TAX_STATUSES = ("", EXEMPT, ZERO_RATED, OUT_OF_SCOPE)
 CODE_EXEMPT, CODE_ZERO, CODE_OUT, CODE_NONE = "EXEMPT", "ZERO", "OUT", "NONE"
 STATUS_CODES = {EXEMPT: CODE_EXEMPT, ZERO_RATED: CODE_ZERO, OUT_OF_SCOPE: CODE_OUT}
 CODE_STATUSES = {code: status for status, code in STATUS_CODES.items()}
@@ -814,12 +817,7 @@ def _prefill(
         elif k in learned_exempt:
             exempt = [] if status else [t for t in learned_exempt[k] if t not in taxes]
             if how[k] == "learned":
-                reason = str(_get(items[k], "reasoning_justification") or "")
-                reason = reason if LEARNED_NOTE in reason else f"{reason} {LEARNED_NOTE}".strip()
-                if isinstance(items[k], dict):
-                    items[k]["reasoning_justification"] = reason
-                else:
-                    items[k] = items[k].model_copy(update={"reasoning_justification": reason})
+                items[k] = _with_note(items[k], LEARNED_NOTE)
         elif status:
             exempt = []
         else:
@@ -836,26 +834,14 @@ def _prefill(
                     check.add(k)
             # A PST exemption inferred, not printed: a person confirms it (exempt, or missed and to self-assess).
             if "PST" in canadian and "PST" not in taxes and collects_now("PST") and how[k] != "printed":
-                reason = str(_get(items[k], "reasoning_justification") or "")
-                note = inferred_note(pst_name)
-                if note not in reason:
-                    reason = f"{reason} {note}".strip()
-                if isinstance(items[k], dict):
-                    items[k]["reasoning_justification"] = reason
-                else:
-                    items[k] = items[k].model_copy(update={"reasoning_justification": reason})
+                items[k] = _with_note(items[k], inferred_note(pst_name))
         update = {"taxes_applied": taxes, "tax_status": status, "tax_exempt": exempt}
         if isinstance(items[k], dict):
             items[k].update(update)
         else:
             items[k] = items[k].model_copy(update=update)
         if k in check:
-            reason = str(_get(items[k], "reasoning_justification") or "")
-            note = f"{reason} {GUESS_NOTE}".strip() if GUESS_NOTE not in reason else reason
-            if isinstance(items[k], dict):
-                items[k]["reasoning_justification"] = note
-            else:
-                items[k] = items[k].model_copy(update={"reasoning_justification": note})
+            items[k] = _with_note(items[k], GUESS_NOTE)
     return Prefill(items, how, check, unallocated, ambiguous)
 
 
@@ -1073,7 +1059,7 @@ def tax_guessed(line: Any) -> bool:
 
 
 __all__ = [
-    "CANADIAN_TAX_TYPES", "CODE_EXEMPT", "CODE_NONE", "CODE_OUT", "CODE_ZERO", "EXEMPT", "OUT_OF_SCOPE", "TAX_STATUSES",
+    "CANADIAN_TAX_TYPES", "CODE_EXEMPT", "CODE_NONE", "CODE_OUT", "CODE_ZERO", "EXEMPT", "OUT_OF_SCOPE",
     "ZERO_RATED", "all_labels", "apply_tax_code", "code_for", "code_label", "learned_codes", "options", "parse_code",
     "parse_legend", "prefill", "read_flags", "solve", "tax_code_of", "tax_learned",
 ]  # fmt: skip

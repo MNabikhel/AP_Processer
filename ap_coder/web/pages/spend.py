@@ -17,6 +17,7 @@ from ap_coder.core import ui
 from ap_coder.erp import spend
 from ap_coder.web.charts import SERIES, Series, bar_chart, compact, legend_items
 from ap_coder.web.core import get_store, money, reference_or_none, render
+from ap_coder.web.files import XLSX, download
 
 router = APIRouter()
 
@@ -145,9 +146,6 @@ def spend_page(request: Request) -> HTMLResponse:
     chart, legend = month_chart(data, months, order, shown_currency)
     centers = spend.total_by(rows, "cost_center", shown_currency)
     cc_names = {code: row.get("description", "") for code, row in spend.accounts_by_code(reference, True).items()}
-    month_totals: dict[str, float] = {}
-    for row in data:
-        month_totals[row["month"]] = month_totals.get(row["month"], 0.0) + row["amount"]
     return render(
         request,
         "spend.html",
@@ -157,7 +155,6 @@ def spend_page(request: Request) -> HTMLResponse:
         chart=chart,
         legend=legend,
         month_rows=[{"month": d["month"], "category": d["category"], "amount": money(d["amount"])} for d in data],
-        month_totals=[(m, money(month_totals.get(m, 0.0))) for m in months],
         gl_rows=ranked(spend.total_by(rows, "gl_code", shown_currency), names, total),
         vendor_rows=ranked(vendors, {}, total),
         cc_rows=ranked(centers, cc_names, total) if any(key for key, _, _ in centers) else [],
@@ -169,9 +166,4 @@ def spend_page(request: Request) -> HTMLResponse:
 def spend_workbook(request: Request) -> Response:
     """Every invoice, its lines and its GL posting, as three Excel tables that join on AP Coder #."""
     store = get_store(request)
-    data = spend.workbook(store, reference_or_none(store))
-    return Response(
-        data,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="ap_coder_data_{dt.date.today()}.xlsx"'},
-    )
+    return download(spend.workbook(store, reference_or_none(store)), f"ap_coder_data_{dt.date.today()}.xlsx", XLSX)

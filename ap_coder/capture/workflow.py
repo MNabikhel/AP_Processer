@@ -273,12 +273,12 @@ def still_touchless(store: Any, capture: CaptureResult | None, output: dict[str,
     if invoice_id is not None:
         if not still_untouched(store, invoice_id, output):
             return False
-        from ..coding.bulk import _needs_a_person
+        from ..coding.bulk import needs_a_person
 
         report = checks_today(store, invoice_id, output, settings)
         if report is None or report.requires_review:
             return False
-        if any(_needs_a_person(i.severity, i.code) for i in report.issues):
+        if any(needs_a_person(i.severity, i.code) for i in report.issues):
             return False
     key, _ = supplier_for(store, output)
     if not key:

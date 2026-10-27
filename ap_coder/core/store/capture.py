@@ -9,7 +9,6 @@ import zlib
 from collections.abc import Callable
 from typing import Any
 
-from ..paths import PROJECT_DIR, default_db_path, find_moved_file, private_dir  # noqa: F401  (re-exported)
 from ._base import (
     _AZURE_IN_LINE,
     _IN_LINE,

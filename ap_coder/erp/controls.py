@@ -7,6 +7,8 @@
   exports undone and backups restored
 * approvals per person, and how many were bulk approvals
 * invoices where one person did several of the steps: first approval, second approval, export, posting to JD Edwards
+
+Entry points: ``build`` (the sections of a period) and ``report_html``.
 """
 
 from __future__ import annotations
@@ -94,10 +96,6 @@ def build(store: Store, start: dt.date, end: dt.date, *, duties: bool = False) -
         "by_person": [(p, n, bulk.get(p, 0)) for p, n in by_person.most_common()],
         "limit": store.approval_limit(), "same_person": same_person_steps(events) if duties else None,
     }  # fmt: skip
-
-
-def exceptions(report: dict[str, Any]) -> int:
-    return len(report["overrides"]) + len(report["signals"])
 
 
 REPORT_CSS = """

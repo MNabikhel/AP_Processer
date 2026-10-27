@@ -13,8 +13,6 @@ import re
 from collections.abc import Iterable, Sequence
 from typing import Any
 
-# Categorical palette (dataviz reference palette, fixed order).
-SERIES = ("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948")
 # Status colours (web/static/app.css --lg-success / --lg-warning / --lg-danger / --lg-accent; BRAND is the accent).
 OK, WARN, ERR, BRAND = "#15803d", "#b45309", "#b91c1c", "#2563eb"
 INK = "#0f172a"
@@ -31,7 +29,7 @@ def money(value: Any) -> str:
         amount = float(value)
     except (TypeError, ValueError):
         return "—"
-    return f"({-amount:,.2f})" if amount < -0.004 else f"{abs(amount) if amount > -0.005 else 0.0:,.2f}"
+    return f"({-amount:,.2f})" if amount <= -0.005 else f"{abs(amount):,.2f}"  # less than half a cent: 0.00
 
 
 def icon(name: str, size: str = "1.1em", color: str = "") -> str:

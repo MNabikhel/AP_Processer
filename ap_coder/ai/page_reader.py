@@ -447,17 +447,14 @@ def _post_json(url: str, body: dict[str, Any], api_key: str, timeout: float) -> 
     """POST JSON to LM Studio's own routes (a server on this computer or network: no proxy). Raises
     ``PageReaderError`` with LM Studio's own reason (not enough memory, say) when it refuses, and for a server on
     the internet in the offline build (``local_llm.refused_address``: nothing is sent)."""
-    refused = local_llm.refused_address(url)
-    if refused:
-        raise PageReaderError(refused)
-    request = urllib.request.Request(
-        url, data=json.dumps(body).encode("utf-8"), method="POST",
-        headers={"Authorization": f"Bearer {api_key or 'lm-studio'}", "Content-Type": "application/json"},
-    )  # fmt: skip
     try:
         local = local_llm.refuse_internet(url)
     except ConnectionRefusedError as exc:
         raise PageReaderError(str(exc)) from exc
+    request = urllib.request.Request(
+        url, data=json.dumps(body).encode("utf-8"), method="POST",
+        headers={"Authorization": f"Bearer {api_key or 'lm-studio'}", "Content-Type": "application/json"},
+    )  # fmt: skip
     try:
         with local_llm.opener(local).open(request, timeout=timeout) as response:  # no proxy here, no redirect
             raw = response.read()
@@ -1161,18 +1158,6 @@ def _cached_reading(digest: str, total: int, model: str | None) -> PageReading |
                        cached=True, page_count=total)  # fmt: skip
 
 
-def cached_reading(settings: Settings, path: Path, *, model: str | None = None) -> PageReading | None:
-    """The page reader's reading of this file as kept on disk, without asking the model server: every page (up to
-    AP_PAGE_READER_MAX_PAGES) read by ``model``, else by the model named in the settings, else a document reader's
-    reading, else the newest. None when no model has read every page."""
-    path = Path(path)
-    try:
-        digest, _pdf, total = _file_pages(path.read_bytes(), path.name, settings)
-    except (OSError, PageReaderError, RuntimeError, ValueError):
-        return None
-    return _cached_reading(digest, total, (model or settings.page_reader.model or "").strip() or None)
-
-
 def _loaded(settings: Settings, model: str) -> bool:
     """LM Studio has the model loaded (any context), or the server isn't LM Studio (it serves what it lists)."""
     listing = lm_studio_listing(settings)
@@ -1440,74 +1425,6 @@ def test_reader(settings: Settings, *, model: str | None = None,
 test_reader.__test__ = False  # type: ignore[attr-defined]  # not a pytest test
 
 
-# --- Which model does which job ---------------------------------------------------------------------------------------
-
-
-def _coding_row(settings: Settings) -> dict[str, str]:
-    row = {"role": "Suggests GL accounts", "model": "", "state": "off", "status": "", "note": ""}
-    provider = local_llm.resolve_provider(settings)
-    if provider == "azure":
-        ready = local_llm.provider_status(settings)
-        row.update(model=settings.openai.deployment, state="on" if ready.ready else "off", status=ready.detail)
-        return row
-    if provider == "off":  # only code or a test turns it off
-        row.update(state="fallback", status="The chat model isn't asked: accounts come from what AP approved before.")
-        return row
-    status = local_llm.check_server(settings.llm)
-    if status.active:
-        status_line = f"Running in {status.server}: suggests accounts for lines AP hasn't coded before."
-        row.update(model=status.model, state="on", status=status_line)
-        return row
-    row.update(state="fallback", status=f"{status.describe()} Accounts come from what AP approved before; lines "
-                                        "nothing was learned for are left for AP to code.")  # fmt: skip
-    row["note"] = (
-        "Start LM Studio's server with a chat model (Gemma 4 12B or Qwen 3.5 9B) for suggestions on new vendors."
-    )
-    return row
-
-
-def _reader_row(settings: Settings) -> dict[str, str]:
-    row = {"role": "Reads pages (page reader)", "model": "", "state": "off", "status": "", "note": ""}
-    status = reader_status(settings)
-    if not status.usable:
-        row.update(model=status.model, status="Invoices are read by OCR alone and wait for a person.",
-                   note=status.note)  # fmt: skip
-        return row
-    row["model"] = reader_name(status.model)
-    row["state"] = "on"
-    parts = []
-    if status.lm_studio:
-        parts.append("Loaded." if status.state == "loaded" else "Downloaded: LM Studio loads it when a page is read.")
-    parts.append("Reads every page of every invoice in the background.")
-    seconds = page_seconds_estimate(settings, model=status.model)
-    if seconds is not None:
-        parts.append(f"{duration(seconds).capitalize()} a page on this computer.")
-    row["status"] = " ".join(parts)
-    row["note"] = status.note
-    return row
-
-
-def _ocr_row() -> dict[str, str]:
-    from ..capture import layout
-
-    row = {"role": "OCR for scans", "model": "", "state": "off", "status": "", "note": ""}
-    if not layout.ocr_available():
-        row["status"] = "Not installed: scans and photos can't be read on this computer (text PDFs can)."
-        row["note"] = "Run APProcessor.bat: it installs the OCR add-on from the offline bundle."
-        return row
-    names = {"rapidocr": "PP-OCRv4", "ppocrv5": "PP-OCRv5"}
-    first, second = layout._engine_name(), layout.second_engine_name()
-    row["state"] = "on"
-    if first != second:
-        row["model"] = f"{names.get(first, first)} + {names.get(second, second)}"
-        row["status"] = "On this computer: each scan is read by two OCR models, in seconds."
-    else:
-        row["model"] = names.get(first, first)
-        row["status"] = "On this computer: each scan is read twice by one OCR model (the second time straightened)."
-        row["note"] = "A second OCR model reads independently: it comes with the offline bundle (models folder)."
-    return row
-
-
 # --- What LM Studio has, and loading a model ------------------------------------------------------------------------
 
 
@@ -1569,9 +1486,3 @@ def load_model(settings: Settings, model: str) -> str:
     finally:
         forget_status()
     return ""
-
-
-def models_in_use(settings: Settings) -> list[dict[str, str]]:
-    """One row per job, for Settings: ``role``, ``model`` ("" when none), ``state`` ("on"; "fallback" when something
-    less good does the job; "off"), ``status`` (what happens now) and ``note`` (why, or what to do)."""
-    return [_coding_row(settings), _reader_row(settings), _ocr_row()]

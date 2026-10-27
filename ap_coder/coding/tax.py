@@ -13,6 +13,9 @@ Three responsibilities, all deterministic (the LLM only reads what is printed):
   treatment: recoverable taxes (GST/HST ITCs, QST ITRs) go to their own GL
   account, while non-recoverable PST is added to the cost of the expense
   lines it applies to, or to its own expense account.
+
+Entry points: ``TaxRateTable`` and ``TaxSetup``, ``supply_source`` / ``place_of_supply``, ``check_taxes`` and
+``build_gl_distribution``; line by line, the tax codes are ``line_tax.py``'s.
 """
 
 from __future__ import annotations
@@ -420,7 +423,7 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
                            _gap_line([li for li in coding.line_items if li not in marked], gap, tol, sign))  # fmt: skip
             name = tax_name(tl.tax_type, tl.province or prov)
             if suspect is not None:
-                said = f"line {suspect.line_number} ({_short(suspect.description)}, {suspect.amount:,.2f})"
+                said = f"line {suspect.line_number} ({short(suspect.description)}, {suspect.amount:,.2f})"
                 hint = f": {said} may be exempt from {name}" if gap < 0 else f": {said} may carry {name} too"
             else:
                 hint, explained = _unexplained(coding.line_items, tl.tax_type, tl.tax_amount, tl.rate, name)
@@ -490,7 +493,7 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
                 else _gap_line([li for li in coding.line_items if tax_type not in li.taxes_applied], gap, tol, sign)
             )
             if suspect is not None:
-                said = f"line {suspect.line_number} ({_short(suspect.description)}, {suspect.amount:,.2f})"
+                said = f"line {suspect.line_number} ({short(suspect.description)}, {suspect.amount:,.2f})"
                 hint = f": {said} may be exempt from {name}" if gap < 0 else f": {said} may carry {name} too"
             else:
                 charged_amount = round(sum(t.tax_amount for t in tax_lines if t.tax_type == tax_type), 2)
@@ -517,9 +520,10 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
         not_charged.add(tax_type)
         name = tax_name(tax_type, prov)
         if tax_type == "PST":
-            todo = (f"if they are taxable, the {name} is due: choose “{_other_only(tax_type, prov)} · {name} not "
+            # "GST only": the province's other tax, as the dropdown says it
+            todo = (f"if they are taxable, the {name} is due: choose “GST only · {name} not "
                     f"charged (self-assess)” and self-assess it ({SELF_ASSESS_LAW.get(prov, 'the provincial act')}); "
-                    f"if they are exempt, choose “{_other_only(tax_type, prov)} · {name} exempt”")  # fmt: skip
+                    f"if they are exempt, choose “GST only · {name} exempt”")  # fmt: skip
         elif tax_type == "QST":
             todo = (f"choose “GST only · QST not charged” if they are taxable ({QST_NOT_CHARGED}), or “GST only · "
                     "QST exempt” if they are exempt")  # fmt: skip
@@ -676,10 +680,15 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
     return findings
 
 
+def gap_lines(lines: list[Any], gap: float, tol: float, sign: int = 1) -> list[Any]:
+    """The lines whose amount is ``gap`` (within ``tol``; ``sign`` -1 on a credit note, whose amounts are negative):
+    the lines a tax that does not add up may be missing, or carry wrongly (the Tax check's too, ``taxmath``)."""
+    return [li for li in lines if abs(sign * li.amount - gap) <= tol + 1e-9 and abs(li.amount) > 0.004]
+
+
 def _gap_line(lines: list[Any], gap: float, tol: float, sign: int = 1) -> Any:
-    """The one line whose amount is ``gap`` (within ``tol``; ``sign`` -1 on a credit note, whose amounts are
-    negative), None when none or several are."""
-    found = [li for li in lines if abs(sign * li.amount - gap) <= tol + 1e-9 and abs(li.amount) > 0.004]
+    """The one line of ``gap_lines``, None when none or several are."""
+    found = gap_lines(lines, gap, tol, sign)
     return found[0] if len(found) == 1 else None
 
 
@@ -718,12 +727,8 @@ def _which_lines(lines: list[Any], all_of: list[Any] | None = None) -> str:
     return f"line {numbers[0]}" if len(numbers) == 1 else f"lines {', '.join(numbers)}"
 
 
-def _other_only(tax_type: str, province: str) -> str:
-    """ "GST only": the other tax of a GST + PST (or QST) province, as the dropdown says it."""
-    return "GST only"
-
-
-def _short(text: str, size: int = 32) -> str:
+def short(text: Any, size: int = 32) -> str:
+    """``text`` on one line, cut to ``size`` characters with "…" (a line's description in a finding)."""
     text = " ".join(str(text or "").split())
     return text if len(text) <= size else text[: size - 1].rstrip() + "…"
 

@@ -1,4 +1,6 @@
-"""Runtime configuration, loaded from environment variables (and an optional .env file)."""
+"""Runtime configuration, loaded from environment variables and the data folder's .env (``Settings.from_env``): the
+local model server (``LocalLLMSettings``), the page reader, the engine, and Azure's (only with the internet allowed).
+``load_env_file`` never takes a variable that decides which code runs (``process_var``)."""
 
 from __future__ import annotations
 
@@ -248,16 +250,6 @@ class PageReaderSettings:
     # measured (AP_PAGE_READER_SAMPLE).
     skip_clean: bool = False
     skip_sample: float = 0.1
-
-    @property
-    def mode(self) -> str:
-        """Always "auto": every invoice is read in the background (AP_PAGE_READER is no longer read)."""
-        return "auto"
-
-    @property
-    def scope(self) -> str:
-        """Always "all": digital PDFs too (AP_PAGE_READER_SCOPE is no longer read)."""
-        return "all"
 
 
 @dataclass(frozen=True)

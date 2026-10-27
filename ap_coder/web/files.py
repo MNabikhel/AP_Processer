@@ -7,14 +7,12 @@ which column holds what before anything is imported. The uploaded file waits und
 (``keep_upload``) for an hour; the page reads it again with ``read_upload`` (``?file=<token>``) to show its first rows
 and the column choices (``sheet_context``), and the import POST names the token. It waits in the dashboard's
 database (a restart of the server keeps it), never as a file of its own, and is deleted after the hour (D-99).
+Uploads larger than ``_MAX_BYTES`` are not read (``read_capped``); every page reads a CSV with ``read_csv``.
 """
 
 from __future__ import annotations
 
 import io
-import secrets
-import threading
-import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -48,6 +46,8 @@ TOO_BIG = "This file is larger than 50 MB. Export fewer rows, or only the column
 
 # --- Downloads ---------------------------------------------------------------------------------------------------
 
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
 
 def download(data: bytes, name: str, mime: str) -> Response:
     """``data`` as a file download called ``name`` (any characters: the plain-ASCII name is a fallback)."""
@@ -70,53 +70,30 @@ UPLOAD_KIND = "upload"  # its kind in the database's short-lived table (``Store.
 class Upload:
     name: str
     content: bytes
-    at: float
-
-
-_uploads: dict[str, Upload] = {}
-_lock = threading.Lock()
 
 
 def keep_upload(name: str, content: bytes) -> str:
-    """Keep an uploaded file for the next page; returns its token. In the dashboard's database while a request is
-    answered (a restart of the server keeps it, D-99), else in memory."""
-    store = current_store()
-    if store is not None:
-        return store.keep_ephemeral(UPLOAD_KIND, name.encode("utf-8") + b"\0" + content, _TTL, keep=_MAX)
-    token = secrets.token_urlsafe(12)
-    now = time.monotonic()
-    with _lock:
-        for key in [k for k, u in _uploads.items() if now - u.at > _TTL]:
-            del _uploads[key]
-        while len(_uploads) >= _MAX:
-            del _uploads[min(_uploads, key=lambda k: _uploads[k].at)]
-        _uploads[token] = Upload(name, content, now)
-    return token
+    """Keep an uploaded file for the next page, in the dashboard's database (a restart of the server keeps it, D-99);
+    returns its token."""
+    return current_store().keep_ephemeral(UPLOAD_KIND, name.encode("utf-8") + b"\0" + content, _TTL, keep=_MAX)
 
 
 def get_upload(token: str | None) -> Upload | None:
-    if not token:
+    kept = current_store().ephemeral(UPLOAD_KIND, token) if token else None
+    if kept is None:
         return None
-    store = current_store()
-    if store is not None:
-        kept = store.ephemeral(UPLOAD_KIND, token)
-        if kept is None:
-            return None
-        name, _, content = kept.partition(b"\0")
-        return Upload(name.decode("utf-8", "replace"), content, time.monotonic())
-    with _lock:
-        upload = _uploads.get(token)
-    if upload is None or time.monotonic() - upload.at > _TTL:
-        return None
-    return upload
+    name, _, content = kept.partition(b"\0")
+    return Upload(name.decode("utf-8", "replace"), content)
 
 
 def drop_upload(token: str | None) -> None:
-    store = current_store()
-    if store is not None:
-        store.drop_ephemeral(UPLOAD_KIND, token)
-    with _lock:
-        _uploads.pop(token or "", None)
+    current_store().drop_ephemeral(UPLOAD_KIND, token)
+
+
+async def read_capped(file: UploadFile) -> bytes | None:
+    """An uploaded spreadsheet's bytes, or None when it is larger than ``_MAX_BYTES`` (never more than that read)."""
+    content = await file.read(_MAX_BYTES + 1)
+    return None if len(content) > _MAX_BYTES else content
 
 
 async def receive_sheet(file: UploadFile) -> tuple[str, str]:
@@ -124,8 +101,8 @@ async def receive_sheet(file: UploadFile) -> tuple[str, str]:
     name = file.filename or "upload.csv"
     if not name.lower().endswith(SHEET_TYPES):
         return "", NOT_A_SHEET
-    content = await file.read(_MAX_BYTES + 1)
-    if len(content) > _MAX_BYTES:
+    content = await read_capped(file)
+    if content is None:
         return "", TOO_BIG
     try:
         read_sheet(name, content)
@@ -151,6 +128,21 @@ def read_excel(content: bytes, sheet_name: int | None = None) -> Any:
     return pd.read_excel(io.BytesIO(content), sheet_name=sheet_name, dtype=str, keep_default_na=False, na_filter=False)
 
 
+def read_csv(content: bytes) -> pd.DataFrame:
+    """An uploaded CSV as text cells, as every page reads one: UTF-8 (with or without its mark) or Windows-1252
+    (Excel's "CSV"), its delimiter found from several lines (``sniff_delimiter``: a semicolon file whose header has a
+    comma in a cell too, B-1400). Raises SheetError when it is neither encoding; pandas' own error for a file that
+    is no CSV."""
+    for encoding in ("utf-8-sig", "cp1252"):
+        try:
+            text = content.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+        return pd.read_csv(io.StringIO(text), dtype=str, keep_default_na=False, sep=sniff_delimiter(text),
+                           engine="python")  # fmt: skip
+    raise SheetError("Could not read this file. In Excel, use Save As → CSV UTF-8 and upload it again.")
+
+
 def read_sheet(name: str, content: bytes, sheet: str | None = None) -> tuple[pd.DataFrame, list[str]]:
     """(the sheet as text cells, the workbook's sheet names) of an uploaded CSV or Excel file. ``sheet``: the
     workbook sheet to read (default the first). Semicolon CSVs and Windows-1252 CSVs (Excel's "CSV") are read too."""
@@ -164,22 +156,7 @@ def read_sheet(name: str, content: bytes, sheet: str | None = None) -> tuple[pd.
             key = next((k for k in sheets if str(k) == sheet), next(iter(sheets)))
             df = sheets[key]
         else:
-            df = None
-            for encoding in ("utf-8-sig", "cp1252"):
-                try:
-                    text = content.decode(encoding)
-                except UnicodeDecodeError:
-                    continue
-                df = pd.read_csv(
-                    io.StringIO(text),
-                    dtype=str,
-                    keep_default_na=False,
-                    sep=sniff_delimiter(text),  # as the reference files are read: several lines, not the header alone
-                    engine="python",
-                )
-                break
-            if df is None:
-                raise SheetError("Could not read this file. In Excel, use Save As → CSV UTF-8 and upload it again.")
+            df = read_csv(content)
     except SheetError:
         raise
     except Exception as exc:  # noqa: BLE001 - empty file, not really a spreadsheet, damaged workbook...

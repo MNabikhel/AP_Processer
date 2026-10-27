@@ -3,6 +3,10 @@
 Everything is computed from data AP Coder already keeps (invoices, their processing metadata with page
 counts and token usage, and the audit trail of approvals). Time and price figures are *assumptions* the
 AP team can edit on the Insights page; they are stored in the database (setting ``insights_assumptions``).
+
+Entry points: ``compute`` (the business case), ``report_html``, ``operations``, ``vendor_workload``,
+``approved_as_coded``; ``invoice_facts``, ``approval_facts``, ``workload_facts`` and ``payment_facts`` are what the
+invoices' summary keeps for them (D-110).
 """
 
 from __future__ import annotations
@@ -75,9 +79,6 @@ def corrected(event: dict[str, Any]) -> bool:
         for c in changes
         if isinstance(c, dict) and c.get("what") not in NOT_CODING
     )
-
-
-_corrected = corrected  # the name Insights' own tests use
 
 
 def filled_in(event: dict[str, Any]) -> bool:
@@ -239,9 +240,10 @@ def compute(store: Store, a: Assumptions | None = None) -> dict[str, Any]:
     for r in store.summary_query("SELECT code, SUM(n) FROM summary_codes GROUP BY code"):
         codes[r[0]][0] = r[1]
     duplicates = ", ".join(f"'{c}'" for c in sorted(DUPLICATE_CODES))
-    stopped_rows = list(store.summary_query(
+    # As tuples: sqlite rows can't be sorted, nor compared with the tuples added below (B-1370).
+    stopped_rows = [tuple(r) for r in store.summary_query(
         f"SELECT id, grand_total, currency FROM invoice_summary s WHERE status = '{REJECTED}' AND {whole} AND EXISTS "
-        f"(SELECT 1 FROM summary_codes c WHERE c.id = s.id AND c.code IN ({duplicates})) ORDER BY id"))  # fmt: skip
+        f"(SELECT 1 FROM summary_codes c WHERE c.id = s.id AND c.code IN ({duplicates})) ORDER BY id")]  # fmt: skip
     # What the summary could not read, read again from the invoice (failing as it did when every invoice was read).
     for r in store.summary_rows(summary_broken("insights", "approval"), (), "id, status, grand_total, currency, "
                                 "created_at, requires_review, broken"):  # fmt: skip

@@ -16,6 +16,10 @@ The two CSV files are for the ERP's loader, like the JD Edwards files: their tex
 is, with no spreadsheet apostrophe (an invoice number ``'+A-100`` would miss the ERP's duplicate check).
 The xlsx workbook is opened by people, so its formula-looking text is stored as plain text.
 * ``jde``: JD Edwards E1 Z-table files (F0411Z1 / F0911Z1), built by ``jde.build_zip``.
+
+Entry points: ``build`` (one batch's file in a format), ``distribution`` (an approved invoice's posting lines,
+as stored or built again), ``line_rows`` / ``invoice_rows`` and ``entry_lines`` (the invoice line behind a
+posting line, which the JD Edwards files use too).
 """
 
 from __future__ import annotations
@@ -184,29 +188,29 @@ def line_rows(
     return rows
 
 
+def entry_lines(dist: list[dict[str, Any]], items: list[dict[str, Any]]) -> list[dict[str, Any] | None]:
+    """The invoice line behind each posting line (None for a tax line, or an expense line no invoice line has the
+    number of): the expense lines follow the invoice lines in order (``build_gl_distribution``); matched by line
+    number when the counts differ."""
+    if sum(1 for e in dist if e.get("kind") == "expense") == len(items):
+        it = iter(items)
+        return [next(it) if e.get("kind") == "expense" else None for e in dist]
+    by_number: dict[Any, dict[str, Any]] = {}
+    for li in items:
+        by_number.setdefault(li.get("line_number"), li)
+    return [by_number.get(e.get("line_number")) if e.get("kind") == "expense" else None for e in dist]
+
+
 def line_tax_codes(dist: list[dict[str, Any]], items: list[dict[str, Any]],
                    final: dict[str, Any] | None = None) -> list[str]:  # fmt: skip
-    """The tax code of the invoice line behind each posting line ("GST+PST", "Exempt", D-64), "" for a tax line: the
-    expense lines follow the invoice lines in order (``build_gl_distribution``); matched by line number when the
-    counts differ."""
-    from ..coding.line_tax import export_code as words
-    from ..coding.line_tax import legacy_basis
+    """The tax code of the invoice line behind each posting line (``entry_lines``) in the export's words ("GST +
+    PST", "Exempt", D-64), "" for a tax line."""
+    from ..coding.line_tax import export_code, legacy_basis
     from ..coding.tax import stored_supply
 
     final = final or {}
     province, charged = stored_supply(final), legacy_basis(items, final.get("tax_lines") or [])
-
-    def export_code(li: dict[str, Any]) -> str:
-        return words(li, province, charged)
-
-    expenses = [e for e in dist if e.get("kind") == "expense"]
-    if len(expenses) == len(items):
-        it = iter(items)
-        return [export_code(next(it)) if e.get("kind") == "expense" else "" for e in dist]
-    by_number: dict[Any, str] = {}
-    for li in items:
-        by_number.setdefault(li.get("line_number"), export_code(li))
-    return [by_number.get(e.get("line_number"), "") if e.get("kind") == "expense" else "" for e in dist]
+    return [export_code(li, province, charged) if li is not None else "" for li in entry_lines(dist, items)]
 
 
 def gl_summary(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:

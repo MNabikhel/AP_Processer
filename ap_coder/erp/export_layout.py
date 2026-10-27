@@ -8,6 +8,9 @@ that reads plain UTF-8 takes it as part of the first header).
 
 The file is for the ERP's loader, so text is written exactly as it is: no spreadsheet apostrophe in front of
 ``+A-100`` or ``- Labour``, which would no longer match what the ERP holds.
+
+Entry points: ``Layout`` (saved as JSON), ``default_columns`` and ``build`` (``exports.custom_rows`` in, the
+file's bytes out).
 """
 
 from __future__ import annotations

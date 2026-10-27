@@ -360,10 +360,10 @@ def azure_check_on(store: Any) -> bool:
         return False
 
 
-def reading_context(request: Request, *, fresh: bool = False) -> dict[str, Any]:
+def reading_context(request: Request) -> dict[str, Any]:
     """Everything the Reading tab shows. Never raises over LM Studio: a status that can't be worked out is said."""
     settings, store = get_settings(request), get_store(request)
-    status = reading_status_or_none(settings, store, use_cache=not fresh)
+    status = reading_status_or_none(settings, store)
     context: dict[str, Any] = {
         "how_it_reads": how_it_reads(server_mode(request)),
         "status": status,

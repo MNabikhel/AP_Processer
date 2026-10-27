@@ -73,7 +73,7 @@ def shortcut_keys(spec: str) -> list[dict[str, Any]]:
 
 
 # The review screen's G, shown with the invoice keys; kept out of SHORTCUT_ROWS, whose rows after the first four are
-# the page viewer's, the menus', Undo's, Park's and Reject's (tests/test_web_help.py).
+# the page viewer's, the menus', Undo's, Park's and Reject's (tests/web/test_web_help.py).
 GO_TO_LINE = ("[G]", "Go to the line still to code")
 SHORTCUTS = [(shortcut_keys(spec), what) for spec, what in [*SHORTCUT_ROWS[:4], GO_TO_LINE, *SHORTCUT_ROWS[4:]]]
 
@@ -189,8 +189,9 @@ def report_page(request: Request, codes: bool = False) -> HTMLResponse:
     store = get_store(request)
     logs = paths.user_settings_path().parent / "logs"
     shown = [logs / "launch.log", logs / "dashboard-errors.log"]
-    if server_mode(request):  # the service's log (D-100)
-        shown = [service.log_path(data_dir(store))]
+    admin_here = can(request, "/help/report/setup", "GET")  # an Admin's on the server (D-109)
+    if server_mode(request):  # the service's log (D-100), where it is on the server: an Admin's (B-1407)
+        shown = [service.log_path(data_dir(store))] if admin_here else []
     key = str(store.path)
     with _setup_lock:
         kept = _setup_cache.get(key)
@@ -201,10 +202,9 @@ def report_page(request: Request, codes: bool = False) -> HTMLResponse:
         "help",
         title="Report a problem",
         setup=ready,
-        setup_shown=can(request, "/help/report/setup", "GET"),  # an Admin's on the server: versions, names (D-109)
+        setup_shown=admin_here,  # an Admin's on the server: versions, names (D-109)
         activity=activity_report(store, codes),
         codes=codes,
-        key_file=short_path(data_dir(store) / "share_report_key.csv"),
         logs=[short_path(p) for p in shown],
     )
 
@@ -241,7 +241,6 @@ def help_page(request: Request, q: str = "", area: str = "") -> HTMLResponse:
         quick_start=quick_start(server_mode(request)),
         how_it_reads=how_it_reads(server_mode(request)),
         routine=[(when, [(task, link(key)) for task, key in tasks]) for when, tasks in ROUTINE],
-        areas=AREAS,
         area=area,
         q=q,
         checks=checks,

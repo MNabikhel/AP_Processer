@@ -407,25 +407,6 @@ def _supply_part(request: Request, our_province: str | None, site_provinces: str
     return save
 
 
-# The Review tab's three forms before B-507, kept for links and scripts that post to them.
-@router.post("/settings/review/approval")
-def save_approval(
-    request: Request,
-    approval_limit: str = Form("0"),
-    terms_days: str = Form("30"),
-    fx_rates: str = Form(""),
-    why_after: str = Form(""),
-) -> JSONResponse:
-    part = _approval_part(request, approval_limit, terms_days, fx_rates, why_after)
-    return part if isinstance(part, JSONResponse) else done(request, tab_url("review"), saved_text(part()))
-
-
-@router.post("/settings/review/supply")
-def save_supply(request: Request, our_province: str = Form(""), site_provinces: str = Form("")) -> JSONResponse:
-    part = _supply_part(request, our_province, site_provinces)
-    return part if isinstance(part, JSONResponse) else done(request, tab_url("review"), saved_text(part()))
-
-
 # --- Data & backups ------------------------------------------------------------------------------------------------
 
 

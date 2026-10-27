@@ -10,6 +10,10 @@ A page module uses these::
     return message("Copied.")                                     # stay, show a message
     return refuse("That file is not a CSV.")                      # stay, show the problem
 
+``can(request, path)`` says whether the person asking may use a route (always on a laptop; their role's say on the
+server), ``reviewer()`` / ``login()`` who they are, ``current_store()`` the database of the request (where messages
+and uploads wait, D-99).
+
 Templates are escaped automatically (Jinja autoescape). The ``ui`` global gives the HTML helpers of
 ``ap_coder/core/ui.py`` (they escape what they are given), e.g. ``{{ ui.pill("Ready", "ok") }}``. Never mark text from
 an invoice or a file as safe yourself.
@@ -25,11 +29,8 @@ import getpass
 import hashlib
 import json
 import os
-import secrets
 import subprocess
 import sys
-import threading
-import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -41,7 +42,6 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 
-from ap_coder import __version__
 from ap_coder.core import paths, ui
 from ap_coder.core.config import Settings
 from ap_coder.core.reference_data import UNASSIGNED, ReferenceData
@@ -119,7 +119,7 @@ def money(value: Any, currency: str = "") -> str:
 # Autoescape on for every template: text from invoices and files is always escaped.
 templates = Jinja2Templates(env=jinja2.Environment(loader=jinja2.FileSystemLoader(TEMPLATES_DIR), autoescape=True))
 templates.env.globals.update(
-    ui=_UiHelpers(), static_version=_static_version(), version=__version__, unassigned=UNASSIGNED
+    ui=_UiHelpers(), static_version=_static_version(), unassigned=UNASSIGNED
 )  # (a line without a GL account, as the pages say it)
 templates.env.filters.update(
     money=money,
@@ -297,19 +297,21 @@ def reading_status_or_none(settings: Settings, store: Store, *, use_cache: bool 
 
 # --- Messages after an action (flash) ----------------------------------------------------------------------------
 # A POST answers with where to go next; the message waits under a one-off token in the address (?flash=...) and is
-# shown once by the page it leads to. It waits in the database (``Store.keep_ephemeral``), so a restart of the server
-# between the action and its page does not lose it (D-99); outside a request (a script, a test), in memory.
+# shown once by the page it leads to. It waits in the dashboard's database (``Store.keep_ephemeral``), so a restart
+# of the server between the action and its page does not lose it (D-99).
 
 _FLASH_TTL = 600  # seconds a message waits for its page
-_flashes: dict[str, tuple[float, list[dict[str, Any]]]] = {}
-_flash_lock = threading.Lock()
 
 CURRENT_STORE: contextvars.ContextVar[Store | None] = contextvars.ContextVar("ap_coder_store", default=None)
 
 
-def current_store() -> Store | None:
-    """The database of the request being answered (set by ``StoreContext``); None outside a request."""
-    return CURRENT_STORE.get()
+def current_store() -> Store:
+    """The database of the request being answered (set by ``StoreContext``; ``using_store`` outside a request), where
+    messages and uploads wait. RuntimeError outside both: they wait nowhere else."""
+    store = CURRENT_STORE.get()
+    if store is None:
+        raise RuntimeError("not answering a request to the dashboard: wrap the call in core.using_store(store)")
+    return store
 
 
 @contextlib.contextmanager
@@ -345,32 +347,18 @@ def flash_message(text: str, tone: str = "ok", details: list[str] | None = None,
 
 def keep_flash(messages: list[dict[str, Any]]) -> str:
     """Keep ``messages`` for the next page; returns their token."""
-    store = current_store()
-    if store is not None:
-        return store.keep_ephemeral("flash", json.dumps(messages).encode("utf-8"), _FLASH_TTL)
-    token = secrets.token_urlsafe(8)
-    now = time.monotonic()
-    with _flash_lock:
-        for key in [k for k, (at, _) in _flashes.items() if now - at > _FLASH_TTL]:
-            del _flashes[key]
-        _flashes[token] = (now, messages)
-    return token
+    return current_store().keep_ephemeral("flash", json.dumps(messages).encode("utf-8"), _FLASH_TTL)
 
 
 def take_flash(token: str | None) -> list[dict[str, Any]]:
     """The messages kept under ``token`` (once: they are forgotten)."""
     if not token:
         return []
-    store = current_store()
-    if store is not None:
-        try:
-            kept = store.ephemeral("flash", token, take=True)
-            return list(json.loads(kept)) if kept else []
-        except ValueError:  # (never written so: a page shows without its message rather than an error)
-            return []
-    with _flash_lock:
-        _, messages = _flashes.pop(token, (0.0, []))
-    return messages
+    try:
+        kept = current_store().ephemeral("flash", token, take=True)
+        return list(json.loads(kept)) if kept else []
+    except ValueError:  # (never written so: a page shows without its message rather than an error)
+        return []
 
 
 def with_flash(url: str, messages: list[dict[str, Any]]) -> str:
@@ -414,8 +402,12 @@ def refuse(text: str, status: int = 400, **extra: Any) -> JSONResponse:
 OLDEST_DAY, LATEST_DAY = dt.date(1900, 1, 1), dt.date(2999, 12, 31)
 
 
-def clamp_day(day: dt.date) -> dt.date:
-    return min(max(day, OLDEST_DAY), LATEST_DAY)
+def address_day(value: Any, default: dt.date) -> dt.date:
+    """A YYYY-MM-DD from the address, kept within those years, or ``default`` when it is missing or not a date."""
+    try:
+        return min(max(dt.date.fromisoformat(str(value or "").strip()[:10]), OLDEST_DAY), LATEST_DAY)
+    except ValueError:
+        return default
 
 
 # A form that saves a whole list or page posts a stamp of what it showed (``page_version``, in a hidden "version"
@@ -437,9 +429,6 @@ def stale_page(form: Any, shown: Any) -> JSONResponse | None:
     if posted is None or str(posted) == page_version(shown):
         return None
     return refuse(STALE_PAGE, 409)
-
-
-# --- Drawing a page ----------------------------------------------------------------------------------------------
 
 
 # --- What this pilot shows (Settings → About, D-52) -----------------------------------------------------------------
@@ -485,6 +474,9 @@ def developer_tools(store: Store) -> bool:
     """Whether the developer tools show (Learning → Readers, the training data export, the developer changelog):
     the switch on Settings → About, or AP_DEVELOPER_TOOLS=1."""
     return developer_env_on() or _switch(store, DEVELOPER_TOOLS)
+
+
+# --- Drawing a page ----------------------------------------------------------------------------------------------
 
 
 def nav_counts(store: Store) -> dict[str, int]:

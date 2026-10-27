@@ -1,8 +1,8 @@
 """The offline proof's walk through a running AP Coder, over HTTP on 127.0.0.1, as AP would use it: every page and
 static file the pages name, the setup, every sample invoice (text PDFs, a scan, a photo, an emailed invoice), approval,
-an export and its download, the Settings tabs, their checks and Help. Used by tests/test_offline_guard.py, against a
-real ``python -m ap_coder serve`` under the network guard and inside a Linux network namespace with no network at
-all (``python -m tests.offline_flow --netns``, run under ``unshare -rn``).
+an export and its download, the Settings tabs, their checks and Help. Used by tests/offline/test_offline_guard.py,
+against a real ``python -m ap_coder serve`` under the network guard and inside a Linux network namespace with no
+network at all (``python -m tests.offline_flow --netns``, run under ``unshare -rn``).
 
 It also collects every address a page refers to (links, scripts, styles, images, fonts, form actions, CSS ``url()``):
 anything that is not this server is reported, as a page that loads or links to the internet would be.
@@ -308,7 +308,7 @@ def wait_for_job(base: str, report: Report, path: str = "/process/status", timeo
         snap = request(base, "GET", path).json()
         if snap.get("state") in ("done", "failed", "idle", None) and snap.get("state") != "running":
             return snap
-        time.sleep(0.5)
+        time.sleep(0.1)  # a poll: the job says when it is done
     report.errors.append(f"{path} still running after {timeout:.0f} s: {snap}")
     return snap
 
@@ -524,7 +524,7 @@ class Server:
                 if request(self.base, "GET", "/healthz", timeout=2).status == 200:
                     break
             except OSError:
-                time.sleep(0.3)
+                time.sleep(0.1)  # a poll: the server is starting
         else:
             self.stop()
             raise RuntimeError("the server did not start:\n" + "\n".join(self.output[-40:]))

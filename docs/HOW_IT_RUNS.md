@@ -34,7 +34,7 @@ Contents: [1 The files](#1-the-files-that-start-ap-coder) ·
 
 | File | What it does |
 | --- | --- |
-| `APProcessor.bat` (Windows) | The double-click. Finds a Python, then runs `scripts\launch.py` with it. ASCII, CRLF, every path quoted (`tests/test_launcher_scripts.py`). |
+| `APProcessor.bat` (Windows) | The double-click. Finds a Python, then runs `scripts\launch.py` with it. ASCII, CRLF, every path quoted (`tests/launcher/test_launcher_scripts.py`). |
 | `APProcessor.command` (macOS; Linux from a terminal) | The same for bash 3.2 (macOS's `/bin/bash`). |
 | `APProcessor.bat --installer` / `./APProcessor.command --installer` | The same setup plus the installer's questions (`scripts/install.py`; its options after `--installer`). Run over or beside an older version it does what the double-click does (stale files removed, old settings retired, older installs cleaned up after the self-check); run again with nothing changed it says *Nothing to update* in seconds. |
 | `scripts\terminal.bat` (Windows) | A command prompt in AP Coder's folder (the one above `scripts\`) with `.venv\Scripts` first on `PATH` (no `activate.bat`, which hard-codes the folder the .venv was made in). |
@@ -143,7 +143,7 @@ Python is never installed by the offline build.
    (`apple_python_ok`); asking `xcode-select` never opens a dialog.
 6. None: says what to install (`brew install python@3.12` or python.org) and `stop`s (pause unless `AP_NO_PAUSE`).
 
-The script is bash 3.2 (no associative arrays, `mapfile`, `${var,,}`, `&>>`…): `tests/test_launcher_scripts.py`
+The script is bash 3.2 (no associative arrays, `mapfile`, `${var,,}`, `&>>`…): `tests/launcher/test_launcher_scripts.py`
 refuses every bash-4-only form and runs `bash -n` on it.
 
 ### Inside launch.py: a better Python than the one found
@@ -443,7 +443,7 @@ messages, so it stays on the computer like the data. The dashboard's Activity pa
 | 19 | `ap_coder/erp/jde_ais.py:internal_address` | the company's JD Edwards AIS Server, its saved address only | off until an Admin sets it up (Settings → JD Edwards E1); a named internal system (D-104): an address on the internet is refused unless `AP_ALLOW_INTERNET=1` |
 | 20 | server mode (`ap_coder/web/server.py:serve`) | listens on every network card, over HTTPS (inbound) | only on a server set up for it (`AP_SERVER_MODE=1`, [SERVER.md](SERVER.md)) |
 
-Tests: `tests/test_offline*.py`, `tests/test_network_gates.py`, and a web test that fails if a page connects out.
+Tests: `tests/offline/test_offline*.py`, `tests/offline/test_network_gates.py`, and a web test that fails if a page connects out.
 
 ## 11. Per-OS notes and troubleshooting
 
@@ -508,7 +508,7 @@ uvicorn on port 8765 in the same process).
 | CI | pytest on three OSes | pytest, plus real launcher runs (offline bundle, update over 0.1) | **Keep** |
 
 **Adopted in this pass** (each with a test that failed first): the launcher's log file and the plain report of an
-unexpected error (`tests/test_launch_log.py`).
+unexpected error (`tests/launcher/test_launch_log.py`).
 
 **Recommended, not done** (bigger than a small safe change):
 
@@ -528,13 +528,13 @@ Fixed, each with a test that failed first:
 
 | Bug | Fix | Test |
 | --- | --- | --- |
-| `APProcessor.bat` echoed its own folder unquoted when `pushd` failed: in a folder named `R&D` cmd ran the rest as a command | quoted | `tests/test_launcher_scripts.py` |
-| The server's own "is it up?" request went through the office proxy (`HTTP_PROXY`, Windows' setting): behind one, `python -m ap_coder serve` never printed its address nor opened the browser | direct opener | `tests/test_network_gates.py` |
-| `AP_LLM_BASE_URL` / `AP_PAGE_READER_BASE_URL` naming an internet host was contacted without `AP_ALLOW_INTERNET` (invoice text could leave the computer) | `local_llm.refused_address` gates all three ways out | `tests/test_network_gates.py` |
-| Linux without a desktop: `webbrowser` ran a text browser inside the AP Coder window and the launcher waited in it | `offline.browser_wanted` | `tests/test_browser_open.py` |
-| Debian/Ubuntu Python without `python3.X-venv`: the hint said to reinstall Python from python.org | names the package | `tests/test_launch.py` |
-| An unexpected exception printed a raw traceback under "The message above says what to do" | one plain line, traceback in the log | `tests/test_launch_log.py` |
-| `terminal.bat` had no `setlocal`: run from an open prompt, it left `.venv` on that prompt's `PATH` (twice when run twice) | `setlocal` | `tests/test_launcher_scripts.py` |
+| `APProcessor.bat` echoed its own folder unquoted when `pushd` failed: in a folder named `R&D` cmd ran the rest as a command | quoted | `tests/launcher/test_launcher_scripts.py` |
+| The server's own "is it up?" request went through the office proxy (`HTTP_PROXY`, Windows' setting): behind one, `python -m ap_coder serve` never printed its address nor opened the browser | direct opener | `tests/offline/test_network_gates.py` |
+| `AP_LLM_BASE_URL` / `AP_PAGE_READER_BASE_URL` naming an internet host was contacted without `AP_ALLOW_INTERNET` (invoice text could leave the computer) | `local_llm.refused_address` gates all three ways out | `tests/offline/test_network_gates.py` |
+| Linux without a desktop: `webbrowser` ran a text browser inside the AP Coder window and the launcher waited in it | `offline.browser_wanted` | `tests/launcher/test_browser_open.py` |
+| Debian/Ubuntu Python without `python3.X-venv`: the hint said to reinstall Python from python.org | names the package | `tests/launcher/test_launch.py` |
+| An unexpected exception printed a raw traceback under "The message above says what to do" | one plain line, traceback in the log | `tests/launcher/test_launch_log.py` |
+| `terminal.bat` had no `setlocal`: run from an open prompt, it left `.venv` on that prompt's `PATH` (twice when run twice) | `setlocal` | `tests/launcher/test_launcher_scripts.py` |
 
 Checked and found right: `APProcessor.command` uses only bash 3.2 forms; every .bat path is quoted otherwise, the
 .bat files are ASCII and CRLF and never `cd` without `/d`; the Store alias and the py install manager never install

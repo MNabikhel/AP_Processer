@@ -12,6 +12,9 @@
 Credit notes reduce the claim. Invoices still in review or waiting for a second approval are counted
 separately, not claimed. On meals and entertainment only half the tax is claimed (ITA s.67.1, ETA s.236 and Quebec's
 QST Act alike, D-90): the other half was expensed with the line when the invoice was approved, and the report says so.
+
+Entry points: ``build`` (the claims of a period, a ``Report``) and ``to_csv``; ``self_assessment`` and
+``self_assessment_csv``; ``tax_facts`` and ``self_assessment_facts`` are what the invoices' summary keeps (D-110).
 """
 
 from __future__ import annotations
@@ -514,7 +517,7 @@ def to_csv(report: Report) -> bytes:
     if any(c.meals for c in report.claims):
         w.writerow([])
         w.writerow([MEALS_WHY])
-    return ("﻿" + out.getvalue()).encode("utf-8")
+    return ("\ufeff" + out.getvalue()).encode("utf-8")
 
 
 def default_period(today: dt.date | None = None) -> tuple[dt.date, dt.date]:

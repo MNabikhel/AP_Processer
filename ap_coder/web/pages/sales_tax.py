@@ -11,9 +11,8 @@ from fastapi.responses import HTMLResponse, Response
 
 from ap_coder.coding import taxreturn
 from ap_coder.core import ui
-from ap_coder.web.core import get_store, money, render
+from ap_coder.web.core import address_day, get_store, money, render
 from ap_coder.web.files import download
-from ap_coder.web.pages.month_end import day
 
 router = APIRouter()
 
@@ -44,7 +43,7 @@ def amounts(by_currency: dict[str, float], rates: dict[str, float]) -> tuple[str
 
 def period(start: str, end: str) -> tuple[dt.date, dt.date]:
     default_start, default_end = taxreturn.default_period()
-    return day(start, default_start), day(end, default_end)
+    return address_day(start, default_start), address_day(end, default_end)
 
 
 @router.get("/sales-tax", response_class=HTMLResponse)

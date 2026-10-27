@@ -1,8 +1,10 @@
 """python -m ap_coder.bench run --n 300 --seed 1 --scanned 0.3 [--out bench_out] [--workers 4]
+python -m ap_coder.bench generate --n 300 --seed 1 --scanned 0.3 [--out bench_out]
 python -m ap_coder.bench calibrate RUN_DIR [RUN_DIR ...]
 python -m ap_coder.bench learn --suppliers 30 --invoices 40 [--scanned 0.0]
 python -m ap_coder.bench speed --n 20 --scanned 0.5 [--history 30000]
-python -m ap_coder.bench coding --vendors 30 --invoices 30 --seed 1 [--out bench_coding] [--realistic] [--ai]"""
+python -m ap_coder.bench coding --vendors 30 --invoices 30 --seed 1 [--out bench_coding] [--realistic] [--ai]
+python -m ap_coder.bench triage --n 300 --seed 1 [--msg-share 0.4] [--out bench_triage]"""
 
 from __future__ import annotations
 
@@ -10,7 +12,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from ap_coder.bench.harness import READERS, default_workers, prepare_cases, run
+from ap_coder.bench.harness import READERS, _pct, default_workers, prepare_cases, run
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -140,25 +142,22 @@ def main(argv: list[str] | None = None) -> int:
         s = report["summary"]
         o, first = s["overall"], s["first_or_later"]
 
-        def pc(v: float | None) -> str:
-            return "-" if v is None else f"{100 * v:.1f}%"
-
         print(
-            f"{a.vendors} vendors x {a.invoices} invoices, {o['lines']} lines: accuracy {pc(o['accuracy'])}, "
-            f"precision {pc(o['precision'])} ({o['wrong']} wrong), coverage {pc(o['coverage'])}; first invoice "
-            f"from a vendor {pc(first.get('first invoice', {}).get('accuracy'))}, later "
-            f"{pc(first.get('later invoices', {}).get('accuracy'))}"
+            f"{a.vendors} vendors x {a.invoices} invoices, {o['lines']} lines: accuracy {_pct(o['accuracy'])}, "
+            f"precision {_pct(o['precision'])} ({o['wrong']} wrong), coverage {_pct(o['coverage'])}; first invoice "
+            f"from a vendor {_pct(first.get('first invoice', {}).get('accuracy'))}, later "
+            f"{_pct(first.get('later invoices', {}).get('accuracy'))}"
         )
         tc, ls = s.get("tax_codes") or {}, s.get("lessons") or {}
-        print(f"tax codes: precision {pc(tc.get('precision'))} ({tc.get('wrong', 0)} wrong), coverage "
-              f"{pc(tc.get('coverage'))}, {tc.get('learned', 0)} learned; line lessons the AI reads on "
+        print(f"tax codes: precision {_pct(tc.get('precision'))} ({tc.get('wrong', 0)} wrong), coverage "
+              f"{_pct(tc.get('coverage'))}, {tc.get('learned', 0)} learned; line lessons the AI reads on "
               f"{ls.get('shown', 0)} lines ({ls.get('wrong', 0)} wrong), screen hints on {ls.get('screen', 0)} "
               f"lines ({ls.get('screen_wrong', 0)} wrong)")  # fmt: skip
         cm = s.get("chat_model") or {}
         if cm.get("asked"):
             print(f"chat model {report['config'].get('model', '')}: {cm['right']} right of {cm['answered']} answered "
-                  f"({cm['asked']} lines asked), precision {pc(cm['precision'])}; on a vendor's first invoice "
-                  f"{pc(cm['first invoice']['precision'])}")  # fmt: skip
+                  f"({cm['asked']} lines asked), precision {_pct(cm['precision'])}; on a vendor's first invoice "
+                  f"{_pct(cm['first invoice']['precision'])}")  # fmt: skip
         print(f"report: {Path(a.out) / 'report.md'}")
         return 0
 
@@ -208,13 +207,10 @@ def main(argv: list[str] | None = None) -> int:
     s = report["summary"]
     o, inv = s["overall"], s["invoices"]
 
-    def pct(v: float | None) -> str:
-        return "-" if v is None else f"{100 * v:.1f}%"
-
     print(
-        f"reader {report['config']['reader']}: {report['cases']} invoices, field accuracy {pct(o['accuracy'])}, "
-        f"verified precision {pct(o['verified_precision'])} (coverage {pct(o['verified_coverage'])}), "
-        f"fully correct invoices {pct(inv['fully_correct'])}, no silent error {pct(inv.get('no_silent_error'))}, "
+        f"reader {report['config']['reader']}: {report['cases']} invoices, field accuracy {_pct(o['accuracy'])}, "
+        f"verified precision {_pct(o['verified_precision'])} (coverage {_pct(o['verified_coverage'])}), "
+        f"fully correct invoices {_pct(inv['fully_correct'])}, no silent error {_pct(inv.get('no_silent_error'))}, "
         f"ECE {s['calibration']['ece']}"
     )
     print(f"report: {Path(a.out) / 'report.md'}")

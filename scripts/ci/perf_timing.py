@@ -36,7 +36,7 @@ def _counting(*args, **kwargs):
 
 
 def build(folder: Path, n: int, bulk: int) -> tuple[Store, list[Path], list[int]]:
-    """A database of ``n`` invoices like tests/test_scale.py's ``_add`` (each with a file of its own; a third
+    """A database of ``n`` invoices like tests/core/test_scale.py's ``_add`` (each with a file of its own; a third
     approved), plus ``bulk`` clean ones of a known vendor for the bulk approval. (store, files, bulk ids)"""
     store = Store(folder / "private" / "ap_coder.db")
     load_sample_setup(store)

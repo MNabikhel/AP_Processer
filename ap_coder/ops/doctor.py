@@ -51,8 +51,6 @@ def _version(pkg: str) -> str | None:
 
 def _secrets(settings: Settings) -> list[str]:
     """Keys, endpoints, endpoint hostnames and resource names: none of these may appear in the report."""
-    from urllib.parse import urlparse
-
     values: list[str] = []
     for endpoint in (settings.openai.endpoint, settings.document_intelligence.endpoint):
         if endpoint:
@@ -406,11 +404,11 @@ def _page_reader_check(settings: Settings) -> tuple[str, str, str]:
     return "page reader", WARN, f"{found}; self-test {state}: {detail}"
 
 
-def _aoai_dry_run(settings: Settings, reference: ReferenceData, provider: str | None = None) -> tuple[str, str, str]:
-    """Send one synthetic invoice with the real prompt and schema (about one invoice's cost on Azure; free locally)."""
-    area = "local dry run" if provider == "local" else "AOAI dry run"
+def _aoai_dry_run(settings: Settings, reference: ReferenceData) -> tuple[str, str, str]:
+    """Send one synthetic invoice to Azure OpenAI with the real prompt and schema (about one invoice's cost)."""
+    area = "AOAI dry run"
     try:
-        coder = InvoiceCoder(settings, reference, provider=provider)
+        coder = InvoiceCoder(settings, reference)
         result = coder.code(
             ExtractionResult(source="doctor-dry-run.md", model_id="synthetic", content=_DRY_RUN_INVOICE)
         )
@@ -420,11 +418,10 @@ def _aoai_dry_run(settings: Settings, reference: ReferenceData, provider: str | 
         hint = _aoai_hint(exc)
         return area, FAIL, f"{type(exc).__name__}: {_scrub(str(exc), settings)}{hint}"
     usage = result.usage
-    accepted = "strict schema accepted" if provider != "local" else f"valid coding in {result.attempts} call(s)"
     return (
         area,
         PASS,
-        f"{accepted} by {result.model}; prompt {usage.get('prompt_tokens', '?')} tokens, "
+        f"strict schema accepted by {result.model}; prompt {usage.get('prompt_tokens', '?')} tokens, "
         f"completion {usage.get('completion_tokens', '?')} tokens",
     )
 

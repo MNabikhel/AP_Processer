@@ -1,7 +1,11 @@
-"""Component 2 - Inference & GL coding layer.
+"""The chat model: an invoice coded whole (``InvoiceCoder.code``), and the local model's two short jobs.
 
-Azure OpenAI with strict Structured Outputs, or a local OpenAI-compatible model (LM Studio, Ollama) through
-:mod:`ap_coder.ai.local_llm`, which asks for the same schema and falls back to parsing a looser reply.
+``InvoiceCoder.code`` asks Azure OpenAI with strict Structured Outputs (when the internet is allowed), or a local
+OpenAI-compatible model (LM Studio, Ollama) through :mod:`ap_coder.ai.local_llm`, which asks for the same schema and
+falls back to parsing a looser reply (the doctor's dry run). In the app, the local readers code the invoice, and the
+local model only suggests the GL account of the lines AP's history doesn't cover (``suggest_accounts``) and reads the
+header from the page images as one more reader (``read_header``). ``CodingError`` is every failure, ``temporary``
+when it is the model server's.
 """
 
 from __future__ import annotations
@@ -484,7 +488,14 @@ def suggest_accounts(coder: InvoiceCoder, vendor: str, lines: list[tuple[int, st
     asked = lines[:SUGGEST_MAX_LINES]
     for first in range(0, len(asked), SUGGEST_BATCH_LINES):
         batch = asked[first : first + SUGGEST_BATCH_LINES]
-        out.update(_suggest_batch(coder, model, schema, system, vendor, batch, history, valid_gl, valid_cc))
+        try:
+            out.update(_suggest_batch(coder, model, schema, system, vendor, batch, history, valid_gl, valid_cc))
+        except Exception as exc:  # the batches answered before keep their accounts (B-1342); the rest stay for AP
+            if not out:
+                raise
+            log.info("the local model suggested accounts for %d lines, then failed (%s): the rest left for AP",
+                     len(out), exc)  # fmt: skip
+            break
     return out
 
 
@@ -511,6 +522,8 @@ def _suggest_batch(coder: InvoiceCoder, model: str, schema: dict[str, Any], syst
     wanted = {n for n, _, _ in lines}
     out: dict[int, tuple[str, str, str]] = {}
     for row in data.get("lines") or []:
+        if not isinstance(row, dict):  # a row that is not an object (a small model's slip): that line stays for AP
+            continue
         try:
             n = int(row.get("line_number"))
         except (TypeError, ValueError):

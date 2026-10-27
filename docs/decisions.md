@@ -11,10 +11,10 @@ that is reversed keeps its line, marked "replaced by D-NN".
   README "Run it by hand")
 - **D-02** · Azure (Document Intelligence check, Azure OpenAI) is optional, off by default, and never needed to install
   or start; its packages are an extra. Why: the pilot runs with no cloud account; Azure is a second opinion, not a
-  dependency. (`pyproject.toml` `azure` extra, `ap_coder/ai/azure_check.py`, `tests/test_azure_optional.py`)
+  dependency. (`pyproject.toml` `azure` extra, `ap_coder/ai/azure_check.py`, `tests/ai/test_azure_optional.py`)
 - **D-03** · The offline proof: tests run AP Coder under a socket guard that refuses and records any connection not to
   this computer (127.0.0.0/8, ::1, localhost), and CI installs the bundle with every proxy pointed at a closed port.
-  Why: "offline" must be shown, not promised. (`tests/offline_guard.py`, `tests/test_offline_guard.py`,
+  Why: "offline" must be shown, not promised. (`tests/offline_guard.py`, `tests/offline/test_offline_guard.py`,
   `.github/workflows/ci.yml`)
 - **D-04** · LM Studio is reached only on this computer or the office network; an internet address is refused however it
   is written, unless `AP_ALLOW_INTERNET=1`. Why: a model server URL is the easiest way for data to leave.
@@ -37,7 +37,7 @@ that is reversed keeps its line, marked "replaced by D-NN".
 - **D-09** · SQLite, one file in the data folder; a backup once a day when the dashboard starts (newest 14 kept), an
   optional second backup folder; a newer database is refused and an older one backed up before migrating. Why: a single
   laptop needs no server, and an update must never risk the data. (`ap_coder/core/store/` `auto_backup`, `copy_backup`,
-  `_before_migrating`; `tests/test_update_database.py`, docs/WHATS_NEW.md)
+  `_before_migrating`; `tests/core/test_update_database.py`, docs/WHATS_NEW.md)
 - **D-10** · No company data in the repo: `private/` and `.env` are git-ignored, and so are every `.xlsx` and the PDFs
   and TIFFs at the top of the repo. Why: the repo is shared; invoices are confidential. (`.gitignore`,
   `private/README.md`)
@@ -174,7 +174,7 @@ that is reversed keeps its line, marked "replaced by D-NN".
   (sessionStorage). Why: the pilot tester asked for "delete the field" on a right-click, and the actions that took
   several steps (a line's account from the line above, a line between two others) are one click where the reviewer
   already is; Undo makes the quick ones safe to use. (`ap_coder/web/static/js/ctxmenu.js`,
-  `ap_coder/web/static/js/invoice.js`, `ap_coder/web/invoice_view.py`, `tests/test_web_ctxmenu.py`)
+  `ap_coder/web/static/js/invoice.js`, `ap_coder/web/invoice_view.py`, `tests/web/test_web_ctxmenu.py`)
 - **D-63** · The review screen's right-hand column runs: the checks, the **invoice details**, the line items, the PO
   match, the suggestions, the notes (the sales tax and the GL posting preview stay full width under the columns). This
   supersedes B-467's order (lines first, details after them). Why: the pilot tester asked for the details first, and it
@@ -182,7 +182,7 @@ that is reversed keeps its line, marked "replaced by D-NN".
   page first, then the lines are coded. The details stay compact (two columns per group: Supplier, Invoice, Amounts),
   the document card stays sticky beside the lines once they are scrolled to, and Tab, G (the line still to code) and N
   (the next field to check) work as before. (`ap_coder/web/templates/invoice.html`,
-  `tests/test_web_pilot_walkthrough.py::test_in_a_browser_at_1366_the_page_and_the_line_grid_show_together`)
+  `tests/web/test_web_pilot_walkthrough.py::test_in_a_browser_at_1366_the_page_and_the_line_grid_show_together`)
 
 ## Reading and touchless approval
 
@@ -563,7 +563,7 @@ that is reversed keeps its line, marked "replaced by D-NN".
   finder first on `sys.meta_path`, gives each old name (`ap_coder.store`...) the moved module itself, so old imports,
   outside scripts and patching through an old path still work, and a stale flat file an older install left is never
   imported. Why: the files doubled every listing and search of `ap_coder/` and sent agents to read an alias before the
-  real module (token-cost study, October 2026). (`tests/test_moved_modules.py`)
+  real module (token-cost study, October 2026). (`tests/meta/test_moved_modules.py`)
 - **D-68** · The default `python -m pytest` leaves out the slow tests (every browser test and those over half a second,
   listed in `tests/slow_tests.txt`; marked `slow` in `tests/conftest.py`): about 3,000 tests in a few minutes instead of
   ~3,600 in 20+. CI, `--full-tests` and anyone before a merge run everything with `-m ""`; `scripts/check.py` runs ruff
@@ -571,9 +571,10 @@ that is reversed keeps its line, marked "replaced by D-NN".
   suite (token-cost study, October 2026).
 - **D-69** · `ap_coder/core/store.py` (4,000 lines) is the package `ap_coder/core/store/`: one mixin per subject,
   assembled into the same `Store`; the package re-exports every name the module had (`tests/fixtures/store_api.txt`,
-  `tests/test_store_package.py`). `ap_coder/capture/reader.py` (3,900 lines) is the package `ap_coder/capture/reader/`
-  the same way: one part per section, each using only the parts before it, all names re-exported. Why: the store was the
-  file agents read most, and a 4,000-line read fills a session's context for every later step.
+  `tests/core/test_store_package.py`). `ap_coder/capture/reader.py` (3,900 lines) is the package
+  `ap_coder/capture/reader/` the same way: one part per section, each using only the parts before it, all names
+  re-exported. Why: the store was the file agents read most, and a 4,000-line read fills a session's context for every
+  later step.
 - **D-70** · A line's tax code is learned from approvals: each approved line keeps its code (`feedback.final_tax_code`,
   schema 17, filled from the approved invoices), and a code the vendor's history agrees on (lines worded alike, at least
   2 approvals of different invoices, never another code) is used before the subset-sum guess, marked "Learned from past
@@ -581,7 +582,7 @@ that is reversed keeps its line, marked "replaced by D-NN".
   from the history); a learned code for a tax the invoice does not charge is not used; one contradiction and the line is
   worked out again. The Tax check checks a learned code like any other. Why: the solver can't see an exemption on an
   invoice that charges no PST, and an inferred one waits for a person every time. Measured with `bench coding` (tax code
-  precision and coverage). (`coding/line_tax.py` `learned_codes`, `prefill`; `tests/test_tax_learning.py`)
+  precision and coverage). (`coding/line_tax.py` `learned_codes`, `prefill`; `tests/coding/test_tax_learning.py`)
 - **D-71** · A withdrawn approval takes back what it taught the vendor's layout: before an approval's `learn()` changes
   the template, the template as it was is kept (`template_snapshots`, keyed by invoice, the last 5 per vendor);
   reopening, rejecting or sending back that invoice puts it back, unless a later approval changed the template since
@@ -589,25 +590,25 @@ that is reversed keeps its line, marked "replaced by D-NN".
   The Learning page's Suppliers tab has "Reset layout" (asks first, logged as `layout_reset`). Why: a box taught on the
   wrong words is authoritative at once, and the next invoice was read with it. Measured with `bench learn
   --wrong-approval N`. (`core/store/invoices.py` `_withdraw_template`, `core/store/capture.py`;
-  `tests/test_template_rollback.py`)
+  `tests/capture/test_template_rollback.py`)
 - **D-72** · A lesson reaches the AI (prompts, automatic use) only after 2 corrections to the same value (`agreeing`,
   counted over the approvals still standing in `lesson_approvals`) or 1 correction with the clerk's reason. The review
   screen's hints (a person decides) show from the first correction, said as "Corrected once before: …"
   (`lessons.on_screen`); a single correction is still counted and shown on the Lessons tab as "not shown to the AI yet".
   A line's cost center is a lesson of its own (`line_cc`) beside its GL account (`line_gl`). Why: one slip (2% of lines
   in `bench coding --realistic`) was told to the AI at once, and half the line lessons shown were wrong.
-  (`ai/lessons.py` `reaches_ai`, `core/store/lessons.py`; `tests/test_lessons.py`)
+  (`ai/lessons.py` `reaches_ai`, `core/store/lessons.py`; `tests/ai/test_lessons.py`)
 - **D-73** · The training export's format 2 only adds to format 1: per field `corrected` and `boxes` (taught by click,
   kept with the capture at approval, or found by the supplier's template), each invoice's `split` ("holdout" for one in
   10 by a SHA-256 of its id, so an invoice is on the same side in every export), and `coding.jsonl` (one row per line:
   words, then GL, cost center, tax code). Why: a model tuned on it needs the mistakes, the boxes and a fixed set it
   never trains on, and a reader of format 1 must keep working. (`ai/training_export.py`;
-  `tests/test_training_export.py`)
+  `tests/ai/test_training_export.py`)
 - **D-74** · The Lessons tab measures each lesson: corrections per invoice of its vendor and field before it reached the
   AI (the second agreeing correction, or the first with a reason) and since, over the approvals still standing
   (`lesson_approvals`). One still corrected as often after 3 invoices or more is suggested for retiring, never retired
   on its own. Why: a lesson that doesn't help still costs a line of every prompt, and only a person knows whether the
-  vendor changed. (`ai/lessons.py` `effect`, `Store.lesson_history`; `tests/test_lessons.py`)
+  vendor changed. (`ai/lessons.py` `effect`, `Store.lesson_history`; `tests/ai/test_lessons.py`)
 - **D-75** · Before approval, the review screen asks what an export would refuse, and "Approve anyway" covers only what
   can be right anyway. With JD Edwards the export in use (Settings → About's switch, `erp/jde.in_use`), every reason
   its batch would hold a voucher back (`jde.voucher_findings`: the AN8, a GL account with no BU.Object.Subsidiary, the
@@ -619,7 +620,7 @@ that is reversed keeps its line, marked "replaced by D-NN".
   box, kept with each error in the approval's `open_issues`. Why: approved vouchers were held back at export for what
   the screen could have said (B-737), and the tick cleared a missing invoice number or an unbalanced total. Pilot
   testers who run JD Edwards unconfigured see every invoice "Not ready" until Settings → JD Edwards E1 is filled: that
-  is the point. (`ap_coder/erp/jde.py`, `ap_coder/web/invoice_view.py`, `tests/test_web_review_voucher.py`)
+  is the point. (`ap_coder/erp/jde.py`, `ap_coder/web/invoice_view.py`, `tests/web/test_web_review_voucher.py`)
 - **D-76** · The review screen is laid out for a clerk entering a standard voucher: the reading tools (OvisOCR2's
   queue, the AI reviewer, LM Studio's state) folded under "Reading" in the Document card; the page a little wider than
   the form at 1366, both halves equal on a wide screen; a "JD Edwards voucher" block in E1's order (company, AN8,
@@ -647,8 +648,8 @@ that is reversed keeps its line, marked "replaced by D-NN".
   exemption used in Manitoba, legacy and bulk approvals teaching exemptions, and learned exemptions going touchless.
   `bench coding`: default 97.7% precision / 96.9% coverage before, 97.8% / 97.1% after; `--realistic` 95.2% / 96.5%
   before, 95.2% / 94.3% after. Not done: the 50% ITC on meals. (`coding/line_tax.py` `learned_codes`, `tax_vote`,
-  `uncollected`, `prefill`; `core/store/_base.py` `_fill_tax_codes`; `tests/test_tax_learning_safety.py`,
-  `tests/test_tax_learning_votes.py`)
+  `uncollected`, `prefill`; `core/store/_base.py` `_fill_tax_codes`; `tests/coding/test_tax_learning_safety.py`,
+  `tests/coding/test_tax_learning_votes.py`)
 - **D-85** · Template snapshots keep the order of approval (`template_snapshots.seq`, AUTOINCREMENT), not a time to the
   second; the newest 5 per vendor are kept, never the one just written. A withdrawal whose template a later approval
   changed since keeps it (D-71), and the later approval's snapshot now starts from what was there before the withdrawn
@@ -657,7 +658,7 @@ that is reversed keeps its line, marked "replaced by D-NN".
   layout". Learning re-checks that the invoice is still approved, in the template's transaction and once more after
   learning (`forget_if_withdrawn`). Why: bulk approval writes many snapshots in one second, and a withdrawal must
   never leave a wrong box behind. (`core/store/capture.py` `save_supplier_profile`, `core/store/invoices.py`
-  `_withdraw_template`; `tests/test_template_rollback.py`)
+  `_withdraw_template`; `tests/capture/test_template_rollback.py`)
 - **D-86** · The review screen after its second UI sign-off. (1) Drafts (edits not approved yet) are kept in the store,
   `invoice_drafts` (one row per invoice and person: "" this computer, else a colleague's key), read back when AP Coder
   starts and dropped on approval, rejection, deletion, Start over and a restore; only real edits make one: an account
@@ -671,7 +672,7 @@ that is reversed keeps its line, marked "replaced by D-NN".
   independent UI sign-off found phantom drafts holding back bulk approval, drafts lost on a restart while the screen
   promised them, a 29% confidence that only meant "JD Edwards not set up", and a bar naming the bank account for a
   currency typo. (`web/pages/invoice.py`, `web/invoice_view.py`, `core/store/invoices.py`, `coding/validation.py`,
-  `static/js/invoice.js`, `static/js/ctxmenu.js`; `tests/test_web_review_signoff.py`)
+  `static/js/invoice.js`, `static/js/ctxmenu.js`; `tests/web/test_web_review_signoff.py`)
 - **D-87** · A PO number longer than JD Edwards' PO field (VLPO, 8 characters) no longer blocks approval when the PO
   is sent as a reference: the voucher goes out with VLPO, VLPDCT and VLPKCO blank, the PO kept in AP Coder and in the
   remark (`AP Coder #<id> PO <number>`) when that fits in VLRMK's 30 characters, with a warning on the review screen
@@ -679,7 +680,7 @@ that is reversed keeps its line, marked "replaced by D-NN".
   a longer one still holds the invoice back. Why: vendor-printed POs like "4500078813" or "MNT-2026-028" are common,
   and blocking made the clerk change what is printed; cutting it to 8 characters would send a wrong reference.
   (`erp/jde.py` `po_not_sent`, `_prepare`, `voucher_rows`, `voucher_findings`; `docs/JDE_E1.md`;
-  `tests/test_jde.py::test_a_po_number_longer_than_jde_holds_is_kept_here_and_not_sent`)
+  `tests/erp/test_jde.py::test_a_po_number_longer_than_jde_holds_is_kept_here_and_not_sent`)
 - **D-88** · The review queue's "look clean" and Ready are today's checks, not the ones stored when the invoice was
   read (B-815). A stored validation carries `checks_stamp`, a fingerprint of what the checks read that a person
   changes in Settings (`Store.checks_stamp`: the GL accounts, cost centers, tax setup and rate file, our province and
@@ -726,7 +727,7 @@ that is reversed keeps its line, marked "replaced by D-NN".
   numbers say what to look at. The invoices still to approve that the local readers read before get the Reading of their
   stored capture once, when this version opens the database. (`capture/confidence.py`, `capture/workflow.py`
   `supplier_record`, `ai/offline_coder.py`, `coding/validation.py`, `web/invoice_view.py`, `_invoice_live.html`,
-  `bench/learning.py`, `bench/coding.py`, `core/store` `_reading_as_d89`; `tests/test_reading_and_coding.py`)
+  `bench/learning.py`, `bench/coding.py`, `core/store` `_reading_as_d89`; `tests/ai/test_reading_and_coding.py`)
 - **D-90** · Meals and entertainment: 50% of the GST/HST and QST is claimable. Income Tax Act s.67.1 limits meals and
   entertainment to 50%, and Excise Tax Act s.236 claws back half the input tax credits on them; Quebec does the same
   for the QST input tax refunds (the QST Act's counterpart of s.236, and Taxation Act s.421.1 for income tax: verify the
@@ -773,8 +774,8 @@ that is reversed keeps its line, marked "replaced by D-NN".
   staff event? Use the other account." ("GST and QST" in Quebec), following the GL account as it is changed.
   (`coding/tax.py` `tax_shares`, `meals_parts`, `meals_unsure`, `build_gl_distribution`; `core/store/accounts.py`,
   `core/reference_data.py`; `web/pages/accounts.py`; `erp/jde.py` `_prepare`, `voucher_rows`, `_claimed_shares`,
-  `voucher_findings`; `coding/taxreturn.py`; `tests/test_meals.py`) **Keeping the ticks:** the flag is usually set
-  only in AP Coder, not in the ERP's chart, so an import without a meals column (*Replace the list* too) keeps each
+  `voucher_findings`; `coding/taxreturn.py`; `tests/coding/test_meals.py`) **Keeping the ticks:** the flag is usually
+  set only in AP Coder, not in the ERP's chart, so an import without a meals column (*Replace the list* too) keeps each
   code's tick (B-890). **Going back to an older version loses the meals ticks; re-tick after:** a version before this
   one drops them on its *Replace the list* import or grid save, and it can't be changed (docs/UPGRADING.md).
 - **D-91** · Payment terms → JD Edwards payment terms code (VLPTC). Before, VLPTC was one code for every voucher or
@@ -791,7 +792,7 @@ that is reversed keeps its line, marked "replaced by D-NN".
   set-up, not a gap; terms not understood are TERMS_NOT_FOUND's. Only the printed terms are looked up, not the vendor
   master's: E1 has the supplier's own terms already. (`coding/terms.py` `terms_label`, `terms_key`; `erp/jde.py`
   `terms_code`, `terms_unmapped`, `voucher_rows`, `voucher_findings`, `voucher_view`, `dry_run`;
-  `web/pages/settings_jde.py` `save_terms`; `docs/JDE_E1.md`; `tests/test_jde_terms.py`) **Later (B-896):**
+  `web/pages/settings_jde.py` `save_terms`; `docs/JDE_E1.md`; `tests/erp/test_jde_terms.py`) **Later (B-896):**
   JDE_TERMS_NO_CODE is a note (info), not a warning: a blank VLPTC is a benign fallback (E1 takes the supplier's own
   terms), so it holds back no bulk approval; it is still shown. **Credit memos** are sent with a blank VLPTC, as
   their due date is not sent: a terms code can carry a discount (2/10 Net 30) that E1 would work out on the credit.
@@ -808,23 +809,23 @@ that is reversed keeps its line, marked "replaced by D-NN".
   when processed) that AP posted differently, and what has no match; `pilot_score.md`, a CSV of the differences and
   the figures for Insights go to the data folder's `pilot_score`. Why: the pilot's question is whether AP Coder
   agrees with what AP really posts, and the vouchers are the only truth that needs no extra labelling; it runs the
-  same on synthetic data now and real exports later. (`ops/pilot_score.py`, `tests/test_pilot_score.py`) (2) **The JDE
-  test-import checklist** for the pilot tester's IT is its own section of `docs/JDE_E1.md`: load the Z-file batch in
+  same on synthetic data now and real exports later. (`ops/pilot_score.py`, `tests/ops/test_pilot_score.py`) (2) **The
+  JDE test-import checklist** for the pilot tester's IT is its own section of `docs/JDE_E1.md`: load the Z-file batch in
   a test environment, R04110ZA proof then final with the options to check, what to compare, how to report back;
   what varies by company says "confirm with your JDE administrator". (3) **Getting started in the pilot's order**: GL
   accounts → vendor master (with the AN8s) → JD Edwards settings → the ERP's past coding ("AP Coder learns your coding
   from what you posted before") → first invoices; the Next step card walks through them when JD Edwards is the
   export, and the rows show for everyone (`web/pages/process.py` `pilot_steps`). Measured cold start, first invoice
   from new vendors with no AI model: through the pipeline on generated invoices 0 of 285 lines coded without history,
-  285 of 285 with the vendors' past coding imported (exact wording; `tests/test_first_steps_order.py`); in the coding
-  benchmark (each vendor's own wording) 35.2% → 91.5% of first-invoice lines (30 vendors, `--history 1.0`). (4) **The
-  AI-on paths** (the AI coder end to end, the page reader with its self-test, the AI reviewer) run against a scripted
-  fake LM Studio over HTTP (`tests/test_ai_paths.py`); they passed after the round-2 changes with nothing to fix. The
-  coding benchmark gained `--ai`: the chat model in LM Studio codes the lines nothing else coded, scored against the
-  truth. **Still owed: a real-model accuracy run on the pilot laptop** (LM Studio is on no build computer), with LM
-  Studio's server started and its chat model and OvisOCR2 loaded: `python -m ap_coder read-pages --test` (OvisOCR2's
-  self-test), then `python -m ap_coder.bench coding --vendors 20 --invoices 5 --ai --out bench_ai` (the chat model's
-  precision, first invoice apart; report in `bench_ai/report.md`), and, once AP has posted the pilot's invoices,
+  285 of 285 with the vendors' past coding imported (exact wording; `tests/ops/test_first_steps_order.py`); in the
+  coding benchmark (each vendor's own wording) 35.2% → 91.5% of first-invoice lines (30 vendors, `--history 1.0`). (4)
+  **The AI-on paths** (the AI coder end to end, the page reader with its self-test, the AI reviewer) run against a
+  scripted fake LM Studio over HTTP (`tests/ai/test_ai_paths.py`); they passed after the round-2 changes with nothing to
+  fix. The coding benchmark gained `--ai`: the chat model in LM Studio codes the lines nothing else coded, scored
+  against the truth. **Still owed: a real-model accuracy run on the pilot laptop** (LM Studio is on no build computer),
+  with LM Studio's server started and its chat model and OvisOCR2 loaded: `python -m ap_coder read-pages --test`
+  (OvisOCR2's self-test), then `python -m ap_coder.bench coding --vendors 20 --invoices 5 --ai --out bench_ai` (the chat
+  model's precision, first invoice apart; report in `bench_ai/report.md`), and, once AP has posted the pilot's invoices,
   `python -m ap_coder pilot-score` on the JDE export.
 - **D-93** · JD Edwards: the tax coded to G/L accounts. The pilot's AP team posts GST/HST to a GST receivable account
   and the other provinces' taxes to their own accounts, and does not want E1 computing tax; both earlier modes (gross,
@@ -842,7 +843,7 @@ that is reversed keeps its line, marked "replaced by D-NN".
   BU.Obj.Sub is the usual JDE_NO_ACCOUNT, named as the tax account. Self-assessed PST is never accrued by E1 here
   (`accrues_use_tax` false): the Self-assessment report has it. Why: posting the tax as AP Coder coded and checked it
   is what this AP team does by hand today, and it leaves E1 nothing to work out differently from the invoice.
-  (`erp/jde.py`, `tests/test_jde_gl_mode.py`, `docs/JDE_E1.md`)
+  (`erp/jde.py`, `tests/erp/test_jde_gl_mode.py`, `docs/JDE_E1.md`)
 - **D-94** · First-time setup is the one exception to "nothing goes online". From GitHub's ZIP (the code alone: no
   offline bundle's manifest, wheelhouse or models), the launcher downloads, once, the Python packages from PyPI
   (pypi.org, files.pythonhosted.org) and the OCR models from www.modelscope.cn, and APProcessor.bat may offer Python
@@ -852,7 +853,8 @@ that is reversed keeps its line, marked "replaced by D-NN".
   where, and how to avoid it (`scripts/launch.py` `DOWNLOAD_NOTICE`, `say_downloads`; the .bat before winget). Why:
   a pilot tester who downloads the ZIP needs AP Coder to set itself up without IT, and IT reviewing the pilot needs
   to see exactly what left the laptop and when; a firm that allows no download uses the offline bundle.
-  (`tests/test_launch.py::test_the_first_setup_says_which_packages_it_downloads_from_where`, `::..._models_...`)
+  (`tests/launcher/test_launch.py::test_the_first_setup_says_which_packages_it_downloads_from_where`,
+  `::..._models_...`)
 - **D-95** · Touchless never approves what bulk approval would refuse. Before, only errors, the always-a-person
   findings and a line without an account kept an invoice touchless processing passed from going through: HST at the
   wrong rate, HST in a GST province, GST only where HST is due, a PST due and not charged, or no GST/HST number on a
@@ -879,7 +881,7 @@ that is reversed keeps its line, marked "replaced by D-NN".
   `audit.approved_over`). Why: a sweep found Ctrl+Z and Alt+arrows dead where the page itself put the focus, a queue
   that contradicted the draft, and a second approver who couldn't see what was approved over.
   (`static/js/invoice.js`, `web/pages/invoice.py` `_keep_draft`, `web/pages/review.py` `draft_reasons`,
-  `core/audit.py`; `tests/test_web_ui_sweep4.py`)
+  `core/audit.py`; `tests/web/test_web_ui_details.py`)
 - **D-97** · Server mode: AP Coder on one company server, each person with their own account. Off by default
   (`AP_SERVER_MODE=1`, or `serve --server`): the laptop pilot is unchanged (D-34 still holds there). On, every request
   but /login, /healthz, the styles and scripts needs a session, whichever computer it comes from: the server's own
@@ -902,7 +904,8 @@ that is reversed keeps its line, marked "replaced by D-NN".
   person, nor an address for a login; the pilot tester asked for logins and roles with nothing installed on the
   clerks' PCs and nothing new to download. (`ap_coder/core/store/users.py`, `ap_coder/web/identity.py`,
   `ap_coder/web/pages/login.py`, `ap_coder/web/pages/users.py`, `ap_coder/ops/cli.py` `cmd_users`;
-  `tests/test_users.py`, `tests/test_users_cli.py`, `tests/test_server_web.py`, `tests/test_server_browser.py`)
+  `tests/core/test_users.py`, `tests/ops/test_users_cli.py`, `tests/web/test_server_web.py`,
+  `tests/web/test_server_browser.py`)
 - **D-98** · Roles in server mode: Read-only, Clerk, Approver, Admin, each able to do what the one before can.
   Read-only looks (the queue, invoices and their pages, the directory, reports, the exports list, Insights, Spend,
   Activity, Help, its own password) and changes nothing; Clerk also imports, reviews and checks, gives the first
@@ -917,8 +920,8 @@ that is reversed keeps its line, marked "replaced by D-NN".
   can't use (`core.can`), but the server is what refuses. The second approval needs a second account: two accounts
   are compared by id (`same_approver`; two people may share a name), and each approval records the account
   (`detail.user_id`). Why: the plan's roles, with one place that says who may do what and a default that closes
-  rather than opens. (`ap_coder/web/roles.py`, `ap_coder/core/store/users.py` `same_approver`; `tests/test_roles.py`,
-  `tests/test_server_second_approval.py`)
+  rather than opens. (`ap_coder/web/roles.py`, `ap_coder/core/store/users.py` `same_approver`;
+  `tests/web/test_roles.py`, `tests/web/test_server_second_approval.py`)
 - **D-100** · The company server runs AP Coder as a Windows scheduled task, and updates with a way back. (1) **The
   service**: `python -m ap_coder service install|remove|start|stop|status` registers a Task Scheduler task (XML,
   `schtasks /create /xml`) that starts at boot, a minute after, as a dedicated local account (`--account`, default
@@ -950,8 +953,8 @@ that is reversed keeps its line, marked "replaced by D-NN".
   what was done since the update is lost (it says so and asks first). `server.json` keeps `folder`,
   `previous_folder`, `pre_update_backup` and `history`; the record of installs is written as the laptop updater does.
   `--dry-run` prints the steps. Why: a server update must leave the AP team on a working version whatever happens.
-  (`ap_coder/ops/service.py`, `ap_coder/ops/server_update.py`, docs/SERVER.md; `tests/test_service.py`,
-  `tests/test_server_update.py`)
+  (`ap_coder/ops/service.py`, `ap_coder/ops/server_update.py`, docs/SERVER.md; `tests/ops/test_service.py`,
+  `tests/ops/test_server_update.py`)
 - **D-99** · The company server's network side and pages (with D-97's switch). (1) **HTTPS:** `serve --certfile
   --keyfile` (PEM; or `AP_TLS_CERT`/`AP_TLS_KEY`) are passed to uvicorn. In server mode (`--server` or
   `AP_SERVER_MODE=1`) AP Coder refuses to start without both, in plain words, unless `--insecure-http` (a first test; it
@@ -977,13 +980,14 @@ that is reversed keeps its line, marked "replaced by D-NN".
   restart the files are in the invoices folder, listed as new. The folder pick-up still says it is busy (409). (7)
   **Restart-safe state:** messages waiting for their page and spreadsheets waiting for their columns (imports, AP line
   history) are kept in the database's `ephemeral` table (kind, token, value, expiry; `CREATE TABLE IF NOT EXISTS`, no
-  schema bump), deleted once used or expired; outside a request, in memory as before. An upload therefore sits in the
-  database (and a backup made in that hour) instead of only in memory: the same data the database holds anyway. (8)
+  schema bump), deleted once used or expired; outside a request, in memory as before *(that way is gone: nothing
+  used it, sweep 5)*. An upload therefore sits in the database (and a backup made in that hour) instead of only in
+  memory: the same data the database holds anyway. (8)
   **Drafts** are keyed by `access.person_key` (one key, `key_of`): the account's id on the server, else the colleague's
   (name, browser) as before. `is_admin` is the logged-in account's role (`identity.person()`), always yes on a laptop;
   the rail says "Data stays on this server". Why: staff open the server from their own PCs over the company network, by
   its company name, possibly behind IIS. (`web/server.py`, `web/security.py`, `web/access.py`,
-  `core/store/ephemeral.py`, `web/pages/process.py`; `tests/test_server_https.py`, `tests/test_server_ux.py`)
+  `core/store/ephemeral.py`, `web/pages/process.py`; `tests/web/test_server_https.py`, `tests/web/test_server_ux.py`)
 - **D-101** · Server security review (changes D-97, D-99 and D-100 where they say otherwise). (1) **Lockout**: 5
   tries that don't match within 15 minutes for one username from one address pause that pair for 15 minutes; 30 from
   one address, whatever the usernames, pause the address. A person elsewhere is never locked out by someone else's
@@ -1017,7 +1021,7 @@ that is reversed keeps its line, marked "replaced by D-NN".
   a vendor's hold and reopen another person's approval (separation of duties). Why: a reviewer's walk of the server
   mode found each of these a way past, or around, D-97's logins. (`core/store/users.py`, `core/store/backups.py`,
   `ops/server_update.py`, `web/identity.py`, `web/pages/login.py`, `web/pages/users.py`, `web/pages/activity.py`,
-  `web/app.py`, `web/security.py`; `tests/test_server_security.py`, `tests/test_server_update.py`)
+  `web/app.py`, `web/security.py`; `tests/web/test_server_security.py`, `tests/ops/test_server_update.py`)
 - **D-102** · What each role sees on the company server, and how the server speaks (with D-97 to D-99). (1) **A page
   offers only what the role may use**, from `web/roles.py`'s table (`core.can`, which takes a link's path without its
   query): forms, links and the review screen's buttons to a route the role is refused are left out, a list the role
@@ -1044,7 +1048,7 @@ that is reversed keeps its line, marked "replaced by D-NN".
   found every hidden control to be a 403, laptop words on a server, and uploads with no person in the audit.
   (`web/core.py` `can`, `web/pages/process.py` `shown_setup`, `web/pages/invoice.py` `_shown_live`,
   `static/js/invoice.js`, `ops/help.py`, `ops/service.py` `doctor_checks`, `core/store/_base.py` `EVENT_ACTOR`;
-  `tests/test_server_role_pages.py`, `tests/test_server_ui_fixes.py`)
+  `tests/web/test_server_role_pages.py`, `tests/web/test_server_wording_and_console.py`)
 - **D-103** · The finance hub feed (Microsoft Fabric): six versioned tables and two ways to deliver them, off by
   default. (1) **The tables**: `invoices`, `invoice_lines`, `approvals`, `activity`, `accuracy`, `workflow_runs`, each
   built from the Store with stable column names and types (`HUB_SCHEMA_VERSION = 1`; a change is a new version), the
@@ -1079,7 +1083,7 @@ that is reversed keeps its line, marked "replaced by D-NN".
   the server). One run at a time per data folder (a lock file). Why: the data team has not chosen how the data will
   travel, so both ways share one table format and one writer, and nothing leaves AP Coder until an Admin turns it
   on. (`ap_coder/erp/hub/`, `core/store/hub.py`, `web/pages/settings_hub.py`, `ops/cli.py` `cmd_hub`;
-  `tests/test_finance_hub.py`, docs/FINANCE_HUB.md)
+  `tests/erp/test_finance_hub.py`, docs/FINANCE_HUB.md)
 - **D-104** · JD Edwards through its AIS Server (the API connection), and the offline rule's named internal systems. AP
   Coder signs in to the company's AIS Server as its own JDE service user and calls named orchestrations with JSON in and
   out; it never writes JDE tables. (1) **One mapping file**, `erp/jde_orchestrations.json`: the AIS paths and versions
@@ -1109,15 +1113,15 @@ that is reversed keeps its line, marked "replaced by D-NN".
   database. (5) **The offline rule** (CLAUDE.md): a named internal system may be enabled by an Admin. The AIS connection
   is off by default; on, AP Coder connects only to the one AIS address saved, which must be on the company network (a
   private address, or a name resolving to private addresses only) unless AP_ALLOW_INTERNET=1; plain http only to this
-  computer (the stand-in). `tests/test_offline_guard.py` proves it. (6) **Roles**: the connection, its test and sync are
-  an Admin's; the dry run a Clerk's; the go-ahead and the queue an Approver's (`web/roles.py`). (7) **The stand-in**
-  `tests/fake_ais.py` answers as AIS does (token flow, expiry, sign-in failures, no permission, an orchestration not
-  built, timeouts, busy, JDE's error shape, paging, one voucher per key) over http or HTTPS with test-only certificates.
-  Why: the company has no AIS set up yet; the CSV imports and batch files need a person each time and see JDE a day
-  late. Built against the stand-in, off, ready to switch on once the JDE team has built and confirmed the
-  orchestrations. (`erp/jde_ais.py`, `erp/jde_sync.py`, `erp/jde_post.py`, `erp/jde_orchestrations.json`,
-  `ops/jde_cmd.py`, `web/pages/settings_jde.py`, `web/pages/exports.py`; `tests/test_jde_ais.py`,
-  `tests/test_jde_sync.py`, `tests/test_jde_post.py`, `tests/test_jde_api_web.py`)
+  computer (the stand-in). `tests/offline/test_offline_guard.py` proves it. (6) **Roles**: the connection, its test and
+  sync are an Admin's; the dry run a Clerk's; the go-ahead and the queue an Approver's (`web/roles.py`). (7) **The
+  stand-in** `tests/fake_ais.py` answers as AIS does (token flow, expiry, sign-in failures, no permission, an
+  orchestration not built, timeouts, busy, JDE's error shape, paging, one voucher per key) over http or HTTPS with
+  test-only certificates. Why: the company has no AIS set up yet; the CSV imports and batch files need a person each
+  time and see JDE a day late. Built against the stand-in, off, ready to switch on once the JDE team has built and
+  confirmed the orchestrations. (`erp/jde_ais.py`, `erp/jde_sync.py`, `erp/jde_post.py`, `erp/jde_orchestrations.json`,
+  `ops/jde_cmd.py`, `web/pages/settings_jde.py`, `web/pages/exports.py`; `tests/erp/test_jde_ais.py`,
+  `tests/erp/test_jde_sync.py`, `tests/erp/test_jde_post.py`, `tests/erp/test_jde_api_web.py`)
 - **D-105** · Voucher posting safety (changes D-104 where it says otherwise). Posting moves money, so when AP Coder
   can't be sure, it locks the voucher and asks JDE (or a person). (1) **Key**: `APC-<installation
   id>-<invoice>-<batch>`; the installation id is 10 random hex digits in the data folder (`jde_installation_id`),
@@ -1153,8 +1157,8 @@ that is reversed keeps its line, marked "replaced by D-NN".
   settings events stay out of `activity`; a failure of the gateway's SQLite copy is a warning once the data files are
   written; the OneLake listing follows its continuation. Why: an independent review found ways a voucher could be posted
   twice, or someone else's taken for it. (`erp/jde_post.py`, `core/store/postings.py`, `erp/jde_ais.py`,
-  `erp/jde_sync.py`, `erp/hub/`; `tests/test_jde_post_safety.py`, `tests/test_jde_ais_safety.py`,
-  `tests/test_jde_sync_safety.py`, `tests/test_finance_hub.py`)
+  `erp/jde_sync.py`, `erp/hub/`; `tests/erp/test_jde_post_safety.py`, `tests/erp/test_jde_ais_safety.py`,
+  `tests/erp/test_jde_sync_safety.py`, `tests/erp/test_finance_hub.py`)
 - **D-106** · Coding work runs as the `developer` agent (`.claude/agents/developer.md`). Measured on 6 tasks × 3 runs
   each (a bug fix, a feature, a rename across folders, two code questions, a test), on main ff9c3ff, graded by hidden
   checks: a general Claude Code session starts every turn with ~36.6k tokens of context in a cloud session (its
@@ -1167,7 +1171,7 @@ that is reversed keeps its line, marked "replaced by D-NN".
   27.7 vs 27.0 of 30, the bug fix 35.7 vs 37.0 of 40 (every fix correct and tested; an extra comment, a reply's side
   claim). Its prompt states what the general one would: a bug fix brings its own test, the smallest correct change,
   finish an ambiguous task and say the choice. It is a profile, not a setting: lead sessions that publish documents,
-  run workflows or talk to other agents keep every tool. `tests/test_agent_profile.py` keeps its tool list
+  run workflows or talk to other agents keep every tool. `tests/meta/test_agent_profile.py` keeps its tool list
   deliberate.
 - **D-107** · Fixes of an end-to-end walk (B-1180 to B-1210), with the choices they made. (1) **Releasing a voucher
   checked in JD Edwards**: a voucher locked because JDE answered EXISTS for another invoice (or whose answer was lost)
@@ -1187,7 +1191,7 @@ that is reversed keeps its line, marked "replaced by D-NN".
   HTTPS files are in neither server.json nor the environment: it can't see a running server's command line. (8) **The
   hub's invoice links** default to the server's own address in server mode (server.json and the environment; the
   computer's name when no name is set). (`erp/jde_post.py`, `erp/jde_ais.py`, `erp/insights.py`, `coding/review.py`,
-  `ops/service.py`, `erp/hub/run.py`; `tests/test_walk_fixes.py`, `tests/test_server_walk_fixes.py`)
+  `ops/service.py`, `erp/hub/run.py`; `tests/ops/test_laptop_walk.py`, `tests/erp/test_jde_api_and_hub.py`)
 - **D-108** · Fixes of an end-to-end review (B-1211 to B-1217), with the choices they made. (1) **UNASSIGNED is no
   cost center**: `exports.distribution` gives every ERP file (CSV, Excel, Custom, JD Edwards files and API, the stamp,
   spend and accruals) a blank cost center for a line still UNASSIGNED, as the hub feed does, and `jde.account_for`
@@ -1202,7 +1206,7 @@ that is reversed keeps its line, marked "replaced by D-NN".
   live answer replaces the register's** DUPLICATE_IN_ERP for the same invoice: it names the voucher and its paid
   status; the register's message stays when JD Edwards can't be asked. (`erp/exports.py`, `erp/jde.py`, `ops/cli.py`,
   `ops/doctor.py`, `erp/insights.py`, `erp/hub/tables.py`, `coding/vendors.py`, `erp/jde_sync.py`;
-  `tests/test_e2e_review_fixes.py`, `tests/test_jde_sync.py`)
+  `tests/ops/test_setup_gate_and_doctor.py`, `tests/erp/test_jde_sync.py`)
 - **D-109** · Second security review of server mode (B-1231 to B-1243; changes D-97, D-100, D-101 and D-103 where it
   says otherwise). (1) **What an administrator's command trusts**: no `.env` sets a variable that decides which code
   runs (`PATH`, `PATHEXT`, `COMSPEC`, `SYSTEMROOT`, `WINDIR`, `VIRTUAL_ENV`, `PYTHON*`, `PIP_*`, `LD_*`, `DYLD_*`,
@@ -1253,7 +1257,7 @@ that is reversed keeps its line, marked "replaced by D-NN".
   wheelhouse). (`ops/server_update.py`, `ops/service.py`, `ops/cli.py`, `core/config.py`, `web/security.py`,
   `web/identity.py`, `web/pages/process.py`, `core/store/users.py` (`posting_refusal`, `vouched_for`),
   `core/store/invoices.py`, `erp/controls.py`, `erp/directory.py`, `web/roles.py`, `web/server.py`,
-  `erp/hub/onelake.py`; `tests/test_server_hardening.py`)
+  `erp/hub/onelake.py`; `tests/web/test_server_hardening.py`)
 - **D-110** · **The invoices' summary: the lists, the search and the reports read one narrow row per invoice, worked
   out when the invoice changes** (server mode at a year of invoices, 120,000, and 50 people at once). Every report
   read and decoded every invoice's JSON on each visit (Month-end 84 s, Sales tax 57 s, Vendors 45 s, Insights 36 s,
@@ -1265,8 +1269,8 @@ that is reversed keeps its line, marked "replaced by D-NN".
   `self_assessment_facts`, `insights.invoice_facts`, `workload_facts`, `approval_facts`, `payment_facts`,
   `bulk.queue_facts`, `accruals._bill`, `spend.spend_parts` into **`summary_spend`**; the longer values in
   `summary_facts`, the checks' codes in `summary_codes`): the report then does with them what it did with the invoice,
-  so its results are the same. `tests/test_invoice_summary.py` checks every report, list, the search, the directory and
-  the bulk candidates against the code as it was (`tests/summary_reference.py`) on a year of the sample invoices in
+  so its results are the same. `tests/erp/test_invoice_summary.py` checks every report, list, the search, the directory
+  and the bulk candidates against the code as it was (`tests/summary_reference.py`) on a year of the sample invoices in
   every state; the pages of a 12,000-invoice database were also compared, as HTML, with the code before. Nothing in it
   depends on a setting but the posting lines of an invoice approved by an older version, built with the tax setup
   (`legacy`). Sums of many lines are added in another order (per invoice first): equal to the cent. (2) **Kept in step
@@ -1300,7 +1304,7 @@ that is reversed keeps its line, marked "replaced by D-NN".
   `purchasing.py`, `vendors.py`, `learning.py`, `backups.py`, `coding/taxreturn.py`, `coding/bulk.py`,
   `coding/terms.py`, `erp/spend.py`, `erp/insights.py`, `erp/accruals.py`, `erp/search.py`, `erp/directory.py`,
   `erp/recurring.py`, `web/core.py`, `web/pages/review.py`, `invoice.py`, `spend.py`, `month_end.py`;
-  `tests/test_invoice_summary.py`)
+  `tests/erp/test_invoice_summary.py`)
 - **D-111** · The company server's runtime for ~500 accounts (~50 at once) and 5,000 to 10,000 invoices a month (changes
   D-99 (6), D-100 and D-109 (4) where they say otherwise). (1) **Web workers**: one Python process answers about 1.6
   pages a second (the GIL), so `serve --server --workers N` (`server.json` `workers`, `service install --workers`,
@@ -1357,7 +1361,7 @@ that is reversed keeps its line, marked "replaced by D-NN".
   mode are CI's (spawn, the stop file and the job object are the Windows paths). (`web/server.py`, `web/app.py`
   `start_background_work`, `web/jobs.py`, `core/store/ephemeral.py`, `web/pages/process.py`, `web/pages/users.py`,
   `web/pages/invoice.py`, `core/store/backups.py`, `web/security.py`, `ai/local_llm.py` `Slots`, `ai/page_worker.py`,
-  `ai/verifier.py`, `ai/pipeline.py`, `ops/service.py`; `tests/test_server_scale.py`)
+  `ai/verifier.py`, `ai/pipeline.py`, `ops/service.py`; `tests/web/test_server_scale.py`)
 - **D-112** · A pilot tester's walk of laptop mode (B-1297 to B-1306), with the choices it made (changes D-39 and
   D-108 (4) where it says otherwise). (1) **A vendor with no JD Edwards address number (AN8) still blocks approval**,
   not only the export: D-75 holds (an approved voucher is never held back at export for something the review screen
@@ -1389,4 +1393,18 @@ that is reversed keeps its line, marked "replaced by D-NN".
   in the singular for one. (`erp/jde.py`, `web/pages/invoice.py`, `web/templates/invoice.html`, `erp/insights.py`,
   `web/pages/learning.py`, `web/pages/activity.py`, `web/pages/insights.py`, `core/store/invoices.py`,
   `web/pages/process.py`, `ops/cli.py`, `ops/pilot_score.py`, `core/store/purchasing.py`;
-  `tests/test_pilot_walk_laptop.py`)
+  `tests/ops/test_laptop_walk_jde.py`)
+- **D-115** · The rule reader's package (`ap_coder/capture/reader/`) re-exports only the names used outside it (42 of
+  them), no longer every name its parts define (changes D-69 for the reader; the store keeps its full re-export). Why:
+  260 of the 315 names it re-exported (private patterns and helpers) were named nowhere outside their own part, and a
+  300-line import list was the first thing an agent read to find the reader's entry points. A name needed elsewhere is
+  imported from its part (`from .reader.values import ...`) or added to the list. (`capture/reader/__init__.py`)
+- **D-116** · The tests live in folders that mirror `ap_coder/` (`tests/core/`, `tests/coding/`, `tests/web/`..., plus
+  `tests/launcher/` for scripts/, `tests/offline/` and `tests/meta/` for the repository itself), each file named by its
+  subject: a sweep's or a review's tests went to the subject they test, each test keeping its name. Shared helpers are
+  in one place each (`tests/conftest.py`'s `store`, `client` and demo templates; `tests/pdfs.py`, `tests/scripts.py`,
+  `tests/browser.py`). The demo, the sample setup and a year of invoices are built once per run and copied with SQLite's
+  backup, SQLite skips the disk sync in the test process, and each browser test file starts one Chromium. Why: 229 flat
+  files, many named after the round that wrote them (sweep4, review2), sent an agent through several files to find one
+  subject's tests, and the whole suite took 18 minutes on Linux, most of it rebuilding the same demo.
+  (`tests/conftest.py`, `scripts/check.py`)

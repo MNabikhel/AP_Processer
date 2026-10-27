@@ -2,7 +2,7 @@
 
 Each table is a ``Table``: its name, its key columns and its columns, each with a stable name, a type and a meaning.
 ``build(store, name, ...)`` gives its rows as dicts with exactly those columns, in that order. Names and types never
-change within a ``HUB_SCHEMA_VERSION``: a column added is a new version (``tests/test_finance_hub.py`` holds the
+change within a ``HUB_SCHEMA_VERSION``: a column added is a new version (``tests/erp/test_finance_hub.py`` holds the
 columns of this one, and checks the data dictionary describes every one of them).
 
 Types (``TYPES``): string, int64, decimal(18,2) (money), float64, date (YYYY-MM-DD), timestamp (local time, to the
@@ -455,19 +455,24 @@ def invoices(store: Any, ctx: Context, rows: list[dict[str, Any]] | None = None)
 
 
 def invoice_lines(store: Any, ctx: Context, rows: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
-    from ...coding.line_tax import tax_code_of
+    from ...coding.line_tax import legacy_basis, tax_code_of
 
     rows = store.hub_invoice_rows() if rows is None else rows
     out = []
     for r in rows:
         coding, source = _coding(r)
-        charged = [str(t.get("tax_type") or "") for t in coding.get("tax_lines") or [] if isinstance(t, dict)]
-        for position, li in enumerate(coding.get("line_items") or [], start=1):
+        items = coding.get("line_items") or []
+        try:  # a line stored before ``tax_exempt`` is read as the review screen and the exports read it (B-1373)
+            basis = legacy_basis([li for li in items if isinstance(li, dict)],
+                                 [t for t in coding.get("tax_lines") or [] if isinstance(t, dict)])  # fmt: skip
+        except Exception:  # noqa: BLE001 - a tax line stored oddly: its old lines go out without their codes
+            basis = None
+        for position, li in enumerate(items, start=1):
             if not isinstance(li, dict):
                 continue
             gl = text(li.get("predicted_gl_code"))
             try:
-                code = tax_code_of(li, charged)
+                code = tax_code_of(li, basis or ()) if basis is not None or li.get("tax_exempt") is not None else None
             except Exception:  # noqa: BLE001 - a line stored oddly still goes out, without its code
                 code = None
             out.append({

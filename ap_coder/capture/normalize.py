@@ -7,8 +7,10 @@ produce the same normalized value, and agreement can be tested with ``==``.
 from __future__ import annotations
 
 import datetime as dt
+import functools
 import re
 import unicodedata
+from collections.abc import Callable
 
 # ---------------------------------------------------------------- amounts
 
@@ -204,15 +206,16 @@ _ISO = re.compile(rf"\b(20\d{{2}}|19\d{{2}})[-/.](\d{{1,2}})[-/.](\d{{1,2}})(?:\
 _NUMERIC = re.compile(
     rf"\b(\d{{1,2}})[-/.](\d{{1,2}})[-/.](\d{{4}}{_TIME_NEXT}|\d{{2}}{_TIME_NEXT}|\d{{2}}\b|\d{{4}}\b|\d{{4}}(?=[a-z]{{3}}))"
 )
-# Spaces optional: OCR often drops them ("May14,2026", "20Jul2026"); the month name is looked up.
+# Spaces optional: OCR often drops them ("May14,2026", "20Jul2026"); the month name is looked up (three to ten
+# letters: "septiembre" has ten, B-1343).
 # Between the day and the year, a comma and a speck OCR read as a point: "October 23, . 2026"; a receipt's slashes:
 # "Jun14/2017", "Jul/15/2017".
 _WORDY_MDY = re.compile(
-    rf"\b([a-z]{{3,9}})\.?[\s/-]*(\d{{1,2}})(?:st|nd|rd|th)?(?:\s*[,./]){{0,2}}\s*(\d{{4}})(?:\b|{_TIME_NEXT})"
+    rf"\b([a-z]{{3,10}})\.?[\s/-]*(\d{{1,2}})(?:st|nd|rd|th)?(?:\s*[,./]){{0,2}}\s*(\d{{4}})(?:\b|{_TIME_NEXT})"
 )
 # Spanish and Portuguese put "de" between the parts: "10 de febrero de 2022".
 _WORDY_DMY = re.compile(
-    r"\b(\d{1,2})(?:er|st|nd|rd|th)?[\s.]*(?:de\s+)?([a-z]{3,9})(?:\s*[,.]){0,2}\s*(?:del?\s+)?(\d{4})(?:\b|"
+    r"\b(\d{1,2})(?:er|st|nd|rd|th)?[\s.]*(?:de\s+)?([a-z]{3,10})(?:\s*[,.]){0,2}\s*(?:del?\s+)?(\d{4})(?:\b|"
     + _TIME_NEXT
     + ")"
 )
@@ -251,10 +254,10 @@ _SPECK_BY_SEP = re.compile(
 )
 
 
-_WORDY_DMY_DASH = re.compile(r"\b(\d{1,2})[-\s]([a-z]{3,9})[-\s](\d{2,4})\b")
+_WORDY_DMY_DASH = re.compile(r"\b(\d{1,2})[-\s]([a-z]{3,10})[-\s](\d{2,4})\b")
 # Compact forms: "Oct-15-26" (the month, day and year by dashes) and "15OCT26" (all run together, a two-digit year).
 # Not inside a number ("INV-12MAR26", "PO-OCT-15-26").
-_WORDY_MDY_DASH = re.compile(r"(?<![\w/-])([a-z]{3,9})\.?-(\d{1,2})-(\d{2}|\d{4})(?![\w/-])")
+_WORDY_MDY_DASH = re.compile(r"(?<![\w/-])([a-z]{3,10})\.?-(\d{1,2})-(\d{2}|\d{4})(?![\w/-])")
 _GLUED_DMY = re.compile(r"(?<![\w/-])(\d{1,2})([a-z]{3,4})(\d{2})(?![\w/-])")
 
 
@@ -269,11 +272,48 @@ def _make(y: int, m: int, d: int) -> dt.date | None:
         return None
 
 
+def _folded(text: str, fold: Callable[[str], str]) -> tuple[str, list[tuple[int, int]] | None]:
+    """``fold(text)`` and, for each of its characters, the span of ``text`` it comes from: "…", "™", "œ" and "ß" are
+    one character printed and several folded, so a match's place in the folded text is not its place in ``text``
+    (B-1340). Folded a character at a time (with the accents after it); None for plain ASCII, where nothing moves."""
+    if text.isascii() or all(_one_for_one(c, fold) for c in text if not c.isascii()):
+        return fold(text), None
+    out: list[str] = []
+    spans: list[tuple[int, int]] = []
+    i, n = 0, len(text)
+    while i < n:
+        j = i + 1
+        while j < n and unicodedata.combining(text[j]):
+            j += 1
+        piece = fold(text[i:j])
+        out.append(piece)
+        spans += [(i, j)] * len(piece)
+        i = j
+    return "".join(out), spans
+
+
+@functools.lru_cache(maxsize=4096)
+def _one_for_one(char: str, fold: Callable[[str], str]) -> bool:
+    """The character folds to one character, and no accent folds into the one before it."""
+    return len(fold(char)) == 1 and not unicodedata.combining(char)
+
+
+def _unfolded(spans: list[tuple[int, int]] | None, a: int, b: int) -> tuple[int, int]:
+    """A match's span (never empty) in the folded text (``_folded``) as a span of the text itself."""
+    return (a, b) if spans is None else (spans[a][0], spans[b - 1][1])
+
+
+def _date_fold(text: str) -> str:
+    return _plain(unicodedata.normalize("NFKC", text))
+
+
 def parse_dates(text: str, *, prefer_day_first: bool | None = None) -> list[tuple[dt.date, int, int, bool]]:
-    """Every date in ``text``: (date, start, end, ambiguous). ``ambiguous`` is True for 03/04/2026
-    when both day-first and month-first are valid and no preference resolves it."""
+    """Every date in ``text``: (date, start, end, ambiguous), start and end where it is printed in ``text``.
+    ``ambiguous`` is True for 03/04/2026 when both day-first and month-first are valid and no preference resolves
+    it."""
+    folded, spans = _folded(text, _date_fold)
     # A soft hyphen printed as the date's separator: "10\u00ad31\u00ad2016" (same length, so offsets hold).
-    s = _ocr_date_text(_plain(unicodedata.normalize("NFKC", text)).replace("\u00ad", "-"))
+    s = _ocr_date_text(folded.replace("\u00ad", "-"))
     found: list[tuple[dt.date, int, int, bool]] = []
     taken: list[tuple[int, int]] = []
 
@@ -322,7 +362,7 @@ def parse_dates(text: str, *, prefer_day_first: bool | None = None) -> list[tupl
             pos = m.start() + nxt.end() - 1 if nxt else m.end()
             continue
         taken.append(m.span())
-    return sorted(found, key=lambda x: x[1])
+    return sorted(((d, *_unfolded(spans, a, b), ambiguous) for d, a, b, ambiguous in found), key=lambda x: x[1])
 
 
 def infer_day_first(text: str) -> bool | None:
@@ -377,24 +417,28 @@ def luhn_ok(digits: str) -> bool:
 
 
 # The nine digits may be grouped by spaces or dashes, or a period where a scan left a speck ("57165.3898 RT 0001").
+def _nfkc(text: str) -> str:
+    return unicodedata.normalize("NFKC", text)
+
+
 _BN = re.compile(r"(?<![\d-])(\d(?:[ .-]?\d){8})[\s.:-]*(RT|R\s?T)[\s.:-]*(\d{4})(?!\d)", re.I)
 _BN9 = re.compile(r"(?<!\d)(\d{3}\s?\d{3}\s?\d{3})(?!\d)")
 _QST = re.compile(r"(?<!\d)(\d{10})[\s.:-]*(TQ|T\s?Q)[\s.:-]*(\d{4})(?!\d)", re.I)
 
 
 def find_gst_numbers(text: str) -> list[tuple[str, int, int, bool]]:
-    """GST/HST registration numbers: ('123456782RT0001', start, end, luhn_valid)."""
-    s = unicodedata.normalize("NFKC", text)
+    """GST/HST registration numbers: ('123456782RT0001', start, end, luhn_valid), start and end in ``text``."""
+    s, spans = _folded(text, _nfkc)
     out = []
     for m in _BN.finditer(s):
         digits = re.sub(r"[\s.-]", "", m.group(1))
-        out.append((f"{digits}RT{m.group(3)}", m.start(), m.end(), luhn_ok(digits)))
+        out.append((f"{digits}RT{m.group(3)}", *_unfolded(spans, *m.span()), luhn_ok(digits)))
     return out
 
 
 def find_qst_numbers(text: str) -> list[tuple[str, int, int]]:
-    s = unicodedata.normalize("NFKC", text)
-    return [(f"{m.group(1)}TQ{m.group(3)}", m.start(), m.end()) for m in _QST.finditer(s)]
+    s, spans = _folded(text, _nfkc)
+    return [(f"{m.group(1)}TQ{m.group(3)}", *_unfolded(spans, *m.span())) for m in _QST.finditer(s)]
 
 
 # A provincial sales tax number (BC "PST-1234-5678", Manitoba "RST 123456-7", Saskatchewan "PST 1234567") has no
@@ -410,13 +454,13 @@ _PST = re.compile(
 def find_pst_numbers(text: str) -> list[tuple[str, int, int]]:
     """Provincial sales tax numbers after their label: ('PST-1234-5678', start, end) with the number as printed
     (its own "PST-" prefix kept); start..end covers the number, not the label."""
-    s = unicodedata.normalize("NFKC", text)
+    s, spans = _folded(text, _nfkc)
     out = []
     for m in _PST.finditer(s):
         if sum(c.isdigit() for c in m.group(2)) < 6:
             continue
         a = m.start(1) if m.group(1) else m.start(2)
-        out.append((s[a : m.end()].strip(), a, m.end()))
+        out.append((s[a : m.end()].strip(), *_unfolded(spans, a, m.end())))
     return out
 
 
@@ -470,9 +514,6 @@ def norm_name(text: str | None) -> str:
     s = re.sub(r"[^a-z0-9 ]", " ", s)
     s = _LEGAL_SUFFIX.sub(" ", s)
     return " ".join(s.split())
-
-
-CURRENCIES = ("CAD", "USD", "EUR", "GBP")
 
 
 _CODE = r"(?<![A-Z])(CAD|USD|EUR|GBP)(?![A-Z])"  # also glued by OCR: "TOTALCAD"

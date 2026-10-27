@@ -23,6 +23,7 @@ from ap_coder.erp.insights import AS_CODED, Assumptions, as_coded_note, compute,
 from ap_coder.ops.offline import internet_allowed
 from ap_coder.web.charts import OK_GREEN, SERIES, WARN_AMBER, Series, bar_chart
 from ap_coder.web.core import done, get_store, posted_form, refuse, render, reviewer
+from ap_coder.web.files import download
 
 router = APIRouter()
 
@@ -204,11 +205,7 @@ def pilot_card(store: Any) -> dict[str, Any] | None:
 def insights_business_case(request: Request) -> Response:
     """The one-page business case: totals only (no vendor names, invoice amounts or file names)."""
     html = report_html(compute(get_store(request)))
-    return Response(
-        html.encode("utf-8"),
-        media_type="text/html; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="ap_coder_business_case_{dt.date.today()}.html"'},
-    )
+    return download(html.encode("utf-8"), f"ap_coder_business_case_{dt.date.today()}.html", "text/html; charset=utf-8")
 
 
 @router.post("/insights/assumptions")

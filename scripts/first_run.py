@@ -25,10 +25,6 @@ from ap_coder.core import paths  # noqa: E402
 DEFAULT_DATA_DIR = paths.default_data_dir()
 
 
-def has_data(folder: Path) -> bool:
-    return folder.is_dir() and any(p.name != "README.md" for p in folder.iterdir())
-
-
 def choose_data_dir() -> Path:
     """The folder already in use, else ``~/APCoder``; data kept inside a code folder (``private/``, as AP Coder 0.1
     did) is moved to ``~/APCoder`` first, so replacing the code never touches it (``scripts/upgrade.py``)."""

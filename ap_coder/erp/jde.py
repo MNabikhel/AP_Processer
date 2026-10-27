@@ -34,6 +34,22 @@ left out of the batch, instead of E1 posting the PST twice or not at all.
 With the tax coded to G/L accounts (``AMOUNT_GL``, the default for a new setup, D-93) E1 posts no tax: the F0911Z1
 lines are AP Coder's distribution unfiltered (each recoverable tax on its own line to its tax account), the voucher
 goes with the gross, code E and no tax area, and ``sum(F0911Z1) == gross``.
+
+Where things are
+----------------
+Every part works from one voucher worked out once (``_prepare``: its amounts in cents, tax area and code, the
+distribution lines and why it can't go), so they stay in this one file, in this order:
+
+* the settings (``JdeSettings``, ``load``, ``save``, ``settings_problems``) and the formats (``julian``,
+  ``jde_amount``);
+* supplier numbers and accounts (``resolve_an8``, ``account_for``), then one voucher (``_prepare``, ``terms_code``,
+  ``sent_due``) and its rows (``voucher_rows``);
+* the checks over a batch (``validate``, ``duplicate_problems``) and before approval, on the review screen
+  (``voucher_findings``, ``voucher_view``);
+* the files (``export_batch``, ``readme``, ``build_zip``), the dry run (``dry_run``, ``dry_run_text``) and the
+  account mapping import (``gl_map_from_records``).
+
+The AIS API is ``jde_ais.py`` (the client), ``jde_sync.py`` (reading from JDE) and ``jde_post.py`` (posting).
 """
 
 from __future__ import annotations
@@ -54,13 +70,12 @@ from ..coding.line_tax import exempt_of, legacy_basis
 from ..coding.tax import CANADIAN_TAX_TYPES, OUTSIDE_CANADA, PLACE_OF_SUPPLY, PROVINCES, ZERO_DECIMAL_CURRENCIES
 from ..coding.terms import terms_key
 from ..coding.vendors import norm_invoice_number
-from ..core.headers import header_key
+from ..core.headers import match_columns
 from ..core.memory import refresh_vendor_key, vendor_key
 from ..core.reference_data import UNASSIGNED
 
 SETTING_KEY = "jde_e1"
 FORMAT = "jde"
-LABEL = "JD Edwards E1 (F0411Z1 / F0911Z1)"
 # The two reasons an invoice is held back for its supplier number: the Exports page links them to Settings → JD
 # Edwards E1 → Supplier address numbers (``an8_problem``).
 NO_AN8 = "no JDE supplier number (AN8)"
@@ -351,15 +366,9 @@ def jde_amount(x: float | int | str | Decimal, implied: bool = True, decimals: i
     return f"{d:.{decimals}f}"
 
 
-def _cents(x: Any) -> int:
-    try:
-        return int(Decimal(str(x or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) * 100)
-    except ArithmeticError:
-        return 0
-
-
 def _units(x: Any, decimals: int = 2) -> int:
-    """An amount in cents, rounded to what the currency can hold (whole yen: a multiple of 100)."""
+    """An amount in cents, rounded half away from zero to the cent, or to what the currency can hold (``decimals``
+    0 for the yen: a multiple of 100); 0 for what is not a number."""
     try:
         return int(Decimal(str(x or 0)).quantize(Decimal(1).scaleb(-decimals), rounding=ROUND_HALF_UP) * 100)
     except ArithmeticError:
@@ -579,7 +588,7 @@ def pst_owed(final: dict[str, Any]) -> str:
     from ..coding.line_tax import NOT_DUE, tax_state
     from ..coding.tax import is_tip
 
-    items = [li for li in final.get("line_items") or [] if isinstance(li, dict) and abs(_cents(li.get("amount")))]
+    items = [li for li in final.get("line_items") or [] if isinstance(li, dict) and abs(_units(li.get("amount")))]
     items = [li for li in items if not is_tip(SimpleNamespace(description=li.get("description")))] or items
     if not items:
         return ALL_OWED
@@ -672,7 +681,7 @@ def _gross_problems(v: _Voucher, final: dict[str, Any]) -> list[str]:
     basis = legacy_basis(items, final.get("tax_lines") or [])
     kinds = sorted({t["tax_type"] for t in v.charged})
     for li in items:
-        if not isinstance(li, dict) or not abs(_cents(li.get("amount"))) or li.get("taxes_applied"):
+        if not isinstance(li, dict) or not abs(_units(li.get("amount"))) or li.get("taxes_applied"):
             continue
         if li.get("tax_status") in EXEMPT_STATUSES or (
             kinds and not li.get("tax_status") and set(kinds) <= set(exempt_of(li, basis))
@@ -785,10 +794,10 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
             add(problem, "JDE_GROSS_TAX")
     if v.po_matched:
         items = final.get("line_items") or []
-        lines = sum(_cents(li.get("amount")) for li in items)
+        lines = sum(_units(li.get("amount")) for li in items)
         if not items:
             add("PO-matched voucher without invoice lines to match", "JDE_UNBALANCED")
-        elif abs(lines - _cents(final.get("subtotal"))) > len(items):
+        elif abs(lines - _units(final.get("subtotal"))) > len(items):
             add(
                 f"the lines add up to {lines / 100:,.2f}, not the subtotal {float(final.get('subtotal') or 0):,.2f}",
                 "SUBTOTAL_MISMATCH",
@@ -797,8 +806,8 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
 
     if not dist:
         add("no GL distribution to post", "NO_LINE_ITEMS")
-    total = sum(_cents(e.get("amount")) for e in dist)
-    gross_cents = _cents(final.get("grand_total"))
+    total = sum(_units(e.get("amount")) for e in dist)
+    gross_cents = _units(final.get("grand_total"))
     if dist and total != gross_cents:
         add(
             f"the GL distribution adds up to {total / 100:,.2f}, not the invoice total {v.gross / 100:,.2f}",
@@ -840,11 +849,11 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
         v.entries.append({**e, "cents": _units(e.get("amount"), v.decimals), "account": account})
     expected = v.gross - v.recoverable
     kept = sum(e["cents"] for e in v.entries)
-    kept_cents = sum(_cents(e.get("amount")) for e in v.entries)
+    kept_cents = sum(_units(e.get("amount")) for e in v.entries)
     if v.decimals < 2 and v.entries and kept != expected:
         # Whole units (yen): a distribution spread in cents (coded before tax was spread in whole units) balances
         # in cents, but its lines each rounded to the yen can be a yen or two off: the largest line takes it.
-        if kept_cents == gross_cents - sum(_cents(t.get("tax_amount")) for t in recoverable):
+        if kept_cents == gross_cents - sum(_units(t.get("tax_amount")) for t in recoverable):
             biggest = max(range(len(v.entries)), key=lambda i: abs(v.entries[i]["cents"]))
             v.entries[biggest]["cents"] += expected - kept
             kept = expected
@@ -911,6 +920,8 @@ def voucher_rows(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:  # fmt: skip
     """(F0411Z1 rows, F0911Z1 rows, match rows) of one approved invoice, as {column: value}. Check it with
     ``validate`` first: an invoice with problems gives incomplete rows."""
+    from .exports import entry_lines
+
     v = _prepare(invoice, settings, str(vendor_an8 or "").strip())
     final = v.final
     keys = _keys("VL", settings, batch, v.inv_id)
@@ -968,7 +979,7 @@ def voucher_rows(
     stated = [li is not None and not (li.get("taxes_applied") or [])
               and (li.get("tax_status") in EXEMPT_STATUSES
                    or (bool(kinds) and not li.get("tax_status") and set(kinds) <= set(exempt_of(li, basis))))
-              for li in _entry_lines(v.entries, items)]  # fmt: skip
+              for li in entry_lines(v.entries, items)]  # fmt: skip
     line_codes = [exempt if no_tax and v.tax_code not in ("", exempt) else v.tax_code for no_tax in stated]
     if v.po_matched:
         header = {**common, "VLEDLN": 1, **amounts(v.gross, v.stam, v.atxa), **extras}
@@ -979,7 +990,7 @@ def voucher_rows(
                 "DOCO": po[:8], "DCTO": settings.po_document_type.strip(), "KCOO": common["VLPKCO"],
                 "LNID": li.get("line_number") or "", "LITM": "", "DSC1": _text(li.get("description"), 30),
                 "UORG": _plain(li.get("quantity")), "PRRC": _plain(li.get("unit_price"), 4),
-                "AEXP": _amount(_cents(li.get("amount")), settings, v.decimals), "CRCD": v.currency,
+                "AEXP": _amount(_units(li.get("amount")), settings, v.decimals), "CRCD": v.currency,
             })  # fmt: skip
         return [header], [], matches
 
@@ -1014,7 +1025,7 @@ def voucher_rows(
         # non-recoverable tax already in its line (e.g. PST charged on some lines only).
         unit = 10 ** (2 - v.decimals)
         taxes = _entry_taxes(v.entries, final.get("line_items") or [])
-        net = [_cents(e.get("net_amount")) if e.get("kind") == "expense" else 0 for e in v.entries]
+        net = [_units(e.get("net_amount")) if e.get("kind") == "expense" else 0 for e in v.entries]
         weights = net if any(net) else [e["cents"] for e in v.entries]
 
         def carrying(tax_type: str) -> list[int]:
@@ -1057,13 +1068,14 @@ def _claimed_shares(v: _Voucher) -> list[int] | None:
     can't be read back or don't match the distribution lines (then the pay items split the tax themselves)."""
     from ..coding.tax import half_down, is_meals, tax_shares
     from ..core.schema import InvoiceCoding
+    from .exports import entry_lines
 
     try:
         coding = InvoiceCoding.model_validate({k: x for k, x in v.final.items() if k != "gl_distribution"})
     except ValueError:
         return None
     items = v.final.get("line_items") or []
-    behind = _entry_lines(v.entries, items)
+    behind = entry_lines(v.entries, items)
     position = {id(li): i for i, li in enumerate(items)}
     lines = [position.get(id(li)) if li is not None else None for li in behind]
     if len(coding.line_items) != len(items):
@@ -1081,21 +1093,11 @@ def _claimed_shares(v: _Voucher) -> list[int] | None:
     return shares if sum(shares) == v.recoverable else None
 
 
-def _entry_lines(entries: list[dict[str, Any]], items: list[dict[str, Any]]) -> list[dict[str, Any] | None]:
-    """The invoice line behind each distribution line (None for a tax line). Expense lines follow the invoice lines
-    in order; matched by line number when the counts differ."""
-    if sum(1 for e in entries if e.get("kind") == "expense") == len(items):
-        it = iter(items)
-        return [next(it) if e.get("kind") == "expense" else None for e in entries]
-    by_number: dict[Any, dict[str, Any]] = {}
-    for li in items:
-        by_number.setdefault(li.get("line_number"), li)
-    return [by_number.get(e.get("line_number")) if e.get("kind") == "expense" else None for e in entries]
-
-
 def _entry_taxes(entries: list[dict[str, Any]], items: list[dict[str, Any]]) -> list[set[str]]:
     """The taxes the invoice line behind each distribution line is marked with (none for a tax line)."""
-    return [set((li or {}).get("taxes_applied") or []) for li in _entry_lines(entries, items)]
+    from .exports import entry_lines
+
+    return [set((li or {}).get("taxes_applied") or []) for li in entry_lines(entries, items)]
 
 
 def _text(value: Any, size: int) -> str:
@@ -1147,6 +1149,16 @@ def duplicate_problems(
     def same(a: tuple[str, str], b: tuple[str, str]) -> bool:
         return (bool(a[0]) and a[0] == b[0]) or (bool(a[1]) and a[1] == b[1])
 
+    def by_number(rows: Iterable[dict[str, Any]], total: str) -> dict[tuple[str, bool], list[dict[str, Any]]]:
+        """``rows`` by (invoice number as compared, a credit), in their order: each number read once, not once an
+        invoice of the batch (thousands of rows already out)."""
+        found: dict[tuple[str, bool], list[dict[str, Any]]] = {}
+        for r in rows:
+            found.setdefault((norm_invoice_number(r.get("invoice_number")), _negative(r.get(total))), []).append(r)
+        return found
+
+    exported = by_number(prior.get("exported") or [], "grand_total")
+    register = by_number(prior.get("register") or [], "total")
     earlier: list[tuple[tuple[str, str], str, bool, int]] = []
     for inv in invoices:
         final = inv.get("final_output") or {}
@@ -1160,15 +1172,11 @@ def duplicate_problems(
             if other_number == number and other_credit == credit and same(who, other_who):
                 msgs.append(f"same supplier and invoice number as AP Coder #{other_id} in this batch")
                 break
-        for r in prior.get("exported") or []:
-            if norm_invoice_number(r.get("invoice_number")) != number or _negative(r.get("grand_total")) != credit:
-                continue
+        for r in exported.get((number, credit), []):
             if same(who, (an8_of(r), vendor_key(r.get("vendor_name") or ""))):
                 msgs.append(f"already exported: AP Coder #{r['id']} in batch {r['export_batch']}")
                 break
-        for r in prior.get("register") or []:
-            if norm_invoice_number(r.get("invoice_number")) != number or _negative(r.get("total")) != credit:
-                continue
+        for r in register.get((number, credit), []):
             key = r.get("vendor_key") or vendor_key(r.get("vendor_name") or "")
             if same(who, (an8_of(r), key)):  # (the register has no GST/HST number: by name)
                 when = f", dated {r['invoice_date']}" if r.get("invoice_date") else ""
@@ -1802,13 +1810,7 @@ def gl_map_from_records(records: list[dict[str, Any]]) -> list[GlMap]:
     Object, Subsidiary"); rows without a GL code are skipped."""
     if not records:
         return []
-    headers = {header_key(h): h for h in records[0]}
-    columns = {}
-    for target, aliases in GL_MAP_ALIASES.items():
-        for alias in (header_key(target), *aliases):
-            if alias in headers and headers[alias] not in columns.values():
-                columns[target] = headers[alias]
-                break
+    columns = match_columns(list(records[0]), GL_MAP_ALIASES)
     out = []
     for rec in records:
 

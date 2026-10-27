@@ -1,0 +1,174 @@
+"""Sweep 4 (real-world testing): the findings Sweep 3 left, fixed."""
+
+import datetime as dt
+import io
+import json
+import struct
+import subprocess
+import sys
+
+import pymupdf
+from openpyxl import load_workbook
+
+from ap_coder.ai import page_worker
+from ap_coder.core.store import Store, load_sample_setup
+from ap_coder.erp import accruals, spend, stamp
+from tests.conftest import SAMPLES
+
+NORTHWIND = "northwind_ON_HST_NW-2026-0912"
+
+
+def _approved_by_an_older_version(tmp_path):
+    """An approved invoice whose final coding has no stored gl_distribution (approved by an older version)."""
+    store = Store(tmp_path / "s.db")
+    load_sample_setup(store)
+    doc = json.loads((SAMPLES / "ground_truth" / f"{NORTHWIND}.json").read_text())
+    assert "gl_distribution" not in doc
+    invoice_id = store.add_invoice(SAMPLES / f"{NORTHWIND}.pdf", doc, {})
+    store.approve_invoice(invoice_id, doc, "Jordan")
+    assert not (store.get_invoice(invoice_id)["final_output"] or {}).get("gl_distribution")
+    return store, invoice_id, doc
+
+
+def test_an_invoice_approved_without_a_stored_distribution_is_in_the_spend_report(tmp_path):
+    """B-217: spend.lines and the full data workbook build the posting lines again, as the exports do (B-151)."""
+    store, invoice_id, doc = _approved_by_an_older_version(tmp_path)
+    rows = spend.lines(store, dt.date(2020, 1, 1), dt.date(2030, 12, 31))
+    assert {r.invoice_id for r in rows} == {invoice_id}
+    assert round(sum(r.amount for r in rows), 2) == doc["subtotal"]  # the expense lines, net of the HST
+    posting = load_workbook(io.BytesIO(spend.workbook(store, store.reference_data())))["Posting"]
+    assert posting.max_row == len(doc["line_items"]) + 2  # the header, each line and the HST
+    assert "2310" in {c.value for c in posting["F"]}  # the HST's own account (the store's tax setup)
+
+
+def test_an_invoice_approved_without_a_stored_distribution_is_in_the_accrual_detail(tmp_path):
+    """B-217: an approved invoice not yet exported is accrued by GL account even with no stored distribution."""
+    store, _, doc = _approved_by_an_older_version(tmp_path)
+    items = [a for a in accruals.build(store, dt.date(2026, 12, 31)) if a.source == accruals.NOT_IN_ERP]
+    assert items and round(sum(a.amount for a in items), 2) == doc["subtotal"]
+    assert all(a.gl_code for a in items)
+
+
+def test_an_invoice_approved_without_a_stored_distribution_has_its_posting_on_the_stamp(tmp_path):
+    """B-217: the stamped PDF's coding page lists the posting lines built again, with the tax setup's accounts."""
+    store, invoice_id, doc = _approved_by_an_older_version(tmp_path)
+    pdf = stamp.stamped_pdf(store.get_invoice(invoice_id), {}, store.tax_treatments())
+    with pymupdf.open("pdf", pdf) as opened:
+        coding = opened[opened.page_count - 1].get_text()
+    assert f"{doc['grand_total']:,.2f}" in coding and "2310" in coding
+
+
+def test_a_reading_mark_whose_process_id_another_program_now_has_goes_back_in_line(tmp_path):
+    """B-218: a dashboard killed mid-read left its "being read" mark; its process id now belongs to another program.
+    The mark notes when its process started, so the invoice is read again at once, not two hours later."""
+    store = Store(tmp_path / "ap.db")
+    other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        started = page_worker._process_started(other.pid)
+        assert started and page_worker._process_started(2**22 + 12345) == ""  # no such process
+        readers = {31: f"{other.pid}:dead:{started}x", 32: f"{other.pid}:alive:{started}", 33: f"{other.pid}:old"}
+        for invoice_id, reader in readers.items():
+            store.queue_page_read(invoice_id, "new invoice")
+            assert store.next_page_read(invoice_id, reader=reader)["reader"] == reader
+        assert page_worker.release_interrupted(store) == 1
+        # The program now under that id started at another time; a mark of its own and an older mark (no start
+        # noted: by its process id, as before) stand.
+        assert {i: store.page_read(i)["status"] for i in readers} == {31: "waiting", 32: "reading", 33: "reading"}
+    finally:
+        other.kill()
+        other.wait()
+    assert page_worker.READER_ID.count(":") == 2 and page_worker.reader_alive(page_worker.READER_ID) is False
+
+
+def test_invoices_of_an_old_vendor_and_others_in_turn_share_the_suggestion_indexes(tmp_path, reference, monkeypatch):
+    """B-219: past the memory read cap, an old vendor's invoice gets a list of its own (B-175); invoices of it and of
+    other vendors in turn rebuilt the suggestion index each time (about 0.3 s at 50,000 lessons)."""
+    from ap_coder.ai import suggest
+    from ap_coder.core import store as store_mod
+
+    store = Store(tmp_path / "ap.db")
+    store.import_history([{"vendor_name": "Northwind IT Solutions Inc.", "description": "Dell Latitude laptop",
+                           "gl_code": "6010", "amount": 100.0, "date": "2025-01-01"}])  # fmt: skip
+    store.import_history([{"vendor_name": f"Zenith Freight {i}", "description": f"Freight charge lot {i}",
+                           "gl_code": "5100", "amount": 10.0, "date": "2025-06-01"} for i in range(30)])  # fmt: skip
+    monkeypatch.setattr(store_mod.learning, "FEEDBACK_READ", 20)
+    monkeypatch.setattr(suggest, "_MEMORY", suggest.RowsCache())
+    builds = []
+    build = suggest._build_memory
+    monkeypatch.setattr(suggest, "_build_memory", lambda *a: builds.append(1) or build(*a))
+    for vendor in ["Northwind IT Solutions Inc.", "Zenith Freight 29", "Northwind IT Solutions Inc.",
+                   "Zenith Freight 28", "Northwind IT Solutions Inc."]:  # fmt: skip
+        suggest.suggest_gl("Dell Latitude laptop", vendor, store.learning_rows(vendor), reference)
+    assert len(builds) == 2  # Northwind's own list, and the shared one
+
+
+def test_an_invoice_number_in_digit_groups_with_more_text_after_it_is_read_whole(tmp_path):
+    """B-220: "No de facture 123 456 Page 1 de 1": the number is 123 456, not 123 (B-185 joined the groups only
+    when nothing followed them on the line)."""
+    from ap_coder.capture.reader import _id_from
+    from tests.capture.test_capture_edge_cases import _pdf
+    from tests.capture.test_reader_verified_values import _NO_NUMBER, _read
+
+    assert _id_from(" 123 456 Date 2026-09-14", 0)[0] == "123 456"
+    assert _id_from(": 12 345 678 Réf. client A-77", 0)[0] == "12 345 678"
+    # Another figure after it, or a group that is not three digits: still the first number alone.
+    assert [_id_from(t, 0)[0] for t in (" 123 456 2026-09-14", " 123 45 Date", " 123 4567 Date")] == ["123"] * 3
+    lines = _NO_NUMBER + [(380, 120, "No de facture 123 456 Page 1 de 1")]
+    fr = _read(_pdf(tmp_path, lines)).fields["invoice_number"]
+    assert fr.value.replace(" ", "") == "123456", fr
+
+
+def test_a_jpeg_photo_too_large_to_open_is_read_at_a_smaller_size(tmp_path, monkeypatch):
+    """B-222: a photo from a phone's 200 MP mode (over twice Pillow's limit) was refused; a JPEG is now decoded at
+    half, a quarter or an eighth of its size, the smallest reduction that brings it under the limit, and the page
+    keeps its size. The photo itself is kept as it came."""
+    import pytest
+    from PIL import Image
+
+    from ap_coder.intake.pictures import to_pdf
+
+    photo = tmp_path / "IMG_2026.jpg"
+    Image.new("RGB", (800, 600), (200, 200, 200)).save(photo, "JPEG", dpi=(200, 200))
+    original = photo.read_bytes()
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 40_000)  # 480,000 pixels: over twice the limit, as 200 MP is
+    converted = to_pdf(photo)
+    with pymupdf.open(converted.pdf) as doc:
+        (xref, *_), *_ = doc[0].get_images()
+        shown = doc.extract_image(xref)
+        assert (shown["width"], shown["height"]) == (200, 150)  # a quarter: half would still be 120,000 pixels
+        assert (round(doc[0].rect.width), round(doc[0].rect.height)) == (288, 216)  # 4 x 3 inches, as photographed
+    assert converted.original.read_bytes() == original
+    # A picture that can't be decoded smaller (a PNG) is still refused, in plain words (B-148).
+    big = tmp_path / "scan.png"
+    Image.new("L", (800, 600), 200).save(big, "PNG")
+    with pytest.raises(Image.DecompressionBombError):
+        to_pdf(big)
+
+
+def test_a_picture_an_outlook_email_shows_only_in_its_rich_text_is_a_logo():
+    """B-223: a .msg that holds its text only as compressed RTF (an HTML email kept as RTF, no HTML stream) showed a
+    signature picture by its Content-ID; the RTF was never read, so the logo went to the queue as an invoice."""
+    from ap_coder.bench.msgwriter import Attachment, Message, build_msg
+    from ap_coder.intake.mailbox import read_msg_mail
+    from tests.intake.test_emails_and_inbox import _scan_jpeg
+
+    jpg = _scan_jpeg()
+    rtf = r'{\rtf1\ansi\fromhtml1 {\*\htmltag84 <img src="cid:image001.jpg@01DA">}\htmlrtf Thanks\htmlrtf0 }'
+    msg = Message(subject="Invoice INV-80", body="Invoice attached.", rtf=rtf,
+                  attachments=[Attachment("image001.jpg", jpg, "image/jpeg", "image001.jpg@01DA"),
+                               Attachment("scan.jpg", jpg, "image/jpeg", "f_lx3abc2")])  # fmt: skip
+    mail = read_msg_mail(build_msg(msg))
+    assert [n for n, _ in mail.found] == ["scan.jpg"] and any("image001.jpg" in s for s in mail.skipped)
+
+
+def test_compressed_rtf_is_read_as_outlook_writes_it():
+    """B-223: MS-OXRTFCP's own example of a compressed RTF body (LZFu), and one stored as it is (MELA)."""
+    from ap_coder.intake.msgfile import decompress_rtf
+
+    example = bytes.fromhex(
+        "2d 00 00 00 2b 00 00 00 4c 5a 46 75 f1 c5 c7 a7 03 00 0a 00 72 63 70 67 31 32 35 42 32 0a f3 20 68 65 6c 09"
+        " 00 20 62 77 05 b0 6c 64 7d 0a 80 0f a0"
+    )
+    assert decompress_rtf(example) == b"{\\rtf1\\ansi\\ansicpg1252\\pard hello world}\r\n"
+    raw = b"{\\rtf1 plain}"
+    assert decompress_rtf(struct.pack("<IIII", len(raw) + 12, len(raw), 0x414C454D, 0) + raw) == raw

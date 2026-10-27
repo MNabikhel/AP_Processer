@@ -7,13 +7,14 @@ Reject, Delete). Any other invoice opens read-only, with what can be done in its
 sending it back, bringing a parked one back, reopening an approved (for correction) or a rejected one.
 
 Every edit is checked as the reviewer types (``POST /review/<id>/check`` answers the sections again) and kept as a
-draft for this dashboard's lifetime, so moving to another invoice and back keeps it.
+draft, per person and in the store too (D-86), so moving to another invoice and back keeps it, a restart too.
 What is worked out lives in ``ap_coder/web/invoice_view.py``; the page script is ``static/js/invoice.js`` with the
 page viewer ``static/js/invoice_viewer.js``.
 
 Routes (all under ``/review/<id>``): GET the screen, ``page/<n>.png`` (a page's picture), ``words`` (the words on
 the pages, to teach a field), ``reader`` (OvisOCR2's progress on it), ``approved.pdf``; POST ``check``,
-``approve``, ``park``, ``reject``, ``note``, ``teach``, ``split``, ``apply-rules``, ``po-coding``,
+``approve``, ``undo-approve`` (the approval banner's Undo), ``park``, ``reject``, ``note``, ``teach``, ``split``,
+``apply-rules``, ``po-coding``,
 ``suggestion``, ``fill-lines`` (Apply to all lines), ``vendor`` (add the printed vendor), ``read-pages``,
 ``review-again`` (the AI reviewer), ``start-over``, ``resume`` (a parked invoice), ``restore`` (a rejected one),
 ``correct`` (an approved one).
@@ -68,6 +69,7 @@ from ap_coder.web.core import (
 )
 from ap_coder.web.files import download
 from ap_coder.web.identity import shown_path
+from ap_coder.web.pages.activity import timeline_items
 from ap_coder.web.pages.review import attention, filter_queue, sort_queue
 
 router = APIRouter()
@@ -123,23 +125,14 @@ def _all_drafts(request: Request) -> list[dict[int, dict[str, Any]]]:
         return [state.invoice_drafts, *state.person_drafts.values()]
 
 
-def _my_key(request: Request) -> tuple[str, ...] | None:
-    """Whose drafts: this computer's (None), a colleague's on the office network, or a user's (``web/access.py``)."""
-    return person_key(request)
-
-
 def _drafts(request: Request) -> dict[int, dict[str, Any]]:
     """The edits of the person asking: this computer's, or a colleague's on the office network."""
     _all_drafts(request)
-    key = _my_key(request)
+    key = person_key()  # None: this computer's own person (web/access.py)
     if key is None:
         return _holder(request).invoice_drafts
     with _drafts_lock:
         return _holder(request).person_drafts.setdefault(key, {})
-
-
-def _draft_key(found: identity.Person) -> tuple[str, str]:
-    return key_of(found)  # server mode: the account's; on the office network the colleague's name and browser
 
 
 def rename_drafts(request: Request, found: identity.Person, now: identity.Person) -> None:
@@ -148,14 +141,14 @@ def rename_drafts(request: Request, found: identity.Person, now: identity.Person
     _all_drafts(request)
     everyone = _holder(request).person_drafts
     with _drafts_lock:
-        kept = everyone.pop(_draft_key(found), None) if _draft_key(found) != _draft_key(now) else None
+        kept = everyone.pop(key_of(found), None) if key_of(found) != key_of(now) else None
         if kept:
-            everyone.setdefault(_draft_key(now), {}).update(kept)
+            everyone.setdefault(key_of(now), {}).update(kept)
     if kept:
         store = get_store(request)
-        store.drop_invoice_drafts(person=_person(_draft_key(found)))
+        store.drop_invoice_drafts(person=_person(key_of(found)))
         for invoice_id, draft in kept.items():
-            store.save_invoice_draft(invoice_id, _person(_draft_key(now)), draft)
+            store.save_invoice_draft(invoice_id, _person(key_of(now)), draft)
 
 
 def unsaved_edits(request: Request) -> set[int]:
@@ -167,7 +160,7 @@ def unsaved_edits(request: Request) -> set[int]:
 def forget_draft(request: Request, invoice_id: int) -> None:
     """Drop the edits of the person asking (Start over)."""
     _drafts(request).pop(invoice_id, None)
-    get_store(request).drop_invoice_drafts(invoice_id, _person(_my_key(request)))
+    get_store(request).drop_invoice_drafts(invoice_id, _person(person_key()))
 
 
 def forget_everyones_draft(request: Request, invoice_id: int) -> None:
@@ -229,7 +222,7 @@ def _keep_draft(request: Request, invoice_id: int, draft: view.Draft, keep: bool
         at = before["saved_at"] if same and before.get("saved_at") else dt.datetime.now().isoformat(timespec="minutes")
         kept = {**edits, "saved_at": at, **({"check": check} if check is not None else {})}
         _drafts(request)[invoice_id] = kept
-        get_store(request).save_invoice_draft(invoice_id, _person(_my_key(request)), kept)
+        get_store(request).save_invoice_draft(invoice_id, _person(person_key()), kept)
     elif invoice_id in _drafts(request):
         forget_draft(request, invoice_id)
 
@@ -325,16 +318,8 @@ NOTE_ACTIONS = ("note", "parked", "sent_back")  # what the notes card lists
 
 
 def history(events: list[dict[str, Any]]) -> list[dict[str, str]]:
-    """Audit events as timeline items (``ui.timeline``), newest first."""
-    from ap_coder.core.audit import ACTIONS, describe
-
-    items = []
-    for e in events:
-        icon_name, tone, label = ACTIONS.get(e["action"], ("circle", "gray", e["action"]))
-        when = f"{ui.time_ago(e['created_at'])} · {e['created_at'].replace('T', ' ')[:16]}"
-        items.append({"icon": icon_name, "tone": tone, "title": label, "text": describe(e),
-                      "who": e.get("actor") or "", "when": when})  # fmt: skip
-    return items
+    """The invoice's audit events as timeline items (``ui.timeline``), newest first, as Activity draws them."""
+    return timeline_items(events, with_invoice=False)
 
 
 def _lesson_hints(store: Store, inv: dict[str, Any]) -> list[str]:
@@ -678,11 +663,16 @@ def page_picture(request: Request, invoice_id: int, number: int, scale: str = "1
 
 @router.get("/review/{invoice_id:int}/words")
 def page_words(request: Request, invoice_id: int) -> JSONResponse:
+    """The words on the invoice's pages, to teach a field by clicking them (``document.page_words``)."""
     inv = _invoice(get_store(request), invoice_id)
+    if not Path(inv.get("source_path") or "").is_file():  # its name alone to a colleague (B-979, B-1403)
+        gone = f"This invoice's file is no longer at {shown_path(inv.get('source_path'))}."
+        return JSONResponse({"ok": False, "error": gone, "words": []})
     try:
         words = document.page_words(inv["source_path"])
     except Exception as exc:  # noqa: BLE001 - no OCR on this computer, a damaged file...
-        return JSONResponse({"ok": False, "error": f"The words on the page can't be read here ({exc}).",
+        said = identity.without_folders(str(exc))
+        return JSONResponse({"ok": False, "error": f"The words on the page can't be read here ({said}).",
                              "words": []})  # fmt: skip
     return JSONResponse({"ok": True, "words": words})
 
@@ -706,16 +696,19 @@ def reader_progress(request: Request, invoice_id: int) -> JSONResponse:
 @router.get("/review/{invoice_id:int}/approved.pdf")
 def approved_pdf(request: Request, invoice_id: int) -> Response:
     store = get_store(request)
-    inv = _invoice(store, invoice_id)
+    return approved_pdf_download(store, _invoice(store, invoice_id))
+
+
+def approved_pdf_download(store: Store, inv: dict[str, Any]) -> Response:
+    """The approved invoice with its APPROVED stamp and coding page, as a download (here and from the invoice
+    directory); 409 for one not fully approved (never before the second approval)."""
+    if not stamp.can_stamp(inv):
+        raise HTTPException(status_code=409, detail="No longer fully approved: no approved PDF.")
     reference = reference_or_none(store)
     names = {row[reference.chart_of_accounts.key_column]: row.get("description", "")
              for row in reference.chart_of_accounts.rows} if reference is not None else {}  # fmt: skip
-    try:
-        pdf = stamp.stamped_pdf(inv, names, store.tax_treatments())
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
     # (files.download: a vendor named "Bœuf" is not Latin-1, the only characters a plain filename= header takes)
-    return download(pdf, stamp.file_name(inv), "application/pdf")
+    return download(stamp.stamped_pdf(inv, names, store.tax_treatments()), stamp.file_name(inv), "application/pdf")
 
 
 # --- Checking the edits ---------------------------------------------------------------------------------------------
@@ -1042,6 +1035,8 @@ async def split(request: Request, invoice_id: int) -> JSONResponse:
     """Split one line across several GL accounts / cost centers by percentage (shared costs)."""
     store = get_store(request)
     inv = _invoice(store, invoice_id)
+    if inv["status"] != REVIEW:  # approved in another tab meanwhile: no draft is kept for it (B-1402)
+        return refuse("This invoice is no longer in the review queue: reload the page.", 409)
     reference = _reference(store)
     form, draft = await _posted(request, inv)
     number = view._line_number(form.get("split_line"))

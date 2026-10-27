@@ -36,7 +36,7 @@ from ap_coder.web.core import (
     short_path,
     stale_page,
 )
-from ap_coder.web.files import SheetError, download, drop_upload, read_upload, receive_sheet, sheet_context
+from ap_coder.web.files import NO_ROWS, SheetError, download, drop_upload, read_upload, receive_sheet, sheet_context
 from ap_coder.web.pages.process import tax_types_mapped
 
 router = APIRouter()
@@ -99,7 +99,7 @@ def account_context(store: Store, table: str, file: str, sheet: str) -> dict[str
         try:
             upload, df, sheets = read_upload(file, sheet or None)
             if df.empty:
-                imp_error = "This file has no rows under its header line."
+                imp_error = NO_ROWS
             columns = list(df.columns)
             guessed = {
                 "code": guess(columns, _CODE_HINTS) or (columns[0] if columns else ""),
@@ -268,7 +268,7 @@ def bank_context(store: Store, gl: list[dict[str, Any]], file: str, sheet: str) 
         try:
             upload, df, sheets = read_upload(file, sheet or None)
             if df.empty:
-                imp_error = "This file has no rows under its header line."
+                imp_error = NO_ROWS
             guessed = banks.columns_for([str(c) for c in df.columns])
             imp = sheet_context(file, upload, df, sheets, sheet, banks.IMPORT_FIELDS, guessed, ("code", "currency"))
         except SheetError as exc:
@@ -307,7 +307,7 @@ async def bank_import(request: Request) -> JSONResponse:
     except SheetError as exc:
         return refuse(str(exc))
     if df.empty:
-        return refuse("This file has no rows under its header line.")
+        return refuse(NO_ROWS)
     columns = list(df.columns)
     picked = {f: str(form.get(f"col_{f}") or "") for f in banks.IMPORT_FIELDS}
     picked = {f: c for f, c in picked.items() if c in columns}
@@ -393,7 +393,7 @@ async def accounts_import(request: Request, table: str) -> JSONResponse:
     except SheetError as exc:
         return refuse(str(exc))
     if df.empty:
-        return refuse("This file has no rows under its header line.")
+        return refuse(NO_ROWS)
     columns = list(df.columns)
     picked = {f: str(form.get(f"col_{f}") or "") for f in import_fields(table)}
     picked = {f: c if c in columns else "" for f, c in picked.items()}

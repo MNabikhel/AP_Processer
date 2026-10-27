@@ -1,4 +1,9 @@
-"""Only this computer, and only AP Coder's own pages.
+"""Only this computer (or the server's own names), and only AP Coder's own pages; on the server, its security
+headers, request sizes and access log.
+
+* ``LocalOnly`` (ASGI): the two guards below. ``SecurityHeaders`` (ASGI): what the browser may do with a page (D-99).
+* ``limit_body``: a request's body read up to its limit, no further (D-109; the ``Identity`` middleware sets it).
+* ``AccessLog`` (ASGI, server mode): a line per request in ``logs/access.log``, each download an event (D-109).
 
 Two guards sit in front of every page, as in CloseDesk:
 
@@ -179,7 +184,7 @@ class LocalOnly:
 
 # --- Security headers (D-99) --------------------------------------------------------------------------------------
 
-# Scripts only from AP Coder's own files (no inline script runs: tests/test_server_https.py checks the templates);
+# Scripts only from AP Coder's own files (no inline script runs: tests/web/test_server_https.py checks the templates);
 # inline styles are allowed, as the pages set a bar's width or a column's size in style="...". Nothing is loaded from
 # another site, and no other site may show AP Coder in a frame.
 CONTENT_SECURITY_POLICY = (

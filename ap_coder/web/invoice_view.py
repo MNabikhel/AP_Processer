@@ -9,6 +9,14 @@
 * The grid actions (split a line, the coding rules, the PO's coding, a suggested GL account) return new grid rows.
 
 The store calls and the rules for what may be approved and what is learned are the store's and the pipeline's own.
+
+The file, in order (each part under its ``# ---`` heading): the form (``Draft``, what the server fills in:
+``settle_header``, the words taught on the page), labels and choices for codes (``grid``, ``tax_choices``), what
+was read from the page (``capture_of``, ``shown_sure``), OvisOCR2 and the AI reviewer for this invoice
+(``reader_state``, ``reviewer_state``), the checks as the screen says them (``checks_summary``, ``learn_text``),
+the sections (``summary``, ``po_section``, ``tax_check``, ``distribution``), the analysis (``analyse``), dates,
+currency and what is never approved anyway (``settle_dates``, ``HARD_CODES``, ``ordered_blockers``), and the grid
+actions.
 """
 
 from __future__ import annotations
@@ -61,7 +69,7 @@ from ap_coder.coding.tax import (
     province_label,
     stored_supply,
 )
-from ap_coder.coding.taxmath import math_check  # noqa: F401 - the review screen's math, shown with the tax lines
+from ap_coder.coding.taxmath import math_check
 from ap_coder.coding.terms import describe as terms_describe
 from ap_coder.coding.terms import payment
 from ap_coder.core.config import Settings
@@ -598,8 +606,9 @@ def cc_display(code: str | None) -> str:
     return NEEDS_CC if code == UNASSIGNED else (code or "")
 
 
-def gl_name(reference: ReferenceData, code: str) -> str:
-    row = reference.chart_of_accounts.get(code)
+def gl_name(reference: ReferenceData | None, code: str) -> str:
+    """A GL account's short name ("" for a code not in the list, or before any list is imported)."""
+    row = reference.chart_of_accounts.get(code) if reference is not None else None
     return short_name((row or {}).get("description", "")) if row else ""
 
 
@@ -1075,9 +1084,14 @@ GOTO_BOX = {
 
 
 def confidence_pct(value: float, threshold: float) -> str:
-    from ap_coder.web.pages.review import confidence_pct as pct
-
-    return pct(value, threshold)
+    """The invoice's confidence as a percentage, rounded the usual way, so the screen, the queue and the messages
+    agree. Where that rounding would mislead (84.9% shown as the 85% threshold it is below, or 99.6% as certainty) it
+    keeps one decimal, rounded down."""
+    value = max(0.0, min(1.0, value or 0.0))
+    whole = int(f"{value * 100:.0f}")
+    if (value < threshold and whole >= int(f"{threshold * 100:.0f}")) or (value < 1 and whole >= 100):
+        return f"{math.floor(value * 1000 + 1e-9) / 10:.1f}%"
+    return f"{whole}%"
 
 
 METER_ABOUT = {
@@ -1562,7 +1576,7 @@ def distribution(output: dict[str, Any], reference: ReferenceData | None, js: An
             "account": account,
             "kind": "Tax" if e["kind"] == "tax" else f"Line {e['line_number']}",
             "gl": gl_display(e["gl_code"]) if e["gl_code"] else "⚠ not mapped",
-            "gl_name": gl_name(reference, e["gl_code"]) if reference is not None else "",
+            "gl_name": gl_name(reference, e["gl_code"]),
             "todo": e["gl_code"] in (UNASSIGNED, ""),
             "cc": cc_display(e.get("cost_center")),
             "description": e.get("description") or "",

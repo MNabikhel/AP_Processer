@@ -278,9 +278,11 @@ def page_words(path: str | Path) -> list[list[dict[str, Any]]]:
                     row.append({"t": text, "b": [r.x0 / w, r.y0 / h, r.x1 / w, r.y1 / h]})
                 words.append(row)
     if not any(words):
-        from ap_coder.capture.layout import build_layout
+        from ap_coder.capture.layout import build_layout, ocr_cache
+        from ap_coder.core.paths import private_dir
 
-        layout = build_layout(p)
+        with ocr_cache(private_dir() / ".cache" / "ocr"):  # the OCR kept when the invoice came in (B-1409)
+            layout = build_layout(p)
         words = [
             [{"t": w.text, "b": [w.box.x0, w.box.y0, w.box.x1, w.box.y1]} for w in pg.words] for pg in layout.pages
         ]

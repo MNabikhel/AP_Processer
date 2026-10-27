@@ -1,5 +1,5 @@
 """The reports, lists and search as they were computed before the invoices' summary (D-110, schema 18): every
-invoice read and decoded on each call. ``tests/test_invoice_summary.py`` checks the summary's results against these,
+invoice read and decoded on each call. ``tests/erp/test_invoice_summary.py`` checks the summary's results against these,
 on realistic data; the bodies are the old code as it was (only renamed, and pointed at the old queries below)."""
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ import statistics
 from collections import Counter, defaultdict
 from typing import Any
 
-from ap_coder.coding.bulk import _audit_pick, _credit_note, _needs_a_person, issues_today
+from ap_coder.coding.bulk import _audit_pick, _credit_note, issues_today, needs_a_person
 from ap_coder.coding.taxreturn import (
     DEFAULT_TREATMENTS,
     FOREIGN,
@@ -589,7 +589,7 @@ def bulk_sort_for_bulk(
             left[inv["id"]] = "credit note"
         elif inv["id"] in audited:
             left[inv["id"]] = "audit"
-        elif any(_needs_a_person(i.get("severity"), i.get("code")) for i in issues):
+        elif any(needs_a_person(i.get("severity"), i.get("code")) for i in issues):
             left[inv["id"]] = "warning"
         else:
             candidates.append(inv)

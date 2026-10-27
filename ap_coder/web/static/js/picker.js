@@ -28,7 +28,7 @@
 const LIGATURES = { "œ": "oe", "Œ": "OE", "æ": "ae", "Æ": "AE", "ß": "ss", "ø": "o", "Ø": "O", "ł": "l" };
 
 /** Lower case, without accents and ligatures: "Hydro-Québec" and "hydro-quebec" read the same. invoice.js vendorKey
-    builds on it: keep it in step with memory.py (tests/test_web_invoice.py compares the vendor keys). */
+    builds on it: keep it in step with memory.py (tests/web/test_web_invoice.py compares the vendor keys). */
 export function fold(text) {
   return (text || "")
     .replace(/[œŒæÆßøØł]/g, (c) => LIGATURES[c])

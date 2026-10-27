@@ -82,8 +82,9 @@ SYSTEM = (
 )
 
 
-def schema(fields: list[str], lines: list[int]) -> dict[str, Any]:
-    """The answer's JSON schema: one entry per field and per line asked about, then confident and a summary."""
+def schema(fields: list[str]) -> dict[str, Any]:
+    """The answer's JSON schema: an entry per field asked about (``fields``) and per line, then confident and a
+    summary."""
     field = {"type": "object", "additionalProperties": False, "required": ["field", "agree", "on_page", "reason"],
              "properties": {"field": {"type": "string", "enum": fields or list(FIELDS)}, "agree": {"type": "boolean"},
                             "on_page": {"type": ["string", "null"]}, "reason": {"type": "string"}}}  # fmt: skip
@@ -354,7 +355,7 @@ def ask_model(coder: Any, images: list[Any], *, seconds_left: Callable[[], float
         content += [{"type": "image_url", "image_url": {"url": img.to_data_url(), "detail": "high"}} for img in images]
         messages = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content}]
         timeout = max(MIN_CALL_SECONDS, float(seconds_left())) if seconds_left is not None else None
-        response = coder._local_create(model, messages, schema(fields, lines), thinking=True, timeout=timeout)
+        response = coder._local_create(model, messages, schema(fields), thinking=True, timeout=timeout)
         # Strict: a draft in its thinking is not its answer (an answer that can approve an invoice).
         reply = local_llm.read_reply(response.choices[0], response_limit(coder), strict=True)
         if reply.data is None:
@@ -428,7 +429,7 @@ class Plan:
     hold: bool = False
 
 
-def prepare(store: Any, invoice_id: int | None, autonomy: dict[str, Any] | None = None) -> Plan:
+def prepare(store: Any, autonomy: dict[str, Any] | None = None) -> Plan:
     """Before the touchless decision: with the reviewer on, every invoice is put in line and waits for it; with its
     scope "touchless" (D-111), only one touchless processing passed (``autonomy``), which waits for it; the others
     go to a person anyway (one read again by the page reader is asked again then). Never raises."""

@@ -1,9 +1,10 @@
-"""Component 1 - Extraction layer (Azure AI Document Intelligence).
+"""The document's text as the coding reads it (:class:`ExtractionResult`), and which files are invoices.
 
-Runs ``prebuilt-layout`` or ``prebuilt-invoice`` with Markdown output, which
-preserves reading order and renders multi-page tables as HTML ``<table>``
-blocks, then condenses the result into an :class:`ExtractionResult` that the
-inference layer can consume.
+Read on this computer, a PDF or picture's text comes from capture (``offline_coder.local_extraction``) and a .md or
+.txt invoice is read as it is (``result_from_text``). With the internet allowed and an endpoint set,
+``DocumentExtractor`` runs Azure Document Intelligence's ``prebuilt-layout`` or ``prebuilt-invoice`` with Markdown
+output (reading order kept, multi-page tables as HTML ``<table>`` blocks), its results cached by file. The file
+kinds: ``DOCUMENT_EXTENSIONS``, ``TEXT_EXTENSIONS``, ``SUPPORTED_EXTENSIONS``.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from ..core.config import DocumentIntelligenceSettings
+from .figures import PAGE_BREAK
 
 log = logging.getLogger(__name__)
 
@@ -173,7 +175,7 @@ def result_from_text(path: str | Path) -> ExtractionResult:
         source=str(path),
         model_id="pre-extracted",
         content=content,
-        page_count=max(1, content.count("<!-- PageBreak -->") + 1),
+        page_count=max(1, content.count(PAGE_BREAK) + 1),
         table_count=content.count("<table"),
     )
 

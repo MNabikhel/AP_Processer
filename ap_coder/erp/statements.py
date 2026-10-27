@@ -9,6 +9,8 @@ the invoices AP Coder holds for that vendor, by invoice number (compared the way
 * not received: on the statement but not in AP Coder (ask the vendor for a copy)
 * not on statement: in AP Coder for the statement period but not on the statement
 * payment / credit: without a number, or with an invoice's number and the opposite sign: shown for information
+
+Entry points: ``map_columns``, ``reconcile`` (a ``Reconciliation``) and ``to_csv``.
 """
 
 from __future__ import annotations
@@ -128,10 +130,6 @@ class Reconciliation:
     def total(self, status: str) -> float:
         return round(sum((li.statement_amount or li.ap_amount or 0) for li in self.lines if li.status == status), 2)
 
-    @property
-    def statement_total(self) -> float:
-        return round(sum(li.statement_amount or 0 for li in self.lines if li.status != NOT_ON_STATEMENT), 2)
-
 
 def reconcile(records: list[dict[str, Any]], columns: dict[str, str], invoices: list[dict[str, Any]]) -> Reconciliation:
     """``records``: statement rows; ``columns``: ``map_columns`` output (number and amount or balance needed);
@@ -192,7 +190,9 @@ def reconcile(records: list[dict[str, Any]], columns: dict[str, str], invoices: 
         if not candidates:
             result.lines.append(Line(NOT_RECEIVED, raw_number, date, amount))
             continue
-        same = [i for i in candidates if amount is not None and abs((i["grand_total"] or 0) - amount) <= TOLERANCE]
+        # (a float a hair over the cent is still the cent: 100.01 - 100.00 is 0.010000000000005116, B-1371)
+        same = [i for i in candidates
+                if amount is not None and abs((i["grand_total"] or 0) - amount) <= TOLERANCE + 1e-9]  # fmt: skip
         inv = (same or candidates)[0]
         seen.add(inv["id"])
         status = MATCHED if same else DIFFERS
@@ -233,4 +233,4 @@ def to_csv(rec: Reconciliation) -> bytes:
             "" if li.difference is None else f"{li.difference:.2f}",
             li.invoice_id or "", li.ap_status, li.note,
         ]))  # fmt: skip
-    return ("﻿" + out.getvalue()).encode("utf-8")
+    return ("\ufeff" + out.getvalue()).encode("utf-8")
