@@ -203,7 +203,7 @@ the last B- line (`grep -o "B-[0-9]*" docs/BUGS.md | tail -1`).
 - **B-112** · Plain Enter in a review field approves the invoice · medium · tests/test_web_invoice.py::test_in_a_browser_enter_in_a_review_field_never_approves
 - **B-113** · A refused export says "The page is refreshed", and the button's count freezes · low · tests/test_web_finance.py::test_an_export_refused_as_exported_meanwhile_refreshes_the_page, tests/test_web_invoice.py::test_in_a_browser_a_refused_export_reloads_and_the_count_follows_the_ticks
 - **B-114** · An edit typed just before Back is lost · low · tests/test_web_invoice.py::test_in_a_browser_an_edit_typed_just_before_leaving_is_kept
-- **B-115** · Alt+←/→ in a text box jumps to another invoice · low · tests/test_web_invoice.py::test_in_a_browser_alt_arrows_in_a_text_box_stay_on_the_invoice
+- **B-115** · Alt+←/→ in a text box jumps to another invoice · low · tests/test_web_invoice.py::test_in_a_browser_alt_arrows_in_a_text_box_stay_on_the_invoice_only_on_a_mac
 
 ### Intake, CLI and launch
 
@@ -213,19 +213,19 @@ the last B- line (`grep -o "B-[0-9]*" docs/BUGS.md | tail -1`).
 
 ### Codebase map tooling and CI
 
-- **B-118** · Interface names pass when they exist anywhere · medium · tests/test_check_map.py::test_an_interface_name_must_be_in_the_module_or_file_it_names, tests/test_check_map.py::test_a_name_in_a_folder_without_code_must_exist_somewhere
-- **B-119** · A source file with a byte-order mark crashes the map checker · low-medium · tests/test_check_map.py::test_a_source_file_with_a_byte_order_mark_is_read_like_python_reads_it
-- **B-120** · `--changed` passes over a base git can't compare with · low · tests/test_check_map.py::test_a_base_git_cannot_compare_with_is_said_not_passed_over
-- **B-121** · A new file not yet added to git is invisible to the map checker · low · tests/test_check_map.py::test_a_new_module_counts_before_it_is_added_to_git
-- **B-122** · The map checker crashes on a deleted file, a list as hook input, or no base · low · tests/test_check_map.py::test_a_new_module_counts_before_it_is_added_to_git, tests/test_check_map.py::test_the_hook_reminds_of_the_folder_map_and_never_blocks, tests/test_check_map.py::test_a_base_git_cannot_compare_with_is_said_not_passed_over
-- **B-123** · The hook never reminds of an edit in an agent's worktree · low · tests/test_check_map.py::test_the_hook_reminds_of_an_edit_in_an_agents_worktree_too
+- **B-118** · Interface names pass when they exist anywhere · medium · its tests went with the codebase map checker (removed in 3e4a8c7)
+- **B-119** · A source file with a byte-order mark crashes the map checker · low-medium · its tests went with the codebase map checker (removed in 3e4a8c7)
+- **B-120** · `--changed` passes over a base git can't compare with · low · its tests went with the codebase map checker (removed in 3e4a8c7)
+- **B-121** · A new file not yet added to git is invisible to the map checker · low · its tests went with the codebase map checker (removed in 3e4a8c7)
+- **B-122** · The map checker crashes on a deleted file, a list as hook input, or no base · low · its tests went with the codebase map checker (removed in 3e4a8c7)
+- **B-123** · The hook never reminds of an edit in an agent's worktree · low · its tests went with the codebase map checker (removed in 3e4a8c7)
 - **B-124** · The browser tests never ran in CI · medium · tests/test_ci_workflow.py::test_ci_runs_the_browser_tests_and_never_lets_them_skip
 - **B-125** · The phone-screen popover test read the position before the page placed it · low · tests/test_web_invoice.py::test_in_a_browser_the_popovers_open_inside_a_phone_screen
 - **B-126** · A Status filter with many statuses broke the invoice directory · low · tests/test_directory.py::test_a_status_filter_with_more_statuses_than_sqlite_takes_variables, tests/test_code_rules.py::test_no_sql_placeholders_are_made_one_per_item_of_a_list
 - **B-127** · The browser tests could not start in CI's browser job · medium · tests/test_ci_workflow.py::test_the_browser_is_looked_up_once_not_inside_a_running_playwright
 - **B-129** · A change made from the office network lost what it changed from · medium · tests/test_network_identity.py::test_a_colleagues_address_never_replaces_what_an_event_itself_records
 - **B-130** · Invoices a colleague processed in parallel were recorded as nobody's · low · tests/test_network_identity.py::test_invoices_read_in_parallel_keep_the_colleague_who_started_them
-- **B-131** · On Windows, a commit after `cd C:\path` passed the review gate unchecked · low · tests/test_map_review_gate.py::test_a_windows_path_keeps_its_backslashes
+- **B-131** · On Windows, a commit after `cd C:\path` passed the review gate unchecked · low · its tests went with the codebase map checker (removed in 3e4a8c7)
 
 ### Not reproduced or left as they are
 
@@ -629,7 +629,7 @@ the last B- line (`grep -o "B-[0-9]*" docs/BUGS.md | tail -1`).
 - **B-434** · "Pick a GL account for line 1…" said what to do but not where · medium · tests/test_web_pilot_walkthrough.py::test_the_pick_hint_is_a_button_to_the_line_that_needs_it, tests/test_web_pilot_walkthrough.py::test_in_a_browser_approve_stays_at_the_right_while_a_line_needs_an_account
 - **B-435** · The form's field labels said "97%" or "check", never Verified or Likely · medium · tests/test_web_pilot_walkthrough.py::test_each_field_says_how_sure_it_is_in_words
 - **B-436** · On a wide screen the queue cut the reason an invoice needs attention · low · tests/test_web_pilot_walkthrough.py::test_in_a_browser_the_queue_gives_the_reason_room_on_a_wide_screen
-- **B-437** · Nothing asked where invoices are delivered: "Province of supply unknown" on most invoices · medium · tests/test_web_pilot_walkthrough.py::test_getting_started_asks_for_your_province_without_counting_it
+- **B-437** · Nothing asked where invoices are delivered: "Province of supply unknown" on most invoices · medium · tests/test_web_pilot_walkthrough.py::test_getting_started_asks_for_your_province_and_counts_it
 - **B-438** · "about 34 more clean invoices to go touchless": jargon after every approval · low-medium · tests/test_web_pilot_walkthrough.py::test_the_way_to_skipping_review_is_said_in_plain_words
 - **B-439** · A notes file uploaded by mistake became an invoice from "hello" · low · tests/test_web_pilot_walkthrough.py::test_a_text_file_without_amounts_is_not_read_as_an_invoice
 - **B-440** · Report a problem took 3 s the first time with nothing on the screen · low · tests/test_web_pilot_walkthrough.py::test_in_a_browser_report_a_problem_shows_it_is_working
@@ -667,7 +667,7 @@ the last B- line (`grep -o "B-[0-9]*" docs/BUGS.md | tail -1`).
 ### Before testing: review screen and coding
 
 - **B-463** · With LM Studio chosen but not running, an account's name was put in the line as if learned · high · tests/test_trust_review.py::test_with_lm_studio_chosen_but_not_answering_a_weak_match_is_left_blank, ::test_the_chat_models_answer_is_a_guess_and_says_how_it_compares_with_the_weak_match, ::test_a_kept_guess_is_the_reviewers_coding_not_coded_as_suggested, ::test_the_review_screen_marks_a_guess_and_does_not_call_it_as_suggested
-- **B-466** · Month-end accrued guesses, mixed CAD and USD rows, and said "already in the ERP" with nothing imported · medium · tests/test_trust_review.py::test_month_end_accrues_an_unapproved_invoice_as_proposed_and_never_on_a_guess, ::test_month_end_lists_an_invoice_dated_over_a_year_back_instead_of_accruing_it, ::test_month_end_groups_an_account_in_two_currencies_on_one_row, ::test_month_end_with_nothing_imported_says_so
+- **B-466** · Month-end accrued guesses, mixed CAD and USD rows, and said "already in the ERP" with nothing imported · medium · tests/test_trust_review.py::test_month_end_accrues_an_unapproved_invoice_as_proposed_and_never_on_a_guess, ::test_month_end_flags_an_invoice_dated_over_a_year_back_and_lists_one_with_no_date, ::test_month_end_groups_an_account_in_two_currencies_on_one_row, ::test_month_end_with_nothing_imported_says_so
 - **B-464** · The checks spoke the code's language: "invoice_number is empty", VENDOR_NEW, UNASSIGNED · medium · tests/test_trust_review.py::test_the_checks_say_what_is_missing_in_plain_words_and_keep_their_codes_for_a_hover, ::test_a_lesson_on_a_blank_account_reads_left_blank_not_unassigned, tests/test_table_reading.py
 - **B-465** · What kept Approve closed was "Worth a look", not counted in "N must be fixed" · medium · tests/test_trust_review.py::test_what_keeps_approve_closed_is_its_own_group_before_the_errors_and_warnings
 - **B-467** · At 1366 × 768 the review screen showed 150–200 px of the invoice and the lines 1,200 px down · high · tests/test_web_pilot_walkthrough.py::test_in_a_browser_at_1366_the_page_and_the_line_grid_show_together, ::test_with_lm_studio_off_the_review_screen_says_it_once
