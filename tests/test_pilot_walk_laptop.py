@@ -14,9 +14,9 @@ from ap_coder.erp import jde
 
 from .test_pilot_score import pilot
 from .test_web_invoice import PAGE, check
-from .test_web_review_signoff import _jde_on, client, demo_db, me, store
+from .test_web_review_signoff import _jde_on, demo_db, me, store
 
-__all__ = ["client", "demo_db", "me", "pilot", "store"]  # the fixtures, shared
+__all__ = ["demo_db", "me", "pilot", "store"]  # the fixtures, shared
 
 
 def _plain(html: str) -> str:

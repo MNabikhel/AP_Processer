@@ -8,17 +8,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ap_coder.core.config import Settings
-from ap_coder.core.store import REVIEW, Store
+from ap_coder.core.store import REVIEW
 from ap_coder.web.app import create_app
 
 from .conftest import fill_from
 
 PAGE = {"X-AP-Coder": "1"}
-
-
-@pytest.fixture
-def store(tmp_path):
-    return Store(tmp_path / "private" / "ap_coder.db")
 
 
 @pytest.fixture(autouse=True)

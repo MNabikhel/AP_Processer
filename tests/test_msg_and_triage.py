@@ -10,7 +10,6 @@ import json
 import time
 from email.message import EmailMessage
 
-import pymupdf
 import pytest
 
 from ap_coder.bench.msgwriter import Attachment, Message, build_msg
@@ -19,16 +18,8 @@ from ap_coder.intake import inbox, triage
 from ap_coder.intake.mailbox import PERSON_FOLDER, STATEMENTS_FOLDER, read_msg_mail, triage_log, unpack, unpack_folder
 from ap_coder.intake.msgfile import MsgError, read_msg
 
+from .pdfs import pdf_bytes as _pdf
 from .webclient import client_for, follow, post
-
-
-def _pdf(*lines: str) -> bytes:
-    doc = pymupdf.open()
-    page = doc.new_page()
-    for n, line in enumerate(lines):
-        page.insert_text((50, 60 + 16 * n), line, fontsize=10)
-    return doc.tobytes()
-
 
 INVOICE = _pdf("Northwind Supplies", "INVOICE", "Invoice No. INV-4471", "Subtotal 100.00", "GST 5.00", "Total 105.00")
 STATEMENT = _pdf("Northwind Supplies", "STATEMENT OF ACCOUNT", "Invoice INV-4471 105.00", "Invoice INV-4502 88.10",

@@ -5,8 +5,6 @@ are then that person's, and this computer's own browser works as before."""
 
 from __future__ import annotations
 
-import shutil
-
 import pytest
 from fastapi.testclient import TestClient
 
@@ -14,6 +12,7 @@ from ap_coder.core.store import APPROVED, PENDING, REVIEW, Store
 from ap_coder.web import identity
 from ap_coder.web.app import create_app
 
+from .conftest import copy_database
 from .webclient import PAGE, web_settings
 
 
@@ -25,10 +24,7 @@ def demo_db(demo_template):
 
 @pytest.fixture
 def store(demo_db, tmp_path):
-    target = tmp_path / "private" / "ap_coder.db"
-    target.parent.mkdir(parents=True)
-    shutil.copy(demo_db, target)
-    return Store(target)
+    return copy_database(demo_db, tmp_path / "private" / "ap_coder.db")
 
 
 @pytest.fixture

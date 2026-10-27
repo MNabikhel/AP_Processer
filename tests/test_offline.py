@@ -4,8 +4,6 @@ without them), the launchers and the offline bundle are put together as the pilo
 from __future__ import annotations
 
 import hashlib
-import importlib
-import importlib.util
 import ipaddress
 import json
 import os
@@ -23,13 +21,11 @@ from ap_coder.core.store import APPROVED, Store
 from ap_coder.ops import cli, offline
 
 from .conftest import ROOT, SAMPLE_STEM, SAMPLES
+from .scripts import load_script
 
 
 def _script(name: str):
-    spec = importlib.util.spec_from_file_location(f"ap_script_{name}", ROOT / "scripts" / f"{name}.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module  # its dataclasses look themselves up there
-    spec.loader.exec_module(module)
+    module = load_script(name, f"ap_script_{name}")  # its dataclasses look themselves up there
     return module
 
 

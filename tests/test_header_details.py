@@ -13,7 +13,7 @@ from ap_coder.core.schema import FROM_VENDOR_LIST
 from ap_coder.core.store import APPROVED, REVIEW, Store
 from ap_coder.web import invoice_view as view
 
-from .test_web_invoice import PAGE, _open_review, browser, check, client, demo_db, form_of, me, store  # noqa: F401
+from .test_web_invoice import PAGE, _open_review, browser, check, demo_db, form_of, me, store  # noqa: F401
 from .test_web_pilot_walkthrough import LAPTOP
 
 GST, QST, PST = "gst_hst_registration_number", "qst_registration_number", "pst_registration_number"

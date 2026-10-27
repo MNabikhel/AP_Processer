@@ -5,7 +5,6 @@ when it can't); code switched on to use Azure says so plainly when they are miss
 from __future__ import annotations
 
 import dataclasses
-import importlib.util
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,6 +15,8 @@ from ap_coder.ai import extraction, inference
 from ap_coder.core.config import DocumentIntelligenceSettings, Settings
 from ap_coder.ops import doctor
 from ap_coder.ops.offline import AZURE_UNAVAILABLE
+
+from .scripts import load_script
 
 ROOT = Path(__file__).resolve().parent.parent
 AZURE_PACKAGES = ("azure-ai-documentintelligence", "azure-identity")
@@ -71,10 +72,7 @@ def test_the_offline_bundle_carries_azure_as_an_optional_download():
 
 
 def _launcher(tmp_path, monkeypatch):
-    spec = importlib.util.spec_from_file_location("ap_script_launch_azure", ROOT / "scripts" / "launch.py")
-    launch = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = launch
-    spec.loader.exec_module(launch)
+    launch = load_script("launch", "ap_script_launch_azure")
     monkeypatch.setattr(launch, "ROOT", tmp_path)
     monkeypatch.setattr(launch, "fingerprint", lambda: "v2")
     monkeypatch.setattr(launch.check_deps, "problem", lambda r: "Missing" if r.startswith("azure") else "")

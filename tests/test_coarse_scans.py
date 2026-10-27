@@ -5,7 +5,6 @@ some wrong ones shown as verified). And a label OCR misread is never taken for a
 from __future__ import annotations
 
 import io
-from pathlib import Path
 
 import pymupdf
 import pytest
@@ -13,6 +12,8 @@ from PIL import Image
 
 from ap_coder.capture import analyze, layout
 from ap_coder.capture.types import CHECK, DocLayout, PageLayout
+
+from .pdfs import text_pdf as _pdf
 
 LINES = ["ACME SUPPLY LTD", "INVOICE", "Invoice No: A-1001", "Date: 2026-10-01", "Subtotal: 100.00", "GST 5%: 5.00",
          "Total: 105.00"]  # fmt: skip
@@ -57,16 +58,6 @@ def test_a_scans_resolution_is_its_pictures_own(tmp_path):
     phone = Image.new("L", (3024, 4032))
     phone.info["dpi"] = (72, 72)  # a phone's "72 dpi": a page 56 inches long, not believed
     assert layout._stated_dpi(phone) == 0.0
-
-
-def _pdf(tmp_path: Path, lines: list[tuple[float, float, str]]) -> Path:
-    doc = pymupdf.open()
-    page = doc.new_page(width=612, height=792)
-    for x, y, text in lines:
-        page.insert_text((x, y), text, fontsize=10)
-    path = tmp_path / "inv.pdf"
-    doc.save(path)
-    return path
 
 
 def test_a_label_ocr_misread_is_not_the_invoice_number(tmp_path):

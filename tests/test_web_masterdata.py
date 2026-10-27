@@ -6,22 +6,18 @@ the files the earlier dashboard gave; destructive actions ask first; text from f
 from __future__ import annotations
 
 import io
-from dataclasses import replace
 from pathlib import Path
 from urllib.parse import urlencode
 
 import openpyxl
 import pandas as pd
 import pytest
-from fastapi.testclient import TestClient
 
 from ap_coder.coding import po as po_mod
 from ap_coder.coding.rules import Rule
 from ap_coder.coding.vendors import ON_HOLD
-from ap_coder.core.config import Settings
 from ap_coder.core.safe import csv_cell
 from ap_coder.core.store import Store, load_sample_setup
-from ap_coder.web.app import create_app
 
 from .conftest import fill_from
 
@@ -39,18 +35,6 @@ MASTER_PAGES = [
     "/accounts?tab=rules",
     "/accounts?tab=bank",
 ]
-
-
-@pytest.fixture
-def store(tmp_path):
-    return Store(tmp_path / "private" / "ap_coder.db")
-
-
-@pytest.fixture
-def client(store):
-    s = Settings()
-    app = create_app(replace(s, llm=replace(s.llm, provider="off")), store, start_reader=False)
-    return TestClient(app, base_url="http://localhost")
 
 
 @pytest.fixture

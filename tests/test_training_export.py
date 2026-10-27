@@ -175,11 +175,6 @@ def test_cli_export_training(tmp_path, ground_truth, capsys):
 
 
 @pytest.fixture
-def store(tmp_path):
-    return Store(tmp_path / "private" / "ap_coder.db")
-
-
-@pytest.fixture
 def client(store, monkeypatch):
     from .webclient import client_for
 

@@ -11,23 +11,9 @@ from ap_coder.capture import analyze, build_layout, read_fields
 from ap_coder.capture.normalize import parse_dates
 from ap_coder.capture.types import MISSING, VERIFIED
 
+from .pdfs import text_pdf as _pdf
+
 TODAY = dt.date(2026, 10, 20)
-
-
-def _pdf(tmp_path: Path, items: list[tuple], name: str = "inv.pdf", pages: int = 1) -> Path:
-    """A PDF: (x, y, text), (x, y, text, font size) or (x, y, text, font size, page) in points from the top left."""
-    import pymupdf
-
-    doc = pymupdf.open()
-    for _ in range(pages):
-        doc.new_page(width=612, height=792)
-    for x, y, text, *more in items:
-        size = more[0] if more else 10
-        page = doc[more[1] - 1] if len(more) > 1 else doc[0]
-        page.insert_text((x, y), text, fontsize=size)
-    path = tmp_path / name
-    doc.save(path)
-    return path
 
 
 def _read(path: Path):

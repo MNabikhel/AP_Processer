@@ -16,9 +16,9 @@ from ap_coder.core.reference_data import UNASSIGNED
 from ap_coder.core.schema import InvoiceCoding
 
 from .test_web_invoice import check, form_of
-from .test_web_review_signoff import _id, _jde_on, client, demo_db, me, store
+from .test_web_review_signoff import _id, _jde_on, demo_db, me, store
 
-__all__ = ["client", "demo_db", "me", "store"]  # the fixtures, shared
+__all__ = ["demo_db", "me", "store"]  # the fixtures, shared
 
 
 # --- The Reading rises with the supplier's record ----------------------------------------------------------------

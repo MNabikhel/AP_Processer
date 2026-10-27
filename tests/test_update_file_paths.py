@@ -12,11 +12,9 @@ the dashboard finds a file that moved anyway (``Store.invoice_file``) or says pl
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
 import shutil
 import sqlite3
-import sys
 from pathlib import Path
 
 import pytest
@@ -25,6 +23,7 @@ from ap_coder.core import paths
 from ap_coder.core.store import Store
 
 from .conftest import SAMPLES
+from .scripts import load_script
 from .test_update import make_install
 from .webclient import client_for
 
@@ -37,10 +36,7 @@ SCAN = "redriver_MB_GST_RST_RRO-55821.pdf"  # a file elsewhere in the old folder
 
 @pytest.fixture
 def upgrade():
-    spec = importlib.util.spec_from_file_location("ap_script_upgrade_file_paths", ROOT / "scripts" / "upgrade.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    module = load_script("upgrade", "ap_script_upgrade_file_paths")
     return module
 
 

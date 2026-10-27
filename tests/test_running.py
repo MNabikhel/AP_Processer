@@ -5,7 +5,6 @@ versions never run on one database."""
 from __future__ import annotations
 
 import http.server
-import importlib.util
 import json
 import subprocess
 import sys
@@ -16,15 +15,14 @@ from pathlib import Path
 
 import pytest
 
+from .scripts import load_script
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture
 def running():
-    spec = importlib.util.spec_from_file_location("ap_script_running", ROOT / "scripts" / "running.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    module = load_script("running", "ap_script_running")
     return module
 
 

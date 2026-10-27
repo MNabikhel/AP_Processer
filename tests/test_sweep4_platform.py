@@ -13,7 +13,7 @@ from ap_coder.ai import local_llm
 from ap_coder.core.store import APPROVED, PENDING, Store
 from ap_coder.web.app import create_app
 
-from .conftest import next_second
+from .conftest import copy_database, next_second
 from .webclient import PAGE, add_clean, web_settings
 
 REAL_FETCH = local_llm._fetch_json  # conftest replaces it for every test (no real LM Studio)
@@ -27,10 +27,7 @@ def demo_db(demo_template):
 
 @pytest.fixture
 def store(demo_db, tmp_path):
-    target = tmp_path / "private" / "ap_coder.db"
-    target.parent.mkdir(parents=True)
-    shutil.copy(demo_db, target)
-    return Store(target)
+    return copy_database(demo_db, tmp_path / "private" / "ap_coder.db")
 
 
 def local(app) -> TestClient:

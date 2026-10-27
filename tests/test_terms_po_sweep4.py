@@ -14,20 +14,9 @@ from ap_coder.capture.reader import _terms
 from ap_coder.capture.types import VERIFIED
 from ap_coder.coding.terms import Terms, parse_terms
 
+from .pdfs import text_pdf as _pdf
+
 TODAY = dt.date(2026, 10, 20)
-
-
-def _pdf(tmp_path: Path, items: list[tuple], name: str = "inv.pdf") -> Path:
-    """A one-page PDF: (x, y, text) or (x, y, text, font size) in points from the top left."""
-    import pymupdf
-
-    doc = pymupdf.open()
-    page = doc.new_page(width=612, height=792)
-    for x, y, text, *size in items:
-        page.insert_text((x, y), text, fontsize=size[0] if size else 10)
-    path = tmp_path / name
-    doc.save(path)
-    return path
 
 
 def _read(path: Path):

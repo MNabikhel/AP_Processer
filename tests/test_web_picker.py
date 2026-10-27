@@ -20,6 +20,7 @@ from ap_coder.web import invoice_view
 from ap_coder.web.app import create_app
 
 from .browser import browser_on, wait_until
+from .conftest import copy_database
 
 PAGE = {"X-AP-Coder": "1"}
 LAPTOP = {"width": 1366, "height": 768}
@@ -33,12 +34,7 @@ def demo_db(cost_centers_demo_template):
 
 @pytest.fixture
 def store(demo_db, tmp_path):
-    import shutil
-
-    target = tmp_path / "private" / "ap_coder.db"
-    target.parent.mkdir(parents=True)
-    shutil.copy(demo_db, target)
-    return Store(target)
+    return copy_database(demo_db, tmp_path / "private" / "ap_coder.db")
 
 
 def _app(store):

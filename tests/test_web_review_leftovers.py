@@ -8,9 +8,9 @@ from ap_coder.coding.bulk import clean_candidates, issues_today
 from ap_coder.core.memory import vendor_key
 from ap_coder.core.store import APPROVED, PENDING
 
-from .test_web_review_signoff import _id, _review, browser, client, demo_db, me, store
+from .test_web_review_signoff import _id, _review, browser, demo_db, me, store
 
-__all__ = ["browser", "client", "demo_db", "me", "store"]  # the fixtures, shared
+__all__ = ["browser", "demo_db", "me", "store"]  # the fixtures, shared
 
 
 # --- 1. The Tax check at 1366 (B-840) -------------------------------------------------------------------------------

@@ -12,18 +12,14 @@ import csv
 import datetime as dt
 import io
 import zipfile
-from dataclasses import replace
 
 import openpyxl
 import pytest
-from fastapi.testclient import TestClient
 
 from ap_coder.coding import taxreturn
-from ap_coder.core.config import Settings
 from ap_coder.core.store import APPROVED, PARKED, REJECTED, REVIEW, Store
 from ap_coder.erp import accruals, dupaudit, export_layout, exports, stamp
 from ap_coder.erp import statements as stm
-from ap_coder.web.app import create_app
 from ap_coder.web.pages import exports as export_page
 
 from .conftest import fill_from
@@ -41,18 +37,6 @@ FINANCE_PAGES = [
     "/sales-tax?show=all",
     "/statements",
 ]
-
-
-@pytest.fixture
-def store(tmp_path):
-    return Store(tmp_path / "private" / "ap_coder.db")
-
-
-@pytest.fixture
-def client(store):
-    s = Settings()
-    app = create_app(replace(s, llm=replace(s.llm, provider="off")), store, start_reader=False)
-    return TestClient(app, base_url="http://localhost")
 
 
 @pytest.fixture

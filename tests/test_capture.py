@@ -22,6 +22,8 @@ from ap_coder.capture.normalize import (
 )
 from ap_coder.capture.types import VERIFIED, Box, CaptureResult, FieldResult
 
+from .pdfs import text_pdf as _pdf
+
 SAMPLES = Path(__file__).resolve().parents[1] / "samples"
 TODAY = dt.date(2026, 10, 9)
 
@@ -222,19 +224,6 @@ def test_rotated_page_boxes_line_up(tmp_path):
 
 
 # ---------------------------------------------------------------- reader rules found by the benchmark
-
-
-def _pdf(tmp_path, lines: list[tuple[float, float, str]], name: str = "inv.pdf") -> Path:
-    """A one-page PDF with text at (x, y) points."""
-    import pymupdf
-
-    doc = pymupdf.open()
-    page = doc.new_page(width=612, height=792)
-    for x, y, text in lines:
-        page.insert_text((x, y), text, fontsize=10)
-    path = tmp_path / name
-    doc.save(path)
-    return path
 
 
 def _read(path: Path) -> dict:

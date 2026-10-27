@@ -18,7 +18,7 @@ from ap_coder.web import core
 from ap_coder.web.pages import exports as exports_page
 from ap_coder.web.pages import process
 
-from .test_before_testing import PAGE, _demo_client, client, demo_db, demo_store, store  # noqa: F401
+from .test_before_testing import PAGE, _demo_client, client, demo_db, demo_store  # noqa: F401
 
 # --- B-526: JD Edwards users keep their tab and format -----------------------------------------------------------
 

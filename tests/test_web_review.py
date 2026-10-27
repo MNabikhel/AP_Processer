@@ -19,11 +19,6 @@ PAGE = {"X-AP-Coder": "1"}
 
 
 @pytest.fixture
-def store(tmp_path):
-    return Store(tmp_path / "private" / "ap_coder.db")
-
-
-@pytest.fixture
 def client(store):
     s = Settings()
     return TestClient(create_app(replace(s, llm=replace(s.llm, provider="off")), store), base_url="http://localhost")

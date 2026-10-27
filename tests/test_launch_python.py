@@ -5,7 +5,6 @@ stand-in Pythons on a made-up PATH; scripts/launch.py's checks and messages are 
 from __future__ import annotations
 
 import glob
-import importlib.util
 import json
 import re
 import subprocess
@@ -14,6 +13,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+from .scripts import load_script
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -342,10 +343,7 @@ def test_homebrews_314_on_apple_silicon_and_the_xcode_python(finder):
 
 def test_launch_py_looks_where_python_org_and_homebrew_put_314(tmp_path, monkeypatch):
     """bootstrap's search for a Python the bundle fits (not only what is on PATH)."""
-    spec = importlib.util.spec_from_file_location("ap_script_launch_places", ROOT / "scripts" / "launch.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    module = load_script("launch", "ap_script_launch_places")
     monkeypatch.setattr(module, "WINDOWS", False)
     monkeypatch.setattr(module.shutil, "which", lambda name: None)  # Finder's PATH: no python3.14 on it
     found = [c[0] for c in module.python_candidates("3.14")]
@@ -362,10 +360,7 @@ def test_launch_py_looks_where_python_org_and_homebrew_put_314(tmp_path, monkeyp
 
 @pytest.fixture
 def launch(tmp_path, monkeypatch):
-    spec = importlib.util.spec_from_file_location("ap_script_launch_python", ROOT / "scripts" / "launch.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    module = load_script("launch", "ap_script_launch_python")
     monkeypatch.setattr(module, "ROOT", tmp_path)
     monkeypatch.setattr(module, "VENV", tmp_path / ".venv")
     monkeypatch.setattr(module, "VENV_PY", tmp_path / ".venv" / "bin" / "python")

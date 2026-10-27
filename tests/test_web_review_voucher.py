@@ -17,7 +17,7 @@ from . import test_web_invoice as screen
 from .test_web_invoice import PAGE, check, clean_invoice, form_of
 
 # The review screen's fixtures, shared with its own tests: the demo invoices, a store, a client, a browser.
-demo_db, store, client, me, browser = screen.demo_db, screen.store, screen.client, screen.me, screen.browser
+demo_db, store, me, browser = screen.demo_db, screen.store, screen.me, screen.browser  # (client: tests/conftest.py)
 
 
 def _id(store, vendor: str) -> int:

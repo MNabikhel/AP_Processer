@@ -19,6 +19,8 @@ from ap_coder.core.store import REVIEW, Store, load_sample_setup
 from ap_coder.web.app import create_app
 from ap_coder.web.pages import MORE_MODULES, PAGES
 
+from .conftest import copy_database
+
 PAGE = {"X-AP-Coder": "1"}
 
 # Every page module imported now, before `me` patches web/core.py: a module imported while it is patched would keep
@@ -35,19 +37,7 @@ def demo_db(cost_centers_demo_template):
 
 @pytest.fixture
 def store(demo_db, tmp_path):
-    import shutil
-
-    target = tmp_path / "private" / "ap_coder.db"
-    target.parent.mkdir(parents=True)
-    shutil.copy(demo_db, target)
-    return Store(target)
-
-
-@pytest.fixture
-def client(store):
-    s = Settings()
-    app = create_app(replace(s, llm=replace(s.llm, provider="off")), store, start_reader=False)
-    return TestClient(app, base_url="http://localhost")
+    return copy_database(demo_db, tmp_path / "private" / "ap_coder.db")
 
 
 @pytest.fixture(autouse=True)

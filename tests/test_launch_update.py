@@ -5,7 +5,6 @@ fit this computer is said plainly, and the server is started with ``python -m ap
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import sys
@@ -17,15 +16,14 @@ import pytest
 from ap_coder.core import paths
 from ap_coder.core.store import SCHEMA_VERSION
 
+from .scripts import load_script
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture
 def launch(tmp_path, monkeypatch):
-    spec = importlib.util.spec_from_file_location("ap_script_launch_update", ROOT / "scripts" / "launch.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    module = load_script("launch", "ap_script_launch_update")
     here = tmp_path / "AP Coder 0.2"
     (here / "ap_coder").mkdir(parents=True)
     (here / "scripts").mkdir()

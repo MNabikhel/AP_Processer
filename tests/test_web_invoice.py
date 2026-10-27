@@ -23,7 +23,7 @@ from ap_coder.web.app import create_app
 from ap_coder.web.invoice_view import Draft
 
 from .browser import browser_on, wait_until
-from .conftest import chromium_path
+from .conftest import chromium_path, copy_database
 
 PAGE = {"X-AP-Coder": "1"}
 
@@ -36,19 +36,7 @@ def demo_db(cost_centers_demo_template):
 
 @pytest.fixture
 def store(demo_db, tmp_path):
-    import shutil
-
-    target = tmp_path / "private" / "ap_coder.db"
-    target.parent.mkdir(parents=True)
-    shutil.copy(demo_db, target)
-    return Store(target)
-
-
-@pytest.fixture
-def client(store):
-    s = Settings()
-    app = create_app(replace(s, llm=replace(s.llm, provider="off")), store, start_reader=False)
-    return TestClient(app, base_url="http://localhost")
+    return copy_database(demo_db, tmp_path / "private" / "ap_coder.db")
 
 
 @pytest.fixture(autouse=True)

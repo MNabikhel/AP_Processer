@@ -6,7 +6,6 @@ middle button), Rotate (on screen only), Page Up / Page Down, and a sharper pict
 from __future__ import annotations
 
 import io
-import shutil
 from dataclasses import replace
 
 import pytest
@@ -19,6 +18,7 @@ from ap_coder.web import document
 from ap_coder.web.app import create_app
 
 from .browser import browser_on, wait_until
+from .conftest import copy_database
 
 LAPTOP = {"width": 1366, "height": 768}
 ZOOM_KEY = "apc-invoice-viewer-zoom"
@@ -32,10 +32,7 @@ def demo_db(cost_centers_demo_template):
 
 @pytest.fixture
 def store(demo_db, tmp_path):
-    target = tmp_path / "private" / "ap_coder.db"
-    target.parent.mkdir(parents=True)
-    shutil.copy(demo_db, target)
-    return Store(target)
+    return copy_database(demo_db, tmp_path / "private" / "ap_coder.db")
 
 
 def _app(store: Store):

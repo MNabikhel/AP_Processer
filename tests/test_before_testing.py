@@ -31,11 +31,6 @@ def _settings() -> Settings:
 
 
 @pytest.fixture
-def store(tmp_path):
-    return Store(tmp_path / "private" / "ap_coder.db")
-
-
-@pytest.fixture
 def client(store):
     return TestClient(create_app(_settings(), store, start_reader=False), base_url="http://localhost")
 

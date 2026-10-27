@@ -4,7 +4,6 @@ unexpected error is said in one plain line that names the log, which holds the d
 
 from __future__ import annotations
 
-import importlib.util
 import sys
 from pathlib import Path
 
@@ -12,15 +11,14 @@ import pytest
 
 from ap_coder.core import paths
 
+from .scripts import load_script
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture
 def launch(tmp_path, monkeypatch):
-    spec = importlib.util.spec_from_file_location("ap_script_launch_log", ROOT / "scripts" / "launch.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    module = load_script("launch", "ap_script_launch_log")
     venv = tmp_path / "code" / ".venv"
     venv.mkdir(parents=True)
     monkeypatch.setattr(module, "ROOT", tmp_path / "code")

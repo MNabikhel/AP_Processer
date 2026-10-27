@@ -3,24 +3,21 @@ docs/CODE_REVIEW_WEB_AND_LAUNCHER.md at 968cf9d), each reproduced here first."""
 
 from __future__ import annotations
 
-import importlib.util
 import json
-import sys
 from pathlib import Path
 
 import pytest
 
 from ap_coder.core import paths
 
+from .scripts import load_script
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture
 def launch(tmp_path, monkeypatch):
-    spec = importlib.util.spec_from_file_location("ap_script_launch_review", ROOT / "scripts" / "launch.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    module = load_script("launch", "ap_script_launch_review")
     venv = tmp_path / ".venv"
     venv.mkdir()
     monkeypatch.setattr(module, "VENV", venv)

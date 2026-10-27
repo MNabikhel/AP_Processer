@@ -10,19 +10,9 @@ from ap_coder.capture.bridge import ai_values
 from ap_coder.capture.supplier import AUTONOMOUS, confirmed_values, learn, should_auto_approve
 from ap_coder.capture.types import VERIFIED
 
+from .pdfs import text_pdf as _pdf
+
 TODAY = dt.date(2026, 10, 9)
-
-
-def _pdf(tmp_path: Path, lines: list[tuple[float, float, str]], name: str = "inv.pdf") -> Path:
-    import pymupdf
-
-    doc = pymupdf.open()
-    page = doc.new_page(width=612, height=792)
-    for x, y, text in lines:
-        page.insert_text((x, y), text, fontsize=10)
-    path = tmp_path / name
-    doc.save(path)
-    return path
 
 
 _ACME = [

@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import csv
 import dataclasses
-import importlib.util
 import io
 import json
 import os
@@ -27,7 +26,8 @@ from ap_coder.erp import jde
 from ap_coder.ops import cli
 from ap_coder.ops.doctor import run_checks
 
-from .conftest import ROOT, SAMPLE_STEM, SAMPLES
+from .conftest import SAMPLE_STEM, SAMPLES
+from .scripts import load_script
 from .test_jde import AN8, ON, _files, _invoice
 
 # --- JD Edwards: dates and field widths ------------------------------------------------------------------------
@@ -385,10 +385,7 @@ def test_checking_and_restoring_a_backup_writes_nothing_next_to_it(tmp_path):
 
 @pytest.fixture
 def launch(tmp_path, monkeypatch):
-    spec = importlib.util.spec_from_file_location("ap_script_launch_sweep", ROOT / "scripts" / "launch.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    module = load_script("launch", "ap_script_launch_sweep")
     monkeypatch.setattr(module, "ROOT", tmp_path)
     monkeypatch.setattr(module, "VENV", tmp_path / ".venv")
     monkeypatch.setattr(module, "VENV_PY", tmp_path / ".venv" / "bin" / "python")

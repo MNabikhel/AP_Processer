@@ -15,6 +15,8 @@ from ap_coder.capture.reader import read_line_items
 from ap_coder.capture.transcript import layout_from_transcript, transcript_fields
 from ap_coder.capture.types import CHECK, MISSING, VERIFIED, CaptureResult, DocLayout, FieldResult, PageLayout
 
+from .pdfs import text_pdf as _pdf
+
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "page_reader"
 OVIS = (FIXTURES / "s212-0000.md").read_text(encoding="utf-8")  # OvisOCR2's reading of the scan s212-0000.pdf
 TRUTH = json.loads((FIXTURES / "s212-0000.truth.json").read_text(encoding="utf-8"))
@@ -186,18 +188,6 @@ def test_page_reader_descriptions_on_a_scan_whose_amounts_agree(monkeypatch, sca
 
 
 # ---------------------------------------------------------------- line items from the page reader
-
-
-def _pdf(tmp_path: Path, lines: list[tuple[float, float, str]], name: str = "inv.pdf") -> Path:
-    import pymupdf
-
-    doc = pymupdf.open()
-    page = doc.new_page(width=612, height=792)
-    for x, y, text in lines:
-        page.insert_text((x, y), text, fontsize=10)
-    path = tmp_path / name
-    doc.save(path)
-    return path
 
 
 _HEAD = [(60, 60, "Acme Supply Ltd."), (60, 75, "12 Main St, Calgary, AB T2P 1A1"), (380, 120, "Invoice No: AC-1001"),

@@ -23,11 +23,6 @@ def store(tmp_path):
     return store
 
 
-@pytest.fixture
-def client(store):
-    return client_for(store)
-
-
 def _flagged(store, doc=None, **changes):
     doc = {**(doc or gt()), **changes}
     return store.add_invoice(SAMPLES / f"{SAMPLE_STEM}.pdf", doc, {"requires_review": True})

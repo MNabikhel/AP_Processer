@@ -24,15 +24,7 @@ from ap_coder.capture.types import (
     Word,
 )
 
-
-def _pdf(path: Path, lines: list[tuple], size: float = 10) -> Path:
-    """``lines``: (x, y, text) or (x, y, text, font size)."""
-    doc = pymupdf.open()
-    page = doc.new_page(width=612, height=792)
-    for x, y, text, *big in lines:
-        page.insert_text((x, y), text, fontsize=big[0] if big else size)
-    doc.save(path)
-    return path
+from .pdfs import text_pdf as _pdf
 
 
 def _layout(path: Path) -> DocLayout:

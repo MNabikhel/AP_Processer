@@ -5,7 +5,6 @@ Import pages, and the dashboard's words)."""
 from __future__ import annotations
 
 import html
-import importlib.util
 import io
 import json
 import logging
@@ -23,6 +22,7 @@ from ap_coder.ops import cli
 from ap_coder.web.app import create_app
 
 from .conftest import ROOT
+from .scripts import load_script
 
 # --- B-240: the AP Coder window fills with technical lines once a scan is read -----------------------------------
 
@@ -113,10 +113,7 @@ def test_a_page_that_fails_still_answers_when_the_page_frame_itself_fails(tmp_pa
 @pytest.fixture
 def launch(tmp_path, monkeypatch):
     """scripts/launch.py, as an offline bundle's copy in its own folder (as tests/test_launch_update.py loads it)."""
-    spec = importlib.util.spec_from_file_location("ap_script_launch_sweep4", ROOT / "scripts" / "launch.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    module = load_script("launch", "ap_script_launch_sweep4")
     here = tmp_path / "AP Coder 0.2"
     (here / "ap_coder").mkdir(parents=True)
     (here / "scripts").mkdir()

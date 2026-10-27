@@ -12,9 +12,9 @@ from ap_coder.erp import jde
 
 from .browser import wait_until
 from .test_web_invoice import PAGE, check, form_of
-from .test_web_review_signoff import _id, _jde_on, _open, _overlap, _review, browser, client, demo_db, me, store
+from .test_web_review_signoff import _id, _jde_on, _open, _overlap, _review, browser, demo_db, me, store
 
-__all__ = ["browser", "client", "demo_db", "me", "store"]  # the fixtures, shared
+__all__ = ["browser", "demo_db", "me", "store"]  # the fixtures, shared
 
 
 def _boxes_apart(page, *selectors: str) -> list[str]:

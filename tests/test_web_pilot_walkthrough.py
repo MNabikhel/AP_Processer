@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import html
 import re
-import shutil
 import sqlite3
 from dataclasses import replace
 
@@ -22,7 +21,7 @@ from ap_coder.web.pages import invoice as _invoice_page  # noqa: F401 - imported
 from ap_coder.web.pages import review as _review_page  # noqa: F401
 
 from .browser import browser_on
-from .conftest import SAMPLES
+from .conftest import SAMPLES, copy_database
 
 PAGE = {"X-AP-Coder": "1"}
 LAPTOP = {"width": 1366, "height": 768}
@@ -36,10 +35,7 @@ def demo_db(demo_template):
 
 @pytest.fixture
 def store(demo_db, tmp_path):
-    target = tmp_path / "private" / "ap_coder.db"
-    target.parent.mkdir(parents=True)
-    shutil.copy(demo_db, target)
-    return Store(target)
+    return copy_database(demo_db, tmp_path / "private" / "ap_coder.db")
 
 
 def _app(store: Store, **kwargs):

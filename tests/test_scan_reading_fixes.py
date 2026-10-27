@@ -4,24 +4,15 @@ the customer's, "ltée" read right made "Itée", and a header grid's PO taken fr
 from __future__ import annotations
 
 import datetime as dt
-from pathlib import Path
 
 import pymupdf
 
 from ap_coder.capture import analyze
 from ap_coder.capture.reader import _ocr_name_fix
 
+from .pdfs import text_pdf as _pdf
+
 TODAY = dt.date(2026, 10, 13)
-
-
-def _pdf(tmp_path: Path, lines: list[tuple[float, float, str]], name: str = "inv.pdf", size: float = 10) -> Path:
-    doc = pymupdf.open()
-    page = doc.new_page(width=612, height=792)
-    for x, y, text in lines:
-        page.insert_text((x, y), text, fontsize=size)
-    path = tmp_path / name
-    doc.save(path)
-    return path
 
 
 _TOTALS = [

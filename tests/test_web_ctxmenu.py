@@ -7,7 +7,6 @@ from __future__ import annotations
 import copy
 import json
 import re
-import shutil
 from dataclasses import replace
 
 import pytest
@@ -20,6 +19,7 @@ from ap_coder.web.app import create_app
 from ap_coder.web.invoice_view import Draft
 
 from .browser import browser_on
+from .conftest import copy_database
 from .test_web_invoice import check, form_of
 
 PAGE = {"X-AP-Coder": "1"}
@@ -40,10 +40,7 @@ def demo_db(demo_template):
 
 @pytest.fixture
 def store(demo_db, tmp_path):
-    target = tmp_path / "private" / "ap_coder.db"
-    target.parent.mkdir(parents=True)
-    shutil.copy(demo_db, target)
-    return Store(target)
+    return copy_database(demo_db, tmp_path / "private" / "ap_coder.db")
 
 
 def _app(store):

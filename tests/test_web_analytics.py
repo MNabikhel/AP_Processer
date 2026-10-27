@@ -18,7 +18,7 @@ from markupsafe import Markup
 from ap_coder.capture.supplier import HELD, SUPERVISED
 from ap_coder.capture.workflow import learn_from_approval
 from ap_coder.core.config import Settings
-from ap_coder.core.store import REVIEW, Store, load_sample_setup
+from ap_coder.core.store import REVIEW, load_sample_setup
 from ap_coder.erp.insights import Assumptions
 from ap_coder.web import charts
 from ap_coder.web.app import create_app
@@ -30,11 +30,6 @@ from .conftest import SAMPLE_STEM, SAMPLES, fill_from
 PAGE = {"X-AP-Coder": "1"}
 SVG = "{http://www.w3.org/2000/svg}"
 PAGES = ("/learning", "/learning?tab=suppliers", "/learning?tab=readers", "/spend", "/insights", "/activity")
-
-
-@pytest.fixture
-def store(tmp_path):
-    return Store(tmp_path / "private" / "ap_coder.db")
 
 
 @pytest.fixture

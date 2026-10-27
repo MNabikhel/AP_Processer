@@ -9,9 +9,9 @@ import re
 from ap_coder.core.store import PENDING, REVIEW
 
 from .test_web_invoice import PAGE, check, clean_invoice, form_of
-from .test_web_review_signoff import _id, _open, _review, browser, client, demo_db, me, store
+from .test_web_review_signoff import _id, _open, _review, browser, demo_db, me, store
 
-__all__ = ["browser", "client", "demo_db", "me", "store"]  # the fixtures, shared
+__all__ = ["browser", "demo_db", "me", "store"]  # the fixtures, shared
 
 
 def _waiting_for_second(store, client, currency: str = "USD") -> int:

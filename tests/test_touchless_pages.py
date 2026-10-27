@@ -10,18 +10,13 @@ from ap_coder.core.store import Store, load_sample_setup
 
 from .test_touchless import _ready
 from .test_web_invoice import form_of
-from .webclient import add_clean, client_for, follow, post
+from .webclient import add_clean, follow, post
 
 
 @pytest.fixture
 def store(tmp_path, monkeypatch):
     monkeypatch.setenv("AP_REVIEWER", "Lead Lee")
     return Store(tmp_path / "private" / "ap_coder.db")
-
-
-@pytest.fixture
-def client(store):
-    return client_for(store)
 
 
 def _switch(page: str) -> str:

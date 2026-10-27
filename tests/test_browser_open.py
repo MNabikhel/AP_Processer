@@ -7,7 +7,6 @@ output mixed into it. There, no browser is opened and the address is said instea
 
 from __future__ import annotations
 
-import importlib.util
 import sys
 import webbrowser
 from pathlib import Path
@@ -17,15 +16,14 @@ import pytest
 from ap_coder.ops import offline
 from ap_coder.web import server as web_server
 
+from .scripts import load_script
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture
 def launch(monkeypatch):
-    spec = importlib.util.spec_from_file_location("ap_script_launch_browser", ROOT / "scripts" / "launch.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    module = load_script("launch", "ap_script_launch_browser")
     yield module
     module.close_log()
 

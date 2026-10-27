@@ -18,15 +18,14 @@ from types import SimpleNamespace
 
 import pytest
 
+from .scripts import load_script
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture
 def launch(tmp_path, monkeypatch):
-    spec = importlib.util.spec_from_file_location("ap_script_launch", ROOT / "scripts" / "launch.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    module = load_script("launch", "ap_script_launch")
     venv = tmp_path / ".venv"
     venv.mkdir()
     monkeypatch.setattr(module, "VENV", venv)

@@ -17,7 +17,7 @@ from ap_coder.web.pages.settings import TAB_KEYS
 
 from .conftest import ROOT, SAMPLES, fill_from
 from .test_web_invoice import form_of
-from .webclient import client_for, follow, post, web_settings
+from .webclient import follow, post, web_settings
 
 STEM = "harbourview_NS_HST_HPS-2026-0347"
 MODEL = "ath-maas_ovisocr2"
@@ -28,11 +28,6 @@ TAB_NAMES = ["Review", "Reading", "Automation", "Data & backups", "About"]  # JD
 def store(tmp_path, monkeypatch):
     monkeypatch.setenv("AP_ENV_FILE", str(tmp_path / "private" / ".env"))
     return Store(tmp_path / "private" / "ap_coder.db")
-
-
-@pytest.fixture
-def client(store):
-    return client_for(store)
 
 
 def _reader_status(state="downloaded", model=MODEL):

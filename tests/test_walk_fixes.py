@@ -12,9 +12,9 @@ from ap_coder.core.store import REVIEW
 from ap_coder.erp import jde
 
 from .browser import wait_until
-from .test_web_review_signoff import _jde_on, browser, client, demo_db, me, store
+from .test_web_review_signoff import _jde_on, browser, demo_db, me, store
 
-__all__ = ["browser", "client", "demo_db", "me", "store"]  # the fixtures, shared
+__all__ = ["browser", "demo_db", "me", "store"]  # the fixtures, shared
 
 
 def _plain(html: str) -> str:

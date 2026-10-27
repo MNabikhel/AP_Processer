@@ -15,7 +15,6 @@ from fastapi.testclient import TestClient
 
 import ap_coder
 from ap_coder.core.config import Settings
-from ap_coder.core.store import Store
 from ap_coder.web import core, server
 from ap_coder.web.app import CODE_FOLDER, create_app
 from ap_coder.web.jobs import DONE, ERROR, Job
@@ -28,11 +27,6 @@ PAGE = {"X-AP-Coder": "1"}
 def web_settings() -> Settings:
     s = Settings()
     return replace(s, llm=replace(s.llm, provider="off"))
-
-
-@pytest.fixture
-def store(tmp_path):
-    return Store(tmp_path / "private" / "ap_coder.db")
 
 
 @pytest.fixture

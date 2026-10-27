@@ -14,6 +14,8 @@ from ap_coder.core.config import Settings
 from ap_coder.core.store import Store
 from ap_coder.web.app import create_app
 
+from .pdfs import text_pdf as _pdf
+
 
 def _web(store: Store) -> TestClient:
     s = Settings()
@@ -110,17 +112,6 @@ def test_an_invoice_of_a_hundred_and_fifty_lines_can_be_checked_and_approved(tmp
     ticked = [inv_id, *range(10_000, 11_500)]  # the Exports page with 1,500 invoices ticked
     made = client.post("/exports/create", data={"fmt": "xlsx", "ids": ticked}, headers=PAGE).json()
     assert made.get("ok") and store.get_invoice(inv_id)["export_batch"], made
-
-
-def _pdf(path, lines, size: float = 10):
-    import pymupdf
-
-    doc = pymupdf.open()
-    page = doc.new_page(width=612, height=792)
-    for x, y, text in lines:
-        page.insert_text((x, y), text, fontsize=size)
-    doc.save(path)
-    return path
 
 
 def test_an_invoice_approved_again_teaches_the_template_once(tmp_path, ground_truth):

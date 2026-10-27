@@ -6,9 +6,9 @@ column, and the setup pages kept to this computer."""
 from __future__ import annotations
 
 from .test_web_invoice import PAGE, check, form_of
-from .test_web_review_signoff import _id, _review, browser, client, demo_db, me, store
+from .test_web_review_signoff import _id, _review, browser, demo_db, me, store
 
-__all__ = ["browser", "client", "demo_db", "me", "store"]  # the fixtures, shared
+__all__ = ["browser", "demo_db", "me", "store"]  # the fixtures, shared
 
 
 # --- 1. The tax rows follow the place of supply on screen ----------------------------------------------------------

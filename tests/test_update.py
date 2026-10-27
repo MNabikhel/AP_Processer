@@ -5,7 +5,6 @@ folder; nothing is duplicated and the data folder's contents are never touched."
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -14,14 +13,13 @@ import pytest
 
 from ap_coder.core import paths
 
+from .scripts import load_script
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
 def _script(name: str):
-    spec = importlib.util.spec_from_file_location(f"ap_script_{name}_update", ROOT / "scripts" / f"{name}.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    module = load_script(name, f"ap_script_{name}_update")
     return module
 
 

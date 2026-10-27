@@ -16,6 +16,8 @@ import pytest
 
 from ap_coder.core import paths
 
+from .scripts import load_script
+
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT / "scripts") not in sys.path:  # (running.py, fetch_models.py: imported the way the launcher does)
     sys.path.insert(0, str(ROOT / "scripts"))
@@ -35,10 +37,7 @@ def _code(folder: Path, version: str = "0.3.0", stamp: str | None = STAMP_A) -> 
 
 @pytest.fixture
 def launch(tmp_path, monkeypatch):
-    spec = importlib.util.spec_from_file_location("ap_script_launch_build", ROOT / "scripts" / "launch.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    module = load_script("launch", "ap_script_launch_build")
     here = _code(tmp_path / "AP Coder")
     (here / "APProcessor.bat").write_text("")
     (here / "APProcessor.command").write_text("")

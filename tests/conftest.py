@@ -187,6 +187,22 @@ def no_local_model(monkeypatch):
     local_llm.forget_status()
 
 
+@pytest.fixture
+def store(tmp_path):
+    """A new database in the test's own data folder (a test file may define a ``store`` of its own)."""
+    from ap_coder.core.store import Store
+
+    return Store(tmp_path / "private" / "ap_coder.db")
+
+
+@pytest.fixture
+def client(store):
+    """The dashboard on ``store``, as this computer's browser opens it (``tests/webclient.py``, ``client_for``)."""
+    from tests.webclient import client_for
+
+    return client_for(store)
+
+
 # --- Databases made once per run, copied for each test -----------------------------------------------------------
 # Loading the demo reads, codes and captures ten PDFs (1.5 s, several on Windows); the sample setup imports four
 # lists. Each is made once per run here and copied for a test (a few milliseconds): every test still has a database

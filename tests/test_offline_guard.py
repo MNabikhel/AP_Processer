@@ -43,6 +43,7 @@ from ap_coder.ops import offline
 from . import offline_flow
 from . import offline_guard as guard_module
 from .conftest import chromium_path
+from .scripts import load_script
 
 ROOT = Path(__file__).resolve().parent.parent
 REAL_FETCH = local_llm._fetch_json  # conftest replaces it for every test; the real one is needed here
@@ -385,12 +386,9 @@ def _wheel(folder: Path, name: str = "ap_offline_probe", version: str = "1.0") -
 
 @pytest.fixture
 def launch_module(monkeypatch):
-    spec = importlib.util.spec_from_file_location("ap_script_launch_offline", ROOT / "scripts" / "launch.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    module = load_script("launch", "ap_script_launch_offline")
     yield module
-    sys.modules.pop(spec.name, None)
+    sys.modules.pop("ap_script_launch_offline", None)
 
 
 @pytest.mark.skipif(importlib.util.find_spec("pip") is None, reason="pip isn't installed in this Python")

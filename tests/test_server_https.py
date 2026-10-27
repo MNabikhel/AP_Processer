@@ -16,7 +16,6 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from ap_coder.core.store import Store
 from ap_coder.ops import cli, offline
 from ap_coder.web import security, server
 from ap_coder.web.app import create_app
@@ -33,11 +32,6 @@ def free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
-
-
-@pytest.fixture
-def store(tmp_path):
-    return Store(tmp_path / "private" / "ap_coder.db")
 
 
 @pytest.fixture

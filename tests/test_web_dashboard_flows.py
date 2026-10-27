@@ -21,7 +21,7 @@ from ap_coder.web.core import invoice_dir
 
 from .conftest import SAMPLE_STEM, SAMPLES, fill_from
 from .test_web_invoice import check, form_of
-from .webclient import add_clean, client_for, follow, gt, known_vendors, post
+from .webclient import add_clean, follow, gt, known_vendors, post
 
 
 @pytest.fixture
@@ -29,11 +29,6 @@ def store(tmp_path):
     store = Store(tmp_path / "private" / "ap_coder.db")
     load_sample_setup(store)
     return store
-
-
-@pytest.fixture
-def client(store):
-    return client_for(store)
 
 
 def _flagged(store, doc=None, **changes):
