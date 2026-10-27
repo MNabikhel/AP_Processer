@@ -587,7 +587,9 @@ def _netns_available() -> bool:
 
 
 @pytest.mark.skipif(not _netns_available(), reason="needs Linux with unshare -rn (user and network namespaces)")
-@pytest.mark.parametrize("lm_studio", [False, True], ids=["no-lm-studio", "fake-lm-studio"])
+# Without LM Studio only: with the fake one, the walk covers the same lines as the subprocess walk above, which
+# already shows LM Studio is asked on 127.0.0.1 and nothing else is tried.
+@pytest.mark.parametrize("lm_studio", [False], ids=["no-lm-studio"])
 def test_the_whole_walk_works_in_a_network_namespace_without_network(tmp_path, lm_studio):
     """A real computer with no network at all (only ``lo``): the server starts, every page opens, every sample is read,
     approved and exported."""
