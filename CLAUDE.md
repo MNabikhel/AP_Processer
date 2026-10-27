@@ -60,5 +60,5 @@ Every step re-reads the whole conversation, so fewer, fuller steps cost less:
 - Run: `python -m ap_coder serve` (http://127.0.0.1:8501); `python -m ap_coder doctor`; `python scripts/pilot_check.py`.
 - Check a change: `python scripts/check.py` (ruff on the changed files, then their tests; a minute or two).
 - Test: `python -m pytest -q` runs all but the slow tests (a few minutes; serially, no xdist). The whole suite with the
-  browser tests, `python -m pytest -q -m ""`, takes ~25 minutes: CI runs it on pushes to main and on pull requests, so leave it to CI.
+  browser tests, `python -m pytest -q -m ""`, takes ~15 minutes: CI runs it on pushes to main and on pull requests, so leave it to CI.
 - Lint: `ruff check ap_coder tests scripts` and `ruff format --check ap_coder tests scripts`.
