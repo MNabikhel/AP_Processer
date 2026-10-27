@@ -30,6 +30,7 @@ from markupsafe import Markup
 
 from ap_coder.ai import history
 from ap_coder.core import ui
+from ap_coder.core.reference_data import UNASSIGNED
 from ap_coder.core.store import Store
 from ap_coder.erp import insights
 from ap_coder.web.charts import SERIES, Series, line_chart, percent
@@ -79,12 +80,21 @@ OUTCOMES = {
     "accepted": "✓ confirmed",
     "corrected": "✎ corrected",
     "coded": "✎ coded by AP (the AI only guessed)",
+    "coded_blank": "✎ coded by AP (it had no account)",
     "bulk": "✓ approved in bulk, as proposed",
     "history": "⟲ ERP history",
 }
 
 
 # --- Small helpers --------------------------------------------------------------------------------------------------
+
+
+def outcome_of(row: dict[str, Any]) -> str:
+    """A memory row's outcome as Learning words it: AP's own coding of a line the AI left without an account is
+    "coded_blank", not a kept guess (B-1412)."""
+    if row["outcome"] == "coded" and (row.get("suggested_gl") or "") in ("", UNASSIGNED):
+        return "coded_blank"
+    return row["outcome"]
 
 
 def built(html: str) -> Markup:
@@ -246,7 +256,8 @@ def coding_context(store: Store, mem_q: str, settings: Any = None) -> dict[str, 
     rows = store.feedback_rows(limit=MEMORY_READ)
     reviewed = [r for r in rows if r["outcome"] != "history"]
     feed = [
-        {**r, "short": short(r["description"]), "when": ui.time_ago(r["created_at"])} for r in reviewed[:FEED]
+        {**r, "short": short(r["description"]), "when": ui.time_ago(r["created_at"]),
+         "blank": outcome_of(r) == "coded_blank"} for r in reviewed[:FEED]
     ]  # fmt: skip
     reference = reference_or_none(store)
     corrections = [
@@ -269,7 +280,7 @@ def coding_context(store: Store, mem_q: str, settings: Any = None) -> dict[str, 
         ).lower()  # fmt: skip
     ]
     memory = [
-        {**r, "date": str(r["created_at"] or "")[:10], "outcome_text": OUTCOMES.get(r["outcome"], r["outcome"])}
+        {**r, "date": str(r["created_at"] or "")[:10], "outcome_text": OUTCOMES.get(outcome_of(r), r["outcome"])}
         for r in matching[:MEMORY_SHOWN]
     ]
     return {
