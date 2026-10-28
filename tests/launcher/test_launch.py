@@ -465,10 +465,12 @@ def test_ports(launch, monkeypatch):
 
 def test_a_free_port_is_found_when_the_next_fifty_are_refused(launch, monkeypatch):
     """Windows reserves blocks of ports (Hyper-V, WSL): when none of the 50 after the one asked for can be bound,
-    the port asked for (in use) was given back; now one the system says is free."""
+    the port asked for (in use) was given back; now one the system says is free. The block is below every system's
+    own range of ports to give out (Linux from 32768, Windows and macOS from 49152): one in 40000-40049 was the
+    system's answer about once in 500 runs on Linux, though never refused there (B-1415)."""
     import socket as real
 
-    refused = set(range(40000, 40050))
+    refused = set(range(20000, 20050))
 
     class Probe(real.socket):
         def bind(self, address):
@@ -477,7 +479,7 @@ def test_a_free_port_is_found_when_the_next_fifty_are_refused(launch, monkeypatc
             return super().bind(address)
 
     monkeypatch.setattr(real, "socket", Probe)
-    port = launch.free_port(40000)
+    port = launch.free_port(20000)
     assert port not in refused and port > 0
 
 
