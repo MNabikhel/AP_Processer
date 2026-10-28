@@ -32,10 +32,11 @@ plan that turns the pilot into a decision, see [PILOT_PLAN.md](PILOT_PLAN.md).
     laptop that LM Studio lets use several cores, expect a few minutes a page (CloseDesk measured about 3 on 4
     cores); a graphics card is many times faster. If it seems slow, check *CPU Thread Pool Size* for OvisOCR2
     in LM Studio (My Models, the gear next to it).
-  - *Memory.* OvisOCR2 is small (about 1 GB on disk), but reading a page image needs working memory too:
-    LM Studio holds up to 4 readings at once by default, each with the 20,480-token context a page image needs,
-    and the model's server used about 8 GB while reading. On a 16 GB laptop that also has the 9B chat model
-    loaded, set *Max Concurrent Predictions* to 1 for OvisOCR2 in LM Studio.
+  - *Memory.* OvisOCR2 is small (about 1 GB on disk), and AP Coder loads it with LM Studio's *Flash Attention*
+    on: reading a page, its server then used 1.8 GB, and read it in 6 minutes instead of 11 on the same CPU. With
+    Flash Attention off it used 8.9 GB and kept it while loaded, more than a 16 GB laptop has room for beside
+    Gemma 4 12B; *Max Concurrent Predictions* made no difference. So in LM Studio turn **Flash Attention on for
+    OvisOCR2** (My Models, the gear next to it): then a copy loaded by CloseDesk or by hand has it too.
   - *Overnight instead.* `python -m ap_coder read-pages --minutes 240` reads the queue and stops; schedule
     it with Task Scheduler for a laptop that is busy during the day.
 - **A chat model in LM Studio** (Gemma 4 12B, else Qwen 3.5 9B; the pilot runs with it): it reviews each invoice

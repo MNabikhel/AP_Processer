@@ -25,8 +25,8 @@ chat model is **loaded** is the one used, so switching between Gemma and Qwen is
 | --- | --- | --- |
 | Which chat model | `CONTROLLER_INBOX_LLM_MODEL` if set; else the chat model loaded now; else the one it last saw loaded. Never the first on LM Studio's list, never OvisOCR2 (`local_llm._pick_model`). | `AP_LLM_MODEL` if set; else the chat model loaded now (whichever app loaded it); else Gemma 4 12B if downloaded, else Qwen 3.5 9B; else none. Never the first on the list, never OvisOCR2 or an embedding model (`local_llm.pick_model`). |
 | Chat context | Loads/reloads its chat model with **16,384** tokens (`min_context_tokens`), or the model's maximum if less (`ensure_context`, `use_chat_model`). | Never reloads a loaded model. *Settings → Reading → Load* loads a chat model with **16,384** tokens, or its maximum if less (`page_reader.load_model`). |
-| Page reader context | Loads OvisOCR2 with **20,480** tokens before reading; a shorter instance is replaced, the chat model left alone (`load_for_reading`). | The same: **20,480**, reloaded only when shorter, failures not retried for 30 min (`page_reader.load_reader`). |
-| Page image | OvisOCR2: **200 DPI, long side ≤ 2,048 px** (LM Studio shrinks larger ones anyway). General model: 100 DPI, ≤ 1,600 px. | OvisOCR2: the same 200 DPI / 2,048 px (`page_reader.OVIS`, `_render`). A general model only if a developer names one: 150 DPI / 1,600 px. |
+| Page reader context | Loads OvisOCR2 with **20,480** tokens before reading; a shorter instance is replaced, the chat model left alone (`load_for_reading`). | The same: **20,480**, reloaded only when shorter, failures not retried for 30 min, with **Flash Attention on** (B-1413: 1.8 GB reading a page instead of 8.9) (`page_reader.load_reader`). |
+| Page image | OvisOCR2: **200 DPI, long side ≤ 2,048 px** (LM Studio shrinks larger ones anyway). General model: 100 DPI, ≤ 1,600 px. | OvisOCR2: the same 200 DPI / 2,048 px (`page_reader.OVIS`, `_render`). A general model only if a developer names one: 150 DPI / 1,600 px. The chat model (coding, its header reading, the AI reviewer): 150 DPI, **at most a million pixels** (`imaging.MAX_PIXELS`): Gemma 4 takes each picture in one batch, 512 tokens in LM Studio, and a larger one stops its model server (B-1414). |
 | Page reading tokens | OvisOCR2 **12,288**; a general model 8,192. Greedy (temperature 0); one retry with Qwen's sampling when it loops. | The same (`page_reader.transcribe`). |
 | Pages | ≤ 20 per request, one page at a time. | ≤ 5 per invoice (`AP_PAGE_READER_MAX_PAGES`), **one page at a time** per process (`page_reader.READ_LOCK`). |
 | Chat reply tokens | 450 (filing), 500 (chat); 2,048 when the model thinks. | 4,096 (`AP_LLM_MAX_TOKENS`); the accounts reply is about 60 tokens a line. |
@@ -43,7 +43,8 @@ chat model is **loaded** is the one used, so switching between Gemma and Qwen is
 
 1. **Developer → Start server** (`http://127.0.0.1:1234`). LM Studio 0.4.8 or newer (it honours "thinking off").
 2. **My Models → the chat model (Gemma 4 12B or Qwen 3.5 9B) → Context Length 16384**, and **OvisOCR2 → Context
-   Length 20480**. Then a model LM
+   Length 20480, Flash Attention on** (without it, reading one page took OvisOCR2's server to 8.9 GB, kept while it
+   is loaded; with it 1.8 GB). Then a model LM
    Studio loads on its own when a request names it (just-in-time loading) gets the same size the apps ask for, and
    neither app has to reload it.
 3. Leave **Just-in-Time model loading** on, but turn off the server setting that keeps only the last model loaded
@@ -54,7 +55,10 @@ chat model is **loaded** is the one used, so switching between Gemma and Qwen is
    whichever is loaded. OvisOCR2 is a GGUF model.
 
 **Memory.** Gemma 4 12B (QAT Q4_0) is about 7.0 GB plus its 0.18 GB vision file; Qwen 3.5 9B at Q4_K_M is about 5.6 GB plus its 0.9 GB vision file; OvisOCR2 at Q8_0 about 1 GB, an
-embedding model under 1 GB, plus the context of each (16,384 and 20,480 tokens). A 16 GB Mac holds all three; on
+embedding model under 1 GB, plus the context of each (16,384 and 20,480 tokens). Measured (LM Studio's headless
+server, on a CPU): Gemma 4 12B 8.8 GB loaded, 9.8 GB once it has answered; OvisOCR2 1.3 GB loaded, 1.8 GB reading
+with Flash Attention on, 8.9 GB with it off (kept while loaded). A 16 GB Mac holds all three with Flash Attention on
+for OvisOCR2 (AP Coder loads it so; CloseDesk's copy needs the setting in step 2); on
 8 GB, keep only OvisOCR2 loaded (AP Coder codes from AP's history without the chat model). AP Coder and CloseDesk
 then share these copies; neither loads a second one.
 
@@ -75,8 +79,8 @@ page reader stays OvisOCR2.
 3. **Put each model's two files in its own folder** in LM Studio's models folder (*My Models* shows where; usually
    `C:\Users\<you>\.lmstudio\models`), the vision file next to its model:
    `lmstudio-community\gemma-4-12B-it-QAT-GGUF\` and `bartowski\ATH-MaaS_OvisOCR2-GGUF\`. Restart LM Studio.
-4. **My Models → Gemma 4 12B → Context Length 16384**, GPU offload at the maximum; **OvisOCR2 → 20480**, left
-   unloaded (AP Coder loads it).
+4. **My Models → Gemma 4 12B → Context Length 16384**, GPU offload at the maximum; **OvisOCR2 → 20480, Flash
+   Attention on**, left unloaded (AP Coder loads it, with Flash Attention).
 5. **Developer → Start server**; Just-in-Time loading on, auto-evict off (above).
 6. **Load Gemma 4 12B, and unload Qwen** if it is loaded: keep one chat model loaded. With two, AP Coder uses
    one of them, and the double-click's summary names it and says to unload the other. Leave Gemma's *Thinking* off
