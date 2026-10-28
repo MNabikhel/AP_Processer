@@ -446,13 +446,19 @@ def held(autonomy: dict[str, Any]) -> bool:
     return any(autonomy.get(k) for k in HOLDS)
 
 
-def hold(autonomy: dict[str, Any], plan: Plan) -> dict[str, Any]:
-    """The touchless decision, held back until the reviewer agrees: recorded whether or not another check (the
-    Azure check) is already holding it, so neither approves it alone."""
+def held_for(autonomy: dict[str, Any], plan: Any, flag: str, waiting: str) -> dict[str, Any]:
+    """The touchless decision, held back for a check when its ``plan`` says so (``flag``: one of ``HOLDS``,
+    ``waiting``: why, in plain words): recorded whether or not the other check is already holding it, so neither
+    approves it alone."""
     if plan.hold and (autonomy.get("auto") or held(autonomy)):
-        reason = WAITING_FOR_REVIEWER if autonomy.get("auto") else f"{autonomy.get('reason')}; {WAITING_FOR_REVIEWER}"
-        return {**autonomy, "auto": False, "audit": False, "verifier_hold": True, "reason": reason}
+        reason = waiting if autonomy.get("auto") else f"{autonomy.get('reason')}; {waiting}"
+        return {**autonomy, "auto": False, "audit": False, flag: True, "reason": reason}
     return autonomy
+
+
+def hold(autonomy: dict[str, Any], plan: Plan) -> dict[str, Any]:
+    """The touchless decision, held back until the reviewer agrees (``held_for``)."""
+    return held_for(autonomy, plan, "verifier_hold", WAITING_FOR_REVIEWER)
 
 
 def queue(store: Any, invoice_id: int | None, plan: Plan, held: bool = False) -> bool:

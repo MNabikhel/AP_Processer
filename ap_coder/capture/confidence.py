@@ -124,7 +124,7 @@ class _Group:
         sources = {s for s, _ in readings}
         for source in sources:
             best = max(r.score for s, r in readings if s == source)
-            p_wrong *= 1.0 - RELIABILITY.get(source, 0.7) * max(0.0, min(best, 1.0))
+            p_wrong *= 1.0 - RELIABILITY.get(source, 0.7) * _clamp(best)
         # Readers that are wrong rarely produce the *same* wrong value: each extra agreeing reader
         # divides the chance of a shared misread further. A reader that only listed the value as a
         # runner-up agrees by half: two readers' second choices (a label, the terms) often coincide.
@@ -312,6 +312,11 @@ def _date(v: Any) -> dt.date | None:
 # Kept conservative: never claims more than the benchmark showed.
 CALIBRATION_FILE = Path(__file__).with_name("calibration.json")
 MIN_EVIDENCE = 40  # cases of one evidence pattern before its measured accuracy replaces the formula
+
+
+def _clamp(value: float, top: float = 1.0) -> float:
+    """``value`` kept between 0 and ``top``."""
+    return max(0.0, min(value, top))
 
 
 def evidence_key(
@@ -575,39 +580,34 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
         best = g.best()
         if best.method.endswith(UNSETTLED) and vouched != sources:
             best = max((r for _, r in g.readings if UNSETTLED not in r.method), key=lambda r: (bool(r.boxes), r.score))
-        evidence = evidence_key(field, vouched, best.method, layout_source=layout_source,
-                                contested=contest.get(field, 0.0) > 0.25, confirmed=bool(n_conf) and field not in failed,
-                                soft=field in soft)  # fmt: skip
-        conf = calibrate(max(0.0, min(raw, 1.0)), evidence, local_evidence)
+        # What the evidence patterns below share; they differ in the readers and the reading they describe.
+        alike = {"layout_source": layout_source, "contested": contest.get(field, 0.0) > 0.25,
+                 "confirmed": bool(n_conf) and field not in failed, "soft": field in soft}  # fmt: skip
+        measured = _clamp(raw)
+        evidence = evidence_key(field, vouched, best.method, **alike)
+        conf = calibrate(measured, evidence, local_evidence)
         if "vlm" in vouched and len(vouched) > 1:
             # The page reader agreeing is one more reader on top of a pattern the benchmark may have measured
             # without it (patterns with it are not measured yet): it never makes the value less certain.
-            without = evidence_key(field, [s for s in vouched if s != "vlm"], best.method, layout_source=layout_source,
-                                   contested=contest.get(field, 0.0) > 0.25,
-                                   confirmed=bool(n_conf) and field not in failed, soft=field in soft)  # fmt: skip
-            conf = max(conf, calibrate(max(0.0, min(raw, 1.0)), without, local_evidence))
+            without = evidence_key(field, [s for s in vouched if s != "vlm"], best.method, **alike)
+            conf = max(conf, calibrate(measured, without, local_evidence))
         if "template" in sources and len(sources) > 1:
             # Likewise the supplier's template agreeing: the pattern without it may be measured (the rule reader's
             # name with a rival name under it), the one with it not yet. Agreeing never makes the value less certain
             # than the other readers alone would (a lone reader is capped below verified: so is this floor).
             others = [r for s, r in g.readings if s != "template"]
             method = max(others, key=lambda r: (bool(r.boxes), r.score)).method
-            without = evidence_key(field, [s for s in sources if s != "template"], method, layout_source=layout_source,
-                                   contested=contest.get(field, 0.0) > 0.25,
-                                   confirmed=bool(n_conf) and field not in failed, soft=field in soft)  # fmt: skip
-            conf = max(conf, min(calibrate(max(0.0, min(raw, 1.0)), without, local_evidence), SINGLE_READER_CAP))
+            without = evidence_key(field, [s for s in sources if s != "template"], method, **alike)
+            conf = max(conf, min(calibrate(measured, without, local_evidence), SINGLE_READER_CAP))
         if len(vouched) > 1:
             # Readers that agree each describe the same evidence their own way (the supplier template's "template",
             # the rule reader's "label-right+adds-up"); which reading ranks first is chance, so the description
             # with the better measured record counts.
             for method in {r.method for _, r in g.readings if UNSETTLED not in r.method} - {best.method}:
-                alt = evidence_key(field, vouched, method, layout_source=layout_source,
-                                   contested=contest.get(field, 0.0) > 0.25,
-                                   confirmed=bool(n_conf) and field not in failed, soft=field in soft)  # fmt: skip
-                conf = max(conf, calibrate(max(0.0, min(raw, 1.0)), alt, local_evidence))
+                conf = max(conf, calibrate(measured, evidence_key(field, vouched, method, **alike), local_evidence))
         if field in failed:
             # The evidence pattern does not record the failed check: its measured accuracy must not undo the mark-down.
-            conf = min(conf, max(0.0, min(raw, 1.0)))
+            conf = min(conf, measured)
         # A lone reader is never verified on its own measured record (the benchmark is synthetic):
         # verified also needs a second reader or a check to agree. The second OCR read of a scan
         # shares the first one's blind spots (a word OCR never saw), so with the rule reader it
@@ -691,7 +691,7 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
             conf = min(conf, UNLABELLED_CAP)
             reasons.append("read only where this supplier's value was before, and the template cannot vouch for it")
         if any(TAKEN_OFF in r.method for _, r in g.readings):
-            conf = min(conf, max(0.0, min(raw, UNMEASURED_CAP)))
+            conf = min(conf, _clamp(raw, UNMEASURED_CAP))
             reasons.append(
                 "something is taken off before the amount to pay (a deposit, a commission): a person checks it"
             )
@@ -705,10 +705,10 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
             # Wording the benchmark never prints: its reading's family has a measured record, this wording not. Two
             # OCR reads of a scan see the same pixels: however many agree, only a check on other fields lifts it.
             if n_conf and field not in failed:
-                conf = min(conf, max(0.0, min(raw, SINGLE_READER_CAP)))
+                conf = min(conf, _clamp(raw, SINGLE_READER_CAP))
                 reasons.append("read from wording the test invoices do not print, and confirmed by the other fields")
             else:
-                conf = min(conf, max(0.0, min(raw, UNMEASURED_CAP)))
+                conf = min(conf, _clamp(raw, UNMEASURED_CAP))
                 reasons.append("read from wording the test invoices do not print: a person checks it")
         # 03/04/2026 with nothing on the page to settle it: however many readers chose the same order, the
         # page does not confirm it. Settled only by the day it arrived, it is likely at best, never verified.
