@@ -1439,3 +1439,23 @@ that is reversed keeps its line, marked "replaced by D-NN".
   benchmark measures *wrong this time, right next time* (`bench.coding.next_time`). (`core/memory.py`,
   `ai/suggest.py`, `coding/line_tax.py`, `core/store/lessons.py`, `core/store/learning.py`, `web/pages/learning.py`,
   `bench/coding.py`)
+- **D-119** · Learning on the reading side, "wrong this time, right next time". (1) **A vendor name AP corrects is
+  remembered** (`vendor_aliases`: the name as read, the name approved, the GST/HST number, the approval), and an
+  invoice whose vendor name reads so is that vendor's: `Store.vendor_alias`, used by `supplier_key_for` (the
+  template), `find_vendor` and `vendor_key_for` (the vendor master record, coding memory, lessons) and
+  `workflow.apply_vendor_alias` (the name shown, `likely` until approved so twice). Only when the two names look
+  alike (most letters the same, or one's words in the other's), never for an invoice whose GST/HST number is another
+  vendor's, never over a vendor that goes by the name read, and a later approval that keeps the name as read ends it;
+  withdrawn with its approval. Why: a misread with no GST/HST number had no key the next invoice could reach. (2) **An
+  untouched bulk approval settles no template spot**: its values were proposed, not checked, so they show the
+  template where a field is printed but count as no approval in a row and no miss (`learn(..., checked=)`; a field AP
+  corrected still counts); it confirms no vendor name. Changes the CAPTURE_DESIGN rule "a bulk approval teaches the
+  template". (3) **A withdrawal after a later approval takes the teaching back**: the template is learned again from
+  the withdrawn approval's snapshot through the later approvals (`Store._replay_without`, `workflow.replay_template`),
+  their snapshots rewritten on the way, when the snapshots follow on and the later pages have a text layer; a scan is
+  not OCR'd again inside a withdrawal, so with one the template is kept as before (D-71). (4) **Bench learn runs the
+  app's path**: `read_invoice` and `learn_from_approval` on a real store with the clock set by the stream, two in
+  twenty suppliers with a misread name and no GST/HST number (`misread_name`), `--withdraw-after K`, `--bulk SHARE`,
+  and right-next-time and eligible-but-wrong by position in the report. (`capture/workflow.py`, `capture/supplier.py`,
+  `core/store/vendors.py`, `core/store/capture.py`, `core/store/invoices.py`, `capture/bridge.py`,
+  `capture/confidence.py`, `ai/offline_coder.py`, `bench/learning.py`, `bench/generator.py`)

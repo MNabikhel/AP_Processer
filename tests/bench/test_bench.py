@@ -415,3 +415,21 @@ def test_learn_command_runs_and_writes_a_report(tmp_path, capsys):
     assert all(r["state"] == "learning" and not r["touchless"] for r in rows)
     md = (out / "report.md").read_text(encoding="utf-8")
     assert "## Learning curve" in md and "## Autonomy" in md and "s1-v001" in md
+
+
+def test_learn_runs_the_apps_learning_and_says_what_was_right_next_time(tmp_path):
+    """Bench learn learns as the app does (``learn_from_approval``): the supplier whose name reads wrong (no GST/HST
+    number) has its name corrected once, right on the next invoice; the clerk's slip of ``--wrong-approval`` is no
+    reading error, and withdrawn after a later approval it is taken back (B-1432, B-1435)."""
+    from ap_coder.bench.generator import MISREAD_NAME, supplier_archetype
+    from ap_coder.bench.learning import simulate_supplier, summarize_learning
+    from ap_coder.capture.supplier import AutonomyPolicy
+
+    assert supplier_archetype(1, 17) == MISREAD_NAME
+    job = (str(tmp_path), 1, 17, 4, 0.0, AutonomyPolicy().to_dict(), True, (), 2, 1, 0.0)
+    rows = simulate_supplier(job)["rows"]
+    assert rows[0]["corrections"] == ["vendor_name"] and "vendor_name" not in rows[1]["wrong_fields"]
+    assert rows[1]["slip"] and "invoice_number" not in rows[1]["corrections"]
+    assert "invoice_number" not in rows[3]["wrong_fields"]  # the slip withdrawn, after invoice 3 was approved
+    fixed = summarize_learning(rows, 2)["fixed_next_time"]
+    assert fixed["by_field"]["vendor_name"] == {"corrected": 1, "fixed": 1}

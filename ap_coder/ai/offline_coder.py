@@ -23,7 +23,7 @@ from ..capture.bridge import vendor_record
 from ..capture.confidence import apply_supplier_record, reading_confidence
 from ..capture.reader import us_address
 from ..capture.types import LIKELY, VERIFIED, CaptureResult, DocLayout, Line
-from ..capture.workflow import local_evidence, supplier_for, supplier_record
+from ..capture.workflow import apply_vendor_alias, local_evidence, supplier_for, supplier_record
 from ..coding.tax import OUTSIDE_CANADA, TaxRateTable
 from ..coding.vendors import bank_digit_count, cut_bank_details
 from ..core.memory import vendor_key
@@ -88,14 +88,15 @@ _CUSTOMER_LABEL = re.compile(
 
 def read_invoice(path: str | Path, store: Any = None, layout: DocLayout | None = None,
                  page_text: list[str] | None = None, ai_values: dict[str, Any] | None = None,
-                 ) -> tuple[CaptureResult, str, dict[str, Any] | None]:  # fmt: skip
+                 today: dt.date | None = None) -> tuple[CaptureResult, str, dict[str, Any] | None]:  # fmt: skip
     """(capture, supplier key, supplier profile): a first read, then again with the supplier's template
     and vendor-master record once the first read says who the supplier is. ``layout``: the page, already
     read (a scan is OCR'd once). ``page_text``: the page reader's transcription of each page, when it has
     read them (one more independent reader). ``ai_values``: the chat model's own reading of the header from the page
-    images (another one). What AP approved on this computer calibrates the confidence."""
+    images (another one). What AP approved on this computer calibrates the confidence. ``today``: the day it is
+    processed (today; the learning benchmark gives the day its invoice arrives)."""
     path = Path(path)
-    today = dt.date.today()
+    today = today or dt.date.today()
     layout = layout or build_layout(path)
     local = local_evidence(store)
     capture = analyze(path, layout=layout, today=today, page_text=page_text, local_evidence=local,
@@ -109,6 +110,7 @@ def read_invoice(path: str | Path, store: Any = None, layout: DocLayout | None =
                           local_evidence=local, ai_values=ai_values or None)  # fmt: skip
     if template:  # a verified value its template read: as sure as this supplier's record of it (D-89)
         apply_supplier_record(capture.fields, supplier_record(store, key))
+    apply_vendor_alias(store, capture)  # a vendor name read as AP corrected it before (D-119)
     return capture, key, profile
 
 

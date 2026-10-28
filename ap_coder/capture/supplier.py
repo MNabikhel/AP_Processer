@@ -83,6 +83,10 @@ _LABEL_WORDS = {
 }  # fmt: skip
 _CURRENCY_WORDS = {"cad", "usd", "eur", "gbp", "ca", "us", "cdn", "dr", "cr"}
 _RATE = re.compile(r"[(@]*\d*(?:[.,]\d+)?\s*%\)?:?|@")  # "5%", "(13%)", "%)", "5%:", "@"
+# An amount whose thousands are set off by a space ("11 211,29", "$ 1 118.33 CR"): one value, not its last group.
+_SPACED_THOUSANDS = re.compile(
+    r"[-(]?(?:\$\s?)?\d{1,3}(?:\s\d{3})+(?:[.,]\d{1,2})?(?:\s?\$)?(?:\s?(?:cr|dr)\.?)?\)?", re.I
+)
 
 
 def _now() -> str:
@@ -181,6 +185,14 @@ def date_candidates(text: Any) -> list[tuple[str, str]]:
     ]
     if month is None or others or len(numbers) != 2:
         return []
+    # Printed in a date's order: month day year, day month year, or year month day. Not the end of one date and the
+    # start of the next printed beside it ("10, 2025 October", "2025 March 15,").
+    at = {w: i for i, w in enumerate(words)}
+    month_at = next(i for i, w in enumerate(words) if w in _MONTHS)
+    if len(numbers[0]) == 4 and (at[numbers[0]] > month_at or s.endswith(",")):
+        return []
+    if len(numbers[-1]) == 4 and at[numbers[-1]] < month_at:
+        return []
     year = next((int(n) for n in numbers if len(n) == 4), None)
     day = next((int(n) for n in numbers if len(n) <= 2), None)
     if year is None and words[-1] == numbers[-1] and len(numbers[-1]) == 2 and len(numbers[0]) <= 2:
@@ -242,6 +254,8 @@ def normalize_value(name: str, raw: Any, date_order: str | None = None) -> Any:
             value = shared_value(name, raw)
         except Exception:
             value = None
+        if name in DATE_FIELDS and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(value or "")):
+            value = None  # not a date it can read: the words as printed are no date value
         if value not in (None, ""):
             return value
     return _local_normalize(name, raw, date_order)
@@ -656,11 +670,13 @@ def _box_distance(a: list[float], b: list[float]) -> float:
 
 def learn(
     template: Template | dict[str, Any] | None, layout: DocLayout, confirmed: dict[str, tuple[Any, list[Box] | None]],
-    when: str | None = None, document: str = "",
+    when: str | None = None, document: str = "", checked: Iterable[str] | None = None,
 ) -> Template:  # fmt: skip
     """Update ``template`` (a ``Template`` or its dict, as the store keeps it) from the values AP
     confirmed: ``{field: (value, boxes or None)}``. ``document``: what tells this page from others (its file's
-    SHA-256): a page approved again teaches only the values approved differently since (B-454).
+    SHA-256): a page approved again teaches only the values approved differently since (B-454). ``checked``: the
+    fields a person looked at (None: all of them, a reviewed approval). Approved in bulk, nobody opened the invoice: a
+    value nobody checked shows where the field is printed, but vouches for no spot and counts as no miss (D-119).
 
     ``boxes`` are the words the reviewer clicked (teach-by-click) and are authoritative; without them the
     value is looked for on the page. A value that cannot be found on the page teaches nothing.
@@ -676,6 +692,7 @@ def learn(
     when = when or _now()
     seen: dict[str, list[str]] = template.documents.get(document, {}) if document else {}
     again = bool(seen)
+    looked = None if checked is None else set(checked)
     items, known = [], set()
     for name, item in confirmed.items():
         value, boxes = item if isinstance(item, tuple) else (item, None)
@@ -689,9 +706,11 @@ def learn(
     learned = 0
     for name, value, boxes in items:
         variants = template.fields.setdefault(name, [])
+        sure = looked is None or name in looked or bool(boxes)  # a person confirmed this value
         # A spot that holds another value than the one approved is a miss even for a value this page taught before: put
         # back after a correction, the corrected-to spot must not keep its mark (B-462).
-        _misses(name, value, variants, layout)
+        if sure:
+            _misses(name, value, variants, layout)
         if name in known:
             continue
         hit = _taught(layout, boxes, name, value) if boxes else _best_span(layout, name, spans[name], variants)
@@ -702,6 +721,7 @@ def learn(
         shared = any(ids & {id(w) for w in s[1]} for other, found in spans.items() if other != name for s in found)
         # A reviewer's click settles the spot; a value found on the page only when it is printed there alone.
         settled = bool(boxes) or (len(spans[name]) == 1 and not shared)
+        confirm = sure  # nobody checked it: no approval in a row at the spot either
         page = _page(layout, page_no)
         rows = _rows(page.words) if page is not None else []
         vbox = union_all(boxes) if boxes else _span_box(words)  # a taught box is authoritative
@@ -711,7 +731,16 @@ def learn(
         if anchor is not None and name == "vendor_name" and _name_again(anchor.text, value):
             anchor = None  # the name printed again (a logo over the address) is not its label
         first = _update_variants(
-            variants, _page_ref(layout, page_no), _box4(vbox), anchor, raw, order, when, settled, rows=rows
+            variants,
+            _page_ref(layout, page_no),
+            _box4(vbox),
+            anchor,
+            raw,
+            order,
+            when,
+            settled and confirm,
+            rows=rows,
+            confirm=confirm,
         )
         if not boxes and len(spans[name]) > 1:
             # Printed twice: the next likeliest place is learned too, so that once the two differ the template's own
@@ -738,6 +767,7 @@ def learn(
                         False,
                         first,
                         rows=_rows(page2.words) if page2 is not None else None,
+                        confirm=confirm,
                     )
                     twin.twin = True
         learned += 1
@@ -746,7 +776,9 @@ def learn(
         template.updated_at = when
     if document:
         values = template.documents.pop(document, {})  # put back last: the newest pages are kept
-        for name, value, _ in items:  # every value of a field learned from this page (A, then B, then A again)
+        for name, value, boxes in items:  # every value of a field learned from this page (A, then B, then A again)
+            if looked is not None and name not in looked and not boxes:
+                continue  # nobody checked it: a person approving this page later teaches it in full
             values[name] = list(dict.fromkeys([*values.get(name, []), str(compare_key(name, value))]))
         template.documents[document] = values
         while len(template.documents) > KEEP_DOCUMENTS:
@@ -841,7 +873,7 @@ def _same_variant(v: Variant, page: int | str, box: list[float], anchor: Anchor 
 def _update_variants(
     variants: list[Variant], page: int | str, box: list[float], anchor: Anchor | None, raw: str,
     order: str | None, when: str, settled: bool = True, avoid: Variant | None = None,
-    rows: list[list[Word]] | None = None,
+    rows: list[list[Word]] | None = None, confirm: bool = True,
 ) -> Variant:  # fmt: skip
     candidates = [
         v
@@ -881,7 +913,7 @@ def _update_variants(
         match.date_order = order
     match.count += 1
     match.settled += settled
-    match.streak += 1
+    match.streak += confirm  # an approval nobody checked is none in a row (D-119)
     match.last_seen = when
     variants.sort(key=lambda v: (-v.count, v.last_seen))
     return match
@@ -1083,7 +1115,7 @@ def _apply_variant(name: str, variant: Variant, layout: DocLayout) -> list[Readi
         return []
     rows = _rows(page.words)
     experience = 1.0 if variant.count >= 2 else 0.9
-    found: list[tuple[Reading, set[int], tuple[float, float, int, float]]] = []
+    found: list[tuple[Reading, set[int], tuple[bool, float, float, int, float]]] = []
 
     def add(words: list[Word], raw: str, shape: float, geometry: float, base: float) -> None:
         if name == "payment_terms" and not _has_letters(raw):
@@ -1110,8 +1142,10 @@ def _apply_variant(name: str, variant: Variant, layout: DocLayout) -> list[Readi
         conf = min((w.conf for w in words), default=1.0)
         score = (base * (0.6 + 0.4 * geometry) + SHAPE_WEIGHT * shape) * experience * conf - 0.005 * (len(words) - 1)
         reading = Reading(name, value, raw, [w.box for w in words], round(min(score, 0.99), 4), method)
-        # Of nested spans that fit alike, the longer is the value: "2 074,06", not its tail "074,06".
-        rank = (variant.shape.fit(raw), shape, len(words), reading.score)
+        # Of nested spans that fit alike, the longer is the value: "2 074,06", not its tail "074,06". An amount over a
+        # thousand on a supplier's invoices learned under one ("11 211,29" where "211,29" was) is whole first.
+        whole = name in AMOUNT_FIELDS and bool(_SPACED_THOUSANDS.fullmatch(" ".join(raw.split())))
+        rank = (whole, variant.shape.fit(raw), shape, len(words), reading.score)
         found.append((reading, {id(w) for w in words}, rank))
 
     hits = _anchor_hits(rows, variant.anchor) if variant.anchor else []
@@ -1147,7 +1181,7 @@ def _apply_variant(name: str, variant: Variant, layout: DocLayout) -> list[Readi
     def nested(a: set[int], b: set[int]) -> bool:
         return a != b and (a <= b or b <= a)
 
-    def beaten(ids: set[int], rank: tuple[float, float, int, float]) -> bool:
+    def beaten(ids: set[int], rank: tuple[bool, float, float, int, float]) -> bool:
         return any(nested(ids, o_ids) and o_rank > rank for _, o_ids, o_rank in found)
 
     return [r for r, ids, rank in found if not beaten(ids, rank)]

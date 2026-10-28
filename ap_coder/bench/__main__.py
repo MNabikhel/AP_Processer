@@ -64,6 +64,20 @@ def main(argv: list[str] | None = None) -> int:
         metavar="N",
         help="on each supplier's invoice N the clerk teaches the wrong words, then it is withdrawn",
     )
+    lp.add_argument(
+        "--withdraw-after",
+        type=int,
+        default=0,
+        metavar="K",
+        help="with --wrong-approval: withdrawn once K more invoices were approved (default 0: before the next one)",
+    )
+    lp.add_argument(
+        "--bulk",
+        type=float,
+        default=0.0,
+        metavar="SHARE",
+        help="share of invoices AP approves in bulk, untouched, when bulk approval takes them (default 0)",
+    )
     sp = sub.add_parser("speed", help="seconds per invoice through the app's pipeline on this computer")
     sp.add_argument("--n", type=int, default=20, help="number of invoices (default 20)")
     sp.add_argument("--seed", type=int, default=1, help="random seed; the same seed gives the same invoices")
@@ -182,6 +196,8 @@ def main(argv: list[str] | None = None) -> int:
             vendor_master=not a.no_vendor_master,
             ignore_checks=tuple(a.ignore_check),
             wrong_at=a.wrong_approval,
+            withdraw_after=a.withdraw_after,
+            bulk=a.bulk,
         )
         au, b = report["summary"]["autonomy"], report["summary"]["buckets"]
         first, last = next(iter(b.values())), list(b.values())[-1]

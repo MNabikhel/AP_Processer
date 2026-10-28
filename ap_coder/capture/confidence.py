@@ -273,8 +273,10 @@ def run_checks(values: dict[str, Any], line_items: list[LineReading], vendor: di
                            "detail": "GST/HST number " + ("matches" if ok else "differs from") + " the vendor master"})  # fmt: skip
         vn = vendor.get("name")
         if vn and values.get("vendor_name"):
-            a, b = norm_name(vn), norm_name(values["vendor_name"])
-            ok = bool(a) and (a == b or a in b or b in a)
+            b = norm_name(values["vendor_name"])
+            # The master's name, or a name AP corrected to it that the vendor's invoices print (D-119).
+            ok = any(bool(a) and (a == b or a in b or b in a)
+                     for a in (norm_name(n) for n in [vn, *(vendor.get("aliases") or [])]))  # fmt: skip
             checks.append({"code": "VENDOR_NAME_MATCH", "ok": ok, "fields": ["vendor_name"],
                            "detail": "supplier name " + ("matches" if ok else "differs from") + " the vendor master"})  # fmt: skip
     return checks
