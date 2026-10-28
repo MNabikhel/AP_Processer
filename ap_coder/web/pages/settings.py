@@ -41,13 +41,11 @@ from ap_coder.web.core import (
     developer_env_on,
     developer_tools,
     done,
-    folder_on_the_server,
     get_settings,
     get_store,
     invoice_dir,
     jde_shown,
-    message,
-    open_folder,
+    open_folder_here,
     page_version,
     posted_form,
     refuse,
@@ -459,12 +457,7 @@ def backup_path(store: Store, name: str) -> Path:
 
 @router.post("/settings/data/open-folder")
 def open_data_folder(request: Request) -> JSONResponse:
-    folder = data_dir(get_store(request))
-    if server_mode(request):
-        return folder_on_the_server(request, folder)
-    if open_folder(folder):
-        return message("Opened the data folder.", "info")
-    return message(f"Open this folder yourself: {folder}", "info")
+    return open_folder_here(request, data_dir(get_store(request)), "data folder")
 
 
 @router.post("/settings/data/backup")
