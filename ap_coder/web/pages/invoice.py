@@ -43,6 +43,7 @@ from ap_coder.coding.vendors import mask_account
 from ap_coder.core import audit, ui
 from ap_coder.core.memory import ACCEPTED, CODED, CORRECTED, vendor_key
 from ap_coder.core.reference_data import ReferenceData
+from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store, coded_blanks
 from ap_coder.core.store.users import same_approver
 from ap_coder.erp import jde, stamp
@@ -237,6 +238,29 @@ def _invoice(store: Store, invoice_id: int) -> dict[str, Any]:
     return inv
 
 
+NOT_IN_REVIEW = "This invoice is no longer in the review queue: reload the page."
+
+
+def _in_review(store: Store, invoice_id: int) -> dict[str, Any]:
+    """The invoice, still in the review queue; refused (409) when it was approved, parked... meanwhile."""
+    inv = _invoice(store, invoice_id)
+    if inv["status"] != REVIEW:
+        raise HTTPException(status_code=409, detail=NOT_IN_REVIEW)
+    return inv
+
+
+def _fix_first(analysis: view.Analysis) -> InvoiceCoding:
+    """The coding on screen; refused while a field keeps it from being built."""
+    if analysis.coding is None:
+        raise HTTPException(status_code=400, detail="Fix this field first: " + "; ".join(analysis.problems))
+    return analysis.coding
+
+
+def _back(request: Request, invoice_id: int, text: str, tone: str = "ok", icon: str = "") -> JSONResponse:
+    """The invoice's screen again, with a message."""
+    return done(request, f"/review/{invoice_id}", flash_message(text, tone, icon=icon))
+
+
 def _nav_query(params: Any) -> dict[str, str]:
     return {k: str(params.get(k)) for k in NAV_PARAMS if params.get(k)}
 
@@ -309,9 +333,8 @@ def changed_meanwhile(request: Request, invoice_id: int, exc: Exception) -> JSON
                                                       icon="sync_problem"))  # fmt: skip
     now = _NOW.get(inv["status"], str(inv["status"]))
     by = f" by {inv['reviewer']}" if inv["status"] in (APPROVED, PENDING) and inv.get("reviewer") else ""
-    return done(request, f"/review/{invoice_id}",
-                flash_message(f"Not done: this invoice changed meanwhile, in another tab or by someone else. It is "
-                              f"{now}{by}.", "warn", icon="sync_problem"))  # fmt: skip
+    return _back(request, invoice_id, f"Not done: this invoice changed meanwhile, in another tab or by someone else. "
+                 f"It is {now}{by}.", "warn", icon="sync_problem")  # fmt: skip
 
 
 NOTE_ACTIONS = ("note", "parked", "sent_back")  # what the notes card lists
@@ -377,12 +400,13 @@ def folded_reviewer(state: dict[str, Any]) -> dict[str, Any]:
     return {**state, "lines": []} if state.get("state") == "waiting" else state
 
 
-def _document(store: Store, settings: Any, inv: dict[str, Any], status: Any, editable: bool) -> dict[str, Any]:
-    """The document card: the pages (or the extracted text), what OvisOCR2 made of it, how the lines were read."""
+def _document(store: Store, settings: Any, inv: dict[str, Any], status: Any, editable: bool,
+              capture: Any) -> dict[str, Any]:  # fmt: skip
+    """The document card: the pages (or the extracted text), what OvisOCR2 made of it, how the lines were read.
+    ``capture``: the invoice's (``view.capture_of``)."""
     from ap_coder.capture.line_items import sources_line
 
     path = Path(inv.get("source_path") or "")
-    capture = view.capture_of(store, inv["id"])
     sizes: list[tuple[float, float]] = []
     problem = ""
     if not path.exists():  # (a file an update moved was found again by get_invoice)
@@ -393,6 +417,8 @@ def _document(store: Store, settings: Any, inv: dict[str, Any], status: Any, edi
         except Exception:  # noqa: BLE001 - a damaged file: the extracted text still shows what was read
             problem = "This file could not be shown (it may be damaged)."
     original = (inv.get("meta") or {}).get("original") or {}
+    folded = editable and lm_studio_off(status)  # the banner says LM Studio is off: the lines don't say it again
+    reader, checker = view.reader_state(store, settings, inv, status), view.reviewer_state(store, inv)
     return {
         "file_name": inv.get("file_name") or path.name,
         "kind": view.document_kind(capture.layout_source) if capture is not None else None,
@@ -401,19 +427,14 @@ def _document(store: Store, settings: Any, inv: dict[str, Any], status: Any, edi
         "teach_fields": [(f, LABELS.get(f, f)) for f in view.TEACHABLE],
         "problem": problem,
         "text": Markup(ui.document_text(inv.get("extraction_md") or "")),  # noqa: S704 - document_text escapes
-        "reader": (folded_reader if editable and lm_studio_off(status) else _same)(
-            view.reader_state(store, settings, inv, status)),
-        "reviewer": (folded_reviewer if editable and lm_studio_off(status) else _same)(view.reviewer_state(store, inv)),
+        "reader": folded_reader(reader) if folded else reader,
+        "reviewer": folded_reviewer(checker) if folded else checker,
         "lessons": _lesson_hints(store, inv),
         "lines_note": sources_line(capture.line_items, capture.checks) if capture is not None else "",
         "original": {"file": str(original["file"]),
                      "folder": Path(str(original.get("kept") or "")).parent.name or "originals"}
         if original.get("file") else None,
     }  # fmt: skip
-
-
-def _same(state: dict[str, Any]) -> dict[str, Any]:
-    return state
 
 
 UNDONE = "undone right after approving"  # the reason an approval undone from its banner is reopened with
@@ -490,7 +511,8 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
     }
     editable = inv["status"] == REVIEW and reference is not None
     may_edit = can(request, f"/review/{invoice_id}/check")  # server mode: Read-only looks and changes nothing (D-98)
-    context["doc"] = _document(store, settings, inv, status, editable and may_edit)
+    capture = view.capture_of(store, invoice_id)  # read once: the document card and the checks use it
+    context["doc"] = _document(store, settings, inv, status, editable and may_edit, capture)
     if not editable:
         mode = _mode(inv, reference)
         if mode in ("approved", "pending", "rejected", "parked"):  # nothing left to read: no reading tools' warning
@@ -499,8 +521,7 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
                       **_closed(store, reference, inv))  # fmt: skip
     saved_at = str((_drafts(request).get(invoice_id) or {}).get("saved_at") or "")  # edits kept from before
     draft, kept = current_draft(request, inv)
-    analysis = view.analyse(store, settings, reference, inv, draft, reviewer())
-    capture = view.capture_of(store, invoice_id)
+    analysis = view.analyse(store, settings, reference, inv, draft, reviewer(), capture=capture)
     sure = view.shown_sure(view.capture_confidence(capture), draft.header, inv.get("ai_output") or {}, capture)
     start = _start(inv)
     computed = None
@@ -574,9 +595,7 @@ def add_vendor(
     "Approve anyway" (VENDOR_ADDED_HERE) until it is set up in JD Edwards and the vendor list is imported again. With
     JD Edwards on, its address number (AN8) can be given here (an Admin's, as in Settings → JD Edwards E1, D-112)."""
     store = get_store(request)
-    inv = _invoice(store, invoice_id)
-    if inv["status"] != REVIEW:
-        return refuse("This invoice is no longer in the review queue: reload the page.", 409)
+    _in_review(store, invoice_id)
     name = " ".join(name.split())
     if province and province not in PROVINCE_NAMES and province != OUTSIDE_CANADA:
         return refuse("Choose a province from the list.")
@@ -731,9 +750,7 @@ async def check(request: Request, invoice_id: int) -> JSONResponse:
 @one_connection
 def _check(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     store, settings = get_store(request), get_settings(request)
-    inv = _invoice(store, invoice_id)
-    if inv["status"] != REVIEW:
-        return refuse("This invoice is no longer in the review queue: reload the page.", 409)
+    inv = _in_review(store, invoice_id)
     reference = _reference(store)
     draft = _from_form(request, inv, form)
     analysis = view.analyse(store, settings, reference, inv, draft, reviewer())
@@ -794,8 +811,7 @@ def _approve(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     draft = _from_form(request, inv, form)
     query = _nav_query(form)
     analysis = view.analyse(store, settings, reference, inv, draft, reviewer())
-    if analysis.coding is None:
-        return refuse("Fix this field first: " + "; ".join(analysis.problems))
+    _fix_first(analysis)
     if not analysis.allow:
         bar = analysis.live["bar"]
         first = bar["first"]  # the first thing that keeps it closed, in screen order (B-797)
@@ -1009,16 +1025,22 @@ def teach(request: Request, invoice_id: int, field: str = Form(""), text: str = 
 # --- Changing the line grid -----------------------------------------------------------------------------------------
 
 
-async def _coded(request: Request, invoice_id: int) -> tuple[Store, dict[str, Any], ReferenceData, Any, view.Draft,
-                                                            view.Analysis]:  # fmt: skip
+async def _posted_in_review(request: Request, invoice_id: int) -> tuple[Store, dict[str, Any], ReferenceData, Any,
+                                                                       view.Draft]:  # fmt: skip
+    """A grid action's invoice (still in the review queue), the GL accounts, the form posted and its draft."""
     store = get_store(request)
-    inv = _invoice(store, invoice_id)
-    if inv["status"] != REVIEW:
-        raise HTTPException(status_code=409, detail="This invoice is no longer in the review queue: reload the page.")
+    inv = _in_review(store, invoice_id)
     reference = _reference(store)
     form, draft = await _posted(request, inv)
-    analysis = view.analyse(store, get_settings(request), reference, inv, draft)
-    return store, inv, reference, form, draft, analysis
+    return store, inv, reference, form, draft
+
+
+async def _coded(request: Request, invoice_id: int) -> tuple[Store, dict[str, Any], ReferenceData, Any, view.Draft,
+                                                            InvoiceCoding]:  # fmt: skip
+    """As ``_posted_in_review``, with the coding on screen (refused while a field keeps it from being built)."""
+    store, inv, reference, form, draft = await _posted_in_review(request, invoice_id)
+    coding = _fix_first(view.analyse(store, get_settings(request), reference, inv, draft))
+    return store, inv, reference, form, draft, coding
 
 
 def _new_lines(request: Request, invoice_id: int, reference: ReferenceData, draft: view.Draft,
@@ -1033,12 +1055,7 @@ def _new_lines(request: Request, invoice_id: int, reference: ReferenceData, draf
 @router.post("/review/{invoice_id:int}/split")
 async def split(request: Request, invoice_id: int) -> JSONResponse:
     """Split one line across several GL accounts / cost centers by percentage (shared costs)."""
-    store = get_store(request)
-    inv = _invoice(store, invoice_id)
-    if inv["status"] != REVIEW:  # approved in another tab meanwhile: no draft is kept for it (B-1402)
-        return refuse("This invoice is no longer in the review queue: reload the page.", 409)
-    reference = _reference(store)
-    form, draft = await _posted(request, inv)
+    _, _, reference, form, draft = await _posted_in_review(request, invoice_id)  # (approved meanwhile: B-1402)
     number = view._line_number(form.get("split_line"))
     if number is None:
         return refuse("Pick the line to split.")
@@ -1061,10 +1078,8 @@ async def split(request: Request, invoice_id: int) -> JSONResponse:
 @router.post("/review/{invoice_id:int}/apply-rules")
 async def apply_rules(request: Request, invoice_id: int) -> JSONResponse:
     """Code the lines as the fixed coding rules say (e.g. a rule added after the invoice was processed)."""
-    store, inv, reference, _, draft, analysis = await _coded(request, invoice_id)
-    if analysis.coding is None:
-        return refuse("Fix this field first: " + "; ".join(analysis.problems))
-    lines, n = view.apply_rules(store, analysis.coding, draft, invoice_id, inv["ai_output"] or {})
+    store, inv, reference, _, draft, coding = await _coded(request, invoice_id)
+    lines, n = view.apply_rules(store, coding, draft, invoice_id, inv["ai_output"] or {})
     return _new_lines(request, invoice_id, reference, draft, lines,
                       f"Coding rules applied to {ui.plural(n, 'line')}.", "rule_settings")  # fmt: skip
 
@@ -1072,10 +1087,8 @@ async def apply_rules(request: Request, invoice_id: int) -> JSONResponse:
 @router.post("/review/{invoice_id:int}/po-coding")
 async def use_po_coding(request: Request, invoice_id: int) -> JSONResponse:
     """Set the GL account and cost center of the lines that differ from the purchase order to the PO's."""
-    store, _, reference, _, draft, analysis = await _coded(request, invoice_id)
-    if analysis.coding is None:
-        return refuse("Fix this field first: " + "; ".join(analysis.problems))
-    lines, n = view.po_coding(store, analysis.coding, draft, invoice_id)
+    store, _, reference, _, draft, coding = await _coded(request, invoice_id)
+    lines, n = view.po_coding(store, coding, draft, invoice_id)
     return _new_lines(request, invoice_id, reference, draft, lines,
                       f"Applied the PO's coding to {ui.plural(n, 'line')}.", "auto_fix_high")  # fmt: skip
 
@@ -1083,18 +1096,16 @@ async def use_po_coding(request: Request, invoice_id: int) -> JSONResponse:
 @router.post("/review/{invoice_id:int}/suggestion")
 async def use_suggestion(request: Request, invoice_id: int) -> JSONResponse:
     """Code a line with a suggested GL account (one click, from past decisions and the account list)."""
-    _, _, reference, form, draft, analysis = await _coded(request, invoice_id)
-    if analysis.coding is None:
-        return refuse("Fix this field first: " + "; ".join(analysis.problems))
+    _, _, reference, form, draft, coding = await _coded(request, invoice_id)
     gl = str(form.get("gl") or "")
     if reference.chart_of_accounts.get(gl) is None:
         return refuse("That GL account is not in your chart of accounts.")
     try:
         position = int(str(form.get("position") or ""))
-        lines = view.use_suggestion(reference, analysis.coding, draft, position, gl, str(form.get("cc") or ""))
+        lines = view.use_suggestion(reference, coding, draft, position, gl, str(form.get("cc") or ""))
     except ValueError as exc:
         return refuse(f"Not changed: {exc}.")
-    number = analysis.coding.line_items[position].line_number
+    number = coding.line_items[position].line_number
     return _new_lines(request, invoice_id, reference, draft, lines, f"Line {number} coded to GL {gl}.", "add_task")
 
 
@@ -1102,12 +1113,7 @@ async def use_suggestion(request: Request, invoice_id: int) -> JSONResponse:
 async def fill_lines(request: Request, invoice_id: int) -> JSONResponse:
     """Apply to all lines: one GL account and / or cost center for every line that has none yet (lines already
     coded keep theirs)."""
-    store = get_store(request)
-    inv = _invoice(store, invoice_id)
-    if inv["status"] != REVIEW:
-        return refuse("This invoice is no longer in the review queue: reload the page.", 409)
-    reference = _reference(store)
-    form, draft = await _posted(request, inv)
+    _, _, reference, form, draft = await _posted_in_review(request, invoice_id)
     gl, cc = str(form.get("fill_gl") or "").strip(), str(form.get("fill_cc") or "").strip()
     if not gl and not cc:
         return refuse("Pick a GL account or a cost center to apply to the lines without one.")
@@ -1131,8 +1137,7 @@ def read_pages(request: Request, invoice_id: int) -> JSONResponse:
     store = get_store(request)
     _invoice(store, invoice_id)
     store.queue_page_read(invoice_id, "not read yet", requested_by=reviewer())
-    return done(request, f"/review/{invoice_id}", flash_message(
-        "Added to OvisOCR2's queue: it reads it in the background.", "ok", icon="visibility"))  # fmt: skip
+    return _back(request, invoice_id, "Added to OvisOCR2's queue: it reads it in the background.", icon="visibility")
 
 
 @router.post("/review/{invoice_id:int}/review-again")
@@ -1141,15 +1146,12 @@ def review_again(request: Request, invoice_id: int) -> JSONResponse:
     from ap_coder.ai import verifier
 
     store = get_store(request)
-    inv = _invoice(store, invoice_id)
-    if inv["status"] != REVIEW:
-        return refuse("This invoice is no longer in the review queue: reload the page.", 409)
+    _in_review(store, invoice_id)
     if not verifier.load_settings(store).on:
         return refuse(f"The {verifier.NAME} is off: turn it on in Settings → Reading.")
     store.queue_verification(invoice_id, f"asked by {reviewer()}")
-    return done(request, f"/review/{invoice_id}", flash_message(
-        f"In line for the {verifier.NAME}: it checks the invoice when the chat model is free.", "ok",
-        icon="playlist_add"))  # fmt: skip
+    return _back(request, invoice_id, f"In line for the {verifier.NAME}: it checks the invoice when the chat model "
+                 "is free.", icon="playlist_add")  # fmt: skip
 
 
 @router.post("/review/{invoice_id:int}/start-over")
@@ -1157,8 +1159,7 @@ def start_over(request: Request, invoice_id: int) -> JSONResponse:
     """Drop the edits not approved yet: the fields show the invoice as read (OvisOCR2's reading, when it is in)."""
     _invoice(get_store(request), invoice_id)
     forget_draft(request, invoice_id)
-    return done(request, f"/review/{invoice_id}", flash_message("The fields show the reading again.", "ok",
-                                                                icon="restart_alt"))  # fmt: skip
+    return _back(request, invoice_id, "The fields show the reading again.", icon="restart_alt")
 
 
 # --- The other states -------------------------------------------------------------------------------------------------
@@ -1171,8 +1172,7 @@ def resume(request: Request, invoice_id: int) -> JSONResponse:
         get_store(request).unpark_invoice(invoice_id, reviewer())
     except ValueError as exc:
         return changed_meanwhile(request, invoice_id, exc)
-    return done(request, f"/review/{invoice_id}", flash_message(
-        f"Invoice #{invoice_id} is back in the review queue.", "ok", icon="play_circle"))  # fmt: skip
+    return _back(request, invoice_id, f"Invoice #{invoice_id} is back in the review queue.", icon="play_circle")
 
 
 @router.post("/review/{invoice_id:int}/restore")
@@ -1182,7 +1182,7 @@ def restore(request: Request, invoice_id: int) -> JSONResponse:
         get_store(request).reopen(invoice_id, reviewer(), only_rejected=True)
     except ValueError as exc:
         return changed_meanwhile(request, invoice_id, exc)
-    return done(request, f"/review/{invoice_id}", flash_message("Back in the review queue.", "ok", icon="undo"))
+    return _back(request, invoice_id, "Back in the review queue.", icon="undo")
 
 
 @router.post("/review/{invoice_id:int}/correct")
@@ -1202,9 +1202,8 @@ def correct(request: Request, invoice_id: int, reason: str = Form("")) -> JSONRe
 
         why = exported_reason(store, store.get_invoice(invoice_id))
         if why:  # exported, or posted to JD Edwards: the real reason (B-1201)
-            return done(request, f"/review/{invoice_id}", flash_message(f"Not done: {why}.", "warn", icon="undo"))
+            return _back(request, invoice_id, f"Not done: {why}.", "warn", icon="undo")
         return changed_meanwhile(request, invoice_id, exc)
     on_reopen(store, invoice_id, me, reason.strip(), before=before)
     forget_everyones_draft(request, invoice_id)
-    return done(request, f"/review/{invoice_id}", flash_message("Reopened: correct it and approve it again.", "ok",
-                                                                icon="undo"))  # fmt: skip
+    return _back(request, invoice_id, "Reopened: correct it and approve it again.", icon="undo")

@@ -54,14 +54,12 @@ from ap_coder.web.core import (
     can,
     done,
     flash_message,
-    folder_on_the_server,
     get_settings,
     get_store,
     invoice_dir,
     jobs,
     local_url,
-    message,
-    open_folder,
+    open_folder_here,
     reading_status_or_none,
     reference_or_none,
     refuse,
@@ -535,6 +533,40 @@ def needs_attention(store: Store, reference: ReferenceData | None, result: Pipel
     return inv["id"] in attention(store, reference, [inv])
 
 
+def run_summary(ok: int, todo: list[Path], skipped: list[Path], mails: list[Unpacked], note: str,
+                notes: list[dict[str, Any]] | None = None) -> tuple[list[dict[str, Any]], str]:  # fmt: skip
+    """What a processing run says when it ends: (its messages, its one-line label). ``ok``: the files of ``todo`` read
+    and coded; ``skipped``: those already in AP Coder; ``mails``: the emails unpacked; ``note``: OvisOCR2's queue
+    (``queued_note``); ``notes``: messages from saving the upload, said first."""
+    failed = len(todo) - ok
+    messages = list(notes or [])
+    if ok:
+        ready = "It's" if ok == 1 else "They're"  # (B-430)
+        messages.append(flash_message(f"{ui.plural(ok, 'invoice')} read and coded. {ready} ready to review in the "
+                                      f"review queue. {note}".strip(), "ok", icon="inbox"))  # fmt: skip
+    if failed:
+        messages.append(flash_message(f"{ui.plural(failed, 'file')} could not be processed. See Review queue → "
+                                      "Failed / rejected.", "err"))  # fmt: skip
+    if skipped:
+        messages.append(flash_message(f"Skipped {ui.plural(len(skipped), 'file')} already in AP Coder.", "info",
+                                      [p.name for p in skipped], "content_copy"))  # fmt: skip
+    if not todo and not skipped and not mails:
+        messages.append(flash_message("Nothing new to read.", "info"))
+    label = f"Processed {ok} of {len(todo) + len(skipped)}" if todo else "Nothing new to read"
+    if todo and skipped:  # every file of the run counted, the ones not read said (B-1184)
+        label += f": {len(skipped)} already in AP Coder"
+    to_person = sum(1 for m in mails if m.error or (m.triage and m.triage.needs_person))
+    if to_person:  # every email counted, the ones sorted to a person too (B-1303)
+        files = len(todo) + len(skipped)
+        read = (f"{ui.plural(ok, 'invoice')} processed" if ok == files
+                else f"{ok} of {ui.plural(files, 'file')} processed")  # fmt: skip
+        parts = [read] if files else []
+        parts += [f"{len(skipped)} already in AP Coder"] if skipped else []
+        parts.append(f"{to_person} sent to Emails that need a person")
+        label = f"{ui.plural(len(mails), 'email')}: {', '.join(parts)}"
+    return messages, label
+
+
 def process_files(store: Store, settings: Settings, paths: list[Path], *, already: list[Path] | None = None,
                   emails: list[Unpacked] | None = None, notes: list[dict[str, Any]] | None = None,
                   folder_emails: bool = False) -> Any:  # fmt: skip
@@ -582,32 +614,8 @@ def process_files(store: Store, settings: Settings, paths: list[Path], *, alread
                                     started_at=started, seconds=time.monotonic() - clock, errors=errors,
                                     actor=actor)  # fmt: skip
         queued = max(0, store.page_reads_waiting() - waiting)
-        messages = list(notes or [])
-        if ok:
-            note = queued_note(settings, store, queued)
-            ready = "It's" if ok == 1 else "They're"  # (B-430)
-            messages.append(flash_message(f"{ui.plural(ok, 'invoice')} read and coded. {ready} ready to review in the "
-                                          f"review queue. {note}".strip(), "ok", icon="inbox"))  # fmt: skip
-        if failed:
-            messages.append(flash_message(f"{ui.plural(failed, 'file')} could not be processed. See Review queue → "
-                                          "Failed / rejected.", "err"))  # fmt: skip
-        if skipped:
-            messages.append(flash_message(f"Skipped {ui.plural(len(skipped), 'file')} already in AP Coder.", "info",
-                                          [p.name for p in skipped], "content_copy"))  # fmt: skip
-        if not todo and not skipped and not mails:
-            messages.append(flash_message("Nothing new to read.", "info"))
-        label = f"Processed {ok} of {len(todo) + len(skipped)}" if todo else "Nothing new to read"
-        if todo and skipped:  # every file of the run counted, the ones not read said (B-1184)
-            label += f": {len(skipped)} already in AP Coder"
-        to_person = sum(1 for m in mails if m.error or (m.triage and m.triage.needs_person))
-        if to_person:  # every email counted, the ones sorted to a person too (B-1303)
-            files = len(todo) + len(skipped)
-            read = (f"{ui.plural(ok, 'invoice')} processed" if ok == files
-                    else f"{ok} of {ui.plural(files, 'file')} processed")  # fmt: skip
-            parts = [read] if files else []
-            parts += [f"{len(skipped)} already in AP Coder"] if skipped else []
-            parts.append(f"{to_person} sent to Emails that need a person")
-            label = f"{ui.plural(len(mails), 'email')}: {', '.join(parts)}"
+        note = queued_note(settings, store, queued) if ok else ""
+        messages, label = run_summary(ok, todo, skipped, mails, note, notes)
         return {"processed": len(todo), "ok": ok, "failed": failed, "queued": queued, "messages": messages,
                 "label": label}  # fmt: skip
 
@@ -949,14 +957,7 @@ def process_status(request: Request) -> JSONResponse:
 
 @router.post("/process/open-folder")
 def process_open_folder(request: Request) -> JSONResponse:
-    folder = invoice_dir(get_store(request))
-    if server_mode(request):
-        return folder_on_the_server(request, folder)
-    if person() is not None:  # a colleague's click must not open a window on the computer running AP Coder
-        return message("The invoices folder is on the computer running AP Coder: open it there.", "info")
-    if open_folder(folder):
-        return message("Opened the invoices folder.", "info")
-    return message(f"Open this folder yourself: {folder}", "info")
+    return open_folder_here(request, invoice_dir(get_store(request)), "invoices folder")
 
 
 # --- Emails set aside by triage ------------------------------------------------------------------------------------

@@ -285,6 +285,18 @@ def folder_on_the_server(request: Request, folder: Path) -> JSONResponse:
     return message(f"This folder is on the server, so it does not open here. To get a file, {downloads}.", "info")
 
 
+def open_folder_here(request: Request, folder: Path, what: str) -> JSONResponse:
+    """An Open folder button (``what``: "invoices folder"): the folder in a window on this computer, never on the
+    computer running AP Coder for someone else (the company server, or a colleague on the office network)."""
+    if server_mode(request):
+        return folder_on_the_server(request, folder)
+    if identity.person() is not None:  # a colleague's click must not open a window on the computer running AP Coder
+        return message(f"The {what} is on the computer running AP Coder: open it there.", "info")
+    if open_folder(folder):
+        return message(f"Opened the {what}.", "info")
+    return message(f"Open this folder yourself: {folder}", "info")
+
+
 def reading_status_or_none(settings: Settings, store: Store, *, use_cache: bool = True) -> Any:
     """``ap_coder.ai.reading.reading_status``, or None when it can't be worked out (never raises)."""
     try:
