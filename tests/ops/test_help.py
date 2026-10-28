@@ -34,6 +34,10 @@ def _raised_codes():
         for name in re.findall(r"\b(?:ERROR|WARNING|INFO)\s*,\s*([A-Z][A-Z0-9_]*)\s*,", text):
             if name in constants:
                 codes.add(constants[name])
+        # codes raised as they come, from a named set: elif code in SAID_AS_IS: out.append((ERROR, code, ...))
+        for name, members in re.findall(r"(?m)^([A-Z][A-Z0-9_]*)\s*=\s*frozenset\(\{([^}]*)\}\)", text):
+            if re.search(rf"\bcode in {name}:\s*\n\s*\S*\(\((?:ERROR|WARNING|INFO), code,", text):
+                codes |= set(re.findall(r"\"([A-Z][A-Z0-9_]+)\"", members))
     return codes
 
 

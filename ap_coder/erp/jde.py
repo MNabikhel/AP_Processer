@@ -1306,7 +1306,7 @@ def voucher_findings(output: dict[str, Any], settings: JdeSettings, an8: str) ->
             out.append((ERROR, "JDE_PO_LONG", f"JD Edwards keeps 8 characters of the PO number: “{po}” has "
                         f"{len(po)}. Type the PO number as JD Edwards has it", None))  # fmt: skip
         elif code == "JDE_DATE_RANGE":
-            out.append((ERROR, code, f"JD Edwards: the {problem}", None))
+            out.append((ERROR, "JDE_DATE_RANGE", f"JD Edwards: the {problem}", None))
         elif code == "JDE_CURRENCY":
             out.append((ERROR, "JDE_CURRENCY", f"JD Edwards isn't set up for {v.currency}: check the currency, or ask "
                         "the pilot tester to add it in Settings → JD Edwards E1", None))  # fmt: skip
