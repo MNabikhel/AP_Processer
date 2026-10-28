@@ -1468,16 +1468,19 @@ that is reversed keeps its line, marked "replaced by D-NN".
   invoice that reads the same way is shown as AP approved it, before it is coded (`workflow.apply_line_memory` in
   `read_invoice`; `capture/line_memory.py`). *The same way*: `fold` (case, spacing, punctuation and the letters OCR
   mixes up, 1 l I, 0 O, 5 S, rn m, do not count; a part number that differs in a digit is another item). AP's latest
-  decision on a text wins (D-118): approving it back as printed ends the renaming. An item code: a description that
-  only differs from an approved one by its leading code is that line; once AP has dropped the code from two lines and
-  kept none since, a new item's code is left out too (a code of digits alone has five or more, so a year or a
-  quantity is never one). Said where AP looks: under the line ("Named as approved before · printed …", gone once AP
-  edits it), in the line's reasoning, in the approval's message ("Remembered your 2 line descriptions") and on the
-  Learning page's Corrections, with whether it read right the next time. Only the description: a line's numbers
-  are the invoice's own. Measured with `python -m ap_coder.bench lines` (12 suppliers x 10 scanned invoices, the
-  app's read, code, approve and learn path; `--no-memory` for before): descriptions right 19.7% -> 73.8%, corrections
-  AP had to make 811 -> 265, an item AP corrected before read right the next time 15.5% -> 95.5%, the GL account
-  right on an item AP coded before 61.1% -> 97.7%; an item's first time unchanged (18.8% -> 19.2%: that is the
-  reader's). (`capture/line_memory.py`, `capture/workflow.py`, `capture/types.py`, `ai/offline_coder.py`,
-  `core/store/capture.py`, `core/store/_base.py`, `core/store/lessons.py`, `web/invoice_view.py`,
-  `web/templates/_invoice_lines.html`, `bench/lines.py`)
+  decision on a text wins (D-118): approving it back as printed ends the renaming. An item code: a description that only
+  differs from an approved one by its leading code is that line; once AP has dropped the code from two lines and kept
+  none since, a new item's code is left out too (a code of digits alone has five or more, so a year or a quantity is
+  never one). Also forgiven: what the columns beside ran into the description (a unit of measure, the line's own
+  quantity or price, a stray mark: "2 visit Janitorial service-Unit4", "Disinfectant4L ea") and a letter or two OCR
+  dropped from a description of 12 characters or more, every digit there and one description only ("58A" is no reading
+  of "58X", "6206" none of "6205", "… seal kit" none of the item without it). Said where AP looks: under the line
+  ("Named as approved before · printed …", gone once AP edits it), in the line's reasoning, in the approval's message
+  ("Remembered your 2 line descriptions") and on the Learning page's Corrections, with whether it read right the next
+  time. Only the description: a line's numbers are the invoice's own. Measured with `python -m ap_coder.bench lines` (12
+  suppliers x 10 scanned invoices, the app's read, code, approve and learn path; `--no-memory` for before): descriptions
+  right 19.7% -> 76.2%, corrections AP had to make 811 -> 240, an item AP corrected before read right the next time
+  15.5% -> 99.0%, the GL account right on an item AP coded before 61.1% -> 99.6%, no line named as another item; an
+  item's first time unchanged (18.8% -> 19.2%: that is the reader's). (`capture/line_memory.py`, `capture/workflow.py`,
+  `capture/types.py`, `ai/offline_coder.py`, `core/store/capture.py`, `core/store/_base.py`, `core/store/lessons.py`,
+  `web/invoice_view.py`, `web/templates/_invoice_lines.html`, `bench/lines.py`)

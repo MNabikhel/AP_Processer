@@ -459,8 +459,9 @@ Automation):
   (`line_texts`); the supplier's next invoice that reads a line the same way (spacing, case, punctuation and the
   letters OCR mixes up aside) shows it as AP approved it, and says what was printed under it. An item code AP drops
   from two lines is left out of new items too. A right description is what the coding memory knows the line by, so
-  the GL account AP gave the item follows: on 120 scans, an item AP corrected before read right the next time 95.5%
-  of the time (15.5% before), its account right 97.7% (61.1%) (`python -m ap_coder.bench lines`).
+  the GL account AP gave the item follows: on 120 scans, an item AP corrected before read right the next time 99.0%
+  of the time (15.5% before), its account right 99.6% (61.1%) (`python -m ap_coder.bench lines`). A unit or the
+  quantity run in from the next column, and a letter or two OCR dropped, are forgiven; a digit never is.
 - **Upgrading**: vendors an AP lead turned touchless by hand before keep their state but are not touchless while the
   switch is off. When it is turned on, those that meet the standard bar stay touchless; any that do not go back to
   review until they do.
