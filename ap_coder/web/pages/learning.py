@@ -1,6 +1,7 @@
 """Learning & accuracy, in four tabs (``?tab=coding|suppliers|lessons|readers``; Lessons: corrections per situation):
 
-* Coding accuracy: accuracy against the 90% target, by week (an SVG line), recent lessons, accuracy by vendor, the
+* Coding accuracy: first the corrections AP made and whether AP Coder had each right the next time; then accuracy
+  against the 90% target, by week (an SVG line), recent lessons, accuracy by vendor, the
   most common corrections, the memory (every lesson, with the option to forget some) and teaching from past coding
   (an ERP export of AP lines: upload, match the columns, teach).
 * Supplier learning: what each vendor's reviewed invoices taught, the fields the clerk corrected, how far it is from
@@ -207,6 +208,51 @@ def _history_context(store: Store, token: str | None, sheet: str | None) -> dict
         context["upload"] = {"token": token, "name": name, "sheets": list(sheets), "sheet": sheet, "columns": columns,
                              "rows": len(rows), "guessed": history.map_columns(columns)}  # fmt: skip
     return context
+
+
+CORRECTIONS_SHOWN = 50
+NEXT_TIME = {
+    "right": ("Right the next time", "ok"),
+    "again": ("Corrected again", "warn"),
+    "": ("Not seen since", "gray"),
+}
+
+
+def corrections_context(store: Store) -> dict[str, Any]:
+    """Corrections, the first thing on the Coding accuracy tab: each correction AP made (an invoice's field, a line's
+    GL account, cost center or tax code), what AP Coder proposed and what AP approved, and whether AP Coder had it
+    right the next time (``Store.corrections``)."""
+    from ap_coder.ai import lessons
+
+    reference = reference_or_none(store)
+    rows = []
+    for c in store.corrections(limit=CORRECTIONS_SHOWN):
+        field, pattern = c["field"], c["pattern"]
+        if field == lessons.LINE_GL:
+            what = f"GL account of lines like “{pattern}”"
+        elif field == lessons.LINE_CC:
+            what = f"Cost center of lines like “{pattern}”"
+        elif field == "tax_code":
+            what = f"Tax code of “{short(pattern, 60)}”"
+        else:
+            what = lessons.FIELD_WORDS.get(field, field)
+        names = {"proposed": "", "value": "", "next_value": ""}
+        if field == lessons.LINE_GL:
+            names = {k: gl_name(reference, c[k]) if c[k] else "" for k in names}
+        text, tone = NEXT_TIME[c["next"]]
+        rows.append({**c, "what": what[:1].upper() + what[1:], "names": names, "when": str(c["at"] or "")[:10],
+                     "next_text": text, "next_tone": tone, "proposed_text": "" if c["proposed"] in ("", UNASSIGNED)
+                     else c["proposed"], "next_when": str(c["next_at"] or "")[:10]})  # fmt: skip
+    seen = [r for r in rows if r["next"]]
+    right = sum(r["next"] == "right" for r in seen)
+    if not rows:
+        summary = ""
+    elif not seen:
+        summary = "None of them has come up again yet."
+    else:
+        summary = (f"Of the {ui.plural(len(seen), 'correction')} that came up again, AP Coder had "
+                   f"{right} right the next time.")  # fmt: skip
+    return {"fixes": rows, "fixes_summary": summary, "fixes_shown": CORRECTIONS_SHOWN}
 
 
 def coding_context(store: Store, mem_q: str, settings: Any = None) -> dict[str, Any]:
@@ -468,6 +514,7 @@ def learning_page(request: Request) -> HTMLResponse:
         "teach": bool(q.get("teach")),
     }  # from Getting started: Teach from past coding open
     if tab == "coding":
+        context.update(corrections_context(store))
         context.update(_history_context(store, q.get("history"), q.get("sheet")))
         context.update(coding_context(store, q.get("mem_q") or "", get_settings(request)))
     elif tab == "suppliers":

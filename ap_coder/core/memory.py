@@ -14,10 +14,12 @@ After coding:
   established pattern for that vendor. Agreement is shown as reinforcement in
   the dashboard; disagreement is flagged for review.
 
-Both follow AP when it changes its mind (``current``): once a correction to a
-new account is confirmed by one more decision, the older decisions for another
-account no longer count. A single correction is not enough on its own: it may
-be a slip, and then it still shows as a conflict with what AP did before.
+Both follow AP when it changes its mind with the one rule the GL suggestions and
+the learned line tax codes use too (``latest_decision``): the latest decision on a
+line is the one that counts, and the older decisions for another value no longer
+do, unless that single decision reverses a long run of approvals
+(``UNCONFIRMED_REVERSAL``): a slip and a change of mind look the same until AP
+confirms it once more.
 
 Accepted lines count as approvals, so patterns the AI gets right grow
 stronger over time; a reviewer can delete any bad record.
@@ -28,7 +30,7 @@ from __future__ import annotations
 import operator
 import re
 import unicodedata
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import cached_property, lru_cache
@@ -209,17 +211,51 @@ def aggregate(rows: list[dict[str, Any]]) -> list[Pattern]:
     return _AGGREGATED.get(rows, None, lambda: _aggregate(rows))
 
 
-# A correction counts against older decisions once AP has confirmed it: this many decisions in a row for the new
-# account, the correction included, whatever their outcome (filling in a line left blank counts as a correction here:
-# ``changed_account``).
-CONFIRMED_FIX = 2
+# AP changes its mind (D-118): one rule for the GL suggestions (``suggest``), the history check (``current``) and the
+# learned line tax codes (``line_tax.learned_codes``). The latest decision on a line is the one that counts; a
+# correction that reverses this many decisions in a row of the same line, alone, waits for one more before it does: a
+# slip and a deliberate change look the same until then.
+UNCONFIRMED_REVERSAL = 5
+
+
+@dataclass(frozen=True)
+class Latest:
+    """What AP decided last on one line (``latest_decision``)."""
+
+    value: str  # the latest decision's value (an account, a tax code)
+    run: int  # decisions in a row for it, the latest included
+    was: str = ""  # the value AP changed it from: the commonest of the decisions it reverses, "" if never changed
+    was_count: int = 0  # decisions for ``was`` among them
+    reversed: int = 0  # decisions in a row for other values before the run, back to the latest one for ``value``
+    unconfirmed: bool = False  # a single correction against a long run of decisions: maybe a slip, waits for one more
+
+    @property
+    def counts(self) -> bool:
+        """Whether the latest value replaces the older ones (everything but an unconfirmed reversal)."""
+        return not self.unconfirmed
+
+
+def latest_decision(values: list[str], corrected: bool, reversal: int = UNCONFIRMED_REVERSAL) -> Latest:
+    """AP's latest decision on a line, from its decisions' values, newest first (not empty). ``corrected``: the latest
+    changed what was proposed (a correction, a blank filled in: ``changed_account``; a tax code picked). It is
+    unconfirmed when it is the only one for its value and reverses ``reversal`` decisions or more: those in a row for
+    other values before it, back to the last one for its own (two slips in a row against ten approvals reverse
+    eleven, a slip put right reverses one)."""
+    value = values[0]
+    run = next((i for i, v in enumerate(values) if v != value), len(values))
+    if run == len(values):
+        return Latest(value, run)
+    others = values[run:]
+    span = others[: next((i for i, v in enumerate(others) if v == value), len(others))]
+    tally = Counter(span)
+    was = max(tally, key=lambda v: (tally[v], -span.index(v)))  # the commonest, then the most recent
+    return Latest(value, run, was, tally[was], len(span), run == 1 and corrected and len(span) >= reversal)
 
 
 def _aggregate(rows: list[dict[str, Any]]) -> list[Pattern]:
     groups: dict[tuple[str, str, str, str], Pattern] = {}
-    # Each line's latest account: [account, decisions in a row for it, whether the oldest of them changed the account,
-    # ended by an older decision for another account].
-    runs: dict[tuple[str, str], list[Any]] = {}
+    history: dict[tuple[str, str], list[str]] = {}  # each line's accounts, newest first
+    first: dict[tuple[str, str], bool] = {}  # whether its latest decision changed the account (``changed_account``)
     for r in rows:  # newest first (``Store.feedback_rows``)
         key = (r["vendor_key"], _normalise(r["description"]), r["final_gl"], r.get("final_cc") or "")
         p = groups.get(key)
@@ -232,24 +268,20 @@ def _aggregate(rows: list[dict[str, Any]]) -> list[Pattern]:
         else:
             p.approvals += 1
         p.last_seen = max(p.last_seen, r.get("created_at") or "")
-        run = runs.get(key[:2])
-        if run is None:
-            runs[key[:2]] = [r["final_gl"], 1, changed_account(r), False]
-        elif not run[3]:
-            if r["final_gl"] == run[0]:
-                run[1], run[2] = run[1] + 1, changed_account(r)
-            else:
-                run[3] = True
+        history.setdefault(key[:2], []).append(r["final_gl"])
+        first.setdefault(key[:2], changed_account(r))
+    latest = {line: latest_decision(values, first[line]) for line, values in history.items()}
     for key, p in groups.items():
-        gl, n, first, changed = runs[key[:2]]
-        p.superseded = changed and first and n >= CONFIRMED_FIX and p.gl_code != gl
+        last = latest[key[:2]]
+        p.superseded = last.counts and p.gl_code != last.value
     return list(groups.values())
 
 
 def current(patterns: list[Pattern]) -> list[Pattern]:
     """``patterns`` without what AP has moved away from: on each line, the decisions for another account than the
-    one AP changed it to and confirmed with one more decision (``CONFIRMED_FIX``). Until then they all count: a
-    single correction may be a slip. Each line is its own: a recode of the laptops leaves the batteries' history."""
+    latest one (``latest_decision``), unless the latest is a single change against ``UNCONFIRMED_REVERSAL`` decisions
+    or more (it may be a slip: then they all count). Each line is its own: a recode of the laptops leaves the
+    batteries' history."""
     return [p for p in patterns if not p.superseded]
 
 
@@ -361,16 +393,11 @@ def compare_with_history(coding: Any, rows: list[dict[str, Any]], key: str | Non
         corrected = any(p.corrections for p in similar if p.gl_code == best_gl)
         if not ((total >= MIN_DECISIONS or corrected) and best_votes / total >= DOMINANT_SHARE):
             continue
-        cc_votes: dict[str, int] = defaultdict(int)
-        for p in similar:
-            if p.gl_code == best_gl:
-                cc_votes[p.cost_center] += p.decisions
         results.append(
             {
                 "line_number": li.line_number,
                 "status": "match" if li.predicted_gl_code == best_gl else "conflict",
                 "history_gl": best_gl,
-                "history_cost_center": max(cc_votes.items(), key=lambda kv: kv[1])[0],
                 "decisions": total,
             }
         )

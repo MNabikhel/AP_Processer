@@ -367,3 +367,33 @@ def test_a_line_bulk_approved_unchanged_is_left_out_of_the_accuracy(tmp_path):
     m = st.metrics()
     assert m["lines_accepted"] == 0 and m["line_accuracy"] is None and m["lines_bulk"] == 1
     assert st.feedback_rows()[0]["outcome"] == BULK
+
+
+def test_forgetting_a_line_in_the_coding_memory_withdraws_its_line_lessons(tmp_path, ground_truth):
+    """Learning → Coding memory → Forget: the line's lesson ("lines like … are coded to GL 6999") was still shown as
+    a hint and read by the AI (B-1422). Forgetting the memory's line takes back what its approval taught the lessons
+    for that line (GL account and cost center); the other lines' lessons stay."""
+    store = Store(tmp_path / "a.db")
+    vendor = ground_truth["vendor_name"]
+    proposed = _doc(ground_truth, "1")
+    final = copy.deepcopy(proposed)
+    final["line_items"][0]["predicted_gl_code"] = "6999"
+    final["line_items"][1]["predicted_gl_code"] = "6998"
+    for n in (1, 2):
+        iid = store.add_invoice(tmp_path / f"{n}.pdf", {**proposed, "invoice_number": str(n)}, None)
+        store.approve_invoice(iid, {**copy.deepcopy(final), "invoice_number": str(n)}, "Jane")
+        lessons.record(store, iid, proposed, final, "Jane")
+
+    def hints(gl: str) -> list[str]:
+        return [line for line in lessons.prompt_lines(store, vendor, fields="lines") if f"GL {gl}" in line]
+
+    assert hints("6999") and hints("6998")
+    first = lessons.line_pattern(final["line_items"][0]["description"])
+    ids = [r["id"] for r in store.feedback_rows() if lessons.line_pattern(r["description"]) == first]
+    assert len(ids) == 2
+    store.delete_feedback(ids[:1], actor="Jane")
+    assert hints("6999") == [] and hints("6998")  # one correction left: no longer read by the AI
+    store.delete_feedback(ids[1:], actor="Jane")
+    key = lessons.situation(vendor, lessons.INVOICE, lessons.LINE_GL, first)
+    assert not lessons.on_screen(store.lesson(key))  # no correction left: no hint on the review screen either
+    assert hints("6998")

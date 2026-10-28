@@ -36,7 +36,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..core.memory import RowsCache, _normalise, changed_account, tokens, vendor_key
+from ..core.memory import Latest, RowsCache, _normalise, changed_account, latest_decision, tokens, vendor_key
 from ..core.reference_data import UNASSIGNED, ReferenceData
 from .line_match import Index, keys
 
@@ -51,9 +51,9 @@ OTHERS_AUTO_VENDORS = 2  # ...or this many other vendors coded similar lines to 
 OTHERS_AUTO_SHARE = 0.75  # ...with this share of the other vendors' evidence (each vendor's closest line)
 USUAL_MIN_LINES = 2  # different lines AP coded for this vendor, all to one account: suggested
 USUAL_AUTO_LINES = 4  # ...and coded with it
-# A correction that reverses this many approvals in a row of the same line is suggested, not coded with, until
-# AP confirms it once: a slip and a deliberate change of account look the same until the next decision.
-UNCONFIRMED_REVERSAL = 5
+# A correction that reverses ``UNCONFIRMED_REVERSAL`` approvals in a row of the same line is suggested, not coded
+# with, until AP confirms it once: a slip and a deliberate change of account look the same until the next decision
+# (``memory.latest_decision``: the one rule the history check and the learned tax codes follow too, D-118).
 PRIORITY = {"vendor": 3, "usual": 2, "master": 1, "others": 1, "words": 0}
 # A line that reads as a meal or a drink (B-932): on a weak match it goes to the meals account (50% of the tax
 # claimable, D-90), never to the 100% one ("Staff events & meals billed to clients") for the word "client".
@@ -84,15 +84,27 @@ class _Pattern:
     gl_code: str
     cost_center: str
     rank: int  # how recent its latest decision is: 0 for the newest of all
-    decisions: int = 1  # approvals of ``gl_code`` since the description was last coded otherwise
-    was: str = ""  # the account AP coded it to before (AP changed it), "" if never changed
-    reversed: int = 0  # decisions in a row for ``was`` before AP changed it
-    corrected: bool = False  # the latest decision changed the account proposed (or filled in a blank)
+    latest: Latest  # AP's latest decision on the line (``memory.latest_decision``)
+
+    @property
+    def decisions(self) -> int:
+        """Decisions for ``gl_code`` in a row since the description was last coded otherwise."""
+        return self.latest.run
+
+    @property
+    def was(self) -> str:
+        """The account AP coded it to before (AP changed it), "" if never changed."""
+        return self.latest.was
+
+    @property
+    def reversed(self) -> int:
+        """Decisions for ``was`` among those AP's latest decision reverses."""
+        return self.latest.was_count
 
     @property
     def unconfirmed(self) -> bool:
         """AP has just changed this line's account against several older decisions, and not confirmed it yet."""
-        return self.decisions == 1 and self.corrected and self.reversed >= UNCONFIRMED_REVERSAL
+        return self.latest.unconfirmed
 
 
 @dataclass
@@ -120,15 +132,10 @@ def _build_memory(feedback: list[dict[str, Any]], valid: frozenset[str]) -> _Mem
             decisions.setdefault((r["vendor_key"], _normalise(r["description"])), []).append((rank, r))
     groups: dict[tuple[str, str], _Pattern] = {}
     for key, seq in decisions.items():
-        rank, r = seq[0]
-        gl = r["final_gl"]
-        run = next((i for i, (_, x) in enumerate(seq) if x["final_gl"] != gl), len(seq))
-        p = _Pattern(r["vendor_key"], r["description"], keys(r["description"]), gl, r.get("final_cc") or "", rank,
-                     run, corrected=changed_account(r))  # fmt: skip
-        if run < len(seq):  # older decisions for another account: superseded
-            p.was = seq[run][1]["final_gl"]
-            p.reversed = next((i for i, (_, x) in enumerate(seq[run:]) if x["final_gl"] != p.was), len(seq) - run)
-        groups[key] = p
+        rank, r = seq[0]  # the latest decision wins over older ones for another account
+        latest = latest_decision([x["final_gl"] for _, x in seq], changed_account(r))
+        groups[key] = _Pattern(r["vendor_key"], r["description"], keys(r["description"]), latest.value,
+                               r.get("final_cc") or "", rank, latest)  # fmt: skip
     patterns = [p for p in groups.values() if p.keys]
     usual: dict[str, Counter[str]] = defaultdict(Counter)
     newest: dict[str, int] = {}
