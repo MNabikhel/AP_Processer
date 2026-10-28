@@ -766,10 +766,7 @@ def connection_test(store: Any, settings: Settings | None = None, *, client: Any
 
 
 def last_test(store: Any) -> dict[str, Any] | None:
-    try:
-        saved = json.loads(store.get_setting(TEST_KEY, "") or "null")
-    except (TypeError, ValueError):
-        return None
+    saved = store.get_json(TEST_KEY)
     return saved if isinstance(saved, dict) else None
 
 

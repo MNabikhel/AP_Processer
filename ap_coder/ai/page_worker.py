@@ -108,13 +108,7 @@ def reading_as(mark: str) -> Iterator[str]:
 
 def saved_tests(store: Any) -> dict[str, dict[str, Any]]:
     """Every model's last test of the page reader on the invoice whose answers are known: {model: test}."""
-    try:
-        raw = store.get_setting(TEST_KEY)
-        saved = json.loads(raw) if raw else None
-    except (ValueError, TypeError):
-        return {}
-    if not isinstance(saved, dict):
-        return {}
+    saved = store.get_json(TEST_KEY, {})
     if isinstance(saved.get("models"), dict):
         return {str(m): t for m, t in saved["models"].items() if isinstance(t, dict)}
     return {str(saved["model"]): saved} if saved.get("model") else {}  # the single test of an older AP Coder
@@ -266,10 +260,10 @@ def skip_reason(settings: Settings, capture: Any, autonomy: dict[str, Any] | Non
 
 def skipped_totals(store: Any) -> dict[str, int]:
     """{"invoices", "pages"} OvisOCR2 left out as clean digital PDFs so far (D-111)."""
+    found = store.get_json(SKIPPED_KEY, {})
     try:
-        found = json.loads(store.get_setting(SKIPPED_KEY) or "{}")
         return {"invoices": int(found.get("invoices") or 0), "pages": int(found.get("pages") or 0)}
-    except (ValueError, TypeError, AttributeError):
+    except (ValueError, TypeError):
         return {"invoices": 0, "pages": 0}
 
 
@@ -335,10 +329,7 @@ def record_figures(store: Any, layout_source: str, comparison: Any) -> None:
     total = max(comparison.figures, comparison.first_figures)
     if not total:
         return
-    try:
-        totals = json.loads(store.get_setting(FIGURES_KEY) or "{}")
-    except (ValueError, TypeError):
-        totals = {}
+    totals = store.get_json(FIGURES_KEY, {})
     kind = "digital" if layout_source == "text" else "scans"
     same, seen = totals.get(kind) or [0, 0]
     totals[kind] = [same + comparison.confirmed, seen + total]
@@ -347,8 +338,8 @@ def record_figures(store: Any, layout_source: str, comparison: Any) -> None:
 
 def figure_totals(store: Any) -> dict[str, tuple[int, int]]:
     """{"digital" | "scans": (figures read the same, figures compared)} so far."""
+    totals = store.get_json(FIGURES_KEY, {})
     try:
-        totals = json.loads(store.get_setting(FIGURES_KEY) or "{}")
         return {k: (int(v[0]), int(v[1])) for k, v in totals.items() if isinstance(v, list) and len(v) == 2}
     except (ValueError, TypeError):
         return {}
@@ -839,11 +830,7 @@ def test_under_way(store: Any) -> dict[str, Any] | None:
     """The test of the page reader under way on this computer: {model, started, updated, pid, pages, done}, or
     None. A test whose process is gone (the dashboard was closed during it), or whose mark was not renewed for
     ``TEST_STALE_HOURS`` (its process id now another program's), is not under way."""
-    try:
-        raw = store.get_setting(TESTING_KEY)
-        testing = json.loads(raw) if raw else None
-    except (ValueError, TypeError):
-        return None
+    testing = store.get_json(TESTING_KEY)
     if not isinstance(testing, dict):
         return None
     if testing.get("reader") == READER_ID:  # this process's: under way until its test ends

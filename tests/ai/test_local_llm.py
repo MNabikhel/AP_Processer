@@ -974,3 +974,19 @@ def test_a_call_given_less_time_than_the_timeout_gets_only_that(reference):
     coder = InvoiceCoder(settings, reference, client=client, provider="local")
     coder._local_create("m", [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}], timeout=120)
     assert client.calls[0]["timeout"] == 120
+
+
+def test_lm_studio_listing_counts_a_loaded_model_listed_without_a_key(monkeypatch):
+    """The listing is parsed once (``parse_lm_studio_listing``); a 0.4 model without a key still counts its loaded
+    instances, though the page reader's listing leaves it out."""
+    v1 = {"models": [
+        {"type": "vlm", "loaded_instances": [{"id": "keyless:1"}]},
+        {"type": "llm", "key": "qwen/qwen3.5-9b", "capabilities": {"vision": True}, "loaded_instances": [{"id": "q"}]},
+        {"type": "embedding", "key": "nomic", "loaded_instances": [{"id": "nomic"}]},
+    ]}  # fmt: skip
+    monkeypatch.setattr(local_llm, "_fetch_json", lambda url, *a: v1 if "/api/v1/" in url else {})
+    loaded, seeing = local_llm._lm_studio_listing("http://127.0.0.1:1234", "", 1.0)
+    assert loaded == ["keyless:1", "q"] and seeing == {"keyless:1", "q", "qwen/qwen3.5-9b"}
+    assert [m.key for m in local_llm.parse_lm_studio_listing(v1).models] == ["qwen/qwen3.5-9b"]
+    monkeypatch.setattr(local_llm, "_fetch_json", lambda url, *a: {"data": [{"id": "x"}]})  # not LM Studio
+    assert local_llm._lm_studio_listing("http://127.0.0.1:1234", "", 1.0) is None

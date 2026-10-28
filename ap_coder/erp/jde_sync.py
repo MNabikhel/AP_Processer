@@ -45,11 +45,7 @@ CLOSED_STATUS = "999"  # F4311 next status of a closed line
 
 
 def state(store: Any) -> dict[str, Any]:
-    try:
-        found = json.loads(store.get_setting(STATE_KEY) or "{}")
-    except ValueError:
-        found = {}
-    return found if isinstance(found, dict) else {}
+    return store.get_json(STATE_KEY, {})
 
 
 def _now() -> dt.datetime:

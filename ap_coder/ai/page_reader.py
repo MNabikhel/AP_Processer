@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..core import paths
 from . import local_llm
+from .local_llm import LMListing, LMModel, _int, parse_lm_studio_listing  # noqa: F401 - page_reader's names too
 
 if TYPE_CHECKING:
     from ..core.config import LocalLLMSettings, Settings
@@ -160,98 +161,6 @@ def _reader_llm(settings: Settings) -> LocalLLMSettings:
     if base.rstrip("/") == llm.base_url.rstrip("/"):
         return replace(llm, timeout_seconds=timeout)
     return replace(llm, base_url=base, model="", timeout_seconds=timeout)
-
-
-@dataclass(frozen=True)
-class LMModel:
-    """A chat or vision model LM Studio has downloaded: its key, whether it can look at pictures, its loaded instances
-    (instance id, context length; 0 when LM Studio doesn't say) and the longest context it supports."""
-
-    key: str
-    vision: bool
-    instances: tuple[tuple[str, int], ...] = ()
-    max_context: int = 0
-    reasoning: tuple[str, ...] = ()  # LM Studio 0.4.8+: the reasoning options it takes ("off", "on")
-
-    @property
-    def loaded_context(self) -> int:
-        """The longest context it is loaded with now (0: not loaded, or not said)."""
-        return max((size for _id, size in self.instances), default=0)
-
-    def named(self, name: str) -> bool:
-        return name == self.key or any(name == instance for instance, _size in self.instances)
-
-
-@dataclass(frozen=True)
-class LMListing:
-    """LM Studio's own model list. ``route``: "v1" (LM Studio 0.4, which loads a model when asked) or "v0" (0.3)."""
-
-    route: str
-    models: tuple[LMModel, ...]
-    embeddings: tuple[tuple[str, bool], ...] = ()  # embedding models (key, loaded): listed in Settings, never used
-
-    def find(self, name: str) -> LMModel | None:
-        return next((model for model in self.models if model.named(name)), None)
-
-
-def _int(value: Any) -> int:
-    try:
-        return max(0, int(value))
-    except (TypeError, ValueError):
-        return 0
-
-
-def parse_lm_studio_listing(data: Any) -> LMListing | None:
-    """LM Studio's ``/api/v1/models`` (0.4: ``models``, each with its ``loaded_instances``) or ``/api/v0/models``
-    (0.3: ``data``, each with a ``state``) as a listing of its chat and vision models; embedding models are left out.
-    None for an answer that isn't LM Studio's (a server answering with a plain list of models)."""
-    if not isinstance(data, dict):
-        return None
-    models: list[LMModel] = []
-    embeddings: list[tuple[str, bool]] = []
-    if isinstance(data.get("models"), list):
-        for item in data["models"]:
-            if isinstance(item, dict) and item.get("type") == "embedding" and item.get("key"):
-                embeddings.append((str(item["key"]), bool(item.get("loaded_instances"))))
-            if not isinstance(item, dict) or item.get("type") not in {"llm", "vlm"} or not item.get("key"):
-                continue
-            caps = item.get("capabilities") if isinstance(item.get("capabilities"), dict) else {}
-            reasoning = caps.get("reasoning") if isinstance(caps.get("reasoning"), dict) else {}
-            options = reasoning.get("allowed_options") if isinstance(reasoning.get("allowed_options"), list) else []
-            instances = []
-            for instance in item.get("loaded_instances") or []:
-                if isinstance(instance, dict) and instance.get("id"):
-                    config = instance.get("config") if isinstance(instance.get("config"), dict) else {}
-                    instances.append((str(instance["id"]), _int(config.get("context_length"))))
-            models.append(
-                LMModel(
-                    key=str(item["key"]),
-                    vision=caps.get("vision") is True or item.get("type") == "vlm",
-                    instances=tuple(instances),
-                    max_context=_int(item.get("max_context_length")),
-                    reasoning=tuple(str(option) for option in options),
-                )  # fmt: skip
-            )
-        return LMListing("v1", tuple(models), tuple(embeddings))
-    items = data.get("data")
-    if isinstance(items, list) and any(isinstance(item, dict) and "state" in item for item in items):
-        for item in items:
-            if isinstance(item, dict) and item.get("type") == "embeddings" and item.get("id"):
-                embeddings.append((str(item["id"]), item.get("state") == "loaded"))
-            if not isinstance(item, dict) or not item.get("id") or item.get("type") not in {"llm", "vlm"}:
-                continue
-            loaded = item.get("state") == "loaded"
-            context = _int(item.get("loaded_context_length")) if loaded else 0
-            models.append(
-                LMModel(
-                    key=str(item["id"]),
-                    vision=item.get("type") == "vlm",
-                    instances=((str(item["id"]), context),) if loaded else (),
-                    max_context=_int(item.get("max_context_length")),
-                )  # fmt: skip
-            )
-        return LMListing("v0", tuple(models), tuple(embeddings))
-    return None
 
 
 LISTING_TIMEOUT = 3.0  # seconds: LM Studio lists its models in milliseconds, even while it reads a page

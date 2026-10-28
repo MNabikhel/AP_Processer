@@ -367,3 +367,15 @@ def test_share_report_from_dashboard_database_is_redacted(tmp_path, ground_truth
     for secret in ("Northwind", "northwind", "NW-2026", "18017", "Latitude", "6010", "6000"):
         assert secret not in text, secret
     assert "6010 -> 6000 x1" in build_share_report(tmp_path / "x", include_codes=True, db_path=tmp_path / "ap.db")
+
+
+def test_a_json_setting_unset_unreadable_or_of_another_kind_is_the_default(tmp_path):
+    store = Store(tmp_path / "ap.db")
+    assert store.get_json("k", {}) == {} and store.get_json("k") is None
+    store.set_setting("k", '{"a": 1}')
+    assert store.get_json("k", {}) == {"a": 1} and store.get_json("k") == {"a": 1}
+    assert store.get_json("k", []) == []  # a dict where a list is kept
+    store.set_setting("k", "{not json")
+    assert store.get_json("k", {"b": 2}) == {"b": 2} and store.get_json("k") is None
+    store.set_setting("k", "[1, 2]")
+    assert store.get_json("k", []) == [1, 2] and store.get_json("k", {}) == {}

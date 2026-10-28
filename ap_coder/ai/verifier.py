@@ -121,12 +121,7 @@ def default_scope() -> str:
 
 def load_settings(store: Any) -> ReviewerSettings:
     """Settings → Reading (on by default: 3 rounds, 5 minutes an invoice)."""
-    try:
-        data = json.loads(store.get_setting(SETTING) or "{}")
-    except (ValueError, TypeError, AttributeError):
-        data = {}
-    if not isinstance(data, dict):
-        data = {}
+    data = store.get_json(SETTING, {}) if store is not None else {}
     try:
         rounds = min(MAX_ROUNDS, max(1, int(data.get("rounds", DEFAULT_ROUNDS))))
         minutes = min(MAX_MINUTES, max(0.5, float(data.get("minutes", DEFAULT_MINUTES))))

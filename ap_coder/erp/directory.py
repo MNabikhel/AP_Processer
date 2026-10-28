@@ -379,12 +379,8 @@ def _keys(owner: str) -> tuple[str, str]:
 
 def presets(store: Any, owner: str = "") -> list[dict[str, str]]:
     """The saved layouts: [{name, query}], in the order saved (``owner``'s own; "" the shared ones)."""
-    try:
-        data = json.loads(store.get_setting(_keys(owner)[0]) or "[]")
-    except ValueError:
-        return []
     out = []
-    for p in data if isinstance(data, list) else []:
+    for p in store.get_json(_keys(owner)[0], []):
         if isinstance(p, dict) and str(p.get("name") or "").strip():
             out.append({"name": str(p["name"]).strip()[:MAX_PRESET_NAME], "query": _clean(str(p.get("query") or ""))})
     return out

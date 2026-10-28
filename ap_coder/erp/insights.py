@@ -42,10 +42,7 @@ class Assumptions:
 
     @classmethod
     def load(cls, store: Store) -> Assumptions:
-        try:
-            saved = json.loads(store.get_setting("insights_assumptions") or "{}")
-        except ValueError:
-            saved = {}
+        saved = store.get_json("insights_assumptions", {})
         known = {f.name: f.type for f in fields(cls)}
         values = {}
         for key, value in saved.items():

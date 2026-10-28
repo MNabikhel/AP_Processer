@@ -791,8 +791,4 @@ def _now() -> str:
 
 
 def last_test(store: Any) -> dict[str, Any]:
-    try:
-        found = json.loads(store.get_setting(SETTING_KEY + "_tested") or "{}")
-    except ValueError:
-        found = {}
-    return found if isinstance(found, dict) else {}
+    return store.get_json(SETTING_KEY + "_tested", {})

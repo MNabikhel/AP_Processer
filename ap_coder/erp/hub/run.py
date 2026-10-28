@@ -176,10 +176,7 @@ def save_config(store: Any, config: HubConfig, actor: str | None = None, secret:
 
 
 def last_run(store: Any) -> dict[str, Any] | None:
-    try:
-        found = json.loads(store.get_setting(LAST_RUN_KEY) or "null")
-    except ValueError:
-        return None
+    found = store.get_json(LAST_RUN_KEY)
     return found if isinstance(found, dict) else None
 
 
