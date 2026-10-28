@@ -239,24 +239,12 @@ class InvoicesMixin:
                     [*params, limit, offset],
                 )
             ]
-            found: dict[int, dict[str, Any]] = {}
-            for start in range(0, len(ids), 500):
-                chunk = ids[start : start + 500]
-                marks = ", ".join("?" * len(chunk))  # at most 500, under SQLite's variable limit
-                for r in conn.execute(f"{rows_sql} SELECT {fields} FROM rows WHERE id IN ({marks})", chunk):
-                    found[r["id"]] = dict(r)
+            page = conn.execute(f"{rows_sql} SELECT {fields} FROM rows WHERE {_in_list('id')}", (json.dumps(ids),))
+            found = {r["id"]: dict(r) for r in page}
             rows = [found[i] for i in ids if i in found]
             wanted = sorted({r["export_batch"] for r in rows if r["export_batch"]})
-            batches = {}
-            for start in range(0, len(wanted), 500):
-                chunk = wanted[start : start + 500]
-                marks = ", ".join("?" * len(chunk))  # at most 500, under SQLite's variable limit
-                batches.update(
-                    {
-                        b["id"]: b["created_at"]
-                        for b in conn.execute(f"SELECT id, created_at FROM export_batches WHERE id IN ({marks})", chunk)
-                    }
-                )
+            made = f"SELECT id, created_at FROM export_batches WHERE {_in_list('id')}"
+            batches = {b["id"]: b["created_at"] for b in conn.execute(made, (json.dumps(wanted),))}
         for r in rows:
             r["exported_at"] = batches.get(r["export_batch"]) if r["export_batch"] else None
         return rows

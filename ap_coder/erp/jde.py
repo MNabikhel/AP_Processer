@@ -914,15 +914,27 @@ def _doc_type(v: _Voucher, settings: JdeSettings) -> str:
     return settings.document_type.strip().upper()
 
 
+def _vouchers(invoices: list[dict[str, Any]], settings: JdeSettings,
+              vendor_lookup: VendorLookup) -> list[tuple[str, _Voucher]]:  # fmt: skip
+    """Each invoice's (supplier number, voucher), in their order: prepared once for a whole check, export or dry run,
+    then handed to ``validate``, ``voucher_rows`` and ``dry_run`` as ``prepared``."""
+    out = []
+    for inv in invoices:
+        an8 = resolve_an8(inv.get("final_output") or {}, vendor_lookup, settings)
+        out.append((an8, _prepare(inv, settings, an8)))
+    return out
+
+
 def voucher_rows(
     invoice: dict[str, Any], vendor_an8: str, settings: JdeSettings, *, batch: int | str = "",
-    fx_rates: Mapping[str, float] | None = None, on: dt.date | None = None,
+    fx_rates: Mapping[str, float] | None = None, on: dt.date | None = None, prepared: _Voucher | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:  # fmt: skip
     """(F0411Z1 rows, F0911Z1 rows, match rows) of one approved invoice, as {column: value}. Check it with
-    ``validate`` first: an invoice with problems gives incomplete rows."""
+    ``validate`` first: an invoice with problems gives incomplete rows. ``prepared``: its voucher already prepared
+    for ``vendor_an8`` (``_vouchers``), not prepared again."""
     from .exports import entry_lines
 
-    v = _prepare(invoice, settings, str(vendor_an8 or "").strip())
+    v = prepared if prepared is not None else _prepare(invoice, settings, str(vendor_an8 or "").strip())
     final = v.final
     keys = _keys("VL", settings, batch, v.inv_id)
     invoice_date = _date(final.get("invoice_date")) or (on or dt.date.today())
@@ -1121,7 +1133,7 @@ def prior_records(store: Any, exclude_ids: Iterable[int] = ()) -> dict[str, list
     """What is already out (read-only): invoices in live export batches (not ``exclude_ids``) and the
     imported ERP invoice register."""
     exclude = set(exclude_ids)
-    exported = [r for r in store.search_rows() if r.get("export_batch") and r["id"] not in exclude]
+    exported = [r for r in store.search_rows(exported=True) if r["id"] not in exclude]
     return {"exported": exported, "register": store.erp_register()}
 
 
@@ -1191,6 +1203,12 @@ def duplicate_problems(
 NO_ACCOUNT_SAID = " has no JDE account (BU.Object.Subsidiary): add it to the account mapping"
 
 
+def _lines_said(numbers: Iterable[int]) -> str:
+    """The invoice lines a problem is on, in the order given: "line 3", "lines 1, 3"."""
+    said = [str(n) for n in numbers]
+    return f"line{'s' if len(said) > 1 else ''} {', '.join(said)}"
+
+
 def _accounts_once(v: _Voucher) -> list[str]:
     """A voucher's problems, an account without a JDE account said once with the lines posting to it ("GL 1500 has no
     JDE account (lines 1, 3): …"), not once a line (B-1301)."""
@@ -1204,7 +1222,7 @@ def _accounts_once(v: _Voucher) -> list[str]:
         if not numbers:
             out.append(problem)
             continue
-        said = f"line{'s' if len(numbers) > 1 else ''} {', '.join(str(n) for n in numbers)}"
+        said = _lines_said(numbers)
         if problem.endswith(NO_ACCOUNT_SAID):
             out.append(f"{problem.removesuffix(NO_ACCOUNT_SAID)} has no JDE account ({said}): add it to the account "
                        "mapping (BU.Object.Subsidiary)")  # fmt: skip
@@ -1215,12 +1233,14 @@ def _accounts_once(v: _Voucher) -> list[str]:
 
 def validate(
     invoices: list[dict[str, Any]], settings: JdeSettings, vendor_lookup: VendorLookup = None,
-    prior: Mapping[str, list[dict[str, Any]]] | None = None,
+    prior: Mapping[str, list[dict[str, Any]]] | None = None, *, prepared: list[tuple[str, _Voucher]] | None = None,
 ) -> dict[int, list[str]]:  # fmt: skip
-    """{invoice id: blocking problems} for the invoices that cannot go out (the others are fine)."""
+    """{invoice id: blocking problems} for the invoices that cannot go out (the others are fine). ``prepared``: the
+    invoices' vouchers already prepared (``_vouchers``)."""
     out: dict[int, list[str]] = {}
-    for inv in invoices:
-        v = _prepare(inv, settings, resolve_an8(inv.get("final_output") or {}, vendor_lookup, settings))
+    if prepared is None:
+        prepared = _vouchers(invoices, settings, vendor_lookup)
+    for inv, (_an8, v) in zip(invoices, prepared, strict=True):
         if v.problems:
             out[int(inv.get("id") or 0)] = _accounts_once(v)
     for inv_id, msgs in duplicate_problems(invoices, settings, vendor_lookup, prior).items():
@@ -1237,6 +1257,8 @@ SETTINGS_URL = "/settings/jde"
 # GL account, the totals.
 SAID_ELSEWHERE = frozenset({"MISSING_INVOICE_NUMBER", "INVOICE_DATE_INVALID", "GL_UNASSIGNED", "SUBTOTAL_MISMATCH",
                             "POSTING_UNBALANCED", "NO_LINE_ITEMS", "TAX_GL_UNMAPPED"})  # fmt: skip
+# Said on the review screen as the voucher check words them, after "JD Edwards: ", for the whole invoice.
+SAID_AS_IS = frozenset({"JDE_TAX_AREA", "JDE_MEALS_PO", "JDE_GL_PO", "JDE_GROSS_TAX", "JDE_UNBALANCED"})
 
 
 def in_use(store: Any) -> bool:
@@ -1263,12 +1285,12 @@ def voucher_findings(output: dict[str, Any], settings: JdeSettings, an8: str) ->
     v = _prepare({"id": 0, "final_output": output}, settings, str(an8 or "").strip())
     seen: set[tuple[str, int | None]] = set()
     unmapped: dict[str, list[int | None]] = {}  # "GL 6010 / CC400": the lines posting to it with no E1 account
+    number = str(output.get("invoice_number") or "").strip()
+    po = str(output.get("po_number") or "").strip()
     for problem, (code, line) in zip(v.problems, v.codes, strict=True):
         if code in SAID_ELSEWHERE or (code, line) in seen:
             continue
         seen.add((code, line))
-        number = str(output.get("invoice_number") or "").strip()
-        po = str(output.get("po_number") or "").strip()
         if code == "JDE_NO_AN8":
             out.append((ERROR, "JDE_NO_AN8", "JD Edwards: this vendor has no supplier number (AN8). Pick the vendor "
                         "from the vendor list, or add its number in Settings → JD Edwards E1 → Supplier address "
@@ -1284,24 +1306,16 @@ def voucher_findings(output: dict[str, Any], settings: JdeSettings, an8: str) ->
             out.append((ERROR, "JDE_PO_LONG", f"JD Edwards keeps 8 characters of the PO number: “{po}” has "
                         f"{len(po)}. Type the PO number as JD Edwards has it", None))  # fmt: skip
         elif code == "JDE_DATE_RANGE":
-            out.append((ERROR, "JDE_DATE_RANGE", f"JD Edwards: the {problem}", None))
+            out.append((ERROR, code, f"JD Edwards: the {problem}", None))
         elif code == "JDE_CURRENCY":
             out.append((ERROR, "JDE_CURRENCY", f"JD Edwards isn't set up for {v.currency}: check the currency, or ask "
                         "the pilot tester to add it in Settings → JD Edwards E1", None))  # fmt: skip
-        elif code == "JDE_TAX_AREA":
-            out.append((ERROR, "JDE_TAX_AREA", f"JD Edwards: {problem}", None))
         elif code == "JDE_NO_ACCOUNT":  # said once for all the lines below
             unmapped.setdefault(problem.split(" has no JDE account")[0].split(": JDE account")[0], []).append(line)
         elif code == "JDE_MEALS_GROSS":
             out.append((ERROR, "JDE_MEALS_GROSS", f"JD Edwards: {problem}, or ask the pilot tester", None))
-        elif code == "JDE_MEALS_PO":
-            out.append((ERROR, "JDE_MEALS_PO", f"JD Edwards: {problem}", None))
-        elif code == "JDE_GL_PO":
-            out.append((ERROR, "JDE_GL_PO", f"JD Edwards: {problem}", None))
-        elif code == "JDE_GROSS_TAX":
-            out.append((ERROR, "JDE_GROSS_TAX", f"JD Edwards: {problem}", None))
-        elif code == "JDE_UNBALANCED":
-            out.append((ERROR, "JDE_UNBALANCED", f"JD Edwards: {problem}", None))
+        elif code in SAID_AS_IS:
+            out.append((ERROR, code, f"JD Edwards: {problem}", None))
         else:
             out.append((ERROR, "JDE_VOUCHER", f"JD Edwards: {problem}", line))
     no_code = terms_unmapped(output, settings)
@@ -1314,9 +1328,8 @@ def voucher_findings(output: dict[str, Any], settings: JdeSettings, an8: str) ->
     if unmapped:  # one finding: "GL 6400 (lines 1, 2), 6500 (line 7) have no JDE account…", not one per account
 
         def where(account: str, lines: list[int | None]) -> str:
-            numbers = [str(n) for n in lines if n]
-            said = f" (line{'s' if len(numbers) > 1 else ''} {', '.join(numbers)})" if numbers else ""
-            return account.removeprefix("GL ") + said
+            numbers = [n for n in lines if n]
+            return account.removeprefix("GL ") + (f" ({_lines_said(numbers)})" if numbers else "")
 
         accounts = [where(a, ls) for a, ls in unmapped.items()]
         one = len(accounts) == 1
@@ -1451,14 +1464,16 @@ def _csv(columns: list[str], rows: list[dict[str, Any]]) -> bytes:
 def export_batch(
     invoices: list[dict[str, Any]], settings: JdeSettings, vendor_lookup: VendorLookup = None, *,
     batch: int | str = "", fx_rates: Mapping[str, float] | None = None, on: dt.date | None = None,
+    prepared: list[tuple[str, _Voucher]] | None = None,
 ) -> dict[str, bytes]:  # fmt: skip
     """{"F0411Z1.csv": …, "F0911Z1.csv": …[, "F0411Z1T.csv": …]} for these invoices (validated first)."""
     headers: list[dict[str, Any]] = []
     dists: list[dict[str, Any]] = []
     matches: list[dict[str, Any]] = []
-    for inv in invoices:
-        an8 = resolve_an8(inv.get("final_output") or {}, vendor_lookup, settings)
-        h, d, m = voucher_rows(inv, an8, settings, batch=batch, fx_rates=fx_rates, on=on)
+    if prepared is None:
+        prepared = _vouchers(invoices, settings, vendor_lookup)
+    for inv, (an8, v) in zip(invoices, prepared, strict=True):
+        h, d, m = voucher_rows(inv, an8, settings, batch=batch, fx_rates=fx_rates, on=on, prepared=v)
         headers += h
         dists += d
         matches += m
@@ -1564,17 +1579,21 @@ def build_zip(
     invoices: list[dict[str, Any]], settings: JdeSettings, vendor_lookup: VendorLookup = None, *,
     batch: int | str = "", fx_rates: Mapping[str, float] | None = None, on: dt.date | None = None,
     left_out: Mapping[int, list[str]] | None = None, to_check: Mapping[int, list[str]] | None = None,
-    left_invoices: list[dict[str, Any]] = (), no_undo: str = "",
+    left_invoices: list[dict[str, Any]] = (), no_undo: str = "", check_now: bool = False,
 ) -> tuple[bytes, str, str]:  # fmt: skip
     """(ZIP bytes, file name, mime type): the CSVs and a README.txt. ``left_invoices``: the invoices of ``left_out``,
-    for their vendor, number and date in DRY_RUN.txt (B-1197); ``no_undo``: why it can't be undone (``readme``)."""
-    files = export_batch(invoices, settings, vendor_lookup, batch=batch, fx_rates=fx_rates, on=on)
+    for their vendor, number and date in DRY_RUN.txt (B-1197); ``no_undo``: why it can't be undone (``readme``);
+    ``check_now``: ``to_check`` is what ``validate`` now finds in ``invoices`` (each voucher prepared once for all)."""
+    vouchers = _vouchers(invoices, settings, vendor_lookup)
+    if check_now:
+        to_check = validate(invoices, settings, vendor_lookup, prepared=vouchers)
+    files = export_batch(invoices, settings, vendor_lookup, batch=batch, fx_rates=fx_rates, on=on, prepared=vouchers)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for name, data in files.items():
             zf.writestr(name, data)
         zf.writestr("README.txt", readme(files, settings, batch, invoices, left_out, to_check, no_undo))
-        report = dry_run(invoices, settings, vendor_lookup, batch=batch, fx_rates=fx_rates, on=on)
+        report = dry_run(invoices, settings, vendor_lookup, batch=batch, fx_rates=fx_rates, on=on, prepared=vouchers)
         for h in report["held"]:
             if h["id"] in (to_check or {}):  # the files hold it: it passed the checks when the batch was made
                 h["reasons"] = ["it IS in this batch's files (checked when the batch was made): check it before "
@@ -1627,11 +1646,17 @@ def dry_run(
     batch: int | str = "",
     fx_rates: Mapping[str, float] | None = None,
     on: dt.date | None = None,
+    prepared: list[tuple[str, _Voucher]] | None = None,
+    rows: Mapping[int, tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]] | None = None,
 ) -> dict[str, Any]:
     """Exactly what a batch of these invoices would load, row by row, and why any invoice is held back, without
-    making a batch. {"blocking": [...], "vouchers": [...], "held": [...], "files": {file: rows}, "totals": {...}}."""
+    making a batch. {"blocking": [...], "vouchers": [...], "held": [...], "files": {file: rows}, "totals": {...}}.
+    ``prepared``: the invoices' vouchers already prepared (``_vouchers``); ``rows``: {invoice: ``voucher_rows``}
+    already made with the same batch, rates and date."""
     blocking = settings_problems(settings)
-    problems = validate(invoices, settings, vendor_lookup, prior)
+    if prepared is None:
+        prepared = _vouchers(invoices, settings, vendor_lookup)
+    problems = validate(invoices, settings, vendor_lookup, prior, prepared=prepared)
     notes = bank_notes(invoices, settings)
     out: dict[str, Any] = {
         "batch": f"{settings.batch_prefix.strip()}{batch}"[:15],
@@ -1643,7 +1668,7 @@ def dry_run(
         "files": {HEADER_FILE: 0, DIST_FILE: 0, MATCH_FILE: 0},
         "totals": {},
     }
-    for inv in invoices:
+    for inv, (an8, v) in zip(invoices, prepared, strict=True):
         final = inv.get("final_output") or {}
         inv_id = int(inv.get("id") or 0)
         who = {
@@ -1659,9 +1684,9 @@ def dry_run(
                 {**who, "reasons": problems.get(inv_id, []) + (["the JD Edwards settings above"] if blocking else [])}
             )
             continue
-        an8 = resolve_an8(final, vendor_lookup, settings)
-        v = _prepare(inv, settings, an8)
-        headers, dists, matches = voucher_rows(inv, an8, settings, batch=batch, fx_rates=fx_rates, on=on)
+        made = (rows or {}).get(inv_id)
+        headers, dists, matches = made or voucher_rows(inv, an8, settings, batch=batch, fx_rates=fx_rates, on=on,
+                                                       prepared=v)  # fmt: skip
         aa_col = "VNACR" if v.foreign else "VNAA"
         dist_total = sum(Decimal(str(d.get(aa_col) or 0)) for d in dists)
         posted = Decimal(v.gross - sum(e["cents"] for e in v.entries)) / 100

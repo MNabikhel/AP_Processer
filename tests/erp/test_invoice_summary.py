@@ -127,6 +127,8 @@ def test_the_lists_are_the_invoices_own(year):
     for status in (None, REVIEW, APPROVED, PENDING, PARKED, REJECTED, FAILED):
         assert year.list_invoices(status) == ref.old_list_invoices(year, status)
     assert year.search_rows() == ref.old_search_rows(year)
+    exported = [r for r in year.search_rows() if r["export_batch"]]
+    assert year.search_rows(exported=True) == exported and exported  # (the JD Edwards duplicate check's)
     assert year.unexported_approved() == ref._old_unexported(year)
     assert year.demo_count() == 1
     assert year.approved_since("2000-01-01", "Jordan Lee") > 0

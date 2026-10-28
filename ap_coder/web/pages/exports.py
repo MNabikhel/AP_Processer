@@ -109,7 +109,7 @@ def jde_left_out(store: Store, batch: int) -> tuple[list[dict[str, Any]], dict[i
     checked now, as it never was for JD Edwards."""
     ids = store.batch_invoice_ids(batch)
     invoices = store.get_invoices(ids)
-    known = next((b for b in store.export_batches() if b["id"] == batch), None)
+    known = store.export_batch(batch)
     if known and known["format"] == jde.FORMAT:
         return invoices, {}
     left_out = jde.validate(invoices, jde.load(store), store.vendor_ids(), jde.prior_records(store, exclude_ids=ids))
@@ -125,7 +125,7 @@ def jde_file(store: Store, batch: int) -> tuple[bytes, str, str]:
     # they would be twice. The README lists them (the unknown ones: check in JD Edwards before loading).
     left_out = {**left_out, **jde_post.left_out_of_files(store, batch)}
     settings, lookup = jde.load(store), store.vendor_ids()
-    created = next((b["created_at"] for b in store.export_batches() if b["id"] == batch), "")
+    created = (store.export_batch(batch) or {}).get("created_at") or ""
     kept = [i for i in invoices if i["id"] not in left_out]
     return jde.build_zip(
         kept,
@@ -135,7 +135,7 @@ def jde_file(store: Store, batch: int) -> tuple[bytes, str, str]:
         fx_rates=store.fx_rates(),
         on=dt.date.fromisoformat(created[:10]) if created else None,
         left_out=left_out,
-        to_check=jde.validate(kept, settings, lookup),
+        check_now=True,  # to_check: what the current settings would now refuse (B-21)
         left_invoices=[i for i in invoices if i["id"] in left_out],
         no_undo=jde_post.undo_problem(store, batch),
     )
@@ -417,7 +417,7 @@ def jde_dry_run(request: Request) -> Response:
 def live_batch(store: Store, batch: int) -> dict[str, Any]:
     """Export batch ``batch``, to download. An undone batch holds no invoice any more (they are back in Ready to
     export, or in a later batch): its file would be empty, so it is refused."""
-    known = next((b for b in store.export_batches() if b["id"] == batch), None)
+    known = store.export_batch(batch)
     if known is None:
         raise HTTPException(status_code=404, detail="There is no such export batch.")
     if known["undone_at"]:
@@ -457,7 +457,7 @@ def approved_pdfs(request: Request, batch: int) -> Response:
 def undo_batch(request: Request, batch: int) -> JSONResponse:
     """The ERP import failed: the batch's invoices go back to Ready to export (the batch stays, marked undone)."""
     store = get_store(request)
-    known = next((b for b in store.export_batches() if b["id"] == batch), None)
+    known = store.export_batch(batch)
     if known is None or known["undone_at"]:
         return refuse(f"Batch {batch} is not an export that can be undone.")
     try:  # refused in the same transaction when JD Edwards has (or may have) one of its vouchers (D-104, D-105)
