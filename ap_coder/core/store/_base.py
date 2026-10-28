@@ -31,7 +31,8 @@ from .fx import _FX_RATE, APPROVAL_CONTROLS, parse_fx_rates, tiny_fx_rates, unre
 # tax_province and tax_uncollected (filled from the approved invoices, D-70, D-80), template_snapshots (D-85),
 # invoice_drafts (by _SCHEMA: the review screen's edits not approved yet, kept over a restart, D-86),
 # 18: users, sessions, login_attempts (by _SCHEMA: server mode's accounts, D-97), later vendors.erp_bank (D-104) and
-# vendor_aliases (by _SCHEMA: a vendor name read wrong, as AP corrected it, D-119)
+# vendor_aliases (by _SCHEMA: a vendor name read wrong, as AP corrected it, D-119), line_texts (by _SCHEMA: a
+# supplier's line descriptions as AP approved them, D-120)
 SCHEMA_VERSION = 19  # 19: the invoices' summary and its triggers (summary.py, ``_summary_migrate``, D-110)
 # The one-off clean-ups of the learning memory ``_migrate`` has run on a database (settings.feedback_cleanup): a new
 # clean-up added there changes it, so it runs once on every database.
@@ -175,6 +176,12 @@ CREATE TABLE IF NOT EXISTS vendor_aliases (
     vendor_name TEXT NOT NULL, gst_number TEXT NOT NULL DEFAULT '', invoice_id INTEGER, at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS vendor_aliases_key ON vendor_aliases (alias_key, id);
 CREATE INDEX IF NOT EXISTS vendor_aliases_invoice ON vendor_aliases (invoice_id);
+CREATE TABLE IF NOT EXISTS line_texts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, supplier_key TEXT NOT NULL, read_key TEXT NOT NULL,
+    printed TEXT NOT NULL DEFAULT '', description TEXT NOT NULL, corrected INTEGER NOT NULL DEFAULT 0,
+    invoice_id INTEGER, at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS line_texts_key ON line_texts (supplier_key, id);
+CREATE INDEX IF NOT EXISTS line_texts_invoice ON line_texts (invoice_id);
 CREATE TABLE IF NOT EXISTS reader_outcomes (
     id INTEGER PRIMARY KEY AUTOINCREMENT, invoice_id INTEGER, reader TEXT NOT NULL, field TEXT NOT NULL,
     read_value TEXT, final_value TEXT, correct INTEGER NOT NULL, evidence TEXT NOT NULL DEFAULT '',

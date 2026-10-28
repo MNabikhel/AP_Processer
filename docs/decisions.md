@@ -1459,3 +1459,25 @@ that is reversed keeps its line, marked "replaced by D-NN".
   and right-next-time and eligible-but-wrong by position in the report. (`capture/workflow.py`, `capture/supplier.py`,
   `core/store/vendors.py`, `core/store/capture.py`, `core/store/invoices.py`, `capture/bridge.py`,
   `capture/confidence.py`, `ai/offline_coder.py`, `bench/learning.py`, `bench/generator.py`)
+- **D-120** · **A supplier's line descriptions as AP approves them, known again on its next invoice.** A scan reads a
+  supplier's items the same wrong way on each invoice (spaces lost, "Palletwrap18in.x1500ft"; a letter for a digit,
+  "Hexbo1t"; the item-code column run in, "PB-93930 Bearing 6205-2RS"), and AP corrected each one again; the coding
+  memory knows a line by its words, so the GL account AP gave the item did not follow either. Each approved line is
+  remembered with the text it was read as (`line_texts`, kept with the approval: withdrawn with it, replaced when it is
+  learned from again; an untouched bulk approval teaches only the lines AP changed), and a line of the supplier's next
+  invoice that reads the same way is shown as AP approved it, before it is coded (`workflow.apply_line_memory` in
+  `read_invoice`; `capture/line_memory.py`). *The same way*: `fold` (case, spacing, punctuation and the letters OCR
+  mixes up, 1 l I, 0 O, 5 S, rn m, do not count; a part number that differs in a digit is another item). AP's latest
+  decision on a text wins (D-118): approving it back as printed ends the renaming. An item code: a description that
+  only differs from an approved one by its leading code is that line; once AP has dropped the code from two lines and
+  kept none since, a new item's code is left out too (a code of digits alone has five or more, so a year or a
+  quantity is never one). Said where AP looks: under the line ("Named as approved before · printed …", gone once AP
+  edits it), in the line's reasoning, in the approval's message ("Remembered your 2 line descriptions") and on the
+  Learning page's Corrections, with whether it read right the next time. Only the description: a line's numbers
+  are the invoice's own. Measured with `python -m ap_coder.bench lines` (12 suppliers x 10 scanned invoices, the
+  app's read, code, approve and learn path; `--no-memory` for before): descriptions right 19.7% -> 73.8%, corrections
+  AP had to make 811 -> 265, an item AP corrected before read right the next time 15.5% -> 95.5%, the GL account
+  right on an item AP coded before 61.1% -> 97.7%; an item's first time unchanged (18.8% -> 19.2%: that is the
+  reader's). (`capture/line_memory.py`, `capture/workflow.py`, `capture/types.py`, `ai/offline_coder.py`,
+  `core/store/capture.py`, `core/store/_base.py`, `core/store/lessons.py`, `web/invoice_view.py`,
+  `web/templates/_invoice_lines.html`, `bench/lines.py`)

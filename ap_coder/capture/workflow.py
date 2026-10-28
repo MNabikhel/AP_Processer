@@ -23,7 +23,7 @@ from typing import Any
 from ..ai.extraction import TEXT_EXTENSIONS
 from ..core.schema import as_read
 from ..core.ui import FIELD_WORDS
-from . import analyze, build_layout
+from . import analyze, build_layout, line_memory
 from .bridge import ai_values, vendor_record
 from .confidence import apply_supplier_record
 from .supplier import (
@@ -95,6 +95,47 @@ def apply_vendor_alias(store: Any, capture: CaptureResult | None) -> str:
     if alias.get("confirmed", 0) < 2 and fr.status == VERIFIED:
         fr.status, fr.confidence = LIKELY, min(fr.confidence, 0.97)
     return name
+
+
+def supplier_key_of(store: Any, capture: CaptureResult | None) -> str:
+    """The supplier ``capture`` reads as (its vendor name and GST/HST number, ``Store.supplier_key_for``); "" when
+    it names none."""
+    fr = capture.fields.get("vendor_name") if capture is not None else None
+    if store is None or fr is None or fr.value in (None, ""):
+        return ""
+    gst = capture.fields.get("gst_hst_registration_number")
+    return store.supplier_key_for(str(fr.value), gst.value if gst is not None and gst.value else None)
+
+
+def apply_line_memory(store: Any, capture: CaptureResult | None) -> int:
+    """The lines of ``capture`` read as lines AP approved on an earlier invoice of the supplier, shown as AP named
+    them (``line_memory.apply``, D-120). In place; returns how many were renamed. Never raises."""
+    if capture is None or not capture.line_items or not hasattr(store, "line_texts"):
+        return 0
+    try:
+        return line_memory.apply(capture.line_items, store.line_texts(supplier_key_of(store, capture)))
+    except Exception as exc:  # the lines as read stand
+        log.warning("line descriptions not looked up (%s)", exc)
+        return 0
+
+
+def remember_lines(store: Any, key: str, invoice_id: int, capture: dict[str, Any] | None, proposed: dict[str, Any],
+                   final: dict[str, Any], *, bulk: bool = False) -> int:  # fmt: skip
+    """What an approval says about the supplier's lines (D-120): each line AP approved, with the text it was read as
+    (the capture's line it was proposed from), for ``apply_line_memory`` on the next invoice. ``bulk``: nobody opened
+    it, so only the lines AP changed (on a reopened invoice) say anything. Returns how many were corrected."""
+    from ..core.memory import pair_lines
+
+    read_lines = list((capture or {}).get("line_items") or [])
+    pairs = []
+    for before, after in pair_lines(proposed.get("line_items") or [], final.get("line_items") or []):
+        if not before or not after.get("description"):
+            continue  # a line AP added: nothing was read for it
+        printed = line_memory.as_read(read_lines, before.get("description") or "", before.get("amount"))
+        if bulk and line_memory.same_text(before.get("description"), after.get("description")):
+            continue
+        pairs.append((printed, str(before.get("description") or ""), str(after["description"])))
+    return store.remember_line_texts(key, line_memory.observations(pairs), invoice_id=invoice_id)
 
 
 def local_evidence(store: Any) -> dict[str, tuple[int, int]] | None:
@@ -432,6 +473,11 @@ def learn_from_approval(store: Any, invoice_id: int, final: dict[str, Any], *, a
             learned["alias"] = printed
     except Exception as exc:  # learning must never block an approval
         log.warning("invoice %s: vendor name as read not remembered (%s)", invoice_id, exc)
+    try:  # each line's description as AP approved it: the supplier's next invoice that reads so (D-120)
+        learned["lines"] = remember_lines(store, key, invoice_id, store.get_capture(invoice_id),
+                                          inv.get("ai_output") or {}, approved, bulk=bulk)  # fmt: skip
+    except Exception as exc:  # learning must never block an approval
+        log.warning("invoice %s: line descriptions not remembered (%s)", invoice_id, exc)
     source = "audit" if ((inv.get("meta") or {}).get("capture") or {}).get("audit") else "review"
     learned.update(fields=len(rows), corrected=corrected)
     # Written otherwise but the same to AP Coder ("BDO Canada" -> "BDO Canada LLP"): no correction, but said (B-666).
@@ -589,6 +635,9 @@ def taught_message(store: Any, learned: dict[str, Any]) -> str:
         head = "You changed no header field."  # what is known: not that each was read right (B-472)
     else:
         head = "Learned this vendor's layout." if learned.get("template") else ""
+    if learned.get("lines"):  # line descriptions AP corrected: named so on the vendor's next invoices (D-120)
+        lines = plural(learned["lines"], "line description")
+        head = f"{head} Remembered your {lines}: named so when the vendor's next invoice reads the same way.".strip()
     try:
         _, invoices, where = supplier_progress(store, key)
     except Exception as exc:  # the message must never block an approval

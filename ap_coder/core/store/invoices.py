@@ -468,10 +468,10 @@ class InvoicesMixin:
     def _forget_learning(conn: sqlite3.Connection, invoice_id: int) -> dict[str, Any]:
         """Withdraw what an invoice's approval taught: its coding memory, its lessons (what the AI is told), its
         supplier outcomes (from a review or an audit sample alike, so none keeps counting towards the supplier's
-        autonomy), its reader scores, a vendor name it corrected (D-119) and what it taught the supplier's template
-        (``_withdraw_template``, capture.py). Returns what became of the template, for the event's detail ({} when the
-        approval taught it nothing)."""
-        for table in ("feedback", "supplier_outcomes", "reader_outcomes", "vendor_aliases"):
+        autonomy), its reader scores, a vendor name it corrected (D-119), its lines' descriptions (D-120) and what it
+        taught the supplier's template (``_withdraw_template``, capture.py). Returns what became of the template, for
+        the event's detail ({} when the approval taught it nothing)."""
+        for table in ("feedback", "supplier_outcomes", "reader_outcomes", "vendor_aliases", "line_texts"):
             conn.execute(f"DELETE FROM {table} WHERE invoice_id = ?", (invoice_id,))
         _store_class()._withdraw_lessons(conn, invoice_id)
         return _store_class()._withdraw_template(conn, invoice_id)
@@ -511,7 +511,7 @@ class InvoicesMixin:
                     "status": row["status"], "lessons_forgotten": forget_lessons,
                 })  # fmt: skip
             if forget_lessons:
-                for table in ("feedback", "vendor_aliases"):
+                for table in ("feedback", "vendor_aliases", "line_texts"):
                     conn.execute(f"DELETE FROM {table} WHERE invoice_id = ?", (invoice_id,))
                 self._withdraw_lessons(conn, invoice_id)
                 self._withdraw_template(conn, invoice_id)

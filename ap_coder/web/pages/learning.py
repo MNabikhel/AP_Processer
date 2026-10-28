@@ -220,8 +220,8 @@ NEXT_TIME = {
 
 def corrections_context(store: Store) -> dict[str, Any]:
     """Corrections, the first thing on the Coding accuracy tab: each correction AP made (an invoice's field, a line's
-    GL account, cost center or tax code), what AP Coder proposed and what AP approved, and whether AP Coder had it
-    right the next time (``Store.corrections``)."""
+    GL account, cost center, tax code or description), what AP Coder proposed and what AP approved, and whether AP
+    Coder had it right the next time (``Store.corrections``)."""
     from ap_coder.ai import lessons
 
     reference = reference_or_none(store)
@@ -234,6 +234,8 @@ def corrections_context(store: Store) -> dict[str, Any]:
             what = f"Cost center of lines like “{pattern}”"
         elif field == "tax_code":
             what = f"Tax code of “{short(pattern, 60)}”"
+        elif field == "line_description":
+            what = "Description of a line, as read"
         else:
             what = lessons.FIELD_WORDS.get(field, field)
         names = {"proposed": "", "value": "", "next_value": ""}
