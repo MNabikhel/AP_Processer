@@ -1002,6 +1002,12 @@ def invoice_uncollected(coding: Any, province: str) -> list[str]:
                        str(_get(coding, "qst_registration_number") or ""), _get(coding, "tax_lines") or [])  # fmt: skip
 
 
+# A code picked against the line's older approvals waits for one more decision before it is learned (D-118): left
+# without a learned code, the line is worked out from the tax charged, and a person checks it when the amounts do not
+# say; a wrong learned code (a slip) is worse: ``prefill`` then drops every learned code of the invoice.
+TAX_REVERSAL = 1
+
+
 def learned_codes(lines: Sequence[Any], feedback: Iterable[dict[str, Any]], vendor: str, province: str,
                   uncollected: Iterable[str] = (), key: str | None = None) -> list[str]:  # fmt: skip
     """For each line, the tax code the vendor's history agrees on, else "" (D-70, with the safety rules of D-80).
@@ -1016,9 +1022,13 @@ def learned_codes(lines: Sequence[Any], feedback: Iterable[dict[str, Any]], vend
     * Votes: a person's pick on review is enough alone; approvals as proposed must be of at least ``MIN_AGREEING``
       different invoices approved on different days. A learned code or a guess kept, or a bulk approval, is no vote
       (no code recorded); an approval made before exemptions were recorded (``LEGACY``) is no vote.
-    * One contradiction (another code on a line worded alike, whoever approved it) and the line is worked out from
-      the tax charged again."""
-    from ..core.memory import VENDOR_LINE_SIMILARITY, similarity, vendor_key
+    * AP changes its mind (D-118): on each line (the same words), the latest decision counts, as for the GL account
+      (``memory.latest_decision``): a code AP picked in place of older approvals is the line's code once one more
+      decision confirms it (``TAX_REVERSAL``; until then the line is worked out from the tax charged: it may be a
+      slip). The votes are the latest decision's run.
+    * Lines worded alike that disagree (another code on a similar line, whoever approved it): the line is worked out
+      from the tax charged again."""
+    from ..core.memory import VENDOR_LINE_SIMILARITY, latest_decision, similarity, vendor_key
 
     key = key or vendor_key(vendor or "")  # ``key``: the vendor's own, of two whose names read alike (B-1021)
     province = str(province or "").strip().upper()
@@ -1031,20 +1041,27 @@ def learned_codes(lines: Sequence[Any], feedback: Iterable[dict[str, Any]], vend
         return [""] * len(lines)
     seen = [(tax_words(r.get("description") or ""), r) for r in past]
     seen = [(w, r) for w, r in seen if not generic(w)]
+    seen.sort(key=lambda wr: (str(wr[1].get("created_at") or ""), wr[1].get("id") or 0), reverse=True)  # newest first
     out = []
     for li in lines:
         words = tax_words(str(_get(li, "description") or ""))
         if generic(words):
             out.append("")
             continue
-        near = [(w, r) for w, r in seen if w == words or similarity(words, w) >= VENDOR_LINE_SIMILARITY]
-        codes = {str(r["final_tax_code"]) for _, r in near}
-        if len(codes) != 1:  # none, or a contradiction
+        near: dict[frozenset[str], list[dict[str, Any]]] = {}  # each line worded alike: its approvals, newest first
+        for w, r in seen:
+            if w == words or similarity(words, w) >= VENDOR_LINE_SIMILARITY:
+                near.setdefault(w, []).append(r)
+        latest = {w: latest_decision([str(r["final_tax_code"]) for r in rows], rows[0].get("tax_source") == PICKED,
+                                     TAX_REVERSAL) for w, rows in near.items()}  # fmt: skip
+        codes = {d.value if d.counts else None for d in latest.values()}
+        if len(codes) != 1 or None in codes:  # none, lines alike that disagree, or a change not confirmed yet
             out.append("")
             continue
         code = next(iter(codes))
         strict, negations = _exemption(code), words & NEGATIONS
-        voters = [r for w, r in near if (w == words if strict else w & NEGATIONS == negations)
+        voters = [r for w, rows in near.items() for r in rows[: latest[w].run]
+                  if (w == words if strict else w & NEGATIONS == negations)
                   and r.get("tax_source", "") in VOTING]  # fmt: skip
         invoices = {r.get("invoice_id") or ("row", r.get("id")) for r in voters}
         days = {str(r.get("created_at") or "")[:10] for r in voters}

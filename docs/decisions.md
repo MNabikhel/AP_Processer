@@ -1418,3 +1418,44 @@ that is reversed keeps its line, marked "replaced by D-NN".
   files, many named after the round that wrote them (sweep4, review2), sent an agent through several files to find one
   subject's tests, and the whole suite took 18 minutes on Linux, most of it rebuilding the same demo.
   (`tests/conftest.py`, `scripts/check.py`)
+- **D-118** · **One rule for "AP changed its mind"**, written once (`memory.latest_decision`) and used by the GL
+  suggestions (`suggest`), the history check and the chat model's examples (`memory.current`) and the line tax codes
+  learned from approvals (`line_tax.learned_codes`): the latest decision on a line counts and the older ones for
+  another value no longer do, unless it is a single correction against 5 decisions or more (counted back to the
+  line's last decision for the new value, so two slips in a row reverse the whole run). Why: the suggestions coded
+  the new account after one correction while the history check kept counting the old one until a second decision
+  (after 4 approvals and a correction, the next invoice was coded right and warned, B-1420), and a line's tax code
+  never recovered from one contradiction (B-1421). A kept guess of the chat model is an approval like any (D-58):
+  it supersedes too, and the check no longer warns on the line coded with it. Line tax codes ask for one more
+  decision whatever the run (`TAX_REVERSAL` = 1): a tax slip learned at once disagrees with the tax charged and
+  `prefill` then drops every learned code of the invoice (measured: learned at once, realistic tax accuracy 89.8% →
+  85.4%; with one more decision, 92.2%). Measured on `bench coding` seed 1 (docs/CODING.md): default run unchanged;
+  realistic run, GL accuracy unchanged (93.8%), false alarms 9 → 6, wrong accounts caught 20 → 18 (two slips filled
+  in again, before and after, now without the warning: the price of not warning on a recode), tax codes wrong 105 →
+  58. Also: forgetting a coding-memory line withdraws the line lessons its approval taught (B-1422), and the
+  Learning page starts with **Corrections**: each correction AP made (an invoice's field, a line's GL account, cost
+  center or tax code), proposed → approved, and whether AP Coder had it right the next time, from the lessons'
+  approvals and the feedback rows already kept (`Store.corrections`, two queries; no new data collected). The
+  benchmark measures *wrong this time, right next time* (`bench.coding.next_time`). (`core/memory.py`,
+  `ai/suggest.py`, `coding/line_tax.py`, `core/store/lessons.py`, `core/store/learning.py`, `web/pages/learning.py`,
+  `bench/coding.py`)
+- **D-119** · Learning on the reading side, "wrong this time, right next time". (1) **A vendor name AP corrects is
+  remembered** (`vendor_aliases`: the name as read, the name approved, the GST/HST number, the approval), and an
+  invoice whose vendor name reads so is that vendor's: `Store.vendor_alias`, used by `supplier_key_for` (the
+  template), `find_vendor` and `vendor_key_for` (the vendor master record, coding memory, lessons) and
+  `workflow.apply_vendor_alias` (the name shown, `likely` until approved so twice). Only when the two names look
+  alike (most letters the same, or one's words in the other's), never for an invoice whose GST/HST number is another
+  vendor's, never over a vendor that goes by the name read, and a later approval that keeps the name as read ends it;
+  withdrawn with its approval. Why: a misread with no GST/HST number had no key the next invoice could reach. (2) **An
+  untouched bulk approval settles no template spot**: its values were proposed, not checked, so they show the
+  template where a field is printed but count as no approval in a row and no miss (`learn(..., checked=)`; a field AP
+  corrected still counts); it confirms no vendor name. Changes the CAPTURE_DESIGN rule "a bulk approval teaches the
+  template". (3) **A withdrawal after a later approval takes the teaching back**: the template is learned again from
+  the withdrawn approval's snapshot through the later approvals (`Store._replay_without`, `workflow.replay_template`),
+  their snapshots rewritten on the way, when the snapshots follow on and the later pages have a text layer; a scan is
+  not OCR'd again inside a withdrawal, so with one the template is kept as before (D-71). (4) **Bench learn runs the
+  app's path**: `read_invoice` and `learn_from_approval` on a real store with the clock set by the stream, two in
+  twenty suppliers with a misread name and no GST/HST number (`misread_name`), `--withdraw-after K`, `--bulk SHARE`,
+  and right-next-time and eligible-but-wrong by position in the report. (`capture/workflow.py`, `capture/supplier.py`,
+  `core/store/vendors.py`, `core/store/capture.py`, `core/store/invoices.py`, `capture/bridge.py`,
+  `capture/confidence.py`, `ai/offline_coder.py`, `bench/learning.py`, `bench/generator.py`)

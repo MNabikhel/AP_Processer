@@ -348,7 +348,10 @@ def test_in_a_browser_no_page_breaks_the_content_security_policy(store, server_o
             # The rail's More menu remembers being open (its script is a file of its own now, no longer inline).
             page.goto(f"http://127.0.0.1:{port}/review")
             page.click("#nav-more summary")
-            page.wait_for_function("localStorage.getItem('apc-nav-more') === 'open'")
+            for _ in range(100):  # polled from here: wait_for_function evaluates its string with eval, which CSP blocks
+                if page.evaluate("localStorage.getItem('apc-nav-more')") == "open":
+                    break
+                page.wait_for_timeout(50)
             page.reload()
             assert page.evaluate("document.getElementById('nav-more').open") is True
             chromium.close()

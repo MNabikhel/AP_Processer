@@ -151,7 +151,7 @@ def _setup(store: Store) -> dict[str, Any]:
 def _put_back_setup(store: Store) -> None:
     """Each part of the sample setup the demo loaded (GL accounts, cost centers, tax setup, policy) as it was before,
     when it is still as the demo left it: a part the user changed meanwhile is theirs now and stays."""
-    saved = json.loads(store.get_setting(DEMO_SETUP_SETTING) or "{}")
+    saved = store.get_json(DEMO_SETUP_SETTING, {})
     before, after = saved.get("before"), saved.get("after")
     if not before or not after:
         return
@@ -237,11 +237,11 @@ def remove_demo(store: Store) -> int:
         store.delete_invoice(invoice_id, forget_lessons=True)
     store.delete_empty_batches(batches)  # export batches that held only demo invoices
     store.prune_supplier_profiles(suppliers)  # supplier profiles that only the demo invoices made
-    vendor_keys = json.loads(store.get_setting(DEMO_VENDORS_SETTING) or "[]")
+    vendor_keys = store.get_json(DEMO_VENDORS_SETTING, [])
     if vendor_keys:
         store.delete_vendors(vendor_keys)
         store.set_setting(DEMO_VENDORS_SETTING, "")
-    po_keys = json.loads(store.get_setting(DEMO_POS_SETTING) or "[]")
+    po_keys = store.get_json(DEMO_POS_SETTING, [])
     if po_keys:
         store.delete_purchase_orders(po_keys)
         store.set_setting(DEMO_POS_SETTING, "")

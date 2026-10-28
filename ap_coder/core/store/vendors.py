@@ -34,7 +34,97 @@ def _distinct(first: dict[str, Any], row: dict[str, Any]) -> bool:
     return bool(gst_a and gst_b) and not same_tax_number(gst_a, gst_b)
 
 
+def alike_names(printed: str, name: str) -> bool:
+    """Whether ``name`` (what AP approved) can be what ``printed`` (what was read) misreads: the same letters but a few
+    ("N0rthwind Supp1y" for "Northwind Supply"), or the one's words all in the other ("NORTHWIND" for "Northwind Supply
+    Ltd."). The customer's name read as the vendor's, or another vendor's, is not (D-119)."""
+    from difflib import SequenceMatcher
+
+    a, b = vendor_key(printed or ""), vendor_key(name or "")
+    if not a or not b or a == b:
+        return False
+    if SequenceMatcher(None, a.replace(" ", ""), b.replace(" ", "")).ratio() >= 0.75:
+        return True
+    wa, wb = set(a.split()), set(b.split())
+    return min(len(wa), len(wb)) >= 1 and (wa <= wb or wb <= wa) and len("".join(wa & wb)) >= 4
+
+
 class VendorsMixin:
+    # --- A vendor name read wrong the same way, as AP corrected it (D-119) -------------------------------------------
+
+    def remember_vendor_alias(self, printed: str, vendor_name: str, gst_number: Any = "", *,
+                              invoice_id: int | None = None) -> bool:  # fmt: skip
+        """An approval that corrected the vendor name read (``printed``) to ``vendor_name``: the next invoice that reads
+        so is that vendor's (``vendor_alias``). With ``vendor_name`` the name read itself (kept as read), a name AP
+        corrected before is no longer taken for another. Kept with the approval (``invoice_id``): withdrawn with it.
+        False when nothing was remembered (the names do not look alike)."""
+        key = vendor_key(printed or "")
+        same = key == vendor_key(vendor_name or "")
+        if not key or not vendor_name or (not same and not alike_names(printed, vendor_name)):
+            return False
+        with self._conn() as conn:
+            if (
+                same
+                and conn.execute("SELECT 1 FROM vendor_aliases WHERE alias_key = ? LIMIT 1", (key,)).fetchone() is None
+            ):
+                return False  # a name approved as read, and never corrected: nothing to undo
+            if invoice_id is not None:
+                conn.execute("DELETE FROM vendor_aliases WHERE invoice_id = ? AND alias_key = ?", (invoice_id, key))
+            conn.execute(
+                "INSERT INTO vendor_aliases (alias_key, printed, vendor_name, gst_number, invoice_id, at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    key,
+                    str(printed).strip(),
+                    str(vendor_name).strip(),
+                    str(gst_number or "").strip(),
+                    invoice_id,
+                    _now(),
+                ),
+            )
+        return True
+
+    def vendor_alias(self, name: str | None, gst_number: Any = None) -> dict[str, Any] | None:
+        """The vendor an invoice whose vendor name reads ``name`` is, as AP corrected that name on an earlier invoice:
+        {"vendor_name", "gst_number", "printed", "confirmed": approvals that said so since it was last approved
+        otherwise}. None when AP never corrected this name, when its last approval kept it as read, or when the invoice
+        shows a GST/HST number that is not that vendor's."""
+        from ...coding.vendors import same_tax_number
+
+        key = vendor_key(name or "")
+        if not key:
+            return None
+        with self._conn() as conn:
+            rows = [dict(r) for r in conn.execute(
+                "SELECT * FROM vendor_aliases WHERE alias_key = ? ORDER BY id DESC LIMIT 50", (key,))]  # fmt: skip
+        if not rows or vendor_key(rows[0]["vendor_name"]) == key:
+            return None
+        target = vendor_key(rows[0]["vendor_name"])
+        confirmed = 0
+        for r in rows:
+            if vendor_key(r["vendor_name"]) != target:
+                break
+            confirmed += 1
+        number, known = str(gst_number or "").strip(), str(rows[0]["gst_number"] or "")
+        if number and known and not same_tax_number(number, known):
+            return None
+        return {"vendor_name": rows[0]["vendor_name"], "gst_number": known, "printed": rows[0]["printed"],
+                "confirmed": confirmed}  # fmt: skip
+
+    def _aliased(self, name: str | None, gst_number: Any = None) -> str | None:
+        """The vendor name ``name`` reads as, AP corrected (``vendor_alias``), when no vendor goes by ``name`` itself;
+        None otherwise."""
+        key = vendor_key(name or "")
+        if not key:
+            return None
+        with self._conn() as conn:
+            if conn.execute("SELECT 1 FROM vendor_aliases WHERE alias_key = ? LIMIT 1", (key,)).fetchone() is None:
+                return None  # the usual case: one look, no other
+            if conn.execute("SELECT 1 FROM vendors WHERE vendor_key = ?", (key,)).fetchone() is not None:
+                return None  # a vendor of that very name
+        alias = self.vendor_alias(name, gst_number)
+        return alias["vendor_name"] if alias else None
+
     # --- Vendors ----------------------------------------------------------------------------------------
 
     def get_vendor(self, key: str) -> dict[str, Any] | None:
@@ -52,6 +142,9 @@ class VendorsMixin:
         key = vendor_key(name or "")
         if not key:
             return None
+        aliased = self._aliased(name, gst_number)
+        if aliased:  # a name AP corrected to this vendor's (D-119)
+            name, key = aliased, vendor_key(aliased)
         with self._conn() as conn:
             rows = [dict(r) for r in conn.execute(
                 "SELECT * FROM vendors WHERE vendor_key = ? OR substr(vendor_key, 1, ?) = ?",
@@ -79,7 +172,10 @@ class VendorsMixin:
         if not key:
             return ""
         found = self.find_vendor(name, gst_number, erp_id)
-        return found["vendor_key"] if found else key
+        if found:
+            return found["vendor_key"]
+        aliased = self._aliased(name, gst_number)  # a name AP corrected, of a vendor not in the list (D-119)
+        return vendor_key(aliased) if aliased else key
 
     def save_vendor(
         self, key: str, display_name: str, status: str = "active", expected_gst: str = "", notes: str = "",

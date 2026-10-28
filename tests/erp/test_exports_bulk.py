@@ -33,6 +33,8 @@ def test_export_batch_lifecycle(demo_store):
     assert store.undo_export_batch(batch, actor="jane") == 2
     assert len(store.unexported_approved()) == 2
     assert store.export_batches()[0]["undone_by"] == "jane"
+    assert store.export_batch(batch) == store.export_batches()[0]  # one batch, as the list has it
+    assert store.export_batch(batch + 1) is None
 
 
 def test_a_batch_of_more_invoices_than_sqlite_takes_variables(demo_store, monkeypatch, few_sql_variables):

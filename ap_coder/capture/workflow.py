@@ -54,6 +54,49 @@ def supplier_for(store: Any, output: dict[str, Any] | None) -> tuple[str, dict[s
     return key, (store.get_supplier_profile(key) if key else None)
 
 
+VENDOR_ALIAS = "vendor alias"  # a vendor name's source: the name AP corrected the one read to before (D-119)
+
+
+def printed_vendor_name(capture: CaptureResult | dict[str, Any] | None) -> str:
+    """The vendor name as the readers read it off the page: before the vendor master's spelling or a name AP
+    corrected it to replaced it ("" when no reader read one)."""
+    if isinstance(capture, dict):
+        capture = CaptureResult.from_dict(capture)
+    fr = capture.fields.get("vendor_name") if capture is not None else None
+    if fr is None or fr.value in (None, ""):
+        return ""
+    for reader, raw in fr.sources.items():
+        if not reader.startswith("other:") and reader not in NOT_READERS and str(raw or "").strip():
+            return str(raw).strip()
+    return str(fr.value)
+
+
+def apply_vendor_alias(store: Any, capture: CaptureResult | None) -> str:
+    """A vendor name read as AP corrected it on an earlier invoice (``Store.vendor_alias``): the name AP gave, with
+    the one printed in the reasons. Vouched for once AP approved it so twice (a name corrected once may be a slip): until
+    then at most likely. In place; returns the name given ("" when none)."""
+    from .types import LIKELY, VERIFIED
+
+    fr = capture.fields.get("vendor_name") if capture is not None else None
+    if store is None or fr is None or fr.value in (None, "") or not hasattr(store, "vendor_alias"):
+        return ""
+    gst = capture.fields.get("gst_hst_registration_number")
+    try:
+        alias = store.vendor_alias(str(fr.value), gst.value if gst is not None else None)
+    except Exception as exc:  # an older store: the name as read stands
+        log.warning("vendor alias not looked up (%s)", exc)
+        return ""
+    if not alias:
+        return ""
+    name, printed = alias["vendor_name"], str(fr.value)
+    fr.sources = {VENDOR_ALIAS: name, **fr.sources}
+    fr.reasons = [*fr.reasons, f"the name AP corrected it to on an earlier invoice (printed: {printed})"]
+    fr.value = name
+    if alias.get("confirmed", 0) < 2 and fr.status == VERIFIED:
+        fr.status, fr.confidence = LIKELY, min(fr.confidence, 0.97)
+    return name
+
+
 def local_evidence(store: Any) -> dict[str, tuple[int, int]] | None:
     """{evidence: (cases, right)}: how often each evidence pattern was right on the invoices AP approved here
     (``store.evidence_counts``), for the local calibration of confidence. None without a store, or with a store
@@ -99,6 +142,7 @@ def capture_invoice(path: str | Path, output: dict[str, Any] | None, *, store: A
                           today=dt.date.today(), page_text=page_text, local_evidence=local_evidence(store))  # fmt: skip
         if template:
             apply_supplier_record(capture.fields, supplier_record(store, key))
+        apply_vendor_alias(store, capture)
     except Exception as exc:  # capture is an extra check: never lose an invoice over it
         log.warning("%s: capture failed (%s)", path.name, exc)
         return None, key, profile
@@ -292,7 +336,7 @@ def still_touchless(store: Any, capture: CaptureResult | None, output: dict[str,
     return state == AUTONOMOUS and not invoice_gates(store, capture, report, output)
 
 
-NOT_READERS = ("computed", "vendor master")  # a field's sources that did not read the page
+NOT_READERS = ("computed", "vendor master", VENDOR_ALIAS)  # a field's sources that did not read the page
 
 
 def reader_outcome_rows(capture: CaptureResult | dict[str, Any] | None, final: dict[str, Any]) -> list[dict[str, Any]]:
@@ -377,9 +421,19 @@ def learn_from_approval(store: Any, invoice_id: int, final: dict[str, Any], *, a
     if not key:
         return learned
     learned.update(supplier=key, name=name)
-    source = "audit" if ((inv.get("meta") or {}).get("capture") or {}).get("audit") else "review"
     rows = outcome_rows(inv.get("ai_output") or {}, final)
-    learned.update(fields=len(rows), corrected=[r["field"] for r in rows if not r["correct"]])
+    corrected = [r["field"] for r in rows if not r["correct"]]
+    try:  # a vendor name read wrong and corrected: known again on the next invoice that reads so (D-119)
+        printed = printed_vendor_name(store.get_capture(invoice_id)) or str((inv.get("ai_output") or {}).get(
+            "vendor_name") or "")  # fmt: skip
+        # Approved in bulk, nobody looked at the name: it says nothing about it, unless AP corrected it before.
+        if printed and (not bulk or "vendor_name" in corrected) and store.remember_vendor_alias(
+                printed, name, approved.get("gst_hst_registration_number"), invoice_id=invoice_id):  # fmt: skip
+            learned["alias"] = printed
+    except Exception as exc:  # learning must never block an approval
+        log.warning("invoice %s: vendor name as read not remembered (%s)", invoice_id, exc)
+    source = "audit" if ((inv.get("meta") or {}).get("capture") or {}).get("audit") else "review"
+    learned.update(fields=len(rows), corrected=corrected)
     # Written otherwise but the same to AP Coder ("BDO Canada" -> "BDO Canada LLP"): no correction, but said (B-666).
     learned["reworded"] = [(r["field"], str(r["ai_value"] or ""), str(r["final_value"] or "")) for r in rows
                            if r["correct"] and r["field"] in ("vendor_name", "invoice_number", "po_number")
@@ -401,8 +455,11 @@ def learn_from_approval(store: Any, invoice_id: int, final: dict[str, Any], *, a
         with ocr_cache(private_dir() / ".cache" / "ocr"):  # the pages the pipeline OCR'd on arrival (B-1294)
             layout = build_layout(path)
         profile = store.get_supplier_profile(key) or {}
+        # Approved in bulk, nobody opened it: only the fields AP corrected (on a reopened or sent-back invoice) were
+        # checked by a person; the rest shows where they are printed, but settles no spot (D-119).
         template = learn(profile.get("template") or None, layout, confirmed_values(final, taught),
-                         document=str(inv.get("file_sha256") or ""))  # fmt: skip
+                         document=str(inv.get("file_sha256") or ""),
+                         checked=set(learned["corrected"]) if bulk else None)  # fmt: skip
         # Put back if this approval is withdrawn (D-71); refused if it was withdrawn meanwhile (B-782).
         learned["template"] = store.save_supplier_profile(
             key, display_name=name, template=template, actor=actor or None, invoice_id=invoice_id
@@ -419,6 +476,33 @@ def learn_from_approval(store: Any, invoice_id: int, final: dict[str, Any], *, a
         learned.update(counted=False, template=False)
         return learned if _again else _learn_again(store, invoice_id, actor)
     return learned
+
+
+def replay_template(before: dict[str, Any] | None, approvals: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+    """The supplier's template learned again from ``before`` (as it was before an approval now withdrawn) through the
+    approvals that came after it, in order, as ``learn_from_approval`` learned from each: the template after each one.
+    Each approval: {"source_path", "file_sha256", "final", "ai", "taught" ({field: [box lists]}), "bulk",
+    "layout_source"}. None when one of them cannot be read again quickly (a scan, which would be OCR'd again, or a
+    file gone): the withdrawal then keeps the template as it is (D-71, D-119)."""
+    from .normalize import same_value
+
+    template: Any = before
+    afters: list[dict[str, Any]] = []
+    for a in approvals:
+        path = Path(a.get("source_path") or "")
+        if a.get("layout_source") != "text" or path.suffix.lower() in TEXT_EXTENSIONS or not path.exists():
+            return None
+        final = as_read(a.get("final") or {}, a.get("ai") or {})
+        corrected = [r["field"] for r in outcome_rows(a.get("ai") or {}, final) if not r["correct"]]
+        # The boxes clicked at that approval, while its field still has the value they were clicked for (_keep_taught).
+        values = a.get("taught_values") or {}
+        taught = {f: [Box.from_list(b) for b in boxes] for f, boxes in (a.get("taught") or {}).items()
+                  if boxes and (f not in values or same_value(f, values[f], final.get(f)))}  # fmt: skip
+        template = learn(template, build_layout(path, ocr=False), confirmed_values(final, taught or None),
+                         document=str(a.get("file_sha256") or ""),
+                         checked=set(corrected) if a.get("bulk") else None)  # fmt: skip
+        afters.append(template.to_dict())
+    return afters
 
 
 def _learn_again(store: Any, invoice_id: int, actor: str) -> dict[str, Any]:

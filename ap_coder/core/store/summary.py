@@ -549,11 +549,14 @@ class SummaryMixin:
             return fetch_rows(conn, f"SELECT {columns} FROM {_tables(columns)} WHERE {where} ORDER BY {order}",
                               tuple(params))  # fmt: skip
 
-    def search_rows(self, ids: list[int] | None = None) -> list[dict[str, Any]]:
+    def search_rows(self, ids: list[int] | None = None, exported: bool = False) -> list[dict[str, Any]]:
         """Every invoice's identifying fields and where it stands (for the invoice directory's quick search), with
         the date of its export batch and its GST/HST number (the JD Edwards duplicate check finds a supplier by
-        it); only ``ids``' when given. From the invoices' summary (D-110)."""
+        it); only ``ids``' when given, only those in an export batch with ``exported``. From the invoices' summary
+        (D-110)."""
         where, params = ("1", ()) if ids is None else (_in_list("id"), (json.dumps([int(i) for i in ids]),))
+        if exported:
+            where += " AND export_batch IS NOT NULL"
         with self._conn() as conn:
             self._summary_fresh(conn)
             batches = {r["id"]: r["created_at"] for r in conn.execute("SELECT id, created_at FROM export_batches")}

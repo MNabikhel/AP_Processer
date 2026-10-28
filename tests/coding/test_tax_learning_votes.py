@@ -173,3 +173,21 @@ def test_a_database_at_17_without_the_new_columns_gets_them(tmp_path):
     assert upgraded.get_setting("schema_version") == str(SCHEMA_VERSION)  # 17 and on (18: the accounts, D-97)
     assert [(r["final_tax_code"], r["tax_source"], r["tax_province"]) for r in upgraded.feedback_rows()] == [
         ("GST~PST", "picked", "BC")]  # fmt: skip
+
+
+def test_a_lines_tax_code_follows_ap_when_it_changes_its_mind():
+    """AP approved the hard hats GST~PST twice, then picked GST+PST: before, the old approvals vetoed the line's code
+    forever (B-1421). Now the latest decision counts, as for the GL account (D-118): a code picked against older
+    approvals waits for one more decision (``TAX_REVERSAL``: a slip learned would cost every learned code of the
+    invoice), then it is the line's code. A slip put right waits once too; a similar line of another code still
+    vetoes (each line is its own)."""
+    hat = _lines(("Hard hat", 30.0))
+    old = [_row(n, "Hard hat", "GST~PST") for n in (1, 2)]
+    picked = _row(3, "Hard hat", "GST+PST", source="picked")
+    assert _learn(hat, [picked, *old]) == [""]  # the line is worked out from the tax charged, as before
+    assert _learn(hat, [_row(4, "Hard hat", "GST+PST"), picked, *old]) == ["GST+PST"]  # confirmed: AP changed it
+    put_right = _row(4, "Hard hat", "GST~PST", source="picked")
+    assert _learn(hat, [put_right, picked, *old]) == [""]
+    assert _learn(hat, [_row(5, "Hard hat", "GST~PST"), put_right, picked, *old]) == ["GST~PST"]
+    white = [_row(n, "Hard hat white", "GST") for n in (5, 6)]
+    assert _learn(hat, [_row(7, "Hard hat", "GST+PST"), picked, *white, *old]) == [""]

@@ -8,6 +8,28 @@
 </nav>
 
 {% if tab == "coding" %}
+{# --- Corrections: what AP corrected, and whether it was right the next time ----------------------------- #}
+{% if fixes %}
+<section class="card" id="corrections" aria-labelledby="fixes-title">
+  <h4 id="fixes-title">Corrections</h4>
+  <p class="muted">Each correction AP made on an approved invoice (a field, or a line's GL account, cost center or tax
+    code): what AP Coder proposed, what AP approved, and whether AP Coder had it right the next time that vendor's
+    invoice had it. {{ fixes_summary }}</p>
+  <div class="table-wrap an-scroll"><table class="apc-table">
+    <thead><tr><th>Approved</th><th>Invoice</th><th>What</th><th>Proposed</th><th></th><th>AP approved</th><th>Next time</th></tr></thead>
+    <tbody>{% for c in fixes %}
+      <tr><td>{{ c.when }}{% if c.reviewer %}<br><span class="apc-muted">{{ c.reviewer }}</span>{% endif %}</td>
+        <td>{% if c.invoice_id %}<a href="/review/{{ c.invoice_id }}">{{ c.vendor_name }} {{ c.invoice_number }}</a>{% else %}{{ c.vendor_name }}{% endif %}</td>
+        <td class="w">{{ c.what }}</td>
+        <td>{% if c.proposed_text %}<span class="apc-mono">{{ c.proposed_text }}</span>{% if c.names.proposed %}<small> {{ c.names.proposed }}</small>{% endif %}{% else %}<i>blank</i>{% endif %}</td>
+        <td><span class="apc-arrow">→</span></td>
+        <td><b class="apc-mono">{{ c.value }}</b>{% if c.names.value %}<small> {{ c.names.value }}</small>{% endif %}</td>
+        <td>{{ ui.pill(c.next_text, c.next_tone) }}{% if c.next == "again" and c.next_value %}<br><span class="apc-muted">to {{ c.next_value }}</span>{% endif %}{% if c.next_invoice_id %}<br><a class="apc-muted" href="/review/{{ c.next_invoice_id }}">{{ c.next_when or "the next invoice" }}</a>{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% if fixes | length >= fixes_shown %}<p class="muted">The latest {{ fixes_shown }}.</p>{% endif %}
+</section>
+{% endif %}
 {# --- Teach from past coding --------------------------------------------------------------------------- #}
 <details class="card an-expander" id="history"{% if upload or upload_gone or teach %} open{% endif %}>
   <summary><span class="ms" aria-hidden="true">history_edu</span>Teach from past coding{% if history_count %} ({{ history_count | plural("past line") }} taught){% endif %}</summary>

@@ -4,20 +4,22 @@
 layout, new content each time, see ``generator.make_stream_case``) and plays them through the same code
 the app runs, in order, one supplier per process:
 
-1. read the invoice with ``capture.analyze`` and the supplier's template as stored so far;
+1. read the invoice as the app reads it (``offline_coder.read_invoice``): a first read says who the supplier is,
+   then the supplier's template as stored so far, its vendor master record and its record of each field;
 2. decide, as the pipeline does, whether it would be approved without a person: the supplier's state
    from ``autonomy_status`` over its recorded outcomes, then ``should_auto_approve`` and the audit sample
    (``pick_for_audit``). Touchless processing is on, so a supplier goes touchless by itself as soon as it
    meets the bar, and again after a suspension once it has a fresh clean streak (``automatic_transition``,
    exactly as ``Store.sync_autonomy`` applies it);
-3. unless it went through untouched, AP "approves" the truth: the outcomes (what capture proposed against
-   what was approved, ``outcome_rows``) are recorded in a real ``Store`` and the template learns from the
-   approved values (``learn`` on ``confirmed_values``), exactly as ``workflow.learn_from_approval`` does.
-   A correction on an autonomous supplier suspends it, as ``Store.record_outcomes`` does.
+3. unless it went through untouched, AP "approves" the truth (``--bulk``: some invoices are approved in bulk as
+   proposed, nobody looking) in a real ``Store`` (``add_invoice``, ``approve_invoice``) and the app learns from it
+   with ``workflow.learn_from_approval``: the outcomes, the readers' scores, the template, the lessons, a vendor name
+   AP corrected. A correction on an autonomous supplier suspends it, as ``Store.record_outcomes`` does.
 
 Each invoice is also scored against its truth (``score_case``), and read a second time without the
-template so the gain from learning is measured on the very same invoices. Writes ``report.json``,
-``report.md`` and ``invoices.jsonl``.
+template so the gain from learning is measured on the very same invoices, and a field AP corrected is looked at
+again on the supplier's next invoice ("right next time"). Writes ``report.json``, ``report.md`` and
+``invoices.jsonl``.
 """
 
 from __future__ import annotations
@@ -86,8 +88,10 @@ def _field_counts(recs: list[dict[str, Any]]) -> dict[str, int]:
 Job = tuple[str, int, int, int, float, dict[str, Any] | None, bool, tuple[str, ...], int]
 # ``--wrong-approval N``: on each supplier's invoice N the clerk teaches the invoice number on the wrong words (the
 # invoice date's, clicked by mistake) and approves; the approval is then withdrawn (reopened: a second look caught it)
-# before the next invoice arrives. How the next invoices read is in the report's "wrong_approval".
+# before the next invoice arrives, or with ``--withdraw-after K`` once K more invoices were approved (the template has
+# learned from them meanwhile). How the next invoices read is in the report's "wrong_approval".
 WRONG_FIELD, CLICKED_FIELD = "invoice_number", "invoice_date"
+CLERK = "AP clerk (benchmark)"
 
 
 def _wrong_click(layout: Any, truth: dict[str, Any]) -> tuple[str, list[Any]] | None:
@@ -100,6 +104,15 @@ def _wrong_click(layout: Any, truth: dict[str, Any]) -> tuple[str, list[Any]] | 
         return None
     words = spans[0][1]
     return " ".join(w.text for w in words), [w.box for w in words]
+
+
+def bulk_pick(sid: str, index: int, share: float) -> bool:
+    """Whether this invoice is one AP approves in bulk, without opening it (``--bulk``: a share, at random)."""
+    if share <= 0:
+        return False
+    import random
+
+    return random.Random(f"ap-bench-bulk:{sid}:{index}").random() < share
 
 
 def simulate_supplier(job: Job) -> dict[str, Any]:
@@ -119,9 +132,40 @@ def simulate_supplier(job: Job) -> dict[str, Any]:
         capture_pkg.read_line_items = original
 
 
+@contextlib.contextmanager
+def _app_clock(folder: str) -> Any:
+    """The app's data folder in ``folder`` (its OCR cache, as ``learn_from_approval`` reads the pages again) and the
+    store's clock set by the simulation (``clock[0]``): an invoice is reviewed an hour after the one before it, so the
+    supplier's record (its clean streak since a suspension) reads in the stream's order."""
+    import os
+    import sys
+
+    from ap_coder.core.store import _base
+
+    clock = [_base._now()]
+    real = _base._now
+    patched = [m for name, m in list(sys.modules.items())
+               if name.startswith("ap_coder.core.store") and getattr(m, "_now", None) is real]  # fmt: skip
+    before = os.environ.get("AP_PRIVATE_DIR")
+    os.environ["AP_PRIVATE_DIR"] = folder
+    for m in patched:
+        m._now = lambda: clock[0]
+    try:
+        yield clock
+    finally:
+        for m in patched:
+            m._now = real
+        if before is None:
+            os.environ.pop("AP_PRIVATE_DIR", None)
+        else:
+            os.environ["AP_PRIVATE_DIR"] = before
+
+
 def _simulate(job: Job) -> dict[str, Any]:
+    from ap_coder.ai.offline_coder import read_invoice
     from ap_coder.capture import analyze, build_layout
-    from ap_coder.capture.confidence import apply_supplier_record, reading_confidence
+    from ap_coder.capture.confidence import reading_confidence
+    from ap_coder.capture.layout import ocr_cache
     from ap_coder.capture.supplier import (
         AUTONOMOUS,
         SUPERVISED,
@@ -129,16 +173,16 @@ def _simulate(job: Job) -> dict[str, Any]:
         AutonomyPolicy,
         automatic_transition,
         autonomy_status,
-        confirmed_values,
-        learn,
-        outcome_rows,
         pick_for_audit,
         should_auto_approve,
     )
+    from ap_coder.capture.workflow import learn_from_approval
     from ap_coder.core.store import Store
 
     out_dir, seed, supplier, invoices, scanned_fraction, policy_d, vendor_master, ignore, *more = job
     wrong_at = int(more[0]) if more else 0
+    withdraw_after = int(more[1]) if len(more) > 1 else 0
+    bulk_share = float(more[2]) if len(more) > 2 else 0.0
     policy = AutonomyPolicy.from_dict(policy_d)
     sid = supplier_id(seed, supplier)
     cases_dir = Path(out_dir) / "cases" / sid
@@ -146,20 +190,27 @@ def _simulate(job: Job) -> dict[str, Any]:
     evidence: list[dict[str, Any]] = []  # for `bench calibrate`: what a template adds to the evidence
     t0 = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="ap-learn-") as tmp, contextlib.ExitStack() as held:
+        clock = held.enter_context(_app_clock(tmp))
         store = Store(Path(tmp) / "learn.db")
         held.enter_context(store.session())  # one connection for the run, as the app holds one for each request
+        held.enter_context(ocr_cache(Path(tmp) / ".cache" / "ocr"))  # each page OCR'd once, as on arrival (B-1294)
         # The stored state, since when it is touchless and when it was last suspended (as the store keeps them).
         stored, since, suspended_at = SUPERVISED, None, None
         key = ""
+        withdraw: tuple[int, int] | None = None  # (the wrong approval's invoice id, withdrawn after this invoice)
         for i in range(invoices):
             case = make_stream_case(cases_dir, seed, supplier, i, stream_scanned(seed, supplier, i, scanned_fraction))
             truth = case.truth
             at = (EPOCH + dt.timedelta(hours=i)).isoformat(timespec="seconds")
+            clock[0] = at
             fields = truth["fields"]
             name = fields["vendor_name"]["value"]
             gst = (fields.get("gst_hst_registration_number") or {}).get("value")
-            key = key or store.supplier_key_for(name, gst)
-            # An established supplier is in the vendor master (as bridge.vendor_record gives it).
+            if i == 0 and vendor_master:  # an established supplier is in the vendor master, as AP imported it
+                store.import_vendor_master([{"vendor_name": name, "gst": gst or "", "erp_id": None,
+                                             "status": "active"}])  # fmt: skip
+            key = key or store.supplier_key_for(name, gst)  # where AP's approvals of this supplier are counted
+            # The vendor master's record, as the rule reader alone (without learning) is given it.
             vendor = {"name": name, "gst_number": gst or "", "erp_id": ""} if vendor_master else None
             # The day AP processes it: a few days after the invoice date (the date checks expect that).
             today = dt.date.fromisoformat(fields["invoice_date"]["value"]) + dt.timedelta(days=3)
@@ -177,12 +228,11 @@ def _simulate(job: Job) -> dict[str, Any]:
             state, _progress, _why = autonomy_status(stats, policy, stored, since, suspended_at=suspended_at)
 
             layout = build_layout(case.path)
-            profile = store.get_supplier_profile(key) or {}
-            template = profile.get("template") or None
-            capture = analyze(case.path, template=template, vendor=vendor, layout=layout, today=today)
-            plain = analyze(case.path, vendor=vendor, layout=layout, today=today) if template else capture
-            if template:  # as offline_coder.read_invoice does: the supplier's record of each field (D-89)
-                apply_supplier_record(capture.fields, {n: (f.n, f.correct) for n, f in stats.fields.items()})
+            # Read as the app reads it: a first read says who the supplier is, then its template, its vendor master
+            # record and its record of each field (``offline_coder.read_invoice``).
+            capture, _read_key, profile = read_invoice(case.path, store, layout=layout, today=today)
+            template = (profile or {}).get("template") or None
+            plain = analyze(case.path, vendor=vendor, layout=layout, today=today)  # without anything learned
             recs = score_case(truth, capture)
             evidence.extend(
                 {"case": case.id, "scanned": case.scanned, "field": r["field"], "evidence": r["evidence"],
@@ -202,28 +252,36 @@ def _simulate(job: Job) -> dict[str, Any]:
 
             final = approved_values(truth, capture)
             taught = None
-            invoice_id = 100_000 + i + 1  # the store's own ids stay free for an invoice approved in it (``wrong_at``)
             clicked = _wrong_click(layout, truth) if i + 1 == wrong_at else None
             if clicked is not None:  # the clerk's slip: the wrong words taught for the invoice number
                 final = {**final, WRONG_FIELD: clicked[0]}
                 taught = {WRONG_FIELD: clicked[1]}
-                invoice_id = store.add_invoice(case.path, {"vendor_name": name, "line_items": []}, None)
-                store.approve_invoice(invoice_id, {"vendor_name": name, "line_items": [], "grand_total": 0.0},
-                                      "AP clerk (benchmark)")  # fmt: skip
-            outcomes = outcome_rows(capture, final)
-            corrections = [r["field"] for r in outcomes if not r["correct"]]
-            if not touchless:  # a person saw it: record what was corrected, and learn from the approval
-                store.record_outcomes(key, invoice_id, outcomes, source="audit" if audit else "review",
-                                      display_name=name, at=at)  # fmt: skip
+            # Approved in bulk: nobody opened it, what was proposed is approved as it is (right or wrong). Only an
+            # invoice with every check passed, not a credit note, as bulk approval takes.
+            bulk = (clicked is None and i > 0 and not touchless and not audit and not capture.credit_note
+                    and all(c.get("ok", True) for c in capture.checks) and bulk_pick(sid, i, bulk_share))  # fmt: skip
+            if bulk:
+                final = kept_values(truth, capture)
+            proposed = {f: fr.value for f, fr in capture.fields.items() if fr.value not in (None, "")}
+            corrections: list[str] = []
+            if not touchless:  # a person saw it (or approved it in bulk): approved and learned from, as in the app
+                invoice_id = store.add_invoice(case.path, {**proposed, "line_items": []}, None,
+                                               meta={"capture": {"audit": audit}})  # fmt: skip
+                store.save_capture(invoice_id, capture.to_dict())
+                coding = {**final, "line_items": []}
+                store.approve_invoice(invoice_id, coding, CLERK, bulk=bulk)
+                learned = learn_from_approval(store, invoice_id, coding, actor=CLERK, taught=taught, bulk=bulk)
+                corrections = list(learned.get("corrected") or [])
                 if corrections and stored == AUTONOMOUS:
                     stored, suspended_at = SUSPENDED, at  # one correction suspends autonomy
-                learned = learn(template, layout, confirmed_values(final, taught))
                 if clicked is not None:
-                    store.save_supplier_profile(key, display_name=name, template=learned, invoice_id=invoice_id)
-                    # A second look caught it: the approval is withdrawn before the next invoice arrives.
-                    store.reopen(invoice_id, "AP clerk (benchmark)", "the wrong words were taught")
-                else:
-                    store.save_supplier_profile(key, display_name=name, template=learned)
+                    withdraw = (invoice_id, i + 1 + withdraw_after)
+            if withdraw is not None and i + 1 >= withdraw[1]:
+                # A second look caught it: the approval is withdrawn (reopened), and stays reopened.
+                store.reopen(withdraw[0], CLERK, "the wrong words were taught")
+                withdraw = None
+            # The clerk's slip is no reading error: it is not counted as one.
+            misread = [f for f in corrections if not (clicked is not None and f == WRONG_FIELD)]
 
             rows.append(
                 {
@@ -237,14 +295,17 @@ def _simulate(job: Job) -> dict[str, Any]:
                     "template_fields": len((template or {}).get("fields") or {}),
                     **{k: got[k] for k in ("fields", "correct", "verified", "spurious", "fully_correct")},
                     "wrong_fields": got["wrong_fields"],
+                    "present_fields": [r["field"] for r in recs if r["present"]],
                     "accuracy": round(got["correct"] / got["fields"], 4) if got["fields"] else None,
                     "reading": reading_confidence(capture.fields),  # the Reading shown (before the checks, D-89)
                     "baseline_reading": reading_confidence(plain.fields),
                     "baseline_correct": base["correct"],
                     "baseline_verified": base["verified"],
                     "baseline_fully_correct": base["fully_correct"],
-                    "outcome_fields": len(outcomes),
-                    "corrections": corrections,
+                    "baseline_wrong_fields": base["wrong_fields"],
+                    "corrections": misread,
+                    "slip": clicked is not None,
+                    "bulk": bulk,
                     "eligible": eligible,
                     "eligible_reason": "" if eligible else why_not,
                     "auto": auto,
@@ -255,6 +316,19 @@ def _simulate(job: Job) -> dict[str, Any]:
                 }
             )
     return {"supplier": sid, "rows": rows, "evidence": evidence, "seconds": round(time.perf_counter() - t0, 2)}
+
+
+def kept_values(truth: dict[str, Any], capture: CaptureResult) -> dict[str, Any]:
+    """What a bulk approval approves: what capture proposed for each field the invoice prints (or implies and capture
+    proposed), as it is: nobody looked."""
+    fields = {f for f in (truth.get("fields") or {}) if f in FIELDS} | {f for f in (truth.get("implied") or {})
+                                                                          if f in FIELDS}  # fmt: skip
+    out = {}
+    for f in sorted(fields):
+        fr = capture.fields.get(f)
+        if fr is not None and fr.status != MISSING and fr.value not in (None, ""):
+            out[f] = fr.value
+    return out
 
 
 # --- the report -------------------------------------------------------------------------------
@@ -296,6 +370,41 @@ def wrong_approval(rows: list[dict[str, Any]], at: int) -> dict[str, Any]:
             "accuracy": _ratio(sum(r["correct"] for r in part), sum(r["fields"] for r in part)),
             "invoice_number_wrong": sum(WRONG_FIELD in r["wrong_fields"] for r in part),
         }
+    return out
+
+
+def fixed_next_time(by_supplier: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+    """Wrong this time, right next time: of the fields AP corrected on a supplier's invoice (reviewed, not the clerk's
+    slip), how many the supplier's next invoice read right (where it prints the field too). Per field as well."""
+    fields: dict[str, list[int]] = defaultdict(lambda: [0, 0])
+    for rs in by_supplier.values():
+        rs = sorted(rs, key=lambda r: r["index"])
+        for now, nxt in zip(rs, rs[1:], strict=False):
+            for f in now["corrections"]:
+                if f in nxt.get("present_fields", []):
+                    fields[f][0] += 1
+                    fields[f][1] += f not in nxt["wrong_fields"]
+    n, fixed = sum(v[0] for v in fields.values()), sum(v[1] for v in fields.values())
+    return {"corrected": n, "fixed": fixed, "share": _ratio(fixed, n),
+            "by_field": {f: {"corrected": v[0], "fixed": v[1]} for f, v in sorted(fields.items())}}  # fmt: skip
+
+
+def eligible_wrong_by_position(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Invoices every reader and check would have let through touchless (eligible) with a wrong field, by position,
+    with the fields: the errors a touchless supplier would post."""
+    out = {}
+    for lo, hi in BUCKETS:
+        part = [r for r in rows if lo <= r["index"] <= hi and r["eligible"] and not r["fully_correct"]]
+        if part:
+            fields = _count(f for r in part for f in r["wrong_fields"])
+            out[bucket_name(lo, hi)] = {"invoices": len(part), "fields": dict(sorted(fields.items()))}
+    return out
+
+
+def _count(items: Any) -> dict[str, int]:
+    out: dict[str, int] = defaultdict(int)
+    for x in items:
+        out[x] += 1
     return out
 
 
@@ -401,6 +510,9 @@ def summarize_learning(rows: list[dict[str, Any]], wrong_at: int = 0) -> dict[st
             for lay, ss in sorted(by_layout.items())
         },
         "wrong_approval": wrong_approval(rows, wrong_at) if wrong_at else None,
+        "fixed_next_time": fixed_next_time(by_supplier),
+        "eligible_wrong": eligible_wrong_by_position(rows),
+        "bulk_approved": sum(1 for r in rows if r.get("bulk")),
         # Is the Reading honest? Its mean against the share of the printed fields read right (D-89); and the same
         # invoices read without the template (a first-time supplier's Reading). The Coding: see the coding bench.
         "calibration": {
@@ -424,13 +536,15 @@ def _reasons(rows: list[dict[str, Any]], key: str) -> dict[str, int]:
     return dict(sorted(out.items(), key=lambda kv: -kv[1])[:12])
 
 
-def _wrong_section(w: dict[str, Any] | None) -> list[str]:
+def _wrong_section(w: dict[str, Any] | None, after: int = 0) -> list[str]:
     if not w:
         return []
+    when = (f"once {after} more invoice{'s' if after > 1 else ''} had been approved (and learned from)" if after
+            else "before the next invoice arrived")  # fmt: skip
     return [
         "## A wrong approval, then its withdrawal\n",
         f"On each supplier's invoice {w['at']} the clerk taught the invoice number on the invoice date's words and "
-        "approved; the approval was withdrawn (reopened) before the next invoice arrived.\n",
+        f"approved; the approval was withdrawn (reopened) {when}.\n",
         _table(
             ["invoices", "count", "accuracy", "invoice numbers wrong"],
             [
@@ -440,6 +554,29 @@ def _wrong_section(w: dict[str, Any] | None) -> list[str]:
             ],
         ),  # fmt: skip
     ]
+
+
+def _fixed_section(f: dict[str, Any] | None) -> list[str]:
+    if not f:
+        return []
+    return [
+        "## Wrong this time, right next time\n",
+        f"Of the fields AP corrected on an invoice, **{f['fixed']} of {f['corrected']} ({_pct(f['share'])})** were "
+        "read right on the supplier's next invoice.\n",
+        _table(["field", "corrected", "right next time"],
+               [[k, v["corrected"], v["fixed"]] for k, v in f["by_field"].items()]) if f["by_field"] else "",
+        "",
+    ]  # fmt: skip
+
+
+def _eligible_wrong_section(e: dict[str, Any] | None) -> list[str]:
+    head = ["## Eligible but wrong\n", "Invoices that would have gone touchless (every printed field verified, every "
+            "check passed) with a field read wrong, by position:\n"]  # fmt: skip
+    if not e:
+        return [*head, "None.\n"]
+    return [*head, _table(["invoice #", "invoices", "fields wrong"],
+                          [[b, m["invoices"], ", ".join(f"{k} {v}" for k, v in m["fields"].items())]
+                           for b, m in e.items()]), ""]  # fmt: skip
 
 
 def render_markdown(report: dict[str, Any]) -> str:
@@ -463,7 +600,16 @@ def render_markdown(report: dict[str, Any]) -> str:
             if cfg["ignore_checks"]
             else "\n"
         ),
-        *_wrong_section(s.get("wrong_approval")),
+        *_wrong_section(s.get("wrong_approval"), cfg.get("withdraw_after") or 0),
+        *(_fixed_section(s.get("fixed_next_time")) + _eligible_wrong_section(s.get("eligible_wrong"))),
+        *(
+            [
+                f"{s['bulk_approved']} invoices were approved in bulk (nobody opened them; what was proposed was "
+                "approved, right or wrong).\n"
+            ]
+            if cfg.get("bulk")
+            else []
+        ),
         "## Learning curve\n",
         "Accuracy over the printed header fields, by the invoice's position in its supplier's stream; "
         "*without template* reads the same invoices with the rule reader only. *No correction*: AP changed "
@@ -586,8 +732,12 @@ def run_learning(
     vendor_master: bool = True,
     ignore_checks: tuple[str, ...] = (),
     wrong_at: int = 0,
+    withdraw_after: int = 0,
+    bulk: float = 0.0,
 ) -> dict[str, Any]:
-    """``wrong_at``: the invoice of each supplier approved with the wrong words taught, then withdrawn (0: none)."""
+    """``wrong_at``: the invoice of each supplier approved with the wrong words taught, then withdrawn (0: none), once
+    ``withdraw_after`` more invoices were approved (0: before the next one arrives). ``bulk``: the share of invoices
+    (after a supplier's first) approved in bulk, untouched, when bulk approval would take them."""
     from ap_coder.capture.supplier import AutonomyPolicy
 
     out = Path(out)
@@ -595,7 +745,19 @@ def run_learning(
     pol = AutonomyPolicy.from_dict(policy)
     t0 = time.perf_counter()
     jobs = [
-        (str(out), seed, s, invoices, scanned, pol.to_dict(), vendor_master, tuple(ignore_checks), wrong_at)
+        (
+            str(out),
+            seed,
+            s,
+            invoices,
+            scanned,
+            pol.to_dict(),
+            vendor_master,
+            tuple(ignore_checks),
+            wrong_at,
+            withdraw_after,
+            bulk,
+        )
         for s in range(suppliers)
     ]
     results = _map(simulate_supplier, jobs, workers, "suppliers")
@@ -612,7 +774,8 @@ def run_learning(
             "policy": pol.to_dict(),
             "vendor_master": vendor_master,
             "ignore_checks": list(ignore_checks),
-            **({"wrong_approval_at": wrong_at} if wrong_at else {}),
+            **({"wrong_approval_at": wrong_at, "withdraw_after": withdraw_after} if wrong_at else {}),
+            **({"bulk": bulk} if bulk else {}),
             "layouts": {supplier_id(seed, s): supplier_archetype(seed, s) for s in range(suppliers)},
         },
         "summary": summarize_learning(rows, wrong_at),

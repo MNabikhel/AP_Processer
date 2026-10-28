@@ -47,6 +47,34 @@ ARCHETYPES = (
     "minimal_courier",  # small vendor, typewriter font, few fields, a little crooked
 )
 
+# Supplier streams only (``supplier_archetype``): a supplier whose name prints in a way that reads wrong, the same way
+# on every invoice ("N0rthwind 1ndustrial Supply": a stylised logotype, read as printed), with no GST/HST number to know
+# it by. Laid out as one of the plain layouts. AP corrects the name on the first invoice; the next ones show whether
+# AP Coder knows the supplier again from the misread name.
+MISREAD_NAME = "misread_name"
+MISREAD_BASES = ("classic_left", "vendor_right", "header_grid", "boxed_fields", "totals_left", "table_footer")
+MISREAD_EVERY, MISREAD_AT = 20, (17, 18)  # suppliers v017, v018, v037, v038...: layouts other suppliers also have
+_LOOKALIKE = {"o": "0", "O": "0", "l": "1", "I": "1", "i": "1", "S": "5", "B": "8", "e": "c"}
+
+
+def misread(name: str) -> str:
+    """The name as it reads: in each of its first two words of four letters or more, the first letter that has a
+    lookalike digit or letter replaced by it ("Northwind Industrial Supply Ltd." -> "N0rthwind 1ndustrial Supply
+    Ltd.")."""
+    words, done = name.split(" "), 0
+    for n, word in enumerate(words):
+        if done == 2:
+            break
+        if sum(c.isalpha() for c in word) < 4:
+            continue
+        at = next((i for i, c in enumerate(word) if c in _LOOKALIKE), None)
+        if at is not None:
+            words[n] = word[:at] + _LOOKALIKE[word[at]] + word[at + 1 :]
+            done += 1
+    out = " ".join(words)
+    return out if out != name else name.replace(" ", "", 1)  # nothing to swap: two words read as one
+
+
 FAMILIES = {"helv": ("helv", "hebo"), "tiro": ("tiro", "tibo"), "cour": ("cour", "cobo")}
 INK = (0, 0, 0)
 GREY = (0.35, 0.35, 0.35)
@@ -392,12 +420,13 @@ def make_invoice(rng: random.Random, arch: str, style: Style | None = None) -> I
     """One invoice of layout ``arch``. ``style`` pinned to a supplier keeps everything but the content
     the same from one invoice to the next (see Style); without it every choice comes from ``rng``."""
     S = style or Style(rng)
-    k = _knobs(S("knobs"), arch)
-    kind = {"credit_note": "credit", "utility_bill": "utility", "minimal_courier": "minimal"}.get(arch, "invoice")
-    country = "US" if arch == "us_vendor" else "CA"
-    if arch in ("quebec_fr",):
+    layout = S("misread_base").choice(MISREAD_BASES) if arch == MISREAD_NAME else arch  # how it is laid out
+    k = _knobs(S("knobs"), layout)
+    kind = {"credit_note": "credit", "utility_bill": "utility", "minimal_courier": "minimal"}.get(layout, "invoice")
+    country = "US" if layout == "us_vendor" else "CA"
+    if layout in ("quebec_fr",):
         province, lang = "QC", "fr"
-    elif arch == "bilingual":
+    elif layout == "bilingual":
         province, lang = S("province").choice(["QC", "QC", "ON", "NS"]), "bi"
     elif country == "US":
         province, lang = "", "en"
@@ -413,6 +442,8 @@ def make_invoice(rng: random.Random, arch: str, style: Style | None = None) -> I
         or ("fr" if lang == "fr" else "en")
     )
     vendor = C.make_vendor(S("vendor"), vendor_kind, province or "ON")
+    if arch == MISREAD_NAME:
+        vendor.bn = vendor.qst = ""  # nothing but the name to know it by
     # Tax follows the place of supply: the customer's site is in the province whose tax is charged.
     customer = C.make_customer(S("customer"), province or _province(S("customer_province")))
     currency = "USD" if country == "US" else "CAD"
@@ -518,6 +549,8 @@ def make_invoice(rng: random.Random, arch: str, style: Style | None = None) -> I
         sty=S,
     )
     inv.header = _header_items(rng, inv)
+    if arch == MISREAD_NAME:
+        inv.extras["printed_name"] = misread(vendor.name)
     return inv
 
 
@@ -648,6 +681,7 @@ class Renderer:
         self.show_bn = bool(inv.vendor.bn) and S("show_bn").random() < 0.95
         self.show_qst = bool(inv.vendor.qst) and S("show_qst").random() < 0.92
         self.page_bottom = self.H - self.m - 14  # leave room for the page number line
+        self.vname = inv.extras.get("printed_name") or inv.vendor.name  # the vendor's name as printed
 
     # small helpers
     def lab(self, key: str) -> str:
@@ -723,16 +757,16 @@ class Renderer:
                 name_y = y + ls / 2 + name_size * 0.35
                 nx = x + w_logo + 8 if align == "left" else x - w_logo - 8
             maxw = (self.W * 0.42 - w_logo - 8) if align != "center" else self.W - 2 * self.m
-            name_size = cv.fit(v.name, name_size, maxw, bold=True)
-            box = cv.text(nx, name_y, v.name, name_size, bold=True, color=self.accent, align=align)
+            name_size = cv.fit(self.vname, name_size, maxw, bold=True)
+            box = cv.text(nx, name_y, self.vname, name_size, bold=True, color=self.accent, align=align)
             y = max(name_y + name_size * 0.35, top + (ls if align != "center" else 0)) + 3
         else:
-            name_size = cv.fit(v.name, name_size, self.W * 0.42, bold=True)
+            name_size = cv.fit(self.vname, name_size, self.W * 0.42, bold=True)
             y += name_size
             color = S("vendor_color").choice([INK, self.accent])
-            box = cv.text(x, y, v.name, name_size, bold=True, color=color, align=align)
+            box = cv.text(x, y, self.vname, name_size, bold=True, color=color, align=align)
             y += name_size * 0.35 + 3
-        self.put("vendor_name", v.name, v.name, box)
+        self.put("vendor_name", v.name, self.vname, box)
         y += s * 1.2
         for line in v.lines:
             cv.text(x, y, line, s, align=align)
@@ -1004,8 +1038,8 @@ class Renderer:
         """Top of a continuation page: vendor name, the invoice number again, the table header."""
         cv, s, inv, m = self.cv, self.s, self.inv, self.m
         y = m + s * 1.6
-        box = cv.text(m, y, inv.vendor.name, s * 1.2, bold=True)
-        self.put("vendor_name", inv.vendor.name, inv.vendor.name, box)
+        box = cv.text(m, y, self.vname, s * 1.2, bold=True)
+        self.put("vendor_name", inv.vendor.name, self.vname, box)
         if self.S("cont_number").random() < 0.8:
             lbl = with_sep(self.lab({"credit": "credit_number"}.get(inv.kind, "invoice_number")), ":")
             boxes = cv.parts(self.W - m, y, [lbl, inv.number], s, align="right")
@@ -1236,8 +1270,8 @@ class Renderer:
         left_y = y + self.lh
         lbl = phrase(S("payable"), "payable", lang) + ":"
         cv.text(m, left_y, lbl, s * 0.9, color=GREY)
-        box = cv.text(m, left_y + self.lh, inv.vendor.name, s, bold=True)
-        self.put("vendor_name", inv.vendor.name, inv.vendor.name, box)
+        box = cv.text(m, left_y + self.lh, self.vname, s, bold=True)
+        self.put("vendor_name", inv.vendor.name, self.vname, box)
         ly = left_y + self.lh * 2
         for line in inv.vendor.lines:
             cv.text(m, ly, line, s * 0.9)
@@ -1336,8 +1370,8 @@ class Renderer:
     def render_minimal(self) -> None:
         inv, cv, s, S, m, W = self.inv, self.cv, self.s, self.S, self.m, self.W
         y = m + 14
-        box = cv.text(m, y, inv.vendor.name, 13, bold=True)
-        self.put("vendor_name", inv.vendor.name, inv.vendor.name, box)
+        box = cv.text(m, y, self.vname, 13, bold=True)
+        self.put("vendor_name", inv.vendor.name, self.vname, box)
         y += 18
         cv.text(m, y, ", ".join(inv.vendor.lines), s)
         y += self.lh
@@ -1582,7 +1616,10 @@ def supplier_id(seed: int, supplier: int) -> str:
 
 
 def supplier_archetype(seed: int, supplier: int) -> str:
-    """Suppliers take the layouts in a seeded rotation, so every layout has suppliers."""
+    """Suppliers take the layouts in a seeded rotation, so every layout has suppliers; two in twenty (from v017) are
+    suppliers whose name reads wrong (``MISREAD_NAME``) instead, in place of a layout others have."""
+    if supplier % MISREAD_EVERY in MISREAD_AT:
+        return MISREAD_NAME
     order = list(ARCHETYPES)
     random.Random(f"ap-bench-suppliers:{seed}").shuffle(order)
     return order[supplier % len(order)]

@@ -27,17 +27,20 @@ import json
 import math
 import re
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any
 
 import pandas as pd
 
-from ap_coder.ai.extraction import ExtractionResult
+from ap_coder.ai import verifier
+from ap_coder.ai.extraction import TEXT_EXTENSIONS, ExtractionResult
 from ap_coder.ai.history import HISTORY
 from ap_coder.ai.pipeline import finalise_coding
 from ap_coder.ai.suggest import suggest_gl
-from ap_coder.capture.normalize import parse_amount, parse_date
-from ap_coder.capture.types import MISSING, Box, CaptureResult
-from ap_coder.coding import rules, vendor_mail
+from ap_coder.capture.bridge import currency_read, review_issues
+from ap_coder.capture.normalize import find_amounts, parse_amount, parse_date, parse_dates
+from ap_coder.capture.types import DATE_FIELDS, MISSING, Box, CaptureResult
+from ap_coder.coding import banks, rules, vendor_mail
 from ap_coder.coding.line_tax import (
     all_labels,
     charged_types,
@@ -60,23 +63,32 @@ from ap_coder.coding.review import (
     uses_cost_centers,
 )
 from ap_coder.coding.tax import (
+    EXPENSE_TO_LINE,
     OUTSIDE_CANADA,
     PLACE_OF_SUPPLY,
     PROVINCE_NAMES,
+    SUPPLY_OURS,
+    SUPPLY_PRINTED,
+    SUPPLY_SITE,
+    SUPPLY_VENDOR,
     TAX_TYPES,
+    follow_supply,
     meals_note,
     place_of_supply,
     province_label,
     stored_supply,
+    supply_source,
 )
 from ap_coder.coding.taxmath import math_check
 from ap_coder.coding.terms import describe as terms_describe
 from ap_coder.coding.terms import payment
+from ap_coder.coding.validation import COUNTED_IN_CODING, ERROR, INFO, Issue, off_text
+from ap_coder.coding.vendors import expected_tax_numbers
 from ap_coder.core.config import Settings
 from ap_coder.core.memory import ACCEPTED, BULK, CODED, CORRECTED, pair_lines, vendor_key
 from ap_coder.core.reference_data import UNASSIGNED, ReferenceData, short_name
 from ap_coder.core.schema import FROM_VENDOR_LIST, PROVINCE_VALUES, InvoiceCoding
-from ap_coder.core.store import Store, nothing_proposed, suggestion_kept
+from ap_coder.core.store import Store, line_guessed, nothing_proposed, suggestion_kept
 from ap_coder.core.ui import TAX_LABELS, plural
 from ap_coder.ops.help import help_for
 from ap_coder.ops.offline import setup_contact
@@ -210,11 +222,16 @@ def _number_cell(value: Any) -> str:
     """A number cell of the grids as posted, or "" when it is not a finite number ("1e309" reads as infinity),
     which the checks and the page could not use."""
     text = str(value or "").strip()
+    return text if _finite(text) is not None else ""
+
+
+def _finite(value: Any) -> float | None:
+    """A number as typed or read ("1,234.50", "$12"), None when it is no finite number."""
     try:
-        number = float(text.replace(",", "").replace("$", ""))
+        number = float(str(value or 0).replace(",", "").replace("$", ""))
     except ValueError:
-        return ""
-    return text if math.isfinite(number) else ""
+        return None
+    return number if math.isfinite(number) else None
 
 
 def _line_number(value: Any) -> int | None:
@@ -311,8 +328,6 @@ class Draft:
                 t.update({c: _number_cell(t[c]) for c in NUMBER_CELLS if c in t})
         supply = header.get("ship_to_province", "").strip().upper()
         if supply != base.header.get("ship_to_province", "").strip().upper():  # tax rows put in the old one follow
-            from ap_coder.coding.tax import follow_supply
-
             taxes = follow_supply(taxes, supply, _date_or_none(header.get("invoice_date")))
         absent = parse_absent(form.get("absent"), header) if form.get("absent") is not None else base.absent
         from_vendor = (
@@ -404,8 +419,6 @@ def unread_numbers(read: dict[str, Any] | None) -> set[str] | None:
 def settle_header(store: Store, draft: Draft, read: dict[str, Any] | None = None) -> dict[str, str]:
     """What the server fills in the invoice details before they are checked: the vendor list's tax numbers (D-65) and
     the default Pay from account (D-66). Returns {field: value} changed, for the screen to show."""
-    from ap_coder.coding import banks
-
     header = draft.header
     key = vendor_key(header.get("vendor_name") or "")
     # of two vendors whose names read alike, the one with the GST/HST number on screen (B-1021)
@@ -442,8 +455,6 @@ def parse_absent(raw: Any, header: dict[str, str]) -> list[str]:
 def settle_absent(issues: list[Any], absent: list[str]) -> list[Any]:
     """The checks once the reviewer said a field is not on the invoice: what asked for it is said as information
     (what it costs), or left out (ABSENT_FIELDS). Errors are never touched."""
-    from ap_coder.coding.validation import INFO, Issue
-
     swap: dict[str, Any] = {}
     for name in absent:
         swap.update(ABSENT_FIELDS.get(name) or {})
@@ -498,8 +509,6 @@ def line_value(name: str, text: str) -> Any:
         value = parse_amount(plain)
         return None if value is None else (int(value) if float(value).is_integer() else value)
     if name == NEW_LINE:
-        from ap_coder.capture.normalize import find_amounts
-
         found = find_amounts(plain)
         if not found:
             return None
@@ -652,10 +661,6 @@ def province_options() -> list[tuple[str, str]]:
 def supply_line(header: dict[str, Any], lines: list[dict[str, Any]], setup: Any) -> dict[str, Any]:
     """The place of supply as the review screen says it: {province, label, why, open}: open when it is not known or
     is only the vendor's province (a guess), so the reviewer sees the choice."""
-    from types import SimpleNamespace
-
-    from ap_coder.coding.tax import SUPPLY_OURS, SUPPLY_PRINTED, SUPPLY_SITE, SUPPLY_VENDOR, supply_source
-
     coding = SimpleNamespace(
         ship_to_province=str(header.get("ship_to_province") or ""),
         supplier_province=str(header.get("supplier_province") or ""),
@@ -682,10 +687,7 @@ def tax_province_options() -> list[tuple[str, str]]:
 
 def received_on(inv: dict[str, Any]) -> dt.date | None:
     """The day the invoice came in (its ``created_at``), None when it can't be read."""
-    try:
-        return dt.date.fromisoformat(str(inv.get("created_at") or "")[:10])
-    except ValueError:
-        return None
+    return _date_or_none(inv.get("created_at"))
 
 
 def vendor_accounts(store: Store, vendor_name: str, limit: int = 6) -> list[str]:
@@ -709,8 +711,6 @@ def grid(reference: ReferenceData, draft: Draft, ai: dict[str, Any] | None = Non
     invoice as read: a row whose account is still the one the AI only guessed for its line is marked (B-463), not one
     whose account the reviewer, a coding rule or the PO coding put there (B-475). ``vendor_gls``: the accounts the
     vendor's lines went to (``vendor_accounts``), offered first by the account picker; those still in the list."""
-    from ap_coder.core.store import line_guessed
-
     paired = list(pair_lines((ai or {}).get("line_items") or [], draft.lines))
     guesses = {
         id(row)
@@ -802,11 +802,8 @@ def _charged(draft: Any) -> list[str]:
 
 
 def _number(value: Any) -> float:
-    try:
-        number = float(str(value or 0).replace(",", "").replace("$", ""))
-    except ValueError:
-        return 0.0
-    return number if math.isfinite(number) else 0.0
+    number = _finite(value)
+    return 0.0 if number is None else number
 
 
 # --- Capture (what was read from the page) -----------------------------------------------------------------------
@@ -866,7 +863,6 @@ def shown_sure(sure: dict[str, dict[str, str]], header: dict[str, str], read: di
     """The reading's badges the form shows: only beside a value that is still the one read (an empty field, or one
     the reviewer changed, has none: the badge would vouch for what is not there), and none for a currency the page
     does not print (the domestic CAD assumed: "Check" on almost every invoice said nothing)."""
-    from ap_coder.capture.bridge import currency_read
 
     def same(name: str) -> bool:
         now, was = str(header.get(name) or "").strip(), read.get(name)
@@ -937,8 +933,6 @@ def not_running(status: Any, settings: Settings, store: Store) -> str:
 def reviewer_state(store: Store, inv: dict[str, Any]) -> dict[str, Any]:
     """What the AI reviewer (verifier.py) made of this invoice, for a line under the document title: {state, lines:
     [(icon, text)], again: offer to review it again}."""
-    from ap_coder.ai import verifier
-
     if not verifier.load_settings(store).on:
         return {"state": "off", "lines": [], "again": False}
     row = store.verification(inv["id"])
@@ -984,8 +978,6 @@ def reader_state(store: Store, settings: Settings, inv: dict[str, Any], status: 
     """What OvisOCR2 made of this invoice, for the line under the document title: ``state`` is "read" (its reading
     is in), "waiting", "reading", "skipped", "done" (read, not applied), "failed", "none" (not in its queue) or ""
     (a text file: no page to read). ``lines``: (icon, text); ``queue``: offer to put it in OvisOCR2's queue."""
-    from ap_coder.ai.extraction import TEXT_EXTENSIONS
-
     path = str(inv.get("source_path") or "")
     if any(path.lower().endswith(s) for s in TEXT_EXTENSIONS):
         return {"state": "", "lines": [], "queue": False, "poll": False}
@@ -1119,8 +1111,6 @@ def low_confidence(report: Any) -> list[str]:
     """What is below the review threshold, as the checks say it ("Reading 80% is below the 85% threshold."). The
     Coding is not said when a line still to code (or an account or cost center to pick) is why: that finding says it
     (D-89)."""
-    from ap_coder.coding.validation import COUNTED_IN_CODING
-
     picks = any(i.code in COUNTED_IN_CODING for i in report.issues)
     return [f"{name} {confidence_pct(value, report.review_threshold)} is below the {report.review_threshold:.0%} "
             "threshold."
@@ -1221,8 +1211,6 @@ def learn_text(coding: InvoiceCoding, ai: dict[str, Any], cost_centers: bool = F
     AI proposed nothing, or only a guess, and you picked it), 1 you changed, 1 as suggested (an account proposed and
     kept), 1 by a coding rule, 1 guessed account to check (the chat model's guess, still on screen: B-463)".
     ``rules_applied``: the invoice's (its ``meta``), the lines a fixed coding rule coded when it was read."""
-    from ap_coder.core.store import line_guessed
-
     by_rule = {c.get("line_number"): c for c in rules_applied or []}
     todo = coded = changed = kept = guesses = ruled = 0
     for before, li in pair_lines(ai.get("line_items", []), list(coding.line_items)):
@@ -1522,8 +1510,6 @@ def tax_marks(math: dict[str, Any], issues: list[Any]) -> dict[int, str]:
 def posting_note(coding: InvoiceCoding, reference: ReferenceData) -> str:
     """A word over the GL posting preview when a non-recoverable tax (PST) is spread over the lines marked with it
     while some lines' tax codes are still to check: the spread may be on the wrong lines (B-714)."""
-    from ap_coder.coding.tax import EXPENSE_TO_LINE
-
     spread = [t for t in charged_types(coding.tax_lines) if reference.tax.treatment(t).treatment == EXPENSE_TO_LINE]
     open_lines = [li.line_number for li in coding.line_items if tax_guessed(li) or exemption_to_confirm(li)]
     if not spread or not open_lines:
@@ -1587,8 +1573,6 @@ def distribution(output: dict[str, Any], reference: ReferenceData | None, js: An
         })  # fmt: skip
     total = round(sum(e["amount"] for e in output.get("gl_distribution") or []), 2)
     diff = round(total - (output.get("grand_total") or 0), 2)
-    from ap_coder.coding.validation import off_text
-
     off = off_text(total, output.get("grand_total") or 0)
     return {"rows": rows, "total": signed(total), "balanced": abs(diff) < 0.005, "off": signed(diff),
             "off_text": off[:1].upper() + off[1:],
@@ -1614,9 +1598,6 @@ class Analysis:
     filled: dict[str, str] = field(default_factory=dict)  # details the server filled in (``settle_header``)
 
 
-_TOTALS = ("subtotal", "tax_total", "grand_total")
-
-
 def totals_settled(coding: InvoiceCoding, ai: dict[str, Any]) -> bool:
     """Whether the reviewer changed the amounts as read and they now add up (subtotal + tax = total, the tax lines
     = the tax): capture's "as printed, … ≠ total" no longer says anything about the invoice on screen (B-662)."""
@@ -1627,7 +1608,7 @@ def totals_settled(coding: InvoiceCoding, ai: dict[str, Any]) -> bool:
         except (TypeError, ValueError):
             return 0
 
-    changed = any(cents(ai.get(f)) != cents(getattr(coding, f)) for f in _TOTALS)
+    changed = any(cents(ai.get(f)) != cents(getattr(coding, f)) for f in AMOUNT_FIELDS)
     changed = changed or sorted(cents(t.get("tax_amount")) for t in ai.get("tax_lines") or []) != sorted(
         cents(t.tax_amount) for t in coding.tax_lines
     )
@@ -1636,10 +1617,67 @@ def totals_settled(coding: InvoiceCoding, ai: dict[str, Any]) -> bool:
     return changed and adds_up and (taxes or not coding.tax_lines)
 
 
+_UNREAD: Any = object()  # analyse without a capture given: it reads the invoice's own
+
+
+def _findings(store: Store, inv: dict[str, Any], draft: Draft, coding: InvoiceCoding, output: dict[str, Any],
+              report: Any, dates: DateCheck, capture: CaptureResult | None) -> list[str]:  # fmt: skip
+    """What ``analyse`` adds to the checks of ``finalise_coding`` (``report.issues``), in the order the screen lists
+    them: the AI reviewer's, capture's, the fields said absent, the vendor list's, the dates and currency as typed
+    (first), no Pay from account. Returns the fields the vendor list filled (``FROM_VENDOR_LIST``)."""
+    ai = inv["ai_output"] or {}
+    # The AI reviewer's findings, on what is on screen now: a field it disputed that the reviewer changed is settled.
+    review = store.verification(inv["id"])
+    for severity, code, message in verifier.issues((review or {}).get("result"), output):
+        report.issues.append(Issue(severity, code, message))
+    # What capture found about the page (pages not read, a currency or a date not printed, totals that don't add up as
+    # printed...): kept with the invoice when it was read, and shown here too (B-458). A date not found is assumed
+    # only while the date is still the one put in for it.
+    if capture is not None:
+        # Assumed while the date is still the one put in, unless a person approved it so (reopened, sent back) or
+        # showed it on the page.
+        confirmed = bool(inv.get("final_output")) or "invoice_date" in draft.taught
+        assumed = coding.invoice_date if coding.invoice_date == ai.get("invoice_date") and not confirmed else None
+        settled = totals_settled(coding, ai)
+        for severity, code, message in review_issues(capture, coding.currency, assumed_date=assumed):
+            if code == "CAPTURE_CHECK_FIELDS":  # the fields to check are highlighted in amber: no need to list them
+                continue
+            if code == "CAPTURE_TOTALS" and settled:  # the reviewer fixed the amounts and they add up now (B-662)
+                continue
+            report.issues.append(Issue(severity, code, message))
+    if draft.absent:  # fields the reviewer said are not on this invoice: nothing asks for them (D-60)
+        report.issues = settle_absent(report.issues, draft.absent)
+    from_list = sorted((draft.from_vendor.get("fields") or {}).keys())
+    report.issues += not_printed(coding, from_list)
+    typed = dates.issues + currency_issues(coding.currency)  # the dates and the currency as typed (D-75)
+    if typed:
+        report.issues = typed + report.issues
+        report.requires_review = True
+    if from_list:
+        output[FROM_VENDOR_LIST] = from_list  # kept with the coding: the tax return's claims at risk read it
+    # No bank account in use: nothing asks for a Pay from account, and the screen says where to add them (D-66).
+    if not store.bank_accounts(active_only=True):
+        report.issues.append(Issue(INFO, "PAY_FROM_NO_ACCOUNTS", banks.NONE_YET))
+    return from_list
+
+
+def _vendor_mail(doc: dict[str, Any], issues: list[Any], lang: str, signature: str) -> dict[str, Any] | None:
+    """The email to the vendor about what its invoice is missing, in each language (the one picked, or suggested,
+    first shown), or None when nothing is the vendor's to fix."""
+    if not vendor_mail.points(doc, issues):
+        return None
+    chosen = lang if lang in vendor_mail.LANGUAGES else vendor_mail.suggested_language(doc)
+    drafts = []
+    for code, name in vendor_mail.LANGUAGES.items():
+        m = vendor_mail.draft(doc, issues, code, signature)
+        drafts.append({"lang": code, "name": name, "subject": m.subject, "body": m.body, "mailto": m.mailto()})
+    return {"chosen": chosen, "drafts": drafts}
+
+
 def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dict[str, Any], draft: Draft,
-            signature: str = "") -> Analysis:  # fmt: skip
+            signature: str = "", capture: CaptureResult | None = _UNREAD) -> Analysis:  # fmt: skip
     """The screen's coding, checked as approval checks it. ``signature``: the reviewer's name, for the email to the
-    vendor."""
+    vendor; ``capture``: the invoice's capture (``capture_of``) when the caller has it already."""
     ai = inv["ai_output"] or {}
     start = inv.get("final_output") or ai
     has_cc = reference.cost_centers is not None
@@ -1673,46 +1711,9 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     )
     output, report = finalise_coding(coding, reference, settings, extraction, store=store,
                                      exclude_invoice_id=inv["id"], received=received_on(inv))  # fmt: skip
-    # The AI reviewer's findings, on what is on screen now: a field it disputed that the reviewer changed is settled.
-    from ap_coder.ai import verifier
-    from ap_coder.coding.validation import Issue
-
-    review = store.verification(inv["id"])
-    for severity, code, message in verifier.issues((review or {}).get("result"), output):
-        report.issues.append(Issue(severity, code, message))
-    # What capture found about the page (pages not read, a currency or a date not printed, totals that don't add up as
-    # printed...): kept with the invoice when it was read, and shown here too (B-458). A date not found is assumed
-    # only while the date is still the one put in for it.
-    capture = capture_of(store, inv["id"])
-    if capture is not None:
-        from ap_coder.capture.bridge import review_issues
-
-        # Assumed while the date is still the one put in, unless a person approved it so (reopened, sent back) or
-        # showed it on the page.
-        confirmed = bool(inv.get("final_output")) or "invoice_date" in draft.taught
-        assumed = coding.invoice_date if coding.invoice_date == ai.get("invoice_date") and not confirmed else None
-        settled = totals_settled(coding, ai)
-        for severity, code, message in review_issues(capture, coding.currency, assumed_date=assumed):
-            if code == "CAPTURE_CHECK_FIELDS":  # the fields to check are highlighted in amber: no need to list them
-                continue
-            if code == "CAPTURE_TOTALS" and settled:  # the reviewer fixed the amounts and they add up now (B-662)
-                continue
-            report.issues.append(Issue(severity, code, message))
-    if draft.absent:  # fields the reviewer said are not on this invoice: nothing asks for them (D-60)
-        report.issues = settle_absent(report.issues, draft.absent)
-    from_list = sorted((draft.from_vendor.get("fields") or {}).keys())
-    report.issues += not_printed(coding, from_list)
-    typed = dates.issues + currency_issues(coding.currency)  # the dates and the currency as typed (D-75)
-    if typed:
-        report.issues = typed + report.issues
-        report.requires_review = True
-    if from_list:
-        output[FROM_VENDOR_LIST] = from_list  # kept with the coding: the tax return's claims at risk read it
-    accounts = store.bank_accounts(active_only=True)
-    if not accounts:  # nothing asks for a Pay from account, and the screen says where to add them (D-66)
-        from ap_coder.coding.banks import INFO, NONE_YET
-
-        report.issues.append(Issue(INFO, "PAY_FROM_NO_ACCOUNTS", NONE_YET))
+    if capture is _UNREAD:
+        capture = capture_of(store, inv["id"])
+    from_list = _findings(store, inv, draft, coding, output, report, dates, capture)
     errors = [i for i in report.issues if i.severity == "error"]
     warnings = [i for i in report.issues if i.severity == "warning"]
     default_days = store.default_terms_days()
@@ -1720,11 +1721,10 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
 
     # The approve bar: never post to UNASSIGNED; where cost centers are used, a line without one isn't posted either.
     # The queue asks the same question (pages/review.py attention), so its Ready means Approve is open here.
-    line_pick = pick = codes_to_pick(coding.line_items, uses_cost_centers(reference))
-    from ap_coder.coding.banks import blocking
-
+    cc = uses_cost_centers(reference)
+    line_pick = pick = codes_to_pick(coding.line_items, cc)
     # never approved without one of our accounts in use to pay from, whatever is ticked (D-66, B-683)
-    bank = blocking(coding.pay_from_account, store.bank_accounts())
+    bank = banks.blocking(coding.pay_from_account, store.bank_accounts())
     if bank:
         pick = f"{pick}; {bank[0].lower()}{bank[1:]}" if pick else bank
     # What makes the voucher invalid is never approved anyway; the rest of the errors only with a reason (D-75).
@@ -1734,20 +1734,13 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     key = override_key(soft) if soft else ""
     reason = draft.override_reason.strip()
     allow = not pick and not hard and (not soft or (draft.override == key and bool(reason)))
-    changed = ai_changes(coding, ai, uses_cost_centers(reference))
+    changed = ai_changes(coding, ai, cc)
     lines_n = len(coding.line_items)
     _, rule_changes = rules.apply(coding, store.coding_rules())
     doc = coding.model_dump()
     if PLACE_OF_SUPPLY in output:  # worked out, no ship-to printed: the vendor is told where it is delivered
         doc[PLACE_OF_SUPPLY] = output[PLACE_OF_SUPPLY]
-    mail = None
-    if vendor_mail.points(doc, report.issues):
-        chosen = draft.mail_lang if draft.mail_lang in vendor_mail.LANGUAGES else vendor_mail.suggested_language(doc)
-        drafts = []
-        for lang, name in vendor_mail.LANGUAGES.items():
-            m = vendor_mail.draft(doc, report.issues, lang, signature)
-            drafts.append({"lang": lang, "name": name, "subject": m.subject, "body": m.body, "mailto": m.mailto()})
-        mail = {"chosen": chosen, "drafts": drafts}
+    mail = _vendor_mail(doc, report.issues, draft.mail_lang, signature)
 
     from ap_coder.erp import jde
 
@@ -1783,7 +1776,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
         "from_vendor": from_list,
         "bar": {
             "amount": signed(coding.grand_total), "currency": coding.currency, "lines": lines_n, "changed": changed,
-            "learn": learn_text(coding, ai, uses_cost_centers(reference), meta.get("rules_applied")),
+            "learn": learn_text(coding, ai, cc, meta.get("rules_applied")),
             "pick": pick, "errors": len(soft), "override_key": key, "override": bool(key) and draft.override == key,
             "override_reason": draft.override_reason if bool(key) and draft.override == key else "",
             "hard": hard_reasons(hard), "allow": allow, "credit": coding.grand_total < 0,
@@ -1798,8 +1791,6 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
 def pay_from_choices(store: Store, header: dict[str, str]) -> dict[str, Any]:
     """The Pay from list (D-66): our bank accounts in use, as "name · currency · ••••1234", the one chosen (an account
     no longer in use stays listed while it is the one chosen), and whether there are any."""
-    from ap_coder.coding import banks
-
     chosen = header.get("pay_from_account") or ""
     accounts = [a for a in store.bank_accounts() if a["active"] or a["code"] == chosen]
     return {
@@ -1817,7 +1808,6 @@ def not_printed(coding: InvoiceCoding, from_list: list[str]) -> list[Any]:
     (GST/HST) Regulations; Revenu Québec the same for the QST), the supplier's registration number must be on the
     invoice to claim the input tax credit (refund). The vendor list's number is no substitute (D-65)."""
     from ap_coder.coding.taxreturn import document_threshold
-    from ap_coder.coding.validation import INFO, Issue
 
     charged = {t.tax_type for t in coding.tax_lines if abs(t.tax_amount) > 0.004}
     threshold = document_threshold(coding.invoice_date)
@@ -1852,8 +1842,6 @@ def field_flags(
     """{invoice detail: the note under it} for the checks about one detail (``FIELD_FLAGS``): the screen highlights the
     detail in amber, with the note, as well as listing the check. The tax numbers' note says what the vendor list (or
     this vendor's approved invoices) has."""
-    from ap_coder.coding.vendors import expected_tax_numbers
-
     flags: dict[str, list[str]] = {}
     expected: dict[str, str] | None = None
     for issue in issues:
@@ -1898,9 +1886,6 @@ def is_hard(issue: Any) -> bool:
     return issue.severity == "error" and (issue.code in HARD_CODES or issue.code.startswith("JDE_"))
 
 
-DATE_FIELDS = ("invoice_date", "due_date")
-
-
 def _date_or_none(text: Any) -> dt.date | None:
     try:
         return dt.date.fromisoformat(str(text or "").strip()[:10])
@@ -1937,9 +1922,6 @@ def settle_dates(header: dict[str, Any], fallback: dict[str, Any]) -> DateCheck:
     """The invoice and due dates as typed: YYYY-MM-DD as is; another way of writing one date (Oct 5, 2026; 2026/10/05;
     25/10/2026) put as YYYY-MM-DD; 12/06/2026 (6 December or 12 June) asked; anything else said plainly at the field.
     Meanwhile the checks run on the date as read (``fallback``), so a typo never wipes them."""
-    from ap_coder.capture.normalize import parse_dates
-    from ap_coder.coding.validation import ERROR, Issue
-
     out = DateCheck(header=dict(header))
     for name in DATE_FIELDS:
         text = str(header.get(name) or "").strip()
@@ -1976,8 +1958,6 @@ def settle_dates(header: dict[str, Any], fallback: dict[str, Any]) -> DateCheck:
 def currency_issues(currency: str) -> list[Any]:
     """A three-letter currency that is no currency in use (XYZ): flagged, never a voucher (D-75). Not three letters is
     validation's own CURRENCY_FORMAT."""
-    from ap_coder.coding.validation import ERROR, Issue
-
     code = (currency or "").strip().upper()
     if re.fullmatch(r"[A-Z]{3}", code) and code not in ISO_CURRENCIES:
         return [Issue(ERROR, "CURRENCY_UNKNOWN", f"“{code}” is not a currency code in use: type it as on the page, "
@@ -2102,8 +2082,6 @@ def field_help(store: Store, coding: InvoiceCoding, draft: Draft, capture: Captu
                issues: list[Any]) -> dict[str, dict[str, Any]]:  # fmt: skip
     """A note under an empty or unclear field with a one-click fix: which of two dates, a PO this vendor has open
     ("Use PO-89904"), a value boxed on the page while the field is empty ("Use BC-4410 from the page")."""
-    from ap_coder.coding.po import po_label
-
     out: dict[str, dict[str, Any]] = {}
     for name, choices in dates.choices.items():
         out[name] = {"text": "Which date is it?",

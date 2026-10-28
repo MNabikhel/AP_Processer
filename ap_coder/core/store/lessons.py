@@ -167,6 +167,76 @@ class LessonsMixin:
                 self._log(conn, "lesson_explained", invoice_id, actor, {"situation": situation, "reason": text})
             return cur.rowcount > 0
 
+    def corrections(self, limit: int = 100) -> list[dict[str, Any]]:
+        """What AP corrected, newest first, and whether AP Coder had it right the next time (the Learning page's
+        Corrections): {invoice_id, invoice_number, vendor_name, field, pattern, proposed, value, at, reviewer, next,
+        next_value, next_invoice_id, next_at}. ``next``: "right" (the next approval of the same situation kept what was
+        proposed), "again" (AP corrected it again) or "" (not seen since). From what the store keeps, two queries:
+
+        * the lessons' approvals (``lesson_approvals``): an invoice's header fields and its lines' GL account and cost
+          center (per kind of line, ``lessons.line_pattern``), what was proposed and what AP approved; the next
+          approval of the same situation says whether it was right;
+        * the line tax codes AP changed (``feedback.tax_source`` "picked", field ``tax_code``), what was proposed from
+          the approval's audit event (``diff_coding``), the next approval of the same vendor's line (the same words)
+          whether AP had to pick it again.
+
+        A guess of the AI changed or a blank filled in is no correction (the lessons and the accuracy leave them out);
+        an approval withdrawn (the invoice reopened) or a line forgotten is not listed."""
+        from ...coding.line_tax import code_label
+        from ...coding.vendors import mask_account
+
+        with self._conn() as conn:
+            fields = conn.execute(
+                """SELECT a.invoice_id, a.value, a.proposed, a.at, l.vendor_name, l.field, l.pattern,
+                          i.invoice_number, i.reviewer, n.corrected next_corrected, n.value next_value,
+                          n.invoice_id next_invoice_id, n.at next_at
+                   FROM lesson_approvals a JOIN lessons l ON l.situation = a.situation
+                   LEFT JOIN invoices i ON i.id = a.invoice_id
+                   LEFT JOIN lesson_approvals n ON n.rowid = (SELECT b.rowid FROM lesson_approvals b
+                       WHERE b.situation = a.situation AND b.rowid > a.rowid ORDER BY b.rowid LIMIT 1)
+                   WHERE a.corrected = 1 ORDER BY a.rowid DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+            taxes = conn.execute(
+                """SELECT * FROM (SELECT f.invoice_id, f.line_number, f.vendor_name, f.description, f.final_tax_code,
+                          f.created_at, f.reviewer, i.invoice_number,
+                          (SELECT json_extract(c.value, '$.before') FROM events e, json_each(e.detail, '$.changes') c
+                           WHERE e.invoice_id = f.invoice_id AND e.action = 'approved' AND json_valid(e.detail)
+                           AND json_extract(c.value, '$.what') = 'line ' || f.line_number || ' tax code'
+                           ORDER BY e.id DESC LIMIT 1) proposed,
+                          n.tax_source next_source, n.final_tax_code next_code, n.invoice_id next_invoice_id,
+                          n.created_at next_at
+                   FROM feedback f LEFT JOIN invoices i ON i.id = f.invoice_id
+                   LEFT JOIN feedback n ON n.id = (SELECT m.id FROM feedback m WHERE m.vendor_key = f.vendor_key
+                       AND m.id > f.id AND lower(m.description) = lower(f.description) AND m.tax_source != ''
+                       ORDER BY m.id LIMIT 1)
+                   WHERE f.tax_source = 'picked' AND f.invoice_id IS NOT NULL ORDER BY f.id DESC LIMIT ?)
+                   WHERE proposed IS NOT NULL""",
+                (limit,),
+            ).fetchall()
+        out = []
+        for r in fields:
+            shown = mask_account if r["field"] == "remit_bank_account" else str  # never the whole account number
+            following = "" if r["next_corrected"] is None else "again" if r["next_corrected"] else "right"
+            out.append({"invoice_id": r["invoice_id"], "invoice_number": r["invoice_number"] or "",
+                        "vendor_name": r["vendor_name"], "field": r["field"], "pattern": r["pattern"],
+                        "proposed": shown(r["proposed"]) if r["proposed"] else "", "value": shown(r["value"]),
+                        "at": r["at"], "reviewer": r["reviewer"] or "", "next": following,
+                        "next_value": shown(r["next_value"] or ""), "next_invoice_id": r["next_invoice_id"],
+                        "next_at": r["next_at"] or ""})  # fmt: skip
+        for r in taxes:
+            source = r["next_source"]
+            following = "" if source in (None, "bulk", "legacy") else "again" if source == "picked" else "right"
+            out.append({"invoice_id": r["invoice_id"], "invoice_number": r["invoice_number"] or "",
+                        "vendor_name": r["vendor_name"], "field": "tax_code", "pattern": r["description"],
+                        "proposed": r["proposed"], "value": code_label(r["final_tax_code"]), "at": r["created_at"],
+                        "reviewer": r["reviewer"] or "", "next": following,
+                        "next_value": code_label(r["next_code"]) if r["next_code"] else "",
+                        "next_invoice_id": r["next_invoice_id"] if following else None,
+                        "next_at": (r["next_at"] or "") if following else ""})  # fmt: skip
+        out.sort(key=lambda c: str(c["at"] or ""), reverse=True)
+        return out[:limit]
+
     def retire_lesson(self, lesson_id: int, actor: str | None = None, retired: bool = True) -> bool:
         """A lesson no longer true (the vendor changed its invoices): not shown to the AI or the reviewer again."""
         with self._conn() as conn:

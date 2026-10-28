@@ -113,6 +113,7 @@ class CaptureMixin:
         from ...capture.supplier import supplier_key
         from ...coding.vendors import master_vendor_id
 
+        vendor_name = self._aliased(vendor_name, gst_number) or vendor_name  # a name AP corrected (D-119)
         return supplier_key(vendor_name, gst_number, master_vendor_id(self.vendor_ids(), vendor_name, gst_number))
 
     @staticmethod
@@ -171,6 +172,87 @@ class CaptureMixin:
                     (key, invoice_id, key, KEEP_SNAPSHOTS),
                 )
         return True
+
+    @staticmethod
+    def _withdraw_template(conn: sqlite3.Connection, invoice_id: int) -> dict[str, Any]:
+        """The supplier's template as it was before ``invoice_id``'s approval taught it (``template_snapshots``),
+        put back. A later approval changed it since: learned again from the later approvals without this one
+        (``_replay_without``, D-119), else kept, and said (D-71)."""
+        snap = conn.execute("SELECT * FROM template_snapshots WHERE invoice_id = ?", (invoice_id,)).fetchone()
+        if snap is None:
+            return {}
+        conn.execute("DELETE FROM template_snapshots WHERE invoice_id = ?", (invoice_id,))
+        now = conn.execute("SELECT template_json FROM supplier_profiles WHERE key = ?",
+                           (snap["supplier_key"],)).fetchone()  # fmt: skip
+        if now is None:
+            return {}
+        if now["template_json"] != snap["after_json"]:
+            replayed = CaptureMixin._replay_without(conn, snap)  # learned again without it, when it can be (D-119)
+            if replayed:
+                return replayed
+            # The later approval's snapshot started from what this one taught: it now starts from what was there
+            # before this one, so withdrawing it too takes back both (B-781).
+            conn.execute("UPDATE template_snapshots SET before_json = ? WHERE supplier_key = ? AND before_json IS ?",
+                         (snap["before_json"], snap["supplier_key"], snap["after_json"]))  # fmt: skip
+            return {"layout": "kept: a later approval changed the vendor's layout since, so it was not put back"}
+        conn.execute("UPDATE supplier_profiles SET template_json = ?, updated_at = ? WHERE key = ?",
+                     (snap["before_json"], _now(), snap["supplier_key"]))  # fmt: skip
+        # A later snapshot of this supplier started from what this approval taught: it now starts from what is back.
+        conn.execute("UPDATE template_snapshots SET before_json = ? WHERE supplier_key = ? AND before_json IS ?",
+                     (snap["before_json"], snap["supplier_key"], snap["after_json"]))  # fmt: skip
+        return {"layout": "put back as it was before this approval"}
+
+    @staticmethod
+    def _replay_without(conn: sqlite3.Connection, snap: sqlite3.Row) -> dict[str, Any]:
+        """A withdrawn approval's teaching taken back after later approvals changed the supplier's template since: the
+        template learned again from what it was before the withdrawn approval, through each later approval in order
+        (``workflow.replay_template``), and their snapshots made again on the way, so that withdrawing one of them later
+        puts back what it found (D-119). Only when the later approvals' snapshots follow on from the withdrawn one's,
+        each later invoice is still approved and its pages have a text layer (a scan is not OCR'd again here); {} when
+        not, and the template is kept as it is (D-71)."""
+        from ...capture.workflow import replay_template
+
+        later = conn.execute("SELECT * FROM template_snapshots WHERE supplier_key = ? AND seq > ? ORDER BY seq",
+                             (snap["supplier_key"], snap["seq"])).fetchall()  # fmt: skip
+        now = conn.execute("SELECT template_json FROM supplier_profiles WHERE key = ?",
+                           (snap["supplier_key"],)).fetchone()  # fmt: skip
+        if not later or now is None or later[-1]["after_json"] != now["template_json"]:
+            return {}
+        if any(b["before_json"] != a["after_json"] for a, b in zip([snap, *later], later, strict=False)):
+            return {}  # changed by something else in between (reset on the Learning page): not followed
+        approvals = []
+        for s in later:
+            inv = conn.execute("SELECT status, source_path, file_sha256, final_output, ai_output FROM invoices "
+                               "WHERE id = ?", (s["invoice_id"],)).fetchone()  # fmt: skip
+            if inv is None or inv["status"] not in (APPROVED, PENDING) or not inv["final_output"]:
+                return {}
+            row = conn.execute("SELECT capture_json FROM invoice_capture WHERE invoice_id = ?",
+                               (s["invoice_id"],)).fetchone()  # fmt: skip
+            capture = capture_value(row[0]) if row else {}
+            event = conn.execute("SELECT detail FROM events WHERE invoice_id = ? AND action = 'approved' "
+                                 "ORDER BY id DESC LIMIT 1", (s["invoice_id"],)).fetchone()  # fmt: skip
+            approvals.append({
+                "source_path": inv["source_path"], "file_sha256": inv["file_sha256"],
+                "final": json.loads(inv["final_output"]), "ai": json.loads(inv["ai_output"] or "{}"),
+                "taught": capture.get("taught") or {}, "taught_values": capture.get("taught_values") or {},
+                "layout_source": capture.get("layout_source") or "",
+                "bulk": bool(json.loads(event["detail"] or "{}").get("bulk")) if event else False,
+            })  # fmt: skip
+        try:
+            afters = replay_template(json.loads(snap["before_json"]) if snap["before_json"] else None, approvals)
+        except Exception:  # learning must never block a withdrawal: the template is kept as it is
+            return {}
+        if afters is None:
+            return {}
+        before = snap["before_json"]
+        for s, after in zip(later, afters, strict=True):
+            text = json.dumps(after)
+            conn.execute("UPDATE template_snapshots SET before_json = ?, after_json = ? WHERE seq = ?",
+                         (before, text, s["seq"]))  # fmt: skip
+            before = text
+        conn.execute("UPDATE supplier_profiles SET template_json = ?, updated_at = ? WHERE key = ?",
+                     (before, _now(), snap["supplier_key"]))  # fmt: skip
+        return {"layout": "taken back: the vendor's layout learned again from the approvals made since"}
 
     def approval_generation(self, invoice_id: int) -> int:
         """How many times the invoice was approved (its ``approved`` events): which approval learning learns from, so

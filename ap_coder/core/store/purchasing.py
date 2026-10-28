@@ -265,6 +265,12 @@ class PurchasingMixin:
         with self._conn() as conn:
             return [dict(r) for r in conn.execute("SELECT * FROM export_batches ORDER BY id DESC")]
 
+    def export_batch(self, batch_id: int) -> dict[str, Any] | None:
+        """Export batch ``batch_id`` as ``export_batches`` lists it, or None when there is none."""
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM export_batches WHERE id = ?", (batch_id,)).fetchone()
+        return dict(row) if row else None
+
     # --- Fixed coding rules ---------------------------------------------------------------------------
 
     def coding_rules(self) -> list[Rule]:

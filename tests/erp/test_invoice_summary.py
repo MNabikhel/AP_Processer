@@ -70,6 +70,8 @@ def _fill_year(store: Store, tmp_path) -> None:
                    "due_date": "", "payment_terms": "2% 10, net 30" if n % 2 else doc.get("payment_terms")}  # fmt: skip
             if k == 3 and n == 1:  # a GL account picked by the reviewer that is the meals one
                 doc["line_items"] = [{**li, "predicted_gl_code": meals} for li in doc["line_items"]]
+            elif k >= 2:  # coded as AP recoded it in the second round: AP's latest decision (D-118)
+                doc["line_items"] = [{**doc["line_items"][0], "predicted_gl_code": meals}, *doc["line_items"][1:]]
             invoice_id, output = _add(store, tmp_path, f"{k}-{n}", doc)
             fate = (k, n % 4)
             if k == 0 or fate == (3, 1):
@@ -127,6 +129,8 @@ def test_the_lists_are_the_invoices_own(year):
     for status in (None, REVIEW, APPROVED, PENDING, PARKED, REJECTED, FAILED):
         assert year.list_invoices(status) == ref.old_list_invoices(year, status)
     assert year.search_rows() == ref.old_search_rows(year)
+    exported = [r for r in year.search_rows() if r["export_batch"]]
+    assert year.search_rows(exported=True) == exported and exported  # (the JD Edwards duplicate check's)
     assert year.unexported_approved() == ref._old_unexported(year)
     assert year.demo_count() == 1
     assert year.approved_since("2000-01-01", "Jordan Lee") > 0

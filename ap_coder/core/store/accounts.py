@@ -356,6 +356,18 @@ class AccountsMixin:
             row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
         return row["value"] if row else default
 
+    def get_json(self, key: str, default: Any = None) -> Any:
+        """Setting ``key`` saved as JSON, or ``default`` when it is unset or unreadable, or (a ``default`` given) not
+        of its kind: a dict for ``{}``, a list for ``[]``."""
+        raw = self.get_setting(key)
+        if not raw:
+            return default
+        try:
+            value = json.loads(raw)
+        except ValueError:
+            return default
+        return default if default is not None and not isinstance(value, type(default)) else value
+
     def set_setting(self, key: str, value: str, actor: str | None = None) -> None:
         with self._conn() as conn:
             if key == "policy_notes" and self.get_setting(key) != value:

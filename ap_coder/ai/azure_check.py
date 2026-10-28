@@ -470,14 +470,11 @@ def prepare(store: Any, settings: Settings | None, invoice_id: int | None, captu
 
 
 def hold(autonomy: dict[str, Any], plan: Plan) -> dict[str, Any]:
-    """The touchless decision, held back while Azure hasn't checked an invoice picked for it: recorded whether or not
-    another check (the AI reviewer) is already holding it, so neither approves it alone."""
-    from .verifier import held
+    """The touchless decision, held back while Azure hasn't checked an invoice picked for it (``verifier.held_for``:
+    whether or not the AI reviewer is already holding it)."""
+    from .verifier import held_for
 
-    if plan.hold and (autonomy.get("auto") or held(autonomy)):
-        reason = WAITING_FOR_AZURE if autonomy.get("auto") else f"{autonomy.get('reason')}; {WAITING_FOR_AZURE}"
-        return {**autonomy, "auto": False, "audit": False, "azure_hold": True, "reason": reason}
-    return autonomy
+    return held_for(autonomy, plan, "azure_hold", WAITING_FOR_AZURE)
 
 
 def queue(store: Any, invoice_id: int | None, plan: Plan) -> bool:
@@ -766,10 +763,7 @@ def connection_test(store: Any, settings: Settings | None = None, *, client: Any
 
 
 def last_test(store: Any) -> dict[str, Any] | None:
-    try:
-        saved = json.loads(store.get_setting(TEST_KEY, "") or "null")
-    except (TypeError, ValueError):
-        return None
+    saved = store.get_json(TEST_KEY)
     return saved if isinstance(saved, dict) else None
 
 

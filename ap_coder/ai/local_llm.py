@@ -201,46 +201,113 @@ def pick_model(requested: str, ids: list[str], loaded: list[str] | None = None, 
     return next((m for m in ids if is_chat_model(m)), "")
 
 
-def _lm_studio_listing(root: str, api_key: str, timeout: float) -> tuple[list[str], set[str]] | None:
-    """LM Studio's own model list: its loaded chat models, and every model that can see. None from other servers.
+@dataclass(frozen=True)
+class LMModel:
+    """A chat or vision model LM Studio has downloaded: its key, whether it can look at pictures, its loaded instances
+    (instance id, context length; 0 when LM Studio doesn't say) and the longest context it supports."""
 
-    LM Studio 0.4 answers ``/api/v1/models`` (``models`` with ``loaded_instances``), 0.3 ``/api/v0/models``
-    (``data`` with a ``state`` on each)."""
+    key: str
+    vision: bool
+    instances: tuple[tuple[str, int], ...] = ()
+    max_context: int = 0
+    reasoning: tuple[str, ...] = ()  # LM Studio 0.4.8+: the reasoning options it takes ("off", "on")
+
+    @property
+    def loaded_context(self) -> int:
+        """The longest context it is loaded with now (0: not loaded, or not said)."""
+        return max((size for _id, size in self.instances), default=0)
+
+    def named(self, name: str) -> bool:
+        return name == self.key or any(name == instance for instance, _size in self.instances)
+
+
+@dataclass(frozen=True)
+class LMListing:
+    """LM Studio's own model list. ``route``: "v1" (LM Studio 0.4, which loads a model when asked) or "v0" (0.3)."""
+
+    route: str
+    models: tuple[LMModel, ...]
+    embeddings: tuple[tuple[str, bool], ...] = ()  # embedding models (key, loaded): listed in Settings, never used
+
+    def find(self, name: str) -> LMModel | None:
+        return next((model for model in self.models if model.named(name)), None)
+
+
+def _int(value: Any) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def parse_lm_studio_listing(data: Any, *, keyless: bool = False) -> LMListing | None:
+    """LM Studio's ``/api/v1/models`` (0.4: ``models``, each with its ``loaded_instances``) or ``/api/v0/models``
+    (0.3: ``data``, each with a ``state``) as a listing of its chat and vision models; embedding models are left out.
+    None for an answer that isn't LM Studio's (a server answering with a plain list of models). ``keyless``: a 0.4
+    model without a key is kept too (key ""), for its loaded instances (``_lm_studio_listing``)."""
+    if not isinstance(data, dict):
+        return None
+    models: list[LMModel] = []
+    embeddings: list[tuple[str, bool]] = []
+    if isinstance(data.get("models"), list):
+        for item in data["models"]:
+            if isinstance(item, dict) and item.get("type") == "embedding" and item.get("key"):
+                embeddings.append((str(item["key"]), bool(item.get("loaded_instances"))))
+            if not isinstance(item, dict) or item.get("type") not in {"llm", "vlm"} or not (item.get("key") or keyless):
+                continue
+            caps = item.get("capabilities") if isinstance(item.get("capabilities"), dict) else {}
+            reasoning = caps.get("reasoning") if isinstance(caps.get("reasoning"), dict) else {}
+            options = reasoning.get("allowed_options") if isinstance(reasoning.get("allowed_options"), list) else []
+            instances = []
+            for instance in item.get("loaded_instances") or []:
+                if isinstance(instance, dict) and instance.get("id"):
+                    config = instance.get("config") if isinstance(instance.get("config"), dict) else {}
+                    instances.append((str(instance["id"]), _int(config.get("context_length"))))
+            models.append(
+                LMModel(
+                    key=str(item.get("key") or ""),
+                    vision=caps.get("vision") is True or item.get("type") == "vlm",
+                    instances=tuple(instances),
+                    max_context=_int(item.get("max_context_length")),
+                    reasoning=tuple(str(option) for option in options),
+                )  # fmt: skip
+            )
+        return LMListing("v1", tuple(models), tuple(embeddings))
+    items = data.get("data")
+    if isinstance(items, list) and any(isinstance(item, dict) and "state" in item for item in items):
+        for item in items:
+            if isinstance(item, dict) and item.get("type") == "embeddings" and item.get("id"):
+                embeddings.append((str(item["id"]), item.get("state") == "loaded"))
+            if not isinstance(item, dict) or not item.get("id") or item.get("type") not in {"llm", "vlm"}:
+                continue
+            loaded = item.get("state") == "loaded"
+            context = _int(item.get("loaded_context_length")) if loaded else 0
+            models.append(
+                LMModel(
+                    key=str(item["id"]),
+                    vision=item.get("type") == "vlm",
+                    instances=((str(item["id"]), context),) if loaded else (),
+                    max_context=_int(item.get("max_context_length")),
+                )  # fmt: skip
+            )
+        return LMListing("v0", tuple(models), tuple(embeddings))
+    return None
+
+
+def _lm_studio_listing(root: str, api_key: str, timeout: float) -> tuple[list[str], set[str]] | None:
+    """LM Studio's own model list (``parse_lm_studio_listing``): its loaded chat models, and every model that can see.
+    None from other servers."""
     for path in ("/api/v1/models", "/api/v0/models"):
         try:
             data = _fetch_json(root + path, api_key, timeout)
         except (OSError, ValueError):
             continue
-        if not isinstance(data, dict):
+        listing = parse_lm_studio_listing(data, keyless=True)
+        if listing is None:
             continue
-        loaded: list[str] = []
-        seeing: set[str] = set()
-        if isinstance(data.get("models"), list):
-            for item in data["models"]:
-                if not isinstance(item, dict) or item.get("type") not in {"llm", "vlm"}:
-                    continue
-                caps = item.get("capabilities") if isinstance(item.get("capabilities"), dict) else {}
-                sees = caps.get("vision") is True or item.get("type") == "vlm"
-                instances = [
-                    str(i["id"]) for i in item.get("loaded_instances") or [] if isinstance(i, dict) and i.get("id")
-                ]
-                loaded += instances
-                if sees:
-                    seeing.update(instances)
-                    if item.get("key"):
-                        seeing.add(str(item["key"]))
-            return loaded, seeing
-        items = data.get("data")
-        if isinstance(items, list) and any(isinstance(i, dict) and "state" in i for i in items):
-            for item in items:
-                if not isinstance(item, dict) or not item.get("id") or item.get("type") not in {"llm", "vlm"}:
-                    continue
-                if item.get("type") == "vlm":
-                    seeing.add(str(item["id"]))
-                if item.get("state") == "loaded":
-                    loaded.append(str(item["id"]))
-            return loaded, seeing
-        # A server answering this route with a plain list of models isn't LM Studio.
+        loaded = [instance for model in listing.models for instance, _size in model.instances]
+        seeing = {instance for model in listing.models if model.vision for instance, _size in model.instances}
+        return loaded, seeing | {model.key for model in listing.models if model.vision and model.key}
     return None
 
 

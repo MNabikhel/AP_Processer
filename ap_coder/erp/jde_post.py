@@ -88,7 +88,7 @@ def _hash(payload: dict[str, Any]) -> str:
 
 
 def _batch(store: Any, batch: int) -> dict[str, Any]:
-    known = next((b for b in store.export_batches() if b["id"] == batch), None)
+    known = store.export_batch(batch)
     if known is None or known["undone_at"]:
         raise ValueError(f"Batch {batch} is unknown or undone.")
     if known["format"] != jde.FORMAT:
@@ -118,24 +118,34 @@ def _expect(inv: dict[str, Any], headers: list[dict[str, Any]], settings: jde.Jd
 
 def payloads(store: Any, batch: int) -> tuple[dict[int, dict[str, Any]], dict[int, list[str]], list[dict[str, Any]]]:
     """({invoice: what the voucher orchestration is sent}, {invoice: why it can't go}, the batch's invoices)."""
+    return _payloads(store, batch)[:3]
+
+
+def _payloads(store: Any, batch: int) -> tuple[dict[int, dict[str, Any]], dict[int, list[str]],
+                                               list[dict[str, Any]], dict[str, Any]]:  # fmt: skip
+    """``payloads``, and what they were made with (for the dry run's report: not read or prepared again): {"settings",
+    "lookup", "on", "fx_rates", "vouchers": {invoice: (AN8, voucher)}}."""
     known = _batch(store, batch)
-    settings, lookup = jde.load(store), store.vendor_ids()
+    settings, lookup, fx_rates = jde.load(store), store.vendor_ids(), store.fx_rates()
     invoices = store.get_invoices(store.batch_invoice_ids(batch))
     blocking = jde.settings_problems(settings)
-    problems = jde.validate(invoices, settings, lookup)
+    prepared = jde._vouchers(invoices, settings, lookup)
+    problems = jde.validate(invoices, settings, lookup, prepared=prepared)
     on = dt.date.fromisoformat(known["created_at"][:10])
     installation = installation_id(store)
     out: dict[int, dict[str, Any]] = {}
-    for inv in invoices:
+    for inv, (an8, v) in zip(invoices, prepared, strict=True):
         if blocking:
             problems.setdefault(inv["id"], []).extend(blocking)
         if inv["id"] in problems:
             continue
-        an8 = jde.resolve_an8(inv.get("final_output") or {}, lookup, settings)
-        headers, dists, matches = jde.voucher_rows(inv, an8, settings, batch=batch, fx_rates=store.fx_rates(), on=on)
+        headers, dists, matches = jde.voucher_rows(inv, an8, settings, batch=batch, fx_rates=fx_rates, on=on,
+                                                   prepared=v)  # fmt: skip
         out[inv["id"]] = {"key": idem_key(inv["id"], batch, installation), "pay_items": headers, "gl_lines": dists,
                           "matches": matches, "_expect": _expect(inv, headers, settings)}  # fmt: skip
-    return out, problems, invoices
+    made = {"settings": settings, "lookup": lookup, "on": on, "fx_rates": fx_rates,
+            "vouchers": {inv["id"]: pv for inv, pv in zip(invoices, prepared, strict=True)}}  # fmt: skip
+    return out, problems, invoices, made
 
 
 # --- The postings table ----------------------------------------------------------------------------------------------
@@ -406,11 +416,11 @@ def dry_run(store: Any, batch: int, actor: str | None = None,
     """Check the batch's vouchers (here, then in JDE's proof mode when it answers); each invoice's row says how it went.
     {"batch", "report" (``jde.dry_run``'s), "rows": [...], "jde": "" or why JDE did not check them}. A row JDE has or
     may have, or one approved and queued, is never written over."""
-    found, problems, invoices = payloads(store, batch)
-    settings = jde.load(store)
-    known = _batch(store, batch)
-    report = jde.dry_run([i for i in invoices if i["id"] in found], settings, store.vendor_ids(), batch=batch,
-                         fx_rates=store.fx_rates(), on=dt.date.fromisoformat(known["created_at"][:10]))  # fmt: skip
+    found, problems, invoices, made = _payloads(store, batch)
+    going = [i for i in invoices if i["id"] in found]
+    rows = {i: (p["pay_items"], p["gl_lines"], p["matches"]) for i, p in found.items()}
+    report = jde.dry_run(going, made["settings"], made["lookup"], batch=batch, fx_rates=made["fx_rates"],
+                         on=made["on"], prepared=[made["vouchers"][i["id"]] for i in going], rows=rows)  # fmt: skip
     already = {p["invoice_id"]: p for p in postings(store, batch)}
     jde_note = ""
     own = client is None

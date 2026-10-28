@@ -55,8 +55,13 @@ def vendor_record(store: Any, vendor_name: str | None, gst_number: Any = None) -
         return None
     if not rec or not rec.get("in_master"):
         return None
-    return {"name": rec.get("display_name") or vendor_name, "gst_number": rec.get("expected_gst") or "",
-            "erp_id": rec.get("erp_id") or ""}  # fmt: skip
+    from ..core.memory import vendor_key
+
+    name = rec.get("display_name") or vendor_name
+    # Found by a name AP corrected to this vendor's (D-119): the name as printed is that vendor's too.
+    aliases = [vendor_name] if vendor_key(vendor_name) != vendor_key(name) else []
+    return {"name": name, "gst_number": rec.get("expected_gst") or "", "erp_id": rec.get("erp_id") or "",
+            **({"aliases": aliases} if aliases else {})}  # fmt: skip
 
 
 def review_issues(capture: CaptureResult, assumed_currency: str | None = None, *,

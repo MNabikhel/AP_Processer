@@ -108,13 +108,7 @@ def reading_as(mark: str) -> Iterator[str]:
 
 def saved_tests(store: Any) -> dict[str, dict[str, Any]]:
     """Every model's last test of the page reader on the invoice whose answers are known: {model: test}."""
-    try:
-        raw = store.get_setting(TEST_KEY)
-        saved = json.loads(raw) if raw else None
-    except (ValueError, TypeError):
-        return {}
-    if not isinstance(saved, dict):
-        return {}
+    saved = store.get_json(TEST_KEY, {})
     if isinstance(saved.get("models"), dict):
         return {str(m): t for m, t in saved["models"].items() if isinstance(t, dict)}
     return {str(saved["model"]): saved} if saved.get("model") else {}  # the single test of an older AP Coder
@@ -266,10 +260,10 @@ def skip_reason(settings: Settings, capture: Any, autonomy: dict[str, Any] | Non
 
 def skipped_totals(store: Any) -> dict[str, int]:
     """{"invoices", "pages"} OvisOCR2 left out as clean digital PDFs so far (D-111)."""
+    found = store.get_json(SKIPPED_KEY, {})
     try:
-        found = json.loads(store.get_setting(SKIPPED_KEY) or "{}")
         return {"invoices": int(found.get("invoices") or 0), "pages": int(found.get("pages") or 0)}
-    except (ValueError, TypeError, AttributeError):
+    except (ValueError, TypeError):
         return {"invoices": 0, "pages": 0}
 
 
@@ -335,10 +329,7 @@ def record_figures(store: Any, layout_source: str, comparison: Any) -> None:
     total = max(comparison.figures, comparison.first_figures)
     if not total:
         return
-    try:
-        totals = json.loads(store.get_setting(FIGURES_KEY) or "{}")
-    except (ValueError, TypeError):
-        totals = {}
+    totals = store.get_json(FIGURES_KEY, {})
     kind = "digital" if layout_source == "text" else "scans"
     same, seen = totals.get(kind) or [0, 0]
     totals[kind] = [same + comparison.confirmed, seen + total]
@@ -347,8 +338,8 @@ def record_figures(store: Any, layout_source: str, comparison: Any) -> None:
 
 def figure_totals(store: Any) -> dict[str, tuple[int, int]]:
     """{"digital" | "scans": (figures read the same, figures compared)} so far."""
+    totals = store.get_json(FIGURES_KEY, {})
     try:
-        totals = json.loads(store.get_setting(FIGURES_KEY) or "{}")
         return {k: (int(v[0]), int(v[1])) for k, v in totals.items() if isinstance(v, list) and len(v) == 2}
     except (ValueError, TypeError):
         return {}
@@ -495,6 +486,17 @@ def _read_one(settings: Settings, store: Any, cache_dir: Path | None, invoice_id
         raise
 
 
+_QUEUE_STATE = {"skipped": "skipped", "postponed": "waiting", "failed": "failed"}  # outcome → its queue row's
+
+
+def _end(store: Any, iid: int, status: str, model: str, message: str, pages: int = 0, seconds: float = 0.0,
+         **kw: Any) -> ReadOutcome:  # fmt: skip
+    """A reading over without a result (``status``: skipped, postponed or failed): its queue row says why, and so
+    does the outcome."""
+    store.finish_page_read(iid, _QUEUE_STATE[status], model, pages, seconds, message, **kw)
+    return ReadOutcome(iid, status, model, pages, seconds, message=message)
+
+
 def _postpone_or_fail(store: Any, row: dict[str, Any], model: str, pages: int, seconds: float,
                       problem: str) -> ReadOutcome:  # fmt: skip
     """A reading the model server cut off: back in line, or failed once it has been cut off MAX_TRIES times."""
@@ -506,11 +508,9 @@ def _postpone_or_fail(store: Any, row: dict[str, Any], model: str, pages: int, s
     if tries >= MAX_TRIES:
         message = (f"the model server cut the reading off {tries} times ({problem}); read it again from the invoice "
                    "(Add it to OvisOCR2's queue) once LM Studio is running with the model loaded")  # fmt: skip
-        store.finish_page_read(iid, "failed", model, pages, seconds, message, tries=tries)
-        return ReadOutcome(iid, "failed", model, pages, seconds, message=message)
+        return _end(store, iid, "failed", model, message, pages, seconds, tries=tries)
     message = f"{problem}: read again later (try {tries} of {MAX_TRIES})"
-    store.finish_page_read(iid, "waiting", model, pages, seconds, message, tries=tries)
-    return ReadOutcome(iid, "postponed", model, pages, seconds, message=message)
+    return _end(store, iid, "postponed", model, message, pages, seconds, tries=tries)
 
 
 def _read_taken(settings: Settings, store: Any, row: dict[str, Any], model: str, cache_dir: Path | None,
@@ -528,21 +528,17 @@ def _read_taken(settings: Settings, store: Any, row: dict[str, Any], model: str,
     identity = store.row_identity(iid)  # its reading is written onto this invoice only (a restore may come between)
     path = Path((inv or {}).get("source_path") or "")
     if inv is None or not path.exists():
-        store.finish_page_read(iid, "skipped", model, 0, 0.0, "the invoice or its file is gone")
-        return ReadOutcome(iid, "skipped", model, message="the invoice or its file is gone")
+        return _end(store, iid, "skipped", model, "the invoice or its file is gone")
     why_not = decided(inv)
     if why_not:
-        store.finish_page_read(iid, "skipped", model, 0, 0.0, why_not)
-        return ReadOutcome(iid, "skipped", model, message=why_not)
+        return _end(store, iid, "skipped", model, why_not)
     problem = page_reader.load_reader(settings, model)
     if problem:  # not enough memory, most often: it stays in the queue, asked again later
-        store.finish_page_read(iid, "waiting", model, 0, 0.0, problem)
-        return ReadOutcome(iid, "postponed", model, message=problem)
+        return _end(store, iid, "postponed", model, problem)
     blank, checked = blank_pages(settings, path)
     if checked and len(blank) >= checked:
         message = "not read: OCR found no words on its pages, so there is nothing for the page reader to read"
-        store.finish_page_read(iid, "skipped", model, 0, 0.0, message)
-        return ReadOutcome(iid, "skipped", model, message=message)
+        return _end(store, iid, "skipped", model, message)
     t0 = time.perf_counter()
     stop, on_page = should_stop, None
     if should_stop is not None and finish_page:
@@ -560,8 +556,7 @@ def _read_taken(settings: Settings, store: Any, row: dict[str, Any], model: str,
     seconds = sum(reading.seconds) if reading.seconds else time.perf_counter() - t0
     if reading.stopped:  # asked to stop (time is up, the app is closing): it keeps its place in line
         message = f"stopped after {len(reading.pages)} of {reading.page_count or '?'} page(s): read again later"
-        store.finish_page_read(iid, "waiting", model, len(reading.pages), seconds, message)
-        return ReadOutcome(iid, "postponed", model, len(reading.pages), seconds, message=message)
+        return _end(store, iid, "postponed", model, message, len(reading.pages), seconds)
     # A page OCR found blank, or one the model wrote only a page number or a pangram for, is read as blank: nothing
     # on it is taken from the page reader alone. One OCR found words on was not read by the page reader at all.
     not_read = sum(1 for number, text in enumerate(reading.pages, start=1) if number not in blank and made_up(text))
@@ -575,8 +570,7 @@ def _read_taken(settings: Settings, store: Any, row: dict[str, Any], model: str,
             if len(reading.pages) >= reading.page_count
             else f"the page reader read {len(reading.pages)} of {reading.page_count} page(s)"
         )
-        store.finish_page_read(iid, "failed", model, len(reading.pages), seconds, message)
-        return ReadOutcome(iid, "failed", model, len(reading.pages), seconds, message=message)
+        return _end(store, iid, "failed", model, message, len(reading.pages), seconds)
 
     if store.restoring() or store.row_identity(iid) != identity:
         return _restored(iid, model)
@@ -586,8 +580,7 @@ def _read_taken(settings: Settings, store: Any, row: dict[str, Any], model: str,
                               pages_read=len(reading.pages) - not_read)  # fmt: skip
     if result.error or result.output is None or result.report is None:
         message = result.error or "the invoice could not be read again"
-        store.finish_page_read(iid, "failed", model, len(reading.pages), seconds, message)
-        return ReadOutcome(iid, "failed", model, len(reading.pages), seconds, message=message)
+        return _end(store, iid, "failed", model, message, len(reading.pages), seconds)
     if store.restoring() or store.row_identity(iid) != identity:
         return _restored(iid, model)
     summary = agreement(result.capture)
@@ -839,11 +832,7 @@ def test_under_way(store: Any) -> dict[str, Any] | None:
     """The test of the page reader under way on this computer: {model, started, updated, pid, pages, done}, or
     None. A test whose process is gone (the dashboard was closed during it), or whose mark was not renewed for
     ``TEST_STALE_HOURS`` (its process id now another program's), is not under way."""
-    try:
-        raw = store.get_setting(TESTING_KEY)
-        testing = json.loads(raw) if raw else None
-    except (ValueError, TypeError):
-        return None
+    testing = store.get_json(TESTING_KEY)
     if not isinstance(testing, dict):
         return None
     if testing.get("reader") == READER_ID:  # this process's: under way until its test ends

@@ -239,24 +239,12 @@ class InvoicesMixin:
                     [*params, limit, offset],
                 )
             ]
-            found: dict[int, dict[str, Any]] = {}
-            for start in range(0, len(ids), 500):
-                chunk = ids[start : start + 500]
-                marks = ", ".join("?" * len(chunk))  # at most 500, under SQLite's variable limit
-                for r in conn.execute(f"{rows_sql} SELECT {fields} FROM rows WHERE id IN ({marks})", chunk):
-                    found[r["id"]] = dict(r)
+            page = conn.execute(f"{rows_sql} SELECT {fields} FROM rows WHERE {_in_list('id')}", (json.dumps(ids),))
+            found = {r["id"]: dict(r) for r in page}
             rows = [found[i] for i in ids if i in found]
             wanted = sorted({r["export_batch"] for r in rows if r["export_batch"]})
-            batches = {}
-            for start in range(0, len(wanted), 500):
-                chunk = wanted[start : start + 500]
-                marks = ", ".join("?" * len(chunk))  # at most 500, under SQLite's variable limit
-                batches.update(
-                    {
-                        b["id"]: b["created_at"]
-                        for b in conn.execute(f"SELECT id, created_at FROM export_batches WHERE id IN ({marks})", chunk)
-                    }
-                )
+            made = f"SELECT id, created_at FROM export_batches WHERE {_in_list('id')}"
+            batches = {b["id"]: b["created_at"] for b in conn.execute(made, (json.dumps(wanted),))}
         for r in rows:
             r["exported_at"] = batches.get(r["export_batch"]) if r["export_batch"] else None
         return rows
@@ -480,37 +468,13 @@ class InvoicesMixin:
     def _forget_learning(conn: sqlite3.Connection, invoice_id: int) -> dict[str, Any]:
         """Withdraw what an invoice's approval taught: its coding memory, its lessons (what the AI is told), its
         supplier outcomes (from a review or an audit sample alike, so none keeps counting towards the supplier's
-        autonomy), its reader scores and what it taught the supplier's template (``_withdraw_template``). Returns
-        what became of the template, for the event's detail ({} when the approval taught it nothing)."""
-        for table in ("feedback", "supplier_outcomes", "reader_outcomes"):
+        autonomy), its reader scores, a vendor name it corrected (D-119) and what it taught the supplier's template
+        (``_withdraw_template``, capture.py). Returns what became of the template, for the event's detail ({} when the
+        approval taught it nothing)."""
+        for table in ("feedback", "supplier_outcomes", "reader_outcomes", "vendor_aliases"):
             conn.execute(f"DELETE FROM {table} WHERE invoice_id = ?", (invoice_id,))
         _store_class()._withdraw_lessons(conn, invoice_id)
         return _store_class()._withdraw_template(conn, invoice_id)
-
-    @staticmethod
-    def _withdraw_template(conn: sqlite3.Connection, invoice_id: int) -> dict[str, Any]:
-        """The supplier's template as it was before ``invoice_id``'s approval taught it (``template_snapshots``),
-        put back, unless a later approval changed it since: that one is kept, and said (D-71)."""
-        snap = conn.execute("SELECT * FROM template_snapshots WHERE invoice_id = ?", (invoice_id,)).fetchone()
-        if snap is None:
-            return {}
-        conn.execute("DELETE FROM template_snapshots WHERE invoice_id = ?", (invoice_id,))
-        now = conn.execute("SELECT template_json FROM supplier_profiles WHERE key = ?",
-                           (snap["supplier_key"],)).fetchone()  # fmt: skip
-        if now is None:
-            return {}
-        if now["template_json"] != snap["after_json"]:
-            # The later approval's snapshot started from what this one taught: it now starts from what was there
-            # before this one, so withdrawing it too takes back both (B-781).
-            conn.execute("UPDATE template_snapshots SET before_json = ? WHERE supplier_key = ? AND before_json IS ?",
-                         (snap["before_json"], snap["supplier_key"], snap["after_json"]))  # fmt: skip
-            return {"layout": "kept: a later approval changed the vendor's layout since, so it was not put back"}
-        conn.execute("UPDATE supplier_profiles SET template_json = ?, updated_at = ? WHERE key = ?",
-                     (snap["before_json"], _now(), snap["supplier_key"]))  # fmt: skip
-        # A later snapshot of this supplier started from what this approval taught: it now starts from what is back.
-        conn.execute("UPDATE template_snapshots SET before_json = ? WHERE supplier_key = ? AND before_json IS ?",
-                     (snap["before_json"], snap["supplier_key"], snap["after_json"]))  # fmt: skip
-        return {"layout": "put back as it was before this approval"}
 
     def delete_invoice(
         self, invoice_id: int, forget_lessons: bool = False, actor: str | None = None, *, keep_approved: bool = False
@@ -547,7 +511,8 @@ class InvoicesMixin:
                     "status": row["status"], "lessons_forgotten": forget_lessons,
                 })  # fmt: skip
             if forget_lessons:
-                conn.execute("DELETE FROM feedback WHERE invoice_id = ?", (invoice_id,))
+                for table in ("feedback", "vendor_aliases"):
+                    conn.execute(f"DELETE FROM {table} WHERE invoice_id = ?", (invoice_id,))
                 self._withdraw_lessons(conn, invoice_id)
                 self._withdraw_template(conn, invoice_id)
             else:
