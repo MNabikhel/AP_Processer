@@ -33,7 +33,8 @@
     <input type="hidden" name="line_reason" value="{{ row.reasoning_justification or '' }}" form="inv">
     <input type="number" name="line_number" value="{{ num(row.line_number) }}" step="1" min="0" form="inv" aria-label="Line number"></td>
   <td class="c-desc"><textarea name="line_description" rows="1" form="inv" aria-label="{{ line_label(row, 'Description') }}" data-one-line>{{ (row.description or '') | replace('\r', ' ') | replace('\n', ' ') }}</textarea>
-    <span class="inv-remark small" data-remark hidden></span></td>
+    <span class="inv-remark small" data-remark hidden></span>
+    {%- if row.read_as %}<span class="inv-readas" data-read-as title="This supplier's line is printed “{{ row.read_as }}”: AP approved it as described here on an earlier invoice, so it is named so again"><span class="ms" aria-hidden="true">school</span>Named as approved before · printed “{{ row.read_as }}”</span>{% endif %}</td>
   <td class="c-del"><button type="button" class="icon-btn" data-del-row title="Delete this line" aria-label="Delete this line"><span class="ms" aria-hidden="true">delete</span></button></td>
   <td data-label="GL account" class="c-gl{% if row.guessed %} is-guess{% endif %}"><select name="line_gl" form="inv" aria-label="{{ line_label(row, 'GL account') }}" data-gl data-picker data-picker-noun="account" data-picker-line data-options="gl-options" data-groups="gl">{{ few(g.gl_labels, row.predicted_gl_code or "UNASSIGNED") }}</select>
     {%- if row.guessed %}<span class="inv-guess" title="{{ row.reasoning_justification }}"><span class="ms" aria-hidden="true">help</span>A guess, not learned yet: check it</span>{% endif %}

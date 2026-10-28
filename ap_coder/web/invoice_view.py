@@ -35,6 +35,7 @@ import pandas as pd
 from ap_coder.ai import verifier
 from ap_coder.ai.extraction import TEXT_EXTENSIONS, ExtractionResult
 from ap_coder.ai.history import HISTORY
+from ap_coder.ai.offline_coder import renamed_from
 from ap_coder.ai.pipeline import finalise_coding
 from ap_coder.ai.suggest import suggest_gl
 from ap_coder.capture.bridge import currency_read, review_issues
@@ -726,6 +727,9 @@ def grid(reference: ReferenceData, draft: Draft, ai: dict[str, Any] | None = Non
     }
     # A PST exemption inferred when the invoice was read: picking it again later is still confirmed on review (B-723).
     inferred = {id(row): exemption_to_confirm(before) for before, row in paired if before and row}
+    # A line read as AP named it on an earlier invoice, still so: the text printed, said under it (D-120).
+    printed = {id(row): renamed_from(before.get("reasoning_justification")) for before, row in paired
+               if before and row and before.get("description") == row.get("description")}  # fmt: skip
     codes = tax_choices(draft, reference.tax)
     return {  # "guessed": an account no approval backs, marked for the reviewer to check (B-463)
         "lines": [
@@ -737,6 +741,7 @@ def grid(reference: ReferenceData, draft: Draft, ai: dict[str, Any] | None = Non
                 "tax_guess": id(row) in tax_guesses,
                 "tax_learned": tax_learned(row),  # taken from what AP approved on the vendor's similar lines (D-70)
                 "tax_inferred": inferred.get(id(row), ""),
+                "read_as": printed.get(id(row), ""),
             }
             for i, row in enumerate(draft.lines)
         ],

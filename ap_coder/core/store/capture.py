@@ -597,6 +597,46 @@ class CaptureMixin:
                 (json.dumps(list(keys)),),
             ).rowcount
 
+    # --- A supplier's line descriptions as AP approved them (D-120) ---------------------------------------------
+
+    def remember_line_texts(self, key: str, rows: list[dict[str, Any]], *, invoice_id: int | None = None) -> int:
+        """The lines of an approval of supplier ``key`` (``line_memory.observations``: {"read_key", "printed",
+        "description", "corrected"}), kept with the approval (``invoice_id``): withdrawn with it, and replaced when it
+        is learned from again. Returns how many were corrected."""
+        if not key:
+            return 0
+        at = _now()
+        with self._conn() as conn:
+            if invoice_id is not None:
+                conn.execute("DELETE FROM line_texts WHERE invoice_id = ?", (invoice_id,))
+            conn.executemany(
+                "INSERT INTO line_texts (supplier_key, read_key, printed, description, corrected, invoice_id, at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        key,
+                        r["read_key"],
+                        r.get("printed") or "",
+                        r["description"],
+                        int(bool(r.get("corrected"))),
+                        invoice_id,
+                        at,
+                    )
+                    for r in rows
+                    if r.get("read_key") and r.get("description")
+                ],
+            )
+        return sum(1 for r in rows if r.get("corrected"))
+
+    def line_texts(self, key: str, limit: int = 2000) -> list[dict[str, Any]]:
+        """Supplier ``key``'s remembered lines, newest first."""
+        if not key:
+            return []
+        with self._conn() as conn:
+            return [dict(r) for r in conn.execute(
+                "SELECT read_key, printed, description, corrected, invoice_id, at FROM line_texts "
+                "WHERE supplier_key = ? ORDER BY id DESC LIMIT ?", (key, int(limit)))]  # fmt: skip
+
     # --- Each reader against what AP approved; the page reader's queue -------------------------------------------
 
     def record_reader_outcomes(

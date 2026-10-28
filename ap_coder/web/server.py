@@ -408,6 +408,12 @@ def _stop_worker_when_asked(data: Path, token: str, parent: int) -> None:
     while True:
         time.sleep(1.0)
         if _asked_to_stop(data, token) or not _pid_alive(parent):
+            # Still running well into the time a stop is given (the server ends it at GRACEFUL_SECONDS + 5): what each
+            # of its threads is doing goes to the server's log, so a slow stop says why.
+            with contextlib.suppress(Exception):
+                import faulthandler
+
+                faulthandler.dump_traceback_later(GRACEFUL_SECONDS - 5, file=sys.stderr)
             signal.raise_signal(signal.SIGTERM)
             return
 

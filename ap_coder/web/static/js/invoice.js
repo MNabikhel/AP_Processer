@@ -182,6 +182,8 @@ document.addEventListener("input", (e) => {
   if (e.target.matches?.("textarea[data-one-line]") && /[\r\n]/.test(e.target.value)) {
     e.target.value = e.target.value.replace(/\s*[\r\n]+\s*/g, " ");
   }
+  // A description named as approved before, changed by hand: the note of what was printed no longer applies (D-120).
+  if (e.target.matches?.("textarea[name=line_description]")) e.target.closest("td")?.querySelector("[data-read-as]")?.remove();
 });
 
 if (form) {

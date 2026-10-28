@@ -228,6 +228,9 @@ class LineReading:
     # The text of the line table's tax column on this row, as printed ("G", "GP", "G R", "H", "E", "*", "exempt"): the
     # line's tax code, read with the invoice's legend (``coding.line_tax.prefill``, D-64). "" when there is none.
     tax_flags: str = ""
+    # The description as printed, when the one shown is how AP named this line on an earlier invoice of the supplier
+    # (``capture.line_memory``, D-120); "" when it is shown as read.
+    read_as: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -239,7 +242,7 @@ class LineReading:
         return cls(d.get("description") or "", d.get("quantity"), d.get("unit_price"), d.get("amount"),
                    [Box.from_list(b) for b in d.get("boxes") or []], float(d.get("score") or 0),
                    str(d.get("source") or ""), [str(s) for s in d.get("agreed") or []],
-                   str(d.get("tax_flags") or ""))  # fmt: skip
+                   str(d.get("tax_flags") or ""), str(d.get("read_as") or ""))  # fmt: skip
 
 
 @dataclass

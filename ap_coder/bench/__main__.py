@@ -78,6 +78,14 @@ def main(argv: list[str] | None = None) -> int:
         metavar="SHARE",
         help="share of invoices AP approves in bulk, untouched, when bulk approval takes them (default 0)",
     )
+    lnp = sub.add_parser("lines", help="line items: each supplier's invoices read in order, AP correcting each line")
+    lnp.add_argument("--suppliers", type=int, default=20, help="number of suppliers (default 20)")
+    lnp.add_argument("--invoices", type=int, default=12, help="invoices per supplier (default 12)")
+    lnp.add_argument("--seed", type=int, default=1, help="random seed; the same seed gives the same suppliers")
+    lnp.add_argument("--scanned", type=float, default=1.0, help="share of invoices that arrive as scans (default 1)")
+    lnp.add_argument("--out", default="bench_lines", help="output folder (default bench_lines)")
+    lnp.add_argument("--workers", type=int, default=default_workers(), help="processes (one supplier each)")
+    lnp.add_argument("--no-memory", action="store_true", help="what-if: lines shown as read every time (before D-120)")
     sp = sub.add_parser("speed", help="seconds per invoice through the app's pipeline on this computer")
     sp.add_argument("--n", type=int, default=20, help="number of invoices (default 20)")
     sp.add_argument("--seed", type=int, default=1, help="random seed; the same seed gives the same invoices")
@@ -118,6 +126,16 @@ def main(argv: list[str] | None = None) -> int:
               f"routes right {100 * (o['routes_right'] or 0):.1f}%, bank changes flagged {o['fraud_flagged']}, "
               f"non-invoices into the queue {o['into_queue_wrongly']}")  # fmt: skip
         print(f"report: {Path(a.out) / 'report.md'}")
+        return 0
+
+    if a.cmd == "lines":
+        from ap_coder.bench.lines import run_lines
+
+        s = run_lines(a.suppliers, a.invoices, a.seed, a.scanned, a.out, a.workers, a.no_memory)["summary"]
+        print(f"{s['lines']} lines: descriptions right {100 * (s['descriptions_right'] or 0):.1f}%, corrected before "
+              f"and right next time {100 * (s['corrected_before_right'] or 0):.1f}% of {s['corrected_before']}, "
+              f"GL right on items coded before {100 * (s['known_items_gl_right'] or 0):.1f}%")  # fmt: skip
+        print(f"report: {Path(a.out) / 'lines.md'}")
         return 0
 
     if a.cmd == "speed":

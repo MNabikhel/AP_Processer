@@ -171,14 +171,16 @@ class LessonsMixin:
         """What AP corrected, newest first, and whether AP Coder had it right the next time (the Learning page's
         Corrections): {invoice_id, invoice_number, vendor_name, field, pattern, proposed, value, at, reviewer, next,
         next_value, next_invoice_id, next_at}. ``next``: "right" (the next approval of the same situation kept what was
-        proposed), "again" (AP corrected it again) or "" (not seen since). From what the store keeps, two queries:
+        proposed), "again" (AP corrected it again) or "" (not seen since). From what the store keeps, three queries:
 
         * the lessons' approvals (``lesson_approvals``): an invoice's header fields and its lines' GL account and cost
           center (per kind of line, ``lessons.line_pattern``), what was proposed and what AP approved; the next
           approval of the same situation says whether it was right;
         * the line tax codes AP changed (``feedback.tax_source`` "picked", field ``tax_code``), what was proposed from
           the approval's audit event (``diff_coding``), the next approval of the same vendor's line (the same words)
-          whether AP had to pick it again.
+          whether AP had to pick it again;
+        * the line descriptions AP corrected (``line_texts``, field ``line_description``, D-120): the text as read and
+          as approved; the next approval of the supplier's line read the same way whether AP had to correct it again.
 
         A guess of the AI changed or a blank filled in is no correction (the lessons and the accuracy leave them out);
         an approval withdrawn (the invoice reopened) or a line forgotten is not listed."""
@@ -214,7 +216,26 @@ class LessonsMixin:
                    WHERE proposed IS NOT NULL""",
                 (limit,),
             ).fetchall()
+            # A line's description AP corrected (D-120): the next approval of the supplier's line read the same way.
+            texts = conn.execute(
+                """SELECT t.invoice_id, t.printed, t.description, t.at, i.vendor_name, i.invoice_number, i.reviewer,
+                          n.corrected next_corrected, n.description next_value, n.invoice_id next_invoice_id,
+                          n.at next_at
+                   FROM line_texts t LEFT JOIN invoices i ON i.id = t.invoice_id
+                   LEFT JOIN line_texts n ON n.id = (SELECT m.id FROM line_texts m WHERE m.supplier_key =
+                       t.supplier_key AND m.read_key = t.read_key AND m.id > t.id AND m.invoice_id IS NOT t.invoice_id
+                       ORDER BY m.id LIMIT 1)
+                   WHERE t.corrected = 1 AND t.invoice_id IS NOT NULL ORDER BY t.id DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
         out = []
+        for r in texts:
+            following = "" if r["next_corrected"] is None else "again" if r["next_corrected"] else "right"
+            out.append({"invoice_id": r["invoice_id"], "invoice_number": r["invoice_number"] or "",
+                        "vendor_name": r["vendor_name"] or "", "field": "line_description", "pattern": "",
+                        "proposed": r["printed"], "value": r["description"], "at": r["at"],
+                        "reviewer": r["reviewer"] or "", "next": following, "next_value": r["next_value"] or "",
+                        "next_invoice_id": r["next_invoice_id"], "next_at": r["next_at"] or ""})  # fmt: skip
         for r in fields:
             shown = mask_account if r["field"] == "remit_bank_account" else str  # never the whole account number
             following = "" if r["next_corrected"] is None else "again" if r["next_corrected"] else "right"

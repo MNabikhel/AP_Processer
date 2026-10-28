@@ -23,7 +23,7 @@ from ..capture.bridge import vendor_record
 from ..capture.confidence import apply_supplier_record, reading_confidence
 from ..capture.reader import us_address
 from ..capture.types import LIKELY, VERIFIED, CaptureResult, DocLayout, Line
-from ..capture.workflow import apply_vendor_alias, local_evidence, supplier_for, supplier_record
+from ..capture.workflow import apply_line_memory, apply_vendor_alias, local_evidence, supplier_for, supplier_record
 from ..coding.tax import OUTSIDE_CANADA, TaxRateTable
 from ..coding.vendors import bank_digit_count, cut_bank_details
 from ..core.memory import vendor_key
@@ -43,6 +43,15 @@ WEAK_MATCH = "A weak match, for a person to confirm"
 # A line's account that no approval backs (the chat model's own pick, or an older weak match): a guess for a person to
 # check. Marked on the review screen, and a guess kept is the reviewer's coding, not "coded as suggested" (B-463).
 GUESSED = (MODEL_SUGGESTED, WEAK_MATCH)
+
+
+RENAMED = "described as AP approved it on an earlier invoice"  # a line read as AP named it before (D-120)
+
+
+def renamed_from(reason: Any) -> str:
+    """The text printed on a line its reasoning says was described as AP approved it before (``RENAMED``), else ""."""
+    match = re.search(re.escape(RENAMED) + r" \(read “(.*)”\)", str(reason or ""))
+    return match.group(1) if match else ""
 
 
 def guessed(reason: Any) -> bool:
@@ -111,6 +120,7 @@ def read_invoice(path: str | Path, store: Any = None, layout: DocLayout | None =
     if template:  # a verified value its template read: as sure as this supplier's record of it (D-89)
         apply_supplier_record(capture.fields, supplier_record(store, key))
     apply_vendor_alias(store, capture)  # a vendor name read as AP corrected it before (D-119)
+    apply_line_memory(store, capture)  # its lines read as AP named them before (D-120)
     return capture, key, profile
 
 
@@ -429,6 +439,8 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
         ]  # fmt: skip
     # The tax-code cell printed on each line ("G R", "E"), read with the invoice's legend below (D-64).
     flags = [li.tax_flags for li in readings] if readings else [""]
+    # A line read as AP named it on an earlier invoice of the supplier: the text printed, said in its reasoning (D-120).
+    printed_as = [li.read_as for li in readings]
     # A credit note that prints its lines without a sign but its subtotal negative: the lines are the credit (their
     # sum is minus the subtotal), not lines owed with a charge twice their size taking them back. The quantity
     # keeps its sign and the unit price carries the credit's, as the reader codes a credit's line.
@@ -457,6 +469,8 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
         if top is not None and best is None:
             hints[number] = top.gl_code
         why = "; ".join(best.reasons) if best else not_sure(top) if top is not None else NO_HISTORY
+        if number <= len(printed_as) and printed_as[number - 1]:
+            why = f"{why}; {RENAMED} (read “{printed_as[number - 1]}”)"
         lines.append(
             LineItem(
                 line_number=number,
