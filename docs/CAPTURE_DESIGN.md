@@ -397,7 +397,13 @@ approval), and the autonomy policy is applied: with touchless processing on, a s
 as soon as it meets the bar (`automatic_transition`, as the app applies it). The
 report gives accuracy by invoice position (against the same invoices read without a template), when
 each supplier would reach the policy, and after that the touchless share and its errors.
-`--ignore-check CODE` is a what-if: a failed check with that code does not hold an invoice back.
+`--ignore-check CODE` is a what-if: a failed check with that code does not hold an invoice back. Each approval goes
+through the app's own `learn_from_approval` (outcomes, reader scores, template, lessons, a vendor name corrected), and
+the report says how many fields AP corrected were right on the supplier's next invoice ("wrong this time, right next
+time") and which invoices would have gone touchless with a wrong field ("eligible but wrong"), by position. Two in
+twenty suppliers print a name that reads wrong and no GST/HST number (`misread_name`). `--wrong-approval N` has the
+clerk teach the invoice number on the date's words on invoice N, withdrawn before the next invoice (or with
+`--withdraw-after K` once K more were approved); `--bulk SHARE` approves that share of invoices in bulk, as proposed.
 
 GL coding without an AI model has its own benchmark, `python -m ap_coder.bench coding`: see
 [CODING.md](CODING.md).
@@ -440,7 +446,15 @@ Automation):
 - **Training, visible**: every approval records, field by field, what the clerk corrected; the review screen says what
   was learned ("Learned from your 2 corrections (invoice number, due date). Acme Ltd: 14 invoices reviewed, about 6
   more invoices approved without a correction before this vendor can skip review."), and the Learning page shows each vendor's progress. A bulk approval (nobody
-  opened the invoice) teaches the template, but only its corrections count towards the bar.
+  opened the invoice) shows the template where each field is printed, but vouches for no spot: only a person's
+  approval settles one, and only its corrections count towards the bar (D-119).
+- **Wrong this time, right next time** (D-119): a vendor name AP corrects (read "N0rthwind Supp1y", approved as
+  Northwind Supply) is remembered with that approval (`vendor_aliases`, `Store.vendor_alias`): the next invoice that
+  reads so is that vendor's, under its name, with its template, vendor master record, coding memory and lessons; the
+  name is *likely* until AP has approved it so twice. Only a name that looks like the one read is remembered (not the
+  customer's name read as the vendor's), and not for an invoice whose GST/HST number is another's. Withdrawing an
+  approval takes back what it taught even after a later approval changed the template: the template is learned again
+  from the later approvals (their pages read again, text layers only; a scan's is kept as it is).
 - **Upgrading**: vendors an AP lead turned touchless by hand before keep their state but are not touchless while the
   switch is off. When it is turned on, those that meet the standard bar stay touchless; any that do not go back to
   review until they do.
