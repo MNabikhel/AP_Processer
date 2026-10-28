@@ -177,14 +177,21 @@ def test_no_history_conflict_once_ap_has_confirmed_a_recode(ground_truth):
     assert old["status"] == "conflict" and old["history_gl"] == "1500"
 
 
-def test_a_single_correction_or_a_kept_guess_still_warns(ground_truth):
+def test_a_single_correction_against_many_approvals_still_warns(ground_truth):
     """A single correction against twelve approvals may be a slip (it looks the same as a change of mind until the
-    next decision), and a guess kept on another account changes nothing: the old account still stands."""
+    next decision): the old account still stands, as ``suggest_gl`` leaves the line for AP. So do two slips in a row
+    (they reverse eleven decisions between them). A guess kept on another account is learned like any approval
+    (D-58), and the line is coded with it next time: the history check agrees (D-118)."""
     old = [_row("Northwind IT Solutions Inc.", LAPTOP, "6010") for _ in range(12)]
-    for latest in (_row("Northwind IT Solutions Inc.", LAPTOP, "6000", outcome=CORRECTED, suggested="6010"),
-                   _row("Northwind IT Solutions Inc.", LAPTOP, "6000", outcome=CODED)):  # fmt: skip
-        slip = _laptop([latest, *old], ground_truth, "6000")
+    vendor = "Northwind IT Solutions Inc."
+    for latest in ([_row(vendor, LAPTOP, "6000", outcome=CORRECTED, suggested="6010")],
+                   [_row(vendor, LAPTOP, "6000", outcome=CORRECTED, suggested="6020"),
+                    _row(vendor, LAPTOP, "6020", outcome=CORRECTED, suggested="6010")]):  # fmt: skip
+        slip = _laptop([*latest, *old], ground_truth, "6000")
         assert slip["status"] == "conflict" and slip["history_gl"] == "6010"
+    kept = [_row("Northwind IT Solutions Inc.", LAPTOP, "6000", outcome=CODED), *old]
+    assert all(h["status"] == "match" for h in compare_with_history(_laptop_coded(ground_truth, "6000"), kept)
+               if h["line_number"] == 1)  # fmt: skip
     fixed = [_row("Northwind IT Solutions Inc.", LAPTOP, "6010", outcome=CORRECTED, suggested="6000"),
              _row("Northwind IT Solutions Inc.", LAPTOP, "6000", outcome=CORRECTED, suggested="6010")]  # fmt: skip
     fixed += old
@@ -367,3 +374,28 @@ def test_share_report_from_dashboard_database_is_redacted(tmp_path, ground_truth
     for secret in ("Northwind", "northwind", "NW-2026", "18017", "Latitude", "6010", "6000"):
         assert secret not in text, secret
     assert "6010 -> 6000 x1" in build_share_report(tmp_path / "x", include_codes=True, db_path=tmp_path / "ap.db")
+
+
+def test_no_false_alarm_on_the_line_ap_just_recoded(ground_truth):
+    """Four approvals of 6010, then AP corrects the laptop to 1500 once: the next invoice is coded 1500
+    (``suggest_gl``: the latest decision wins), and the history check agrees with it instead of warning that
+    reviewers coded it to 6010 (B-1420). One rule for both (``memory.latest_decision``, D-118)."""
+    rows = [_row("Northwind IT Solutions Inc.", LAPTOP, "1500", outcome=CORRECTED, suggested="6010")]
+    rows += [_row("Northwind IT Solutions Inc.", LAPTOP, "6010") for _ in range(4)]
+    assert _laptop(rows, ground_truth, "1500")["status"] == "match"
+    assert _laptop(rows, ground_truth, "6010")["status"] == "conflict"
+
+
+def test_suggest_and_the_history_check_follow_one_rule(ground_truth, reference):
+    """For any run of approvals before a single correction, the line is coded with the new account exactly when the
+    history check takes it as the line's account: no warning on a line coded as AP just taught."""
+    from ap_coder.ai.suggest import suggest_gl
+    from ap_coder.core.memory import UNCONFIRMED_REVERSAL
+
+    for before in range(1, UNCONFIRMED_REVERSAL + 3):
+        rows = [_row("Northwind IT Solutions Inc.", LAPTOP, "6020", outcome=CORRECTED, suggested="6010")]
+        rows += [_row("Northwind IT Solutions Inc.", LAPTOP, "6010") for _ in range(before)]
+        top = suggest_gl(LAPTOP, "Northwind IT Solutions Inc.", rows, reference)[0]
+        coded = top.auto and top.gl_code == "6020"
+        warned = _laptop(rows, ground_truth, "6020")["status"] == "conflict"
+        assert coded == (before < UNCONFIRMED_REVERSAL) and warned == (not coded), before

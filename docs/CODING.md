@@ -69,13 +69,22 @@ toward the vendor's usual account: both accounts are suggested and the line says
 in. A slip (the wrong account picked once) and a change of mind look the same until then, and a slip filled in
 again on every later invoice is the most common wrong account on the realistic benchmark.
 
-The check *reviewers coded similar lines from this vendor to GL ...* and the examples of AP's coding shown to the
-local chat model follow the same rule (`memory.current`): once a correction is confirmed by one more decision for
-the new account (whatever its outcome: filling in a line left blank is recorded as a correction), the older
-decisions for another account on that line no longer count (B-601, B-605). Each line is its own: recoding the
-laptops leaves the batteries' history as it was (B-602). Before, they counted forever: after twelve approvals,
-a recode warned on about fifty more lines. A single correction still counts as one vote among the older ones, so
-a slip still warns.
+The check *reviewers coded similar lines from this vendor to GL ...*, the examples of AP's coding shown to the
+local chat model (`memory.current`) and the line tax codes learned from approvals (`line_tax.learned_codes`)
+follow the same rule, written once (`memory.latest_decision`, D-118): the latest decision on a line is the one
+that counts, and the older decisions for another account on that line no longer do, unless it is a single
+correction against 5 decisions or more (counted back to the line's last decision for the new account: two slips
+in a row against ten approvals reverse eleven). Then they all count, the line is left for AP and the check warns.
+Before, the check counted the old account until a second decision confirmed the new one: after four approvals
+and one correction the next invoice was coded with the new account and warned that reviewers used the old one
+(B-1420). Each line is its own: recoding the laptops leaves the batteries' history as it was (B-602).
+
+A line's tax code learned from approvals follows AP the same way, with one more decision asked for: a code AP
+picked against the line's older approvals is learned once one more approval agrees (`line_tax.TAX_REVERSAL`).
+Until then the line is worked out from the tax charged, as without learning. Before, one different code on a line
+blocked its learned code for good (B-1421). A tax slip learned at once costs more than a slip of the account: the
+learned code then disagrees with the tax charged, and every learned code of that invoice is dropped for a person
+to check.
 
 A guess of the local chat model that the reviewer kept is learned like any approval. Making such lines wait for
 a second decision was tried and left out: it cost more right accounts than it saved wrong ones (D-58).
@@ -129,7 +138,11 @@ The report (`report.md`, `report.json`, and every line in `lines.jsonl`) gives:
   vendor in the same words, in other words, only for other vendors, never), by language, by vendor, and by where
   the account came from;
 - the *reviewers coded similar lines ... to GL* warning (HISTORY_CONFLICT) on the lines that had an account (the
-  proposal, or the chat model's guess): false alarms on a right account, and the wrong accounts it caught.
+  proposal, or the chat model's guess): false alarms on a right account, and the wrong accounts it caught;
+- *wrong this time, right next time* (`next_time`): for every line AP changed (the account approved is not the
+  one proposed), the next line of the same vendor and item on a later invoice: right (*fixed next time*), or the
+  slip filled in again; the warning on those next lines; and after AP changed a line's tax code, the next line's
+  code proposed for sure (coverage) and right (precision).
 
 A 30 × 30 run takes about two minutes on a laptop.
 
@@ -227,6 +240,26 @@ On the default run, which has no mistakes, nothing changes but the first spare p
 checked once by a person (accuracy 0.1 point lower, no wrong account more). Of the wrong accounts left on the
 realistic run, most are the split maintenance contract (92: about half its lines; the words cannot tell) and
 slips confirmed by nobody yet.
+
+## One rule for a change of mind: before and after (D-118)
+
+*Before*: commit e11d9bb. *After*: the rule above (`memory.latest_decision`). Seed 1, 30 vendors × 30 invoices
+(`python -m ap_coder.bench coding [--realistic]`).
+
+| | default: before | default: after | realistic: before | realistic: after |
+|---|---:|---:|---:|---:|
+| GL accuracy | 96.1% | 96.1% | 93.8% | 93.8% |
+| GL precision | 99.6% | 99.6% | 98.2% | 98.2% |
+| fixed next time (AP's change right on the next line) | 85.6% | 85.6% | 89.0% | 89.0% |
+| HISTORY_CONFLICT false alarms (after a change) | 1 (0) | 1 (0) | 9 (5) | 6 (3) |
+| wrong accounts caught by it | 0 of 8 | 0 of 8 | 20 of 69 | 18 of 69 |
+| tax codes: precision / coverage | 97.8% / 97.1% | 97.8% / 97.1% | 95.2% / 94.3% | 97.4% / 94.7% |
+| tax codes wrong | 49 | 49 | 105 | 58 |
+| next line's tax code after AP changed one: sure / right | 84.5% / 100% | 84.5% / 100% | 87.4% / 58.3% | 88.9% / 90.6% |
+
+The default run has no reviewer mistakes: nothing changes. On the realistic one the warning no longer fires on a
+line coded as AP just taught it, and two slips filled in again (the same before and after) are no longer warned
+about: a slip and a change of mind look the same until AP decides again. Tax codes recover after a change.
 
 ## Speed with a long history
 

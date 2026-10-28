@@ -732,6 +732,54 @@ def history_warnings(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def next_time(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Wrong this time, right next time: for every line AP changed (the account approved is not the one proposed),
+    the next line of the same vendor and item on a later invoice. *Recoded*: AP changed an account proposed; *filled
+    in*: the line was left blank. A change AP got right is *fixed next time* when that next line has the right account
+    filled in; a slip (an account approved by mistake) is *repeated* when the next line has the slip's account. Then
+    the HISTORY_CONFLICT warning on those next lines (a false alarm on a right account, a wrong one caught), and the
+    tax codes of the next line after AP changed a line's tax code: proposed for sure (coverage), and right (precision);
+    learned from past approvals and right."""
+    last: dict[tuple[str, str], dict[str, Any]] = {}  # vendor + item -> its latest line
+    out: dict[str, Any] = {"recoded": 0, "recoded_fixed": 0, "filled_in": 0, "filled_in_fixed": 0, "slips": 0,
+                           "slips_repeated": 0, "after_change": 0, "false_alarms": 0, "wrong": 0, "caught": 0,
+                           "tax_changed": 0, "tax_sure": 0, "tax_sure_right": 0, "tax_learned": 0,
+                           "tax_learned_right": 0}  # fmt: skip
+    for r in rows:
+        key = (r["vendor"], r["item"])
+        before = last.get(key)
+        if before is not None and before["invoice"] < r["invoice"]:
+            approved = before.get("approved", before["truth"])
+            if approved != before["proposed"]:
+                in_line = r.get("in_line", r["proposed"])
+                if approved == before["truth"]:
+                    kind = "recoded" if before["proposed"] != "UNASSIGNED" else "filled_in"
+                    out[kind] += 1
+                    out[f"{kind}_fixed"] += r["proposed"] == r["truth"]
+                else:
+                    out["slips"] += 1
+                    out["slips_repeated"] += r["proposed"] == approved
+                if in_line != "UNASSIGNED":
+                    out["after_change"] += 1
+                    if in_line == r["truth"]:
+                        out["false_alarms"] += bool(r.get("warned"))
+                    else:
+                        out["wrong"] += 1
+                        out["caught"] += bool(r.get("warned"))
+            if before.get("approved_tax", before["tax_truth"]) != before["tax_proposed"]:
+                out["tax_changed"] += 1
+                out["tax_sure"] += bool(r.get("tax_sure"))
+                out["tax_sure_right"] += bool(r.get("tax_sure")) and r["tax_proposed"] == r["tax_truth"]
+                out["tax_learned"] += bool(r.get("tax_learned"))
+                out["tax_learned_right"] += bool(r.get("tax_learned")) and r["tax_proposed"] == r["tax_truth"]
+        last[key] = r
+    fixes = out["recoded"] + out["filled_in"]
+    out["fixed_next_time"] = _ratio(out["recoded_fixed"] + out["filled_in_fixed"], fixes)
+    out["tax_coverage"] = _ratio(out["tax_sure"], out["tax_changed"])
+    out["tax_precision"] = _ratio(out["tax_sure_right"], out["tax_sure"])
+    return out
+
+
 def tax_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Line tax codes: *precision*, the codes proposed for sure (``tax_sure``) that were right; *coverage*, the share
     of lines with a code proposed for sure (the others wait for a person: worked out from several possible sets of
@@ -805,6 +853,7 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "recoded": line_stats([r for r in rows if r["recoded"]]),
         "split": line_stats([r for r in rows if r.get("split")]),
         "history_warnings": history_warnings(rows),
+        "next_time": next_time(rows),
         "tax_codes": tax_stats(rows),
         "tax_codes_by_column": _tax_split(rows),
         "lessons": lesson_stats(rows),
@@ -904,6 +953,29 @@ def render_markdown(report: dict[str, Any]) -> str:
             f"that had an account: {hw['false_alarms']} false alarms on a right account "
             f"({hw['false_alarms_after_recode']} of them after AP recoded spare parts); it caught {hw['caught']} "
             f"of the {hw['wrong']} wrong accounts.\n"
+        )
+    nt = s.get("next_time") or {}
+    if nt.get("recoded") or nt.get("filled_in") or nt.get("slips") or nt.get("tax_changed"):
+        out.append("## Wrong this time, right next time\n")
+        out.append(
+            "Each line AP changed (the account approved is not the one proposed), and the next line of the same "
+            "vendor and item on a later invoice.\n"
+        )
+        out.append(_table(
+            ["AP changed", "lines", "right next time"],
+            [["an account proposed", nt["recoded"], nt["recoded_fixed"]],
+             ["a line left blank", nt["filled_in"], nt["filled_in_fixed"]],
+             ["by mistake (the slip filled in again)", nt["slips"], nt["slips_repeated"]]],
+        ))  # fmt: skip
+        out.append(
+            f"Fixed next time: {_pct(nt['fixed_next_time'])}. The HISTORY_CONFLICT warning on the {nt['after_change']} "
+            f"next lines that had an account: {nt['false_alarms']} false alarms on a right account; it caught "
+            f"{nt['caught']} of the {nt['wrong']} wrong accounts.\n"
+        )
+        out.append(
+            f"After AP changed a line's tax code ({nt['tax_changed']} lines): the next line's code proposed for sure "
+            f"on {_pct(nt['tax_coverage'])}, right on {_pct(nt['tax_precision'])} of those; learned from past "
+            f"approvals on {nt['tax_learned']}, {nt['tax_learned_right']} right.\n"
         )
     tc = s.get("tax_codes") or {}
     if tc.get("lines"):

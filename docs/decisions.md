@@ -1418,3 +1418,24 @@ that is reversed keeps its line, marked "replaced by D-NN".
   files, many named after the round that wrote them (sweep4, review2), sent an agent through several files to find one
   subject's tests, and the whole suite took 18 minutes on Linux, most of it rebuilding the same demo.
   (`tests/conftest.py`, `scripts/check.py`)
+- **D-118** · **One rule for "AP changed its mind"**, written once (`memory.latest_decision`) and used by the GL
+  suggestions (`suggest`), the history check and the chat model's examples (`memory.current`) and the line tax codes
+  learned from approvals (`line_tax.learned_codes`): the latest decision on a line counts and the older ones for
+  another value no longer do, unless it is a single correction against 5 decisions or more (counted back to the
+  line's last decision for the new value, so two slips in a row reverse the whole run). Why: the suggestions coded
+  the new account after one correction while the history check kept counting the old one until a second decision
+  (after 4 approvals and a correction, the next invoice was coded right and warned, B-1420), and a line's tax code
+  never recovered from one contradiction (B-1421). A kept guess of the chat model is an approval like any (D-58):
+  it supersedes too, and the check no longer warns on the line coded with it. Line tax codes ask for one more
+  decision whatever the run (`TAX_REVERSAL` = 1): a tax slip learned at once disagrees with the tax charged and
+  `prefill` then drops every learned code of the invoice (measured: learned at once, realistic tax accuracy 89.8% →
+  85.4%; with one more decision, 92.2%). Measured on `bench coding` seed 1 (docs/CODING.md): default run unchanged;
+  realistic run, GL accuracy unchanged (93.8%), false alarms 9 → 6, wrong accounts caught 20 → 18 (two slips filled
+  in again, before and after, now without the warning: the price of not warning on a recode), tax codes wrong 105 →
+  58. Also: forgetting a coding-memory line withdraws the line lessons its approval taught (B-1422), and the
+  Learning page starts with **Corrections**: each correction AP made (an invoice's field, a line's GL account, cost
+  center or tax code), proposed → approved, and whether AP Coder had it right the next time, from the lessons'
+  approvals and the feedback rows already kept (`Store.corrections`, two queries; no new data collected). The
+  benchmark measures *wrong this time, right next time* (`bench.coding.next_time`). (`core/memory.py`,
+  `ai/suggest.py`, `coding/line_tax.py`, `core/store/lessons.py`, `core/store/learning.py`, `web/pages/learning.py`,
+  `bench/coding.py`)

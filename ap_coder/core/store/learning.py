@@ -138,10 +138,32 @@ class LearningMixin:
             return count
 
     def delete_feedback(self, ids: list[int], actor: str | None = None) -> int:
+        """Forget lines of the coding memory (Learning → Coding memory). What each line's approval taught the lessons
+        for lines like it (its GL account and cost center lessons, ``lessons.LINE_FIELDS``) is withdrawn with it, once
+        no line of that kind is left on that invoice (B-1422): a forgotten line is no hint and reaches no AI."""
+        from ...ai.lessons import LINE_FIELDS, line_pattern
+
         with self._conn() as conn:
+            gone = conn.execute(
+                "SELECT invoice_id, description FROM feedback WHERE invoice_id IS NOT NULL AND id IN "
+                "(SELECT value FROM json_each(?))", (json.dumps([int(i) for i in ids]),)
+            ).fetchall()  # fmt: skip
             cur = conn.executemany("DELETE FROM feedback WHERE id = ?", [(i,) for i in ids])
+            withdrawn = 0
+            for invoice_id, pattern in {(r["invoice_id"], line_pattern(r["description"])) for r in gone}:
+                left = conn.execute("SELECT description FROM feedback WHERE invoice_id = ?", (invoice_id,)).fetchall()
+                if not pattern or any(line_pattern(r["description"]) == pattern for r in left):
+                    continue  # another line like it is still in the memory: its lesson still stands
+                situations = conn.execute(
+                    "SELECT a.situation FROM lesson_approvals a JOIN lessons l ON l.situation = a.situation "
+                    "WHERE a.invoice_id = ? AND l.field IN (?, ?) AND l.pattern = ?",
+                    (invoice_id, *LINE_FIELDS, pattern),
+                ).fetchall()  # fmt: skip
+                for (situation,) in situations:
+                    self._withdraw_lessons(conn, invoice_id, situation)
+                    withdrawn += 1
             if ids:
-                self._log(conn, "lessons_forgotten", actor=actor, detail={"count": len(ids)})
+                self._log(conn, "lessons_forgotten", actor=actor, detail={"count": len(ids), "lessons": withdrawn})
             return cur.rowcount
 
     def metrics(self) -> dict[str, Any]:
