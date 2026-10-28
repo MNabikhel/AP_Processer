@@ -526,7 +526,9 @@ def load_reader(settings: Settings, model: str | None = None) -> str:
     and its reading need (OvisOCR2: 20,480 tokens) before pages are read: one LM Studio loads on its own when first
     asked gets its default context, too short for a page. Already loaded with at least that context: nothing to do.
     Loaded shorter: loaded again longer, the short instance unloaded once the long one is in. Only LM Studio loads
-    models when asked, and a general model (no context of its own) is left as LM Studio has it.
+    models when asked, and a general model (no context of its own) is left as LM Studio has it. Loaded with flash
+    attention on: with LM Studio's default (off) OvisOCR2's server went from 1.3 to 8.9 GB reading one page and kept
+    it, with it on 1.8 GB, the same text, 43% sooner (B-1413).
 
     Returns "" or what went wrong (LM Studio's reason: not enough memory, say). A failure is remembered for half an
     hour so a computer without the memory isn't asked before every page (``forget_reader_failures``)."""
@@ -559,9 +561,14 @@ def load_reader(settings: Settings, model: str | None = None) -> str:
         root = local_llm._root(reader_base_url(settings))
         api_key = settings.llm.api_key
         started = time.monotonic()
+        body = {"model": found.key, "context_length": reader.context}
         try:
-            _post_json(root + "/api/v1/models/load", {"model": found.key, "context_length": reader.context}, api_key,
-                       LOAD_TIMEOUT)  # fmt: skip
+            try:
+                _post_json(root + "/api/v1/models/load", {**body, "flash_attention": True}, api_key, LOAD_TIMEOUT)
+            except PageReaderError as exc:
+                if "flash" not in str(exc).lower():
+                    raise
+                _post_json(root + "/api/v1/models/load", body, api_key, LOAD_TIMEOUT)  # an LM Studio without it
         except PageReaderError as exc:
             problem = f"LM Studio couldn't load {name} with a {reader.context:,}-token context ({exc})."
             _load_failures[found.key] = (time.monotonic(), problem)

@@ -282,6 +282,16 @@ that is reversed keeps its line, marked "replaced by D-NN".
   twice, one page made a spot learned unsettled "two approvals in a row" and vouched for, and the template read the
   invoice date as the due date on the next invoice (B-454; D-46 counts approvals in a row).
   (`ap_coder/capture/supplier.py` `learn`, `Template.documents`; `ap_coder/capture/workflow.py` `learn_from_approval`)
+- **D-117** · AP Coder asks LM Studio for what a 16 GB laptop holds, measured on the real models (LM Studio's
+  headless server, OvisOCR2 Q8_0 and Gemma 4 12B QAT, on a CPU): it loads OvisOCR2 with flash attention (1.8 GB
+  reading a page instead of 8.9 GB kept while loaded, the same text, 6 minutes instead of 11; loaded without it on an
+  LM Studio that refuses the setting), and sends a chat model page images of at most a million pixels, since Gemma 4
+  must take each picture in one batch (512 tokens in LM Studio) and stopped its model server on a letter page at
+  150 dpi (about 925 tokens). Why: a laptop's own LM Studio settings aren't AP Coder's to change, and a chat model
+  loaded by the pilot tester or CloseDesk is never reloaded (docs/LM_STUDIO.md, Limits); the image size is AP
+  Coder's own. At a million pixels Gemma 4 read the same header right, sooner; Azure OpenAI shrinks a page to about
+  that size itself.
+  (`ap_coder/ai/page_reader.py` `load_reader`, `ap_coder/ai/imaging.py` `MAX_PIXELS`; docs/BUGS.md B-1413, B-1414)
 
 ## Tax, coding and learning
 

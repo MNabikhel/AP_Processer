@@ -120,7 +120,7 @@ def page_pngs(path: str | Path, max_pages: int = MAX_PAGES) -> list[bytes]:
 
     path = Path(path)
     out = []
-    for page in render_page_images(path, max_pages):
+    for page in render_page_images(path, max_pages, max_pixels=None):  # sized here (MAX_SIDE)
         with Image.open(io.BytesIO(page.data), formats=picture_formats()) as img:
             upright = img.getexif().get(0x0112, 1) in (0, 1)  # EXIF orientation: a phone photo may be turned
             if page.mime_type == "image/png" and upright and max(img.size) <= MAX_SIDE:

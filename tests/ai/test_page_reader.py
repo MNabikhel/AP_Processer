@@ -112,6 +112,7 @@ def serve(monkeypatch):
 
 class Posts(list):
     fail = None  # LM Studio's reason for refusing to load, when it does
+    no_flash = None  # an LM Studio that refuses the flash attention setting: its reason
 
 
 @pytest.fixture
@@ -124,6 +125,8 @@ def posts(monkeypatch):
         sent.append((path, body))
         if path.endswith("/load") and sent.fail:
             raise PageReaderError(sent.fail)
+        if path.endswith("/load") and sent.no_flash and "flash_attention" in body:
+            raise PageReaderError(sent.no_flash)
         return {"status": "loaded"}
 
     monkeypatch.setattr(page_reader, "_post_json", post)
@@ -337,6 +340,9 @@ def test_the_page_reader_can_have_its_own_server(serve):
 # --- Loading it in LM Studio ------------------------------------------------------------------------------------
 
 
+LOAD = {"model": OVIS_KEY, "context_length": 20480, "flash_attention": True}
+
+
 def test_load_does_nothing_when_loaded_with_enough_context(serve, posts):
     serve({"/v1/models": REAL_IDS, "/api/v1/models": REAL_V1})
     assert page_reader.load_reader(Settings()) == ""
@@ -348,7 +354,7 @@ def test_load_longer_then_unload_the_short_one(serve, posts):
     serve(lm_studio(v1_model(OVIS_KEY, loaded=4096)))
     assert page_reader.load_reader(Settings(), OVIS_KEY) == ""
     assert posts == [
-        ("/api/v1/models/load", {"model": OVIS_KEY, "context_length": 20480}),
+        ("/api/v1/models/load", LOAD),
         ("/api/v1/models/unload", {"instance_id": OVIS_KEY}),
     ]
 
@@ -356,7 +362,7 @@ def test_load_longer_then_unload_the_short_one(serve, posts):
 def test_load_a_downloaded_reader(serve, posts):
     serve(lm_studio(v1_model(OVIS_KEY)))
     assert page_reader.load_reader(Settings()) == ""
-    assert posts == [("/api/v1/models/load", {"model": OVIS_KEY, "context_length": 20480})]
+    assert posts == [("/api/v1/models/load", LOAD)]
 
 
 def test_a_failed_load_is_remembered(serve, posts):
@@ -377,6 +383,25 @@ def test_a_failed_load_is_remembered(serve, posts):
     assert page_reader.load_reader(Settings(), OVIS_KEY) == ""
     assert len(posts) == 2
     assert page_reader.reader_status(Settings()).model == OVIS_KEY
+
+
+def test_the_reader_is_loaded_with_flash_attention(serve, posts):
+    """LM Studio's default (off) took OvisOCR2's server from 1.3 to 8.9 GB reading one page, and kept it: with Gemma 4
+    12B loaded too, more than 16 GB. With it on, 1.8 GB, the same text, 43% sooner (B-1413)."""
+    serve(lm_studio(v1_model(OVIS_KEY)))
+    assert page_reader.load_reader(Settings(), OVIS_KEY) == ""
+    assert posts == [("/api/v1/models/load", {"model": OVIS_KEY, "context_length": 20480, "flash_attention": True})]
+
+
+def test_an_lm_studio_that_refuses_flash_attention_loads_it_without(serve, posts):
+    serve(lm_studio(v1_model(OVIS_KEY)))
+    posts.no_flash = "Unrecognized key(s) in object: 'flash_attention'"
+    assert page_reader.load_reader(Settings(), OVIS_KEY) == ""
+    assert posts == [
+        ("/api/v1/models/load", LOAD),
+        ("/api/v1/models/load", {"model": OVIS_KEY, "context_length": 20480}),
+    ]
+    assert page_reader.reader_load_problem(OVIS_KEY) == ""
 
 
 def test_load_leaves_general_models_and_other_servers_alone(serve, posts):
@@ -1018,7 +1043,7 @@ def test_load_a_chat_model_from_settings(serve, posts):
     # memory, never two loaded with different settings.
     assert posts[-1] == ("/api/v1/models/load", {"model": "qwen2.5-7b-instruct", "context_length": 16384})
     assert page_reader.load_model(Settings(), OVIS_KEY) == ""  # the page reader: with the context a page needs
-    assert posts[-1] == ("/api/v1/models/load", {"model": OVIS_KEY, "context_length": 20480})
+    assert posts[-1] == ("/api/v1/models/load", LOAD)
     assert "doesn't have" in page_reader.load_model(Settings(), "missing-model")
 
 
