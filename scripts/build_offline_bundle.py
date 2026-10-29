@@ -49,6 +49,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import check_deps  # noqa: E402
 from check_deps import requirement_name, tomllib  # noqa: E402  (tomllib, or pip's copy on Python 3.10)
 
 # Where the build downloads from (for IT's firewall rules): pip's index and its files, then the OCR models' site.
@@ -83,11 +84,7 @@ def project() -> dict:
 
 
 def requirements(extras: list[str]) -> list[str]:
-    proj = project()
-    reqs = list(proj["dependencies"])
-    for extra in extras:
-        reqs += proj.get("optional-dependencies", {}).get(extra, [])
-    return list(dict.fromkeys(reqs + BUILD_TOOLS))
+    return list(dict.fromkeys(check_deps.requirements(extras=extras) + BUILD_TOOLS))
 
 
 def excluded(rel: Path) -> bool:

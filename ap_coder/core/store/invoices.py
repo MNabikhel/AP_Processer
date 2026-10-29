@@ -60,8 +60,8 @@ class InvoicesMixin:
         error: str | None = None,
         original_sha256: str | None = None,
     ) -> int:
-        """``original_sha256``: the SHA-256 of the picture this PDF was made from (``intake.py``), so the same photo
-        sent again is found as this invoice (``find_by_hash``)."""
+        """``original_sha256``: the SHA-256 of the picture this PDF was made from (``intake/pictures.py``), so the same
+        photo sent again is found as this invoice (``find_by_hash``)."""
         source_path = Path(source_path)
         sha = hashlib.sha256(source_path.read_bytes()).hexdigest() if source_path.exists() else None
         out = output or {}

@@ -34,14 +34,6 @@ def luhn_check_digit(digits: str) -> int:
     return (10 - total % 10) % 10
 
 
-def luhn_valid(number: str) -> bool:
-    digits = [c for c in number if c.isdigit()]
-    if len(digits) < 2:
-        return False
-    s = "".join(digits)
-    return luhn_check_digit(s[:-1]) == int(s[-1])
-
-
 def make_bn(rng: random.Random) -> str:
     """A 9-digit business number that passes the Luhn check (first digit never 0)."""
     body = str(rng.randint(1, 9)) + "".join(str(rng.randint(0, 9)) for _ in range(7))

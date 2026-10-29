@@ -62,10 +62,6 @@ def map_columns(headers: list[str]) -> dict[str, str]:
     return match_columns(headers, COLUMN_ALIASES)
 
 
-def _number(value: Any) -> float | None:
-    return parse_amount(value)
-
-
 def date_part(value: Any) -> str:
     """The date of a date and time as exports write it: "1/5/2026 0:00", "2026-01-05T00:00:00" -> the part
     before the time (never cut at 10 characters, which splits "1/5/2026 0:00" in the middle of the time)."""
@@ -154,12 +150,12 @@ def reconcile(records: list[dict[str, Any]], columns: dict[str, str], invoices: 
         raw_number = str(get(rec, "number") or "").strip()
         if raw_number.lower() in ("nan", "none"):
             raw_number = ""
-        amount = _number(get(rec, "amount"))
+        amount = parse_amount(get(rec, "amount"))
         if "credit" in columns:  # separate Debit / Credit columns: the amount is debit minus credit
-            debit, credit = amount, _number(get(rec, "credit"))
+            debit, credit = amount, parse_amount(get(rec, "credit"))
             amount = None if debit is None and credit is None else (debit or 0.0) - abs(credit or 0.0)
         elif amount is None:  # only when there is no amount: an open-balance column, per document
-            amount = _number(get(rec, "balance"))
+            amount = parse_amount(get(rec, "balance"))
         kind_text = str(get(rec, "type") or "").strip()
         kind = kind_text.lower()
         date = read_date(get(rec, "date"), day_first)

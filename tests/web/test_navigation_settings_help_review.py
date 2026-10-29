@@ -1,4 +1,4 @@
-"""The independent review of "Before testing" (docs/BUGS.md, Sweep 4, B-526 to B-534): JD Edwards users keep their
+"""The independent review of "Before testing" (the bug log, Sweep 4, B-526 to B-534): JD Edwards users keep their
 tab, the developer switch stores only what was ticked, the demo carries no cost centers, the welcome page leads with
 LM Studio in the state it is in, the Quick start follows the screens, and the coding memory is one number."""
 

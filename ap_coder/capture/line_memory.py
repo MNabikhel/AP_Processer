@@ -30,7 +30,6 @@ _CONFUSABLE = str.maketrans({"1": "l", "i": "l", "|": "l", "!": "l", "0": "o", "
 # digits alone has five or more.
 _CODE = re.compile(r"^\s*(?=[A-Z0-9-]*\d{3})([A-Z]{0,4}[-/]?\d[\dA-Z-]{2,15})\s+(?=\S*[A-Za-z]{2})(.+)$")
 CODE_DROPS = 2  # lines AP dropped the code from (and none kept since) before a new item's code is left out too
-RECENT = 2000  # the supplier's latest remembered lines looked at
 
 
 def fold(text: Any) -> str:

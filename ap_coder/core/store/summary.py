@@ -163,7 +163,7 @@ SUMMARY_SCHEMA = (
     "cents REAL NOT NULL, amounts TEXT, PRIMARY KEY (invoice_id, part))",
     "CREATE TABLE IF NOT EXISTS summary_dirty (id INTEGER PRIMARY KEY)",
     "CREATE INDEX IF NOT EXISTS summary_vendors ON invoice_summary (status, vendor_key, vendor_name)",
-    # The learning memory's lessons by outcome, counted as they are added and removed (``feedback_counted``): the
+    # The learning memory's lessons by outcome, counted as they are added and removed (``feedback_counts``): the
     # review queue's accuracy and the memory's stamp read it instead of counting the lessons.
     "CREATE TABLE IF NOT EXISTS feedback_counts (outcome TEXT PRIMARY KEY, n INTEGER NOT NULL)",
     # The review queue's coding accuracy counts the lessons by outcome (``line_metrics``).

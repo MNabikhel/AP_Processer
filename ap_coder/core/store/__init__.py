@@ -92,7 +92,6 @@ from ._base import (  # noqa: F401  (what other modules import from here, and ev
     nothing_proposed,
     parse_fx_rates,
     private_dir,
-    proposed_coding,
     sqlite3,
     suggestion_kept,
     tiny_fx_rates,

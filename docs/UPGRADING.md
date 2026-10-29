@@ -27,7 +27,7 @@ command prompt for AP Coder's commands is now `scripts\terminal.bat`, and the in
 
 Every `0.2.0` looked the same to the launcher: GitHub's ZIP carried nothing but the version, so a newer ZIP
 unzipped over an older one said no *Updated* line, showed the older one's *Self-check OK at setup* and ran no new
-self-check (docs/BUGS.md B-542). From `0.3.0` every copy says which build it is:
+self-check (docs/archive/bugs-2026-10.md B-542). From `0.3.0` every copy says which build it is:
 
 - **GitHub's ZIP** (and `git archive`): `ap_coder/BUILD` holds `$Format:%h %cI$`, which git fills in with the commit
   and its time (`export-subst` in `.gitattributes`).

@@ -156,7 +156,7 @@ def env_path() -> Path:
     """The .env being used, or where a new one goes (the data folder)."""
     from ..core import paths
 
-    return paths.env_file() or paths.private_dir() / ".env"
+    return paths.env_target()
 
 
 def save_settings(store: Any, *, enabled: bool, endpoint: str, api_key: str = "", forget_key: bool = False,
@@ -692,7 +692,6 @@ class AzureChecker(threading.Thread):
         self._store_factory = store_factory
         self._store: Any = None  # the store, built at the first round (a Store() runs the schema and its upgrade)
         self._halt = threading.Event()
-        self.last: CheckOutcome | None = None
 
     def stop(self) -> None:
         self._halt.set()
@@ -708,7 +707,6 @@ class AzureChecker(threading.Thread):
                 else:
                     outcome = check_one(settings, store)
                     if outcome is not None:
-                        self.last = outcome
                         log.info("Azure check: invoice %s %s", outcome.invoice_id, outcome.status)
                         pause = CAP_SECONDS if outcome.status == "postponed" else 0.0
             except Exception:  # noqa: BLE001 - never let the thread die: the next round tries again

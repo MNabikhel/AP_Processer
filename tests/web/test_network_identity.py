@@ -1,4 +1,4 @@
-"""W2-02 (docs/BUGS.md N-57): the dashboard shared on the office network (``AP_DASHBOARD_ADDRESS=0.0.0.0``) knows
+"""W2-02 (the bug log N-57): the dashboard shared on the office network (``AP_DASHBOARD_ADDRESS=0.0.0.0``) knows
 who each person is. Each browser on another computer gives its name once ("Who are you?"); the name is kept in a
 cookie the server signs, so it cannot be made up. Approvals, the audit trail and the review screen's unsaved edits
 are then that person's, and this computer's own browser works as before."""

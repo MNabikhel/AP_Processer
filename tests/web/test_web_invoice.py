@@ -820,8 +820,7 @@ def test_in_a_browser_os_dark_mode_leaves_the_light_page_readable(browser, store
                                     color_scheme=scheme)  # fmt: skip
         page.wait_for_selector(".inv-details [data-field=vendor_name] [data-flag]:not([hidden])")  # B-796: the note
         page.wait_for_selector(".rvw-math")
-        looks[scheme] = page.evaluate("""() => ['.inv-details [data-field=vendor_name] [data-flag]', '.rvw-math',
-            '.inv-math .ok, .inv-math .bad']
+        looks[scheme] = page.evaluate("""() => ['.inv-details [data-field=vendor_name] [data-flag]', '.rvw-math']
             .map(s => document.querySelector(s)).filter(Boolean)
             .map(e => [e.className, getComputedStyle(e).color, getComputedStyle(e).backgroundColor])""")
         assert errors == []

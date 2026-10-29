@@ -133,7 +133,7 @@ def score_case(truth: dict[str, Any], result: CaptureResult | None) -> list[dict
 # --- aggregation ------------------------------------------------------------------------------
 
 
-def _ratio(a: int, b: int) -> float | None:
+def ratio(a: int, b: int) -> float | None:
     return round(a / b, 4) if b else None
 
 
@@ -149,13 +149,13 @@ def field_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
     statuses = {s: sum(1 for r in present if r["status"] == s) for s in STATUSES}
     return {
         "n": n,
-        "accuracy": _ratio(correct, n),
-        "box_hit": _ratio(box_hits, correct),
-        "verified_precision": _ratio(sum(r["correct"] for r in ver), len(ver)),
-        "verified_coverage": _ratio(sum(1 for r in present if r["status"] == VERIFIED), n),
+        "accuracy": ratio(correct, n),
+        "box_hit": ratio(box_hits, correct),
+        "verified_precision": ratio(sum(r["correct"] for r in ver), len(ver)),
+        "verified_coverage": ratio(sum(1 for r in present if r["status"] == VERIFIED), n),
         "verified_n": len(ver),
-        "vl_precision": _ratio(sum(r["correct"] for r in vl), len(vl)),
-        "vl_coverage": _ratio(sum(1 for r in present if r["status"] in (VERIFIED, LIKELY)), n),
+        "vl_precision": ratio(sum(r["correct"] for r in vl), len(vl)),
+        "vl_coverage": ratio(sum(1 for r in present if r["status"] in (VERIFIED, LIKELY)), n),
         "spurious": sum(1 for r in records if r["spurious"]),
         "statuses": statuses,
     }
@@ -209,12 +209,12 @@ def invoice_metrics(per_case: list[tuple[dict[str, Any], list[dict[str, Any]]]])
             touchless_wrong += not ok
     return {
         "n": n,
-        "fully_correct": _ratio(fully, n),
-        "no_silent_error": _ratio(no_silent, n),
-        "touchless": _ratio(touchless, n),
+        "fully_correct": ratio(fully, n),
+        "no_silent_error": ratio(no_silent, n),
+        "touchless": ratio(touchless, n),
         "touchless_n": touchless,
         "touchless_wrong": touchless_wrong,
-        "touchless_precision": _ratio(touchless - touchless_wrong, touchless),
+        "touchless_precision": ratio(touchless - touchless_wrong, touchless),
     }
 
 

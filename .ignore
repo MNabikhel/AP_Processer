@@ -1,0 +1,3 @@
+# Ripgrep (and the Grep tool) skip these: the old bug log and decisions in full. Search them by name:
+#   grep -n "B-1234 " docs/archive/*.md
+docs/archive/

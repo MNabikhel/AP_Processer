@@ -46,11 +46,11 @@ def test_reconcile_finds_matches_differences_and_gaps():
 
 
 def test_negative_amount_formats():
-    assert stm._number("(1,234.50)") == -1234.5
-    assert stm._number("1234.50-") == -1234.5
-    assert stm._number("99.00 CR") == -99.0
-    assert stm._number("$1,000") == 1000.0
-    assert stm._number("n/a") is None and stm._number(float("nan")) is None
+    assert stm.parse_amount("(1,234.50)") == -1234.5
+    assert stm.parse_amount("1234.50-") == -1234.5
+    assert stm.parse_amount("99.00 CR") == -99.0
+    assert stm.parse_amount("$1,000") == 1000.0
+    assert stm.parse_amount("n/a") is None and stm.parse_amount(float("nan")) is None
 
 
 def test_a_payment_word_in_a_description_does_not_turn_an_invoice_into_a_payment():

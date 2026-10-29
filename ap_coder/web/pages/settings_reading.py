@@ -421,6 +421,7 @@ def check_again(request: Request, back: str = Form(URL)) -> JSONResponse:
     from ap_coder.web.pages.help import forget_setup_report
 
     page_reader.forget_status()
+    page_reader.forget_reader_failures()  # memory freed: a model that failed to load is tried again
     forget_status()
     forget_setup_report()  # Report a problem's setup report says what is true now
     status = reading_status_or_none(get_settings(request), get_store(request), use_cache=False)
@@ -457,6 +458,7 @@ def load_model(request: Request, model: str = Form("")) -> JSONResponse:
     model = model.strip()
     if not model:
         return refuse("Choose a model to load.")
+    page_reader.forget_reader_failures()  # asked now, not after the half hour a failure is kept
     problem = page_reader.load_model(get_settings(request), model)
     if problem:
         return refuse(problem)

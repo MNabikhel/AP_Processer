@@ -55,17 +55,9 @@ pre.code.wrap {white-space: pre-wrap; word-break: break-word;}
 .apc-table tr.dim td {color: var(--lg-subtle);}
 
 /* Find an invoice */
-.search-box {display: flex; gap: 8px; align-items: center;}
-.search-field {flex: 1; display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 12px;
-  border: 1px solid var(--lg-border); border-radius: var(--lg-r); background: var(--lg-surface);}
-.search-field:focus-within {border-color: var(--lg-accent); box-shadow: var(--lg-focus);}
-.search-field .ms {color: var(--lg-subtle);}
-.search-field input {flex: 1; border: 0; height: 34px; padding: 0; box-shadow: none; outline: none; background: transparent;}
-.search-field input:focus {box-shadow: none;}
 section.card.hit {display: flex; gap: 16px; align-items: center; justify-content: space-between;}
 section.card.hit > * + * {margin-top: 0;}
 .hit-body {display: flex; flex-direction: column; gap: 4px; min-width: 0;}
-.hit-actions {flex: 0 0 auto; max-width: 220px; text-align: right;}
 
 /* Vendors and purchase orders */
 .vendor-link {display: inline-flex; align-items: center; gap: 10px; color: var(--lg-text);}

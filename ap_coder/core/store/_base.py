@@ -1,7 +1,7 @@
 """The store's foundation (D-69): the schema (``_SCHEMA``, ``SCHEMA_VERSION``), the migrations of an older database
 (``StoreCore._migrate``), the connections (``StoreCore._conn``, ``StoreCore.session``) and the helpers the other parts
 share: the statuses and queues' names, ``_now``, ``_in_list``, ``fold_text`` (the SQL function ``ap_fold``), and what
-an approval counts as coded, kept or guessed (``suggestion_kept``, ``proposed_coding``, ``line_guessed``)."""
+an approval counts as coded, kept or guessed (``suggestion_kept``, ``line_guessed``)."""
 
 from __future__ import annotations
 
@@ -380,20 +380,6 @@ def line_guessed(suggestion: dict[str, Any] | None, rule: dict[str, Any] | None 
     return bool(suggestion) and guessed((suggestion or {}).get("reasoning_justification"))
 
 
-def proposed_coding(suggestion: dict[str, Any] | None) -> tuple[str | None, str | None]:
-    """(GL account, cost center) the AI really proposed for a line (``suggestion``: the line as read, None: no line).
-    An account no approval backs (the chat model's own pick, an older version's weak match: ``offline_coder.guessed``)
-    was a guess for a person to check, not a proposal: it counts as left blank, so a reviewer who keeps it coded the
-    line, and coding accuracy and the lessons never count it as "coded as suggested" (B-463)."""
-    if not suggestion:
-        return None, None
-    from ...ai.offline_coder import guessed
-
-    if guessed(suggestion.get("reasoning_justification")):
-        return UNASSIGNED, ""
-    return suggestion.get("predicted_gl_code"), suggestion.get("predicted_cost_center", "")
-
-
 def fold_text(value: Any) -> Any:
     """The SQL function ``ap_fold(x)``: text without accents and its case folded ("Énergir" -> "energir"), so a
     filter compares names as people read them. SQLite's own lower() and LIKE fold only A to Z (B-04). Plain ASCII,
@@ -582,8 +568,8 @@ class StoreCore:
         for column in ("qst_number", "pst_number", "province", "erp_bank", "erp_hold"):  # erp_hold: JDE's (D-105)
             if columns and column not in columns:
                 conn.execute(f"ALTER TABLE vendors ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
-        # An invoice made from a picture remembers the picture's SHA-256 (intake.py), so the same photo sent again is
-        # found (looked for whatever the version).
+        # An invoice made from a picture remembers the picture's SHA-256 (intake/pictures.py), so the same photo sent
+        # again is found (looked for whatever the version).
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(invoices)")}
         if "original_sha256" not in columns:
             conn.execute("ALTER TABLE invoices ADD COLUMN original_sha256 TEXT")

@@ -207,7 +207,7 @@ def env_path() -> Path:
     """The .env in use, or where a new one goes (the data folder): where the password is kept, as the Azure key is."""
     from ..core import paths
 
-    return paths.env_file() or paths.private_dir() / ".env"
+    return paths.env_target()
 
 
 def _password() -> str:

@@ -90,7 +90,7 @@ def render_tab(request: Request, tab: str, **context: Any) -> HTMLResponse:
 
 def env_path() -> Path:
     """The .env being used, or where a new one goes (the data folder)."""
-    return paths.env_file() or paths.private_dir() / ".env"
+    return paths.env_target()
 
 
 def save_env(store: Store, updates: dict[str, str]) -> list[str]:

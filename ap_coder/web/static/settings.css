@@ -100,8 +100,6 @@ details.st-danger > summary {color: var(--lg-danger);}
 .hp-search {flex: 1 1 280px; position: relative; display: flex; align-items: center;}
 .hp-search .ms {position: absolute; left: 9px; color: var(--lg-subtle);}
 .hp-search input {width: 100%; padding-left: 34px;}
-.hp-areas {flex-wrap: wrap;}
-.hp-code {font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; color: var(--lg-subtle); margin-top: 2px;}
 .hp-faq details {border-bottom: 1px solid var(--lg-hairline); padding: 8px 0;}
 .hp-faq details:last-child {border-bottom: none;}
 .hp-faq summary {cursor: pointer; font-weight: 500; font-size: 13.5px;}

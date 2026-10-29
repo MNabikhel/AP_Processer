@@ -294,13 +294,9 @@ def _terms_key(value: Any) -> str | None:
     return "terms:" + "/".join(str(int(n)) for n in numbers) + (":receipt" if receipt else "")
 
 
-def _matches(name: str, raw: str, value: Any) -> str | None:
-    """Does printed ``raw`` show ``value``? Returns the date order it was read in (or "" for a match)."""
-    return _matches_key(name, raw, compare_key(name, value))
-
-
 def _matches_key(name: str, raw: str, target: Any) -> str | None:
-    """``_matches`` with the value's ``compare_key`` worked out once: learning tries every span of every row."""
+    """Does printed ``raw`` show the value whose ``compare_key`` is ``target`` (worked out once: learning tries every
+    span of every row)? Returns the date order it was read in (or "" for a match)."""
     if target is None:
         return None
     if name == "payment_terms" and (not _has_letters(raw) or any(t.endswith(":") for t in raw.split())):
@@ -1370,15 +1366,6 @@ class AutonomyPolicy:
             window=int(d.get("window", base.window)), clean_streak=int(d.get("clean_streak", base.clean_streak)),
             audit_rate=float(d.get("audit_rate", base.audit_rate)), z=float(d.get("z", base.z)),
         )  # fmt: skip
-
-    def describe(self) -> str:
-        return (
-            f"at least {self.min_invoices} invoices reviewed, header-field accuracy of at least "
-            f"{self.min_lower_bound:.0%} at 95% confidence since the last correction and "
-            f"{self.window_lower_bound:.0%} over the last {self.window}, and the last {self.clean_streak} without a "
-            f"single correction; {self.audit_rate:.0%} of the invoices that skip review are still audited, and one "
-            "correction suspends it"
-        )
 
     def plain_rules(self) -> list[tuple[str, str]]:
         """The bar in plain English, one (what, the standard) per rule, for the Automation settings."""

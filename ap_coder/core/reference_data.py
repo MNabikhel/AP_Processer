@@ -213,7 +213,7 @@ def load_table(path: str | Path, kind: str, key_column: str) -> ReferenceTable:
     return ReferenceTable(kind=kind, key_column=key_column, rows=rows)
 
 
-def meals_codes(path: str | Path, key_column: str = "gl_code") -> frozenset[str]:
+def meals_codes(path: str | Path) -> frozenset[str]:
     """The codes a chart of accounts file marks as meals and entertainment (its "meals" / "M&E" column, D-90)."""
     raw_rows = _read_rows(Path(path))
     headers = [k for k in (raw_rows[0].keys() if raw_rows else []) if k is not None]
@@ -221,7 +221,7 @@ def meals_codes(path: str | Path, key_column: str = "gl_code") -> frozenset[str]
     if not header:
         return frozenset()
     rename = {v: k for k, v in _canonical_headers(headers).items()}
-    code = rename.get(key_column, key_column)
+    code = rename.get("gl_code", "gl_code")
     return frozenset(str(r.get(code) or "").strip() for r in raw_rows if marks_meals(r.get(header))) - {""}
 
 
@@ -238,16 +238,14 @@ def load_reference_data(
     cost_centers: str | Path | None = None,
     tax_mapping: str | Path | None = None,
     policy_notes: str | Path | None = None,
-    tax_rates: str | Path | None = None,
 ) -> ReferenceData:
     from ..coding.tax import TaxRateTable
 
     notes = parse_policy_notes(Path(policy_notes).read_text(encoding="utf-8-sig")) if policy_notes else []
     treatments: dict[str, TaxTreatment] = load_tax_mapping(tax_mapping) if tax_mapping else {}
-    rates = TaxRateTable.load(tax_rates) if tax_rates else TaxRateTable.load()
     return ReferenceData(
         chart_of_accounts=load_table(chart_of_accounts, "GL account", "gl_code"),
         cost_centers=load_table(cost_centers, "cost center", "cost_center") if cost_centers else None,
-        tax=TaxSetup(rates, treatments, meals_gl_codes=meals_codes(chart_of_accounts)),
+        tax=TaxSetup(TaxRateTable.load(), treatments, meals_gl_codes=meals_codes(chart_of_accounts)),
         notes=notes,
     )

@@ -227,8 +227,8 @@ def bring_back(request: Request, invoice_id: int) -> JSONResponse:
         return refuse("That invoice is not in AP Coder.", 404)
     try:
         store.unpark_invoice(invoice_id, reviewer())
-    except ValueError as exc:
+    except ValueError:
         if (store.get_invoice(invoice_id) or {}).get("status") != REVIEW:  # rejected, approved, deleted meanwhile
-            return changed_meanwhile(request, invoice_id, exc)
+            return changed_meanwhile(request, invoice_id)
         # else someone else brought it back meanwhile: it is opened all the same
     return done(request, f"/review/{invoice_id}", "Back in the review queue.")

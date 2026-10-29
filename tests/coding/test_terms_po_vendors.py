@@ -46,7 +46,7 @@ def test_terms_misreads(text, expected):
     [("-150.00", -150.0), ("$-150", -150.0), ("150,00", 150.0), ("1 234,56", 1234.56), ("(2,316.50)", -2316.5)],
 )
 def test_statement_amounts(text, value):
-    assert stm._number(text) == value
+    assert stm.parse_amount(text) == value
 
 
 def test_statement_credit_matches_and_description_words_are_not_payments():

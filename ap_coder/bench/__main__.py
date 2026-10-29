@@ -4,7 +4,9 @@ python -m ap_coder.bench calibrate RUN_DIR [RUN_DIR ...]
 python -m ap_coder.bench learn --suppliers 30 --invoices 40 [--scanned 0.0]
 python -m ap_coder.bench speed --n 20 --scanned 0.5 [--history 30000]
 python -m ap_coder.bench coding --vendors 30 --invoices 30 --seed 1 [--out bench_coding] [--realistic] [--ai]
-python -m ap_coder.bench triage --n 300 --seed 1 [--msg-share 0.4] [--out bench_triage]"""
+python -m ap_coder.bench triage --n 300 --seed 1 [--msg-share 0.4] [--out bench_triage]
+
+--quick on run, learn, lines, speed, coding and triage: a small run to check a change (sizes in ``QUICK``)."""
 
 from __future__ import annotations
 
@@ -13,6 +15,17 @@ import sys
 from pathlib import Path
 
 from ap_coder.bench.harness import READERS, _pct, default_workers, prepare_cases, run
+
+# ``--quick``: the sizes of a run that checks a change in a minute or so (what each took on a 4-core laptop); scans
+# (OCR) are what make the full runs long.
+QUICK = {
+    "run": {"n": 24, "scanned": 0.15, "took": "~1 min"},
+    "learn": {"suppliers": 4, "invoices": 30, "took": "~20 s; each reaches autonomy"},
+    "lines": {"suppliers": 3, "invoices": 5, "scanned": 0.5, "took": "~80 s"},
+    "speed": {"n": 4, "took": "~30 s"},
+    "coding": {"vendors": 8, "invoices": 12, "took": "~5 s"},
+    "triage": {"n": 60, "took": "~10 s"},
+}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -123,7 +136,15 @@ def main(argv: list[str] | None = None) -> int:
     tp.add_argument("--seed", type=int, default=1, help="random seed; the same seed gives the same emails")
     tp.add_argument("--msg-share", type=float, default=0.4, help="share saved as Outlook .msg (default 0.4)")
     tp.add_argument("--out", default="bench_triage", help="output folder (default bench_triage)")
+    parsers = {"run": r, "learn": lp, "lines": lnp, "speed": sp, "coding": cp, "triage": tp}
+    for name, sizes in QUICK.items():
+        took = sizes["took"]
+        parsers[name].add_argument("--quick", action="store_true", help=f"a small run to check a change ({took})")
     a = p.parse_args(argv)
+    if getattr(a, "quick", False):  # smaller sizes, unless given
+        for key, value in QUICK[a.cmd].items():
+            if key != "took" and getattr(a, key) == parsers[a.cmd].get_default(key):
+                setattr(a, key, value)
 
     if a.cmd == "triage":
         from ap_coder.bench.emails import run_triage

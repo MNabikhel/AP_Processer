@@ -1,4 +1,4 @@
-"""The dashboard as the pilot tester first meets it (docs/BUGS.md, Sweep 4, "Pilot walkthrough (UI)"): the first
+"""The dashboard as the pilot tester first meets it (the bug log, Sweep 4, "Pilot walkthrough (UI)"): the first
 steps, the review screen on a 1366 x 768 laptop, the keyboard, what each status means, and the messages after an
 action."""
 

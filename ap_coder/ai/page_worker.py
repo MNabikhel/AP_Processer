@@ -728,10 +728,8 @@ class BackgroundReader(threading.Thread):
         self._store: Any = None  # the store, built at the first round (a Store() runs the schema and its upgrade)
         self._cache_dir = cache_dir
         self._halt = threading.Event()
-        self.current: int | None = None  # the invoice being read now
         self.last: ReadOutcome | None = None
         self.last_test: dict[str, Any] | None = None  # the self-test it ran on its own, when it ran one
-        self.last_review: Any = None  # the AI reviewer's last review (verifier.Outcome)
 
     def stop(self) -> None:
         self._halt.set()
@@ -759,7 +757,6 @@ class BackgroundReader(threading.Thread):
             return OFF_SECONDS
         if outcome is None:
             return IDLE_SECONDS
-        self.last_review = outcome
         log.info("AI reviewer: invoice %s %s (%s round(s), %.0f s)", outcome.invoice_id, outcome.status,
                  outcome.rounds, outcome.seconds)  # fmt: skip
         return OFF_SECONDS if outcome.status == "postponed" else 0.0

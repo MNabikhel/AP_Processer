@@ -25,6 +25,7 @@ from .coding import sample_reference
 from .generator import make_stream_case, stream_scanned, supplier_id
 from .harness import _map
 from .learning import EPOCH, _app_clock
+from .scoring import ratio
 
 CLERK = "Bench clerk"
 # Each item's GL account, as AP codes it (one of the sample chart's expense accounts, the same for every supplier).
@@ -140,10 +141,6 @@ def _simulate(job: Job) -> dict[str, Any]:
     return {"supplier": sid, "rows": rows, "seconds": round(time.perf_counter() - t0, 2)}
 
 
-def _ratio(a: int, b: int) -> float | None:
-    return round(a / b, 4) if b else None
-
-
 def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
     lines = [li for r in rows for li in r["lines"]]
     again = [li for li in lines if li["corrected_before"]]
@@ -155,23 +152,23 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "invoices": len(rows),
         "lines": len(lines),
-        "lines_right": _ratio(sum(li["right"] for li in lines), len(lines)),
-        "descriptions_right": _ratio(sum(li["right_text"] for li in lines), len(lines)),
+        "lines_right": ratio(sum(li["right"] for li in lines), len(lines)),
+        "descriptions_right": ratio(sum(li["right_text"] for li in lines), len(lines)),
         "descriptions_corrected": sum(not li["right_text"] for li in lines),
         # Wrong this time, right next time: an item whose description AP corrected before, listed again.
         "corrected_before": len(again),
-        "corrected_before_right": _ratio(sum(li["right_text"] for li in again), len(again)),
-        "first_time_right": _ratio(sum(li["right_text"] for li in first), len(first)),
+        "corrected_before_right": ratio(sum(li["right_text"] for li in again), len(again)),
+        "first_time_right": ratio(sum(li["right_text"] for li in first), len(first)),
         # The GL account AP gave an item, on the next invoice that lists it.
         "known_items": len(known),
-        "known_items_gl_right": _ratio(sum(li["gl_right"] for li in known), len(known)),
-        "corrected_before_gl_right": _ratio(sum(li["gl_right"] for li in again), len(again)),
+        "known_items_gl_right": ratio(sum(li["gl_right"] for li in known), len(known)),
+        "corrected_before_gl_right": ratio(sum(li["gl_right"] for li in again), len(again)),
         "renamed": sum(li["renamed"] for li in lines),
         # Named as approved before, partly: the item code left out, the spacing of an item new to the memory still off.
         "renamed_partly": sum(li["renamed"] and not li["right_text"] and not li.get("other_item") for li in lines),
         "renamed_other_item": sum(li["renamed"] and bool(li.get("other_item")) for li in lines),
         "by_position": {
-            k: {"lines": len(v), "descriptions_right": _ratio(sum(li["right_text"] for li in v), len(v))}
+            k: {"lines": len(v), "descriptions_right": ratio(sum(li["right_text"] for li in v), len(v))}
             for k, v in sorted(by_position.items())
         },  # fmt: skip
     }

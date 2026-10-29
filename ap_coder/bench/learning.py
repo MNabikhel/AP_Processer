@@ -42,7 +42,7 @@ from ap_coder.bench.generator import (
     supplier_id,
 )
 from ap_coder.bench.harness import _map, _pct, _table
-from ap_coder.bench.scoring import score_case, values_match
+from ap_coder.bench.scoring import ratio, score_case, values_match
 from ap_coder.capture.supplier import compare_key
 from ap_coder.capture.types import FIELDS, MISSING, VERIFIED, CaptureResult
 
@@ -378,23 +378,19 @@ def kept_values(truth: dict[str, Any], capture: CaptureResult) -> dict[str, Any]
 # --- the report -------------------------------------------------------------------------------
 
 
-def _ratio(a: float, b: float) -> float | None:
-    return round(a / b, 4) if b else None
-
-
 def _bucket_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
     n_fields = sum(r["fields"] for r in rows)
     return {
         "invoices": len(rows),
         "fields": n_fields,
-        "accuracy": _ratio(sum(r["correct"] for r in rows), n_fields),
-        "baseline_accuracy": _ratio(sum(r["baseline_correct"] for r in rows), n_fields),
-        "verified": _ratio(sum(r["verified"] for r in rows), n_fields),
-        "baseline_verified": _ratio(sum(r["baseline_verified"] for r in rows), n_fields),
-        "fully_correct": _ratio(sum(r["fully_correct"] for r in rows), len(rows)),
-        "baseline_fully_correct": _ratio(sum(r["baseline_fully_correct"] for r in rows), len(rows)),
-        "no_correction": _ratio(sum(not r["corrections"] for r in rows), len(rows)),
-        "eligible": _ratio(sum(r["eligible"] for r in rows), len(rows)),
+        "accuracy": ratio(sum(r["correct"] for r in rows), n_fields),
+        "baseline_accuracy": ratio(sum(r["baseline_correct"] for r in rows), n_fields),
+        "verified": ratio(sum(r["verified"] for r in rows), n_fields),
+        "baseline_verified": ratio(sum(r["baseline_verified"] for r in rows), n_fields),
+        "fully_correct": ratio(sum(r["fully_correct"] for r in rows), len(rows)),
+        "baseline_fully_correct": ratio(sum(r["baseline_fully_correct"] for r in rows), len(rows)),
+        "no_correction": ratio(sum(not r["corrections"] for r in rows), len(rows)),
+        "eligible": ratio(sum(r["eligible"] for r in rows), len(rows)),
         "eligible_wrong": sum(1 for r in rows if r["eligible"] and (r["corrections"] or not r["fully_correct"])),
     }
 
@@ -411,7 +407,7 @@ def wrong_approval(rows: list[dict[str, Any]], at: int) -> dict[str, Any]:
         part = [r for r in rows if at + lo <= r["index"] <= at + hi]
         out[label] = {
             "invoices": len(part),
-            "accuracy": _ratio(sum(r["correct"] for r in part), sum(r["fields"] for r in part)),
+            "accuracy": ratio(sum(r["correct"] for r in part), sum(r["fields"] for r in part)),
             "invoice_number_wrong": sum(WRONG_FIELD in r["wrong_fields"] for r in part),
         }
     return out
@@ -429,7 +425,7 @@ def fixed_next_time(by_supplier: dict[str, list[dict[str, Any]]]) -> dict[str, A
                     fields[f][0] += 1
                     fields[f][1] += f not in nxt["wrong_fields"]
     n, fixed = sum(v[0] for v in fields.values()), sum(v[1] for v in fields.values())
-    return {"corrected": n, "fixed": fixed, "share": _ratio(fixed, n),
+    return {"corrected": n, "fixed": fixed, "share": ratio(fixed, n),
             "by_field": {f: {"corrected": v[0], "fixed": v[1]} for f, v in sorted(fields.items())}}  # fmt: skip
 
 
@@ -443,13 +439,13 @@ def known_values(by_supplier: dict[str, list[dict[str, Any]]]) -> dict[str, Any]
     for lo, hi in BUCKETS:
         part = [v for r in rows if lo <= r["index"] <= hi for v in r["known"].values()]
         if part:
-            by_position[bucket_name(lo, hi)] = {"values": len(part), "right": _ratio(sum(part), len(part))}
+            by_position[bucket_name(lo, hi)] = {"values": len(part), "right": ratio(sum(part), len(part))}
     suppliers = {r["supplier"] for r in rows}
     return {
         "suppliers": len(suppliers),
         "values": sum(len(r["known"]) for r in rows),
         "set_by_ap": sum(1 for r in rows for v in r["known"].values() if not v),
-        "right": _ratio(sum(v for r in rows for v in r["known"].values()), sum(len(r["known"]) for r in rows)),
+        "right": ratio(sum(v for r in rows for v in r["known"].values()), sum(len(r["known"]) for r in rows)),
         "by_position": by_position,
         "touchless_suppliers": sum(1 for sid in suppliers if any(r["turned_on"] for r in by_supplier[sid])),
         "touchless_invoices": sum(1 for sid in suppliers for r in by_supplier[sid] if r["touchless"]),
@@ -525,7 +521,7 @@ def summarize_learning(rows: list[dict[str, Any]], wrong_at: int = 0) -> dict[st
                 "invoices": len(rs),
                 "scanned": sum(r["scanned"] for r in rs),
                 "accuracy_first": rs[0]["accuracy"],
-                "accuracy_rest": _ratio(sum(r["correct"] for r in rs[1:]), sum(r["fields"] for r in rs[1:])),
+                "accuracy_rest": ratio(sum(r["correct"] for r in rs[1:]), sum(r["fields"] for r in rs[1:])),
                 "reviewed_with_correction": sum(1 for r in rs if r["corrections"] and not r["touchless"]),
                 # Autonomy is switched on before this invoice: the bar was met after the ones before it.
                 "ready_at": on,
@@ -538,7 +534,7 @@ def summarize_learning(rows: list[dict[str, Any]], wrong_at: int = 0) -> dict[st
                     for a, b in zip(rs, rs[1:], strict=False)
                     if a["state"] == "autonomous" and b["state"] == "suspended"
                 ),
-                "touchless_rate": _ratio(sum(r["touchless"] for r in after), len(after)),
+                "touchless_rate": ratio(sum(r["touchless"] for r in after), len(after)),
             }
         )
     touchless = [r for r in after_all if r["touchless"]]
@@ -561,18 +557,18 @@ def summarize_learning(rows: list[dict[str, Any]], wrong_at: int = 0) -> dict[st
             "invoices_after_ready": len(after_all),
             "touchless": len(touchless),
             "audited": sum(r["audit"] for r in after_all),
-            "touchless_rate": _ratio(len(touchless), len(after_all)),
+            "touchless_rate": ratio(len(touchless), len(after_all)),
             "touchless_errors": touchless_errors,
-            "touchless_precision": _ratio(len(touchless) - touchless_errors, len(touchless)),
+            "touchless_precision": ratio(len(touchless) - touchless_errors, len(touchless)),
             "suspensions": sum(s["suspensions"] for s in suppliers),
-            "share_of_all_invoices_touchless": _ratio(len(touchless), len(rows)),
+            "share_of_all_invoices_touchless": ratio(len(touchless), len(rows)),
         },
         "layouts": {
             lay: {
                 "suppliers": len(ss),
                 "ready": sum(1 for s in ss if s["ready_at"] is not None),
-                "accuracy_first": _ratio(sum(s["accuracy_first"] or 0 for s in ss), len(ss)),
-                "accuracy_rest": _ratio(sum(s["accuracy_rest"] or 0 for s in ss), len(ss)),
+                "accuracy_first": ratio(sum(s["accuracy_first"] or 0 for s in ss), len(ss)),
+                "accuracy_rest": ratio(sum(s["accuracy_rest"] or 0 for s in ss), len(ss)),
             }
             for lay, ss in sorted(by_layout.items())
         },
@@ -586,7 +582,7 @@ def summarize_learning(rows: list[dict[str, Any]], wrong_at: int = 0) -> dict[st
         "calibration": {
             "reading": calibration(rows, "reading", "accuracy", weight="fields"),
             "reading_without_template": calibration(
-                [{**r, "accuracy": _ratio(r["baseline_correct"], r["fields"])} for r in rows],
+                [{**r, "accuracy": ratio(r["baseline_correct"], r["fields"])} for r in rows],
                 "baseline_reading",
                 "accuracy",
                 weight="fields",
