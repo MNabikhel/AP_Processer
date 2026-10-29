@@ -969,7 +969,7 @@ class InvoicesMixin:
 
 @dataclass
 class _LineFeedback:
-    """What an approval's lines say (InvoicesMixin._line_feedback): their feedback rows, the outcomes counted,
+    """What an approval's lines say (``InvoicesMixin._line_feedback``): their feedback rows, the outcomes counted,
     how many lines the reviewer changed or coded by hand, and what changed since an approval before a reopen."""
 
     counts: dict[str, int]
