@@ -71,10 +71,13 @@ def printed_vendor_name(capture: CaptureResult | dict[str, Any] | None) -> str:
     return str(fr.value)
 
 
+ALIAS_VOUCHED = 2  # approvals under the corrected name, after the correction, before it is vouched for (verified)
+
+
 def apply_vendor_alias(store: Any, capture: CaptureResult | None) -> str:
     """A vendor name read as AP corrected it on an earlier invoice (``Store.vendor_alias``): the name AP gave, with
-    the one printed in the reasons. Vouched for once AP approved it so twice (a name corrected once may be a slip): until
-    then at most likely. In place; returns the name given ("" when none)."""
+    the one printed in the reasons. At most likely until AP has approved it so (a name corrected once may be a slip);
+    verified once AP has approved it under that name ``ALIAS_VOUCHED`` times since the correction. In place; returns the name given ("" when none)."""
     from .types import LIKELY, VERIFIED
 
     fr = capture.fields.get("vendor_name") if capture is not None else None
@@ -92,8 +95,14 @@ def apply_vendor_alias(store: Any, capture: CaptureResult | None) -> str:
     fr.sources = {VENDOR_ALIAS: name, **fr.sources}
     fr.reasons = [*fr.reasons, f"the name AP corrected it to on an earlier invoice (printed: {printed})"]
     fr.value = name
-    if alias.get("confirmed", 0) < 2 and fr.status == VERIFIED:
+    confirmed = int(alias.get("confirmed") or 0)
+    if confirmed < 2 and fr.status == VERIFIED:
         fr.status, fr.confidence = LIKELY, min(fr.confidence, 0.97)
+    elif confirmed >= 1 + ALIAS_VOUCHED and fr.status == LIKELY:
+        # Read exactly so again, and AP approved it under that name twice since correcting it: vouched for, as the
+        # page itself never can (it prints the misread). Else the vendor could never skip review (B-1437).
+        fr.status, fr.confidence = VERIFIED, max(fr.confidence, 0.99)
+        fr.reasons = [*fr.reasons, f"AP approved it under this name {confirmed} times"]
     return name
 
 

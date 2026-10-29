@@ -998,13 +998,18 @@ def _candidates(
     predicted: list[float],
     exclude: set[int],
     v_pad: float = 0.008,
+    same_line: bool = False,
 ) -> list[tuple[list[Word], str, float, float]]:
-    """Word spans in the predicted region: (words, raw text, shape score, geometry score)."""
+    """Word spans in the predicted region: (words, raw text, shape score, geometry score). ``same_line``: the label was
+    found, so the value is on the line predicted from it: a value on the next line (the due date under the invoice
+    date) is another field's, not a rival reading of this one (B-1438)."""
     w, h = predicted[2] - predicted[0], predicted[3] - predicted[1]
     region = _region(predicted, max(w * 0.6, 0.04), max(h * 0.8, v_pad))
+    top, bottom = predicted[1] - 0.25 * h, predicted[3] + 0.25 * h
     out = []
     for row in rows:
-        inside = [x for x in row if id(x) not in exclude and _overlap(x.box, region)]
+        inside = [x for x in row if id(x) not in exclude and _overlap(x.box, region)
+                  and (not same_line or top <= x.box.cy <= bottom)]  # fmt: skip
         for i in range(len(inside)):
             for j in range(i, min(i + 6, len(inside))):
                 span = inside[i : j + 1]
@@ -1173,7 +1178,7 @@ def _apply_variant(name: str, variant: Variant, layout: DocLayout) -> list[Readi
     else:
         base, predicted, exclude = POSITION_SCORE, variant.box, set()
     v_pad = 0.008 if hits else 0.025  # without the label the page may have moved a little more
-    for words, raw, shape, geometry in _candidates(name, variant, rows, predicted, exclude, v_pad):
+    for words, raw, shape, geometry in _candidates(name, variant, rows, predicted, exclude, v_pad, bool(hits)):
         add(words, raw, shape, geometry, base)
 
     # Of spans inside one another ("NET", "60" and "NET 60"), only the one shaped most like the values
