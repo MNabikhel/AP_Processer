@@ -28,9 +28,9 @@ The handoff is three files; use whichever route the company's environment allows
 **Route A, the git bundle (preferred).**
 
 ```bash
-git bundle verify AP_Coder.bundle          # "The bundle records a complete history" = good
-git clone AP_Coder.bundle AP_Processer     # a normal repository; origin points at the bundle file
+git clone -b main AP_Coder.bundle AP_Processer   # a normal repository (cloning checks the bundle); origin = the bundle
 cd AP_Processer
+git bundle verify ../AP_Coder.bundle       # "The bundle records a complete history" (it works only inside a repository)
 git tag                                    # the release tags
 git log --oneline | head                   # the latest commits
 # Make the company's Git server the origin (an empty repository created there first):
