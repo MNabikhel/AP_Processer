@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Form, Request
+from fastapi import Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
@@ -53,6 +53,7 @@ from ap_coder.web.core import (
     login,
     money,
     one_connection,
+    page_router,
     posted_form,
     reference_or_none,
     refuse,
@@ -63,7 +64,7 @@ from ap_coder.web.core import (
 from ap_coder.web.identity import shown_path
 from ap_coder.web.invoice_view import confidence_pct, document_kind
 
-router = APIRouter()
+router = page_router()  # each plain handler: one connection a request
 
 QUEUE_PAGE = 50  # rows drawn at once; more on request
 APPROVED_SHOWN = 100

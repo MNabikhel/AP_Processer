@@ -14,7 +14,7 @@ import io
 from typing import Any
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Request
+from fastapi import Request
 from fastapi.responses import HTMLResponse, Response
 
 from ap_coder.core import ui
@@ -22,10 +22,10 @@ from ap_coder.core.audit import ACTIONS, describe
 from ap_coder.core.safe import csv_row
 from ap_coder.erp import controls, insights
 from ap_coder.web.access import is_admin
-from ap_coder.web.core import address_day, get_store, render, server_mode
+from ap_coder.web.core import address_day, get_store, page_router, render, server_mode
 from ap_coder.web.files import download
 
-router = APIRouter()
+router = page_router()  # each plain handler: one connection a request
 
 GROUPS = {
     "Invoices": ["processed", "failed", "approved", "final_approved", "sent_back", "reopened", "parked", "unparked",

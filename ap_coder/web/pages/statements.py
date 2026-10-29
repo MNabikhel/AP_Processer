@@ -12,14 +12,14 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from ap_coder.coding import vendor_mail
 from ap_coder.core.store import Store
 from ap_coder.erp import statements as stm
 from ap_coder.intake import inbox
-from ap_coder.web.core import done, get_store, invoice_dir, money, refuse, render, reviewer
+from ap_coder.web.core import done, get_store, invoice_dir, money, page_router, refuse, render, reviewer
 from ap_coder.web.files import (
     _MAX_BYTES,
     NO_ROWS,
@@ -34,7 +34,7 @@ from ap_coder.web.files import (
     sheet_context,
 )
 
-router = APIRouter()
+router = page_router()  # each plain handler: one connection a request
 
 TONES = {
     stm.MATCHED: ("ok", "check"),

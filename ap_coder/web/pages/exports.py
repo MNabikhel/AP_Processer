@@ -19,7 +19,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from ap_coder.core import ui
@@ -35,6 +35,7 @@ from ap_coder.web.core import (
     jobs,
     message,
     one_connection,
+    page_router,
     posted_form,
     reference_or_none,
     refuse,
@@ -52,7 +53,7 @@ from ap_coder.web.files import (
     sheet_context,
 )
 
-router = APIRouter()
+router = page_router()  # each plain handler: one connection a request
 
 LAYOUT_SETTING = "export_layout"
 SHORT_FORMATS = {

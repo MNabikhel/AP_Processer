@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from markupsafe import Markup
 
@@ -43,6 +43,7 @@ from ap_coder.web.core import (
     done,
     get_settings,
     get_store,
+    page_router,
     posted_form,
     reference_or_none,
     refuse,
@@ -52,7 +53,7 @@ from ap_coder.web.core import (
 from ap_coder.web.files import TOO_BIG, SheetError, read_capped, read_csv, read_excel
 from ap_coder.web.invoice_view import gl_name
 
-router = APIRouter()
+router = page_router()  # each plain handler: one connection a request
 
 TABS = {"coding": "Coding accuracy", "suppliers": "Supplier learning", "lessons": "Lessons", "readers": "Readers"}
 HISTORY_LABELS = {"vendor_name": "Vendor *", "description": "Line description *", "gl_code": "GL account *",

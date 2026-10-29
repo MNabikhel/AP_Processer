@@ -6,15 +6,15 @@ from __future__ import annotations
 
 import datetime as dt
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 
 from ap_coder.coding import taxreturn
 from ap_coder.core import ui
-from ap_coder.web.core import address_day, get_store, money, render
+from ap_coder.web.core import address_day, get_store, money, page_router, render
 from ap_coder.web.files import download
 
-router = APIRouter()
+router = page_router()  # each plain handler: one connection a request
 
 ISSUE_TONES = {
     taxreturn.NO_GST_NUMBER: "err",

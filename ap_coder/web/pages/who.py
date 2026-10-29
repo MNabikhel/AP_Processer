@@ -4,14 +4,14 @@ names them. On this computer the page only says who is approving here (Settings 
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Form, Request
+from fastapi import Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from ap_coder.web import identity
-from ap_coder.web.core import done, local_url, refuse, render, reviewer, server_mode
+from ap_coder.web.core import done, local_url, page_router, refuse, render, reviewer, server_mode
 from ap_coder.web.pages.invoice import rename_drafts
 
-router = APIRouter()
+router = page_router()  # each plain handler: one connection a request
 
 COOKIE_DAYS = 365  # kept by the browser; a restart of AP Coder asks again (the signing secret is new)
 

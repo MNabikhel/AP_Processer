@@ -8,17 +8,17 @@ import datetime as dt
 import re
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import Request
 from fastapi.responses import HTMLResponse, Response
 
 from ap_coder.core import ui
 from ap_coder.core.reference_data import UNASSIGNED, ReferenceData, short_name
 from ap_coder.erp import accruals
-from ap_coder.web.core import address_day, get_store, money, reference_or_none, render
+from ap_coder.web.core import address_day, get_store, money, page_router, reference_or_none, render
 from ap_coder.web.files import download
 from ap_coder.web.invoice_view import NEEDS_CC, NEEDS_GL
 
-router = APIRouter()
+router = page_router()  # each plain handler: one connection a request
 
 TITLES = {
     accruals.RECEIVED: "Received, not invoiced",

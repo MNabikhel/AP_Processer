@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
-from fastapi import APIRouter, Form, Request
+from fastapi import Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from ap_coder.core.store.users import LoginRefused
@@ -25,6 +25,7 @@ from ap_coder.web.core import (
     flash_message,
     get_store,
     local_url,
+    page_router,
     refuse,
     render,
     reviewer,
@@ -33,7 +34,7 @@ from ap_coder.web.core import (
     templates,
 )
 
-router = APIRouter()
+router = page_router()  # each plain handler: one connection a request
 
 HOME = "/review"
 NO_LOGINS = "There are no logins on this computer: AP Coder opens for whoever uses it."

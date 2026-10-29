@@ -152,7 +152,37 @@ def one_connection(handler: Callable[..., Any]) -> Callable[..., Any]:
         with get_store(request).session():
             return handler(*args, **kwargs)
 
+    wrapped.one_connection = True  # type: ignore[attr-defined]
     return wrapped
+
+
+def page_router() -> Any:
+    """The ``router`` of a page module (``ap_coder/web/pages/<page>.py``): each plain ``def`` handler declared on it
+    that takes the request is made ``one_connection`` (``OneConnectionRoute``), so no page opens a connection per
+    store call because its handler was not marked (7 of 179 were; the settings page opened 23 a request)."""
+    from fastapi import APIRouter
+
+    return APIRouter(route_class=_one_connection_route())
+
+
+@functools.cache
+def _one_connection_route() -> type:
+    import inspect
+
+    from fastapi.routing import APIRoute
+
+    class OneConnectionRoute(APIRoute):
+        """A route whose plain handler shares one database connection for the request. An ``async`` handler is left
+        as it is: other requests run on its thread while it awaits, so a connection held across that would be
+        theirs too."""
+
+        def __init__(self, path: str, endpoint: Callable[..., Any], **kwargs: Any) -> None:
+            if (not inspect.iscoroutinefunction(endpoint) and not getattr(endpoint, "one_connection", False)
+                    and "request" in inspect.signature(endpoint).parameters):  # fmt: skip
+                endpoint = one_connection(endpoint)
+            super().__init__(path, endpoint, **kwargs)
+
+    return OneConnectionRoute
 
 
 def get_settings(request: Request) -> Settings:
