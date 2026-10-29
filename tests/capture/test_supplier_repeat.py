@@ -309,3 +309,24 @@ def test_a_total_tax_the_page_does_not_print_stays_worked_out_from_the_taxes(tmp
         statuses.append(capture.fields["tax_total"].status)
         _approve(store, case.path, capture, approved_values(case.truth, capture))
     assert statuses == ["verified"] * 5, statuses
+
+
+def test_a_label_after_the_previous_columns_hash_is_found_where_it_is_printed(tmp_path, store):
+    """The vendor prints its header as columns, "P.O. #" then "Terms", in two arrangements (bench supplier 9,
+    "remittance stub"). Where "Terms" came right after the "#", the label was found as "# Terms", its box starting at
+    the "#": the value was looked for under the P.O. column, the terms read by the rules alone (likely), and the
+    invoice could not skip review."""
+    import datetime as dt
+
+    from ap_coder.ai.offline_coder import read_invoice
+    from ap_coder.bench.generator import make_stream_case
+    from ap_coder.bench.learning import approved_values
+
+    statuses = []
+    for i in range(9):
+        case = make_stream_case(tmp_path / "cases", 1, 9, i)
+        today = dt.date.fromisoformat(case.truth["fields"]["invoice_date"]["value"]) + dt.timedelta(days=3)
+        capture = read_invoice(case.path, store, today=today)[0]
+        statuses.append(capture.fields["payment_terms"].status)
+        _approve(store, case.path, capture, approved_values(case.truth, capture))
+    assert statuses[3:] == ["verified"] * 6, statuses

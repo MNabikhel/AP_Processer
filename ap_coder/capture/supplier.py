@@ -942,6 +942,8 @@ def _anchor_hits(rows: list[list[Word]], anchor: Anchor) -> list[tuple[Box, list
         return hits
     for row in rows:
         for i in range(len(row)):
+            if not _compact(row[i].text):
+                continue  # a mark ("#", ":") starts no label: "P.O. # Terms" holds "Terms", not "# Terms" (B-1440)
             acc = ""
             starts = i == 0 or not _glued(row[i - 1], row[i])
             for j in range(i, min(i + 6, len(row))):

@@ -407,7 +407,7 @@ def test_policy_is_configurable():
 
 
 def test_the_bar_is_99_percent_with_95_percent_confidence_one_sided():
-    """"At least 99%, with 95% confidence" is one-sided (z 1.645): about 268 fields read right without an error,
+    """ "At least 99%, with 95% confidence" is one-sided (z 1.645): about 268 fields read right without an error,
     some 21 invoices. The two-sided 1.96 asked for 381 (97.5% confidence), some 30 invoices (D-122)."""
     assert DEFAULT_POLICY.z == pytest.approx(1.645)
     assert clean_fields_needed(0, 0, 0.99, DEFAULT_POLICY.z) == 268
