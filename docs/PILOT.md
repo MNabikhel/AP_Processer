@@ -253,12 +253,13 @@ turns it on in **Settings → Automation** (with a confirmation; recorded in the
 name). From then on, a vendor that meets the bar goes touchless by itself:
 
 - at least 20 invoices reviewed by a person;
-- header fields read right at least 99% of the time, with 95% confidence, over its last 200 invoices
-  (with about 13 header fields an invoice, that usually takes about 30 to 40 clean invoices);
+- header fields read right at least 99% of the time, with 95% confidence, since its last correction, and
+  at least 98% over its last 200 invoices (with about 13 header fields an invoice, that usually takes about
+  20 to 30 clean invoices; a correction AP made early on, once learned, no longer holds it back);
 - the last 10 with no correction at all.
 
 5% of touchless invoices still go to a person as an audit. One correction, or a touchless invoice
-reopened, suspends the vendor until it has a fresh clean streak. *Keep supervised* (Learning & accuracy)
+reopened, suspends the vendor until the invoices since show 99% again (about 21 without a correction). *Keep supervised* (Learning & accuracy)
 keeps one vendor with a person whatever its record. Some invoices always go to a person: a changed bank
 account or GST/HST number, any sign of a duplicate, an unusual amount, a vendor not in the vendor master
 or on hold, a credit note, a total above *Largest invoice approved without a person* (5,000.00 CAD by

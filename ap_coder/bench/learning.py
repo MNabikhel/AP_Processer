@@ -112,6 +112,18 @@ def _wrong_click(layout: Any, truth: dict[str, Any]) -> tuple[str, list[Any]] | 
 KNOWN_TERMS = ("Net 45", "Net 60", "Net 15", "2% 10 Net 30", "Due on receipt")
 
 
+def known_fields(recs: list[dict[str, Any]], known: dict[str, str]) -> list[dict[str, Any]]:
+    """``recs`` (``score_case``) with each value AP knows and the invoice does not print scored as a field of the
+    invoice: right only when proposed so (posted without it, or otherwise, it is wrong)."""
+    out = []
+    for r in recs:
+        if r["field"] in known:
+            right = bool(r["reported"]) and values_match(r["field"], known[r["field"]], r["got"])
+            r = {**r, "present": True, "truth": known[r["field"]], "correct": right, "spurious": False, "scored": True}
+        out.append(r)
+    return out
+
+
 def ap_knows(seed: int, supplier: int, share: float) -> dict[str, str]:
     """{field: value} AP sets on each of this supplier's invoices that does not print it ({}: none), for a ``share`` of
     the suppliers, at random."""
@@ -254,7 +266,10 @@ def _simulate(job: Job) -> dict[str, Any]:
             capture, _read_key, profile = read_invoice(case.path, store, layout=layout, today=today)
             template = (profile or {}).get("template") or None
             plain = analyze(case.path, vendor=vendor, layout=layout, today=today)  # without anything learned
-            recs = score_case(truth, capture)
+            # What AP knows of the supplier and the invoice does not print is part of what is right (``--ap-knows``):
+            # proposed as AP knows it, it is no error; proposed otherwise, it is one.
+            known_now = {f: v for f, v in known.items() if f not in (truth.get("fields") or {})}
+            recs = known_fields(score_case(truth, capture), known_now)
             evidence.extend(
                 {"case": case.id, "scanned": case.scanned, "field": r["field"], "evidence": r["evidence"],
                  "correct": r["correct"]}
@@ -273,7 +288,6 @@ def _simulate(job: Job) -> dict[str, Any]:
 
             final = approved_values(truth, capture)
             # What AP knows of this supplier that its invoices do not print (``--ap-knows``): set on each approval.
-            known_now = {f: v for f, v in known.items() if f not in (truth.get("fields") or {})}
             final.update(known_now)
             taught = None
             clicked = _wrong_click(layout, truth) if i + 1 == wrong_at else None
@@ -659,7 +673,9 @@ def render_markdown(report: dict[str, Any]) -> str:
         "with the supplier's template as learned so far, AP approves the true values, and the template "
         "learns from every approval.\n",
         f"Autonomy policy: at least {pol['min_invoices']} reviewed invoices, a {pol['min_lower_bound']:.0%} "
-        f"lower bound on header-field accuracy, the last {pol['clean_streak']} without a correction; "
+        f"lower bound on header-field accuracy since the last correction "
+        f"({pol.get('window_lower_bound', pol['min_lower_bound']):.0%} over the last {pol['window']}), the last "
+        f"{pol['clean_streak']} without a correction; "
         f"{pol['audit_rate']:.0%} audit sample. Touchless processing is on: a supplier goes touchless by itself as "
         "soon as it meets the bar.\n",
         ("Suppliers are in the vendor master (name and GST/HST number checked). " if cfg["vendor_master"] else "")

@@ -252,7 +252,7 @@ def test_reading_says_whether_lm_studio_runs_and_folds_the_rest_for_it(client):
 def test_touchless_is_not_the_pages_main_button_and_says_to_leave_it_off(client):
     page = client.get("/settings/automation").text
     assert '<summary class="btn"><span class="ms" aria-hidden="true">bolt</span>Turn on' in page
-    assert "Leave it off during the pilot." in page and "30 to 40" in page
+    assert "Leave it off during the pilot." in page and "20 to 30" in page
 
 
 def test_supplier_learning_says_how_many_more_invoices_once(client, demo_store):

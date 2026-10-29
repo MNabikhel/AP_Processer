@@ -289,8 +289,8 @@ and how far each vendor is from touchless.
 person. Leave it off for the first weeks and watch *Supplier learning*. When your regular vendors are
 close to the bar, an AP lead turns it on (with a confirmation, recorded in the Activity log). A vendor then
 goes touchless by itself once it has at least 20 reviewed invoices, header fields read right at least 99%
-of the time with 95% confidence, and the last 10 without a correction: in practice about 30 to 40 invoices
-approved without a correction. *Supplier learning* shows each vendor's own number.
+of the time with 95% confidence since its last correction (and at least 98% over its last 200 invoices), and
+the last 10 without a correction: in practice about 20 to 30 invoices approved without a correction. *Supplier learning* shows each vendor's own number.
 5% are still audited, and one correction suspends the vendor. Some invoices always go to a person (a
 changed bank account or GST/HST number, a possible duplicate, a total above *Largest invoice approved
 without a person*, 5,000.00 CAD by default, and others: Settings → Automation lists them). See

@@ -250,3 +250,83 @@ def test_two_dates_side_by_side_are_never_read_as_one(tmp_path):
         assert all(not p.startswith("9") for p in variant.shape.patterns)  # learned on the due date's own words
     assert date_candidates("10, 2025 October") == [] and date_candidates("2025 March 15,") == []
     assert date_candidates("March 15, 2025")[0][0] == "2025-03-15" and date_candidates("15 mars 2025")
+
+
+def test_a_misread_name_ap_approved_so_twice_more_is_vouched_for(tmp_path, store):
+    """D-119 said a corrected vendor name is likely until AP has approved it so twice, but nothing ever made it
+    verified: the page cannot vouch for it (it prints the misread), so the vendor could never skip review, however
+    long its record. Read exactly as before and confirmed twice since the correction, it is verified."""
+    from ap_coder.ai.offline_coder import read_invoice
+
+    statuses = []
+    for n in range(5):
+        path = _misread_invoice(tmp_path / f"{n}.pdf", f"NW-{1000 + n}", "100.00")
+        capture = read_invoice(path, store)[0]
+        statuses.append((capture.fields["vendor_name"].value, capture.fields["vendor_name"].status))
+        _approve(store, path, capture, {"vendor_name": NAME})
+    assert statuses[1] == (NAME, "likely") and statuses[2] == (NAME, "likely")  # corrected once, then once more
+    assert statuses[3] == (NAME, "verified") and statuses[4] == (NAME, "verified")
+
+
+def test_the_value_on_the_line_below_the_learned_spot_is_no_rival_reading(tmp_path, store):
+    """A US vendor prints "Date:" and, on the line right below, "Pay By:": the template read the invoice date at its
+    learned spot, and the due date on the next line as a second reading close enough to cast doubt, so the date was to
+    check on every invoice and the vendor could never skip review. With its label found, a value is read on the
+    label's own line."""
+    from ap_coder.ai.offline_coder import read_invoice
+
+    def invoice(n: int) -> Path:
+        return text_pdf(tmp_path / f"{n}.pdf", [
+            (40, 50, "Lone Pine Tools Inc.", 14), (40, 90, "Invoice No."), (120, 90, f"LP-{300 + n}"),
+            (40, 102, "Date:"), (120, 102, f"May {10 + n}, 2025"),
+            (40, 114, "Pay By"), (120, 114, f"Jun {20 + n}, 2025"),
+            (40, 300, "Description"), (450, 300, "Amount"), (40, 320, "Wrenches"), (450, 320, "90.00"),
+            (330, 560, "Subtotal:"), (450, 560, "90.00"), (330, 590, "Total:"), (450, 590, "90.00")])  # fmt: skip
+
+    for n in range(3):
+        capture = read_invoice(invoice(n), store)[0]
+        _approve(store, tmp_path / f"{n}.pdf", capture, {"invoice_date": f"2025-05-{10 + n}"})
+    date = read_invoice(invoice(3), store)[0].fields["invoice_date"]
+    assert date.value == "2025-05-13" and date.status == "verified", (date.status, date.reasons)
+    assert not any(k.startswith("other:") for k in date.sources)
+
+
+def test_a_total_tax_the_page_does_not_print_stays_worked_out_from_the_taxes(tmp_path, store):
+    """The vendor prints HST alone, no total tax (bench supplier 16, "minimal courier"): the total tax was worked out
+    from the HST (verified), until the template, taught the approved total tax at the HST's spot, read it there alone:
+    likely, so the invoice could not skip review."""
+    import datetime as dt
+
+    from ap_coder.ai.offline_coder import read_invoice
+    from ap_coder.bench.generator import make_stream_case
+    from ap_coder.bench.learning import approved_values
+
+    statuses = []
+    for i in range(5):
+        case = make_stream_case(tmp_path / "cases", 1, 16, i)
+        today = dt.date.fromisoformat(case.truth["fields"]["invoice_date"]["value"]) + dt.timedelta(days=3)
+        capture = read_invoice(case.path, store, today=today)[0]
+        statuses.append(capture.fields["tax_total"].status)
+        _approve(store, case.path, capture, approved_values(case.truth, capture))
+    assert statuses == ["verified"] * 5, statuses
+
+
+def test_a_label_after_the_previous_columns_hash_is_found_where_it_is_printed(tmp_path, store):
+    """The vendor prints its header as columns, "P.O. #" then "Terms", in two arrangements (bench supplier 9,
+    "remittance stub"). Where "Terms" came right after the "#", the label was found as "# Terms", its box starting at
+    the "#": the value was looked for under the P.O. column, the terms read by the rules alone (likely), and the
+    invoice could not skip review."""
+    import datetime as dt
+
+    from ap_coder.ai.offline_coder import read_invoice
+    from ap_coder.bench.generator import make_stream_case
+    from ap_coder.bench.learning import approved_values
+
+    statuses = []
+    for i in range(9):
+        case = make_stream_case(tmp_path / "cases", 1, 9, i)
+        today = dt.date.fromisoformat(case.truth["fields"]["invoice_date"]["value"]) + dt.timedelta(days=3)
+        capture = read_invoice(case.path, store, today=today)[0]
+        statuses.append(capture.fields["payment_terms"].status)
+        _approve(store, case.path, capture, approved_values(case.truth, capture))
+    assert statuses[3:] == ["verified"] * 6, statuses

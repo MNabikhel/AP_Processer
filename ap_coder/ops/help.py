@@ -837,15 +837,15 @@ FAQ: list[tuple[str, str]] = [
     ),
     (
         "When is an invoice approved without a person?",
-        "Only once touchless processing is turned on (Settings → Automation; it is off until an AP lead turns it on). "
-        "Each invoice a clerk reviews trains its vendor, field by field. A vendor goes touchless by itself once it "
-        "meets the same bar as every vendor: 20 invoices reviewed, 99% of fields right with confidence, and the "
-        "last 10 without a correction; in practice about 30 to 40 invoices approved without a correction, and "
-        "Learning & accuracy → Supplier learning shows each vendor's own number. Its invoices still go to a person "
-        "when a field is not verified, a check fails, the bank account or GST/HST number changed, it may be a "
-        "duplicate, the amount is unusual or over the touchless limit, it is a credit note, or it needs a second "
-        "approver; 5% are audited anyway. One correction sends the vendor back to review. An AP lead can keep any "
-        "vendor supervised on Learning & accuracy.",
+        "Only once touchless processing is turned on (Settings → Automation; it is off until an AP lead turns it on)."
+        " Each invoice a clerk reviews trains its vendor, field by field. A vendor goes touchless by itself once it "
+        "meets the same bar as every vendor: 20 invoices reviewed, 99% of fields right with confidence since its last"
+        " correction, and the last 10 without a correction; in practice about 20 to 30 invoices approved without a "
+        "correction, and Learning & accuracy → Supplier learning shows each vendor's own number. Its invoices still "
+        "go to a person when a field is not verified, a check fails, the bank account or GST/HST number changed, it "
+        "may be a duplicate, the amount is unusual or over the touchless limit, it is a credit note, or it needs a "
+        "second approver; 5% are audited anyway. One correction sends the vendor back to review. An AP lead can keep "
+        "any vendor supervised on Learning & accuracy.",
     ),
     (
         "What is the difference between errors, warnings and 'good to know'?",

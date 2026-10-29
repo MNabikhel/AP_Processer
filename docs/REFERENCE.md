@@ -122,10 +122,11 @@ training its vendor.
 
 - **One switch, one bar.** With the switch on, a vendor goes touchless by itself once it meets the same
   fixed bar as every other vendor: at least 20 reviewed invoices, header fields read right at least 99% of
-  the time with 95% confidence over its last 200 invoices, and the last 10 without a correction. With
-  about 13 header fields an invoice, that usually takes about 30 to 40 clean invoices.
+  the time with 95% confidence since its last correction and at least 98% over its last 200 invoices, and
+  the last 10 without a correction. With about 13 header fields an invoice, that usually takes about 20 to
+  30 clean invoices.
 - **Checked as it goes.** 5% of touchless invoices still go to a person. One correction, or a touchless
-  invoice reopened, suspends the vendor until it has a fresh clean streak. An AP lead can *Keep supervised*
+  invoice reopened, suspends the vendor until the invoices since show 99% again (about 21 clean ones). An AP lead can *Keep supervised*
   any vendor (*Learning & accuracy → Supplier learning*).
 - **Always a person**, whatever the vendor's record: a changed bank account or GST/HST number, any sign of
   a duplicate, an unusual amount, a vendor not in the vendor master or on hold, a credit note, a total
