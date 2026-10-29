@@ -30,12 +30,12 @@ Adding a page
 -------------
 1. Write ``ap_coder/web/pages/<name>.py`` with an ``APIRouter`` called ``router``::
 
-       from fastapi import APIRouter, Form, Request
+       from fastapi import Form, Request
        from fastapi.responses import HTMLResponse, JSONResponse
 
-       from ap_coder.web.core import done, get_store, render
+       from ap_coder.web.core import done, get_store, page_router, render
 
-       router = APIRouter()
+       router = page_router()  # each plain handler's store calls share one connection a request
 
        @router.get("/vendors", response_class=HTMLResponse)
        def vendors_page(request: Request) -> HTMLResponse:

@@ -11,19 +11,19 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi import Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from ap_coder.core.safe import csv_row
 from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW
 from ap_coder.erp import directory, search
 from ap_coder.web.access import is_admin
-from ap_coder.web.core import done, get_store, local_url, refuse, render, reviewer, server_mode
+from ap_coder.web.core import done, get_store, local_url, page_router, refuse, render, reviewer, server_mode
 from ap_coder.web.files import XLSX, download
 from ap_coder.web.identity import person
 from ap_coder.web.pages.invoice import approved_pdf_download, changed_meanwhile
 
-router = APIRouter()
+router = page_router()  # each plain handler: one connection a request
 
 STATUS = {
     REVIEW: ("To review", "info", "inbox"),

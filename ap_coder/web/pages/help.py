@@ -17,7 +17,7 @@ import time
 from dataclasses import replace
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 
 from ap_coder.core import paths
@@ -27,11 +27,11 @@ from ap_coder.ops.offline import internet_allowed, setup_contact
 from ap_coder.ops.service import log_path as service_log
 from ap_coder.web import minimd
 from ap_coder.web.access import is_admin
-from ap_coder.web.core import can, data_dir, developer_tools, get_store, render, server_mode, short_path
+from ap_coder.web.core import can, data_dir, developer_tools, get_store, page_router, render, server_mode, short_path
 from ap_coder.web.pages import BY_KEY
 from ap_coder.web.pages.settings_reading import azure_check_on, how_it_reads
 
-router = APIRouter()
+router = page_router()  # each plain handler: one connection a request
 
 SETUP_KEEP_SECONDS = 300  # the setup report is kept this long once made
 _setup_cache: dict[str, tuple[float, str]] = {}

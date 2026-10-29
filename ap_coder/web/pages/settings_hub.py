@@ -11,7 +11,7 @@ from __future__ import annotations
 import urllib.parse
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from ap_coder.erp.hub import landing, onelake
@@ -28,9 +28,9 @@ from ap_coder.erp.hub.run import (
     save_config,
 )
 from ap_coder.erp.hub.tables import HUB_SCHEMA_VERSION, TABLES
-from ap_coder.web.core import done, get_store, posted_form, refuse, reviewer, server_mode
+from ap_coder.web.core import done, get_store, page_router, posted_form, refuse, reviewer, server_mode
 
-router = APIRouter()
+router = page_router()  # each plain handler: one connection a request
 
 URL = "/settings/hub"
 EVERY_WORDS = {0: "Only when run by hand", 1: "Every hour", 4: "Every 4 hours", 12: "Every 12 hours", 24: "Once a day"}

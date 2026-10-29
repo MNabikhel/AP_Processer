@@ -16,7 +16,7 @@ import functools
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Form, Request
+from fastapi import Form, Request
 from fastapi.responses import JSONResponse
 
 from ap_coder.ai import page_reader, page_worker
@@ -33,6 +33,7 @@ from ap_coder.web.core import (
     jobs,
     local_url,
     message,
+    page_router,
     reading_status_or_none,
     reference_or_none,
     refuse,
@@ -41,7 +42,7 @@ from ap_coder.web.core import (
 )
 from ap_coder.web.jobs import Job
 
-router = APIRouter()
+router = page_router()  # each plain handler: one connection a request
 
 URL = "/settings/reading"
 

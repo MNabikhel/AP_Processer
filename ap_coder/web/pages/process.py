@@ -20,7 +20,7 @@ from collections.abc import Callable
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
-from fastapi import APIRouter, File, Form, Request, UploadFile
+from fastapi import File, Form, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
@@ -60,6 +60,7 @@ from ap_coder.web.core import (
     jobs,
     local_url,
     open_folder_here,
+    page_router,
     reading_status_or_none,
     reference_or_none,
     refuse,
@@ -72,7 +73,7 @@ from ap_coder.web.identity import person
 from ap_coder.web.jobs import Job
 from ap_coder.web.pages.review import attention
 
-router = APIRouter()
+router = page_router()  # each plain handler: one connection a request
 
 JOB = "process"
 STILL_SAVING_SECONDS = 60  # a file changed this recently whose end is missing is still being written

@@ -13,7 +13,7 @@ import datetime as dt
 from typing import Any
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, File, Form, Query, Request, UploadFile
+from fastapi import File, Form, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from ap_coder.coding import vendor_mail
@@ -34,7 +34,17 @@ from ap_coder.core.store import PARKED, REVIEW, Store
 from ap_coder.erp import recurring
 from ap_coder.erp.insights import vendor_workload
 from ap_coder.ops.help import help_for
-from ap_coder.web.core import done, flash_message, get_store, posted_form, reference_or_none, refuse, render, reviewer
+from ap_coder.web.core import (
+    done,
+    flash_message,
+    get_store,
+    page_router,
+    posted_form,
+    reference_or_none,
+    refuse,
+    render,
+    reviewer,
+)
 from ap_coder.web.files import (
     NO_ROWS,
     SheetError,
@@ -46,7 +56,7 @@ from ap_coder.web.files import (
 )
 from ap_coder.web.invoice_view import gl_name
 
-router = APIRouter()
+router = page_router()  # each plain handler: one connection a request
 
 SORTS = {
     "spend": "Spend: high to low",

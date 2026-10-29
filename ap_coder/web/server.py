@@ -341,6 +341,20 @@ def _stop_when_asked(supervisor: Any, data: Path, token: str) -> None:
             supervisor.should_exit.set()
 
 
+WAKE_EVERY = 0.5  # seconds between the connections that wake a worker waiting in accept() once asked to stop
+
+
+def _wake_waiting_workers(config: Any) -> None:
+    """Connect to the server's own port, and close at once: a web worker whose loop waits in a blocking ``accept()``
+    on the socket the workers share (on Windows: two woke for one connection, the other took it) takes it, and then
+    sees it was asked to stop; it would otherwise run until ended at the deadline (B-1441). A worker that is not
+    waiting answers an empty connection, which is nothing."""
+    host = str(getattr(config, "host", "") or "127.0.0.1")
+    host = {"0.0.0.0": "127.0.0.1", "::": "::1", "": "127.0.0.1"}.get(host, host)
+    with contextlib.suppress(OSError):
+        socket.create_connection((host, int(config.port)), timeout=WAKE_EVERY).close()
+
+
 def _supervisor_class() -> Any:
     from uvicorn.config import STARTUP_FAILURE
     from uvicorn.supervisors.multiprocess import Multiprocess
@@ -367,7 +381,10 @@ def _supervisor_class() -> Any:
         def join_all(self) -> None:
             deadline = time.monotonic() + GRACEFUL_SECONDS + 5
             for process in self.processes:
-                process.process.join(max(0.1, deadline - time.monotonic()))
+                process.process.join(min(WAKE_EVERY, max(0.1, deadline - time.monotonic())))
+                while process.process.is_alive() and time.monotonic() < deadline:
+                    _wake_waiting_workers(self.config)  # one stuck in accept() sees the stop (B-1441)
+                    process.process.join(min(WAKE_EVERY, max(0.1, deadline - time.monotonic())))
                 if process.process.is_alive():
                     process.kill()
                     process.process.join(5)

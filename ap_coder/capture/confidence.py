@@ -352,6 +352,8 @@ def calibration_table() -> dict[str, tuple[int, int]]:
 
 
 def wilson_lower(correct: int, n: int, z: float = 1.96) -> float:
+    """Lower bound of the Wilson score interval: the accuracy we can claim with confidence, not luck (the
+    calibration's, and the touchless bar's: ``supplier``)."""
     if n <= 0:
         return 0.0
     p = correct / n

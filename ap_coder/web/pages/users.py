@@ -20,14 +20,14 @@ import threading
 import time
 from typing import Any
 
-from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi import Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from ap_coder.core.store.users import ANYWHERE, ROLE_LABELS, ROLES
 from ap_coder.web import identity
-from ap_coder.web.core import done, flash_message, get_store, refuse, render, reviewer, server_mode
+from ap_coder.web.core import done, flash_message, get_store, page_router, refuse, render, reviewer, server_mode
 
-router = APIRouter()
+router = page_router()  # each plain handler: one connection a request
 
 PATH = "/admin/users"
 SHOWN_FOR = 600  # seconds a temporary password waits to be shown

@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi import Form, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from markupsafe import Markup
@@ -59,6 +59,7 @@ from ap_coder.web.core import (
     login,
     message,
     one_connection,
+    page_router,
     posted_form,
     reading_status_or_none,
     reference_or_none,
@@ -73,7 +74,7 @@ from ap_coder.web.identity import shown_path
 from ap_coder.web.pages.activity import timeline_items
 from ap_coder.web.pages.review import attention, filter_queue, sort_queue
 
-router = APIRouter()
+router = page_router()  # each plain handler: one connection a request
 
 VIEWER_HEIGHT = 760  # px; the page scrolls inside, never taller than the window
 PAGE_READER_POLL_SECONDS = 20  # while OvisOCR2 has the open invoice in its queue

@@ -37,6 +37,40 @@ def client(store):
 # --- Every page answers ---------------------------------------------------------------------------------------
 
 
+def test_each_page_handler_shares_one_database_connection_for_its_request(client):
+    """Only 7 of the 179 handlers were marked to share one connection: every other request opened and closed one per
+    store call (the settings page 23, Process 34), each close writing the write-ahead log to disk. Every plain
+    handler that takes the request now shares one (``core.one_connection_each``); an async one is left as it is."""
+    import importlib
+    import inspect
+
+    from fastapi.routing import APIRoute
+
+    from ap_coder.web.app import MORE_MODULES
+
+    plain = []
+    for module in [*MORE_MODULES, *{p.module for p in PAGES}]:
+        router = importlib.import_module(f"ap_coder.web.pages.{module}").router
+        plain += [(module, r) for r in router.routes if isinstance(r, APIRoute)
+                  and not inspect.iscoroutinefunction(inspect.unwrap(r.endpoint))
+                  and "request" in inspect.signature(r.endpoint).parameters]  # fmt: skip
+    assert len(plain) > 100
+    assert [(m, r.path) for m, r in plain if not getattr(r.endpoint, "one_connection", False)] == []
+
+    opened = []
+    real = client.app.state.store._open
+
+    def counted():
+        opened.append(1)
+        return real()
+
+    client.app.state.store._open = counted
+    for path in ("/settings", "/process", "/learning", "/month-end"):
+        opened.clear()
+        assert client.get(path).status_code == 200
+        assert len(opened) <= 1, path
+
+
 def test_every_page_in_the_rail_answers(client):
     home = client.get("/")
     assert home.status_code == 200 and home.url.path == "/review"

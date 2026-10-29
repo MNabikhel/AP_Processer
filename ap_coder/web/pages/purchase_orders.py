@@ -13,14 +13,24 @@ import re
 from typing import Any
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Form, Request, UploadFile
 from fastapi import File as FileParam
+from fastapi import Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from ap_coder.coding import po as po_mod
 from ap_coder.core import ui
 from ap_coder.core.store import Store, load_sample_purchase_orders
-from ap_coder.web.core import done, flash_message, get_store, message, posted_form, refuse, render, reviewer
+from ap_coder.web.core import (
+    done,
+    flash_message,
+    get_store,
+    message,
+    page_router,
+    posted_form,
+    refuse,
+    render,
+    reviewer,
+)
 from ap_coder.web.files import (
     NO_ROWS,
     SheetError,
@@ -32,7 +42,7 @@ from ap_coder.web.files import (
     sheet_context,
 )
 
-router = APIRouter()
+router = page_router()  # each plain handler: one connection a request
 
 FIELD_LABELS = {
     "po_number": "PO number",

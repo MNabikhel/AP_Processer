@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, File, Form, Request, UploadFile
+from fastapi import File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 
 from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCES, province_label
@@ -23,10 +23,10 @@ from ap_coder.core.memory import vendor_key
 from ap_coder.core.store import Store
 from ap_coder.erp import jde, jde_ais, jde_sync, jde_worksheet
 from ap_coder.web import minimd
-from ap_coder.web.core import done, get_store, jobs, posted_form, refuse, reviewer
+from ap_coder.web.core import done, get_store, jobs, page_router, posted_form, refuse, reviewer
 from ap_coder.web.files import TOO_BIG, XLSX, SheetError, download, read_capped, read_csv, read_excel
 
-router = APIRouter()
+router = page_router()  # each plain handler: one connection a request
 
 URL = "/settings/jde"
 

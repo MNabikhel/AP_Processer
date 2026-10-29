@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 import fastapi
-from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi import Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from ap_coder import __version__
@@ -46,6 +46,7 @@ from ap_coder.web.core import (
     invoice_dir,
     jde_shown,
     open_folder_here,
+    page_router,
     page_version,
     posted_form,
     refuse,
@@ -54,7 +55,7 @@ from ap_coder.web.core import (
     server_mode,
 )
 
-router = APIRouter()
+router = page_router()  # each plain handler: one connection a request
 
 # (key, label) in the order of the tab bar; /settings/<key> is each tab.
 TABS: list[tuple[str, str]] = [

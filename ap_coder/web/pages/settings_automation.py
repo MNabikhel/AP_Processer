@@ -12,14 +12,14 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from fastapi import APIRouter, Form, Request
+from fastapi import Form, Request
 from fastapi.responses import JSONResponse
 
 from ap_coder.core import ui
 from ap_coder.core.store import Store
-from ap_coder.web.core import done, get_store, refuse, reviewer
+from ap_coder.web.core import done, get_store, page_router, refuse, reviewer
 
-router = APIRouter()
+router = page_router()  # each plain handler: one connection a request
 
 URL = "/settings/automation"
 STATE_WORDS = {"autonomous": "Touchless", "ready": "Ready", "suspended": "Suspended", "supervised": "Learning",

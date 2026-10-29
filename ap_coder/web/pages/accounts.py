@@ -12,7 +12,7 @@ from collections import Counter
 from typing import Any
 
 import pandas as pd
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from ap_coder.coding import banks
@@ -28,6 +28,7 @@ from ap_coder.web.core import (
     done,
     flash_message,
     get_store,
+    page_router,
     page_version,
     posted_form,
     refuse,
@@ -39,7 +40,7 @@ from ap_coder.web.core import (
 from ap_coder.web.files import NO_ROWS, SheetError, download, drop_upload, read_upload, receive_sheet, sheet_context
 from ap_coder.web.pages.process import tax_types_mapped
 
-router = APIRouter()
+router = page_router()  # each plain handler: one connection a request
 
 TABLES = {"gl_accounts": ("gl", "GL account"), "cost_centers": ("cc", "cost center")}
 TABS = {

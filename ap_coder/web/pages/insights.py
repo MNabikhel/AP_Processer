@@ -14,7 +14,7 @@ import datetime as dt
 from dataclasses import fields
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from ap_coder.core import ui
@@ -22,10 +22,10 @@ from ap_coder.core.store import APPROVED
 from ap_coder.erp.insights import AS_CODED, Assumptions, as_coded_note, compute, operations, report_html
 from ap_coder.ops.offline import internet_allowed
 from ap_coder.web.charts import OK_GREEN, SERIES, WARN_AMBER, Series, bar_chart
-from ap_coder.web.core import done, get_store, posted_form, refuse, render, reviewer
+from ap_coder.web.core import done, get_store, page_router, posted_form, refuse, render, reviewer
 from ap_coder.web.files import download
 
-router = APIRouter()
+router = page_router()  # each plain handler: one connection a request
 
 MIN_APPROVALS = 20  # Insights' figures show once this many invoices are approved
 CLOUD_FIELDS = {"di_usd_per_1000_pages", "aoai_usd_per_m_input", "aoai_usd_per_m_cached", "aoai_usd_per_m_output",

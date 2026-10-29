@@ -16,13 +16,24 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from fastapi import APIRouter, Form, Request
+from fastapi import Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from ap_coder.ai import azure_check
-from ap_coder.web.core import done, get_settings, get_store, jobs, local_url, refuse, render, reviewer, templates
+from ap_coder.web.core import (
+    done,
+    get_settings,
+    get_store,
+    jobs,
+    local_url,
+    page_router,
+    refuse,
+    render,
+    reviewer,
+    templates,
+)
 
-router = APIRouter()
+router = page_router()  # each plain handler: one connection a request
 
 JOB = "azure-test"
 HOME = "/settings/azure-check"

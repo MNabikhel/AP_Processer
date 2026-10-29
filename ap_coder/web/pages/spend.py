@@ -10,16 +10,16 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import Request
 from fastapi.responses import HTMLResponse, Response
 
 from ap_coder.core import ui
 from ap_coder.erp import spend
 from ap_coder.web.charts import SERIES, Series, bar_chart, compact, legend_items
-from ap_coder.web.core import get_store, money, reference_or_none, render
+from ap_coder.web.core import get_store, money, page_router, reference_or_none, render
 from ap_coder.web.files import XLSX, download
 
-router = APIRouter()
+router = page_router()  # each plain handler: one connection a request
 
 TOP = 10
 ALL_IN_CAD = "All, in CAD"
