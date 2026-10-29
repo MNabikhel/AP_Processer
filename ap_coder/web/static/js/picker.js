@@ -127,17 +127,19 @@ function fromJson(id) {
 }
 
 function words(query) {
-  return fold(query).split(/\s+/).filter(Boolean);
+  return fold(query).split(/[\s·]+/).filter(Boolean); // "6000 · Office Supplies" pasted back finds its account
 }
 
-/** The choices with every word in them: the ones whose code (or name) starts with the first word first, then a word
-    of the name starting with it, then the rest, each in the list's order. */
+/** The choices with every word in them: the one whose code is all that was typed first, then the ones whose code (or
+    name) starts with the first word, then a word of the name starting with it, then the rest, each in the list's
+    order. */
 function matching(items, ws) {
   const first = ws[0];
+  const whole = ws.join(" ");
   const ranked = [];
   items.forEach((it, i) => {
     if (!ws.every((w) => it.hay.includes(w))) return;
-    const rank = it.lead.startsWith(first) ? 0 : ` ${it.hay}`.includes(` ${first}`) ? 1 : 2;
+    const rank = it.code && fold(it.code) === whole ? -1 : it.lead.startsWith(first) ? 0 : ` ${it.hay}`.includes(` ${first}`) ? 1 : 2;
     ranked.push([rank, i, it]);
   });
   return ranked.sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((r) => r[2]);
@@ -228,7 +230,20 @@ class Picker {
       this.render();
     });
     input.addEventListener("keydown", (e) => this.key(e));
-    input.addEventListener("blur", () => this.close());
+    input.addEventListener("blur", () => this.leave());
+  }
+
+  /** The focus left the box (a click elsewhere): what was typed is picked when it names one choice, its whole code
+      or words only one choice has, so a code and its name never part; anything else leaves the choice as it was
+      (B-1445). A free box keeps what was typed, as it always does. */
+  leave() {
+    if (!this.free && this.isOpen() && this.typed) {
+      const whole = words(this.query()).join(" ");
+      const offered = this.view.filter((it) => !it.run);
+      const one = offered.find((it) => it.code && fold(it.code) === whole) || (offered.length === 1 ? offered[0] : null);
+      if (whole && one) return this.pick(this.view.indexOf(one));
+    }
+    this.close();
   }
 
   /** The box's label: its select's, with the line number when it is a line's ("Line 3 GL account"). */
@@ -657,7 +672,7 @@ document.addEventListener(
   true,
 );
 document.addEventListener("pointerdown", (e) => {
-  if (shown && e.target !== shown.input && !layer.contains(e.target)) shown.close();
+  if (shown && e.target !== shown.input && !layer.contains(e.target)) shown.leave(); // a click elsewhere: as a blur
 });
 window.addEventListener("resize", () => shown?.follow());
 document.addEventListener("scroll", (e) => {
