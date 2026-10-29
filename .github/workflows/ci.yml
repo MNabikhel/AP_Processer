@@ -425,7 +425,10 @@ jobs:
           Write-Host "$($zip.Name): $([math]::Round($zip.Length / 1MB)) MB"
           Expand-Archive -Path $zip.FullName -DestinationPath 'C:\pilot'
           if (-not (Test-Path 'C:\pilot\APProcessor\wheelhouse')) { throw 'no wheelhouse in the bundle' }
-      - name: Double-click with the internet cut off
+      - name: Double-click with the internet cut off, LM Studio (a stand-in) running
+        # As on the pilot tester's laptop (docs/DEMO_RUN_SHEET.md): LM Studio runs with its three models
+        # (scripts/ci/fake_lm_studio.py on LM Studio's port, else another that AP Coder is told), and AP Coder must
+        # pick the right one for each job.
         shell: pwsh
         working-directory: C:\pilot\APProcessor
         env:
@@ -435,6 +438,24 @@ jobs:
           PIP_INDEX_URL: http://127.0.0.1:9/simple
           NO_PROXY: 127.0.0.1,localhost
         run: |
+          $lmsPort = 1234
+          if (Get-NetTCPConnection -LocalPort 1234 -State Listen -ErrorAction SilentlyContinue) {
+            $lmsPort = 1239
+            $env:AP_LLM_BASE_URL = "http://127.0.0.1:$lmsPort/v1"
+          }
+          $lmsLog = Join-Path $env:RUNNER_TEMP 'lms.log'
+          $lms = Start-Process -FilePath 'python' -PassThru `
+            -ArgumentList "`"$env:GITHUB_WORKSPACE\scripts\ci\fake_lm_studio.py`"",'serve','--port',"$lmsPort",'--log',"`"$lmsLog`"" `
+            -RedirectStandardOutput (Join-Path $env:RUNNER_TEMP 'lms.out') -RedirectStandardError (Join-Path $env:RUNNER_TEMP 'lms.err')
+          $lmsUp = $false
+          foreach ($i in 1..30) {
+            Start-Sleep -Seconds 1
+            try {
+              $m = Invoke-WebRequest -Uri "http://127.0.0.1:$lmsPort/v1/models" -UseBasicParsing -TimeoutSec 3 -NoProxy
+              if ($m.Content -match 'ath-maas_ovisocr2') { $lmsUp = $true; break }
+            } catch { }
+          }
+          if (-not $lmsUp) { throw 'the stand-in for LM Studio did not start' }
           $p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','APProcessor.bat','--port','8596' -PassThru `
             -RedirectStandardOutput launch.out -RedirectStandardError launch.err
           $ok = $false
@@ -446,14 +467,41 @@ jobs:
             } catch { }
             if ($p.HasExited) { break }
           }
+          $models = $false
+          if ($ok) {
+            python "$env:GITHUB_WORKSPACE\scripts\ci\fake_lm_studio.py" check --app http://127.0.0.1:8596 --log "$lmsLog"
+            $models = ($LASTEXITCODE -eq 0)
+          }
           $out = Get-Content launch.out -Raw -ErrorAction SilentlyContinue
           Write-Host $out
           Get-Content launch.err -Tail 40 -ErrorAction SilentlyContinue
           Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*ap_coder*' } |
             ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+          Stop-Process -Id $lms.Id -Force -ErrorAction SilentlyContinue
           if ($out -notmatch 'wheelhouse') { throw 'did not install from the wheelhouse' }
           if (-not $ok) { throw 'the offline install did not bring the dashboard up' }
           if ($out -notmatch 'Self-check OK') { throw 'the readiness summary did not show the self-check OK' }
+          if (-not $models) { throw 'AP Coder did not pick the right LM Studio model for each job' }
+      - name: The demo launcher keeps a data folder of its own (APProcessor-demo.bat)
+        shell: pwsh
+        working-directory: C:\pilot\APProcessor
+        env:
+          HTTP_PROXY: http://127.0.0.1:9
+          HTTPS_PROXY: http://127.0.0.1:9
+          ALL_PROXY: http://127.0.0.1:9
+          PIP_INDEX_URL: http://127.0.0.1:9/simple
+          NO_PROXY: 127.0.0.1,localhost
+        run: |
+          $record = Join-Path $env:USERPROFILE '.ap_coder\settings.json'
+          $before = (Get-Content $record -Raw | ConvertFrom-Json).data_dir
+          cmd /c "APProcessor-demo.bat --no-start > demo.out 2>&1"
+          $code = $LASTEXITCODE
+          Get-Content demo.out -Tail 30
+          if ($code -ne 0) { throw "APProcessor-demo.bat --no-start ended with $code" }
+          if (-not (Test-Path (Join-Path $env:USERPROFILE 'APCoder-demo\invoices'))) { throw 'no APCoder-demo data folder' }
+          $after = (Get-Content $record -Raw | ConvertFrom-Json).data_dir
+          if ($after -ne $before) { throw "the demo changed the recorded data folder: $before -> $after" }
+          if ($after -like '*APCoder-demo*') { throw 'the demo data folder was recorded as the usual one' }
       - name: OCR models copied from the bundle, samples read right, still offline
         shell: cmd
         working-directory: C:\pilot\APProcessor
@@ -465,7 +513,8 @@ jobs:
         run: |
           .venv\Scripts\python.exe scripts\fetch_models.py --check || exit /b 1
           .venv\Scripts\python.exe scripts\pilot_check.py
-      - name: Offline guard tests (no connection but this computer), internet still cut off
+      - name: Offline guard tests and the demo run sheet (no connection but this computer), internet still cut off
+        # tests/ops/test_demo_day.py: the demo run sheet, import to Excel export, on the unzipped bundle.
         # tests/offline/test_offline_guard.py: the server, every page, every sample, approval, export, Settings and Help under a
         # guard that refuses (and records) any connection that is not to 127.0.0.1, with every proxy and package index
         # pointing at the internet. pytest comes from the bundle's wheelhouse (pip --no-index: never PyPI).
@@ -479,7 +528,7 @@ jobs:
           NO_PROXY: 127.0.0.1,localhost
         run: |
           .venv\Scripts\python.exe -m pip install --no-index --find-links wheelhouse pytest || exit /b 1
-          .venv\Scripts\python.exe -m pytest -q -m "" -p no:cacheprovider tests\offline\test_offline_guard.py
+          .venv\Scripts\python.exe -m pytest -q -m "" -p no:cacheprovider tests\offline\test_offline_guard.py tests\ops\test_demo_day.py
 
   macos-offline-bundle:
     # The tester's Mac: Python 3.14 and nothing else, no internet. Build the offline bundle for it (online),

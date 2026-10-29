@@ -3,7 +3,8 @@
 Usage: python scripts/make_sample_pdf.py [name ...]
 Without names every sample is (re)generated. Requires PyMuPDF (pip install pymupdf).
 Writes samples/<name>.pdf and samples/<name>.md; the matching answers live in
-samples/ground_truth/<name>.json.
+samples/ground_truth/<name>.json. The demo day's two invoices (DEMO_DAY, docs/DEMO_RUN_SHEET.md) go to
+samples/demo_day/, which the self-check and the tests' sample lists leave out.
 
 Optional keys in an invoice spec (the defaults reproduce the original three samples):
   x / widths    column positions and widths of the line-item table
@@ -303,7 +304,7 @@ def _lines(page: pymupdf.Page, x: float, y: float, lines: list[str]) -> float:
     return y
 
 
-def build(name: str, spec: dict) -> None:
+def build(name: str, spec: dict, folder: Path = SAMPLES) -> None:
     doc = pymupdf.open()
     md: list[str] = []
     n_pages = len(spec["pages"])
@@ -353,15 +354,43 @@ def build(name: str, spec: dict) -> None:
         footer = spec.get("page_label", "Page {n} of {total}").format(n=index + 1, total=n_pages)
         page.insert_text((270, 760), footer, fontsize=8, fontname="helv")
         md += [f'<!-- PageFooter="{footer}" -->', ""]
-    doc.save(SAMPLES / f"{name}.pdf")
-    (SAMPLES / f"{name}.md").write_text("\n".join(md), encoding="utf-8")
-    print(f"wrote samples/{name}.pdf and .md")
+    folder.mkdir(parents=True, exist_ok=True)
+    doc.save(folder / f"{name}.pdf")
+    (folder / f"{name}.md").write_text("\n".join(md), encoding="utf-8")
+    print(f"wrote {folder.relative_to(SAMPLES.parent).as_posix()}/{name}.pdf and .md")
+
+
+# The demo day (docs/DEMO_RUN_SHEET.md): Pacific Office Supply's next invoice, the same toner, paper and monitor that AP
+# coded on PO-77120 (coded from that approval when it arrives), and PO-77120 sent again as a second notice (the
+# duplicate check stops it). In samples/demo_day/, apart from the samples the self-check reads.
+DEMO_DAY_DIR = SAMPLES / "demo_day"
+DEMO_DAY = {
+    "pacific_BC_GST_PST_PO-77311": {
+        **INVOICES["pacific_BC_GST_PST_PO-77120"],
+        "meta": ["Invoice #: PO-77311", "Date: 2026-10-26", "Terms: Net 15"],
+        "pages": [
+            [
+                ["1", "HP 26X toner cartridges (G, P)", "6", "89.00", "534.00"],
+                ["2", "Copy paper, letter, case of 10 reams (G, P)", "20", "52.00", "1,040.00"],
+                ["3", 'Dell 27" monitor P2725H (G, P)', "2", "329.00", "658.00"],
+            ]
+        ],
+        "totals": [("Subtotal", "$2,232.00"), ("GST 5%", "$111.60"), ("PST 7%", "$156.24"), ("Total CAD", "$2,499.84")],
+    },
+    "pacific_BC_GST_PST_PO-77120_second_notice": {
+        **INVOICES["pacific_BC_GST_PST_PO-77120"],
+        "footer": "SECOND NOTICE - payment overdue. Thank you!",
+    },
+}
 
 
 if __name__ == "__main__":
-    unknown = [n for n in sys.argv[1:] if n not in INVOICES]
+    unknown = [n for n in sys.argv[1:] if n not in INVOICES and n not in DEMO_DAY]
     if unknown:
-        sys.exit(f"unknown sample(s): {', '.join(unknown)}; choose from {', '.join(INVOICES)}")
+        sys.exit(f"unknown sample(s): {', '.join(unknown)}; choose from {', '.join([*INVOICES, *DEMO_DAY])}")
     SAMPLES.mkdir(exist_ok=True)
-    for invoice_name in sys.argv[1:] or INVOICES:
-        build(invoice_name, INVOICES[invoice_name])
+    for invoice_name in sys.argv[1:] or [*INVOICES, *DEMO_DAY]:
+        if invoice_name in DEMO_DAY:
+            build(invoice_name, DEMO_DAY[invoice_name], DEMO_DAY_DIR)
+        else:
+            build(invoice_name, INVOICES[invoice_name])

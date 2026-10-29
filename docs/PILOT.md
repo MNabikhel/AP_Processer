@@ -2,6 +2,9 @@
 
 A short guide for running the pilot on a Windows laptop (a Mac works the same way). For the four-week
 plan that turns the pilot into a decision, see [PILOT_PLAN.md](PILOT_PLAN.md).
+To show it to someone, follow [DEMO_RUN_SHEET.md](DEMO_RUN_SHEET.md): `APProcessor-demo.bat` runs AP Coder on a
+data folder of its own, so a demo never mixes with the pilot's invoices. What it does not do yet:
+[KNOWN_LIMITS.md](KNOWN_LIMITS.md).
 
 ## What you need
 
