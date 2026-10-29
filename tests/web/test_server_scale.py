@@ -310,6 +310,50 @@ def test_a_worker_asked_to_stop_is_no_startup_failure_even_with_windows_exit_cod
     assert supervisor.failed
 
 
+def test_a_worker_stuck_waiting_for_a_connection_is_woken_to_stop(monkeypatch):
+    """B-1441: on Windows a web worker's loop could sit in a blocking ``accept()`` on the socket the workers share
+    (both woke for one connection, the other took it): it never saw the stop, and was ended at the deadline, 30 s on
+    (CI's faulthandler dump). While a worker is still running after the stop, the server connects to its own port every
+    half second: the worker waiting takes the connection and its loop sees the stop."""
+    import socket
+    import threading
+    from types import SimpleNamespace
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    listener.setblocking(True)  # as the shared socket can be in a worker on Windows
+    accepted = []
+    waiting = threading.Thread(target=lambda: accepted.append(listener.accept()), daemon=True)
+    waiting.start()
+    server._wake_waiting_workers(SimpleNamespace(host="0.0.0.0", port=listener.getsockname()[1]))
+    waiting.join(5)
+    listener.close()
+    assert accepted and not waiting.is_alive()
+
+    class Stopping:  # a worker that ends on the third look
+        def __init__(self):
+            self.looks, self.exitcode = 0, 0
+            self.process = self
+
+        def join(self, _timeout=None):
+            self.looks += 1
+
+        def is_alive(self):
+            return self.looks < 3
+
+        def kill(self):
+            raise AssertionError("ended gracefully, never killed")
+
+    woken = []
+    monkeypatch.setattr(server, "_wake_waiting_workers", lambda config: woken.append(config))
+    supervisor = server._supervisor_class().__new__(server._supervisor_class())
+    supervisor.config, supervisor.asked_to_stop = SimpleNamespace(host="127.0.0.1", port=1), True
+    supervisor.processes = [Stopping()]
+    supervisor.join_all()
+    assert len(woken) == 2  # while it ran, and no more once it ended
+
+
 def test_the_service_starts_one_worker_per_core_at_most_8_unless_server_json_says(tmp_path, monkeypatch):
     from ap_coder.ops import service
 
