@@ -24,8 +24,8 @@ from ..capture.confidence import apply_supplier_record, reading_confidence
 from ..capture.reader import us_address
 from ..capture.types import LIKELY, VERIFIED, CaptureResult, DocLayout, Line
 from ..capture.workflow import (
+    apply_header_lessons,
     apply_line_memory,
-    apply_steady_lessons,
     apply_vendor_alias,
     local_evidence,
     supplier_for,
@@ -127,7 +127,7 @@ def read_invoice(path: str | Path, store: Any = None, layout: DocLayout | None =
     if template:  # a verified value its template read: as sure as this supplier's record of it (D-89)
         apply_supplier_record(capture.fields, supplier_record(store, key))
     apply_vendor_alias(store, capture)  # a vendor name read as AP corrected it before (D-119)
-    apply_steady_lessons(store, capture)  # its terms and currency as AP set them, when the page does not say (D-121)
+    apply_header_lessons(store, capture)  # what AP taught about its header fields, without the chat model (D-121)
     apply_line_memory(store, capture)  # its lines read as AP named them before (D-120)
     return capture, key, profile
 

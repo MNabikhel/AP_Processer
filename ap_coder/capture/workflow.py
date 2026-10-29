@@ -97,31 +97,37 @@ def apply_vendor_alias(store: Any, capture: CaptureResult | None) -> str:
     return name
 
 
-AP_LESSON = "AP's lesson"  # a field's source: the value AP set on this vendor's invoices that do not print it (D-121)
-# Fields whose value a vendor keeps from one invoice to the next, so that what AP set on its last invoices holds for the
-# next one too. Not its tax numbers: one AP types in is no number printed on the invoice, which an input tax credit needs.
+AP_LESSON = "AP's lesson"  # a field's source: what AP set on this vendor's last invoices (D-121)
+# Fields whose value a vendor keeps from one invoice to the next: what AP set on its last invoices is proposed on the next
+# one that does not print it. Not its tax numbers: one AP types in is no number printed on the invoice, which an input
+# tax credit needs.
 STEADY_FIELDS = ("payment_terms", "currency")
 VOUCHED = 2  # approvals that kept a lesson's value as proposed before it is vouched for (verified), as D-119's names
 
 
-def apply_steady_lessons(store: Any, capture: CaptureResult | None) -> list[str]:
-    """Each steady field (``STEADY_FIELDS``) AP set the same way on this vendor's invoices (a lesson that reaches the AI:
-    corrected twice to its value, or once with a reason, D-72), not taken back since (its latest approval kept another
-    value), proposed so here too, without the chat model (D-121): when the invoice prints no value for it, or prints the
-    one AP keeps correcting. One the invoice prints otherwise stands. *Likely* until AP approved it so ``VOUCHED``
-    times, then *verified*. In place; returns the fields set. Never raises."""
+def apply_header_lessons(store: Any, capture: CaptureResult | None) -> list[str]:
+    """What AP taught about this vendor's header fields, applied without the chat model (D-121). A lesson applies once
+    AP has corrected the field to the same value twice (or once, with a reason: ``lessons.reaches_ai``, D-72) and has
+    not kept another value since (AP's latest decision, D-118):
+
+    * the reader reads exactly what AP keeps correcting (a customer account number taken for the PO number, cleared
+      each time; a currency read "CAD" that AP sets to "USD"): AP's value, or the field cleared;
+    * a steady field (``STEADY_FIELDS``) the invoice does not print: AP's value.
+
+    A value the invoice prints otherwise stands. A value set is *likely* until AP approved it so ``VOUCHED`` times, then
+    *verified*. In place; returns the fields changed. Never raises."""
     from ..ai.lessons import CREDIT_NOTE, INVOICE, reaches_ai
     from ..core.memory import vendor_key
     from .supplier import compare_key
-    from .types import LIKELY, MISSING, VERIFIED, FieldResult
+    from .types import FIELDS, LIKELY, MISSING, VERIFIED, FieldResult
 
     name = capture.fields.get("vendor_name") if capture is not None else None
     if store is None or name is None or not vendor_key(str(name.value or "")) or not hasattr(store, "lessons_for"):
         return []
     try:
-        lessons = [r for r in store.lessons_for(vendor_key(str(name.value)), CREDIT_NOTE if capture.credit_note
-                                                else INVOICE)
-                   if r.get("field") in STEADY_FIELDS and reaches_ai(r)]  # fmt: skip
+        kind = CREDIT_NOTE if capture.credit_note else INVOICE
+        lessons = [r for r in store.lessons_for(vendor_key(str(name.value)), kind)
+                   if r.get("field") in FIELDS and r.get("field") != "vendor_name" and reaches_ai(r)]  # fmt: skip
         history = store.lesson_history([r["situation"] for r in lessons]) if lessons else {}
     except Exception as exc:  # the readers' values stand
         log.warning("lessons not looked up (%s)", exc)
@@ -131,20 +137,24 @@ def apply_steady_lessons(store: Any, capture: CaptureResult | None) -> list[str]
         field, value = lesson["field"], lesson["value"]
         latest = (history.get(lesson["situation"]) or [None])[-1]
         if latest and not latest["corrected"] and compare_key(field, latest["value"]) != compare_key(field, value):
-            continue  # AP kept another value since: the lesson no longer holds (AP's latest decision, D-118)
+            continue  # AP kept another value since: the lesson no longer holds
         current = capture.fields.get(field)
         shown = current.value if current is not None and current.status != MISSING else None
         if compare_key(field, shown) == compare_key(field, value):
             continue
-        if shown not in (None, "") and compare_key(field, shown) != compare_key(field, lesson.get("proposed")):
-            continue  # the invoice prints another value: the page wins
-        vouched = int(lesson.get("confirmed") or 0) >= VOUCHED
-        was = f" (read “{shown}”)" if shown not in (None, "") else ""
-        capture.fields[field] = FieldResult(
-            field, value, 0.99 if vouched else 0.9, VERIFIED if vouched else LIKELY,
-            sources={AP_LESSON: value},
-            reasons=[f"as AP set it on this vendor's last invoices{was}, the page not saying otherwise"],
-        )  # fmt: skip
+        misread = shown not in (None, "") and compare_key(field, shown) == compare_key(field, lesson.get("proposed"))
+        if not misread and (shown not in (None, "") or field not in STEADY_FIELDS):
+            continue  # the invoice prints another value (the page wins), or a field AP only fills in when printed
+        was = f" (read “{shown}”)" if misread else ""
+        if value in (None, ""):
+            why = f"left blank, as AP did on this vendor's last invoices{was}"
+            capture.fields[field] = FieldResult(field, None, 0.0, MISSING, sources={AP_LESSON: ""}, reasons=[why])
+        else:
+            vouched = int(lesson.get("confirmed") or 0) >= VOUCHED
+            capture.fields[field] = FieldResult(
+                field, value, 0.99 if vouched else 0.9, VERIFIED if vouched else LIKELY, sources={AP_LESSON: value},
+                reasons=[f"as AP set it on this vendor's last invoices{was}"],
+            )  # fmt: skip
         done.append(field)
     return done
 
@@ -236,7 +246,7 @@ def capture_invoice(path: str | Path, output: dict[str, Any] | None, *, store: A
         if template:
             apply_supplier_record(capture.fields, supplier_record(store, key))
         apply_vendor_alias(store, capture)
-        apply_steady_lessons(store, capture)
+        apply_header_lessons(store, capture)
     except Exception as exc:  # capture is an extra check: never lose an invoice over it
         log.warning("%s: capture failed (%s)", path.name, exc)
         return None, key, profile

@@ -107,3 +107,22 @@ def test_the_review_screen_says_the_value_is_as_ap_set_it(tmp_path, store):
         _approve(store, path, capture, {"payment_terms": "Net 45"})
     badge = capture_confidence(capture)["payment_terms"]
     assert badge["text"].startswith("As you set it") and "this vendor's last invoices" in badge["help"]
+
+
+def test_a_number_the_reader_takes_for_the_po_each_time_is_cleared_once_ap_cleared_it_twice(tmp_path, store):
+    """The vendor prints our customer account number under "PO / Account:": the reader takes it for the PO number on
+    every invoice, and AP clears it each time. The template learns where values are, not that there is none: it is
+    cleared once AP has cleared it twice."""
+
+    def invoice(n: int) -> Path:
+        return text_pdf(tmp_path / f"{n}.pdf", [
+            (40, 50, VENDOR, 14), (330, 90, "Invoice No:"), (430, 90, f"LF-{100 + n}"), (330, 105, "Date:"),
+            (430, 105, "2026-09-12"), (330, 120, "PO #:"), (430, 120, "AC-55512"), (330, 560, "Total:"),
+            (450, 560, "40.00")])  # fmt: skip
+
+    seen = []
+    for n in range(4):
+        capture = _read(store, invoice(n))
+        seen.append(_field(capture, "po_number")[0])
+        _approve(store, tmp_path / f"{n}.pdf", capture, {"po_number": ""})
+    assert seen[:2] == ["AC-55512", "AC-55512"] and seen[2:] == [None, None]

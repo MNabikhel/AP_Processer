@@ -1484,3 +1484,21 @@ that is reversed keeps its line, marked "replaced by D-NN".
   item's first time unchanged (18.8% -> 19.2%: that is the reader's). (`capture/line_memory.py`, `capture/workflow.py`,
   `capture/types.py`, `ai/offline_coder.py`, `core/store/capture.py`, `core/store/_base.py`, `core/store/lessons.py`,
   `web/invoice_view.py`, `web/templates/_invoice_lines.html`, `bench/lines.py`)
+- **D-121** · **Header lessons reach the reader without the chat model.** A lesson (AP's correction of a field, kept per
+  vendor, D-72) was read by the chat model and shown on the review screen; on a laptop without LM Studio it changed
+  nothing, and a value AP sets on every invoice was set by hand every time, each time a correction against the vendor
+  (so it could never reach touchless). The supplier's template learns where a value is printed, which covers a field the
+  page prints; what it cannot learn is a value the page does not print, or a value read wrong the same way each time.
+  Now `workflow.apply_header_lessons` (in `read_invoice`, after the vendor alias) applies a header field's lesson once
+  it reaches the AI (corrected twice to its value, or once with a reason) and AP has not kept another value since
+  (D-118): (1) the reader reads exactly what AP keeps correcting (our customer account number taken for the PO number,
+  cleared each time; "CAD" set to "USD"): AP's value, or the field cleared; (2) a steady field the page does not print
+  (`STEADY_FIELDS`: payment terms, currency): AP's value. A value the page prints otherwise always wins. Never a tax
+  number filled in: one AP types is no number printed on the invoice, which an input tax credit needs. A value set is
+  likely until AP approved it so twice more (`VOUCHED`), then verified, as D-119's names; the field says "As you set it"
+  on the review screen. Measured with `bench learn --ap-knows SHARE` (that share of suppliers have terms, and half of
+  them US dollars, AP sets on invoices that do not print them): on 20 suppliers x 30 invoices, 6 of them with such
+  values, AP set 240 of the 240 by hand before and 16 after (each on the vendor's first two invoices; proposed right
+  from the third on, 100% from the sixth), and their invoices with a correction went from 180 of 180 to 12 (none after
+  the third); the other suppliers unchanged. (`capture/workflow.py`, `ai/offline_coder.py`, `web/invoice_view.py`,
+  `web/templates/learning.html`, `bench/learning.py`)

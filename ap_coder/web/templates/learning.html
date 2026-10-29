@@ -248,7 +248,10 @@
   reason (the coding memory, on the Coding accuracy tab, keeps every line AP approved). The AI reviewer
   and the GL suggestions read them with each vendor's invoices, and the review screen shows them. When the same correction
   comes back {{ why_after }} times, AP Coder asks why before saving (Settings → Review). A lesson reaches the AI once AP
-  has made the same correction twice, or given a reason: a single correction may be a slip. Corrections per invoice
+  has made the same correction twice, or given a reason: a single correction may be a slip. From then on the reader
+  applies a header field's lesson too, with no AI model running: the payment terms or currency AP sets on a vendor's
+  invoices that do not print them, and a value the reader keeps misreading the same way (proposed as AP set it, a
+  value the page prints otherwise always winning). Corrections per invoice
   shows whether it helped; one that did not is suggested for retiring (only you retire it). Edit a reason, or retire a
   lesson that is no longer true.</p>
 {% if not lessons %}
@@ -260,7 +263,7 @@
     <thead><tr><th>Vendor</th><th>What</th><th>AP's value</th><th class="r">Corrected</th><th class="r">Since the reason</th><th class="r">Right since</th><th>Corrections per invoice</th><th>AP's reason</th><th></th></tr></thead>
     <tbody>{% for l in lessons %}
       <tr{% if l.retired %} class="muted"{% endif %}><td>{{ l.vendor_name }} <span class="muted small">{{ l.kind }}</span></td>
-        <td>{{ l.what }}</td><td>{{ l.value }}{% if l.proposed == "UNASSIGNED" %}<div class="muted small">left blank</div>{% elif l.proposed %}<div class="muted small">read as {{ l.proposed }}</div>{% endif %}{% if not l.retired and not l.reaches %}<div class="muted small">Not shown to the AI yet: once more to this value, or a reason</div>{% endif %}</td>
+        <td>{{ l.what }}</td><td>{% if l.value %}{{ l.value }}{% else %}<i>cleared</i>{% endif %}{% if l.proposed == "UNASSIGNED" %}<div class="muted small">left blank</div>{% elif l.proposed %}<div class="muted small">read as {{ l.proposed }}</div>{% endif %}{% if not l.retired and not l.reaches %}<div class="muted small">Not shown to the AI yet: once more to this value, or a reason</div>{% endif %}</td>
         <td class="r">{{ l.corrected }}</td><td class="r">{{ l.since_why }}</td><td class="r">{{ l.confirmed }}</td>
         {% set e = l.effect %}<td>{% if e.reached %}{{ "%.2f" | format(e.before.rate or 0) }} before → {% if e.after.invoices %}{{ "%.2f" | format(e.after.rate) }} since{% else %}none yet{% endif %}
           <div class="muted small">{{ e.before.invoices }} invoice{{ "" if e.before.invoices == 1 else "s" }} before, {{ e.after.invoices }} since it reached the AI</div>
