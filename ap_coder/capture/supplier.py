@@ -1371,10 +1371,12 @@ class AutonomyPolicy:
     def from_dict(cls, d: dict[str, Any] | None) -> AutonomyPolicy:
         base = cls()
         d = d or {}
+        least = float(d.get("min_lower_bound", base.min_lower_bound))
         return cls(
             min_invoices=int(d.get("min_invoices", base.min_invoices)),
-            min_lower_bound=float(d.get("min_lower_bound", base.min_lower_bound)),
-            window_lower_bound=float(d.get("window_lower_bound", base.window_lower_bound)),
+            min_lower_bound=least,
+            # A bar from before D-122 (one bound): the window is held to no more than the run since a correction.
+            window_lower_bound=float(d.get("window_lower_bound", min(base.window_lower_bound, least))),
             window=int(d.get("window", base.window)), clean_streak=int(d.get("clean_streak", base.clean_streak)),
             audit_rate=float(d.get("audit_rate", base.audit_rate)), z=float(d.get("z", base.z)),
         )  # fmt: skip
