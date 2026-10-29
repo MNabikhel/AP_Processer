@@ -2157,17 +2157,19 @@ def grid_row(lines: pd.DataFrame, coding: InvoiceCoding, position: int) -> Any:
     return [rows[nth]] if nth < len(rows) else same
 
 
-def split(draft: Draft, number: int, parts: list[tuple[str, str, float]], has_cc: bool) -> list[dict[str, Any]]:
-    """Split line ``number`` across several GL accounts / cost centers by percentage (``review.split_line``).
-    ValueError when the parts don't add up to 100% or there is no such line."""
+def split(draft: Draft, number: int, parts: list[tuple[str, str, float]], has_cc: bool,
+          by: str = "percent") -> list[dict[str, Any]]:  # fmt: skip
+    """Split line ``number`` across several GL accounts / cost centers by percentage or by dollar amount
+    (``review.split_line``); a part left at 0 is left out. ValueError when the parts don't add up (to 100%, or to the
+    line's amount) or there is no such line."""
     frame = lines_frame(draft.lines)
     rows = frame[pd.to_numeric(frame["line_number"], errors="coerce") == number]
     if rows.empty:
         raise ValueError(f"there is no line {number}")
     row = rows.iloc[0]
     gl, cc = row.get("predicted_gl_code") or UNASSIGNED, row.get("predicted_cost_center") or ""
-    chosen = [(g or gl, (c or cc) if has_cc else "", p) for g, c, p in parts if p > 0]
-    return lines_records(split_line(frame, number, chosen))
+    chosen = [(g or gl, (c or cc) if has_cc else "", p) for g, c, p in parts if (p != 0 if by == "amount" else p > 0)]
+    return lines_records(split_line(frame, number, chosen, by=by))
 
 
 def apply_rules(store: Store, coding: InvoiceCoding, draft: Draft, invoice_id: int,

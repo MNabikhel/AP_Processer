@@ -179,7 +179,7 @@
 .inv-grid-table .c-amt {width: 120px;}
 .inv-grid-table .c-gl {min-width: 200px;} .inv-grid-table .c-cc {min-width: 150px;}
 .inv-grid-table .c-qty, .inv-grid-table .c-price {width: 96px;}
-.inv-grid-table .c-del {width: 36px;}
+.inv-grid-table .c-del {width: 36px;} .inv-lines-grid .c-del {width: 64px;}
 /* A cell's width is only a wish in a table: without these, a wide row squeezed 1200.00 down to "12". */
 .inv-grid-table .c-no input {min-width: 52px;}
 .inv-grid-table .c-amt input {min-width: 104px;}
@@ -192,7 +192,7 @@
 .inv-lines-grid tbody {display: block;}
 /* Three rows a line, in the order Tab follows (B-478): # · description · delete; GL account (the most room:
    no cost centers in the pilot) · amount; taxes · qty · unit price. */
-.inv-lines-grid tr[data-row] {display: grid; grid-template-columns: 44px minmax(0, 1fr) 64px 108px 92px 28px;
+.inv-lines-grid tr[data-row] {display: grid; grid-template-columns: 44px minmax(0, 1fr) 64px 108px 92px 60px;
   grid-template-areas: "no desc desc desc desc del" "gl gl gl gl amt amt" "tax tax tax qty price .";
   gap: 4px 6px; padding: 8px 0; border-bottom: 1px solid var(--lg-hairline);}
 .inv-lines-grid:has(.c-cc) tr[data-row] {grid-template-areas: "no desc desc desc desc del" "gl gl gl cc amt amt"
@@ -211,7 +211,7 @@
   color: var(--lg-warning);}
 .inv-taxnote[hidden] {display: none;}
 .inv-taxnote .ms {font-size: 13px; flex: none;}
-.inv-lines-grid td.c-del {display: flex; align-items: flex-start;}
+.inv-lines-grid td.c-del {display: flex; align-items: flex-start; justify-content: flex-end; gap: 2px;}
 .inv-lines-grid textarea {width: 100%; min-height: 30px; height: auto; resize: vertical; font: inherit; font-size: 13px;
   line-height: 18px; padding: 5px 8px; border: 1px solid var(--lg-border); border-radius: var(--lg-r-sm, 6px);
   background: var(--lg-surface); color: var(--lg-text); field-sizing: content; max-height: 80px;}
@@ -240,6 +240,7 @@
 .inv-parts td {padding: 4px 6px; height: auto;}
 .inv-parts select, .inv-parts input {width: 100%; height: 30px; font-size: 13px;}
 .inv-parts input {text-align: right;}
+.inv-split-by {gap: 16px; margin: 2px 0 4px;}
 .inv-sugg + .inv-sugg {border-top: 1px solid var(--lg-hairline); padding-top: 10px;}
 .inv-sugg > * + * {margin-top: 6px;}
 .rvw-sugg-line {font-size: 13px;}

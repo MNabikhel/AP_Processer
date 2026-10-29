@@ -161,3 +161,30 @@ def test_bat_files_keep_their_settings_to_themselves(name):
     changes = [i for i, line in enumerate(code) if re.match(r"(set|pushd)\b", line)]
     if changes:
         assert "setlocal" in code[: changes[0]], f"{name}: setlocal must come before {code[changes[0]]!r}"
+
+
+# --- The demo launcher ---------------------------------------------------------------------------------------------
+
+
+def test_the_demo_launcher_runs_ap_coder_on_a_data_folder_of_its_own():
+    """scripts\\demo.bat (docs/DEMO_RUN_SHEET.md): the same AP Coder as APProcessor.bat, on APCoder-demo in the
+    user's folder, so a demo or a rehearsal never mixes with the pilot tester's own invoices; in scripts\\, as the
+    app folder's top holds one file to open per computer."""
+    text = (ROOT / "scripts" / "demo.bat").read_text(encoding="ascii")
+    assert 'set "AP_PRIVATE_DIR=%USERPROFILE%\\APCoder-demo"' in text
+    assert 'call "%~dp0..\\APProcessor.bat" %*' in text
+
+
+def test_the_demo_data_folder_is_used_as_it_is_and_never_recorded(tmp_path, monkeypatch):
+    """A data folder set by hand (the demo launcher's) is the one used, and the one recorded for the usual double-click
+    stays as it was: after the demo, APProcessor.bat opens the pilot tester's own data again."""
+    from tests.scripts import load_script
+
+    upgrade = load_script("upgrade", "ap_script_upgrade_demo")
+    settings = tmp_path / "settings.json"
+    own = tmp_path / "APCoder"
+    settings.write_text(f'{{"data_dir": "{own.as_posix()}"}}', encoding="utf-8")
+    monkeypatch.setenv("AP_USER_SETTINGS", str(settings))
+    monkeypatch.setenv("AP_PRIVATE_DIR", str(tmp_path / "APCoder-demo"))
+    assert upgrade.settle_data_folder(tmp_path / "code", lambda line: None) == tmp_path / "APCoder-demo"
+    assert settings.read_text(encoding="utf-8") == f'{{"data_dir": "{own.as_posix()}"}}'

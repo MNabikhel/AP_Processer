@@ -150,3 +150,22 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   looked up there by name). Why: both files were read whole, searched and appended to on most changes. Benches take
   `--quick` (`bench/__main__.py` `QUICK`) for a check in a minute or two. `tests/meta/test_agent_friendly.py` keeps
   the last numbers findable in the short files.
+- **D-126** · A line is split across GL accounts (cost centers) by percentage or by dollar amount, from a split
+  button on every line (beside Delete; left out of Tab's way, B-478) as well as *Split a line…* under the table
+  and the line's right-click menu. By amount, the parts are the amounts typed, to the cent, each of the line's sign
+  (minus on a credit note), and must add up to the line; the description says "(500.00 of 890.00)". Why: the pilot
+  tester asked for a line's cost shared across GL accounts and did not find the split under the table; invoices are
+  often shared out in dollars, and a percentage of 56.18% to get 500.00 is error-prone. Where: `coding/review.py`
+  `split_line(by=)`, `web/pages/invoice.py` `split`, the popover in `web/templates/invoice.html`,
+  `static/js/invoice.js`; tests `tests/coding/test_split.py`, `tests/web/test_web_picker.py`.
+- **D-127** · The demo release: a demo runs AP Coder on a data folder of its own, `scripts\demo.bat`
+  (`AP_PRIVATE_DIR=%USERPROFILE%\APCoder-demo`, never recorded: the usual double-click keeps the pilot tester's
+  data; in `scripts\` as the app folder's top holds one file to open per computer), with the ten samples imported
+  and two more invoices in `samples/demo_day/` (made by `scripts/make_sample_pdf.py`, left out of the self-check):
+  Pacific Office Supply's next invoice, coded from the approval of PO-77120, and PO-77120 sent again, stopped as a
+  duplicate. `docs/DEMO_RUN_SHEET.md` is the one page to follow, `docs/KNOWN_LIMITS.md` what it does not do yet.
+  CI proves it on the offline bundle on Windows with the internet cut off: installed with LM Studio (a stand-in)
+  running and the right model for each job, `scripts\demo.bat` keeping its own folder, and
+  `tests/ops/test_demo_day.py` (import to Excel export). Why: the pilot tester's laptop may hold their own AP Coder
+  data, where the samples would be skipped as already in AP Coder; a rehearsal is put back with a backup restore.
+  The version stays 0.3.0; the release is the git tag `v0.3.0-pilot1` and its bundle, told apart by its build stamp.

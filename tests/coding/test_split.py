@@ -1,6 +1,7 @@
 """Splitting a line across GL accounts / cost centers."""
 
 import json
+import re
 
 import pandas as pd
 import pytest
@@ -66,3 +67,68 @@ def test_split_from_the_review_screen(tmp_path):
     servers = [li for li in final["line_items"] if li["description"].startswith("Dell PowerEdge")]
     assert [li["amount"] for li in servers] == [4450.0, 4450.0] and len(final["line_items"]) == 6
     assert len(store.feedback_rows()) == 6
+
+
+# --- Split by dollar amount (D-126) --------------------------------------------------------------------------------
+
+
+def _one_line(amount: float = 890.0, quantity: float = 10.0) -> pd.DataFrame:
+    return pd.DataFrame([{"line_number": 1, "description": "HP 26X toner", "quantity": quantity,
+                          "unit_price": amount / quantity, "amount": amount, "predicted_gl_code": "6000",
+                          "predicted_cost_center": "", "taxes_applied": []}])  # fmt: skip
+
+
+def test_split_by_amount_keeps_the_amounts_typed():
+    """An invoice line shared out in dollars ("500.00 to office supplies, the rest to IT"): the parts are the amounts
+    typed, to the cent, and the quantity follows in proportion."""
+    out = split_line(_one_line(), 1, [("6000", "", 500.0), ("6010", "", 390.0)], by="amount")
+    assert out["amount"].tolist() == [500.0, 390.0]
+    assert out["predicted_gl_code"].tolist() == ["6000", "6010"]
+    assert out["description"].tolist() == ["HP 26X toner (500.00 of 890.00)", "HP 26X toner (390.00 of 890.00)"]
+    assert out["line_number"].tolist() == [1, 2] and round(out["quantity"].sum(), 6) == 10.0
+
+
+def test_a_credit_note_line_is_split_by_amount_in_minus_amounts():
+    out = split_line(_one_line(-100.0, 1.0), 1, [("6000", "", -60.0), ("6010", "", -40.0)], by="amount")
+    assert out["amount"].tolist() == [-60.0, -40.0]
+
+
+@pytest.mark.parametrize(
+    ("amounts", "said"),
+    [
+        ([500.0, 300.0], "the amounts must add up to the line's 890.00 (they add up to 800.00)"),
+        ([890.0, 0.0], "every part needs an amount above 0"),
+        ([900.0, -10.0], "every part needs an amount above 0"),
+        ([500.0, float("nan")], "every part needs an amount"),
+    ],
+)
+def test_a_split_by_amount_that_does_not_add_up_is_refused(amounts, said):
+    with pytest.raises(ValueError, match=re.escape(said)):
+        split_line(_one_line(), 1, [("6000", "", a) for a in amounts], by="amount")
+
+
+def test_a_line_of_nothing_is_split_by_percentage_only():
+    with pytest.raises(ValueError, match="split by percentage"):
+        split_line(_one_line(0.0, 1.0), 1, [("6000", "", 0.0), ("6010", "", 0.0)], by="amount")
+
+
+def test_split_by_amount_from_the_review_screen(tmp_path):
+    from tests.web.test_web_invoice import form_of
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(store)
+    invoice_id = store.add_invoice(SAMPLES / f"{SAMPLE_STEM}.pdf", _gt(), {"requires_review": False})
+    client = client_for(store)
+    line = _gt()["line_items"][1]
+    data = {**form_of(store, invoice_id), "split_line": "2", "split_by": "amount",
+            "part_gl": [line["predicted_gl_code"], "6010"], "part_cc": [line["predicted_cost_center"]] * 2,
+            "part_amount": ["5000", "3900"], "part_pct": ["50", "50"]}  # fmt: skip
+    answer = post(client, f"/review/{invoice_id}/split", data).json()
+    assert answer["ok"] and "Line 2 split in 2" in answer["toast"]["text"]
+    follow(client, post(client, f"/review/{invoice_id}/approve", draft_form(client, invoice_id)))
+    final = store.get_invoice(invoice_id)["final_output"]
+    servers = [li for li in final["line_items"] if li["description"].startswith("Dell PowerEdge")]
+    assert [(li["amount"], li["predicted_gl_code"]) for li in servers] == [(5000.0, line["predicted_gl_code"]),
+                                                                          (3900.0, "6010")]  # fmt: skip
+    wrong = post(client, f"/review/{invoice_id}/split", {**data, "part_amount": ["5000", "3000"]})
+    assert wrong.status_code >= 400 or not wrong.json().get("ok")

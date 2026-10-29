@@ -40,3 +40,16 @@ The invoice content lives in `INVOICES` in `scripts/make_sample_pdf.py`. To add 
 there, generate it, then write `ground_truth/<name>.json` by hand. The new sample is picked up by
 `tests/coding/test_samples.py` automatically. Regenerating writes a new PDF file ID and creation date, so
 the PDF bytes change even when the content does not.
+
+## The demo day's two invoices (`demo_day/`)
+
+Two more invoices from Pacific Office Supply for a live demo ([DEMO_RUN_SHEET.md](../docs/DEMO_RUN_SHEET.md)), kept
+in their own folder so the self-check (`scripts/pilot_check.py`) and the tests' sample lists leave them out (they have
+no ground truth):
+
+- `pacific_BC_GST_PST_PO-77311.pdf`: the vendor's next invoice, with the same toner, paper and monitor as
+  PO-77120. Once PO-77120 is approved, its lines arrive coded from that approval: nothing to correct.
+- `pacific_BC_GST_PST_PO-77120_second_notice.pdf`: PO-77120 sent again as a second notice (another file, the same
+  vendor and invoice number). The duplicate check stops it: *possible duplicate payment*, and it can't be approved.
+
+Made by `python scripts/make_sample_pdf.py` (`DEMO_DAY`).

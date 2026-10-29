@@ -145,7 +145,8 @@ Things to try:
 - Open *Harbourview*: line 4 has no GL account; **Suggested GL accounts** offers one.
 - Type `2/10 Net 30` in an invoice's *Payment terms*: the due date and the early-payment discount
   deadline update (a discount shows while its deadline is still ahead).
-- *Split a line…* under the line grid divides a shared cost across cost centers.
+- The split button on a line (beside Delete), or *Split a line…* under the line grid, shares one line's cost
+  across several GL accounts (or cost centers), by percentage or by dollar amount.
 - On an invoice with something to ask (e.g. *Red River*), open **Ask the vendor** under the checks:
   the email is written for you (English, or French for a Quebec vendor).
 - **Invoice directory**: type `northwind 0912` or an amount such as `18,017.85` in the quick search, or `>10000` in

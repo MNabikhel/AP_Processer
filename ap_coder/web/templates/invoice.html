@@ -220,7 +220,7 @@
         <label class="check small inv-qty-toggle" title="Show each line's quantity and unit price"><input type="checkbox" data-show-qty{% if grid.show_qty %} checked{% endif %}> Qty and price</label></div>
       <div class="table-wrap">
         <table class="apc-table inv-grid-table inv-lines-grid{% if grid.lines | length > 3 %} compact{% endif %}{% if grid.has_cc %} has-cc{% endif %}{% if grid.show_qty %} show-qty{% endif %}" id="lines"{% if live.jde %} data-remark-limit="30"{% endif %}>
-          <thead><tr><th class="c-no">#</th><th class="c-desc">Description</th><th class="c-del"><span class="rvw-sr">Delete</span></th><th class="c-gl">GL account</th>{% if grid.has_cc %}<th class="c-cc">Cost center</th>{% endif %}
+          <thead><tr><th class="c-no">#</th><th class="c-desc">Description</th><th class="c-del"><span class="rvw-sr">Split or delete</span></th><th class="c-gl">GL account</th>{% if grid.has_cc %}<th class="c-cc">Cost center</th>{% endif %}
             <th class="r c-amt">Amount</th><th class="c-tax">Tax code</th><th class="r c-qty">Qty</th><th class="r c-price">Unit price</th></tr></thead>
           <tbody data-grid="lines">{{ grids.line_rows(grid) }}</tbody>
         </table>
@@ -236,14 +236,18 @@
         <details class="pop" data-split>
           <summary class="btn sm"><span class="ms" aria-hidden="true">call_split</span>Split a line…</summary>
           <div class="pop-body inv-split-pop">
-            <p class="muted">Split one line across several GL accounts{% if grid.has_cc %} or cost centers{% endif %} by percentage (shared costs).</p>
+            <p class="muted">Split one line across several GL accounts{% if grid.has_cc %} or cost centers{% endif %} (shared costs), by percentage or by amount.</p>
             <label class="field">Line<select name="split_line" data-split-line></select></label>
-            <table class="apc-table inv-parts"><thead><tr><th>GL account</th>{% if grid.has_cc %}<th>Cost center</th>{% endif %}<th class="r">%</th><th></th></tr></thead>
+            <div class="row inv-split-by" role="radiogroup" aria-label="Split by">
+              <label class="check"><input type="radio" name="split_by" value="percent" data-split-by checked> By percentage</label>
+              <label class="check"><input type="radio" name="split_by" value="amount" data-split-by> By amount</label></div>
+            <table class="apc-table inv-parts"><thead><tr><th>GL account</th>{% if grid.has_cc %}<th>Cost center</th>{% endif %}<th class="r" data-split-unit>%</th><th></th></tr></thead>
               <tbody data-parts></tbody></table>
             <template id="part-template"><tr>
               <td><select name="part_gl" aria-label="GL account" data-picker data-picker-noun="account" data-options="gl-options" data-groups="gl"><option value="UNASSIGNED">{{ grid.gl_labels["UNASSIGNED"] }}</option></select></td>
               {% if grid.has_cc %}<td><select name="part_cc" aria-label="Cost center" data-picker data-picker-noun="cost center" data-options="cc-options"><option value="UNASSIGNED">{{ grid.cc_labels["UNASSIGNED"] }}</option></select></td>{% endif %}
-              <td class="r"><input type="number" name="part_pct" value="50" min="0" max="100" step="any" aria-label="Percent"></td>
+              <td class="r"><input type="number" name="part_pct" value="50" min="0" max="100" step="any" aria-label="Percent">
+                <input type="number" name="part_amount" step="0.01" aria-label="Amount" hidden></td>
               <td><button type="button" class="icon-btn" data-del-part aria-label="Remove this part"><span class="ms" aria-hidden="true">close</span></button></td>
             </tr></template>
             <div class="row"><button type="button" class="btn sm ghost" data-add-part><span class="ms" aria-hidden="true">add</span>Add a part</button>
