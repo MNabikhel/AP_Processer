@@ -192,6 +192,36 @@ def test_in_a_browser_typing_a_word_from_inside_an_account_name_finds_it_and_ent
     assert errors == []
 
 
+def test_in_a_browser_a_code_or_a_name_typed_then_clicking_away_picks_its_account(browser, store):
+    """A GL code typed in full, or words only one account's name has, then a click elsewhere: the box went back to the
+    account it had and what was typed was lost (only Tab and Enter picked). Now the account typed is picked, its code
+    and its name together; text that names no single account leaves the account as it was, never half typed
+    (B-1445)."""
+    invoice_id = store.list_invoices(REVIEW)[-1]["id"]  # not the first: the test before edits that one
+    options = invoice_view.gl_options(store.reference_data(), [])
+    accounts = {code: label for code, label in options if code != UNASSIGNED}
+    page, errors = _review(browser, invoice_id)
+    field = page.locator(GL).first
+    value = lambda: page.eval_on_selector("[data-grid=lines] select[name=line_gl]", "s => s.value")  # noqa: E731
+    first, second = [code for code in accounts if code != value()][:2]
+
+    def typed_then_away(text):
+        field.click()
+        page.keyboard.press("ControlOrMeta+a")
+        page.keyboard.type(text)
+        page.locator(".inv-actionbar").click(position={"x": 5, "y": 5})  # somewhere else on the page
+        page.wait_for_load_state("networkidle")  # the check the change starts has answered
+
+    typed_then_away(first)  # the code alone
+    assert value() == first and field.input_value() == accounts[first]
+    name = accounts[second].split(" · ", 1)[1]
+    typed_then_away(name.lower())  # the name alone, as typed
+    assert value() == second and field.input_value() == accounts[second]
+    typed_then_away("zzzz qqq")  # no account: the one it had, code and name
+    assert value() == second and field.input_value() == accounts[second]
+    assert errors == []
+
+
 def test_in_a_browser_escape_closes_the_list_and_keeps_the_account(browser, store):
     invoice_id = store.list_invoices(REVIEW)[0]["id"]
     page, errors = _review(browser, invoice_id)
