@@ -1529,3 +1529,13 @@ that is reversed keeps its line, marked "replaced by D-NN".
   new databases (every outcome, edit, second approval and refusal); 6,400 `fuse` calls recorded from 300 generated
   invoices, a learning run and the test suite, with a coding model and a page reader added as readers; 101 files and
   35 page-reader re-reads through the pipeline. A change planted on purpose in each showed up as differences.
+- **D-124 (2026-10-29) Fewer connections a page; a before/after harness for refactors.** Page modules make their
+  router with `page_router()` (`web/core.py`): its route class makes each plain handler that takes the request
+  `one_connection`, so a page opens one SQLite connection, not 7 to 34 (7 of 179 handlers had it; a test fails a
+  handler without it). Measured on the demo data (Linux, 20 pages): 472 ms in all before, ~240 ms after (settings
+  28 to 8 ms, process 56 to 14 ms); more on Windows, where opening a connection costs more. Chosen over setting
+  each handler by hand (easy to forget) or patching routes at include time (relies on FastAPI internals).
+  `scripts/same_behaviour.py` runs seeded probes (`scripts/probes/`: tax, approve, read, pipeline) on a git ref's
+  worktree and on this checkout and compares the output byte for byte, showing the first differing key path; it
+  proves only what its inputs reach, so the tests still run. `wilson_lower` had two copies; `capture/supplier.py`
+  now imports the one in `capture/confidence.py`. The test suite's time is unchanged (~6 min), so none is claimed.

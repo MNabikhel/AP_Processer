@@ -19,6 +19,12 @@ How to work
 - Check your work once, at the end: `python scripts/check.py` (ruff on changed files, then their tests), or the
   specific `python -m pytest -q tests/<folder>/test_x.py` files. Don't run the whole slow suite; CI does.
 - A question only: answer from the code, naming files and functions; change nothing.
+- A refactor or speed-up: prove it with `python scripts/same_behaviour.py` as well as the tests.
+
+Shell pitfalls
+- Don't `pkill -f` / `pgrep -f` a pattern that is in your own command line (it matches your shell); kill by PID.
+- Quote heredocs (`<<'EOF'`) when the text holds backticks or `$`, or the shell runs them.
+- A `cd` inside a backgrounded `( ... ) &` doesn't apply to the commands after it; use absolute paths.
 
 Safety
 - Don't commit, push, open pull requests or change git history unless the task asks for it. Never delete files or

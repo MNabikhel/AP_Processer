@@ -27,6 +27,8 @@ guides, the bug log (BUGS.md) and decisions (decisions.md). Search the code to f
   `web/static/js/invoice.js` (the form) and `invoice_viewer.js` (the PDF beside it). Other pages:
   `web/pages/<page>.py` + `web/templates/<page>.html`; the review queue is `web/pages/review.py` (`coding/review.py`
   is the line grid's edits).
+  A page module's `router = page_router()` (`web/core.py`): each plain handler shares one database connection a
+  request.
 - Amounts and dates: `capture/normalize.py` for what is read off an invoice, `core/safe.py` / `core/csvio.py` for
   imported files; column headers: `core/headers.py` (`match_columns`).
 - Tests: `tests/<folder>/test_<module>.py`, the folders mirroring `ap_coder/` (`core`, `coding`, `capture`, `ai`,
@@ -54,6 +56,13 @@ Every step re-reads the whole conversation, so fewer, fuller steps cost less:
 - Put independent lookups in one command (several `grep -n` / `sed -n A,Bp` joined with `;`), and read the lines
   around a match rather than whole files.
 - Make the change, then check once with `python scripts/check.py`; don't wait on the whole suite (CI runs it).
+- Search code with `grep -rn --include=*.py` (skips `__pycache__` and the large docs/BUGS.md and decisions.md); the
+  next numbers: `grep -o "B-[0-9]*" docs/BUGS.md | tail -1` (and `D-[0-9]*` in docs/decisions.md).
+- A refactor, clean-up or speed-up is proven to change nothing with `python scripts/same_behaviour.py` (probes on
+  origin/main and this checkout, compared; D-124), plus the tests.
+- Bench runs (`python -m ap_coder.bench learn|lines|run`): scans (OCR) set the time. `learn` (no scans by default)
+  4 suppliers x 20 takes ~10 s, 20 x 50 at `--scanned 0.1` ~40 min; `lines` 6 x 8 at `--scanned 1` ~6 min; `run
+  --n 60` (30% scans) ~2.5 min. Start small.
 
 ## Run and test
 - Set up: `python -m venv .venv`, activate it, `pip install -e ".[ocr,dev]"` (or double-click `APProcessor.bat` / `APProcessor.command`).

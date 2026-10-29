@@ -37,6 +37,7 @@ from functools import lru_cache
 from typing import Any
 
 from ..core.memory import vendor_key
+from .confidence import wilson_lower  # one Wilson lower bound for the bar and the calibration
 from .normalize import normalize_value as shared_value
 from .types import (
     AMOUNT_FIELDS,
@@ -1235,17 +1236,6 @@ def outcome_rows(proposed: Any, final: Any, fields: Iterable[str] = FIELDS) -> l
             continue
         rows.append({"field": name, "ai_value": a, "final_value": b, "correct": ka == kb})
     return rows
-
-
-def wilson_lower(correct: int, n: int, z: float = 1.96) -> float:
-    """Lower bound of the Wilson score interval: the accuracy we can claim with confidence, not luck."""
-    if n <= 0:
-        return 0.0
-    p = correct / n
-    denom = 1 + z * z / n
-    centre = p + z * z / (2 * n)
-    margin = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))
-    return max(0.0, (centre - margin) / denom)
 
 
 def clean_fields_needed(correct: int, n: int, target: float, z: float = 1.96, limit: int = 1_000_000) -> int | None:
