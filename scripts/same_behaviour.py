@@ -79,12 +79,19 @@ def _path(x: object, y: object, at: str = "") -> str:
     return f"{at or '/'}: {str(x)[:120]!r} before, {str(y)[:120]!r} after"
 
 
-def main(argv: list[str] | None = None) -> int:
+def parse(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("probes", nargs="*", default=list(DEFAULT), choices=list(DEFAULT_N))
+    # No default list here: argparse checks a list default against the choices as one value (B-1443).
+    parser.add_argument("probes", nargs="*", choices=list(DEFAULT_N), help=f"default: {' '.join(DEFAULT)}")
     parser.add_argument("--ref", default="origin/main", help="the code to compare with (default origin/main)")
     parser.add_argument("--n", type=int, default=0, help="how many inputs (each probe has its own default)")
     args = parser.parse_args(argv)
+    args.probes = args.probes or list(DEFAULT)
+    return args
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse(argv)
     scratch = Path(tempfile.mkdtemp(prefix="ap-same-"))
     before = scratch / "before"
     added = subprocess.run(["git", "worktree", "add", "--detach", str(before), args.ref], cwd=ROOT,

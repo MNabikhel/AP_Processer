@@ -10,3 +10,4 @@ last B- line (`grep -o "B-[0-9]*" docs/BUGS.md | tail -1`).
 ## From B-1442
 
 - **B-1442** · Settings → Reading's Check again and Load never retried a page reader LM Studio had failed to load (not enough memory): the failure was kept for half an hour whatever the person did, since `forget_reader_failures` lost its caller when the Reading tab was simplified · medium · `tests/web/test_reading_pages.py::test_check_again_and_load_ask_lm_studio_to_load_a_model_that_failed_before`
+- **B-1443** · `python scripts/same_behaviour.py` with no probes named stopped at once ("invalid choice"): argparse checked the default list of probes against the choices as one value, so only naming the probes worked · low · `tests/meta/test_same_behaviour.py::test_with_no_probes_named_the_default_ones_run`

@@ -33,3 +33,9 @@ def test_the_tax_probe_gives_the_same_output_each_run(tmp_path):
     runs = [subprocess.run([sys.executable, str(ROOT / "scripts" / "probes" / "tax.py"), "300", str(tmp_path / str(i))],
                            env=env, capture_output=True, check=True).stdout for i in range(2)]  # fmt: skip
     assert runs[0] == runs[1] and runs[0].count(b"\n") == 300
+
+
+def test_with_no_probes_named_the_default_ones_run():
+    tool = _tool()
+    assert tool.parse([]).probes == list(tool.DEFAULT)
+    assert tool.parse(["pipeline", "--n", "3"]).probes == ["pipeline"]
