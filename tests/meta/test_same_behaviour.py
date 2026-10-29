@@ -9,6 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -39,3 +41,5 @@ def test_with_no_probes_named_the_default_ones_run():
     tool = _tool()
     assert tool.parse([]).probes == list(tool.DEFAULT)
     assert tool.parse(["pipeline", "--n", "3"]).probes == ["pipeline"]
+    with pytest.raises(SystemExit):
+        tool.parse(["taxes"])

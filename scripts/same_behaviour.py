@@ -81,11 +81,14 @@ def _path(x: object, y: object, at: str = "") -> str:
 
 def parse(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    # No default list here: argparse checks a list default against the choices as one value (B-1443).
-    parser.add_argument("probes", nargs="*", choices=list(DEFAULT_N), help=f"default: {' '.join(DEFAULT)}")
+    # Checked here, not with ``choices``: argparse checks an empty or a default list against them as one value, and
+    # Python versions differ in when (B-1443).
+    parser.add_argument("probes", nargs="*", help=f"{', '.join(DEFAULT_N)} (default: {' '.join(DEFAULT)})")
     parser.add_argument("--ref", default="origin/main", help="the code to compare with (default origin/main)")
     parser.add_argument("--n", type=int, default=0, help="how many inputs (each probe has its own default)")
     args = parser.parse_args(argv)
+    if unknown := [p for p in args.probes if p not in DEFAULT_N]:
+        parser.error(f"no probe named {', '.join(unknown)} (the probes: {', '.join(DEFAULT_N)})")
     args.probes = args.probes or list(DEFAULT)
     return args
 
