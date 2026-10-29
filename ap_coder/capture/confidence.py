@@ -500,6 +500,29 @@ def _whole_first_word(groups: list[_Group]) -> None:
             return
 
 
+@dataclass
+class _Fusion:
+    """One invoice's fusion as ``fuse`` works it out: each field's chosen group, its rivals, the checks and what
+    they say of each field; what every field's result reads."""
+
+    by_source: dict[str, dict[str, list[Reading]]]
+    layout_source: str
+    local_evidence: dict[str, tuple[int, int]] | None
+    chosen: dict[str, _Group | None]
+    contest: dict[str, float]  # the rival's strength against the chosen group's
+    all_groups: dict[str, list[_Group]]
+    values: dict[str, Any] = _field(default_factory=dict)
+    checks: list[dict[str, Any]] = _field(default_factory=list)
+    confirmed: dict[str, int] = _field(default_factory=dict)  # checks that confirm a field (the strong count twice)
+    failed: dict[str, list[str]] = _field(default_factory=dict)
+    soft: dict[str, list[str]] = _field(default_factory=dict)  # a note: never verified past 0.97
+    look: dict[str, list[str]] = _field(default_factory=dict)  # a person looks
+    template_rival: dict[str, Any] = _field(default_factory=dict)  # the template's other amount, settled by the sums
+
+    def confirmed_ok(self, f: str) -> bool:
+        return bool(self.confirmed.get(f, 0)) and f not in self.failed
+
+
 def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineReading],
          vendor: dict[str, Any] | None = None, fields: tuple[str, ...] = FIELDS,
          today: dt.date | None = None, layout_source: str = "text",
@@ -508,19 +531,35 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
     """``by_source``: reader name -> field -> readings (best first). Returns field results and checks.
     ``local_evidence``: {evidence: (cases, right)} from AP's approvals, for the calibration; ``text``: the page's
     text (a tip printed after the tax, ``run_checks``)."""
+    fz = _choose_readings(by_source, fields, layout_source, local_evidence)
+    fz.values = {f: (normalize_value(f, g.value) if f in AMOUNT_FIELDS else g.value) for f, g in fz.chosen.items()
+                 if g}  # fmt: skip
+    fz.checks = run_checks(fz.values, line_items, vendor, today, text)
+    _what_the_checks_say(fz)
+    _template_rivals_the_sums_settle(fz)
+    results = {f: _field_result(fz, f) for f in fields}
+    _derive_tax_total(results)
+    _vendor_master_name(results, fz.checks, vendor)
+    return results, fz.checks
+
+
+def _choose_readings(by_source: dict[str, dict[str, list[Reading]]], fields: tuple[str, ...], layout_source: str,
+                     local_evidence: dict[str, tuple[int, int]] | None) -> _Fusion:  # fmt: skip
+    """Each field's readings grouped by value, the strongest chosen, the runner-up kept as a rival; then the taxes
+    and totals chosen so that they add up."""
     chosen: dict[str, _Group | None] = {}
     contest: dict[str, float] = {}
     all_groups: dict[str, list[_Group]] = {}
-    for field in fields:
-        per_source = {s: cands.get(field, []) for s, cands in by_source.items() if cands.get(field)}
-        groups = _groups(field, per_source)
+    for f in fields:
+        per_source = {s: cands.get(f, []) for s, cands in by_source.items() if cands.get(f)}
+        groups = _groups(f, per_source)
         _vouched_first(groups)
-        if field == "vendor_name":
+        if f == "vendor_name":
             _whole_first_word(groups)
-        all_groups[field] = groups
-        chosen[field] = groups[0] if groups else None
+        all_groups[f] = groups
+        chosen[f] = groups[0] if groups else None
         if len(groups) > 1:
-            contest[field] = groups[1].strength() / max(groups[0].strength(), 1e-9)
+            contest[f] = groups[1].strength() / max(groups[0].strength(), 1e-9)
 
     if any(chosen.get(f) is not None for f in TAX_FIELDS) and (
         _unsettled(chosen.get("tax_total")) or _template_sum_of_taxes(chosen)
@@ -532,242 +571,263 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
         contest.pop("tax_total", None)
     _one_tax_per_printed_amount(chosen, all_groups, contest)
     _totals_that_add_up(chosen, all_groups, contest)
-    values = {f: (normalize_value(f, g.value) if f in AMOUNT_FIELDS else g.value) for f, g in chosen.items() if g}
-    checks = run_checks(values, line_items, vendor, today, text)
-    confirmed: dict[str, int] = {}
-    failed: dict[str, list[str]] = {}
-    soft: dict[str, list[str]] = {}
-    look: dict[str, list[str]] = {}
-    for c in checks:
+    return _Fusion(by_source, layout_source, local_evidence, chosen, contest, all_groups)
+
+
+def _what_the_checks_say(fz: _Fusion) -> None:
+    """Each check's verdict on the fields it covers: confirmed, failed, a note, or to look at."""
+    for c in fz.checks:
         for f in c["fields"]:
             if not c["ok"] and c["code"] in SOFT_CHECKS:
-                soft.setdefault(f, []).append(c["detail"])
+                fz.soft.setdefault(f, []).append(c["detail"])
             elif not c["ok"] and c["code"] in LOOK_CHECKS:
-                look.setdefault(f, []).append(c["detail"])
+                fz.look.setdefault(f, []).append(c["detail"])
             elif c["ok"]:
                 if c["code"] not in WEAK_CHECKS:
-                    confirmed[f] = confirmed.get(f, 0) + (
+                    fz.confirmed[f] = fz.confirmed.get(f, 0) + (
                         2 if c["code"] in ("TOTALS_ADD_UP", "VENDOR_GST_MATCH") else 1
                     )
             else:
-                failed.setdefault(f, []).append(c["detail"])
-    template_rival: dict[str, Any] = {}
-    adds_up = {f for c in checks if c["ok"] and c["code"] == "TOTALS_ADD_UP" for f in c["fields"]}
-    for f in AMOUNT_FIELDS:
-        rival = all_groups[f][1] if f in contest and len(all_groups[f]) > 1 else None
-        if rival and f in adds_up and f not in failed and all(s == "template" for s, _ in rival.readings):
-            # The supplier's template read another amount (its learned spot, as the layout was): the totals add up with
-            # this one, read on the page by another reader. The arithmetic settles it: no contest.
-            template_rival[f] = rival.value
-            del contest[f]
+                fz.failed.setdefault(f, []).append(c["detail"])
 
-    results: dict[str, FieldResult] = {}
-    for field in fields:
-        g = chosen.get(field)
-        if g is None:
-            results[field] = FieldResult(field, None, 0.0, MISSING, [], {}, ["not found on the invoice"])
-            continue
-        raw = g.strength()
-        sources = sorted({s for s, _ in g.readings})
-        # The template agreeing at a spot it does not vouch for is not a reader of its own: the evidence is the others'.
-        vouched = sorted({s for s, r in g.readings if UNSETTLED not in r.method}) or sources
-        reasons = []
-        if len(sources) > 1:
-            reasons.append(f"{len(sources)} readers agree ({', '.join(sources)})")
+
+def _template_rivals_the_sums_settle(fz: _Fusion) -> None:
+    """The supplier's template read another amount (its learned spot, as the layout was): the totals add up with
+    the one read on the page by another reader. The arithmetic settles it: no contest."""
+    adds_up = {f for c in fz.checks if c["ok"] and c["code"] == "TOTALS_ADD_UP" for f in c["fields"]}
+    for f in AMOUNT_FIELDS:
+        rival = fz.all_groups[f][1] if f in fz.contest and len(fz.all_groups[f]) > 1 else None
+        if rival and f in adds_up and f not in fz.failed and all(s == "template" for s, _ in rival.readings):
+            fz.template_rival[f] = rival.value
+            del fz.contest[f]
+
+
+def _field_result(fz: _Fusion, f: str) -> FieldResult:
+    """One field's value, confidence and status, with the reasons in the order they apply."""
+    g = fz.chosen.get(f)
+    if g is None:
+        return FieldResult(f, None, 0.0, MISSING, [], {}, ["not found on the invoice"])
+    sources = sorted({s for s, _ in g.readings})
+    # The template agreeing at a spot it does not vouch for is not a reader of its own: the evidence is the others'.
+    vouched = sorted({s for s, r in g.readings if UNSETTLED not in r.method}) or sources
+    reasons: list[str] = []
+    raw = _raw_strength(fz, f, g, sources, reasons)
+    best = g.best()
+    if best.method.endswith(UNSETTLED) and vouched != sources:
+        best = max((r for _, r in g.readings if UNSETTLED not in r.method), key=lambda r: (bool(r.boxes), r.score))
+    conf, evidence = _calibrated(fz, f, g, raw, best, sources, vouched)
+    independent, speck = _readers_agree(fz, f, g, vouched, reasons)
+    if len(independent) < 2 and not fz.confirmed_ok(f):
+        conf = min(conf, SINGLE_READER_CAP)
+    conf = _capped(fz, f, g, conf, raw, vouched, reasons)
+    status = _status(fz, f, g, conf, best, speck, reasons)
+    return FieldResult(
+        field=f, value=fz.values.get(f, g.value), confidence=conf, status=status, boxes=list(best.boxes),
+        sources={s: str(max((r for src, r in g.readings if src == s), key=lambda r: r.score).raw) for s in sources}
+        | {f"other:{grp.value}": ", ".join(sorted({s for s, _ in grp.readings})) for grp in fz.all_groups[f][1:3]},
+        reasons=reasons, evidence=evidence,
+    )  # fmt: skip
+
+
+def _raw_strength(fz: _Fusion, f: str, g: _Group, sources: list[str], reasons: list[str]) -> float:
+    """The readers' strength, lowered by a rival reading, raised by the checks that confirm the field, lowered by
+    those that fail it; capped by a note or a check to look at."""
+    raw = g.strength()
+    if len(sources) > 1:
+        reasons.append(f"{len(sources)} readers agree ({', '.join(sources)})")
+    else:
+        reasons.append(f"read by {sources[0]} ({g.best().method})")
+    if f in fz.contest:
+        raw *= 1.0 - 0.8 * min(fz.contest[f], 1.0)
+        other = fz.all_groups[f][1]
+        reasons.append(f"another reading: {other.value}")
+    elif f in fz.template_rival:
+        reasons.append(f"the supplier's template read {fz.template_rival[f]}: the totals add up with this one")
+    n_conf = fz.confirmed.get(f, 0)
+    if n_conf and f not in fz.failed:
+        raw = 1.0 - (1.0 - raw) * (0.15 ** min(n_conf, 3))
+        reasons.append("confirmed by " + ", ".join(c["code"].lower().replace("_", " ") for c in fz.checks
+                                                  if c["ok"] and c["code"] not in WEAK_CHECKS and f in c["fields"]))  # fmt: skip
+    if f in fz.failed:
+        raw *= 0.3
+        reasons += [f"check failed: {d}" for d in fz.failed[f]]
+    if f in fz.soft:
+        raw = min(raw, 0.97)
+        reasons += [f"note: {d}" for d in fz.soft[f]]
+    if f in fz.look:
+        raw = min(raw, LOOK_CAP)
+        reasons += [f"check: {d}" for d in fz.look[f]]
+    return raw
+
+
+def _calibrated(fz: _Fusion, f: str, g: _Group, raw: float, best: Reading, sources: list[str],
+                vouched: list[str]) -> tuple[float, str]:  # fmt: skip
+    """The confidence the benchmark (and AP's approvals) measured for this kind of evidence, and its key."""
+    # What the evidence patterns below share; they differ in the readers and the reading they describe.
+    alike = {"layout_source": fz.layout_source, "contested": fz.contest.get(f, 0.0) > 0.25,
+             "confirmed": fz.confirmed_ok(f), "soft": f in fz.soft}  # fmt: skip
+    local = fz.local_evidence
+    measured = _clamp(raw)
+    evidence = evidence_key(f, vouched, best.method, **alike)
+    conf = calibrate(measured, evidence, local)
+    if "vlm" in vouched and len(vouched) > 1:
+        # The page reader agreeing is one more reader on top of a pattern the benchmark may have measured without it
+        # (patterns with it are not measured yet): it never makes the value less certain.
+        without = evidence_key(f, [s for s in vouched if s != "vlm"], best.method, **alike)
+        conf = max(conf, calibrate(measured, without, local))
+    if "template" in sources and len(sources) > 1:
+        # Likewise the supplier's template agreeing: the pattern without it may be measured (the rule reader's name
+        # with a rival name under it), the one with it not yet. Agreeing never makes the value less certain than the
+        # other readers alone would (a lone reader is capped below verified: so is this floor).
+        others = [r for s, r in g.readings if s != "template"]
+        method = max(others, key=lambda r: (bool(r.boxes), r.score)).method
+        without = evidence_key(f, [s for s in sources if s != "template"], method, **alike)
+        conf = max(conf, min(calibrate(measured, without, local), SINGLE_READER_CAP))
+    if len(vouched) > 1:
+        # Readers that agree each describe the same evidence their own way (the supplier template's "template", the
+        # rule reader's "label-right+adds-up"); which reading ranks first is chance, so the description with the
+        # better measured record counts.
+        for method in {r.method for _, r in g.readings if UNSETTLED not in r.method} - {best.method}:
+            conf = max(conf, calibrate(measured, evidence_key(f, vouched, method, **alike), local))
+    if f in fz.failed:
+        # The evidence pattern does not record the failed check: its measured accuracy must not undo the mark-down.
+        conf = min(conf, measured)
+    return conf, evidence
+
+
+def _readers_agree(fz: _Fusion, f: str, g: _Group, vouched: list[str], reasons: list[str]) -> tuple[set[str], bool]:
+    """The readers that count as independent, and whether a speck on the scan may be part of the number. A lone
+    reader is never verified on its own measured record (the benchmark is synthetic): verified also needs a second
+    reader or a check to agree. The second OCR read of a scan shares the first one's blind spots (a word OCR never
+    saw), so with the rule reader it counts as one reader."""
+    independent = {"rules" if s == "ocr" else s for s in vouched}
+    texts = {" ".join(str(r.value).split()).casefold() for _, r in g.readings}
+    if f == "vendor_name" and len(texts) > 1:
+        independent = {"one"}  # they agree on the supplier, not on how its name is printed
+        reasons.append("readers differ on the exact name: " + " / ".join(sorted({str(r.value) for _, r in g.readings})))
+    forms = {"".join(str(r.value).split()).upper() for s, r in g.readings if s != "ai"}  # how the page prints it
+    speck = False
+    if f in ("invoice_number", "po_number") and len(forms) > 1:
+        # "BC-15.332" / "BC-15332": the same number to compare, but which is printed is not agreed. OCR adds specks
+        # as dots and commas far more often than it drops printed ones: the plainer form is shown.
+        independent = {"one"}
+        plain = min(forms, key=lambda form: (sum(not ch.isalnum() for ch in form), form))
+        g.value = next(r.value for s, r in g.readings if s != "ai" and "".join(str(r.value).split()).upper() == plain)
+        fz.values[f] = g.value
+        reasons.append("readers write it differently: " + " / ".join(sorted(forms)))
+        # "IN833.79" / "IN833.7.9" (printed IN83379): even the plainer form keeps a dot between digits that the
+        # readers do not agree on, so it may be a speck too. A person looks.
+        speck = bool(re.search(r"\d[.,]\d", plain))
+    if f in ("invoice_number", "po_number") and fz.layout_source != "text" and len(forms) == 1:
+        # "No.4.6" (printed No. 46), read so by both OCR reads: on a scan, a number that reads like a decimal may
+        # hold a speck the readers share. A person looks.
+        speck = bool(re.fullmatch(r"\d{1,4}[.,]\d{1,2}", next(iter(forms))))
+        if speck:
+            reasons.append("a dot between its digits may be a speck on the scan")
+    return independent, speck
+
+
+def _capped(fz: _Fusion, f: str, g: _Group, conf: float, raw: float, vouched: list[str],
+            reasons: list[str]) -> float:  # fmt: skip
+    """The confidence kept below verified (or below likely) where the evidence cannot vouch for the value, however
+    many readers agree: what each cap is for is said in its reason."""
+    readings = [r for _, r in g.readings]
+    confirmed = fz.confirmed_ok(f)
+    if f in AMOUNT_FIELDS and fz.layout_source != "text" and not confirmed and conf > SINGLE_READER_CAP:
+        # On a scan or a photo, an amount no sum confirms (no total read, or nothing adds up with it): the two OCR
+        # reads share the page's geometry, and a tilted row can put the next row's amount on its label.
+        conf = SINGLE_READER_CAP
+        reasons.append("no total or sum on the page confirms this amount")
+    if (
+        f in REGISTRATION_FIELDS
+        and all(BILL_TO_READING in r.method for r in readings)
+        and not any(c["ok"] and c["code"] == "VENDOR_GST_MATCH" and f in c["fields"] for c in fz.checks)
+    ):
+        # Read only where the customer's details are printed: a valid check digit shows the number is well formed,
+        # not that it is the supplier's. Only the vendor master can say it is.
+        conf = min(conf, SINGLE_READER_CAP)
+        reasons.append("read only in the bill-to block: it may be the customer's number")
+    if any(EITHER_TAX in r.method for r in readings):
+        # Printed under "PST/QST" with nothing on the page to say which the supplier charges: the amount adds up,
+        # which tax it is does not follow from that. A person says.
+        conf = min(conf, SINGLE_READER_CAP)
+        reasons.append(
+            "printed under a label naming two taxes (PST/QST, GST/HST): which of the two it is, the page does not say"
+        )
+    if any(RIVAL_NAME in r.method for r in readings) and "template" not in vouched and not fz.confirmed.get(f, 0):
+        conf = min(conf, SINGLE_READER_CAP)
+        reasons.append(
+            f"another name is printed at the top as well: {fz.all_groups[f][1].value}"
+            if len(fz.all_groups[f]) > 1
+            else "another name is printed at the top as well"
+        )
+    if all(r.method.startswith(UNLABELLED_METHODS) for r in readings):
+        # A receipt's date and time, or a date beside the title, with no label to say which date it is: however many
+        # readers see it, a person checks it.
+        conf = min(conf, UNLABELLED_CAP)
+        reasons.append("read without a label: printed where an invoice's date usually is")
+    elif all(r.method.startswith(WEAK_LABEL_METHOD) for r in readings):
+        # "Receipt No.", "Numéro :", "Nr.": words that name other numbers and dates too. However many readers agree
+        # on what is printed after one, which number it is the page does not say: a person checks it.
+        conf = min(conf, UNLABELLED_CAP)
+        reasons.append("read after a word that also names other numbers or dates (a receipt's, a customer's)")
+    if _unsettled(g):
+        # Read only by the supplier's template where the value used to be, without its label on this page or at a
+        # spot another value was printed at too: what is printed there now may be something else. A person checks.
+        conf = min(conf, UNLABELLED_CAP)
+        reasons.append("read only where this supplier's value was before, and the template cannot vouch for it")
+    if any(TAKEN_OFF in r.method for r in readings):
+        conf = min(conf, _clamp(raw, UNMEASURED_CAP))
+        reasons.append("something is taken off before the amount to pay (a deposit, a commission): a person checks it")
+    if any(TWO_SUBTOTALS in r.method for r in readings):
+        conf = min(conf, SINGLE_READER_CAP)
+        reasons.append("the totals add up with another subtotal printed too (before or after the charges)")
+    if any(PART_OF_TERMS in r.method for r in readings):
+        conf = min(conf, SINGLE_READER_CAP)
+        reasons.append("the terms ask for a deposit first: these days are only the balance's")
+    if all(UNMEASURED in r.method for r in readings):
+        # Wording the benchmark never prints: its reading's family has a measured record, this wording not. Two OCR
+        # reads of a scan see the same pixels: however many agree, only a check on other fields lifts it.
+        if confirmed:
+            conf = min(conf, _clamp(raw, SINGLE_READER_CAP))
+            reasons.append("read from wording the test invoices do not print, and confirmed by the other fields")
         else:
-            reasons.append(f"read by {sources[0]} ({g.best().method})")
-        if field in contest:
-            raw *= 1.0 - 0.8 * min(contest[field], 1.0)
-            other = all_groups[field][1]
-            reasons.append(f"another reading: {other.value}")
-        elif field in template_rival:
-            reasons.append(f"the supplier's template read {template_rival[field]}: the totals add up with this one")
-        n_conf = confirmed.get(field, 0)
-        if n_conf and field not in failed:
-            raw = 1.0 - (1.0 - raw) * (0.15 ** min(n_conf, 3))
-            reasons.append("confirmed by " + ", ".join(c["code"].lower().replace("_", " ") for c in checks
-                                                      if c["ok"] and c["code"] not in WEAK_CHECKS and field in c["fields"]))  # fmt: skip
-        if field in failed:
-            raw *= 0.3
-            reasons += [f"check failed: {d}" for d in failed[field]]
-        if field in soft:
-            raw = min(raw, 0.97)
-            reasons += [f"note: {d}" for d in soft[field]]
-        if field in look:
-            raw = min(raw, LOOK_CAP)
-            reasons += [f"check: {d}" for d in look[field]]
-        best = g.best()
-        if best.method.endswith(UNSETTLED) and vouched != sources:
-            best = max((r for _, r in g.readings if UNSETTLED not in r.method), key=lambda r: (bool(r.boxes), r.score))
-        # What the evidence patterns below share; they differ in the readers and the reading they describe.
-        alike = {"layout_source": layout_source, "contested": contest.get(field, 0.0) > 0.25,
-                 "confirmed": bool(n_conf) and field not in failed, "soft": field in soft}  # fmt: skip
-        measured = _clamp(raw)
-        evidence = evidence_key(field, vouched, best.method, **alike)
-        conf = calibrate(measured, evidence, local_evidence)
-        if "vlm" in vouched and len(vouched) > 1:
-            # The page reader agreeing is one more reader on top of a pattern the benchmark may have measured
-            # without it (patterns with it are not measured yet): it never makes the value less certain.
-            without = evidence_key(field, [s for s in vouched if s != "vlm"], best.method, **alike)
-            conf = max(conf, calibrate(measured, without, local_evidence))
-        if "template" in sources and len(sources) > 1:
-            # Likewise the supplier's template agreeing: the pattern without it may be measured (the rule reader's
-            # name with a rival name under it), the one with it not yet. Agreeing never makes the value less certain
-            # than the other readers alone would (a lone reader is capped below verified: so is this floor).
-            others = [r for s, r in g.readings if s != "template"]
-            method = max(others, key=lambda r: (bool(r.boxes), r.score)).method
-            without = evidence_key(field, [s for s in sources if s != "template"], method, **alike)
-            conf = max(conf, min(calibrate(measured, without, local_evidence), SINGLE_READER_CAP))
-        if len(vouched) > 1:
-            # Readers that agree each describe the same evidence their own way (the supplier template's "template",
-            # the rule reader's "label-right+adds-up"); which reading ranks first is chance, so the description
-            # with the better measured record counts.
-            for method in {r.method for _, r in g.readings if UNSETTLED not in r.method} - {best.method}:
-                conf = max(conf, calibrate(measured, evidence_key(field, vouched, method, **alike), local_evidence))
-        if field in failed:
-            # The evidence pattern does not record the failed check: its measured accuracy must not undo the mark-down.
-            conf = min(conf, measured)
-        # A lone reader is never verified on its own measured record (the benchmark is synthetic):
-        # verified also needs a second reader or a check to agree. The second OCR read of a scan
-        # shares the first one's blind spots (a word OCR never saw), so with the rule reader it
-        # counts as one reader.
-        independent = {"rules" if s == "ocr" else s for s in vouched}
-        texts = {" ".join(str(r.value).split()).casefold() for _, r in g.readings}
-        if field == "vendor_name" and len(texts) > 1:
-            independent = {"one"}  # they agree on the supplier, not on how its name is printed
-            reasons.append(
-                "readers differ on the exact name: " + " / ".join(sorted({str(r.value) for _, r in g.readings}))
-            )
-        forms = {"".join(str(r.value).split()).upper() for s, r in g.readings if s != "ai"}  # how the page prints it
-        speck = False
-        if field in ("invoice_number", "po_number") and len(forms) > 1:
-            # "BC-15.332" / "BC-15332": the same number to compare, but which is printed is not agreed. OCR adds
-            # specks as dots and commas far more often than it drops printed ones: the plainer form is shown.
-            independent = {"one"}
-            plain = min(forms, key=lambda f: (sum(not ch.isalnum() for ch in f), f))
-            g.value = next(
-                r.value for s, r in g.readings if s != "ai" and "".join(str(r.value).split()).upper() == plain
-            )
-            values[field] = g.value
-            reasons.append("readers write it differently: " + " / ".join(sorted(forms)))
-            # "IN833.79" / "IN833.7.9" (printed IN83379): even the plainer form keeps a dot between digits that the
-            # readers do not agree on, so it may be a speck too. A person looks.
-            speck = bool(re.search(r"\d[.,]\d", plain))
-        if field in ("invoice_number", "po_number") and layout_source != "text" and len(forms) == 1:
-            # "No.4.6" (printed No. 46), read so by both OCR reads: on a scan, a number that reads like a decimal
-            # may hold a speck the readers share. A person looks.
-            speck = bool(re.fullmatch(r"\d{1,4}[.,]\d{1,2}", next(iter(forms))))
-            if speck:
-                reasons.append("a dot between its digits may be a speck on the scan")
-        if len(independent) < 2 and not (n_conf and field not in failed):
-            conf = min(conf, SINGLE_READER_CAP)
-        if (
-            field in AMOUNT_FIELDS
-            and layout_source != "text"
-            and not (n_conf and field not in failed)
-            and conf > SINGLE_READER_CAP
-        ):
-            # On a scan or a photo, an amount no sum confirms (no total read, or nothing adds up with it): the two OCR
-            # reads share the page's geometry, and a tilted row can put the next row's amount on its label.
-            conf = SINGLE_READER_CAP
-            reasons.append("no total or sum on the page confirms this amount")
-        if (
-            field in REGISTRATION_FIELDS
-            and all(BILL_TO_READING in r.method for _, r in g.readings)
-            and not any(c["ok"] and c["code"] == "VENDOR_GST_MATCH" and field in c["fields"] for c in checks)
-        ):
-            # Read only where the customer's details are printed: a valid check digit shows the number is well
-            # formed, not that it is the supplier's. Only the vendor master can say it is.
-            conf = min(conf, SINGLE_READER_CAP)
-            reasons.append("read only in the bill-to block: it may be the customer's number")
-        if any(EITHER_TAX in r.method for _, r in g.readings):
-            # Printed under "PST/QST" with nothing on the page to say which the supplier charges: the amount adds up,
-            # which tax it is does not follow from that. A person says.
-            conf = min(conf, SINGLE_READER_CAP)
-            reasons.append(
-                "printed under a label naming two taxes (PST/QST, GST/HST): which of the two it is, the page does not say"
-            )
-        if any(RIVAL_NAME in r.method for _, r in g.readings) and "template" not in vouched and not n_conf:
-            conf = min(conf, SINGLE_READER_CAP)
-            reasons.append(
-                f"another name is printed at the top as well: {all_groups[field][1].value}"
-                if len(all_groups[field]) > 1
-                else "another name is printed at the top as well"
-            )
-        if all(r.method.startswith(UNLABELLED_METHODS) for _, r in g.readings):
-            # A receipt's date and time, or a date beside the title, with no label to say which date it is: however
-            # many readers see it, a person checks it.
-            conf = min(conf, UNLABELLED_CAP)
-            reasons.append("read without a label: printed where an invoice's date usually is")
-        elif all(r.method.startswith(WEAK_LABEL_METHOD) for _, r in g.readings):
-            # "Receipt No.", "Numéro :", "Nr.": words that name other numbers and dates too. However many readers
-            # agree on what is printed after one, which number it is the page does not say: a person checks it.
-            conf = min(conf, UNLABELLED_CAP)
-            reasons.append("read after a word that also names other numbers or dates (a receipt's, a customer's)")
-        if _unsettled(g):
-            # Read only by the supplier's template where the value used to be, without its label on this page or at a
-            # spot another value was printed at too: what is printed there now may be something else. A person checks.
-            conf = min(conf, UNLABELLED_CAP)
-            reasons.append("read only where this supplier's value was before, and the template cannot vouch for it")
-        if any(TAKEN_OFF in r.method for _, r in g.readings):
             conf = min(conf, _clamp(raw, UNMEASURED_CAP))
-            reasons.append(
-                "something is taken off before the amount to pay (a deposit, a commission): a person checks it"
-            )
-        if any(TWO_SUBTOTALS in r.method for _, r in g.readings):
-            conf = min(conf, SINGLE_READER_CAP)
-            reasons.append("the totals add up with another subtotal printed too (before or after the charges)")
-        if any(PART_OF_TERMS in r.method for _, r in g.readings):
-            conf = min(conf, SINGLE_READER_CAP)
-            reasons.append("the terms ask for a deposit first: these days are only the balance's")
-        if all(UNMEASURED in r.method for _, r in g.readings):
-            # Wording the benchmark never prints: its reading's family has a measured record, this wording not. Two
-            # OCR reads of a scan see the same pixels: however many agree, only a check on other fields lifts it.
-            if n_conf and field not in failed:
-                conf = min(conf, _clamp(raw, SINGLE_READER_CAP))
-                reasons.append("read from wording the test invoices do not print, and confirmed by the other fields")
-            else:
-                conf = min(conf, _clamp(raw, UNMEASURED_CAP))
-                reasons.append("read from wording the test invoices do not print: a person checks it")
-        # 03/04/2026 with nothing on the page to settle it: however many readers chose the same order, the
-        # page does not confirm it. Settled only by the day it arrived, it is likely at best, never verified.
-        unsure = [_date_unsure(r) for _, r in g.readings] if field in DATE_FIELDS else []
-        if unsure and all(unsure):
-            if all(u == "ambiguous" for u in unsure):
-                conf = min(conf, 0.6)
-                reasons.append("the date reads both day/month and month/day")
-            else:
-                conf = min(conf, SINGLE_READER_CAP)
-                reasons.append("the date reads both day/month and month/day: the day it arrived chose one")
-        # The AI's coding is what an approval posts: a page value it does not share is not verified for it,
-        # however well the page's own values add up.
-        ai_top = (by_source.get("ai") or {}).get(field, [])[:1]
-        coding_differs = bool(ai_top) and normalize_value(field, ai_top[0].value) is not None and "ai" not in g.top
-        if coding_differs:
-            reasons.append(f"the coding has {ai_top[0].value}, the page reads {g.value}")
-        # Two independent readings of the page that disagree: a person looks, however the rest adds up.
-        readers_differ = _page_reader_differs(field, by_source)
-        if readers_differ:
-            vlm_reading, other, other_reading = readers_differ
-            reasons.append(f"the page reader read {vlm_reading.value}, {other} read {other_reading.value}")
-        if field in failed or field in look or coding_differs or readers_differ or speck:
-            status = CHECK
-        elif conf >= VERIFIED_AT and best.boxes:
-            status = VERIFIED
-        elif conf >= LIKELY_AT:
-            status = LIKELY
+            reasons.append("read from wording the test invoices do not print: a person checks it")
+    # 03/04/2026 with nothing on the page to settle it: however many readers chose the same order, the page does not
+    # confirm it. Settled only by the day it arrived, it is likely at best, never verified.
+    unsure = [_date_unsure(r) for r in readings] if f in DATE_FIELDS else []
+    if unsure and all(unsure):
+        if all(u == "ambiguous" for u in unsure):
+            conf = min(conf, 0.6)
+            reasons.append("the date reads both day/month and month/day")
         else:
-            status = CHECK
-        value = values.get(field, g.value)
-        results[field] = FieldResult(
-            field=field, value=value, confidence=conf, status=status, boxes=list(best.boxes),
-            sources={s: str(max((r for src, r in g.readings if src == s), key=lambda r: r.score).raw) for s in sources}
-            | {f"other:{grp.value}": ", ".join(sorted({s for s, _ in grp.readings})) for grp in all_groups[field][1:3]},
-            reasons=reasons, evidence=evidence,
-        )  # fmt: skip
-    _derive_tax_total(results)
-    _vendor_master_name(results, checks, vendor)
-    return results, checks
+            conf = min(conf, SINGLE_READER_CAP)
+            reasons.append("the date reads both day/month and month/day: the day it arrived chose one")
+    return conf
+
+
+def _status(fz: _Fusion, f: str, g: _Group, conf: float, best: Reading, speck: bool, reasons: list[str]) -> str:
+    """Verified, likely or to check: a person looks whatever the confidence when a check fails or asks to, the
+    coding disagrees with the page, two readings of the page disagree, or a speck may be part of the number."""
+    # The AI's coding is what an approval posts: a page value it does not share is not verified for it, however
+    # well the page's own values add up.
+    ai_top = (fz.by_source.get("ai") or {}).get(f, [])[:1]
+    coding_differs = bool(ai_top) and normalize_value(f, ai_top[0].value) is not None and "ai" not in g.top
+    if coding_differs:
+        reasons.append(f"the coding has {ai_top[0].value}, the page reads {g.value}")
+    # Two independent readings of the page that disagree: a person looks, however the rest adds up.
+    readers_differ = _page_reader_differs(f, fz.by_source)
+    if readers_differ:
+        vlm_reading, other, other_reading = readers_differ
+        reasons.append(f"the page reader read {vlm_reading.value}, {other} read {other_reading.value}")
+    if f in fz.failed or f in fz.look or coding_differs or readers_differ or speck:
+        return CHECK
+    if conf >= VERIFIED_AT and best.boxes:
+        return VERIFIED
+    if conf >= LIKELY_AT:
+        return LIKELY
+    return CHECK
 
 
 def _date_unsure(r: Reading) -> str:
