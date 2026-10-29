@@ -57,10 +57,10 @@ GENERATED = {".venv", "__pycache__", ".pytest_cache", ".ruff_cache", ".cache", M
 # so unzipped over an older folder they are removed (prune_stale), and an older folder is still recognised. Every
 # top-level name git tracks is here too: GitHub's ZIP holds them all (tests/launcher/test_update.py checks it).
 BUNDLE_TOP = {"ap_coder", "scripts", "tests", "docs", "data", "samples", "static", "wheelhouse", "models", "private",
-              ".streamlit", ".github", ".claude", "APProcessor.bat", "APProcessor-demo.bat", "APProcessor.command",
-              "install.bat", "install.sh", "start.bat", "start.sh", "terminal.bat", "README.md", "CLAUDE.md",
-              "pyproject.toml", "requirements.txt", "streamlit_app.py", "bundle_manifest.json", ".env.example",
-              ".gitignore", ".gitattributes", ".ignore"}  # fmt: skip
+              ".streamlit", ".github", ".claude", "APProcessor.bat", "APProcessor.command", "install.bat",
+              "install.sh", "start.bat", "start.sh", "terminal.bat", "README.md", "CLAUDE.md", "pyproject.toml",
+              "requirements.txt", "streamlit_app.py", "bundle_manifest.json", ".env.example", ".gitignore",
+              ".gitattributes", ".ignore"}  # fmt: skip
 # Top-level names of a bundle folder never removed when a newer bundle no longer ships them: data, the person's own
 # notes may be there, the manifest itself (not in its own file list), what starts AP Coder, and Claude Code's
 # settings (the bundle leaves .claude/ out; a developer's own settings.local.json may be in it).

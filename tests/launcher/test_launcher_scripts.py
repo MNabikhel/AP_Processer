@@ -167,11 +167,12 @@ def test_bat_files_keep_their_settings_to_themselves(name):
 
 
 def test_the_demo_launcher_runs_ap_coder_on_a_data_folder_of_its_own():
-    """APProcessor-demo.bat (docs/DEMO_RUN_SHEET.md): the same AP Coder as APProcessor.bat, on APCoder-demo in the
-    user's folder, so a demo or a rehearsal never mixes with the pilot tester's own invoices."""
-    text = (ROOT / "APProcessor-demo.bat").read_text(encoding="ascii")
+    """scripts\\demo.bat (docs/DEMO_RUN_SHEET.md): the same AP Coder as APProcessor.bat, on APCoder-demo in the
+    user's folder, so a demo or a rehearsal never mixes with the pilot tester's own invoices; in scripts\\, as the
+    app folder's top holds one file to open per computer."""
+    text = (ROOT / "scripts" / "demo.bat").read_text(encoding="ascii")
     assert 'set "AP_PRIVATE_DIR=%USERPROFILE%\\APCoder-demo"' in text
-    assert 'call "%~dp0APProcessor.bat" %*' in text
+    assert 'call "%~dp0..\\APProcessor.bat" %*' in text
 
 
 def test_the_demo_data_folder_is_used_as_it_is_and_never_recorded(tmp_path, monkeypatch):

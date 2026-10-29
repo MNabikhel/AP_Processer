@@ -482,7 +482,7 @@ jobs:
           if (-not $ok) { throw 'the offline install did not bring the dashboard up' }
           if ($out -notmatch 'Self-check OK') { throw 'the readiness summary did not show the self-check OK' }
           if (-not $models) { throw 'AP Coder did not pick the right LM Studio model for each job' }
-      - name: The demo launcher keeps a data folder of its own (APProcessor-demo.bat)
+      - name: The demo launcher keeps a data folder of its own (scripts\demo.bat)
         shell: pwsh
         working-directory: C:\pilot\APProcessor
         env:
@@ -494,10 +494,10 @@ jobs:
         run: |
           $record = Join-Path $env:USERPROFILE '.ap_coder\settings.json'
           $before = (Get-Content $record -Raw | ConvertFrom-Json).data_dir
-          cmd /c "APProcessor-demo.bat --no-start > demo.out 2>&1"
+          cmd /c "scripts\demo.bat --no-start > demo.out 2>&1"
           $code = $LASTEXITCODE
           Get-Content demo.out -Tail 30
-          if ($code -ne 0) { throw "APProcessor-demo.bat --no-start ended with $code" }
+          if ($code -ne 0) { throw "scripts\demo.bat --no-start ended with $code" }
           if (-not (Test-Path (Join-Path $env:USERPROFILE 'APCoder-demo\invoices'))) { throw 'no APCoder-demo data folder' }
           $after = (Get-Content $record -Raw | ConvertFrom-Json).data_dir
           if ($after -ne $before) { throw "the demo changed the recorded data folder: $before -> $after" }
