@@ -397,7 +397,7 @@ def test_state_machine_learning_supervised_ready_autonomous_suspended():
 
 
 def test_policy_is_configurable():
-    lenient = AutonomyPolicy(min_invoices=5, min_lower_bound=0.9, clean_streak=3)
+    lenient = AutonomyPolicy(min_invoices=5, min_lower_bound=0.9, window_lower_bound=0.9, clean_streak=3)
     assert autonomy_status(SupplierStats.from_rows(_rows(5)), lenient)[0] == READY
     assert AutonomyPolicy.from_dict(lenient.to_dict()) == lenient
     stats = SupplierStats.from_rows(_rows(20))  # 260 clean fields: the 99% bound is the last thing missing

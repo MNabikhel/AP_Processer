@@ -673,7 +673,9 @@ def render_markdown(report: dict[str, Any]) -> str:
         "with the supplier's template as learned so far, AP approves the true values, and the template "
         "learns from every approval.\n",
         f"Autonomy policy: at least {pol['min_invoices']} reviewed invoices, a {pol['min_lower_bound']:.0%} "
-        f"lower bound on header-field accuracy, the last {pol['clean_streak']} without a correction; "
+        f"lower bound on header-field accuracy since the last correction "
+        f"({pol.get('window_lower_bound', pol['min_lower_bound']):.0%} over the last {pol['window']}), the last "
+        f"{pol['clean_streak']} without a correction; "
         f"{pol['audit_rate']:.0%} audit sample. Touchless processing is on: a supplier goes touchless by itself as "
         "soon as it meets the bar.\n",
         ("Suppliers are in the vendor master (name and GST/HST number checked). " if cfg["vendor_master"] else "")

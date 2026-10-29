@@ -1294,6 +1294,17 @@ class SupplierStats:
     def lower_bound(self, z: float = 1.96) -> float:
         return wilson_lower(self.correct, self.n, z)
 
+    @property
+    def run_fields(self) -> int:
+        """Header fields of the clean streak: read right since the last correction (or since a suspension, in
+        ``judged_stats``). Without a history (a made-up record), all of them when the streak covers the window."""
+        if self.history:
+            return sum(int(h.get("fields") or 0) for h in self.history[: self.clean_streak])
+        return self.n if self.clean_streak >= self.window_invoices else 0
+
+    def run_bound(self, z: float = 1.96) -> float:
+        return wilson_lower(self.run_fields, self.run_fields, z)
+
     def corrections_since(self, iso: str | None) -> int:
         """Invoices with a correction recorded at or after ``iso``."""
         if not iso:
@@ -1342,8 +1353,9 @@ class SupplierStats:
 @dataclass
 class AutonomyPolicy:
     min_invoices: int = 20
-    min_lower_bound: float = 0.99  # Wilson lower bound of header-field accuracy...
-    window: int = 200  # ...over the last this many reviewed invoices
+    min_lower_bound: float = 0.99  # Wilson lower bound of header-field accuracy since the last correction...
+    window_lower_bound: float = 0.98  # ...and over the last ``window`` reviewed invoices, the corrections among them
+    window: int = 200
     clean_streak: int = 10  # the last this many invoices without a single correction
     audit_rate: float = 0.05  # share of autonomous invoices still checked by a person
     # "At least 99%, with 95% confidence" is a one-sided claim: 1.645, not the two-sided 1.96, which asked for 97.5%
@@ -1351,7 +1363,8 @@ class AutonomyPolicy:
     z: float = 1.645
 
     def to_dict(self) -> dict[str, Any]:
-        return {"min_invoices": self.min_invoices, "min_lower_bound": self.min_lower_bound, "window": self.window,
+        return {"min_invoices": self.min_invoices, "min_lower_bound": self.min_lower_bound,
+                "window_lower_bound": self.window_lower_bound, "window": self.window,
                 "clean_streak": self.clean_streak, "audit_rate": self.audit_rate, "z": self.z}  # fmt: skip
 
     @classmethod
@@ -1361,6 +1374,7 @@ class AutonomyPolicy:
         return cls(
             min_invoices=int(d.get("min_invoices", base.min_invoices)),
             min_lower_bound=float(d.get("min_lower_bound", base.min_lower_bound)),
+            window_lower_bound=float(d.get("window_lower_bound", base.window_lower_bound)),
             window=int(d.get("window", base.window)), clean_streak=int(d.get("clean_streak", base.clean_streak)),
             audit_rate=float(d.get("audit_rate", base.audit_rate)), z=float(d.get("z", base.z)),
         )  # fmt: skip
@@ -1368,9 +1382,10 @@ class AutonomyPolicy:
     def describe(self) -> str:
         return (
             f"at least {self.min_invoices} invoices reviewed, header-field accuracy of at least "
-            f"{self.min_lower_bound:.0%} at 95% confidence over the last {self.window}, and the last "
-            f"{self.clean_streak} without a single correction; {self.audit_rate:.0%} of the invoices that skip review "
-            "are still audited, and one correction suspends it"
+            f"{self.min_lower_bound:.0%} at 95% confidence since the last correction and "
+            f"{self.window_lower_bound:.0%} over the last {self.window}, and the last {self.clean_streak} without a "
+            f"single correction; {self.audit_rate:.0%} of the invoices that skip review are still audited, and one "
+            "correction suspends it"
         )
 
     def plain_rules(self) -> list[tuple[str, str]]:
@@ -1378,7 +1393,8 @@ class AutonomyPolicy:
         return [
             ("Invoices reviewed by a person", f"at least {self.min_invoices}"),
             ("Header fields read right",
-             f"at least {self.min_lower_bound:.0%}, with 95% confidence, over its last {self.window} invoices"),
+             f"at least {self.min_lower_bound:.0%}, with 95% confidence, since its last correction, and at least "
+             f"{self.window_lower_bound:.0%} over its last {self.window} invoices"),
             ("Invoices in a row without a correction", f"the last {self.clean_streak}"),
             ("Audit sample", f"{self.audit_rate:.0%} of the invoices that skip review still go to a person"),
             ("A correction", "suspends the vendor at once; it needs a fresh run without corrections to skip review "
@@ -1393,6 +1409,18 @@ def _plural(n: int, word: str) -> str:
     return f"{n} {word}{'' if n == 1 else 's'}"
 
 
+def fields_needed(stats: SupplierStats, policy: AutonomyPolicy = DEFAULT_POLICY) -> int | None:
+    """How many more header fields read right in a row would meet both accuracy bounds (0: met; None: out of
+    reach within the window). Since the last correction: the reading as it is now, once a correction was learned
+    from; over the window: a vendor misread now and then never gets there, however long its runs (D-122)."""
+    run = stats.run_fields
+    need_run = clean_fields_needed(run, run, policy.min_lower_bound, policy.z)
+    need_window = clean_fields_needed(stats.correct, stats.n, policy.window_lower_bound, policy.z)
+    if need_run is None or need_window is None:
+        return None
+    return max(need_run, need_window)
+
+
 def policy_gaps(stats: SupplierStats, policy: AutonomyPolicy = DEFAULT_POLICY) -> tuple[list[str], float]:
     """What is still missing to meet the policy (plain English, empty when met) and the progress 0..1."""
     gaps: list[str] = []
@@ -1402,15 +1430,15 @@ def policy_gaps(stats: SupplierStats, policy: AutonomyPolicy = DEFAULT_POLICY) -
     p_streak = min(1.0, stats.clean_streak / policy.clean_streak) if policy.clean_streak > 0 else 1.0
     if stats.clean_streak < policy.clean_streak:
         gaps.append(f"{policy.clean_streak - stats.clean_streak} more in a row without a correction needed")
-    need = clean_fields_needed(stats.correct, stats.n, policy.min_lower_bound, policy.z)
+    need = fields_needed(stats, policy)
     if need == 0:
         p_bound = 1.0
     elif need is None or not stats.n:
         p_bound = 0.0
         if stats.n:
-            gaps.append(f"accuracy {stats.lower_bound(policy.z):.1%} is below {policy.min_lower_bound:.0%}")
+            gaps.append(f"accuracy {stats.lower_bound(policy.z):.1%} is below {policy.window_lower_bound:.0%}")
     else:
-        p_bound = stats.n / (stats.n + need)
+        p_bound = stats.run_fields / (stats.run_fields + need)
         per_invoice = stats.n / stats.window_invoices if stats.window_invoices else 10
         more = math.ceil(need / max(per_invoice, 1))
         if not gaps or more > max(policy.min_invoices - stats.invoices, policy.clean_streak - stats.clean_streak):
@@ -1453,7 +1481,7 @@ def clean_invoices_to_go(stats: SupplierStats, policy: AutonomyPolicy = DEFAULT_
     within the window, which only more clean invoices replacing old corrections will change)."""
     need_invoices = max(0, policy.min_invoices - stats.invoices)
     need_streak = max(0, policy.clean_streak - stats.clean_streak)
-    need_fields = clean_fields_needed(stats.correct, stats.n, policy.min_lower_bound, policy.z)
+    need_fields = fields_needed(stats, policy)
     if need_fields is None:
         return None
     per_invoice = stats.n / stats.window_invoices if stats.window_invoices else 10
@@ -1516,7 +1544,7 @@ def autonomy_status(
     if not gaps:
         when = "from its next invoice" if touchless_on else "once touchless processing is on (Settings → Automation)"
         return (READY, 1.0, f"Meets the bar: {stats.invoices} invoices, accuracy at least "
-                            f"{stats.lower_bound(policy.z):.1%}, last {policy.clean_streak} without a correction. "
+                            f"{stats.run_bound(policy.z):.1%}, last {policy.clean_streak} without a correction. "
                             f"Skips review {when}.")  # fmt: skip
     return SUPERVISED, progress, "; ".join(gaps) + "."
 

@@ -17,6 +17,7 @@ from ap_coder.capture.supplier import (
     automatic_transition,
     clean_invoices_to_go,
     fresh_streak,
+    meets_policy,
     should_auto_approve,
     touchless_gates,
 )
@@ -158,15 +159,15 @@ def test_a_vendor_reaching_the_bar_goes_touchless_on_the_approval_that_gets_it_t
 
 def test_a_correction_suspends_and_a_fresh_clean_streak_brings_it_back(tmp_path, path):
     store = Store(tmp_path / "s.db")
-    _ready(store, 60)  # enough that one correction keeps the accuracy bound: the clean streak decides
+    _ready(store, 60)  # enough that one correction keeps the 98% bound over the window: the run since decides
     store.set_touchless(True, "Mia")
     result = store.record_outcomes(KEY, 3000, _outcomes(bad=True), source="audit", at="2099-01-01T00:00:00")
     assert result["suspended"] and store.get_supplier_profile(KEY)["state"] == SUSPENDED
     assert _decide(store, path)["auto"] is False and _decide(store, path)["state"] == SUSPENDED
-    for i in range(9):  # 9 clean ones: not yet
+    for i in range(20):  # 20 clean ones (260 fields): not yet 99% since the correction (D-122)
         store.record_outcomes(KEY, 3001 + i, _outcomes(), at=_at(i + 1, "2099-01-01"))
     assert store.get_supplier_profile(KEY)["state"] == SUSPENDED
-    assert store.record_outcomes(KEY, 3010, _outcomes(), at=_at(10, "2099-01-01"))["touchless"]  # the 10th
+    assert store.record_outcomes(KEY, 3021, _outcomes(), at=_at(21, "2099-01-01"))["touchless"]  # the 21st
     assert store.get_supplier_profile(KEY)["state"] == AUTONOMOUS
     assert "again" in store.events(actions=["autonomy_on"])[0]["detail"]["reason"]
 
@@ -187,7 +188,7 @@ def test_a_reopened_touchless_invoice_suspends_until_a_fresh_streak(tmp_path, gr
     assert profile["state"] == SUSPENDED and profile["suspended_at"]
     # No correction was recorded: its old clean streak does not count, only clean invoices since.
     assert store.sync_autonomy(KEY) == [] and store.get_supplier_profile(KEY)["state"] == SUSPENDED
-    for i in range(10):
+    for i in range(21):
         store.record_outcomes(KEY, 4000 + i, _outcomes(), at=_at(i, "2099-01-01"))
     assert store.get_supplier_profile(KEY)["state"] == AUTONOMOUS
 
@@ -237,7 +238,7 @@ def test_keeping_a_suspended_vendor_supervised_then_allowing_it_still_needs_a_fr
     store.set_supplier_state(KEY, HELD, "Mia")
     store.set_supplier_state(KEY, SUPERVISED, "Mia", reason="allowed again")
     assert store.get_supplier_profile(KEY)["state"] == SUPERVISED
-    for i in range(10):
+    for i in range(21):
         store.record_outcomes(KEY, 4000 + i, _outcomes(), at=_at(i, "2099-01-01"))
     assert store.get_supplier_profile(KEY)["state"] == AUTONOMOUS
     assert store.get_supplier_profile(KEY)["suspended_at"] is None  # touchless again: a later one starts afresh
@@ -307,9 +308,16 @@ def test_automatic_transition_rules():
     # suspended at invoice 25's time: only the 4 reviewed after count towards the streak
     assert fresh_streak(clean, _at(25)) == 4 and fresh_streak(clean, None) == 30
     assert automatic_transition(clean, stored_state=SUSPENDED, suspended_at=_at(25)) is None
-    assert automatic_transition(clean, stored_state=SUSPENDED, suspended_at=_at(19))[0] == AUTONOMOUS
+    assert automatic_transition(clean, stored_state=SUSPENDED, suspended_at=_at(19)) is None  # 10 since: 130 fields
+    assert automatic_transition(_stats(45), stored_state=SUSPENDED, suspended_at=_at(23))[0] == AUTONOMOUS  # 21
     assert clean_invoices_to_go(_stats(12)) == 9 and clean_invoices_to_go(clean) == 0  # the 99% bound: 9 more
-    assert clean_invoices_to_go(_stats(60, (59,))) == 10  # one correction among many: the clean streak decides
+    assert clean_invoices_to_go(_stats(60, (59,))) == 21  # one correction among many: 99% since it, from scratch
+    # Two corrections on the first two invoices, learned from: 99% since them decides, not the corrections forever
+    assert clean_invoices_to_go(_stats(2, (0, 1))) == 22 and clean_invoices_to_go(_stats(24, (0, 1))) == 0
+    # 30 clean since its last correction prove 99% on their own, but ten corrections before them keep the window
+    # below 98%: a vendor misread now and then does not skip review on one good run
+    lately = _stats(40, tuple(range(10)))
+    assert lately.run_bound(1.645) >= 0.99 and not meets_policy(lately) and clean_invoices_to_go(lately) > 0
 
 
 # --- Always a person ---------------------------------------------------------------------------------------------
@@ -563,7 +571,7 @@ def test_taught_message_says_what_was_learned(tmp_path, ground_truth):
     name = ground_truth["vendor_name"].rstrip(".")
     assert message == (
         f"Learned from your 2 corrections (invoice number, due date). {name}: 1 invoice reviewed, "
-        "0 of about 50 clean approvals toward skipping review."
+        "0 of about 24 clean approvals toward skipping review."
     )
     key = store.supplier_key_for(ground_truth["vendor_name"], ground_truth["gst_hst_registration_number"])
     for i in range(14):
