@@ -18,7 +18,7 @@ Pure logic, no web page and no database (the store keeps what this module comput
 
 States: ``learning`` (too few invoices), ``supervised``, ``ready`` (meets the bar; goes touchless as soon
 as touchless processing is on), ``autonomous`` (touchless), ``suspended`` (a person found an error since it
-went touchless: it needs a fresh clean streak to go touchless again) and ``held`` (an AP lead keeps it
+went touchless: the invoices since must meet the bar again) and ``held`` (an AP lead keeps it
 supervised whatever its record). Only ``supervised``, ``autonomous``, ``suspended`` and ``held`` are stored;
 ``learning`` and ``ready`` are computed.
 """
