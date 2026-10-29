@@ -419,7 +419,7 @@ Automation):
   (`Store.sync_autonomy`, run when the switch is turned on, after every approval and before every decision). Turning
   it on or off is recorded in the Activity log with who did it.
 - **One bar**, fixed standard values (`AutonomyPolicy` defaults; an older `autonomy_policy` setting is ignored): at
-  least 20 reviewed invoices, a 99% lower bound (95% confidence) on header-field accuracy over the last 200, the last
+  least 20 reviewed invoices, a 99% lower bound (95% confidence, one-sided) on header-field accuracy over the last 200, the last
   10 without a correction; 5% of touchless invoices are still audited.
 - **Demotion**: a correction on an audited invoice, or a touchless invoice reopened, suspends the vendor at once. It
   goes touchless again by itself once it meets the bar with a fresh clean streak of 10 invoices reviewed since the
@@ -440,9 +440,9 @@ Automation):
   a person could not approve either), or a line whose account only the local chat model chose (the touchless bar
   measures the header fields, not line coding) sends the invoice to a person (`should_auto_approve`,
   `invoice_gates`).
-- **How long it takes**: at about 13 header fields an invoice, a 99% lower bound with no error needs about 380
-  fields read right (n / (n + 1.96²) ≥ 0.99), so a vendor typically reaches the bar after about 30 to
-  40 clean invoices, not 20.
+- **How long it takes**: at about 13 header fields an invoice, a 99% lower bound with no error needs about 268
+  fields read right (one-sided 95% confidence: n / (n + 1.645²) ≥ 0.99, D-122), so a vendor with no correction
+  reaches the bar after about 21 invoices (27 at 10 fields); one correction among them adds about 13 more, two about 25.
 - **Training, visible**: every approval records, field by field, what the clerk corrected; the review screen says what
   was learned ("Learned from your 2 corrections (invoice number, due date). Acme Ltd: 14 invoices reviewed, about 6
   more invoices approved without a correction before this vendor can skip review."), and the Learning page shows each vendor's progress. A bulk approval (nobody

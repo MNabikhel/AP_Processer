@@ -400,9 +400,18 @@ def test_policy_is_configurable():
     lenient = AutonomyPolicy(min_invoices=5, min_lower_bound=0.9, clean_streak=3)
     assert autonomy_status(SupplierStats.from_rows(_rows(5)), lenient)[0] == READY
     assert AutonomyPolicy.from_dict(lenient.to_dict()) == lenient
-    stats = SupplierStats.from_rows(_rows(22))  # 286 clean fields: the 99% bound is the last thing missing
+    stats = SupplierStats.from_rows(_rows(20))  # 260 clean fields: the 99% bound is the last thing missing
     state, _, why = autonomy_status(stats)
-    assert state == SUPERVISED and "more invoices without a correction to show 99% accuracy" in why
+    assert state == SUPERVISED and "about 1 more invoice without a correction to show 99% accuracy" in why
+    assert autonomy_status(SupplierStats.from_rows(_rows(21)))[0] == READY  # 273 clean fields
+
+
+def test_the_bar_is_99_percent_with_95_percent_confidence_one_sided():
+    """"At least 99%, with 95% confidence" is one-sided (z 1.645): about 268 fields read right without an error,
+    some 21 invoices. The two-sided 1.96 asked for 381 (97.5% confidence), some 30 invoices (D-122)."""
+    assert DEFAULT_POLICY.z == pytest.approx(1.645)
+    assert clean_fields_needed(0, 0, 0.99, DEFAULT_POLICY.z) == 268
+    assert wilson_lower(268, 268, DEFAULT_POLICY.z) >= 0.99 > wilson_lower(267, 267, DEFAULT_POLICY.z)
 
 
 def _capture(**statuses):

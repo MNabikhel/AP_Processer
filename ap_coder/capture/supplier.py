@@ -1344,7 +1344,9 @@ class AutonomyPolicy:
     window: int = 200  # ...over the last this many reviewed invoices
     clean_streak: int = 10  # the last this many invoices without a single correction
     audit_rate: float = 0.05  # share of autonomous invoices still checked by a person
-    z: float = 1.96
+    # "At least 99%, with 95% confidence" is a one-sided claim: 1.645, not the two-sided 1.96, which asked for 97.5%
+    # confidence and about 110 more fields read right than the claim needs (D-122).
+    z: float = 1.645
 
     def to_dict(self) -> dict[str, Any]:
         return {"min_invoices": self.min_invoices, "min_lower_bound": self.min_lower_bound, "window": self.window,

@@ -47,7 +47,7 @@ def _at(i: int, day: str = "2026-01-01") -> str:
 
 
 def _ready(store: Store, n: int = 30, key: str = KEY, name: str = "Northwind", start: int = 0) -> None:
-    """``n`` reviewed invoices with no correction (30 of 13 fields each meet the bar; 29 do not)."""
+    """``n`` reviewed invoices with no correction (21 of 13 fields each meet the bar; 20 do not)."""
     base = 1000 if key == KEY else 50_000  # each vendor's own invoices
     for i in range(start, start + n):
         store.record_outcomes(key, base + i, _outcomes(), display_name=name, at=_at(i))
@@ -150,9 +150,9 @@ def test_switch_on_makes_every_vendor_that_meets_the_bar_touchless(tmp_path, pat
 def test_a_vendor_reaching_the_bar_goes_touchless_on_the_approval_that_gets_it_there(tmp_path):
     store = Store(tmp_path / "s.db")
     store.set_touchless(True, "Mia")
-    _ready(store, 29)
+    _ready(store, 20)
     assert store.get_supplier_profile(KEY)["state"] == SUPERVISED
-    result = store.record_outcomes(KEY, 2000, _outcomes(), at=_at(29))  # the 30th clean invoice: the 99% bound
+    result = store.record_outcomes(KEY, 2000, _outcomes(), at=_at(20))  # the 21st clean invoice: the 99% bound
     assert result["touchless"] and store.get_supplier_profile(KEY)["state"] == AUTONOMOUS
 
 
@@ -308,7 +308,7 @@ def test_automatic_transition_rules():
     assert fresh_streak(clean, _at(25)) == 4 and fresh_streak(clean, None) == 30
     assert automatic_transition(clean, stored_state=SUSPENDED, suspended_at=_at(25)) is None
     assert automatic_transition(clean, stored_state=SUSPENDED, suspended_at=_at(19))[0] == AUTONOMOUS
-    assert clean_invoices_to_go(_stats(12)) == 18 and clean_invoices_to_go(clean) == 0  # the 99% bound: 18 more
+    assert clean_invoices_to_go(_stats(12)) == 9 and clean_invoices_to_go(clean) == 0  # the 99% bound: 9 more
     assert clean_invoices_to_go(_stats(60, (59,))) == 10  # one correction among many: the clean streak decides
 
 
@@ -563,7 +563,7 @@ def test_taught_message_says_what_was_learned(tmp_path, ground_truth):
     name = ground_truth["vendor_name"].rstrip(".")
     assert message == (
         f"Learned from your 2 corrections (invoice number, due date). {name}: 1 invoice reviewed, "
-        "0 of about 60 clean approvals toward skipping review."
+        "0 of about 50 clean approvals toward skipping review."
     )
     key = store.supplier_key_for(ground_truth["vendor_name"], ground_truth["gst_hst_registration_number"])
     for i in range(14):

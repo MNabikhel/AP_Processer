@@ -254,7 +254,7 @@ name). From then on, a vendor that meets the bar goes touchless by itself:
 
 - at least 20 invoices reviewed by a person;
 - header fields read right at least 99% of the time, with 95% confidence, over its last 200 invoices
-  (with about 13 header fields an invoice, that usually takes about 30 to 40 clean invoices);
+  (with about 13 header fields an invoice, that usually takes about 20 to 30 clean invoices);
 - the last 10 with no correction at all.
 
 5% of touchless invoices still go to a person as an audit. One correction, or a touchless invoice

@@ -41,7 +41,7 @@ def supplier_counts(store: Store) -> dict[str, int]:
 
 
 def typical_to_go(store: Store) -> str:
-    """About how many invoices approved without a correction a new vendor needs: "30 to 40" with the standard bar
+    """About how many invoices approved without a correction a new vendor needs: "20 to 30" with the standard bar
     (from 13 header fields an invoice down to 10); the same count each vendor's row shows on Supplier learning."""
     from ap_coder.capture.supplier import SupplierStats, clean_invoices_to_go
 
