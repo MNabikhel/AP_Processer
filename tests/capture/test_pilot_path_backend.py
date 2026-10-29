@@ -1,5 +1,5 @@
 """Sweep 4, the pilot path (backend): import, review, approval, learning, exports and the store, as the pilot tester
-uses them with real English vendor PDFs (docs/BUGS.md, "Pilot path (backend)")."""
+uses them with real English vendor PDFs (docs/archive/bugs-2026-10.md, "Pilot path (backend)")."""
 
 from __future__ import annotations
 

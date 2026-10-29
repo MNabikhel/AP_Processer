@@ -89,7 +89,6 @@
 .apc-title {font-size: 24px; font-weight: 600; color: var(--lg-text); letter-spacing: -.01em; line-height: 1.25; margin: 4px 0 0;}
 .apc-sub {color: var(--lg-muted); font-size: 14px; margin-top: 4px; max-width: 96ch; line-height: 1.45;}
 .apc-muted {color: var(--lg-muted); font-size: 13px;}
-.apc-num {font-variant-numeric: tabular-nums; font-feature-settings: var(--lg-num);}
 .apc-mono {font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: .82em;}
 kbd.apc-kbd {font-family: inherit; font-size: 11.5px; font-weight: 500; color: var(--lg-muted); background: var(--lg-surface);
   border: 1px solid var(--lg-border); border-bottom-width: 2px; border-radius: 5px; padding: 0 5px; margin: 0 1px;}
@@ -326,12 +325,6 @@ kbd.apc-kbd {font-family: inherit; font-size: 11.5px; font-weight: 500; color: v
 }
 
 /* ==== Shared pieces ====================================================================================== */
-.rq-pill {display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 6px; font-size: 11.5px;
-  font-weight: 500; line-height: 16px; white-space: nowrap; background: var(--rv-neutral); color: var(--rv-muted);}
-.rq-pill.ok {background: var(--rv-success-weak); color: var(--rv-success);}
-.rq-pill.warn {background: var(--rv-warning-weak); color: var(--rv-warning);}
-.rq-pill.err {background: var(--rv-danger-weak); color: var(--rv-danger);}
-.rq-pill.accent {background: var(--rv-accent-weak); color: var(--rv-accent);}
 .rq-tax {display: inline-block; padding: 0 6px; border-radius: 4px; font-size: 11px; font-weight: 500; line-height: 18px;
   letter-spacing: .02em; color: var(--rv-muted); background: var(--rv-surface); border: 1px solid var(--rv-border);
   white-space: nowrap;}

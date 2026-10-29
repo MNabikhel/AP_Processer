@@ -64,7 +64,7 @@ class PipelineResult:
     rules_applied: list[dict[str, Any]] = field(default_factory=list)  # lines a fixed coding rule changed
     capture: Any = None  # capture.CaptureResult: every header field located, with its confidence
     autonomy: dict[str, Any] = field(default_factory=dict)  # supplier state and whether it went touchless
-    original: dict[str, Any] | None = None  # the picture this PDF was made from (intake.py): name, kept, sha256
+    original: dict[str, Any] | None = None  # the picture this PDF was made from (intake/pictures): name, kept, sha256
 
     @property
     def ok(self) -> bool:

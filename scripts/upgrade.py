@@ -60,7 +60,7 @@ BUNDLE_TOP = {"ap_coder", "scripts", "tests", "docs", "data", "samples", "static
               ".streamlit", ".github", ".claude", "APProcessor.bat", "APProcessor.command", "install.bat",
               "install.sh", "start.bat", "start.sh", "terminal.bat", "README.md", "CLAUDE.md", "pyproject.toml",
               "requirements.txt", "streamlit_app.py", "bundle_manifest.json", ".env.example", ".gitignore",
-              ".gitattributes"}  # fmt: skip
+              ".gitattributes", ".ignore"}  # fmt: skip
 # Top-level names of a bundle folder never removed when a newer bundle no longer ships them: data, the person's own
 # notes may be there, the manifest itself (not in its own file list), what starts AP Coder, and Claude Code's
 # settings (the bundle leaves .claude/ out; a developer's own settings.local.json may be in it).

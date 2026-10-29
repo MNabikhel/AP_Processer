@@ -165,13 +165,13 @@ class VendorsMixin:
                 return own if own in found else found[0]
         return own
 
-    def vendor_key_for(self, name: str | None, gst_number: Any = None, erp_id: Any = None) -> str:
+    def vendor_key_for(self, name: str | None, gst_number: Any = None) -> str:
         """The vendor key an invoice's vendor is kept under (its history, its lessons, its checks): ``vendor_key`` of
         the name, or the key of the vendor list's second vendor by that name it is (``find_vendor``, B-1021)."""
         key = vendor_key(name or "")
         if not key:
             return ""
-        found = self.find_vendor(name, gst_number, erp_id)
+        found = self.find_vendor(name, gst_number)
         if found:
             return found["vendor_key"]
         aliased = self._aliased(name, gst_number)  # a name AP corrected, of a vendor not in the list (D-119)

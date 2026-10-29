@@ -571,7 +571,7 @@ def _tax_area_code(final: dict[str, Any], settings: JdeSettings) -> tuple[list[d
     elif province in PST_PROVINCES and types & {"GST", "HST"} and "PST" not in types:
         # PST to self-assess: E1 accrues it (B) on the whole voucher, so only when every line owes it; on lines all
         # exempt from it there is none, and E1 handles no tax (the GST goes on its own G/L line, B-922). A mix is
-        # held back (``pst_mix``).
+        # held back (``PST_MIX``).
         owes = pst_owed(final)
         code = (
             settings.exempt_code.strip().upper() if owes == NONE_OWED else settings.self_assessed_code.strip().upper()

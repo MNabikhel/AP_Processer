@@ -1,5 +1,5 @@
 """The company server, walked end to end (D-102): its wording, its audit, its console and its docs, as staff and IT
-meet them. Each test names the bug it fixed (docs/BUGS.md, B-1100 on)."""
+meet them. Each test names the bug it fixed (docs/archive/bugs-2026-10.md, B-1100 on)."""
 
 from __future__ import annotations
 

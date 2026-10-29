@@ -395,14 +395,12 @@ class CaptureMixin:
                 continue
             state, reason = move
             with self._conn() as conn:
-                self._set_state(conn, p, state, "AP Coder", reason, None, policy)
+                self._set_state(conn, p, state, "AP Coder", reason, policy)
             changes.append({"key": p["key"], "supplier": p["display_name"] or p["key"], "from": p["state"],
                             "to": state, "reason": reason})  # fmt: skip
         return changes
 
-    def set_supplier_state(
-        self, key: str, state: str, by: str | None, reason: str = "", audit_rate: float | None = None
-    ) -> None:
+    def set_supplier_state(self, key: str, state: str, by: str | None, reason: str = "") -> None:
         """Set a supplier's state: ``held`` (an AP lead keeps it supervised, whatever its record), ``supervised``
         (back to the automatic bar, e.g. "Allow again" after ``held``), ``suspended`` (a person found an error in a
         touchless invoice) or ``autonomous`` (only when it meets the bar; touchless processing does this by itself).
@@ -431,13 +429,13 @@ class CaptureMixin:
         if state == profile["state"]:
             return
         with self._conn() as conn:
-            self._set_state(conn, profile, state, by, reason, audit_rate, policy)
+            self._set_state(conn, profile, state, by, reason, policy)
         if state != SUSPENDED:  # "Allow again": it may go touchless straight away
             self.sync_autonomy(key)
 
     def _set_state(
         self, conn: sqlite3.Connection, profile: dict[str, Any], state: str, by: str | None, reason: str,
-        audit_rate: float | None, policy: Any,
+        policy: Any,
     ) -> None:  # fmt: skip
         from ...capture.supplier import AUTONOMOUS, HELD, SUPERVISED, SUSPENDED
 
@@ -448,7 +446,7 @@ class CaptureMixin:
             action = "autonomy_allowed"
         else:
             action = {AUTONOMOUS: "autonomy_on", SUSPENDED: "autonomy_suspended"}.get(state, "autonomy_off")
-        rate = audit_rate if audit_rate is not None else profile["audit_rate"]
+        rate = profile["audit_rate"]
         if state == AUTONOMOUS and rate is None:
             rate = policy.audit_rate
         # Since when it is touchless (kept while suspended, to show; cleared otherwise), and when it was suspended
@@ -502,7 +500,7 @@ class CaptureMixin:
 
     def record_outcomes(
         self, supplier_key: str, invoice_id: int | None, rows: list[dict[str, Any]], source: str = "review",
-        display_name: str = "", vendor_id: str = "", at: str | None = None,
+        display_name: str = "", at: str | None = None,
     ) -> dict[str, Any]:  # fmt: skip
         """Record, per header field, what AP Coder proposed and what AP approved (``outcome_rows``).
 
@@ -518,7 +516,7 @@ class CaptureMixin:
         at = at or _now()
         corrections = [r["field"] for r in rows if not r.get("correct")]
         with self._conn() as conn:
-            self._save_profile(conn, supplier_key, display_name, vendor_id, None, None)
+            self._save_profile(conn, supplier_key, display_name, "", None, None)
             if invoice_id is not None:
                 conn.execute("DELETE FROM supplier_outcomes WHERE invoice_id = ? AND source = ?", (invoice_id, source))
             conn.executemany(
@@ -830,10 +828,10 @@ class CaptureMixin:
             )  # fmt: skip
             return cur.rowcount > 0
 
-    def release_page_reads(self, alive: Callable[[str], bool], why: str = "") -> int:
+    def release_page_reads(self, alive: Callable[[str], bool]) -> int:
         """Put back in line every invoice marked as being read by a reader that isn't reading any more
         (``alive(reader)`` is False: its process was closed or killed part way). How many were put back."""
-        why = why or "interrupted (AP Coder was closed while it was read): it is read again"
+        why = "interrupted (AP Coder was closed while it was read): it is read again"
         with self._conn() as conn:
             rows = conn.execute("SELECT invoice_id, reader FROM page_reads WHERE status = 'reading'").fetchall()
             gone = [(r["invoice_id"], r["reader"]) for r in rows if not alive(r["reader"] or "")]

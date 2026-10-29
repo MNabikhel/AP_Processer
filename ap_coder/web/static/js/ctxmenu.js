@@ -37,10 +37,6 @@ export function register(selector, make, { keepFocus = false } = {}) {
   providers.push({ selector, make, keepFocus });
 }
 
-export function isOpen() {
-  return Boolean(root);
-}
-
 const NOT_TEXT = new Set(["checkbox", "radio", "button", "submit", "reset", "image", "file", "range", "color", "hidden"]);
 
 let focusedBefore = null; // what had the focus as the right button went down (it focuses the box clicked)

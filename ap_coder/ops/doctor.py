@@ -166,7 +166,7 @@ def run_checks(
     else:  # optional: without it every invoice is read on this computer
         add("DI endpoint", SKIP, "not set: invoices are read on this computer (PDF text, local OCR for scans)")
     provider = resolve_provider(settings)
-    add("AI model", PASS, _provider_detail(settings, provider))
+    add("AI model", PASS, _provider_detail(provider))
     if provider != "azure":
         add("AOAI endpoint", SKIP, "not used (the offline build codes invoices on this computer)")
     else:
@@ -347,7 +347,7 @@ def store_checks(store: Any, server: bool) -> list[Check]:
     return checks
 
 
-def _provider_detail(settings: Settings, provider: str) -> str:
+def _provider_detail(provider: str) -> str:
     if provider == "azure":
         return "Azure OpenAI (the internet is allowed: AP_ALLOW_INTERNET=1)"
     local = "local: read by the local readers, coded from AP's history and rules"

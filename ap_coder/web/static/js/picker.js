@@ -620,11 +620,6 @@ export function enhance(root = document) {
   for (const el of found) if (!pickers.has(el)) pickers.set(el, new Picker(el));
 }
 
-/** The box shows its select's choice again: after a script set the select's value. */
-export function sync(select) {
-  pickers.get(select)?.sync();
-}
-
 /** Set a picker's select to ``value`` (a choice it doesn't hold yet is added, with its label from the list). */
 export function setValue(select, value) {
   const p = pickers.get(select);

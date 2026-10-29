@@ -8,7 +8,7 @@ what AP approves, and exports approved invoices to JD Edwards E1 or Excel/CSV. P
 Code: `ap_coder/` (`core` store and settings, `ai` pipeline and models, `coding` tax and checks, `erp` exports and
 reports, `intake` pictures and emails, `ops` command line and doctor, `capture` document reading, `web` the dashboard,
 `bench` the accuracy benchmark). `scripts/`: launcher, installer, update, offline bundle. `tests/`: pytest. `docs/`:
-guides, the bug log (BUGS.md) and decisions (decisions.md). Search the code to find things; the code is the reference.
+guides, the bug log (BUGS.md) and decisions (decisions.md), their older entries in full in `docs/archive/`. Search the code to find things; the code is the reference.
 
 ## Where things live
 - One invoice, start to end: `ai/pipeline.py` (`finalise_coding`); the schema: `core/schema.py`. Reading: the rule
@@ -56,13 +56,15 @@ Every step re-reads the whole conversation, so fewer, fuller steps cost less:
 - Put independent lookups in one command (several `grep -n` / `sed -n A,Bp` joined with `;`), and read the lines
   around a match rather than whole files.
 - Make the change, then check once with `python scripts/check.py`; don't wait on the whole suite (CI runs it).
-- Search code with `grep -rn --include=*.py` (skips `__pycache__` and the large docs/BUGS.md and decisions.md); the
-  next numbers: `grep -o "B-[0-9]*" docs/BUGS.md | tail -1` (and `D-[0-9]*` in docs/decisions.md).
+- Search code with `grep -rn --include=*.py` (skips `__pycache__`). `docs/archive/` (bugs B-01 to B-1441 and
+  decisions in full) is skipped by ripgrep and the Grep tool (`.ignore`): look a number up with `grep -n "B-1234 "
+  docs/archive/*.md`. The next numbers: `grep -o "B-[0-9]*" docs/BUGS.md | tail -1` (and `D-[0-9]*` in
+  docs/decisions.md).
 - A refactor, clean-up or speed-up is proven to change nothing with `python scripts/same_behaviour.py` (probes on
   origin/main and this checkout, compared; D-124), plus the tests.
-- Bench runs (`python -m ap_coder.bench learn|lines|run`): scans (OCR) set the time. `learn` (no scans by default)
-  4 suppliers x 20 takes ~10 s, 20 x 50 at `--scanned 0.1` ~40 min; `lines` 6 x 8 at `--scanned 1` ~6 min; `run
-  --n 60` (30% scans) ~2.5 min. Start small.
+- Bench runs (`python -m ap_coder.bench run|learn|lines|speed|coding|triage`): add `--quick` to check a change in
+  under a minute or two (sizes in `bench/__main__.py` `QUICK`). Scans (OCR) set the time of a full run: `learn` 20 x 50
+  at `--scanned 0.1` takes ~40 min, `lines` 6 x 8 at `--scanned 1` ~6 min, `run --n 60` ~2.5 min.
 
 ## Run and test
 - Set up: `python -m venv .venv`, activate it, `pip install -e ".[ocr,dev]"` (or double-click `APProcessor.bat` / `APProcessor.command`).

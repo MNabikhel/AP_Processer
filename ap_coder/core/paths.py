@@ -383,6 +383,11 @@ def env_file() -> Path | None:
     return None
 
 
+def env_target() -> Path:
+    """The .env in use, or where a new one goes (the data folder): where settings and passwords are written."""
+    return env_file() or private_dir() / ".env"
+
+
 def try_lock(path: Path) -> object | None:
     """An exclusive lock on ``path`` held by this process (the open file: keep it, close it to release), or None when
     another process holds it. The operating system's own lock (``msvcrt.locking`` on Windows, ``flock`` elsewhere):

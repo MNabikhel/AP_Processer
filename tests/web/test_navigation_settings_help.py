@@ -1,4 +1,4 @@
-"""Before the pilot tester starts testing (docs/BUGS.md, Sweep 4, "Before testing: navigation, settings and help"):
+"""Before the pilot tester starts testing (the bug log, Sweep 4, "Before testing: navigation, settings and help"):
 the menu fits a laptop, the getting-started checklist counts what it shows, Settings opens on what a tester changes,
 Help is grouped by what the tester does, and nothing in the offline build talks about a cloud it doesn't use."""
 

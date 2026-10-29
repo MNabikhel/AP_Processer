@@ -832,7 +832,7 @@ _SCAN_PNGS_LOCK = threading.Lock()  # the dashboard's page reader reads in a thr
 
 def _scan_png(doc: Any, page: Any) -> bytes:
     """The image OCR reads for a PDF page without text: for a PDF AP Coder made from a photo or a scan
-    (``intake.py``), that picture's own pixels, as OCR read the picture before it was converted; any other page
+    (``intake/pictures.py``), that picture's own pixels, as OCR read the picture before it was converted; any other page
     rendered at ``OCR_DPI``. Made once for both OCR engines (a page's PNG takes about a second)."""
     try:
         st = os.stat(doc.name)

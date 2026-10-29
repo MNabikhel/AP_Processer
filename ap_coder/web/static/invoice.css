@@ -6,8 +6,6 @@
 /* B-467: on a 1366 x 768 laptop the page of the invoice shows: one row at the top, less room around it. */
 .main:has(> .inv-top) {padding-top: 14px;}
 .main:has(> .inv-top) > * + * {margin-top: 12px;}
-.rvw-lm {font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; max-width: 340px;}
-.rvw-lm .ms {font-size: 14px;}
 .rvw-nav {display: flex; align-items: center; gap: 8px; flex-wrap: wrap;}
 .rvw-nav .spacer {flex: 1;}
 .rvw-pos {display: block; font-size: 13px; color: var(--rv-muted); white-space: nowrap;
@@ -186,13 +184,6 @@
 .inv-grid-table .c-no input {min-width: 52px;}
 .inv-grid-table .c-amt input {min-width: 104px;}
 .inv-grid-table .c-qty input, .inv-grid-table .c-price input {min-width: 80px;}
-.inv-taxes {display: flex; gap: 2px;}
-.inv-taxes label {display: inline-flex; cursor: pointer;}
-.inv-taxes input {position: absolute; opacity: 0; width: 1px; height: 1px;}
-.inv-taxes span {padding: 0 6px; border-radius: 4px; font-size: 11px; font-weight: 500; line-height: 22px; letter-spacing: .02em;
-  color: var(--lg-subtle); border: 1px dashed var(--lg-border); white-space: nowrap;}
-.inv-taxes input:checked + span {color: var(--lg-text); border: 1px solid var(--lg-accent-line); background: var(--lg-accent-weak);}
-.inv-taxes input:focus-visible + span {outline: 2px solid var(--lg-accent); outline-offset: 1px;}
 .inv-lines > .row {margin-top: 10px;}
 /* ---- The line grid beside the document: each line two rows, nothing scrolls sideways (B-467) ----
    Row 1: # · description (it wraps) · taxes · delete; row 2: GL account · cost center · qty · unit price · amount. */
@@ -355,8 +346,6 @@ button.inv-pick .ms {font-size: 14px;}
 .inv-taxcheck th, .inv-taxcheck td {padding-left: 5px; padding-right: 5px;}
 
 /* The math, line by line, and its one-line verdict on the approve bar. */
-.inv-math td:first-child {white-space: nowrap;}
-.inv-math .ok {color: #166534;} .inv-math .bad {color: #b91c1c; font-weight: 600;}
 .rvw-math {display: inline-flex; align-items: center; gap: 3px; margin-left: 10px; font-size: 12.5px; font-weight: 600; padding: 1px 8px; border-radius: 999px;}
 .rvw-math .ms {font-size: 15px;}
 .rvw-math.ok {color: #166534; background: #dcfce7;}

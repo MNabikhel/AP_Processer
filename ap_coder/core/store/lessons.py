@@ -339,11 +339,11 @@ class LessonsMixin:
             )  # fmt: skip
             return cur.rowcount > 0
 
-    def release_verifications(self, alive: Callable[[str], bool], why: str = "") -> int:
+    def release_verifications(self, alive: Callable[[str], bool]) -> int:
         """Put back in line every invoice marked as being reviewed by a process that isn't reviewing any more
         (``alive(reader)`` is False: closed or killed part way), at once rather than after STALE_READING_HOURS. How
         many were put back (``release_page_reads``, for the AI reviewer's queue)."""
-        why = why or "interrupted (AP Coder was closed while it was reviewed): it is reviewed again"
+        why = "interrupted (AP Coder was closed while it was reviewed): it is reviewed again"
         with self._conn() as conn:
             rows = conn.execute("SELECT invoice_id, reader FROM verifications WHERE status = 'verifying'").fetchall()
             gone = [(r["invoice_id"], r["reader"]) for r in rows if not alive(r["reader"] or "")]

@@ -68,7 +68,6 @@ load_sample_setup
 load_sample_vendor_master
 nothing_proposed
 parse_fx_rates
-proposed_coding
 suggestion_kept
 unread_fx_text
 Store.__init__

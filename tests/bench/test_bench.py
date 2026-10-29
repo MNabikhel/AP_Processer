@@ -16,6 +16,7 @@ from ap_coder.bench import content as C  # noqa: E402
 from ap_coder.bench.generator import ARCHETYPES, generate, plan, rotate_box  # noqa: E402
 from ap_coder.bench.harness import evaluate, render_markdown, run  # noqa: E402
 from ap_coder.bench.scoring import calibration, field_metrics, score_case, values_match  # noqa: E402
+from ap_coder.capture.normalize import luhn_ok  # noqa: E402
 from ap_coder.capture.types import AMOUNT_FIELDS, FIELDS, Box, CaptureResult, FieldResult  # noqa: E402
 
 
@@ -129,17 +130,17 @@ def test_credit_notes_are_negative(digital_cases):
 
 
 def test_business_numbers_pass_luhn(digital_cases):
-    assert C.luhn_valid("123456782") and not C.luhn_valid("123456789")
+    assert luhn_ok("123456782") and not luhn_ok("123456789")
     rng = random.Random(1)
     for _ in range(200):
-        assert C.luhn_valid(C.make_bn(rng))
+        assert luhn_ok(C.make_bn(rng))
     seen = 0
     for case in digital_cases:
         e = case.truth["fields"].get("gst_hst_registration_number")
         if e:
             v = e["value"]
             assert re.fullmatch(r"\d{9}RT\d{4}", v), v
-            assert C.luhn_valid(v[:9])
+            assert luhn_ok(v[:9])
             seen += 1
         q = case.truth["fields"].get("qst_registration_number")
         if q:
@@ -433,3 +434,13 @@ def test_learn_runs_the_apps_learning_and_says_what_was_right_next_time(tmp_path
     assert "invoice_number" not in rows[3]["wrong_fields"]  # the slip withdrawn, after invoice 3 was approved
     fixed = summarize_learning(rows, 2)["fixed_next_time"]
     assert fixed["by_field"]["vendor_name"] == {"corrected": 1, "fixed": 1}
+
+
+def test_quick_runs_the_small_sizes_and_a_size_given_still_wins(tmp_path):
+    from ap_coder.bench.__main__ import QUICK, main
+
+    assert main(["coding", "--quick", "--out", str(tmp_path / "a")]) == 0
+    config = json.loads((tmp_path / "a" / "report.json").read_text(encoding="utf-8"))["config"]
+    assert (config["vendors"], config["invoices"]) == (QUICK["coding"]["vendors"], QUICK["coding"]["invoices"])
+    assert main(["coding", "--quick", "--vendors", "3", "--out", str(tmp_path / "b")]) == 0
+    assert json.loads((tmp_path / "b" / "report.json").read_text(encoding="utf-8"))["config"]["vendors"] == 3

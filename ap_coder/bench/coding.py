@@ -34,6 +34,7 @@ from typing import Any
 
 from ap_coder.bench import content as C
 from ap_coder.bench.harness import _pct, _table
+from ap_coder.bench.scoring import ratio
 
 DATA = Path(__file__).resolve().parent.parent.parent / "data"
 
@@ -674,10 +675,6 @@ def simulate(
 # --- the report -------------------------------------------------------------------------------------------------
 
 
-def _ratio(a: float, b: float) -> float | None:
-    return round(a / b, 4) if b else None
-
-
 def line_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
     assigned = [r for r in rows if r["assigned"]]
     left = [r for r in rows if not r["assigned"]]
@@ -686,14 +683,14 @@ def line_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "lines": len(rows),
         "assigned": len(assigned),
         "correct": correct,
-        "accuracy": _ratio(correct, len(rows)),
-        "precision": _ratio(correct, len(assigned)),
-        "coverage": _ratio(len(assigned), len(rows)),
+        "accuracy": ratio(correct, len(rows)),
+        "precision": ratio(correct, len(assigned)),
+        "coverage": ratio(len(assigned), len(rows)),
         "wrong": len(assigned) - correct,
         # Lines left for AP: the right account is one of the suggestions the review screen shows (one click).
-        "left_with_right_suggestion": _ratio(sum(r["truth"] in r["shown"] for r in left), len(left)),
+        "left_with_right_suggestion": ratio(sum(r["truth"] in r["shown"] for r in left), len(left)),
         # The best guess, assigned or not: what taking the top suggestion every time would score.
-        "top_suggestion_right": _ratio(sum(bool(r["top"]) and r["top"][0] == r["truth"] for r in rows), len(rows)),
+        "top_suggestion_right": ratio(sum(bool(r["top"]) and r["top"][0] == r["truth"] for r in rows), len(rows)),
     }
 
 
@@ -774,9 +771,9 @@ def next_time(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 out["tax_learned_right"] += bool(r.get("tax_learned")) and r["tax_proposed"] == r["tax_truth"]
         last[key] = r
     fixes = out["recoded"] + out["filled_in"]
-    out["fixed_next_time"] = _ratio(out["recoded_fixed"] + out["filled_in_fixed"], fixes)
-    out["tax_coverage"] = _ratio(out["tax_sure"], out["tax_changed"])
-    out["tax_precision"] = _ratio(out["tax_sure_right"], out["tax_sure"])
+    out["fixed_next_time"] = ratio(out["recoded_fixed"] + out["filled_in_fixed"], fixes)
+    out["tax_coverage"] = ratio(out["tax_sure"], out["tax_changed"])
+    out["tax_precision"] = ratio(out["tax_sure_right"], out["tax_sure"])
     return out
 
 
@@ -790,12 +787,12 @@ def tax_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "lines": len(rows),
         "sure": len(sure),
         "correct": right,
-        "precision": _ratio(right, len(sure)),
-        "coverage": _ratio(len(sure), len(rows)),
-        "accuracy": _ratio(right, len(rows)),
+        "precision": ratio(right, len(sure)),
+        "coverage": ratio(len(sure), len(rows)),
+        "accuracy": ratio(right, len(rows)),
         "wrong": len(sure) - right,
         "learned": sum(bool(r.get("tax_learned")) for r in rows),
-        "any_right": _ratio(sum(r["tax_proposed"] == r["tax_truth"] for r in rows), len(rows)),
+        "any_right": ratio(sum(r["tax_proposed"] == r["tax_truth"] for r in rows), len(rows)),
     }
 
 
@@ -807,7 +804,7 @@ def lesson_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
     wrong = sum(r["lesson"] != r["truth"] for r in shown)
     screen = [r for r in rows if r.get("lesson_screen")]
     screen_wrong = sum(r["lesson_screen"] != r["truth"] for r in screen)
-    return {"lines": len(rows), "shown": len(shown), "wrong": wrong, "noise": _ratio(wrong, len(shown)),
+    return {"lines": len(rows), "shown": len(shown), "wrong": wrong, "noise": ratio(wrong, len(shown)),
             "screen": len(screen), "screen_wrong": screen_wrong}  # fmt: skip
 
 
@@ -820,7 +817,7 @@ def model_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
         answered = [r for r in asked if r.get("model")]
         right = sum(r["model"] == r["truth"] for r in answered)
         return {"asked": len(asked), "answered": len(answered), "right": right,
-                "precision": _ratio(right, len(answered)), "coverage": _ratio(len(answered), len(asked))}  # fmt: skip
+                "precision": ratio(right, len(answered)), "coverage": ratio(len(answered), len(asked))}  # fmt: skip
 
     return {**stats(rows), "first invoice": stats([r for r in rows if r["position"] == 1]),
             "later invoices": stats([r for r in rows if r["position"] > 1])}  # fmt: skip

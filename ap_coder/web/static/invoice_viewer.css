@@ -150,13 +150,7 @@ details.iv-group > summary:focus-visible { outline: 2px solid var(--brand); outl
   padding: 8px 16px; border-bottom: 1px solid var(--line); background: var(--card);
 }
 .iv-segs { display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--neutral); }
-.iv-seg {
-  height: 26px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent;
-  font-size: 12.5px; font-weight: 500; color: var(--muted); cursor: pointer; font-variant-numeric: tabular-nums;
-}
-.iv-seg:hover { color: var(--ink); }
-.iv-seg[aria-pressed="true"] { background: var(--card); color: var(--ink); box-shadow: 0 0 0 1px var(--line-strong); }
-.iv-seg:focus-visible, .iv-icon-btn:focus-visible, .iv-btn:focus-visible, .iv-zbtn:focus-visible, .iv-zpct:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+.iv-icon-btn:focus-visible, .iv-btn:focus-visible, .iv-zbtn:focus-visible, .iv-zpct:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
 /* The view tools: zoom (- 100% +), Fit width / Fit page, the Hand, Rotate, then Next to check, and the pages at the
    end of the row (the view tools' box takes no room of its own: they line up with Next to check) */
 .iv-view { display: contents; }
@@ -377,7 +371,6 @@ details.iv-group > summary:focus-visible { outline: 2px solid var(--brand); outl
   .iv-toolbar { padding: 6px 10px; gap: 6px 4px; }
   .iv-check { margin-left: 2px; }
   .iv-step { padding: 0 9px; gap: 5px; }
-  .iv-seg { padding: 0 8px; }
   .iv-where { min-width: 44px; }
   .iv-where-word { font-size: 0; }
   .iv-stage { padding: 10px; }

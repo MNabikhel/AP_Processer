@@ -90,10 +90,6 @@ def _blank(value: Any) -> bool:
     return value is None or (isinstance(value, float) and math.isnan(value)) or str(value).strip() == ""
 
 
-def _number(value: Any) -> float | None:
-    return None if _blank(value) else parse_amount(value)
-
-
 def _text(value: Any) -> str:
     if _blank(value):
         return ""
@@ -116,7 +112,7 @@ def rows_from_records(records: list[dict[str, Any]], columns: dict[str, str]) ->
         if not number or not description:
             skipped += 1
             continue
-        qty, price, amount = _number(get("quantity")), _number(get("unit_price")), _number(get("amount"))
+        qty, price, amount = parse_amount(get("quantity")), parse_amount(get("unit_price")), parse_amount(get("amount"))
         if amount:  # an ERP writes 0 rather than blank for the quantity and price of a lump-sum line
             qty, price = qty or None, price or None
         amount_only = qty is None and price is None and amount is not None  # e.g. "Consulting services: 5,000"
@@ -126,7 +122,7 @@ def rows_from_records(records: list[dict[str, Any]], columns: dict[str, str]) ->
             price = (amount / qty) if amount is not None and qty else 0.0
         if amount is None:
             amount = round(qty * price, 2)
-        line = _number(get("line_number"))
+        line = parse_amount(get("line_number"))
         status = _text(get("status")).lower()
         rows.append(
             {
@@ -138,7 +134,7 @@ def rows_from_records(records: list[dict[str, Any]], columns: dict[str, str]) ->
                 "unit_price": price,
                 "amount": amount,
                 "amount_only": amount_only,
-                "received_quantity": _number(get("received_quantity")),
+                "received_quantity": parse_amount(get("received_quantity")),
                 "gl_code": _text(get("gl_code")),
                 "cost_center": _text(get("cost_center")),
                 "status": CLOSED if status in {"closed", "close", "complete", "completed", "fermé", "ferme"} else OPEN,

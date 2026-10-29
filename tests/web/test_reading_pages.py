@@ -468,3 +468,15 @@ def test_agreement_line_counts_every_field_compared():
     line = agreement_line({"agree": ["a", "b", "c"], "differ": ["d"], "only": ["e"], "seconds": 90})
     assert line == ("OvisOCR2 read this invoice: 3 of 5 fields agree (1 read differently, marked Check; 1 found only "
                     "by OvisOCR2) · 1.5 min")  # fmt: skip
+
+
+def test_check_again_and_load_ask_lm_studio_to_load_a_model_that_failed_before(client, status, monkeypatch):
+    """A page reader LM Studio couldn't load is not asked again for half an hour, so as not to ask before every page;
+    a person pressing Check again (once they freed memory) or Load is asking now: the failure is forgotten."""
+    monkeypatch.setitem(page_reader._load_failures, MODEL, (time.monotonic(), "Not enough memory"))
+    follow(client, post(client, "/settings/reading/check"))
+    assert MODEL not in page_reader._load_failures
+    monkeypatch.setitem(page_reader._load_failures, MODEL, (time.monotonic(), "Not enough memory"))
+    monkeypatch.setattr(page_reader, "load_model", lambda settings, model: dict(page_reader._load_failures).get(model,
+                        ("", ""))[1])  # fmt: skip
+    assert post(client, "/settings/reading/load-model", {"model": MODEL}).status_code == 200

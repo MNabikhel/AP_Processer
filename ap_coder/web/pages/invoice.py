@@ -325,7 +325,7 @@ _NOW = {APPROVED: "approved", PENDING: "approved, waiting for a second approval"
         PARKED: "parked", REVIEW: "in the review queue", FAILED: "a failed read"}  # fmt: skip
 
 
-def changed_meanwhile(request: Request, invoice_id: int, exc: Exception) -> JSONResponse:
+def changed_meanwhile(request: Request, invoice_id: int) -> JSONResponse:
     """The invoice was acted on after this screen was drawn (in another tab, or by someone else): say so plainly and
     show where it stands now (the queue, when it was deleted)."""
     inv = get_store(request).get_invoice(invoice_id)
@@ -515,7 +515,7 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
     capture = view.capture_of(store, invoice_id)  # read once: the document card and the checks use it
     context["doc"] = _document(store, settings, inv, status, editable and may_edit, capture)
     if not editable:
-        mode = _mode(inv, reference)
+        mode = _mode(inv)
         if mode in ("approved", "pending", "rejected", "parked"):  # nothing left to read: no reading tools' warning
             context["banner"] = ""
         return render(request, "invoice.html", "review", mode=mode, **context,
@@ -621,7 +621,7 @@ def add_vendor(
                    key=vendor_key(name))  # fmt: skip
 
 
-def _mode(inv: dict[str, Any], reference: ReferenceData | None) -> str:
+def _mode(inv: dict[str, Any]) -> str:
     if inv["status"] == REVIEW:
         return "nogl"  # waiting for review, but there are no GL accounts to code it with yet
     return {PENDING: "pending", PARKED: "parked", APPROVED: "approved", REJECTED: "rejected",
@@ -841,8 +841,8 @@ def _approve(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     confirm_codes(analysis.output)  # approving confirms the tax codes worked out to check (B-713)
     try:
         counts = store.approve_invoice(invoice_id, analysis.output, me, open_issues=open_issues, login=login())
-    except (KeyError, ValueError) as exc:  # KeyError: deleted meanwhile, after it was read above
-        return changed_meanwhile(request, invoice_id, exc)
+    except (KeyError, ValueError):  # KeyError: deleted meanwhile, after it was read above
+        return changed_meanwhile(request, invoice_id)
     learned = learn_from_approval(store, invoice_id, analysis.output, actor=me, taught=view.taught_boxes(draft))
     explained = 0
     for item in asked:  # the reasons AP gave on the "why" screen (none when it was skipped), after this correction
@@ -925,8 +925,8 @@ def undo_approve(request: Request, invoice_id: int) -> JSONResponse:
     me = reviewer()
     try:
         store.reopen(invoice_id, me, UNDONE)
-    except ValueError as exc:
-        return changed_meanwhile(request, invoice_id, exc)
+    except ValueError:
+        return changed_meanwhile(request, invoice_id)
     on_reopen(store, invoice_id, me, UNDONE, before=inv)
     return done(
         request,
@@ -959,8 +959,8 @@ def park(request: Request, invoice_id: int, reason: str = Form(""), follow_up: s
     after = next_url(store, invoice_id, query, next_id)
     try:
         store.park_invoice(invoice_id, reviewer(), reason.strip(), follow.isoformat() if follow else None)
-    except ValueError as exc:
-        return changed_meanwhile(request, invoice_id, exc)
+    except ValueError:
+        return changed_meanwhile(request, invoice_id)
     return done(request, after, flash_message(f"Invoice #{invoice_id} parked. It is in the Parked tab.", "ok",
                                               icon="pause_circle"))  # fmt: skip
 
@@ -974,8 +974,8 @@ def reject(request: Request, invoice_id: int, reason: str = Form(""), show: str 
     after = next_url(store, invoice_id, _nav_query({"show": show, "q": q, "sort": sort}), next_id)
     try:
         store.reject_invoice(invoice_id, reviewer(), reason.strip())
-    except ValueError as exc:
-        return changed_meanwhile(request, invoice_id, exc)
+    except ValueError:
+        return changed_meanwhile(request, invoice_id)
     forget_everyones_draft(request, invoice_id)
     return done(request, after, flash_message(f"Invoice #{invoice_id} rejected.", "ok", icon="block"))
 
@@ -1171,8 +1171,8 @@ def resume(request: Request, invoice_id: int) -> JSONResponse:
     """A parked invoice back in the review queue, opened to review it."""
     try:
         get_store(request).unpark_invoice(invoice_id, reviewer())
-    except ValueError as exc:
-        return changed_meanwhile(request, invoice_id, exc)
+    except ValueError:
+        return changed_meanwhile(request, invoice_id)
     return _back(request, invoice_id, f"Invoice #{invoice_id} is back in the review queue.", icon="play_circle")
 
 
@@ -1181,8 +1181,8 @@ def restore(request: Request, invoice_id: int) -> JSONResponse:
     """A rejected invoice back in the review queue (e.g. rejected by mistake)."""
     try:
         get_store(request).reopen(invoice_id, reviewer(), only_rejected=True)
-    except ValueError as exc:
-        return changed_meanwhile(request, invoice_id, exc)
+    except ValueError:
+        return changed_meanwhile(request, invoice_id)
     return _back(request, invoice_id, "Back in the review queue.", icon="undo")
 
 
@@ -1198,13 +1198,13 @@ def correct(request: Request, invoice_id: int, reason: str = Form("")) -> JSONRe
     before = store.get_invoice(invoice_id)  # who approved it: the reopen clears it
     try:
         store.reopen(invoice_id, me, reason.strip())
-    except ValueError as exc:  # exported meanwhile, say: nothing reopened, no vendor suspended
+    except ValueError:  # exported meanwhile, say: nothing reopened, no vendor suspended
         from ap_coder.web.pages.review import exported_reason
 
         why = exported_reason(store, store.get_invoice(invoice_id))
         if why:  # exported, or posted to JD Edwards: the real reason (B-1201)
             return _back(request, invoice_id, f"Not done: {why}.", "warn", icon="undo")
-        return changed_meanwhile(request, invoice_id, exc)
+        return changed_meanwhile(request, invoice_id)
     on_reopen(store, invoice_id, me, reason.strip(), before=before)
     forget_everyones_draft(request, invoice_id)
     return _back(request, invoice_id, "Reopened: correct it and approve it again.", icon="undo")
