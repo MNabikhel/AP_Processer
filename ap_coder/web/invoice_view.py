@@ -41,6 +41,7 @@ from ap_coder.ai.suggest import suggest_gl
 from ap_coder.capture.bridge import currency_read, review_issues
 from ap_coder.capture.normalize import find_amounts, parse_amount, parse_date, parse_dates
 from ap_coder.capture.types import DATE_FIELDS, MISSING, Box, CaptureResult
+from ap_coder.capture.workflow import AP_LESSON
 from ap_coder.coding import banks, rules, vendor_mail
 from ap_coder.coding.line_tax import (
     all_labels,
@@ -858,8 +859,12 @@ def capture_confidence(capture: CaptureResult | None) -> dict[str, dict[str, str
         # the status in words, and how sure in figures where that tells more (never rounded up to certainty)
         sure = f"{math.floor(fr.confidence * 100 + 1e-9)}%"
         words = CAPTURE_WORDS[status] + (f" {sure}" if status in ("likely", "check") else "")
+        about = CAPTURE_HELP[status]
+        if AP_LESSON in fr.sources:  # not read: what AP set on the vendor's last invoices (D-121)
+            words = "As you set it" + (f" {sure}" if status != "verified" else "")
+            about = "The page does not print it: AP set it this way on this vendor's last invoices."
         out[name] = {"tone": tone, "icon": icon_name, "text": words, "status": status,
-                     "help": f"{CAPTURE_HELP[status]} How sure: {sure}."}  # fmt: skip
+                     "help": f"{about} How sure: {sure}."}  # fmt: skip
     return out
 
 

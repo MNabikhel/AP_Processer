@@ -43,6 +43,7 @@ from ap_coder.bench.generator import (
 )
 from ap_coder.bench.harness import _map, _pct, _table
 from ap_coder.bench.scoring import score_case, values_match
+from ap_coder.capture.supplier import compare_key
 from ap_coder.capture.types import FIELDS, MISSING, VERIFIED, CaptureResult
 
 BUCKETS = ((1, 1), (2, 5), (6, 10), (11, 20), (21, 40), (41, 80), (81, 10**9))
@@ -104,6 +105,25 @@ def _wrong_click(layout: Any, truth: dict[str, Any]) -> tuple[str, list[Any]] | 
         return None
     words = spans[0][1]
     return " ".join(w.text for w in words), [w.box for w in words]
+
+
+# What AP knows of a supplier that its invoices do not print (``--ap-knows``): its payment terms, and for some, that it
+# bills in US dollars (a Canadian address, amounts printed with "$" alone).
+KNOWN_TERMS = ("Net 45", "Net 60", "Net 15", "2% 10 Net 30", "Due on receipt")
+
+
+def ap_knows(seed: int, supplier: int, share: float) -> dict[str, str]:
+    """{field: value} AP sets on each of this supplier's invoices that does not print it ({}: none), for a ``share`` of
+    the suppliers, at random."""
+    import random
+
+    rng = random.Random(f"ap-bench-knows:{seed}:{supplier}")
+    if share <= 0 or rng.random() >= share:
+        return {}
+    known = {"payment_terms": rng.choice(KNOWN_TERMS)}
+    if rng.random() < 0.5:
+        known["currency"] = "USD"
+    return known
 
 
 def bulk_pick(sid: str, index: int, share: float) -> bool:
@@ -183,6 +203,7 @@ def _simulate(job: Job) -> dict[str, Any]:
     wrong_at = int(more[0]) if more else 0
     withdraw_after = int(more[1]) if len(more) > 1 else 0
     bulk_share = float(more[2]) if len(more) > 2 else 0.0
+    known = ap_knows(seed, supplier, float(more[3]) if len(more) > 3 else 0.0)
     policy = AutonomyPolicy.from_dict(policy_d)
     sid = supplier_id(seed, supplier)
     cases_dir = Path(out_dir) / "cases" / sid
@@ -251,6 +272,9 @@ def _simulate(job: Job) -> dict[str, Any]:
             touchless = auto and not audit
 
             final = approved_values(truth, capture)
+            # What AP knows of this supplier that its invoices do not print (``--ap-knows``): set on each approval.
+            known_now = {f: v for f, v in known.items() if f not in (truth.get("fields") or {})}
+            final.update(known_now)
             taught = None
             clicked = _wrong_click(layout, truth) if i + 1 == wrong_at else None
             if clicked is not None:  # the clerk's slip: the wrong words taught for the invoice number
@@ -304,6 +328,12 @@ def _simulate(job: Job) -> dict[str, Any]:
                     "baseline_fully_correct": base["fully_correct"],
                     "baseline_wrong_fields": base["wrong_fields"],
                     "corrections": misread,
+                    # Each value AP knows and the invoice does not print: whether it was proposed so (D-121).
+                    "known": {
+                        f: compare_key(f, (capture.fields.get(f).value if capture.fields.get(f) else None))
+                        == compare_key(f, v)
+                        for f, v in known_now.items()
+                    },
                     "slip": clicked is not None,
                     "bulk": bulk,
                     "eligible": eligible,
@@ -387,6 +417,29 @@ def fixed_next_time(by_supplier: dict[str, list[dict[str, Any]]]) -> dict[str, A
     n, fixed = sum(v[0] for v in fields.values()), sum(v[1] for v in fields.values())
     return {"corrected": n, "fixed": fixed, "share": _ratio(fixed, n),
             "by_field": {f: {"corrected": v[0], "fixed": v[1]} for f, v in sorted(fields.items())}}  # fmt: skip
+
+
+def known_values(by_supplier: dict[str, list[dict[str, Any]]]) -> dict[str, Any] | None:
+    """What AP knows of a supplier and its invoices do not print (``--ap-knows``): how often AP had to set it, by
+    position, and how many of those suppliers went touchless. None when no supplier had any."""
+    rows = [r for rs in by_supplier.values() for r in rs if r.get("known")]
+    if not rows:
+        return None
+    by_position = {}
+    for lo, hi in BUCKETS:
+        part = [v for r in rows if lo <= r["index"] <= hi for v in r["known"].values()]
+        if part:
+            by_position[bucket_name(lo, hi)] = {"values": len(part), "right": _ratio(sum(part), len(part))}
+    suppliers = {r["supplier"] for r in rows}
+    return {
+        "suppliers": len(suppliers),
+        "values": sum(len(r["known"]) for r in rows),
+        "set_by_ap": sum(1 for r in rows for v in r["known"].values() if not v),
+        "right": _ratio(sum(v for r in rows for v in r["known"].values()), sum(len(r["known"]) for r in rows)),
+        "by_position": by_position,
+        "touchless_suppliers": sum(1 for sid in suppliers if any(r["turned_on"] for r in by_supplier[sid])),
+        "touchless_invoices": sum(1 for sid in suppliers for r in by_supplier[sid] if r["touchless"]),
+    }
 
 
 def eligible_wrong_by_position(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -511,6 +564,7 @@ def summarize_learning(rows: list[dict[str, Any]], wrong_at: int = 0) -> dict[st
         },
         "wrong_approval": wrong_approval(rows, wrong_at) if wrong_at else None,
         "fixed_next_time": fixed_next_time(by_supplier),
+        "known": known_values(by_supplier),
         "eligible_wrong": eligible_wrong_by_position(rows),
         "bulk_approved": sum(1 for r in rows if r.get("bulk")),
         # Is the Reading honest? Its mean against the share of the printed fields read right (D-89); and the same
@@ -554,6 +608,20 @@ def _wrong_section(w: dict[str, Any] | None, after: int = 0) -> list[str]:
             ],
         ),  # fmt: skip
     ]
+
+
+def _known_section(k: dict[str, Any] | None) -> list[str]:
+    if not k:
+        return []
+    return [
+        "## What AP knows and the invoice does not print\n",
+        f"{k['suppliers']} suppliers whose terms (and for some, US dollars) AP sets: of {k['values']} values, AP had "
+        f"to set **{k['set_by_ap']}**; proposed right {_pct(k['right'])}. Of those suppliers, "
+        f"{k['touchless_suppliers']} went touchless ({k['touchless_invoices']} invoices).\n",
+        _table(["invoice #", "values", "proposed right"],
+               [[b, v["values"], _pct(v["right"])] for b, v in k["by_position"].items()]),
+        "",
+    ]  # fmt: skip
 
 
 def _fixed_section(f: dict[str, Any] | None) -> list[str]:
@@ -601,7 +669,11 @@ def render_markdown(report: dict[str, Any]) -> str:
             else "\n"
         ),
         *_wrong_section(s.get("wrong_approval"), cfg.get("withdraw_after") or 0),
-        *(_fixed_section(s.get("fixed_next_time")) + _eligible_wrong_section(s.get("eligible_wrong"))),
+        *(
+            _fixed_section(s.get("fixed_next_time"))
+            + _known_section(s.get("known"))
+            + _eligible_wrong_section(s.get("eligible_wrong"))
+        ),
         *(
             [
                 f"{s['bulk_approved']} invoices were approved in bulk (nobody opened them; what was proposed was "
@@ -734,8 +806,11 @@ def run_learning(
     wrong_at: int = 0,
     withdraw_after: int = 0,
     bulk: float = 0.0,
+    ap_knows_share: float = 0.0,
 ) -> dict[str, Any]:
-    """``wrong_at``: the invoice of each supplier approved with the wrong words taught, then withdrawn (0: none), once
+    """``ap_knows_share``: the share of suppliers whose payment terms (and for some, US dollars) AP knows and sets,
+    their invoices not printing them (D-121). ``wrong_at``: the invoice of each supplier approved with the wrong words
+    taught, then withdrawn (0: none), once
     ``withdraw_after`` more invoices were approved (0: before the next one arrives). ``bulk``: the share of invoices
     (after a supplier's first) approved in bulk, untouched, when bulk approval would take them."""
     from ap_coder.capture.supplier import AutonomyPolicy
@@ -757,6 +832,7 @@ def run_learning(
             wrong_at,
             withdraw_after,
             bulk,
+            ap_knows_share,
         )
         for s in range(suppliers)
     ]
@@ -776,6 +852,7 @@ def run_learning(
             "ignore_checks": list(ignore_checks),
             **({"wrong_approval_at": wrong_at, "withdraw_after": withdraw_after} if wrong_at else {}),
             **({"bulk": bulk} if bulk else {}),
+            **({"ap_knows": ap_knows_share} if ap_knows_share else {}),
             "layouts": {supplier_id(seed, s): supplier_archetype(seed, s) for s in range(suppliers)},
         },
         "summary": summarize_learning(rows, wrong_at),

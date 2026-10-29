@@ -455,6 +455,11 @@ Automation):
   customer's name read as the vendor's), and not for an invoice whose GST/HST number is another's. Withdrawing an
   approval takes back what it taught even after a later approval changed the template: the template is learned again
   from the later approvals (their pages read again, text layers only; a scan's is kept as it is).
+- **What the page does not print** (D-121): the payment terms or currency AP sets on a vendor's invoices that do not
+  print them are proposed on its next invoice once AP has set them twice (a lesson, D-72), with no AI model running;
+  so is a value the reader keeps misreading the same way (a customer account number taken for the PO number, cleared
+  each time). A value the page prints otherwise always wins; never a tax number filled in. *As you set it* on the
+  review screen: likely, then verified once AP has approved it so twice more.
 - **Line descriptions, right next time** (D-120): each line AP approves is remembered with the text it was read as
   (`line_texts`); the supplier's next invoice that reads a line the same way (spacing, case, punctuation and the
   letters OCR mixes up aside) shows it as AP approved it, and says what was printed under it. An item code AP drops

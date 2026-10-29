@@ -78,6 +78,13 @@ def main(argv: list[str] | None = None) -> int:
         metavar="SHARE",
         help="share of invoices AP approves in bulk, untouched, when bulk approval takes them (default 0)",
     )
+    lp.add_argument(
+        "--ap-knows",
+        type=float,
+        default=0.0,
+        metavar="SHARE",
+        help="share of suppliers whose terms (and for some, US dollars) AP sets, the invoices not printing them",
+    )
     lnp = sub.add_parser("lines", help="line items: each supplier's invoices read in order, AP correcting each line")
     lnp.add_argument("--suppliers", type=int, default=20, help="number of suppliers (default 20)")
     lnp.add_argument("--invoices", type=int, default=12, help="invoices per supplier (default 12)")
@@ -216,6 +223,7 @@ def main(argv: list[str] | None = None) -> int:
             wrong_at=a.wrong_approval,
             withdraw_after=a.withdraw_after,
             bulk=a.bulk,
+            ap_knows_share=a.ap_knows,
         )
         au, b = report["summary"]["autonomy"], report["summary"]["buckets"]
         first, last = next(iter(b.values())), list(b.values())[-1]
