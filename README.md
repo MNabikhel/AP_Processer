@@ -111,6 +111,7 @@ Every place the network could be touched: [docs/HOW_IT_RUNS.md](docs/HOW_IT_RUNS
 | The JD Edwards team | [JDE_E1.md](docs/JDE_E1.md), [JDE_ORCHESTRATIONS.md](docs/JDE_ORCHESTRATIONS.md) |
 | The data team | [FINANCE_HUB.md](docs/FINANCE_HUB.md) |
 | Finance and tax | [SALES_TAX.md](docs/SALES_TAX.md), [CODING.md](docs/CODING.md) |
+| A developer or AI agent taking it over | [HANDOFF.md](docs/HANDOFF.md) (start here), then [CLAUDE.md](CLAUDE.md) |
 | How it all works | [REFERENCE.md](docs/REFERENCE.md) (every feature, page and command), [HOW_IT_RUNS.md](docs/HOW_IT_RUNS.md), [CAPTURE_DESIGN.md](docs/CAPTURE_DESIGN.md), [WHATS_NEW.md](docs/WHATS_NEW.md) |
 
 ## For developers

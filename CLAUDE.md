@@ -5,6 +5,9 @@ each PDF or picture locally, codes the GL accounts and cost centers, checks GST/
 what AP approves, and exports approved invoices to JD Edwards E1 or Excel/CSV. People review on a local dashboard
 (FastAPI) at 127.0.0.1 (or a company server: docs/SERVER.md).
 
+Taking AP Coder over in a new place (the company's own repository)? Start with `docs/HANDOFF.md`: how to get the
+code in, the connection points, the company's information to gather, and the order of work.
+
 Code: `ap_coder/` (`core` store and settings, `ai` pipeline and models, `coding` tax and checks, `erp` exports and
 reports, `intake` pictures and emails, `ops` command line and doctor, `capture` document reading, `web` the dashboard,
 `bench` the accuracy benchmark). `scripts/`: launcher, installer, update, offline bundle. `tests/`: pytest. `docs/`:
