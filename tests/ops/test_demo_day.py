@@ -45,7 +45,10 @@ def demo(tmp_path):
 def _running():
     """The AP Coder running at LIVE, once LM Studio's OvisOCR2 passed its self-test (on demo day it passed the
     evening before, at the rehearsal): no app object, the client talks to it over HTTP."""
-    import httpx
+    try:  # in every install (openai's HTTP client); httpx comes only with the dev extra the launcher leaves out
+        import httpx2 as httpx
+    except ModuleNotFoundError:
+        import httpx
 
     from ap_coder.ai import page_worker
 
