@@ -494,168 +494,200 @@ class InvoicePipeline:
         or a photo, a text file as it is; the same readers and checks, then coded from AP's history. A document the
         page reader hasn't read yet (``page_text`` None) is never approved without a person: it is queued for the
         page reader, which decides that once it has read it."""
-        path = Path(path)
-        result = PipelineResult(source=path)
-        captured: tuple[Any, str, Any] | None = None  # (capture, supplier key, profile) when read without AI
-        text_file = path.suffix.lower() in TEXT_EXTENSIONS
+        result = PipelineResult(source=Path(path))
+        text_file = result.source.suffix.lower() in TEXT_EXTENSIONS
+        # (capture, supplier key, profile) when read without AI: kept even if a later step of the reading fails
+        captured: dict[str, tuple[Any, str, Any]] = {}
         try:
-            # A photo or a scanned picture coming in is made a PDF first; one stored as a picture by an older version
-            # (read again by the page reader) stays where the database has it.
-            path = result.source = _as_pdf(path, result, convert=invoice_id is None)
-            _check_pdf(path)
-            t0 = time.perf_counter()
-            layout = None
-            if self._reads_locally(path):  # offline: the page's text layer, or local OCR for a scan
-                from ..capture import build_layout
-                from .offline_coder import local_extraction
-
-                layout = build_layout(path)
-                if invoice_id is None and any(page.turn for page in layout.pages):
-                    path = result.source = _upright(path, layout, result)
-                result.extraction = local_extraction(path, layout)
-            else:
-                result.extraction = self.extractor.extract(path)
-            result.timings["extraction"] = time.perf_counter() - t0
-
-            # Reviewer history relevant to this document (immediate learning).
-            vendor_hint = (result.extraction.invoice_fields.get("VendorName") or {}).get("value")
-            feedback = self.store.learning_rows(vendor_hint) if self.store is not None else []
-            examples = select_examples(feedback, result.extraction.content, vendor_hint)
-            result.history_examples = len(examples)
-            history_text = format_examples(examples, with_cost_center=self.reference.cost_centers is not None)
-
-            t1 = time.perf_counter()
-            provider = getattr(self.coder, "provider", "")
-            if provider in ("off", "local"):
-                # The local readers' header, lines and taxes (they read invoices better than a small model), each
-                # line coded from what AP approved before; the chat model suggests the lines left over when it
-                # answers. A text file is read by the same rule reader, its text taken as exact.
-                from .offline_coder import code_from_capture, read_invoice, text_layout
-
-                if layout is None and text_file:
-                    layout = text_layout(result.extraction.content)
-                # Once the page reader has read the pages (in the background), the chat model reads the header from the
-                # page images too, when it can see pages: one more independent reader of every field.
-                model_values = self._model_reading(path) if page_text is not None and provider == "local" else None
-                captured = read_invoice(path, self.store, layout=layout, page_text=page_text, ai_values=model_values)
-                vendor = captured[0].fields.get("vendor_name")
-                if vendor is not None and vendor.value:
-                    # The vendor is known now: its lessons, past the cap too, and its examples for the chat model,
-                    # even when its name is not on the page as AP's history has it ("&" for "and", B-600).
-                    if self.store is not None:
-                        feedback = self.store.learning_rows(str(vendor.value))
-                    examples = select_examples(feedback, result.extraction.content, str(vendor.value))
-                    result.history_examples = len(examples)
-                    history_text = format_examples(
-                        examples, with_cost_center=self.reference.cost_centers is not None
-                    )  # fmt: skip
-                # A weak match (an account's name) is never put in the line: it is left blank, suggested on the
-                # review screen, and the chat model is asked about it when it answers (B-463).
-                result.coding = code_from_capture(
-                    captured[0], self.reference, feedback, self.store, text=result.extraction.content, layout=layout
-                )  # fmt: skip
-                if provider == "local":
-                    self._local_accounts(result.coding, history_text)
-            else:
-                result.coding = self.coder.code(result.extraction, self._images(path), history_text)
-                _mark_chat_accounts(result.coding.coding)
-                _model_line_taxes(result.coding.coding, result.extraction.content if result.extraction else "",
-                                  feedback)  # fmt: skip
-            result.timings["inference"] = time.perf_counter() - t1
-            if self.store is not None:  # fixed coding rules set by AP win over the AI
-                coded, result.rules_applied = apply_rules(result.coding.coding, self.store.coding_rules())
-                result.coding.coding = coded
-
-            result.output, result.report = finalise_coding(
-                result.coding.coding,
-                self.reference,
-                self.settings,
-                result.extraction,
-                store=self.store,
-                exclude_invoice_id=invoice_id,
-                feedback=feedback,
-            )
-            if _cut_off(path):  # what is there is read and shown; the person is told part may be missing
-                result.report.issues.append(Issue(WARNING, CUT_OFF, CUT_OFF_TEXT.format(name=path.name)))
+            self._read_and_code(result, page_text, invoice_id, text_file, captured)
         except CannotRead as exc:  # no OCR or photo add-on, no pages, a web page: said plainly, never an empty reading
-            log.warning("%s: %s", path.name, exc)
+            log.warning("%s: %s", result.source.name, exc)
             result.error = str(exc)
         except Exception as exc:  # one bad invoice must not stop a batch
-            log.exception("Failed to process %s", path)
-            result.error = plain_error(exc, path)
+            log.exception("Failed to process %s", result.source)
+            result.error = plain_error(exc, result.source)
+        azure, reviewer_plan = self._checks_after_coding(result, captured.get("local"), page_text, invoice_id,
+                                                         pages_read, text_file)  # fmt: skip
+        self._save_and_queue(result, save, invoice_id, azure, reviewer_plan)
+        return result
 
-        key, profile = "", None
+    def _read_and_code(self, result: PipelineResult, page_text: list[str] | None, invoice_id: int | None,
+                       text_file: bool, captured: dict[str, tuple[Any, str, Any]]) -> None:  # fmt: skip
+        """Read the invoice (``result.extraction``), code it (``result.coding``, AP's fixed rules applied) and check
+        it (``result.output``, ``result.report``). ``captured["local"]``: the capture (with its supplier key and
+        profile) when the local readers read it (the chat model's coding is read against the page afterwards)."""
+        path = result.source
+        # A photo or a scanned picture coming in is made a PDF first; one stored as a picture by an older version
+        # (read again by the page reader) stays where the database has it.
+        path = result.source = _as_pdf(path, result, convert=invoice_id is None)
+        _check_pdf(path)
+        t0 = time.perf_counter()
+        layout = None
+        if self._reads_locally(path):  # offline: the page's text layer, or local OCR for a scan
+            from ..capture import build_layout
+            from .offline_coder import local_extraction
+
+            layout = build_layout(path)
+            if invoice_id is None and any(page.turn for page in layout.pages):
+                path = result.source = _upright(path, layout, result)
+            result.extraction = local_extraction(path, layout)
+        else:
+            result.extraction = self.extractor.extract(path)
+        result.timings["extraction"] = time.perf_counter() - t0
+
+        # Reviewer history relevant to this document (immediate learning).
+        vendor_hint = (result.extraction.invoice_fields.get("VendorName") or {}).get("value")
+        feedback = self.store.learning_rows(vendor_hint) if self.store is not None else []
+        examples = select_examples(feedback, result.extraction.content, vendor_hint)
+        result.history_examples = len(examples)
+        history_text = format_examples(examples, with_cost_center=self.reference.cost_centers is not None)
+
+        t1 = time.perf_counter()
+        provider = getattr(self.coder, "provider", "")
+        if provider in ("off", "local"):
+            feedback = self._code_locally(result, path, layout, page_text, feedback, history_text, text_file,
+                                          captured)  # fmt: skip
+        else:
+            result.coding = self.coder.code(result.extraction, self._images(path), history_text)
+            _mark_chat_accounts(result.coding.coding)
+            _model_line_taxes(result.coding.coding, result.extraction.content if result.extraction else "",
+                              feedback)  # fmt: skip
+        result.timings["inference"] = time.perf_counter() - t1
+        if self.store is not None:  # fixed coding rules set by AP win over the AI
+            coded, result.rules_applied = apply_rules(result.coding.coding, self.store.coding_rules())
+            result.coding.coding = coded
+
+        result.output, result.report = finalise_coding(
+            result.coding.coding,
+            self.reference,
+            self.settings,
+            result.extraction,
+            store=self.store,
+            exclude_invoice_id=invoice_id,
+            feedback=feedback,
+        )
+        if _cut_off(path):  # what is there is read and shown; the person is told part may be missing
+            result.report.issues.append(Issue(WARNING, CUT_OFF, CUT_OFF_TEXT.format(name=path.name)))
+
+    def _code_locally(self, result: PipelineResult, path: Path, layout: Any, page_text: list[str] | None,
+                      feedback: list[Any], history_text: str, text_file: bool,
+                      captured: dict[str, tuple[Any, str, Any]]) -> list[Any]:  # fmt: skip
+        """The local readers' header, lines and taxes (they read invoices better than a small model), each line coded
+        from what AP approved before; the chat model suggests the lines left over when it answers. A text file is read
+        by the same rule reader, its text taken as exact. The capture goes in ``captured``; returns the vendor's
+        feedback."""
+        from .offline_coder import code_from_capture, read_invoice, text_layout
+
+        provider = getattr(self.coder, "provider", "")
+        if layout is None and text_file:
+            layout = text_layout(result.extraction.content)
+        # Once the page reader has read the pages (in the background), the chat model reads the header from the page
+        # images too, when it can see pages: one more independent reader of every field.
+        model_values = self._model_reading(path) if page_text is not None and provider == "local" else None
+        local = captured["local"] = read_invoice(path, self.store, layout=layout, page_text=page_text,
+                                                 ai_values=model_values)  # fmt: skip
+        vendor = local[0].fields.get("vendor_name")
+        if vendor is not None and vendor.value:
+            # The vendor is known now: its lessons, past the cap too, and its examples for the chat model, even when
+            # its name is not on the page as AP's history has it ("&" for "and", B-600).
+            if self.store is not None:
+                feedback = self.store.learning_rows(str(vendor.value))
+            examples = select_examples(feedback, result.extraction.content, str(vendor.value))
+            result.history_examples = len(examples)
+            history_text = format_examples(examples, with_cost_center=self.reference.cost_centers is not None)
+        # A weak match (an account's name) is never put in the line: it is left blank, suggested on the review
+        # screen, and the chat model is asked about it when it answers (B-463).
+        result.coding = code_from_capture(
+            local[0], self.reference, feedback, self.store, text=result.extraction.content, layout=layout
+        )  # fmt: skip
+        if provider == "local":
+            self._local_accounts(result.coding, history_text)
+        return feedback
+
+    def _checks_after_coding(self, result: PipelineResult, captured: tuple[Any, str, Any] | None,
+                             page_text: list[str] | None, invoice_id: int | None, pages_read: int | None,
+                             text_file: bool) -> tuple[Any, Any]:  # fmt: skip
+        """The capture against the coding, the review issues it raises, and whether the invoice may skip review
+        (``result.autonomy``), held for the Azure check and the AI reviewer. Returns their plans."""
+        path = result.source
         azure = azure_check.Plan()
         reviewer_plan = verifier.Plan()
-        if result.output is not None:
-            try:
-                t2 = time.perf_counter()
-                if captured is not None:  # already read (no AI model): the capture is the proposal itself
-                    result.capture, key, profile = captured
-                else:
-                    result.capture, key, profile = capture_invoice(
-                        path, result.output, store=self.store, page_text=page_text,
-                        di_raw=result.extraction.raw if result.extraction else None,
-                    )  # fmt: skip
-                result.timings["capture"] = time.perf_counter() - t2
-                if result.capture is not None and result.report is not None:
-                    for severity, code, message in review_issues(
-                        result.capture, result.output.get("currency"), assumed_date=result.output.get("invoice_date")
-                    ):
-                        result.report.issues.append(Issue(severity, code, message))
-                    # The optional Azure check (off unless turned on): a check already done is folded in again (read
-                    # again by the page reader); otherwise whether it goes in line, and waits for it.
-                    azure = azure_check.prepare(
-                        self.store, self.settings, invoice_id, result.capture, result.report, path
-                    )
-                    # Not read by the page reader yet: it will be (queued below), and decides then.
-                    awaiting = page_text is None and not text_file
-                    read = None if page_text is None else len(page_text)  # it stops at AP_PAGE_READER_MAX_PAGES
-                    if read is not None and pages_read is not None:
-                        read = min(read, pages_read)
-                    result.autonomy = autonomy_decision(self.store, key, profile, result.capture, result.report, path,
-                                                        output=result.output, awaiting_page_reader=awaiting,
-                                                        pages_read=read)  # fmt: skip
-                    result.autonomy = azure_check.hold(result.autonomy, azure)
-                    # The AI reviewer (on by default): every invoice goes in line, and none is approved without a person
-                    # until it agrees.
-                    reviewer_plan = verifier.prepare(self.store, result.autonomy)
-                    result.autonomy = verifier.hold(result.autonomy, reviewer_plan)
-            except Exception:  # one bad invoice must not stop a batch: saved for a person, never touchless
-                log.exception("Checks after coding failed for %s", path)
-                result.autonomy = {}
+        if result.output is None:
+            return azure, reviewer_plan
+        try:
+            t2 = time.perf_counter()
+            if captured is not None:  # already read (no AI model): the capture is the proposal itself
+                result.capture, key, profile = captured
+            else:
+                result.capture, key, profile = capture_invoice(
+                    path, result.output, store=self.store, page_text=page_text,
+                    di_raw=result.extraction.raw if result.extraction else None,
+                )  # fmt: skip
+            result.timings["capture"] = time.perf_counter() - t2
+            if result.capture is not None and result.report is not None:
+                for severity, code, message in review_issues(
+                    result.capture, result.output.get("currency"), assumed_date=result.output.get("invoice_date")
+                ):
+                    result.report.issues.append(Issue(severity, code, message))
+                # The optional Azure check (off unless turned on): a check already done is folded in again (read
+                # again by the page reader); otherwise whether it goes in line, and waits for it.
+                azure = azure_check.prepare(self.store, self.settings, invoice_id, result.capture, result.report, path)
+                # Not read by the page reader yet: it will be (queued below), and decides then.
+                awaiting = page_text is None and not text_file
+                read = None if page_text is None else len(page_text)  # it stops at AP_PAGE_READER_MAX_PAGES
+                if read is not None and pages_read is not None:
+                    read = min(read, pages_read)
+                result.autonomy = autonomy_decision(self.store, key, profile, result.capture, result.report, path,
+                                                    output=result.output, awaiting_page_reader=awaiting,
+                                                    pages_read=read)  # fmt: skip
+                result.autonomy = azure_check.hold(result.autonomy, azure)
+                # The AI reviewer (on by default): every invoice goes in line, and none is approved without a person
+                # until it agrees.
+                reviewer_plan = verifier.prepare(self.store, result.autonomy)
+                result.autonomy = verifier.hold(result.autonomy, reviewer_plan)
+        except Exception:  # one bad invoice must not stop a batch: saved for a person, never touchless
+            log.exception("Checks after coding failed for %s", path)
+            result.autonomy = {}
+        return azure, reviewer_plan
 
-        if self.store is not None and not save and invoice_id:  # read again (the page reader): same invoice
+    def _save_and_queue(self, result: PipelineResult, save: bool, invoice_id: int | None, azure: Any,
+                        reviewer_plan: Any) -> None:  # fmt: skip
+        """Saved to the review queue (``save``) with its capture; queued for the Azure check, the AI reviewer and the
+        page reader; approved by AP Coder on its own when its supplier is touchless and nothing holds it back."""
+        if self.store is None:
+            return
+        path = result.source
+        if not save and invoice_id:  # read again (the page reader): same invoice
             azure_check.queue(self.store, invoice_id, azure)
             verifier.queue(self.store, invoice_id, reviewer_plan, held=bool(result.autonomy.get("verifier_hold")))
-        if self.store is not None and save:
-            try:
-                result.invoice_id = self.store.add_invoice(
-                    path,
-                    result.output,
-                    result.report.to_dict() if result.report else None,
-                    extraction_md=result.extraction.content if result.extraction else "",
-                    meta=_meta(result),
-                    error=result.error,
-                    original_sha256=(result.original or {}).get("sha256"),
-                )
-                if result.capture is not None:
-                    self.store.save_capture(result.invoice_id, result.capture.to_dict())
-                azure_check.queue(self.store, result.invoice_id, azure)
-                verifier.queue(self.store, result.invoice_id, reviewer_plan,
-                               held=bool(result.autonomy.get("verifier_hold")))  # fmt: skip
-                if result.autonomy.get("auto") and result.output is not None:
-                    self.store.approve_invoice(result.invoice_id, result.output, AUTONOMOUS_REVIEWER, login="ap-coder")
-                elif result.output is not None:  # the page reader reads every page of it in the background
-                    from .page_worker import queue_new_invoice, skip_new_invoice, skip_reason
+        if not save:
+            return
+        try:
+            result.invoice_id = self.store.add_invoice(
+                path,
+                result.output,
+                result.report.to_dict() if result.report else None,
+                extraction_md=result.extraction.content if result.extraction else "",
+                meta=_meta(result),
+                error=result.error,
+                original_sha256=(result.original or {}).get("sha256"),
+            )
+            if result.capture is not None:
+                self.store.save_capture(result.invoice_id, result.capture.to_dict())
+            azure_check.queue(self.store, result.invoice_id, azure)
+            verifier.queue(self.store, result.invoice_id, reviewer_plan,
+                           held=bool(result.autonomy.get("verifier_hold")))  # fmt: skip
+            if result.autonomy.get("auto") and result.output is not None:
+                self.store.approve_invoice(result.invoice_id, result.output, AUTONOMOUS_REVIEWER, login="ap-coder")
+            elif result.output is not None:  # the page reader reads every page of it in the background
+                from .page_worker import queue_new_invoice, skip_new_invoice, skip_reason
 
-                    why = skip_reason(self.settings, result.capture, result.autonomy, path)  # (server: D-111)
-                    if not why or not skip_new_invoice(self.store, result.invoice_id, result.capture.page_count, why):
-                        queue_new_invoice(self.store, result.invoice_id, path)
-            except Exception as exc:  # a file that cannot be saved (locked, gone) must not stop the batch
-                log.exception("Could not save %s", path)
-                result.error = result.error or f"not saved: {type(exc).__name__}: {exc}"
-        return result
+                why = skip_reason(self.settings, result.capture, result.autonomy, path)  # (server: D-111)
+                if not why or not skip_new_invoice(self.store, result.invoice_id, result.capture.page_count, why):
+                    queue_new_invoice(self.store, result.invoice_id, path)
+        except Exception as exc:  # a file that cannot be saved (locked, gone) must not stop the batch
+            log.exception("Could not save %s", path)
+            result.error = result.error or f"not saved: {type(exc).__name__}: {exc}"
 
     def process_many(
         self,

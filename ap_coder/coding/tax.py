@@ -362,13 +362,47 @@ def pct(rate: float) -> str:
     return f"{round(float(rate) * 100, 4):g}%"
 
 
+@dataclass
+class _TaxCheck:
+    """One invoice's tax check as it goes (``check_taxes``): what each step reads, and the findings so far."""
+
+    coding: Any
+    setup: TaxSetup
+    on: dt.date | None  # the invoice date: the rates in force
+    prov: str  # the place of supply
+    assumed: str  # how it was assumed when no ship-to is printed, said in the warnings (D-61)
+    tax_lines: list[Any]
+    charged: set[str]  # Canadian taxes actually charged (a printed "GST 0.00" on an exempt invoice is not a charge)
+    posted: set[str]  # every tax charged, non-Canadian too
+    n_items: int
+    tol: float  # per-line rounding on the vendor's side
+    findings: list[TaxFinding] = field(default_factory=list)
+    foreign: float = 0.0  # non-Canadian tax charged (OTHER): US sales tax, said once
+    not_charged: set[str] = field(default_factory=set)  # taxes lines are marked with that the invoice does not charge
+
+    def add(self, severity: str, code: str, message: str, line: int | None = None) -> None:
+        self.findings.append(TaxFinding(severity, code, message, line))
+
+
 def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = None) -> list[TaxFinding]:
-    findings: list[TaxFinding] = []
+    """The tax findings of an invoice as coded, in the order the review screen lists them: the tax lines' sums,
+    each tax line's amount, rate and province, which lines carry each tax, the regime of the place of supply, a
+    non-Canadian tax, exemptions to confirm, the registration numbers and the GL accounts the taxes post to."""
+    check = _start_tax_check(coding, setup)
+    _tax_lines_add_up(check)
+    _each_tax_line(check)
+    _lines_carry_each_tax(check)
+    _lines_marked_with_a_tax_not_charged(check)
+    _qst_before_gst(check)
+    _regime_of_the_place_of_supply(check)
+    _foreign_tax(check)
+    _exemptions_to_confirm(check)
+    _registration_numbers(check)
+    _tax_accounts(check, known_gl_codes)
+    return check.findings
 
-    def add(severity: str, code: str, message: str, line: int | None = None) -> None:
-        findings.append(TaxFinding(severity, code, message, line))
 
-    on = _invoice_date(coding)
+def _start_tax_check(coding: Any, setup: TaxSetup) -> _TaxCheck:
     prov, source = supply_source(coding, setup)
     # Where the place of supply came from, when no ship-to is printed: the warnings say it was assumed (D-61).
     assumed = {
@@ -379,145 +413,171 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
         where = "your province in Settings" if source == SUPPLY_OURS else "only the vendor's province"
         assumed = f" (the ship-to printed is outside Canada: checked against {where})"
     tax_lines = list(coding.tax_lines)
-    # Canadian taxes actually charged (a printed "GST 0.00" on an exempt invoice is not a charge).
-    charged = {tl.tax_type for tl in tax_lines if abs(tl.tax_amount) > 0.004 and tl.tax_type != "OTHER"}
     n_items = max(1, len(coding.line_items))
-    tol = 0.01 * n_items + 0.01  # per-line rounding on the vendor's side
-    foreign = 0.0  # non-Canadian tax charged (OTHER): US sales tax
+    return _TaxCheck(
+        coding=coding, setup=setup, on=_invoice_date(coding), prov=prov, assumed=assumed, tax_lines=tax_lines,
+        charged={tl.tax_type for tl in tax_lines if abs(tl.tax_amount) > 0.004 and tl.tax_type != "OTHER"},
+        posted={tl.tax_type for tl in tax_lines if abs(tl.tax_amount) > 0.004},
+        n_items=n_items, tol=0.01 * n_items + 0.01,
+    )  # fmt: skip
 
-    # Tax lines add up to the tax total.
-    lines_total = round(sum(tl.tax_amount for tl in tax_lines), 2)
+
+def _tax_lines_add_up(check: _TaxCheck) -> None:
+    """The tax lines add up to the tax total."""
+    coding = check.coding
+    lines_total = round(sum(tl.tax_amount for tl in check.tax_lines), 2)
     if not _close(lines_total, coding.tax_total, 0.02):
-        add(
+        check.add(
             ERROR,
             "TAX_LINES_TOTAL_MISMATCH",
             f"the tax lines add up to {lines_total:.2f} but the tax total is {coding.tax_total:.2f}",
         )
 
-    # Tax is worked out once on the taxable amount (a cent of rounding), or line by line and added up (each line
-    # rounded). An amount neither way gives is a wrong charge: an error, or a warning when it is within what half a
-    # cent of rounding per line could add up to (tax rounded per unit, a line marked wrongly), never silently.
-    places = currency_places(getattr(coding, "currency", ""))
-    unit = 10.0**-places
-    rounding = unit * (n_items / 2 + 1)
-    for tl in tax_lines:
-        label = f"{tl.tax_type}{' ' + tl.province if tl.province else ''}"
-        expected = round(tl.taxable_amount * tl.rate, places)
-        ways = [expected]
-        if sum(1 for t in tax_lines if t.tax_type == tl.tax_type) == 1:
-            flagged = [li for li in coding.line_items if tl.tax_type in li.taxes_applied]
-            if flagged:
-                ways.append(round(sum(round(li.amount * tl.rate, places) for li in flagged), places))
-        # A tax printed at 0.00 is nothing charged (LINE_TAX_NOT_CHARGED and the self-assessment say what follows).
-        if abs(tl.tax_amount) > 0.004 and not any(_close(way, tl.tax_amount, unit) for way in ways):
-            # The taxable is the lines marked with the tax (it follows them on the review screen) and one line's
-            # amount is the difference: the tax charged is right for the other lines, a line's tax code is what to
-            # look at (a warning that names it), not the vendor's arithmetic.
-            marked = [li for li in coding.line_items if tl.tax_type in li.taxes_applied]
-            # Worked in the size of the amounts: a credit note reverses an invoice line for line (ETA s.232).
-            sign = -1 if (tl.taxable_amount or tl.tax_amount) < 0 else 1
-            gap = sign * round((tl.tax_amount - expected) / tl.rate, 2) if tl.rate else 0.0
-            suspect = None
-            if marked and _close(round(sum(li.amount for li in marked), 2), tl.taxable_amount, tol) and gap:
-                suspect = (_gap_line(marked, -gap, tol, sign) if gap < 0 else
-                           _gap_line([li for li in coding.line_items if li not in marked], gap, tol, sign))  # fmt: skip
-            name = tax_name(tl.tax_type, tl.province or prov)
-            if suspect is not None:
-                said = f"line {suspect.line_number} ({short(suspect.description)}, {suspect.amount:,.2f})"
-                hint = f": {said} may be exempt from {name}" if gap < 0 else f": {said} may carry {name} too"
-            else:
-                hint, explained = _unexplained(coding.line_items, tl.tax_type, tl.tax_amount, tl.rate, name)
-                suspect = suspect if not explained else True  # a choice of lines makes it: a warning, no error
-            add(
-                WARNING if _close(expected, tl.tax_amount, rounding) or suspect is not None else ERROR,
-                "TAX_CALC_MISMATCH",
-                f"{label}: {tl.taxable_amount:.2f} x {pct(tl.rate)} = {expected:.2f} "
-                f"but invoice charges {tl.tax_amount:.2f}{hint}",
-            )
 
+def _each_tax_line(check: _TaxCheck) -> None:
+    """Each tax line: its amount at its rate, the rate in force where it is charged, the province it names."""
+    places = currency_places(getattr(check.coding, "currency", ""))
+    for tl in check.tax_lines:
+        _tax_line_amount(check, tl, places)
         if tl.tax_type == "OTHER":
-            foreign += tl.tax_amount if abs(tl.tax_amount) > 0.004 else 0.0  # said once, below (B-814)
+            check.foreign += tl.tax_amount if abs(tl.tax_amount) > 0.004 else 0.0  # said once, below (B-814)
             continue
         if abs(tl.tax_amount) <= 0.004:
             continue  # "GST 0.00" / "exempt" printed: nothing charged, nothing to allocate or verify
-        rate_province = tl.province or prov
-        if tl.tax_type != "GST" and not rate_province:
-            add(WARNING, "TAX_PROVINCE_UNKNOWN", f"{tl.tax_type}: province unknown, rate cannot be verified")
-        else:
-            official = setup.rates.rate_for(tl.tax_type, rate_province, on)
-            if official is None:
-                where = PROVINCE_NAMES.get(rate_province, rate_province or "this province")
-                add(ERROR, "TAX_TYPE_NOT_LEVIED", f"{tl.tax_type} is not levied in {where}")
-            elif abs(official - tl.rate) > 1e-6 and round(tl.rate, 6) not in LAWFUL_OTHER_RATES.get(
-                (tl.tax_type, rate_province), ()
-            ):
-                add(
-                    WARNING,
-                    "TAX_RATE_NONSTANDARD",
-                    f"{label} rate {pct(tl.rate)} differs from the official {pct(official)} on {coding.invoice_date}",
-                )
-        if prov and tl.province and tl.tax_type != "GST" and tl.province != prov:
-            add(WARNING, "TAX_PROVINCE_DIFFERS", f"{label} charged but place of supply is {prov}{assumed}")
+        _tax_line_rate(check, tl)
 
-    # Which invoice lines carry each tax (their tax code, D-64), and does their sum match the taxable amount? Compared
-    # per tax type, because the same tax can be printed more than once (e.g. on goods and on freight).
-    for tax_type in sorted(charged):
-        name = tax_name(tax_type, prov)
+
+def _tax_line_amount(check: _TaxCheck, tl: Any, places: int) -> None:
+    """Tax is worked out once on the taxable amount (a cent of rounding), or line by line and added up (each line
+    rounded). An amount neither way gives is a wrong charge: an error, or a warning when it is within what half a
+    cent of rounding per line could add up to (tax rounded per unit, a line marked wrongly), never silently."""
+    coding, tol = check.coding, check.tol
+    unit = 10.0**-places
+    rounding = unit * (check.n_items / 2 + 1)
+    label = f"{tl.tax_type}{' ' + tl.province if tl.province else ''}"
+    expected = round(tl.taxable_amount * tl.rate, places)
+    ways = [expected]
+    if sum(1 for t in check.tax_lines if t.tax_type == tl.tax_type) == 1:
+        flagged = [li for li in coding.line_items if tl.tax_type in li.taxes_applied]
+        if flagged:
+            ways.append(round(sum(round(li.amount * tl.rate, places) for li in flagged), places))
+    # A tax printed at 0.00 is nothing charged (LINE_TAX_NOT_CHARGED and the self-assessment say what follows).
+    if abs(tl.tax_amount) <= 0.004 or any(_close(way, tl.tax_amount, unit) for way in ways):
+        return
+    # The taxable is the lines marked with the tax (it follows them on the review screen) and one line's amount is
+    # the difference: the tax charged is right for the other lines, a line's tax code is what to look at (a warning
+    # that names it), not the vendor's arithmetic.
+    marked = [li for li in coding.line_items if tl.tax_type in li.taxes_applied]
+    # Worked in the size of the amounts: a credit note reverses an invoice line for line (ETA s.232).
+    sign = -1 if (tl.taxable_amount or tl.tax_amount) < 0 else 1
+    gap = sign * round((tl.tax_amount - expected) / tl.rate, 2) if tl.rate else 0.0
+    suspect = None
+    if marked and _close(round(sum(li.amount for li in marked), 2), tl.taxable_amount, tol) and gap:
+        suspect = (_gap_line(marked, -gap, tol, sign) if gap < 0 else
+                   _gap_line([li for li in coding.line_items if li not in marked], gap, tol, sign))  # fmt: skip
+    name = tax_name(tl.tax_type, tl.province or check.prov)
+    if suspect is not None:
+        said = f"line {suspect.line_number} ({short(suspect.description)}, {suspect.amount:,.2f})"
+        hint = f": {said} may be exempt from {name}" if gap < 0 else f": {said} may carry {name} too"
+    else:
+        hint, explained = _unexplained(coding.line_items, tl.tax_type, tl.tax_amount, tl.rate, name)
+        suspect = suspect if not explained else True  # a choice of lines makes it: a warning, no error
+    check.add(
+        WARNING if _close(expected, tl.tax_amount, rounding) or suspect is not None else ERROR,
+        "TAX_CALC_MISMATCH",
+        f"{label}: {tl.taxable_amount:.2f} x {pct(tl.rate)} = {expected:.2f} "
+        f"but invoice charges {tl.tax_amount:.2f}{hint}",
+    )
+
+
+def _tax_line_rate(check: _TaxCheck, tl: Any) -> None:
+    """A Canadian tax charged: levied where it is charged, at the rate in force on the invoice date, in the province
+    of supply."""
+    coding, prov = check.coding, check.prov
+    label = f"{tl.tax_type}{' ' + tl.province if tl.province else ''}"
+    rate_province = tl.province or prov
+    if tl.tax_type != "GST" and not rate_province:
+        check.add(WARNING, "TAX_PROVINCE_UNKNOWN", f"{tl.tax_type}: province unknown, rate cannot be verified")
+    else:
+        official = check.setup.rates.rate_for(tl.tax_type, rate_province, check.on)
+        if official is None:
+            where = PROVINCE_NAMES.get(rate_province, rate_province or "this province")
+            check.add(ERROR, "TAX_TYPE_NOT_LEVIED", f"{tl.tax_type} is not levied in {where}")
+        elif abs(official - tl.rate) > 1e-6 and round(tl.rate, 6) not in LAWFUL_OTHER_RATES.get(
+            (tl.tax_type, rate_province), ()
+        ):
+            check.add(
+                WARNING,
+                "TAX_RATE_NONSTANDARD",
+                f"{label} rate {pct(tl.rate)} differs from the official {pct(official)} on {coding.invoice_date}",
+            )
+    if prov and tl.province and tl.tax_type != "GST" and tl.province != prov:
+        check.add(WARNING, "TAX_PROVINCE_DIFFERS", f"{label} charged but place of supply is {prov}{check.assumed}")
+
+
+def _lines_carry_each_tax(check: _TaxCheck) -> None:
+    """Which invoice lines carry each tax (their tax code, D-64), and does their sum match the taxable amount?
+    Compared per tax type, because the same tax can be printed more than once (e.g. on goods and on freight)."""
+    coding, tol = check.coding, check.tol
+    for tax_type in sorted(check.charged):
+        name = tax_name(tax_type, check.prov)
         flagged = [li for li in coding.line_items if tax_type in li.taxes_applied]
-        taxable = round(sum(t.taxable_amount for t in tax_lines if t.tax_type == tax_type), 2)
+        taxable = round(sum(t.taxable_amount for t in check.tax_lines if t.tax_type == tax_type), 2)
         if not flagged:
-            add(WARNING, "TAX_NOT_ALLOCATED",
-                f"{name} is charged but no line is marked with it: pick the tax code of the lines it applies "
-                "to")  # fmt: skip
+            check.add(WARNING, "TAX_NOT_ALLOCATED",
+                      f"{name} is charged but no line is marked with it: pick the tax code of the lines it applies "
+                      "to")  # fmt: skip
             continue
         base = round(sum(li.amount for li in flagged), 2)
-        if not _close(base, taxable, tol):
-            # In the size of the amounts: a credit note reverses an invoice line for line (ETA s.232).
-            sign = -1 if (taxable or base) < 0 else 1
-            gap = sign * round(taxable - base, 2)
-            # A line marked exempt or zero-rated (from this tax, or from all) whose amount makes the tax add up: the
-            # vendor taxed it, or it is not exempt after all (EXEMPT_LINE_TAXED says so instead of the difference).
-            stated = [li for li in coding.line_items if tax_type not in li.taxes_applied
-                      and (li.tax_status in (EXEMPT, ZERO_RATED) or tax_type in (li.tax_exempt or []))]  # fmt: skip
-            taxed = _gap_line(stated, gap, tol, sign) if gap > 0 else None
-            if taxed is not None:
-                what = "zero-rated" if taxed.tax_status == ZERO_RATED else "exempt"
-                add(WARNING, "EXEMPT_LINE_TAXED",
-                    f"marked {what}, but the {name} charged adds up only with this line ({taxed.amount:,.2f}): the "
-                    f"vendor charged {name} on it, or it is not {what}", taxed.line_number)  # fmt: skip
-                continue
-            # Name the line whose amount is the difference: marked and maybe exempt, or not marked and maybe taxed.
-            suspect = (
-                _gap_line(flagged, -gap, tol, sign)
-                if gap < 0
-                else _gap_line([li for li in coding.line_items if tax_type not in li.taxes_applied], gap, tol, sign)
-            )
-            if suspect is not None:
-                said = f"line {suspect.line_number} ({short(suspect.description)}, {suspect.amount:,.2f})"
-                hint = f": {said} may be exempt from {name}" if gap < 0 else f": {said} may carry {name} too"
-            else:
-                charged_amount = round(sum(t.tax_amount for t in tax_lines if t.tax_type == tax_type), 2)
-                rates = {round(t.rate, 6) for t in tax_lines if t.tax_type == tax_type}
-                hint = (_unexplained(coding.line_items, tax_type, charged_amount, rates.pop(), name)[0]
-                        if len(rates) == 1
-                        else f": check the lines' tax codes, or the {name} the vendor charged")  # fmt: skip
-            add(
-                WARNING,
-                "TAX_BASE_MISMATCH",
-                f"lines marked {name} total {base:,.2f} but the {name} is charged on {taxable:,.2f} "
-                f"({abs(gap):,.2f} {'more' if gap < 0 else 'less'} on the lines){hint}",
-            )
-
-    # Lines marked with a tax the invoice does not charge (an invoice of before printing "PST 0.00" with every line
-    # ticked): once per tax, the lines listed. A provincial tax due and not collected is self-assessed: the code that
-    # says so keeps it in the self-assessment, where "exempt" would take it out (B-708).
-    posted_types = {tl.tax_type for tl in tax_lines if abs(tl.tax_amount) > 0.004}
-    not_charged: set[str] = set()
-    for tax_type in TAX_TYPES:
-        lines = [li for li in coding.line_items if tax_type in li.taxes_applied]
-        if not lines or tax_type in posted_types:
+        if _close(base, taxable, tol):
             continue
-        not_charged.add(tax_type)
+        # In the size of the amounts: a credit note reverses an invoice line for line (ETA s.232).
+        sign = -1 if (taxable or base) < 0 else 1
+        gap = sign * round(taxable - base, 2)
+        # A line marked exempt or zero-rated (from this tax, or from all) whose amount makes the tax add up: the
+        # vendor taxed it, or it is not exempt after all (EXEMPT_LINE_TAXED says so instead of the difference).
+        stated = [li for li in coding.line_items if tax_type not in li.taxes_applied
+                  and (li.tax_status in (EXEMPT, ZERO_RATED) or tax_type in (li.tax_exempt or []))]  # fmt: skip
+        taxed = _gap_line(stated, gap, tol, sign) if gap > 0 else None
+        if taxed is not None:
+            what = "zero-rated" if taxed.tax_status == ZERO_RATED else "exempt"
+            check.add(WARNING, "EXEMPT_LINE_TAXED",
+                      f"marked {what}, but the {name} charged adds up only with this line ({taxed.amount:,.2f}): "
+                      f"the vendor charged {name} on it, or it is not {what}", taxed.line_number)  # fmt: skip
+            continue
+        # Name the line whose amount is the difference: marked and maybe exempt, or not marked and maybe taxed.
+        suspect = (
+            _gap_line(flagged, -gap, tol, sign)
+            if gap < 0
+            else _gap_line([li for li in coding.line_items if tax_type not in li.taxes_applied], gap, tol, sign)
+        )
+        if suspect is not None:
+            said = f"line {suspect.line_number} ({short(suspect.description)}, {suspect.amount:,.2f})"
+            hint = f": {said} may be exempt from {name}" if gap < 0 else f": {said} may carry {name} too"
+        else:
+            charged_amount = round(sum(t.tax_amount for t in check.tax_lines if t.tax_type == tax_type), 2)
+            rates = {round(t.rate, 6) for t in check.tax_lines if t.tax_type == tax_type}
+            hint = (_unexplained(coding.line_items, tax_type, charged_amount, rates.pop(), name)[0]
+                    if len(rates) == 1
+                    else f": check the lines' tax codes, or the {name} the vendor charged")  # fmt: skip
+        check.add(
+            WARNING,
+            "TAX_BASE_MISMATCH",
+            f"lines marked {name} total {base:,.2f} but the {name} is charged on {taxable:,.2f} "
+            f"({abs(gap):,.2f} {'more' if gap < 0 else 'less'} on the lines){hint}",
+        )
+
+
+def _lines_marked_with_a_tax_not_charged(check: _TaxCheck) -> None:
+    """Lines marked with a tax the invoice does not charge (an invoice of before printing "PST 0.00" with every line
+    ticked): once per tax, the lines listed. A provincial tax due and not collected is self-assessed: the code that
+    says so keeps it in the self-assessment, where "exempt" would take it out (B-708)."""
+    prov = check.prov
+    for tax_type in TAX_TYPES:
+        lines = [li for li in check.coding.line_items if tax_type in li.taxes_applied]
+        if not lines or tax_type in check.posted:
+            continue
+        check.not_charged.add(tax_type)
         name = tax_name(tax_type, prov)
         if tax_type == "PST":
             # "GST only": the province's other tax, as the dropdown says it
@@ -529,155 +589,186 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
                     "QST exempt” if they are exempt")  # fmt: skip
         else:
             todo = "choose the code of what was charged, or ask the vendor"
-        add(WARNING, "LINE_TAX_NOT_CHARGED",
-            f"{_which_lines(lines)} marked {name}, but no {name} is charged: {todo}")  # fmt: skip
+        check.add(WARNING, "LINE_TAX_NOT_CHARGED",
+                  f"{_which_lines(lines)} marked {name}, but no {name} is charged: {todo}")  # fmt: skip
 
-    # QST is calculated on the price excluding GST (no tax-on-tax since 2013).
-    gst = next((t for t in tax_lines if t.tax_type == "GST"), None)
-    qst = next((t for t in tax_lines if t.tax_type == "QST"), None)
-    if gst and qst and not _close(qst.taxable_amount, gst.taxable_amount, tol):
-        if _close(qst.taxable_amount, gst.taxable_amount + gst.tax_amount, tol):
-            add(ERROR, "QST_ON_GST_INCLUSIVE", "QST was calculated on the GST-inclusive amount; it must exclude GST")
 
-    # Do the taxes charged match the province of supply?
+def _qst_before_gst(check: _TaxCheck) -> None:
+    """QST is calculated on the price excluding GST (no tax-on-tax since 2013)."""
+    gst = next((t for t in check.tax_lines if t.tax_type == "GST"), None)
+    qst = next((t for t in check.tax_lines if t.tax_type == "QST"), None)
+    if gst and qst and not _close(qst.taxable_amount, gst.taxable_amount, check.tol):
+        if _close(qst.taxable_amount, gst.taxable_amount + gst.tax_amount, check.tol):
+            check.add(ERROR, "QST_ON_GST_INCLUSIVE",
+                      "QST was calculated on the GST-inclusive amount; it must exclude GST")  # fmt: skip
+
+
+def _regime_of_the_place_of_supply(check: _TaxCheck) -> None:
+    """Do the taxes charged match the province of supply?"""
+    coding, prov, charged = check.coding, check.prov, check.charged
     if not prov:
         if charged:
-            add(WARNING, "PROVINCE_UNKNOWN", "province of supply unknown; tax regime cannot be verified")
-    elif abs(coding.subtotal) > 0.004:  # credit notes (negative) are checked too
-        expected_types = regime_on(prov, on, setup.rates)
-        name = PROVINCE_NAMES[prov] + assumed
-        # Every line says why it carries no tax (exempt, zero-rated, out of scope): no provincial tax was due either.
-        all_stated = bool(coding.line_items) and all(not li.taxes_applied and li.tax_status for li in coding.line_items)
-        if not charged and abs(foreign) > 0.004:
-            # A foreign vendor's own tax, none of Canada's: one finding, not "no sales tax charged" beside it (B-814).
-            owed = " and ".join(tax_name(t, prov) for t in sorted(expected_types))
-            add(
-                WARNING,
-                "TAX_NON_CANADIAN",
-                f"non-Canadian tax of {foreign:.2f} charged (e.g. US sales tax) and no Canadian tax, on a supply in "
-                f"{name}: the foreign tax is not recoverable here and is added to the expense lines, so confirm the "
-                f"vendor should have charged it. {owed or 'Canadian tax'} may still be due: on goods it is paid at "
-                "the border (the customs entry); on services, check whether you must self-assess it",
-            )
-            foreign = 0.0
-        elif not charged:
-            add(
-                WARNING,
-                "NO_TAX_CHARGED",
-                f"no sales tax charged on a supply in {name}; "
-                + ("every line is marked exempt, zero-rated or out of scope: confirm it" if all_stated
-                   else "confirm it is exempt or zero-rated"),
-            )  # fmt: skip
-        for extra in sorted(charged - expected_types):
-            add(
-                WARNING,
-                "TAX_REGIME_MISMATCH",
-                f"{extra} charged but {name} normally charges {' + '.join(sorted(expected_types))}",
-            )
-        if charged:
-            # A provincial tax due on lines the vendor did not charge it on (an out-of-province or unregistered
-            # vendor, or a line it missed), charged elsewhere on the invoice or not: self-assessed, line by line.
-            for provincial in [t for t in ("PST", "QST") if t in expected_types and t not in not_charged]:
-                due = [li for li in coding.line_items
-                       if tax_state(li, provincial, sorted(charged)) == DUE]  # fmt: skip
-                if due and not all_stated:
-                    base = round(sum(li.amount for li in due), 2)
-                    pname = tax_name(provincial, prov)
-                    where = f"{_which_lines(due, all_of=coding.line_items)} ({base:,.2f}) of a supply in {name}"
-                    if provincial == "QST":  # B-718: a registrant generally owes nothing net
-                        message = (f"no QST charged on {where}: {QST_NOT_CHARGED}; mark the lines exempt from QST "
-                                   "if they are")  # fmt: skip
-                    else:
-                        message = (f"no {pname} charged on {where}: it is due, self-assess it "
-                                   f"({SELF_ASSESS_LAW.get(prov, 'the provincial act')}), or mark the lines exempt "
-                                   f"from {pname} if they are")  # fmt: skip
-                    add(WARNING, "PROVINCIAL_TAX_NOT_CHARGED", message)
-            for missing in sorted(expected_types - charged):
-                if missing == "HST" and "GST" not in charged:
-                    add(WARNING, "TAX_REGIME_MISMATCH", f"{name} is an HST province but no HST was charged")
-            # Only the tax properly payable is claimable as an input tax credit (ETA s.169): HST charged where GST
-            # applies is a risk to the claim, said apart (never booked otherwise).
-            if "HST" in charged and "HST" not in expected_types:
-                add(WARNING, "ITC_AT_RISK",
-                    f"HST charged on a supply in {name}, where it is not payable: only the tax properly payable is "
-                    "claimable (ETA s.169), so claim the GST part only or get a corrected invoice")  # fmt: skip
-            # GST alone where HST applies is no risk to the claim: the GST charged is claimable (B-717); the
-            # recipient stays liable for the HST payable (s.165), not a s.218.1 self-assessment (B-721).
-            if "GST" in charged and expected_types == {"HST"}:
-                hst = setup.rates.rate_for("HST", prov, on)
-                rate = f" ({prov} {hst * 100:.4g}%)" if hst else ""
-                add(WARNING, "HST_NOT_CHARGED",
-                    f"the vendor should have charged HST{rate} on a supply in {name}; the GST is claimable. You "
-                    "remain liable for the provincial part (ETA s.165): ask for a corrected invoice")  # fmt: skip
+            check.add(WARNING, "PROVINCE_UNKNOWN", "province of supply unknown; tax regime cannot be verified")
+        return
+    if abs(coding.subtotal) <= 0.004:  # credit notes (negative) are checked too
+        return
+    expected_types = regime_on(prov, check.on, check.setup.rates)
+    name = PROVINCE_NAMES[prov] + check.assumed
+    # Every line says why it carries no tax (exempt, zero-rated, out of scope): no provincial tax was due either.
+    all_stated = bool(coding.line_items) and all(not li.taxes_applied and li.tax_status for li in coding.line_items)
+    if not charged and abs(check.foreign) > 0.004:
+        # A foreign vendor's own tax, none of Canada's: one finding, not "no sales tax charged" beside it (B-814).
+        owed = " and ".join(tax_name(t, prov) for t in sorted(expected_types))
+        check.add(
+            WARNING,
+            "TAX_NON_CANADIAN",
+            f"non-Canadian tax of {check.foreign:.2f} charged (e.g. US sales tax) and no Canadian tax, on a supply "
+            f"in {name}: the foreign tax is not recoverable here and is added to the expense lines, so confirm the "
+            f"vendor should have charged it. {owed or 'Canadian tax'} may still be due: on goods it is paid at "
+            "the border (the customs entry); on services, check whether you must self-assess it",
+        )
+        check.foreign = 0.0
+    elif not charged:
+        check.add(
+            WARNING,
+            "NO_TAX_CHARGED",
+            f"no sales tax charged on a supply in {name}; "
+            + ("every line is marked exempt, zero-rated or out of scope: confirm it" if all_stated
+               else "confirm it is exempt or zero-rated"),
+        )  # fmt: skip
+    for extra in sorted(charged - expected_types):
+        check.add(
+            WARNING,
+            "TAX_REGIME_MISMATCH",
+            f"{extra} charged but {name} normally charges {' + '.join(sorted(expected_types))}",
+        )
+    if charged:
+        _provincial_tax_due(check, expected_types, name, all_stated)
+        _hst_where_it_applies(check, expected_types, name)
 
-    if abs(foreign) > 0.004:
-        add(WARNING, "TAX_NON_CANADIAN",
-            f"non-Canadian tax of {foreign:.2f} charged (e.g. US sales tax); it is not recoverable here and is added "
-            "to the expense lines. Confirm it should have been charged")  # fmt: skip
 
-    # A PST exemption inferred from the vendor charging the PST on other lines: a person confirms it (B-715).
+def _provincial_tax_due(check: _TaxCheck, expected_types: set[str], name: str, all_stated: bool) -> None:
+    """A provincial tax due on lines the vendor did not charge it on (an out-of-province or unregistered vendor, or a
+    line it missed), charged elsewhere on the invoice or not: self-assessed, line by line."""
+    coding, prov = check.coding, check.prov
+    for provincial in [t for t in ("PST", "QST") if t in expected_types and t not in check.not_charged]:
+        due = [li for li in coding.line_items
+               if tax_state(li, provincial, sorted(check.charged)) == DUE]  # fmt: skip
+        if not due or all_stated:
+            continue
+        base = round(sum(li.amount for li in due), 2)
+        pname = tax_name(provincial, prov)
+        where = f"{_which_lines(due, all_of=coding.line_items)} ({base:,.2f}) of a supply in {name}"
+        if provincial == "QST":  # B-718: a registrant generally owes nothing net
+            message = (f"no QST charged on {where}: {QST_NOT_CHARGED}; mark the lines exempt from QST "
+                       "if they are")  # fmt: skip
+        else:
+            message = (f"no {pname} charged on {where}: it is due, self-assess it "
+                       f"({SELF_ASSESS_LAW.get(prov, 'the provincial act')}), or mark the lines exempt "
+                       f"from {pname} if they are")  # fmt: skip
+        check.add(WARNING, "PROVINCIAL_TAX_NOT_CHARGED", message)
+
+
+def _hst_where_it_applies(check: _TaxCheck, expected_types: set[str], name: str) -> None:
+    """HST missing where it applies, or charged where it does not."""
+    charged, prov = check.charged, check.prov
+    for missing in sorted(expected_types - charged):
+        if missing == "HST" and "GST" not in charged:
+            check.add(WARNING, "TAX_REGIME_MISMATCH", f"{name} is an HST province but no HST was charged")
+    # Only the tax properly payable is claimable as an input tax credit (ETA s.169): HST charged where GST applies
+    # is a risk to the claim, said apart (never booked otherwise).
+    if "HST" in charged and "HST" not in expected_types:
+        check.add(WARNING, "ITC_AT_RISK",
+                  f"HST charged on a supply in {name}, where it is not payable: only the tax properly payable is "
+                  "claimable (ETA s.169), so claim the GST part only or get a corrected invoice")  # fmt: skip
+    # GST alone where HST applies is no risk to the claim: the GST charged is claimable (B-717); the recipient stays
+    # liable for the HST payable (s.165), not a s.218.1 self-assessment (B-721).
+    if "GST" in charged and expected_types == {"HST"}:
+        hst = check.setup.rates.rate_for("HST", prov, check.on)
+        rate = f" ({prov} {hst * 100:.4g}%)" if hst else ""
+        check.add(WARNING, "HST_NOT_CHARGED",
+                  f"the vendor should have charged HST{rate} on a supply in {name}; the GST is claimable. You "
+                  "remain liable for the provincial part (ETA s.165): ask for a corrected invoice")  # fmt: skip
+
+
+def _foreign_tax(check: _TaxCheck) -> None:
+    """A non-Canadian tax charged beside Canada's (said with the regime when it is the only tax)."""
+    if abs(check.foreign) > 0.004:
+        check.add(WARNING, "TAX_NON_CANADIAN",
+                  f"non-Canadian tax of {check.foreign:.2f} charged (e.g. US sales tax); it is not recoverable here "
+                  "and is added to the expense lines. Confirm it should have been charged")  # fmt: skip
+
+
+def _exemptions_to_confirm(check: _TaxCheck) -> None:
+    """A PST exemption inferred from the vendor charging the PST on other lines: a person confirms it (B-715). A
+    provincial tax's exemption taken from the vendor's history (D-70): it saves typing, and a person still looks:
+    never approved without one (``supplier.ALWAYS_A_PERSON``, D-80)."""
     from .line_tax import PROVINCIAL, STATED, exemption_to_confirm, tax_learned
 
-    for li in coding.line_items:
+    prov = check.prov
+    for li in check.coding.line_items:
         inferred = exemption_to_confirm(li)
         if inferred:
-            add(WARNING, "PST_EXEMPTION_TO_CONFIRM",
-                f"{inferred} exemption inferred (charged on the other lines, not this one): confirm it is exempt, or "
-                f"pick “not charged (self-assess)”", li.line_number)  # fmt: skip
-    # A provincial tax's exemption taken from the vendor's history (D-70): it saves typing, and a person still looks:
-    # never approved without one (``supplier.ALWAYS_A_PERSON``, D-80).
-    for li in coding.line_items:
+            check.add(WARNING, "PST_EXEMPTION_TO_CONFIRM",
+                      f"{inferred} exemption inferred (charged on the other lines, not this one): confirm it is "
+                      f"exempt, or pick “not charged (self-assess)”", li.line_number)  # fmt: skip
+    for li in check.coding.line_items:
         if not tax_learned(li):
             continue
         free = [t for t in PROVINCIAL if t in REGIME.get(prov, ()) and t not in li.taxes_applied
                 and (li.tax_status in STATED or t in (li.tax_exempt or []))]  # fmt: skip
         if free:
             names = " and ".join(tax_name(t, prov) for t in free)
-            add(INFO, "TAX_EXEMPTION_LEARNED",
-                f"{names} exemption learned from earlier approvals of this vendor's lines: confirm it applies to "
-                "this line", li.line_number)  # fmt: skip
+            check.add(INFO, "TAX_EXEMPTION_LEARNED",
+                      f"{names} exemption learned from earlier approvals of this vendor's lines: confirm it applies "
+                      "to this line", li.line_number)  # fmt: skip
 
-    # Registration numbers needed to claim input tax credits.
-    if charged & {"GST", "HST"}:
+
+def _registration_numbers(check: _TaxCheck) -> None:
+    """Registration numbers needed to claim input tax credits."""
+    coding = check.coding
+    if check.charged & {"GST", "HST"}:
         number = coding.gst_hst_registration_number
         if not number.strip():
-            add(WARNING, "GST_HST_NUMBER_MISSING", "supplier GST/HST registration number not found (needed for ITC)")
+            check.add(WARNING, "GST_HST_NUMBER_MISSING",
+                      "supplier GST/HST registration number not found (needed for ITC)")  # fmt: skip
         elif not valid_gst_number(number):
-            add(WARNING, "GST_HST_NUMBER_FORMAT", "GST/HST number is not in the format 123456789RT0001")
+            check.add(WARNING, "GST_HST_NUMBER_FORMAT", "GST/HST number is not in the format 123456789RT0001")
         elif not gst_check_digit_ok(number):
-            add(WARNING, "GST_NUMBER_CHECK_DIGIT",
-                "GST/HST number fails the CRA check digit: misread, mistyped or not a real number")  # fmt: skip
-    if "QST" in charged:
+            check.add(WARNING, "GST_NUMBER_CHECK_DIGIT",
+                      "GST/HST number fails the CRA check digit: misread, mistyped or not a real number")  # fmt: skip
+    if "QST" in check.charged:
         number = coding.qst_registration_number
         if not number.strip():
-            add(WARNING, "QST_NUMBER_MISSING", "supplier QST registration number not found (needed for ITR)")
+            check.add(WARNING, "QST_NUMBER_MISSING", "supplier QST registration number not found (needed for ITR)")
         elif not valid_qst_number(number):
-            add(WARNING, "QST_NUMBER_FORMAT", "QST number is not in the format 1234567890TQ0001")
+            check.add(WARNING, "QST_NUMBER_FORMAT", "QST number is not in the format 1234567890TQ0001")
 
-    # Every tax charged must have a GL treatment the user has set up. Non-Canadian tax (OTHER) too: set up to post
-    # to its own account, it would otherwise post to a blank GL.
-    posted = {tl.tax_type for tl in tax_lines if abs(tl.tax_amount) > 0.004}
-    for tax_type in sorted(posted):
+
+def _tax_accounts(check: _TaxCheck, known_gl_codes: set[str] | None) -> None:
+    """Every tax charged must have a GL treatment the user has set up. Non-Canadian tax (OTHER) too: set up to post
+    to its own account, it would otherwise post to a blank GL. Meals (D-90): half the tax on a meals line is
+    expensed, so which lines carry the tax decides how much (B-868)."""
+    setup = check.setup
+    for tax_type in sorted(check.posted):
         t = setup.treatment(tax_type)
         if t.needs_gl and not t.gl_code:
-            add(ERROR, "TAX_GL_UNMAPPED", f"no GL account is set for {tax_type}: set it in GL accounts & tax")
+            check.add(ERROR, "TAX_GL_UNMAPPED", f"no GL account is set for {tax_type}: set it in GL accounts & tax")
         elif t.needs_gl and known_gl_codes is not None and t.gl_code not in known_gl_codes:
-            add(
+            check.add(
                 ERROR,
                 "TAX_GL_UNKNOWN",
                 f"{tax_type} posts to GL account {t.gl_code}, which is not in your GL accounts: fix it in "
                 "GL accounts & tax",
             )
-    # Meals (D-90): half the tax on a meals line is expensed, so which lines carry the tax decides how much (B-868).
-    for tax_type in sorted(posted & set(MEALS_RESTRICTED)):
+    for tax_type in sorted(check.posted & set(MEALS_RESTRICTED)):
         if setup.treatment(tax_type).treatment != RECOVERABLE:
             continue
-        for number in meals_unsure(coding.line_items, tax_type, setup.meals_gl_codes):
-            add(WARNING, "MEALS_TAX_LINES",
-                f"meals line: the {tax_name(tax_type, prov)} is spread over lines not marked with it, so the "
-                "half not claimable is a guess. Confirm which lines carry the tax (each line's tax code)",
-                number)  # fmt: skip
-    return findings
+        for number in meals_unsure(check.coding.line_items, tax_type, setup.meals_gl_codes):
+            check.add(WARNING, "MEALS_TAX_LINES",
+                      f"meals line: the {tax_name(tax_type, check.prov)} is spread over lines not marked with it, so "
+                      "the half not claimable is a guess. Confirm which lines carry the tax (each line's tax code)",
+                      number)  # fmt: skip
 
 
 def gap_lines(lines: list[Any], gap: float, tol: float, sign: int = 1) -> list[Any]:

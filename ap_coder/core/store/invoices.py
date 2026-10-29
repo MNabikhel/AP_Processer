@@ -7,6 +7,7 @@ import json
 import math
 import sqlite3
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -669,17 +670,7 @@ class InvoicesMixin:
         records no feedback: nobody checked its coding, so it is no lesson and no measure of accuracy."""
         from ...capture.workflow import AUTONOMOUS_REVIEWER
 
-        inv = self.get_invoice(invoice_id)
-        if inv is None:
-            raise KeyError(invoice_id)
-        if inv["status"] in (APPROVED, PENDING):
-            raise ValueError(f"invoice {invoice_id} is already approved")
-        if inv["status"] == REJECTED:  # e.g. rejected by someone else meanwhile: reopen it first
-            raise ValueError(f"invoice {invoice_id} was rejected: reopen it before approving it")
-        if inv["status"] == PARKED:  # parked by someone else meanwhile: waiting for information
-            raise ValueError(f"invoice {invoice_id} is parked: bring it back to the queue before approving it")
-        if inv["status"] != REVIEW:  # a failed read has nothing checked to approve
-            raise ValueError(f"invoice {invoice_id} is not in the review queue ({inv['status']})")
+        inv = self._approvable(invoice_id)
         ai = inv["ai_output"] or {"line_items": []}
         currency = str(final_output.get("currency") or "CAD").strip().upper()
         # The limit and rate in force since the invoice came in, the strictest of them (B-970); kept in the event.
@@ -689,99 +680,9 @@ class InvoicesMixin:
         vendor_name = final_output.get("vendor_name", "")
         key = self.vendor_key_for(vendor_name, final_output.get("gst_hst_registration_number"))  # B-1021
         now = _now()
-        counts = {ACCEPTED: 0, CORRECTED: 0, CODED: 0, **({BULK: 0} if bulk else {})}
-        reviewer_changed = reviewer_coded = 0
-        # Lines a fixed coding rule set: the AI's own answer is what its accuracy is measured on.
-        by_rule = {c["line_number"]: c for c in (inv.get("meta") or {}).get("rules_applied") or []}
-        feedback_rows = []
-        approved_before = (inv.get("meta") or {}).get("reopened_coding") or {}  # before a reopen (B-1299, D-112)
-        reopen_changes: list[dict[str, str]] = []
-
-        kept = suggestion_kept
-        # Without a cost center list the review screen has none to show or keep: a cost center the AI copied from
-        # coding memory is not part of what it proposed (B-562).
-        cost_centers = bool(self.list_accounts("cost_centers"))
-
-        final_lines = final_output.get("line_items", [])
-        # Where it is supplied, for the tax code each line is remembered with (D-80).
-        province = supply_province(final_output, self.our_province())
-        # And the provincial taxes the vendor did not collect, as the coder saw the invoice (what it read).
-        missing = "+".join(invoice_uncollected(ai if ai.get("line_items") else final_output, province))
-        for suggestion, li in pair_lines(ai.get("line_items", []), final_lines):
-            s_gl = suggestion.get("predicted_gl_code") if suggestion else None
-            s_cc = (suggestion.get("predicted_cost_center", "") if cost_centers else "") if suggestion else None
-            f_gl, f_cc = li["predicted_gl_code"], li.get("predicted_cost_center", "")
-            if f_gl == UNASSIGNED:
-                continue  # not a coding decision: nothing to learn from it
-            rule = by_rule.get(suggestion.get("line_number")) if suggestion else None
-            guess = line_guessed(suggestion, rule)
-            kept_rule = rule is not None and rule.get("gl_to") == f_gl and (rule.get("cc_to") or "") == (f_cc or "")
-            # A kept guess is no edit; another account in its place is (B-479), as any change to what was proposed.
-            blank = nothing_proposed(s_gl, s_cc)
-            replaced = (
-                (f_gl != s_gl or (f_cc or "") != (s_cc or ""))
-                if guess
-                else not blank and not kept(s_gl, s_cc, f_gl, f_cc)
-            )
-            if not kept_rule and replaced:
-                reviewer_changed += 1
-            if not kept_rule and blank and not guess:  # coded by hand where the AI left the line blank (B-670)
-                reviewer_coded += 1
-            if rule is not None:  # the AI's own answer, as first recorded (not a rule's)
-                s_gl, s_cc = rule.get("gl_from"), rule.get("cc_from", "")
-            # Accuracy measures what the AI proposed: the blanks it left are not counted against it. A line whose
-            # account it only guessed, or left blank, is the reviewer's own coding: neither confirmed nor corrected
-            # (B-475, B-650). (The rule's own answer decides: a rule that filled a blank leaves the line coded.)
-            outcome = (
-                CODED if guess or nothing_proposed(s_gl, s_cc) else ACCEPTED if kept(s_gl, s_cc, f_gl, f_cc)
-                else CORRECTED
-            )  # fmt: skip
-            prior = approved_before.get(str(li["line_number"]))
-            moved = changed_since(prior, li["line_number"], f_gl, f_cc, cost_centers) if outcome == CODED else []
-            if moved:  # AP's own coding, approved before a reopen, changed: a correction of it (B-1299)
-                outcome, s_gl, s_cc = CORRECTED, prior[0], prior[1] if cost_centers else ""
-                reviewer_changed, reopen_changes = reviewer_changed + 1, reopen_changes + moved
-            if bulk and outcome == ACCEPTED:  # kept, but nobody looked at it: no confirmation (B-955)
-                outcome = BULK
-            counts[outcome] += 1
-            feedback_rows.append(
-                (
-                    invoice_id,
-                    li["line_number"],
-                    key,
-                    vendor_name,
-                    li["description"],
-                    li.get("amount"),
-                    s_gl,
-                    f_gl,
-                    s_cc,
-                    f_cc,
-                    outcome,
-                    reviewer,
-                    now,
-                    *tax_vote(
-                        suggestion,
-                        li,
-                        ai.get("line_items", []),
-                        ai.get("tax_lines") or [],
-                        final_lines,
-                        final_output.get("tax_lines") or [],
-                        bulk=bulk,
-                    ),
-                    province,
-                    missing,
-                )  # fmt: skip
-            )
-        read = as_read(final_output, ai)  # a tax number filled from the vendor list is no edit (B-681)
-        edits = [f for f in _HEADER_FIELDS if str(ai.get(f, "")) != str(read.get(f, ""))]
-        if _tax_signature(ai) != _tax_signature(final_output):
-            edits.append("tax_lines")
-        if reviewer_changed:  # what the reviewer changed (a rule's coding kept is not a change)
-            edits.append("line_coding")
-        if reviewer_coded:  # no correction, but not the AI's coding either: never "approved without any edit"
-            edits.append("line_coded")
-        if len(ai.get("line_items", [])) != len(final_output.get("line_items", [])):
-            edits.append("line_count")
+        lines = self._line_feedback(invoice_id, inv, final_output, key, reviewer, now, bulk)
+        counts = lines.counts
+        edits = _approval_edits(ai, final_output, lines)
         with self._conn() as conn:
             # Claim the invoice first, in the same transaction as the feedback: if two approvals race,
             # the second finds it already approved and records nothing.
@@ -810,13 +711,14 @@ class InvoicesMixin:
             )
             if cur.rowcount == 0:
                 raise ValueError(f"invoice {invoice_id} left the review queue (approved, parked or rejected)")
+            feedback_rows = lines.rows
             if reviewer == AUTONOMOUS_REVIEWER:
                 feedback_rows = []  # nobody checked it: nothing to learn from, nothing to measure accuracy on
             self._log(conn, "approved", invoice_id, reviewer, {
                 "lines": len(final_output.get("line_items", [])), "corrected": counts[CORRECTED],
                 **({"coded": counts[CODED]} if counts[CODED] else {}),
                 "total": final_output.get("grand_total"),
-                "changes": diff_coding(ai, final_output, cost_centers) + reopen_changes,
+                "changes": diff_coding(ai, final_output, lines.cost_centers) + lines.reopen_changes,
                 **({"bulk": True} if bulk else {}),
                 **({"needs_second": True, "second_reason": second_reason} if needs_second else {}),
                 **({"limit": limit, "rate": rate} if limit else {}),
@@ -831,6 +733,107 @@ class InvoicesMixin:
                 feedback_rows,
             )
         return counts
+
+    def _approvable(self, invoice_id: int) -> dict[str, Any]:
+        """The invoice, if it can be approved: only one in the review queue."""
+        inv = self.get_invoice(invoice_id)
+        if inv is None:
+            raise KeyError(invoice_id)
+        if inv["status"] in (APPROVED, PENDING):
+            raise ValueError(f"invoice {invoice_id} is already approved")
+        if inv["status"] == REJECTED:  # e.g. rejected by someone else meanwhile: reopen it first
+            raise ValueError(f"invoice {invoice_id} was rejected: reopen it before approving it")
+        if inv["status"] == PARKED:  # parked by someone else meanwhile: waiting for information
+            raise ValueError(f"invoice {invoice_id} is parked: bring it back to the queue before approving it")
+        if inv["status"] != REVIEW:  # a failed read has nothing checked to approve
+            raise ValueError(f"invoice {invoice_id} is not in the review queue ({inv['status']})")
+        return inv
+
+    def _line_feedback(self, invoice_id: int, inv: dict[str, Any], final_output: dict[str, Any], key: str,
+                       reviewer: str, now: str, bulk: bool) -> _LineFeedback:  # fmt: skip
+        """What each approved line says about the coding proposed: its outcome (accepted, corrected, coded by
+        hand), counted, and its feedback row (the coding memory and the tax code it is remembered with)."""
+        ai = inv["ai_output"] or {"line_items": []}
+        vendor_name = final_output.get("vendor_name", "")
+        out = _LineFeedback(counts={ACCEPTED: 0, CORRECTED: 0, CODED: 0, **({BULK: 0} if bulk else {})})
+        # Lines a fixed coding rule set: the AI's own answer is what its accuracy is measured on.
+        by_rule = {c["line_number"]: c for c in (inv.get("meta") or {}).get("rules_applied") or []}
+        approved_before = (inv.get("meta") or {}).get("reopened_coding") or {}  # before a reopen (B-1299, D-112)
+        kept = suggestion_kept
+        # Without a cost center list the review screen has none to show or keep: a cost center the AI copied from
+        # coding memory is not part of what it proposed (B-562).
+        cost_centers = out.cost_centers = bool(self.list_accounts("cost_centers"))
+        final_lines = final_output.get("line_items", [])
+        # Where it is supplied, for the tax code each line is remembered with (D-80).
+        province = supply_province(final_output, self.our_province())
+        # And the provincial taxes the vendor did not collect, as the coder saw the invoice (what it read).
+        missing = "+".join(invoice_uncollected(ai if ai.get("line_items") else final_output, province))
+        for suggestion, li in pair_lines(ai.get("line_items", []), final_lines):
+            s_gl = suggestion.get("predicted_gl_code") if suggestion else None
+            s_cc = (suggestion.get("predicted_cost_center", "") if cost_centers else "") if suggestion else None
+            f_gl, f_cc = li["predicted_gl_code"], li.get("predicted_cost_center", "")
+            if f_gl == UNASSIGNED:
+                continue  # not a coding decision: nothing to learn from it
+            rule = by_rule.get(suggestion.get("line_number")) if suggestion else None
+            guess = line_guessed(suggestion, rule)
+            kept_rule = rule is not None and rule.get("gl_to") == f_gl and (rule.get("cc_to") or "") == (f_cc or "")
+            # A kept guess is no edit; another account in its place is (B-479), as any change to what was proposed.
+            blank = nothing_proposed(s_gl, s_cc)
+            replaced = (
+                (f_gl != s_gl or (f_cc or "") != (s_cc or ""))
+                if guess
+                else not blank and not kept(s_gl, s_cc, f_gl, f_cc)
+            )
+            if not kept_rule and replaced:
+                out.changed += 1
+            if not kept_rule and blank and not guess:  # coded by hand where the AI left the line blank (B-670)
+                out.coded += 1
+            if rule is not None:  # the AI's own answer, as first recorded (not a rule's)
+                s_gl, s_cc = rule.get("gl_from"), rule.get("cc_from", "")
+            # Accuracy measures what the AI proposed: the blanks it left are not counted against it. A line whose
+            # account it only guessed, or left blank, is the reviewer's own coding: neither confirmed nor corrected
+            # (B-475, B-650). (The rule's own answer decides: a rule that filled a blank leaves the line coded.)
+            outcome = (
+                CODED if guess or nothing_proposed(s_gl, s_cc) else ACCEPTED if kept(s_gl, s_cc, f_gl, f_cc)
+                else CORRECTED
+            )  # fmt: skip
+            prior = approved_before.get(str(li["line_number"]))
+            moved = changed_since(prior, li["line_number"], f_gl, f_cc, cost_centers) if outcome == CODED else []
+            if moved:  # AP's own coding, approved before a reopen, changed: a correction of it (B-1299)
+                outcome, s_gl, s_cc = CORRECTED, prior[0], prior[1] if cost_centers else ""
+                out.changed, out.reopen_changes = out.changed + 1, out.reopen_changes + moved
+            if bulk and outcome == ACCEPTED:  # kept, but nobody looked at it: no confirmation (B-955)
+                outcome = BULK
+            out.counts[outcome] += 1
+            out.rows.append(
+                (
+                    invoice_id,
+                    li["line_number"],
+                    key,
+                    vendor_name,
+                    li["description"],
+                    li.get("amount"),
+                    s_gl,
+                    f_gl,
+                    s_cc,
+                    f_cc,
+                    outcome,
+                    reviewer,
+                    now,
+                    *tax_vote(
+                        suggestion,
+                        li,
+                        ai.get("line_items", []),
+                        ai.get("tax_lines") or [],
+                        final_lines,
+                        final_output.get("tax_lines") or [],
+                        bulk=bulk,
+                    ),
+                    province,
+                    missing,
+                )  # fmt: skip
+            )
+        return out
 
     # --- Second approval -----------------------------------------------------------------------------
 
@@ -962,3 +965,31 @@ class InvoicesMixin:
             layout = self._forget_learning(conn, invoice_id)
             rejected = {"rejected": was["error"] or ""} if was["status"] == REJECTED else {}  # the rejection undone
             self._log(conn, "reopened", invoice_id, actor, {"reason": reason, **rejected, **layout})
+
+
+@dataclass
+class _LineFeedback:
+    """What an approval's lines say (``InvoicesMixin._line_feedback``): their feedback rows, the outcomes counted,
+    how many lines the reviewer changed or coded by hand, and what changed since an approval before a reopen."""
+
+    counts: dict[str, int]
+    rows: list[tuple[Any, ...]] = field(default_factory=list)
+    changed: int = 0
+    coded: int = 0
+    reopen_changes: list[dict[str, str]] = field(default_factory=list)
+    cost_centers: bool = False  # whether the company keeps a cost center list (none to keep otherwise, B-562)
+
+
+def _approval_edits(ai: dict[str, Any], final_output: dict[str, Any], lines: _LineFeedback) -> list[str]:
+    """What the reviewer edited of what was proposed: header fields, the tax lines, the lines' coding and count."""
+    read = as_read(final_output, ai)  # a tax number filled from the vendor list is no edit (B-681)
+    edits = [f for f in _HEADER_FIELDS if str(ai.get(f, "")) != str(read.get(f, ""))]
+    if _tax_signature(ai) != _tax_signature(final_output):
+        edits.append("tax_lines")
+    if lines.changed:  # what the reviewer changed (a rule's coding kept is not a change)
+        edits.append("line_coding")
+    if lines.coded:  # no correction, but not the AI's coding either: never "approved without any edit"
+        edits.append("line_coded")
+    if len(ai.get("line_items", [])) != len(final_output.get("line_items", [])):
+        edits.append("line_count")
+    return edits
