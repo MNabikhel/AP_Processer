@@ -27,16 +27,18 @@ jobs:
     name: Pilot laptop with the real LM Studio (release zip, no internet)
     runs-on: windows-latest
     timeout-minutes: 350
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
     env:
       AP_NO_PAUSE: "1"
       BROWSER: none
     steps:
       - uses: actions/checkout@v4
-      - name: The pilot release in .github/release-tags.txt
+      - name: The newest pilot release in .github/release-tags.txt (its last pilot line)
         id: release
         shell: pwsh
         run: |
-          $line = Get-Content .github\release-tags.txt | Where-Object { $_ -match '^v\S+-pilot\d+\s' } | Select-Object -First 1
+          $line = Get-Content .github\release-tags.txt | Where-Object { $_ -match '^v\S+-pilot\d+\s' } | Select-Object -Last 1
           if (-not $line) { throw 'no pilot release in .github/release-tags.txt' }
           $tag, $sha = ($line -split '\s+')[0, 1]
           Write-Host "$tag at $sha"
@@ -167,8 +169,8 @@ jobs:
           retention-days: 14
 
   tags:
-    # Only on main: each tag of .github/release-tags.txt that GitHub lacks, with its release; the pilot release gets
-    # the offline install zip the job above checked, and its SHA-256.
+    # Only on main: each tag of .github/release-tags.txt that GitHub lacks, with its release; the pilot release the
+    # job above checked (the newest) gets its offline install zip and SHA-256, an earlier pilot's zip left as it was.
     name: Release tags and the offline install zip on GitHub
     needs: pilot-laptop
     if: github.event_name != 'pull_request'
@@ -186,6 +188,7 @@ jobs:
       - name: Create each missing tag and its release
         env:
           GH_TOKEN: ${{ github.token }}
+          CHECKED: ${{ needs.pilot-laptop.outputs.tag }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -204,7 +207,5 @@ jobs:
             else
               gh release create "$tag" --verify-tag --title "$tag" --notes "$title"
             fi
-            case "$tag" in
-              *-pilot*) gh release upload "$tag" dist/APProcessor-offline-*.zip dist/SHA256SUMS.txt --clobber ;;
-            esac
           done
+          gh release upload "$CHECKED" dist/APProcessor-offline-*.zip dist/SHA256SUMS.txt --clobber
