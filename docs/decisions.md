@@ -1517,3 +1517,15 @@ that is reversed keeps its line, marked "replaced by D-NN".
   Result: suppliers hands-free 10 -> 20 of 20 (median from invoice #35 -> #28.5, earliest #31 -> #22), invoices
   without review 97 -> 296 of 1,000, with 0 wrong; 11 audited, one suspension (the reader doubted the terms itself, AP
   corrected them). (`capture/supplier.py`, `capture/workflow.py`, `capture/confidence.py`, `bench/learning.py`)
+- **D-123** · **The five longest functions in named steps, no behaviour change.** `check_taxes` (316 lines) is 14 steps
+  over one `_TaxCheck` record, in the order the review screen lists their findings; `fuse` (268) chooses each field's
+  reading, notes what the checks say, then per field `_raw_strength`, `_calibrated`, `_readers_agree`, `_capped` (each
+  cap with its reason) and `_status`, over one `_Fusion` record; `approve_invoice` (177) checks the invoice can be
+  approved (`_approvable`), works out what each line teaches (`_line_feedback`) and the edits, then writes it in one
+  transaction as before; the pipeline's `_process` (177) reads and codes (`_read_and_code`, `_code_locally`), checks
+  after coding and saves and queues; `math_check` (170) builds its rows (lines, each tax, two rates, why a tax does
+  not add up, self-assessment, total). Proved unchanged by running the code before and after on the same inputs, every
+  output compared byte for byte: 30,000 generated invoices through `check_taxes` and `math_check`; 600 approvals into
+  new databases (every outcome, edit, second approval and refusal); 6,400 `fuse` calls recorded from 300 generated
+  invoices, a learning run and the test suite, with a coding model and a page reader added as readers; 101 files and
+  35 page-reader re-reads through the pipeline. A change planted on purpose in each showed up as differences.
