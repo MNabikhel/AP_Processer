@@ -63,30 +63,42 @@ jobs:
       - name: LM Studio (headless) with the pilot laptop's models, its server on port 1234
         # The laptop's three (docs/LM_STUDIO.md): Qwen 3.5 9B to chat (context 16,384, step 2 of the guide), OvisOCR2
         # to read pages (AP Coder loads it itself, 20,480), and an embedding model it must not pick for either job.
+        # The files come from Hugging Face into LM Studio's models folder (publisher\repository\file), with retries
+        # that resume: LM Studio's own download of the chat model broke off once.
         shell: pwsh
         run: |
           pwsh -NoProfile -Command 'Invoke-RestMethod https://lmstudio.ai/install.ps1 | Invoke-Expression'
           $lms = Join-Path $env:USERPROFILE '.lmstudio\bin\lms.exe'
           if (-not (Test-Path $lms)) { throw 'LM Studio (llmster) did not install' }
           & $lms daemon up
-          & $lms get qwen/qwen3.5-9b --gguf -y
-          if ($LASTEXITCODE) { throw 'the chat model did not download' }
-          $ovis = Join-Path $env:USERPROFILE '.lmstudio\models\bartowski\ATH-MaaS_OvisOCR2-GGUF'
-          New-Item -ItemType Directory -Force -Path $ovis | Out-Null
-          foreach ($f in 'ATH-MaaS_OvisOCR2-Q8_0.gguf', 'mmproj-ATH-MaaS_OvisOCR2-f16.gguf') {
-            curl.exe -sSfL -o (Join-Path $ovis $f) "https://huggingface.co/bartowski/ATH-MaaS_OvisOCR2-GGUF/resolve/main/$f"
+          $files = @(
+            'lmstudio-community/Qwen3.5-9B-GGUF/Qwen3.5-9B-Q4_K_M.gguf',
+            'lmstudio-community/Qwen3.5-9B-GGUF/mmproj-Qwen3.5-9B-BF16.gguf',
+            'bartowski/ATH-MaaS_OvisOCR2-GGUF/ATH-MaaS_OvisOCR2-Q8_0.gguf',
+            'bartowski/ATH-MaaS_OvisOCR2-GGUF/mmproj-ATH-MaaS_OvisOCR2-f16.gguf',
+            'Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf'
+          )
+          foreach ($f in $files) {
+            $publisher, $repo, $name = $f -split '/'
+            $folder = Join-Path $env:USERPROFILE ".lmstudio\models\$publisher\$repo"
+            New-Item -ItemType Directory -Force -Path $folder | Out-Null
+            curl.exe -sSfL --retry 8 --retry-all-errors --retry-delay 10 -C - -o (Join-Path $folder $name) `
+              "https://huggingface.co/$publisher/$repo/resolve/main/${name}?download=true"
             if ($LASTEXITCODE) { throw "$f did not download" }
+            Write-Host "$f`: $([math]::Round((Get-Item (Join-Path $folder $name)).Length / 1MB)) MB"
           }
-          & $lms get https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF@Q8_0 --gguf -y
-          & $lms ls
-          & $lms load qwen/qwen3.5-9b --context-length 16384 -y
+          $raw = (& $lms ls --json) -join "`n"
+          $listed = $raw.Substring($raw.IndexOf('[')) | ConvertFrom-Json
+          $listed | Format-Table modelKey, type, path -AutoSize | Out-String -Width 200 | Write-Host
+          $chat = ($listed | Where-Object { $_.path -like '*Qwen3.5-9B-Q4_K_M*' } | Select-Object -First 1).modelKey
+          if (-not $chat) { throw 'LM Studio does not list the chat model' }
+          & $lms load $chat --context-length 16384 -y
           if ($LASTEXITCODE) { throw 'the chat model did not load' }
           & $lms server start --port 1234
           & $lms ps
           $models = (Invoke-WebRequest -Uri 'http://127.0.0.1:1234/api/v1/models' -UseBasicParsing -TimeoutSec 30).Content
           Write-Host $models
           if ($models -notmatch 'ath-maas_ovisocr2') { throw 'LM Studio does not list OvisOCR2' }
-          if ($models -notmatch 'qwen3\.5-9b') { throw 'LM Studio does not list the chat model' }
       - name: Unzip the release zip to a fresh folder
         shell: pwsh
         run: |
