@@ -133,13 +133,15 @@ ruff check ap_coder tests scripts && ruff format --check ap_coder tests scripts
   `origin/main` and your checkout; point `origin` at the company's repository first).
 - Accuracy benchmarks: `python -m ap_coder.bench run|learn|lines|speed|coding|triage [--quick]`.
 
-**CI** is one GitHub Actions file, `.github/workflows/ci.yml` (on push to main and on pull requests): the tests on
-Linux (Python 3.11–3.14) and Windows (3.11–3.14, the slow ones in 3 shards), lint and `pip-audit`, browser tests
-(Chromium), the installer and the double-click launcher on Windows, GitHub's ZIP on Windows, the offline bundle on
-Windows and macOS with the internet cut off (installed with an LM Studio stand-in, then the demo story), updates
-from three older versions on Linux, macOS and Windows. On another CI system (Azure DevOps, GitLab...), port at least:
-the Linux and Windows tests, lint, and the Windows offline-bundle job (the closest thing to the pilot tester's
-laptop). Three kinds of job need the repository's history: "Update from ..." (`git archive` of three old commits,
+**CI** is mainly one GitHub Actions file, `.github/workflows/ci.yml` (on push to main and on pull requests): the
+tests on Linux (Python 3.11–3.14) and Windows (3.11–3.14, the slow ones in 3 shards), lint and `pip-audit`, browser
+tests (Chromium), the installer and the double-click launcher on Windows, GitHub's ZIP on Windows, the offline
+bundle on Windows and macOS with the internet cut off (installed with an LM Studio stand-in, then the demo story),
+updates from three older versions on Linux, macOS and Windows. A second file, `.github/workflows/release.yml`, runs
+only when it or `.github/release-tags.txt` changes: the release's offline zip on Windows with the real LM Studio
+(models on the CPU: hours), then the release tags (D-129). On another CI system (Azure DevOps, GitLab...), port at
+least: the Linux and Windows tests, lint, and the Windows offline-bundle job (the closest thing to the pilot
+tester's laptop). Three kinds of job need the repository's history: "Update from ..." (`git archive` of three old commits,
 `scripts/ci/old_versions.py`), "The pilot tester's Mac ... updated from PR 8" (fetch depth 0) and "GitHub's ZIP on
 Windows" (`git archive HEAD~1`); with route B, drop them. CI needs Linux and Windows runners (macOS for the Mac jobs)
 and these hosts: `pypi.org` and `files.pythonhosted.org` (packages, `pip-audit`'s advisories), Playwright's Chromium

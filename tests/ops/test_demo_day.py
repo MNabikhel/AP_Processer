@@ -1,13 +1,18 @@
 """The demo run sheet (docs/DEMO_RUN_SHEET.md), step by step, as the dashboard does it: the sample GL accounts, the ten
 sample invoices imported, read and coded; Pacific Office Supply's PO-77120 corrected and approved; its next invoice
 (samples/demo_day/) coded from that approval; the same invoice sent again stopped as a duplicate; the Excel export.
-CI runs it on Linux and Windows, and in the Windows offline bundle job on the unzipped bundle."""
+CI runs it on Linux and Windows, and in the Windows offline bundle job on the unzipped bundle. With AP_DEMO_DAY_URL
+it runs against an AP Coder already running there (the demo launcher, with LM Studio and its models: the release
+workflow's pilot laptop, D-129), and checks that the real models did the reading and the coding."""
 
 from __future__ import annotations
 
 import io
+import os
 import re
+import time
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -21,21 +26,54 @@ from tests.web.test_web_invoice import form_of
 PAGE = {"X-AP-Coder": "1"}
 DEMO_DAY = SAMPLES / "demo_day"
 CORRECTED = {"HP 26X toner": "6000", "Dell 27": "6010", "Copy paper": "6000"}  # what AP codes on PO-77120
+LIVE = os.environ.get("AP_DEMO_DAY_URL", "")  # a running AP Coder; its database is AP_DEMO_DAY_DB
+READER = os.environ.get("AP_DEMO_DAY_READER", "ath-maas_ovisocr2")  # LM Studio's OvisOCR2, as AP Coder names it
+WAIT = float(os.environ.get("AP_DEMO_DAY_WAIT", "300"))  # seconds a step may take: on a CPU, minutes an invoice
 
 
 @pytest.fixture
 def demo(tmp_path):
+    if LIVE:
+        yield from _running()
+        return
     store = Store(tmp_path / "private" / "ap_coder.db")
     s = Settings()
     app = create_app(replace(s, llm=replace(s.llm, provider="off")), store)  # no LM Studio: learning needs none
-    return app, TestClient(app, base_url="http://localhost"), store
+    yield app, TestClient(app, base_url="http://localhost"), store
+
+
+def _running():
+    """The AP Coder running at LIVE, once LM Studio's OvisOCR2 passed its self-test (on demo day it passed the
+    evening before, at the rehearsal): no app object, the client talks to it over HTTP."""
+    try:  # in every install (openai's HTTP client); httpx comes only with the dev extra the launcher leaves out
+        import httpx2 as httpx
+    except ModuleNotFoundError:
+        import httpx
+
+    from ap_coder.ai import page_worker
+
+    store = Store(Path(os.environ["AP_DEMO_DAY_DB"]))
+    with httpx.Client(base_url=LIVE, timeout=WAIT, trust_env=False) as client:  # this computer: never a proxy
+        deadline = time.monotonic() + WAIT
+        while not page_worker.confirmed(store, READER):
+            tested = page_worker.saved_test(store, READER)
+            if tested and client.get("/settings/reading/self-test").json()["state"] == "idle":
+                break  # tested, and it failed: the assert below says how
+            assert time.monotonic() < deadline, f"{READER}'s self-test did not end in {WAIT:.0f} s"
+            time.sleep(10)
+        assert page_worker.confirmed(store, READER), page_worker.saved_test(store, READER)
+        yield None, client, store
 
 
 def _import(app, client, *paths):
     files = [("files", (p.name, p.read_bytes(), "application/pdf")) for p in paths]
     assert client.post("/process/upload", files=files, headers=PAGE).json()["ok"]
-    assert app.state.jobs.get("process").wait(300), "reading took too long"
-    snap = client.get("/process/status").json()
+    if app is not None:
+        assert app.state.jobs.get("process").wait(WAIT), "reading took too long"
+    deadline = time.monotonic() + WAIT
+    while (snap := client.get("/process/status").json())["state"] == "running":
+        assert time.monotonic() < deadline, "reading took too long"
+        time.sleep(5)
     assert snap["state"] == "done", snap
     return snap["result"]
 
@@ -57,6 +95,10 @@ def test_the_demo_run_sheet_works_from_import_to_the_excel_export(demo):
     result = _import(app, client, *sorted(SAMPLES.glob("*.pdf")))
     assert result["ok"] == 10 and result["failed"] == 0
     assert len(store.list_invoices(REVIEW)) == 10
+    if LIVE:  # LM Studio's chat model coded each of them, not OvisOCR2 (meta.inference: the model the pipeline asked)
+        coded_by = {i["invoice_number"]: (store.get_invoice(i["id"])["meta"].get("inference") or {}).get("model")
+                    for i in store.list_invoices(REVIEW)}  # fmt: skip
+        assert all(model and READER not in model for model in coded_by.values()), coded_by
 
     # 1-2. Pacific Office Supply's PO-77120: the tax check adds up; AP codes its three lines and approves
     pacific = _invoice(store, "PO-77120")["id"]
