@@ -16,48 +16,64 @@ real and what is sample data · 6 the connection points, one by one · 7 the com
 
 ## 1. Getting the code in
 
-The handoff is three files; use whichever route the company's environment allows. Check the files first:
-`sha256sum -c SHA256SUMS.txt` (Windows: `Get-FileHash <file> -Algorithm SHA256`).
+The handoff is four files. `docs/HANDOFF.md` inside the code is the master copy of this file; the loose
+`HANDOFF.md` beside the others is the same file, for reading before anything is unpacked. Work in the folder that
+holds the four files, and check them first: `sha256sum -c SHA256SUMS.txt` (Windows: `Get-FileHash <file> -Algorithm
+SHA256`, compared by eye).
 
 | File | What it is | Use it when |
 |---|---|---|
-| `AP_Coder.bundle` | A git bundle: the `main` branch with its whole history and the release tags (`v0.3.0-pilot1`, the laptop release; `v0.3.0-handoff1`, the handoff) | Git is available: keeps every commit message, which explains why the code is as it is |
+| `AP_Coder.bundle` | A git bundle: `main` with its whole history and the tags `v0.3.0-pilot1` (the laptop release) and `v0.3.0-handoff1` (this handoff: the release plus these docs) | Git is available: keeps every commit message, which explains why the code is as it is |
 | `AP_Coder_source.zip` | The same files as `main`, no history | Only file transfers are allowed, or git isn't |
 | `HANDOFF.md` | This file | Read first |
+| `SHA256SUMS.txt` | The SHA-256 of the three files above | Check the transfer |
 
-**Route A, the git bundle (preferred).**
+**Route A, the git bundle (preferred).** In the folder with the four files:
 
 ```bash
 git clone -b main AP_Coder.bundle AP_Processer   # a normal repository (cloning checks the bundle); origin = the bundle
 cd AP_Processer
-git bundle verify ../AP_Coder.bundle       # "The bundle records a complete history" (it works only inside a repository)
-git tag                                    # the release tags
-git log --oneline | head                   # the latest commits
+git bundle verify ../AP_Coder.bundle             # "The bundle records a complete history" (works only inside a repository)
+git tag                                          # v0.3.0-handoff1, v0.3.0-pilot1
+git log --oneline | head                         # the latest commits
 # Make the company's Git server the origin (an empty repository created there first):
 git remote set-url origin <the company's repository URL>
 git push -u origin main --tags
 ```
 
-**Route B, the plain zip.** Unzip it, then make it a repository so changes are tracked from here:
+**Route B, the plain zip.** In the folder with the four files:
 
 ```bash
+unzip AP_Coder_source.zip                        # makes AP_Processer/
 cd AP_Processer
+cat ap_coder/BUILD                               # must read $Format:%h %cI$ (git fills it in for each ZIP made later)
 git init -b main && git add -A && git commit -m "AP Coder at the handoff (v0.3.0-handoff1), no history"
 git remote add origin <the company's repository URL> && git push -u origin main
 ```
 
-The decisions and bugs are fully written in `docs/` (and `docs/archive/`), so the history's reasons survive route B,
-but the commit messages don't.
+`ap_coder/BUILD` is the build stamp: `git archive` and GitHub's ZIP write the commit into it, and the updater uses it
+to tell builds apart (B-542). It must stay the placeholder in the repository; if it holds a commit and a date, put
+the placeholder back before the first commit: `printf '$Format:%%h %%cI$\n' > ap_coder/BUILD`.
+The decisions and bugs are written in full in `docs/` (and `docs/archive/`), so the reasons survive route B; the
+commit messages don't.
 
 **Python and packages.** Python 3.11 to 3.14 (3.12 recommended). With a package index reachable:
-`python -m venv .venv`, activate it, `pip install -e ".[ocr,dev]"`. With no internet, use a wheelhouse: the offline
-install zip of the laptop release (`APProcessor-offline-0.3.0-*.zip`, Windows, Python 3.12–3.14) has a `wheelhouse/`
-folder: `pip install --no-index --find-links <that wheelhouse> -e ".[ocr,dev]"`. A wheelhouse for another platform is
-built on any computer with internet: `AP_ALLOW_INTERNET=1 python scripts/build_offline_bundle.py --platform <tag>
---python <x.y>` (`--dry-run` lists every address it downloads from, for the firewall).
+`python -m venv .venv`, activate it, `pip install -e ".[ocr,dev]"`. `pyproject.toml` asks only for minimum versions;
+the exact set this release was tested with is `docs/tested-packages.txt` (`pip install -c docs/tested-packages.txt
+-e ".[ocr,dev]"` when a newer package breaks something).
+With no internet, use a wheelhouse. The person who handed this over may also have given you the laptop release's
+offline install zip (`APProcessor-offline-0.3.0-20261029.zip`, Windows, Python 3.12–3.14): its `wheelhouse/` folder
+installs everything with `pip install --no-index --find-links <that wheelhouse> -e ".[ocr,dev]"`. Without it, build
+one on any computer with internet: `AP_ALLOW_INTERNET=1 python scripts/build_offline_bundle.py` (Windows, Python
+3.11–3.14, plus that computer; `--platform` and `--python` choose others; `--dry-run` lists every address it
+downloads from, for the firewall). The same command makes the offline install zip for the pilot laptop (step 2 of
+section 8; `docs/PILOT.md`).
 
-Then prove the copy works before changing anything (section 3): the fast tests pass, `python scripts/pilot_check.py`
-says 10 of 10 sample invoices read right, `python -m ap_coder serve` opens http://127.0.0.1:8501.
+Then prove the copy works before changing anything (section 3): the default test tier passes,
+`python scripts/pilot_check.py` says 10 of 10 sample invoices read right, `python -m ap_coder serve --port 8501
+--no-browser` answers on http://127.0.0.1:8501/healthz. `python -m ap_coder doctor` then shows six warnings that are
+expected on a fresh copy (the OCR and table-finder models not copied yet, LM Studio not running, the sample GL
+accounts, no cost centers); `python scripts/fetch_models.py` copies or fetches the OCR models.
 
 ---
 
@@ -82,7 +98,8 @@ Nothing connects to the internet at run time. It is a FastAPI web app on 127.0.0
 roles and HTTPS). Data lives in one SQLite database in a data folder outside the code. It is at pilot stage: built
 and tested on synthetic and public sample invoices, not yet on the company's invoices or systems.
 
-Status at the handoff (release `v0.3.0-pilot1`, commit `a1724b5`, 29 October 2026):
+Status at the handoff (`v0.3.0-handoff1`: the laptop release `v0.3.0-pilot1` of 29 October 2026 plus these handoff
+docs; the build stamp `doctor` and `/healthz` report is that commit's):
 
 | Part | State |
 |---|---|
@@ -97,11 +114,11 @@ Status at the handoff (release `v0.3.0-pilot1`, commit `a1724b5`, 29 October 202
 ## 3. Run and test
 
 ```bash
-python -m ap_coder serve          # the dashboard, http://127.0.0.1:8501 (the laptop way: double-click APProcessor.bat)
+python -m ap_coder serve          # the dashboard on http://127.0.0.1:8501 or the next free port (--port N, --no-browser)
 python -m ap_coder doctor         # what is set up and what is missing
 python scripts/pilot_check.py     # reads the 10 sample invoices, compares with samples/ground_truth (no AI needed)
 python scripts/check.py           # after a change: ruff on the changed files, then their tests (a minute or two)
-python -m pytest -q               # the default tier: all but the slow tests (about 4,000, 6 minutes)
+python -m pytest -q               # the default test tier: all but the slow tests (about 4,000, 6 minutes)
 python -m pytest -q -m ""         # everything, browser tests included (about 15 minutes; needs Playwright + Chromium)
 ruff check ap_coder tests scripts && ruff format --check ap_coder tests scripts
 ```
@@ -122,8 +139,12 @@ Linux (Python 3.11–3.14) and Windows (3.11–3.14, the slow ones in 3 shards),
 Windows and macOS with the internet cut off (installed with an LM Studio stand-in, then the demo story), updates
 from three older versions on Linux, macOS and Windows. On another CI system (Azure DevOps, GitLab...), port at least:
 the Linux and Windows tests, lint, and the Windows offline-bundle job (the closest thing to the pilot tester's
-laptop). The "Update from ..." jobs take older versions out of this repository's own history (`git archive` of
-three commits, `scripts/ci/old_versions.py`): with route B (no history) drop them.
+laptop). Three kinds of job need the repository's history: "Update from ..." (`git archive` of three old commits,
+`scripts/ci/old_versions.py`), "The pilot tester's Mac ... updated from PR 8" (fetch depth 0) and "GitHub's ZIP on
+Windows" (`git archive HEAD~1`); with route B, drop them. CI needs Linux and Windows runners (macOS for the Mac jobs)
+and these hosts: `pypi.org` and `files.pythonhosted.org` (packages, `pip-audit`'s advisories), Playwright's Chromium
+download (browser tests), and the OCR models' site (`www.modelscope.cn`; `build_offline_bundle.py --dry-run` lists
+them all).
 
 ---
 
@@ -156,9 +177,10 @@ Starting points: `ai/pipeline.py` (`finalise_coding`), `core/schema.py`, `web/pa
   mapping, Canadian tax rates, vendor master, POs, bank accounts, coding policy) and `samples/` (10 synthetic invoices
   addressed to "Fabrikam Canada Ltd." with their answers in `samples/ground_truth/`, and `samples/demo_day/`).
   The made-up email domain `pcl-made-up.example` (in `bench/emails.py` and one test) is not a real address.
-- **Never in the repository:** the company's data. It lives in the **data folder**, outside the code: `AP_PRIVATE_DIR`
-  if set, else the folder recorded in `~/.ap_coder/settings.json` (default `~/APCoder`), else `private/` in a checkout
-  (git-ignored). It holds `ap_coder.db`, `invoices/`, `emails/`, `backups/`, `logs/`, and a `.env` with any secrets
+- **Never in the repository:** the company's data. It lives in the **data folder** (`core/paths.py` `private_dir`):
+  `AP_PRIVATE_DIR` if set, else the folder the launcher or installer recorded in `~/.ap_coder/settings.json`
+  (`~/APCoder` on a pilot laptop), else `private/` in the checkout (git-ignored): a developer checkout installed with
+  pip uses `private/`. It holds `ap_coder.db`, `invoices/`, `emails/`, `backups/`, `logs/`, and a `.env` with any secrets
   (AIS password, Azure keys, the Finance Hub's client secret). `.gitignore` keeps `private/`, `.env*` and `*.xlsx`
   out of git. Keep it so: real invoices, vendor lists, GL charts or JDE values committed to git are a leak.
 - **What real data replaces:** the sample GL accounts, tax mapping, vendor master, POs and bank accounts are imported
@@ -190,15 +212,16 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
 - **The company supplies** (the **JDE worksheet** asks all of it): Settings → JD Edwards E1 → **Download the
   worksheet** gives one Excel file with 37 questions, a yellow answer column, and sheets for tax areas, the account
   mapping (every GL account listed) and each supplier's address number (AN8). The JDE team fills it in; **Import the
-  answers** on the same page applies them and lists any it could not use. The questions: company, BUs, document types
+  JDE team's answers** on the same page applies them and lists any it could not use. The questions: company, BUs, document types
   (voucher, credit note), the P0400047 version and whether it recalculates tax, the duplicate-invoice edit, batch
   prefix and user, amount mode, decimals, line numbering, account format, how the AAIs post each tax, the self-assessed
   and exempt tax codes, G/L date, due date, terms code, pay status, the PO path, currencies.
   **Not in the worksheet:** payment terms → VLPTC codes (Settings → JD Edwards E1 → terms table), VLGLBA per bank
   account, and everything for the API (6.2).
 - **Not confirmed with a real E1** (`jde.UNCONFIRMED`): the PO extra columns and the whole F0411Z1T layout (not a
-  standard Oracle table), VNEDLN numbering (1 or 1000), the tax area names, blank VLCRR, VLGLBA, whether code E with
-  no tax area posts lines as sent, BU right-justification. `docs/JDE_E1.md` has the open questions.
+  standard Oracle table), VNEDLN numbering, whether line numbers load as 1 or 1000, the tax area names, blank VLCRR,
+  VLGLBA. The worksheet also asks (`info:` questions) whether code E with no tax area posts lines as sent and whether
+  BUs are right-justified. `docs/JDE_E1.md` has the open questions.
 - **Prove it:** the shadow pilot scores AP Coder's vouchers against what AP posted in E1:
   `python -m ap_coder pilot-score --vouchers F0411.xlsx [--distribution F0911.xlsx]` (writes `pilot_score/`).
 - **Code and tests:** `erp/jde.py`, `erp/jde_worksheet.py`, `web/pages/settings_jde.py`, `web/pages/exports.py`;
@@ -332,7 +355,9 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
 ## 7. The company's information to gather
 
 Nothing below is in the repository, and nothing of it may be committed. Collect it inside the company, keep it in
-the data folder or the company's own document store, and import it through the dashboard.
+the data folder or the company's own document store, and import it through the dashboard. The people are named
+nowhere in the code: ask whoever handed this over to you for the pilot tester, the AP lead who decides, the JDE /
+CNC contact, IT's contact for the laptop and the server, and who owns the company's repository and CI.
 
 | What | From | Goes to |
 |---|---|---|
@@ -350,6 +375,8 @@ the data folder or the company's own document store, and import it through the d
 | Server, certificate, service account, DNS name | IT | `docs/SERVER.md` (6.10) |
 | Coding policy; meals accounts; approval limit | AP lead | GL accounts & tax → Coding policy; Settings → Review |
 | A sample of real invoices with what AP coded | AP | The shadow pilot (`docs/PILOT_PLAN.md`) and `pilot-score` |
+| E1's vouchers for the pilot period (F0411, and F0911 for the distribution) | JDE team | `python -m ap_coder pilot-score` (step 2's "done when") |
+| LM Studio and the models (a chat model: Gemma 4 12B or Qwen 3.5 9B; OvisOCR2's GGUF and vision file) | IT, from LM Studio's model catalogue | `docs/LM_STUDIO.md`, `docs/PILOT.md` "What you need" |
 
 ---
 
@@ -357,12 +384,14 @@ the data folder or the company's own document store, and import it through the d
 
 Each step ends with something a person can check. Don't start the next while the last one's tests are red.
 
-1. **Land the code.** Import it (section 1), run the fast tests and `pilot_check.py`, get CI running in the
-   company's system (section 3). *Done when* the tests are green on the company's CI and the dashboard opens.
+1. **Land the code.** Import it (section 1), run the default test tier and `pilot_check.py`, get CI running in the
+   company's system (section 3: the runners and hosts it needs). Replace the README's CI badge and links, which point
+   at the original GitHub repository. *Done when* the tests are green on the company's CI and the dashboard opens.
 2. **The laptop pilot on the company's master data, no connections yet.** Import the GL accounts, tax accounts,
    vendor master, bank accounts (section 7) on the pilot tester's laptop (the offline install zip; `docs/PILOT.md`).
    Run the four-week shadow pilot of `docs/PILOT_PLAN.md`: AP keeps working as today, AP Coder reads the same invoices,
-   `pilot-score` compares. *Done when* the pilot score is written up and the AP lead decides.
+   `pilot-score` compares. *Done when* the pilot score is written up and the AP lead decides whether to go on to
+   live use (the four weeks and the decision are in `docs/PILOT_PLAN.md`).
 3. **JD Edwards through batch files.** Send the JDE worksheet; import the answers; make dry runs; load a batch into
    E1's **test** environment through R04110ZA; compare with what AP would have keyed. Resolve every point of
    `jde.UNCONFIRMED`. *Done when* a test batch posts in E1 exactly as AP would have.
@@ -430,5 +459,5 @@ review yet.
 | OvisOCR2 | The small vision model that reads every page, in LM Studio |
 | Touchless | An invoice approved without a person, for a vendor with a track record (off by default) |
 | Shadow pilot | AP works as today while AP Coder reads the same invoices; the two are compared |
-| Data folder | Where the company's data lives, outside the code (`~/APCoder` by default) |
+| Data folder | Where the company's data lives, outside the code (`~/APCoder` on a laptop, `private/` in a checkout) |
 | Pilot tester | The person running the pilot on the laptop |
