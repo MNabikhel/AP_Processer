@@ -1,0 +1,198 @@
+# The release (D-129): the pilot release's offline install zip checked on a Windows laptop with the real LM Studio,
+# then the tags of .github/release-tags.txt and their GitHub releases. Slow (the models run on the CPU: no graphics
+# card here), so it runs only when this file or the tag list changes, or by hand.
+name: Release
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - .github/release-tags.txt
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/release.yml
+      - .github/release-tags.txt
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pilot-laptop:
+    # The pilot tester's laptop on demo day (docs/DEMO_RUN_SHEET.md): Windows, LM Studio running with the laptop's
+    # three models (the real LM Studio, headless: llmster), the release's offline install zip unzipped to a fresh
+    # folder and the demo launcher double-clicked with the internet cut off, then the demo run sheet from import to
+    # the Excel export through the running dashboard, once OvisOCR2 passed its self-test, the chat model coding.
+    name: Pilot laptop with the real LM Studio (release zip, no internet)
+    runs-on: windows-latest
+    timeout-minutes: 350
+    env:
+      AP_NO_PAUSE: "1"
+      BROWSER: none
+    steps:
+      - uses: actions/checkout@v4
+      - name: The pilot release in .github/release-tags.txt
+        id: release
+        shell: pwsh
+        run: |
+          $line = Get-Content .github\release-tags.txt | Where-Object { $_ -match '^v\S+-pilot\d+\s' } | Select-Object -First 1
+          if (-not $line) { throw 'no pilot release in .github/release-tags.txt' }
+          $tag, $sha = ($line -split '\s+')[0, 1]
+          Write-Host "$tag at $sha"
+          "tag=$tag" | Out-File $env:GITHUB_OUTPUT -Append
+          "sha=$sha" | Out-File $env:GITHUB_OUTPUT -Append
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.release.outputs.sha }}
+          path: release-src
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the release's offline install zip (online), as sent to the pilot tester
+        working-directory: release-src
+        env:
+          AP_ALLOW_INTERNET: "1"
+        run: python scripts/build_offline_bundle.py --no-current --python 3.12 3.13 3.14 --out "${{ runner.temp }}\dist"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: offline-install-zip
+          path: ${{ runner.temp }}\dist\APProcessor-offline-*.zip
+          compression-level: 0
+          retention-days: 14
+      - name: LM Studio (headless) with the pilot laptop's models, its server on port 1234
+        # The laptop's three (docs/LM_STUDIO.md): Qwen 3.5 9B to chat (context 16,384, step 2 of the guide), OvisOCR2
+        # to read pages (AP Coder loads it itself, 20,480), and an embedding model it must not pick for either job.
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -Command 'Invoke-RestMethod https://lmstudio.ai/install.ps1 | Invoke-Expression'
+          $lms = Join-Path $env:USERPROFILE '.lmstudio\bin\lms.exe'
+          if (-not (Test-Path $lms)) { throw 'LM Studio (llmster) did not install' }
+          & $lms daemon up
+          & $lms get qwen/qwen3.5-9b --gguf -y
+          if ($LASTEXITCODE) { throw 'the chat model did not download' }
+          $ovis = Join-Path $env:USERPROFILE '.lmstudio\models\bartowski\ATH-MaaS_OvisOCR2-GGUF'
+          New-Item -ItemType Directory -Force -Path $ovis | Out-Null
+          foreach ($f in 'ATH-MaaS_OvisOCR2-Q8_0.gguf', 'mmproj-ATH-MaaS_OvisOCR2-f16.gguf') {
+            curl.exe -sSfL -o (Join-Path $ovis $f) "https://huggingface.co/bartowski/ATH-MaaS_OvisOCR2-GGUF/resolve/main/$f"
+            if ($LASTEXITCODE) { throw "$f did not download" }
+          }
+          & $lms get https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF@Q8_0 --gguf -y
+          & $lms ls
+          & $lms load qwen/qwen3.5-9b --context-length 16384 -y
+          if ($LASTEXITCODE) { throw 'the chat model did not load' }
+          & $lms server start --port 1234
+          & $lms ps
+          $models = (Invoke-WebRequest -Uri 'http://127.0.0.1:1234/api/v1/models' -UseBasicParsing -TimeoutSec 30).Content
+          Write-Host $models
+          if ($models -notmatch 'ath-maas_ovisocr2') { throw 'LM Studio does not list OvisOCR2' }
+          if ($models -notmatch 'qwen3\.5-9b') { throw 'LM Studio does not list the chat model' }
+      - name: Unzip the release zip to a fresh folder
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem "$env:RUNNER_TEMP\dist" -Filter 'APProcessor-offline-*.zip' | Select-Object -First 1
+          if (-not $zip) { throw 'no bundle built' }
+          Write-Host "$($zip.Name): $([math]::Round($zip.Length / 1MB)) MB"
+          Expand-Archive -Path $zip.FullName -DestinationPath 'C:\pilot'
+          Get-Content 'C:\pilot\APProcessor\ap_coder\BUILD'
+      - name: Double-click the demo launcher with the internet cut off, then the demo run sheet with the real models
+        # tests/ops/test_demo_day.py against the running dashboard (AP_DEMO_DAY_URL): it waits for OvisOCR2's
+        # self-test to pass, then imports, codes (the chat model), corrects, approves, stops the duplicate and exports
+        # to Excel. This checkout's copy replaces the release's (which predates running against a live dashboard).
+        shell: pwsh
+        working-directory: C:\pilot\APProcessor
+        env:
+          HTTP_PROXY: http://127.0.0.1:9
+          HTTPS_PROXY: http://127.0.0.1:9
+          ALL_PROXY: http://127.0.0.1:9
+          PIP_INDEX_URL: http://127.0.0.1:9/simple
+          NO_PROXY: 127.0.0.1,localhost
+          AP_DEMO_DAY_URL: http://127.0.0.1:8596
+          AP_DEMO_DAY_WAIT: "7200"
+        run: |
+          $p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','scripts\demo.bat','--port','8596' -PassThru `
+            -RedirectStandardOutput launch.out -RedirectStandardError launch.err
+          $ok = $false
+          foreach ($i in 1..360) {
+            Start-Sleep -Seconds 5
+            try {
+              $r = Invoke-WebRequest -Uri 'http://127.0.0.1:8596/healthz' -UseBasicParsing -TimeoutSec 5 -NoProxy
+              if ($r.StatusCode -eq 200) { $ok = $true; break }
+            } catch { }
+            if ($p.HasExited) { break }
+          }
+          $out = Get-Content launch.out -Raw -ErrorAction SilentlyContinue
+          Write-Host $out
+          Get-Content launch.err -Tail 40 -ErrorAction SilentlyContinue
+          if (-not $ok) { throw 'the offline install did not bring the dashboard up' }
+          if ($out -notmatch 'wheelhouse') { throw 'did not install from the wheelhouse' }
+          if ($out -notmatch 'Self-check OK') { throw 'the readiness summary did not show the self-check OK' }
+          Copy-Item "$env:GITHUB_WORKSPACE\tests\ops\test_demo_day.py" tests\ops\test_demo_day.py -Force
+          $env:AP_DEMO_DAY_DB = Join-Path $env:USERPROFILE 'APCoder-demo\ap_coder.db'
+          .venv\Scripts\python.exe -m pip install --no-index --find-links wheelhouse pytest
+          if ($LASTEXITCODE) { throw 'pytest did not install from the wheelhouse' }
+          $started = Get-Date
+          .venv\Scripts\python.exe -m pytest -q -m "" -p no:cacheprovider tests\ops\test_demo_day.py
+          $code = $LASTEXITCODE
+          Write-Host "The run sheet took $([math]::Round(((Get-Date) - $started).TotalMinutes)) min"
+          if ($code) { throw "the demo run sheet failed with the real models ($code)" }
+      - name: Logs (launcher, AP Coder, LM Studio)
+        if: always()
+        shell: pwsh
+        run: |
+          $logs = Join-Path $env:RUNNER_TEMP 'pilot-logs'
+          New-Item -ItemType Directory -Force -Path $logs | Out-Null
+          Copy-Item C:\pilot\APProcessor\launch.* $logs -ErrorAction SilentlyContinue
+          Copy-Item (Join-Path $env:USERPROFILE 'APCoder-demo\logs') (Join-Path $logs 'ap-coder') -Recurse -ErrorAction SilentlyContinue
+          Copy-Item (Join-Path $env:USERPROFILE '.lmstudio\server-logs') (Join-Path $logs 'lm-studio') -Recurse -ErrorAction SilentlyContinue
+          Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*ap_coder*' } |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pilot-laptop-logs
+          path: ${{ runner.temp }}\pilot-logs
+          retention-days: 14
+
+  tags:
+    # Only on main: each tag of .github/release-tags.txt that GitHub lacks, with its release; the pilot release gets
+    # the offline install zip the job above checked, and its SHA-256.
+    name: Release tags and the offline install zip on GitHub
+    needs: pilot-laptop
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: offline-install-zip
+          path: dist
+      - name: Create each missing tag and its release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          (cd dist && sha256sum APProcessor-offline-*.zip > SHA256SUMS.txt && cat SHA256SUMS.txt)
+          grep -v '^#' .github/release-tags.txt | while read -r tag sha title; do
+            [ -n "$tag" ] || continue
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+              echo "$tag: already tagged"
+            else
+              git tag -a "$tag" "$sha" -m "$title"
+              git push origin "refs/tags/$tag"
+            fi
+            if gh release view "$tag" > /dev/null 2>&1; then
+              echo "$tag: its release exists"
+            else
+              gh release create "$tag" --verify-tag --title "$tag" --notes "$title"
+            fi
+            case "$tag" in
+              *-pilot*) gh release upload "$tag" dist/APProcessor-offline-*.zip dist/SHA256SUMS.txt --clobber ;;
+            esac
+          done

@@ -176,3 +176,11 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   them and their SHA-256. The company's copy becomes the main one. No company data travels: the company's values
   are gathered inside the company (the JDE worksheet) and imported into the data folder. `CLAUDE.md` and the README
   point to HANDOFF.md first.
+- **D-129** · A release is tagged by CI once its laptop is checked with the real LM Studio: `.github/release-tags.txt`
+  lists the tags (tag, commit, title), and `.github/workflows/release.yml` builds the pilot release's offline install
+  zip from its commit, installs it on Windows with LM Studio running headless (llmster) with the pilot laptop's
+  models on the CPU, double-clicks `scripts\demo.bat` with the internet cut off and runs the run sheet against the
+  running dashboard: `tests/ops/test_demo_day.py` with `AP_DEMO_DAY_URL` waits for OvisOCR2 to pass its self-test and
+  checks that the chat model coded every sample invoice. On main it then creates each missing tag and its GitHub
+  release, the checked zip attached to the pilot's. Why: a stand-in proved the install, not the real models on
+  Windows, and only CI may push tags here. Slow, so it runs only when the workflow or the tag list changes.
