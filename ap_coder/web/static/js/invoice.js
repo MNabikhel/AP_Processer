@@ -278,6 +278,13 @@ document.addEventListener("click", (e) => {
     if (tr) deleteRow(tr);
     return;
   }
+  const splitRow = e.target.closest("[data-split-row]");
+  if (splitRow) {
+    const tr = splitRow.closest("tr");
+    if (tr && lineNo(tr)) openSplit(tr);
+    else toast({ text: "Give the line a number first: then it can be split.", tone: "info" }, 3000);
+    return;
+  }
   const action = e.target.closest("[data-grid-action]");
   if (action) gridAction(action.dataset.gridAction, { position: action.dataset.position, gl: action.dataset.gl, cc: action.dataset.cc }, action);
   const copy = e.target.closest("[data-copy]");
@@ -375,6 +382,8 @@ document.addEventListener("click", (e) => {
 
 /* ---------- Split a line ---------- */
 
+// One line shared across several GL accounts (cost centers): by percentage, or by dollar amount (D-126). Opened from
+// the button under the table, a line's own split button, or its right-click menu (openSplit).
 const split = document.querySelector("[data-split]");
 const splitLine = split?.querySelector("[data-split-line]");
 const parts = split?.querySelector("[data-parts]");
@@ -386,6 +395,7 @@ function lineRows() {
     description: tr.querySelector('[name="line_description"]')?.value || "",
     gl: tr.querySelector('[name="line_gl"]')?.value || "",
     cc: tr.querySelector('[name="line_cc"]')?.value || "",
+    amount: Number(tr.querySelector('[name="line_amount"]')?.value) || 0,
   }));
 }
 
@@ -405,6 +415,12 @@ function fillSplitLines() {
   if ([...splitLine.options].some((o) => o.value === before)) splitLine.value = before;
 }
 
+const cents = (n) => Math.round(n * 100) / 100;
+const money = (n) => n.toLocaleString("en-CA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const splitBy = () => split?.querySelector("[data-split-by]:checked")?.value || "percent";
+const splitAmount = () => (lineRows().find((r) => r.number === splitLine.value) || {}).amount || 0;
+const partInputs = (name) => [...parts.querySelectorAll(`[name="${name}"]`)];
+
 function addPart(gl, cc, pct) {
   if (!partTemplate || !parts) return;
   parts.append(partTemplate.content.cloneNode(true));
@@ -415,6 +431,8 @@ function addPart(gl, cc, pct) {
   if (gl) setValue(glSelect, gl); // the line's accounts
   if (ccSelect && cc) setValue(ccSelect, cc);
   tr.querySelector('[name="part_pct"]').value = pct;
+  tr.querySelector('[name="part_amount"]').value = cents((splitAmount() * pct) / 100).toFixed(2);
+  showSplitBy();
 }
 
 function resetParts() {
@@ -423,14 +441,58 @@ function resetParts() {
   const row = lineRows().find((r) => r.number === splitLine.value) || {};
   addPart(row.gl, row.cc, 50);
   addPart(row.gl, row.cc, 50);
+  const amounts = partInputs("part_amount"); // the two halves in dollars add up to the line (the last takes the cent)
+  if (amounts.length === 2) amounts[1].value = cents(splitAmount() - Number(amounts[0].value)).toFixed(2);
+  splitTotal();
+}
+
+/** The percentages or the amounts, as chosen ("By percentage" / "By amount"). */
+function showSplitBy() {
+  const amount = splitBy() === "amount";
+  partInputs("part_pct").forEach((i) => (i.hidden = amount));
+  partInputs("part_amount").forEach((i) => (i.hidden = !amount));
+  const unit = split.querySelector("[data-split-unit]");
+  if (unit) unit.textContent = amount ? "Amount" : "%";
+}
+
+/** Switching between percentages and amounts: the other one follows from what is typed (the last part takes the
+    rounding, so the parts still add up). */
+function convertParts() {
+  const line = splitAmount();
+  const pcts = partInputs("part_pct");
+  const amounts = partInputs("part_amount");
+  if (splitBy() === "amount") {
+    let left = line;
+    amounts.forEach((input, i) => {
+      const value = i === amounts.length - 1 ? cents(left) : cents((line * (Number(pcts[i].value) || 0)) / 100);
+      input.value = value.toFixed(2);
+      left -= value;
+    });
+  } else if (line) {
+    let left = 100;
+    pcts.forEach((input, i) => {
+      const value = i === pcts.length - 1 ? Math.round(left * 100) / 100 : Math.round(((Number(amounts[i].value) || 0) / line) * 10000) / 100;
+      input.value = value;
+      left -= value;
+    });
+  }
+  showSplitBy();
   splitTotal();
 }
 
 function splitTotal() {
-  const total = [...parts.querySelectorAll('[name="part_pct"]')].reduce((s, i) => s + (Number(i.value) || 0), 0);
   const label = split.querySelector("[data-split-total]");
+  const go = split.querySelector("[data-split-go]");
+  if (splitBy() === "amount") {
+    const line = splitAmount();
+    const total = cents(partInputs("part_amount").reduce((s, i) => s + (Number(i.value) || 0), 0));
+    label.textContent = `Total ${money(total)} of ${money(line)} (must match the line)`;
+    go.disabled = !line || Math.abs(total - line) > 0.005;
+    return;
+  }
+  const total = partInputs("part_pct").reduce((s, i) => s + (Number(i.value) || 0), 0);
   label.textContent = `Total ${Math.round(total * 100) / 100}% (must be 100%)`;
-  split.querySelector("[data-split-go]").disabled = Math.abs(total - 100) > 0.01;
+  go.disabled = Math.abs(total - 100) > 0.01;
 }
 
 if (split) {
@@ -440,12 +502,19 @@ if (split) {
     resetParts();
   });
   splitLine.addEventListener("change", resetParts);
+  split.addEventListener("change", (e) => {
+    if (e.target.matches("[data-split-by]")) convertParts();
+  });
   split.addEventListener("input", (e) => {
-    if (e.target.name === "part_pct") splitTotal();
+    if (e.target.name === "part_pct" || e.target.name === "part_amount") splitTotal();
   });
   split.addEventListener("click", (e) => {
     if (e.target.closest("[data-add-part]")) {
-      addPart(undefined, undefined, 0);
+      // a new part takes what is left to share (nothing when it is all shared already)
+      const pctLeft = Math.max(0, Math.round((100 - partInputs("part_pct").reduce((s, i) => s + (Number(i.value) || 0), 0)) * 100) / 100);
+      const amountLeft = cents(splitAmount() - partInputs("part_amount").reduce((s, i) => s + (Number(i.value) || 0), 0));
+      addPart(undefined, undefined, pctLeft);
+      partInputs("part_amount").at(-1).value = (Math.sign(amountLeft) === Math.sign(splitAmount()) ? amountLeft : 0).toFixed(2);
       splitTotal();
     } else if (e.target.closest("[data-del-part]")) {
       e.target.closest("tr").remove();
@@ -456,9 +525,11 @@ if (split) {
         `${base}/split`,
         {
           split_line: splitLine.value,
+          split_by: splitBy(),
           part_gl: rows.map((r) => r.querySelector('[name="part_gl"]').value),
           part_cc: rows.map((r) => r.querySelector('[name="part_cc"]')?.value || ""),
           part_pct: rows.map((r) => r.querySelector('[name="part_pct"]').value),
+          part_amount: rows.map((r) => r.querySelector('[name="part_amount"]').value),
         },
         e.target.closest("[data-split-go]"),
       ).then(() => split.removeAttribute("open"));
@@ -1720,9 +1791,10 @@ function openSplit(tr) {
   if (!split) return;
   fillSplitLines();
   splitLine.value = lineNo(tr);
+  if (split.open) resetParts(); // open already (on another line): its parts start again from this one
   split.open = true; // its "toggle" sets the parts from this line
   split.scrollIntoView({ block: "nearest" });
-  setTimeout(() => split.querySelector('[name="part_pct"]')?.focus(), 50);
+  setTimeout(() => split.querySelector('[name="part_pct"]:not([hidden]), [name="part_amount"]:not([hidden])')?.focus(), 50);
 }
 
 function copyAbove(tr) {

@@ -1055,24 +1055,26 @@ def _new_lines(request: Request, invoice_id: int, reference: ReferenceData, draf
 
 @router.post("/review/{invoice_id:int}/split")
 async def split(request: Request, invoice_id: int) -> JSONResponse:
-    """Split one line across several GL accounts / cost centers by percentage (shared costs)."""
+    """Split one line across several GL accounts / cost centers (shared costs), by percentage or, with
+    ``split_by=amount``, by dollar amount (D-126)."""
     _, _, reference, form, draft = await _posted_in_review(request, invoice_id)  # (approved meanwhile: B-1402)
     number = view._line_number(form.get("split_line"))
     if number is None:
         return refuse("Pick the line to split.")
+    by = "amount" if str(form.get("split_by") or "") == "amount" else "percent"
     parts = []
-    for gl, cc, pct in zip(form.getlist("part_gl"), form.getlist("part_cc") or [""] * len(form.getlist("part_gl")),
-                           form.getlist("part_pct"), strict=False):  # fmt: skip
+    for gl, cc, share in zip(form.getlist("part_gl"), form.getlist("part_cc") or [""] * len(form.getlist("part_gl")),
+                             form.getlist("part_amount" if by == "amount" else "part_pct"), strict=False):  # fmt: skip
         try:
-            value = float(str(pct).strip() or "nan")
+            value = float(str(share).strip() or "nan")
         except ValueError:
             value = float("nan")
         parts.append((str(gl or ""), str(cc or ""), value))
     try:
-        lines = view.split(draft, number, parts, reference.cost_centers is not None)
+        lines = view.split(draft, number, parts, reference.cost_centers is not None, by=by)
     except ValueError as exc:
         return refuse(f"Not split: {exc}.")
-    shown = sum(1 for p in parts if p[2] > 0)
+    shown = sum(1 for p in parts if (p[2] != 0 if by == "amount" else p[2] > 0))
     return _new_lines(request, invoice_id, reference, draft, lines, f"Line {number} split in {shown}.", "call_split")
 
 

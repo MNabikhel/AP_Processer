@@ -148,31 +148,43 @@ def codes_to_pick(lines: Any, cost_centers: bool, hint: bool = True) -> str:
     return f"{picked}. {confirm}" if confirm else picked
 
 
-def split_line(lines: pd.DataFrame, line_number: int, parts: list[tuple[str, str, float]]) -> pd.DataFrame:
-    """Replace one line by several, one per (GL, cost center, percent); percents must add up to 100.
+def split_line(
+    lines: pd.DataFrame, line_number: int, parts: list[tuple[str, str, float]], by: str = "percent"
+) -> pd.DataFrame:
+    """Replace one line by several, one per (GL, cost center, share). ``by="percent"``: the shares are percents that
+    add up to 100; ``by="amount"``: they are dollar amounts that add up to the line's amount, each of its sign (D-126).
 
     Quantities are split in proportion at the same unit price (so PO matching still adds up), the last
     part takes the rounding, and each part keeps the line's description and taxes. The first part keeps
     the line number and its place; the others go right under it, numbered after the last line (B-1188).
     """
-    if any(not isinstance(p, (int, float)) or not math.isfinite(p) for _, _, p in parts):
-        raise ValueError("every part needs a percentage")
-    if not parts or abs(sum(p for _, _, p in parts) - 100) > 0.01:
-        raise ValueError("the percentages must add up to 100")
-    if any(p <= 0 for _, _, p in parts):
-        raise ValueError("every part needs a percentage above 0")
     numbers = pd.to_numeric(lines["line_number"], errors="coerce")
     matches = lines.index[numbers == line_number].tolist()
-    if not matches:
-        raise ValueError(f"there is no line {line_number}")
+    if by == "amount":
+        if not matches:
+            raise ValueError(f"there is no line {line_number}")
+        shares = _amount_shares(to_number(lines.loc[matches[0]].get("amount")), parts)
+    else:
+        if any(not isinstance(p, (int, float)) or not math.isfinite(p) for _, _, p in parts):
+            raise ValueError("every part needs a percentage")
+        if not parts or abs(sum(p for _, _, p in parts) - 100) > 0.01:
+            raise ValueError("the percentages must add up to 100")
+        if any(p <= 0 for _, _, p in parts):
+            raise ValueError("every part needs a percentage above 0")
+        if not matches:
+            raise ValueError(f"there is no line {line_number}")
+        shares = [(gl, cc, pct, None, f"{pct:g}%") for gl, cc, pct in parts]
     row = lines.loc[matches[0]].to_dict()
     amount = to_number(row.get("amount"))
     quantity = to_number(row.get("quantity"), 1.0)
     next_no = int(numbers.max()) + 1
     new_rows, allocated = [], 0.0
-    for i, (gl, cc, pct) in enumerate(parts):
-        last = i == len(parts) - 1
-        part_amount = round(amount - allocated, 2) if last else round(amount * pct / 100, 2)
+    for i, (gl, cc, pct, typed, label) in enumerate(shares):
+        last = i == len(shares) - 1
+        if last:
+            part_amount = round(amount - allocated, 2)
+        else:
+            part_amount = typed if typed is not None else round(amount * pct / 100, 2)
         allocated += part_amount
         new = dict(row)
         new.update(
@@ -181,8 +193,8 @@ def split_line(lines: pd.DataFrame, line_number: int, parts: list[tuple[str, str
             amount=part_amount,
             predicted_gl_code=gl or row.get("predicted_gl_code"),
             predicted_cost_center=cc if cc is not None else row.get("predicted_cost_center"),
-            description=f"{row.get('description') or ''} ({pct:g}%)",
-            reasoning_justification=f"Split from line {line_number} ({pct:g}%).",
+            description=f"{row.get('description') or ''} ({label})",
+            reasoning_justification=f"Split from line {line_number} ({label}).",
         )
         if quantity and new["quantity"]:
             new["unit_price"] = round(part_amount / new["quantity"], 6)
@@ -191,3 +203,19 @@ def split_line(lines: pd.DataFrame, line_number: int, parts: list[tuple[str, str
     # (renumbering would pair lines wrongly with the AI's when learning from the approval).
     position = lines.index.get_loc(matches[0])
     return pd.concat([lines.iloc[:position], pd.DataFrame(new_rows), lines.iloc[position + 1 :]], ignore_index=True)
+
+
+def _amount_shares(amount: float, parts: list[tuple[str, str, float]]) -> list[tuple[str, str, float, float, str]]:
+    """Dollar amounts as split_line's shares: (GL, cost center, percent of the line, amount, label "500.00 of
+    890.00"). ValueError unless every amount is of the line's sign and they add up to it, to the cent."""
+    if any(not isinstance(p, (int, float)) or not math.isfinite(p) for _, _, p in parts) or not parts:
+        raise ValueError("every part needs an amount")
+    if round(amount, 2) == 0:
+        raise ValueError("a line of 0.00 can only be split by percentage")
+    if any(p == 0 or (p > 0) != (amount > 0) for _, _, p in parts):
+        raise ValueError(f"every part needs an amount {'above' if amount > 0 else 'below'} 0")
+    total = round(sum(round(p, 2) for _, _, p in parts), 2)
+    if abs(total - round(amount, 2)) > 0.005:
+        raise ValueError(f"the amounts must add up to the line's {amount:,.2f} (they add up to {total:,.2f})")
+    return [(gl, cc, round(p, 2) / amount * 100, round(p, 2), f"{round(p, 2):,.2f} of {amount:,.2f}")
+            for gl, cc, p in parts]  # fmt: skip

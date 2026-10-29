@@ -307,6 +307,46 @@ def test_in_a_browser_new_lines_and_split_lines_get_the_picker(browser, store):
     assert errors == []
 
 
+def test_in_a_browser_each_line_has_a_split_button_that_opens_the_split_for_it(browser, store):
+    """The split was only offered under the table ("Split a line…") and in a line's right-click menu: a pilot tester
+    looking at a line did not find it (D-126). Each line has its own split button: the split opens on that line."""
+    page, errors = _review(browser, store.list_invoices(REVIEW)[0]["id"])
+    second = page.locator("[data-grid=lines] tr").nth(1)
+    number = second.locator("[name=line_number]").input_value()
+    second.locator("[data-split-row]").click()
+    assert page.locator("[data-split]").get_attribute("open") is not None
+    assert page.locator("[data-split-line]").input_value() == number
+    page.locator("[data-parts] tr").nth(1).wait_for()
+    assert page.locator("[data-parts] tr").count() == 2
+    assert errors == []
+
+
+def test_in_a_browser_a_line_is_split_by_dollar_amount(browser, store):
+    """By amount (D-126): the parts start as the line's two halves in dollars; Split is offered once they add up to the
+    line, and the new lines carry the amounts typed."""
+    page, errors = _review(browser, store.list_invoices(REVIEW)[0]["id"])
+    first = page.locator("[data-grid=lines] tr").first
+    amount = float(first.locator("[name=line_amount]").input_value())
+    rows = page.locator("[data-grid=lines] tr").count()
+    first.locator("[data-split-row]").click()
+    page.locator("[data-parts] tr").nth(1).wait_for()
+    page.check("[data-split-by][value=amount]")
+    amounts = page.locator("[data-parts] [name=part_amount]")
+    half = round(amount / 2, 2)
+    assert [float(v) for v in amounts.evaluate_all("els => els.map((e) => e.value)")] == [half, round(amount - half, 2)]
+    assert page.locator("[data-parts] [name=part_pct]").first.is_hidden()
+    amounts.nth(0).fill("10")
+    assert page.locator("[data-split-go]").is_disabled()
+    assert "must match the line" in page.inner_text("[data-split-total]")
+    amounts.nth(1).fill(f"{amount - 10:.2f}")
+    assert page.locator("[data-split-go]").is_enabled()
+    page.click("[data-split-go]")
+    page.wait_for_function(f"() => document.querySelectorAll('[data-grid=lines] tr').length === {rows + 1}")
+    got = page.eval_on_selector_all("[data-grid=lines] [name=line_amount]", "els => els.map((e) => Number(e.value))")
+    assert 10.0 in got and round(amount - 10, 2) in got
+    assert errors == []
+
+
 def test_in_a_browser_the_split_popover_closes_on_escape_and_gives_back_the_focus(browser, store):
     page, errors = _review(browser, store.list_invoices(REVIEW)[0]["id"])
     page.click("[data-split] > summary")
