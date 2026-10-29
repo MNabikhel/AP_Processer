@@ -169,3 +169,10 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   `tests/ops/test_demo_day.py` (import to Excel export). Why: the pilot tester's laptop may hold their own AP Coder
   data, where the samples would be skipped as already in AP Coder; a rehearsal is put back with a backup restore.
   The version stays 0.3.0; the release is the git tag `v0.3.0-pilot1` and its bundle, told apart by its build stamp.
+- **D-128** · The handoff to the company's own AI coding agent is one way and complete: `docs/HANDOFF.md` is its
+  brief (getting the code in, run and test, the code's map, sample vs real data, each connection point with what the
+  company supplies, the order of work, the house rules), written so that nothing need be asked back. It travels
+  as a git bundle (`main` with its whole history and the tags) and as a plain zip of `main`, with HANDOFF.md beside
+  them and their SHA-256. The company's copy becomes the main one. No company data travels: the company's values
+  are gathered inside the company (the JDE worksheet) and imported into the data folder. `CLAUDE.md` and the README
+  point to HANDOFF.md first.
