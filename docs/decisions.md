@@ -1502,3 +1502,18 @@ that is reversed keeps its line, marked "replaced by D-NN".
   from the third on, 100% from the sixth), and their invoices with a correction went from 180 of 180 to 12 (none after
   the third); the other suppliers unchanged. (`capture/workflow.py`, `ai/offline_coder.py`, `web/invoice_view.py`,
   `web/templates/learning.html`, `bench/learning.py`)
+- **D-122** · **Suppliers reach hands-free sooner, on an honest bar.** Measured with `bench learn` (20 suppliers x 50
+  invoices, 10% scans, `--ap-knows 0.3`) and a replay of its reviewed invoices under other bars, then confirmed by a
+  run. (1) Four readings kept vendors off touchless on invoices read right: an alias AP approved stayed likely
+  (B-1437), the line under a learned spot was taken for a rival reading (B-1438), a total tax the vendor does not
+  print was read by the template alone (B-1439), a label after the previous column's "#" was looked for there
+  (B-1440): invoices eligible from the fourth on went from 60.4% to 82.2%. (2) "At least 99% with 95% confidence" is
+  one-sided: z 1.645, not 1.96 (97.5%), about 268 fields read right without an error instead of 381. (3) The 99% is
+  measured since the vendor's last correction, with at least 98% over its last 200 invoices (`fields_needed`):
+  corrections AP made on a vendor's first invoices (its terms, its name), once learned, held it back for months (six
+  of the 20 never got there in 50 invoices); a vendor misread now and then stays below 98% over the window. After a
+  correction or a suspension a vendor needs about 21 clean invoices, not 10. Rejected: 98% over the window alone (no
+  proof of the reading as it is now; it let a vendor go hands-free sooner, but it was suspended in the replay).
+  Result: suppliers hands-free 10 -> 20 of 20 (median from invoice #35 -> #28.5, earliest #31 -> #22), invoices
+  without review 97 -> 296 of 1,000, with 0 wrong; 11 audited, one suspension (the reader doubted the terms itself, AP
+  corrected them). (`capture/supplier.py`, `capture/workflow.py`, `capture/confidence.py`, `bench/learning.py`)
