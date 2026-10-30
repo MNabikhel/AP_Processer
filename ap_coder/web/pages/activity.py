@@ -31,7 +31,7 @@ GROUPS = {
     "Invoices": ["processed", "failed", "approved", "final_approved", "sent_back", "reopened", "parked", "unparked",
                  "note", "rejected", "deleted", "exported", "proposal_updated", "verified", "azure_checked",
                  "azure_check_disagrees", "jde_api_dry_run", "jde_api_approved", "jde_voucher_posted",
-                 "jde_voucher_refused", "jde_voucher_mismatch", "jde_voucher_released"],
+                 "jde_voucher_refused", "jde_voucher_mismatch", "jde_voucher_released", "jde_file_downloaded"],
     "Setup": ["accounts_imported", "accounts_edited", "accounts_deleted", "tax_setup_changed", "policy_changed",
               "settings_changed", "rules_changed", "vendor_updated", "vendor_added", "vendors_deleted",
               "vendors_imported", "pos_imported", "po_status", "pos_deleted", "export_undone", "erp_register_imported",

@@ -8,6 +8,7 @@ import pytest
 
 from ap_coder.core.audit import describe
 from ap_coder.core.store import Store
+from ap_coder.core.store.backups import DAILY
 
 
 def test_backup_and_restore_round_trip(tmp_path, ground_truth):
@@ -37,7 +38,7 @@ def test_auto_backup_once_a_day_keeps_the_newest(tmp_path):
     newest.write_bytes(b"")
     os.utime(newest, (time.time() - 2 * 86400,) * 2)
     store.auto_backup(keep=14, min_hours=0)
-    daily = [p for p in store.list_backups() if p.stem.count("-") == 2]
+    daily = [p for p in store.list_backups() if DAILY.fullmatch(p.stem)]
     assert len(daily) == 14
     manual = store.backup_now("manual")
     store.auto_backup(keep=14, min_hours=0)
@@ -110,3 +111,33 @@ def test_a_restore_forgets_the_learning_counts_kept_for_the_database(tmp_path):
     assert mine in _base._METRICS
     store.restore_from(backup)
     assert mine not in _base._METRICS
+
+
+def test_a_daily_backup_made_in_the_same_second_as_another_is_pruned_like_the_others(tmp_path, monkeypatch):
+    """``backup_now`` names a second backup in the same second ``ap_coder-<stamp>-2.db``: the pruning took it for a
+    labelled one and kept it for ever, here and in the second backup folder."""
+    import datetime as dt
+    from types import SimpleNamespace
+
+    from ap_coder.core.store import backups
+
+    class Frozen(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 1, 10, 9, 0, 0)
+
+    store = Store(tmp_path / "db" / "ap.db")
+    second = tmp_path / "onedrive"
+    second.mkdir()
+    store.set_setting("backup_copy_dir", str(second))
+    monkeypatch.setattr(backups, "dt", SimpleNamespace(datetime=Frozen, timedelta=dt.timedelta))
+    store.backup_now()
+    assert store.backup_now().name == "ap_coder-20260110-090000-2.db"  # the same second
+    monkeypatch.setattr(backups, "dt", dt)
+    for folder in (store.backup_dir(), second):
+        for day in range(1, 16):  # 15 newer daily backups
+            (folder / f"ap_coder-202602{day:02d}-090000.db").write_bytes(b"")
+    store.auto_backup(keep=14, min_hours=0)
+    for folder in (store.backup_dir(), second):
+        names = sorted(p.name for p in folder.glob("ap_coder-*.db"))
+        assert len(names) == 14 and not [n for n in names if "20260110" in n], (folder, names)

@@ -214,3 +214,17 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   end" in the CSV and a pill on the page (`erp/accruals.py`, `late_after`). Why: JD Edwards has such an invoice in
   the next month, so counted as in the ERP its cost was in neither month. With the G/L date the invoice date (the
   default) a voucher exported later still lands in its own month, so an exported invoice stays in the ERP.
+- **D-134** · A JD Edwards batch goes to JDE one way: its ZIP loaded, or its vouchers posted through the API. Each
+  download of a batch's ZIP is recorded (`jde_file_downloaded`: who, when; Activity, and the batch's API part says
+  it). Posting that batch through the API afterwards is refused unless the person ticks that the file was not loaded
+  into JDE and says what was checked, kept in the `jde_api_approved` event (the pattern of "Approve anyway" with a
+  reason): every post once a download is recorded asks, as any later post may send a voucher that file holds. The
+  vouchers waiting in the queue at the download (JDE never reached, so in the file) go back to *Dry run passed*: the
+  queue would have posted them a second time unasked, and a go-ahead under way at the download sends none it had not
+  sent yet (`_claim`: none approved before the last download). A batch posted through the API has its ZIP's page
+  warn that those vouchers are in JDE already (the ZIP leaves them out; a copy downloaded before holds them). A batch
+  only ever sent one way posts as before. Why not refuse the second way outright: the files are the fallback while
+  JDE's API is down, and AP may download a ZIP only to look at it. The record is in the database: a restore from
+  before the download forgets it, as it forgets the batch's other events. (`ap_coder/erp/jde_post.py`
+  `file_downloaded`, `downloads`, `post`, `_claim`; `ap_coder/web/pages/exports.py`; `tests/erp/test_jde_post.py`,
+  `test_jde_api_web.py`)

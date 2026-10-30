@@ -582,26 +582,50 @@ def go_back(data: Path, db: Path, *, server: Server | None = None, dry_run: bool
     if installed and not server.stop():
         print("The service did not stop: nothing was changed.", file=sys.stderr)
         return 1
-    if db.exists():
-        kept = safety_copy(db, "before-going-back")
-        say(f"The database as it was is kept in {kept}")
-    put_back(backup, db)
-    switch_to(data, previous)
-    _record(
-        data,
-        {"from": _version(current), "to": _version(previous), "result": "went back", "backup": str(backup)},
-        previous_folder="",
-        pre_update_backup="",
-        went_back_from=str(current),
-    )
+
+    def went_back() -> None:
+        switch_to(data, previous)
+        _record(
+            data,
+            {"from": _version(current), "to": _version(previous), "result": "went back", "backup": str(backup)},
+            previous_folder="",
+            pre_update_backup="",
+            went_back_from=str(current),
+        )
+
+    # Whatever stops it once the service is stopped (the disk full for the safety copy, a backup that can't be read,
+    # Ctrl+C) still ends with a version running, as B-1474 does for an update: the one that ran, on the database as
+    # it was, until the backup is put back; the previous one after.
+    kept, restored, stopped = None, False, ""
+    try:
+        if db.exists():
+            kept = safety_copy(db, "before-going-back")
+            say(f"The database as it was is kept in {kept}")
+        put_back(backup, db)
+        restored = True
+        went_back()
+    except (Exception, KeyboardInterrupt) as exc:  # noqa: BLE001 - see above
+        stopped = "was interrupted (Ctrl+C)" if isinstance(exc, KeyboardInterrupt) else (
+            f"stopped on an error: {exc or type(exc).__name__}")  # fmt: skip
+        say(f"\nGoing back {stopped}.")
+        if restored:  # the database is the pre-update backup: the previous version is the one that opens it
+            went_back()
+        elif kept is not None:
+            copy_database(kept, db)  # the database as it was, whatever put_back had done of it
+    running = previous if restored else current
     if installed:
         server.start()
-        if not server.up(previous):
-            say("The previous version does not answer: python -m ap_coder service status, and the log.")
+        if not server.up(running):
+            say(f"AP Coder {_version(running)} does not answer: python -m ap_coder service status, and the log.")
             return 1
+    if not restored:
+        on = f"runs {_version(current)} again" if installed else f"stays on {_version(current)}"
+        say(f"AP Coder did not go back: it {on} ({current}), on the database as it was. Nothing was changed: fix "
+            "what stopped it, then server-update --back again.")  # fmt: skip
+        return 1
     say(f"Back on AP Coder {_version(previous)}. The newer folder {current} is kept; delete it when you no longer "
         "need it (or update to a newer bundle).")  # fmt: skip
-    return 0
+    return 1 if stopped else 0
 
 
 # --- The command line -------------------------------------------------------------------------------------------------

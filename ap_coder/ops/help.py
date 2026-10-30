@@ -142,7 +142,9 @@ CHECKS: dict[str, CheckHelp] = {
     ),
     "JDE_NO_ACCOUNT": CheckHelp(
         ERP, "GL account not mapped to JD Edwards",
-        "The line's GL account (and cost center) has no JD Edwards account (business unit . object . subsidiary).",
+        "The line's GL account (and cost center) has no JD Edwards account (business unit . object . subsidiary), "
+        "or its mapping is longer than JD Edwards holds (business unit 12 characters, object 6, subsidiary 8, "
+        "subledger 8, subledger type 1).",
         "Check the line's GL account; if it is right, ask the pilot tester to map it in Settings → JD Edwards E1.",
     ),
     "JDE_UNBALANCED": CheckHelp(

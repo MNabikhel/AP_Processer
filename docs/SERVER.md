@@ -466,7 +466,9 @@ It stops the service, keeps a copy of the database as it is now (`backups\...-be
 backup made before the update (keeping the user accounts and paused logins as they are now, and logging everyone
 out), and starts the previous folder again. What was done in AP Coder since the update is
 not in that backup (the older version can't open a database the newer one changed), so go back soon, or not at all.
-It asks first (`--yes` doesn't); `--dry-run` shows what it would do.
+It asks first (`--yes` doesn't); `--dry-run` shows what it would do. If the copy or the backup put back fails (a full
+disk, Ctrl+C), it starts the version that was running again, on the database as it was, and says so; once the backup
+is back, it starts the previous version.
 
 Two folders are kept: the current one and the previous one. After the next update, the message names the folder two
 versions back, which you can delete. What was done, when, is in `D:\APCoderData\server.json` (`history`), and the

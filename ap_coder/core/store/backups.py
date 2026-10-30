@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import os
+import re
 import shutil
 import sqlite3
 import time
@@ -26,6 +27,14 @@ from ._base import (
 from .postings import carry_postings, saved_postings
 from .summary import SUMMARY_TRIGGERS
 from .users import carry_accounts, saved_accounts
+
+# A daily backup, the ones pruned: ap_coder-YYYYMMDD-HHMMSS, and -2, -3 when another was made in the same second.
+# A labelled one (-manual, -before-restore, -before-update-...) is kept.
+DAILY = re.compile(r"ap_coder-\d{8}-\d{6}(-\d+)?")
+
+
+def _daily(path: Path) -> bool:
+    return DAILY.fullmatch(path.stem) is not None
 
 
 class BackupsMixin:
@@ -112,7 +121,7 @@ class BackupsMixin:
             if target.resolve() == made.parent.resolve():
                 raise OSError("that is the local backups folder; choose another one")
             copied = Path(shutil.copy2(made, target / made.name))
-            for old in sorted((p for p in target.glob("ap_coder-*.db") if p.stem.count("-") == 2), reverse=True)[keep:]:
+            for old in sorted((p for p in target.glob("ap_coder-*.db") if _daily(p)), reverse=True)[keep:]:
                 old.unlink(missing_ok=True)
         except OSError as exc:
             self.set_setting("backup_copy_status", f"failed {_now()[:16]}: {exc}")
@@ -122,7 +131,7 @@ class BackupsMixin:
 
     def auto_backup(self, keep: int = 14, min_hours: float = 20) -> Path | None:
         """Back up at most once a day (call it at start-up) and keep the newest ``keep`` daily copies."""
-        daily = [p for p in self.list_backups() if p.stem.count("-") == 2]  # ap_coder-YYYYMMDD-HHMMSS
+        daily = [p for p in self.list_backups() if _daily(p)]
         now = dt.datetime.now()
         for backup in daily:  # one made in the future (the clock was ahead) is old: it never stops the daily backups
             try:
@@ -134,7 +143,7 @@ class BackupsMixin:
         if not self.path.exists():
             return None
         made = self.backup_now()
-        for old in [p for p in self.list_backups() if p.stem.count("-") == 2][keep:]:
+        for old in [p for p in self.list_backups() if _daily(p)][keep:]:
             old.unlink(missing_ok=True)
         return made
 

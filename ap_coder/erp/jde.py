@@ -846,6 +846,13 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
                 "JDE_NO_ACCOUNT",
                 e.get("line_number"),
             )
+        elif len(account.sbl) > 8 or len(account.sblt) > 1:
+            add(
+                f"{where}: JDE account {ani(account)} has a subledger too long ({account.sbl or 'blank'}, type "
+                f"{account.sblt or 'blank'}: subledger 8, type 1 character)",
+                "JDE_NO_ACCOUNT",
+                e.get("line_number"),
+            )
         v.entries.append({**e, "cents": _units(e.get("amount"), v.decimals), "account": account})
     expected = v.gross - v.recoverable
     kept = sum(e["cents"] for e in v.entries)
