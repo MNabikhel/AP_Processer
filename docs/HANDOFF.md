@@ -139,7 +139,8 @@ tests (Chromium), the installer and the double-click launcher on Windows, GitHub
 bundle on Windows and macOS with the internet cut off (installed with an LM Studio stand-in, then the demo story),
 updates from three older versions on Linux, macOS and Windows. A second file, `.github/workflows/release.yml`, runs
 only when it or `.github/release-tags.txt` changes: the release's offline zip on Windows with the real LM Studio
-(models on the CPU: hours), then the release tags (D-129). On another CI system (Azure DevOps, GitLab...), port at
+(models on the CPU: 60 to 90 minutes, once per pilot release: a later run reuses a passed check, D-130), then the
+release tags (D-129). On another CI system (Azure DevOps, GitLab...), port at
 least: the Linux and Windows tests, lint, and the Windows offline-bundle job (the closest thing to the pilot
 tester's laptop). Three kinds of job need the repository's history: "Update from ..." (`git archive` of three old commits,
 `scripts/ci/old_versions.py`), "The pilot tester's Mac ... updated from PR 8" (fetch depth 0) and "GitHub's ZIP on
