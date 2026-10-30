@@ -51,6 +51,7 @@ from .line_items import (
     _credit_titled,
     _on_tilted_page,
     credit_printed_positive,
+    credit_titled,
     read_line_items,
     straightened,
 )
@@ -578,6 +579,8 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
                 if in_table_head:
                     continue  # "Total" over the line-items' amount column is not the invoice total
             hits.setdefault(hit.field, []).append(hit)
+    if any(h.credit_only for h in hits.get("invoice_number", [])) and not credit_titled(layout):
+        hits["invoice_number"] = [h for h in hits["invoice_number"] if not h.credit_only]  # "Memo No" on an invoice
     _net_of_commission(hits, by_page)
     taxes_at = [h.line for f in (*_TAX_FIELDS, "tax_total") for h in hits.get(f, [])]
     hits["subtotal"] = [

@@ -390,6 +390,46 @@ def test_a_disagreement_marks_the_field_and_sends_it_to_a_person(store, touchles
     assert "VERIFIER_DISAGREES" not in codes
 
 
+def test_a_proposal_it_reviewed_with_the_same_model_is_not_reviewed_again(store, touchless, monkeypatch):  # noqa: F811
+    """Read again by the page reader with nothing changed, the invoice went back in line and was reviewed again: a
+    multi-minute call for the same answer. That very proposal's review by that model stands, folded in again; a
+    person asking for it again, a changed proposal or another model still has it reviewed."""
+    from tests.webclient import client_for, post
+
+    iid = InvoicePipeline(_settings(), store.reference_data(), store=store).process(PDF).invoice_id
+    _read_by_the_page_reader(store, monkeypatch)
+    wrong = {"grand_total": "9,999.00"}
+    coder = FakeCoder(_answer(wrong), lambda fields: _answer(wrong, fields=fields))
+    assert verifier.verify_one(_settings(), store, coder=coder).status == verifier.DISAGREES
+    store.queue_page_read(iid, "read again", requested_by="Mia")
+    _read_by_the_page_reader(store, monkeypatch)  # the same reading: the same proposal, put in line again
+    assert store.verification(iid)["status"] == "waiting"
+    silent = FakeCoder()  # no answer to give: asked anything, it fails
+    kept = verifier.verify_one(_settings(), store, coder=silent)
+    assert kept.status == verifier.DISAGREES and silent.calls == [] and store.verification(iid)["status"] == "done"
+    assert "VERIFIER_DISAGREES" in {i["code"] for i in store.get_invoice(iid)["validation"]["issues"]}
+
+    def reviewed(model="gemma-4-12b", *answers):
+        coder = FakeCoder(*answers)
+        coder._prepare_local = lambda: model
+        done = verifier.verify_one(_settings(), store, coder=coder)
+        return done.status == verifier.AGREED and coder.calls == [True] * len(answers)
+
+    assert post(client_for(store), f"/review/{iid}/review-again").status_code == 200  # a person asks
+    store.queue_page_read(iid, "read again", requested_by="Mia")
+    _read_by_the_page_reader(store, monkeypatch)  # the page reader's reading meanwhile: still as the person asked
+    assert reviewed("gemma-4-12b", _answer())
+    inv = store.get_invoice(iid)
+    changed = {**inv["ai_output"], "invoice_number": "HPS-2026-0348"}
+    assert store.replace_proposal(iid, changed, inv["validation"], None)
+    verifier.queue(store, iid, verifier.Plan(queue=True))
+    assert reviewed("gemma-4-12b", _answer())
+    verifier.queue(store, iid, verifier.Plan(queue=True))
+    assert reviewed("qwen3.5-9b", _answer())
+    verifier.queue(store, iid, verifier.Plan(queue=True))
+    assert reviewed("qwen3.5-9b")  # its review of this proposal stands: not asked
+
+
 def test_no_chat_model_leaves_it_in_line(store, touchless, monkeypatch):  # noqa: F811
     result = InvoicePipeline(_settings(), store.reference_data(), store=store).process(PDF)
     store.finish_page_read(result.invoice_id, "done")

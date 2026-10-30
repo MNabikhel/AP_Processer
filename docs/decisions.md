@@ -208,3 +208,9 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   amount in CAD is what a second pair of eyes is for. One rule for the laptop and the server (`Store.approval_reason`,
   called by `approve_invoice`, bulk approval included). An invoice whose currency was never changed is decided as
   before.
+- **D-133** · Month-end counts an invoice as in the ERP at a period end only if the export batch that took it was
+  made on or before that day (`export_batches.created_at`); one exported later is accrued for that period, its note
+  "exported after the month end" in the CSV and a pill on the page (`erp/accruals.py`, `_not_in_erp`). Why: in JD
+  Edwards such an invoice is in the next month (its G/L date the export day), so counted as in the ERP its cost was
+  in neither month. With the G/L date the invoice date, one exported while the period was still open is already in
+  it: the row says why it is there, and AP leaves it out of the entry.
