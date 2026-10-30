@@ -3,6 +3,7 @@
 import json
 
 from ap_coder.core.store import Store
+from ap_coder.core.store.backups import DAILY
 from tests.conftest import SAMPLES
 
 
@@ -73,7 +74,7 @@ def test_backups_are_copied_to_a_second_folder(tmp_path):
     for n in range(16):  # daily copies there are pruned to the newest 14
         (second / f"ap_coder-2020010{n % 10}-0000{n:02d}.db").write_bytes(b"x")
     store.copy_backup(store.backup_now())
-    daily = [p for p in second.glob("ap_coder-*.db") if p.stem.count("-") == 2]
+    daily = [p for p in second.glob("ap_coder-*.db") if DAILY.fullmatch(p.stem)]
     assert len(daily) == 14
 
 
