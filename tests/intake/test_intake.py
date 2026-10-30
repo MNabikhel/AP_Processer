@@ -4,6 +4,8 @@ for the audit trail, OCR still reading the picture's own pixels, and the same ph
 import dataclasses
 import hashlib
 import io
+import tracemalloc
+import zlib
 
 import pymupdf
 import pytest
@@ -378,3 +380,52 @@ def test_a_desk_photo_read_where_it_is_is_shown_as_it_is_read(tmp_path):
     shown = _pixels(png)
     assert abs(w_pt / h_pt - read.width / read.height) < 0.01
     assert abs(shown.width / shown.height - read.width / read.height) < 0.01
+
+
+def _claims_to_be_ours(path, width, height, page_height=792):
+    """A PDF whose Creator says AP Coder made it from a picture: one grey Flate picture of ``width`` x ``height``
+    pixels on a page 612 points wide. Each row is the same, so it is a few hundred KB whatever its pixels."""
+    pack = zlib.compressobj(9)
+    data = b"".join(pack.compress(b"\xf0" * width) for _ in range(height)) + pack.flush()
+    content = b"q 612 0 0 %d 0 0 cm /Im0 Do Q" % page_height
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 %d] /Resources << /XObject << /Im0 5 0 R >> >> "
+        b"/Contents 4 0 R >>" % page_height,
+        b"<< /Length %d >>\nstream\n%s\nendstream" % (len(content), content),
+        b"<< /Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace /DeviceGray /BitsPerComponent 8 "
+        b"/Filter /FlateDecode /Length %d >>\nstream\n%s\nendstream" % (width, height, len(data), data),
+        b"<< /Creator (%s) >>" % intake.CREATOR.encode(),
+    ]
+    out, offsets = bytearray(b"%PDF-1.7\n"), []
+    for number, body in enumerate(objects, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n%s\nendobj\n" % (number, body)
+    start = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    out += b"".join(b"%010d 00000 n \n" % offset for offset in offsets)
+    out += b"trailer\n<< /Size %d /Root 1 0 R /Info %d 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (
+        len(objects) + 1, len(objects), start)  # fmt: skip
+    path.write_bytes(bytes(out))
+    return path
+
+
+@pytest.mark.parametrize(("width", "height", "page_height"), [(10_000, 10_000, 792), (2_000, 2_000, 30_000)])
+def test_a_pdf_claiming_to_be_a_huge_picture_of_ours_is_rendered_not_decoded(tmp_path, width, height, page_height):
+    """B-1498: a PDF of a few hundred KB whose Creator says AP Coder made it from a picture had that picture decoded
+    whole (10,000 x 10,000 pixels: 1.3 GB), or stretched to the page's shape (612 x 30,000 points: 10 GB). Over
+    MAX_PICTURE_PIXELS, as stored or as shown, the page is rendered at OCR's size instead."""
+    pdf = _claims_to_be_ours(tmp_path / "crafted.pdf", width, height, page_height)
+    assert pdf.stat().st_size < 1_000_000
+    with pymupdf.open(pdf) as doc:
+        page = doc[0]
+        assert intake.made_from_picture(doc) and intake.page_picture(doc, page) is None
+        tracemalloc.start()
+        try:
+            png = layout._make_scan_png(doc, page)
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        assert peak < 20_000_000  # (the picture's own pixels alone are 100 MB)
+        assert png == layout._page_png(page)
