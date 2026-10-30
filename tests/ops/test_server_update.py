@@ -320,3 +320,17 @@ def test_a_backup_that_fails_starts_the_service_again_and_changes_nothing(server
     assert not (server["current"].parent / "APProcessor-0.4.0").exists()
     assert service.read_config(server["data"])["folder"] == str(server["current"])
     assert "No space left on device" in capsys.readouterr().out
+
+
+def test_back_says_the_work_lost_since_the_update_it_undoes_not_since_a_later_failed_one(server, capsys):
+    assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=FakeServer()) == 0
+    assert _install(_bundle(server["tmp"], "0.5.0"), server["data"], server["db"],
+                    server=FakeServer(check_ok=False)) == 1  # fmt: skip
+    history = service.read_config(server["data"])["history"]
+    assert [h["result"][:7] for h in history] == ["updated", "rolled "]
+    history[0]["at"], history[1]["at"] = "2026-11-02T09:00:00", "2026-11-20T16:00:00"
+    service.write_config(server["data"], history=history)
+    capsys.readouterr()
+    assert server_update.go_back(server["data"], server["db"], server=FakeServer(), dry_run=True) == 0
+    out = capsys.readouterr().out
+    assert "since 2026-11-02T09:00:00" in out and "2026-11-20" not in out

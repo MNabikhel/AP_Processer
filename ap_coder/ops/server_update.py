@@ -552,7 +552,9 @@ def go_back(data: Path, db: Path, *, server: Server | None = None, dry_run: bool
               "version can't open the updated database).", file=sys.stderr)  # fmt: skip
         return 1
     current = s.code_folder
-    since = saved.get("history", [{}])[-1].get("at", "the update") if saved.get("history") else "the update"
+    # The update the backup was made for: the last one that went through, not a later attempt rolled back.
+    updates = [h for h in saved.get("history") or [] if isinstance(h, dict) and h.get("result") == "updated"]
+    since = updates[-1].get("at", "the update") if updates else "the update"
     say(f"Going back from AP Coder {_version(current)} ({current}) to {_version(previous)} ({previous}).")
     say(f"The database goes back to the backup made before the update ({backup.name}): what was done in AP Coder "
         f"since {since} is not in it. A copy of the database as it is now is kept in backups. The user accounts, "
