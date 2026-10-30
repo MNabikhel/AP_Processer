@@ -1,5 +1,6 @@
 # The release tags (D-129): tag, commit, title. The Release workflow (.github/workflows/release.yml) checks the pilot
 # release on a Windows laptop with the real LM Studio, then creates each tag missing here with its GitHub release; the
-# pilot release gets the offline install zip it checked.
+# newest pilot release (its last pilot line) gets the offline install zip it checked; an earlier pilot keeps its own.
 v0.3.0-pilot1 a1724b522945daf0910b9482c316687e303f7100 AP Coder 0.3.0, pilot release 1: the laptop prototype for the demo (run sheet, demo data folder, demo-day invoices, split by amount)
 v0.3.0-handoff1 230f6299c79184221702f1976d6306a73ebcfba7 AP Coder handoff to the company's own AI coding agent: v0.3.0-pilot1 plus docs/HANDOFF.md (D-128)
+v0.3.0-pilot2 61b0aed1cb4e75e1bf168eda69ceff4faf86de56 AP Coder 0.3.0, pilot release 2: pilot1 plus account boxes that pick the code or name typed when the box is left (B-1445)
