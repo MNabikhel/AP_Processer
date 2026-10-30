@@ -98,6 +98,7 @@ RULES: dict[tuple[str, str], str] = {
         "POST /search/presets", "POST /search/presets/default", "POST /search/presets/delete",  # their saved views
         # Export batches and their downloads.
         "POST /exports/create", "GET /exports/batches/{batch:int}/download",
+        "POST /exports/batches/{batch:int}/download",  # the JD Edwards ZIP: its download is recorded (D-135)
         "GET /exports/batches/{batch:int}/approved-pdfs.zip", "GET /exports/jde/dry-run.txt",
         "POST /exports/batches/{batch:int}/jde-api/dry-run",  # the JDE API's dry run: nothing posted (D-104)
         # Statements compared, vendors' hold and notes, looking at the setup and what was learned.

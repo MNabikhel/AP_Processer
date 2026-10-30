@@ -228,3 +228,18 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   before the download forgets it, as it forgets the batch's other events. (`ap_coder/erp/jde_post.py`
   `file_downloaded`, `downloads`, `post`, `_claim`; `ap_coder/web/pages/exports.py`; `tests/erp/test_jde_post.py`,
   `test_jde_api_web.py`)
+- **D-135** · Two defences against another page of the company's domain acting in a person's browser (the security
+  audit of October 2026). (1) A batch's JD Edwards ZIP is downloaded by a POST from the Exports page (its button
+  sends a form; `app.js` saves an answer that is a file under its name), which LocalOnly checks (the page's header,
+  the same origin): that download is recorded and puts the vouchers waiting in the queue back to a go-ahead (D-134),
+  so an `<img>` or a link on another page must not do it. A GET of the ZIP is refused (405), not served unrecorded:
+  a ZIP out without the record is the double posting D-134 prevents, as the queue would still send the vouchers it
+  holds. The other formats stay GET links (they change nothing). (2) Over HTTPS the session cookie is
+  `__Host-ap_session` (Secure, Path=/, no Domain), which a browser takes only from this host, so another host of the
+  domain can't plant one beside it to block a login (two session cookies are still no login, D-101); `ap_session`
+  only over `--insecure-http`, where the prefix isn't allowed. The update logs everyone out once (the old cookie is
+  not read). With them, the vouch rule (D-109) follows a chain: an account added or reset within `VOUCH_DAYS` by
+  an account the first approver added or reset in that time can't give the second approval either.
+  (`ap_coder/web/pages/exports.py` `download_batch`, `static/js/app.js` `post`, `web/identity.py` `session_cookie`,
+  `web/pages/login.py`, `core/store/users.py` `vouched_for`; `tests/erp/test_jde_api_web.py`,
+  `tests/web/test_server_security.py`, `test_server_hardening.py`)

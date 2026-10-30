@@ -218,7 +218,7 @@ def test_batch_downloads_are_the_export_functions_files(client, busy):
 def test_jde_download_is_the_zip_jde_builds(client, busy):
     batch = _batch(client, busy)
     data, name, mime = export_page.jde_file(busy, batch)
-    got = attachment(client.get(f"/exports/batches/{batch}/download?fmt=jde"), name, mime)
+    got = attachment(client.post(f"/exports/batches/{batch}/download?fmt=jde", headers=PAGE), name, mime)
     with zipfile.ZipFile(io.BytesIO(got)) as a, zipfile.ZipFile(io.BytesIO(data)) as b:
         assert a.namelist() == b.namelist() and "README.txt" in a.namelist()
         assert all(a.read(n) == b.read(n) for n in a.namelist())

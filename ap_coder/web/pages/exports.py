@@ -8,10 +8,10 @@ duplicate payment audit.
 * ``GET /exports``: the ready list (``?fmt=`` picks the format; JD Edwards E1 checks every invoice first), the batch
   just made (``?made=<batch>``), the custom CSV layout, the ERP's invoice register, past batches (``?batch=&bfmt=``
   picks one to download again, stamp or undo) and the duplicate audit (``?audit=1``).
-* Downloads (GET): ``/exports/batches/<n>/download?fmt=``, ``/exports/batches/<n>/approved-pdfs.zip``,
-  ``/exports/duplicates.csv``, ``/exports/jde/dry-run.txt`` (what a JD Edwards batch of the ready invoices would
-  load). The files are the ones ``exports.build`` / ``jde.build_zip`` / ``stamp.batch_zip`` / ``dupaudit.to_csv`` /
-  ``jde.dry_run_text`` make.
+* Downloads (GET; a batch's JD Edwards ZIP by POST, D-135): ``/exports/batches/<n>/download?fmt=``,
+  ``/exports/batches/<n>/approved-pdfs.zip``, ``/exports/duplicates.csv``, ``/exports/jde/dry-run.txt`` (what a JD
+  Edwards batch of the ready invoices would load). The files are the ones ``exports.build`` / ``jde.build_zip`` /
+  ``stamp.batch_zip`` / ``dupaudit.to_csv`` / ``jde.dry_run_text`` make.
 """
 
 from __future__ import annotations
@@ -432,14 +432,19 @@ def live_batch(store: Store, batch: int) -> dict[str, Any]:
 
 
 @router.get("/exports/batches/{batch:int}/download")
+@router.post("/exports/batches/{batch:int}/download")
 @one_connection
 def download_batch(request: Request, batch: int, fmt: str = "") -> Response:
-    """Batch ``batch`` as a file again: in ``fmt``, else in the format it went out in."""
+    """Batch ``batch`` as a file again: in ``fmt``, else in the format it went out in. The JD Edwards ZIP only by a
+    POST from the page: its download is recorded and puts back the vouchers waiting in the queue (D-134), which a GET
+    must not do, as another page of the site can make the browser send one (D-135)."""
     store = get_store(request)
     known = live_batch(store, batch)
     fmt = fmt or known["format"]
     if fmt not in exports.FORMATS:
         raise HTTPException(status_code=400, detail="Unknown export format.")
+    if fmt == jde.FORMAT and request.method != "POST":
+        raise HTTPException(status_code=405, detail="Download the JD Edwards file with its button on the Exports page.")
     if fmt == jde.FORMAT and (blocking := jde.settings_problems(jde.load(store))):
         # Z-files made with these settings cannot load (their own dry run says "NOTHING CAN LOAD"): say what to fix.
         detail = " ".join(f"{p} Set it in Settings → JD Edwards E1, then download the batch again." for p in blocking)

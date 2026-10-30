@@ -155,7 +155,7 @@ def test_a_folder_of_emails_becomes_a_checked_jde_batch(tmp_path, monkeypatch):
     made = post(client, "/exports/create", {"fmt": jde.FORMAT, "ids": [str(i) for i in ids]})
     assert made.status_code == 200 and made.json()["ok"], made.text
     (batch,) = [b["id"] for b in store.export_batches()]
-    zipped = client.get(f"/exports/batches/{batch}/download")
+    zipped = post(client, f"/exports/batches/{batch}/download")
     with zipfile.ZipFile(io.BytesIO(zipped.content)) as zf:
         assert sorted(zf.namelist()) == ["DRY_RUN.txt", "F0411Z1.csv", "F0911Z1.csv", "README.txt"]
         headers = list(csv.DictReader(io.StringIO(zf.read("F0411Z1.csv").decode())))

@@ -448,6 +448,38 @@ def test_an_admin_cant_give_the_second_approval_through_an_account_they_made(web
     assert store.get_invoice(invoice_id)["status"] == "approved"
 
 
+def test_an_admin_cant_give_the_second_approval_through_a_chain_of_accounts_or_behind_1000_events(web):
+    """B-1497: the vouch rule (D-109) saw only the accounts the first approver added or reset themselves, and looked
+    for the first approval among the invoice's newest 1000 events. An Admin's second Admin account adding the second
+    approver's account (or resetting a colleague's password), or 1000 notes on the invoice, let one Admin give both
+    approvals; and after 1000 events the page posted no approval, so an honest second approver was refused."""
+    from tests.web.test_server_security import account, log_in
+    from tests.webclient import PAGE
+
+    store = web["store"]
+    boss = account(store, "boss", "admin")
+    carol = store.add_user("carol", GOOD, role="admin", by_user=boss)  # boss's second Admin account
+    puppet = store.add_user("puppet", GOOD, role="approver", by_user=carol)
+    dave = account(store, "dave", "approver")  # a colleague's own account...
+    store.reset_password(dave, by_user=carol)  # ...whose password carol reset
+    direct = store.add_user("direct", GOOD, role="approver", by_user=boss)
+    invoice_id = _waiting(store, boss)
+    shown = store.latest_approval_id(invoice_id)
+    for user_id, name in ((puppet, "Puppet"), (dave, "Dave")):
+        with pytest.raises(PermissionError, match="added or reset"):
+            store.final_approve(invoice_id, name, login=f"user:{user_id}", shown=shown)
+    for n in range(1000):
+        store.add_note(invoice_id, "Direct", f"note {n}")
+    with pytest.raises(PermissionError, match="added or reset"):
+        store.final_approve(invoice_id, "Direct", login=f"user:{direct}", shown=shown)
+    account(store, "erin", "approver")
+    erin = web["client"]("10.0.0.9")
+    assert log_in(erin, "erin").status_code == 200
+    assert f'name="approval" value="{shown}"' in erin.get(f"/review/{invoice_id}").text
+    erin.post(f"/review/{invoice_id}/final-approve", data={"approval": shown}, headers=PAGE)
+    assert store.get_invoice(invoice_id)["status"] == "approved"
+
+
 def test_the_poster_can_be_kept_apart_from_the_approvers(tmp_path):
     store = Store(tmp_path / "ap_coder.db")
     invoice_id = _waiting(store, 1)
@@ -585,6 +617,15 @@ def test_the_server_logs_each_request_and_records_each_download(web):
     assert {e["detail"]["file"] for e in downloads} >= {backup.name}
     assert all(e["actor"] == "Boss" for e in downloads)
     assert len(downloads) == 2
+
+
+def test_a_newline_in_the_path_cant_forge_a_line_in_the_access_log(web):
+    log = web["store"].path.parent / "logs" / "access.log"
+    before = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+    web["client"]().get("/review%0Afake%0Dline")
+    lines = log.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == len(before) + 1
+    assert "/review%0Afake%0Dline" in lines[-1]
 
 
 def test_the_laptop_keeps_no_access_log(tmp_path):
