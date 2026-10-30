@@ -672,10 +672,9 @@ class InvoicesMixin:
 
         inv = self._approvable(invoice_id)
         ai = inv["ai_output"] or {"line_items": []}
-        currency = str(final_output.get("currency") or "CAD").strip().upper()
-        # The limit and rate in force since the invoice came in, the strictest of them (B-970); kept in the event.
-        limit, rate = self.approval_controls(currency, inv.get("created_at") or "")
-        second_reason = self.second_approval_reason(final_output, limit, rates={} if rate is None else {currency: rate})
+        # The limit and rate in force since the invoice came in, the strictest of them (B-970), kept in the event; a
+        # currency changed from the one read is held to the limit in both (D-132).
+        second_reason, limit, rate = self.approval_reason(inv, final_output)
         needs_second = bool(second_reason)
         vendor_name = final_output.get("vendor_name", "")
         key = self.vendor_key_for(vendor_name, final_output.get("gst_hst_registration_number"))  # B-1021

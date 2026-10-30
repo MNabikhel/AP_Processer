@@ -198,3 +198,13 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   second request that failed (the model busy or unloaded beside OvisOCR2) blanked the accounts the invoice had. A
   question that changed (an approval or a lesson since, other lines read off the page) is asked again, so what AP
   taught applies. Only the app's pipeline keeps them: the doctor's dry run and the coding bench still ask the model.
+- **D-132** · A currency changed from the one read off the invoice can't take it under the second-approval limit: the
+  total is held to the limit in both currencies, each at its CAD rate (the strictest in force since it came in,
+  B-970), and above either it waits for a second approver; a currency read with no CAD rate needs one, as an invoice
+  in it always does. The approve bar says why before approving ("The currency was changed from USD, and in USD it is
+  over the approval limit of 20,000.00 CAD: a second approver is needed"), as do the first approval's message, the
+  Second approval tab and the audit trail, which keeps the change itself as it keeps every edit. Why both, not the
+  one read alone: a reading can be wrong and a person must be able to correct it, but a correction that lowers the
+  amount in CAD is what a second pair of eyes is for. One rule for the laptop and the server (`Store.approval_reason`,
+  called by `approve_invoice`, bulk approval included). An invoice whose currency was never changed is decided as
+  before.

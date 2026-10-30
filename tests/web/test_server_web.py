@@ -265,6 +265,38 @@ def test_the_second_approval_needs_a_second_account(store):
     assert store.get_invoice(invoice_id)["status"] == "approved"
 
 
+@pytest.mark.parametrize("server", [False, True])
+def test_changing_the_currency_on_the_review_screen_does_not_skip_the_second_approver(store, server, monkeypatch):
+    """B-1482 (D-132), on a laptop and on the company server: an invoice read as USD and changed to CAD on the review
+    screen still needs a second approver above the limit in USD, and the approve bar says why before approving."""
+    from tests.conftest import next_second
+    from tests.web.test_web_invoice import form_of
+
+    store.set_setting("approval_limit", "20000.00")
+    store.set_setting("fx_rates", "USD=1.37")
+    next_second()  # the invoice comes in after the settings (B-970)
+    known_vendors(store)
+    invoice_id = add_clean(store, currency="USD")  # 18,017.85 USD: about 24,684 CAD, 18,017.85 as CAD
+    if server:
+        account(store, "ann", "approver", "Ann Lee")
+        client = server_client(store)
+        log_in(client, "ann")
+    else:
+        monkeypatch.delenv("AP_SERVER_MODE", raising=False)
+        monkeypatch.setenv("AP_REVIEWER", "Ann Lee")
+        client = TestClient(create_app(web_settings(), store, start_reader=False), base_url="http://localhost")
+
+    def bar(data):
+        return client.post(f"/review/{invoice_id}/check", data=data, headers=PAGE).json()["sections"]["bar"]
+
+    assert "currency was changed" not in bar(form_of(store, invoice_id))  # as read: the bar as before
+    changed = {**form_of(store, invoice_id, currency="CAD"), "why_done": "1"}
+    assert "The currency was changed from USD" in bar(changed) and "a second approver is needed" in bar(changed)
+    assert client.post(f"/review/{invoice_id}/approve", data=changed, headers=PAGE).json()["ok"]
+    inv = store.get_invoice(invoice_id)
+    assert inv["status"] == PENDING and inv["currency"] == "CAD"
+
+
 def test_a_clerk_cannot_give_the_second_approval(store):
     store.set_setting("approval_limit", "5000.00")
     known_vendors(store)
