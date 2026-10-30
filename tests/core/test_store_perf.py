@@ -3,6 +3,7 @@ workers reuse one store (the SQL statements and connections counted)."""
 
 import sqlite3
 import threading
+import time
 
 from ap_coder.core import store as store_mod
 from ap_coder.core.store import Store
@@ -64,8 +65,10 @@ def test_the_background_workers_build_their_store_once(tmp_path, monkeypatch):
         built.clear()
         rounds.clear()
         worker.start()
-        try:
-            threading.Event().wait(0.2)
+        try:  # until several rounds ran (B-1492: Windows' timer ticks of about 15 ms made 0.2 s only 2 rounds)
+            deadline = time.monotonic() + 10
+            while len(rounds) <= 3 and time.monotonic() < deadline:
+                threading.Event().wait(0.01)
         finally:
             worker.stop()
             worker.join(5)
