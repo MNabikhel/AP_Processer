@@ -48,11 +48,38 @@ def test_exported_rejected_and_closed_are_left_out(tmp_path):
     store.reject_invoice(b, "Jane", "duplicate")
     refs = {x.reference for x in accruals.build(store, END)}
     assert any("NW-2026-0912" in r for r in refs) and not any("X-1" in r for r in refs)
-    store.create_export_batch([a], "csv")
-    assert not any("NW-2026-0912" in x.reference for x in accruals.build(store, END))
+    store.create_export_batch([a], "csv")  # today: in the ERP at today's period end (D-133)
+    assert not any("NW-2026-0912" in x.reference for x in accruals.build(store, dt.date.today()))
     assert any(x.reference == "PO-89904 line 1" for x in accruals.build(store, END))  # nothing billed yet
     store.set_po_status("89904", "closed")
     assert not any(x.reference.startswith("PO-89904") for x in accruals.build(store, END))
+
+
+def test_an_invoice_exported_after_the_period_end_is_accrued_for_that_period(tmp_path):
+    # Dated 14 September, exported on 2 October: JD Edwards has it in October, so at 30 September it is accrued, and
+    # says why (D-133). Exported by 30 September, it was in the ERP then.
+    from tests.webclient import client_for
+
+    store = Store(tmp_path / "a.db")
+    load_sample_setup(store)
+    nw = _coded(store, "northwind_ON_HST_NW-2026-0912")
+    a = store.add_invoice(tmp_path / "a.pdf", nw, {})
+    store.approve_invoice(a, nw, "Jane")
+    batch = store.create_export_batch([a], "csv")
+
+    def made_on(when):
+        with store._conn() as conn:
+            conn.execute("UPDATE export_batches SET created_at = ? WHERE id = ?", (when, batch))
+        return [x for x in accruals.build(store, END) if f"(#{a})" in x.reference]
+
+    late = made_on("2026-10-02T09:15:00")
+    assert late and {x.note for x in late} == {"exported after the month end"}
+    assert round(sum(x.amount for x in late), 2) == nw["subtotal"]  # its cost; the recoverable HST is not
+    assert "exported after the month end" in accruals.to_csv(late, END).decode("utf-8-sig")
+    assert "Exported after the month end" in client_for(store).get(f"/month-end?end={END}").text
+    assert made_on("2026-09-30T16:40:00") == []
+    assert made_on("2026-10-02T09:15:00") and not [x for x in accruals.build(store, dt.date(2026, 10, 31))
+                                                   if f"(#{a})" in x.reference]  # fmt: skip
 
 
 def test_a_resent_copy_of_a_bill_already_counted_is_not_accrued_again(tmp_path):

@@ -37,7 +37,17 @@ from ap_coder.coding.taxreturn import (
 from ap_coder.coding.terms import payment
 from ap_coder.core.memory import vendor_key
 from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store
-from ap_coder.erp.accruals import NOT_IN_ERP, OLD_DAYS, OLD_NOTE, PROPOSED, Accrual, _bill, _flags, _unguessed
+from ap_coder.erp.accruals import (
+    EXPORTED_LATE,
+    NOT_IN_ERP,
+    OLD_DAYS,
+    OLD_NOTE,
+    PROPOSED,
+    Accrual,
+    _bill,
+    _flags,
+    _unguessed,
+)
 from ap_coder.erp.exports import distribution
 from ap_coder.erp.insights import (
     AGE_BUCKETS,
@@ -459,8 +469,12 @@ def tax_self_assessment(
 def _not_in_erp(store: Store, period_end: dt.date, no_date: list[Accrual] | None = None) -> list[Accrual]:
     end = period_end.isoformat()
     oldest = (period_end - dt.timedelta(days=OLD_DAYS)).isoformat()
-    rows = store.invoice_columns(("id", "status", "ai_output", "final_output", "validation"))
+    rows = store.invoice_columns(("id", "status", "ai_output", "final_output", "validation", "export_batch"))
     exported = {r["id"] for r in _old_list_invoices(store, APPROVED)} - {r["id"] for r in _old_unexported(store)}
+    # In the ERP at the period end: exported by a batch made on or before it (D-133); a later one is accrued.
+    made = {b["id"]: b["created_at"][:10] for b in store.export_batches()}
+    late = {r["id"] for r in rows if r["id"] in exported and made[r["export_batch"]] > end}
+    exported -= late
     # A copy flagged as a duplicate of a bill already in the ERP (exported) or already accrued is not accrued
     # again; one flagged as already in the ERP's invoice register is in the ERP.
     counted = {_bill(r["final_output"] or {}) for r in rows if r["id"] in exported}
@@ -505,7 +519,7 @@ def _not_in_erp(store: Store, period_end: dt.date, no_date: list[Accrual] | None
                     cc,
                     round(amount, 2),
                     doc.get("currency") or "",
-                    state[r["status"]] + (f"; {OLD_NOTE}" if old else ""),
+                    (EXPORTED_LATE if r["id"] in late else state[r["status"]]) + (f"; {OLD_NOTE}" if old else ""),
                     old,
                 )  # fmt: skip
             )

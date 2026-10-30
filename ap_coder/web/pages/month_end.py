@@ -80,6 +80,7 @@ def month_end_page(request: Request, end: str = "") -> HTMLResponse:
                 "amount": a.amount,
                 "currency": a.currency,
                 "proposed": accruals.PROPOSED in a.note,
+                "exported_late": accruals.EXPORTED_LATE in a.note,
                 "old": a.old,
             }
             for a in items
