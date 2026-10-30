@@ -228,3 +228,12 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   before the download forgets it, as it forgets the batch's other events. (`ap_coder/erp/jde_post.py`
   `file_downloaded`, `downloads`, `post`, `_claim`; `ap_coder/web/pages/exports.py`; `tests/erp/test_jde_post.py`,
   `test_jde_api_web.py`)
+- **D-136** · The administrator's `service install|start|stop|status|remove` never take the task's account, its name
+  or the code folder from `server.json` (B-1500): the command line's, else `APCoderService`, `AP Coder` and the folder
+  the command runs from, as `server-update` trusts only that folder (D-109). Why: the data folder is the service
+  account's to write, and these three say what the task runs, as whom, and which task `schtasks` changes; a built-in
+  account (SYSTEM) is so used only when `--account` names it. Who chose another name or account gives it each time.
+  `service stop` ends a process that host.json or .ap_coder_server.json names only when it runs the folder's Python
+  (its `.venv`'s, or the `home` Python of its `pyvenv.cfg`, which a .venv's python.exe starts); any other is left to
+  the dashboard's own /shutdown and `schtasks /end`. (`ap_coder/ops/service.py` `main`, `runs_python_of`;
+  `docs/SERVER.md` step 6; `tests/ops/test_service.py`)
