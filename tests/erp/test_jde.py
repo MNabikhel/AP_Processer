@@ -369,6 +369,22 @@ def test_account_columns_mode_and_mapping():
     assert jde.ani(jde.account_for("6010", "CC400", no_cc)) == "1.6010"
 
 
+def test_a_subledger_too_long_for_jd_edwards_holds_the_voucher_back_before_the_batch():
+    """VNSBL holds 8 characters and VNSBLT one: a longer mapping (from a spreadsheet) failed only when JD Edwards
+    loaded the batch, where the business unit, object and subsidiary are checked before it is made."""
+
+    def settings(sbl: str, sblt: str) -> jde.JdeSettings:
+        return jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, account_mode=jde.ACCOUNT_COLUMNS,
+                               gl_map=[jde.GlMap("6010", "", "100", "6010", "01", sbl, sblt)])  # fmt: skip
+
+    assert jde.validate([_invoice(ON)], settings("12345678", "A"), AN8) == {}
+    for sbl, sblt in (("123456789", "A"), ("12345678", "AB")):
+        (reasons,) = jde.validate([_invoice(ON)], settings(sbl, sblt), AN8).values()
+        assert any("GL 6010" in r and "subledger" in r and "too long" in r for r in reasons), reasons
+        codes = {f[1] for f in jde.voucher_findings(_invoice(ON)["final_output"], settings(sbl, sblt), "10023")}
+        assert "JDE_NO_ACCOUNT" in codes
+
+
 def test_csv_columns_in_order_and_text_as_it_is():
     inv = _invoice(ON)
     inv["final_output"]["gl_distribution"][0]["description"] = "=HYPERLINK(evil)"
