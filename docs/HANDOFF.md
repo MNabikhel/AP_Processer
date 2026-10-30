@@ -23,7 +23,7 @@ SHA256`, compared by eye).
 
 | File | What it is | Use it when |
 |---|---|---|
-| `AP_Coder.bundle` | A git bundle: `main` with its whole history and the tags `v0.3.0-pilot1` and `v0.3.0-pilot2` (the laptop releases; pilot2 is the newest) and `v0.3.0-handoff2` (this handoff: pilot2 plus these docs; `v0.3.0-handoff1` was the first, on pilot1) | Git is available: keeps every commit message, which explains why the code is as it is |
+| `AP_Coder.bundle` | A git bundle: `main` with its whole history and the tags `v0.3.0-pilot1`, `v0.3.0-pilot2` and `v0.3.0-pilot3` (the laptop releases; pilot3 is the newest) and `v0.3.0-handoff3` (this handoff: pilot3 and these docs, the same commit; `v0.3.0-handoff1` and `-handoff2` were earlier ones) | Git is available: keeps every commit message, which explains why the code is as it is |
 | `AP_Coder_source.zip` | The same files as `main`, no history | Only file transfers are allowed, or git isn't |
 | `HANDOFF.md` | This file | Read first |
 | `SHA256SUMS.txt` | The SHA-256 of the three files above | Check the transfer |
@@ -34,7 +34,7 @@ SHA256`, compared by eye).
 git clone -b main AP_Coder.bundle AP_Processer   # a normal repository (cloning checks the bundle); origin = the bundle
 cd AP_Processer
 git bundle verify ../AP_Coder.bundle             # "The bundle records a complete history" (works only inside a repository)
-git tag                                          # v0.3.0-handoff1, v0.3.0-handoff2, v0.3.0-pilot1, v0.3.0-pilot2
+git tag                                          # v0.3.0-handoff1 to -handoff3, v0.3.0-pilot1 to -pilot3
 git log --oneline | head                         # the latest commits
 # Make the company's Git server the origin (an empty repository created there first):
 git remote set-url origin <the company's repository URL>
@@ -47,7 +47,7 @@ git push -u origin main --tags
 unzip AP_Coder_source.zip                        # makes AP_Processer/
 cd AP_Processer
 cat ap_coder/BUILD                               # must read $Format:%h %cI$ (git fills it in for each ZIP made later)
-git init -b main && git add -A && git commit -m "AP Coder at the handoff (v0.3.0-handoff2), no history"
+git init -b main && git add -A && git commit -m "AP Coder at the handoff (v0.3.0-handoff3), no history"
 git remote add origin <the company's repository URL> && git push -u origin main
 ```
 
@@ -98,9 +98,9 @@ Nothing connects to the internet at run time. It is a FastAPI web app on 127.0.0
 roles and HTTPS). Data lives in one SQLite database in a data folder outside the code. It is at pilot stage: built
 and tested on synthetic and public sample invoices, not yet on the company's invoices or systems.
 
-Status at the handoff (`v0.3.0-handoff2`: the laptop release `v0.3.0-pilot2` of 30 October 2026 plus these handoff
-docs; the build stamp `doctor` and `/healthz` report is that commit's). Each pilot release was checked by CI on
-Windows with the real LM Studio before it was tagged (`.github/workflows/release.yml`, D-129, D-130):
+Status at the handoff (`v0.3.0-handoff3`: the laptop release `v0.3.0-pilot3` of 30 October 2026, the same commit,
+with these handoff docs; the build stamp `doctor` and `/healthz` report is that commit's). Each pilot release was
+checked by CI on Windows with the real LM Studio before it was tagged (`.github/workflows/release.yml`, D-129, D-130):
 
 | Part | State |
 |---|---|
