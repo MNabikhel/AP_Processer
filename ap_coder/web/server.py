@@ -367,6 +367,16 @@ def _supervisor_class() -> Any:
         failed = False
         asked_to_stop = False  # /shutdown or the service: a worker ending now is no startup failure (B-1292)
 
+        def keep_subprocess_alive(self) -> None:
+            """The stop file first: workers that read it may have ended (on Windows with STARTUP_FAILURE's exit
+            code) before ``_stop_when_asked`` saw it, and are no workers that failed to start (B-1493)."""
+            spec = json.loads(os.environ.get(WORKER_ENV) or "{}")
+            if spec.get("data") and _asked_to_stop(Path(spec["data"]), str(spec.get("token") or "")):
+                self.asked_to_stop = True
+                self.should_exit.set()
+                return
+            super().keep_subprocess_alive()
+
         def terminate_all(self) -> None:
             spec = json.loads(os.environ.get(WORKER_ENV) or "{}")
             if spec.get("data"):

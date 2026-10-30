@@ -310,6 +310,50 @@ def test_a_worker_asked_to_stop_is_no_startup_failure_even_with_windows_exit_cod
     assert supervisor.failed
 
 
+def test_workers_that_saw_the_stop_file_first_are_no_startup_failure(tmp_path, monkeypatch, caplog):
+    """B-1493: the workers read the stop file /shutdown wrote and ended (on Windows with exit code 3, uvicorn's
+    STARTUP_FAILURE) before the supervisor's own check of it, every half second, had run: its keep-alive took them
+    for workers that failed to start, and the server ended with exit code 1 after a clean stop. The keep-alive reads
+    the stop file first; a worker that fails at start with no stop asked for still stops the server as a failure."""
+    import json
+    import logging
+    import threading
+    from types import SimpleNamespace
+
+    from uvicorn.config import STARTUP_FAILURE
+
+    class Ended:
+        pid, exitcode = 4608, STARTUP_FAILURE
+
+        def is_alive(self, timeout=None):
+            return False
+
+        def kill(self):
+            pass
+
+        def join(self, timeout=None):
+            pass
+
+    def supervisor():
+        made = server._supervisor_class().__new__(server._supervisor_class())
+        made.should_exit, made.processes = threading.Event(), [Ended()]
+        made.config = SimpleNamespace(timeout_worker_healthcheck=0.01)
+        return made
+
+    monkeypatch.setenv(server.WORKER_ENV, json.dumps({"data": str(tmp_path), "token": "secret"}))
+    caplog.set_level(logging.INFO)
+    server.stop_file(tmp_path).write_text("secret", encoding="utf-8")  # /shutdown, answered by a worker
+    stopping = supervisor()
+    stopping.keep_subprocess_alive()
+    assert stopping.should_exit.is_set() and stopping.asked_to_stop
+    assert "failed to start" not in caplog.text
+    server.stop_file(tmp_path).unlink()  # no stop asked for: a worker that ends at once did fail to start
+    failing = supervisor()
+    failing.keep_subprocess_alive()
+    assert failing.should_exit.is_set() and not failing.asked_to_stop
+    assert "failed to start" in caplog.text
+
+
 def test_a_worker_stuck_waiting_for_a_connection_is_woken_to_stop(monkeypatch):
     """B-1441: on Windows a web worker's loop could sit in a blocking ``accept()`` on the socket the workers share
     (both woke for one connection, the other took it): it never saw the stop, and was ended at the deadline, 30 s on
