@@ -207,8 +207,10 @@ def _credit_note_findings(
         return []
     wanted = norm_invoice_number(printed)
     original = next(
-        (h for h in history if norm_invoice_number(h["invoice_number"]) == wanted and (h["grand_total"] or 0) > 0), None
-    )
+        (h for h in history if norm_invoice_number(h["invoice_number"]) == wanted and (h["grand_total"] or 0) > 0
+         and h["status"] not in ("rejected", "failed")),  # never billed: not what it credits (B-1483)
+        None,
+    )  # fmt: skip
     if original is None:
         posted = [r for r in store.in_erp(coding.vendor_name, printed, None) if r["total"] > 0]
         if posted:
