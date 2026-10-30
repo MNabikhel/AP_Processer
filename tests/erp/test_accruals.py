@@ -133,7 +133,8 @@ def test_an_expected_recurring_invoice_is_not_accrued_beside_its_vendors_receive
     assert chinook == [(accruals.RECEIVED, "PO-90155 line 1", 385.0)]
     left_out: list[accruals.Accrual] = []
     assert accruals.build(store, END, left_out=left_out) == items
-    assert [(a.vendor, a.amount, a.note) for a in left_out] == [(doc["vendor_name"], doc["grand_total"], accruals.ON_PO)]
+    why = (doc["vendor_name"], doc["grand_total"], accruals.ON_PO)
+    assert [(a.vendor, a.amount, a.note) for a in left_out] == [why]
     text = client_for(store).get(f"/month-end?end={END}").text
     assert "Not accrued as expected recurring invoices" in text and "Chinook Courier" in text.split("Not accrued as")[1]
 
