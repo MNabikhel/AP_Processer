@@ -196,6 +196,11 @@
     {{ "are" if left_out[0] > 1 else "is" }} left out of this file{% if left_out[0] == left_out[1] %}, so it holds no invoice{% endif %}
     (e.g. no supplier number in the vendor master). The reasons are listed in README.txt in the ZIP.</div></div>
   {% endif %}
+  {% if again_fmt == jde_format and (jde_api.posted or jde_api.maybe) %}{# posted through the API: never loaded again (D-134) #}
+  <div class="flash warn"><span class="ms" aria-hidden="true">cloud_done</span><div>
+    {% if jde_api.posted %}{{ jde_api.posted | plural("voucher") }} of batch {{ chosen.id }} {{ "are" if jde_api.posted > 1 else "is" }} already in JD Edwards, posted through the API{% endif %}{% if jde_api.maybe %}{{ "; " if jde_api.posted }}{{ jde_api.maybe | plural("voucher") }} may be there (sent, or held for a check in JD Edwards){% endif %}.
+    This file leaves {{ "them" if jde_api.posted + jde_api.maybe > 1 else "it" }} out (README.txt lists why); a copy of it downloaded before holds {{ "them" if jde_api.posted + jde_api.maybe > 1 else "it" }}: don't load that one.</div></div>
+  {% endif %}
   {% if jde_api.shown %}{# JD Edwards through the API (D-104) #}
   <div class="st-sep" id="jde-api">
     <h5>JD Edwards API{% if not jde_api.on %} <span class="muted">(step 2 is off)</span>{% endif %}</h5>
@@ -230,6 +235,12 @@
       </table>
     </div>
     {% endif %}
+    {% set last = jde_api.downloads[0] if jde_api.downloads else none %}
+    {% if last %}{# its ZIP downloaded: posting it too asks if the file was loaded (D-134) #}
+    <div class="flash warn"><span class="ms" aria-hidden="true">download</span><div>
+      The JD Edwards file of this batch was downloaded by {{ last.actor or "someone" }} on {{ last.at }}{% if jde_api.downloads | length > 1 %} ({{ jde_api.downloads | length }} downloads in all){% endif %}.
+      {% if not jde_api.done %}If it was loaded into JD Edwards, don't post these vouchers through the API too: they would be there twice.{% endif %}</div></div>
+    {% endif %}
     {% if jde_api.on and not jde_api.done %}
     <div class="row">
       {% if can("/exports/batches/1/jde-api/dry-run") %}
@@ -238,8 +249,12 @@
       </form>
       {% endif %}
       {% if jde_api.checked and can("/exports/batches/1/jde-api/post") %}
-      <form method="post" action="/exports/batches/{{ chosen.id }}/jde-api/post" data-busy="Posting…"
+      <form method="post" action="/exports/batches/{{ chosen.id }}/jde-api/post" data-busy="Posting…"{% if last %} class="stack"{% endif %}
             data-confirm="Post {{ jde_api.checked | plural('voucher') }} of batch {{ chosen.id }} to JD Edwards?">
+        {% if last %}
+        <label class="check"><input type="checkbox" name="not_loaded" value="1" required> I've checked in JD Edwards: the downloaded file was not loaded</label>
+        <label class="field">What you checked <span class="muted small">(kept in the audit trail with your name)</span><textarea name="why" rows="2" required></textarea></label>
+        {% endif %}
         <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">send</span>Post {{ jde_api.checked | plural("voucher") }} to JD Edwards</button>
       </form>
       {% elif jde_api.checked %}

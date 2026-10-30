@@ -348,10 +348,15 @@ def api_context(store: Store, chosen: dict[str, Any] | None) -> dict[str, Any]:
     cfg = jde_ais.load(store)
     rows = jde_post.status_rows(store, chosen["id"]) if chosen and chosen["format"] == jde.FORMAT else []
     shown = bool(chosen and chosen["format"] == jde.FORMAT and (cfg.step2 or rows))
+    posted = sum(r["status"] == jde_post.POSTED for r in rows)
+    # Its ZIP downloaded (D-134): posting it too asks for a person's word that the file was not loaded.
+    downloads = [{**d, "at": d["at"].replace("T", " ")[:16]} for d in jde_post.downloads(store, chosen["id"])] if (
+        shown) else []  # fmt: skip
     return {"shown": shown, "on": cfg.step2, "rows": rows,
             "checked": sum(r["status"] == jde_post.CHECKED for r in rows),
             "waiting": len(jde_post.waiting(store)), "done": all(r["status"] == jde_post.POSTED for r in rows) and
-            bool(rows)}  # fmt: skip
+            bool(rows), "downloads": downloads, "posted": posted,
+            "maybe": sum(r["locked"] for r in rows) - posted}  # fmt: skip
 
 
 # --- Exporting ---------------------------------------------------------------------------------------------------
@@ -439,6 +444,8 @@ def download_batch(request: Request, batch: int, fmt: str = "") -> Response:
         # Z-files made with these settings cannot load (their own dry run says "NOTHING CAN LOAD"): say what to fix.
         detail = " ".join(f"{p} Set it in Settings → JD Edwards E1, then download the batch again." for p in blocking)
         raise HTTPException(status_code=409, detail=detail)
+    if fmt == jde.FORMAT:  # who and when; posting the batch through the API too then asks if it was loaded (D-134)
+        jde_post.file_downloaded(store, batch, current_reviewer())
     return download(*batch_file(store, batch, fmt))
 
 
@@ -609,8 +616,9 @@ def jde_api_dry_run(request: Request, batch: int) -> JSONResponse:
 
 
 @router.post("/exports/batches/{batch:int}/jde-api/post")
-def jde_api_post(request: Request, batch: int) -> JSONResponse:
-    """The go-ahead (an Approver or Admin): the vouchers that passed the dry run, unchanged since, are posted."""
+def jde_api_post(request: Request, batch: int, not_loaded: str = Form(""), why: str = Form("")) -> JSONResponse:
+    """The go-ahead (an Approver or Admin): the vouchers that passed the dry run, unchanged since, are posted. Once
+    the batch's ZIP was downloaded, only with ``not_loaded`` ticked and ``why`` (what was checked) said (D-134)."""
     store = get_store(request)
     if not jde_ais.load(store).step2:
         return refuse("Step 2 of the JD Edwards API (vouchers) is off: an Admin switches it on in Settings → JD "
@@ -623,12 +631,17 @@ def jde_api_post(request: Request, batch: int) -> JSONResponse:
     refused = store.posting_refusal(batch, who.user_id if who else None)  # separation of duties (D-109)
     if refused:
         return refuse(refused, 403)
+    downloaded, why = jde_post.downloads(store, batch), " ".join(why.split())
+    if downloaded and not not_loaded:
+        return refuse(jde_post.downloaded_message(batch, downloaded))
+    if downloaded and not why:
+        return refuse("Say what you checked in JD Edwards: it is kept with the go-ahead in the audit trail.")
     actor = current_reviewer()
 
     def work(job: Any) -> dict[str, Any]:
         job.step(0, 1, "Posting the vouchers to JD Edwards…")
         try:
-            return {"messages": _api_messages(jde_post.post(store, batch, actor=actor))}
+            return {"messages": _api_messages(jde_post.post(store, batch, actor=actor, not_loaded=why))}
         except (ValueError, jde_ais.AisError) as exc:
             return {"messages": [{"text": str(exc), "tone": "warn"}]}
 
