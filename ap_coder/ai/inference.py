@@ -10,10 +10,12 @@ when it is the model server's.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import math
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
@@ -457,12 +459,14 @@ def _account_schema(reference: ReferenceData) -> dict[str, Any]:
     }
 
 
-def suggest_accounts(coder: InvoiceCoder, vendor: str, lines: list[tuple[int, str, float]],
-                     history: str = "") -> dict[int, tuple[str, str, str]]:  # fmt: skip
+def suggest_accounts(coder: InvoiceCoder, vendor: str, lines: list[tuple[int, str, float]], history: str = "",
+                     kept: Path | None = None) -> dict[int, tuple[str, str, str]]:  # fmt: skip
     """A local model's GL account (and cost center) for each line the approval memory could not code:
     line number -> (gl_code, cost_center, reason). The invoice itself is read by the local reader, which a
     small model is worse at than at choosing an account; this call is short, so it is quick on a laptop.
-    Only codes from the chart come back (the schema lists them); anything else is dropped."""
+    Only codes from the chart come back (the schema lists them); anything else is dropped. ``kept``: a folder where
+    each answer is kept, so the same question (model, lines, history, chart) is never asked twice: the page reader's
+    pass asks what arrival asked (D-131)."""
     if not lines:
         return {}
     model = coder._prepare_local()
@@ -489,7 +493,8 @@ def suggest_accounts(coder: InvoiceCoder, vendor: str, lines: list[tuple[int, st
     for first in range(0, len(asked), SUGGEST_BATCH_LINES):
         batch = asked[first : first + SUGGEST_BATCH_LINES]
         try:
-            out.update(_suggest_batch(coder, model, schema, system, vendor, batch, history, valid_gl, valid_cc))
+            out.update(_suggest_batch(coder, model, schema, system, vendor, batch, history, valid_gl, valid_cc,
+                                      kept))  # fmt: skip
         except Exception as exc:  # the batches answered before keep their accounts (B-1342); the rest stay for AP
             if not out:
                 raise
@@ -507,18 +512,41 @@ SUGGEST_HISTORY_CHARS = 3_000  # of the approval history and AP's lessons
 
 def _suggest_batch(coder: InvoiceCoder, model: str, schema: dict[str, Any], system: str, vendor: str,
                    lines: list[tuple[int, str, float]], history: str, valid_gl: set[str],
-                   valid_cc: set[str]) -> dict[int, tuple[str, str, str]]:  # fmt: skip
-    """``suggest_accounts`` for one batch of lines: one call."""
+                   valid_cc: set[str], kept: Path | None = None) -> dict[int, tuple[str, str, str]]:  # fmt: skip
+    """``suggest_accounts`` for one batch of lines: one call, or none when ``kept`` has its answer."""
     listing = "\n".join(f"{n}. {str(desc)[:SUGGEST_DESCRIPTION_CHARS]} | {amount:,.2f}" for n, desc, amount in lines)
     user = f"Vendor: {vendor or 'unknown'}\nLines (number. description | amount):\n{listing}"
     if history:
         user += f"\n\nHow AP coded similar lines before:\n{history}"
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+    path = None
+    if kept is not None:
+        digest = hashlib.sha256(json.dumps([model, messages, schema], sort_keys=True).encode()).hexdigest()
+        path = kept / f"{digest}.json"
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = None
+        if isinstance(data, dict):
+            return _picks(data, lines, valid_gl, valid_cc)
     response = coder._local_create(model, messages, schema)
     reply = local_llm.read_reply(response.choices[0], coder.settings.llm.max_output_tokens)
     if reply.data is None:  # the lines stay for AP to code; the reason is logged, and shown by the doctor
         raise CodingError(reply.problem[:1].upper() + reply.problem[1:])
-    data = reply.data
+    if path is not None:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            part = path.with_suffix(".part")
+            part.write_text(json.dumps(reply.data), encoding="utf-8")
+            part.replace(path)
+        except OSError:
+            pass
+    return _picks(reply.data, lines, valid_gl, valid_cc)
+
+
+def _picks(data: dict[str, Any], lines: list[tuple[int, str, float]], valid_gl: set[str],
+           valid_cc: set[str]) -> dict[int, tuple[str, str, str]]:  # fmt: skip
+    """The model's answer for these lines: line number -> (gl_code, cost_center, reason), chart codes only."""
     wanted = {n for n, _, _ in lines}
     out: dict[int, tuple[str, str, str]] = {}
     for row in data.get("lines") or []:

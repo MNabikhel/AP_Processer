@@ -368,10 +368,16 @@ class InvoicePipeline:
         )  # AP's corrections, with its reasons
         if learned:
             history = "\n".join([history, "AP's lessons for this vendor:", *learned]).strip()
+        kept = None
+        if getattr(self, "store", None) is not None:  # an app pipeline: the page reader's pass asks no question twice
+            from ..core.paths import private_dir
+
+            kept = private_dir() / ".cache" / "model_accounts"
         try:
             picks = suggest_accounts(
-                self.coder, coding.vendor_name, [(n, li.description, li.amount) for n, li in todo.items()], history
-            )
+                self.coder, coding.vendor_name, [(n, li.description, li.amount) for n, li in todo.items()], history,
+                kept=kept,
+            )  # fmt: skip
         except CodingError as exc:  # the chat model isn't running (it is optional): the lines stay for AP
             log.info("local model could not suggest accounts (%s); left for AP", exc)
             return
@@ -542,11 +548,17 @@ class InvoicePipeline:
         result.history_examples = len(examples)
         history_text = format_examples(examples, with_cost_center=self.reference.cost_centers is not None)
 
+        # Read again (the page reader): as of the day it came in, which settles a 03/04/2026 the page leaves open.
+        received = None
+        if invoice_id is not None and self.store is not None:
+            from ..coding.bulk import _received_on
+
+            received = _received_on(self.store.get_invoice(invoice_id) or {})
         t1 = time.perf_counter()
         provider = getattr(self.coder, "provider", "")
         if provider in ("off", "local"):
             feedback = self._code_locally(result, path, layout, page_text, feedback, history_text, text_file,
-                                          captured)  # fmt: skip
+                                          captured, received)  # fmt: skip
         else:
             result.coding = self.coder.code(result.extraction, self._images(path), history_text)
             _mark_chat_accounts(result.coding.coding)
@@ -565,17 +577,19 @@ class InvoicePipeline:
             store=self.store,
             exclude_invoice_id=invoice_id,
             feedback=feedback,
+            received=received,
         )
         if _cut_off(path):  # what is there is read and shown; the person is told part may be missing
             result.report.issues.append(Issue(WARNING, CUT_OFF, CUT_OFF_TEXT.format(name=path.name)))
 
     def _code_locally(self, result: PipelineResult, path: Path, layout: Any, page_text: list[str] | None,
                       feedback: list[Any], history_text: str, text_file: bool,
-                      captured: dict[str, tuple[Any, str, Any]]) -> list[Any]:  # fmt: skip
+                      captured: dict[str, tuple[Any, str, Any]],
+                      received: dt.date | None = None) -> list[Any]:  # fmt: skip
         """The local readers' header, lines and taxes (they read invoices better than a small model), each line coded
         from what AP approved before; the chat model suggests the lines left over when it answers. A text file is read
         by the same rule reader, its text taken as exact. The capture goes in ``captured``; returns the vendor's
-        feedback."""
+        feedback. ``received``: the day it came in, when it is read again (default today)."""
         from .offline_coder import code_from_capture, read_invoice, text_layout
 
         provider = getattr(self.coder, "provider", "")
@@ -585,7 +599,7 @@ class InvoicePipeline:
         # images too, when it can see pages: one more independent reader of every field.
         model_values = self._model_reading(path) if page_text is not None and provider == "local" else None
         local = captured["local"] = read_invoice(path, self.store, layout=layout, page_text=page_text,
-                                                 ai_values=model_values)  # fmt: skip
+                                                 ai_values=model_values, today=received)  # fmt: skip
         vendor = local[0].fields.get("vendor_name")
         if vendor is not None and vendor.value:
             # The vendor is known now: its lessons, past the cap too, and its examples for the chat model, even when

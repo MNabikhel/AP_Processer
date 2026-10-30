@@ -30,9 +30,9 @@ _RECEIPT = re.compile(
 _EOM = re.compile(r"\b(eom|end of (the )?month|fin de mois)\b", re.I)
 # A discount: 2/10 net 30, 2/10 EOM net 30, 2/10 EOM, 1.5/15 n60 (a net part or EOM is required, and the rate
 # must look like a discount, so "Due 10/15 net 45" stays a date), 2% 10 net 30, 2% discount if paid within 10 days,
-# "Net 30, 2% 10" (the word "days" may be left out).
+# "Net 30, 2% 10" (the word "days" may be left out), 2/10/N30 (B-1461).
 _SLASH = re.compile(
-    r"(?<![\d/.,])(\d(?:[.,]\d+)?)\s*%?\s*/\s*(\d+)\s*(?:days?)?\s*(?:eom\b)?\s*[,;]?\s*(?:n(?:et)?\s*[:/\-–]?\s*(\d+)|(?<=eom))",
+    r"(?<![\d/.,])(\d(?:[.,]\d+)?)\s*%?\s*/\s*(\d+)\s*(?:days?)?\s*(?:eom\b)?\s*[,;/]?\s*(?:n(?:et)?\s*[:/\-–]?\s*(\d+)|(?<=eom))",
     re.I,
 )
 _DISCOUNT = [
@@ -218,6 +218,8 @@ def parse_terms(text: str | None) -> Terms:
             pct = float(m.group(1).replace(",", "."))
             days = int(m.group(2))
             net = int(m.group(3)) if m.lastindex and m.lastindex >= 3 and m.group(3) else None
+            if net is not None and re.match(r"\s*" + _MONTHS, text[m.end(3) :], re.I):
+                net = None  # "2/10 Net 1 month": a month, not 1 day (B-1460)
             if net is None and months:  # "2% 10 days, net 1 month"
                 net = 30 * months
             if net is None:  # "Net 45, 1% 15 days" or "2% 10 days, net 30": the net days are elsewhere

@@ -449,11 +449,6 @@ def _update(bundle: Path, data: Path, db: Path, *, server: Server | None, dry_ru
     else:
         say("The service is not installed on this computer: nothing to stop.")
     backup = None
-    if db.exists():
-        from ..core.store import Store
-
-        backup = Store(db).backup_now(label)
-        say(f"Database backed up: {backup}")
     started = False
 
     def back(reason: str) -> int:
@@ -475,28 +470,40 @@ def _update(bundle: Path, data: Path, db: Path, *, server: Server | None, dry_ru
         say(f"AP Coder went back to {old_version}.{kept}")
         return 1
 
-    say(f"Unzipping to {new}...")
+    # Whatever stops it once the service is stopped (the disk full for the backup, the new folder's Python blocked,
+    # Ctrl+C) puts the old version back and starts it again: never a server left stopped.
     try:
-        unzip(Path(bundle), info["top"], new)
-    except (OSError, zipfile.BadZipFile) as exc:
-        return back(f"The bundle could not be unzipped ({exc}).")
-    say("Setting up the new folder (its packages come from its wheelhouse; a few minutes)...")
-    if not server.set_up(new):
-        return back("The new folder could not be set up: its launcher's window says why (and ~/.ap_coder/logs).")
-    say("Updating the database...")
-    if not server.migrate(new, db):
-        return back("The new version could not update the database.")
-    ok, result = server.self_check(new)
-    say(result)
-    if not ok:
-        return back(f"The self-check failed: {result}")
-    previous = service.read_config(data).get("previous_folder") or ""
-    switch_to(data, new)
-    if installed:
-        say("Starting the service...")
-        started = server.start()
-        if not started or not server.up(new):
-            return back("The new version does not answer (python -m ap_coder service status; the log).")
+        if db.exists():
+            from ..core.store import Store
+
+            backup = Store(db).backup_now(label)
+            say(f"Database backed up: {backup}")
+        say(f"Unzipping to {new}...")
+        try:
+            unzip(Path(bundle), info["top"], new)
+        except (OSError, zipfile.BadZipFile) as exc:
+            return back(f"The bundle could not be unzipped ({exc}).")
+        say("Setting up the new folder (its packages come from its wheelhouse; a few minutes)...")
+        if not server.set_up(new):
+            return back("The new folder could not be set up: its launcher's window says why (and ~/.ap_coder/logs).")
+        say("Updating the database...")
+        if not server.migrate(new, db):
+            return back("The new version could not update the database.")
+        ok, result = server.self_check(new)
+        say(result)
+        if not ok:
+            return back(f"The self-check failed: {result}")
+        previous = service.read_config(data).get("previous_folder") or ""
+        switch_to(data, new)
+        if installed:
+            say("Starting the service...")
+            started = server.start()
+            if not started or not server.up(new):
+                return back("The new version does not answer (python -m ap_coder service status; the log).")
+    except (Exception, KeyboardInterrupt) as exc:  # noqa: BLE001 - see above
+        if isinstance(exc, KeyboardInterrupt):
+            return back("The update was interrupted (Ctrl+C).")
+        return back(f"The update stopped on an error: {exc or type(exc).__name__}.")
     _record(
         data,
         {
@@ -545,7 +552,9 @@ def go_back(data: Path, db: Path, *, server: Server | None = None, dry_run: bool
               "version can't open the updated database).", file=sys.stderr)  # fmt: skip
         return 1
     current = s.code_folder
-    since = saved.get("history", [{}])[-1].get("at", "the update") if saved.get("history") else "the update"
+    # The update the backup was made for: the last one that went through, not a later attempt rolled back.
+    updates = [h for h in saved.get("history") or [] if isinstance(h, dict) and h.get("result") == "updated"]
+    since = updates[-1].get("at", "the update") if updates else "the update"
     say(f"Going back from AP Coder {_version(current)} ({current}) to {_version(previous)} ({previous}).")
     say(f"The database goes back to the backup made before the update ({backup.name}): what was done in AP Coder "
         f"since {since} is not in it. A copy of the database as it is now is kept in backups. The user accounts, "
