@@ -113,6 +113,31 @@ def test_expected_recurring_invoice(tmp_path):
     assert not [x for x in accruals.build(store, dt.date(2026, 8, 15)) if x.source == accruals.RECURRING]
 
 
+def test_an_expected_recurring_invoice_is_not_accrued_beside_its_vendors_received_po_lines(tmp_path):
+    # Chinook bills monthly, and its freight on PO-90155 was received, not invoiced, by 30 September: its next invoice
+    # bills that freight. Accrued once, on the PO line; the page says why the expected invoice is left out.
+    from tests.webclient import client_for
+
+    store = Store(tmp_path / "a.db")
+    load_sample_setup(store)
+    load_sample_purchase_orders(store)
+    stem = "chinook_AB_GST_CCO-26-10418"
+    lines = json.loads((SAMPLES / "ground_truth" / f"{stem}.json").read_text())["line_items"]
+    doc = _coded(store, stem, line_items=[li for li in lines if "PO-90155" not in li["description"]])
+    for i, day in enumerate(("2026-05-31", "2026-06-30", "2026-07-31")):
+        inv = {**doc, "invoice_number": f"C-{i}", "invoice_date": day}
+        store.approve_invoice(store.add_invoice(tmp_path / f"{i}.pdf", inv, {}), inv, "Jane")
+    items = accruals.build(store, END)
+    chinook = [(a.source, a.reference, a.amount) for a in items
+               if a.source != accruals.NOT_IN_ERP and a.vendor == doc["vendor_name"]]  # fmt: skip
+    assert chinook == [(accruals.RECEIVED, "PO-90155 line 1", 385.0)]
+    left_out: list[accruals.Accrual] = []
+    assert accruals.build(store, END, left_out=left_out) == items
+    assert [(a.vendor, a.amount, a.note) for a in left_out] == [(doc["vendor_name"], doc["grand_total"], accruals.ON_PO)]
+    text = client_for(store).get(f"/month-end?end={END}").text
+    assert "Not accrued as expected recurring invoices" in text and "Chinook Courier" in text.split("Not accrued as")[1]
+
+
 def test_default_period_end():
     assert accruals.default_period_end(dt.date(2026, 10, 3)) == dt.date(2026, 9, 30)
     assert accruals.default_period_end(dt.date(2026, 10, 20)) == dt.date(2026, 10, 31)

@@ -6,16 +6,17 @@ Three sources, none counted twice:
   invoiced so far, at the PO price, on the PO line's GL account
 * Invoices not yet in the ERP: invoices dated on or before the period end that are still in review,
   waiting for a second approval, approved but not exported, or exported after the period end (in the ERP's next
-  month, D-133), by GL account (net of recoverable tax); a copy
-  flagged as a duplicate of a bill already exported or counted, or as already in the ERP, is left out. One no
-  person has approved yet is "proposed", on the accounts it was given (a guessed account counts as none, B-466);
-  one dated more than a year before the period end is accrued and flagged to check (a date read wrong, or a bill
-  long overdue: AP decides), one with no date is not accrued but listed (``undated``)
+  month, D-133), by GL account (net of recoverable tax); a copy flagged as a duplicate of a bill already exported or
+  counted, or as already in the ERP, is left out. One no person has approved yet is "proposed", on the accounts it
+  was given (a guessed account counts as none, B-466); one dated more than a year before the period end is accrued
+  and flagged to check (a date read wrong, or a bill long overdue: AP decides), one with no date is not accrued but
+  listed (``undated``)
 * Expected recurring invoices: regular vendors whose next invoice was due by the period end and has not
-  arrived, at their usual amount, on the GL account most used for them (an estimate)
+  arrived, at their usual amount, on the GL account most used for them (an estimate). Not for a vendor whose
+  received, not invoiced PO lines are accrued: that invoice would bill them, so it is left out (``left_out``)
 
-Entry points: ``build`` (with ``undated``: the invoices with no date, not accrued), ``by_gl_columns``,
-``summary`` and ``to_csv``.
+Entry points: ``build`` (with ``undated``: the invoices with no date, not accrued; ``left_out``: the expected
+recurring invoices left out), ``by_gl_columns``, ``summary`` and ``to_csv``.
 """
 
 from __future__ import annotations
@@ -44,6 +45,8 @@ OLD_NOTE = "dated over a year ago: check"
 PROPOSED = "proposed: not approved yet"
 # Exported by a batch made after the period end: not in the ERP at the period end, so accrued for it (D-133).
 EXPORTED_LATE = "exported after the month end"
+# An expected recurring invoice not accrued: its vendor's received, not invoiced PO lines are, and it would bill them.
+ON_PO = "left out: its received, not invoiced purchase-order lines are accrued instead"
 # The export batches made after a period end (``?``): their invoices were not in the ERP at that period end (D-133).
 _LATE_BATCHES = "SELECT id FROM export_batches WHERE substr(created_at, 1, 10) > ?"
 
@@ -216,10 +219,19 @@ def _not_in_erp(store: Store, period_end: dt.date, no_date: list[Accrual] | None
     return out
 
 
-def _expected_recurring(store: Store, period_end: dt.date) -> list[Accrual]:
+def _expected_recurring(store: Store, period_end: dt.date, received: list[Accrual],
+                        left_out: list[Accrual] | None = None) -> list[Accrual]:  # fmt: skip
+    # A vendor's received, not invoiced PO lines (``received``) are what its next invoice bills: accrued once, on them.
+    on_po = {vendor_key(a.vendor) for a in received}
     out = []
     for r in recurring.detected(store, today=period_end):
         if r.next_date > period_end:
+            continue
+        if r.vendor_key in on_po:
+            if left_out is not None:
+                left_out.append(Accrual(RECURRING, r.vendor_name, f"expected {r.next_date.isoformat()}",
+                                        f"{r.cadence.lower()} invoice", "", "", round(r.typical_total, 2), r.currency,
+                                        ON_PO))  # fmt: skip
             continue
         usage = store.vendor_gl_usage(r.vendor_key)
         out.append(
@@ -238,14 +250,14 @@ def _expected_recurring(store: Store, period_end: dt.date) -> list[Accrual]:
     return out
 
 
-def build(store: Store, period_end: dt.date, undated: list[Accrual] | None = None) -> list[Accrual]:
+def build(store: Store, period_end: dt.date, undated: list[Accrual] | None = None,
+          left_out: list[Accrual] | None = None) -> list[Accrual]:  # fmt: skip
     """The accruals at ``period_end``; ``undated``: filled with the invoices not in the ERP yet that have no invoice
-    date, not accrued until they have one (B-474), read in the same go."""
-    return (
-        _received_not_invoiced(store, period_end)
-        + _not_in_erp(store, period_end, undated)
-        + _expected_recurring(store, period_end)
-    )
+    date, not accrued until they have one (B-474), read in the same go; ``left_out``: with the expected recurring
+    invoices not accrued, as their vendor's received, not invoiced PO lines are (``ON_PO``)."""
+    received = _received_not_invoiced(store, period_end)
+    expected = _expected_recurring(store, period_end, received, left_out)
+    return received + _not_in_erp(store, period_end, undated) + expected
 
 
 def by_gl_columns(accruals: list[Accrual]) -> tuple[list[str], list[tuple[str, dict[str, float]]]]:

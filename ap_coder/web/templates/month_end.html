@@ -79,6 +79,11 @@
     </table>
   </div>
   {% endfor %}
+  {% if left_out %}
+  <p class="muted small"><span class="ms" aria-hidden="true">info</span> Not accrued as expected recurring invoices:
+    {% for a in left_out %}<b>{{ a.vendor }}</b> ({{ a.description }}, usually {{ a.amount | money }} {{ a.currency }}){% if not loop.last %}, {% endif %}{% endfor %}.
+    Their received, not invoiced purchase-order lines are accrued instead: the invoice would bill them.</p>
+  {% endif %}
 </section>
 {% endif %}
 {% endblock %}

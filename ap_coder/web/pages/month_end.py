@@ -53,7 +53,8 @@ def month_end_page(request: Request, end: str = "") -> HTMLResponse:
     store = get_store(request)
     period_end = address_day(end, accruals.default_period_end())
     no_date: list[accruals.Accrual] = []  # the invoices with no date: read with the accruals, not again
-    items = accruals.build(store, period_end, no_date)
+    left_out: list[accruals.Accrual] = []  # expected recurring invoices whose received PO lines are accrued instead
+    items = accruals.build(store, period_end, no_date, left_out)
     rates = store.fx_rates()
     tiles = []
     for source, (n, by_currency) in accruals.summary(items).items():
@@ -115,6 +116,10 @@ def month_end_page(request: Request, end: str = "") -> HTMLResponse:
                 "currency": a.currency,
             }
             for a in no_date
+        ],
+        left_out=[
+            {"vendor": a.vendor, "description": a.description, "amount": a.amount, "currency": a.currency}
+            for a in left_out
         ],
         flagged=" · ".join(f"{money(t)} {c}" for c, t in sorted(flagged.items())),
         old_invoices=old_invoices,
