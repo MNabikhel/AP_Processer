@@ -1,6 +1,8 @@
 # The release (D-129): the pilot release's offline install zip checked on a Windows laptop with the real LM Studio,
 # then the tags of .github/release-tags.txt and their GitHub releases. Slow (the models run on the CPU: no graphics
-# card here), so it runs only when this file or the tag list changes, or by hand.
+# card here, 60 to 90 minutes), so it runs only when this file or the tag list changes, or by hand, and only once for
+# a pilot release (D-130): a run that finds the same check of the same release passed before (a release's pull
+# request, before its merge to main) reuses that run's zip instead of checking it again.
 name: Release
 
 on:
@@ -19,16 +21,59 @@ permissions:
   contents: read
 
 jobs:
+  checked:
+    # An earlier run that passed this check of this pilot release (scripts/ci/release_key.py: the release, the check
+    # job's steps and the run sheet it walks, all the same), with its zip still kept: its run number, or nothing.
+    name: Checked before? (this pilot release, checked the same way)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      tag: ${{ steps.find.outputs.tag }}
+      run: ${{ steps.find.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: A passed run with the same key and its zip
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet pyyaml
+          mine=$(python scripts/ci/release_key.py HEAD)
+          tag=$(grep -E '^v\S+-pilot[0-9]+\s' .github/release-tags.txt | tail -1 | cut -d' ' -f1)
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "$tag, key $mine"
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/release.yml/runs?status=success&per_page=100" \
+            --jq '.workflow_runs[] | "\(.id) \(.head_sha)"' > runs.txt
+          while read -r id sha; do
+            git cat-file -e "$sha^{commit}" 2>/dev/null || git fetch -q origin "$sha" 2>/dev/null || continue
+            [ "$(python scripts/ci/release_key.py "$sha" || true)" = "$mine" ] || continue
+            zips=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/artifacts" \
+              --jq '[.artifacts[] | select(.name == "offline-install-zip" and (.expired | not))] | length') || continue
+            [ "$zips" -gt 0 ] || continue
+            echo "run=$id" >> "$GITHUB_OUTPUT"
+            echo "Checked before, the same way: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$id"
+            exit 0
+          done < runs.txt
+          echo "Not checked before this way: the laptop check runs"
+
   pilot-laptop:
     # The pilot tester's laptop on demo day (docs/DEMO_RUN_SHEET.md): Windows, LM Studio running with the laptop's
     # three models (the real LM Studio, headless: llmster), the release's offline install zip unzipped to a fresh
     # folder and the demo launcher double-clicked with the internet cut off, then the demo run sheet from import to
     # the Excel export through the running dashboard, once OvisOCR2 passed its self-test, the chat model coding.
     name: Pilot laptop with the real LM Studio (release zip, no internet)
+    needs: checked
+    if: needs.checked.outputs.run == ''
     runs-on: windows-latest
     timeout-minutes: 350
-    outputs:
-      tag: ${{ steps.release.outputs.tag }}
     env:
       AP_NO_PAUSE: "1"
       BROWSER: none
@@ -169,14 +214,19 @@ jobs:
           retention-days: 14
 
   tags:
-    # Only on main: each tag of .github/release-tags.txt that GitHub lacks, with its release; the pilot release the
-    # job above checked (the newest) gets its offline install zip and SHA-256, an earlier pilot's zip left as it was.
+    # Only on main: each tag of .github/release-tags.txt that GitHub lacks, with its release; the pilot release
+    # checked (the newest: here, or before by the run the first job found) gets the offline install zip that passed and
+    # its SHA-256, once: a release keeps the zip it was given, and an earlier pilot's zip is left as it was.
     name: Release tags and the offline install zip on GitHub
-    needs: pilot-laptop
-    if: github.event_name != 'pull_request'
+    needs: [checked, pilot-laptop]
+    if: >-
+      !cancelled() && github.event_name != 'pull_request' && needs.checked.result == 'success'
+      && (needs.pilot-laptop.result == 'success'
+      || (needs.pilot-laptop.result == 'skipped' && needs.checked.outputs.run != ''))
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -185,10 +235,12 @@ jobs:
         with:
           name: offline-install-zip
           path: dist
+          run-id: ${{ needs.checked.outputs.run || github.run_id }}
+          github-token: ${{ github.token }}
       - name: Create each missing tag and its release
         env:
           GH_TOKEN: ${{ github.token }}
-          CHECKED: ${{ needs.pilot-laptop.outputs.tag }}
+          CHECKED: ${{ needs.checked.outputs.tag }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -208,4 +260,8 @@ jobs:
               gh release create "$tag" --verify-tag --title "$tag" --notes "$title"
             fi
           done
-          gh release upload "$CHECKED" dist/APProcessor-offline-*.zip dist/SHA256SUMS.txt --clobber
+          if gh release view "$CHECKED" --json assets --jq '.assets[].name' | grep -q '^APProcessor-offline-'; then
+            echo "$CHECKED: keeps the offline install zip it has"
+          else
+            gh release upload "$CHECKED" dist/APProcessor-offline-*.zip dist/SHA256SUMS.txt
+          fi

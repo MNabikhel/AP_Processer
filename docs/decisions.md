@@ -184,3 +184,11 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   checks that the chat model coded every sample invoice. On main it then creates each missing tag and its GitHub
   release, the checked zip attached to the pilot's. Why: a stand-in proved the install, not the real models on
   Windows, and only CI may push tags here. Slow, so it runs only when the workflow or the tag list changes.
+- **D-130** · A pilot release is checked on the laptop once, not once per run: the Release workflow's first job
+  keys what its check checks (`scripts/ci/release_key.py`: the newest pilot release's tag and commit, the check
+  job's runner, time limit, environment and steps, and `tests/ops/test_demo_day.py`) and looks for a passed run
+  with the same key whose zip is still kept (14 days). Found, the check is skipped and the tags job attaches that
+  run's zip. A release's pull request runs the check; its merge to main reuses it (it ran twice, 60 to 90 minutes
+  each, on the CPU). A release keeps the zip it was first given (no `--clobber`): its checksum never changes after
+  it is published. Why not key on the files alone: the zip is built from the pilot's commit, so a release reuses
+  only a check of that same commit.
