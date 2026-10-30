@@ -283,3 +283,40 @@ def test_the_bundle_is_checked_and_unzipped_from_a_private_copy(server, monkeypa
     assert checked == unzipped and checked[0] != bundle
     assert not (server["current"].parent / "APProcessor-0.4.0" / "evil.txt").exists()
     assert not checked[0].exists()  # the private copy is removed afterwards
+
+
+class RaisingServer(FakeServer):
+    """A step that raises instead of answering: the new folder's Python blocked (antivirus, AppLocker), or Ctrl+C."""
+
+    def __init__(self, error: BaseException) -> None:
+        super().__init__()
+        self.error = error
+
+    def migrate(self, folder: Path, db: Path) -> bool:
+        super().migrate(folder, db)
+        raise self.error
+
+
+@pytest.mark.parametrize("error", [PermissionError(13, "Access is denied"), KeyboardInterrupt()])
+def test_a_step_that_raises_still_puts_the_old_version_back_and_starts_it(server, error, capsys):
+    fake = RaisingServer(error)
+    assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=fake) == 1
+    assert fake.calls[-2:] == ["start", "up APProcessor"]  # the old version, started again
+    assert _marker(server["db"]) == "as before the update"  # the half-migrated database put back
+    saved = service.read_config(server["data"])
+    assert saved["folder"] == str(server["current"]) and saved["history"][-1]["result"].startswith("rolled back")
+    assert "went back to 0.3.0" in capsys.readouterr().out
+
+
+def test_a_backup_that_fails_starts_the_service_again_and_changes_nothing(server, monkeypatch, capsys):
+    def full(self, label="", actor=None):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(Store, "backup_now", full)
+    fake = FakeServer()
+    assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=fake) == 1
+    assert fake.calls == ["stop", "start", "up APProcessor"]  # nothing set up, the old version started again
+    assert _marker(server["db"]) == "as before the update"
+    assert not (server["current"].parent / "APProcessor-0.4.0").exists()
+    assert service.read_config(server["data"])["folder"] == str(server["current"])
+    assert "No space left on device" in capsys.readouterr().out
