@@ -138,6 +138,7 @@ class _LabelHit:
     weak: bool = False  # one of ``WEAK_LABELS``
     fallback: bool = False  # read only when no other label for its field is on the document
     unmeasured: bool = False  # found by a rule the benchmark never exercises: its reading is marked ``UNMEASURED``
+    credit_only: bool = False  # one of ``CREDIT_ONLY_LABELS``: read only on a document that calls itself a credit
 
 
 # Labels seen on real invoices (sweep 4): an English variant, and the German, Dutch, Italian, Spanish and French
@@ -221,9 +222,15 @@ WEAK_LABELS: dict[str, list[tuple[str, float, bool]]] = {
 for _field, _weak in WEAK_LABELS.items():
     LABELS[_field] = [*LABELS[_field], *((rx, st) for rx, st, _fb in _weak)]
 
+# A credit memo's number under a short label: "Memo No: CN-0913" under its "CREDIT MEMO" title. Read only on a document
+# that calls itself a credit (``credit_titled``): an invoice's "Memo" is a note, not its number. Never printed by the
+# benchmark (``UNMEASURED_LABELS``).
+CREDIT_ONLY_LABELS: dict[str, list[str]] = {"invoice_number": [rf"memo\s*{_NO}"]}
+
 # Labels for the terms, the PO and the due date seen on real invoices (sweep 4) that the benchmark never prints: a
 # value read by one is marked ``UNMEASURED`` (a person checks it). Tried after all the labels above.
 UNMEASURED_LABELS: dict[str, list[tuple[str, float]]] = {
+    "invoice_number": [(rx, 0.9) for rx in CREDIT_ONLY_LABELS["invoice_number"]],
     "payment_terms": [
         (r"condicion(?:es)?\s*de\s*pago", 0.9), (r"(?:termini|condizioni)\s*(?:di\s*)?pagamento", 0.9),
         (r"zahlungs\s*-?\s*(?:bedingungen|konditionen|ziel)", 0.85), (r"betalings\s*-?\s*(?:voorwaarden|termijn|conditie)s?", 0.85),
@@ -279,6 +286,8 @@ _LABELS = _compile()
 _WEAK = {_label_rx(rx) for weak in WEAK_LABELS.values() for rx, _s, _fb in weak}
 
 _FALLBACK = {_label_rx(rx) for weak in WEAK_LABELS.values() for rx, _s, fb in weak if fb}
+
+_CREDIT_ONLY = {_label_rx(rx) for rxs in CREDIT_ONLY_LABELS.values() for rx in rxs}
 
 _DISTRACT = {f: [re.compile(rx) for rx in pats] for f, pats in DISTRACTORS.items()}
 
@@ -355,9 +364,8 @@ def _hits_at(line: Line, text: str, starts: list[int], chained: set[int] | None 
                     for hit_field in ("pst_amount", "qst_amount"):
                         hits.append(_LabelHit(hit_field, line, strength, end, text[st:end], box_start))
                 else:
-                    hits.append(
-                        _LabelHit(field, line, strength, end, label_text, box_start, rx in _WEAK, rx in _FALLBACK)
-                    )
+                    hits.append(_LabelHit(field, line, strength, end, label_text, box_start, rx in _WEAK,
+                                          rx in _FALLBACK, credit_only=rx in _CREDIT_ONLY))  # fmt: skip
                 break
             else:
                 continue

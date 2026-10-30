@@ -64,6 +64,26 @@ def test_a_credit_memo_that_says_so_only_in_its_body_is_read_as_a_credit(tmp_pat
     assert f["hst_amount"].value == -3.12
 
 
+def test_a_credit_memo_numbered_under_memo_no_has_its_number_and_an_invoice_keeps_its_own(tmp_path):
+    # "CREDIT MEMO" over "Memo No: CN-0913": the credit memo's own number (it was MISSING_INVOICE_NUMBER). On an
+    # invoice a "Memo No" is not its number.
+    def doc(title: str, *more: tuple) -> list[tuple]:
+        return [
+            (60, 60, "Acme Supply Ltd."), (60, 75, "12 Main St, Calgary, AB T2P 1A1"), (400, 60, title, 14),
+            (380, 100, "Memo No: CN-0913"), (380, 115, "Date: 2026-09-20"), *more,
+            (60, 200, "Description"), (500, 200, "Amount"),
+            (60, 215, "Returned toner cartridges"), (500, 215, "1,000.00"),
+            (380, 500, "Subtotal"), (500, 500, "1,000.00"), (380, 515, "GST 5%"), (500, 515, "50.00"),
+            (380, 530, "Total"), (500, 530, "1,050.00"),
+        ]  # fmt: skip
+
+    number = _read(_pdf(tmp_path, doc("CREDIT MEMO"), "credit.pdf"))["invoice_number"]
+    assert number.value == "CN-0913" and number.status != VERIFIED  # the benchmark never prints it: a person checks
+    assert _read(_pdf(tmp_path, doc("INVOICE"), "invoice.pdf"))["invoice_number"].value is None
+    invoice = doc("INVOICE", (380, 130, "Invoice No: INV-5512"))
+    assert _read(_pdf(tmp_path, invoice, "numbered.pdf"))["invoice_number"].value == "INV-5512"
+
+
 # ---------------------------------------------------------------- amounts taken off the total
 
 
