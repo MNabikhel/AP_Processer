@@ -56,12 +56,16 @@ def test_exported_rejected_and_closed_are_left_out(tmp_path):
 
 
 def test_an_invoice_exported_after_the_period_end_is_accrued_for_that_period(tmp_path):
-    # Dated 14 September, exported on 2 October: JD Edwards has it in October, so at 30 September it is accrued, and
-    # says why (D-133). Exported by 30 September, it was in the ERP then.
+    # Dated 14 September, exported on 2 October with the export day as its G/L date: JD Edwards has it in October,
+    # so at 30 September it is accrued, and says why (D-133). Exported by 30 September, it was in the ERP then.
+    from ap_coder.erp import jde
     from tests.webclient import client_for
 
     store = Store(tmp_path / "a.db")
     load_sample_setup(store)
+    settings = jde.load(store)
+    settings.gl_date = jde.GL_DATE_EXPORT
+    jde.save(store, settings)
     nw = _coded(store, "northwind_ON_HST_NW-2026-0912")
     a = store.add_invoice(tmp_path / "a.pdf", nw, {})
     store.approve_invoice(a, nw, "Jane")
@@ -80,6 +84,20 @@ def test_an_invoice_exported_after_the_period_end_is_accrued_for_that_period(tmp
     assert made_on("2026-09-30T16:40:00") == []
     assert made_on("2026-10-02T09:15:00") and not [x for x in accruals.build(store, dt.date(2026, 10, 31))
                                                    if f"(#{a})" in x.reference]  # fmt: skip
+
+
+def test_with_the_invoice_date_as_g_l_date_an_invoice_exported_after_the_period_end_is_in_its_month(tmp_path):
+    # JD Edwards' G/L date is the invoice date (the default): dated 14 September and exported on 2 October, the
+    # voucher is in September already, so it is not accrued for 30 September as well (D-133).
+    store = Store(tmp_path / "a.db")
+    load_sample_setup(store)
+    nw = _coded(store, "northwind_ON_HST_NW-2026-0912")
+    a = store.add_invoice(tmp_path / "a.pdf", nw, {})
+    store.approve_invoice(a, nw, "Jane")
+    batch = store.create_export_batch([a], "csv")
+    with store._conn() as conn:
+        conn.execute("UPDATE export_batches SET created_at = ? WHERE id = ?", ("2026-10-02T09:15:00", batch))
+    assert not [x for x in accruals.build(store, END) if f"(#{a})" in x.reference]
 
 
 def test_a_resent_copy_of_a_bill_already_counted_is_not_accrued_again(tmp_path):

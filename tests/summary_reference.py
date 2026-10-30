@@ -48,6 +48,7 @@ from ap_coder.erp.accruals import (
     _flags,
     _unguessed,
 )
+from ap_coder.erp.accruals import late_after as accruals_late_after
 from ap_coder.erp.exports import distribution
 from ap_coder.erp.insights import (
     AGE_BUCKETS,
@@ -473,7 +474,8 @@ def _not_in_erp(store: Store, period_end: dt.date, no_date: list[Accrual] | None
     exported = {r["id"] for r in _old_list_invoices(store, APPROVED)} - {r["id"] for r in _old_unexported(store)}
     # In the ERP at the period end: exported by a batch made on or before it (D-133); a later one is accrued.
     made = {b["id"]: b["created_at"][:10] for b in store.export_batches()}
-    late = {r["id"] for r in rows if r["id"] in exported and made[r["export_batch"]] > end}
+    cutoff = accruals_late_after(store, end)  # the period end only with the export day as G/L date
+    late = {r["id"] for r in rows if r["id"] in exported and made[r["export_batch"]] > cutoff}
     exported -= late
     # A copy flagged as a duplicate of a bill already in the ERP (exported) or already accrued is not accrued
     # again; one flagged as already in the ERP's invoice register is in the ERP.
