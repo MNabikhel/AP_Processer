@@ -124,6 +124,26 @@ def test_an_invoice_read_again_is_no_duplicate_of_itself(tmp_path, settings, ref
     assert "DUPLICATE_INVOICE" in {i.code for i in without.report.issues}
 
 
+def test_an_invoice_read_again_later_settles_its_date_by_the_day_it_came_in(tmp_path, settings, reference, store):
+    """Dated 03/04/2025 and in AP Coder since 5 March 2025, it can only be dated 4 March: read again by the page
+    reader weeks later (LM Studio off meanwhile, a person's Read again), its date was settled against that day
+    instead, and the proposal said 3 April, a date after the invoice came in."""
+    from tests.pdfs import text_pdf
+
+    lines = ["Maple Office Supply Ltd.", "123 King St W, Toronto ON M5H 1A1", "GST/HST No. 123456789 RT0001",
+             "INVOICE", "Invoice No: MO-4471", "Date: 03/04/2025", "Bill to: Northwind Canada Inc.",
+             "Printer paper, letter size    100.00", "Subtotal 100.00", "HST 13% 13.00", "Total 113.00"]  # fmt: skip
+    pdf = text_pdf(tmp_path, [(50, 60 + 16 * n, line) for n, line in enumerate(lines)])
+    pipe = InvoicePipeline(settings, reference, store=store)
+    first = pipe.process(pdf)
+    assert first.ok, first.error
+    with store._conn() as conn:
+        conn.execute("UPDATE invoices SET created_at = '2025-03-05T09:00:00' WHERE id = ?", (first.invoice_id,))
+    again = pipe.process(first.source, page_text=["\n".join(lines)], save=False, invoice_id=first.invoice_id)
+    assert again.ok, again.error
+    assert again.output["invoice_date"] == "2025-03-04"
+
+
 def test_a_damaged_file_is_said_plainly_not_as_a_python_error(tmp_path, settings, reference):
     """A broken picture or PDF showed "UnidentifiedImageError: cannot identify image file <_io.BytesIO object at
     0x...>" on the Process page; AP needs to know the file is damaged and what to do."""
