@@ -253,3 +253,19 @@ def test_discount_terms_in_prox_or_weeks_give_the_discount(text, discount_by, du
 def test_a_prox_late_payment_rate_is_still_no_discount():
     """B-216: a rate charged on the 10th prox on overdue accounts is a late-payment rate, not a discount."""
     assert parse_terms("Net 30, 1.5% 10th prox interest on overdue accounts").discount_pct is None
+
+
+@pytest.mark.parametrize("text", ["2/10 Net 1 month", "2% 10 net 1 month", "1/15 n 1 mois"])
+def test_a_discount_with_the_net_in_months_is_never_due_the_next_day(text):
+    """B-1460: "2/10 Net 1 month" (the standard wording of "2% 10 days, net 1 month", its JD Edwards terms key) was
+    read as a discount and net 1 day: due the day after the invoice date, before its own discount date."""
+    p = payment({"invoice_date": "2026-09-10", "payment_terms": text, "grand_total": 113, "subtotal": 100})
+    assert p.terms.net_months == 1 and p.terms.discount_pct is not None
+    assert p.due == dt.date(2026, 10, 10) and p.discount_by < p.due
+
+
+def test_a_discount_written_with_slashes_to_the_net_is_kept():
+    """B-1461: "2/10/N30" (2% in 10 days, net 30) was read as net 30 with no discount: the early-payment discount
+    was never said."""
+    assert parse_terms("2/10/N30") == parse_terms("2/10 Net 30") == Terms(30, 2.0, 10)
+    assert parse_terms("1%/15/net 45") == Terms(45, 1.0, 15)
