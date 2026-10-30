@@ -18,7 +18,7 @@ there; an action is refused), the styles and scripts, and ``/healthz``.
 
 **Server mode** (``AP_SERVER_MODE=1``, D-97) replaces all of this: everyone logs in with their own account
 (``pages/login.py``), whichever computer they use, the server's own included (no address is "this computer" for
-what may be done). The session cookie (``SESSION_COOKIE``) holds a token whose SHA-256 the store keeps
+what may be done). The session cookie (``session_cookie``) holds a token whose SHA-256 the store keeps
 (``core/store/users.py``); ``PERSON`` is then the account (``user_id``, ``role``), so approvals name the person and
 record ``user:<id>`` as their login, and what each request may do is the role's (``web/roles.py``, D-98): no
 session, the login page (a page) or a 401 (an action); a password to change first, the password page; a role that
@@ -52,7 +52,8 @@ WHO_PATH = "/who"
 OPEN_PATHS = ("/healthz", WHO_PATH)  # answered to a browser that has not said who it is
 OPEN_PREFIXES = ("/static/", "/fonts/", "/assets/")
 # Server mode (D-97): the session cookie, the login page and the page where a password is changed.
-SESSION_COOKIE = "ap_session"
+SESSION_COOKIE = "__Host-ap_session"  # Secure (HTTPS): a browser takes it only from this host (D-135)
+HTTP_SESSION_COOKIE = "ap_session"  # over --insecure-http, where the __Host- prefix isn't allowed
 LOGIN_PATH = "/login"
 PASSWORD_PATH = "/account/password"
 SESSION_ENDED = "You are not logged in (or your session ended): log in again."
@@ -191,23 +192,30 @@ def _cookies(headers: list[tuple[bytes, bytes]]) -> dict[str, str]:
     return found
 
 
-def session_tokens(headers: list[tuple[bytes, bytes]]) -> list[str]:
-    """Every ``ap_session`` cookie the request carries, in order."""
+def session_cookie(secure: bool) -> str:
+    """The session cookie's name: Secure (the server over HTTPS), ``__Host-ap_session``, which a browser takes only
+    from this host, for the path /, never for a Domain, so another host of the company's domain can't plant one
+    beside it (D-135); not Secure (``--insecure-http``), ``ap_session``."""
+    return SESSION_COOKIE if secure else HTTP_SESSION_COOKIE
+
+
+def session_tokens(headers: list[tuple[bytes, bytes]], name: str) -> list[str]:
+    """Every session cookie called ``name`` the request carries, in order."""
     found = []
     for key, value in headers:
         if key.lower() == b"cookie":
             for part in value.decode("latin-1").split(";"):
-                name, _, kept = part.strip().partition("=")
-                if name == SESSION_COOKIE:
+                called, _, kept = part.strip().partition("=")
+                if called == name:
                     found.append(kept)
     return found
 
 
-def session_token(headers: list[tuple[bytes, bytes]]) -> str:
-    """The session token of a request, read the same way by the login middleware and the pages: its one
-    ``ap_session`` cookie. Two or more (one planted by another site of the company for a path or a parent domain, or
-    left over) are no login at all, never one of them picked (D-101)."""
-    found = session_tokens(headers)
+def session_token(headers: list[tuple[bytes, bytes]], name: str) -> str:
+    """The session token of a request, read the same way by the login middleware and the pages: its one session
+    cookie called ``name`` (``session_cookie``). Two or more (one planted by another site of the company for a path or
+    a parent domain, or left over) are no login at all, never one of them picked (D-101)."""
+    found = session_tokens(headers, name)
     return found[0] if len(found) == 1 else ""
 
 
@@ -292,8 +300,10 @@ class Identity:
         need = roles.need_for(scope.get("app"), scope)
         user = None
         store = getattr(getattr(scope.get("app"), "state", None), "store", None)
+        secure = not getattr(getattr(scope.get("app"), "state", None), "insecure_http", False)  # as login.secure_cookie
+        cookie = session_cookie(secure)
         if not path.startswith(OPEN_PREFIXES):
-            token = session_token(scope.get("headers") or [])
+            token = session_token(scope.get("headers") or [], cookie)
             if token and store is not None:
                 user = await run_in_threadpool(store.session_user, token)
         page = method in ("GET", "HEAD")
@@ -304,10 +314,10 @@ class Identity:
             else:
                 refusal = JSONResponse({"ok": False, "error": SESSION_ENDED, "redirect": LOGIN_PATH}, status_code=401)
                 if path == "/logout":  # (two cookies, say): the sessions they name end, and the cookie is cleared
-                    for named in session_tokens(scope.get("headers") or []):
+                    for named in session_tokens(scope.get("headers") or [], cookie):
                         if named and store is not None:
                             await run_in_threadpool(store.end_session, named)
-                    refusal.delete_cookie(SESSION_COOKIE, path="/", httponly=True, samesite="strict")
+                    refusal.delete_cookie(cookie, path="/", httponly=True, samesite="strict", secure=secure)
         elif user is not None and user["must_change"] and need not in (roles.OPEN, roles.SIGNED_IN):
             if page:
                 refusal = RedirectResponse(f"{PASSWORD_PATH}?next={quote(_wanted(scope), safe='')}", status_code=303)

@@ -84,7 +84,7 @@ def test_exports_dry_run_post_and_the_voucher_number(tmp_path, ais, monkeypatch)
     assert "10001 PV 00001" in page and "Posted" in page and "Dry run through the API" not in page
     answer = post(client, f"/exports/batches/{batch}/undo").json()
     assert not answer["ok"] and "can't be undone" in answer["error"]
-    data = client.get(f"/exports/batches/{batch}/download").content
+    data = post(client, f"/exports/batches/{batch}/download").content
     readme = zipfile.ZipFile(io.BytesIO(data)).read("README.txt").decode()
     assert "already posted to JD Edwards through the API" in readme
     header = zipfile.ZipFile(io.BytesIO(data)).read("F0411Z1.csv").decode().splitlines()
@@ -148,7 +148,7 @@ def test_a_batch_downloaded_as_a_zip_is_posted_through_the_api_only_on_a_persons
     _wait(client, "jde-api")
     page = client.get(f"/exports?batch={batch}").text
     assert "was downloaded" not in page and 'name="not_loaded"' not in page  # sent one way only: as before
-    assert client.get(f"/exports/batches/{batch}/download").status_code == 200
+    assert post(client, f"/exports/batches/{batch}/download").status_code == 200
     (event,) = store.events(actions=["jde_file_downloaded"])
     assert event["detail"]["batch"] == batch
     page = client.get(f"/exports?batch={batch}").text
@@ -167,6 +167,34 @@ def test_a_batch_downloaded_as_a_zip_is_posted_through_the_api_only_on_a_persons
     assert "JD Edwards file downloaded" in activity and why in activity
     page = client.get(f"/exports?batch={batch}").text
     assert "already in JD Edwards" in page  # the ZIP's page: a copy downloaded before holds them
+
+
+def test_a_get_of_the_jde_zip_records_no_download_and_leaves_the_queue_alone(tmp_path, ais, monkeypatch):
+    """B-1495: a GET of the batch's JD Edwards ZIP (an <img> on another page of the same site could send it) recorded
+    a download in the person's name and put the vouchers waiting for JD Edwards back to a go-ahead. It is refused:
+    the ZIP comes by a POST from the Exports page, which does both (D-134, D-135)."""
+    store, batch = batch_of(tmp_path, ais)
+    monkeypatch.setenv(jde_ais.PASSWORD_ENV, PASSWORD)
+    client = client_for(store)
+    post(client, f"/exports/batches/{batch}/jde-api/dry-run")
+    _wait(client, "jde-api")
+    ais.script("voucher_create", 503, 503, 503)
+    post(client, f"/exports/batches/{batch}/jde-api/post")
+    _wait(client, "jde-api")
+    assert jde_post.postings(store, batch)[0]["status"] == jde_post.QUEUED
+    for url in (f"/exports/batches/{batch}/download?fmt=jde", f"/exports/batches/{batch}/download"):
+        assert client.get(url).status_code == 405, url
+    assert client.post(f"/exports/batches/{batch}/download?fmt=jde").status_code == 403  # not from the page
+    assert store.events(actions=["jde_file_downloaded"]) == []
+    assert jde_post.postings(store, batch)[0]["status"] == jde_post.QUEUED
+    answer = post(client, f"/exports/batches/{batch}/download?fmt=jde")
+    assert answer.status_code == 200 and answer.content[:2] == b"PK"
+    assert "attachment" in answer.headers["content-disposition"]
+    assert len(store.events(actions=["jde_file_downloaded"])) == 1
+    assert jde_post.postings(store, batch)[0]["status"] == jde_post.CHECKED
+    page = client.get(f"/exports?batch={batch}").text
+    assert f'action="/exports/batches/{batch}/download?fmt=jde"' in page
+    assert f'href="/exports/batches/{batch}/download?fmt=jde"' not in page
 
 
 def test_in_a_browser_posting_a_downloaded_batch_needs_the_tick_and_what_was_checked(chromium, tmp_path, ais,
@@ -198,3 +226,25 @@ def test_in_a_browser_posting_a_downloaded_batch_needs_the_tick_and_what_was_che
         assert jde_post.postings(store, batch)[0]["status"] == jde_post.POSTED
         (approved,) = store.events(actions=["jde_api_approved"])
         assert approved["detail"]["not_loaded"] == "No batch of these vouchers in JD Edwards" and errors == []
+
+
+def test_in_a_browser_the_jde_zip_downloads_by_its_button_and_is_recorded(chromium, tmp_path, ais):
+    """D-135: the Exports page's Download button of a JD Edwards batch sends a POST; the browser saves the ZIP under
+    its name and the download is recorded (D-134)."""
+    from ap_coder.web.app import create_app
+    from tests.browser import browser_on
+    from tests.webclient import web_settings
+
+    store, batch = batch_of(tmp_path, ais)
+    with browser_on(chromium, create_app(web_settings(), store, start_reader=False)) as (browser, base):
+        page = browser.new_page(viewport={"width": 1400, "height": 1000}, accept_downloads=True)
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(f"{base}/exports?batch={batch}")
+        with page.expect_download() as caught:
+            page.get_by_role("button", name="Download again").click()
+        saved = caught.value
+        assert saved.suggested_filename == f"ap_coder_jde_batch_{batch}.zip"
+        assert "README.txt" in zipfile.ZipFile(saved.path()).namelist()
+        (event,) = store.events(actions=["jde_file_downloaded"])
+        assert event["detail"]["batch"] == batch and errors == []

@@ -885,7 +885,7 @@ class InvoicesMixin:
         inv = self.get_invoice(invoice_id)
         if inv is None or inv["status"] != PENDING:
             raise ValueError(f"invoice {invoice_id} is not waiting for a second approval")
-        first = next((e for e in self.events(invoice_id) if e["action"] == "approved"), None)
+        first = next(iter(self.events(invoice_id, ["approved"], limit=1)), None)  # never lost behind 1000 (B-1497)
         first_login = ((first or {}).get("detail") or {}).get("login") or ""
         if same_approver(inv["reviewer"], first_login, approver, login):
             if account_of(first_login) is not None and account_of(login) is not None:

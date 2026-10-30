@@ -357,6 +357,12 @@ def _filename(headers: list[tuple[bytes, bytes]]) -> str | None:
     return None
 
 
+def _printable(text: str) -> str:
+    """``text`` with each control or other non-printable character percent-encoded again (a newline as %0A), so a
+    request's path can't start a line of its own in the access log (B-1494)."""
+    return "".join(c if c.isprintable() else "".join(f"%{b:02X}" for b in c.encode()) for c in text)
+
+
 class AccessLog:
     """ASGI middleware, server mode: a line per request in ``logs/access.log`` (time, address, user, method, path
     without its query, status, bytes, milliseconds), and each download (a response sent as an attachment: the
@@ -391,8 +397,8 @@ class AccessLog:
             await self.app(scope, receive, sending)
         finally:
             user = scope["state"].get(USER_KEY) or "-"
-            client = (scope.get("client") or ("-", 0))[0] or "-"
-            path = scope.get("path") or "/"
+            client = _printable((scope.get("client") or ("-", 0))[0] or "-")
+            path = _printable(scope.get("path") or "/")
             self.log.info("%s %s %s %s %s %d %d", client, user, scope.get("method", "GET"), path, status or 500, size,
                           int((time.monotonic() - started) * 1000))  # fmt: skip
             if download is not None and status == 200 and self.store is not None:

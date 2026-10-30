@@ -306,6 +306,33 @@ def test_two_session_cookies_are_not_a_login_and_logout_still_clears_it(store):
     assert store.session_user(good) is None  # the sessions it named are ended too
 
 
+def test_over_https_a_session_cookie_planted_by_another_host_of_the_domain_is_not_read(store):
+    """B-1496: an ``ap_session`` cookie set by another host of the company's domain (``Domain=company.test``) sat
+    beside the real one: two session cookies, so no login, and logout couldn't clear it. Over HTTPS the cookie is
+    ``__Host-ap_session``, which a browser takes only from this host (Secure, Path=/, no Domain); ``ap_session`` is
+    not read there. Over ``--insecure-http`` it stays ``ap_session`` (the prefix needs HTTPS)."""
+    account(store, "rob", "readonly")
+    app = app_for(store)
+    client = client_of(app)
+    cookie = log_in(client, "rob").headers["set-cookie"]
+    assert cookie.startswith("__Host-ap_session=") and "secure" in cookie.lower() and "path=/" in cookie.lower()
+    assert "domain" not in cookie.lower()
+    good = client.cookies.get("__Host-ap_session")
+    with client:  # the app's lifespan once
+        pass
+    planted = f"ap_session=planted; __Host-ap_session={good}"
+    assert _raw(app, "GET", "/review", planted)["status"] == 200
+    out = _raw(app, "POST", "/logout", planted)
+    cleared = [v.decode() for k, v in out["headers"] if k.lower() == b"set-cookie"]
+    assert out["status"] == 200 and store.session_user(good) is None
+    assert any(c.startswith("__Host-ap_session=") and "Max-Age=0" in c and "Secure" in c for c in cleared), cleared
+    out = _raw(app, "POST", "/logout", f"__Host-ap_session=a; __Host-ap_session={good}")  # two: cleared even so
+    cleared = [v.decode() for k, v in out["headers"] if k.lower() == b"set-cookie"]
+    assert any(c.startswith("__Host-ap_session=") and "Max-Age=0" in c and "Secure" in c for c in cleared), cleared
+    first_test = client_of(app_for(store, insecure_http=True), base="http://localhost")
+    assert log_in(first_test, "rob").headers["set-cookie"].startswith("ap_session=")
+
+
 # --- 7. /healthz behind a proxy on the same server --------------------------------------------------------------------
 
 

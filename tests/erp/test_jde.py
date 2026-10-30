@@ -624,7 +624,7 @@ def test_exports_page_jde_flow(db, cost_centers_demo_template):
     assert [i["id"] for i in store.unexported_approved()] == [chinook]  # left out, still ready
     data, name, mime = batch_file(store, batch["id"], jde.FORMAT)
     assert name == f"ap_coder_jde_batch_{batch['id']}.zip" and mime == "application/zip"
-    download = client.get(f"/exports/batches/{batch['id']}/download")
+    download = post(client, f"/exports/batches/{batch['id']}/download")  # by POST: recorded (D-135)
     assert download.status_code == 200 and download.content[:2] == b"PK"
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
         (head,) = _csv(zf.read(jde.HEADER_FILE))
@@ -710,11 +710,13 @@ def _one_jde_batch(store, send_due_date=True, **final_changes):
 
 def test_a_due_date_jde_cannot_hold_leaves_vlddj_blank_in_a_batch_downloaded_again(db, cost_centers_demo_template):
     """The batch was made with "send due date" off; switched on later, a due date of 3026 must not break the file."""
+    from tests.webclient import post
+
     store = copy_database(cost_centers_demo_template, db)
     client, settings, batch, inv_id = _one_jde_batch(store, send_due_date=False, due_date="3026-10-14")
     settings.send_due_date = True
     jde.save(store, settings)
-    answer = client.get(f"/exports/batches/{batch}/download")
+    answer = post(client, f"/exports/batches/{batch}/download")
     assert answer.status_code == 200
     with zipfile.ZipFile(io.BytesIO(answer.content)) as zf:
         (head,) = _csv(zf.read(jde.HEADER_FILE))
@@ -725,11 +727,13 @@ def test_a_due_date_jde_cannot_hold_leaves_vlddj_blank_in_a_batch_downloaded_aga
 
 def test_a_jde_batch_is_not_downloaded_while_a_setting_stops_every_export(db, cost_centers_demo_template):
     """A Z-file with no User ID cannot load, and its own dry run says so: the download says what to fix instead."""
+    from tests.webclient import post
+
     store = copy_database(cost_centers_demo_template, db)
     client, settings, batch, _inv_id = _one_jde_batch(store)
     settings.user = ""
     jde.save(store, settings)
-    answer = client.get(f"/exports/batches/{batch}/download")
+    answer = post(client, f"/exports/batches/{batch}/download")
     assert answer.status_code == 409 and "User ID" in answer.text and "Settings" in answer.text
     assert client.get(f"/exports/batches/{batch}/download?fmt=xlsx").status_code == 200  # other formats still go
 

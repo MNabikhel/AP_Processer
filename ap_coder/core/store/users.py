@@ -489,20 +489,20 @@ class UsersMixin:
                 "it.")  # fmt: skip
 
     def vouched_for(self, admin_id: int, user_id: int, days: int = VOUCH_DAYS) -> bool:
-        """Whether account ``admin_id`` added account ``user_id``, or reset its password, in the last ``days`` days:
-        it knew that account's password then, so the two are not two people for a second approval (D-109)."""
+        """Whether account ``admin_id`` added account ``user_id``, or reset its password, in the last ``days`` days,
+        itself or through accounts it added or reset in that time (an Admin's second Admin account, B-1497): it knew
+        that account's password then, so the two are not two people for a second approval (D-109)."""
         since = (dt.datetime.now() - dt.timedelta(days=days)).isoformat(timespec="seconds")
         with self._conn() as conn:
-            row = conn.execute("SELECT username FROM users WHERE id = ?", (int(user_id),)).fetchone()
-            if row is None:
-                return False
+            ids = {r["username"]: int(r["id"]) for r in conn.execute("SELECT id, username FROM users")}
             found = conn.execute("SELECT detail FROM events WHERE action IN ('user_added', 'password_reset') AND "
                                  "created_at >= ?", (since,)).fetchall()  # fmt: skip
-        for (detail,) in found:
-            d = json.loads(detail or "{}")
-            if d.get("username") == row["username"] and d.get("by_user") == int(admin_id):
-                return True
-        return False
+        edges = [(d.get("by_user"), ids.get(d.get("username"))) for d in (json.loads(r[0] or "{}") for r in found)]
+        reached, frontier = set(), {int(admin_id)}
+        while frontier:  # the accounts added or reset by the ones reached last
+            frontier = {uid for by, uid in edges if by in frontier and uid is not None} - reached
+            reached |= frontier
+        return int(user_id) in reached
 
     # --- Paused addresses (D-101) ---------------------------------------------------------------------------------
 

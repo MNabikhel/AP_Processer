@@ -329,7 +329,8 @@ def test_in_a_browser_no_page_breaks_the_content_security_policy(store, server_o
         with sync_playwright() as p:
             chromium = p.chromium.launch(executable_path=chromium_path(), args=["--no-proxy-server"])
             context = chromium.new_context(viewport={"width": 1366, "height": 768})
-            context.add_cookies([{"name": SESSION_COOKIE, "value": session, "url": f"http://127.0.0.1:{port}"}])
+            # As a header: the __Host- cookie is Secure, which Chromium doesn't take for this http:// address
+            context.set_extra_http_headers({"Cookie": f"{SESSION_COOKIE}={session}"})
             page = context.new_page()
 
             def console(m):
