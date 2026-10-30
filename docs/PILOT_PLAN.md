@@ -66,6 +66,8 @@ Process the week's invoices in AP Coder **and** code them the usual way. Do not 
 
 ## Week 4: close and decide
 
+- [ ] **Pilot score:** the JDE team exports E1's vouchers for the pilot days (F0411, and F0911 for the
+      distribution; the columns are in [JDE_E1.md](JDE_E1.md)); run `python -m ap_coder pilot-score` on them.
 - [ ] **Month-end:** the accruals schedule for the close.
 - [ ] **Sales tax:** the ITCs and ITRs for the period, and the PST/QST to self-assess, checked
       against the GL.

@@ -149,6 +149,21 @@ def test_every_dashboard_page_runs_offline(no_network, demo_db):
     assert no_network == []
 
 
+def test_doctor_names_the_data_folder_it_uses_with_the_home_folder_shortened(tmp_path, monkeypatch):
+    """B-1501: a checkout on a computer where AP Coder was installed before uses that install's recorded data folder
+    (~/.ap_coder/settings.json), which may hold real company data; doctor said only "writable", never which folder.
+    It names it, the home folder shortened to ~ (the setup report is pasted elsewhere: no Windows user name)."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setenv("AP_PRIVATE_DIR", str(tmp_path / "APCoder"))
+    status, detail = {a: (s, d) for a, s, d in offline.offline_checks()}["data folder"]
+    assert status == offline.PASS and detail == f"writable: ~{os.sep}APCoder"
+    elsewhere = tmp_path.parent / "shared-data"
+    monkeypatch.setenv("AP_PRIVATE_DIR", str(elsewhere))
+    detail = {a: d for a, _s, d in offline.offline_checks()}["data folder"]
+    assert detail == f"writable: {elsewhere}" and Path(elsewhere).is_dir()
+
+
 def test_doctor_offline_checks_need_no_network(no_network):
     checks = {area: (status, detail) for area, status, detail in offline.offline_checks()}
     assert checks["data folder"][0] == offline.PASS

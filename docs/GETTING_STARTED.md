@@ -7,8 +7,8 @@ and the AI's memory stay in your **data folder**
 (default `C:\Users\<you>\APCoder`, chosen during install), outside the code, so none of it can
 be pushed to GitHub. The dashboard is a local web app on
 your computer (`http://127.0.0.1:8501`, opened in your browser) and is not reachable from other machines (in
-server mode, staff open it over HTTPS and log in). You only send back two text
-reports, and you can read both before sending:
+server mode, staff open it over HTTPS and log in). You only send two text reports to the company's AP Coder
+developer, and you can read both before sending:
 
 | You paste back | Produced by | Contains | Never contains |
 |---|---|---|---|
@@ -18,8 +18,8 @@ reports, and you can read both before sending:
 The pilot tester's one-page summary of this guide, to print, is [QUICK_START.md](QUICK_START.md); in the dashboard,
 **Help → Quick start → Print**.
 Invoices appear in the share report as `doc-01`, `doc-02`, … The file
-`share_report_key.csv` in your data folder maps them back to file names and stays on your machine. If I ask
-about `doc-07`, you can look it up there.
+`share_report_key.csv` in your data folder maps them back to file names and stays on your machine. If the
+developer asks about `doc-07`, you can look it up there.
 
 ---
 
@@ -124,9 +124,9 @@ one plain line there; AP Coder still starts. **Settings → Reading** in the das
 
 Start LM Studio's server, with the chat model loaded, **before** you double-click, so the check covers it.
 
-Only if something is wrong, or I ask for it: **Help → Report a problem** in the dashboard gives the same checks as
-a report to copy and paste into the chat (no keys, codes or invoice data). If the dashboard won't open,
-`python -m ap_coder doctor --online` in `scripts\terminal.bat` gives it too.
+Only if something is wrong, or the company's AP Coder developer asks for it: **Help → Report a problem** in the
+dashboard gives the same checks as a report to copy and paste into the chat (no keys, codes or invoice data). If the
+dashboard won't open, `python -m ap_coder doctor --online` in `scripts\terminal.bat` gives it too.
 
 ## Step 4: Try the dashboard with the sample data (no enterprise data)
 
@@ -297,11 +297,11 @@ changed bank account or GST/HST number, a possible duplicate, a total above *Lar
 without a person*, 5,000.00 CAD by default, and others: Settings → Automation lists them). See
 [PILOT.md](PILOT.md#touchless-processing-when-to-turn-it-on).
 
-## Step 8: Send me the share report
+## Step 8: Send the share report to the company's AP Coder developer
 
 Open **Help → Report a problem**, click *Include them* under *The activity summary* (so it lists the GL codes),
 then **Copy**, and **paste it**. It includes the review statistics and which GL codes get corrected to which
-(e.g. `6000 -> 6010 x4`). That is what lets me improve the prompts and checks. Leave the codes out if account
+(e.g. `6000 -> 6010 x4`). That is what lets the developer improve the prompts and checks. Leave the codes out if account
 codes may not leave the building; the percentages still come through. (The same report from a command prompt:
 `python -m ap_coder share-report --include-codes` in `scripts\terminal.bat`.)
 
@@ -321,7 +321,7 @@ passed. The details: [PILOT.md](PILOT.md#updating-ap-coder).
 
 ---
 
-### If I need to see a specific problem
+### If the developer needs to see a specific problem
 
 Describe it in words, e.g. "doc-07: the freight line was merged into the line above" or "QST
 flagged as wrong on a Quebec invoice that looks correct". If your policy allows, paste a

@@ -411,15 +411,19 @@ def offline_checks() -> list[tuple[str, str, str]]:
     from ..core.paths import private_dir
 
     folder = private_dir()
+    # Which folder (B-1501): a checkout on a computer where AP Coder was installed uses that install's recorded
+    # folder; the home folder shortened to ~, so a pasted setup report shows no Windows user name.
+    home = Path.home()
+    shown = f"~{os.sep}{folder.relative_to(home)}" if folder.is_relative_to(home) and folder != home else str(folder)
     try:
         folder.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(dir=folder, prefix=".write-test-"):
             pass
-        status, detail = PASS, "writable"
+        status, detail = PASS, f"writable: {shown}"
         if "onedrive" in str(folder).lower():
-            status, detail = WARN, "writable, but synced by OneDrive (can corrupt the open database)"
+            status, detail = WARN, f"writable, but synced by OneDrive (can corrupt the open database): {shown}"
     except OSError as exc:
-        status, detail = FAIL, f"not writable ({type(exc).__name__})"
+        status, detail = FAIL, f"not writable ({type(exc).__name__}): {shown}"
     out.append(("data folder", status, detail))
 
     address = dashboard_address()

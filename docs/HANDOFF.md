@@ -19,7 +19,9 @@ real and what is sample data · 6 the connection points, one by one · 7 the com
 The handoff is four files. `docs/HANDOFF.md` inside the code is the master copy of this file; the loose
 `HANDOFF.md` beside the others is the same file, for reading before anything is unpacked. Work in the folder that
 holds the four files, and check them first: `sha256sum -c SHA256SUMS.txt` (Windows: `Get-FileHash <file> -Algorithm
-SHA256`, compared by eye).
+SHA256`, compared by eye). The tag list `.github/release-tags.txt` in this copy stops at the release before this
+one: a tag list can't name the commit it is in, so the lines for this handoff's tags were added in the next commit
+of the original repository. The tags themselves are in the bundle.
 
 | File | What it is | Use it when |
 |---|---|---|
@@ -47,6 +49,7 @@ git push -u origin main --tags
 unzip AP_Coder_source.zip                        # makes AP_Processer/
 cd AP_Processer
 cat ap_coder/BUILD                               # must read $Format:%h %cI$ (git fills it in for each ZIP made later)
+git config user.name "<you>" && git config user.email "<you@company>"   # a fresh machine has none
 git init -b main && git add -A && git commit -m "AP Coder at the handoff (v0.3.0-handoff3), no history"
 git remote add origin <the company's repository URL> && git push -u origin main
 ```
@@ -55,25 +58,30 @@ git remote add origin <the company's repository URL> && git push -u origin main
 to tell builds apart (B-542). It must stay the placeholder in the repository; if it holds a commit and a date, put
 the placeholder back before the first commit: `printf '$Format:%%h %%cI$\n' > ap_coder/BUILD`.
 The decisions and bugs are written in full in `docs/` (and `docs/archive/`), so the reasons survive route B; the
-commit messages don't.
+commit messages don't. On route B, `doctor` and `/healthz` report the new commit, not the handoff's: the zip's
+checksum (`SHA256SUMS.txt`) is what proves the files are the release's. Drop `.github/workflows/release.yml` (its
+tag list names commits a route B repository doesn't have).
 
 **Python and packages.** Python 3.11 to 3.14 (3.12 recommended). With a package index reachable:
 `python -m venv .venv`, activate it, `pip install -e ".[ocr,dev]"`. `pyproject.toml` asks only for minimum versions;
 the exact set this release was tested with is `docs/tested-packages.txt` (`pip install -c docs/tested-packages.txt
 -e ".[ocr,dev]"` when a newer package breaks something).
 With no internet, use a wheelhouse. The person who handed this over may also have given you the laptop release's
-offline install zip (`APProcessor-offline-0.3.0-20261029.zip`, Windows, Python 3.12–3.14): its `wheelhouse/` folder
-installs everything with `pip install --no-index --find-links <that wheelhouse> -e ".[ocr,dev]"`. Without it, build
-one on any computer with internet: `AP_ALLOW_INTERNET=1 python scripts/build_offline_bundle.py` (Windows, Python
-3.11–3.14, plus that computer; `--platform` and `--python` choose others; `--dry-run` lists every address it
-downloads from, for the firewall). The same command makes the offline install zip for the pilot laptop (step 2 of
-section 8; `docs/PILOT.md`).
+offline install zip (`APProcessor-offline-0.3.0-20261030.zip`, the release `v0.3.0-pilot3`; Windows, Python
+3.12–3.14): its `wheelhouse/` folder installs everything on Windows with `pip install --no-index --find-links <that
+wheelhouse> -e ".[ocr,dev]"` (its wheels are Windows ones: a Linux agent or CI runner needs PyPI or a mirror).
+Without it, build one on any computer with internet: `AP_ALLOW_INTERNET=1 python scripts/build_offline_bundle.py`
+(Windows, Python 3.11–3.14, plus that computer; `--platform` and `--python` choose others; `--dry-run` lists every
+address it downloads from, for the firewall). The same command makes the offline install zip for the pilot laptop
+(step 2 of section 8; `docs/PILOT.md`).
 
 Then prove the copy works before changing anything (section 3): the default test tier passes,
 `python scripts/pilot_check.py` says 10 of 10 sample invoices read right, `python -m ap_coder serve --port 8501
 --no-browser` answers on http://127.0.0.1:8501/healthz. `python -m ap_coder doctor` then shows six warnings that are
-expected on a fresh copy (the OCR and table-finder models not copied yet, LM Studio not running, the sample GL
-accounts, no cost centers); `python scripts/fetch_models.py` copies or fetches the OCR models.
+expected on a fresh copy (the OCR and table-finder models not copied yet, LM Studio not running (two), and the
+sample setup); its "data folder" line names the folder it uses (see section 5). The OCR models come with the offline
+bundle's `models/` folder (`python scripts/fetch_models.py` copies them from there), or, with internet,
+`AP_ALLOW_INTERNET=1 python scripts/fetch_models.py` (add `--table-finder` for the table model).
 
 ---
 
@@ -145,17 +153,24 @@ release tags (D-129). On another CI system (Azure DevOps, GitLab...), port at
 least: the Linux and Windows tests, lint, and the Windows offline-bundle job (the closest thing to the pilot
 tester's laptop). Three kinds of job need the repository's history: "Update from ..." (`git archive` of three old commits,
 `scripts/ci/old_versions.py`), "The pilot tester's Mac ... updated from PR 8" (fetch depth 0) and "GitHub's ZIP on
-Windows" (`git archive HEAD~1`); with route B, drop them. CI needs Linux and Windows runners (macOS for the Mac jobs)
-and these hosts: `pypi.org` and `files.pythonhosted.org` (packages, `pip-audit`'s advisories), Playwright's Chromium
-download (browser tests), and the OCR models' site (`www.modelscope.cn`; `build_offline_bundle.py --dry-run` lists
-them all).
+Windows" (it makes its own commit and archives it: it needs no history); with route B, drop the first two. CI needs
+Linux and Windows runners (macOS for the Mac jobs) and these hosts: `pypi.org` and `files.pythonhosted.org`
+(packages, `pip-audit`'s advisories), Playwright's Chromium download (its CDN; for the browser tests:
+`pip install playwright` then `python -m playwright install --with-deps chromium`, not in the dev extra), and the OCR
+models' site (`www.modelscope.cn`; `build_offline_bundle.py --dry-run` lists them all). `release.yml` also needs
+`lmstudio.ai` and `huggingface.co` (LM Studio and its models), the `gh` command, GitHub's artifacts API and a token
+that may push tags and create releases. **Before the first push of the whole history, switch Actions off (or delete
+`release.yml`)**: the first push runs every workflow, and `release.yml` would spend 60 to 90 minutes checking an old
+release on Windows and create GitHub releases for its tags. Switch `ci.yml` on first; `release.yml` only once the
+company cuts its own releases. The default test tier skips 6 tests on a fresh copy, as expected: the Azure extra (2),
+pyarrow (2), the table-finder model (1) and one Windows-only test.
 
 ---
 
 ## 4. How the code is organised
 
 About 78,000 lines of Python in `ap_coder/` (plus 13,700 of HTML/JS/CSS), 7,800 in `scripts/`, 68,000 in `tests/`
-(236 test files, about 3,500 test functions before parametrisation). `CLAUDE.md` has the map; in short:
+(237 test files, about 3,500 test functions before parametrisation). `CLAUDE.md` has the map; in short:
 
 | Package | Lines | What |
 |---|---|---|
@@ -184,9 +199,13 @@ Starting points: `ai/pipeline.py` (`finalise_coding`), `core/schema.py`, `web/pa
 - **Never in the repository:** the company's data. It lives in the **data folder** (`core/paths.py` `private_dir`):
   `AP_PRIVATE_DIR` if set, else the folder the launcher or installer recorded in `~/.ap_coder/settings.json`
   (`~/APCoder` on a pilot laptop), else `private/` in the checkout (git-ignored): a developer checkout installed with
-  pip uses `private/`. It holds `ap_coder.db`, `invoices/`, `emails/`, `backups/`, `logs/`, and a `.env` with any secrets
-  (AIS password, Azure keys, the Finance Hub's client secret). `.gitignore` keeps `private/`, `.env*` and `*.xlsx`
-  out of git. Keep it so: real invoices, vendor lists, GL charts or JDE values committed to git are a leak.
+  pip uses `private/` only when no install was ever made on that computer. **On a computer where the launcher or
+  installer ran (the pilot laptop), a checkout uses that install's data folder, which may hold the company's real
+  invoices**: set `AP_PRIVATE_DIR=<checkout>/private` there before `serve`, `doctor`, `demo` or `process`, and check
+  the folder `doctor`'s "data folder" line names. It holds `ap_coder.db`, `invoices/`, `emails/`, `backups/`, `logs/`,
+  and a `.env` with any secrets (AIS password, Azure keys, the Finance Hub's client secret). `.gitignore` keeps
+  `private/`, `.env*` and `*.xlsx` out of git. Keep it so: real invoices, vendor lists, GL charts or JDE values
+  committed to git are a leak.
 - **What real data replaces:** the sample GL accounts, tax mapping, vendor master, POs and bank accounts are imported
   from the company's CSV or Excel files in the dashboard (section 6), or synced from JD Edwards (6.2). A company copy
   of `canada_tax_rates.csv` or `jde_orchestrations.json` in the data folder overrides the bundled one.
@@ -270,7 +289,7 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
   the memory before the first approval.
 - **Import:** GL accounts & tax page → upload CSV/Excel (code, description, optional category and a *meals* column
   for the 50% tax credit accounts); cost centers the same way. The pilot runs without cost centers (D-53): with them,
-  each line needs one. Learning → *Import coding history* (vendor, description, gl_code, cost_center).
+  each line needs one. Learning & accuracy → *Teach from past coding* (vendor, description, gl_code, cost_center).
 - **The company supplies:** the posting accounts AP uses (JDE object/subsidiary), the BUs as cost centers if lines
   are coded to them, which accounts are meals and entertainment, the coding policy's rules.
 - **A line can be split** across several GL accounts (cost centers) by percentage or amount (D-126). **Job cost coding
@@ -285,7 +304,7 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
   else the supplier's), each tax `recoverable` (to its GL), `expense_to_line` or `expense_separate`; meals at 50%
   (D-90); self-assessment and input-tax-credit reports (Sales tax page).
 - **Files:** `tax_gl_mapping.csv` (`tax_type,treatment,gl_code`), `canada_tax_rates.csv` (dated rows; a copy in the
-  data folder overrides the bundled one). In the dashboard: GL accounts & tax → Sales tax accounts.
+  data folder overrides the bundled one). In the dashboard: GL accounts & tax → How each sales tax posts.
 - **The company supplies:** the GST/HST and QST receivable accounts, how PST is treated, and in E1 the tax areas
   and AAIs (the worksheet's *Tax areas* sheet).
 - **Code and tests:** `coding/tax.py`, `taxmath.py`, `line_tax.py`, `taxreturn.py`; `tests/coding/test_tax*.py`,
@@ -366,10 +385,13 @@ CNC contact, IT's contact for the laptop and the server, and who owns the compan
 | What | From | Goes to |
 |---|---|---|
 | Chart of accounts AP posts to; cost centers / BUs | Finance / JDE team | GL accounts & tax → import (6.4) |
-| Tax receivable accounts; PST treatment | Tax / Finance | GL accounts & tax → Sales tax accounts (6.5) |
+| Tax receivable accounts; PST treatment | Tax / Finance | GL accounts & tax → How each sales tax posts (6.5) |
 | Vendor master (AN8, name, tax IDs, terms, hold) | E1 supplier export | Vendors → import (6.3) |
 | Open POs with receipts (if PO-matched) | E1 / Procurement | Purchase orders → import (6.6) |
-| Invoices already in E1 (past 2 years) | E1 voucher export | Exports → Invoices already in the ERP (6.6) |
+| Invoices already in E1 (the last 12 to 18 months) | E1 voucher export | Exports → Invoices already in the ERP (6.6) |
+| Last year's posted AP lines (vendor, description, GL, cost center) | JDE team / AP | Learning & accuracy → Teach from past coding |
+| Exchange rates (for invoices in other currencies; the approval limit uses them) | Treasury / AP lead | Settings → Review |
+| A second backup folder (a network share) | IT | Settings → Data → *Also copy each backup to* |
 | Bank accounts that pay AP | Treasury | GL accounts & tax → Bank accounts (6.7) |
 | The JDE worksheet's answers (37 questions, tax areas, account mapping, AN8s) | JDE team | Settings → JD Edwards E1 → Import the answers (6.1) |
 | Payment terms → E1 terms codes | JDE team | Settings → JD Edwards E1 → terms table |
@@ -379,7 +401,7 @@ CNC contact, IT's contact for the laptop and the server, and who owns the compan
 | Server, certificate, service account, DNS name | IT | `docs/SERVER.md` (6.10) |
 | Coding policy; meals accounts; approval limit | AP lead | GL accounts & tax → Coding policy; Settings → Review |
 | A sample of real invoices with what AP coded | AP | The shadow pilot (`docs/PILOT_PLAN.md`) and `pilot-score` |
-| E1's vouchers for the pilot period (F0411, and F0911 for the distribution) | JDE team | `python -m ap_coder pilot-score` (step 2's "done when") |
+| E1's vouchers for the pilot period (F0411, and F0911 for the distribution; the columns are in `docs/JDE_E1.md`) | JDE team | `python -m ap_coder pilot-score` (step 2's "done when") |
 | LM Studio and the models (a chat model: Gemma 4 12B or Qwen 3.5 9B; OvisOCR2's GGUF and vision file) | IT, from LM Studio's model catalogue | `docs/LM_STUDIO.md`, `docs/PILOT.md` "What you need" |
 
 ---
@@ -391,11 +413,15 @@ Each step ends with something a person can check. Don't start the next while the
 1. **Land the code.** Import it (section 1), run the default test tier and `pilot_check.py`, get CI running in the
    company's system (section 3: the runners and hosts it needs). Replace the README's CI badge and links, which point
    at the original GitHub repository. *Done when* the tests are green on the company's CI and the dashboard opens.
-2. **The laptop pilot on the company's master data, no connections yet.** Import the GL accounts, tax accounts,
-   vendor master, bank accounts (section 7) on the pilot tester's laptop (the offline install zip; `docs/PILOT.md`).
-   Run the four-week shadow pilot of `docs/PILOT_PLAN.md`: AP keeps working as today, AP Coder reads the same invoices,
-   `pilot-score` compares. *Done when* the pilot score is written up and the AP lead decides whether to go on to
-   live use (the four weeks and the decision are in `docs/PILOT_PLAN.md`).
+2. **The laptop pilot on the company's master data, no connections yet.** Import the GL accounts, tax accounts, vendor
+   master, bank accounts (section 7) on the pilot tester's laptop (the offline install zip; `docs/PILOT.md`). Also
+   import the vendors' AN8s and the JDE account mapping sheet (or set a Default BU) from the worksheet: `pilot-score`
+   matches suppliers by AN8 and compares accounts as BU.Object.Subsidiary; nothing is sent to E1. Run the four-week
+   shadow pilot of `docs/PILOT_PLAN.md` without its ERP and mailbox items (week 2's "Export approved invoices to the
+   ERP" makes a file that is not loaded; week 3's mailbox watcher and JDE worksheet are steps 3 and 4 here): AP keeps
+   working as today, AP Coder reads the same invoices, `pilot-score` compares. *Done when* the pilot score is written
+   up and the AP lead decides whether to go on to live use (the four weeks and the decision are in
+   `docs/PILOT_PLAN.md`).
 3. **JD Edwards through batch files.** Send the JDE worksheet; import the answers; make dry runs; load a batch into
    E1's **test** environment through R04110ZA; compare with what AP would have keyed. Resolve every point of
    `jde.UNCONFIRMED`. *Done when* a test batch posts in E1 exactly as AP would have.
@@ -464,4 +490,5 @@ review yet.
 | Touchless | An invoice approved without a person, for a vendor with a track record (off by default) |
 | Shadow pilot | AP works as today while AP Coder reads the same invoices; the two are compared |
 | Data folder | Where the company's data lives, outside the code (`~/APCoder` on a laptop, `private/` in a checkout) |
+| CloseDesk | The original builder's Outlook assistant, where the page reader idea and `ai/figures.py` came from; not part of AP Coder, nothing to install |
 | Pilot tester | The person running the pilot on the laptop |

@@ -392,7 +392,7 @@ JDE administrator's word wins over this page.
 
 **4. Report back to us**
 
-Send the pilot tester (who passes it on; no supplier names or amounts needed for us):
+Send the pilot tester, who passes it on to the company's AP Coder developer (no supplier names or amounts needed):
 
 - the batch number, the R04110ZA version and mode, and whether proof and final ran clean;
 - vouchers created against the README's count; the batch total against the README's; the vouchers whose tax or
