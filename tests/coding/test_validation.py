@@ -50,6 +50,20 @@ def test_line_math_and_numbering(reference, ground_truth):
     assert {"LINE_MATH", "LINE_NUMBERING"} <= _codes(report)
 
 
+def test_a_credit_line_printed_as_a_positive_quantity_and_price_is_no_line_math(reference):
+    """B-1484: a credit note's line printed 4 × 150.00 = -600.00 raised LINE_MATH: the sign is where the credit note
+    puts it, not a misread. A real difference is still caught."""
+    import json
+
+    from tests.conftest import SAMPLES
+
+    credit = json.loads((SAMPLES / "ground_truth" / "northwind_ON_HST_CN-2026-0047.json").read_text())
+    credit["line_items"][1]["quantity"] = 4  # 4 × 150.00, the amount -600.00
+    assert "LINE_MATH" not in _codes(validate_coding(InvoiceCoding.model_validate(credit), reference))
+    credit["line_items"][1]["quantity"] = 3  # 3 × 150.00 is not 600.00, whatever the sign
+    assert "LINE_MATH" in _codes(validate_coding(InvoiceCoding.model_validate(credit), reference))
+
+
 def test_low_model_confidence_triggers_review(reference, ground_truth):
     gt = dict(ground_truth, confidence_score=0.7)
     report = validate_coding(InvoiceCoding.model_validate(gt), reference, review_threshold=0.85)
