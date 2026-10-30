@@ -6,7 +6,7 @@ import sqlite3
 
 import pytest
 
-from ap_coder.coding.terms import Terms, describe, parse_terms, payment, payment_findings
+from ap_coder.coding.terms import Terms, describe, parse_terms, payment, payment_findings, terms_key
 from ap_coder.core.store import Store
 from tests.conftest import SAMPLE_STEM, SAMPLES
 
@@ -269,3 +269,44 @@ def test_a_discount_written_with_slashes_to_the_net_is_kept():
     was never said."""
     assert parse_terms("2/10/N30") == parse_terms("2/10 Net 30") == Terms(30, 2.0, 10)
     assert parse_terms("1%/15/net 45") == Terms(45, 1.0, 15)
+
+
+@pytest.mark.parametrize("text", ["2/10 or net 30", "2/10, or net 30", "2/10 ou net 30", "2% 10 or net 30"])
+def test_a_discount_or_the_net_keeps_the_discount(text):
+    """B-1485: "2/10 or net 30" (2% off in 10 days, or the whole in 30) was read as net 30 with no discount."""
+    assert parse_terms(text) == Terms(30, 2.0, 10)
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("Net 1 month, 2/10", Terms(30, 2.0, 10, net_months=1)),
+        ("Net 2 months 1/15", Terms(60, 1.0, 15, net_months=2)),
+        ("Net 30, 2/10", Terms(30, 2.0, 10)),
+        ("Net 30 days or 2/10", Terms(30, 2.0, 10)),
+    ],
+)
+def test_a_discount_after_the_net_is_kept(text, expected):
+    """B-1486: the net first and the discount after it ("Net 1 month, 2/10") lost the discount: a slash discount was
+    read only before the net."""
+    assert parse_terms(text) == expected
+
+
+def test_net_twelve_months_is_twelve_calendar_months():
+    """B-1487: "2/10 net 12 months" fell back to the default days and its terms key was blank: net months stopped at
+    6. Up to 12 calendar months are read."""
+    p = payment({"invoice_date": "2026-01-31", "payment_terms": "2/10 net 12 months", "grand_total": 113,
+                 "subtotal": 100})  # fmt: skip
+    assert p.terms == Terms(360, 2.0, 10, net_months=12) and p.source == "terms"
+    assert p.due == dt.date(2027, 1, 31) and p.discount_by == dt.date(2026, 2, 10)
+    assert terms_key("2/10 net 12 months") == "2/10 Net 12 months" and terms_key("Net 12 months") == "Net 12 months"
+    assert parse_terms("Net 13 months") == Terms()  # past a year: not read as terms
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["1/15/2026 net 30", "Due 10/15 net 45", "1/15/2026 or net 30", "Due 10/15 or net 45", "Net 30, 1/15/2026",
+     "Net 30 10/15", "Net 30, due 1/15", "Net 1 month, 1/15/2026"],
+)  # fmt: skip
+def test_a_date_beside_the_net_is_never_a_discount(text):
+    assert parse_terms(text).discount_pct is None
