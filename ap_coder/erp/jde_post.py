@@ -221,15 +221,18 @@ def _put(store: Any, key: str, invoice_id: int, batch: int, *, only_from: tuple[
 
 
 def _claim(store: Any, row: dict[str, Any], attempts: int) -> dict[str, Any] | None:
-    """Compare-and-set before a send: *sending* only if the row is the version read, sendable, JDE can't hold it and
-    its batch is not undone; the row as claimed, or None (someone else has it, or the batch was undone)."""
+    """Compare-and-set before a send: *sending* only if the row is the version read, sendable, JDE can't hold it, its
+    batch is not undone and its ZIP was not downloaded since the go-ahead (D-134: the file holds it); the row as
+    claimed, or None (someone else has it, the batch was undone or its file downloaded)."""
     with _conn(store) as conn:
         changed = conn.execute(
             "UPDATE jde_postings SET status = ?, sending_at = ?, maybe_sent = 1, attempts = ?, next_try = NULL, "
             "rev = rev + 1, updated_at = ? WHERE idem_key = ? AND rev = ? AND maybe_sent = 0 AND verify = 0 AND "
             "status IN (SELECT value FROM json_each(?)) AND batch NOT IN "
-            "(SELECT id FROM export_batches WHERE undone_at IS NOT NULL)",
-            (SENDING, _now(), attempts, _now(), row["idem_key"], row["rev"], json.dumps(SENDABLE)),
+            "(SELECT id FROM export_batches WHERE undone_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM events e "
+            "WHERE e.action = ? AND json_extract(e.detail, '$.batch') = jde_postings.batch AND "
+            "e.created_at > COALESCE(jde_postings.approved_at, ''))",
+            (SENDING, _now(), attempts, _now(), row["idem_key"], row["rev"], json.dumps(SENDABLE), FILE_DOWNLOADED),
         ).rowcount
     if changed != 1:
         return None
@@ -721,7 +724,7 @@ def _run(store: Any, ready: list[tuple[dict[str, Any], dict[str, Any] | None]], 
             status, exc = _deliver(store, client, row, payload, actor, look_first)
             if status == "skipped":
                 skipped.append(f"AP Coder #{row['invoice_id']}: not sent: it changed meanwhile (sent from elsewhere, "
-                               "or its batch undone)")  # fmt: skip
+                               "its batch undone, or its JD Edwards file downloaded)")  # fmt: skip
             else:
                 counts[status if status in counts else UNKNOWN if status == SENDING else QUEUED] += 1
             if exc is not None and exc.kind not in (jde_ais.JDE,):

@@ -218,3 +218,19 @@ def test_vouchers_waiting_for_jde_are_not_sent_once_the_batch_file_was_downloade
     assert len(_finals(ais)) == 3  # the three tries while JD Edwards was busy, none since
     with pytest.raises(jde_post.FileDownloaded):
         jde_post.post(store, batch, actor="sam")
+
+
+def test_a_voucher_approved_before_the_batch_file_was_downloaded_is_never_claimed_for_sending(tmp_path, ais):
+    """D-134: a go-ahead under way (one voucher after another) when the batch's ZIP is downloaded: the file made then
+    holds the vouchers not sent yet, so none approved before the download is sent; one approved after it is."""
+    store, batch = batch_of(tmp_path, ais)
+    jde_post.dry_run(store, batch)
+    (row,) = jde_post.postings(store, batch)
+    assert jde_post._put(store, row["idem_key"], row["invoice_id"], batch, rev=row["rev"],
+                         approved_at="2026-10-01T09:00:00", approved_by="jane")  # fmt: skip
+    jde_post.file_downloaded(store, batch, "sam")
+    approved = jde_post.postings(store, batch)[0]
+    assert jde_post._claim(store, approved, 1) is None
+    assert jde_post._put(store, row["idem_key"], row["invoice_id"], batch, rev=approved["rev"],
+                         approved_at="2099-01-01T09:00:00")  # fmt: skip
+    assert jde_post._claim(store, jde_post.postings(store, batch)[0], 1)["status"] == jde_post.SENDING
