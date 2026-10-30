@@ -209,6 +209,13 @@ Windows asks for `APCoderService`'s password once and keeps it for the task. `se
 runs in; `server-update` changes it), `--allowed-folders` (the folders Admins may name, step 9), `--workers`
 and `--llm-parallel` (below), `--no-start`.
 
+`--account`, `--task-name` and `--folder` are never taken from `server.json`: the service's account can change that
+file, and these three say what the task runs, as whom, and which task your `schtasks` commands change. Each
+`service install|start|stop|status|remove` uses the ones given on its own command line, else the defaults (the
+folder: the one you run it from). So when you chose another account, task name or folder, give them again each time;
+`SYSTEM` and the other built-in accounts are used only when `--account` names them. `service stop` ends only the
+service's own `python.exe` (its `.venv`'s, or the Python that `.venv` was made with) when it will not stop by itself.
+
 **Workers** (`--workers N`, kept in `server.json` as `"workers"`; default one per processor core, at most 8): one
 Python process answers about 1.6 pages a second however many cores the server has, so the service runs N *web
 workers*, all answering on the same port, and one *background process* beside them for the work nobody waits on
@@ -242,7 +249,7 @@ many invoices at once.
 | See whether it runs, its version and folder | `.venv\Scripts\python.exe -m ap_coder service status` |
 | Stop it (it stays stopped, also after a restart of the server) | `.venv\Scripts\python.exe -m ap_coder service stop` |
 | Start it again | `.venv\Scripts\python.exe -m ap_coder service start` |
-| Change a setting (port, certificate, names) | `service install` again with the new options (the others are kept) |
+| Change a setting (port, certificate, names) | `service install` again with the new options (the others are kept, except `--account`, `--task-name` and `--folder`: give them again unless they are the defaults) |
 | Remove it (the data, settings and logs are kept) | `.venv\Scripts\python.exe -m ap_coder service remove` |
 
 What it does: the task runs `run.cmd`, which runs AP Coder's *service host* (`python -m ap_coder service run`). The

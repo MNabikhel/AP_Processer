@@ -13,6 +13,7 @@ Uploads larger than ``_MAX_BYTES`` are not read (``read_capped``); every page re
 from __future__ import annotations
 
 import io
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -42,6 +43,14 @@ TOO_BIG_UNZIPPED = (
     "opened: it may be damaged. Export fewer rows, or save it as CSV UTF-8 and upload that."
 )
 TOO_BIG = "This file is larger than 50 MB. Export fewer rows, or only the columns needed."
+# The most columns a sheet is read with (B-1499): a statement or a list has a few dozen, an ERP export a few hundred;
+# pandas takes about 2 KB and 40 microseconds a column, so 50 MB of short headers would take some 10 GB.
+MAX_COLUMNS = 500
+
+
+def too_wide(columns: int) -> str:
+    return (f"This file has {columns:,} columns; AP Coder reads at most {MAX_COLUMNS}. Save only the columns needed "
+            "and upload it again.")  # fmt: skip
 
 
 # --- Downloads ---------------------------------------------------------------------------------------------------
@@ -125,6 +134,9 @@ def read_excel(content: bytes, sheet_name: int | None = None) -> Any:
     Raises SheetError (TOO_BIG_UNZIPPED) for a workbook that unzips to too much."""
     if triage.sheet_unzips_too_big(content):
         raise SheetError(TOO_BIG_UNZIPPED)
+    widest = _widest_sheet(content)
+    if widest > MAX_COLUMNS:
+        raise SheetError(too_wide(widest))
     return pd.read_excel(io.BytesIO(content), sheet_name=sheet_name, dtype=str, keep_default_na=False, na_filter=False)
 
 
@@ -138,9 +150,45 @@ def read_csv(content: bytes) -> pd.DataFrame:
             text = content.decode(encoding)
         except UnicodeDecodeError:
             continue
-        return pd.read_csv(io.StringIO(text), dtype=str, keep_default_na=False, sep=sniff_delimiter(text),
-                           engine="python")  # fmt: skip
+        sep = sniff_delimiter(text)
+        columns = _header_cells(text, sep)
+        if columns > MAX_COLUMNS:
+            raise SheetError(too_wide(columns))
+        return pd.read_csv(io.StringIO(text), dtype=str, keep_default_na=False, sep=sep, engine="python")
     raise SheetError("Could not read this file. In Excel, use Save As → CSV UTF-8 and upload it again.")
+
+
+def _header_cells(text: str, sep: str) -> int:
+    """How many cells a CSV's header line has, counted without splitting it: the blank lines before it skipped, as
+    pandas skips them, and a line break inside a quoted cell kept in it (the line ends where its quotes pair up). A
+    delimiter inside quotes counts too: a cap, not a reading."""
+    start = len(text) - len(text.lstrip())
+    end, quotes = start, 0
+    for line_break in _LINE_BREAK.finditer(text, start):
+        quotes += text.count('"', end, line_break.start())
+        end = line_break.start()
+        if quotes % 2 == 0:
+            break
+    else:
+        end = len(text)
+    return text.count(sep, start, end) + 1
+
+
+_LINE_BREAK = re.compile(r"[\r\n]")
+
+
+def _widest_sheet(content: bytes) -> int:
+    """The most columns a sheet of a workbook says it has (0 when it can't be told: an old .xls, a damaged file)."""
+    import openpyxl
+
+    try:
+        book = openpyxl.load_workbook(io.BytesIO(content), read_only=True)
+    except Exception:  # noqa: BLE001 - pandas reads it, or says why not
+        return 0
+    try:
+        return max((sheet.max_column or 0 for sheet in book.worksheets), default=0)
+    finally:
+        book.close()
 
 
 def read_sheet(name: str, content: bytes, sheet: str | None = None) -> tuple[pd.DataFrame, list[str]]:
