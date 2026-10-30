@@ -30,9 +30,17 @@ _RECEIPT = re.compile(
 _EOM = re.compile(r"\b(eom|end of (the )?month|fin de mois)\b", re.I)
 # A discount: 2/10 net 30, 2/10 EOM net 30, 2/10 EOM, 1.5/15 n60 (a net part or EOM is required, and the rate
 # must look like a discount, so "Due 10/15 net 45" stays a date), 2% 10 net 30, 2% discount if paid within 10 days,
-# "Net 30, 2% 10" (the word "days" may be left out), 2/10/N30 (B-1461).
+# "Net 30, 2% 10" (the word "days" may be left out), 2/10/N30 (B-1461), 2/10 or net 30 (B-1485).
 _SLASH = re.compile(
-    r"(?<![\d/.,])(\d(?:[.,]\d+)?)\s*%?\s*/\s*(\d+)\s*(?:days?)?\s*(?:eom\b)?\s*[,;/]?\s*(?:n(?:et)?\s*[:/\-–]?\s*(\d+)|(?<=eom))",
+    r"(?<![\d/.,])(\d(?:[.,]\d+)?)\s*%?\s*/\s*(\d+)\s*(?:days?)?\s*(?:eom\b)?\s*[,;/]?\s*(?:(?:or|ou)\s+)?"
+    r"(?:n(?:et)?\s*[:/\-–]?\s*(\d+)|(?<=eom))",
+    re.I,
+)
+# The net first and a slash discount after it ("Net 1 month, 2/10", "Net 30 or 2/10"): read as "2/10 Net 1 month"
+# (B-1486). The discount's days end the number, so a date after the net ("Net 30, 1/15/2026") stays a date.
+_NET_THEN_SLASH = re.compile(
+    r"(\bn(?:et)?\s*[:/\-–]?\s*\d{1,3}(?:\s*(?:days?|jours?|months?|mois))?)\s*[,;]?\s*(?:(?:or|ou)\s+)?"
+    r"(\d(?:[.,]\d+)?\s*%?\s*/\s*\d+)\b(?![/.,]\d)",
     re.I,
 )
 _DISCOUNT = [
@@ -108,13 +116,14 @@ _PROX_DISCOUNT = re.compile(
 _NET_ORDINAL = re.compile(r"\bn(?:et)?\s*/?\s*(\d{1,2})(?:st|nd|rd|th)\b", re.I)
 # Weeks, counted as days before anything else is read: "2% 2 weeks net 30" is a 14-day discount.
 _IN_WEEKS = re.compile(r"(?<![\d/.,])\b(\d{1,2})\s*" + _WEEKS, re.I)
-# Net months ("Net 1 month", "net 2 mois"): calendar months from the invoice date.
+# Net months ("Net 1 month", "net 2 mois"): calendar months from the invoice date, up to a year ("Net 12 months",
+# B-1487).
 _NET_MONTHS = re.compile(r"\bn(?:et)?\s*/?\s*(\d{1,2})\s*" + _MONTHS, re.I)
 
 
 def _net_months(text: str) -> int | None:
     for m in _NET_MONTHS.finditer(text):
-        if not _INTEREST.search(_clause(text, m.start(), m.end())) and 0 < int(m.group(1)) <= 6:
+        if not _INTEREST.search(_clause(text, m.start(), m.end())) and 0 < int(m.group(1)) <= 12:
             return int(m.group(1))
     return None
 
@@ -208,6 +217,7 @@ def parse_terms(text: str | None) -> Terms:
         lambda m: f"{int(m.group(1)) / int(m.group(2)):g}%" if int(m.group(2)) else m.group(0), text
     )
     text = _IN_WEEKS.sub(lambda m: f"{int(m.group(1)) * 7} days", text)
+    text = _NET_THEN_SLASH.sub(r"\2 \1,", text)  # the net still ends its clause ("Net 1 month, 2/10 interest ...")
     if prox_discount := _prox_discount(text):
         return prox_discount
     months = _net_months(text)

@@ -178,3 +178,59 @@ def test_undoing_a_batch_before_posting_forgets_its_dry_run(tmp_path, ais):
     assert jde_post.undo_problem(store, batch) == ""
     jde_post.forget_batch(store, batch)
     assert jde_post.postings(store, batch) == []
+
+
+def _finals(fake: FakeAis) -> list:
+    return [c for c in fake.orchestration_calls("voucher_create") if c["ProcessingMode"] == "FINAL"]
+
+
+def test_a_batch_whose_file_was_downloaded_is_posted_only_on_a_persons_word(tmp_path, ais):
+    """D-134: a batch's JD Edwards ZIP downloaded, then posted through the API: its vouchers twice in JD Edwards if the
+    file was loaded. The post asks for a person's word that it was not, kept in the audit trail."""
+    store, batch = batch_of(tmp_path, ais)
+    jde_post.dry_run(store, batch)
+    jde_post.file_downloaded(store, batch, "sam")
+    (seen,) = jde_post.downloads(store, batch)
+    assert seen["actor"] == "sam" and seen["at"]
+    with pytest.raises(jde_post.FileDownloaded, match="downloaded by sam"):
+        jde_post.post(store, batch, actor="jane")
+    with pytest.raises(jde_post.FileDownloaded):
+        jde_post.post(store, batch, actor="jane", not_loaded="  ")
+    assert _finals(ais) == [] and jde_post.postings(store, batch)[0]["status"] == jde_post.CHECKED
+    why = "No batch APC1 in JD Edwards' voucher entries (P0411Z1): the file was not loaded"
+    assert jde_post.post(store, batch, actor="jane", not_loaded=why)["posted"] == 1
+    (approved,) = store.events(actions=["jde_api_approved"])
+    assert approved["actor"] == "jane" and approved["detail"]["not_loaded"] == why
+    assert approved["detail"]["downloaded"] == f"sam {seen['at']}"
+
+
+def test_vouchers_waiting_for_jde_are_not_sent_once_the_batch_file_was_downloaded(tmp_path, ais):
+    """D-134: JD Edwards down, the vouchers wait in the queue; the batch's file downloaded meanwhile (to load it
+    instead) holds them, so the queue would post them a second time: they wait for a new go-ahead instead."""
+    store, batch = batch_of(tmp_path, ais)
+    jde_post.dry_run(store, batch)
+    ais.script("voucher_create", 503, 503, 503)
+    assert jde_post.post(store, batch, actor="sam")["queued"] == 1
+    jde_post.file_downloaded(store, batch, "sam")
+    assert jde_post.waiting(store) == [] and jde_post.retry_queue(store)["posted"] == 0
+    (row,) = jde_post.postings(store, batch)
+    assert row["status"] == jde_post.CHECKED and not row["approved_at"] and "downloaded" in row["error"]
+    assert len(_finals(ais)) == 3  # the three tries while JD Edwards was busy, none since
+    with pytest.raises(jde_post.FileDownloaded):
+        jde_post.post(store, batch, actor="sam")
+
+
+def test_a_voucher_approved_before_the_batch_file_was_downloaded_is_never_claimed_for_sending(tmp_path, ais):
+    """D-134: a go-ahead under way (one voucher after another) when the batch's ZIP is downloaded: the file made then
+    holds the vouchers not sent yet, so none approved before the download is sent; one approved after it is."""
+    store, batch = batch_of(tmp_path, ais)
+    jde_post.dry_run(store, batch)
+    (row,) = jde_post.postings(store, batch)
+    assert jde_post._put(store, row["idem_key"], row["invoice_id"], batch, rev=row["rev"],
+                         approved_at="2026-10-01T09:00:00", approved_by="jane")  # fmt: skip
+    jde_post.file_downloaded(store, batch, "sam")
+    approved = jde_post.postings(store, batch)[0]
+    assert jde_post._claim(store, approved, 1) is None
+    assert jde_post._put(store, row["idem_key"], row["invoice_id"], batch, rev=approved["rev"],
+                         approved_at="2099-01-01T09:00:00")  # fmt: skip
+    assert jde_post._claim(store, jde_post.postings(store, batch)[0], 1)["status"] == jde_post.SENDING

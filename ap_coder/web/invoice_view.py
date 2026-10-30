@@ -91,6 +91,7 @@ from ap_coder.core.memory import ACCEPTED, BULK, CODED, CORRECTED, pair_lines, v
 from ap_coder.core.reference_data import UNASSIGNED, ReferenceData, short_name
 from ap_coder.core.schema import FROM_VENDOR_LIST, PROVINCE_VALUES, InvoiceCoding
 from ap_coder.core.store import Store, line_guessed, nothing_proposed, suggestion_kept
+from ap_coder.core.store.accounts import CURRENCY_CHANGED
 from ap_coder.core.ui import TAX_LABELS, plural
 from ap_coder.ops.help import help_for
 from ap_coder.ops.offline import setup_contact
@@ -1744,6 +1745,9 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     key = override_key(soft) if soft else ""
     reason = draft.override_reason.strip()
     allow = not pick and not hard and (not soft or (draft.override == key and bool(reason)))
+    # A currency changed from the one read: when the limit in that one is why a second approver is needed, the bar
+    # says so before approving (D-132).
+    second = store.approval_reason(inv, output)[0] if coding.currency != (ai.get("currency") or "CAD") else ""
     changed = ai_changes(coding, ai, cc)
     lines_n = len(coding.line_items)
     _, rule_changes = rules.apply(coding, store.coding_rules())
@@ -1791,6 +1795,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
             "override_reason": draft.override_reason if bool(key) and draft.override == key else "",
             "hard": hard_reasons(hard), "allow": allow, "credit": coding.grand_total < 0,
             "first": blockers[0] if blockers else None, "blockers": blockers,
+            "second": second if second.startswith(CURRENCY_CHANGED) else "",
         },
     }  # fmt: skip
     return Analysis(coding=coding, problems=[], output=output, report=report, errors=errors, warnings=warnings,

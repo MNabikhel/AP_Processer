@@ -17,6 +17,8 @@ with its own reasons, up to ``rounds`` times and ``minutes`` in all (Settings â†
 Like the Azure check (azure_check.py), an invoice waits in line (``verifications``), is never approved without a
 person until the reviewer agrees (with the reviewer on), and the reviewer runs between the page reader's invoices, in
 the same background thread, so the two never load LM Studio at once. It never changes a value: a person decides.
+An invoice read again with its proposal unchanged is not reviewed again by the same model (its review stands); a
+person can still ask for it.
 """
 
 from __future__ import annotations
@@ -186,7 +188,7 @@ def proposal(output: dict[str, Any], vendor: dict[str, Any] | None, gl_names: di
 
 
 def digest(output: dict[str, Any]) -> str:
-    """Which proposal a review was of: a new reading (the page reader's) is reviewed again."""
+    """Which proposal a review was of: a new reading (the page reader's) that changed it is reviewed again."""
     keep = {k: output.get(k) for k in (*FIELDS, "line_items", "tax_lines", "ship_to_province")}
     return hashlib.sha256(json.dumps(keep, sort_keys=True, default=str).encode()).hexdigest()[:16]
 
@@ -461,11 +463,19 @@ def hold(autonomy: dict[str, Any], plan: Plan) -> dict[str, Any]:
     return held_for(autonomy, plan, "verifier_hold", WAITING_FOR_REVIEWER)
 
 
+# Why ``queue`` puts an invoice in line: AP Coder read it (again). A proposal reviewed before by the same model is then
+# not reviewed again; any other reason (a person asking, the demo) has it reviewed whatever was reviewed before.
+QUEUED = ("every invoice", "held for touchless")
+
+
 def queue(store: Any, invoice_id: int | None, plan: Plan, held: bool = False) -> bool:
     if store is None or not invoice_id or not plan.queue:
         return False
     try:
-        return bool(store.queue_verification(invoice_id, "held for touchless" if held else "every invoice"))
+        waiting = store.verification(invoice_id)
+        if waiting and waiting["status"] == "waiting" and waiting["reason"] not in QUEUED:
+            return True  # a person asked for it: still reviewed as they asked, whatever was reviewed before
+        return bool(store.queue_verification(invoice_id, QUEUED[1] if held else QUEUED[0]))
     except Exception as exc:  # noqa: BLE001 - the queue is an extra
         log.warning("invoice %s: not queued for the %s (%s)", invoice_id, NAME, type(exc).__name__)
         return False
@@ -552,6 +562,14 @@ def _verify(settings: Any, store: Any, row: dict[str, Any], cfg: ReviewerSetting
     if not images:
         _end(store, row, "skipped", error="no page to show (a text file)")
         return Outcome(iid, "skipped", "no page to show")
+    earlier = json.loads(row.get("result_json") or "null") or {}
+    if row.get("reason") in QUEUED and earlier.get("model") == model and earlier.get("proposal") == digest(output):
+        # This very proposal, reviewed by this model before (read again, nothing changed): its review stands, folded in
+        # again, not a call of minutes for the same answer.
+        _end(store, row, "done", rounds=row.get("rounds") or 0, seconds=row.get("seconds") or 0.0)
+        approved = _fold_in(store, inv, earlier, expect=identity)
+        return Outcome(iid, str(earlier.get("status") or ""), "reviewed before: the same proposal, by the same model",
+                       approved)  # fmt: skip
     vendor = store.get_vendor(vendor_key(output.get("vendor_name") or ""))
     try:
         names = {a["code"]: a["description"] for a in store.list_accounts("gl_accounts")}

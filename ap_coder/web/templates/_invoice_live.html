@@ -279,6 +279,8 @@
     {% if live.math %}<span class="rvw-math {{ 'ok' if live.math.ok else 'bad' }}" title="{% for r in live.math.rows %}{{ '✓' if r.ok else '✕' }} {{ r.what }}: {{ r.detail }}&#10;{% endfor %}"><span class="ms" aria-hidden="true">{{ 'check' if live.math.ok else 'calculate' }}</span>Math: {{ live.math.text }}</span>{% endif %}</div>
   <div class="rvw-post-sub" title="What approving teaches AP Coder: {{ b.learn }}."><span class="ms" aria-hidden="true">school</span>
     <span data-change-count="{{ b.changed }}">{{ b.learn }}</span></div>
+  {% if b.second %}{# the currency changed from the one read, over the limit in that one (D-132) #}
+  <div class="rvw-post-sub" data-second-why><span class="ms" aria-hidden="true">how_to_reg</span>{{ b.second[:1] | upper }}{{ b.second[1:] }}: a second approver is needed.</div>{% endif %}
 </div>
 {% if live.read_only %}{# Read-only (D-98): nothing to pick or approve anyway #}
 {% elif b.first and b.first.kind == "pick" %}{# a button to the first line that needs an account or a cost center (B-434; G does the same) #}

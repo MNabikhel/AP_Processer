@@ -69,7 +69,7 @@
       <tbody>
         {% for a in g.rows %}
         <tr>
-          <td class="w"><b>{{ a.vendor }}</b>{% if a.proposed %} <span class="apc-pill warn" title="No one has approved this invoice yet: its accounts are what AP Coder proposed">Proposed</span>{% endif %}{% if a.old %} <span class="apc-pill err" title="Dated more than a year before the period end: check the date">Check date</span>{% endif %}<div class="muted">{{ a.reference }}</div></td>
+          <td class="w"><b>{{ a.vendor }}</b>{% if a.proposed %} <span class="apc-pill warn" title="No one has approved this invoice yet: its accounts are what AP Coder proposed">Proposed</span>{% endif %}{% if a.exported_late %} <span class="apc-pill gray" title="Exported to the ERP after the period end: it was not in the ERP at the period end, so it is accrued">Exported after the month end</span>{% endif %}{% if a.old %} <span class="apc-pill err" title="Dated more than a year before the period end: check the date">Check date</span>{% endif %}<div class="muted">{{ a.reference }}</div></td>
           <td class="w">{{ a.description }}</td>
           <td class="w">{{ gl(a.gl) }}{% if a.cost_center %}<small class="muted">{{ a.cost_center }}</small>{% endif %}</td>
           <td class="r">{{ a.amount | money }} <span class="muted">{{ a.currency }}</span></td>
@@ -79,6 +79,11 @@
     </table>
   </div>
   {% endfor %}
+  {% if left_out %}
+  <p class="muted small"><span class="ms" aria-hidden="true">info</span> Not accrued as expected recurring invoices:
+    {% for a in left_out %}<b>{{ a.vendor }}</b> ({{ a.description }}, usually {{ a.amount | money }} {{ a.currency }}){% if not loop.last %}, {% endif %}{% endfor %}.
+    Their received, not invoiced purchase-order lines are accrued instead: the invoice would bill them.</p>
+  {% endif %}
 </section>
 {% endif %}
 {% endblock %}

@@ -135,3 +135,66 @@ def test_a_dry_run_without_jde_s_proof_says_so_and_never_ready_in_green(tmp_path
     assert first["tone"] == "warn" and "ready to post" not in first["text"], first
     assert "checked here only" in first["text"] and "proof wasn't received" in first["text"], first
     assert "Post 1 voucher to JD Edwards" in client.get(f"/exports?batch={batch}").text  # posting stays allowed
+
+
+def test_a_batch_downloaded_as_a_zip_is_posted_through_the_api_only_on_a_persons_word(tmp_path, ais, monkeypatch):
+    """D-134: the batch's JD Edwards ZIP downloaded (who and when on the batch and in the audit trail), posting it
+    through the API asks for a tick that the file was not loaded and what was checked; once posted, the ZIP's page
+    says its vouchers are in JD Edwards already."""
+    store, batch = batch_of(tmp_path, ais)
+    monkeypatch.setenv(jde_ais.PASSWORD_ENV, PASSWORD)
+    client = client_for(store)
+    post(client, f"/exports/batches/{batch}/jde-api/dry-run")
+    _wait(client, "jde-api")
+    page = client.get(f"/exports?batch={batch}").text
+    assert "was downloaded" not in page and 'name="not_loaded"' not in page  # sent one way only: as before
+    assert client.get(f"/exports/batches/{batch}/download").status_code == 200
+    (event,) = store.events(actions=["jde_file_downloaded"])
+    assert event["detail"]["batch"] == batch
+    page = client.get(f"/exports?batch={batch}").text
+    assert "The JD Edwards file of this batch was downloaded" in page
+    assert event["created_at"][:16].replace("T", " ") in page
+    assert 'name="not_loaded"' in page and 'name="why"' in page
+    answer = post(client, f"/exports/batches/{batch}/jde-api/post").json()
+    assert not answer["ok"] and "was downloaded" in answer["error"]
+    answer = post(client, f"/exports/batches/{batch}/jde-api/post", {"not_loaded": "1"}).json()
+    assert not answer["ok"] and "what you checked" in answer["error"]
+    why = "Checked in JD Edwards: no voucher of batch APC1 loaded"
+    post(client, f"/exports/batches/{batch}/jde-api/post", {"not_loaded": "1", "why": why})
+    assert _wait(client, "jde-api")["messages"][0]["text"] == "JD Edwards: 1 posted."
+    assert store.events(actions=["jde_api_approved"])[0]["detail"]["not_loaded"] == why
+    activity = client.get("/activity").text
+    assert "JD Edwards file downloaded" in activity and why in activity
+    page = client.get(f"/exports?batch={batch}").text
+    assert "already in JD Edwards" in page  # the ZIP's page: a copy downloaded before holds them
+
+
+def test_in_a_browser_posting_a_downloaded_batch_needs_the_tick_and_what_was_checked(chromium, tmp_path, ais,
+                                                                                    monkeypatch):  # fmt: skip
+    """D-134 on the page: the Post button of a batch whose ZIP was downloaded sends nothing until the box is ticked
+    and what was checked is said; then the vouchers post, and the reason is kept with the go-ahead."""
+    from ap_coder.web.app import create_app
+    from tests.browser import browser_on, wait_until
+    from tests.webclient import web_settings
+
+    store, batch = batch_of(tmp_path, ais)
+    monkeypatch.setenv(jde_ais.PASSWORD_ENV, PASSWORD)
+    jde_post.dry_run(store, batch)
+    jde_post.file_downloaded(store, batch, "Sam")
+    with browser_on(chromium, create_app(web_settings(), store, start_reader=False)) as (browser, base):
+        page = browser.new_page(viewport={"width": 1400, "height": 1000})
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.on("dialog", lambda d: d.accept())  # "Post 1 voucher of batch 1 to JD Edwards?"
+        page.goto(f"{base}/exports?batch={batch}")
+        button = page.get_by_role("button", name="Post 1 voucher to JD Edwards")
+        button.click()
+        page.wait_for_timeout(300)
+        assert store.events(actions=["jde_api_approved"]) == []  # the box not ticked: nothing sent
+        page.check("input[name=not_loaded]")
+        page.fill("textarea[name=why]", "No batch of these vouchers in JD Edwards")
+        button.click()
+        wait_until(page, lambda: jde_post.postings(store, batch)[0]["status"] == jde_post.POSTED, 15)
+        assert jde_post.postings(store, batch)[0]["status"] == jde_post.POSTED
+        (approved,) = store.events(actions=["jde_api_approved"])
+        assert approved["detail"]["not_loaded"] == "No batch of these vouchers in JD Edwards" and errors == []

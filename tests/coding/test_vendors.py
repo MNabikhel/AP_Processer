@@ -311,6 +311,29 @@ def test_several_credit_notes_together_exceed_the_invoice(tmp_path, reference):
     assert "CREDIT_EXCEEDS_INVOICE" not in codes
 
 
+def test_a_credit_note_never_credits_a_rejected_invoice(tmp_path, reference):
+    """B-1483: a credit note took a rejected invoice of the number it names as its original ("credits invoice
+    NW-2026-0912 (#2, rejected)"), even with the approved one there: rejected and failed invoices were skipped only
+    in the sum of earlier credits."""
+    import json
+
+    from tests.conftest import SAMPLES
+
+    store = Store(tmp_path / "ap.db")
+    invoice = json.loads((SAMPLES / "ground_truth" / "northwind_ON_HST_NW-2026-0912.json").read_text())
+    credit = json.loads((SAMPLES / "ground_truth" / "northwind_ON_HST_CN-2026-0047.json").read_text())
+    rejected = store.add_invoice(tmp_path / "a.pdf", invoice, {})
+    store.reject_invoice(rejected, "Jane", "not ours")
+    codes, _ = _codes(store, credit, reference)
+    assert codes.get("CREDIT_NOTE_ORIGINAL_UNKNOWN") == "info" and "CREDIT_NOTE_FOR" not in codes
+    original = _approved(store, invoice, tmp_path, "b.pdf")
+    copy_of_it = store.add_invoice(tmp_path / "c.pdf", invoice, {})  # the same bill sent again, rejected
+    store.reject_invoice(copy_of_it, "Jane", "duplicate")
+    _, report = _codes(store, credit, reference)
+    message = next(i.message for i in report.issues if i.code == "CREDIT_NOTE_FOR")
+    assert f"#{original}, approved" in message and "rejected" not in message
+
+
 # --- QST and PST numbers against the vendor chosen --------------------------------------------------------------------
 
 

@@ -334,3 +334,66 @@ def test_back_says_the_work_lost_since_the_update_it_undoes_not_since_a_later_fa
     assert server_update.go_back(server["data"], server["db"], server=FakeServer(), dry_run=True) == 0
     out = capsys.readouterr().out
     assert "since 2026-11-02T09:00:00" in out and "2026-11-20" not in out
+
+
+def _updated(server) -> None:
+    """Updated to 0.4.0, then work done on it: what --back puts back, or keeps when it can't."""
+    assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=FakeServer()) == 0
+    Store(server["db"]).set_setting("marker", "work done on the new version")
+
+
+@pytest.mark.parametrize("error", [PermissionError(13, "Access is denied"), KeyboardInterrupt()])
+def test_back_that_raises_before_the_backup_is_put_back_starts_the_running_version_again(server, error, monkeypatch,
+                                                                                         capsys):  # fmt: skip
+    _updated(server)
+
+    def half(backup, db):  # the backup copied in, then the accounts could not be carried over
+        server_update.copy_database(backup, db)
+        raise error
+
+    monkeypatch.setattr(server_update, "put_back", half)
+    fake = FakeServer()
+    assert server_update.go_back(server["data"], server["db"], server=fake, yes=True) == 1
+    assert fake.calls == ["stop", "start", "up APProcessor-0.4.0"]  # the version that ran, started again
+    assert _marker(server["db"]) == "work done on the new version"  # the database as it was
+    saved = service.read_config(server["data"])
+    assert saved["folder"].endswith("APProcessor-0.4.0") and saved["previous_folder"] == str(server["current"])
+    assert "APProcessor-0.4.0" in service.runner_path(server["data"]).read_text()
+    out = capsys.readouterr().out
+    assert "did not go back" in out and "runs 0.4.0 again" in out
+
+
+def test_back_whose_safety_copy_fails_starts_the_running_version_again(server, monkeypatch, capsys):
+    _updated(server)
+
+    def full(db, label):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(server_update, "safety_copy", full)
+    fake = FakeServer()
+    assert server_update.go_back(server["data"], server["db"], server=fake, yes=True) == 1
+    assert fake.calls == ["stop", "start", "up APProcessor-0.4.0"]
+    assert _marker(server["db"]) == "work done on the new version"
+    assert service.read_config(server["data"])["previous_folder"] == str(server["current"])  # --back can be tried again
+    out = capsys.readouterr().out
+    assert "No space left on device" in out and "runs 0.4.0 again" in out
+
+
+def test_back_interrupted_once_the_backup_is_put_back_starts_the_restored_version(server, monkeypatch, capsys):
+    _updated(server)
+    record = server_update._record
+
+    def interrupted(data, entry, **values):
+        if entry.get("result") == "went back":
+            monkeypatch.setattr(server_update, "_record", record)  # the next try goes through
+            raise KeyboardInterrupt
+        record(data, entry, **values)
+
+    monkeypatch.setattr(server_update, "_record", interrupted)
+    fake = FakeServer()
+    assert server_update.go_back(server["data"], server["db"], server=fake, yes=True) == 1
+    assert fake.calls == ["stop", "start", "up APProcessor"]  # the previous version, on its backup
+    assert _marker(server["db"]) == "as before the update"
+    saved = service.read_config(server["data"])
+    assert saved["folder"] == str(server["current"]) and not saved.get("previous_folder")
+    assert "Back on AP Coder 0.3.0" in capsys.readouterr().out

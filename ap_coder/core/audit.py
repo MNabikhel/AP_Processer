@@ -72,6 +72,7 @@ ACTIONS = {
     "jde_voucher_refused": ("cloud_off", "err", "Refused by JD Edwards"),
     "jde_voucher_mismatch": ("gpp_bad", "err", "JD Edwards holds another voucher under this key"),
     "jde_voucher_released": ("lock_open", "warn", "Voucher released after a check in JD Edwards"),
+    "jde_file_downloaded": ("download", "info", "JD Edwards file downloaded"),
     "parked": ("pause_circle", "warn", "Parked"),
     "unparked": ("play_circle", "info", "Back in the queue"),
     "note": ("sticky_note_2", "violet", "Note"),
@@ -436,7 +437,10 @@ def describe(event: dict[str, Any]) -> str:
     if action in ("jde_api_dry_run", "jde_api_approved"):
         n = d.get("vouchers")
         return f"batch {d.get('batch', '')}" + (f": {n} voucher{'' if n == 1 else 's'}" if n is not None else "") + (
-            " (checked here only: JD Edwards not reached)" if d.get("jde") is False else "")  # fmt: skip
+            " (checked here only: JD Edwards not reached)" if d.get("jde") is False else "") + (
+            f" · its file was downloaded, not loaded: {d['not_loaded']}" if d.get("not_loaded") else "")  # fmt: skip
+    if action == "jde_file_downloaded":
+        return f"batch {d.get('batch', '')}"
     if action == "jde_voucher_mismatch":
         return f"batch {d.get('batch', '')}: JD Edwards' voucher {d.get('document', '')} is not this invoice"
     if action == "jde_voucher_released":

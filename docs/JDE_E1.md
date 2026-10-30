@@ -457,7 +457,10 @@ inputs and outputs are in `ap_coder/erp/jde_orchestrations.json`.
   now*, `python -m ap_coder jde status --retry`). A voucher is never posted twice: the key
   `APC-<installation id>-<invoice>-<batch>` is asked for
   before anything is sent again, the batch can't be undone once one of its vouchers is in JDE, and its ZIP of files
-  leaves the posted vouchers out. The files stay the fallback at any time.
+  leaves the posted vouchers out. The files stay the fallback at any time. A batch's ZIP downloaded is recorded (who,
+  when: on the batch and in Activity); posting that batch through the API afterwards asks for a tick that the file was
+  not loaded into JDE and what was checked (kept with the go-ahead), and its vouchers waiting in the queue wait for
+  that go-ahead instead (D-134).
 * `python -m ap_coder jde test` tests the connection; `jde status` shows the settings, the last test and sync, and
   the vouchers waiting.
 

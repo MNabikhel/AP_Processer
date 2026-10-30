@@ -29,6 +29,10 @@ The flow, per export batch made in the JD Edwards format (Exports):
    voucher); not found, the same voucher (the same fingerprint, else *failed*: dry run again) is sent with the same
    key. **Never posted twice**: a locked row (``postings.LOCKED_SQL``) is never sent blind, its batch can't be undone
    (``undo_batch``, in the same kind of transaction as the claim), and its ZIP of batch files leaves it out.
+5. **The batch's ZIP downloaded** (D-134): each download is an event (``file_downloaded``: who, when). From then on the
+   go-ahead asks for a person's word that the file was not loaded into JDE (``post``'s ``not_loaded``, kept in the
+   ``jde_api_approved`` event), and the vouchers waiting in the queue (JDE never reached: the file holds them) are
+   not sent by the queue any more: they wait for that go-ahead.
 """
 
 from __future__ import annotations
@@ -60,10 +64,15 @@ DRY_RUN_OVER = (CHECKED, REFUSED, FAILED)  # what a dry run may write over (and 
 RETRY_MINUTES = (5, 15, 60)  # the queue's waits after each try that did not reach JDE (then hourly)
 SENDING_MINUTES = 15  # a row *sending* longer than this was left by a stop: looked up by its key, never resent blind
 YES, NO = ("1", "Y", "YES", "TRUE"), ("0", "N", "NO", "FALSE")
+FILE_DOWNLOADED = "jde_file_downloaded"  # the event of a download of a batch's JD Edwards ZIP (D-134)
 
 
 class Locked(ValueError):
     """The batch can't be undone: JDE has, or may have, one of its vouchers."""
+
+
+class FileDownloaded(ValueError):
+    """The batch's JD Edwards ZIP was downloaded: posting it needs a person's word that it was not loaded (D-134)."""
 
 
 def _now() -> str:
@@ -212,15 +221,18 @@ def _put(store: Any, key: str, invoice_id: int, batch: int, *, only_from: tuple[
 
 
 def _claim(store: Any, row: dict[str, Any], attempts: int) -> dict[str, Any] | None:
-    """Compare-and-set before a send: *sending* only if the row is the version read, sendable, JDE can't hold it and
-    its batch is not undone; the row as claimed, or None (someone else has it, or the batch was undone)."""
+    """Compare-and-set before a send: *sending* only if the row is the version read, sendable, JDE can't hold it, its
+    batch is not undone and its ZIP was not downloaded since the go-ahead (D-134: the file holds it); the row as
+    claimed, or None (someone else has it, the batch was undone or its file downloaded)."""
     with _conn(store) as conn:
         changed = conn.execute(
             "UPDATE jde_postings SET status = ?, sending_at = ?, maybe_sent = 1, attempts = ?, next_try = NULL, "
             "rev = rev + 1, updated_at = ? WHERE idem_key = ? AND rev = ? AND maybe_sent = 0 AND verify = 0 AND "
             "status IN (SELECT value FROM json_each(?)) AND batch NOT IN "
-            "(SELECT id FROM export_batches WHERE undone_at IS NOT NULL)",
-            (SENDING, _now(), attempts, _now(), row["idem_key"], row["rev"], json.dumps(SENDABLE)),
+            "(SELECT id FROM export_batches WHERE undone_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM events e "
+            "WHERE e.action = ? AND json_extract(e.detail, '$.batch') = jde_postings.batch AND "
+            "e.created_at > COALESCE(jde_postings.approved_at, ''))",
+            (SENDING, _now(), attempts, _now(), row["idem_key"], row["rev"], json.dumps(SENDABLE), FILE_DOWNLOADED),
         ).rowcount
     if changed != 1:
         return None
@@ -329,6 +341,37 @@ def forget_batch(store: Any, batch: int) -> None:
                                            (batch,))]  # fmt: skip
         conn.execute(f"DELETE FROM jde_postings WHERE batch = ? AND NOT {LOCKED_SQL}", (batch,))
     ledger.append(store.path, [{"idem_key": k, "deleted": True, "updated_at": _now()} for k in keys])
+
+
+# --- The batch's ZIP downloaded (D-134) -------------------------------------------------------------------------------
+
+
+def file_downloaded(store: Any, batch: int, actor: str | None) -> None:
+    """The batch's JD Edwards ZIP is being downloaded: who and when, in the audit trail. Its vouchers waiting in the
+    queue (approved, JDE never reached: the file holds them) go back to waiting for a go-ahead, which asks whether the
+    file was loaded. Called before the file is made: a voucher the queue claims meanwhile is left out of it."""
+    why = "Not sent: the batch's JD Edwards file was downloaded. Post it only if the file was not loaded"
+    for row in postings(store, batch, statuses=(QUEUED,)):
+        _put(store, row["idem_key"], row["invoice_id"], batch, only_from=(QUEUED,), rev=row["rev"], status=CHECKED,
+             approved_at=None, approved_by=None, next_try=None, error=why)  # fmt: skip
+    store.log_event(FILE_DOWNLOADED, actor=actor, detail={"batch": int(batch)})
+
+
+def downloads(store: Any, batch: int) -> list[dict[str, str]]:
+    """Each download of the batch's JD Edwards ZIP, newest first: {"actor", "at"}."""
+    with _conn(store) as conn:
+        found = conn.execute("SELECT actor, created_at FROM events WHERE action = ? AND "
+                             "json_extract(detail, '$.batch') = ? ORDER BY id DESC",
+                             (FILE_DOWNLOADED, int(batch))).fetchall()  # fmt: skip
+    return [{"actor": r[0] or "", "at": r[1] or ""} for r in found]
+
+
+def downloaded_message(batch: int, found: list[dict[str, str]]) -> str:
+    last = found[0]
+    more = f" ({len(found)} downloads)" if len(found) > 1 else ""
+    return (f"Not posted: the JD Edwards file of batch {batch} was downloaded by {last['actor'] or 'someone'} on "
+            f"{last['at'].replace('T', ' ')[:16]}{more}. If it was loaded into JD Edwards, these vouchers would be "
+            "there twice: tick that it was not loaded and say what you checked.")  # fmt: skip
 
 
 def _fresh_sending(row: dict[str, Any]) -> bool:
@@ -633,12 +676,18 @@ def _client(store: Any) -> tuple[jde_ais.AisClient | None, str]:
         return None, str(exc)
 
 
-def post(store: Any, batch: int, actor: str | None = None,
-         client: jde_ais.AisClient | None = None) -> dict[str, Any]:  # fmt: skip
+def post(store: Any, batch: int, actor: str | None = None, client: jde_ais.AisClient | None = None,
+         not_loaded: str = "") -> dict[str, Any]:  # fmt: skip
     """The approval: send the batch's checked vouchers, unchanged since their dry run. {"posted", "failed", "queued",
-    "unknown", "skipped": [why...], "error"}. Raises AisOff when step 2 is off, ValueError when nothing is ready."""
+    "unknown", "skipped": [why...], "error"}. Raises AisOff when step 2 is off, ValueError when nothing is ready, and
+    FileDownloaded when the batch's ZIP was downloaded and ``not_loaded`` (what the person checked) is blank."""
     if not jde_ais.load(store).step2:
         raise jde_ais.AisOff("JD Edwards API step 2 (vouchers) is off: nothing is sent.")
+    downloaded, not_loaded = downloads(store, batch), " ".join((not_loaded or "").split())
+    if downloaded and not not_loaded:
+        raise FileDownloaded(downloaded_message(batch, downloaded))
+    word = {"not_loaded": not_loaded, "downloaded": f"{downloaded[0]['actor']} {downloaded[0]['at']}"} if (
+        downloaded) else {}  # fmt: skip
     found, _problems, _invoices = payloads(store, batch)
     rows = postings(store, batch)
     ready, skipped = [], []
@@ -658,7 +707,7 @@ def post(store: Any, batch: int, actor: str | None = None,
         if _put(store, row["idem_key"], row["invoice_id"], batch, rev=row["rev"], approved_at=_now(),
                 approved_by=actor):  # fmt: skip
             approved.append((_row(store, row["idem_key"]) or row, payload))
-    store.log_event("jde_api_approved", actor=actor, detail={"batch": batch, "vouchers": len(approved)})
+    store.log_event("jde_api_approved", actor=actor, detail={"batch": batch, "vouchers": len(approved), **word})
     return _run(store, approved, actor, client, look_first=False, skipped=skipped)
 
 
@@ -675,7 +724,7 @@ def _run(store: Any, ready: list[tuple[dict[str, Any], dict[str, Any] | None]], 
             status, exc = _deliver(store, client, row, payload, actor, look_first)
             if status == "skipped":
                 skipped.append(f"AP Coder #{row['invoice_id']}: not sent: it changed meanwhile (sent from elsewhere, "
-                               "or its batch undone)")  # fmt: skip
+                               "its batch undone, or its JD Edwards file downloaded)")  # fmt: skip
             else:
                 counts[status if status in counts else UNKNOWN if status == SENDING else QUEUED] += 1
             if exc is not None and exc.kind not in (jde_ais.JDE,):

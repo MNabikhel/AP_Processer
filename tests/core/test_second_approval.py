@@ -60,6 +60,25 @@ def test_under_the_limit_or_no_limit_is_approved_at_once(store, tmp_path):
     assert store.approval_limit() == 0
 
 
+@pytest.mark.parametrize("read, rates, waits", [("USD", "USD=1.37", True), ("USD", "USD=1.05", False),
+                                                ("EUR", "USD=1.37", True)])  # fmt: skip
+def test_a_currency_changed_from_the_one_read_is_held_to_the_limit_in_both(tmp_path, read, rates, waits):
+    """B-1482 (D-132): an invoice read as USD and changed to CAD was checked against the limit in CAD alone: 18,017.85
+    USD (about 24,684 CAD) went under a 20,000 CAD limit without a second approver. Both currencies now count (one
+    with no CAD rate needs the second approver); under the limit in both, it is approved at once."""
+    store = Store(tmp_path / "b.db")
+    store.set_setting("approval_limit", "20000")
+    store.set_setting("fx_rates", rates)
+    next_second()  # the invoice comes in after the settings (B-970)
+    doc = {**_gt(), "currency": read}
+    invoice_id = store.add_invoice(tmp_path / "a.pdf", doc, {})
+    store.approve_invoice(invoice_id, {**doc, "currency": "CAD"}, "Jane")
+    assert store.get_invoice(invoice_id)["status"] == (PENDING if waits else APPROVED)
+    detail = store.events(invoice_id, ["approved"])[0]["detail"]
+    assert {"what": "currency", "before": read, "after": "CAD"} in detail["changes"]  # kept in the audit trail
+    assert detail.get("second_reason", "").startswith(f"the currency was changed from {read}") == waits
+
+
 def test_send_back_returns_it_to_the_queue_and_withdraws_the_lessons(store, tmp_path):
     invoice_id = store.add_invoice(tmp_path / "a.pdf", _gt(), {})
     store.approve_invoice(invoice_id, _gt(), "Jane")

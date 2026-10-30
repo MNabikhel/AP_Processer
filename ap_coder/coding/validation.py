@@ -142,10 +142,13 @@ def validate_coding(
         add(WARNING, "LINE_NUMBERING", f"The line numbers don't run 1, 2, 3…: {', '.join(map(str, numbers))}")
 
     tax_gls = reference.tax.tax_gl_codes()
+    credit = coding.grand_total < 0
     for li in coding.line_items:
         expected = li.quantity * li.unit_price
-        # Unit prices are often printed rounded, so allow 0.5% on the extension.
-        if not _close(li.amount, expected, max(_CENT_TOLERANCE, abs(expected) * 0.005)):
+        # Unit prices are often printed rounded, so allow 0.5% on the extension. A credit note puts its minus on the
+        # quantity, the price or the amount alone (2 × 50.00 = -100.00): its lines are compared in size (B-1484).
+        amount, size = (abs(li.amount), abs(expected)) if credit else (li.amount, expected)
+        if not _close(amount, size, max(_CENT_TOLERANCE, abs(expected) * 0.005)):
             add(
                 WARNING,
                 "LINE_MATH",

@@ -1,7 +1,7 @@
 """GL accounts and cost centers (``import_accounts``, ``save_accounts``), the audit trail (``_log``, ``events``), our
 bank accounts, the tax setup, the settings table (``get_setting``, ``set_setting``), the second approval's controls
-in force (``approval_controls``) and the reference data the coder and the checks use (``reference_data``,
-``checks_stamp``)."""
+in force (``approval_controls``, ``approval_reason``) and the reference data the coder and the checks use
+(``reference_data``, ``checks_stamp``)."""
 
 from __future__ import annotations
 
@@ -27,6 +27,8 @@ from ._base import (
     parse_fx_rates,
 )
 
+# How the reason for a second approval starts when it is the currency changed from the one read (D-132).
+CURRENCY_CHANGED = "the currency was changed from"
 # The reference data as last built, per database: (what it was built from, it) (``Store.reference_data``).
 _REFERENCE: dict[str, tuple[tuple[Any, ...], ReferenceData]] = {}
 _REFERENCE_LOCK = threading.Lock()
@@ -410,6 +412,27 @@ class AccountsMixin:
                 rates.append(parse_fx_rates(str(changes["fx_rates"].get("from") or "")).get(currency))
         above = [limit for limit in limits if limit > 0 and math.isfinite(limit)]
         return (min(above) if above else 0.0), (None if None in rates else max(r for r in rates if r is not None))
+
+    def approval_reason(self, inv: dict[str, Any], coding: dict[str, Any]) -> tuple[str, float, float | None]:
+        """Why approving ``coding`` for the invoice ``inv`` needs a second approver ("" when it doesn't), with the
+        limit and the CAD rate of its currency that decide it (``approval_controls``). A currency changed from the one
+        read (``ai_output``) is held to the limit in both (D-132): a USD invoice approved as CAD can't go under the
+        limit, and the reason says so (it starts with ``CURRENCY_CHANGED``)."""
+        since = inv.get("created_at") or ""
+        currency = str(coding.get("currency") or "CAD").strip().upper()
+        limit, rate = self.approval_controls(currency, since)
+        reason = self.second_approval_reason(coding, limit, rates={} if rate is None else {currency: rate})
+        read = str((inv.get("ai_output") or {}).get("currency") or "CAD").strip().upper()
+        if reason or read == currency:
+            return reason, limit, rate
+        read_rate = self.approval_controls(read, since)[1]
+        if self.second_approval_reason({**coding, "currency": read}, limit,
+                                       rates={} if read_rate is None else {read: read_rate}):  # fmt: skip
+            reason = f"{CURRENCY_CHANGED} {read}, " + (
+                "which has no CAD exchange rate set (Settings → Review)" if read_rate is None
+                else f"and in {read} it is over the approval limit of {limit:,.2f} CAD"
+            )  # fmt: skip
+        return reason, limit, rate
 
     def has_reference(self) -> bool:
         with self._conn() as conn:
