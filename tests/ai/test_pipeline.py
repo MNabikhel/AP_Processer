@@ -94,7 +94,7 @@ def test_local_model_suggestions_only_fill_uncoded_lines(monkeypatch):
     coded = [li.predicted_gl_code for li in coding.line_items]
     asked = {}
 
-    def suggest(coder, vendor, lines, history=""):
+    def suggest(coder, vendor, lines, history="", kept=None):
         asked["lines"] = lines
         return {n: ("6999", "", "a guess") for n, _, _ in lines}
 

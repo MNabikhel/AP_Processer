@@ -368,10 +368,16 @@ class InvoicePipeline:
         )  # AP's corrections, with its reasons
         if learned:
             history = "\n".join([history, "AP's lessons for this vendor:", *learned]).strip()
+        kept = None
+        if getattr(self, "store", None) is not None:  # an app pipeline: the page reader's pass asks no question twice
+            from ..core.paths import private_dir
+
+            kept = private_dir() / ".cache" / "model_accounts"
         try:
             picks = suggest_accounts(
-                self.coder, coding.vendor_name, [(n, li.description, li.amount) for n, li in todo.items()], history
-            )
+                self.coder, coding.vendor_name, [(n, li.description, li.amount) for n, li in todo.items()], history,
+                kept=kept,
+            )  # fmt: skip
         except CodingError as exc:  # the chat model isn't running (it is optional): the lines stay for AP
             log.info("local model could not suggest accounts (%s); left for AP", exc)
             return

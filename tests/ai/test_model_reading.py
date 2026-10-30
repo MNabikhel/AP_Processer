@@ -111,6 +111,29 @@ def test_a_model_that_cant_see_pages_is_never_asked_to_read_them(lm_studio, refe
     assert not any(_sees_a_page(chat) for chat in server.chats)
 
 
+def test_the_page_readers_pass_does_not_ask_for_the_same_accounts_again(lm_studio, reference):
+    """A run with LM Studio: each invoice the page reader read was coded twice by the chat model, on arrival and again
+    in the page reader's pass (an hour later), the same lines asked the same way; and when that second request failed
+    (the model busy or unloaded beside OvisOCR2), the accounts the invoice had were gone from its proposal."""
+    accounts = _replies({})
+
+    def reply(body):
+        if _sees_a_page(body) or not [c for c in server.chats if not _sees_a_page(c)][1:]:
+            return accounts(body)
+        return 503, {"error": "Model unloaded"}  # a second request for the accounts fails
+
+    server = lm_studio(QWEN, reply)
+    with tempfile.TemporaryDirectory() as tmp:
+        store = Store(Path(tmp) / "ap.db")
+        pipe = InvoicePipeline(local_settings(server.base_url), reference, store=store)
+        first = pipe.process(SAMPLE)
+        again = pipe.process(first.source, page_text=["MONT-ROYAL"], save=False, invoice_id=first.invoice_id)
+    coded = [li.predicted_gl_code for li in first.coding.coding.line_items]
+    assert coded and set(coded) == {"6400"}
+    assert [li.predicted_gl_code for li in again.coding.coding.line_items] == coded
+    assert len([chat for chat in server.chats if not _sees_a_page(chat)]) == 1
+
+
 def test_the_models_answer_is_kept_to_the_header_as_capture_reads_it():
     assert clean_header({
         "vendor_name": " Montroyal Inc. ", "invoice_number": "ACMR-1187", "invoice_date": "2026-09-14",

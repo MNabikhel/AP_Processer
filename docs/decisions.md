@@ -192,3 +192,9 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   each, on the CPU). A release keeps the zip it was first given (no `--clobber`): its checksum never changes after
   it is published. Why not key on the files alone: the zip is built from the pilot's commit, so a release reuses
   only a check of that same commit.
+- **D-131** · The local model's account suggestions are kept in the data folder (`.cache/model_accounts`), one file
+  per exact question (model, lines, history and lessons, chart), so the page reader's pass never asks what arrival
+  asked: with a graphics card every invoice was read again and coded twice, the same answer at temperature 0, and a
+  second request that failed (the model busy or unloaded beside OvisOCR2) blanked the accounts the invoice had. A
+  question that changed (an approval or a lesson since, other lines read off the page) is asked again, so what AP
+  taught applies. Only the app's pipeline keeps them: the doctor's dry run and the coding bench still ask the model.

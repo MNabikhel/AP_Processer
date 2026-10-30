@@ -68,7 +68,7 @@ def _coding(*descriptions):
 
 def test_the_chat_models_answer_is_a_guess_and_says_how_it_compares_with_the_weak_match(monkeypatch):
     coding = _coding("Copy paper", "Toner", "Desk")
-    monkeypatch.setattr(inference, "suggest_accounts", lambda coder, vendor, lines, history="": {
+    monkeypatch.setattr(inference, "suggest_accounts", lambda coder, vendor, lines, history="", kept=None: {
         1: ("6000", "", "office supplies"), 2: ("6010", "", "printer")})  # fmt: skip
     result = SimpleNamespace(coding=coding, model="", hints={1: "6000", 2: "6400", 3: "6000"})
     InvoicePipeline._local_accounts(SimpleNamespace(coder=SimpleNamespace(_local_model="m")), result, "")
