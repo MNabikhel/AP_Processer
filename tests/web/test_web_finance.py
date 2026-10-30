@@ -20,6 +20,7 @@ from ap_coder.coding import taxreturn
 from ap_coder.core.store import APPROVED, PARKED, REJECTED, REVIEW, Store
 from ap_coder.erp import accruals, dupaudit, export_layout, exports, stamp
 from ap_coder.erp import statements as stm
+from ap_coder.web import files
 from ap_coder.web.pages import exports as export_page
 from tests.conftest import fill_from
 
@@ -488,3 +489,29 @@ def test_a_statement_from_excel_with_two_sheets(client, busy):
     token = page.url.params["file"]
     text = client.get("/statements", params={"vendor": key, "file": token, "sheet": "Statement"}).text
     assert "Matched" in text
+
+
+def test_a_sheet_of_thousands_of_columns_is_refused_before_it_is_read(client, monkeypatch):
+    """B-1499: a CSV of 100,000 short columns (0.9 MB) took 0.3 GB and 4 s to read, one of 50 MB some 10 GB, and
+    anyone who may upload a statement could send it. A CSV or a workbook's sheet over MAX_COLUMNS columns is now
+    refused, before pandas reads it."""
+
+    def not_read(*args, **kwargs):
+        raise AssertionError("pandas read it")
+
+    monkeypatch.setattr(files.pd, "read_csv", not_read)
+    monkeypatch.setattr(files.pd, "read_excel", not_read)
+    cells = [f"c{i}" for i in range(100_000)]
+    wide = (",".join(cells) + "\n" + ",".join("1" * len(cells)) + "\n").encode()
+    sent = client.post("/statements/upload", files={"file": ("statement.csv", wide, "text/csv")}, headers=PAGE)
+    assert sent.status_code == 400 and "This file has 100,000 columns" in sent.json()["error"]
+    # The header after blank lines, a line break inside its first (quoted) cell: still its header.
+    hidden = ('\r\n\n"Invoice\nNo",' + ",".join(cells[:1_000]) + "\n1\n").encode()
+    with pytest.raises(files.SheetError, match="1,001 columns"):
+        files.read_sheet("statement.csv", hidden)
+    book = openpyxl.Workbook()
+    book.active.append(cells[:1_000])
+    raw = io.BytesIO()
+    book.save(raw)
+    with pytest.raises(files.SheetError, match="1,000 columns"):
+        files.read_sheet("statement.xlsx", raw.getvalue())
