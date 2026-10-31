@@ -8,7 +8,7 @@ that turns them into decisions: [PILOT_PLAN.md](PILOT_PLAN.md).
 2. **Speed without a graphics card.** OvisOCR2 reads a page in a few minutes on a laptop processor, in the
    background; the chat model takes 1 to 6 minutes for an invoice whose lines it must code. A line learned from an
    approval needs no model. A graphics card is many times faster.
-3. **Sample data only.** The sample GL accounts (no cost centers), no vendor list, no purchase orders. A company's
+3. **Sample data only.** Made-up GL accounts, cost centers, vendors and purchase orders, for the demo. A company's
    own GL accounts, cost centers, vendor master, tax accounts and POs are imported from CSV or Excel.
 4. **JD Edwards E1 not tried against a real E1.** The batch-voucher files (F0411Z1 / F0911Z1 for R04110ZA) and the
    AIS connection are built and tested here, hidden until switched on; E1's own values (company, document type,

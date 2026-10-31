@@ -154,6 +154,7 @@ def test_what_each_role_may_do(setup):
         "POST /review/bulk-approve",
         "POST /exports/create",
         "GET /exports/batches/1/download",
+        "POST /exports/batches/1/download",
         "POST /vendors/save",
         "GET /process",
     ):

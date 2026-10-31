@@ -84,8 +84,14 @@
   {% else %}
   <p class="muted">Import this file into your ERP. If the import fails, {{ undo_text }} and export again.</p>
   {% endif %}
+  {% if just.format == jde_format %}{# a POST: the download is recorded (D-134, D-135) #}
+  <form method="post" action="/exports/batches/{{ just.id }}/download?fmt={{ just.format }}" data-busy="Downloading…">
+    <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">download</span>Download batch {{ just.id }}</button>
+  </form>
+  {% else %}
   <a class="btn primary" href="/exports/batches/{{ just.id }}/download?fmt={{ just.format }}" download>
     <span class="ms" aria-hidden="true">download</span>Download batch {{ just.id }}</a>
+  {% endif %}
 </section>
 {% endif %}
 
@@ -275,7 +281,11 @@
   </div>
   {% endif %}
   <div class="row">
-    {% if can("/exports/batches/1/download", "GET") %}
+    {% if again_fmt == jde_format and can("/exports/batches/1/download") %}
+    <form method="post" action="/exports/batches/{{ chosen.id }}/download?fmt={{ again_fmt }}" data-busy="Downloading…">
+      <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">download</span>{{ "Download" if just and just.id == chosen.id else "Download again" }}</button>
+    </form>
+    {% elif again_fmt != jde_format and can("/exports/batches/1/download", "GET") %}
     <a class="btn primary" href="/exports/batches/{{ chosen.id }}/download?fmt={{ again_fmt }}" download>
       <span class="ms" aria-hidden="true">download</span>{{ "Download" if just and just.id == chosen.id else "Download again" }}</a>
     {% endif %}

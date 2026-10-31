@@ -8,6 +8,7 @@ GitHub's Windows runner (an administrator) the task is really installed and remo
 from __future__ import annotations
 
 import ctypes
+import functools
 import json
 import os
 import subprocess
@@ -20,6 +21,7 @@ import pytest
 from ap_coder.ops import cli, service
 
 NS = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
+REAL_DASHBOARD_STOPPED = service.dashboard_stopped  # (the `commands` fixture replaces it)
 
 
 @pytest.fixture
@@ -185,6 +187,49 @@ def test_remove_stops_and_deletes_the_task_and_keeps_the_settings_and_logs(data,
     assert main("remove") == 0
     assert commands[-1] == ["schtasks", "/delete", "/tn", "AP Coder", "/f"]
     assert (data / "server.json").exists()
+
+
+def test_the_data_folder_never_picks_the_task_its_account_its_folder_or_a_process_to_end(
+    data, commands, monkeypatch, capsys
+):
+    """B-1500: server.json, host.json and .ap_coder_server.json are in the data folder, which the service's account
+    can write. The administrator's install, stop and remove took the task's name, account and folder from server.json
+    (installed again, the task ran another folder's python.exe as SYSTEM) and ended the processes those files named."""
+    alive = {4242, 4343}
+    monkeypatch.setattr(service, "process_alive", lambda pid: pid in alive)
+    monkeypatch.setattr(service, "process_image", lambda pid: "C:\\Program Files\\Antivirus\\agent.exe", raising=False)
+    monkeypatch.setattr(service, "_local", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("no dashboard")))
+    monkeypatch.setattr(service, "dashboard_stopped", functools.partial(REAL_DASHBOARD_STOPPED, wait=0))
+    elsewhere = data / "theirs"
+    task = "\\Microsoft\\Windows\\Defrag\\ScheduledDefrag"
+    saved = {"insecure_http": True, "account": "SYSTEM", "folder": str(elsewhere), "task_name": task}
+    (data / "server.json").write_text(json.dumps(saved))
+    (data / "service").mkdir()
+    (data / "service" / "host.json").write_text(json.dumps({"pid": 4242}))
+    (data / ".ap_coder_server.json").write_text(json.dumps({"pid": 4343, "port": 8501, "token": "t"}))
+    main("install", "--no-start")
+    xml = (data / "service" / "ap-coder-task.xml").read_text(encoding="utf-16")
+    assert "<UserId>APCoderService</UserId>" in xml and "S-1-5-18" not in xml
+    runner = (data / "service" / "run.cmd").read_text(encoding="utf-8")
+    assert str(elsewhere) not in runner and str(service.PROJECT_DIR) in runner
+    assert ["schtasks", "/create", "/tn", "AP Coder"] == commands[-1][:4] and "/ru" in commands[-1]
+    main("stop")
+    main("remove")
+    assert ["schtasks", "/delete", "/tn", "AP Coder", "/f"] in commands
+    assert not [cmd for cmd in commands if cmd[0] == "taskkill" or "Defrag" in " ".join(cmd)]
+    # The service's own Python (its .venv's, or the Python that .venv was made with) is ended when it won't stop.
+    monkeypatch.setattr(service, "process_image", lambda pid: str(service.folder_python(service.PROJECT_DIR)))
+    main("stop")
+    assert {"4242", "4343"} <= {cmd[2] for cmd in commands if cmd[0] == "taskkill"}
+    base = data / "Python312"
+    (elsewhere / ".venv").mkdir(parents=True)
+    (elsewhere / ".venv" / "pyvenv.cfg").write_text(f"home = {base}\nversion = 3.12.7\n", encoding="utf-8")
+    monkeypatch.setattr(service, "process_image", lambda pid: str(base / "python.exe"))
+    assert service.runs_python_of(4242, elsewhere) and not service.runs_python_of(4242, data)
+    # A built-in account, another task or folder: only when named on the command line.
+    capsys.readouterr()
+    assert main("install", "--dry-run", "--account", "SYSTEM", "--task-name", "AP Coder test") == 0
+    assert "<UserId>S-1-5-18</UserId>" in capsys.readouterr().out
 
 
 def test_off_windows_the_service_commands_say_so(data, monkeypatch, capsys):

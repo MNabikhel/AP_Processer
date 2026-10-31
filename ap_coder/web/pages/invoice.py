@@ -647,7 +647,7 @@ def _closed(store: Store, reference: ReferenceData | None, inv: dict[str, Any]) 
         out["can_stamp"] = stamp.can_stamp(inv)
     if inv["status"] == PENDING:
         me, my_login = reviewer(), login()
-        first = next((e for e in store.events(inv["id"]) if e["action"] == "approved"), None)
+        first = next(iter(store.events(inv["id"], ["approved"], limit=1)), None)
         first_login = ((first or {}).get("detail") or {}).get("login") or ""
         out["same"] = same_approver(inv["reviewer"], first_login, me, my_login)
         out["limit"] = store.approval_limit()
@@ -855,7 +855,7 @@ def _approve(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     messages = []
     if waits:  # not approved yet: never "Approved <vendor>" for it
         # the reason the approval stored: the limit and rate in force since it came in (B-970, B-1024)
-        first = next((e for e in store.events(invoice_id) if e["action"] == "approved"), None)
+        first = next(iter(store.events(invoice_id, ["approved"], limit=1)), None)
         why = audit.second_reason((first or {}).get("detail") or {})
         messages.append(flash_message(f"First approval recorded for {vendor}: {why}; it waits for a second "
                                       "approver.", "info", icon="how_to_reg"))  # fmt: skip

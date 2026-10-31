@@ -38,6 +38,7 @@ from typing import Any
 from ..capture.layout import (
     HEIF_EXTENSIONS,
     IMAGE_EXTENSIONS,
+    MAX_PICTURE_PIXELS,
     ONE_FRAME_EXTENSIONS,
     open_image,
     picture_formats,
@@ -403,31 +404,51 @@ def _stored_pixels(doc: Any, xref: int) -> Any | None:
     return Image.frombytes("L" if pix.n == 1 else "RGB", (pix.width, pix.height), pix.samples)
 
 
+def _shown_size(page: Any, width: int, height: int) -> tuple[int, int]:
+    """The size a picture of ``width`` x ``height`` pixels is shown at on ``page``. One with taller pixels than wide
+    (a standard fax: 204 dpi across, 98 down) is shown at the page's shape: its rows stretched, as a fax viewer
+    shows it, or OCR would read squashed letters."""
+    across, down = page.cropbox.width, page.cropbox.height
+    if across > 0 and down > 0 and width and height:
+        stretch = (down / across) / (height / width)
+        if stretch > 1.25:
+            return width, round(height * stretch)
+        if stretch < 0.8:
+            return round(width / stretch), height
+    return width, height
+
+
+def _too_large(page: Any, width: int, height: int) -> bool:
+    """The picture is over ``MAX_PICTURE_PIXELS`` as it is stored or as it is shown on ``page`` (B-1498): a PDF of a
+    few hundred KB can hold one of billions of pixels, or a page shaped to stretch one that far."""
+    across, down = _shown_size(page, width, height)
+    return max(width * height, across * down) > MAX_PICTURE_PIXELS
+
+
 def page_picture(doc: Any, page: Any) -> Any | None:
     """The picture on a page of a PDF made from a picture, as a Pillow image the way the page shows it (its
-    rotation applied); None when the page isn't one picture."""
+    rotation applied); None when the page isn't one picture, or is one too large to decode (rendered instead, at
+    OCR's size)."""
     from PIL import Image
 
     images = page.get_images(full=True)
     if len(images) != 1:
         return None
-    xref = images[0][0]
+    xref, width, height = images[0][0], images[0][2], images[0][3]
+    if _too_large(page, width, height):  # its size as the PDF says, before it is decoded
+        return None
     try:
         picture = _stored_pixels(doc, xref)
         if picture is None:
             picture = Image.open(io.BytesIO(doc.extract_image(xref)["image"]), formats=picture_formats())
+            if _too_large(page, *picture.size):  # (a stored picture of another size than the PDF says)
+                return None
             picture.load()
     except Exception:  # noqa: BLE001 - an image PyMuPDF stores another way: rendered instead
         return None
-    # A picture with taller pixels than wide (a standard fax: 204 dpi across, 98 down) is shown at the page's
-    # shape: its rows stretched, as a fax viewer shows it, or OCR would read squashed letters.
-    across, down = page.cropbox.width, page.cropbox.height
-    if across > 0 and down > 0 and picture.width and picture.height:
-        stretch = (down / across) / (picture.height / picture.width)
-        if stretch > 1.25:
-            picture = picture.resize((picture.width, round(picture.height * stretch)))
-        elif stretch < 0.8:
-            picture = picture.resize((round(picture.width / stretch), picture.height))
+    size = _shown_size(page, picture.width, picture.height)
+    if size != picture.size:
+        picture = picture.resize(size)
     turn = page.rotation % 360
     if turn:
         picture = picture.rotate(-turn, expand=True)  # Pillow turns counter-clockwise; the page turns clockwise

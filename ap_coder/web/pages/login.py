@@ -47,7 +47,7 @@ def _next(url: str | None) -> str:
 
 def _token(request: Request) -> str:
     """The session cookie, read as the login middleware reads it (two of them: none, D-101)."""
-    return identity.session_token(request.scope.get("headers") or [])
+    return identity.session_token(request.scope.get("headers") or [], identity.session_cookie(secure_cookie(request)))
 
 
 def secure_cookie(request: Request) -> bool:
@@ -69,7 +69,8 @@ def from_console(request: Request) -> bool:
 def set_session_cookie(request: Request, response: Response, token: str) -> None:
     # A browser-session cookie (no lifetime): closing the browser ends it; the server ends the session anyway after
     # its idle time or its hours (D-109).
-    response.set_cookie(identity.SESSION_COOKIE, token, httponly=True, samesite="strict", secure=secure_cookie(request),
+    secure = secure_cookie(request)
+    response.set_cookie(identity.session_cookie(secure), token, httponly=True, samesite="strict", secure=secure,
                         path="/")  # fmt: skip
 
 
@@ -126,8 +127,8 @@ def logout(request: Request) -> JSONResponse:
         return refuse(NO_LOGINS)
     get_store(request).end_session(_token(request), actor=reviewer())
     answer = done(request, identity.LOGIN_PATH, flash_message("You are logged out.", "ok", icon="logout"))
-    answer.delete_cookie(identity.SESSION_COOKIE, path="/", httponly=True, samesite="strict",
-                         secure=secure_cookie(request))  # fmt: skip
+    secure = secure_cookie(request)
+    answer.delete_cookie(identity.session_cookie(secure), path="/", httponly=True, samesite="strict", secure=secure)
     return answer
 
 

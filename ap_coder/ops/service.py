@@ -42,7 +42,7 @@ from typing import Any
 from xml.sax.saxutils import escape
 
 from .. import __version__
-from ..core.paths import PROJECT_DIR, private_dir
+from ..core.paths import PROJECT_DIR, private_dir, same_folder
 
 WINDOWS = os.name == "nt"
 CONFIG_FILE = "server.json"  # in the data folder
@@ -432,6 +432,48 @@ def ctypes_kernel32() -> Any:
     return kernel
 
 
+def process_image(pid: int) -> str:
+    """The program file a Windows process runs, its full path ("" when it can't be told, and off Windows)."""
+    if not WINDOWS or pid <= 0:
+        return ""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel = ctypes_kernel32()
+        kernel.QueryFullProcessImageNameW.argtypes = (wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR,
+                                                      ctypes.POINTER(wintypes.DWORD))  # fmt: skip
+        handle = kernel.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return ""
+        try:
+            size = wintypes.DWORD(32768)
+            name = ctypes.create_unicode_buffer(size.value)
+            return name.value if kernel.QueryFullProcessImageNameW(handle, 0, name, ctypes.byref(size)) else ""
+        finally:
+            kernel.CloseHandle(handle)
+    except (OSError, AttributeError):
+        return ""
+
+
+def runs_python_of(pid: int, folder: Path) -> bool:
+    """The process ``pid`` runs a Python of the AP Coder folder ``folder``: its .venv's, or the Python that .venv was
+    made with (a .venv's python.exe starts that one, which is the process that writes its number). host.json and
+    .ap_coder_server.json are in the data folder, which the service's account can write (B-1500): a process they name
+    is ended only when it is one of these."""
+    image = process_image(pid)
+    if not image:
+        return False
+    python = folder_python(folder)
+    pythons = [python]
+    with contextlib.suppress(OSError, UnicodeDecodeError):
+        for line in (folder / ".venv" / "pyvenv.cfg").read_text(encoding="utf-8").splitlines():
+            key, _, value = line.partition("=")
+            if key.strip() == "home" and value.strip():
+                pythons.append(Path(value.strip()) / python.name)
+    return any(same_folder(image, p) for p in pythons)
+
+
 def terminate(pid: int) -> None:
     """End a process and what it started (Windows: ``taskkill /T /F``)."""
     if not process_alive(pid):
@@ -500,7 +542,8 @@ def dashboard_stopped(data: Path, s: ServerSettings, wait: float = 45.0) -> bool
     deadline = time.monotonic() + wait
     while time.monotonic() < deadline and process_alive(pid):
         time.sleep(0.5)
-    terminate(pid)
+    if runs_python_of(pid, s.code_folder):
+        terminate(pid)
     return not process_alive(pid)
 
 
@@ -655,7 +698,7 @@ def stop(data: Path, s: ServerSettings, say: Say = print) -> int:
     stopped = dashboard_stopped(data, s)
     run_command(["schtasks", "/end", "/tn", s.task_name], capture_output=True)
     host = int(_read_json(host_record(data)).get("pid") or 0)
-    if host and host != os.getpid():
+    if host and host != os.getpid() and runs_python_of(host, s.code_folder):
         terminate(host)
     if not stopped:
         say("The dashboard did not stop: end python.exe in Task Manager (Details), then run this again.")
@@ -856,8 +899,6 @@ def main(args: argparse.Namespace) -> int:
         given = {
             name: getattr(args, name)
             for name in (
-                "account",
-                "task_name",
                 "port",
                 "host",
                 "certfile",
@@ -870,8 +911,11 @@ def main(args: argparse.Namespace) -> int:
                 "llm_parallel",
             )
         }
-        if args.folder:
-            given["folder"] = str(Path(args.folder).resolve())
+        # Never server.json's (B-1500): the service's account can write it, and these say what the task runs, as
+        # whom, and which task the administrator's schtasks changes. A built-in account only when named here.
+        given["account"] = args.account or DEFAULT_ACCOUNT
+        given["task_name"] = args.task_name or TASK_NAME
+        given["folder"] = str(Path(args.folder).resolve()) if args.folder else str(PROJECT_DIR)
         s = settings(data, **given)
         if args.action == "install":
             found = problems(s, check_files=not args.dry_run)

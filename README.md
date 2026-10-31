@@ -17,7 +17,7 @@ of the [exceptions](#what-leaves-the-laptop).
 | | |
 |---|---|
 | **Laptop pilot** | Ready: checked end to end, the way a pilot tester uses it. Next: a 4-week shadow pilot with AP. |
-| **Company server** | Built and security-reviewed (HTTPS, logins, four roles), sized for about 500 users. Not installed yet: [docs/SERVER.md](docs/SERVER.md). |
+| **Company server** | Built, with HTTPS, logins and four roles; reviewed for security within the project and sized for about 500 users, not yet reviewed by a company's IT security team. Not installed yet: [docs/SERVER.md](docs/SERVER.md). |
 | **JD Edwards E1** | Approved invoices go out as JDE's standard batch files (F0411Z1/F0911Z1). The direct API connection is built and waits for the JDE team: [docs/JDE_E1.md](docs/JDE_E1.md). |
 | **Finance AI Hub** | AP Coder's feed to Microsoft Fabric is built (off until an Admin turns it on): [docs/FINANCE_HUB.md](docs/FINANCE_HUB.md). |
 | **Quality** | About 4,500 automated tests run on every change, on Windows and Linux; the install and the update are checked on clean Windows and Mac machines. Every bug fixed gets its own test ([docs/BUGS.md](docs/BUGS.md)). |
@@ -61,8 +61,8 @@ with sample purchase orders and a vendor list. (The screenshots are of these sam
 
 1. **Start LM Studio's server** with OvisOCR2 downloaded and a chat model loaded (Gemma 4 12B, or Qwen 3.5 9B):
    [docs/LM_STUDIO.md](docs/LM_STUDIO.md).
-2. **Unzip AP Coder** to a folder OneDrive does not sync (for example `C:\APCoder\app`): GitHub's ZIP (**Code →
-   Download ZIP**), or the offline bundle IT gives you.
+2. **Unzip AP Coder** to a folder OneDrive does not sync (for example `C:\APCoder\app`): a ZIP of the code (on GitHub:
+   **Code → Download ZIP**), or the offline bundle IT gives you.
 3. **Double-click `APProcessor.bat`** (Mac: `APProcessor.command`).
 
 The first time, it sets up its own Python environment, the packages and the OCR models, and makes a desktop
