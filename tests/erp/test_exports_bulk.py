@@ -115,7 +115,9 @@ def test_bulk_approve_skips_an_invoice_flagged_after_the_page_listed_it(demo_sto
 
 
 def test_bulk_approve_never_takes_a_check_that_always_needs_a_person(tmp_path):
-    """S2-T3: a new vendor's first invoice (VENDOR_NEW, info only) is not "clean": a person opens it."""
+    """S2-T3: a new vendor's first invoice (VENDOR_NEW, info only) is not "clean": a person opens it. The second
+    invoice is dated today, so its due date never passes and adds PAYMENT_OVERDUE (B-1502)."""
+    import datetime as dt
     import json
 
     from ap_coder.ai.pipeline import finalise_coding
@@ -130,7 +132,9 @@ def test_bulk_approve_never_takes_a_check_that_always_needs_a_person(tmp_path):
     out, _ = finalise_coding(InvoiceCoding.model_validate(known), ref, Settings(), store=store)
     store.approve_invoice(store.add_invoice(tmp_path / "a.pdf", out, {}), out, "jane")
     doc = json.loads((SAMPLES / "ground_truth" / "chinook_AB_GST_CCO-26-10418.json").read_text())
-    doc = {**doc, "vendor_name": "Totally New Supplies Inc", "confidence_score": 0.99}
+    today = dt.date.today()
+    doc = {**doc, "vendor_name": "Totally New Supplies Inc", "confidence_score": 0.99,
+           "invoice_date": today.isoformat(), "due_date": (today + dt.timedelta(days=30)).isoformat()}  # fmt: skip
     out, report = finalise_coding(InvoiceCoding.model_validate(doc), ref, Settings(), store=store)
     assert [(i.severity, i.code) for i in report.issues] == [("info", "VENDOR_NEW")] and not report.requires_review
     invoice_id = store.add_invoice(tmp_path / "b.pdf", out, report.to_dict())
