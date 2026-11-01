@@ -683,10 +683,16 @@ RECENT_COLUMNS = ("id, file_name, status, vendor_name, invoice_number, invoice_d
                   "second_reviewer")  # (as ``Store.list_invoices`` has them)  # fmt: skip
 
 
-@router.get("/process", response_class=HTMLResponse)
-def process_page(request: Request) -> HTMLResponse:
+def demo_offered(demo_count: int, total: int) -> bool:
+    """The demo card shows while there are no invoices of your own, or to remove a demo already loaded: loading it
+    beside your own invoices would add the samples again and mix made-up invoices into your numbers (D-137)."""
     from ap_coder.ops.demo import demo_available
 
+    return demo_available() and (bool(demo_count) or not total)
+
+
+@router.get("/process", response_class=HTMLResponse)
+def process_page(request: Request) -> HTMLResponse:
     store, settings = get_store(request), get_settings(request)
     total = sum(store.status_counts().values())  # counted, not read: a year of invoices is not read (D-110)
     steps, steps_done, steps_needed = first_steps(store, settings, bool(total))
@@ -719,7 +725,7 @@ def process_page(request: Request) -> HTMLResponse:
         job=jobs(request).get(JOB).snapshot(),
         waiting=import_queue(request).files(),
         waiting_text=waiting_text(import_queue(request).files()),
-        demo_available=demo_available(),
+        demo_available=demo_offered(demo_count, total),
         demo_count=demo_count,
         where="/process",
     )  # fmt: skip

@@ -196,3 +196,15 @@ def test_the_import_list_says_ready_only_for_an_invoice_the_queue_calls_ready(st
     for inv in pending:
         row = next((r for r in rows if ui.esc(inv["vendor_name"]) in r and inv["invoice_number"] in r), None)
         assert row is None or ("Needs attention" in row) == (inv["id"] in reasons), (inv["vendor_name"], row)
+
+
+def test_the_demo_is_not_offered_once_there_are_invoices_of_your_own(client, store, tmp_path):
+    """B-1504, D-137: after your own invoices are in, 'Load demo invoices' would add the ten samples again (a second
+    Pacific PO-77120 shows as a duplicate payment) and mix made-up invoices into your numbers. Not offered then; a
+    demo already loaded can still be removed."""
+    assert "Load demo invoices" in client.get("/process").text
+    pdf = tmp_path / "a.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    store.add_invoice(pdf, {"vendor_name": "Acme", "grand_total": 5}, {"issues": []})
+    assert "Load demo invoices" not in client.get("/process").text
+    assert "Load demo invoices" not in client.get("/review").text

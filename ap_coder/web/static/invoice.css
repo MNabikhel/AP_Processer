@@ -192,7 +192,8 @@
 .inv-lines-grid tbody {display: block;}
 /* Three rows a line, in the order Tab follows (B-478): # · description · delete; GL account (the most room:
    no cost centers in the pilot) · amount; taxes · qty · unit price. */
-.inv-lines-grid tr[data-row] {display: grid; grid-template-columns: 44px minmax(0, 1fr) 64px 108px 92px 60px;
+.inv-lines-grid tr[data-row] {display: grid; /* the fixed columns give way on a narrow card, never past it (B-1507) */
+  grid-template-columns: minmax(36px, 44px) minmax(0, 1fr) minmax(48px, 64px) minmax(80px, 108px) minmax(72px, 92px) minmax(44px, 60px);
   grid-template-areas: "no desc desc desc desc del" "gl gl gl gl amt amt" "tax tax tax qty price .";
   gap: 4px 6px; padding: 8px 0; border-bottom: 1px solid var(--lg-hairline);}
 .inv-lines-grid:has(.c-cc) tr[data-row] {grid-template-areas: "no desc desc desc desc del" "gl gl gl cc amt amt"
@@ -475,6 +476,11 @@ html:has(.inv-actionbar) {scroll-padding-bottom: 104px; scroll-padding-top: 12px
 .inv-grid-table .c-no input::-webkit-inner-spin-button, .inv-grid-table .c-no input::-webkit-outer-spin-button {
   -webkit-appearance: none; margin: 0;}
 .inv-lines-grid .c-no input {min-width: 0;}
+/* Qty and unit price without the number box's arrows: in a narrow column they covered the digits (B-1508). */
+.inv-lines-grid .c-qty input, .inv-lines-grid .c-price input {-moz-appearance: textfield; appearance: textfield;}
+.inv-lines-grid .c-qty input::-webkit-inner-spin-button, .inv-lines-grid .c-qty input::-webkit-outer-spin-button,
+.inv-lines-grid .c-price input::-webkit-inner-spin-button, .inv-lines-grid .c-price input::-webkit-outer-spin-button {
+  -webkit-appearance: none; margin: 0;}
 .inv-lines-head {display: flex; align-items: center; justify-content: space-between; gap: 8px;}
 .inv-qty-toggle {display: none; color: var(--rv-muted); gap: 4px; align-items: center;}
 
@@ -493,9 +499,9 @@ html:has(.inv-actionbar) {scroll-padding-bottom: 104px; scroll-padding-top: 12px
 .inv-lines {container: lines / inline-size;}
 @container lines (min-width: 640px) {
   .inv-qty-toggle {display: inline-flex;}
-  .inv-lines-grid {--cols: 40px minmax(140px, 1fr) minmax(130px, 190px) 96px 128px 30px;
+  .inv-lines-grid {--cols: 40px minmax(140px, 1fr) minmax(130px, 190px) 96px 128px 36px;
     --areas: "no desc gl amt tax del";}
-  .inv-lines-grid.has-cc {--cols: 40px minmax(130px, 1fr) minmax(120px, 170px) minmax(96px, 130px) 96px 120px 30px;
+  .inv-lines-grid.has-cc {--cols: 40px minmax(110px, 1fr) minmax(110px, 170px) minmax(90px, 130px) 92px 116px 36px;
     --areas: "no desc gl cc amt tax del";}
   .inv-lines-grid thead {position: static; width: auto; height: auto; overflow: visible; clip: auto; display: block;}
   .inv-lines-grid thead tr {display: grid; grid-template-columns: var(--cols); grid-template-areas: var(--areas);
@@ -512,12 +518,12 @@ html:has(.inv-actionbar) {scroll-padding-bottom: 104px; scroll-padding-top: 12px
   .inv-lines-grid input, .inv-lines-grid select, .inv-lines-grid .pk-input {height: 28px;}
 }
 @container lines (min-width: 720px) {
-  .inv-lines-grid.show-qty {--cols: 36px minmax(140px, 1fr) minmax(120px, 150px) 88px 104px 44px 82px 28px;
+  .inv-lines-grid.show-qty {--cols: 36px minmax(140px, 1fr) minmax(120px, 150px) 88px 104px 44px 82px 36px;
     --areas: "no desc gl amt tax qty price del";}
   .inv-lines-grid.show-qty .c-qty, .inv-lines-grid.show-qty .c-price {display: block;}
 }
 @container lines (min-width: 740px) {
-  .inv-lines-grid.has-cc.show-qty {--cols: 36px minmax(120px, 1fr) minmax(110px, 150px) minmax(86px, 110px) 86px 100px 44px 74px 26px;
+  .inv-lines-grid.has-cc.show-qty {--cols: 36px minmax(104px, 1fr) minmax(100px, 150px) minmax(80px, 110px) 82px 100px 44px 74px 36px;
     --areas: "no desc gl cc amt tax qty price del";}
 }
 /* Between the widths: a line with qty and price shown keeps the card (the row would not hold them). */
@@ -609,15 +615,15 @@ html:has(.inv-actionbar) {scroll-padding-bottom: 104px; scroll-padding-top: 12px
 /* The lines in one row a line (1920): the GL account takes its share of the room with the description, the tax code
    shows "GST + QST", the amount is as wide as an amount (B-800). */
 @container lines (min-width: 640px) {
-  .inv-lines-grid {--cols: 40px minmax(130px, 1fr) minmax(160px, 1.4fr) 90px 116px 30px;}
+  .inv-lines-grid {--cols: 40px minmax(130px, 1fr) minmax(160px, 1.4fr) 90px 116px 36px;}
   .inv-lines-grid thead .c-amt {padding-right: 8px;}
-  .inv-lines-grid.has-cc {--cols: 40px minmax(120px, 1fr) minmax(140px, 1fr) minmax(96px, .7fr) 92px 120px 30px;}
+  .inv-lines-grid.has-cc {--cols: 40px minmax(110px, 1fr) minmax(116px, 1fr) minmax(90px, .7fr) 92px 110px 36px;}
 }
 @container lines (min-width: 720px) {
-  .inv-lines-grid.show-qty {--cols: 36px minmax(104px, .8fr) minmax(160px, 1.5fr) 82px 112px 46px 80px 28px;}
+  .inv-lines-grid.show-qty {--cols: 36px minmax(104px, .8fr) minmax(160px, 1.5fr) 82px 112px 44px 80px 36px;}
 }
 @container lines (min-width: 740px) {
-  .inv-lines-grid.has-cc.show-qty {--cols: 36px minmax(110px, 1fr) minmax(130px, 1fr) minmax(86px, .7fr) 84px 116px 44px 72px 26px;}
+  .inv-lines-grid.has-cc.show-qty {--cols: 36px minmax(104px, 1fr) minmax(116px, 1fr) minmax(80px, .7fr) 82px 108px 44px 72px 36px;}
 }
 /* "Checking…" / "Draft saved 5:22": quiet text in the bar beside its buttons, never a tag floating over the document
    card's corner (B-804). */
@@ -659,14 +665,14 @@ html:has(.inv-actionbar) {scroll-padding-bottom: 104px; scroll-padding-top: 12px
 @container card (max-width: 340px) {.rvw-gl .c-jde, .rvw-gl .c-cc {display: none;}}
 /* The lines at 1920: the description the widest column, the GL account next (its title says it in full) (B-824). */
 @container lines (min-width: 640px) {
-  .inv-lines-grid {--cols: 40px minmax(150px, 1.3fr) minmax(150px, 1fr) 90px 116px 30px;}
-  .inv-lines-grid.has-cc {--cols: 40px minmax(140px, 1.3fr) minmax(130px, 1fr) minmax(96px, .7fr) 92px 116px 30px;}
+  .inv-lines-grid {--cols: 40px minmax(150px, 1.3fr) minmax(150px, 1fr) 90px 116px 36px;}
+  .inv-lines-grid.has-cc {--cols: 40px minmax(112px, 1.3fr) minmax(110px, 1fr) minmax(90px, .7fr) 92px 110px 36px;}
 }
 @container lines (min-width: 720px) {
-  .inv-lines-grid.show-qty {--cols: 36px minmax(140px, 1.25fr) minmax(136px, 1fr) 86px 112px 44px 78px 28px;}
+  .inv-lines-grid.show-qty {--cols: 36px minmax(132px, 1.25fr) minmax(136px, 1fr) 86px 112px 44px 78px 36px;}
 }
 @container lines (min-width: 740px) {
-  .inv-lines-grid.has-cc.show-qty {--cols: 36px minmax(120px, 1.2fr) minmax(120px, 1fr) minmax(86px, .6fr) 82px 108px 44px 76px 26px;}
+  .inv-lines-grid.has-cc.show-qty {--cols: 36px minmax(104px, 1.2fr) minmax(108px, 1fr) minmax(80px, .6fr) 82px 108px 44px 76px 36px;}
 }
 /* Edits kept from before (B-826): a quiet line under the invoice's header, with Discard. */
 .inv-draft-note {display: flex; align-items: center; gap: 6px; color: var(--rv-muted);}

@@ -252,3 +252,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   (its `.venv`'s, or the `home` Python of its `pyvenv.cfg`, which a .venv's python.exe starts); any other is left to
   the dashboard's own /shutdown and `schtasks /end`. (`ap_coder/ops/service.py` `main`, `runs_python_of`;
   `docs/SERVER.md` step 6; `tests/ops/test_service.py`)
+- **D-137** · The demo invoices are offered only while there are no invoices of your own (or to remove a demo already
+  loaded). Loading them beside your own invoices added the ten samples again (a second Pacific PO-77120 reads as a
+  duplicate payment) and mixed made-up invoices into your numbers, which B-468 already guarded against for the
+  order of the cards. The demo's own copy of AP Coder (`scripts/demo.bat`, its own data folder) is where to show it.
+  (`ap_coder/web/pages/process.py` `demo_offered`; `tests/web/test_web_process.py`)

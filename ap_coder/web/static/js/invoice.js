@@ -146,6 +146,7 @@ async function check() {
 function keepFocusInView() {
   const el = document.activeElement;
   if (!el || el === document.body || el.tagName === "MAIN" || !el.closest?.(".main")) return;
+  if (el.closest(".inv-actionbar")) return; // in the approve bar itself: always in view (B-1506)
   const r = el.getBoundingClientRect();
   const bar = document.querySelector(".inv-actionbar")?.getBoundingClientRect().top ?? innerHeight;
   if (r.bottom > bar || r.top < 0) el.scrollIntoView({ block: "nearest" });
@@ -2376,7 +2377,7 @@ function focusNotReady() {
   if (box.checked && overrideWhy && !overrideWhy.value.trim()) {
     overrideWhy.hidden = false;
     overrideWhy.disabled = false;
-    overrideWhy.focus();
+    overrideWhy.focus({ preventScroll: true }); // the warning stays on screen (B-1506)
   } else if (!box.checked) box.focus();
 }
 
@@ -2394,7 +2395,7 @@ function showBarState() {
     const was = overrideWhy.hidden;
     overrideWhy.hidden = !(box && box.checked);
     overrideWhy.disabled = overrideWhy.hidden; // not sent while hidden
-    if (was && !overrideWhy.hidden && document.activeElement === box) overrideWhy.focus();
+    if (was && !overrideWhy.hidden && document.activeElement === box) overrideWhy.focus({ preventScroll: true }); // the warning stays on screen (B-1506)
   }
   const credit = document.querySelector("[data-live=bar] [data-credit]")?.dataset.credit === "1";
   const label = approveButton?.querySelector("[data-approve-label]");
@@ -2405,7 +2406,7 @@ document.addEventListener("change", (e) => {
   if (e.target.name === "override" && e.target.checked && overrideWhy) {
     overrideWhy.hidden = false;
     overrideWhy.disabled = false;
-    overrideWhy.focus();
+    overrideWhy.focus({ preventScroll: true }); // the warning stays on screen (B-1506)
   }
 });
 

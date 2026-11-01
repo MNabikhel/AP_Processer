@@ -1,7 +1,7 @@
 # Handoff: AP Coder to the company's own AI coding agent
 
 **Read this first, then `CLAUDE.md`.** This file is the brief for an AI coding agent (Claude Code or similar) that
-takes over AP Coder inside the company it was built for (PCL), to connect it to the company's own systems. The
+takes over AP Coder inside the company it was built for, to connect it to the company's own systems. The
 handoff is **one way**: whoever built AP Coder up to here cannot be asked anything. Everything known is in this
 repository: this file, `CLAUDE.md`, `docs/` (guides, decisions, bug log, their archives) and 1,450+ commit messages.
 When this file and the code disagree, the code is right; fix this file.
@@ -25,7 +25,7 @@ of the original repository. The tags themselves are in the bundle.
 
 | File | What it is | Use it when |
 |---|---|---|
-| `AP_Coder.bundle` | A git bundle: `main` with its whole history and the tags `v0.3.0-pilot1` to `v0.3.0-pilot4` (the laptop releases; pilot4 is the newest) and `v0.3.0-handoff4` (this handoff: pilot4 and these docs, the same commit; `v0.3.0-handoff1` to `-handoff3` were earlier ones) | Git is available: keeps every commit message, which explains why the code is as it is |
+| `AP_Coder.bundle` | A git bundle: `main` with its whole history and the tags `v0.3.0-pilot1` to `v0.3.0-pilot5` (the laptop releases; pilot5 is the newest) and `v0.3.0-handoff5` (this handoff: pilot5 and these docs, the same commit; `v0.3.0-handoff1` to `-handoff4` were earlier ones) | Git is available: keeps every commit message, which explains why the code is as it is |
 | `AP_Coder_source.zip` | The same files as `main`, no history | Only file transfers are allowed, or git isn't |
 | `HANDOFF.md` | This file | Read first |
 | `SHA256SUMS.txt` | The SHA-256 of the three files above | Check the transfer |
@@ -36,7 +36,7 @@ of the original repository. The tags themselves are in the bundle.
 git clone -b main AP_Coder.bundle AP_Processer   # a normal repository (cloning checks the bundle); origin = the bundle
 cd AP_Processer
 git bundle verify ../AP_Coder.bundle             # "The bundle records a complete history" (works only inside a repository)
-git tag                                          # v0.3.0-handoff1 to -handoff4, v0.3.0-pilot1 to -pilot4
+git tag                                          # v0.3.0-handoff1 to -handoff5, v0.3.0-pilot1 to -pilot5
 git log --oneline | head                         # the latest commits
 # Make the company's Git server the origin (an empty repository created there first):
 git remote set-url origin <the company's repository URL>
@@ -50,7 +50,7 @@ unzip AP_Coder_source.zip                        # makes AP_Processer/
 cd AP_Processer
 cat ap_coder/BUILD                               # must read $Format:%h %cI$ (git fills it in for each ZIP made later)
 git config user.name "<you>" && git config user.email "<you@company>"   # a fresh machine has none
-git init -b main && git add -A && git commit -m "AP Coder at the handoff (v0.3.0-handoff4), no history"
+git init -b main && git add -A && git commit -m "AP Coder at the handoff (v0.3.0-handoff5), no history"
 git remote add origin <the company's repository URL> && git push -u origin main
 ```
 
@@ -67,7 +67,7 @@ tag list names commits a route B repository doesn't have).
 the exact set this release was tested with is `docs/tested-packages.txt` (`pip install -c docs/tested-packages.txt
 -e ".[ocr,dev]"` when a newer package breaks something).
 With no internet, use a wheelhouse. The person who handed this over may also have given you the laptop release's
-offline install zip (`APProcessor-offline-0.3.0-<date>.zip` of the release `v0.3.0-pilot4`; Windows, Python
+offline install zip (`APProcessor-offline-0.3.0-<date>.zip` of the release `v0.3.0-pilot5`; Windows, Python
 3.12–3.14): its `wheelhouse/` folder installs everything on Windows with `pip install --no-index --find-links <that
 wheelhouse> -e ".[ocr,dev]"` (its wheels are Windows ones: a Linux agent or CI runner needs PyPI or a mirror).
 Without it, build one on any computer with internet: `AP_ALLOW_INTERNET=1 python scripts/build_offline_bundle.py`
@@ -106,7 +106,7 @@ Nothing connects to the internet at run time. It is a FastAPI web app on 127.0.0
 roles and HTTPS). Data lives in one SQLite database in a data folder outside the code. It is at pilot stage: built
 and tested on synthetic and public sample invoices, not yet on the company's invoices or systems.
 
-Status at the handoff (`v0.3.0-handoff4`: the laptop release `v0.3.0-pilot4` of 31 October 2026, the same commit,
+Status at the handoff (`v0.3.0-handoff5`: the laptop release `v0.3.0-pilot5` of 1 November 2026, the same commit,
 with these handoff docs; the build stamp `doctor` and `/healthz` report is that commit's). Each pilot release was
 checked by CI on Windows with the real LM Studio before it was tagged (`.github/workflows/release.yml`, D-129, D-130):
 
@@ -195,7 +195,7 @@ Starting points: `ai/pipeline.py` (`finalise_coding`), `core/schema.py`, `web/pa
 - **In the repository (synthetic, safe to share):** `data/` (sample chart of accounts, cost centers, tax GL
   mapping, Canadian tax rates, vendor master, POs, bank accounts, coding policy) and `samples/` (10 synthetic invoices
   addressed to "Fabrikam Canada Ltd." with their answers in `samples/ground_truth/`, and `samples/demo_day/`).
-  The made-up email domain `pcl-made-up.example` (in `bench/emails.py` and one test) is not a real address.
+  The made-up email domain `company-made-up.example` (in `bench/emails.py` and one test) is not a real address.
 - **Never in the repository:** the company's data. It lives in the **data folder** (`core/paths.py` `private_dir`):
   `AP_PRIVATE_DIR` if set, else the folder the launcher or installer recorded in `~/.ap_coder/settings.json`
   (`~/APCoder` on a pilot laptop), else `private/` in the checkout (git-ignored): a developer checkout installed with

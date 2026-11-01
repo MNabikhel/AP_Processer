@@ -680,6 +680,9 @@ def supply_line(header: dict[str, Any], lines: list[dict[str, Any]], setup: Any)
         SUPPLY_OURS: "your province (Settings): no ship-to or bill-to printed",
         SUPPLY_VENDOR: "only the vendor's province: set where it is delivered to you",
     }.get(source, "unknown: choose where it is delivered to you")
+    if coding.ship_to_province == OUTSIDE_CANADA and source in (SUPPLY_OURS, SUPPLY_VENDOR):  # as the tax check says
+        why = "the ship-to printed is outside Canada: checked against " + (
+            "your province (Settings)" if source == SUPPLY_OURS else "only the vendor's province")  # fmt: skip
     label = f"{province} · {PROVINCE_NAMES[province]}" if province in PROVINCE_NAMES else "Not known"
     return {"province": province, "label": label, "why": why, "open": source in ("", SUPPLY_VENDOR)}
 

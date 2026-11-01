@@ -529,7 +529,7 @@ def write_email(s: Scenario, path: Path, as_msg: bool) -> Path:
         path.write_bytes(build_msg(msg))
         return path
     m = EmailMessage()
-    m["Subject"], m["From"], m["To"] = s.subject, s.sender, "ap@pcl-made-up.example"
+    m["Subject"], m["From"], m["To"] = s.subject, s.sender, "ap@company-made-up.example"
     m.set_content(s.body or " ")
     for d in s.docs:
         main, sub = d.mime.split("/")
