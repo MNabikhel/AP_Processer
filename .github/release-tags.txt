@@ -11,3 +11,5 @@ v0.3.0-pilot3 7b1c924f5d26bf700e5a3584265158657e16d26b AP Coder 0.3.0, pilot rel
 v0.3.0-handoff3 7b1c924f5d26bf700e5a3584265158657e16d26b AP Coder handoff to the company's own AI coding agent: v0.3.0-pilot3 with docs/HANDOFF.md, the same commit (D-128)
 v0.3.0-pilot4 d4563c5ddb97da22ff6ea6d567bf97ddb896fc70 AP Coder 0.3.0, pilot release 4: pilot3 plus the security audit fixes and cold-start docs (B-1494 to B-1502, D-135, D-136)
 v0.3.0-handoff4 d4563c5ddb97da22ff6ea6d567bf97ddb896fc70 AP Coder handoff to the company's own AI coding agent: v0.3.0-pilot4 with docs/HANDOFF.md, the same commit (D-128)
+v0.3.0-pilot5 f57d4721dfb3c6e886861be3ee04907ae456ab6d AP Coder 0.3.0, pilot release 5: pilot4 plus the demo-rehearsal fixes (B-1503 to B-1509, D-137)
+v0.3.0-handoff5 f57d4721dfb3c6e886861be3ee04907ae456ab6d AP Coder handoff to the company's own AI coding agent: v0.3.0-pilot5 with docs/HANDOFF.md, the same commit (D-128)
