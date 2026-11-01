@@ -87,6 +87,16 @@ def flash_text(client: TestClient, answer: dict[str, Any]) -> str:
 # --- The page -----------------------------------------------------------------------------------------------------
 
 
+def test_the_pay_from_note_is_one_sentence_not_three_columns(client, store):
+    """B-1509: the note "To choose which of your bank accounts pays (Pay from), add your bank accounts on GL accounts
+    & tax." is a flex row: its text, its link and the rest of its text were laid out as three narrow columns at every
+    width. The sentence is one piece now, beside its icon."""
+    text = client.get(f"/review/{store.list_invoices(REVIEW)[0]['id']}").text
+    note = re.search(r'<p class="small muted inv-pay-note">(.*?)</p>', text, re.S)
+    one = r'<span class="ms"[^>]*>account_balance</span><span>[^<]*<a [^>]*>[^<]*</a>[^<]*</span>'
+    assert note and re.fullmatch(one, note.group(1))
+
+
 def test_the_review_screen_shows_the_document_the_form_the_grids_and_the_actions(client, store):
     pending = store.list_invoices(REVIEW)
     inv = store.get_invoice(pending[0]["id"])
@@ -809,6 +819,50 @@ def test_in_a_browser_the_approve_anyway_box_keeps_the_focus_when_ticked_with_th
     wait_until(page, lambda: page.is_checked("[name=override]"))
     assert page.is_checked("[name=override]")
     assert page.evaluate("document.activeElement.name") == "override_reason" and errors == []
+
+
+def test_in_a_browser_ticking_approve_anyway_never_scrolls_the_warning_away(browser, store):
+    """B-1506: on a 1280x720 screen, ticking "Approve anyway" scrolled the page down by about 1,500 px to the reason
+    box, so the warning being approved over left the screen. The reason box takes the focus where it is."""
+    page, errors = _open_review(browser, store, "Cascade", viewport={"width": 1280, "height": 720})
+    page.wait_for_selector("[name=override]")
+    page.wait_for_timeout(800)  # the check made on opening the page
+    before = page.evaluate("window.scrollY")
+    box = page.locator("[data-live=bar] [name=override]").bounding_box()  # clicked where it is, as a person does
+    with page.expect_response(lambda r: r.url.endswith("/check")):
+        page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    wait_until(page, lambda: page.evaluate("document.activeElement.name") == "override_reason")
+    page.wait_for_timeout(500)  # the bar drawn again after the check
+    assert abs(page.evaluate("window.scrollY") - before) < 40 and errors == []
+
+
+def test_in_a_browser_the_line_grid_fits_its_card_on_a_1280_screen(browser, store):
+    """B-1507: at 1280x720 (a 1080p laptop at 150%) the line grid's fixed columns (398 px) were wider than its card
+    (385 px): the delete icon and the right of the Amount box were cut off. The columns now give way."""
+    page, errors = _open_review(browser, store, "Pacific", viewport={"width": 1280, "height": 720})
+    page.wait_for_selector(".inv-lines-grid tr[data-row]")
+    over = page.evaluate("""() => [...document.querySelectorAll('.inv-lines-grid tr[data-row]')]
+        .map(r => r.scrollWidth - r.clientWidth).filter(d => d > 1)""")
+    table = page.evaluate(
+        "(() => { const t = document.querySelector('.inv-lines-grid'); return "
+        "t.getBoundingClientRect().right - t.parentElement.getBoundingClientRect().right; })()"
+    )
+    assert over == [] and table <= 1 and errors == []
+
+
+def test_in_a_browser_the_one_row_lines_show_their_quantity_and_icons_whole_at_1920(browser, store):
+    """B-1508: at 1920x1080 a quantity of 10 showed as '1C' (the number box's arrows over a 44 px column) and the split
+    and delete icons spilled past the last 26 px column. Nothing in a line row is cut off now."""
+    page, errors = _open_review(browser, store, "Pacific", viewport={"width": 1920, "height": 1080})
+    page.wait_for_selector(".inv-lines-grid tr[data-row] .c-qty input")
+    cut = page.evaluate("""() => [...document.querySelectorAll('.inv-lines-grid tr[data-row]')].flatMap(r => {
+        const q = r.querySelector('.c-qty input'), d = r.querySelector('.c-del'), out = [];
+        if (q && q.getBoundingClientRect().width < 40) out.push('qty ' + q.getBoundingClientRect().width);
+        if (q && getComputedStyle(q).appearance !== 'textfield') out.push('qty arrows');  // they covered the digits
+        if (d && d.scrollWidth > d.clientWidth + 1) out.push('icons ' + (d.scrollWidth - d.clientWidth));
+        if (r.scrollWidth > r.clientWidth + 1) out.push('row ' + (r.scrollWidth - r.clientWidth));
+        return out; })""")
+    assert cut == [] and errors == []
 
 
 def test_in_a_browser_os_dark_mode_leaves_the_light_page_readable(browser, store):

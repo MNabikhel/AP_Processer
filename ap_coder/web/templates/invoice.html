@@ -210,7 +210,7 @@
         {{ field("grand_total", type="number", step="0.01") }}
       </div>
       <div data-live="amounts">{{ live_ui.amounts(live, inv.id) }}</div>
-      {% if not pay_from.any and can("/accounts/bank/save") %}<p class="small muted inv-pay-note"><span class="ms" aria-hidden="true">account_balance</span>To choose which of your bank accounts pays (Pay from), <a class="link" href="/accounts?tab=bank">add your bank accounts</a> on GL accounts &amp; tax.</p>{% endif %}
+      {% if not pay_from.any and can("/accounts/bank/save") %}<p class="small muted inv-pay-note"><span class="ms" aria-hidden="true">account_balance</span><span>To choose which of your bank accounts pays (Pay from), <a class="link" href="/accounts?tab=bank">add your bank accounts</a> on GL accounts &amp; tax.</span></p>{% endif %}
       <div data-live="jde">{{ live_ui.jde(live, inv.id) }}</div>
     </section>
 

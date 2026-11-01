@@ -38,7 +38,7 @@ INVOICES = ["northwind_ON_HST_NW-2026-0912", "laurentides_QC_TPS_TVQ_SIL-4471", 
 
 def _eml(subject: str, body: str, attachments: list[tuple[str, bytes]] = (), forwarded: EmailMessage | None = None):
     m = EmailMessage()
-    m["Subject"], m["From"], m["To"] = subject, "ar@vendor.example", "ap@pcl-made-up.example"
+    m["Subject"], m["From"], m["To"] = subject, "ar@vendor.example", "ap@company-made-up.example"
     m.set_content(body)
     for name, content in attachments:
         m.add_attachment(content, maintype="application", subtype="pdf", filename=name)

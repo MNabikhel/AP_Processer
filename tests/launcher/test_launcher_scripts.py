@@ -175,6 +175,17 @@ def test_the_demo_launcher_runs_ap_coder_on_a_data_folder_of_its_own():
     assert 'call "%~dp0..\\APProcessor.bat" %*' in text
 
 
+def test_the_demo_keeps_its_own_copy_of_the_per_user_settings():
+    """B-1505: the reviewer name saved in Settings during a demo went into ~/.ap_coder/settings.json and renamed the
+    pilot tester's own AP Coder. The demo now starts from a copy of that file, kept beside it, and writes only the copy;
+    the data folder APCoder-demo stays as the launcher creates it."""
+    text = (ROOT / "scripts" / "demo.bat").read_text(encoding="ascii")
+    copy = 'copy /y "%USERPROFILE%\\.ap_coder\\settings.json" "%USERPROFILE%\\.ap_coder\\demo_settings.json"'
+    assert copy in text
+    assert 'set "AP_USER_SETTINGS=%USERPROFILE%\\.ap_coder\\demo_settings.json"' in text
+    assert text.index(copy) < text.index("AP_USER_SETTINGS=") < text.index('call "%~dp0..\\APProcessor.bat"')
+
+
 def test_the_demo_data_folder_is_used_as_it_is_and_never_recorded(tmp_path, monkeypatch):
     """A data folder set by hand (the demo launcher's) is the one used, and the one recorded for the usual double-click
     stays as it was: after the demo, APProcessor.bat opens the pilot tester's own data again."""

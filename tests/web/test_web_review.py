@@ -160,8 +160,8 @@ def test_an_empty_queue_puts_the_demo_invoices_first(client, store, tmp_path):
     pdf = tmp_path / "a.pdf"
     pdf.write_bytes(b"%PDF-1.4")
     store.add_invoice(pdf, {"vendor_name": "Acme", "grand_total": 5}, {"issues": []})
-    text = client.get("/review").text  # invoices waiting for GL accounts: that comes first, the demo last
-    assert text.index("read and waiting") < text.index("Getting started") < text.index("Load demo invoices")
+    text = client.get("/review").text  # invoices waiting for GL accounts: that comes first; no demo beside them (D-137)
+    assert text.index("read and waiting") < text.index("Getting started") and "Load demo invoices" not in text
 
 
 def test_process_offers_the_sample_gl_accounts_when_there_are_none(client, store):

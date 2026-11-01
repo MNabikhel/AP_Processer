@@ -109,6 +109,21 @@ def test_the_screen_never_calls_a_bill_to_the_ship_to():
     )
 
 
+def test_a_ship_to_printed_outside_canada_is_never_called_no_ship_to_on_the_screen():
+    """B-1503: a US invoice shipped to Seattle said 'no ship-to or bill-to printed' beside a warning that 'the ship-to
+    printed is outside Canada'. The screen now says what the tax check says."""
+    from types import SimpleNamespace
+
+    from ap_coder.web.invoice_view import supply_line
+
+    ours = SimpleNamespace(site_provinces={}, our_province="ON")
+    line = supply_line({"ship_to_province": "OUTSIDE_CANADA", "supplier_province": ""}, [], ours)
+    assert "no ship-to" not in line["why"] and "outside Canada" in line["why"] and "your province" in line["why"]
+    nothing = SimpleNamespace(site_provinces={}, our_province="")
+    line = supply_line({"ship_to_province": "OUTSIDE_CANADA", "supplier_province": "BC"}, [], nothing)
+    assert "no ship-to" not in line["why"] and "outside Canada" in line["why"] and "vendor" in line["why"]
+
+
 def test_with_no_ship_to_printed_the_tax_check_says_the_province_is_ours():
     from ap_coder.coding.tax import TaxSetup, check_taxes
     from ap_coder.core.schema import TaxLine
