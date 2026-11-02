@@ -216,3 +216,30 @@ def test_in_a_browser_send_to_manager_sends_the_coding_on_screen(chromium, store
     req = store.waiting_manager_request(iid)
     assert req and req["manager_email"] == "bob@example.com" and store.get_invoice(iid)["status"] == PARKED
     assert all(li["gl_code"] == gl for li in req["lines"])
+
+
+def test_in_a_browser_park_and_send_to_manager_share_one_panel(chromium, store):
+    """B-1545: Send to manager was a second pop-up panel inside Park, placed at the same spot as Park's own form, so
+    it covered it: the reason box could not be clicked. One panel holds both now, Park's form first."""
+    from dataclasses import replace as _replace
+
+    from ap_coder.core.config import Settings
+    from tests.browser import browser_on
+
+    iid = _first(store)
+    s = Settings()
+    app = create_app(_replace(s, llm=_replace(s.llm, provider="off")), store, start_reader=False)
+    with browser_on(chromium, app) as (browser, base):
+        page = browser.new_page(viewport={"width": 1366, "height": 900})
+        page.goto(f"{base}/review/{iid}")
+        page.wait_for_selector(".iv-sheet:not(.loading)")
+        page.click("[data-park] summary")
+        assert page.locator("[data-park] > .pop-body").count() == 1
+        on_top = page.evaluate(
+            "() => { const el = document.querySelector('[data-park] input[name=reason]');"
+            " const r = el.getBoundingClientRect(); const top = document.elementFromPoint(r.x + r.width / 2,"
+            " r.y + r.height / 2); return top === el || el.contains(top); }"
+        )
+        assert on_top
+        page.fill("[data-park] input[name=reason]", "buyer to confirm")
+        assert page.input_value("[data-park] input[name=reason]") == "buyer to confirm"

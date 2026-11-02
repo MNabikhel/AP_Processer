@@ -295,6 +295,8 @@ button.inv-pick .ms {font-size: 14px;}
 .rvw-post-sub .ms {font-size: 15px;}
 .inv-override {font-size: 13px; color: var(--lg-danger); font-weight: 500;}
 .pop.up .pop-body {top: auto; bottom: calc(100% + 6px);}
+/* Send to manager, under Park's form in the same panel (D-138, B-1545) */
+.inv-manager {border-top: 1px solid var(--lg-border); padding-top: 12px;}
 
 /* ---- Read-only states ------------------------------------------------------------------------------------- */
 .inv-state .card-head {flex-wrap: wrap;}

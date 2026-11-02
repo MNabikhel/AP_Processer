@@ -322,7 +322,9 @@
     {% if can("/review/1/approve") %}{# server mode: only a role that may approve sees these (web/roles.py, D-98) #}
     <details class="pop up" data-park>
       <summary class="btn" title="Set it aside while waiting for information, or send it to the manager to confirm the coding (P)" aria-keyshortcuts="p"><span class="ms" aria-hidden="true">pause_circle</span>Park</summary>
-      <form class="pop-body stack" method="post" action="/review/{{ inv.id }}/park">
+      {# One panel holds Park's form and, below it, Send to manager: two panels would sit at the same spot (B-1545). #}
+      <div class="pop-body">
+      <form class="stack" method="post" action="/review/{{ inv.id }}/park">
         <p class="muted">Set it aside while waiting for information.</p>
         <label class="field">Waiting for<input type="text" name="reason" required placeholder="e.g. buyer to confirm the price"></label>
         <label class="field">Follow up on<input type="date" name="follow_up" min="{{ today }}"></label>
@@ -334,7 +336,7 @@
       {# Or ask the manager of the cost centers to confirm the coding (D-138): the fields belong to the invoice's
          form, posted to /manager instead of /approve, so the lines on screen go with the request. Inside Park: both
          set the invoice aside while someone else answers, and the action bar keeps its width. #}
-      <div class="pop-body stack" data-manager>
+      <div class="stack inv-manager" data-manager>
         <p class="muted"><b>Or send it to the manager</b> of these cost centers to confirm the coding. It waits, parked, and comes back here when they answer.</p>
         {% if manager and manager.users %}
         <label class="field">Manager<select name="manager_user" form="inv">{% for u in manager.users %}<option value="{{ u.id }}"{% if manager.suggested and manager.suggested.name == (u.display_name or u.username) %} selected{% endif %}>{{ u.display_name or u.username }}{% if u.cost_centers %} · {{ u.cost_centers }}{% endif %}</option>{% endfor %}</select></label>
@@ -347,6 +349,7 @@
         <button class="btn" type="submit" form="inv" formaction="/review/{{ inv.id }}/manager" formnovalidate><span class="ms" aria-hidden="true">forward_to_inbox</span>Send to manager</button>
       </div>
       {% endif %}
+      </div>
     </details>
     <details class="pop up" data-reject>
       <summary class="btn" title="Not ours, or not to be paid (X opens this)" aria-keyshortcuts="x"><span class="ms" aria-hidden="true">block</span>Reject</summary>
