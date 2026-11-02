@@ -318,6 +318,9 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
 - **ERP invoice register** (what is already in E1, for duplicates): Exports → *Invoices already in the ERP* → import
   (vendor, invoice number, total required). Or synced (`APC_Vouchers_Read`).
 - **Not confirmed:** E1's own receipt matching (P4314, F0411Z1T) for PO-matched vouchers.
+- **Left to expense** (D-139): the review screen's PO match shows what is left on each PO line after the invoice, from
+  the line's amount or, when the PO file has it, an *Open amount* column (E1's AOPN, as of the last import). The AIS
+  sync's PO read (`APC_OpenPOs_Read`) doesn't ask for AOPN yet: add it there to keep it current.
 
 ### 6.7 Bank accounts ("Pay from")
 
@@ -378,6 +381,18 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
 
 - Excel (sheets Invoices, GL lines, By GL account), CSV (one row per GL line), and a **custom layout** (any columns,
   date format, delimiter) for an ERP import that isn't JD Edwards. `erp/exports.py`, `erp/export_layout.py`.
+
+### 6.13 Managers confirming the coding (D-138)
+
+- **What:** *Send to manager* on the review screen parks the invoice waiting for the manager of its cost centers;
+  their answer (confirmed, or sent back with what to change) brings it back to the review queue. Laptop: a
+  ready-made `.eml` request and AP records the reply (kept in `emails/manager/`); server: a **Manager** role that
+  answers on screen and sees only its own requests (`web/roles.py` `MANAGE`). Code: `core/store/managers.py`,
+  `coding/manager_mail.py`, `web/pages/manager.py`.
+- **Company choices to confirm:** which invoices need a manager (today AP decides each time; a rule by amount or
+  cost center would be a next step), who manages each cost center (the cost center import, or the users page on
+  the server), and whether the email should be sent by the company's mail server instead of AP's own Outlook (it
+  would be a named internal system under D-104).
 
 ---
 
