@@ -1482,8 +1482,8 @@ def po_section(store: Store, coding: InvoiceCoding, invoice_id: int) -> dict[str
                  f"{(po.get('vendor_name') or '?').rstrip('.')}")  # fmt: skip
     opened = any(line.open_amount is not None for line in match.left.values())
     how = ("Left to expense: each PO line's amount less what this and the other invoices bill on it"
-           + ("; where the PO import gave an open amount, that amount less this invoice and the ones not exported "
-              "yet" if opened else "") + ".")  # fmt: skip
+           + ("; where the PO import gave an open amount (as the ERP had it at the last PO import), that amount "
+              "less this invoice and the ones not exported yet" if opened else "") + ".")  # fmt: skip
     return {
         "found": True, "label": label, "rows": rows, "received": received,
         "status": (f"{plural(problems, 'line')} to check", "warn") if problems else ("Matches the PO", "ok"),

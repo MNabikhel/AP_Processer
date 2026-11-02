@@ -902,6 +902,16 @@ FAQ: list[tuple[str, str]] = [
         "guide: an invoice over it can still be approved.",
     ),
     (
+        "How does a manager confirm the coding?",
+        "On the review screen, Send to manager asks the manager of the invoice's cost centers to confirm how it is "
+        "coded: the lines on screen go with the request and the invoice is parked, waiting for them. On this "
+        "computer, download the ready-made email from Manager confirmations (it opens in Outlook as a draft, the "
+        "invoice attached), send it, and record the answer there when it comes, with the reply email kept. On a "
+        "company server, a Manager account answers on screen. Confirmed or sent back, the invoice comes back to the "
+        "review queue: approve it as usual, or change it and send it again. The screen says if the coding changed "
+        "after it was confirmed. The invoice directory's Next to act column says who it waits for.",
+    ),
+    (
         "I made a mistake. Can I undo it?",
         "Approvals record what was learned; you can forget lines from the coding memory on Learning & accuracy. "
         "Export batches can be "

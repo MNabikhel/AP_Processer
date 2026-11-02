@@ -180,3 +180,39 @@ def test_an_admin_sets_a_managers_cost_centers(server, store):
                          headers=_as(tokens["admin"])).json()  # fmt: skip
     assert answer["ok"] and next(u for u in store.list_users() if u["id"] == bob_id)["cost_centers"] == "CC-200, CC-410"
     assert store.waiting_manager_requests() == [] and WAITING == "waiting"
+
+
+def test_in_a_browser_send_to_manager_sends_the_coding_on_screen(chromium, store):
+    """The pop-up's fields belong to the invoice's form and its button posts it to /manager instead of /approve
+    (``formaction``, app.js): in a real browser the invoice is parked and the request page opens."""
+    import json as _json
+    from dataclasses import replace as _replace
+
+    from ap_coder.core.config import Settings
+    from tests.browser import browser_on, wait_until
+
+    iid = _first(store)
+    gl = next(a["code"] for a in store.list_accounts("gl_accounts"))
+    inv = store.get_invoice(iid)
+    coding = inv["ai_output"]
+    coding["line_items"] = [{**li, "predicted_gl_code": gl} for li in coding["line_items"]]
+    with store._conn() as conn:
+        conn.execute("UPDATE invoices SET ai_output = ? WHERE id = ?", (_json.dumps(coding), iid))
+    s = Settings()
+    app = create_app(_replace(s, llm=_replace(s.llm, provider="off")), store, start_reader=False)
+    with browser_on(chromium, app) as (browser, base):
+        page = browser.new_page()
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(f"{base}/review/{iid}")
+        page.wait_for_selector(".iv-sheet:not(.loading)")
+        page.click("[data-manager] summary")
+        page.fill("[data-manager] [name=manager_name]", "Bob Manager")
+        page.fill("[data-manager] [name=manager_email]", "bob@example.com")
+        page.click("[data-manager] button[formaction]")
+        wait_until(page, lambda: "/manager/" in page.url, timeout=15)
+        main = page.inner_text("main") if page.query_selector("main") else page.inner_text("body")
+        assert "Bob Manager" in main and errors == [], main[:1500]
+    req = store.waiting_manager_request(iid)
+    assert req and req["manager_email"] == "bob@example.com" and store.get_invoice(iid)["status"] == PARKED
+    assert all(li["gl_code"] == gl for li in req["lines"])

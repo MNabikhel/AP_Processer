@@ -257,3 +257,32 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   duplicate payment) and mixed made-up invoices into your numbers, which B-468 already guarded against for the
   order of the cards. The demo's own copy of AP Coder (`scripts/demo.bat`, its own data folder) is where to show it.
   (`ap_coder/web/pages/process.py` `demo_offered`; `tests/web/test_web_process.py`)
+- **D-138** · A manager confirms an invoice's cost allocation when AP asks: **Send to manager** on the review screen,
+  AP's choice invoice by invoice (never automatic). The lines on screen go with the request (each line's GL account,
+  cost center and amount, `manager_requests.lines`), and the invoice is **parked** waiting for that manager, not a new
+  status: everything that already treats a parked invoice right (out of the queue and bulk approval, still counted for
+  POs, duplicates and the month end, in the directory, brought back by Un-park) stays right, and an older AP Coder
+  opening the database sees a parked invoice. Either answer, **Confirmed** or **Sent back** with what to change, puts
+  it back in the review queue; AP then approves as before: the approval limits and the second approval are unchanged,
+  and an approval never waits on a manager (AP decides). The screen says who answered and when, and warns when the
+  lines are no longer the ones confirmed (GL account, cost center, amount; a retyped description doesn't count). Two
+  ways to answer, as asked: on the **laptop**, AP downloads a ready-made email (`.eml` with `X-Unsent: 1`, so Outlook
+  opens it as a draft to send; the PDF attached, the lines, the manager's own cost centers marked) and records the
+  reply (who, when, what they said; the reply email kept in the data folder's `emails/manager/`); on the **server**,
+  a **Manager** account (a role outside the Read-only to Admin ladder: it opens only `/manager` pages, its own
+  requests, never another manager's or any other invoice) answers on screen. An Admin sets a Manager's cost centers;
+  on the laptop each cost center remembers its manager's name and email. Every step is in the Activity log
+  (`sent_to_manager`, `manager_confirmed`, `manager_sent_back`, `manager_request_withdrawn`). No schema bump: a table
+  and three columns, added whatever the version. (`core/store/managers.py`, `coding/manager_mail.py`,
+  `web/pages/manager.py`, `web/roles.py` `MANAGE`; `tests/core/test_managers.py`, `tests/web/test_manager.py`)
+- **D-139** · The review screen's PO match says what is **left to expense** on each PO line and on the whole PO after
+  this invoice: the line's amount less what the other live invoices bill on it and this one; when the PO import gives
+  an **Open amount** (JD Edwards' AOPN), that amount less this invoice and the ones not exported yet (the ERP counted
+  the exported ones). Over is shown amber, "over by ...", never an error: as asked, it is not strict, so no new check
+  and no change to the PO warnings, and an invoice with no PO or over the amount is approved as before. The open
+  amount is as of the last PO import: between an export and the next import it reads high by what was just exported
+  (said in the notes line). (`coding/po.py` `LineLeft`; `tests/coding/test_po.py`)
+- **D-140** · The invoice directory says **who acts next** and what, beside where the invoice stands, on by default:
+  AP (to review, to export, to process again), the manager it waits for, a second approver (not the first), or no
+  one (in the ERP, rejected). It is worked out from the status and the parked reason, so it needs nothing stored.
+  (`erp/search.py` `next_to_act`; `tests/erp/test_search.py`)
