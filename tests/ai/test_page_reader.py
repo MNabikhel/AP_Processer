@@ -28,6 +28,7 @@ from ap_coder.ai.page_reader import (
     reader_for,
     reader_name,
 )
+from ap_coder.capture.transcript import PARTIAL_MARK
 from ap_coder.capture.types import Reading
 from ap_coder.core.config import PageReaderSettings, Settings
 from tests.conftest import SAMPLE_STEM, SAMPLES
@@ -624,7 +625,8 @@ def test_a_page_that_loops_twice(client):
     long_page = "\n".join(f"Line {n}: consulting services, hours and expenses" for n in range(10))
     client(stream(long_page + "\n" + loop, finish="length"), stream("Header\n" + loop, finish="length"))
     kept = page_reader.transcribe(Settings(), b"png", model=OVIS_KEY)
-    assert kept == long_page + "\n| Item | 1 | 10.00 |"  # the longer reading, the repeated row kept once
+    # the longer reading, the repeated row kept once, said to stop before the end of the page (B-1518)
+    assert kept == long_page + "\n| Item | 1 | 10.00 |\n" + PARTIAL_MARK
 
 
 def test_pages_are_read_one_at_a_time(client):

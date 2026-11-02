@@ -329,6 +329,16 @@ def _table_start(lines: list[str], i: int) -> bool:
 
 _THINK = re.compile(r"<think>.*?(?:</think>|\Z)", re.S)
 _COMMENT = re.compile(r"<!--.*?(?:-->|\Z)", re.S)
+# Put after a page reading the page reader stopped part way (it got stuck repeating itself twice, and what it read
+# before is kept): the rest of the page was never read (B-1518). A comment, so the reading itself never shows it.
+PARTIAL_MARK = "<!-- The page reader stopped here: the rest of this page was not read. -->"
+
+
+def read_in_part(text: str | None) -> bool:
+    """Whether a page reading stops before the end of its page (``PARTIAL_MARK``)."""
+    return PARTIAL_MARK in (text or "")
+
+
 _IMG = re.compile(r"<img\b[^>]*>", re.I)
 _BREAK = re.compile(r"<br\s*/?>|</(?:p|div|h[1-6]|li|ul|ol|blockquote|pre)\s*>", re.I)
 _TAG = re.compile(r"</?[A-Za-z][A-Za-z0-9]*(?:\s[^<>]*)?/?>")
