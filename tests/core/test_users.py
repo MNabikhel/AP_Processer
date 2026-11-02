@@ -82,7 +82,7 @@ def test_a_new_user_is_case_folded_must_change_their_password_and_is_never_store
     with pytest.raises(ValueError, match="12 characters"):
         store.add_user("sam", "short")
     with pytest.raises(ValueError, match="role"):
-        store.add_user("sam", GOOD, role="manager")
+        store.add_user("sam", GOOD, role="owner")  # (not "manager": a role since D-138)
     assert store.find_user("PAT.tester")["id"] == uid
     assert store.events(actions=["user_added"])[0]["detail"]["username"] == "pat.tester"
 
