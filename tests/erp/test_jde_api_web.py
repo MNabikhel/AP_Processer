@@ -248,3 +248,14 @@ def test_in_a_browser_the_jde_zip_downloads_by_its_button_and_is_recorded(chromi
         assert "README.txt" in zipfile.ZipFile(saved.path()).namelist()
         (event,) = store.events(actions=["jde_file_downloaded"])
         assert event["detail"]["batch"] == batch and errors == []
+
+
+def test_odd_api_settings_are_refused_in_words_not_a_server_error(tmp_path):
+    """B-1535: Settings → JD Edwards → API: a CA file path of 20,000 characters gave a 500 (OSError: file name too
+    long), and a sync hour or voucher days of "1e309" a 500 (cannot convert float infinity to integer)."""
+    from ap_coder.core.store import Store
+
+    client = client_for(Store(tmp_path / "ap_coder.db"))
+    for data in ({"ca_file": "x" * 20000}, {"sync_hour": "1e309"}, {"voucher_days": "1e309"}, {"sync_hour": "-5"}):
+        answer = post(client, "/settings/jde/api", {"base_url": "", **data})
+        assert answer.status_code == 400 and answer.json()["ok"] is False, (data, answer.text[:200])

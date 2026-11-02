@@ -236,3 +236,4 @@ def test_the_mapping_can_be_renamed_from_the_data_folder(tmp_path, monkeypatch):
     (tmp_path / jde_ais.MAPPING_FILE).write_text("{not json")
     with pytest.raises(ValueError, match="can't be read"):
         jde_ais.load_mapping()
+
