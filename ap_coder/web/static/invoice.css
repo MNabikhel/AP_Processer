@@ -297,6 +297,11 @@ button.inv-pick .ms {font-size: 14px;}
 .pop.up .pop-body {top: auto; bottom: calc(100% + 6px);}
 /* Send to manager, under Park's form in the same panel (D-138, B-1545) */
 .inv-manager {border-top: 1px solid var(--lg-border); padding-top: 12px;}
+/* The coding sent to the manager, while the invoice waits (B-1546): a line each, its account under it */
+.inv-sent-lines {list-style: none; margin: 0; padding: 0;}
+.inv-sent-lines li {display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 8px 0; border-bottom: 1px solid var(--lg-border);}
+.inv-sent-lines .c {grid-column: 1; color: var(--lg-subtle); font-size: 12.5px;}
+.inv-sent-lines b {grid-column: 2; grid-row: 1 / span 2; align-self: center;}
 
 /* ---- Read-only states ------------------------------------------------------------------------------------- */
 .inv-state .card-head {flex-wrap: wrap;}

@@ -429,7 +429,7 @@
   <div class="card-head"><div>
     <h4><span class="ms" aria-hidden="true">pause_circle</span>Parked</h4>
     <p class="muted">Waiting for: {{ inv.parked_reason }}{% if inv.follow_up %} · follow up {{ inv.follow_up }}{% endif %}{% if manager and manager.waiting %} · sent {{ manager.waiting.sent_at | time_ago }} by {{ manager.waiting.sent_by }}{% endif %}</p></div>
-    {% if manager and manager.waiting %}<a class="btn" href="/manager/{{ manager.waiting.id }}"><span class="ms" aria-hidden="true">how_to_reg</span>{% if can("/manager/1/record") %}The request: email, answer{% else %}The request{% endif %}</a>{% endif %}
+    {% if manager and manager.waiting and can("/manager/1", "GET") %}<a class="btn" href="/manager/{{ manager.waiting.id }}"><span class="ms" aria-hidden="true">how_to_reg</span>{% if can("/manager/1/record") %}The request: email, answer{% else %}The request{% endif %}</a>{% endif %}
     {% if can("/review/1/resume") %}<form method="post" action="/review/{{ inv.id }}/resume"><button class="btn primary" type="submit" title="Back to the review queue, to be approved"><span class="ms" aria-hidden="true">play_circle</span>Un-park</button></form>{% endif %}
   </div>
   {% elif mode == "approved" %}
@@ -488,7 +488,18 @@
 <div class="inv-split">
   {% include "_invoice_document.html" %}
   <div class="col">
-    {% if posting %}
+    {% if manager and manager.waiting %}
+    {# Waiting for the manager: the lines as sent, not the coding as first read; the edits on screen come back when
+       they answer (B-1546). #}
+    {% set w = manager.waiting %}
+    <section class="card inv-posting">{{ live_ui.head("Coding sent to " ~ w.manager_name, "The lines as they were coded when sent. The edits on the sender's screen come back when the manager answers.") }}
+      <ol class="inv-sent-lines">{% for li in w.lines %}
+        <li><span class="d">{{ li.line }}. {{ li.description or "(no description)" }}</span>
+          <span class="c">GL {{ li.gl_code or "none" }} · cost center {{ li.cost_center or "none" }}</span><b>{{ "{:,.2f}".format(li.amount) }}</b></li>
+      {% endfor %}</ol>
+      {% if can("/manager/1", "GET") %}<p class="small muted"><a href="/manager/{{ w.id }}">See the request</a></p>{% endif %}
+    </section>
+    {% elif posting %}
     <section class="card inv-posting">{{ live_ui.head("GL posting") }}{{ live_ui.posting_table(posting) }}</section>
     {% endif %}
     {% include "_invoice_notes.html" %}

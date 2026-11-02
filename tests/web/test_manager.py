@@ -5,6 +5,7 @@ sees only its own requests, and nothing else of AP Coder."""
 from __future__ import annotations
 
 import io
+import re
 from email import message_from_bytes
 from email.policy import default
 
@@ -56,6 +57,9 @@ def test_the_laptop_flow_send_the_email_record_the_answer_back_in_the_queue(stor
     assert store.cost_center_managers()["CC-200"] == {"name": "Bob Manager", "email": "bob@example.com"}
     page = client.get(f"/review/{iid}").text  # parked, waiting for Bob, with the way to the request
     assert "Bob Manager to confirm the cost allocation" in page and f"/manager/{req['id']}" in page
+    # B-1546: the coding shown while it waits is the one sent, not the coding as first read
+    sent = re.search(r'<section class="card inv-posting">.*?</section>', page, re.S).group(0)
+    assert "Coding sent to Bob Manager" in sent and req["lines"][0]["gl_code"] in sent and "CC-200" in sent
     assert "Bob Manager" in client.get("/manager").text  # in the list of requests waiting
     email = client.get(f"/manager/{req['id']}/email.eml")
     msg = message_from_bytes(email.content, policy=default)
@@ -243,3 +247,18 @@ def test_in_a_browser_park_and_send_to_manager_share_one_panel(chromium, store):
         assert on_top
         page.fill("[data-park] input[name=reason]", "buyer to confirm")
         assert page.input_value("[data-park] input[name=reason]") == "buyer to confirm"
+
+
+def test_read_only_sees_the_coding_sent_but_no_link_it_cannot_open(server, store):
+    """B-1546: a Read-only account opening a parked invoice sees the coding sent to the manager, without the link to
+    the request (which only AP and the manager can open)."""
+    client, tokens, bob_id = server
+    _ro_id, ro = _account(store, "rita", "readonly")
+    iid = _first(store)
+    form = {**_coded_form(store, iid), "manager_user": str(bob_id)}
+    assert client.post(f"/review/{iid}/manager", data=form, headers=_as(tokens["clerk"])).json()["ok"]
+    rid = store.waiting_manager_request(iid)["id"]
+    page = client.get(f"/review/{iid}", headers=_as(ro))
+    assert page.status_code == 200 and "Coding sent to Bob" in page.text and f"/manager/{rid}" not in page.text
+    assert client.get(f"/manager/{rid}", headers=_as(ro)).status_code == 403
+    assert f"/manager/{rid}" in client.get(f"/review/{iid}", headers=_as(tokens["clerk"])).text
