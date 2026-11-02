@@ -1715,9 +1715,9 @@ def page_reader_line() -> tuple[str, str]:
         state, _detail = self_test_detail(status.model) if status.usable else ("no model", "")
     except Exception as exc:  # noqa: BLE001 - the summary never stops the start
         return "info", f"Page reader: not checked ({type(exc).__name__})"
-    if not status.usable:
-        return "warn", ("Page reader: OvisOCR2 isn't running in LM Studio: invoices are read by OCR only and wait "
-                        "for a person")  # fmt: skip
+    if not status.usable:  # why, and what to do, as the doctor says it (B-1536)
+        why = (status.note or "OvisOCR2 isn't running in LM Studio").rstrip(". ")
+        return "warn", f"Page reader: {why}. Until then invoices are read by OCR only and wait for a person"
     if state == "passed":
         return "ok", f"Page reader: {status.model} found, self-test passed (reads every page of every invoice)"
     if state == "failed":
