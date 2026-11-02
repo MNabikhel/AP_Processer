@@ -355,6 +355,18 @@ folder removes the old folder's `.venv` once it has checked itself, and the task
 Task Scheduler and change the program and *start in* folder to the new one. An update also stops a `watch` or
 `read-pages` of the older version that is still running, so old code never reads invoices into your data.
 
+### A manager confirms the coding (D-138)
+
+On the invoice, **Send to manager** (beside Park) → their name and email → **Send to manager**. The invoice is
+parked, waiting for them. Download the request email it offers (Outlook opens it as a draft, the invoice attached),
+send it, and when they reply, record the answer on the same page (**Manager confirmations**), keeping their reply.
+Confirmed or sent back, the invoice comes back to the review queue to approve as usual; the screen says if the
+coding changed after it was confirmed. On a company server, a Manager account answers on screen instead.
+
+On an invoice with a PO, the PO match says what is **left to expense** on each PO line and the whole PO after this
+invoice (D-139): a guide, approving over it still works. The **Invoice directory**'s *Next to act* column says who
+each invoice is waiting for (D-140).
+
 ### Two people approving (second approval)
 
 The second approval needs both people to use the same AP Coder database. The simplest set-up is one

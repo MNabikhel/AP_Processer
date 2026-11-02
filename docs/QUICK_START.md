@@ -40,12 +40,6 @@ what's next.
    ERP. The first export is an **Excel workbook**; for a CSV file, click **CSV, one row per GL line** above the list
    first.
 
-Want a manager to confirm the coding first? On the invoice, **Send to manager** (beside Park) → their name and email
-→ **Send to manager**. Download the request email it offers, send it, and when they reply, record the answer on the
-same page (**Manager confirmations**), keeping their reply. The invoice then comes back to the review queue to
-approve. On a PO invoice, the PO match says what is **left to expense** on each PO line (a guide: approving over it
-still works). The **Invoice directory**'s *Next to act* column says who each invoice is waiting for.
-
 Just looking around? **Load demo invoices** on the welcome page adds ten sample invoices; **Remove demo invoices**
 on **Import invoices** takes them away.
 

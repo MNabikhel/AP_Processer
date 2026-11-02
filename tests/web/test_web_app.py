@@ -87,21 +87,21 @@ def test_every_page_in_the_rail_answers(client):
 
 
 NAV_SECTIONS = {  # the breadcrumbs' sections
-    "Work": ["review", "process", "search"],
+    "Work": ["review", "process", "search", "manager"],
     "Close & compliance": ["exports", "month_end", "sales_tax", "statements"],
     "Master data": ["vendors", "purchase_orders", "accounts"],
     "Analytics": ["learning", "spend", "insights", "activity"],
     "System": ["settings", "help"],
 }
 RAIL_ORDER = ["review", "process", "search", "exports", "accounts",  # then More:
-              "month_end", "sales_tax", "statements", "vendors", "purchase_orders", "learning", "spend", "insights",
-              "activity", "settings", "help"]  # fmt: skip
+              "manager", "month_end", "sales_tax", "statements", "vendors", "purchase_orders", "learning", "spend",
+              "insights", "activity", "settings", "help"]  # fmt: skip
 
 
 def test_rail_order_and_sections():
     assert [p.key for p in PAGES] == RAIL_ORDER
     assert {p.key: p.section for p in PAGES} == {k: s for s, keys in NAV_SECTIONS.items() for k in keys}
-    assert [p.key for p in PAGES if p.more] == RAIL_ORDER[5:14]
+    assert [p.key for p in PAGES if p.more] == RAIL_ORDER[5:15]
 
 
 def test_unknown_pages_and_invoices_are_not_found(client):
