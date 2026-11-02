@@ -1232,3 +1232,12 @@ def test_a_stale_reopen_for_correction_does_not_undo_a_rejection(client, store):
     answer = client.post(f"/review/{invoice_id}/correct", data={"reason": "wrong GL"}, headers=PAGE)
     assert store.get_invoice(invoice_id)["status"] == REJECTED
     assert "Reopened" not in flash_text(client, answer.json()) if answer.json().get("redirect") else True
+
+
+def test_an_address_or_form_with_a_value_ap_coder_cant_read_gets_plain_words(client):
+    """B-1534: /review?limit=x, or a form missing a field, answered FastAPI's raw JSON ({"detail":[{"type":
+    "int_parsing",…}]}), which the page shows as nothing: plain words now, as every other error."""
+    page = client.get("/review?limit=x", headers={"accept": "text/html"})
+    assert page.status_code == 422 and "<html" in page.text.lower() and "int_parsing" not in page.text
+    answer = client.post("/purchase-orders/status", data={}, headers=PAGE)
+    assert answer.status_code == 422 and answer.json()["ok"] is False and "detail" not in answer.json()

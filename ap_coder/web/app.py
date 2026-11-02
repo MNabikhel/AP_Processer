@@ -30,6 +30,7 @@ from typing import Any
 
 from dotenv import dotenv_values
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -328,6 +329,17 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
             return JSONResponse({"ok": False, "error": str(exc.detail)}, status_code=exc.status_code)
         return core.render(request, "error.html", "", status_code=exc.status_code, title="Not found",
                            code=exc.status_code, detail=str(exc.detail))  # fmt: skip
+
+    @app.exception_handler(RequestValidationError)
+    async def unreadable(request: Request, exc: RequestValidationError) -> Any:
+        # An address or form with a value AP Coder can't read (a typed ?limit=x, a field left out): plain words, as
+        # every other error, never FastAPI's raw JSON (B-1534).
+        detail = "That address or form has a value AP Coder can't read. Go back and try again."
+        wants_page = request.method == "GET" and "text/html" in request.headers.get("accept", "")
+        if not wants_page:
+            return JSONResponse({"ok": False, "error": detail}, status_code=422)
+        return core.render(request, "error.html", "", status_code=422, title="Not understood", code=422,
+                           detail=detail)  # fmt: skip
 
     @app.exception_handler(OverflowError)
     async def too_large(request: Request, exc: OverflowError) -> Any:
