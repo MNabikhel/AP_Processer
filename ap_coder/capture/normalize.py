@@ -523,10 +523,11 @@ _CURRENCY_STATEMENT = re.compile(
     r"PAYABLE|EXPRIM[EÉ]S?|INDIQU[EÉ]S?|PAYABLES?)\s+)?(?:IN|EN)\s+(?:DOLLARS\s+)?" + _CODE
     + r"|(?:CURRENCY|DEVISE|MONNAIE)\s*[:=]?\s*" + _CODE
 )  # fmt: skip
-# The same said in words: "All prices in Canadian dollars", "Amounts in US dollars", "Montants en dollars canadiens".
+# The same said in words: "All prices in Canadian dollars", "Amounts in US dollars", "Montants en dollars canadiens";
+# or as funds: "All prices are in US funds", "Payable in Canadian funds", "Montants en fonds américains" (B-1517).
 _WORDS_STATEMENT = re.compile(
-    r"(?:IN|EN)\s+(?:(?P<cad>CANADIAN)|(?P<usd>U\.?S\.?|AMERICAN))\s+DOLLARS"
-    r"|DOLLARS\s+(?:(?P<cad2>CANADIENS)|(?P<usd2>AM[EÉ]RICAINS|US)\b)"
+    r"(?:IN|EN)\s+(?:(?P<cad>CANADIAN)|(?P<usd>U\.?S\.?|AMERICAN))\s+(?:DOLLARS|FUNDS)"
+    r"|(?:DOLLARS|FONDS)\s+(?:(?P<cad2>CANADIENS)|(?P<usd2>AM[EÉ]RICAINS|US)\b)"
 )
 # A line on how the supplier may be paid ("Payments in USD accepted", "Wire: ..., USD account 4455"): a code on it
 # is not the currency the invoice is billed in.

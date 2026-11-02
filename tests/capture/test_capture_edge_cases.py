@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 import datetime as dt
 from pathlib import Path
 
@@ -579,3 +581,23 @@ def test_a_grouped_amount_to_four_decimals_is_one_number():
         assert [v for v, _, _ in find_amounts(f"Fuel {text} L")] == [value], text
     assert [v for v, _, _ in find_amounts("Bolts 2 250.5000 501.00")] == [2, 250.5, 501.0]
     assert parse_amount("1,234.56") == 1234.56 and parse_amount("1.3023") == 1.3023
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("All prices are in US funds.", "USD"),
+        ("Amounts shown in U.S. funds", "USD"),
+        ("Payable in US funds", "USD"),
+        ("All amounts in Canadian funds", "CAD"),
+        ("Prices quoted in American funds", "USD"),
+        ("Montants en fonds américains", "USD"),
+        ("Prix en fonds canadiens", "CAD"),
+    ],
+)
+def test_a_currency_said_as_funds_is_read(line, expected):
+    """B-1517: "All prices are in US funds" (a common way to say it in Canada) was not read: a USD invoice was taken
+    as CAD, with only an information note."""
+    from ap_coder.capture.normalize import find_currency
+
+    assert find_currency(f"Widget 100.00\n{line}\nTotal $113.00") == expected
