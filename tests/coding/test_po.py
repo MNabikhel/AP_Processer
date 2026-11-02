@@ -249,3 +249,99 @@ def test_demo_keeps_purchase_orders_that_were_already_there(store, tmp_path):
     load_demo(store)
     remove_demo(store)
     assert len(store.purchase_orders()) == 4  # they were imported before the demo, so they stay
+
+
+# --- Left to expense on each PO line (shown on the review screen, never checked) ------------------------------------
+
+PO_TOTAL = 15945.0  # PO-88213: five lines, line 1 three laptops at 1,450.00
+
+
+def _laptops(quantity, number="NW-2026-0912"):
+    """A Northwind invoice on PO-88213 that bills only ``quantity`` laptops (PO line 1)."""
+    doc = _gt(NW)
+    doc["invoice_number"] = number
+    doc["line_items"] = [{**doc["line_items"][0], "quantity": quantity, "amount": 1450.0 * quantity}]
+    doc["subtotal"] = 1450.0 * quantity
+    return doc
+
+
+def _left(store, doc, invoice_id=None):
+    return match_invoice(InvoiceCoding.model_validate(doc), store, invoice_id)
+
+
+def test_left_to_expense_is_the_po_line_less_the_other_invoices_and_this_one(store, tmp_path):
+    match = _left(store, _laptops(2))
+    line = match.left[1]
+    assert (line.amount, line.open_amount, line.others, line.this_invoice) == (4350.0, None, 0.0, 2900.0)
+    assert line.left == 1450.0
+    assert match.left[2].left == 8900.0  # a PO line this invoice doesn't bill: all of it left
+    assert match.total_left == pytest.approx(PO_TOTAL - 2900.0)
+
+    store.add_invoice(tmp_path / "a.pdf", _laptops(1, "NW-2026-0901"), {})  # in review: counts
+    rejected = store.add_invoice(tmp_path / "b.pdf", _laptops(3, "NW-2026-0902"), {})
+    store.reject_invoice(rejected, "jane")  # not live: doesn't
+    this = store.add_invoice(tmp_path / "c.pdf", _laptops(2), {})
+    match = _left(store, _laptops(2), this)  # this invoice once, not again as another one
+    assert (match.left[1].others, match.left[1].this_invoice, match.left[1].left) == (1450.0, 2900.0, 0.0)
+    assert match.total_left == pytest.approx(PO_TOTAL - 1450.0 - 2900.0)
+
+
+def test_over_the_po_line_is_below_zero_and_the_checks_are_as_before(store, reference, tmp_path):
+    earlier = store.add_invoice(tmp_path / "a.pdf", _laptops(3, "NW-2026-0901"), {})
+    store.approve_invoice(earlier, _laptops(3, "NW-2026-0901"), "jane")
+    match = _left(store, _laptops(2))
+    assert match.left[1].left == -2900.0
+    assert match.total_left == pytest.approx(PO_TOTAL - 4350.0 - 2900.0)
+    assert {c for c in _codes(store, _laptops(2), reference) if c.startswith("PO_")} == {"PO_QTY_OVER"}
+
+
+def test_with_an_open_amount_only_the_invoices_not_exported_yet_count(tmp_path):
+    """The ERP's open amount at import has counted the invoices exported to it: only the ones not exported yet, and
+    this one, come off it. A PO line without one: its amount less every live invoice on it."""
+    store = Store(tmp_path / "ap.db")
+    records = [
+        {"PO Number": "PO-88213", "Vendor": "Northwind IT Solutions Inc.", "Line": 1,
+         "Description": "Dell Latitude 7450 laptop, 32GB RAM", "Qty": 3, "Unit Price": 1450, "Amount": 4350,
+         "Open Amt": "2,900.00"},
+        {"PO Number": "PO-88213", "Vendor": "Northwind IT Solutions Inc.", "Line": 2,
+         "Description": "Dell PowerEdge R760 rack server", "Qty": 1, "Unit Price": 8900, "Amount": 8900,
+         "Open Amt": ""},
+    ]  # fmt: skip
+    rows, _ = rows_from_records(records, map_columns(list(records[0])))
+    store.import_purchase_orders(rows)
+    exported = store.add_invoice(tmp_path / "a.pdf", _laptops(1, "NW-2026-0901"), {})
+    store.approve_invoice(exported, _laptops(1, "NW-2026-0901"), "jane")
+    store.create_export_batch([exported], "csv")
+    store.add_invoice(tmp_path / "b.pdf", _laptops(1, "NW-2026-0902"), {})  # in review, not exported
+
+    match = _left(store, _laptops(1))
+    line = match.left[1]
+    assert (line.open_amount, line.others, line.this_invoice, line.left) == (2900.0, 1450.0, 1450.0, 0.0)
+    assert (match.left[2].open_amount, match.left[2].left) == (None, 8900.0)
+    assert match.total_left == pytest.approx(8900.0)
+    # The exported invoice looked at again: the ERP has counted it, so it doesn't come off the open amount twice.
+    assert _left(store, _laptops(1, "NW-2026-0901"), exported).left[1].left == 1450.0
+
+
+def test_the_po_import_reads_an_optional_open_amount_column():
+    for header in ("Open amount", "Amount open", "Open Amt", "AOPN"):
+        cols = map_columns(["PO", "Description", "Amount", header])
+        assert cols["open_amount"] == header and cols["amount"] == "Amount"
+    assert "open_amount" not in map_columns(["PO", "Description", "Amount"])
+    records = [{"PO": "PO-1", "Description": "Widget", "Amount": "100", "AOPN": "60.50"},
+               {"PO": "PO-1", "Description": "Gadget", "Amount": "40", "AOPN": ""}]  # fmt: skip
+    rows, _ = rows_from_records(records, map_columns(list(records[0])))
+    assert [r["open_amount"] for r in rows] == [60.5, None]
+    assert "open_amount" in template_csv().decode("utf-8-sig").splitlines()[0].split(",")
+
+
+def test_a_database_from_before_the_open_amount_gets_its_column(tmp_path):
+    path = tmp_path / "old.db"
+    Store(path)
+    with sqlite3.connect(path) as conn:  # as an AP Coder before the open amount made it
+        conn.execute("ALTER TABLE po_lines DROP COLUMN open_amount")
+    store = Store(path)
+    row = {"po_number": "PO-1", "vendor_name": "Acme", "line_number": 1, "description": "Widget", "quantity": 1,
+           "unit_price": 100.0, "amount": 100.0, "open_amount": 60.0, "status": "open"}  # fmt: skip
+    store.import_purchase_orders([row, {**row, "line_number": 2, "open_amount": None}])
+    assert [li["open_amount"] for li in store.purchase_order(po_key("PO-1"))["lines"]] == [60.0, None]

@@ -323,6 +323,17 @@ def test_pos_are_uploaded_checked_and_imported(client, busy):
     assert "PO-9001" in text and "PO-9002" not in text
 
 
+def test_the_po_import_takes_an_optional_open_amount_column(client, store):
+    sheet = "PO,Item,Amount,AOPN\nPO-9101,Laptops,2000,1500\nPO-9101,Docks,300,\n"
+    page = upload(client, "/purchase-orders/upload", "pos.csv", sheet.encode())
+    assert '<label class="field">Open amount' in page.text  # the column picker offers it, AOPN recognised
+    assert '<option value="AOPN" selected>' in page.text.split('name="col_open_amount"')[1].split("</select>")[0]
+    form = {"file": page.url.params["file"], "col_po_number": "PO", "col_description": "Item", "col_amount": "Amount",
+            "col_open_amount": "AOPN"}  # fmt: skip
+    follow(client, client.post("/purchase-orders/import", data=form, headers=PAGE))
+    assert [li["open_amount"] for li in store_po(store, "PO-9101")["lines"]] == [1500.0, None]
+
+
 def store_po(store: Store, number: str) -> dict:
     return store.purchase_order(po_mod.po_key(number))
 

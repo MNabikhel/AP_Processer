@@ -18,6 +18,9 @@ compare what is billed with what was ordered (and received):
 
 Matching is local and deterministic; nothing here calls Azure.
 
+The match also says what is left to expense on each PO line after the invoice (``PoMatch.left``, ``LineLeft``): shown on
+the review screen, never a check, so an invoice without a PO or over what is left is approved as before.
+
 Entry points: ``po_findings`` (the checks of an invoice), ``match_invoice`` (the line by line match the review
 screen shows), ``rows_from_records`` and ``map_columns`` (the import), ``billed_by_line``.
 """
@@ -61,6 +64,8 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "quantity": ("quantity", "qty", "orderedqty", "qtyordered", "quantityordered", "ordered"),
     "unit_price": ("unitprice", "price", "unitcost", "rate", "prixunitaire"),
     "amount": ("amount", "linetotal", "extendedamount", "extended", "total", "lineamount", "netamount"),
+    # Optional: what the ERP has left open on the line (JD Edwards' AOPN), for what is left to expense.
+    "open_amount": ("openamount", "amountopen", "openamt", "amtopen", "aopn", "openbalance"),
     "received_quantity": ("receivedquantity", "received", "qtyreceived", "receivedqty", "quantityreceived",
                           "receipts", "recu"),
     "gl_code": ("glcode", "gl", "glaccount", "account", "accountcode", "costcode", "expenseaccount"),
@@ -69,7 +74,7 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
 }  # fmt: skip
 REQUIRED_COLUMNS = ("po_number", "description")
 TEMPLATE_COLUMNS = (
-    "po_number", "vendor_name", "line_number", "description", "quantity", "unit_price", "amount",
+    "po_number", "vendor_name", "line_number", "description", "quantity", "unit_price", "amount", "open_amount",
     "received_quantity", "gl_code", "cost_center", "status",
 )  # fmt: skip
 
@@ -134,6 +139,7 @@ def rows_from_records(records: list[dict[str, Any]], columns: dict[str, str]) ->
                 "unit_price": price,
                 "amount": amount,
                 "amount_only": amount_only,
+                "open_amount": parse_amount(get("open_amount")),
                 "received_quantity": parse_amount(get("received_quantity")),
                 "gl_code": _text(get("gl_code")),
                 "cost_center": _text(get("cost_center")),
@@ -221,6 +227,26 @@ class LineMatch:
 
 
 @dataclass
+class LineLeft:
+    """What is left to expense on one PO line after this invoice, in net amounts (credits give back). Without an open
+    amount: the PO line's amount less what the other live invoices bill on it (``billed_by_line``) and this invoice.
+    With one (what the ERP had left on the line when the POs were imported): that less the other invoices not exported
+    yet and this invoice, as the ERP has counted the exported ones (this one too, once exported)."""
+
+    po_line: int
+    amount: float  # the PO line's amount
+    open_amount: float | None  # what the ERP had left on the line at the PO import; None: the import had no such column
+    others: float  # the other live invoices on the line (with an open amount: those not exported yet)
+    this_invoice: float
+
+    @property
+    def left(self) -> float:
+        """Below zero: over by that much (said, never a check)."""
+        start = self.amount if self.open_amount is None else self.open_amount
+        return round(start - self.others - self.this_invoice, 2)
+
+
+@dataclass
 class PoMatch:
     po_number: str
     found: bool
@@ -229,10 +255,16 @@ class PoMatch:
     other_invoices: list[dict[str, Any]] = field(default_factory=list)
     billed_before: float = 0.0  # subtotal of other invoices on this PO
     findings: list[Finding] = field(default_factory=list)
+    left: dict[int, LineLeft] = field(default_factory=dict)  # every line of the PO, by its line number
 
     @property
     def coding_differs(self) -> list[LineMatch]:
         return [m for m in self.lines if "coding" in m.problems]
+
+    @property
+    def total_left(self) -> float:
+        """What is left to expense on the whole PO after this invoice: its lines' together."""
+        return round(sum(line.left for line in self.left.values()), 2)
 
 
 def po_label(number: str) -> str:
@@ -267,7 +299,8 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
     cost_centers = bool(store.list_accounts("cost_centers"))
     po_lines = po["lines"]
     by_line = {pl["line_number"]: pl for pl in po_lines}
-    others = store.po_invoices(key, exclude_id=exclude_invoice_id)
+    live = store.po_invoices(key)
+    others = [o for o in live if o["id"] != exclude_invoice_id]
     result.other_invoices = others
     result.billed_before = sum(float(o["coding"].get("subtotal") or 0) for o in others)
     billed_before = billed_by_line(po, others)
@@ -276,6 +309,7 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
     items = [li.model_dump() for li in coding.line_items]
     billed_now: dict[int, float] = {}
     billed_now_amount: dict[int, float] = {}
+    this_invoice: dict[int, float] = {}  # this invoice's net amount on each PO line
     for li, po_line in zip(items, po_lines_billed(items, po_lines), strict=True):
         m = LineMatch(li["line_number"], li["description"], billed_quantity(li), float(li["unit_price"]))
         m.amount = float(li["amount"] or 0)
@@ -294,10 +328,12 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
         m.billed_before_amount = billed_before_amount.get(pl["line_number"], 0.0)
         m.po_amount, m.amount_only = pl["amount"], bool(pl.get("amount_only"))
         m.po_gl, m.po_cc = pl.get("gl_code") or "", (pl.get("cost_center") or "") if cost_centers else ""
+        this_invoice[m.po_line] = this_invoice.get(m.po_line, 0.0) + m.amount
         if m.amount_only:
             _amount_findings(m, li, result, billed_now_amount)
         else:
             _line_findings(m, li, result, billed_now)
+    _left_to_expense(result, po, live, billed_before_amount, this_invoice, exclude_invoice_id)
 
     subtotal = float(coding.subtotal or 0)
     total = float(po.get("total") or 0)
@@ -320,6 +356,30 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
              + (" ordered and received" if three_way else " ordered"), None)
         )  # fmt: skip
     return result
+
+
+def _left_to_expense(
+    result: PoMatch,
+    po: dict[str, Any],
+    live: list[dict[str, Any]],
+    billed_before: dict[int, float],
+    this_invoice: dict[int, float],
+    invoice_id: int | None,
+) -> None:
+    """``result.left``: each PO line's ``LineLeft``, from what the other invoices bill on it (``billed_before``, in
+    amounts) and this one; with an open amount, the invoices exported to the ERP don't count (this one included)."""
+    not_exported: dict[int, float] = {}
+    exported = any(o["id"] == invoice_id and o["export_batch"] is not None for o in live)
+    if any(pl["open_amount"] is not None for pl in po["lines"]):
+        waiting = [o for o in live if o["export_batch"] is None and o["id"] != invoice_id]
+        not_exported = billed_by_line(po, waiting, amounts=True)
+    for pl in po["lines"]:
+        n, opened = pl["line_number"], pl["open_amount"]
+        if opened is None:
+            result.left[n] = LineLeft(n, pl["amount"], None, billed_before.get(n, 0.0), this_invoice.get(n, 0.0))
+        else:
+            now = 0.0 if exported else this_invoice.get(n, 0.0)
+            result.left[n] = LineLeft(n, pl["amount"], opened, not_exported.get(n, 0.0), now)
 
 
 def _short(text: str, n: int = 50) -> str:

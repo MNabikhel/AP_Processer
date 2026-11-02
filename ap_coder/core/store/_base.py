@@ -602,6 +602,11 @@ class StoreCore:
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(erp_invoices)")}
         if columns and "copies" not in columns:
             conn.execute("ALTER TABLE erp_invoices ADD COLUMN copies INTEGER NOT NULL DEFAULT 1")
+        # A PO line keeps what the ERP had left open on it when the POs were imported (the import's optional open
+        # amount), for what is left to expense on the review screen (looked for whatever the version).
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(po_lines)")}
+        if "open_amount" not in columns:
+            conn.execute("ALTER TABLE po_lines ADD COLUMN open_amount REAL")
         # Template snapshots go by the order of approval (``seq``), not by a time to the second (B-780): a table made
         # before it (this version, unreleased) is rebuilt, its snapshots kept in the order they were taken.
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(template_snapshots)")}

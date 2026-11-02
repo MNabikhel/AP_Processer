@@ -896,7 +896,10 @@ FAQ: list[tuple[str, str]] = [
         "Import your open POs (one row per PO line) on the Purchase orders page. When an invoice quotes a PO "
         "number, each line is paired with the PO line it bills for and price, quantity ordered and, if the file "
         "has it, quantity received are compared, counting earlier invoices on the same PO. Re-import the ERP "
-        "export regularly to keep received quantities current.",
+        "export regularly to keep received quantities current. The review screen also shows what is left to "
+        "expense on each PO line: its amount less this and the other invoices on it, or, if the file has an open "
+        "amount column (JD Edwards' AOPN), that amount less this invoice and the ones not exported yet. It is a "
+        "guide: an invoice over it can still be approved.",
     ),
     (
         "I made a mistake. Can I undo it?",
