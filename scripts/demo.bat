@@ -10,6 +10,8 @@ rem  your own data folder is never touched. The run sheet: docs\DEMO_RUN_SHEET.m
 rem ===========================================================================================
 setlocal
 set "AP_PRIVATE_DIR=%USERPROFILE%\APCoder-demo"
+rem  A demo: it never cleans up your own AP Coder folder or moves its desktop shortcut (B-1510).
+set "AP_DEMO=1"
 rem  The per-user settings (the reviewer name, the installs) as a copy for the demo, kept beside the real
 rem  file: a name saved in Settings during the demo never renames your own AP Coder (B-1505).
 if not exist "%USERPROFILE%\.ap_coder\demo_settings.json" if exist "%USERPROFILE%\.ap_coder\settings.json" copy /y "%USERPROFILE%\.ap_coder\settings.json" "%USERPROFILE%\.ap_coder\demo_settings.json" >nul

@@ -1507,7 +1507,7 @@ def ensure_shortcut() -> str:
     the current install: (re)written when this install became the current one, or when an earlier try failed (then
     it is tried again on the next start). One the person deleted, or declined (--installer --no-shortcut), is not
     put back while the current install stays the same. Returns a summary line ("" = nothing to say)."""
-    if not (WINDOWS or MAC):
+    if not (WINDOWS or MAC) or demo_start():  # a demo leaves the pilot tester's own shortcut alone (B-1510)
         return ""
     settings = paths.read_user_settings()
     if settings.get("desktop_shortcut") is False:
@@ -2144,9 +2144,18 @@ def legacy_folders() -> list[str]:
     return [str(f) for f in [old_shortcut_folder(), *running.stopped, *upgrade.nearby_installs(ROOT)] if f]
 
 
+def demo_start() -> bool:
+    """Started by scripts/demo.bat (AP_DEMO=1): a demo, perhaps unzipped into a folder of its own, beside the pilot
+    tester's own AP Coder. It never cleans up another install or moves the desktop shortcut (B-1510)."""
+    return os.environ.get("AP_DEMO", "").strip() == "1"
+
+
 def older_installs(ident: dict, legacy: list[str]) -> list[Path]:
     """Every other install this one replaces (on record, or AP Coder 0.1's): only one certainly older than this one, or
-    another copy of this very build; never one that is newer or whose build can't be ordered with this one (B-551)."""
+    another copy of this very build; never one that is newer or whose build can't be ordered with this one (B-551).
+    None for a demo (``demo_start``): the install on record is the pilot tester's own."""
+    if demo_start():
+        return []
     folders = [Path(e["folder"]) for e in paths.installs() if not paths.same_folder(e["folder"], ROOT)]
     folders += upgrade.legacy_installs(ROOT, legacy)
     found: list[Path] = []

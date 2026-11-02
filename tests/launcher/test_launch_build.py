@@ -480,3 +480,26 @@ def test_an_older_venv_is_made_again_only_after_old_dashboards_stopped(launch, m
     monkeypatch.setattr(launch, "ensure_venv", lambda rebuild=False: order.append("venv") or "recreated")
     monkeypatch.setattr(launch.subprocess, "call", lambda cmd: 0)
     assert launch.bootstrap([]) == 0 and order == ["take_over", "venv"]
+
+
+def test_the_demo_never_cleans_up_or_takes_over_the_pilot_testers_own_install(launch, tmp_path, monkeypatch):
+    """B-1510: demo.bat's settings are a copy of the pilot tester's, so a demo unzipped into a folder of its own (the
+    run sheet's step 1) found their own AP Coder on record as another copy of the same build: its first start deleted
+    that folder and moved the desktop shortcut to the demo. A demo start (AP_DEMO=1) leaves both alone."""
+    own = _code(tmp_path / "own AP Coder", stamp="0a0a0a0 2026-10-01T10:00:00+00:00\n")
+    paths.record_install(paths.install_identity(own), current=True)
+    paths.write_user_settings(desktop_shortcut=True, shortcut_target=str(own / "APProcessor.bat"))
+    mine = launch.identity()
+    assert launch.older_installs(mine, []) == [own]  # the usual double-click replaces it
+    monkeypatch.setenv("AP_DEMO", "1")
+    monkeypatch.setattr(launch, "WINDOWS", True)
+    monkeypatch.setattr(launch, "desktop", lambda: tmp_path)
+    monkeypatch.setattr(launch, "write_shortcut", lambda folder: pytest.fail("the demo rewrote the desktop shortcut"))
+    assert launch.older_installs(mine, []) == []
+    assert launch.ensure_shortcut() == ""
+    assert paths.read_user_settings()["shortcut_target"] == str(own / "APProcessor.bat")
+
+
+def test_demo_bat_marks_its_start_as_a_demo():
+    text = (Path(__file__).resolve().parents[2] / "scripts" / "demo.bat").read_text()
+    assert 'set "AP_DEMO=1"' in text
