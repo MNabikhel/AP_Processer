@@ -31,6 +31,9 @@ LABELS: dict[str, list[tuple[str, float]]] = {
         (r"(?:no|n\s?°|nº|n|numero)\.?\s*(?:de\s*)?(?:la\s*)?note\s*de\s*credit", 1.0), (r"credit\s*(?:note|memo)\b(?!\s*(?:date|total))", 0.6), (rf"ref(?:erence)?\.?\s*{_NO}?", 0.3), (r"(?:no\b\.?|n\s?°|nº|#)(?=\s*:?\s*[a-z]{0,3}-?\d)", 0.35),
         # A credit note's title with its number: "Note de crédit 051527-CR", "Avis de crédit AC-104".
         (r"(?:note|avis)\s*de\s*credit(?=\s*[:#]?\s*[a-z]{0,4}-?\d)", 0.6),
+        # A Quebec credit note's number: "No de note", "No. de la note", "Avoir no", "N° d'avoir" (B-1541).
+        (r"(?:no|n\s?°|nº|numero)\.?\s*(?:de\s*)?(?:la\s*)?note\b(?!\s*(?:de\s*(?:livraison|frais|service)))", 0.85),
+        (rf"avoir\s*{_NO}", 0.95), (r"(?:no|n\s?°|nº|numero)\.?\s*(?:de\s*)?(?:d\s*['’]?\s*)?avoir\b", 0.95),
     ],
     "po_number": [
         (r"p\.?\s?o\.?(?![-\d])\s*(?!box\b|b\.?\s?p)(?:no\b\.?|#|number|n\s?°)?", 0.9), (r"purchase\s*order(?:\s*" + _NO + ")?", 1.0),
@@ -53,7 +56,9 @@ LABELS: dict[str, list[tuple[str, float]]] = {
     ],
     "subtotal": [
         (r"sub\s*-?\s*total", 1.0), (r"sous\s*-?\s*total", 1.0), (r"net\s*amount", 0.9), (r"montant\s*net", 0.9),
-        (r"total\s*(?:before|excl\.?|excluding|hors)\s*(?:tax(?:es)?|taxes)", 0.95), (r"amount\s*before\s*tax", 0.95),
+        (r"total\s*(?:before|excl\.?|excluding|hors)\s*(?:tax(?:es)?|taxes|(?:gst\s*/\s*)?hst|gst|pst|qst)", 0.95),
+        (r"amount\s*before\s*tax", 0.95), (r"montant\s*(?:avant|hors|sans)\s*taxes?", 0.95),
+        (r"taxable\s*(?:amount|total)", 0.7),  # below a subtotal on a mixed invoice: the weaker label (B-1539)
         (r"net\s*total", 0.85), (r"total\s*ht\b", 0.9), (r"total\s*(?:avant|sans)\s*taxes?", 0.95),
         (r"total\s*partiel", 0.9), (r"merchandise\s*total", 0.8), (r"total\s*services", 0.5), (r"total\s*sales?\b(?!\s*tax)(?!\s*\(?\s*incl)", 0.8),
         (r"total\s*(?:of\s*)?(?:fees|charges|services|goods|merchandise|labou?r|materials)\b", 0.65),

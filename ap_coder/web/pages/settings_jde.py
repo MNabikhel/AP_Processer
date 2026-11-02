@@ -11,6 +11,7 @@ per row); a row without a GL code (or vendor) is dropped, which is how a row is 
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from fastapi import File, Form, Request, UploadFile
@@ -377,11 +378,14 @@ async def save_api(request: Request) -> JSONResponse:
     def text(name: str) -> str:
         return str(form.get(name) or "").strip()
 
-    def number(name: str, default: float) -> float:
+    def number(name: str, default: float, low: float = 0, high: float = 1e6) -> float:
         try:
-            return float(text(name) or default)
+            value = float(text(name) or default)
         except ValueError:
             raise ValueError(f"The {name.replace('_', ' ')} must be a number.") from None
+        if not (math.isfinite(value) and low <= value <= high):  # "1e309" is infinity: never an hour (B-1535)
+            raise ValueError(f"The {name.replace('_', ' ')} must be a number from {low:g} to {high:g}.")
+        return value
 
     try:
         timeout = number("timeout", jde_ais.DEFAULT_TIMEOUT)
@@ -392,9 +396,9 @@ async def save_api(request: Request) -> JSONResponse:
             username=text("username"), password=str(form.get("password") or ""),
             forget_password=bool(form.get("forget_password")), device_name=text("device_name"),
             auth_mode=text("auth_mode") or jde_ais.TOKEN, ca_file=text("ca_file"), timeout=timeout,
-            step1=bool(form.get("step1")), step2=bool(form.get("step2")), sync_hour=int(number("sync_hour", 2)),
+            step1=bool(form.get("step1")), step2=bool(form.get("step2")), sync_hour=int(number("sync_hour", 2, 0, 23)),
             company=text("company"), po_order_type=text("po_order_type").upper(),
-            voucher_days=int(number("voucher_days", 730)), shared_network=bool(form.get("shared_network")),
+            voucher_days=int(number("voucher_days", 730, 1, 3650)), shared_network=bool(form.get("shared_network")),
             actor=reviewer(),
         )  # fmt: skip
     except ValueError as exc:

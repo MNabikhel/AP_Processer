@@ -1167,3 +1167,77 @@ def test_in_a_browser_the_unit_price_of_a_quantity_1_line_follows_its_amount_onl
     amount.fill("12.5")
     amount.blur()
     assert price.input_value() == "12.5" and errors == []
+
+
+def _queue_reason(client: TestClient, invoice_id: int) -> str:
+    page = client.get("/review").text
+    row = re.search(rf'href="/review/{invoice_id}[^"]*".*?<div class="c-status"[^>]*>(.*?)</div>', page, re.S)
+    assert row, "the invoice is not in the queue"
+    return " ".join(re.sub(r"<[^>]+>", " ", row.group(1)).split())
+
+
+def test_the_queue_names_what_the_review_screen_flagged(client, store):
+    """B-1522: once the review screen's check flagged an invoice (JD Edwards switched on, not set up), the queue said
+    only "Flagged by the checks": a flagged invoice's reasons were its checks as first stored, which said nothing of
+    JD Edwards. Its reasons are today's checks now; and a flag whose cause is gone says to open it again."""
+    invoice_id = clean_invoice(client, store)
+    store.set_setting("show_jde_settings", "1")
+    assert not check(client, invoice_id)["allow"]
+    assert store.get_invoice(invoice_id)["requires_review"]
+    reason = _queue_reason(client, invoice_id)
+    assert "to fix" in reason and "Flagged by the checks" not in reason, reason
+    store.set_setting("show_jde_settings", "0")
+    reason = _queue_reason(client, invoice_id)  # today's checks: the JD Edwards errors are gone
+    assert "to fix" not in reason and "Flagged by the checks" not in reason, reason
+
+
+def test_in_a_browser_ticking_approve_anyway_by_its_words_never_scrolls_either(browser, store):
+    """B-1523: clicking the words "Approve anyway, despite 1 error" (the label, not the box) still scrolled the page by
+    about 390 px at 1366x768, the warning being approved over off the screen: the label's own focus scrolled."""
+    page, errors = _open_review(browser, store, "Cascade", viewport={"width": 1366, "height": 768})
+    page.wait_for_selector("[name=override]")
+    page.wait_for_timeout(800)  # the check made on opening the page
+    before = page.evaluate("window.scrollY")
+    label = page.locator("[data-live=bar] .inv-override").bounding_box()
+    with page.expect_response(lambda r: r.url.endswith("/check")):
+        page.mouse.click(label["x"] + label["width"] - 20, label["y"] + label["height"] / 2)  # on the words
+    wait_until(page, lambda: page.evaluate("document.activeElement.name") == "override_reason")
+    page.wait_for_timeout(500)
+    assert page.evaluate("document.querySelector('[data-live=bar] [name=override]').checked")
+    assert abs(page.evaluate("window.scrollY") - before) < 40 and errors == []
+
+
+def test_a_huge_line_amount_is_refused_in_words_not_a_server_error(client, store):
+    """B-1532: a 17-digit line amount (a reference pasted into an Amount box) gave a 500 on the review screen's check
+    and on Approve (OverflowError in the line-tax solver); smaller and larger ones were refused in words."""
+    invoice_id = clean_invoice(client, store)
+
+    def huge(rows):
+        rows[0]["amount"] = "92233720368547758"
+        return rows
+
+    answer = client.post(f"/review/{invoice_id}/check", data=form_of(store, invoice_id, huge), headers=PAGE)
+    assert answer.status_code == 200 and not answer.json()["allow"]
+    answer = client.post(f"/review/{invoice_id}/approve", data=form_of(store, invoice_id, huge), headers=PAGE)
+    assert answer.status_code in (200, 400, 409) and "Something went wrong" not in answer.text
+
+
+def test_a_stale_reopen_for_correction_does_not_undo_a_rejection(client, store):
+    """B-1533: "Reopen for correction" (an approved invoice's button) posted from a page drawn before the invoice was
+    rejected reopened the rejected invoice and said "Reopened: correct it and approve it again."""
+    from ap_coder.core.store import REJECTED
+
+    invoice_id = clean_invoice(client, store)
+    store.reject_invoice(invoice_id, "Ann", "not ours")
+    answer = client.post(f"/review/{invoice_id}/correct", data={"reason": "wrong GL"}, headers=PAGE)
+    assert store.get_invoice(invoice_id)["status"] == REJECTED
+    assert "Reopened" not in flash_text(client, answer.json()) if answer.json().get("redirect") else True
+
+
+def test_an_address_or_form_with_a_value_ap_coder_cant_read_gets_plain_words(client):
+    """B-1534: /review?limit=x, or a form missing a field, answered FastAPI's raw JSON ({"detail":[{"type":
+    "int_parsing",…}]}), which the page shows as nothing: plain words now, as every other error."""
+    page = client.get("/review?limit=x", headers={"accept": "text/html"})
+    assert page.status_code == 422 and "<html" in page.text.lower() and "int_parsing" not in page.text
+    answer = client.post("/purchase-orders/status", data={}, headers=PAGE)
+    assert answer.status_code == 422 and answer.json()["ok"] is False and "detail" not in answer.json()

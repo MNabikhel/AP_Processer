@@ -181,7 +181,9 @@ def finalise_coding(
         accounts = store.bank_accounts()
         if accounts and not coding.pay_from_account:
             coding.pay_from_account = banks.choose(
-                accounts, coding.currency, store.last_pay_from(vendor_key(coding.vendor_name))
+                accounts,
+                coding.currency,
+                store.last_pay_from(key or vendor_key(coding.vendor_name)),  # B-1515
             )
         bank_findings = banks.findings(coding.pay_from_account, coding.currency, accounts)
     output = coding.to_output()
@@ -212,7 +214,7 @@ def finalise_coding(
         + payment_findings(
             coding.to_output(),
             store.default_terms_days() if store is not None else 30,
-            vendor_terms=store.vendor_terms(vendor_key(coding.vendor_name)) if store is not None else "",
+            vendor_terms=store.vendor_terms(key or vendor_key(coding.vendor_name)) if store is not None else "",
             received=received,
         ),
         po_findings=po_findings(coding, store, exclude_invoice_id) if store is not None else None,
@@ -263,6 +265,12 @@ DAMAGED_PICTURE = ("UnidentifiedImageError",)
 DAMAGED_PDF = ("FileDataError", "EmptyFileError")
 
 
+def _picture(path: Path) -> bool:
+    from ..capture.layout import IMAGE_EXTENSIONS
+
+    return path.suffix.lower() in IMAGE_EXTENSIONS
+
+
 def plain_error(exc: Exception, path: Path) -> str:
     """What AP reads when an invoice can't be processed: a damaged picture or PDF said plainly with what to do (the
     technical detail is in the log), anything else as the error it is."""
@@ -274,7 +282,10 @@ def plain_error(exc: Exception, path: Path) -> str:
         size = f" ({megapixels:,.{0 if megapixels >= 10 else 1}f} megapixels)" if pixels else ""
         return (f"{path.name} is too large a picture{size} to be opened safely. Take the photo at the phone's normal "
                 "resolution (12 megapixels is plenty), or scan the page.")  # fmt: skip
-    if name in DAMAGED_PICTURE or (name == "OSError" and "image file" in str(exc)):
+    # Pillow's own errors on a picture it can't decode (an OSError without a system error number, a TypeError such as
+    # "Missing dimensions", a SyntaxError): the file, not the computer (B-1528).
+    pillow = name in ("OSError", "TypeError", "SyntaxError") and getattr(exc, "errno", None) is None
+    if name in DAMAGED_PICTURE or (name == "OSError" and "image file" in str(exc)) or (pillow and _picture(path)):
         return (f"{path.name} can't be opened as a picture: the file is damaged or not really a {kind}. Ask the "
                 "vendor for a new copy, or scan it again.")  # fmt: skip
     if name in DAMAGED_PDF:
@@ -364,7 +375,7 @@ class InvoicePipeline:
         from .lessons import prompt_lines
 
         learned = prompt_lines(
-            getattr(self, "store", None), coding.vendor_name, fields="lines"
+            getattr(self, "store", None), coding.vendor_name, gst=coding.gst_hst_registration_number, fields="lines"
         )  # AP's corrections, with its reasons
         if learned:
             history = "\n".join([history, "AP's lessons for this vendor:", *learned]).strip()

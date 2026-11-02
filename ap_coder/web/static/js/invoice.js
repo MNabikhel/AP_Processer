@@ -2381,6 +2381,23 @@ function focusNotReady() {
   } else if (!box.checked) box.focus();
 }
 
+// A click on the words of "Approve anyway" (its label, not the box): the label's own focus scrolled the page by a few
+// hundred pixels, the warning being approved over off the screen. Ticked here, focused without scrolling (B-1523).
+document.addEventListener(
+  "click",
+  (e) => {
+    const label = e.target.closest?.(".inv-override");
+    if (!label || e.target.matches?.("input")) return;
+    const box = label.querySelector("input[type=checkbox]");
+    if (!box || box.disabled) return;
+    e.preventDefault();
+    box.checked = !box.checked;
+    box.focus({ preventScroll: true });
+    box.dispatchEvent(new Event("change", { bubbles: true }));
+  },
+  true,
+);
+
 /** Nothing focused hides under the approve bar, however tall it is (B-742): the page's scroll padding is its height. */
 function padForBar() {
   const bar = document.querySelector(".inv-actionbar");

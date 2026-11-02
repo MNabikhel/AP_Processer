@@ -84,6 +84,19 @@ def test_the_windows_launcher_outside_its_folder_says_so():
     assert '"%CD%"' in message
 
 
+def test_a_crash_with_a_negative_exit_code_still_stops_with_the_message():
+    """B-1537: ``if errorlevel 1`` is true for codes of 1 or more only. A Python that crashes (0xC0000005 is
+    -1073741819) and winget's failures (HRESULTs, all negative) passed as success: the window closed with no message,
+    and a .venv Python that crashed on --venv-ok was used anyway. Every exit code the launcher acts on is compared
+    with 0."""
+    text = bat()
+    assert "if errorlevel 1" not in text and "if not errorlevel 1" not in text
+    assert "scripts\\launch.py %*\nif %errorlevel% neq 0 goto :fail" in text
+    assert "--venv-ok >nul 2>&1\nif %errorlevel% equ 0 set PY=" in text
+    assert "--accept-source-agreements\nif %errorlevel% neq 0 echo winget could not install Python" in text
+    assert "where winget >nul 2>&1\nif %errorlevel% neq 0 exit /b 0" in text
+
+
 def test_started_inside_explorers_view_of_the_zip_stops_with_what_to_do(launch, tmp_path, monkeypatch, capsys):
     """Explorer unpacked the whole ZIP to %TEMP%\\Temp1_<name>.zip: nothing is set up there (Windows deletes it)."""
     monkeypatch.setattr(launch, "WINDOWS", True)

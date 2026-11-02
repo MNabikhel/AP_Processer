@@ -7,7 +7,9 @@ layer, OCR with confidence, boxes on the page, agreement between readers).
 No single reader is right on every invoice. Accuracy comes from three things together:
 
 1. **Several independent readers** of every header field:
-   - the PDF's own text layer (exact) or OCR words with their confidence;
+   - the PDF's own text layer (exact) or OCR words with their confidence; a page that is one picture is read by
+     OCR even when it carries text: a scanner's "searchable PDF" (its own OCR, drawn invisibly) or a stamp of a
+     few words is not the page's text (`layout.text_is_the_page`, B-1511, B-1512);
    - a rule reader (labels, patterns and positions, English and French);
    - the supplier's learned template, once AP has confirmed a few invoices;
    - the **page reader**, OvisOCR2 in LM Studio, which transcribes the page image on its own, on every page
@@ -533,7 +535,8 @@ used to tune the readers (s212-0000, and s39 and s40 cases, among them the ones 
 
 It read the invoice number OCR made "p.0", the due date, PO and HST OCR missed, and the line tables OCR could not
 put in rows. These readings also found two fusion bugs, fixed: a PO two readers wrote differently ("BC-15.332" /
-"BC-15332") was verified (now: never verified, the plainer form shown), and a field a third reader agreed on could
+"BC-15332") was verified (now: never verified, the plainer form shown on a scan, the PDF's own text on a digital
+PDF, B-1543), and a field a third reader agreed on could
 lose confidence (now: the pattern without the page reader is the floor until patterns with it are measured).
 Four phone photos (no known answers) were checked by hand: currency, dates and totals verified where both read
 them; the one total both misread (a year in "Incoterm® 2010") stays marked Check.

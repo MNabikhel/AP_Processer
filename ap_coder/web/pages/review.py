@@ -123,6 +123,8 @@ def due_note(ai: dict[str, Any], default_days: int, vendor_terms: str = "") -> t
     return f"Due {p.due:%b} {p.due.day}", ""
 
 
+TO_PICK_CODES = frozenset({"GL_UNASSIGNED", "CC_UNASSIGNED"})  # a line to code: "Pick a GL account…" says it
+FLAGGED_BEFORE = "Flagged when it was last checked: open it to check it again"  # (B-1522)
 _TO_FIX: dict[int, tuple[int, tuple[str, int]]] = {}  # ``_to_fix`` by invoice id: (what it was asked, the answer)
 _PAY_FROM: dict[int, tuple[int, str]] = {}  # the Pay from part of ``attention`` by invoice id: (asked, why)
 
@@ -147,7 +149,14 @@ def _to_fix(invoice_id: int, final: str | None, ai: str | None, validation: str 
     answer = (
         codes_to_pick(coded.get("line_items"), cost_centers, hint=False).removesuffix(" to approve"),
         errors,
-        sum(1 for i in issues if needs_a_person(i.get("severity"), i.get("code"))) - errors,
+        # the lines to code are said in "Pick a GL account…", never counted again as warnings (B-1530)
+        sum(
+            1
+            for i in issues
+            if needs_a_person(i.get("severity"), i.get("code"))
+            and not (i.get("severity") == "warning" and i.get("code") in TO_PICK_CODES)
+        )
+        - errors,
     )
     _TO_FIX[invoice_id] = (asked, answer)
     return answer
@@ -166,7 +175,7 @@ def attention(store: Store, reference: ReferenceData | None, pending: list[dict[
     from ap_coder.coding.bulk import issues_today
 
     if today is None:
-        today = issues_today(store, [i["id"] for i in pending if not i.get("requires_review")], reference)
+        today = issues_today(store, [i["id"] for i in pending], reference)
 
     cost_centers = reference is not None and uses_cost_centers(reference)
     accounts = store.bank_accounts()
@@ -211,7 +220,8 @@ def attention(store: Store, reference: ReferenceData | None, pending: list[dict[
         ]
         why = [w for w in why if w]
         if why or inv.get("requires_review"):
-            out[inv["id"]] = (why[0][0].upper() + "; ".join(why)[1:]) if why else "Flagged by the checks"
+            # flagged when its review screen last checked it, nothing standing today: opening it checks it again
+            out[inv["id"]] = (why[0][0].upper() + "; ".join(why)[1:]) if why else FLAGGED_BEFORE
     return out
 
 
@@ -383,8 +393,9 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
 
     threshold = settings.engine.review_threshold
     pending = [i for i in invoices if i["status"] == REVIEW]
-    # The checks as they are now, of the invoices not flagged (a flagged one is never Ready nor offered in bulk).
-    today = issues_today(store, [i["id"] for i in pending if not i["requires_review"]], reference, settings)
+    # The checks as they are now: a flagged invoice is never Ready nor offered in bulk, but its reasons are today's
+    # too, never only "flagged" (B-1522).
+    today = issues_today(store, [i["id"] for i in pending], reference, settings)
     reasons = attention(store, reference, pending, threshold, today)  # Ready means its Approve is open
     reasons.update(draft_reasons(request, pending))  # an invoice with edits kept: what its screen says (B-996)
     flagged = [i for i in pending if i["id"] in reasons]

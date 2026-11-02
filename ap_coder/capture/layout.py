@@ -38,6 +38,9 @@ IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"} | HEIF_EXT
 # JPEG 2000, ...) stays shut: a file named .png is never handed to them (D-109).
 PICTURE_FORMATS = ("JPEG", "MPO", "PNG", "TIFF", "WEBP", "GIF", "BMP", "HEIF")
 MIN_TEXT_WORDS = 5  # fewer words than this on a page means it is a scan
+# A page that is one picture (a scan) with fewer words of visible text than this carries a stamp, not its text: a
+# scanner's header, a mailroom's "received" line (B-1512). It is read by OCR.
+STAMP_WORDS = 25
 OCR_DPI = 200
 READ_PAGES = 20  # a file's pages read on this computer (``build_layout``): the rest are said not read (B-267)
 OCR_MAX_SIDE = 2400
@@ -907,6 +910,33 @@ def _looks_scanned(page: Any) -> bool:
     return any(b and (b[2] - b[0]) * (b[3] - b[1]) >= 0.25 * area for b in boxes)
 
 
+def _one_picture(page: Any) -> bool:
+    """The page is one picture over (almost) all of it: a scan, whatever text lies on it."""
+    area = max(page.rect.width * page.rect.height, 1.0)
+    try:
+        boxes = [info.get("bbox") for info in page.get_image_info()]
+    except Exception:  # noqa: BLE001 - an image PyMuPDF can't describe: not taken for a scan here
+        return False
+    return any(b and (b[2] - b[0]) * (b[3] - b[1]) >= 0.8 * area for b in boxes)
+
+
+def text_is_the_page(page: Any, text_page: PageLayout) -> bool:
+    """Whether a PDF page's text layer is what the page shows (a digital page, read exactly), rather than a scan
+    with text on it: a scanner's "searchable PDF", whose own OCR is drawn invisibly under the picture, slips and all
+    (B-1511), or a stamp of real text on the scan (B-1512). Those are read as the scans they are."""
+    if len(text_page.words) < MIN_TEXT_WORDS:
+        return False
+    if not _one_picture(page):
+        return True
+    try:
+        trace = page.get_texttrace()
+    except Exception:  # noqa: BLE001 - the text can't be told apart: as before, the text layer
+        return True
+    shown = sum(len(span.get("chars") or ()) for span in trace if span.get("type") != 3)
+    hidden = sum(len(span.get("chars") or ()) for span in trace if span.get("type") == 3)
+    return hidden <= shown and len(text_page.words) >= STAMP_WORDS
+
+
 def build_layout(path: str | Path, *, di_raw: dict[str, Any] | None = None, ocr: str | bool = "auto",
                  max_pages: int = READ_PAGES) -> DocLayout:  # fmt: skip
     """The words of ``path``. ``ocr``: "auto" (scanned pages only), True (force OCR on every page), False (never).
@@ -942,7 +972,9 @@ def build_layout(path: str | Path, *, di_raw: dict[str, Any] | None = None, ocr:
                 break
             number = i + 1
             text_page = _text_layer_page(page, number)
-            if len(text_page.words) >= MIN_TEXT_WORDS and ocr is not True:
+            # Its text, unless it is a scan with text on it and OCR can read the scan (B-1511, B-1512).
+            texted = len(text_page.words) >= MIN_TEXT_WORDS
+            if texted and ocr is not True and (not use_ocr or text_is_the_page(page, text_page)):
                 pages.append(text_page)
                 sources.add("text")
                 continue
@@ -959,7 +991,10 @@ def build_layout(path: str | Path, *, di_raw: dict[str, Any] | None = None, ocr:
                 except Exception as exc:  # a page OCR cannot read is kept empty and counted unread, never fatal
                     log.warning("%s page %d: OCR failed (%s)", path.name, number, exc)
                     pages.append(text_page)
-                    failed += 1
+                    if texted:  # a scan with a text layer: that text, the best there is
+                        sources.add("text")
+                    else:
+                        failed += 1
             elif ocr == "auto" and _looks_scanned(page):
                 raise CannotRead(NO_OCR)
             else:
@@ -1032,7 +1067,7 @@ def second_read_layout(path: str | Path, max_pages: int = READ_PAGES) -> DocLayo
             for i, page in enumerate(doc):
                 if i >= max_pages:
                     break
-                if len(_text_layer_page(page, i + 1).words) >= MIN_TEXT_WORDS:
+                if text_is_the_page(page, _text_layer_page(page, i + 1)):
                     return None  # a text PDF: the text layer is exact
                 pages.append(ocr_image(_second_image(_scan_png(doc, page)), i + 1, second_engine_name()))
     return DocLayout(pages, "ocr")

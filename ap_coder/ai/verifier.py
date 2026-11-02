@@ -84,6 +84,17 @@ SYSTEM = (
 )
 
 
+def vendor_record(store: Any, output: dict[str, Any]) -> dict[str, Any] | None:
+    """The vendor list's record of an invoice's vendor, as the reviewer is shown it: of two vendors whose names read
+    alike, the one with the invoice's GST/HST number (B-1021, B-1515)."""
+    from ..core.memory import vendor_key
+
+    name = output.get("vendor_name") or ""
+    gst = output.get("gst_hst_registration_number")
+    key = store.vendor_key_for(name, gst) if hasattr(store, "vendor_key_for") else vendor_key(name)
+    return store.get_vendor(key)
+
+
 def schema(fields: list[str]) -> dict[str, Any]:
     """The answer's JSON schema: an entry per field asked about (``fields``) and per line, then confident and a
     summary."""
@@ -371,6 +382,18 @@ def response_limit(coder: Any) -> int:
 # --- What it means for the invoice --------------------------------------------------------------------------------
 
 
+def line_seen(output: dict[str, Any] | None, number: Any) -> list[Any]:
+    """One line of a coding as the reviewer judged it: its account, cost center, amount and description ([] when the
+    coding has no such line)."""
+    for li in (output or {}).get("line_items") or []:
+        if str(li.get("line_number")) == str(number):
+            amount = li.get("amount")
+            return [str(li.get("predicted_gl_code") or ""), str(li.get("predicted_cost_center") or ""),
+                    round(float(amount), 2) if isinstance(amount, (int, float)) else str(amount or ""),
+                    " ".join(str(li.get("description") or "").split())]  # fmt: skip
+    return []
+
+
 def issues(result: dict[str, Any] | None, output: dict[str, Any] | None = None) -> list[tuple[str, str, str]]:
     """(severity, code, message) for the review screen from a review's result. With ``output`` (what is on screen
     now): a field it disputed that the reviewer has since changed is no longer reported."""
@@ -384,6 +407,9 @@ def issues(result: dict[str, Any] | None, output: dict[str, Any] | None = None) 
         fields = {f: v for f, v in fields.items()
                   if normalize_value(f, output.get(f)) == normalize_value(f, v.get("value"))}  # fmt: skip
     lines = result.get("lines") or {}
+    seen = result.get("lines_seen") or {}
+    if output is not None and seen:  # a disputed line the clerk has changed since is no longer reported (B-1527)
+        lines = {n: r for n, r in lines.items() if n not in seen or line_seen(output, n) == seen[n]}
     parts = [f"{FIELDS.get(f, f)}: it reads {v.get('on_page') or 'something else'} on the page"
              f"{' (' + v['reason'] + ')' if v.get('reason') else ''}" for f, v in fields.items()]  # fmt: skip
     parts += [f"line {n}: {reason or 'not as entered'}" for n, reason in lines.items()]
@@ -531,7 +557,6 @@ def _coder(settings: Any, store: Any) -> Any:
 
 def _verify(settings: Any, store: Any, row: dict[str, Any], cfg: ReviewerSettings, coder: Any,
             clock: Callable[[], float]) -> Outcome:  # fmt: skip
-    from ..core.memory import vendor_key
     from ..core.store import PARKED, REVIEW
     from .imaging import render_page_images
     from .inference import CodingError
@@ -570,7 +595,7 @@ def _verify(settings: Any, store: Any, row: dict[str, Any], cfg: ReviewerSetting
         approved = _fold_in(store, inv, earlier, expect=identity)
         return Outcome(iid, str(earlier.get("status") or ""), "reviewed before: the same proposal, by the same model",
                        approved)  # fmt: skip
-    vendor = store.get_vendor(vendor_key(output.get("vendor_name") or ""))
+    vendor = vendor_record(store, output)
     try:
         names = {a["code"]: a["description"] for a in store.list_accounts("gl_accounts")}
     except Exception:  # noqa: BLE001
@@ -578,7 +603,13 @@ def _verify(settings: Any, store: Any, row: dict[str, Any], cfg: ReviewerSetting
     shown = proposal(output, vendor, names)
     from . import lessons
 
-    learned = lessons.prompt_lines(store, output.get("vendor_name") or "", lessons.kind_of(output), gl_names=names)
+    learned = lessons.prompt_lines(
+        store,
+        output.get("vendor_name") or "",
+        lessons.kind_of(output),
+        gst=output.get("gst_hst_registration_number"),
+        gl_names=names,
+    )
     if learned:
         shown["lessons"] = learned
     budget, started = cfg.minutes * 60, clock()
@@ -593,6 +624,8 @@ def _verify(settings: Any, store: Any, row: dict[str, Any], cfg: ReviewerSetting
         return _postpone_or_fail(store, row, str(exc)[:300])
     fields = {f: {"value": shown["fields"].get(f), **v} for f, v in found.fields.items()}
     result = {**found.to_dict(), "fields": fields, "model": model, "proposal": digest(output),
+              # each disputed line as it was reviewed: once the clerk changes it, it is no longer reported (B-1527)
+              "lines_seen": {str(n): line_seen(output, n) for n in found.lines},
               "at": dt.datetime.now().isoformat(timespec="seconds")}  # fmt: skip
     if store.restoring() or store.row_identity(iid) != identity:
         return Outcome(iid, "skipped", "not applied: a backup was restored meanwhile")

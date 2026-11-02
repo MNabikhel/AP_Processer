@@ -5,6 +5,8 @@ from __future__ import annotations
 import datetime as dt
 from pathlib import Path
 
+import pytest
+
 from ap_coder.capture import analyze, build_layout
 from ap_coder.capture.bridge import ai_values
 from ap_coder.capture.supplier import AUTONOMOUS, confirmed_values, learn, should_auto_approve
@@ -579,3 +581,39 @@ def test_a_grouped_amount_to_four_decimals_is_one_number():
         assert [v for v, _, _ in find_amounts(f"Fuel {text} L")] == [value], text
     assert [v for v, _, _ in find_amounts("Bolts 2 250.5000 501.00")] == [2, 250.5, 501.0]
     assert parse_amount("1,234.56") == 1234.56 and parse_amount("1.3023") == 1.3023
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("All prices are in US funds.", "USD"),
+        ("Amounts shown in U.S. funds", "USD"),
+        ("Payable in US funds", "USD"),
+        ("All amounts in Canadian funds", "CAD"),
+        ("Prices quoted in American funds", "USD"),
+        ("Montants en fonds américains", "USD"),
+        ("Prix en fonds canadiens", "CAD"),
+    ],
+)
+def test_a_currency_said_as_funds_is_read(line, expected):
+    """B-1517: "All prices are in US funds" (a common way to say it in Canada) was not read: a USD invoice was taken
+    as CAD, with only an information note."""
+    from ap_coder.capture.normalize import find_currency
+
+    assert find_currency(f"Widget 100.00\n{line}\nTotal $113.00") == expected
+
+
+def test_terms_that_differ_by_end_of_month_months_or_prox_are_other_terms():
+    """B-1519: terms were compared by their digits alone: "Net 30" and "Net 30 EOM" (due 11 days apart), "Net 1" and
+    "Net 1 month" were the same terms, so two readers that disagreed fused to Verified and AP's correction from one to
+    the other was scored as no correction."""
+    from ap_coder.capture.normalize import terms_key
+    from ap_coder.capture.supplier import outcome_rows
+
+    assert terms_key("Net 30") == terms_key("30 days") == terms_key("NET 30 jours") == "terms:30"  # as before
+    assert terms_key("2% 10, Net 30") == terms_key("2/10 net 30")
+    assert terms_key("Net 30") != terms_key("Net 30 EOM")
+    assert terms_key("Net 1") != terms_key("Net 1 month")
+    assert terms_key("Net 30") != terms_key("Net 10 prox")
+    rows = outcome_rows({"payment_terms": "Net 30"}, {"payment_terms": "Net 30 EOM"})
+    assert [r["correct"] for r in rows if r["field"] == "payment_terms"] == [False]

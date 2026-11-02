@@ -208,3 +208,16 @@ def test_the_demo_is_not_offered_once_there_are_invoices_of_your_own(client, sto
     store.add_invoice(pdf, {"vendor_name": "Acme", "grand_total": 5}, {"issues": []})
     assert "Load demo invoices" not in client.get("/process").text
     assert "Load demo invoices" not in client.get("/review").text
+
+
+def test_a_stale_page_cannot_load_the_demo_beside_your_own_invoices(client, store, tmp_path):
+    """B-1529: the demo button is hidden once your own invoices are in (D-137), but a page drawn before they were
+    (another tab) still loaded the ten samples beside them: a second Pacific PO-77120 read as a duplicate payment."""
+    from tests.webclient import PAGE
+
+    pdf = tmp_path / "a.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    store.add_invoice(pdf, {"vendor_name": "Acme", "grand_total": 5}, {"issues": []})
+    answer = client.post("/demo/load", headers=PAGE)
+    assert not answer.json().get("ok", True) and "your own invoices" in answer.text
+    assert store.demo_count() == 0 and sum(store.status_counts().values()) == 1

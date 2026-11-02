@@ -183,3 +183,20 @@ def test_an_older_versions_test_file_left_in_tests_is_not_run(tmp_path):
     out = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"],
                          cwd=tmp_path, capture_output=True, text=True, encoding="utf-8")  # fmt: skip
     assert out.returncode == 0 and "1 passed" in out.stdout, out.stdout[-2000:]
+
+
+@needs_ci
+def test_the_release_zip_covers_every_python_the_guides_promise():
+    """B-1524: the pilot release's zip was built for Python 3.12 to 3.14 while PILOT.md, GETTING_STARTED.md and
+    KNOWN_LIMITS.md say any Python 3.11 or newer works (D-55: 3.11 is the floor everywhere): on a laptop with 3.11 the
+    first start stopped, offline, until IT installed another Python."""
+    import re
+    from pathlib import Path
+
+    from scripts.build_offline_bundle import DEFAULT_PYTHONS
+
+    root = Path(__file__).resolve().parents[2]
+    text = (root / ".github" / "workflows" / "release.yml").read_text()
+    built = re.search(r"build_offline_bundle\.py[^\n]*--python ((?:3\.\d+ ?)+)", text)
+    assert built and built.group(1).split() == DEFAULT_PYTHONS
+    assert DEFAULT_PYTHONS[0] == "3.11"

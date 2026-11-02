@@ -8,7 +8,29 @@ has a short tour, and the [pilot plan](PILOT_PLAN.md) suggests four weeks to a d
 Your existing data is safe. On first start the database upgrades itself (schema version 19), and a
 backup of the database is made automatically once a day when AP Coder starts (the newest 14 are kept).
 
-## This release: fixes, safer server mode and faster pages (D-108 to D-112)
+## The pilot releases (D-113 to D-137)
+
+Newest first; each pilot release's own notes are on its GitHub release page, and every fix is a line in
+[BUGS.md](BUGS.md) (B-1442 on).
+
+- **It learns from your corrections on the reading side too** (D-119 to D-122): a field you corrected is read
+  right on the vendor's next invoice, a vendor's line descriptions as you approved them are known again, this
+  works without the chat model, and a vendor reaches hands-free sooner, on an honest bar.
+- **Split a line by percentage or by dollar amount** (D-126), from the line's own button.
+- **The demo runs on a data folder of its own** (`scripts\demo.bat`, D-127), and its invoices are offered only
+  while you have none of your own (D-137).
+- **LM Studio is asked for what a 16 GB laptop holds** (D-117), measured on the real models.
+- **Approvals and JD Edwards:** a currency changed from the one read off the invoice can't take it under the
+  second-approval limit (D-132); with JD Edwards' G/L date set to the export day, an invoice exported after a
+  month end is accrued for that month, not missed (D-133); a batch goes to JD Edwards one way only, its ZIP or the
+  API, never both (D-134).
+- **Safer in a browser** (D-135): another page on the company's domain can't download a JD Edwards ZIP or act
+  in your name from your browser.
+- **Fixes from the pilot tester's walk and the reviews:** among them, scans with a scanner's text layer are read
+  as the scans they are, a report's title row above the column names is skipped on import, and alike-named
+  vendors (*Inc.* and *Limited*) keep their own lessons, terms and Pay-from account.
+
+## Fixes, safer server mode and faster pages (D-108 to D-112)
 
 What changes for the pilot tester:
 
@@ -35,7 +57,7 @@ What changes for the pilot tester:
   lockouts, an option that the person posting to JD Edwards is not the one who approved, safer sessions and HTTPS) and
   several web workers so ~50 people can work at once. Nothing changes on a laptop.
 
-## This release: AP Coder on a company server, each person with their own account (D-97 to D-102)
+## AP Coder on a company server, each person with their own account (D-97 to D-102)
 
 For a team, AP Coder can now run on one company Windows Server instead of a laptop (off by default: the laptop pilot
 is unchanged). Staff open it from their browsers over **HTTPS** and **log in**; each person has their own account and
@@ -44,7 +66,7 @@ one of **four roles** (Read-only, Clerk, Approver, Admin), and a page offers onl
 with a way back (`python -m ap_coder server-update <bundle>`, `--back`). People are added with
 `python -m ap_coder users add`. For IT: [SERVER.md](SERVER.md).
 
-## This release: posting vouchers to JD Edwards through the API (D-104, D-105)
+## Posting vouchers to JD Edwards through the API (D-104, D-105)
 
 Besides the Z-file batch, AP Coder can talk to the company's JD Edwards AIS Server (off until an Admin sets it up in
 Settings → JD Edwards E1 → API connection). Every night it reads suppliers, GL accounts, business units, open POs and
@@ -55,7 +77,7 @@ Edwards is tried again after 5, 15 and 60 minutes, then hourly. The connection g
 (a named internal system). Setup: [JDE_E1.md](JDE_E1.md#through-the-api-ais-server-d-104); the orchestrations for the
 JDE team: [JDE_ORCHESTRATIONS.md](JDE_ORCHESTRATIONS.md).
 
-## This release: a feed for the finance hub on Microsoft Fabric (off until an Admin turns it on, D-103)
+## A feed for the finance hub on Microsoft Fabric (off until an Admin turns it on, D-103)
 
 Settings → Finance hub sends six tables (invoices, their lines, approvals, the Activity log, accuracy and runs) to the
 company's finance hub, only what changed each time: to a shared folder Fabric reads (laid out for Fabric Open
@@ -63,7 +85,7 @@ Mirroring, with a read-only SQLite copy for the on-premises gateway), or straigh
 allowed. The invoices' PDFs stay in AP Coder. The tables are described in [FINANCE_HUB.md](FINANCE_HUB.md); from the
 command line: `python -m ap_coder hub export [--full] [--dry-run]`.
 
-## This release: smaller changes
+## Smaller changes
 
 - **Two confidence numbers (D-89).** The review screen's header shows the **Reading** (how sure the header is) and
   the **Coding** (how sure the lines' GL accounts, cost centers and tax codes are) side by side, where one bar was.
@@ -79,14 +101,14 @@ command line: `python -m ap_coder hub export [--full] [--dry-run]`.
 - **For developers (D-106).** Coding work on AP Coder runs as the `developer` agent (`.claude/agents/developer.md`),
   which carries only the tools that work needs.
 
-## This release: colleagues on the office network each approve in their own name
+## Colleagues on the office network each approve in their own name
 
 When AP Coder is shared on the office network (`AP_DASHBOARD_ADDRESS=0.0.0.0`), a colleague opening it from another
 computer gives their name once, on a "Who are you?" page. Their approvals and changes are recorded in that name and
 with their computer's address, their unsaved edits on the review screen are their own, and they can give the second
 approval of an invoice someone else approved first. On the computer running AP Coder nothing changes.
 
-## This release: a bug sweep (72 bugs fixed)
+## A bug sweep (72 bugs fixed)
 
 A review of every part of AP Coder, section by section, each finding reproduced, given a test, then fixed. The log, one line
 per bug with the test that keeps it fixed, is [docs/BUGS.md](BUGS.md) (older ones in docs/archive). What you may notice:
@@ -106,7 +128,7 @@ per bug with the test that keeps it fixed, is [docs/BUGS.md](BUGS.md) (older one
 - **Screens:** pop-ups stay inside a phone's screen; Enter on Cancel cancels; the review screen stays readable when the
   computer is in dark mode; big pages ask the database far less often.
 
-## This release: the invoice directory
+## The invoice directory
 
 - **Find an invoice is now the Invoice directory**: every invoice in one table, like JD Edwards' query by example. Each
   column has a filter box: `north` (contains), `north*` (starts with), `*0912`, `=TELUS` (exactly), `!credit` (not);
@@ -122,7 +144,7 @@ per bug with the test that keeps it fixed, is [docs/BUGS.md](BUGS.md) (older one
 - The quick search (vendor, invoice or PO number, amount) still finds a vendor's invoice on the phone, in the ERP
   register too; each row's button opens it, brings a parked one back, or downloads the approved PDF.
 
-## This release: lessons from AP's corrections, and "why?"
+## Lessons from AP's corrections, and "why?"
 
 - **Every correction is remembered for its situation.** A situation is a vendor, a kind of document (invoice or credit
   note) and a field, or a kind of line ("lines like 'Mobility services'"). Each approval quietly counts, for each one,
@@ -137,7 +159,7 @@ per bug with the test that keeps it fixed, is [docs/BUGS.md](BUGS.md) (older one
 - **The reviewer sees them too.** The review screen shows "Learned from AP for this vendor"; the Learning page has a
   **Lessons** tab to read every lesson, write or change its reason, and retire one that no longer applies.
 
-## This release: the AI reviewer
+## The AI reviewer
 
 - **The chat model checks every invoice against its pages, as a clerk would before posting it.** Gemma 4 12B in LM
   Studio is shown the page images and everything AP Coder proposes: the header, each line and its GL account, the
@@ -153,7 +175,7 @@ per bug with the test that keeps it fixed, is [docs/BUGS.md](BUGS.md) (older one
   says what it found (or that it waits), with "Have the AI reviewer check it again"; Settings → Reading shows its row
   and how many it agreed with. Turn it off there if you need to.
 
-## This release: the review screen (vendor list, sales tax, picking words on the page)
+## The review screen (vendor list, sales tax, picking words on the page)
 
 - **The vendor comes from the vendor list.** Start typing in the Vendor field to pick it from the vendor list (the
   vendor master imported from JD Edwards); under the field AP Coder says whether it is in the list, with its ERP ID,
@@ -179,7 +201,7 @@ per bug with the test that keeps it fixed, is [docs/BUGS.md](BUGS.md) (older one
 - **A line item and its row light up together.** Point at a row of the line grid and its outline on the page lights
   up (and the other way round); clicking into a row shows it on its page.
 
-## This release: the pilot tester's first session
+## The pilot tester's first session
 
 - **"differs" next to a reader that agreed.** Hovering a field listed each reader's reading as it is printed
   ("Oct 1, 2026") and called it "differs" from the value (2026-10-01), although the readers agreed. The page now
@@ -190,7 +212,7 @@ per bug with the test that keeps it fixed, is [docs/BUGS.md](BUGS.md) (older one
 - **"Process invoices" is now "Import invoices"**: the page to bring invoices in by hand (the review queue is the
   work list). Same address.
 
-## This release: Gemma 4 12B as the chat model
+## Gemma 4 12B as the chat model
 
 - **Gemma 4 12B (Google) works in place of Qwen 3.5 9B.** Load it in LM Studio and AP Coder uses it for GL
   suggestions and the header check from page images; nothing to set. With nothing loaded, AP Coder now asks LM

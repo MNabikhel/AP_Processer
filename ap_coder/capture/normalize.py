@@ -201,7 +201,8 @@ def _plain(text: str) -> str:
 # A receipt's date and time as OCR runs them together: "6/10/201913:59", "2018-02-1514:33:37", "27Mar201818:46",
 # "2/25/125:21PM" (the year 12, then 5:21). The date ends where a time begins.
 _TIME_NEXT = r"(?=_?\d{1,2}:\d)"
-_ISO = re.compile(rf"\b(20\d{{2}}|19\d{{2}})[-/.](\d{{1,2}})[-/.](\d{{1,2}})(?:\b|{_TIME_NEXT})")
+# ISO 8601's T before the time: "2026-10-20T00:00:00" (an export's date, B-1540).
+_ISO = re.compile(rf"\b(20\d{{2}}|19\d{{2}})[-/.](\d{{1,2}})[-/.](\d{{1,2}})(?:\b|{_TIME_NEXT}|(?=t\d{{1,2}}:\d))")
 # The year may run into the next label's word in a PDF's text: "Invoice Date: 08-01-2016Contract ID: 1272709".
 _NUMERIC = re.compile(
     rf"\b(\d{{1,2}})[-/.](\d{{1,2}})[-/.](\d{{4}}{_TIME_NEXT}|\d{{2}}{_TIME_NEXT}|\d{{2}}\b|\d{{4}}\b|\d{{4}}(?=[a-z]{{3}}))"
@@ -523,10 +524,11 @@ _CURRENCY_STATEMENT = re.compile(
     r"PAYABLE|EXPRIM[EÉ]S?|INDIQU[EÉ]S?|PAYABLES?)\s+)?(?:IN|EN)\s+(?:DOLLARS\s+)?" + _CODE
     + r"|(?:CURRENCY|DEVISE|MONNAIE)\s*[:=]?\s*" + _CODE
 )  # fmt: skip
-# The same said in words: "All prices in Canadian dollars", "Amounts in US dollars", "Montants en dollars canadiens".
+# The same said in words: "All prices in Canadian dollars", "Amounts in US dollars", "Montants en dollars canadiens";
+# or as funds: "All prices are in US funds", "Payable in Canadian funds", "Montants en fonds américains" (B-1517).
 _WORDS_STATEMENT = re.compile(
-    r"(?:IN|EN)\s+(?:(?P<cad>CANADIAN)|(?P<usd>U\.?S\.?|AMERICAN))\s+DOLLARS"
-    r"|DOLLARS\s+(?:(?P<cad2>CANADIENS)|(?P<usd2>AM[EÉ]RICAINS|US)\b)"
+    r"(?:IN|EN)\s+(?:(?P<cad>CANADIAN)|(?P<usd>U\.?S\.?|AMERICAN))\s+(?:DOLLARS|FUNDS)"
+    r"|(?:DOLLARS|FONDS)\s+(?:(?P<cad2>CANADIENS)|(?P<usd2>AM[EÉ]RICAINS|US)\b)"
 )
 # A line on how the supplier may be paid ("Payments in USD accepted", "Wire: ..., USD account 4455"): a code on it
 # is not the currency the invoice is billed in.
@@ -649,7 +651,18 @@ def terms_key(text: str) -> str:
     receipt = bool(re.search(r"receipt|reception", s))
     if not numbers and not receipt:
         return " ".join(s.split())
-    return "terms:" + "/".join(str(int(n)) for n in numbers) + (":receipt" if receipt else "")
+    return "terms:" + "/".join(str(int(n)) for n in numbers) + (":receipt" if receipt else "") + terms_kind(text)
+
+
+def terms_kind(text: str) -> str:
+    """What the digits of payment terms don't say (B-1519): counted from the end of the month ("Net 30 EOM"), in
+    months ("Net 1 month"), or to a day of the next month ("Net 10 prox"); "" for plain terms, whose key stays as it
+    was."""
+    from ..coding.terms import parse_terms
+
+    terms = parse_terms(text)
+    return ((":eom" if terms.eom else "") + (":months" if terms.net_months else "")
+            + (f":prox{terms.prox_day}" if terms.prox_day else ""))  # fmt: skip
 
 
 def same_value(field: str, a: object, b: object) -> bool:

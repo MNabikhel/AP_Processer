@@ -132,7 +132,7 @@ Then it checks itself and prints a short summary before the browser opens:
 ```
 AP Coder readiness:
   [OK] Python 3.12.4
-  [OK] Packages: all 15 in place
+  [OK] Packages: all 16 in place
   [OK] OCR for scanned invoices
   [OK] Data folder: C:\Users\you\APCoder
   [OK] Chat model: lmstudio-community/gemma-4-12B-it-QAT-GGUF loaded in LM Studio (can see pages)
@@ -289,8 +289,10 @@ and copy the whole data folder.
 
 When IT gives you a new offline bundle, or you download a new GitHub ZIP:
 
-1. Unzip it **anywhere**: a new folder (e.g. `C:\APCoder\app-0.2`) is fine, and so is unzipping it over
-   the old folder. AP Coder may still be open.
+1. Unzip it **anywhere**: a new folder (e.g. `C:\APCoder\app-0.3`) is fine, and so is unzipping it over
+   the old folder: when Windows asks about files with the same names, choose *Replace the files in the
+   destination* (*Skip* keeps the old version's files, so the old version starts again). AP Coder may still be
+   open.
 2. Double-click **`APProcessor.bat`** in the new folder (Mac: `APProcessor.command`).
 
 That is all. The new version takes over:
@@ -308,7 +310,7 @@ That is all. The new version takes over:
   (`ap_coder-<date>-before-update-from-schema-<n>.db`). Data an older version kept inside its own folder
   (`private\`) and a `.env` left there move into the data folder (when the data folder already has data of
   its own, they go, whole, to `backups\from-<folder>-<date>`: nothing is merged). Settings that are no longer
-  used are commented out in the `.env`, with the note *# no longer used (AP Coder 0.2)*.
+  used are commented out in the `.env`, with the note *# no longer used (AP Coder 0.3)*.
 - **One shortcut, one install.** The *AP Coder* desktop shortcut now opens the new version (on a Mac, an
   *AP Coder.command* on the desktop does). Once the self-check passed, the old version's `.venv`, OCR models
   and folder are removed, and the window says how much space that freed. An old folder with files of your

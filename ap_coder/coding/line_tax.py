@@ -500,6 +500,10 @@ class Solved:
     count: int = 0
 
 
+# Cents above which an amount is no invoice's (ten trillion dollars): the subset sums are 64-bit integers (B-1532).
+_MOST_CENTS = 10**15
+
+
 def _sums(values: Sequence[int]) -> tuple[Any, Any]:
     """Every subset sum of ``values`` and its bit mask (numpy arrays, 2**len(values) each)."""
     import numpy as np
@@ -518,6 +522,8 @@ def subset_solutions(amounts: Sequence[int], target: int, tol: int, cap: int = 2
     amounts (a discount, a credit line) are lines like any other."""
     import numpy as np
 
+    if abs(target) > _MOST_CENTS or any(abs(a) > _MOST_CENTS for a in amounts):
+        return [], 0  # no invoice's amount: a reference pasted into an Amount box (B-1532)
     n = len(amounts)
     half = n // 2
     a_sums, a_masks = _sums(amounts[:half])

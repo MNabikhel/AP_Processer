@@ -11,7 +11,7 @@
       <p class="field">Your name: <b>{{ reviewer_name }}</b> (<a href="/who">change it</a>; this browser gave it to AP Coder)</p>
       {% else %}
       <label class="field">Your name
-        <input type="text" name="reviewer_name" value="{{ reviewer_name }}" placeholder="shown on the invoices you approve"
+        <input type="text" name="reviewer_name" maxlength="60" value="{{ reviewer_name }}" placeholder="shown on the invoices you approve"
                title="Saved for your Windows account: two people sharing one AP Coder each keep their own name."></label>
       <p class="muted">Each approval is recorded under it. A colleague who opens AP Coder from their own computer gives
         their own name on the <a href="/who">Who are you?</a> page.</p>

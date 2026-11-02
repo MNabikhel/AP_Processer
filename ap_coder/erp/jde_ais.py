@@ -314,6 +314,14 @@ def _resolve(host: str) -> list[str]:
         return []
 
 
+def _is_file(path: str) -> bool:
+    """Whether ``path`` is a file; a path the system can't even look at (far too long, say) is none (B-1535)."""
+    try:
+        return Path(path).is_file()
+    except (OSError, ValueError):
+        return False
+
+
 def save(store: Any, *, base_url: str, environment: str, role: str, username: str, password: str = "",
          forget_password: bool = False, device_name: str = "APCoder", auth_mode: str = TOKEN, ca_file: str = "",
          timeout: float = DEFAULT_TIMEOUT, step1: bool = False, step2: bool = False, sync_hour: int = 2,
@@ -347,7 +355,7 @@ def save(store: Any, *, base_url: str, environment: str, role: str, username: st
             found = _resolve(new.host) if new.on else []
         if found != [] and (problem := internal_problem(new.host, lambda _host: found or [], new.shared_network)):
             raise ValueError(problem)
-    if new.ca_file and not Path(new.ca_file).is_file():
+    if new.ca_file and not _is_file(new.ca_file):
         raise ValueError(f"The CA certificate file {new.ca_file} isn't there: give the full path of the .pem / .crt "
                          "file IT gave you, or leave it blank.")  # fmt: skip
     password = one_line(password or "")

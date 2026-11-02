@@ -363,9 +363,16 @@ def text_layer_check(layout: DocLayout, page_text: list[str], fields: dict[str, 
     from decimal import Decimal
 
     from ..ai.figures import compare_figures, figures
+    from .transcript import read_in_part
 
     # Page by page, the pages the page reader read only (one it found blank, or didn't reach, is left out of both).
     pairs = [(page, text) for page, text in zip(layout.pages, page_text, strict=False) if (text or "").strip()]
+    partial = [page.number for page, text in pairs if read_in_part(text)]
+    if partial:  # what it never read is not the PDF showing other figures than its page (B-1518)
+        pages = ", ".join(str(n) for n in partial)
+        return {"code": TEXT_LAYER_CHECK, "ok": True, "fields": [], "severity": "warning", "figures": 0,
+                "confirmed": 0, "detail": f"the page reader read only part of page {pages}: the PDF's text was not "
+                "compared with the page"}  # fmt: skip
     hidden = "\n".join(line.text for page, _text in pairs for line in page.lines)  # bold drawn twice: read once
     shown = "\n\n".join(text for _page, text in pairs)
     comparison = compare_figures(hidden, shown)

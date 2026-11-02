@@ -421,3 +421,16 @@ def test_a_dry_run_with_nothing_to_load_has_no_stray_dash():
               "held": [held], "files": {}}  # fmt: skip
     first = next(line for line in dry_run_text(report).splitlines() if line.startswith("Will load"))
     assert first == "Will load: 0 voucher(s), nothing to load. Held back: 1."
+
+
+def test_the_queue_counts_a_line_to_code_once_not_also_as_a_warning():
+    """B-1530: "Pick a GL account for 4 lines; 5 warnings to look at" for an invoice whose screen shows one warning:
+    each line without an account (GL_UNASSIGNED, CC_UNASSIGNED) was counted again among the warnings."""
+    from ap_coder.web.pages.review import _to_fix
+
+    lines = [{"line_number": n, "predicted_gl_code": UNASSIGNED, "predicted_cost_center": ""} for n in (1, 2, 3, 4)]
+    issues = [{"severity": "warning", "code": "GL_UNASSIGNED", "line_number": n} for n in (1, 2, 3, 4)]
+    issues.append({"severity": "warning", "code": "TAX_NON_CANADIAN"})
+    to_pick, errors, warned = _to_fix(-1, None, json.dumps({"line_items": lines}), json.dumps({"issues": issues}),
+                                      False)  # fmt: skip
+    assert "Pick a GL account for" in to_pick and errors == 0 and warned == 1

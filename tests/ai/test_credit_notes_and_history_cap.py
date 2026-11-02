@@ -169,3 +169,22 @@ def test_the_reviewer_saying_confident_false_as_text_is_not_confident():
     assert verifier._parse({**answer, "confident": True}, ["vendor_name"], [1])[2] is True
     for said in ("false", "no", "False", 0, None):
         assert verifier._parse({**answer, "confident": said}, ["vendor_name"], [1])[2] is False, said
+
+
+def test_a_credit_note_names_the_invoice_it_credits_without_the_chat_model(reference):
+    """B-1521: a credit note's "Original Invoice: NW-2026-0912" was read only by the chat model: with LM Studio off,
+    "Credits invoice #" stayed empty, so CREDIT_NOTE_FOR and CREDIT_EXCEEDS_INVOICE never ran unless AP typed it."""
+    from ap_coder.ai.offline_coder import credited_invoice
+
+    capture = _capture([("Returned laptop", -1, 1450.0, -1450.0)], subtotal=-1450.0, hst_amount=-188.5,
+                       tax_total=-188.5, grand_total=-1638.5)  # fmt: skip
+    capture.credit_note = True
+    text = "Northwind\nCREDIT NOTE\nCredit Note No: CN-1\nOriginal Invoice: NW-2026-0912 (September 14, 2026)\n"
+    assert code_from_capture(capture, reference, [], text=text).coding.original_invoice_number == "NW-2026-0912"
+    for line, number in [("Credit for invoice #INV-4471", "INV-4471"), ("Re: Invoice 88213", "88213"),
+                         ("Applies to invoice no. A-100", "A-100"), ("Facture d'origine : SIL-4471", "SIL-4471"),
+                         ("Avoir sur facture n° 2026-118", "2026-118")]:  # fmt: skip
+        assert credited_invoice(line) == number, line
+    assert credited_invoice("Invoice No: INV-1001\nThank you for your business") == ""  # its own number
+    plain = _capture([("Laptop", 1, 1450.0, 1450.0)], subtotal=1450.0, grand_total=1450.0)
+    assert code_from_capture(plain, reference, [], text=text).coding.original_invoice_number == ""  # not a credit

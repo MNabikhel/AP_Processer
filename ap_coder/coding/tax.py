@@ -629,13 +629,9 @@ def _regime_of_the_place_of_supply(check: _TaxCheck) -> None:
         )
         check.foreign = 0.0
     elif not charged:
-        check.add(
-            WARNING,
-            "NO_TAX_CHARGED",
-            f"no sales tax charged on a supply in {name}; "
-            + ("every line is marked exempt, zero-rated or out of scope: confirm it" if all_stated
-               else "confirm it is exempt or zero-rated"),
-        )  # fmt: skip
+        check.add(WARNING, "NO_TAX_CHARGED", f"no sales tax charged on a supply in {name}; "
+                  + ("every line is marked exempt, zero-rated or out of scope: confirm it" if all_stated
+                     else _nothing_charged(prov, expected_types)))  # fmt: skip
     for extra in sorted(charged - expected_types):
         check.add(
             WARNING,
@@ -645,6 +641,21 @@ def _regime_of_the_place_of_supply(check: _TaxCheck) -> None:
     if charged:
         _provincial_tax_due(check, expected_types, name, all_stated)
         _hst_where_it_applies(check, expected_types, name)
+
+
+def _nothing_charged(prov: str, expected_types: set[str]) -> str:
+    """What to confirm when an invoice charges no tax at all, and what is still due (B-1520): the provincial tax of a
+    PST province is self-assessed on the taxable lines whoever the vendor is (the self-assessment report counts it)."""
+    text = ("confirm it is exempt or zero-rated, or that the vendor is not registered for GST/HST (a small supplier, "
+            "no GST/HST number printed: no GST/HST is due)")  # fmt: skip
+    for provincial in [t for t in ("PST", "QST") if t in expected_types]:
+        pname = tax_name(provincial, prov)
+        if provincial == "QST":
+            text += f"; the {pname} on taxable lines: {QST_NOT_CHARGED}"
+        else:
+            text += (f"; the {pname} is still due on its taxable lines: self-assess it "
+                     f"({SELF_ASSESS_LAW.get(prov, 'the provincial act')}), unless they are marked exempt")  # fmt: skip
+    return text
 
 
 def _provincial_tax_due(check: _TaxCheck, expected_types: set[str], name: str, all_stated: bool) -> None:

@@ -368,6 +368,12 @@ class InvoiceCoder:
         import openai
 
         llm = self.settings.llm
+        if isinstance(exc, openai.APITimeoutError) and timeout:  # the AI reviewer's own limit, its minutes (B-1525)
+            return CodingError(
+                f"The chat model took longer than the AI reviewer's time left ({timeout:.0f}s): it may be slow on this "
+                "computer. Give the AI reviewer more minutes in Settings → Reading, or turn it off there.",
+                temporary=True,
+            )
         if isinstance(exc, openai.APITimeoutError):
             return CodingError(
                 f"The local model took longer than {timeout or llm.timeout_seconds:.0f}s. LM Studio may still be "

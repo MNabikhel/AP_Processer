@@ -76,7 +76,8 @@ class LessonsMixin:
                    value = CASE WHEN excluded.corrected = 1 THEN excluded.value ELSE lessons.value END,
                    proposed = CASE WHEN excluded.corrected = 1 THEN excluded.proposed ELSE lessons.proposed END,
                    last_invoice = excluded.last_invoice, updated_at = excluded.updated_at""",
-                (row["key"], vendor_key(row.get("vendor") or ""), row.get("vendor") or "", row.get("kind") or "invoice",
+                (row["key"], row.get("vendor_key") or vendor_key(row.get("vendor") or ""),  # its own (B-1514)
+                 row.get("vendor") or "", row.get("kind") or "invoice",
                  row["field"], row.get("pattern") or "", value, proposed, corrected, corrected, invoice_id, now, now),
             )  # fmt: skip
             if invoice_id is not None:

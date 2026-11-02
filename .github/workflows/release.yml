@@ -100,7 +100,7 @@ jobs:
         working-directory: release-src
         env:
           AP_ALLOW_INTERNET: "1"
-        run: python scripts/build_offline_bundle.py --no-current --python 3.12 3.13 3.14 --out "${{ runner.temp }}\dist"
+        run: python scripts/build_offline_bundle.py --no-current --python 3.11 3.12 3.13 3.14 --out "${{ runner.temp }}\dist"
       - uses: actions/upload-artifact@v4
         with:
           name: offline-install-zip

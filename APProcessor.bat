@@ -47,7 +47,7 @@ if not defined PY if defined AP_ONLINE call :installpython
 if not defined PY goto :nopython
 
 %PY% scripts\launch.py %*
-if errorlevel 1 goto :fail
+if %errorlevel% neq 0 goto :fail
 popd
 exit /b 0
 
@@ -56,7 +56,7 @@ rem .venv's Python is used when it starts, has pip, and launch.py does not ask f
 rem (the offline bundle has no packages for its Python, AP Coder is not set up yet, and a Python
 rem the bundle has packages for is installed: then that one is found below and .venv is remade).
 ".venv\Scripts\python.exe" scripts\launch.py --venv-ok >nul 2>&1
-if not errorlevel 1 set PY=".venv\Scripts\python.exe"
+if %errorlevel% equ 0 set PY=".venv\Scripts\python.exe"
 exit /b 0
 
 :findpython
@@ -97,7 +97,7 @@ exit /b 0
 rem From GitHub's ZIP or with AP_ALLOW_INTERNET=1: offer to install Python 3.12, for this user
 rem only, with winget (part of Windows). The offline bundle never does this.
 where winget >nul 2>&1
-if errorlevel 1 exit /b 0
+if %errorlevel% neq 0 exit /b 0
 echo.
 if defined OLDPY echo Python %OLDPY% is installed, but AP Coder needs Python 3.11 or newer.
 if not defined OLDPY echo AP Coder needs Python 3.11 or newer, and this computer has none.
@@ -108,7 +108,7 @@ if not defined AP_YES set /p "ANSWER=Install Python 3.12 now from the internet, 
 if /i "%ANSWER:~0,1%"=="N" exit /b 0
 echo Installing Python 3.12 with winget...
 winget install -e --id Python.Python.3.12 --scope user --accept-package-agreements --accept-source-agreements
-if errorlevel 1 echo winget could not install Python - see the message above.
+if %errorlevel% neq 0 echo winget could not install Python - see the message above.
 call :findpython
 exit /b 0
 

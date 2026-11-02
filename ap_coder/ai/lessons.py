@@ -49,8 +49,21 @@ def line_pattern(description: str) -> str:
     return " ".join(words[:4])
 
 
-def situation(vendor: str, kind: str, field: str, pattern: str = "") -> str:
-    return "|".join((vendor_key(vendor), kind, field, pattern))
+def situation(vendor: str, kind: str, field: str, pattern: str = "", key: str | None = None) -> str:
+    """A lesson's key: the vendor's (``key``, its own of two whose names read alike; else its name's), the kind of
+    document, the field and the lines' pattern."""
+    return "|".join((key or vendor_key(vendor), kind, field, pattern))
+
+
+def vendor_of(store: Any, vendor: str, gst: Any = None) -> str:
+    """The key a vendor's lessons are kept under: of two vendors whose names read alike, the one with this GST/HST
+    number (``Store.vendor_key_for``, B-1021, B-1514); the name's key without a store."""
+    if store is not None and hasattr(store, "vendor_key_for"):
+        try:
+            return store.vendor_key_for(vendor, gst)
+        except Exception:  # noqa: BLE001 - an older store: the name's key
+            pass
+    return vendor_key(vendor)
 
 
 def why_after(store: Any) -> int:
@@ -66,7 +79,7 @@ def _shown(value: Any) -> str:
     return "" if value in (None, "") else str(value)
 
 
-def outcomes(proposed: dict[str, Any], final: dict[str, Any]) -> list[dict[str, Any]]:
+def outcomes(proposed: dict[str, Any], final: dict[str, Any], key: str | None = None) -> list[dict[str, Any]]:
     """What an approval says about each situation: {key, vendor, kind, field, pattern, proposed, value, corrected}
     for each header field AP Coder proposed or AP filled in, and for each line whose GL account or cost center AP
     changed or confirmed (``LINE_GL``, ``LINE_CC``)."""
@@ -75,10 +88,12 @@ def outcomes(proposed: dict[str, Any], final: dict[str, Any]) -> list[dict[str, 
     vendor = str(final.get("vendor_name") or "")
     if not vendor_key(vendor):
         return []
+    key = key or vendor_key(vendor)  # the vendor's own (``vendor_of``)
     kind = kind_of(final)
     out = []
     for row in outcome_rows(proposed or {}, final):
-        out.append({"key": situation(vendor, kind, row["field"]), "vendor": vendor, "kind": kind,
+        out.append({"key": situation(vendor, kind, row["field"], key=key), "vendor": vendor, "vendor_key": key,
+                    "kind": kind,
                     "field": row["field"], "pattern": "", "proposed": _shown(row["ai_value"]),
                     "value": _shown(row["final_value"]), "corrected": not row["correct"]})  # fmt: skip
     from .offline_coder import guessed
@@ -96,7 +111,8 @@ def outcomes(proposed: dict[str, Any], final: dict[str, Any]) -> list[dict[str, 
             now = str(after.get(column) or "")
             if not now or (field == LINE_CC and now == UNASSIGNED):  # no cost center chosen: nothing to learn
                 continue
-            out.append({"key": situation(vendor, kind, field, pattern), "vendor": vendor, "kind": kind,
+            out.append({"key": situation(vendor, kind, field, pattern, key=key), "vendor": vendor, "vendor_key": key,
+                        "kind": kind,
                         "field": field, "pattern": pattern, "proposed": was, "value": now,
                         "corrected": bool(before) and was not in ("", UNASSIGNED) and was != now})  # fmt: skip
     return out
@@ -109,7 +125,7 @@ def record(store: Any, invoice_id: int, proposed: dict[str, Any], final: dict[st
     corrections (an earlier approver's, on a reopened invoice) are recorded; what was kept was never looked at, so it
     neither confirms a lesson nor counts as an invoice the lesson was seen on (B-955)."""
     try:
-        rows = outcomes(proposed, final)
+        rows = outcomes(proposed, final, _key_of(store, final))
         if bulk:
             rows = [r for r in rows if r["corrected"]]
         for row in rows:
@@ -122,12 +138,16 @@ def record(store: Any, invoice_id: int, proposed: dict[str, Any], final: dict[st
         return 0
 
 
+def _key_of(store: Any, doc: dict[str, Any]) -> str:
+    return vendor_of(store, str(doc.get("vendor_name") or ""), doc.get("gst_hst_registration_number"))
+
+
 def due_for_why(store: Any, proposed: dict[str, Any], final: dict[str, Any]) -> list[dict[str, Any]]:
     """The corrections in this approval that AP has made ``why_after`` times (this one included) since the last
     reason: [{key, field, label, pattern, proposed, value, times, explanation}]. [] when nothing is asked."""
     threshold = why_after(store)
     asked = []
-    for row in outcomes(proposed, final):
+    for row in outcomes(proposed, final, _key_of(store, final)):
         if not row["corrected"]:
             continue
         lesson = store.lesson(row["key"])
@@ -186,7 +206,7 @@ def on_screen(lesson: dict[str, Any]) -> bool:
 SEEN_ONCE = "Corrected once before: "  # a hint from a single correction, not yet one the AI reads
 
 
-def prompt_lines(store: Any, vendor: str, kind: str | None = None, *, fields: str = "all",
+def prompt_lines(store: Any, vendor: str, kind: str | None = None, *, gst: Any = None, fields: str = "all",
                  gl_names: dict[str, str] | None = None, limit: int = MAX_PROMPT_LINES,
                  screen: bool = False) -> list[str]:  # fmt: skip
     """The lessons for a vendor (of a kind of document), newest first, as sentences: ``fields`` "all", "header" or
@@ -195,7 +215,7 @@ def prompt_lines(store: Any, vendor: str, kind: str | None = None, *, fields: st
     if store is None or not vendor_key(vendor or ""):
         return []
     try:
-        rows = store.lessons_for(vendor_key(vendor), kind)
+        rows = store.lessons_for(vendor_of(store, vendor, gst), kind)  # its own, of two alike (B-1514)
     except Exception:  # noqa: BLE001 - an older store: no lessons
         return []
     shown = on_screen if screen else reaches_ai

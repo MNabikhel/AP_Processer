@@ -726,10 +726,14 @@ def transcribe(settings: Settings, png: bytes, *, model: str | None = None,
             )
         except (CutOff, Blank, _NothingWritten):
             again, looped_again = "", True
-    best = again if not looped_again else max(text, again, key=len)
+    if not looped_again:
+        return again
+    best = max(text, again, key=len)
     if len(best) < MIN_LOOPED_TEXT:
         raise CutOff("the model got stuck repeating itself near the top of the page")
-    return best
+    from ..capture.transcript import PARTIAL_MARK
+
+    return f"{best}\n{PARTIAL_MARK}"  # what it read before the loop: the rest of the page never read (B-1518)
 
 
 def _transcribe_once(settings: Settings, client: Any, model: str, reader: Reader, messages: list[dict[str, Any]],

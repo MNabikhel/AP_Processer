@@ -92,6 +92,8 @@ def _registration_numbers(layout: DocLayout) -> dict[str, list[Reading]]:
             pst.append(Reading("pst_registration_number", value, text[a:b], _boxes(words), score, method))
     if not gst:
         gst = _bare_business_numbers(layout)
+    if not qst:
+        qst = _bare_qst_numbers(layout)
     return {"gst_hst_registration_number": gst, "qst_registration_number": qst, "pst_registration_number": pst}
 
 
@@ -100,7 +102,17 @@ _GST_REG_LABEL = re.compile(
     r"(?<![a-z])(?:gst|hst|tps|tvh)(?:\s*/\s*(?:gst|hst|tps|tvh))?(?:\s*\(\s*[a-z]{2}\s*\))?\s*(?:reg(?:istration|\.)?|registration)?\s*"
     r"(?:no\b\.?|nos?\.|number|num\b\.?|#|n\s?°)\s*:?\s*"
     r"|(?<![a-z])(?:gst|hst|tps|tvh)(?:\s*/\s*(?:gst|hst|tps|tvh))?\s*reg(?:istration|\.)?\s*:?\s*"
+    # French puts the "No" first: "No TPS :", "N° de TPS", "Numéro de TVH" (B-1541).
+    r"|(?<![a-z])(?:no\b\.?|n\s?°|nº|numero)\s*(?:de\s*)?(?:la\s*)?(?:gst|hst|tps|tvh)(?:\s*/\s*(?:gst|hst|tps|tvh))?"
+    r"\s*:?\s*"
 )
+# A QST number's label, the number after it printed without its TQ program account: "No TVQ : 1234567890",
+# "QST: 1234567890", "TVQ no 1234567890" (B-1541).
+_QST_REG_LABEL = re.compile(
+    r"(?<![a-z])(?:(?:no\b\.?|n\s?°|nº|numero)\s*(?:de\s*)?(?:la\s*)?)?(?:qst|tvq)(?:\s*/\s*(?:qst|tvq))?\s*"
+    r"(?:reg(?:istration|\.)?\s*)?(?:no\b\.?|nos?\.|number|num\b\.?|#|n\s?°)?\s*:?\s*"
+)
+_TEN_DIGITS = re.compile(r"^(\d{10})(?![\d.,%])")
 
 _OTHER_PARTY = re.compile(
     r"purchaser|buyer|carrier|sub\s*-?\s*contractor|exempt|recipient|agent|broker|shipper|consignee|customer|client"
@@ -143,9 +155,35 @@ def _bare_business_numbers(layout: DocLayout) -> list[Reading]:
     return out
 
 
+def _bare_qst_numbers(layout: DocLayout) -> list[Reading]:
+    """The supplier's QST number printed without its TQ program account, after its label on the same line: read as
+    the ten digits, marked ``UNMEASURED`` as the bare business number is; not for another party's (B-1541)."""
+    out: list[Reading] = []
+    for line in layout.lines():
+        p = plain(line.text)
+        for m in _QST_REG_LABEL.finditer(p):
+            before = p[max(0, m.start() - 40) : m.start()]
+            if _CUSTOMER_WORD.search(before) or _OTHER_PARTY.search(before):
+                continue
+            rest = line.text[m.end() :]
+            got = _TEN_DIGITS.match(rest)
+            if not got or re.match(r"[\s.:-]*T", rest[got.end() :], re.I):
+                continue  # the whole number is printed (and read by find_qst_numbers) or misread
+            a = m.end()
+            words = _span_words(line, a, a + 10)
+            bill_to = _in_bill_to(layout, line)
+            score = 0.85 * _min_conf(words) * (0.35 if bill_to else 1.0)
+            out.append(Reading("qst_registration_number", got.group(1), got.group(1), _boxes(words), score,
+                               "label-qst" + UNMEASURED + (BILL_TO_READING if bill_to else "")))  # fmt: skip
+            break
+    return out
+
+
 _BILL_TO = re.compile(r"^(bill(?:ed)?\s*to|sold\s*to|ship\s*to|invoice\s*to|deliver\s*to|for\s*:|to\s*:|service\s*address|"
                       r"account\s*(?:holder|name)|customer|client|factur[ée]\s*a|vendu\s*a|livr[ée]?\s*a|"
-                      r"expedier\s*a|adresse\s*de\s*livraison|attention|attn)(?:\b|(?<=:))")  # fmt: skip
+                      r"expedier\s*a|adresse\s*de\s*livraison|attention|attn|"
+                      # The customer under another name (B-1542): "Prepared for:", "Destinataire :", "Adressé à :".
+                      r"prepared\s*for|purchaser|buyer|recipient|destinataire|adresse\s*a)(?:\b|(?<=:))")  # fmt: skip
 
 
 def _bill_to_regions(layout: DocLayout) -> list[Box]:

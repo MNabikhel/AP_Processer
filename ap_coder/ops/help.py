@@ -533,8 +533,13 @@ CHECKS: dict[str, CheckHelp] = {
     ),
     "NO_TAX_CHARGED": CheckHelp(
         TAX, "No tax charged",
-        "No sales tax is charged on a Canadian supply.",
-        "Confirm the items are exempt or zero-rated (e.g. basic groceries, some services); otherwise query it.",
+        "No sales tax is charged on a Canadian supply. A vendor not registered for GST/HST (a small supplier, no "
+        "GST/HST number on the invoice) rightly charges none. The provincial tax of British Columbia, Saskatchewan and "
+        "Manitoba is still due on taxable lines whoever the vendor is: it is self-assessed, and the Self-assessment "
+        "report counts those lines unless they are marked exempt.",
+        "Confirm the items are exempt or zero-rated (e.g. basic groceries, some services) and mark them so, or that "
+        "the vendor is not registered for GST/HST; otherwise query it. Leave taxable lines unmarked: their PST or RST "
+        "is self-assessed (in Quebec a QST registrant generally owes nothing net).",
     ),
     "PROVINCIAL_TAX_NOT_CHARGED": CheckHelp(
         TAX, "Provincial tax not charged",

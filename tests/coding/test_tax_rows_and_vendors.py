@@ -343,3 +343,85 @@ def test_on_the_office_network_a_colleague_cannot_change_the_setup_or_import(tmp
         assert ana.get(path).status_code == 200, path  # viewing stays open
     here = local(app).post("/accounts/policy", data={"policy_notes": ""}, headers=PAGE)
     assert here.status_code != 403
+
+
+def test_the_limiteds_lessons_are_its_own(tmp_path):
+    """B-1514: lessons were kept and looked up by the name alone: the Limited's "Net 60" was set on the Inc.'s invoice
+    as Likely, and the corrections of both merged into one lesson that then applied to the other."""
+    from ap_coder.ai import lessons
+    from ap_coder.capture.types import FIELDS, MISSING, VERIFIED, CaptureResult, FieldResult
+    from ap_coder.capture.workflow import apply_header_lessons, learn_from_approval
+    from tests.webclient import add_clean, gt
+
+    store = _two_great_lakes(tmp_path)
+
+    def approve(name, gst, number, terms):
+        iid = add_clean(store, vendor_name=name, gst_hst_registration_number=gst, invoice_number=number,
+                        payment_terms="", currency="CAD")  # fmt: skip
+        final = {**gt(), "vendor_name": name, "gst_hst_registration_number": gst, "invoice_number": number,
+                 "payment_terms": terms}  # fmt: skip
+        store.approve_invoice(iid, final, "Ann")
+        learn_from_approval(store, iid, final, actor="Ann")
+
+    def read(name, gst):
+        cap = CaptureResult(fields={f: FieldResult(f, None, 0.0, MISSING) for f in FIELDS})
+        cap.fields["vendor_name"] = FieldResult("vendor_name", name, 0.99, VERIFIED)
+        cap.fields["gst_hst_registration_number"] = FieldResult("gst_hst_registration_number", gst, 0.99, VERIFIED)
+        apply_header_lessons(store, cap)
+        return cap.fields["payment_terms"].value
+
+    for n in (1, 2):
+        approve("Great Lakes Mechanical Limited", LTD, f"L-{n}", "Net 60")
+    assert {r["vendor_key"] for r in store.list_lessons()} == {"great lakes mechanical #40120"}
+    assert read("Great Lakes Mechanical Inc.", INC) is None  # the Limited's terms are not the Inc.'s
+    assert not lessons.prompt_lines(store, "Great Lakes Mechanical Inc.", gst=INC)
+    assert lessons.prompt_lines(store, "Great Lakes Mechanical Limited", gst=LTD)
+    for n in (1, 2):
+        approve("Great Lakes Mechanical Inc.", INC, f"I-{n}", "Net 10")
+    assert read("Great Lakes Mechanical Limited", LTD) == "Net 60"
+    assert read("Great Lakes Mechanical Inc.", INC) == "Net 10"
+
+
+def test_the_limiteds_invoice_uses_its_own_terms_and_bank_account(tmp_path):
+    """B-1515: finalise_coding took the vendor-master terms and the last Pay-from account by the name alone: the
+    Limited's invoice got the Inc.'s Net 10 (PAYMENT_OVERDUE while its stored due date said otherwise) and was paid
+    from the Inc.'s account; the AI reviewer was shown the Inc.'s record."""
+    import datetime as dt
+
+    from ap_coder.ai.pipeline import finalise_coding
+    from ap_coder.coding.banks import COLUMNS
+    from ap_coder.coding.vendors import master_columns, master_rows
+    from ap_coder.core.config import Settings
+    from ap_coder.core.schema import InvoiceCoding
+    from ap_coder.core.store import Store, load_sample_setup
+    from tests.webclient import add_clean, gt
+
+    store = Store(tmp_path / "t.db")
+    load_sample_setup(store)
+    records = [
+        {"Name": "Great Lakes Mechanical Inc.", "AN8": "40110", "GST/HST Number": INC, "Payment Terms": "Net 10"},
+        {"Name": "Great Lakes Mechanical Limited", "AN8": "40120", "GST/HST Number": LTD, "Payment Terms": "Net 90"},
+    ]
+    store.import_vendor_master(master_rows(records, master_columns(list(records[0]))))
+    base = {c: "" for c in COLUMNS}
+    store.save_bank_accounts(
+        [
+            {**base, "code": "CAD-1", "name": "Ops 1", "currency": "CAD", "is_default": True, "active": True},
+            {**base, "code": "CAD-2", "name": "Ops 2", "currency": "CAD", "active": True},
+        ]
+    )
+    for name, gst, account, number in (("Great Lakes Mechanical Inc.", INC, "CAD-2", "I-1"),
+                                       ("Great Lakes Mechanical Limited", LTD, "CAD-1", "L-1")):  # fmt: skip
+        iid = add_clean(store, vendor_name=name, gst_hst_registration_number=gst, invoice_number=number)
+        store.approve_invoice(iid, {**gt(), "vendor_name": name, "gst_hst_registration_number": gst,
+                                    "invoice_number": number, "pay_from_account": account}, "Ann")  # fmt: skip
+    dated = (dt.date.today() - dt.timedelta(days=30)).isoformat()
+    doc = {**gt(), "vendor_name": "Great Lakes Mechanical Limited", "gst_hst_registration_number": LTD,
+           "invoice_number": "L-2", "invoice_date": dated, "payment_terms": "", "due_date": "",
+           "pay_from_account": ""}  # fmt: skip
+    out, report = finalise_coding(InvoiceCoding.model_validate(doc), store.reference_data(), Settings(), store=store)
+    assert "PAYMENT_OVERDUE" not in {i.code for i in report.issues}  # Net 90: due in 60 days
+    assert out["pay_from_account"] == "CAD-1"
+    from ap_coder.ai import verifier
+
+    assert verifier.vendor_record(store, doc)["erp_id"] == "40120"

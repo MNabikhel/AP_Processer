@@ -102,10 +102,11 @@ def network_login(address: str) -> str:
     return f"network {address}"
 
 
-def clean_name(text: str) -> str:
-    """A name as given, without control characters or runs of spaces, at most ``MAX_NAME`` characters."""
+def clean_name(text: str, most: int = MAX_NAME) -> str:
+    """A name as given, without control or format characters or runs of spaces, at most ``most`` characters (a
+    person's: ``MAX_NAME``)."""
     kept = "".join(" " if unicodedata.category(c).startswith(("C", "Z")) else c for c in str(text or ""))
-    return " ".join(kept.split())[:MAX_NAME].strip()
+    return " ".join(kept.split())[:most].strip()
 
 
 def encode_name(name: str) -> str:

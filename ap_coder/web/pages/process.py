@@ -1011,7 +1011,11 @@ def demo_load(request: Request, back: str = Form("/process")) -> JSONResponse:
 
     if not demo_available():
         return refuse("The demo invoices are not in this copy of AP Coder.")
-    result = load_demo(get_store(request), get_settings(request))
+    store = get_store(request)
+    if sum(store.status_counts().values()) > store.demo_count():  # a page drawn before your own came in (B-1529)
+        return refuse("Not loaded: your own invoices are in AP Coder now, and the demo would mix ten made-up invoices "
+                      "with them (a second PO-77120 would read as a duplicate payment). Reload the page.")  # fmt: skip
+    result = load_demo(store, get_settings(request))
     return done(request, local_url(back, "/process"),
                 flash_message(f"Demo ready: {result['to_review']} invoices to review, {result['approved']} already "
                               "approved.", "ok", icon="science"))  # fmt: skip

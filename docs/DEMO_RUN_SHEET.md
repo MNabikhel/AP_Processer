@@ -12,7 +12,7 @@ runs on the laptop, with no internet. **If anything goes wrong, play the video.*
    with a data folder of its own (`APCoder-demo` in your user folder), so the demo never mixes with your own
    invoices. The first start takes a few minutes, then the dashboard opens (http://127.0.0.1:8501).
 4. **Settings → Reading**: LM Studio *running*, OvisOCR2 *found*, a chat model named. OvisOCR2's self-test runs by
-   itself (a few minutes) and must say *passed*.
+   itself (10 to 20 minutes the first time) and must say *passed*.
 5. **Settings → Review**: your name, province *Alberta*, **Save**. **GL accounts & tax** → **Use the sample GL
    accounts**.
 6. **Import invoices** → **Choose files** → the 10 PDFs in the bundle's `samples` folder (not `samples\demo_day`) →

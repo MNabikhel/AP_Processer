@@ -955,3 +955,16 @@ def test_the_first_setup_says_which_models_it_downloads_from_where(launch, no_mo
     out = capsys.readouterr().out
     _says_the_downloads(out, "www.modelscope.cn")
     assert out.index("www.modelscope.cn") < out.index("Downloading the OCR models")
+
+
+def test_the_page_reader_line_says_why_it_cant_be_used(launch, monkeypatch):
+    """B-1536: every reason OvisOCR2 couldn't be used (not downloaded, failed to load, another server) read "OvisOCR2
+    isn't running in LM Studio", so the pilot tester found LM Studio running and was stuck; the doctor said why."""
+    from ap_coder.ai import page_reader
+
+    note = "OvisOCR2 isn't in LM Studio: copy its two files into LM Studio's models folder (Settings → Reading)."
+    status = page_reader.ReaderStatus(reachable=True, lm_studio=True, model="", document_reader=False,
+                                      state="missing", note=note)  # fmt: skip
+    monkeypatch.setattr(page_reader, "reader_status", lambda *a, **k: status)
+    level, line = launch.page_reader_line()
+    assert level == "warn" and note in line and "isn't running" not in line

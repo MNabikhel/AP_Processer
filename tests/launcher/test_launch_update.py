@@ -501,6 +501,17 @@ def test_a_wheelhouse_for_another_python_says_which_to_install(launch, monkeypat
     assert "Install Python 3.12" in exc.value.hint and "bundle built for this computer" not in exc.value.hint
 
 
+def test_a_32_bit_python_on_64_bit_windows_is_told_to_install_the_64_bit_one(launch, monkeypatch):
+    """B-1538: a 32-bit Python on a 64-bit laptop (python.org's plain "Windows installer" was 32-bit for years) was
+    told "this computer (win_amd64, Python 3.12) can't use it. Use a bundle built for it (--platform win_amd64)":
+    the bundle it had. No bundle can be built for it (OCR has no 32-bit Windows packages): the 64-bit Python can."""
+    _wheelhouse(launch, *WINDOWS_ONLY)
+    _computer(launch, monkeypatch, "windows", (3, 12), ["cp312-cp312-win32", "py3-none-any"])
+    message = launch.wheelhouse_misfit()
+    assert "32-bit" in message and "64-bit" in message and "install Python 3.12" in message
+    assert "--platform" not in message
+
+
 def test_a_wheelhouse_that_fits_says_nothing(launch, monkeypatch):
     _wheelhouse(launch, *WINDOWS_ONLY)
     _computer(launch, monkeypatch, "windows", (3, 12), ["cp312-cp312-win_amd64", "py3-none-any"])
