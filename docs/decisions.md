@@ -286,3 +286,12 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   AP (to review, to export, to process again), the manager it waits for, a second approver (not the first), or no
   one (in the ERP, rejected). It is worked out from the status and the parked reason, so it needs nothing stored.
   (`erp/search.py` `next_to_act`; `tests/erp/test_search.py`)
+- **D-141** · Changed vendor details are approved only with a reason: a bank account printed for payment that differs
+  from the vendor's approved invoices (`VENDOR_BANK_CHANGED`) or from the one JD Edwards pays (`VENDOR_BANK_NOT_JDE`),
+  and a GST/HST, QST or PST number that differs (`VENDOR_TAX_NUMBER_CHANGED`, `VENDOR_QST_CHANGED`,
+  `VENDOR_PST_CHANGED`) are errors now, not warnings: "Approve anyway" with how the change was confirmed, kept with
+  the approval in the audit trail and the controls report's "Approved despite an error" (the pilot tester's call,
+  2 November 2026: "stuff like this should be logged"). A vendor on hold is never approved anyway (`HARD_CODES`,
+  B-1544): the hold is lifted first, or the invoice rejected. As errors, the changed tax numbers take an error's
+  share off the Reading. (`coding/vendors.py`, `web/invoice_view.py` `HARD_CODES`;
+  `tests/web/test_web_review_voucher.py`)

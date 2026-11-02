@@ -1925,6 +1925,8 @@ HARD_CODES = frozenset({
     "POSTING_UNBALANCED", "INVOICE_DATE_INVALID", "DUE_DATE_INVALID", "DATE_AMBIGUOUS", "CURRENCY_UNKNOWN",
     # An account that is wrong or missing would post to the wrong (or a blank) GL (B-926).
     "GL_IS_TAX_ACCOUNT", "GL_UNKNOWN", "CC_UNKNOWN", "TAX_GL_UNMAPPED", "TAX_GL_UNKNOWN",
+    # A vendor on hold: the hold is lifted first (the Vendors page, or JD Edwards), or the invoice rejected (B-1544).
+    "VENDOR_ON_HOLD",
 })  # fmt: skip
 
 

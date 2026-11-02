@@ -219,13 +219,15 @@ CHECKS: dict[str, CheckHelp] = {
         FRAUD, "Vendor on hold",
         "AP put this vendor on hold on the Vendors page (the note there says why), or the ERP's vendor master "
         "marks it as blocked or inactive.",
-        "Do not approve until the hold is lifted on the Vendors page, or reject the invoice.",
+        "It can't be approved while the vendor is on hold: lift the hold on the Vendors page (a hold set in JD "
+        "Edwards is lifted in JD Edwards, then the vendor list imported or synced again), or reject the invoice.",
     ),
     "VENDOR_TAX_NUMBER_CHANGED": CheckHelp(
         FRAUD, "GST/HST number changed",
         "The vendor's GST/HST number differs from the number in the vendor list or, when it has none, from its "
         "earlier approved invoices. Fake invoices often imitate a real supplier with different details.",
-        "Call the vendor on a number you already have (not the one on this invoice) to confirm before paying.",
+        "Call the vendor on a number you already have (not the one on this invoice) to confirm before paying."
+        " If it checks out, tick “Approve anyway” and say how you confirmed it: the reason is kept in the audit trail.",
     ),
     "VENDOR_ADDED_HERE": CheckHelp(
         FRAUD, "New vendor added here",
@@ -239,14 +241,18 @@ CHECKS: dict[str, CheckHelp] = {
         "The vendor's QST number differs from the one in the vendor list (or on its earlier approved invoices). A "
         "different number can mean a fake invoice, or a bill from another company under a known name.",
         "Call the vendor on a number you already have to confirm. If the vendor list is out of date, correct it on "
-        "the Vendors page.",
+        "the Vendors page."
+        " If it checks out, tick “Approve anyway” and say how you confirmed it: the reason is kept in the "
+        "audit trail.",
     ),
     "VENDOR_PST_CHANGED": CheckHelp(
         FRAUD, "PST number changed",
         "The vendor's provincial sales tax number (BC PST, Manitoba RST, Saskatchewan PST) differs from the one in "
         "the vendor list (or on its earlier approved invoices).",
         "Call the vendor on a number you already have to confirm. If the vendor list is out of date, correct it on "
-        "the Vendors page.",
+        "the Vendors page."
+        " If it checks out, tick “Approve anyway” and say how you confirmed it: the reason is kept in the "
+        "audit trail.",
     ),
     "VENDOR_BANK_NOT_JDE": CheckHelp(
         FRAUD, "Not the bank account JD Edwards pays",
@@ -254,14 +260,17 @@ CHECKS: dict[str, CheckHelp] = {
         "Edwards pays this vendor on (read by the JD Edwards API's supplier sync). New banking details on an invoice "
         "are the most common way AP is defrauded.",
         "Call the vendor on a number from your vendor file (not the one on this invoice or in the email) and "
-        "confirm before paying; a real change goes through your vendor banking change process in JD Edwards.",
+        "confirm before paying; a real change goes through your vendor banking change process in JD Edwards."
+        " If it checks out, tick “Approve anyway” and say how you confirmed it: the reason is kept in the audit trail.",
     ),
     "VENDOR_BANK_CHANGED": CheckHelp(
         FRAUD, "Bank account changed",
         "The bank details printed on the invoice for payment differ from the ones on this vendor's earlier approved "
         "invoices. A message or invoice announcing new banking details is the most common way AP is defrauded.",
         "Call the vendor on a number from your vendor file (not the one on this invoice or in the email) and "
-        "confirm the change before paying or updating the vendor's banking in the ERP.",
+        "confirm the change before paying or updating the vendor's banking in the ERP."
+        " If it checks out, tick “Approve anyway” and say how you confirmed it: the reason is kept in the "
+        "audit trail.",
     ),
     "PAY_FROM_MISSING": CheckHelp(
         PAYMENT, "No bank account to pay from",

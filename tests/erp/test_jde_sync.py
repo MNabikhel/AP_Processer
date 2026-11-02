@@ -180,6 +180,8 @@ def test_a_printed_bank_account_jde_does_not_pay_is_flagged(store, ais):
     assert "VENDOR_BANK_NOT_JDE" not in [c for _, c, _ in vendor_findings(same, store)]
     found = [m for _, c, m in vendor_findings(other, store) if c == "VENDOR_BANK_NOT_JDE"]
     assert found and "…4321" in found[0] and "00012-003 …4567" in found[0]
+    # approved only with "Approve anyway" and a reason, kept in the audit trail (D-141)
+    assert [s for s, c, _ in vendor_findings(other, store) if c == "VENDOR_BANK_NOT_JDE"] == ["error"]
 
 
 def test_the_sync_report_says_how_many_gl_descriptions_were_taken_from_jd_edwards(store, ais):

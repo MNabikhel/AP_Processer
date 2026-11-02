@@ -79,7 +79,7 @@ def test_changed_gst_number_is_flagged(tmp_path, ground_truth, reference):
     store = Store(tmp_path / "ap.db")
     _approved(store, _variant(ground_truth, "A-1", date="2026-06-01"), tmp_path, "a.pdf")
     codes, _ = _codes(store, _variant(ground_truth, "A-2", gst="987654321 RT0001"), reference)
-    assert codes.get("VENDOR_TAX_NUMBER_CHANGED") == "warning"
+    assert codes.get("VENDOR_TAX_NUMBER_CHANGED") == "error"  # approved only with a reason (D-141)
     same, _ = _codes(store, _variant(ground_truth, "A-3", gst="123456782RT0001"), reference)
     assert "VENDOR_TAX_NUMBER_CHANGED" not in same  # spacing differences don't count
 
@@ -113,7 +113,7 @@ def test_expected_gst_number_from_the_vendor_master_wins(tmp_path, ground_truth,
     _approved(store, _variant(ground_truth, "A-1"), tmp_path, "a.pdf")
     store.save_vendor("northwind it solutions", "Northwind IT Solutions Inc.", expected_gst="111111111RT0001")
     codes, _ = _codes(store, _variant(ground_truth, "A-2"), reference)
-    assert codes.get("VENDOR_TAX_NUMBER_CHANGED") == "warning"
+    assert codes.get("VENDOR_TAX_NUMBER_CHANGED") == "error"
 
 
 @pytest.mark.parametrize(
@@ -210,7 +210,7 @@ def test_changed_bank_account_is_flagged(tmp_path, ground_truth, reference):
     codes, report = _codes(
         store, {**_variant(ground_truth, "B-2"), "remit_bank_account": "010 00999 99887766"}, reference
     )
-    assert codes.get("VENDOR_BANK_CHANGED") == "warning"
+    assert codes.get("VENDOR_BANK_CHANGED") == "error"  # approved only with a reason (D-141)
     message = next(i.message for i in report.issues if i.code == "VENDOR_BANK_CHANGED")
     assert "…7766" in message and "…4567" in message and "99887766" not in message  # never the whole account
     reformatted = {**_variant(ground_truth, "B-3"), "remit_bank_account": "Inst 004 Transit 12345 Acct 1234567"}
@@ -348,7 +348,7 @@ def test_the_vendor_lists_numbers_are_checked_on_the_first_invoice_too(tmp_path,
     doc = {**ground_truth, "qst_registration_number": "9999999999 TQ 0001", "pst_registration_number": "PST 9999-0000"}
     codes, report = _codes(store, doc, reference)
     assert {codes.get(c) for c in ("VENDOR_TAX_NUMBER_CHANGED", "VENDOR_QST_CHANGED", "VENDOR_PST_CHANGED")} == {
-        "warning"
+        "error"
     }
     message = next(i.message for i in report.issues if i.code == "VENDOR_PST_CHANGED")
     assert "PST 9999-0000" in message and "vendor list" in message
@@ -378,7 +378,7 @@ def test_without_the_vendor_list_the_approved_invoices_decide(tmp_path, ground_t
     codes, _ = _codes(store, {**_variant(ground_truth, "A-2"), "pst_registration_number": "160482-7"}, reference)
     assert "VENDOR_PST_CHANGED" not in codes
     codes, _ = _codes(store, {**_variant(ground_truth, "A-3"), "pst_registration_number": "555111-2"}, reference)
-    assert codes.get("VENDOR_PST_CHANGED") == "warning"
+    assert codes.get("VENDOR_PST_CHANGED") == "error"
 
 
 def test_an_old_vendor_list_gets_the_new_columns(tmp_path):
