@@ -601,3 +601,21 @@ def test_a_sheet_whose_first_row_is_its_column_names_is_read_as_before():
     rows = [["Code", "Description", "", ""], ["CC100", "Executive", "", ""], ["CC200", "Finance", "", ""]]
     df, _ = read_sheet("cc.xlsx", xlsx(rows))
     assert list(df.columns)[:2] == ["Code", "Description"] and df["Code"].tolist() == ["CC100", "CC200"]
+
+
+def test_names_typed_in_are_cleaned_as_the_who_page_cleans_them(client, store):
+    """B-1531: Settings → Review's "Your name" and the review screen's "Add new vendor" kept any length and control or
+    format characters (a bell, a right-to-left override that shows an approver's name reversed in the audit trail);
+    the Who are you? page already cleans a name (``identity.clean_name``)."""
+    from ap_coder.core import paths
+    from tests.webclient import add_clean
+
+    answer = client.post("/settings/review", data={"reviewer_name": "Dana\x07\u202eClerk " + "x" * 5000}, headers=PAGE)
+    assert answer.status_code == 200
+    saved = paths.read_user_settings().get("reviewer") or ""
+    assert saved.startswith("Dana") and "\x07" not in saved and "\u202e" not in saved and len(saved) <= 60
+    invoice_id = add_clean(store, vendor_name="Brand New Supply")
+    client.post(f"/review/{invoice_id}/vendor", data={"name": "A\x00B\u202e Supply " + "y" * 20000}, headers=PAGE)
+    with store._conn() as conn:
+        names = [r[0] for r in conn.execute("SELECT display_name FROM vendors WHERE display_name LIKE 'A%'")]
+    assert names and all("\x00" not in n and "\u202e" not in n and len(n) <= 120 for n in names)

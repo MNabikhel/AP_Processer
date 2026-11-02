@@ -268,7 +268,7 @@ def _review_part(request: Request, reviewer_name: str | None, threshold: str | N
             return refuse("The confidence threshold must be a number from 50 to 99.")
         if not 50 <= percent <= 99:
             return refuse("The confidence threshold must be from 50% to 99%.")
-    name = None if reviewer_name is None else reviewer_name.strip()
+    name = None if reviewer_name is None else identity.clean_name(reviewer_name)  # as the Who page cleans it (B-1531)
     if name is not None and identity.person() is not None:  # a colleague's name is never the owner's saved one
         if name and name != reviewer():
             if identity.person().user_id:  # server mode (D-97)

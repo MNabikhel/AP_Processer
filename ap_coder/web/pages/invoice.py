@@ -74,6 +74,7 @@ from ap_coder.web.identity import shown_path
 from ap_coder.web.pages.activity import timeline_items
 from ap_coder.web.pages.review import attention, filter_queue, sort_queue
 
+MAX_VENDOR_NAME = 120  # a vendor name typed in Add new vendor (B-1531)
 router = page_router()  # each plain handler: one connection a request
 
 VIEWER_HEIGHT = 760  # px; the page scrolls inside, never taller than the window
@@ -602,7 +603,7 @@ def add_vendor(
     JD Edwards on, its address number (AN8) can be given here (an Admin's, as in Settings → JD Edwards E1, D-112)."""
     store = get_store(request)
     _in_review(store, invoice_id)
-    name = " ".join(name.split())
+    name = identity.clean_name(name, MAX_VENDOR_NAME)  # no control characters, a vendor name's length (B-1531)
     if province and province not in PROVINCE_NAMES and province != OUTSIDE_CANADA:
         return refuse("Choose a province from the list.")
     an8 = an8.strip()
