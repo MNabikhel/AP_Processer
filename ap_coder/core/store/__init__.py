@@ -19,7 +19,8 @@ approving, the ERP's register, the second approval), ``purchasing`` (POs, export
 reviewer's queue), ``vendors``, ``backups``, ``learning`` (the feedback memory, metrics), ``ephemeral`` (messages
 and uploads kept for a short while), ``samples``, ``users`` (server mode's accounts, sessions and login attempts,
 D-97), ``hub`` (what the finance hub feed reads, D-103), ``postings`` (the JD Edwards postings ledger kept across a
-restore, D-105), ``summary`` (the invoices' summary the lists, the search and the reports read, D-110). A test
+restore, D-105), ``summary`` (the invoices' summary the lists, the search and the reports read, D-110), ``managers``
+(a manager confirming an invoice's cost allocation, D-138). A test
 that patches a module-level name (``_now``, ``json``...) patches it in the part that uses it.
 """
 
@@ -105,6 +106,7 @@ from .hub import HubMixin
 from .invoices import InvoicesMixin
 from .learning import LearningMixin
 from .lessons import LessonsMixin
+from .managers import ManagersMixin
 from .purchasing import PurchasingMixin
 from .summary import SummaryMixin
 from .users import UsersMixin
@@ -125,6 +127,7 @@ class Store(
     EphemeralMixin,
     UsersMixin,
     HubMixin,
+    ManagersMixin,
 ):
     """The local SQLite database: one class, its parts in this folder by subject (see the module list above)."""
 
