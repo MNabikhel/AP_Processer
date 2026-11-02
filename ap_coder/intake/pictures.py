@@ -113,7 +113,26 @@ def looks_incomplete(path: str | Path) -> bool:
         fh.seek(max(0, size - 1024))
         tail = fh.read()
     end = {".pdf": b"%%EOF", ".jpg": b"\xff\xd9", ".png": b"IEND"}.get(kind)
+    if end is None and kind in _DECODED_TO_TELL:  # no end marker to look for: decoded whole, every page (B-1528)
+        return not _decodes(path)
     return end is not None and end not in tail
+
+
+# Pictures with no end marker: whether one is whole is told by decoding it (a scanner's multi-page TIFF written page by
+# page, B-1528).
+_DECODED_TO_TELL = (".tif", ".bmp", ".gif", ".webp")
+
+
+def _decodes(path: Path) -> bool:
+    from PIL import Image, ImageSequence
+
+    try:
+        with Image.open(path, formats=picture_formats()) as image:
+            for frame in ImageSequence.Iterator(image):
+                frame.load()
+    except Exception:  # noqa: BLE001 - cut off, or damaged: not whole
+        return False
+    return True
 
 
 def as_its_kind(path: str | Path) -> Path:
