@@ -400,6 +400,27 @@ def not_sure(top: Any) -> str:
     return f"Not sure enough to code it (maybe {top.gl_code}: {'; '.join(top.reasons[:2])}): pick the account."
 
 
+# The invoice a credit note credits, as printed: "Original Invoice: NW-2026-0912", "Credit for invoice #INV-4471",
+# "Re: Invoice 88213", "Applies to invoice no. A-100", "Facture d'origine : SIL-4471", "Avoir sur facture n° 2026-118".
+_CREDITED = re.compile(
+    r"(?i)(?:original\s+invoice|credit(?:s|ed)?\s+(?:to|for|against|on)\s+invoice|re\s*:\s*invoice"
+    r"|applies\s+to\s+invoice|(?:reference|related)\s+invoice|facture\s+(?:d['’]\s*origine|originale)"
+    r"|(?:avoir|note\s+de\s+cr[ée]dit)\s+sur\s+(?:la\s+)?facture)"
+    r"\s*(?:no\.?|n[o°º]\.?|#|number|num[ée]ro)?\s*[:#]?\s*([A-Z0-9][A-Z0-9\-/.]{1,24}[A-Z0-9])"
+)
+
+
+def credited_invoice(text: str) -> str:
+    """The invoice number a credit note says it credits, read off its text ("" when it names none): the chat model
+    reads it too, but without LM Studio the credit note's checks (CREDIT_NOTE_FOR, CREDIT_EXCEEDS_INVOICE) need it
+    (B-1521)."""
+    for match in _CREDITED.finditer(text or ""):
+        number = match.group(1)
+        if any(c.isdigit() for c in number):
+            return number
+    return ""
+
+
 def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback: list[dict[str, Any]],
                       store: Any = None, text: str = "", layout: DocLayout | None = None,
                       ) -> CodingResult:  # fmt: skip
@@ -526,6 +547,10 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
         qst_registration_number=str(values.get("qst_registration_number") or ""),
         pst_registration_number=str(values.get("pst_registration_number") or ""),
         remit_bank_account=bank_details(text),
+        # a credit note: the invoice it credits, as printed (B-1521)
+        original_invoice_number=credited_invoice(text)
+        if capture.credit_note or _amount(values, "grand_total") < 0
+        else "",
         subtotal=round(subtotal + freight, 2),
         tax_lines=tax_lines,
         tax_total=_amount(values, "tax_total") or round(sum(t.tax_amount for t in tax_lines), 2),
