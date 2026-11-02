@@ -650,7 +650,18 @@ def terms_key(text: str) -> str:
     receipt = bool(re.search(r"receipt|reception", s))
     if not numbers and not receipt:
         return " ".join(s.split())
-    return "terms:" + "/".join(str(int(n)) for n in numbers) + (":receipt" if receipt else "")
+    return "terms:" + "/".join(str(int(n)) for n in numbers) + (":receipt" if receipt else "") + terms_kind(text)
+
+
+def terms_kind(text: str) -> str:
+    """What the digits of payment terms don't say (B-1519): counted from the end of the month ("Net 30 EOM"), in
+    months ("Net 1 month"), or to a day of the next month ("Net 10 prox"); "" for plain terms, whose key stays as it
+    was."""
+    from ..coding.terms import parse_terms
+
+    terms = parse_terms(text)
+    return ((":eom" if terms.eom else "") + (":months" if terms.net_months else "")
+            + (f":prox{terms.prox_day}" if terms.prox_day else ""))  # fmt: skip
 
 
 def same_value(field: str, a: object, b: object) -> bool:

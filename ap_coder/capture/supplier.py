@@ -39,6 +39,7 @@ from typing import Any
 from ..core.memory import vendor_key
 from .confidence import wilson_lower  # one Wilson lower bound for the bar and the calibration
 from .normalize import normalize_value as shared_value
+from .normalize import terms_kind
 from .types import (
     AMOUNT_FIELDS,
     DATE_FIELDS,
@@ -291,7 +292,8 @@ def _terms_key(value: Any) -> str | None:
     receipt = bool(re.search(r"receipt|reception", s))
     if not numbers and not receipt:
         return _compact(value) or None
-    return "terms:" + "/".join(str(int(n)) for n in numbers) + (":receipt" if receipt else "")
+    kind = terms_kind(str(value))  # end of month, months, prox (B-1519)
+    return "terms:" + "/".join(str(int(n)) for n in numbers) + (":receipt" if receipt else "") + kind
 
 
 def _matches_key(name: str, raw: str, target: Any) -> str | None:
