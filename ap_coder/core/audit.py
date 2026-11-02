@@ -75,6 +75,11 @@ ACTIONS = {
     "jde_file_downloaded": ("download", "info", "JD Edwards file downloaded"),
     "parked": ("pause_circle", "warn", "Parked"),
     "unparked": ("play_circle", "info", "Back in the queue"),
+    "sent_to_manager": ("forward_to_inbox", "warn", "Sent to the manager"),
+    "manager_confirmed": ("how_to_reg", "ok", "Manager confirmed the coding"),
+    "manager_sent_back": ("undo", "warn", "Manager sent it back"),
+    "manager_request_withdrawn": ("cancel_schedule_send", "info", "Manager request withdrawn"),
+    "cost_center_manager_set": ("manage_accounts", "info", "Cost center manager set"),
     "note": ("sticky_note_2", "violet", "Note"),
     "final_approved": ("how_to_reg", "ok", "Second approval"),
     "sent_back": ("undo", "warn", "Sent back"),
@@ -364,6 +369,17 @@ def describe(event: dict[str, Any]) -> str:
         return f"waiting for: {d.get('reason') or 'no reason given'}{follow}"
     if action == "unparked":
         return "returned to the review queue"
+    if action == "sent_to_manager":
+        centers = ", ".join(d.get("cost_centers") or []) or "no cost center"
+        return f"to {d.get('manager') or '?'} to confirm the cost allocation ({centers})"
+    if action in ("manager_confirmed", "manager_sent_back"):
+        how = " by email, recorded by AP" if d.get("via") == "email" else ""
+        what = "confirmed the coding" if action == "manager_confirmed" else f"sent it back: {d.get('note') or ''}"
+        return f"{d.get('manager') or '?'} {what}{how}"
+    if action == "manager_request_withdrawn":
+        return "brought back before the manager answered"
+    if action == "cost_center_manager_set":
+        return f"{d.get('manager') or '?'} for {', '.join(d.get('cost_centers') or [])}"
     if action == "note":
         return str(d.get("text") or "")
     if action == "final_approved":

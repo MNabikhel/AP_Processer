@@ -494,9 +494,8 @@ class InvoicesMixin:
             if keep_approved and row is not None and row["status"] in (APPROVED, PENDING):
                 raise ValueError(f"invoice {invoice_id} was approved meanwhile: reopen it before deleting it")
             conn.execute("DELETE FROM invoices WHERE id = ?", (invoice_id,))
-            # What capture read, and the supplier accuracy measured on it, go with the invoice: a deleted
-            # invoice (a duplicate upload, a demo) must not count towards a supplier's autonomy, a reader's
-            # record or the confidence calibration, and is no longer waiting for the page reader.
+            # What capture read and the supplier accuracy measured on it go with the invoice (a duplicate, a demo): it
+            # no longer counts for a supplier's autonomy, a reader's record or the calibration, nor waits to be read.
             for table in (
                 "invoice_capture",
                 "supplier_outcomes",
