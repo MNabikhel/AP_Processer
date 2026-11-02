@@ -1,0 +1,182 @@
+"""A manager confirms an invoice's cost allocation (D-138), on the screens: AP sends it from the review screen; on the
+laptop AP downloads the request email and records the answer; in server mode a Manager account answers on screen,
+sees only its own requests, and nothing else of AP Coder."""
+
+from __future__ import annotations
+
+import io
+from email import message_from_bytes
+from email.policy import default
+
+import pytest
+from fastapi.testclient import TestClient
+
+from ap_coder.core.store import PARKED, REVIEW
+from ap_coder.core.store.managers import CONFIRMED, SENT_BACK, WAITING
+from ap_coder.web.app import create_app
+from ap_coder.web.identity import SESSION_COOKIE
+from tests.conftest import copy_database
+from tests.web.test_web_invoice import form_of
+from tests.webclient import PAGE, client_for, web_settings
+
+GOOD = "correct horse battery"
+
+
+@pytest.fixture
+def store(cost_centers_demo_template, tmp_path):
+    return copy_database(cost_centers_demo_template, tmp_path / "private" / "ap_coder.db")
+
+
+def _coded_form(store, iid, center="CC-200"):
+    """The review form with every line coded: a GL account and the cost center ``center``."""
+    gl = next(a["code"] for a in store.list_accounts("gl_accounts"))
+    with store._conn() as conn:  # the sample cost center list, with this one in it
+        conn.execute("INSERT OR IGNORE INTO cost_centers (code, description, created_at) VALUES (?, '', '')", (center,))
+
+    def coded(rows):
+        return [{**r, "predicted_gl_code": gl, "predicted_cost_center": center} for r in rows]
+
+    return form_of(store, iid, coded)
+
+
+def _first(store):
+    return store.list_invoices(REVIEW)[0]["id"]
+
+
+def test_the_laptop_flow_send_the_email_record_the_answer_back_in_the_queue(store, tmp_path):
+    client = client_for(store)
+    iid = _first(store)
+    form = {**_coded_form(store, iid), "manager_name": "Bob Manager", "manager_email": "bob@example.com",
+            "manager_note": "New site", "remember_manager": "1"}  # fmt: skip
+    answer = client.post(f"/review/{iid}/manager", data=form, headers=PAGE).json()
+    assert answer["ok"], answer
+    req = store.waiting_manager_request(iid)
+    assert answer["redirect"].startswith(f"/manager/{req['id']}")
+    assert store.get_invoice(iid)["status"] == PARKED and req["cost_centers"] == ["CC-200"]
+    assert store.cost_center_managers()["CC-200"] == {"name": "Bob Manager", "email": "bob@example.com"}
+    page = client.get(f"/review/{iid}").text  # parked, waiting for Bob, with the way to the request
+    assert "Bob Manager to confirm the cost allocation" in page and f"/manager/{req['id']}" in page
+    assert "Bob Manager" in client.get("/manager").text  # in the list of requests waiting
+    email = client.get(f"/manager/{req['id']}/email.eml")
+    msg = message_from_bytes(email.content, policy=default)
+    assert msg["To"] == "bob@example.com" and msg["X-Unsent"] == "1" and list(msg.iter_attachments())
+    reply = ("RE confirm.eml", io.BytesIO(b"Subject: RE\n\nCONFIRMED, thanks"), "message/rfc822")
+    answer = client.post(f"/manager/{req['id']}/record", headers=PAGE, files={"reply": reply},
+                         data={"decision": CONFIRMED, "by": "Bob Manager"}).json()  # fmt: skip
+    assert answer["ok"], answer
+    done_req = store.manager_request(req["id"])
+    assert done_req["status"] == CONFIRMED and done_req["via"] == "email" and done_req["reply_file"]
+    assert (tmp_path / "private" / "emails" / "manager").is_dir()
+    assert store.get_invoice(iid)["status"] == REVIEW
+    assert "Bob Manager confirmed the coding" in client.get(f"/review/{iid}").text
+
+
+def test_sending_needs_every_line_coded_and_a_manager(store):
+    client = client_for(store)
+    iid = _first(store)
+    uncoded = form_of(store, iid, lambda rows: [{**r, "predicted_gl_code": ""} for r in rows])
+    answer = client.post(f"/review/{iid}/manager", data={**uncoded, "manager_name": "Bob"}, headers=PAGE)
+    assert answer.status_code == 400 and "GL account" in answer.json()["error"]
+    answer = client.post(f"/review/{iid}/manager", data=_coded_form(store, iid), headers=PAGE)
+    assert answer.status_code == 400 and "who the manager is" in answer.json()["error"]
+    assert store.get_invoice(iid)["status"] == REVIEW
+
+
+def test_sent_back_shows_what_to_change_and_a_changed_coding_is_said(store):
+    client = client_for(store)
+    iid = _first(store)
+    client.post(f"/review/{iid}/manager", data={**_coded_form(store, iid), "manager_name": "Bob"}, headers=PAGE)
+    rid = store.waiting_manager_request(iid)["id"]
+    sent_back = {"decision": SENT_BACK, "by": "Bob", "note": "Line 1 is CC-300"}
+    assert client.post(f"/manager/{rid}/record", data=sent_back, headers=PAGE).json()["ok"]
+    assert "Line 1 is CC-300" in client.get(f"/review/{iid}").text
+    # Sent again, confirmed, then the coding changed on screen: the screen says the lines are not the ones confirmed.
+    client.post(f"/review/{iid}/manager", data={**_coded_form(store, iid), "manager_name": "Bob"}, headers=PAGE)
+    rid = store.waiting_manager_request(iid)["id"]
+    store.answer_manager_request(rid, CONFIRMED, by="Bob", actor="Bob")
+    client.post(f"/review/{iid}/check", data=_coded_form(store, iid, center="CC-999"), headers=PAGE)
+    assert "The coding has changed since" in client.get(f"/review/{iid}").text
+
+
+def test_withdrawing_brings_it_back(store):
+    client = client_for(store)
+    iid = _first(store)
+    client.post(f"/review/{iid}/manager", data={**_coded_form(store, iid), "manager_name": "Bob"}, headers=PAGE)
+    rid = store.waiting_manager_request(iid)["id"]
+    assert client.post(f"/manager/{rid}/withdraw", headers=PAGE).json()["ok"]
+    assert store.get_invoice(iid)["status"] == REVIEW and store.manager_request(rid)["status"] == "withdrawn"
+
+
+# --- Server mode ----------------------------------------------------------------------------------------------------
+
+
+def _account(store, username, role, centers=""):
+    uid = store.add_user(username, GOOD, role=role, display_name=username.title())
+    with store._conn() as conn:
+        conn.execute("UPDATE users SET must_change = 0, cost_centers = ? WHERE id = ?", (centers, uid))
+    return uid, store.start_session(uid)
+
+
+@pytest.fixture
+def server(store):
+    app = create_app(web_settings(), store, start_reader=False, server=True)
+    client = TestClient(app, base_url="http://localhost", client=("10.0.0.5", 50000), follow_redirects=False)
+    _admin, admin = _account(store, "boss", "admin")
+    clerk_id, clerk = _account(store, "ann", "clerk")
+    bob_id, bob = _account(store, "bob", "manager", "CC-200")
+    _sue_id, sue = _account(store, "sue", "manager", "CC-300")
+    return client, {"admin": admin, "clerk": clerk, "bob": bob, "sue": sue}, bob_id
+
+
+def _as(token):
+    return {**PAGE, "Cookie": f"{SESSION_COOKIE}={token}"}
+
+
+def test_a_manager_answers_on_screen_and_sees_only_its_own(server, store):
+    client, tokens, bob_id = server
+    iid = _first(store)
+    form = {**_coded_form(store, iid), "manager_user": str(bob_id)}
+    assert client.post(f"/review/{iid}/manager", data=form, headers=_as(tokens["clerk"])).json()["ok"]
+    rid = store.waiting_manager_request(iid)["id"]
+    assert store.manager_request(rid)["manager_user"] == bob_id and store.manager_request(rid)["manager_name"] == "Bob"
+    # Bob sees it; Sue (another manager) sees neither it nor its pages; neither sees the review queue.
+    assert "Bob" in client.get("/manager", headers=_as(tokens["bob"])).text
+    assert client.get(f"/manager/{rid}", headers=_as(tokens["bob"])).status_code == 200
+    assert client.get(f"/manager/{rid}", headers=_as(tokens["sue"])).status_code == 404
+    assert client.get(f"/manager/{rid}/page/1.png", headers=_as(tokens["sue"])).status_code == 404
+    assert client.post(f"/manager/{rid}/answer", data={"decision": CONFIRMED},
+                       headers=_as(tokens["sue"])).status_code == 404  # fmt: skip
+    assert client.get("/review", headers=_as(tokens["bob"])).status_code == 403
+    assert client.get(f"/review/{iid}", headers=_as(tokens["bob"])).status_code == 403
+    assert client.get(f"/manager/{rid}/email.eml", headers=_as(tokens["bob"])).status_code == 403
+    assert client.post(f"/manager/{rid}/record", data={"decision": CONFIRMED},
+                       headers=_as(tokens["bob"])).status_code == 403  # fmt: skip
+    # A clerk can't answer for the manager on screen.
+    assert client.post(f"/manager/{rid}/answer", data={"decision": CONFIRMED},
+                       headers=_as(tokens["clerk"])).status_code == 403  # fmt: skip
+    answer = client.post(f"/manager/{rid}/answer", data={"decision": CONFIRMED}, headers=_as(tokens["bob"])).json()
+    assert answer["ok"] and store.manager_request(rid)["status"] == CONFIRMED
+    assert store.manager_request(rid)["via"] == "screen" and store.get_invoice(iid)["status"] == REVIEW
+
+
+def test_a_manager_lands_on_its_own_page(server, store):
+    client, tokens, _ = server
+    assert client.get("/", headers=_as(tokens["bob"])).headers["location"] == "/manager"
+    assert client.get("/", headers=_as(tokens["clerk"])).headers["location"] == "/review"
+
+
+def test_only_an_active_manager_account_can_be_picked(server, store):
+    client, tokens, _ = server
+    iid = _first(store)
+    clerk = next(u["id"] for u in store.list_users() if u["username"] == "ann")
+    form = {**_coded_form(store, iid), "manager_user": str(clerk)}
+    answer = client.post(f"/review/{iid}/manager", data=form, headers=_as(tokens["clerk"]))
+    assert answer.status_code == 400 and store.waiting_manager_request(iid) is None
+
+
+def test_an_admin_sets_a_managers_cost_centers(server, store):
+    client, tokens, bob_id = server
+    answer = client.post(f"/admin/users/{bob_id}/cost-centers", data={"cost_centers": "CC-200; CC-410, CC-200"},
+                         headers=_as(tokens["admin"])).json()  # fmt: skip
+    assert answer["ok"] and next(u for u in store.list_users() if u["id"] == bob_id)["cost_centers"] == "CC-200, CC-410"
+    assert store.waiting_manager_requests() == [] and WAITING == "waiting"

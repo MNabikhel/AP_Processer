@@ -31,6 +31,12 @@ def parked_reason(manager: str) -> str:
     return f"{manager or 'the manager'} to confirm the cost allocation"
 
 
+def _code(value: Any) -> str:
+    """A GL account or cost center as kept: "" for none (the coding's UNASSIGNED placeholder too)."""
+    code = str(value or "").strip()
+    return "" if code == "UNASSIGNED" else code
+
+
 def coding_lines(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """The lines as a manager confirms them: number, description, GL account, cost center and amount (the rest of a
     line is not theirs to confirm)."""
@@ -39,8 +45,8 @@ def coding_lines(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
         out.append({
             "line": int(li.get("line_number") or n),
             "description": str(li.get("description") or "")[:200],
-            "gl_code": str(li.get("gl_code") or li.get("predicted_gl_code") or ""),  # (the coding's names: predicted_)
-            "cost_center": str(li.get("cost_center") or li.get("predicted_cost_center") or ""),
+            "gl_code": _code(li.get("gl_code") or li.get("predicted_gl_code")),  # (the coding's names: predicted_)
+            "cost_center": _code(li.get("cost_center") or li.get("predicted_cost_center")),
             "amount": round(float(li.get("amount") or 0), 2),
         })  # fmt: skip
     return out

@@ -144,7 +144,7 @@
           {% for c in columns %}{% set v = r.cells[c.key] %}
           {% if c.key == "vendor" %}<td class="w"><a href="/review/{{ r.id }}"><b>{{ v or "—" }}</b></a></td>
           {% elif c.key == "status" %}<td>{{ ui.pill(*r.pill) }}</td>
-          {% elif c.key == "where" %}<td class="w dir-where">{{ v }}</td>
+          {% elif c.key in ("where", "next") %}<td class="w dir-where">{{ v }}</td>
           {% elif c.kind == kinds.money %}<td class="r">{% if v is not none %}{{ v | money }}{% else %}<span class="muted">—</span>{% endif %}</td>
           {% elif c.kind == kinds.date %}<td>{{ (v or "")[:10] or "—" }}</td>
           {% elif c.key == "batch" %}<td class="r">{% if v %}<a href="/exports">{{ v }}</a>{% else %}<span class="muted">—</span>{% endif %}</td>

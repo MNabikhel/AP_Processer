@@ -57,6 +57,33 @@ def where(row: dict[str, Any]) -> str:
     return status
 
 
+MANAGER_WAIT = " to confirm the cost allocation"  # the end of a parked reason while a manager has it (D-138)
+
+
+def next_to_act(row: dict[str, Any]) -> str:
+    """Who has to act on the invoice next, and what (D-140): AP, a manager, a second approver, or no one."""
+    status = row["status"]
+    if status == REVIEW:
+        return "AP: review it and approve it"
+    if status == PARKED:
+        reason = str(row.get("parked_reason") or "")
+        if reason.endswith(MANAGER_WAIT):
+            return f"{reason[: -len(MANAGER_WAIT)] or 'The manager'}: confirm the cost allocation"
+        follow = f" (follow up {row['follow_up']})" if row.get("follow_up") else ""
+        return f"AP, once it has: {reason or 'what it waits for'}{follow}"
+    if status == PENDING:
+        return f"A second approver (not {row.get('reviewer') or 'the first'}): approve it or send it back"
+    if status == APPROVED and row.get("export_batch"):
+        return f"No one: in the ERP (batch {row['export_batch']})"
+    if status == APPROVED:
+        return "AP: export it to the ERP"
+    if status == REJECTED:
+        return "No one: rejected"
+    if status == FAILED:
+        return "AP: process it again or enter it by hand"
+    return "AP Coder: reading it"
+
+
 def _raw(text: str) -> str:
     """Letters and digits only, leading zeros kept: "CN-2026-0047" -> "cn20260047"."""
     return re.sub(r"[^0-9a-z]", "", text.lower())

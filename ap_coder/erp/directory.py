@@ -82,8 +82,10 @@ COLUMNS: dict[str, Column] = {c.key: c for c in (
     Column("received", "Received", DATE, "created_at"),
     Column("file", "File", TEXT, "file_name"),
     Column("where", "Where it stands", WHERE, ""),
+    Column("next", "Next to act", WHERE, ""),  # who acts on it next, and what (search.next_to_act, D-140)
 )}  # fmt: skip
-DEFAULT_COLUMNS = ("vendor", "invoice_number", "invoice_date", "due_date", "total", "currency", "status", "where")
+DEFAULT_COLUMNS = ("vendor", "invoice_number", "invoice_date", "due_date", "total", "currency", "status", "where",
+                   "next")  # fmt: skip
 DEFAULT_SORT = "received"
 
 # Every invoice with the values the directory shows, filters and sorts on (one row per invoice): the summary's.
@@ -256,7 +258,7 @@ def condition(key: str, typed: str) -> tuple[str, list[Any]]:
     """One column's filter as (SQL condition, parameters). Raises FilterError."""
     col = COLUMNS[key]
     if col.kind == WHERE:
-        raise FilterError("“Where it stands” can't be filtered: filter on Status instead.")
+        raise FilterError(f"“{col.label}” can't be filtered: filter on Status instead.")
     if col.kind == STATUS:
         # Only real statuses, each once: the list comes from the address and could be any length (B-126).
         statuses = list(dict.fromkeys(s.strip().lower() for s in typed.split(",") if s.strip()))
@@ -355,6 +357,10 @@ def cell(row: dict[str, Any], key: str) -> Any:
         from .search import where as where_it_stands
 
         return where_it_stands(row)
+    if key == "next":
+        from .search import next_to_act
+
+        return next_to_act(row)
     sql = COLUMNS[key].sql
     return row.get(sql)
 

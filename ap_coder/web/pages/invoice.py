@@ -546,7 +546,7 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
     saved_at = str((_drafts(request).get(invoice_id) or {}).get("saved_at") or "")  # edits kept from before
     draft, kept = current_draft(request, inv)
     analysis = view.analyse(store, settings, reference, inv, draft, reviewer(), capture=capture)
-    context["manager"] = _manager_context(request, store, inv, [li.model_dump() for li in analysis.output.line_items])
+    context["manager"] = _manager_context(request, store, inv, list(analysis.output.get("line_items") or []))
     sure = view.shown_sure(view.capture_confidence(capture), draft.header, inv.get("ai_output") or {}, capture)
     start = _start(inv)
     computed = None
@@ -1007,8 +1007,10 @@ def _send_to_manager(request: Request, invoice_id: int, form: Any) -> JSONRespon
         return changed_meanwhile(request, invoice_id)
     draft = _from_form(request, inv, form)
     analysis = view.analyse(store, settings, _reference(store), inv, draft, reviewer())
-    lines = [li.model_dump() for li in analysis.output.line_items]
-    if not lines or any(not str(li.get("predicted_gl_code") or "").strip() for li in lines):
+    lines = [dict(li) for li in (analysis.output.get("line_items") or [])]
+    from ap_coder.core.reference_data import UNASSIGNED
+
+    if not lines or any(str(li.get("predicted_gl_code") or "").strip() in ("", UNASSIGNED) for li in lines):
         return refuse("Code every line to a GL account first: the manager confirms how the invoice is coded.")
     name, email = str(form.get("manager_name") or "").strip(), str(form.get("manager_email") or "").strip()
     user_id = None
