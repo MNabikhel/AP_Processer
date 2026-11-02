@@ -317,44 +317,8 @@ def invoice_ids(html: str) -> list[int]:
     return sorted({int(i) for i in re.findall(r'href="/review/(\d+)"', html)})
 
 
-def walk(base: str, work: Path, *, invoices_folder: Path | None = None) -> Report:
-    """The whole walk; problems are collected in the report (nothing raises for a page that failed)."""
-    report = Report()
-    health = request(base, "GET", "/healthz")
-    _ok(report, "healthz", health)
-    crawl(base, report)  # the empty dashboard first: setup cards, empty states
-
-    _ok(report, "sample setup", post_form(base, "/accounts/sample"), allow_refusal=True)
-    made = work / "made"
-    made.mkdir(parents=True, exist_ok=True)
-    extra: list[Path] = []
-    try:
-        extra = scan_and_photo(made)
-    except Exception as exc:  # noqa: BLE001 - without PyMuPDF the scan and photo are left out, and said
-        report.steps.append(f"scan and photo not made: {exc}")
-    uploads = sample_pdfs() + [p for p in extra if p.exists()]
-    started = _ok(report, f"upload {len(uploads)} invoices", post_files(base, "/process/upload", uploads))
-    if started:
-        snap = wait_for_job(base, report)
-        result = snap.get("result") or {}
-        report.steps.append(f"processed: {result.get('label')} (ok {result.get('ok')}, failed {result.get('failed')})")
-        report.processed = {
-            "ok": int(result.get("ok") or 0),
-            "failed": int(result.get("failed") or 0),
-            "pdfs": len(sample_pdfs()),
-            "images": len(uploads) - len(sample_pdfs()),
-        }
-        if snap.get("state") != "done":
-            report.errors.append(f"processing ended {snap.get('state')}: {snap}")
-
-    if invoices_folder is not None:  # the invoices folder: an emailed invoice
-        invoices_folder.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(emailed_invoice(made), invoices_folder / "vendor_mail.eml")
-        if _ok(report, "process the invoices folder", post_form(base, "/process/folder"), allow_refusal=True):
-            wait_for_job(base, report)
-
-    _ok(report, "load the demo", post_form(base, "/demo/load", {"back": "/process"}), allow_refusal=True)
-
+def _approve_and_export(base: str, report: Report) -> None:
+    """Approve in bulk what the review queue has ready, then export it (Excel, else CSV) and download the batch."""
     queue = request(base, "GET", "/review").text
     ids = invoice_ids(queue)
     report.steps.append(f"review queue: {len(ids)} invoices")
@@ -389,6 +353,50 @@ def walk(base: str, work: Path, *, invoices_folder: Path | None = None) -> Repor
                     report.errors.append(f"batch {batch.group(1)} download is {len(got.body)} bytes")
             ready = []  # exported: the next format has nothing left, and that is fine
             break
+
+
+def walk(base: str, work: Path, *, invoices_folder: Path | None = None) -> Report:
+    """The whole walk; problems are collected in the report (nothing raises for a page that failed)."""
+    report = Report()
+    health = request(base, "GET", "/healthz")
+    _ok(report, "healthz", health)
+    crawl(base, report)  # the empty dashboard first: setup cards, empty states
+
+    _ok(report, "sample setup", post_form(base, "/accounts/sample"), allow_refusal=True)
+    # The demo first, while there are no invoices of your own (once there are, it is no longer offered, D-137, and a
+    # load beside them is refused, B-1529): its invoices are approved in bulk and exported, then the demo is removed
+    # and your own invoices come in.
+    _ok(report, "load the demo", post_form(base, "/demo/load", {"back": "/process"}))
+    _approve_and_export(base, report)
+    _ok(report, "remove the demo", post_form(base, "/demo/remove", {"sure": "1", "back": "/process"}))
+
+    made = work / "made"
+    made.mkdir(parents=True, exist_ok=True)
+    extra: list[Path] = []
+    try:
+        extra = scan_and_photo(made)
+    except Exception as exc:  # noqa: BLE001 - without PyMuPDF the scan and photo are left out, and said
+        report.steps.append(f"scan and photo not made: {exc}")
+    uploads = sample_pdfs() + [p for p in extra if p.exists()]
+    started = _ok(report, f"upload {len(uploads)} invoices", post_files(base, "/process/upload", uploads))
+    if started:
+        snap = wait_for_job(base, report)
+        result = snap.get("result") or {}
+        report.steps.append(f"processed: {result.get('label')} (ok {result.get('ok')}, failed {result.get('failed')})")
+        report.processed = {
+            "ok": int(result.get("ok") or 0),
+            "failed": int(result.get("failed") or 0),
+            "pdfs": len(sample_pdfs()),
+            "images": len(uploads) - len(sample_pdfs()),
+        }
+        if snap.get("state") != "done":
+            report.errors.append(f"processing ended {snap.get('state')}: {snap}")
+
+    if invoices_folder is not None:  # the invoices folder: an emailed invoice
+        invoices_folder.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(emailed_invoice(made), invoices_folder / "vendor_mail.eml")
+        if _ok(report, "process the invoices folder", post_form(base, "/process/folder"), allow_refusal=True):
+            wait_for_job(base, report)
 
     # Settings: the checks a person can click (no Azure endpoint: the check says why and sends nothing)
     for path, fields in (
