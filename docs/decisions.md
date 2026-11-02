@@ -257,8 +257,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   duplicate payment) and mixed made-up invoices into your numbers, which B-468 already guarded against for the
   order of the cards. The demo's own copy of AP Coder (`scripts/demo.bat`, its own data folder) is where to show it.
   (`ap_coder/web/pages/process.py` `demo_offered`; `tests/web/test_web_process.py`)
-- **D-138** · A manager confirms an invoice's cost allocation when AP asks: **Send to manager** (under Park) on the review screen,
-  AP's choice invoice by invoice (never automatic). The lines on screen go with the request (each line's GL account,
+- **D-138** · A manager confirms an invoice's cost allocation when AP asks: **Send to manager** (under Park) on the
+  review screen, AP's choice invoice by invoice (never automatic). The lines on screen go with the request (each line's GL account,
   cost center and amount, `manager_requests.lines`), and the invoice is **parked** waiting for that manager, not a new
   status: everything that already treats a parked invoice right (out of the queue and bulk approval, still counted for
   POs, duplicates and the month end, in the directory, brought back by Un-park) stays right, and an older AP Coder
