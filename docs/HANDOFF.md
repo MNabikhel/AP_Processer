@@ -390,8 +390,9 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
   answers on screen and sees only its own requests (`web/roles.py` `MANAGE`). Code: `core/store/managers.py`,
   `coding/manager_mail.py`, `web/pages/manager.py`.
 - **Company choices to confirm:** which invoices need a manager (today AP decides each time; a rule by amount or
-  cost center would be a next step), who manages each cost center (the cost center import, or the users page on
-  the server), and whether the email should be sent by the company's mail server instead of AP's own Outlook (it
+  cost center would be a next step), who manages each cost center (on the laptop remembered from the first request
+  for each cost center, `cost_centers.manager_name`; on the server set on the users page; an import column for it
+  is not built yet), and whether the email should be sent by the company's mail server instead of AP's own Outlook (it
   would be a named internal system under D-104).
 
 ---
