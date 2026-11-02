@@ -68,7 +68,7 @@ the exact set this release was tested with is `docs/tested-packages.txt` (`pip i
 -e ".[ocr,dev]"` when a newer package breaks something).
 With no internet, use a wheelhouse. The person who handed this over may also have given you the laptop release's
 offline install zip (`APProcessor-offline-0.3.0-<date>.zip` of the release `v0.3.0-pilot5`; Windows, Python
-3.12–3.14): its `wheelhouse/` folder installs everything on Windows with `pip install --no-index --find-links <that
+3.12–3.14; from `v0.3.0-pilot6` on, 3.11–3.14): its `wheelhouse/` folder installs everything on Windows with `pip install --no-index --find-links <that
 wheelhouse> -e ".[ocr,dev]"` (its wheels are Windows ones: a Linux agent or CI runner needs PyPI or a mirror).
 Without it, build one on any computer with internet: `AP_ALLOW_INTERNET=1 python scripts/build_offline_bundle.py`
 (Windows, Python 3.11–3.14, plus that computer; `--platform` and `--python` choose others; `--dry-run` lists every
