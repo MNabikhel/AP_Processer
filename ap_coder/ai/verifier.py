@@ -382,6 +382,18 @@ def response_limit(coder: Any) -> int:
 # --- What it means for the invoice --------------------------------------------------------------------------------
 
 
+def line_seen(output: dict[str, Any] | None, number: Any) -> list[Any]:
+    """One line of a coding as the reviewer judged it: its account, cost center, amount and description ([] when the
+    coding has no such line)."""
+    for li in (output or {}).get("line_items") or []:
+        if str(li.get("line_number")) == str(number):
+            amount = li.get("amount")
+            return [str(li.get("predicted_gl_code") or ""), str(li.get("predicted_cost_center") or ""),
+                    round(float(amount), 2) if isinstance(amount, (int, float)) else str(amount or ""),
+                    " ".join(str(li.get("description") or "").split())]  # fmt: skip
+    return []
+
+
 def issues(result: dict[str, Any] | None, output: dict[str, Any] | None = None) -> list[tuple[str, str, str]]:
     """(severity, code, message) for the review screen from a review's result. With ``output`` (what is on screen
     now): a field it disputed that the reviewer has since changed is no longer reported."""
@@ -395,6 +407,9 @@ def issues(result: dict[str, Any] | None, output: dict[str, Any] | None = None) 
         fields = {f: v for f, v in fields.items()
                   if normalize_value(f, output.get(f)) == normalize_value(f, v.get("value"))}  # fmt: skip
     lines = result.get("lines") or {}
+    seen = result.get("lines_seen") or {}
+    if output is not None and seen:  # a disputed line the clerk has changed since is no longer reported (B-1527)
+        lines = {n: r for n, r in lines.items() if n not in seen or line_seen(output, n) == seen[n]}
     parts = [f"{FIELDS.get(f, f)}: it reads {v.get('on_page') or 'something else'} on the page"
              f"{' (' + v['reason'] + ')' if v.get('reason') else ''}" for f, v in fields.items()]  # fmt: skip
     parts += [f"line {n}: {reason or 'not as entered'}" for n, reason in lines.items()]
@@ -609,6 +624,8 @@ def _verify(settings: Any, store: Any, row: dict[str, Any], cfg: ReviewerSetting
         return _postpone_or_fail(store, row, str(exc)[:300])
     fields = {f: {"value": shown["fields"].get(f), **v} for f, v in found.fields.items()}
     result = {**found.to_dict(), "fields": fields, "model": model, "proposal": digest(output),
+              # each disputed line as it was reviewed: once the clerk changes it, it is no longer reported (B-1527)
+              "lines_seen": {str(n): line_seen(output, n) for n in found.lines},
               "at": dt.datetime.now().isoformat(timespec="seconds")}  # fmt: skip
     if store.restoring() or store.row_identity(iid) != identity:
         return Outcome(iid, "skipped", "not applied: a backup was restored meanwhile")

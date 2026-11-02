@@ -591,3 +591,22 @@ def test_the_reviewers_timeout_names_its_own_minutes_not_the_environment_variabl
     assert reviewer.temporary
     coding = InvoiceCoder._local_error(Bare(), exc)  # the coding call: the environment variable is its limit
     assert "AP_LLM_TIMEOUT_SECONDS" in str(coding)
+
+
+def test_a_line_it_disputed_is_no_longer_reported_once_the_clerk_recodes_it(store, touchless, monkeypatch):  # noqa: F811
+    """B-1527: a field the AI reviewer disputed drops from its warning once the clerk changes it, as its help says ("the
+    warning goes once it matches"); a disputed line stayed whatever the clerk did to it."""
+    iid = _held_for_the_reviewer(store, monkeypatch, coded=True)
+    disputes = {"lines": [{"line_number": 1, "agree": False, "reason": "the GL account does not fit consulting"}]}
+
+    def twice(fields):
+        return {**_answer(fields=fields), **disputes}
+
+    verifier.verify_one(_settings(), store, coder=FakeCoder(twice, twice))
+    result = store.verification(iid)["result"]
+    output = dict(store.get_invoice(iid)["ai_output"])
+    assert any("line 1" in message for _, _, message in verifier.issues(result, output))  # as it was reviewed
+    lines = [dict(li) for li in output["line_items"]]
+    lines[0]["predicted_gl_code"] = "6100"
+    assert not any("line 1" in m for _, _, m in verifier.issues(result, {**output, "line_items": lines}))
+    assert any("line 1" in message for _, _, message in verifier.issues(result))  # no screen: as stored
