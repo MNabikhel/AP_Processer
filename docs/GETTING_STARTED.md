@@ -357,7 +357,7 @@ Task Scheduler and change the program and *start in* folder to the new one. An u
 
 ### A manager confirms the coding (D-138)
 
-On the invoice, **Send to manager** (beside Park) → their name and email → **Send to manager**. The invoice is
+On the invoice, **Park** → *Or send it to the manager*: their name and email → **Send to manager**. The invoice is
 parked, waiting for them. Download the request email it offers (Outlook opens it as a draft, the invoice attached),
 send it, and when they reply, record the answer on the same page (**Manager confirmations**), keeping their reply.
 Confirmed or sent back, the invoice comes back to the review queue to approve as usual; the screen says if the

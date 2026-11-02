@@ -903,8 +903,8 @@ FAQ: list[tuple[str, str]] = [
     ),
     (
         "How does a manager confirm the coding?",
-        "On the review screen, Send to manager asks the manager of the invoice's cost centers to confirm how it is "
-        "coded: the lines on screen go with the request and the invoice is parked, waiting for them. On this "
+        "On the review screen, Park then Send to manager asks the manager of the invoice's cost centers to confirm "
+        "how it is coded: the lines on screen go with the request and the invoice is parked, waiting for them. On this "
         "computer, download the ready-made email from Manager confirmations (it opens in Outlook as a draft, the "
         "invoice attached), send it, and record the answer there when it comes, with the reply email kept. On a "
         "company server, a Manager account answers on screen. Confirmed or sent back, the invoice comes back to the "

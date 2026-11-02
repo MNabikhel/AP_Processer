@@ -10,7 +10,7 @@ backup of the database is made automatically once a day when AP Coder starts (th
 
 ## Managers confirm the coding, what's left on a PO, who acts next (D-138 to D-140)
 
-- **Send to manager** (D-138): on the review screen, AP can ask the manager of the invoice's cost centers to confirm
+- **Send to manager** (D-138): on the review screen (under Park), AP can ask the manager of the invoice's cost centers to confirm
   how it is coded. On the laptop, AP Coder makes the request email (Outlook opens it as a draft, the invoice
   attached) and AP records the reply, kept with the invoice; on a company server, a **Manager** account answers on
   screen and sees only what was sent to it. Either answer brings the invoice back to the review queue; approving

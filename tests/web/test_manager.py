@@ -206,7 +206,7 @@ def test_in_a_browser_send_to_manager_sends_the_coding_on_screen(chromium, store
         page.on("pageerror", lambda e: errors.append(str(e)))
         page.goto(f"{base}/review/{iid}")
         page.wait_for_selector(".iv-sheet:not(.loading)")
-        page.click("[data-manager] summary")
+        page.click("[data-park] summary")
         page.fill("[data-manager] [name=manager_name]", "Bob Manager")
         page.fill("[data-manager] [name=manager_email]", "bob@example.com")
         page.click("[data-manager] button[formaction]")
