@@ -329,20 +329,33 @@ def test_touchless_waits_for_the_reviewer_then_it_approves(store, touchless, mon
     assert inv["meta"]["verifier"]["status"] == verifier.AGREED
 
 
-def _held_for_the_reviewer(store, monkeypatch, **capture):  # noqa: F811
-    from tests.ai.test_azure_check import _touchless_vendor
+def _held_for_the_reviewer(store, monkeypatch, coded=False, **capture):  # noqa: F811
+    """An invoice waiting for the AI reviewer, of a touchless vendor. ``coded``: its lines given accounts, so that only
+    the guard a test is about can keep it from being approved (B-1526)."""
+    from tests.ai.test_azure_check import _code_the_lines, _touchless_vendor
 
     iid = InvoicePipeline(_settings(), store.reference_data(), store=store).process(PDF).invoice_id
     _read_by_the_page_reader(store, monkeypatch)
     _touchless_vendor(store, store.get_invoice(iid)["ai_output"])
+    if coded:
+        _code_the_lines(store, iid)
     if capture:
         notes = {**store.get_invoice(iid)["meta"]["capture"], **capture}
         store.update_after_check(iid, None, None, (), {"capture": notes})
     return iid
 
 
+def test_the_guards_below_are_not_vacuous_the_reviewer_agreeing_approves_a_coded_invoice(store, touchless, monkeypatch):  # noqa: F811
+    """B-1526: the two guard tests below held an invoice whose lines had no account, which is never approved without a
+    person anyway: they passed with nothing guarded. Coded, with nothing else in the way, the reviewer agreeing
+    approves it: each guard is what keeps it back."""
+    iid = _held_for_the_reviewer(store, monkeypatch, coded=True)
+    done = verifier.verify_one(_settings(), store, coder=FakeCoder(_answer()))
+    assert done.status == verifier.AGREED and done.approved and store.get_invoice(iid)["status"] == "approved"
+
+
 def test_the_reviewer_agreeing_does_not_approve_past_a_pending_azure_hold(store, touchless, monkeypatch):  # noqa: F811
-    iid = _held_for_the_reviewer(store, monkeypatch, azure_hold=True)
+    iid = _held_for_the_reviewer(store, monkeypatch, coded=True, azure_hold=True)
     done = verifier.verify_one(_settings(), store, coder=FakeCoder(_answer()))
     assert done.status == verifier.AGREED and not done.approved
     inv = store.get_invoice(iid)
@@ -352,7 +365,7 @@ def test_the_reviewer_agreeing_does_not_approve_past_a_pending_azure_hold(store,
 def test_a_reopen_during_the_review_keeps_aps_corrections(store, touchless, monkeypatch):  # noqa: F811
     """AP approves with a correction and reopens it while the reviewer is still looking: the reviewer agreeing with
     the old proposal must not approve it over AP's coding."""
-    iid = _held_for_the_reviewer(store, monkeypatch)
+    iid = _held_for_the_reviewer(store, monkeypatch, coded=True)
     proposed = store.get_invoice(iid)["ai_output"]
     corrected = {**proposed, "invoice_number": "CORRECTED-1"}
 
@@ -557,3 +570,24 @@ def test_a_review_taken_over_by_another_process_is_not_ended_by_the_first(tmp_pa
     assert not s.finish_verification(5, "done", result={"status": "agreed"}, reader=first)
     assert s.verification(5)["status"] == "verifying" and s.verification(5)["result"] is None
     assert s.finish_verification(5, "done", result={"status": "agreed"}, reader=second)
+
+
+def test_the_reviewers_timeout_names_its_own_minutes_not_the_environment_variable():
+    """B-1525: the AI reviewer's calls are capped by its own minutes (Settings → Reading), yet its timeout said "allow
+    longer with AP_LLM_TIMEOUT_SECONDS", which changes nothing for it, and "LM Studio may still be loading it" while
+    the model was loaded and slow."""
+    import httpx
+    import openai
+
+    from ap_coder.ai.inference import InvoiceCoder
+    from ap_coder.core.config import Settings
+
+    class Bare:
+        settings = Settings()
+
+    exc = openai.APITimeoutError(httpx.Request("POST", "http://127.0.0.1:9/v1/chat/completions"))
+    reviewer = InvoiceCoder._local_error(Bare(), exc, 30.0)
+    assert "Settings → Reading" in str(reviewer) and "AP_LLM_TIMEOUT_SECONDS" not in str(reviewer)
+    assert reviewer.temporary
+    coding = InvoiceCoder._local_error(Bare(), exc)  # the coding call: the environment variable is its limit
+    assert "AP_LLM_TIMEOUT_SECONDS" in str(coding)
