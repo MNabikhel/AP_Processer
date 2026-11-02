@@ -1205,3 +1205,18 @@ def test_in_a_browser_ticking_approve_anyway_by_its_words_never_scrolls_either(b
     page.wait_for_timeout(500)
     assert page.evaluate("document.querySelector('[data-live=bar] [name=override]').checked")
     assert abs(page.evaluate("window.scrollY") - before) < 40 and errors == []
+
+
+def test_a_huge_line_amount_is_refused_in_words_not_a_server_error(client, store):
+    """B-1532: a 17-digit line amount (a reference pasted into an Amount box) gave a 500 on the review screen's check
+    and on Approve (OverflowError in the line-tax solver); smaller and larger ones were refused in words."""
+    invoice_id = clean_invoice(client, store)
+
+    def huge(rows):
+        rows[0]["amount"] = "92233720368547758"
+        return rows
+
+    answer = client.post(f"/review/{invoice_id}/check", data=form_of(store, invoice_id, huge), headers=PAGE)
+    assert answer.status_code == 200 and not answer.json()["allow"]
+    answer = client.post(f"/review/{invoice_id}/approve", data=form_of(store, invoice_id, huge), headers=PAGE)
+    assert answer.status_code in (200, 400, 409) and "Something went wrong" not in answer.text
