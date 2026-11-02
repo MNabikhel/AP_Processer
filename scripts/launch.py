@@ -751,6 +751,11 @@ def here_tags() -> set[str]:
     return {str(tag) for tag in sys_tags()}
 
 
+def arches(tags) -> set[str]:
+    """The processors (``x86_64``, ``arm64``, ``x86``) the wheel tags ``(interpreter, abi, platform)`` are for."""
+    return {_computer_kind(p)[1] for _i, _a, p in tags}
+
+
 def this_computer() -> str:
     return "windows" if WINDOWS else "mac" if sys.platform == "darwin" else "linux"
 
@@ -780,6 +785,11 @@ def wheelhouse_misfit() -> str:
         advice = {"mac": "Use the bundle built for Macs (build it with --mac)",
                   "windows": "Use the bundle built for Windows (the default build)"}.get(system, other)  # fmt: skip
         return f"{start}; this computer is {THIS_KIND[system]} with Python {version}. {advice}"
+    if system == "windows" and any(t.endswith("-win32") for t in here) and "x86" not in arches(tags):  # B-1538
+        best = "3.12" if "3.12" in pythons or not pythons else pythons[-1]
+        return (f"{start}; this Python ({sys.executable}) is the 32-bit kind, which can't use them (and no bundle "
+                f"can be built for it: the OCR has no 32-bit packages): install Python {best} (64-bit) from "
+                "python.org, then start AP Coder again")  # fmt: skip
     if pythons and version not in pythons:
         best = "3.12" if "3.12" in pythons else pythons[-1]
         return (f"{start}; this computer has Python {version}: install Python {best} (then start AP Coder again), "
