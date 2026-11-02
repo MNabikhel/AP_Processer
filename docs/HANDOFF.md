@@ -358,6 +358,12 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
   60–200 GB SSD, Python 3.12, a service account, a DNS name and a certificate for it, a firewall rule for the port,
   LM Studio installed headless with the models.
 - **Not done:** never installed anywhere; not reviewed by the company's security team; no Entra ID sign-in.
+- **Where single sign-on would go:** the sign-in page and its session cookie are `web/pages/login.py`; who the
+  person is on each request, `web/identity.py` (`Identity`); the accounts, their roles and sessions,
+  `core/store/users.py`; what each role may do, `web/roles.py` (unchanged by SSO: map the company's groups to the
+  four roles). Entra ID signs in through Microsoft's cloud, so under the offline rule (CLAUDE.md) it needs a
+  decision of its own, as the AIS Server had (D-104: a named system an Admin turns on, its one address only); an
+  on-premises ADFS on the company network fits D-104 as it is.
 
 ### 6.11 LM Studio and the models
 

@@ -472,7 +472,7 @@ address is printed; forward the port (`ssh -L 8501:127.0.0.1:8501`) to use it fr
 | *Your database … was made by a newer AP Coder* | An older folder was started: use the newest (its folder is named). |
 | *An older AP Coder is still running (port N)* | Close the old window; start again. |
 | *AP Coder stopped on an unexpected error* | Start again; if it repeats, send `~/.ap_coder/logs/launch.log`. |
-| The browser did not open | Open the address the window shows (`http://localhost:8501`); `BROWSER=none` or no desktop skips it. |
+| The browser did not open | Open the address the window shows (`http://127.0.0.1:8501`); `BROWSER=none` or no desktop skips it. |
 
 ## 12. Compared with CloseDesk
 

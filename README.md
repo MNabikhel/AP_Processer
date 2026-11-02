@@ -71,7 +71,7 @@ shortcut. Each start then checks the setup and opens the dashboard in your brows
 ```
 AP Coder readiness:
   ✓ Python 3.12.10
-  ✓ Packages: all 15 in place
+  ✓ Packages: all 16 in place
   ✓ OCR for scanned invoices
   ✓ Chat model: lmstudio-community/gemma-4-12B-it-QAT-GGUF loaded in LM Studio (can see pages)
   ✓ Page reader: ath-maas_ovisocr2 found, self-test passed (reads every page of every invoice)

@@ -63,8 +63,10 @@ before a flow is built.
 | Not for AP (quote, PO, packing slip, remittance advice, out-of-office, newsletter, a portal link) | `emails\needs a person\` | Import invoices |
 
 An invoice attached to a reminder or to a bank-change email is still read into the review queue (the duplicate check
-says if AP already has it); a document that does not say what it is goes to the review queue too, so **no invoice is
-held back by the sorting**. An attachment AP Coder does not read (a .zip, a Word file, a damaged one) is never
+says if AP already has it); a document that does not say what it is goes to the review queue too, and so does a quote, PO, packing
+slip or remittance advice whose top also says *invoice* (a remittance listing the invoices it pays, a PO printed
+with an invoice number): **no invoice is held back by the sorting**, and AP rejects such a document on the review
+screen. An attachment AP Coder does not read (a .zip, a Word file, a damaged one) is never
 dropped silently: the email waits under *Emails that need a person*, with what was left out, while its other invoices
 are read. An email attached to an email (.eml or .msg) is opened like a forwarded one. Each email's sorting and the
 reason are kept in `emails\triage.jsonl`.

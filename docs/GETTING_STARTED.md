@@ -314,7 +314,8 @@ Phase 2.
 
 ### Updating AP Coder
 
-Unzip the new version **anywhere** (a new folder, or over the old one; AP Coder may still be open) and
+Unzip the new version **anywhere** (a new folder, or over the old one: when Windows asks, choose *Replace the
+files in the destination*; AP Coder may still be open) and
 double-click its **`APProcessor.bat`** (Mac: `APProcessor.command`). It stops the old one, says what changed,
 sets up only what is new, keeps your data and settings, and cleans up the old version once its self-check
 passed. The details: [PILOT.md](PILOT.md#updating-ap-coder).

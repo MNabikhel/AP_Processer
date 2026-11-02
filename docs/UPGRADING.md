@@ -78,7 +78,7 @@ is the new folder itself.
 | `e2a20cf` to `e1cf61a`, double-click | as above; the desktop shortcut *AP Coder* (Windows) now opens the new folder | as above |
 
 In every case: the `.env` keeps its values; a setting no longer used (`AP_PAGE_READER`, `AP_PAGE_READER_SCOPE`,
-`AP_LLM_PROVIDER`) is commented out with *# no longer used (AP Coder 0.2)*; the database is copied to
+`AP_LLM_PROVIDER`) is commented out with *# no longer used (AP Coder 0.3)*; the database is copied to
 `~/APCoder/backups/ap_coder-<date>-before-update-from-schema-<n>.db` before it is changed; invoices, approvals,
 the learning memory, vendors and their notes, coding rules, export batches and settings are all kept, and every
 invoice still shows its file and its page picture. `~/.ap_coder/settings.json` then names the new folder as the
