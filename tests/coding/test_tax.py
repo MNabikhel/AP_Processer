@@ -466,3 +466,27 @@ def test_a_rate_written_with_a_percent_sign_is_always_a_percentage(tmp_path):
     table = TaxRateTable.load(path)
     assert table.rate_for("PST", "BC", dt.date(2026, 2, 1)) == pytest.approx(0.005)
     assert table.rate_for("GST", "BC", dt.date(2026, 2, 1)) == pytest.approx(0.05)
+
+
+def test_no_tax_charged_says_what_is_still_due_and_why_none_may_be_charged(reference):
+    """B-1520: a BC invoice that charges no tax at all said only "confirm it is exempt or zero-rated", while the
+    self-assessment report counts its lines as PST due: the clerk was not told the PST is due unless the lines are
+    exempt, nor that a vendor not registered for GST (a small supplier) rightly charges none."""
+    gt = _gt(BC)
+    gt["tax_lines"], gt["tax_total"], gt["grand_total"] = [], 0.0, gt["subtotal"]
+    gt["gst_hst_registration_number"] = ""
+    for li in gt["line_items"]:
+        li["taxes_applied"], li["tax_status"], li["tax_exempt"] = [], "", []
+    found = [
+        f for f in check_taxes(InvoiceCoding.model_validate(gt), reference.tax, None) if f.code == "NO_TAX_CHARGED"
+    ]
+    message = found[0].message
+    assert "confirm it is exempt or zero-rated" in message  # as before
+    assert "not registered for GST" in message and "PST" in message and "self-assess" in message
+    alberta = {**_gt(ON), "tax_lines": [], "tax_total": 0.0, "ship_to_province": "AB"}
+    alberta["grand_total"] = alberta["subtotal"]
+    for li in alberta["line_items"]:
+        li["taxes_applied"] = []
+    message = next(f.message for f in check_taxes(InvoiceCoding.model_validate(alberta), reference.tax, None)
+                   if f.code == "NO_TAX_CHARGED")  # fmt: skip
+    assert "not registered for GST" in message and "self-assess" not in message  # no provincial tax in Alberta
