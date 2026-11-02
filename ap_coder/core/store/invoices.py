@@ -944,19 +944,23 @@ class InvoicesMixin:
             )
             return cur.rowcount > 0
 
-    def reopen(self, invoice_id: int, actor: str, reason: str = "", *, only_rejected: bool = False) -> None:
+    def reopen(self, invoice_id: int, actor: str, reason: str = "", *, only_rejected: bool = False,
+               only_approved: bool = False) -> None:  # fmt: skip
         """Put an approved invoice that is not exported yet, or a rejected one, back in the review queue to be
         corrected. What its approval taught is withdrawn (learned again at the next approval); the reviewer's
         coding is kept as the starting point. An exported invoice is reopened by undoing its batch first.
         ``only_rejected``: a rejected invoice only (a Reopen button shown on a rejected invoice that someone has
-        reopened and approved since must not reopen that approval)."""
-        approved = "" if only_rejected else f"status IN ('{APPROVED}', '{PENDING}') AND export_batch IS NULL OR "
+        reopened and approved since must not reopen that approval). ``only_approved``: an approved invoice only (the
+        approved screen's "Reopen for correction" must not undo a rejection made meanwhile, B-1533)."""
+        approved = f"status IN ('{APPROVED}', '{PENDING}') AND export_batch IS NULL"
+        rejected = f"status = '{REJECTED}'"
+        which = rejected if only_rejected else approved if only_approved else f"{approved} OR {rejected}"
         with self._conn() as conn:
             was = conn.execute("SELECT status, error FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
             cur = conn.execute(
                 f"""UPDATE invoices SET status = ?, reviewer = NULL, reviewed_at = NULL, second_reviewer = NULL,
-                   second_reviewed_at = NULL, error = NULL WHERE id = ? AND ({approved}status = ?)""",
-                (REVIEW, invoice_id, REJECTED),
+                   second_reviewed_at = NULL, error = NULL WHERE id = ? AND ({which})""",
+                (REVIEW, invoice_id),
             )
             if cur.rowcount == 0:
                 raise ValueError(f"invoice {invoice_id} cannot be reopened (exported, or not approved or rejected)")

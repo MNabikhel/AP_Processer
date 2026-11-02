@@ -1220,3 +1220,15 @@ def test_a_huge_line_amount_is_refused_in_words_not_a_server_error(client, store
     assert answer.status_code == 200 and not answer.json()["allow"]
     answer = client.post(f"/review/{invoice_id}/approve", data=form_of(store, invoice_id, huge), headers=PAGE)
     assert answer.status_code in (200, 400, 409) and "Something went wrong" not in answer.text
+
+
+def test_a_stale_reopen_for_correction_does_not_undo_a_rejection(client, store):
+    """B-1533: "Reopen for correction" (an approved invoice's button) posted from a page drawn before the invoice was
+    rejected reopened the rejected invoice and said "Reopened: correct it and approve it again."""
+    from ap_coder.core.store import REJECTED
+
+    invoice_id = clean_invoice(client, store)
+    store.reject_invoice(invoice_id, "Ann", "not ours")
+    answer = client.post(f"/review/{invoice_id}/correct", data={"reason": "wrong GL"}, headers=PAGE)
+    assert store.get_invoice(invoice_id)["status"] == REJECTED
+    assert "Reopened" not in flash_text(client, answer.json()) if answer.json().get("redirect") else True

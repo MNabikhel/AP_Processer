@@ -1205,8 +1205,8 @@ def correct(request: Request, invoice_id: int, reason: str = Form("")) -> JSONRe
     me = reviewer()
     before = store.get_invoice(invoice_id)  # who approved it: the reopen clears it
     try:
-        store.reopen(invoice_id, me, reason.strip())
-    except ValueError:  # exported meanwhile, say: nothing reopened, no vendor suspended
+        store.reopen(invoice_id, me, reason.strip(), only_approved=True)  # never a rejection made since (B-1533)
+    except ValueError:  # exported or rejected meanwhile, say: nothing reopened, no vendor suspended
         from ap_coder.web.pages.review import exported_reason
 
         why = exported_reason(store, store.get_invoice(invoice_id))
