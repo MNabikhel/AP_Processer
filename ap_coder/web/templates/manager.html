@@ -5,7 +5,7 @@
 <header class="apc-head apc-anim"><div>
   {{ ui.breadcrumbs(["AP Coder", "Work"]) }}
   <h1 class="apc-title">{% if req %}Confirm the cost allocation{% else %}Manager confirmations{% endif %}</h1>
-  <div class="apc-sub">{% if req %}{{ inv.vendor_name or "Invoice" }} · {{ inv.invoice_number or "no number" }} · {{ total | money(inv.currency) }}{% elif manager_view %}Invoices accounts payable asked you to confirm: how each line is coded to your cost centers.{% else %}Invoices sent to a manager to confirm their coding. Each comes back to the review queue once answered.{% endif %}</div>
+  <div class="apc-sub">{% if req %}{{ inv.vendor_name or "Invoice" }} · {{ inv.invoice_number or "no number" }} · {{ total | money(inv.currency) }} before tax to confirm{% elif manager_view %}Invoices accounts payable asked you to confirm: how each line is coded to your cost centers.{% else %}Invoices sent to a manager to confirm their coding. Each comes back to the review queue once answered.{% endif %}</div>
 </div></header>
 {% endblock %}
 {% block content %}
