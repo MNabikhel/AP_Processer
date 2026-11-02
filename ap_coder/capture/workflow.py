@@ -125,7 +125,7 @@ def apply_header_lessons(store: Any, capture: CaptureResult | None) -> list[str]
 
     A value the invoice prints otherwise stands. A value set is *likely* until AP approved it so ``VOUCHED`` times, then
     *verified*. In place; returns the fields changed. Never raises."""
-    from ..ai.lessons import CREDIT_NOTE, INVOICE, reaches_ai
+    from ..ai.lessons import CREDIT_NOTE, INVOICE, reaches_ai, vendor_of
     from ..core.memory import vendor_key
     from .supplier import compare_key
     from .types import FIELDS, LIKELY, MISSING, VERIFIED, FieldResult
@@ -135,7 +135,9 @@ def apply_header_lessons(store: Any, capture: CaptureResult | None) -> list[str]
         return []
     try:
         kind = CREDIT_NOTE if capture.credit_note else INVOICE
-        lessons = [r for r in store.lessons_for(vendor_key(str(name.value)), kind)
+        gst = capture.fields.get("gst_hst_registration_number")
+        key = vendor_of(store, str(name.value), gst.value if gst is not None else None)  # its own (B-1514)
+        lessons = [r for r in store.lessons_for(key, kind)
                    if r.get("field") in FIELDS and r.get("field") != "vendor_name" and reaches_ai(r)]  # fmt: skip
         history = store.lesson_history([r["situation"] for r in lessons]) if lessons else {}
     except Exception as exc:  # the readers' values stand

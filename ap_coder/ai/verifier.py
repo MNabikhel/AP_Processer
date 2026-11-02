@@ -84,6 +84,17 @@ SYSTEM = (
 )
 
 
+def vendor_record(store: Any, output: dict[str, Any]) -> dict[str, Any] | None:
+    """The vendor list's record of an invoice's vendor, as the reviewer is shown it: of two vendors whose names read
+    alike, the one with the invoice's GST/HST number (B-1021, B-1515)."""
+    from ..core.memory import vendor_key
+
+    name = output.get("vendor_name") or ""
+    gst = output.get("gst_hst_registration_number")
+    key = store.vendor_key_for(name, gst) if hasattr(store, "vendor_key_for") else vendor_key(name)
+    return store.get_vendor(key)
+
+
 def schema(fields: list[str]) -> dict[str, Any]:
     """The answer's JSON schema: an entry per field asked about (``fields``) and per line, then confident and a
     summary."""
@@ -531,7 +542,6 @@ def _coder(settings: Any, store: Any) -> Any:
 
 def _verify(settings: Any, store: Any, row: dict[str, Any], cfg: ReviewerSettings, coder: Any,
             clock: Callable[[], float]) -> Outcome:  # fmt: skip
-    from ..core.memory import vendor_key
     from ..core.store import PARKED, REVIEW
     from .imaging import render_page_images
     from .inference import CodingError
@@ -570,7 +580,7 @@ def _verify(settings: Any, store: Any, row: dict[str, Any], cfg: ReviewerSetting
         approved = _fold_in(store, inv, earlier, expect=identity)
         return Outcome(iid, str(earlier.get("status") or ""), "reviewed before: the same proposal, by the same model",
                        approved)  # fmt: skip
-    vendor = store.get_vendor(vendor_key(output.get("vendor_name") or ""))
+    vendor = vendor_record(store, output)
     try:
         names = {a["code"]: a["description"] for a in store.list_accounts("gl_accounts")}
     except Exception:  # noqa: BLE001
@@ -578,7 +588,13 @@ def _verify(settings: Any, store: Any, row: dict[str, Any], cfg: ReviewerSetting
     shown = proposal(output, vendor, names)
     from . import lessons
 
-    learned = lessons.prompt_lines(store, output.get("vendor_name") or "", lessons.kind_of(output), gl_names=names)
+    learned = lessons.prompt_lines(
+        store,
+        output.get("vendor_name") or "",
+        lessons.kind_of(output),
+        gst=output.get("gst_hst_registration_number"),
+        gl_names=names,
+    )
     if learned:
         shown["lessons"] = learned
     budget, started = cfg.minutes * 60, clock()

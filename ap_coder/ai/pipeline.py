@@ -181,7 +181,9 @@ def finalise_coding(
         accounts = store.bank_accounts()
         if accounts and not coding.pay_from_account:
             coding.pay_from_account = banks.choose(
-                accounts, coding.currency, store.last_pay_from(vendor_key(coding.vendor_name))
+                accounts,
+                coding.currency,
+                store.last_pay_from(key or vendor_key(coding.vendor_name)),  # B-1515
             )
         bank_findings = banks.findings(coding.pay_from_account, coding.currency, accounts)
     output = coding.to_output()
@@ -212,7 +214,7 @@ def finalise_coding(
         + payment_findings(
             coding.to_output(),
             store.default_terms_days() if store is not None else 30,
-            vendor_terms=store.vendor_terms(vendor_key(coding.vendor_name)) if store is not None else "",
+            vendor_terms=store.vendor_terms(key or vendor_key(coding.vendor_name)) if store is not None else "",
             received=received,
         ),
         po_findings=po_findings(coding, store, exclude_invoice_id) if store is not None else None,
@@ -364,7 +366,7 @@ class InvoicePipeline:
         from .lessons import prompt_lines
 
         learned = prompt_lines(
-            getattr(self, "store", None), coding.vendor_name, fields="lines"
+            getattr(self, "store", None), coding.vendor_name, gst=coding.gst_hst_registration_number, fields="lines"
         )  # AP's corrections, with its reasons
         if learned:
             history = "\n".join([history, "AP's lessons for this vendor:", *learned]).strip()

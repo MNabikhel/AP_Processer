@@ -352,7 +352,12 @@ def _lesson_hints(store: Store, inv: dict[str, Any]) -> list[str]:
 
     output = inv.get("final_output") or inv.get("ai_output") or {}
     return lessons.prompt_lines(
-        store, output.get("vendor_name") or "", lessons.kind_of(output), limit=5, screen=True
+        store,
+        output.get("vendor_name") or "",
+        lessons.kind_of(output),
+        gst=output.get("gst_hst_registration_number"),
+        limit=5,
+        screen=True,
     )  # a person decides: shown from the first correction (D-72)
 
 
