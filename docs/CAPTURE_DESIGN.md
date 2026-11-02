@@ -7,7 +7,9 @@ layer, OCR with confidence, boxes on the page, agreement between readers).
 No single reader is right on every invoice. Accuracy comes from three things together:
 
 1. **Several independent readers** of every header field:
-   - the PDF's own text layer (exact) or OCR words with their confidence;
+   - the PDF's own text layer (exact) or OCR words with their confidence; a page that is one picture is read by
+     OCR even when it carries text: a scanner's "searchable PDF" (its own OCR, drawn invisibly) or a stamp of a
+     few words is not the page's text (`layout.text_is_the_page`, B-1511, B-1512);
    - a rule reader (labels, patterns and positions, English and French);
    - the supplier's learned template, once AP has confirmed a few invoices;
    - the **page reader**, OvisOCR2 in LM Studio, which transcribes the page image on its own, on every page
