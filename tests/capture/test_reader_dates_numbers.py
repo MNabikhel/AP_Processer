@@ -433,3 +433,10 @@ def test_a_work_log_or_report_stamp_is_not_the_invoice_date():
         [(0.1, 0.2, "Invoice # 20417"), (0.1, 0.5, "Imprimé le 2026-10-20 14:33")],
     ):
         assert _top(_scan(rows), "invoice_date") is None, rows
+
+
+def test_an_iso_date_with_its_time_is_a_date():
+    """B-1540: an export's "2026-10-20T00:00:00" (ISO 8601, the T before the time) was no date at all: the T ran the
+    day into the hour, so the date ended nowhere."""
+    assert parse_date("2026-10-20T00:00:00") == "2026-10-20"
+    assert parse_date("Invoice Date: 2026-10-20T14:05:09Z") == "2026-10-20"

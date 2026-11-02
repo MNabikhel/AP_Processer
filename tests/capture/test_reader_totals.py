@@ -4,6 +4,7 @@ subtotal / taxes / total on invoices whose totals are laid out as a summary tabl
 from pathlib import Path
 
 import pymupdf
+import pytest
 
 from ap_coder.capture import analyze, build_layout, read_fields
 from ap_coder.capture.confidence import fuse
@@ -272,3 +273,32 @@ def test_a_receipts_tax_lines_with_the_number_in_brackets_or_the_rate_first_are_
           (300, 314, "14.69"), (60, 328, "TOTAL"), (300, 328, "127.68")]  # fmt: skip
     f = analyze(_pdf(tmp_path / "on.pdf", on), tables=False).fields
     assert (f["subtotal"].value, f["hst_amount"].value, f["grand_total"].value) == (112.99, 14.69, 127.68)
+
+
+SUBTOTAL_HEAD = ["Acme Supply Ltd.", "123 Main St, Toronto, ON M5V 2T6", "GST/HST No. 123456782 RT0001", "INVOICE",
+                 "Invoice No: INV-7001", "Invoice Date: 2026-10-20", "Bill To: Our Company Inc."]  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("subtotal", "tax", "total"),
+    [("Montant avant taxes 100,00 $", "TVH 13 % 13,00 $", "Montant total 113,00 $"),
+     ("Taxable amount 100.00", "HST @ 13% 13.00", "Amount due 113.00"),
+     ("Total before HST 100.00", "HST 13.00", "Total incl. HST 113.00"),
+     ("Total before GST/HST 100.00", "HST 13.00", "Total 113.00")],
+)  # fmt: skip
+def test_a_subtotal_labelled_before_the_tax_by_its_name_is_read(tmp_path, subtotal, tax, total):
+    """B-1539: "Montant avant taxes", "Taxable amount" and "Total before HST" were not subtotal labels: the subtotal
+    came out missing and the total was left to check, though the three add up."""
+    rows = [*SUBTOTAL_HEAD, subtotal, tax, total]
+    cells = [(50, 50 + 16 * i, t) for i, t in enumerate(rows)]
+    fields = analyze(_pdf(tmp_path / "sub.pdf", cells), tables=False).fields
+    assert fields["subtotal"].value == 100.0 and fields["subtotal"].status == "verified"
+    assert fields["grand_total"].value == 113.0 and fields["grand_total"].status == "verified"
+
+
+def test_a_taxable_amount_below_the_subtotal_is_not_the_subtotal(tmp_path):
+    """A mixed invoice: the subtotal, then the part of it that is taxed. The subtotal is the subtotal."""
+    rows = [*SUBTOTAL_HEAD, "Subtotal 120.00", "Taxable amount 100.00", "HST 13.00", "Total 133.00"]
+    cells = [(50, 50 + 16 * i, t) for i, t in enumerate(rows)]
+    fields = analyze(_pdf(tmp_path / "mixed.pdf", cells), tables=False).fields
+    assert fields["subtotal"].value == 120.0 and fields["grand_total"].value == 133.0

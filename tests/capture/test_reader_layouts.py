@@ -6,8 +6,10 @@ from __future__ import annotations
 import datetime as dt
 from pathlib import Path
 
+import pytest
+
 from ap_coder.capture import analyze
-from ap_coder.capture.types import VERIFIED
+from ap_coder.capture.types import MISSING, VERIFIED
 from tests.pdfs import text_pdf as _pdf
 
 TODAY = dt.date(2026, 10, 20)
@@ -230,3 +232,57 @@ def test_compact_dates_with_a_month_name(tmp_path):
         "2026-04-12",
         "2026-10-15",
     )
+
+
+QUEBEC_HEAD = ["Fournitures Lavoie Inc.", "45 rue Principale, Laval, QC H7N 1A1"]
+QUEBEC_TAIL = ["Date : 20 octobre 2026", "Sous-total : 100,00 $", "TPS 5 % : 5,00 $", "TVQ 9,975 % : 9,98 $",
+               "Total : 114,98 $"]  # fmt: skip
+
+
+def _quebec(tmp_path, name, rows):
+    path = _pdf(tmp_path, [(50, 50 + 16 * i, t) for i, t in enumerate([*QUEBEC_HEAD, *rows, *QUEBEC_TAIL])], name=name)
+    return analyze(path, ocr=False, tables=False).fields
+
+
+@pytest.mark.parametrize(
+    ("title", "label"),
+    [("NOTE DE CREDIT", "No de note : NC-77"), ("NOTE DE CREDIT", "No. de la note : NC-77"),
+     ("AVOIR", "Avoir no : NC-77"), ("AVOIR", "N° d'avoir : NC-77")],
+)  # fmt: skip
+def test_a_french_credit_notes_number_is_read_after_its_label(tmp_path, title, label):
+    """B-1541: "No de note", "No. de la note" and "Avoir no" (a Quebec credit note's number) were not labels: the
+    number came out missing."""
+    rows = ["TPS : 123456782 RT0001", "TVQ : 1234567890 TQ0001", title, label]
+    assert _quebec(tmp_path, "nc.pdf", rows)["invoice_number"].value == "NC-77"
+
+
+def test_french_tax_numbers_with_no_before_the_tax_and_no_program_account_are_read(tmp_path):
+    """B-1541: "No TPS : 123456782" and "No TVQ : 1234567890" (the numbers alone, "No" first as French puts it) were
+    not read at all: both came out missing. They are read as printed, never verified (the whole number is longer)."""
+    fields = _quebec(tmp_path, "regs.pdf", ["No TPS : 123456782", "No TVQ : 1234567890", "FACTURE",
+                                            "No de facture : F-77"])  # fmt: skip
+    gst, qst = fields["gst_hst_registration_number"], fields["qst_registration_number"]
+    assert gst.value == "123456782" and gst.status != VERIFIED
+    assert qst.value == "1234567890" and qst.status != VERIFIED
+    # The QST alone after "QST:" too, and never the customer's.
+    fields = _quebec(tmp_path, "qst.pdf", ["GST/HST Registration: 123456782", "QST: 1234567890", "FACTURE",
+                                           "No de facture : F-77"])  # fmt: skip
+    assert fields["qst_registration_number"].value == "1234567890"
+    fields = _quebec(tmp_path, "client.pdf", ["TPS : 123456782 RT0001", "No TVQ du client : 1234567890", "FACTURE",
+                                              "No de facture : F-77"])  # fmt: skip
+    assert fields["qst_registration_number"].status == MISSING
+
+
+@pytest.mark.parametrize("label", ["Prepared for:", "Purchaser:", "Buyer:", "Recipient:", "Destinataire :",
+                                   "Adressé à :", "Bill To:"])  # fmt: skip
+def test_the_customer_under_any_bill_to_style_label_is_never_the_vendor(tmp_path, label):
+    """B-1542: the supplier's name only in its logo (a picture), the customer's block under "Prepared for:" (or
+    "Purchaser:", "Buyer:", "Destinataire :"): the customer was read as the vendor, shown Likely. Only "Bill To"-style
+    labels marked a customer's block."""
+    cells = [(50, 90, "88 Bay St, Toronto, ON M5J 2N8"), (50, 104, "416-555-0100  info@brightline.ca"),
+             (400, 60, "INVOICE", 16), (400, 80, "Invoice No: 90311"), (400, 94, "Date: 2026-10-20"),
+             (50, 150, label), (50, 164, "Our Company Inc."), (50, 178, "1 King St W, Toronto, ON M5H 1A1"),
+             (50, 266, "Office cleaning, October"), (480, 266, "100.00"), (380, 400, "Subtotal 100.00"),
+             (380, 416, "HST 13% 13.00"), (380, 432, "Total 113.00")]  # fmt: skip
+    vendor = analyze(_pdf(tmp_path, cells, name="logo.pdf"), ocr=False, tables=False).fields["vendor_name"]
+    assert vendor.value != "Our Company Inc.", vendor

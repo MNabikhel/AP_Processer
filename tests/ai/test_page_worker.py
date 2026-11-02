@@ -580,8 +580,9 @@ def test_launcher_line(store, fake_reader, monkeypatch):
     assert launch.page_reader_line()[0] == "warn" and "failed its self-test" in launch.page_reader_line()[1]
     monkeypatch.setattr(page_reader, "reader_status", lambda settings, use_cache=True: page_reader.ReaderStatus(
         reachable=True, lm_studio=True, model="", document_reader=False, state="missing", candidates=[]))  # fmt: skip
-    assert launch.page_reader_line() == ("warn", "Page reader: OvisOCR2 isn't running in LM Studio: invoices are read "
-                                         "by OCR only and wait for a person")  # fmt: skip
+    # No reason from the reader: the plain one (B-1536 says the reader's own when it gives one).
+    assert launch.page_reader_line() == ("warn", "Page reader: OvisOCR2 isn't running in LM Studio. Until then "
+                                         "invoices are read by OCR only and wait for a person")  # fmt: skip
 
 
 def test_the_background_thread_waits_while_ovisocr2_is_missing(store, monkeypatch):

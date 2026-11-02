@@ -336,7 +336,7 @@ def test_a_number_readers_write_differently_is_not_verified_and_shows_the_plain_
         "ocr2": {"po_number": [Reading("po_number", "BC-15.332", "BC-15.332", box, 1.0, "label-right")]},
         "vlm": {"po_number": [Reading("po_number", "BC-15332", "BC-15332", box, 1.0, "label-right")]},
     }
-    fr = fuse(by_source, [], fields=("po_number",))[0]["po_number"]
+    fr = fuse(by_source, [], fields=("po_number",), layout_source="ocr")[0]["po_number"]  # a scan: OCR's speck
     assert fr.value == "BC-15332" and fr.status != "verified"
     assert any("write it differently" in r for r in fr.reasons)
     same = {s: {"po_number": [Reading("po_number", "BC-15332", "BC-15332", box, 1.0, "label-right")]}

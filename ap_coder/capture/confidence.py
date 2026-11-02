@@ -734,6 +734,9 @@ def _readers_agree(fz: _Fusion, f: str, g: _Group, vouched: list[str], reasons: 
         # as dots and commas far more often than it drops printed ones: the plainer form is shown.
         independent = {"one"}
         plain = min(forms, key=lambda form: (sum(not ch.isalnum() for ch in form), form))
+        exact = [r for s, r in g.readings if s == "rules"] if fz.layout_source == "text" else []
+        if exact:  # a digital PDF's own text has no specks: the form it prints is shown (B-1543)
+            plain = "".join(str(exact[0].value).split()).upper()
         g.value = next(r.value for s, r in g.readings if s != "ai" and "".join(str(r.value).split()).upper() == plain)
         fz.values[f] = g.value
         reasons.append("readers write it differently: " + " / ".join(sorted(forms)))

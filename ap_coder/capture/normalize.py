@@ -201,7 +201,8 @@ def _plain(text: str) -> str:
 # A receipt's date and time as OCR runs them together: "6/10/201913:59", "2018-02-1514:33:37", "27Mar201818:46",
 # "2/25/125:21PM" (the year 12, then 5:21). The date ends where a time begins.
 _TIME_NEXT = r"(?=_?\d{1,2}:\d)"
-_ISO = re.compile(rf"\b(20\d{{2}}|19\d{{2}})[-/.](\d{{1,2}})[-/.](\d{{1,2}})(?:\b|{_TIME_NEXT})")
+# ISO 8601's T before the time: "2026-10-20T00:00:00" (an export's date, B-1540).
+_ISO = re.compile(rf"\b(20\d{{2}}|19\d{{2}})[-/.](\d{{1,2}})[-/.](\d{{1,2}})(?:\b|{_TIME_NEXT}|(?=t\d{{1,2}}:\d))")
 # The year may run into the next label's word in a PDF's text: "Invoice Date: 08-01-2016Contract ID: 1272709".
 _NUMERIC = re.compile(
     rf"\b(\d{{1,2}})[-/.](\d{{1,2}})[-/.](\d{{4}}{_TIME_NEXT}|\d{{2}}{_TIME_NEXT}|\d{{2}}\b|\d{{4}}\b|\d{{4}}(?=[a-z]{{3}}))"

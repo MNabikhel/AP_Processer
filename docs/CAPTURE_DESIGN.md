@@ -535,7 +535,8 @@ used to tune the readers (s212-0000, and s39 and s40 cases, among them the ones 
 
 It read the invoice number OCR made "p.0", the due date, PO and HST OCR missed, and the line tables OCR could not
 put in rows. These readings also found two fusion bugs, fixed: a PO two readers wrote differently ("BC-15.332" /
-"BC-15332") was verified (now: never verified, the plainer form shown), and a field a third reader agreed on could
+"BC-15332") was verified (now: never verified, the plainer form shown on a scan, the PDF's own text on a digital
+PDF, B-1543), and a field a third reader agreed on could
 lose confidence (now: the pattern without the page reader is the floor until patterns with it are measured).
 Four phone photos (no known answers) were checked by hand: currency, dates and totals verified where both read
 them; the one total both misread (a year in "Incoterm® 2010") stays marked Check.
