@@ -103,6 +103,32 @@ def test_the_po_match_shows_what_is_left_to_expense_and_over_it_still_approves(c
     assert store.get_invoice(invoice_id)["status"] == APPROVED
 
 
+def test_in_a_browser_left_to_expense_shows_without_scrolling_sideways(chromium, store, tmp_path):
+    """B-1547: the PO match had seven columns in the review screen's narrow right column, so Left to expense (D-139)
+    was off to the right: seen only by scrolling the table sideways. Four columns now, each line's PO line, coding
+    and status under its description: the whole table fits the card at 1366 px."""
+    from dataclasses import replace as _replace
+
+    from ap_coder.core.config import Settings
+    from ap_coder.web.app import create_app
+    from tests.browser import browser_on
+
+    load_sample_purchase_orders(store)
+    invoice_id = add_clean(store)  # bills PO-88213
+    s = Settings()
+    app = create_app(_replace(s, llm=_replace(s.llm, provider="off")), store, start_reader=False)
+    with browser_on(chromium, app) as (browser, base):
+        page = browser.new_page(viewport={"width": 1366, "height": 900})
+        page.goto(f"{base}/review/{invoice_id}")
+        page.wait_for_selector("[data-po-match] table")
+        widths = page.evaluate(
+            "() => { const w = document.querySelector('[data-po-match]'); return [w.scrollWidth, w.clientWidth,"
+            " [...w.querySelectorAll('thead th')].map(t => t.innerText + ': ' + Math.round(t.offsetWidth))]; }"
+        )
+        assert widths[0] <= widths[1] + 1, widths
+        assert "Left to expense" in page.inner_text("[data-po-match] thead")
+
+
 def test_without_a_po_nothing_about_left_to_expense_shows_and_it_approves(client, store):
     load_sample_purchase_orders(store)
     invoice_id = add_clean(store, po_number="")
