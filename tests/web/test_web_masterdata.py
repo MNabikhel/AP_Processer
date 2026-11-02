@@ -552,3 +552,52 @@ def test_the_bank_accounts_version_stamp_holds_no_account_number(client, store):
     assert page.split('name="version" value="', 1)[1].split('"', 1)[0] != stamp  # still a new page version
     stale = client.post("/accounts/bank/save", data={"version": stamp, "code": ["CAD-OP"]}, headers=PAGE)
     assert stale.status_code == 409
+
+
+# --- A title above the column names (B-1513) -----------------------------------------------------------------------
+
+TITLED = [
+    ["Chart of accounts export - Fabrikam Canada"],
+    [],
+    ["Object Account", "Account Description", "Account Type"],
+    ["6010", "IT Hardware", "Opex"],
+    ["1500", "Computer Equipment", "Capex"],
+]
+
+
+@pytest.mark.parametrize(
+    ("name", "content"),
+    [
+        ("coa.xlsx", xlsx(TITLED)),
+        ("coa.csv", "\n".join(",".join(r) for r in TITLED).encode()),
+        ("coa.csv", "\n".join(",".join(r + [""] * (3 - len(r))) for r in TITLED).encode()),  # Excel's "CSV": commas
+    ],
+)
+def test_a_report_title_above_the_column_names_is_skipped(name, content):
+    """B-1513: an ERP export opens with its report's title (and a blank line) above the column names: the title was
+    taken for the column names (the choices read "Chart of accounts export… / Unnamed: 1 / Unnamed: 2") and the real
+    ones became a row of data."""
+    from ap_coder.web.files import read_sheet
+
+    df, _ = read_sheet(name, content)
+    assert list(df.columns) == ["Object Account", "Account Description", "Account Type"]
+    assert df.values.tolist() == [["6010", "IT Hardware", "Opex"], ["1500", "Computer Equipment", "Capex"]]
+
+
+def test_gl_accounts_under_a_report_title_are_guessed_and_imported(client, store):
+    page = upload(client, "/accounts/gl_accounts/upload", "coa.xlsx", xlsx(TITLED))
+    assert '<option value="Object Account" selected>' in page.text
+    assert '<option value="Account Description" selected>' in page.text
+    token = page.url.params["file"]
+    data = {"file": token, "col_code": "Object Account", "col_description": "Account Description"}
+    page = follow(client, client.post("/accounts/gl_accounts/import", data=data, headers=PAGE))
+    assert "Imported: 2 added, 0 updated, 0 skipped" in page.text
+    assert sorted(a["code"] for a in store.list_accounts("gl_accounts")) == ["1500", "6010"]
+
+
+def test_a_sheet_whose_first_row_is_its_column_names_is_read_as_before():
+    from ap_coder.web.files import read_sheet
+
+    rows = [["Code", "Description", "", ""], ["CC100", "Executive", "", ""], ["CC200", "Finance", "", ""]]
+    df, _ = read_sheet("cc.xlsx", xlsx(rows))
+    assert list(df.columns)[:2] == ["Code", "Description"] and df["Code"].tolist() == ["CC100", "CC200"]

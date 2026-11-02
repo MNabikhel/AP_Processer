@@ -150,12 +150,52 @@ def read_csv(content: bytes) -> pd.DataFrame:
             text = content.decode(encoding)
         except UnicodeDecodeError:
             continue
+        text = _after_title(text)
         sep = sniff_delimiter(text)
         columns = _header_cells(text, sep)
         if columns > MAX_COLUMNS:
             raise SheetError(too_wide(columns))
         return pd.read_csv(io.StringIO(text), dtype=str, keep_default_na=False, sep=sep, engine="python")
     raise SheetError("Could not read this file. In Excel, use Save As → CSV UTF-8 and upload it again.")
+
+
+_SEPARATORS = (",", ";", "\t", "|")
+_NUMBER_LIKE = re.compile(r"[-+(]?[\d.,\s$€£%)]+")
+_TITLE_LINES = 10  # a report's title and blank lines above its column names: never more than this
+
+
+def _after_title(text: str) -> str:
+    """A CSV without the report title an ERP puts above its column names (B-1513): the first lines with no separator
+    at all, when a line under them has one. As it is otherwise."""
+    lines = text.splitlines(keepends=True)
+    for i, line in enumerate(lines[: _TITLE_LINES + 1]):
+        if any(sep in line for sep in _SEPARATORS):
+            return "".join(lines[i:]) if i else text
+    return text
+
+
+def _header_below_title(df: pd.DataFrame) -> pd.DataFrame:
+    """The sheet with its column names where they are (B-1513): when the first row is a report's title (one cell,
+    the others blank: "Unnamed: 1"...), the first row below it that names more columns, none of them a number."""
+    columns = [str(c) for c in df.columns]
+    blank = sum(1 for c in columns if c.startswith("Unnamed:") or not c.strip())
+    if len(columns) < 2 or blank * 2 < len(columns):
+        return df
+    named = len(columns) - blank
+    for i in range(min(_TITLE_LINES, len(df))):
+        cells = ["" if pd.isna(v) else str(v).strip() for v in df.iloc[i].tolist()]
+        filled = [c for c in cells if c]
+        if len(filled) >= 2 and len(filled) > named and not any(_NUMBER_LIKE.fullmatch(c) for c in filled):
+            names: list[str] = []
+            for j, cell in enumerate(cells):
+                name = cell or f"Unnamed: {j}"
+                while name in names:  # two columns of one name: kept apart, as pandas does
+                    name += ".1"
+                names.append(name)
+            out = df.iloc[i + 1 :].reset_index(drop=True)
+            out.columns = names
+            return out
+    return df
 
 
 def _header_cells(text: str, sep: str) -> int:
@@ -210,7 +250,7 @@ def read_sheet(name: str, content: bytes, sheet: str | None = None) -> tuple[pd.
     except Exception as exc:  # noqa: BLE001 - empty file, not really a spreadsheet, damaged workbook...
         raise SheetError(CANNOT_READ) from exc
     df.columns = [str(c) for c in df.columns]  # a header like 2024 arrives as a number
-    return df.fillna(""), names
+    return _header_below_title(df).fillna(""), names
 
 
 def read_upload(token: str | None, sheet: str | None = None) -> tuple[Upload, pd.DataFrame, list[str]]:
