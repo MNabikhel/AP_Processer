@@ -14,6 +14,11 @@ The roles, each able to do everything the one before it can (``core/store/users.
   its sync too), the account lists and tax setup, imports of the vendor master and the like, backups and restore,
   deleting, the Azure check, the learning memory's resets, the finance hub feed.
 
+A **Manager** (``MANAGER_ROLE``, D-138) is outside that ladder: it opens the requests sent to it to confirm an
+invoice's cost allocation (``MANAGE`` routes, ``web/pages/manager.py``, each checking the request is its own), its own
+account and Help, nothing else. A Clerk and above open those routes too (every request), to send, record an answer
+given by email, or withdraw.
+
 ``OPEN`` routes answer anyone (the login page, ``/healthz``, the styles and scripts); ``SIGNED_IN`` ones anyone
 logged in, also while they must still choose a new password (logging out, changing it). A route not in ``RULES``
 needs an Admin: a route added without a rule is closed, and ``tests/web/test_roles.py`` fails until it gets one.
@@ -29,10 +34,13 @@ from starlette.routing import Match
 from ap_coder.core.store.users import ADMIN as ADMIN_ROLE
 from ap_coder.core.store.users import APPROVER as APPROVER_ROLE
 from ap_coder.core.store.users import CLERK as CLERK_ROLE
+from ap_coder.core.store.users import MANAGER as MANAGER_ROLE
 from ap_coder.core.store.users import READONLY
 
 OPEN, SIGNED_IN, READ, CLERK, APPROVER, ADMIN = "open", "signed in", "read", "clerk", "approver", "admin"
-RANK = {READONLY: 1, CLERK_ROLE: 2, APPROVER_ROLE: 3, ADMIN_ROLE: 4}  # a role's rank
+MANAGE = "manage"  # a Manager's own requests, or a Clerk and above (D-138)
+RANK = {READONLY: 1, CLERK_ROLE: 2, APPROVER_ROLE: 3, ADMIN_ROLE: 4, MANAGER_ROLE: 0}  # a role's rank (a Manager: 0,
+# only what anyone signed in can do, besides MANAGE)
 NEEDS = {SIGNED_IN: 0, READ: 1, CLERK: 2, APPROVER: 3, ADMIN: 4}  # the rank a need asks for
 MOUNTS_OPEN = ("/static", "/fonts", "/assets")  # the styles, scripts, fonts and logo: anyone (the login page too)
 
@@ -76,6 +84,12 @@ RULES: dict[tuple[str, str], str] = {
         "GET /jobs/{name}",  # how far a job got: the job's own role besides (JOB_NEEDS)
     ),
     **_rules(
+        MANAGE,
+        # A manager confirming an invoice's cost allocation (D-138): each route checks the request is theirs.
+        "GET /manager", "GET /manager/{request_id:int}", "GET /manager/{request_id:int}/page/{number:int}.png",
+        "POST /manager/{request_id:int}/answer",
+    ),
+    **_rules(
         CLERK,
         # Bringing invoices in.
         "GET /process", "POST /process/upload", "POST /process/folder", "GET /process/status",
@@ -91,6 +105,9 @@ RULES: dict[tuple[str, str], str] = {
         "POST /review/{invoice_id:int}/fill-lines", "POST /review/{invoice_id:int}/read-pages",
         "POST /review/{invoice_id:int}/review-again", "POST /review/{invoice_id:int}/start-over",
         "POST /review/{invoice_id:int}/resume", "POST /review/{invoice_id:int}/restore",
+        # Sending an invoice to its manager, the request email, an answer given by email, withdrawing (D-138).
+        "POST /review/{invoice_id:int}/manager", "GET /manager/{request_id:int}/email.eml",
+        "POST /manager/{request_id:int}/record", "POST /manager/{request_id:int}/withdraw",
         "POST /review/{invoice_id:int}/correct",
         # The queue: bulk approval, reopen, back from parked.
         "POST /review/bulk-approve", "POST /review/{invoice_id}/reopen", "POST /review/{invoice_id}/unpark",
@@ -146,6 +163,7 @@ RULES: dict[tuple[str, str], str] = {
         "POST /settings/hub", "POST /settings/hub/run",  # the finance hub feed (D-103)
         "GET /admin/users", "POST /admin/users/add", "POST /admin/users/{user_id:int}/reset",
         "POST /admin/users/{user_id:int}/role", "POST /admin/users/{user_id:int}/deactivate",
+        "POST /admin/users/{user_id:int}/cost-centers",
         "POST /admin/users/{user_id:int}/activate", "POST /admin/users/addresses/unlock",
         "POST /admin/users/usernames/unlock",
         "GET /help/report/setup",  # the server's versions, settings and names (D-109)
@@ -162,6 +180,8 @@ def allowed(role: str | None, need: str) -> bool:
         return True
     if not role or role not in RANK:
         return False
+    if need == MANAGE:
+        return role == MANAGER_ROLE or RANK[role] >= NEEDS[CLERK]
     return RANK[role] >= NEEDS.get(need, NEEDS[ADMIN])
 
 

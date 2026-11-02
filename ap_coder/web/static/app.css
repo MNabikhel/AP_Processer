@@ -518,6 +518,8 @@ pre {white-space: pre-wrap; overflow-wrap: anywhere; background: var(--lg-head);
 .grid-3-2 {display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; align-items: start;}
 .col {display: flex; flex-direction: column; gap: 16px; min-width: 0;}
 @media (max-width: 1100px) {.grid-3-2 {grid-template-columns: minmax(0, 1fr);}}
+/* A manager's own cost centers on a request to confirm (manager.html, D-138) */
+.apc-table tr.mine td {background: color-mix(in srgb, var(--apc-warn-dot) 12%, transparent);}
 .narrow {max-width: 860px; display: flex; flex-direction: column; gap: 16px;}
 .row {display: flex; flex-wrap: wrap; align-items: center; gap: 8px;}
 .row.end {justify-content: flex-end;}

@@ -498,6 +498,22 @@ def _reference(store: Store) -> ReferenceData:
 # --- The screen -----------------------------------------------------------------------------------------------------
 
 
+def _manager_context(request: Request, store: Store, inv: dict[str, Any], lines: list[Any] | None = None) -> dict:
+    """What the review screen says about a manager confirming the coding (D-138): the request waiting (a parked
+    invoice), the last answer and whether the lines on screen still are the ones confirmed, who can be asked."""
+    from ap_coder.core.store.managers import CONFIRMED, same_coding
+    from ap_coder.core.store.users import MANAGER
+
+    answer = store.last_manager_answer(inv["id"])
+    changed = bool(answer and answer["status"] == CONFIRMED and lines and not same_coding(answer["lines"], lines))
+    users = [u for u in store.list_users() if u["role"] == MANAGER and u["active"]] if server_mode(request) else []
+    known = store.cost_center_managers()
+    centers = [str(li.get("predicted_cost_center") or "") for li in lines or []]
+    suggested = next((known[c] for c in centers if c in known), {})
+    return {"waiting": store.waiting_manager_request(inv["id"]) if inv["status"] == PARKED else None,
+            "answer": answer, "changed": changed, "users": users, "suggested": suggested}  # fmt: skip
+
+
 @router.get("/review/{invoice_id:int}", response_class=HTMLResponse)
 @one_connection
 def invoice_page(request: Request, invoice_id: int) -> Any:
@@ -518,6 +534,7 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
     }
     editable = inv["status"] == REVIEW and reference is not None
     may_edit = can(request, f"/review/{invoice_id}/check")  # server mode: Read-only looks and changes nothing (D-98)
+    context["manager"] = _manager_context(request, store, inv)
     capture = view.capture_of(store, invoice_id)  # read once: the document card and the checks use it
     context["doc"] = _document(store, settings, inv, status, editable and may_edit, capture)
     if not editable:
@@ -529,6 +546,7 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
     saved_at = str((_drafts(request).get(invoice_id) or {}).get("saved_at") or "")  # edits kept from before
     draft, kept = current_draft(request, inv)
     analysis = view.analyse(store, settings, reference, inv, draft, reviewer(), capture=capture)
+    context["manager"] = _manager_context(request, store, inv, [li.model_dump() for li in analysis.output.line_items])
     sure = view.shown_sure(view.capture_confidence(capture), draft.header, inv.get("ai_output") or {}, capture)
     start = _start(inv)
     computed = None
@@ -969,6 +987,62 @@ def park(request: Request, invoice_id: int, reason: str = Form(""), follow_up: s
         return changed_meanwhile(request, invoice_id)
     return done(request, after, flash_message(f"Invoice #{invoice_id} parked. It is in the Parked tab.", "ok",
                                               icon="pause_circle"))  # fmt: skip
+
+
+@router.post("/review/{invoice_id:int}/manager")
+async def send_to_manager(request: Request, invoice_id: int) -> JSONResponse:
+    """Ask the manager of the invoice's cost centers to confirm how it is coded (D-138): the lines on screen are kept
+    with the request and the invoice waits, parked, until the manager answers (pages/manager.py)."""
+    form = await posted_form(request)
+    return await run_in_threadpool(_send_to_manager, request, invoice_id, form)
+
+
+@one_connection
+def _send_to_manager(request: Request, invoice_id: int, form: Any) -> JSONResponse:
+    from ap_coder.core.store.users import MANAGER
+
+    store, settings = get_store(request), get_settings(request)
+    inv = _invoice(store, invoice_id)
+    if inv["status"] != REVIEW:
+        return changed_meanwhile(request, invoice_id)
+    draft = _from_form(request, inv, form)
+    analysis = view.analyse(store, settings, _reference(store), inv, draft, reviewer())
+    lines = [li.model_dump() for li in analysis.output.line_items]
+    if not lines or any(not str(li.get("predicted_gl_code") or "").strip() for li in lines):
+        return refuse("Code every line to a GL account first: the manager confirms how the invoice is coded.")
+    name, email = str(form.get("manager_name") or "").strip(), str(form.get("manager_email") or "").strip()
+    user_id = None
+    if server_mode(request) and str(form.get("manager_user") or "").strip():
+        try:
+            picked = int(str(form.get("manager_user")))
+        except ValueError:
+            return refuse("Pick a manager from the list.")
+        account = next((u for u in store.list_users() if u["id"] == picked and u["role"] == MANAGER and u["active"]),
+                       None)  # fmt: skip
+        if account is None:
+            return refuse("That manager's account is not active any more: pick another.")
+        user_id, name = picked, account["display_name"] or account["username"]
+    if not name:
+        return refuse("Say who the manager is.")
+    if email and ("@" not in email or any(c.isspace() for c in email)):
+        return refuse("The manager's email doesn't look like one (name@company.com).")
+    _keep_draft(request, invoice_id, draft, True)  # the edits on screen stay for when it comes back
+    try:
+        note = str(form.get("manager_note") or "")
+        rid = store.send_to_manager(invoice_id, reviewer(), manager_name=name, manager_email=email,
+                                    manager_user=user_id, lines=lines, note=note)  # fmt: skip
+    except ValueError:
+        return changed_meanwhile(request, invoice_id)
+    centers = store.manager_request(rid)["cost_centers"]
+    if form.get("remember_manager") and centers and user_id is None:
+        store.set_cost_center_manager(centers, name, email, reviewer())
+    if user_id is not None:
+        after = next_url(store, invoice_id, _nav_query(form), form.get("next_id"))
+        said = f"Sent to {name}: it waits in their Manager confirmations and comes back to the queue when they answer."
+        return done(request, after, flash_message(said, "ok", icon="forward_to_inbox"))
+    return done(request, f"/manager/{rid}", flash_message(
+        f"Parked, waiting for {name}. Download the request email below and send it; record the answer here when it "
+        "comes.", "ok", icon="forward_to_inbox"))  # fmt: skip
 
 
 @router.post("/review/{invoice_id:int}/reject")

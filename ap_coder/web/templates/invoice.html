@@ -95,6 +95,12 @@
   {% if sent_back.reopened_by %}<div class="rvw-status-sub">Rejected for: {{ sent_back.reason }}. Fix what is needed and approve it, or reject it again.</div></div>
   {% else %}<div class="rvw-status-sub">{{ sent_back.reason }}. The approved coding is kept below; fix what is needed and approve again.</div></div>{% endif %}
 {% endif %}
+{% if mode == "review" and manager and manager.answer %}{% set ma = manager.answer %}
+{# The manager's answer to the last request (D-138): confirmed, or sent back with what to change. #}
+<div class="rvw-status {{ 'warn' if ma.status == 'sent_back' or manager.changed else 'ok' }}" role="status" data-manager-answer><div class="rvw-status-title"><span class="ms" aria-hidden="true">{{ 'undo' if ma.status == 'sent_back' else 'how_to_reg' }}</span>
+  <span>{% if ma.status == "sent_back" %}{{ ma.answered_by }} sent the coding back {{ ma.answered_at | time_ago }}{% else %}{{ ma.answered_by }} confirmed the coding {{ ma.answered_at | time_ago }}{% endif %}{% if ma.via == "email" %} (by email, recorded){% endif %}</span></div>
+  <div class="rvw-status-sub">{% if ma.status == "sent_back" %}{{ ma.answer_note }}. Change the coding, then approve it or send it again.{% elif manager.changed %}The coding has changed since: the lines below are not the ones confirmed. Send it again, or approve knowing it changed.{% else %}The lines below are the ones confirmed: approve it as usual.{% endif %} <a href="/manager/{{ ma.id }}">See the request</a></div></div>
+{% endif %}
 
 <div class="inv-split">
   {% include "_invoice_document.html" %}
@@ -325,6 +331,25 @@
         <button class="btn" type="submit"><span class="ms" aria-hidden="true">pause_circle</span>Park</button>
       </form>
     </details>
+    {% if can("/review/1/manager") %}
+    {# Ask the manager of the cost centers to confirm the coding (D-138): it sends the lines on screen (the fields
+       below belong to the invoice's form, posted to /manager instead of /approve). #}
+    <details class="pop up" data-manager>
+      <summary class="btn" title="Ask the manager of these cost centers to confirm the coding"><span class="ms" aria-hidden="true">forward_to_inbox</span>Send to manager</summary>
+      <div class="pop-body stack">
+        <p class="muted">The manager confirms how the lines are coded. The invoice waits, parked, and comes back here when they answer.</p>
+        {% if manager and manager.users %}
+        <label class="field">Manager<select name="manager_user" form="inv">{% for u in manager.users %}<option value="{{ u.id }}"{% if manager.suggested and manager.suggested.name == (u.display_name or u.username) %} selected{% endif %}>{{ u.display_name or u.username }}{% if u.cost_centers %} · {{ u.cost_centers }}{% endif %}</option>{% endfor %}</select></label>
+        {% else %}
+        <label class="field">Manager<input type="text" name="manager_name" form="inv" maxlength="120" value="{{ manager.suggested.name if manager and manager.suggested else '' }}" placeholder="first and last name"></label>
+        <label class="field">Their email (for the request email)<input type="email" name="manager_email" form="inv" maxlength="200" value="{{ manager.suggested.email if manager and manager.suggested else '' }}" placeholder="name@company.com"></label>
+        <label class="check"><input type="checkbox" name="remember_manager" value="1" form="inv" checked> Remember them as the manager of these cost centers</label>
+        {% endif %}
+        <label class="field">Note (optional)<input type="text" name="manager_note" form="inv" maxlength="2000" placeholder="e.g. new vendor for the site"></label>
+        <button class="btn" type="submit" form="inv" formaction="/review/{{ inv.id }}/manager" formnovalidate><span class="ms" aria-hidden="true">forward_to_inbox</span>Send to manager</button>
+      </div>
+    </details>
+    {% endif %}
     <details class="pop up" data-reject>
       <summary class="btn" title="Not ours, or not to be paid (X opens this)" aria-keyshortcuts="x"><span class="ms" aria-hidden="true">block</span>Reject</summary>
       <form class="pop-body stack" method="post" action="/review/{{ inv.id }}/reject">
@@ -402,7 +427,8 @@
   {% elif mode == "parked" %}
   <div class="card-head"><div>
     <h4><span class="ms" aria-hidden="true">pause_circle</span>Parked</h4>
-    <p class="muted">Waiting for: {{ inv.parked_reason }}{% if inv.follow_up %} · follow up {{ inv.follow_up }}{% endif %}</p></div>
+    <p class="muted">Waiting for: {{ inv.parked_reason }}{% if inv.follow_up %} · follow up {{ inv.follow_up }}{% endif %}{% if manager and manager.waiting %} · sent {{ manager.waiting.sent_at | time_ago }} by {{ manager.waiting.sent_by }}{% endif %}</p></div>
+    {% if manager and manager.waiting %}<a class="btn" href="/manager/{{ manager.waiting.id }}"><span class="ms" aria-hidden="true">how_to_reg</span>{% if can("/manager/1/record") %}The request: email, answer{% else %}The request{% endif %}</a>{% endif %}
     {% if can("/review/1/resume") %}<form method="post" action="/review/{{ inv.id }}/resume"><button class="btn primary" type="submit" title="Back to the review queue, to be approved"><span class="ms" aria-hidden="true">play_circle</span>Un-park</button></form>{% endif %}
   </div>
   {% elif mode == "approved" %}

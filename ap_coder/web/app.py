@@ -267,7 +267,10 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
 
     @app.get("/", include_in_schema=False)
     def home() -> RedirectResponse:
-        return RedirectResponse(PAGES[0].path, status_code=307)
+        from ap_coder.core.store.users import MANAGER  # a Manager opens its own requests (D-138)
+
+        me = identity.person()
+        return RedirectResponse("/manager" if me and me.role == MANAGER else PAGES[0].path, status_code=307)
 
     build = paths.build_stamp(CODE_FOLDER)["commit"]  # the code this server runs (the launcher compares it)
     network = str(address or "").strip().strip("[]").lower() not in THIS_COMPUTER  # shared on the office network

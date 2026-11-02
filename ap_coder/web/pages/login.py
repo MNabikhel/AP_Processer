@@ -18,7 +18,7 @@ from urllib.parse import quote
 from fastapi import Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
-from ap_coder.core.store.users import LoginRefused
+from ap_coder.core.store.users import MANAGER, LoginRefused
 from ap_coder.web import identity
 from ap_coder.web.core import (
     done,
@@ -104,6 +104,8 @@ def login_save(request: Request, username: str = Form(""), password: str = Form(
     store.end_session(_token(request))  # whatever session this browser had before: never carried over
     token = store.start_session(user["id"], ip, request.headers.get("user-agent", ""))
     wanted = _next(next)
+    if user.get("role") == MANAGER and wanted == HOME:
+        wanted = "/manager"  # a Manager's own page: the review queue is not theirs (D-138)
     if user["must_change"]:
         answer = done(request, f"{identity.PASSWORD_PATH}?next={quote(wanted, safe='')}",
                       flash_message("Choose your own password before you carry on: the one you were given is "

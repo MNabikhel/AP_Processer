@@ -80,6 +80,7 @@ ACTIONS = {
     "manager_sent_back": ("undo", "warn", "Manager sent it back"),
     "manager_request_withdrawn": ("cancel_schedule_send", "info", "Manager request withdrawn"),
     "cost_center_manager_set": ("manage_accounts", "info", "Cost center manager set"),
+    "user_cost_centers_set": ("manage_accounts", "info", "A manager's cost centers set"),
     "note": ("sticky_note_2", "violet", "Note"),
     "final_approved": ("how_to_reg", "ok", "Second approval"),
     "sent_back": ("undo", "warn", "Sent back"),
@@ -378,6 +379,8 @@ def describe(event: dict[str, Any]) -> str:
         return f"{d.get('manager') or '?'} {what}{how}"
     if action == "manager_request_withdrawn":
         return "brought back before the manager answered"
+    if action == "user_cost_centers_set":
+        return f"{d.get('username') or '?'} answers for {d.get('cost_centers') or 'no cost center'}"
     if action == "cost_center_manager_set":
         return f"{d.get('manager') or '?'} for {', '.join(d.get('cost_centers') or [])}"
     if action == "note":

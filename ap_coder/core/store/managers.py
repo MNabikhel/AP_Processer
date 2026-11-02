@@ -39,8 +39,8 @@ def coding_lines(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
         out.append({
             "line": int(li.get("line_number") or n),
             "description": str(li.get("description") or "")[:200],
-            "gl_code": str(li.get("gl_code") or ""),
-            "cost_center": str(li.get("cost_center") or ""),
+            "gl_code": str(li.get("gl_code") or li.get("predicted_gl_code") or ""),  # (the coding's names: predicted_)
+            "cost_center": str(li.get("cost_center") or li.get("predicted_cost_center") or ""),
             "amount": round(float(li.get("amount") or 0), 2),
         })  # fmt: skip
     return out

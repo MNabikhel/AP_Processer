@@ -164,7 +164,9 @@ async function submitForm(form, submitter) {
   if (form.hasAttribute("data-urlencoded")) body = new URLSearchParams(body); // the login: the server takes no multipart there
   form.dataset.sending = "1";
   setBusy(form, true, submitter);
-  const answer = await post(form.action, body);
+  // A button with its own formaction sends the form there (the review screen's "Send to manager", D-138).
+  const action = submitter && submitter.hasAttribute && submitter.hasAttribute("formaction") ? submitter.formAction : form.action;
+  const answer = await post(action, body);
   if (answer.ask_why) {
     // The server asks a question before going on (invoice.js answers it, then sends the form again).
     delete form.dataset.sending;
