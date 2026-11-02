@@ -545,6 +545,24 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
     return results, fz.checks
 
 
+EXACT_TEXT_MARGIN = 0.9  # the PDF's text first when its reading is at least this strong against the page reader's
+
+
+def _exact_text_first(groups: list[_Group]) -> None:
+    """On a digital PDF the rule reader reads the PDF's own text, exact; the page reader transcribes its picture and
+    can misread a character (2026-10-28 for 2026-10-20). When the strongest value is the page reader's alone and the
+    PDF's text gives another nearly as strong, the PDF's comes first (B-1516): the readers still disagree, so the field
+    stays to check, with both values named; it is shown where the page prints it. An edited PDF, whose text is not
+    what its page shows, is said by TEXT_LAYER_MATCHES_PAGE."""
+    if len(groups) < 2 or {source for source, _ in groups[0].readings} != {"vlm"}:
+        return
+    first = groups[0].strength()
+    for i, group in enumerate(groups[1:], 1):
+        if "rules" in group.top and group.strength() >= EXACT_TEXT_MARGIN * first:
+            groups.insert(0, groups.pop(i))
+            return
+
+
 def _choose_readings(by_source: dict[str, dict[str, list[Reading]]], fields: tuple[str, ...], layout_source: str,
                      local_evidence: dict[str, tuple[int, int]] | None) -> _Fusion:  # fmt: skip
     """Each field's readings grouped by value, the strongest chosen, the runner-up kept as a rival; then the taxes
@@ -558,6 +576,8 @@ def _choose_readings(by_source: dict[str, dict[str, list[Reading]]], fields: tup
         _vouched_first(groups)
         if f == "vendor_name":
             _whole_first_word(groups)
+        if layout_source == "text":
+            _exact_text_first(groups)
         all_groups[f] = groups
         chosen[f] = groups[0] if groups else None
         if len(groups) > 1:
