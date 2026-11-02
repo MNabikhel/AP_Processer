@@ -90,3 +90,9 @@ def test_a_cost_centers_manager_is_remembered(store):
     store.import_accounts("cost_centers", [{"c": "CC-200"}, {"c": "CC-300"}], "c", None)
     assert store.set_cost_center_manager(["CC-200"], "Bob  Manager", "bob@example.com", "Ann") == 1
     assert store.cost_center_managers() == {"CC-200": {"name": "Bob Manager", "email": "bob@example.com"}}
+
+
+def test_the_users_page_still_lists_admins_first_and_managers_last(store):
+    for name, role in (("mo", "manager"), ("cy", "clerk"), ("ad", "admin")):
+        store.add_user(name, "correct horse battery", role=role)
+    assert [u["role"] for u in store.list_users()] == ["admin", "clerk", "manager"]

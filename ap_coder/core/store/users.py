@@ -328,7 +328,7 @@ class UsersMixin:
 
     def list_users(self) -> list[dict[str, Any]]:
         """Every account, Admins first, then by username."""
-        order = " ".join(f"WHEN '{r}' THEN {n}" for n, r in enumerate(reversed(ROLES)))
+        order = " ".join(f"WHEN '{r}' THEN {n}" for n, r in enumerate((ADMIN, APPROVER, CLERK, READONLY, MANAGER)))
         with self._conn() as conn:
             rows = conn.execute(f"SELECT {_USER_COLUMNS} FROM users ORDER BY CASE role {order} END, username")
             return [u for u in map(_public, rows.fetchall()) if u is not None]
