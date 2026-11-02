@@ -1189,3 +1189,19 @@ def test_the_queue_names_what_the_review_screen_flagged(client, store):
     store.set_setting("show_jde_settings", "0")
     reason = _queue_reason(client, invoice_id)  # today's checks: the JD Edwards errors are gone
     assert "to fix" not in reason and "Flagged by the checks" not in reason, reason
+
+
+def test_in_a_browser_ticking_approve_anyway_by_its_words_never_scrolls_either(browser, store):
+    """B-1523: clicking the words "Approve anyway, despite 1 error" (the label, not the box) still scrolled the page by
+    about 390 px at 1366x768, the warning being approved over off the screen: the label's own focus scrolled."""
+    page, errors = _open_review(browser, store, "Cascade", viewport={"width": 1366, "height": 768})
+    page.wait_for_selector("[name=override]")
+    page.wait_for_timeout(800)  # the check made on opening the page
+    before = page.evaluate("window.scrollY")
+    label = page.locator("[data-live=bar] .inv-override").bounding_box()
+    with page.expect_response(lambda r: r.url.endswith("/check")):
+        page.mouse.click(label["x"] + label["width"] - 20, label["y"] + label["height"] / 2)  # on the words
+    wait_until(page, lambda: page.evaluate("document.activeElement.name") == "override_reason")
+    page.wait_for_timeout(500)
+    assert page.evaluate("document.querySelector('[data-live=bar] [name=override]').checked")
+    assert abs(page.evaluate("window.scrollY") - before) < 40 and errors == []
