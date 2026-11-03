@@ -113,7 +113,7 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
 - **D-89** · Confidence is two numbers
 - **D-90** · Meals and entertainment
 - **D-91** · Payment terms → JD Edwards payment terms code (VLPTC)
-- **D-92** · The shadow-pilot kit
+- **D-92** · The shadow-pilot kit (as the plan, replaced by D-145; `pilot-score` kept)
 - **D-93** · JD Edwards
 - **D-94** · First-time setup is the one exception to "nothing goes online"
 - **D-95** · Touchless never approves what bulk approval would refuse
@@ -323,3 +323,19 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   waits for that review (the user's call). PILOT_PLAN.md's week-3 "Touchless, if ready" item is removed; the plan
   itself is to be rewritten once the pilot's design is settled. Nothing in the code changes: touchless is off by
   default (Settings → Automation). (`docs/PILOT_PLAN.md`)
+- **D-145** · **Connect first, then a live pilot** (the user's decision; the plan was a shadow pilot, D-92, on a laptop:
+  its `pilot-score` is kept). **Stage 0** connects AP Coder to the company: the code into the company's repository; one
+  shared desktop in server mode (Windows 11 Pro, SERVER.md section 1); the AP inbox through a Power Automate flow
+  (MAILBOX_SETUP.md; AP Coder never holds mailbox credentials); single sign-on planned with IT (Entra ID or the
+  company's AD) and built, Entra's sign-in through Microsoft's cloud being an exception to the offline rule to record as
+  one; JD Edwards read and write through the 7 orchestrations of JDE_ORCHESTRATIONS.md, tested in E1's test environment
+  (PY); job costing built; the company's IT security review (OWASP ASVS Level 2) and a focused penetration test,
+  conditions for production write access only. **The pilot**: the pilot tester and 3 to 4 clerks; one rule says which
+  invoices AP Coder owns; a parallel week writing only to PY, scored with `pilot-score` against production; then live,
+  AP Coder creating *pending* voucher batches that AP approves and posts in E1 (Manager Approval of Input), so E1's
+  batch approval keeps a person's final check; rollback steps written before going live; vouchers reconciled before the
+  first payment run; the 5-part gate of PILOT_PLAN.md, word for word, scored on live weeks 2 to 4; touchless off
+  (D-144). Excel/CSV stays for anyone without JD Edwards. Why: the user's call ("integrate the AP inbox, single sign in,
+  and have read and write set up with JDE/E1, and then the actual pilot once all integrations are ready... with a small
+  AP team"). Docs only: nothing in the code changes. (`docs/PILOT_PLAN.md`, `docs/HANDOFF.md` sections 6, 8, 10,
+  `docs/KNOWN_LIMITS.md`, `README.md`, `docs/PILOT.md`)
