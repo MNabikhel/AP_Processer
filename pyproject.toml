@@ -64,6 +64,10 @@ markers = [
 [tool.ruff]
 line-length = 120
 target-version = "py311"
+# Project Nayuki's QR Code generator (MIT), kept as published so it can be checked against its release (D-146);
+# force-exclude: also when scripts/check.py names it.
+extend-exclude = ["ap_coder/web/qrcodegen.py"]
+force-exclude = true
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
