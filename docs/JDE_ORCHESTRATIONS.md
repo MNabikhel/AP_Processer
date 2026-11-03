@@ -8,7 +8,8 @@ The decision is D-104 (docs/decisions.md); the batch files of docs/JDE_E1.md sta
 * **Step 1, read only** (replaces the CSV imports): suppliers, GL accounts, business units, open POs with their
   receipts, and the AP ledger's vouchers (for the duplicate check and "already paid?").
 * **Step 2, vouchers**: an approved export posts each voucher through one orchestration: a dry run first (proof
-  mode), then a person's approval (FINAL mode); JDE's voucher number, or its error, is kept on the invoice.
+  mode), then a person's approval (FINAL mode), which in the pilot makes a **pending** batch that AP approves and posts
+  in E1; JDE's voucher number, or its error, is kept on the invoice.
 
 Everything AP Coder sends and reads is named in one file, `ap_coder/erp/jde_orchestrations.json`: the AIS paths, each
 orchestration's name, its inputs and its outputs. To use other names, copy that file to AP Coder's data folder as
@@ -180,6 +181,10 @@ clerk. `PROOF`: fill the forms and press OK only through the edits, then cancel 
 be checked without committing; otherwise use route (a) for the proof). Store the key in the voucher's remark or a
 custom table (step 1 of *Never twice*).
 
+**In the pilot the batch stays pending.** With E1's batch approval on (*Manager Approval of Input*), `FINAL`
+creates the batch pending; AP approves and posts it in E1 (D-145), so a person makes the final check. The same with
+route (b).
+
 The batch files keep working with either route: the Exports page offers both.
 
 ### APC_Voucher_Status
@@ -224,3 +229,5 @@ dry runs agree with what AP expects.
 12. Where the idempotency key is kept and how `APC_Voucher_Status` finds it.
 13. Everything already listed in docs/JDE_E1.md for the batch files (company, document type, amounts, the tax coded
     to G/L accounts with code E, the account mapping, line numbering), which the API sends the same way.
+14. That batch approval (*Manager Approval of Input*) is on for AP Coder's batch type, so each batch it creates
+    stays pending until AP approves it.

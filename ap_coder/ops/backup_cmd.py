@@ -28,7 +28,7 @@ SERVER_FILE = service.SERVER_FILE  # written by the running dashboard
 def add_parser(sub: Any) -> None:
     p = sub.add_parser("backup", help="Backups of the database and the invoice files: now, list, check, restore")
     p.add_argument("action", choices=["now", "list", "check", "restore"])
-    p.add_argument("name", nargs="?", default=None, help="check, restore: the backup (ap_coder-<date>-<time>.db)")
+    p.add_argument("name", nargs="?", default=None, help="check, restore: the backup's name, as backup list shows it")
     p.add_argument("--from", dest="source", default=None, metavar="FOLDER",
                    help="list, check, restore: the backups in this folder (e.g. the second backup folder on a network "
                    "share), not the data folder's")  # fmt: skip

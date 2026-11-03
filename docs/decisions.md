@@ -2,7 +2,8 @@
 
 The significant choices behind AP Coder. D-01 to D-124, in full (the choice, why, and where it is written or
 enforced): [archive/decisions-2026-10.md](archive/decisions-2026-10.md); look one up with
-`grep -n -A8 "D-34\b" docs/archive/decisions-*.md`. Below, one line each.
+`grep -n -A8 "D-34\b" docs/archive/decisions-*.md`. Below, one line each. D-77 to D-79, D-81 to D-84, D-113
+and D-114 were never used (not lost).
 
 A new choice: the next number (`grep -o "D-[0-9]*" docs/decisions.md | sort -t- -k2 -n | tail -1`), written in full
 at the end of the last section here (lines at most 120 characters); say so in the pull request. Never renumber. A
@@ -66,7 +67,7 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
 - **D-26** · `vendor_key` rules are versioned (`VENDOR_KEY_RULES`)
 - **D-27** · The invoice directory reads the PO, subtotal, tax and GL accounts from the invoice's coding JSON with…
 - **D-51** · An account no approval backs is a guess, not a proposal
-- **D-53** · No cost centers for the pilot
+- **D-53** · No cost centers for the laptop pilot (the pilot of D-145 codes them)
 - **D-58** · How GL coding learns from AP, measured with `bench coding` and its new `--realistic` run (2% reviewer…
 - **D-61** · The ship-to read from an invoice is the address printed under a delivery label ("Ship to", "Deliver to"…
 - **D-62** · EOM payment terms count the net days from the end of the invoice's month, however they are written

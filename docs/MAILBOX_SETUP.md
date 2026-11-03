@@ -40,7 +40,7 @@ share, with the same scheduled `robocopy` from that share.
 Any server-side tool that saves messages as .eml or .msg (an archiving, journaling or capture product) can write to a
 company file share; the same scheduled `robocopy ... /MOV` moves them into the invoices folder.
 
-## Option 3: no setup (the pilot's first weeks)
+## Option 3: no setup (before the flow is built, e.g. for a first try)
 
 AP staff drag emails from **classic Outlook** into the invoices folder (Outlook saves them as .msg), or in **new
 Outlook / Outlook on the web** use *Download* (.eml) and save there. Nothing to install; it shows the triage working

@@ -412,7 +412,7 @@ can only be told apart by its date and sign, and the report says so. Without RPA
 gross and tax are in CAD and are not compared. CSV or Excel (a large export as CSV: an Excel file over 20 MB once
 unzipped is not opened); E1's Julian dates (0 for no date) and implied decimals are read as they are (add
 `--implied-decimals` for amounts without a decimal point). The pilot tester runs, where AP Coder runs (the pilot
-laptop, or the company server):
+computer, or the company server):
 
 ```
 python -m ap_coder pilot-score --vouchers F0411.xlsx --distribution F0911.xlsx
