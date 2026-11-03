@@ -468,7 +468,8 @@ class StoreCore:
     def _before_migrating(self) -> None:
         """An update's safety net, before the database is touched: a database made by a newer AP Coder is refused
         (never opened by this older one, so never downgraded), and one made by an older AP Coder is backed up first
-        (``backups/ap_coder-<date>-before-update-from-schema-<n>.db``), so the update can always be undone."""
+        (``backups/ap_coder-<date>-before-update-from-schema-<n>.db``, with its files: D-143), so the update can always
+        be undone."""
         found = database_schema(self.path)
         if found is None or found == SCHEMA_VERSION:
             return
@@ -480,8 +481,11 @@ class StoreCore:
                 f"{__version__} knows up to version {SCHEMA_VERSION}), so this older version does not open it: "
                 "nothing was changed. Start the newer AP Coder instead."
             )
+        from . import backup_files
+
         stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-        self.backup_to(self.backup_dir() / f"ap_coder-{stamp}-before-update-from-schema-{found}.db")
+        made = self.backup_to(self.backup_dir() / f"ap_coder-{stamp}-before-update-from-schema-{found}.db")
+        backup_files.snapshot(made, self.path.parent)  # the files too: the state before the update restores whole
 
     def _migrate(self, conn: sqlite3.Connection) -> None:
         """Bring a database made by an older version up to date (recorded as settings.schema_version)."""

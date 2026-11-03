@@ -30,8 +30,15 @@
   <div class="card-head">
     <div>
       <h4>Backups</h4>
-      <p class="muted">A copy of the database is made automatically once a day when AP Coder starts (the newest 14 are kept).
-        Make one yourself before big changes, e.g. importing a new chart of accounts.</p>
+      <p class="muted">Each backup is AP Coder as it was at that moment: the database and every invoice file, saved email,
+        attachment and manager's reply it needs. One is made automatically once a day when AP Coder starts (the newest 14
+        are kept). A file that did not change is stored once for all the backups, so a daily backup copies only what is
+        new{% if backups %} (in all, the backups take {{ backups_size }}){% endif %}. Make one yourself before big changes,
+        e.g. importing a new chart of accounts.</p>
+      {% if backup_running %}<p><span class="ms" aria-hidden="true">hourglass_top</span> A backup is being made (started
+        {{ backup_running }}): it appears below once done. AP Coder can be used meanwhile.</p>{% endif %}
+      {% if backup_failed %}<p><span class="ms err-ico" aria-hidden="true">error</span> The last backup failed {{ backup_failed }}.
+        The backups listed below are fine; press Back up now once it is fixed.</p>{% endif %}
     </div>
     <form method="post" action="/settings/data/backup" data-busy="Backing up…">
       <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">backup</span>Back up now</button>
@@ -41,10 +48,11 @@
   <form method="post" action="/settings/data/backup-copy" class="row st-end" data-busy="Saving…">
     <label class="field st-grow">Also copy each backup to (optional)
       <input type="text" name="folder" value="{{ copy_dir }}" placeholder="e.g. C:\Users\you\OneDrive - Company\AP Coder backups"
-             title="A OneDrive, SharePoint-synced or network folder, so a lost or broken computer does not lose the database. Only the backup copies go there; the database itself stays {{ "on the server" if server_mode else "on this computer" }}."></label>
+             title="A OneDrive, SharePoint-synced or network folder, so a lost or broken computer loses nothing. Only the backup copies go there; the database itself stays {{ "on the server" if server_mode else "on this computer" }}."></label>
     <button class="btn" type="submit"><span class="ms" aria-hidden="true">save</span>Save</button>
   </form>
-  <p class="muted">A OneDrive, SharePoint-synced or network folder, so a lost or broken computer does not lose the database.
+  <p class="muted">A OneDrive, SharePoint-synced or network folder, so a lost or broken computer loses nothing: each backup is
+    copied there with the files it needs (each day only the new ones), and a new computer restores from that folder alone.
     Only the backup copies go there; the database itself stays {{ "on the server" if server_mode else "on this computer" }}.</p>
   {% if copy_status %}
   <p class="muted">{% if copy_status.ok %}<span class="ms ok-ico" aria-hidden="true">check_circle</span> Last copied {{ copy_status.when }}: {{ copy_status.what }}
@@ -56,30 +64,35 @@
   {% else %}
   <div class="table-wrap">
     <table class="apc-table">
-      <thead><tr><th>Backup</th><th>Made</th><th class="r">Size</th><th></th></tr></thead>
+      <thead><tr><th>Backup</th><th>Made</th><th>Holds</th><th>Second copy</th><th>Check</th><th></th></tr></thead>
       <tbody>
         {% for b in backups[:10] %}
-        <tr><td>{{ b.name }}</td><td>{{ b.made }}</td><td class="r">{{ b.size }}</td>
-          <td class="r"><a class="link" href="/settings/data/backups/{{ b.name | urlencode }}" download><span class="ms" aria-hidden="true">download</span>Download</a></td></tr>
+        <tr><td>{{ b.name }}</td><td>{{ b.made }}</td><td>{{ b.holds }}</td>
+          <td>{% if b.copied %}<span title="{{ b.copy_detail }}">{% if b.copied == "Copied" %}<span class="ms ok-ico" aria-hidden="true">check_circle</span>{% else %}<span class="ms err-ico" aria-hidden="true">error</span>{% endif %} {{ b.copied }}</span>{% if b.copied != "Copied" %}<br><span class="muted">{{ b.copy_detail }}</span>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
+          <td>{% if b.complete %}<span class="ms ok-ico" aria-hidden="true">check_circle</span>{% else %}<span class="ms err-ico" aria-hidden="true">error</span>{% endif %} {{ b.state }}</td>
+          <td class="r"><a class="link" href="/settings/data?restore={{ b.name | urlencode }}#restore"><span class="ms" aria-hidden="true">settings_backup_restore</span>Restore this state</a>
+            <a class="link" href="/settings/data/backups/{{ b.name | urlencode }}" download title="The database file of this backup"><span class="ms" aria-hidden="true">download</span>Download</a></td></tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
   {% if backups | length > 10 %}<p class="muted">The newest 10 of {{ backups | length }} are listed; every one can be restored below.</p>{% endif %}
 
-  <details class="st-details st-danger" id="restore">
+  <details class="st-details st-danger" id="restore"{% if chosen %} open{% endif %}>
     <summary><span class="ms" aria-hidden="true">settings_backup_restore</span>Restore a backup…</summary>
     <form method="post" action="/settings/data/restore" class="stack" data-busy="Restoring…" data-restore>
       <label class="field">Backup to restore
-        <select name="name" required>{% for b in backups %}<option value="{{ b.name }}">{{ b.name }} · {{ b.made }}</option>{% endfor %}</select></label>
-      <p>Replace the current database with this backup? Everything done since that backup (processed invoices, approvals,
-        lessons, GL changes) is replaced. Unsaved edits on review screens are discarded. The current database is backed
-        up first, so this can be undone.</p>
+        <select name="name" required>{% for b in backups %}<option value="{{ b.name }}"{% if b.name == chosen %} selected{% endif %}>{{ b.name }} · {{ b.made }} · {{ b.state }}</option>{% endfor %}</select></label>
+      <p>Put AP Coder back as it was at this backup? The database and the invoice files, saved emails and attachments go
+        back to that moment: everything done since (processed invoices, approvals, lessons, GL changes) is replaced, and
+        unsaved edits on review screens are discarded. Files that came in or changed since are not deleted: they are moved
+        to a <code>set-aside</code> folder in backups, and the page says how many. The current state is backed up first,
+        so this can be undone.</p>
       {% if server_mode %}<p>The user accounts, their passwords and roles, and paused logins stay as they are now (not as
         in the backup). Everyone is logged out, you too: log in again after the restore.</p>{% endif %}
       <label class="field">Type {{ restore_word }} to confirm
         <input type="text" name="confirm" autocomplete="off" required pattern="\s*[Rr][Ee][Ss][Tt][Oo][Rr][Ee]\s*" data-word="{{ restore_word }}"></label>
-      <button class="btn danger" type="submit" disabled><span class="ms" aria-hidden="true">restore</span>Restore</button>
+      <button class="btn danger" type="submit" disabled><span class="ms" aria-hidden="true">restore</span>Restore this state</button>
     </form>
   </details>
   {% endif %}

@@ -75,6 +75,56 @@ def test_the_laptop_flow_send_the_email_record_the_answer_back_in_the_queue(stor
     assert "Bob Manager confirmed the coding" in client.get(f"/review/{iid}").text
 
 
+def _recorded_reply(store, client) -> int:
+    """A request sent and answered by email, the reply kept: its id."""
+    iid = _first(store)
+    form = {**_coded_form(store, iid), "manager_name": "Bob Manager", "manager_email": "bob@example.com"}
+    assert client.post(f"/review/{iid}/manager", data=form, headers=PAGE).json()["ok"]
+    rid = store.waiting_manager_request(iid)["id"]
+    reply = ("RE confirm.eml", io.BytesIO(b"Subject: RE\n\nCONFIRMED, thanks"), "message/rfc822")
+    answer = client.post(f"/manager/{rid}/record", headers=PAGE, files={"reply": reply},
+                         data={"decision": CONFIRMED, "by": "Bob Manager"}).json()  # fmt: skip
+    assert answer["ok"], answer
+    return rid
+
+
+def test_the_reply_kept_opens_after_a_restore_onto_a_data_folder_elsewhere(store, tmp_path):
+    """The reply's path was kept whole (``C:\\Users\\ann\\APCoder\\emails\\manager\\...``): restored onto a new computer
+    whose data folder is elsewhere, the reply was nowhere to be found (B-1552)."""
+    import shutil
+
+    from ap_coder.core.store import Store
+
+    client = client_for(store)
+    rid = _recorded_reply(store, client)
+    assert store.manager_request(rid)["reply_file"].startswith("emails/manager/AP-")  # kept relative to the data folder
+    assert f'href="/manager/{rid}/reply"' in client.get(f"/manager/{rid}").text
+    assert client.get(f"/manager/{rid}/reply").content == b"Subject: RE\n\nCONFIRMED, thanks"
+    backup = store.backup_now("manual")
+    new = Store(tmp_path / "new computer" / "ap_coder.db")
+    new.restore_state(backup)
+    shutil.rmtree(tmp_path / "private")  # the old computer is gone
+    opened = client_for(new).get(f"/manager/{rid}/reply")
+    assert opened.status_code == 200 and opened.content == b"Subject: RE\n\nCONFIRMED, thanks"
+
+
+@pytest.mark.parametrize(
+    "old",
+    ["D:\\APCoderData\\emails\\manager\\{name}", "/Users/ann/APCoder/emails/manager/{name}"],
+    ids=["windows", "mac"],
+)
+def test_a_reply_kept_under_an_old_whole_path_is_found_in_the_data_folder(store, old):
+    client = client_for(store)
+    rid = _recorded_reply(store, client)
+    name = store.manager_request(rid)["reply_file"].rsplit("/", 1)[1]
+    with store._conn() as conn:  # as an AP Coder before B-1552 kept it, on another computer
+        conn.execute("UPDATE manager_requests SET reply_file = ? WHERE id = ?", (old.format(name=name), rid))
+    assert client.get(f"/manager/{rid}/reply").content == b"Subject: RE\n\nCONFIRMED, thanks"
+    with store._conn() as conn:  # never a file outside the data folder's own places
+        conn.execute("UPDATE manager_requests SET reply_file = ? WHERE id = ?", (str(store.path), rid))
+    assert client.get(f"/manager/{rid}/reply").status_code == 404
+
+
 def test_sending_needs_every_line_coded_and_a_manager(store):
     client = client_for(store)
     iid = _first(store)

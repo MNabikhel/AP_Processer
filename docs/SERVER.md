@@ -346,9 +346,24 @@ window, started at boot like AP Coder.
 
 ## 9. Backups
 
-- **Every day, automatically**: a copy of the database in `D:\APCoderData\backups` (`ap_coder-<date>-<time>.db`), when
-  AP Coder starts and once a day while it runs; the newest 14 are kept. An update adds its own
-  (`...-before-update-<version>.db`), kept until you delete it.
+- **Every day, automatically**: a backup in `D:\APCoderData\backups`, when AP Coder starts and once a day while it
+  runs; the newest 14 are kept. It is made in the background: AP Coder serves pages meanwhile, and *Settings* →
+  *Data & backups* says while one is being made (B-1553). An update adds its own (`...-before-update-<version>`),
+  made before the update goes on, kept until you delete it. Each backup is AP Coder as it was at that moment,
+  restorable whole (D-143):
+  - `ap_coder-<date>-<time>.db`: the database;
+  - `ap_coder-<date>-<time>.files.json`: its list of files, each with its size and SHA-256: the whole `invoices`
+    folder (the PDFs and pictures, `originals`, `deleted`, `statements`, the saved emails and their attachments in
+    `invoices\emails`), the managers' replies in `emails`, `reference`, `canada_tax_rates.csv` and
+    `jde_orchestrations.json` if you keep your own, the JD Edwards postings ledger `jde_postings.jsonl`, and an
+    invoice's file kept outside the data folder;
+  - `files\<2 digits>\<sha256>`: the files themselves, each content kept once for all the backups. A daily backup copies
+    only the files that are new or changed since the last one (2,000 invoices: about a second when nothing changed);
+    a file is dropped when no backup kept lists it any more.
+
+  Not in a backup: the `.env` (it holds passwords; set it again on a new server), `server.json` (made by
+  `service install`), the caches, logs, exports and reports (made again), and the OCR models (they come with the
+  bundle).
 - **The folders an Admin may name** (the backups' second copy, the finance hub's folder): on the server only those IT
   lists, or a folder inside one. Give them when installing the service, separated by `;`:
   `service install --allowed-folders "\\fileserver\Backups\APCoder;\\fileserver\FinanceHub"` (kept in
@@ -356,16 +371,39 @@ window, started at boot like AP Coder.
   AP Coder touches it, so a page can't make the server's account sign in to another computer's share (its password
   hash sent there) or copy the invoices out. With none listed, both settings are refused.
 - **A copy elsewhere**: an Admin sets *Settings* → *Data & backups* → *Also copy each backup to* a network share, for
-  example `\\fileserver\Backups\APCoder` (the `backup_copy_dir` setting; one of the allowed folders above). Each daily backup is then copied there too
-  (the newest 14 kept), and the page says when the last copy was made or why it failed. The service's account must be
-  able to write there: a domain account (step 2), with *Modify* on that share folder.
+  example `\\fileserver\Backups\APCoder` (the `backup_copy_dir` setting; one of the allowed folders above). Each daily
+  backup and each update's backup is then copied there too, with the files it needs that the share does not have yet
+  (the same layout: the newest 14 daily ones kept), and the page says, for each backup, whether its copy was made or
+  why it failed. That folder alone restores the server on a new computer. The service's account must be able to write
+  there: a domain account (step 2), with *Modify* on that share folder.
+- **What each backup holds**: *Settings* → *Data & backups* lists every backup with when it was made, its invoices and
+  files and their size, whether its second copy was made, and whether every file is there (*Complete*, or how many are
+  missing or damaged). `python -m ap_coder backup list` says the same on the console, and `backup check` reads every
+  file of every backup and compares it with its SHA-256.
 - **The server's own backup** (Windows Server Backup, Veeam...): include `D:\APCoderData`, but restore from the
   `backups` copies, not from a copy of the open `ap_coder.db` file.
-- **Restoring**: *Settings* → *Data & backups* → restore a backup (an Admin). The user accounts (passwords, roles,
-  who is turned off) and paused logins stay as they are now, not as in the backup, and everyone is logged out, the
-  Admin too. `server-update --back` and an update that fails do the same. By hand: `service stop`, copy the backup over
-  `D:\APCoderData\ap_coder.db` (delete `ap_coder.db-wal` and `ap_coder.db-shm` beside it), `service start`: that
-  brings back the backup's accounts and sessions, so prefer the page.
+- **Restoring**: *Settings* → *Data & backups* → *Restore this state* (an Admin; type RESTORE to confirm). The
+  database and the files go back to that moment; a file that came in or changed since is moved to
+  `backups\set-aside-<date>-<time>` (never deleted), and the state before the restore is backed up first, so it can be
+  undone. A file missing or damaged in the backup is taken from the second copy when it has it, else the page says
+  which. The user accounts (passwords, roles, who is turned off) and paused logins stay as they are now, not as in the
+  backup, and everyone is logged out, the Admin too. `server-update --back` and an update that fails do the same.
+- **Restoring from the console** (the same rules): `service stop`, then, in the AP Coder folder:
+
+  ```bat
+  .venv\Scripts\python.exe -m ap_coder backup list
+  .venv\Scripts\python.exe -m ap_coder backup restore ap_coder-20261201-090000.db
+  ```
+
+  then `service start`. It refuses while AP Coder runs on the data folder, and asks first (`--yes` doesn't).
+  `backup now` makes a backup. Copying a `.db` over `D:\APCoderData\ap_coder.db` by hand brings back neither the
+  files nor the accounts as they are now: use the command.
+- **A new server** (the old one lost): install AP Coder (step 2) and the service, then restore from the share alone:
+  `.venv\Scripts\python.exe -m ap_coder backup list --from \\fileserver\Backups\APCoder`, then
+  `backup restore <name> --from \\fileserver\Backups\APCoder`. The database and every file come back into the new
+  data folder; the backup's accounts come with it (there are none yet to keep). Set again what a backup does not
+  hold: the `.env`, the allowed folders, and the second backup folder (a restore clears it, so a backup never
+  chooses where later ones go).
 - **The finance hub feed** (off until an Admin turns it on, *Settings* → *Finance hub*): its share needs the same
   *Modify* for the service's account. Its schedule runs while staff use the dashboard; for a night run, add a
   scheduled task running `python -m ap_coder hub export` as the service's account (docs/FINANCE_HUB.md).
@@ -461,7 +499,7 @@ installed yet, it says there is no service to stop or start). The second does th
 1. checks the bundle: its SHA-256 is the one given, one AP Coder folder, every file it lists, nothing damaged, and
    newer than the one running;
 2. stops the service (staff see AP Coder as closed for a few minutes: pick a quiet time);
-3. backs up the database: `backups\ap_coder-<date>-<time>-before-update-0.5.0.db`;
+3. backs up the database and the files (section 9): `backups\ap_coder-<date>-<time>-before-update-0.5.0.db`;
 4. unzips the bundle next to the current folder: `C:\APCoder\APProcessor-0.5.0`;
 5. sets that folder up from its own `wheelhouse` (offline; its launcher's window shows it);
 6. updates the database (the new version opens it once);
@@ -477,9 +515,10 @@ it again, and says why. The new folder is kept to look at; delete it when done.
 .venv\Scripts\python.exe -m ap_coder server-update --back
 ```
 
-It stops the service, keeps a copy of the database as it is now (`backups\...-before-going-back.db`), puts back the
-backup made before the update (keeping the user accounts and paused logins as they are now, and logging everyone
-out), and starts the previous folder again. What was done in AP Coder since the update is
+It stops the service, backs up the database and the files as they are now (`backups\...-before-going-back.db`), puts
+back the backup made before the update with its files (keeping the user accounts and paused logins as they are now,
+and logging everyone out; files that came in since are moved to `backups\set-aside-<date>-<time>`), and starts the
+previous folder again. What was done in AP Coder since the update is
 not in that backup (the older version can't open a database the newer one changed), so go back soon, or not at all.
 It asks first (`--yes` doesn't); `--dry-run` shows what it would do. If the copy or the backup put back fails (a full
 disk, Ctrl+C), it starts the version that was running again, on the database as it was, and says so; once the backup

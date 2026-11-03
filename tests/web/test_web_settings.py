@@ -433,6 +433,115 @@ def test_restore_needs_restore_typed(client, store):
     assert store.events(actions=["backup_restored"])
 
 
+def test_data_tab_says_what_each_backup_holds_and_restores_its_files(client, store, tmp_path, ground_truth):
+    """Each backup says when, what it holds, whether it was copied and whether all of it is there; restoring it brings
+    back the invoice files too (D-143)."""
+    invoices = store.path.parent / "invoices"
+    invoices.mkdir()
+    (invoices / "a.pdf").write_bytes(b"%PDF-1.4 a")
+    store.add_invoice(invoices / "a.pdf", ground_truth, {})
+    share = tmp_path / "share"
+    share.mkdir()
+    store.set_setting("backup_copy_dir", str(share))
+    backup = store.backup_now()
+    text = client.get("/settings/data").text
+    row = text.split(f"<td>{backup.name}", 1)[1].split("</tr>", 1)[0]
+    assert "1 invoice" in row and "1 file" in row and "Copied" in row and "Complete" in row
+    assert f'href="/settings/data?restore={backup.name}#restore"' in row and "Restore this state" in row
+    assert "every invoice file" in text  # the page says what a backup holds and what restoring does
+    chosen = client.get(f"/settings/data?restore={backup.name}").text
+    assert (
+        f'<option value="{backup.name}" selected>' in chosen
+        and '<details class="st-details st-danger" id="restore" open>' in chosen
+    )
+
+    (invoices / "a.pdf").unlink()
+    (invoices / "b.pdf").write_bytes(b"%PDF-1.4 came in since")
+    text = follow(client, post(client, "/settings/data/restore", {"name": backup.name, "confirm": "RESTORE"}))
+    assert f"Restored {backup.name}." in text and "1 put back" in text and "1 file added or changed since" in text
+    assert (invoices / "a.pdf").read_bytes() == b"%PDF-1.4 a" and not (invoices / "b.pdf").exists()
+
+    sha = paths.file_sha256(invoices / "a.pdf")
+    (store.backup_dir() / "files" / sha[:2] / sha).unlink()
+    store.set_setting("backup_status", "failed 2026-11-03 09:00: No space left on device")
+    text = client.get("/settings/data").text
+    row = text.split(f"<td>{backup.name}", 1)[1].split("</tr>", 1)[0]
+    assert "1 file missing" in row
+    assert "The last backup failed 2026-11-03 09:00: No space left on device" in text
+
+
+def test_in_a_browser_restore_this_state_restores_that_backup_once_restore_is_typed(chromium, store):
+    from tests.browser import browser_on
+
+    older = store.backup_now("manual")
+    store.set_setting("fx_rates", "USD=9.99")  # done after the older backup: undone by restoring it
+    store.backup_now("manual")
+    s = Settings()
+    app = create_app(replace(s, llm=replace(s.llm, provider="off")), store, start_reader=False)
+    with browser_on(chromium, app) as (browser, base):
+        page = browser.new_page()
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(base + "/settings/data")
+        page.locator("tr", has_text=older.name).get_by_text("Restore this state").click()
+        page.wait_for_url("**restore=*")
+        assert page.locator("#restore").get_attribute("open") is not None
+        assert page.locator("select[name=name]").input_value() == older.name
+        button = page.locator('form[data-restore] button[type="submit"]')
+        assert button.is_disabled()
+        page.fill("input[name=confirm]", "RESTORE")
+        assert button.is_enabled()
+        button.click()
+        page.get_by_text(f"Restored {older.name}.").wait_for()
+        page.close()
+    assert errors == [] and store.get_setting("fx_rates") == ""
+
+
+def _slow_files(monkeypatch):
+    """The backups' files copied only once ``release`` is set: a first copy to a slow network share (B-1553)."""
+    import threading
+
+    from ap_coder.core.store import backup_files
+
+    release, real = threading.Event(), backup_files.snapshot
+
+    def slow(backup, data):
+        assert release.wait(20)
+        return real(backup, data)
+
+    monkeypatch.setattr(backup_files, "snapshot", slow)
+    return release
+
+
+def test_the_daily_backup_never_holds_up_the_start_and_the_page_says_it_is_being_made(store, monkeypatch):
+    """The start made the day's backup before the dashboard opened: the first one copying every invoice file to a
+    network share held it up for minutes (B-1553)."""
+    import time
+
+    release = _slow_files(monkeypatch)
+    s = Settings()
+    app = create_app(replace(s, llm=replace(s.llm, provider="off")), store, start_reader=False)
+    started = time.monotonic()
+    with TestClient(app, base_url="http://localhost") as opened:
+        assert time.monotonic() - started < 5 and opened.get("/healthz").status_code == 200  # open at once
+        assert "A backup is being made" in opened.get("/settings/data").text
+        release.set()
+        app.state.daily_backup.thread.join(20)
+        assert len(store.list_backups()) == 1 and "A backup is being made" not in opened.get("/settings/data").text
+
+
+def test_back_up_now_goes_on_in_the_background_when_it_takes_long(client, store, monkeypatch):
+    release = _slow_files(monkeypatch)
+    monkeypatch.setattr(settings_page, "BACKUP_WAIT", 0.2)
+    text = follow(client, post(client, "/settings/data/backup"))
+    assert "being made in the background" in text and "A backup is being made" in text
+    again = follow(client, post(client, "/settings/data/backup"))  # never two at once
+    assert "A backup is being made already" in again
+    release.set()
+    client.app.state.daily_backup.thread.join(20)
+    assert len(store.list_backups()) == 1 and store.events(actions=["backup_made"])
+
+
 def test_second_backup_folder(client, store, tmp_path):
     response = post(client, "/settings/data/backup-copy", {"folder": str(tmp_path / "missing")})
     assert response.status_code == 400 and "does not exist" in response.json()["error"]
