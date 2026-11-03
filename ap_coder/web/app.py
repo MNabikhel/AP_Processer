@@ -106,8 +106,8 @@ class DailyBackup:
             def made() -> None:
                 try:
                     self.outcome = self.store.backup_now(label, actor=actor)
-                except OSError as exc:
-                    self.outcome = exc
+                except Exception as exc:  # noqa: BLE001 - said on the page (a busy database too: B-1564), never a 500
+                    self.outcome = exc if isinstance(exc, OSError) else OSError(str(exc))
 
             self.outcome = None
             return self._spawn(made)

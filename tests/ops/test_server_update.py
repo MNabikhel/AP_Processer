@@ -152,6 +152,48 @@ def test_a_new_version_that_does_not_answer_is_rolled_back_too(server):
     assert service.read_config(server["data"])["folder"] == str(server["current"])
 
 
+def test_a_rollback_whose_files_cannot_be_put_back_still_starts_the_old_version(server, monkeypatch, capsys):
+    """A locked file while the update's rollback put the files back: the error left the server stopped (B-1565)."""
+
+    def locked(*args, **kwargs):
+        raise PermissionError(13, "The process cannot access the file because it is being used by another process")
+
+    monkeypatch.setattr(backup_files, "restore_files", locked)
+    fake = FakeServer(check_ok=False)
+    assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=fake) == 1
+    assert fake.calls[-2:] == ["start", "up APProcessor"]  # the old version, started again
+    assert _marker(server["db"]) == "as before the update"
+    assert service.read_config(server["data"])["folder"] == str(server["current"])
+    assert "being used by another process" in capsys.readouterr().out
+
+
+def test_back_never_runs_while_a_backup_is_being_made(server, capsys):
+    """B-1559: one backup or restore at a time, the update's put-back too."""
+    assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=FakeServer()) == 0
+    Store(server["db"]).set_setting("marker", "work done on the new version")
+    import threading
+
+    held, done = threading.Event(), threading.Event()
+
+    def backing_up():  # (another thread, as another process making a backup: the same lock)
+        with backup_files.exclusive(server["data"]):
+            held.set()
+            done.wait(20)
+
+    other = threading.Thread(target=backing_up)
+    other.start()
+    held.wait(10)
+    try:
+        fake = FakeServer()
+        assert server_update.go_back(server["data"], server["db"], server=fake, yes=True) == 1
+    finally:
+        done.set()
+        other.join(10)
+    assert fake.calls == ["stop", "start", "up APProcessor-0.4.0"]  # the version that ran, started again
+    assert _marker(server["db"]) == "work done on the new version"
+    assert "being made or restored" in capsys.readouterr().out
+
+
 def test_back_restores_the_pre_update_backup_and_the_previous_folder(server, capsys):
     assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=FakeServer()) == 0
     Store(server["db"]).set_setting("marker", "work done on the new version")

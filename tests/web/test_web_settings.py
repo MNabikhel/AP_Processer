@@ -542,6 +542,18 @@ def test_back_up_now_goes_on_in_the_background_when_it_takes_long(client, store,
     assert len(store.list_backups()) == 1 and store.events(actions=["backup_made"])
 
 
+def test_back_up_now_says_a_database_error_instead_of_an_error_page(client, store, monkeypatch):
+    """B-1564: only OSError was caught on the backups' thread; a busy database gave the page a 500."""
+    import sqlite3
+
+    def locked(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(store, "backup_now", locked)
+    response = post(client, "/settings/data/backup")
+    assert response.status_code == 400 and "database is locked" in response.json()["error"]
+
+
 def test_second_backup_folder(client, store, tmp_path):
     response = post(client, "/settings/data/backup-copy", {"folder": str(tmp_path / "missing")})
     assert response.status_code == 400 and "does not exist" in response.json()["error"]
