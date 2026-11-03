@@ -59,10 +59,6 @@ Process the week's invoices in AP Coder **and** code them the usual way. Do not 
       unit for every account: set a **Default BU**, or map every GL account, the tax accounts (e.g. GST/HST and QST
       recoverable) included; the Welcome checklist says which are missing.
 - [ ] Look at **Vendors that make work** and ask the worst offenders for better invoices.
-- [ ] **Touchless, if ready:** when several regular vendors are close to the bar on *Learning & accuracy
-      → Supplier learning* and corrections have settled, an AP lead turns on touchless processing in
-      **Settings → Automation**. Check *Largest invoice approved without a person* (5,000.00 CAD by
-      default) and use *Keep supervised* for any vendor that should always go to a person.
 
 ## Week 4: close and decide
 

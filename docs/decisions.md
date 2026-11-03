@@ -307,3 +307,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   hold ends are an Admin's (the vendor master import, the JD Edwards sync's `erp_hold`, removing the demo) or keep it
   (vendors merged, a vendor added on the review screen). (`web/pages/vendors.py` `may_lift_hold`,
   `web/templates/vendors.html`; `tests/web/test_web_masterdata.py`)
+- **D-144** · **Touchless processing stays off** until the company's AI team has done a model-risk review of it
+  (invoices written to steer the AI reviewer included): an invoice approved without a person, on a model's say,
+  waits for that review (the user's call). PILOT_PLAN.md's week-3 "Touchless, if ready" item is removed; the plan
+  itself is to be rewritten once the pilot's design is settled. Nothing in the code changes: touchless is off by
+  default (Settings → Automation). (`docs/PILOT_PLAN.md`)
