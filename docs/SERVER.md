@@ -45,7 +45,8 @@ Why these numbers:
   but reading each page takes minutes on the processor instead of seconds (estimated) on a graphics card.
 - **Disk**: each AP Coder version is 2 to 3 GB (its packages and OCR models), and two are kept (the current one and
   the previous one, to go back to). The models are about 10 GB. The data grows with the invoices (about 0.5 MB each,
-  kept with the database) and 14 daily copies of the database.
+  kept with the database) and 14 daily copies of the database, plus one copy of each invoice file (each content
+  kept once, D-143): about twice the invoices' size.
 - **How many people and invoices** (D-111). *Measured*: a 12,000-invoice database, a load test of logged-in people
   each clicking every 10 seconds on average through the review queue, invoices, their pages, approvals, search and
   exports, on a 4-core test machine (shared with other work, so on the slow side), before the database speed-ups

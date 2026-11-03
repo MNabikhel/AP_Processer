@@ -72,3 +72,17 @@ def test_check_reads_every_file_and_says_what_is_missing_or_damaged(tmp_path, gr
     kept.write_bytes(b"%PDF-1.4 b")  # the same size, another content
     assert cli.main(["--db", str(store.path), "backup", "check"]) == 1
     assert "damaged: invoices/a.pdf" in capsys.readouterr().out
+
+
+def test_help_names_a_backup_as_the_list_shows_it(tmp_path, ground_truth, capsys):
+    """B-1577: ``backup --help`` gave a backup's name as ap_coder-<date>-<time>.db; a manual backup's name ends
+    -manual.db, one before an update -before-update-…: the name to give is the one ``backup list`` shows."""
+    store, _ = _data(tmp_path, ground_truth)
+    made = store.backup_now("manual")
+    try:
+        cli.main(["backup", "--help"])
+    except SystemExit:
+        pass
+    out = " ".join(capsys.readouterr().out.split())
+    assert "as backup list shows it" in out
+    assert "<date>-<time>.db" not in out and made.name.endswith("-manual.db")

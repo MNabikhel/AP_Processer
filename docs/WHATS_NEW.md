@@ -3,7 +3,8 @@
 Everything below was added after the first version (pull request #1). The fastest way to see it all is
 the demo: start AP Coder and click **Load demo invoices** (no Azure needed). The
 [Getting started guide](GETTING_STARTED.md#step-4-try-the-dashboard-with-the-sample-data-no-enterprise-data)
-has a short tour, and the [pilot plan](PILOT_PLAN.md) suggests four weeks to a decision.
+has a short tour, and the [pilot plan](PILOT_PLAN.md) connects AP Coder to the company first (stage 0), then
+runs a parallel week and four measured live weeks to a decision.
 
 Your existing data is safe. On first start the database upgrades itself (schema version 19), and a
 backup of AP Coder (the database and the invoice files) is made automatically once a day (the newest 14 are
@@ -40,7 +41,7 @@ kept).
   that differs from the vendor's, are approved only with **Approve anyway** and how the change was confirmed, kept
   in the audit trail. A vendor on hold can't be approved until the hold is lifted (B-1544).
 
-## The pilot releases (D-113 to D-137)
+## The pilot releases (D-115 to D-137)
 
 Newest first; each pilot release's own notes are on its GitHub release page, and every fix is a line in
 [BUGS.md](BUGS.md) (B-1442 on).

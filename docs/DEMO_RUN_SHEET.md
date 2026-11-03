@@ -19,8 +19,8 @@ runs on the laptop, with no internet. **If anything goes wrong, play the video.*
    **Process**. Wait until *Settings → Reading* says nothing waits for OvisOCR2 (minutes a page on a laptop CPU).
 7. **Settings → Data & backups** → **Back up now**: this is the demo's starting point.
 8. Rehearse steps 1–6 below once. Then **Settings → Data & backups → Restore a backup…** → the backup from step 7 →
-   type RESTORE. A restore puts back the database only: delete the two `demo_day` PDFs the rehearsal copied into the
-   `invoices` folder of `APCoder-demo`, or *Import invoices* offers them as ready to process.
+   type RESTORE. The restore puts back the database and the invoice files as they were at step 7; the two `demo_day`
+   PDFs the rehearsal added are moved to `APCoder-demo\backups\set-aside-…`, so *Import invoices* no longer offers them.
 9. Laptop: plugged in, sleep off, notifications off, other apps closed. The video on the desktop.
 
 **On the day, 5 minutes before:** LM Studio → Start server; double-click `scripts\demo.bat`; the Review queue
@@ -38,7 +38,7 @@ are dated June to October 2026, so their due dates have passed.
 | 4 | **Import invoices** → `samples\demo_day\pacific_BC_GST_PST_PO-77311.pdf` → **Process**, then **Go to the review queue** and open it (the last row) | "The same vendor's next invoice. Nobody touched it: toner and paper to 6000, the monitor to 6010, learned from the approval a minute ago. *Ready to approve*." **Approve & teach**. |
 | 5 | **Import** `…PO-77120_second_notice.pdf`, open it from the review queue | "The vendor sends the same invoice again. AP Coder stops it: *possible duplicate payment*. Approving it anyway takes a tick and a reason, kept in the audit trail." |
 | 6 | **Exports** → Excel workbook → **Export 2 invoices** → **Download batch 1**, open it | "Approved invoices go out in a batch for the ERP: invoices, GL lines and a GL summary. The JD Edwards format is built too: it shows here once it is set up with IT." |
-| 7 | — | "Next: the pilot on real invoices with the AP leads, then the company's own data and JD Edwards, then one central server for the team." |
+| 7 | — | "Next: stage 0 connects AP Coder to the company (the pilot computer in server mode, the AP inbox, sign-in, JD Edwards in its test environment, the company's own data), then a live pilot with a small AP team." |
 
 ## If something goes wrong
 

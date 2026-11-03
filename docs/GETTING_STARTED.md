@@ -196,9 +196,9 @@ Open **GL accounts & tax**:
    sales-tax receivable accounts (e.g. *GST/HST Recoverable*, *QST Recoverable*).
    Good descriptions matter: the AI matches invoice lines against them.
    To look around first, **Use the sample GL accounts**: they come without cost centers, so each line needs only
-   a GL account (the pilot codes no cost centers).
-2. **Cost centers:** optional, and not used in the pilot. Leave empty if you don't code to cost centers; a list
-   imported later makes each line need one.
+   a GL account (the pilot of [PILOT_PLAN.md](PILOT_PLAN.md) codes cost centers too).
+2. **Cost centers:** optional (the pilot imports the company's). Leave empty if you don't code to cost centers;
+   a list imported later makes each line need one.
 3. **Sales tax accounts** (the tab on this page, not the **Sales tax** page under More):
    - GST, HST and QST: *Recoverable*, and pick the receivable GL account for each.
    - PST and other taxes: *add to each expense line's GL* (they then need no account). Alternatively, choose a
@@ -289,15 +289,16 @@ accuracy → Supplier learning** is the training view, vendor by vendor: how oft
 and how far each vendor is from touchless.
 
 **Touchless processing** (Settings → Automation) is off by default, so every invoice is approved by a
-person. Leave it off for the first weeks and watch *Supplier learning*. When your regular vendors are
-close to the bar, an AP lead turns it on (with a confirmation, recorded in the Activity log). A vendor then
+person. It stays off for the pilot, until the company's AI team has done its model-risk review (D-144);
+meanwhile watch *Supplier learning*. Once allowed, an AP lead turns it on (with a confirmation, recorded in
+the Activity log) when your regular vendors are close to the bar. A vendor then
 goes touchless by itself once it has at least 20 reviewed invoices, header fields read right at least 99%
 of the time with 95% confidence since its last correction (and at least 98% over its last 200 invoices), and
 the last 10 without a correction: in practice about 20 to 30 invoices approved without a correction. *Supplier learning* shows each vendor's own number.
 5% are still audited, and one correction suspends the vendor. Some invoices always go to a person (a
 changed bank account or GST/HST number, a possible duplicate, a total above *Largest invoice approved
 without a person*, 5,000.00 CAD by default, and others: Settings → Automation lists them). See
-[PILOT.md](PILOT.md#touchless-processing-when-to-turn-it-on).
+[PILOT.md](PILOT.md#touchless-processing-off-for-the-pilot-d-144).
 
 ## Step 8: Send the share report to the company's AP Coder developer
 

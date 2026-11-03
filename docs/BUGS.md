@@ -2,7 +2,8 @@
 
 One line per bug: `B-NNN · what broke · severity · the test that keeps it fixed`. A suspicion that didn't reproduce is
 an `N-NN` line. B-01 to B-1441 and the N- notes (to 29 October 2026): [archive/bugs-2026-10.md](archive/bugs-2026-10.md);
-look one up with `grep -n "B-1234 " docs/archive/bugs-*.md`.
+look one up with `grep -n "B-1234 " docs/archive/bugs-*.md`. Numbers never used (not lost): B-1448 to B-1459,
+B-1462 to B-1473, B-1480, B-1481.
 
 How to add one: the test first (it fails), then the fix, then a line at the end of this file, numbered after the
 last B- line (`grep -o "B-[0-9]*" docs/BUGS.md | tail -1`).
@@ -108,3 +109,5 @@ last B- line (`grep -o "B-[0-9]*" docs/BUGS.md | tail -1`).
 - **B-1564** · Back up now gave an error page on a database error (a busy database on the server): only OSError was caught on the backups' thread. Any error is said on the page; and clearing a past failure, the database busy, no longer skips the retention · low · `tests/web/test_web_settings.py::test_back_up_now_says_a_database_error_instead_of_an_error_page`
 - **B-1565** · An update's rollback whose files could not be put back (a locked file) stopped with the error and left the server stopped: the old version is started again whatever happens, and the console says to restore the pre-update backup once it runs · medium · `tests/ops/test_server_update.py::test_a_rollback_whose_files_cannot_be_put_back_still_starts_the_old_version`
 - **B-1566** · A restore kept, instead of moving aside, a file that came in after the backup but before the restore when the file's time read ahead of the clock (Windows CI): which files were there when the restore began is now a list taken then, not a time compared (`backup_files.restore_files`) · medium · `tests/core/test_backups.py::test_a_file_from_before_the_restore_is_moved_aside_even_when_its_time_is_ahead_of_the_clock`
+- **B-1576** · `python scripts/check.py --help` took the flag for a file name and ran the check ("No tests found", check: OK) instead of saying how to use it: `-h` and `--help` print the usage · low · `tests/meta/test_check_script.py::test_help_prints_the_usage_and_checks_nothing`
+- **B-1577** · `python -m ap_coder backup --help` gave a backup's name as `ap_coder-<date>-<time>.db`, which no manual backup (`…-manual.db`) or backup before an update matches: it now asks for the name as `backup list` shows it · low · `tests/ops/test_backup_cmd.py::test_help_names_a_backup_as_the_list_shows_it`

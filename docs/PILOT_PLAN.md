@@ -14,8 +14,9 @@ Each item ends with something a person can check. The company's IT and the JDE t
 
 - [ ] **The code goes into the company's own repository** ([HANDOFF.md](HANDOFF.md) section 1), and its tests
       run green there.
-- [ ] **The pilot computer:** for the pilot's handful of people, a laptop with an NVIDIA graphics card (16 GB or
-      more), docked and plugged in, sleep off, in a locked spot (or a desktop), given a burn-in week and set up in
+- [ ] **The pilot computer:** for the pilot's handful of people, a laptop with an NVIDIA graphics card with 16 GB
+      of VRAM or more and 32 GB of memory ([SERVER.md](SERVER.md) section 1), docked and plugged in, sleep off, in a
+      locked spot (or a desktop), given a burn-in week and set up in
       server mode ([SERVER.md](SERVER.md): Windows 11 Pro runs it), with LM Studio, OvisOCR2 and the chat model on it
       (section 8). The pilot tester and the clerks log in from their browsers, each with their own account
       (section 10).
@@ -33,7 +34,8 @@ Each item ends with something a person can check. The company's IT and the JDE t
 - [ ] **Job costing** (job, cost code, cost type on a line): built in AP Coder, about 3 to 4 weeks of work.
 - [ ] **The company's master data:** the GL accounts and cost centers, how each sales tax posts, the vendor list
       with each vendor's address number (AN8), open POs, bank accounts, and last year's posted AP lines
-      (*Learning & accuracy → Teach from past coding*), so each vendor is coded from its first invoice.
+      (*Learning & accuracy → Teach from past coding*), so each vendor is coded from its first invoice. Imported on
+      the pilot computer as soon as it is set up, before job costing ([HANDOFF.md](HANDOFF.md) section 8, step 2).
 - [ ] **A security review** by the company's IT security team (to OWASP ASVS Level 2), and **a penetration test if
       IT requires one.** They are needed before AP Coder gets *production* write access only: read access and the
       work in PY go ahead meanwhile. If IT wants a penetration test, book it early: firms need weeks of notice.
