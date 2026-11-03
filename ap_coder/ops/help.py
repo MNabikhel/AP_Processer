@@ -219,8 +219,9 @@ CHECKS: dict[str, CheckHelp] = {
         FRAUD, "Vendor on hold",
         "AP put this vendor on hold on the Vendors page (the note there says why), or the ERP's vendor master "
         "marks it as blocked or inactive.",
-        "It can't be approved while the vendor is on hold: lift the hold on the Vendors page (a hold set in JD "
-        "Edwards is lifted in JD Edwards, then the vendor list imported or synced again), or reject the invoice.",
+        "It can't be approved while the vendor is on hold: lift the hold on the Vendors page (on the company server "
+        "an Approver or an Admin does that, not a Clerk; a hold set in JD Edwards is lifted in JD Edwards, then the "
+        "vendor list imported or synced again), or reject the invoice.",
     ),
     "VENDOR_TAX_NUMBER_CHANGED": CheckHelp(
         FRAUD, "GST/HST number changed",

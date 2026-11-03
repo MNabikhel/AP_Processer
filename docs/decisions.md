@@ -122,7 +122,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
 - **D-98** · Roles in server mode
 - **D-100** · The company server runs AP Coder as a Windows scheduled task, and updates with a way back
 - **D-99** · The company server's network side and pages (with D-97's switch)
-- **D-101** · Server security review (changes D-97, D-99 and D-100 where they say otherwise)
+- **D-101** · Server security review (changes D-97, D-99 and D-100 where they say otherwise); its "a Clerk may
+  release a vendor's hold": replaced by D-142
 - **D-102** · What each role sees on the company server, and how the server speaks (with D-97 to D-99)
 - **D-103** · The finance hub feed (Microsoft Fabric)
 - **D-104** · JD Edwards through its AIS Server (the API connection), and the offline rule's named internal systems
@@ -295,3 +296,14 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   B-1544): the hold is lifted first, or the invoice rejected. As errors, the changed tax numbers take an error's
   share off the Reading. (`coding/vendors.py`, `web/invoice_view.py` `HARD_CODES`;
   `tests/web/test_web_review_voucher.py`)
+- **D-142** · On the company server only an **Approver or an Admin takes a vendor off hold** (On hold to Active on
+  the Vendors page); a Clerk is refused ("Only an Approver can take a vendor off hold.", the Active choice disabled
+  for them, with that sentence). Replaces D-101's "a Clerk may release a vendor's hold"; D-101's other point left for
+  later (a Clerk may reopen another person's approval) stands. Why: since D-141 a vendor on hold is never approved
+  anyway, and a Clerk who could lift the hold could then approve its invoices under the limit alone (B-1548; the
+  user's call). A Clerk still puts a vendor on hold and edits its notes and tax numbers, so the route stays a Clerk's
+  and only the lift is checked. A Manager (D-138) never reaches the Vendors page. On a laptop (no accounts) nothing
+  changes. The lift is in the audit trail as before (`vendor_updated`, "made active", with who). The other ways a
+  hold ends are an Admin's (the vendor master import, the JD Edwards sync's `erp_hold`, removing the demo) or keep it
+  (vendors merged, a vendor added on the review screen). (`web/pages/vendors.py` `may_lift_hold`,
+  `web/templates/vendors.html`; `tests/web/test_web_masterdata.py`)
