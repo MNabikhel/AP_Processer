@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from ap_coder.core.store import PENDING, Store, load_sample_setup
 from ap_coder.web.app import create_app
 from ap_coder.web.identity import SESSION_COOKIE
-from tests.webclient import PAGE, add_clean, known_vendors, web_settings
+from tests.webclient import PAGE, add_clean, enrol, known_vendors, sign_in, web_settings
 
 GOOD = "correct horse battery"
 
@@ -31,11 +31,13 @@ def account(store: Store, username: str, role: str, name: str = "", password: st
     uid = store.add_user(username, password, role=role, display_name=name or username.title())
     with store._conn() as conn:
         conn.execute("UPDATE users SET must_change = 0 WHERE id = ?", (uid,))
+    enrol(store, uid)  # its authenticator app set up (D-146)
     return uid
 
 
 def log_in(client: TestClient, username: str, password: str = GOOD, next: str = "/review"):  # noqa: A002
-    return client.post("/login", data={"username": username, "password": password, "next": next}, headers=PAGE)
+    """Both steps (D-146): the password, then the authenticator's code."""
+    return sign_in(client, username, password, next)
 
 
 # --- Nothing without a login ---------------------------------------------------------------------------------------
@@ -86,9 +88,10 @@ def test_login_sets_a_strict_http_only_cookie_and_a_new_token_each_time(store):
     planted = store.start_session(store.find_user("ann")["id"])  # a token someone else knows (fixation)
     answer = client.post("/login", data={"username": "ann", "password": GOOD, "next": "/review"},
                          headers={**PAGE, "Cookie": f"{SESSION_COOKIE}={planted}"})  # fmt: skip
-    assert answer.status_code == 200 and answer.json()["redirect"] == "/review"
-    cookie = answer.headers["set-cookie"]
-    assert "HttpOnly" in cookie and "SameSite=strict" in cookie.replace("Strict", "strict") and "Secure" in cookie
+    assert answer.status_code == 200 and answer.json()["redirect"] == "/login/code?next=%2Freview"  # (D-146)
+    assert store.session_user(planted) is None  # ended at the password already
+    for cookie in (answer.headers["set-cookie"], log_in(client, "ann").headers["set-cookie"]):  # half way, then in
+        assert "HttpOnly" in cookie and "SameSite=strict" in cookie.replace("Strict", "strict") and "Secure" in cookie
     token = client.cookies.get(SESSION_COOKIE)
     assert token and token != planted and store.session_user(planted) is None
     page = client.get("/review")
@@ -109,17 +112,17 @@ def test_a_new_account_must_choose_its_own_password_before_anything_else(store):
     uid = store.add_user("ann", GOOD, role="clerk", display_name="Ann Lee")  # must_change, as made
     client = server_client(store)
     answer = log_in(client, "ann", next="/search")
-    assert answer.json()["redirect"].startswith("/account/password?next=%2Fsearch")
-    assert client.get("/review").headers["location"].startswith("/account/password")
-    assert client.post("/review/bulk-approve", data={"ids": "1"}, headers=PAGE).status_code == 403
-    assert client.get("/account/password").status_code == 200
-    mismatch = client.post("/account/password", data={"current": GOOD, "new": "a new long password",
-                                                      "again": "another one"}, headers=PAGE)  # fmt: skip
+    assert answer.json()["redirect"].startswith("/login/new-password?next=%2Fsearch")  # no session yet (D-146)
+    assert client.get("/review").headers["location"].startswith("/login")
+    assert client.post("/review/bulk-approve", data={"ids": "1"}, headers=PAGE).status_code == 401
+    assert client.get("/login/new-password").status_code == 200
+    mismatch = client.post("/login/new-password", data={"current": GOOD, "new": "a new long password",
+                                                         "again": "another one"}, headers=PAGE)  # fmt: skip
     assert "not the same" in mismatch.json()["error"]
     form = {"current": GOOD, "new": "a new long password", "again": "a new long password", "next": "/search"}
-    done = client.post("/account/password", data=form, headers=PAGE)
-    assert done.json()["redirect"].startswith("/search")
-    assert not store.user(uid)["must_change"] and client.get("/review").status_code == 200
+    done = client.post("/login/new-password", data=form, headers=PAGE)
+    assert done.json()["redirect"].startswith("/login/authenticator?next=%2Fsearch")  # then the app is set up
+    assert not store.user(uid)["must_change"] and client.get("/review").status_code == 303
 
 
 def test_logout_ends_the_session(store):
@@ -212,7 +215,7 @@ def test_an_admin_adds_a_person_whose_temporary_password_is_shown_once(store):
     assert store.find_user("ann.lee")["role"] == "approver"
     assert password not in client.get(answer.json()["redirect"]).text  # once
     newcomer = server_client(store)
-    assert log_in(newcomer, "ann.lee", password).json()["redirect"].startswith("/account/password")
+    assert log_in(newcomer, "ann.lee", password).json()["redirect"].startswith("/login/new-password")
     assert store.events(actions=["user_added"])[0]["actor"] == "Pat Tester"
 
 

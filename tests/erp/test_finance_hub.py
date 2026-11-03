@@ -542,7 +542,7 @@ def test_the_finance_hub_is_an_admins_and_records_who_ran_it_on_the_server(store
     from ap_coder.web import roles
     from ap_coder.web.app import create_app
     from ap_coder.web.identity import SESSION_COOKIE
-    from tests.webclient import web_settings
+    from tests.webclient import enrol, web_settings
 
     for route in ("POST /settings/hub", "POST /settings/hub/run"):
         method, _, path = route.partition(" ")
@@ -552,6 +552,7 @@ def test_the_finance_hub_is_an_admins_and_records_who_ran_it_on_the_server(store
     uid = store.add_user(
         "the.admin", "correct horse battery", role="admin", display_name="Ada Admin", must_change=False
     )
+    enrol(store, uid)  # (D-146)
     client = TestClient(app, base_url="https://localhost", client=("10.0.0.5", 50000))
     client.cookies.set(SESSION_COOKIE, store.start_session(uid))
     store.log_event("note", None, "Ada Admin", {"text": "work to send"})  # (account events are not sent, D-105)
@@ -587,7 +588,8 @@ def test_a_new_schema_version_at_the_same_destination_still_deletes_rows_gone(st
 
 def test_account_and_settings_events_stay_out_of_activity(store):
     for action in ("user_added", "role_changed", "user_activated", "user_deactivated", "backup_restored",
-                   "settings_changed", "login", "logout", "login_failed", "login_mfa_failed"):  # fmt: skip
+                   "settings_changed", "login", "logout", "login_failed", "login_mfa_failed",
+                   "authenticator_enrolled", "authenticator_reset"):  # fmt: skip
         store.log_event(action, actor="Admin", detail={"username": "ann"})
     store.log_event("note", 1, "Jane", {"text": "kept"})
     assert [r["action"] for r in tables.build(store, "activity", tables.Context())] == ["note"]

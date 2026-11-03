@@ -23,9 +23,11 @@ Each item ends with something a person can check. The company's IT and the JDE t
 - [ ] **The AP inbox:** a Power Automate flow saves the AP mailbox's emails into AP Coder's invoices folder
       ([MAILBOX_SETUP.md](MAILBOX_SETUP.md)). AP Coder never holds the mailbox's password. Check *Emails that
       need a person* on Import invoices each day.
-- [ ] **Single sign-on:** planned with IT (Entra ID or the company's Active Directory; IT picks), then built.
-      Signing in with Entra ID passes through Microsoft's cloud: an exception to AP Coder's offline rule, to be
-      decided and recorded as one ([HANDOFF.md](HANDOFF.md) 6.10). Until it is built, AP Coder's own accounts.
+- [ ] **Set up AP Coder's logins and authenticator codes for the pilot team** (D-146): an Admin adds the pilot
+      tester and each clerk on *Users*; each signs in with the temporary password, chooses their own password and
+      sets up an authenticator app on their phone (Microsoft Authenticator, Google Authenticator or any other), then
+      signs in with a code from it every time ([SERVER.md](SERVER.md) section 10). Single sign-on with the
+      company's accounts (Entra ID) is set aside for now ([HANDOFF.md](HANDOFF.md) 6.10).
 - [ ] **JD Edwards read and write** through the 7 orchestrations of [JDE_ORCHESTRATIONS.md](JDE_ORCHESTRATIONS.md),
       built by the JDE team and tested in E1's test environment (PY). *Read* brings in the suppliers, accounts,
       business units, open POs and past vouchers. *Write* means AP Coder creates **pending** voucher batches: under

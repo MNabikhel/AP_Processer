@@ -356,7 +356,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   pilot computer in server mode (a laptop with an NVIDIA card for the pilot's handful of people, or a desktop; Windows
   11 Pro, SERVER.md section 1); the AP inbox through a Power Automate flow (MAILBOX_SETUP.md; AP Coder never holds
   mailbox credentials); single sign-on planned with IT (Entra ID or the company's AD) and built, Entra's sign-in through
-  Microsoft's cloud being an exception to the offline rule to record as one; JD Edwards read and write through the 7
+  Microsoft's cloud being an exception to the offline rule to record as one (replaced by D-146: AP Coder's own logins
+  with authenticator codes, single sign-on set aside); JD Edwards read and write through the 7
   orchestrations of JDE_ORCHESTRATIONS.md, tested in E1's test environment (PY); job costing built; the company's IT
   security review (OWASP ASVS Level 2), and a penetration test if IT requires one, conditions for production write
   access only. **The pilot**: the pilot tester and 3 to 4 clerks; one rule says which invoices AP Coder owns; a parallel
@@ -368,3 +369,36 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   and then the actual pilot once all integrations are ready... with a small AP team"). Docs only: nothing in the code
   changes. (`docs/PILOT_PLAN.md`, `docs/HANDOFF.md` sections 6, 8, 10, `docs/KNOWN_LIMITS.md`, `README.md`,
   `docs/PILOT.md`)
+- **D-146** · **AP Coder's own logins, with a code from an authenticator app at every login** (the user's decision:
+  "discard [Entra ID single sign-on] for now and have our own login and authentication with Google Authenticator
+  instead"; D-145's single sign-on replaced). In server mode every account signs in in two steps: the password, then
+  the 6-digit code of any authenticator app (Microsoft Authenticator, Google Authenticator...): TOTP (RFC 6238,
+  HMAC-SHA1, 30 seconds) from the standard library, offline. **First login**: the Admin's temporary password, the
+  person's own password, then the app set up from a QR code of its `otpauth://` address (issuer "AP Coder", account
+  the username; the key also as text), confirmed with a code; an account from before sets it up at its next login.
+  **Each code**: a step either side of the server's clock taken; never a step at or before the last one used (no
+  replay); a wrong one counts toward the lockout as a wrong password does, and a right password alone no longer
+  restarts the count (only a whole login does, so guesses at codes can't be reset by logging in again); success,
+  failure and pauses in the audit trail. **Half way** (the password right, the code to come) is no session: its own
+  cookie, kept by its SHA-256 for 15 minutes in the short-lived table, opening only its next step's page (OPEN
+  routes, each checking the step); the session is made once the code is right, under a new token; a session of an
+  account without its app set up is no login (so sessions from before end). **Recovery**: an Admin's *Reset
+  authenticator* on Users, which resets the password too (a phone lost or stolen may go with it: a temporary one
+  shown once, as for a new account; audited, logs the person out, not one's own); `users reset-2fa <user>` at the
+  console for the last Admin, printing the temporary password once (the user's call).
+  No recovery codes: a printed secret to lose or leave on a desk, while for a handful of people an Admin or the
+  console resets an app in a minute. **The secret**: 20 bytes from `secrets`, kept sealed (HMAC-SHA256 as the stream
+  and the tag, the temporary passwords' sealing of D-111, now shared) with this server's key, `authenticator.key` in
+  the data folder (made at the first set-up, never in the database): a copy of the database alone gives no codes
+  away. **Backups** (D-143): the key is in every whole-state backup (the share is IT's to protect, the user's call);
+  a restore puts it back only where there is none
+  (a new computer, whose accounts come from the backup), never over the one here, which the accounts a restore keeps
+  on the server (D-101) are sealed with, and never sets it aside; so codes work after a restore here and on a new
+  server. A key lost while its accounts are kept: each code refused in words, an Admin resets each app. **The QR
+  code**: Project Nayuki's QR Code generator (MIT, one pure-Python file, standard library only), vendored unchanged
+  as `web/qrcodegen.py` (1.8.0, the wheel's SHA-256 of it checked; left out of ruff), drawn as an SVG on the server:
+  no new dependency to bundle, no JavaScript. The laptop is unchanged. Entra ID sign-in remains a possible later
+  option (HANDOFF.md 6.10). (`core/authenticator.py`, `core/store/users.py`, `core/store/backup_files.py`,
+  `web/pages/login.py`, `web/templates/login_step.html`, `web/identity.py`, `web/roles.py`, `web/pages/users.py`,
+  `ops/cli.py`; `tests/core/test_authenticator.py`, `tests/core/test_users.py`, `tests/core/test_backups.py`,
+  `tests/web/test_server_two_step.py`, `tests/web/test_server_browser.py`, `tests/ops/test_users_cli.py`)

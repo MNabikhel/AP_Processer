@@ -6,8 +6,10 @@ import sqlite3
 
 import pytest
 
+from ap_coder.core import authenticator
 from ap_coder.core.store import Store, users
-from ap_coder.core.store.users import LOCKED, WRONG, LoginRefused
+from ap_coder.core.store.users import LOCKED, WRONG, WRONG_CODE, LoginRefused
+from tests.webclient import enrol
 
 GOOD = "correct horse battery"  # 21 characters
 
@@ -30,6 +32,13 @@ def clock(monkeypatch):
 @pytest.fixture
 def store(tmp_path):
     return Store(tmp_path / "ap_coder.db")
+
+
+def with_app(store: Store, username: str = "ann") -> int:
+    """An account whose authenticator app is set up (D-146): a session is only such an account's."""
+    uid = store.add_user(username, GOOD)
+    enrol(store, uid)
+    return uid
 
 
 # --- Password hashing and policy -----------------------------------------------------------------------------------
@@ -93,6 +102,7 @@ def test_a_new_user_is_case_folded_must_change_their_password_and_is_never_store
 def test_login_with_the_right_password_and_refused_with_a_wrong_one_or_an_unknown_name_alike(store, clock):
     uid = store.add_user("ann", GOOD, role="approver", display_name="Ann Lee")
     assert store.authenticate("ANN", GOOD, "10.0.0.5")["id"] == uid
+    store.check_code(uid, authenticator.code(store.authenticator_secret(uid), clock.now), "10.0.0.5")  # (D-146)
     assert store.user(uid)["last_login"]
     for name in ("ann", "nobody"):
         with pytest.raises(LoginRefused) as refused:
@@ -190,7 +200,7 @@ def test_the_last_active_admin_cannot_be_demoted_or_deactivated(store):
 
 
 def test_only_the_tokens_sha256_is_stored(store, clock):
-    uid = store.add_user("ann", GOOD)
+    uid = with_app(store)
     token = store.start_session(uid, "10.0.0.5", "Firefox")
     assert len(token) >= 43  # 32 random bytes
     with sqlite3.connect(store.path) as conn:
@@ -203,7 +213,7 @@ def test_only_the_tokens_sha256_is_stored(store, clock):
 
 
 def test_a_session_ends_after_30_idle_minutes(store, clock):
-    uid = store.add_user("ann", GOOD)
+    uid = with_app(store)
     token = store.start_session(uid)
     clock.now += 25 * 60
     assert store.session_user(token)  # used: the idle time starts again
@@ -214,7 +224,7 @@ def test_a_session_ends_after_30_idle_minutes(store, clock):
 
 
 def test_a_session_ends_after_12_hours_however_busy(store, clock):
-    uid = store.add_user("ann", GOOD)
+    uid = with_app(store)
     token = store.start_session(uid)
     for _ in range(35):  # used every 20 minutes: 11 hours 40 minutes
         clock.now += 20 * 60
@@ -224,7 +234,7 @@ def test_a_session_ends_after_12_hours_however_busy(store, clock):
 
 
 def test_logout_ends_the_session_and_a_password_change_ends_the_others(store, clock):
-    uid = store.add_user("ann", GOOD)
+    uid = with_app(store)
     here, there, elsewhere = (store.start_session(uid) for _ in range(3))
     assert here != there != elsewhere  # a new token for every login
     store.end_session(elsewhere, actor="ann")
@@ -242,7 +252,7 @@ def test_logout_ends_the_session_and_a_password_change_ends_the_others(store, cl
 
 def test_sessions_survive_a_restart(tmp_path, clock):
     first = Store(tmp_path / "ap_coder.db")
-    token = first.start_session(first.add_user("ann", GOOD))
+    token = first.start_session(with_app(first))
     assert Store(tmp_path / "ap_coder.db").session_user(token)["username"] == "ann"
 
 
@@ -254,3 +264,155 @@ def test_a_deactivated_users_sessions_end(store, clock):
     assert store.session_user(token) is None
     store.activate_user(uid, actor="boss")
     assert store.user(uid)["active"]
+
+
+# --- The second step: a code from an authenticator app (D-146) -------------------------------------------------------
+
+
+def _code(secret: str, clock, steps: int = 0) -> str:
+    return authenticator.code(secret, clock.now + 30 * steps)
+
+
+def _set_up(store: Store, clock, username: str = "ann") -> tuple[int, str]:
+    """An account that logged in once and set up its authenticator app; the clock then a minute on."""
+    uid = store.add_user(username, GOOD)
+    secret = store.authenticator_secret(uid)
+    store.check_code(uid, _code(secret, clock), "10.0.0.5")
+    clock.now += 60
+    return uid, secret
+
+
+def test_a_password_alone_is_not_a_login_its_code_is_then_the_app_is_set_up(store, clock):
+    uid = store.add_user("ann", GOOD, display_name="Ann Lee")
+    found = store.authenticate("ANN", GOOD, "10.0.0.5")
+    assert found["id"] == uid and not found["totp_on"]
+    assert store.user(uid)["last_login"] is None and not store.events(actions=["login"])
+    secret = store.authenticator_secret(uid)
+    assert store.authenticator_secret(uid) == secret  # the same until it is confirmed (the page loaded again)
+    assert store.check_code(uid, _code(secret, clock), "10.0.0.5")["totp_on"]
+    assert store.user(uid)["last_login"] and store.user(uid)["totp_on"]
+    assert [e["action"] for e in store.events()][:2] == ["login", "authenticator_enrolled"]
+    with pytest.raises(ValueError, match="set up"):  # its secret is never shown again
+        store.authenticator_secret(uid)
+
+
+def test_the_secret_is_kept_sealed_by_the_key_file_beside_the_database_not_in_it(store, clock):
+    uid = store.add_user("ann", GOOD)
+    secret = store.authenticator_secret(uid)
+    key = (store.path.parent / authenticator.KEY_FILE).read_text(encoding="utf-8").strip()
+    with sqlite3.connect(store.path) as conn:
+        dumped = "\n".join(conn.iterdump())
+    assert secret not in dumped and key not in dumped
+
+
+def test_a_wrong_code_is_refused_and_counts_toward_the_lockout_the_password_restarts_nothing(store, clock):
+    uid, secret = _set_up(store, clock)
+    wrong = "000000" if _code(secret, clock) != "000000" else "111111"
+    for _ in range(4):
+        assert store.authenticate("ann", GOOD, "10.0.0.9")  # the right password: the count goes on
+        with pytest.raises(LoginRefused) as refused:
+            store.check_code(uid, wrong, "10.0.0.9")
+        assert str(refused.value) == WRONG_CODE
+    store.authenticate("ann", GOOD, "10.0.0.9")
+    with pytest.raises(LoginRefused) as refused:
+        store.check_code(uid, wrong, "10.0.0.9")
+    assert str(refused.value) == LOCKED
+    with pytest.raises(LoginRefused, match="paused"):  # its right code too, from there, while paused
+        store.check_code(uid, _code(secret, clock), "10.0.0.9")
+    with pytest.raises(LoginRefused, match="paused"):
+        store.authenticate("ann", GOOD, "10.0.0.9")
+    failed = store.events(actions=["login_failed"])
+    assert len(failed) == 5 and {e["detail"]["why"] for e in failed} == {users.CODE_WHY}
+    assert store.events(actions=["login_locked"])[0]["detail"]["username"] == "ann"
+    assert store.check_code(uid, _code(secret, clock), "10.0.0.77")["username"] == "ann"  # elsewhere: fine
+
+
+def test_a_code_already_used_is_refused(store, clock):
+    uid, secret = _set_up(store, clock)
+    typed = _code(secret, clock)
+    assert store.check_code(uid, typed, "10.0.0.5")
+    with pytest.raises(LoginRefused) as refused:
+        store.check_code(uid, typed, "10.0.0.5")  # seen by someone looking over a shoulder, say
+    assert str(refused.value) == WRONG_CODE
+    with pytest.raises(LoginRefused):
+        store.check_code(uid, _code(secret, clock, -1), "10.0.0.5")  # the one before it: older still
+    clock.now += 30
+    assert store.check_code(uid, _code(secret, clock), "10.0.0.5")  # the next one
+
+
+@pytest.mark.parametrize("steps, accepted", [(-2, False), (-1, True), (1, True), (2, False)])
+def test_a_phone_a_step_ahead_or_behind_is_accepted_two_steps_are_not(store, clock, steps, accepted):
+    uid, secret = _set_up(store, clock)
+    clock.now += 120  # past every step the setting up could have used
+    if accepted:
+        assert store.check_code(uid, _code(secret, clock, steps), "10.0.0.5")["username"] == "ann"
+    else:
+        with pytest.raises(LoginRefused):
+            store.check_code(uid, _code(secret, clock, steps), "10.0.0.5")
+
+
+def test_a_wrong_code_while_setting_up_is_refused_and_leaves_it_not_set_up(store, clock):
+    uid = store.add_user("ann", GOOD)
+    secret = store.authenticator_secret(uid)
+    with pytest.raises(LoginRefused):
+        store.check_code(uid, _code(secret, clock, 3), "10.0.0.5")
+    assert not store.user(uid)["totp_on"] and store.authenticator_secret(uid) == secret
+
+
+def test_an_admins_reset_of_the_authenticator_means_setting_it_up_again(store, clock):
+    uid, old = _set_up(store, clock)
+    token = store.start_session(uid)
+    store.authenticate("ann", GOOD, "10.0.0.9")
+    with pytest.raises(LoginRefused):
+        store.check_code(uid, "000000" if _code(old, clock) != "000000" else "111111", "10.0.0.9")
+    temporary = store.reset_authenticator(uid, actor="Boss", by_user=7)
+    assert not store.user(uid)["totp_on"] and store.session_user(token) is None  # logged out everywhere
+    with store._conn() as conn:  # their tries that didn't match are forgotten, as at a password reset
+        assert not conn.execute("SELECT COUNT(*) FROM login_attempts WHERE ok = 0").fetchone()[0]
+    # The password too (a phone lost or stolen may go with it): a temporary one, to change at the next login.
+    assert len(temporary) >= 12 and store.user(uid)["must_change"]
+    with pytest.raises(LoginRefused):
+        store.authenticate("ann", GOOD, "10.0.0.5")
+    assert store.authenticate("ann", temporary, "10.0.0.5")["must_change"]
+    (given,) = store.events(actions=["password_reset"])
+    assert given["actor"] == "Boss" and given["detail"]["by_user"] == 7  # (D-109: not that Admin's second approver)
+    new = store.authenticator_secret(uid)
+    assert new != old
+    with pytest.raises(LoginRefused):
+        store.check_code(uid, _code(old, clock), "10.0.0.5")  # the old phone's codes are worth nothing
+    clock.now += 30
+    assert store.check_code(uid, _code(new, clock), "10.0.0.5")["totp_on"]
+    (reset,) = store.events(actions=["authenticator_reset"])
+    assert reset["actor"] == "Boss" and reset["detail"]["username"] == "ann"
+
+
+def test_a_session_of_an_account_without_its_authenticator_set_up_is_no_login(store, clock):
+    uid = store.add_user("ann", GOOD)
+    token = store.start_session(uid)  # one made by an older AP Coder, with a password alone
+    assert store.session_user(token) is None
+
+
+def test_a_login_half_way_is_kept_by_a_hash_ends_in_15_minutes_and_at_a_reset(store, clock):
+    uid = store.add_user("ann", GOOD)
+    pending = store.start_pending(uid)
+    assert store.pending_user(pending)["id"] == uid and store.session_user(pending) is None
+    with sqlite3.connect(store.path) as conn:
+        assert pending not in "\n".join(conn.iterdump())
+    clock.now += users.PENDING_SECONDS + 1
+    assert store.pending_user(pending) is None
+    pending = store.start_pending(uid)
+    store.reset_password(uid, actor="Boss")
+    assert store.pending_user(pending) is None
+    pending = store.start_pending(uid)
+    store.reset_authenticator(uid, actor="Boss")
+    assert store.pending_user(pending) is None
+    pending = store.start_pending(uid)
+    store.end_pending(pending)
+    assert store.pending_user(pending) is None
+
+
+def test_without_the_key_file_a_code_is_refused_in_words_that_say_what_to_do(store, clock):
+    uid, secret = _set_up(store, clock)
+    (store.path.parent / authenticator.KEY_FILE).unlink()
+    with pytest.raises(LoginRefused, match="reset your authenticator"):
+        store.check_code(uid, _code(secret, clock), "10.0.0.5")

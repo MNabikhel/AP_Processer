@@ -48,6 +48,10 @@ on **Import invoices** takes them away.
 - Nothing is installed on your PC. Open the address IT gave you and log in with the user name and temporary
   password you were given.
 - Choose your own password straight away (*Your password*, under the menu, changes it later).
+- Then set up your authenticator app: install one on your phone if you have none (Microsoft Authenticator, Google
+  Authenticator or any other), add an account in it, scan the QR code AP Coder shows, and type the 6-digit code the
+  app shows. From then on each login asks for your password, then a code from the app.
+- A new phone, or lost yours? Ask an Admin to reset your authenticator: you set it up again at your next login.
 - LM Studio and the setup (steps 0 to 2) are IT's or an Admin's: start at step 3.
 - AP Coder won't load, or says LM Studio isn't running: tell IT.
 

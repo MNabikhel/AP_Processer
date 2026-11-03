@@ -297,8 +297,10 @@ On the server's console (nobody can sign up from a browser):
 ```
 
 It asks for a password, twice (at least 12 characters, not the user name). That password is a temporary one (it
-works for 3 days): tell it to the person, who must choose their own the first time they sign in at `https://apcoder.company.local:8501`, before
-anything else. They then add everyone else (step 10).
+works for 3 days): tell it to the person, who signs in at `https://apcoder.company.local:8501` and, before anything
+else, chooses their own password, then sets up an authenticator app on their phone (a QR code to scan, then a code
+from the app: *Sign-in codes*, step 10). The first Admin does this too: every account signs in with a code. They
+then add everyone else (step 10).
 
 ## 8. LM Studio on the same server
 
@@ -410,6 +412,14 @@ window, started at boot like AP Coder.
   in, and the backup's other people would have to be added again. Set again what a backup does not hold: the
   `.env`, the allowed folders, and the second backup folder (a restore clears it, so a backup never chooses where
   later ones go).
+- **The sign-in codes' key** (`D:\APCoderData\authenticator.key`, made when the first person sets up their
+  authenticator app): it seals each person's authenticator secret, which the database keeps only sealed, so a copy of
+  the database alone gives no one's codes away. Every backup holds it. A restore puts it back only where there is none
+  (a new server, whose accounts come from the backup), never over the one there, so after a restore here and on a
+  new server everyone signs in with their codes as before. Keep the data folder's permissions as step 2 set them (the
+  service's account and the administrators only): the key is as private as the data.
+  A backup holds the database and the key together: the second backup folder's share must be protected by IT like
+  the data folder (only the service's account and the administrators can read it).
 - **One at a time**: a backup, a restore and an update's put-back never run at once, on the server across its web
   workers and its background process too (a lock beside the backups). A restore asked for while the day's backup is
   being made says so and changes nothing: try again once the page no longer says a backup is being made. A file
@@ -422,9 +432,9 @@ window, started at boot like AP Coder.
 
 An Admin adds people on the *Users* page (`https://apcoder.company.local:8501/admin/users`): a user name, their name
 and a role. AP Coder makes up a temporary password and shows it once, on that page: give it to the person (it is not
-kept anywhere to look up later). They must change it when they first sign in. The same page resets a password (a new
-temporary one, shown once), changes a role, and turns an account off or on again (an Admin can't turn off the last
-Admin).
+kept anywhere to look up later). They must change it when they first sign in, then set up an authenticator app
+(*Sign-in codes*, below). The same page resets a password (a new temporary one, shown once), resets an authenticator
+app, changes a role, and turns an account off or on again (an Admin can't turn off the last Admin).
 
 | Role | Can |
 |---|---|
@@ -444,6 +454,7 @@ From the server's console, the same:
 .venv\Scripts\python.exe -m ap_coder users add mlee --name "Mary Lee" --role approver
 .venv\Scripts\python.exe -m ap_coder users role mlee clerk
 .venv\Scripts\python.exe -m ap_coder users reset mlee
+.venv\Scripts\python.exe -m ap_coder users reset-2fa mlee
 .venv\Scripts\python.exe -m ap_coder users deactivate mlee
 .venv\Scripts\python.exe -m ap_coder users activate mlee
 ```
@@ -451,11 +462,30 @@ From the server's console, the same:
 `users add` takes `--name` (the name on their approvals; default: the user name) and `--role` (`readonly`, `clerk`,
 `approver` or `admin`; default `clerk`; `--admin` is `--role admin`). On the console the temporary password is the one
 you type, twice (`add` and `reset`); the person changes it at their first sign-in. `activate` turns an account that
-was turned off on again, with its password as it was.
+was turned off on again, with its password as it was. `reset-2fa` forgets a person's authenticator app and resets
+their password, printing a temporary one once (see below): the way back in for the last Admin, whom no other Admin
+can reset.
+
+**Sign-in codes** (D-146). Every login has two steps: the password, then the 6-digit code an authenticator app on
+the person's phone shows (it changes every 30 seconds). Any authenticator app works: Microsoft Authenticator, Google
+Authenticator and others; the codes are worked out on the phone and on the server, nothing goes over the internet.
+
+- **The first sign-in**: the temporary password, then their own password, then AP Coder shows a QR code (and the same
+  key as text, to type in the app instead). They scan it, type the code the app shows, and are in. An account that
+  had already signed in before this version does the same at its next login. Until the code is right there is no
+  session: nothing of AP Coder opens.
+- **A code** is taken 30 seconds early or late (a phone's clock a little off), and only once. Keep the server's clock
+  right (Windows' time service: `w32tm /query /status`); the phones set theirs automatically. A wrong code counts as a
+  wrong password does toward the pauses below.
+- **A new or lost phone**: an Admin clicks *Users* → *Reset authenticator*. It resets the password too (a phone lost
+  or stolen may go with it): the person is logged out everywhere, the page shows a temporary password once, as when
+  a person is added; with it they choose their own password and set the app up again. An Admin's own is reset by
+  another Admin; the last Admin's, on the server's console: `users reset-2fa <username>`, which prints the temporary
+  password once. There are no printed recovery codes: an Admin or the console resets an app in a minute.
 
 Logins that don't match pause, in three ways:
 
-- **One username from one address**: five wrong passwords within 15 minutes pause that username's logins from that
+- **One username from one address**: five wrong passwords or codes within 15 minutes pause that username's logins from that
   address for 15 minutes (five wrong *current* passwords on *Your password* count the same, and also log the person
   out).
 - **One username from anywhere**: from the 10th wrong password within an hour, from any addresses, that username's
@@ -472,7 +502,8 @@ what pauses them, their address too; the *Users* page lists paused addresses and
 
 Passwords: at least 12 characters, not the username or the name, not a common password, not one character or a short
 pattern repeated. A temporary password (a new account, a reset) works for 3 days: after that, reset it again. Every
-sign-in, lockout, change to a user and download is in *Activity*, shown to Admins only.
+sign-in, code that didn't match, lockout, authenticator set up or reset, change to a user and download is in
+*Activity*, shown to Admins only.
 
 **Sessions**: a login ends after 30 minutes unused, after 12 hours whatever, and when the browser is closed. IT can
 change the first two in `server.json`: `"session_idle_minutes": 30` (5 to 480) and `"session_hours": 12` (1 to 168),
@@ -558,6 +589,9 @@ installs in the administrator's `%USERPROFILE%\.ap_coder\settings.json`, as on a
 | `server-update` says the bundle is not newer | It is the version running, or older. To go back to the previous version: `server-update --back`. |
 | `server-update --back` says "Nothing to go back to" | No update was made with `server-update` since the last `--back`. To install an older version, ask for its bundle and the backup made before the update. |
 | Someone forgot their password, or is locked out | An Admin: *Users* → *Reset password*; or on the console `users reset <username>`. A lockout ends by itself after 15 minutes. |
+| "That code doesn't match" every time | The phone's clock: set it to set the time automatically. The server's: `w32tm /query /status`, then `w32tm /resync`. Still wrong: *Users* → *Reset authenticator* (a new temporary password too), and they set the app up again. |
+| A new phone, or a lost one | An Admin: *Users* → *Reset authenticator* (it resets the password too: give them the temporary password shown). The last Admin: `users reset-2fa <username>` on the console, which prints it. |
+| "AP Coder can't check your authenticator codes on this server: its key file ... is missing, damaged or not the one your app was set up with" | `authenticator.key` was deleted or changed in the data folder. Put it back from a copy of the data folder if you have one; otherwise reset each person's authenticator (*Users* → *Reset authenticator*; the last Admin with `users reset-2fa`): they set their apps up again. |
 | Pages are slow when many people work at once | `service status`, then Task Manager: when every core is busy, the server needs more cores (step 1); when they are not, `service install --workers N` with N up to the cores. The log names a worker started again after it stopped. |
 | Invoices wait long for OvisOCR2 | Set the model server to answer several requests together and raise `--llm-parallel` (step 8, point 6). |
 | Anything else | `.venv\Scripts\python.exe -m ap_coder doctor`, and the log. *Help* → *Report a problem* makes a report without invoice data. |

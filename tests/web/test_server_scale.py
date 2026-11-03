@@ -615,8 +615,10 @@ def test_a_busy_database_does_not_fail_a_request_over_the_sessions_last_use(stor
     import sqlite3
 
     from ap_coder.core.store import users
+    from tests.webclient import enrol
 
     uid = store.add_user("ann", "a long enough password 1", users.CLERK)
+    enrol(store, uid)  # (D-146)
     token = store.start_session(uid)
     later = users._clock() + users.SEEN_EVERY + 1
     monkeypatch.setattr(users, "_clock", lambda: later)

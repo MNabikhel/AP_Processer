@@ -18,7 +18,7 @@ from ap_coder.web.app import create_app
 from ap_coder.web.identity import SESSION_COOKIE
 from tests.conftest import copy_database
 from tests.web.test_web_invoice import form_of
-from tests.webclient import PAGE, client_for, web_settings
+from tests.webclient import PAGE, client_for, enrol, web_settings
 
 GOOD = "correct horse battery"
 
@@ -168,6 +168,7 @@ def _account(store, username, role, centers=""):
     uid = store.add_user(username, GOOD, role=role, display_name=username.title())
     with store._conn() as conn:
         conn.execute("UPDATE users SET must_change = 0, cost_centers = ? WHERE id = ?", (centers, uid))
+    enrol(store, uid)  # its authenticator app set up (D-146)
     return uid, store.start_session(uid)
 
 
