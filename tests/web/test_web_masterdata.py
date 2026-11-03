@@ -190,13 +190,32 @@ def test_a_clerk_cannot_take_a_vendor_off_hold(held):
 
 def test_a_clerk_may_still_edit_a_held_vendors_notes_and_put_a_vendor_on_hold(held):
     store, key, clients = held
-    data = {"key": key, "status": ON_HOLD, "notes": "called them", "expected_gst": "123456789RT0001"}
+    data = {"key": key, "status": ON_HOLD, "notes": "called them", "province": "BC"}
     follow(clients["clerk"], clients["clerk"].post("/vendors/save", data=data, headers=PAGE))
     saved = store.get_vendor(key)
-    assert (saved["status"], saved["notes"], saved["expected_gst"]) == (ON_HOLD, "called them", "123456789RT0001")
+    assert (saved["status"], saved["notes"], saved["province"]) == (ON_HOLD, "called them", "BC")
     store.save_vendor(key, saved["display_name"], "active")
     follow(clients["clerk"], clients["clerk"].post("/vendors/save", data={"key": key, "status": ON_HOLD}, headers=PAGE))
     assert store.get_vendor(key)["status"] == ON_HOLD
+
+
+@pytest.mark.parametrize("field", ["expected_gst", "qst_number", "pst_number"])
+def test_a_clerk_cannot_change_a_held_vendors_tax_numbers(held, field):
+    """B-1554: a Clerk cleared a held vendor's GST/HST number (keeping the hold), so an invoice showing it no longer
+    tied to the held vendor and "Approve anyway" went through. The numbers the hold is matched by are an Approver's
+    to change while the vendor is on hold, as the hold itself is (D-142)."""
+    store, key, clients = held
+    numbers = {"expected_gst": "123456782RT0001", "qst_number": "1234567890TQ0001", "pst_number": "PST-1234-5678"}
+    store.save_vendor(key, store.get_vendor(key)["display_name"], ON_HOLD, numbers["expected_gst"],
+                      qst_number=numbers["qst_number"], pst_number=numbers["pst_number"])  # fmt: skip
+    form = {"key": key, "status": ON_HOLD, **numbers}
+    refused = clients["clerk"].post("/vendors/save", data={**form, field: ""}, headers=PAGE)
+    assert refused.status_code == 403 and "Only an Approver can change" in refused.text
+    assert store.get_vendor(key)[field] == numbers[field]
+    detail = clients["clerk"].get("/vendors?" + urlencode({"open": key})).text
+    assert re.search(rf'name="{field}" value="[^"]*"[^>]* readonly', detail)
+    follow(clients["approver"], clients["approver"].post("/vendors/save", data={**form, field: ""}, headers=PAGE))
+    assert store.get_vendor(key)[field] == ""
 
 
 def test_an_approver_takes_a_vendor_off_hold_and_it_is_in_the_audit_trail(held):

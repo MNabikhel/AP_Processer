@@ -314,7 +314,11 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   approve bar says "Only an Approver can approve it." and why. Bulk approval on the server leaves such an invoice
   for a person and says why (B-1551: one read under another vendor's name, asking to be paid to a held vendor's
   bank account, was bulk-approved), whoever runs it: it gives no reason. The audit trail's approval says who and
-  from which vendor (its `changes`: vendor before and after, and the reason). (`web/access.py` `may_lift_hold`,
+  from which vendor (its `changes`: vendor before and after, and the reason). While a vendor is on hold (here or in
+  JD Edwards), what the hold is matched by is an Approver's to change too (B-1554): a Clerk can't change its GST/HST,
+  QST or PST number on the Vendors page (shown read-only) nor replace them with *Add new vendor…* under its name;
+  its name and its bank accounts (on its approved invoices, and JD Edwards' `erp_bank`, B-1555) no Clerk edits.
+  The notes and the province stay a Clerk's. (`web/access.py` `may_lift_hold`,
   `web/pages/vendors.py`, `web/templates/vendors.html`, `coding/vendors.py` `moved_off_hold`, `coding/bulk.py`,
   `web/invoice_view.py` `_findings` and `analyse`, `web/pages/invoice.py` `_approve`;
   `tests/web/test_web_masterdata.py`, `tests/web/test_web_review_voucher.py`, `tests/coding/test_vendors.py`)

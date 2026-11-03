@@ -209,6 +209,11 @@ def held(store):
     return clients, _id(store, "Pacific")
 
 
+def vendor_key_of(store, word: str) -> str:
+    """The vendor list's key of the vendor whose name has ``word``."""
+    return next(v["vendor_key"] for v in store.vendor_summaries() if word in (v["vendor_name"] or ""))
+
+
 def _anyway(client, invoice_id: int, data: dict) -> object:
     """Approve with "Approve anyway" ticked and a reason, as the screen offers it."""
     bar = check(client, invoice_id, data)["sections"]["bar"]
@@ -227,16 +232,77 @@ def test_a_clerk_cannot_approve_a_held_vendors_invoice_moved_to_another_vendor(h
     assert store.get_invoice(invoice_id)["status"] == REVIEW
 
 
+def _read_as(store, name: str, **fields) -> int:
+    """A new invoice like Pacific's, read under ``name`` (a name that matches no vendor on hold)."""
+    inv = store.get_invoice(_id(store, "Pacific"))
+    doc = {**inv["ai_output"], "vendor_name": name, "invoice_number": f"N-{len(fields)}", **fields}
+    return store.add_invoice(store.path.parent / f"{name}.pdf", doc, {})
+
+
 def test_a_near_identical_new_vendor_does_not_get_around_the_hold(held, store):
-    """Added on the review screen under a name a letter off, with the GST/HST number cleared on the form: the number
-    read off the invoice is still the held vendor's."""
-    clients, invoice_id = held
+    """Read under a name a letter off (no name tie), added on the review screen under that name, with the GST/HST
+    number cleared on the form: the number read off the invoice is still the held vendor's (B-1549)."""
+    clients, _ = held
+    key = vendor_key_of(store, "Pacific")
+    store.save_vendor(key, store.get_vendor(key)["display_name"], "on_hold", expected_gst="555666775 RT0001")
+    invoice_id = _read_as(store, "Pacifik Office Supply Ltd", gst_hst_registration_number="555666775 RT0001",
+                          remit_bank_account="")  # fmt: skip
     added = clients["clerk"].post(f"/review/{invoice_id}/vendor", data={"name": "Pacifik Office Supply Ltd"},
                                   headers=PAGE)  # fmt: skip
     assert added.json()["ok"]
-    moved = form_of(store, invoice_id, vendor_name="Pacifik Office Supply Ltd", gst_hst_registration_number="")
+    moved = form_of(store, invoice_id, gst_hst_registration_number="")
     answer = _anyway(clients["clerk"], invoice_id, moved)
-    assert answer.status_code == 403 and "Pacific Office Supply" in answer.json()["error"]
+    assert answer.status_code == 403 and "shows the GST/HST number of Pacific Office Supply" in answer.json()["error"]
+    assert store.get_invoice(invoice_id)["status"] == REVIEW
+
+
+def test_a_held_vendors_bank_account_under_another_name_does_not_get_around_the_hold(held, store):
+    """The bank account read is the one the held vendor's approved invoices were paid to; no name or number tie."""
+    clients, _ = held
+    _paid_like_pacific(store)
+    invoice_id = _read_as(store, "Pacifik Office Supply Ltd", gst_hst_registration_number="",
+                          remit_bank_account="004-12345-1234567")  # fmt: skip
+    answer = _anyway(clients["clerk"], invoice_id, form_of(store, invoice_id))
+    assert answer.status_code == 403 and "shows the bank account Pacific Office Supply" in answer.json()["error"]
+    assert store.get_invoice(invoice_id)["status"] == REVIEW
+
+
+def test_the_bank_account_jd_edwards_pays_a_held_vendor_on_ties_it_too(held, store):
+    """B-1555: with no invoice approved here, the bank tie had nothing to go on; JD Edwards' own account for the held
+    vendor (``erp_bank``, from the supplier sync) counts as well."""
+    clients, _ = held
+    with store._conn() as conn:
+        conn.execute(
+            "UPDATE vendors SET erp_bank = ? WHERE vendor_key = ?", ("00012-003 …4567", vendor_key_of(store, "Pacific"))
+        )
+    invoice_id = _read_as(store, "Pacifik Office Supply Ltd", gst_hst_registration_number="",
+                          remit_bank_account="Transit 00012, Institution 003, Account 7654567")  # fmt: skip
+    answer = _anyway(clients["clerk"], invoice_id, form_of(store, invoice_id))
+    assert answer.status_code == 403 and "shows the bank account Pacific Office Supply" in answer.json()["error"]
+
+
+def test_a_clerk_cannot_clear_a_held_vendors_numbers_by_adding_it_again_on_the_review_screen(held, store):
+    """Add new vendor… under a held vendor's own name (one AP put on hold, not in the vendor master) replaced its
+    numbers with the ones typed: the same way around the hold as the Vendors page (B-1554)."""
+    clients, invoice_id = held
+    store.save_vendor("fraser valley fuels", "Fraser Valley Fuels Ltd", "on_hold", expected_gst="811111118 RT0001")
+    added = clients["clerk"].post(f"/review/{invoice_id}/vendor", data={"name": "Fraser Valley Fuels Ltd"},
+                                  headers=PAGE)  # fmt: skip
+    assert added.status_code == 403 and store.get_vendor("fraser valley fuels")["expected_gst"] == "811111118 RT0001"
+
+
+def test_a_clerk_cannot_clear_a_held_vendors_gst_number_to_approve_its_invoice(held, store):
+    """B-1554, end to end: the held vendor's number cleared on the Vendors page by a Clerk is refused, so its invoice
+    under another name still needs an Approver."""
+    clients, _ = held
+    key = vendor_key_of(store, "Pacific")
+    store.save_vendor(key, store.get_vendor(key)["display_name"], "on_hold", expected_gst="555666775 RT0001")
+    invoice_id = _read_as(store, "Chinook Courier & Office Services Ltd.",
+                          gst_hst_registration_number="555666775 RT0001", remit_bank_account="")  # fmt: skip
+    cleared = clients["clerk"].post("/vendors/save", data={"key": key, "status": "on_hold", "expected_gst": ""},
+                                    headers=PAGE)  # fmt: skip
+    assert cleared.status_code == 403 and store.get_vendor(key)["expected_gst"] == "555666775 RT0001"
+    assert _anyway(clients["clerk"], invoice_id, form_of(store, invoice_id)).status_code == 403
     assert store.get_invoice(invoice_id)["status"] == REVIEW
 
 

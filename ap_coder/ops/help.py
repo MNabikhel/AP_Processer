@@ -227,7 +227,8 @@ CHECKS: dict[str, CheckHelp] = {
     "VENDOR_CHANGED_FROM_HELD": CheckHelp(
         FRAUD, "Moved off a vendor on hold",
         "The invoice is a vendor's that is on hold, by the vendor read on it, its GST/HST number or the bank account "
-        "it asks to be paid to, but it is coded to another vendor. Moving a held vendor's invoice onto another vendor "
+        "it asks to be paid to (one the held vendor was paid on here, or JD Edwards pays it on), but it is coded to "
+        "another vendor. Moving a held vendor's invoice onto another vendor "
         "would get around the hold. On the company server only.",
         "If the invoice really is the other vendor's (it was read wrong), an Approver or an Admin approves it with "
         "“Approve anyway” and says why: a Clerk can't. Otherwise put the held vendor back, and reject it or "
