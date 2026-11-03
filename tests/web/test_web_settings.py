@@ -497,6 +497,51 @@ def test_in_a_browser_restore_this_state_restores_that_backup_once_restore_is_ty
     assert errors == [] and store.get_setting("fx_rates") == ""
 
 
+def _slow_files(monkeypatch):
+    """The backups' files copied only once ``release`` is set: a first copy to a slow network share (B-1553)."""
+    import threading
+
+    from ap_coder.core.store import backup_files
+
+    release, real = threading.Event(), backup_files.snapshot
+
+    def slow(backup, data):
+        assert release.wait(20)
+        return real(backup, data)
+
+    monkeypatch.setattr(backup_files, "snapshot", slow)
+    return release
+
+
+def test_the_daily_backup_never_holds_up_the_start_and_the_page_says_it_is_being_made(store, monkeypatch):
+    """The start made the day's backup before the dashboard opened: the first one copying every invoice file to a
+    network share held it up for minutes (B-1553)."""
+    import time
+
+    release = _slow_files(monkeypatch)
+    s = Settings()
+    app = create_app(replace(s, llm=replace(s.llm, provider="off")), store, start_reader=False)
+    started = time.monotonic()
+    with TestClient(app, base_url="http://localhost") as opened:
+        assert time.monotonic() - started < 5 and opened.get("/healthz").status_code == 200  # open at once
+        assert "A backup is being made" in opened.get("/settings/data").text
+        release.set()
+        app.state.daily_backup.thread.join(20)
+        assert len(store.list_backups()) == 1 and "A backup is being made" not in opened.get("/settings/data").text
+
+
+def test_back_up_now_goes_on_in_the_background_when_it_takes_long(client, store, monkeypatch):
+    release = _slow_files(monkeypatch)
+    monkeypatch.setattr(settings_page, "BACKUP_WAIT", 0.2)
+    text = follow(client, post(client, "/settings/data/backup"))
+    assert "being made in the background" in text and "A backup is being made" in text
+    again = follow(client, post(client, "/settings/data/backup"))  # never two at once
+    assert "A backup is being made already" in again
+    release.set()
+    client.app.state.daily_backup.thread.join(20)
+    assert len(store.list_backups()) == 1 and store.events(actions=["backup_made"])
+
+
 def test_second_backup_folder(client, store, tmp_path):
     response = post(client, "/settings/data/backup-copy", {"folder": str(tmp_path / "missing")})
     assert response.status_code == 400 and "does not exist" in response.json()["error"]

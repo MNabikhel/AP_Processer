@@ -95,7 +95,35 @@ class BackupsMixin:
     def backup_now(self, label: str = "", actor: str | None = None, keep: int = 14) -> Path:
         """The database and the files of the data folder (``backup_files``, D-143): a state that restores whole.
         A backup that fails raises OSError and is recorded (``backup_status``, shown on Settings → Data & backups).
-        ``keep``: the daily backups kept in the second backup folder (``copy_backup``)."""
+        ``keep``: the daily backups kept in the second backup folder (``copy_backup``). While it is made,
+        ``backups/.making-<pid>-...`` says so (``backup_in_progress``: the page shows it, B-1553)."""
+        marker = self.backup_dir() / f".making-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+        with contextlib.suppress(OSError):
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(_now()[:16].replace("T", " "), encoding="utf-8")
+        try:
+            return self._backup_now(label, actor, keep)
+        finally:
+            with contextlib.suppress(OSError):
+                marker.unlink()
+
+    def backup_in_progress(self) -> str:
+        """When the backup being made now started ("" when none is), in this process or another (the server's
+        background process makes the daily one while a web worker draws the page)."""
+        from ap_coder.ai.page_worker import _pid_alive
+
+        for marker in self.backup_dir().glob(".making-*"):
+            try:
+                pid, started = int(marker.name.split("-")[1]), marker.read_text(encoding="utf-8").strip()
+            except (OSError, ValueError, IndexError):
+                continue
+            if pid == os.getpid() or _pid_alive(pid):
+                return started
+            with contextlib.suppress(OSError):
+                marker.unlink()  # left by a process that ended while making it
+        return ""
+
+    def _backup_now(self, label: str, actor: str | None, keep: int) -> Path:
         stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
         suffix = f"-{label}" if label else ""
         dest = self.backup_dir() / f"ap_coder-{stamp}{suffix}.db"

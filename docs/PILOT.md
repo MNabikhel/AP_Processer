@@ -283,7 +283,9 @@ open database can be damaged by syncing.
 AP Coder backs up once a day, when it starts, into `backups` in the data folder (the newest 14 are kept, and one
 before each update and each restore). Each backup is AP Coder as it was then: the database and every invoice file,
 saved email, attachment and manager's reply it needs. A file that did not change is stored once for all the backups,
-so a daily backup copies only what is new. **Settings → Data & backups** lists each backup with what it holds,
+so a daily backup copies only what is new. It is made in the background: AP Coder opens at once (the first one, which
+copies every file, can take a while to a network folder), and Settings says while one is being made.
+**Settings → Data & backups** lists each backup with what it holds,
 whether its second copy was made and whether every file is there; **Restore this state** puts AP Coder back as it
 was then (files that came in since are moved to a `set-aside` folder in `backups`, never deleted; the state before
 is backed up first, so a restore can be undone).

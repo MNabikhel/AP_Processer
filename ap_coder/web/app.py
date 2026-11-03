@@ -72,16 +72,22 @@ class CheckedStaticFiles(StaticFiles):
 
 
 class DailyBackup:
-    """The automatic backup while the dashboard keeps running (B-660): the start makes the day's backup
-    (``Store.auto_backup``, in the lifespan); after that, a request at least ``every`` seconds after the last check
-    checks again on a thread of its own, so no page waits for it. ``auto_backup`` keeps its rules: once a day, the
-    newest 14 kept."""
+    """The automatic backup while the dashboard keeps running (B-660): the start makes the day's backup (``start``,
+    in the lifespan); after that, a request at least ``every`` seconds after the last check checks again. Each runs on
+    a thread of its own, so neither the start nor a page waits for it: the first one after an update copies every
+    invoice file, minutes to a slow network share (B-1553). ``auto_backup`` keeps its rules: once a day, the newest
+    14 kept. ``now``: one asked for on Settings, on the same thread (never two at once)."""
 
     def __init__(self, store: Store, every: float = 3600) -> None:
         self.store, self.every = store, every
-        self.last = time.monotonic()  # the start's own backup is the lifespan's
+        self.last = time.monotonic()  # the start's own backup is ``start``'s
         self.thread: threading.Thread | None = None
+        self.outcome: Path | Exception | None = None  # what the last one asked for (``now``) gave
         self._lock = threading.Lock()
+
+    def start(self) -> None:
+        with self._lock:
+            self._spawn(self._run)
 
     def check(self) -> None:
         now = time.monotonic()
@@ -89,8 +95,27 @@ class DailyBackup:
             if now - self.last < self.every or (self.thread is not None and self.thread.is_alive()):
                 return
             self.last = now
-            self.thread = threading.Thread(target=self._run, name="ap-coder-daily-backup", daemon=True)
-            self.thread.start()
+            self._spawn(self._run)
+
+    def now(self, label: str = "manual", actor: str | None = None) -> threading.Thread | None:
+        """``Store.backup_now(label)`` on the backups' thread (its result in ``outcome``); None while one runs."""
+        with self._lock:
+            if self.thread is not None and self.thread.is_alive():
+                return None
+
+            def made() -> None:
+                try:
+                    self.outcome = self.store.backup_now(label, actor=actor)
+                except OSError as exc:
+                    self.outcome = exc
+
+            self.outcome = None
+            return self._spawn(made)
+
+    def _spawn(self, target: Callable[[], None]) -> threading.Thread:
+        self.thread = threading.Thread(target=target, name="ap-coder-daily-backup", daemon=True)
+        self.thread.start()
+        return self.thread
 
     def _run(self) -> None:
         try:
@@ -205,11 +230,8 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        if background:
-            try:
-                store.auto_backup()  # once a day, when the dashboard starts (then DailyBackup); the newest 14 kept
-            except OSError:
-                pass  # a backup problem must never stop the dashboard from opening
+        if background:  # once a day, when the dashboard starts, on its own thread: it never holds up the start
+            app.state.daily_backup.start()
         if start_reader and background:
             app.state.reader, app.state.azure_checker, app.state.jde_worker = start_background_work(
                 settings_factory, store

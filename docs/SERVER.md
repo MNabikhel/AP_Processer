@@ -340,8 +340,10 @@ window, started at boot like AP Coder.
 ## 9. Backups
 
 - **Every day, automatically**: a backup in `D:\APCoderData\backups`, when AP Coder starts and once a day while it
-  runs; the newest 14 are kept. An update adds its own (`...-before-update-<version>`), kept until you delete it. Each
-  backup is AP Coder as it was at that moment, restorable whole (D-143):
+  runs; the newest 14 are kept. It is made in the background: AP Coder serves pages meanwhile, and *Settings* →
+  *Data & backups* says while one is being made (B-1553). An update adds its own (`...-before-update-<version>`),
+  made before the update goes on, kept until you delete it. Each backup is AP Coder as it was at that moment,
+  restorable whole (D-143):
   - `ap_coder-<date>-<time>.db`: the database;
   - `ap_coder-<date>-<time>.files.json`: its list of files, each with its size and SHA-256: the whole `invoices`
     folder (the PDFs and pictures, `originals`, `deleted`, `statements`, the saved emails and their attachments in

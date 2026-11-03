@@ -35,6 +35,8 @@
         are kept). A file that did not change is stored once for all the backups, so a daily backup copies only what is
         new{% if backups %} (in all, the backups take {{ backups_size }}){% endif %}. Make one yourself before big changes,
         e.g. importing a new chart of accounts.</p>
+      {% if backup_running %}<p><span class="ms" aria-hidden="true">hourglass_top</span> A backup is being made (started
+        {{ backup_running }}): it appears below once done. AP Coder can be used meanwhile.</p>{% endif %}
       {% if backup_failed %}<p><span class="ms err-ico" aria-hidden="true">error</span> The last backup failed {{ backup_failed }}.
         The backups listed below are fine; press Back up now once it is fixed.</p>{% endif %}
     </div>

@@ -70,6 +70,7 @@ TABS: list[tuple[str, str]] = [
 ]
 TAB_KEYS = [key for key, _ in TABS]
 RESTORE_WORD = "RESTORE"
+BACKUP_WAIT = 5.0  # seconds Back up now waits for its backup before saying it goes on in the background (B-1553)
 
 
 def tab_url(tab: str) -> str:
@@ -466,6 +467,7 @@ def data_context(store: Store, chosen: str = "") -> dict[str, Any]:
         "backups": [backup_row(b, seen) for b in backups],
         "backups_size": backup_files.size_words(kept),
         "backup_failed": backup_failure(store),
+        "backup_running": store.backup_in_progress(),
         "chosen": chosen if any(b.name == chosen for b in backups) else "",
         "copy_dir": store.get_setting("backup_copy_dir"),
         "copy_status": copy_status(store),
@@ -486,14 +488,31 @@ def open_data_folder(request: Request) -> JSONResponse:
     return open_folder_here(request, data_dir(get_store(request)), "data folder")
 
 
+def backup_in_background(request: Request, label: str) -> str:
+    """A backup on the backups' thread (``app.DailyBackup.now``), waited for ``BACKUP_WAIT`` seconds: a first one
+    copying every invoice file to a slow share goes on in the background, the page saying so (B-1553). "" when it
+    was made in time, else what to say; raises OSError when it failed."""
+    backups = request.app.state.daily_backup
+    thread = backups.now(label, actor=reviewer())
+    if thread is None:
+        return "A backup is being made already: this page says when it is done."
+    thread.join(BACKUP_WAIT)
+    if thread.is_alive():
+        return ("The backup is being made in the background (the first one copies every invoice file): this page says "
+                "when it is done.")  # fmt: skip
+    if isinstance(backups.outcome, OSError):
+        raise backups.outcome
+    return ""
+
+
 @router.post("/settings/data/backup")
 def backup_now(request: Request) -> JSONResponse:
-    store = get_store(request)
     try:
-        made = store.backup_now("manual", actor=reviewer())
+        later = backup_in_background(request, "manual")
     except OSError as exc:
         return refuse(f"The backup could not be made: {exc}")
-    return done(request, tab_url("data"), f"Backed up to {made.name}.")
+    made = request.app.state.daily_backup.outcome
+    return done(request, tab_url("data"), later or f"Backed up to {made.name}.")
 
 
 @router.post("/settings/data/backup-copy")
@@ -517,9 +536,12 @@ def save_backup_copy(request: Request, folder: str = Form("")) -> JSONResponse:
         return refuse("That is the local backups folder: choose a folder on OneDrive or a network drive.")
     store.set_setting("backup_copy_dir", folder, actor=reviewer())
     store.log_event("settings_changed", actor=reviewer(), detail={"keys": ["backup_copy_dir"]})
-    if folder:
-        store.backup_now()  # a first copy straight away (backup_now copies it)
     said = "Backups will be copied there too." if folder else "Backups are kept on this computer only."
+    if folder:  # a first copy straight away (backup_now copies it), on the backups' thread: every invoice file
+        try:
+            said += f" {backup_in_background(request, '')}".rstrip()
+        except OSError as exc:
+            said += f" The first backup could not be made: {exc}."
     return done(request, tab_url("data"), said)
 
 
