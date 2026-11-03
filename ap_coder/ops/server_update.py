@@ -6,7 +6,8 @@ The steps, in order (``--dry-run`` prints them with the folders and files, and c
    copy is what is unzipped): a ZIP holding one AP Coder folder (no path out of it), every file the manifest lists, CRCs
    that match, and a newer AP Coder than the one the service runs (``paths.compare``, as the laptop updater judges).
 2. **Stop the service** (``service stop``).
-3. **Back up the database**: ``backups/ap_coder-<time>-before-update-<version>.db`` (``Store.backup_now``).
+3. **Back up the database** and the files: ``backups/ap_coder-<time>-before-update-<version>.db`` and its list of
+   files (``Store.backup_now``, D-143).
 4. **Unzip** it next to the current folder, as ``APProcessor-<version>``.
 5. **Set up** that folder with its own launcher (``scripts/launch.py --no-start --yes``: its ``.venv`` from its
    ``wheelhouse/``, offline), in server mode, so the launcher keeps the previous folder.
@@ -17,7 +18,8 @@ The steps, in order (``--dry-run`` prints them with the folders and files, and c
 When 5, 6, 7 or 8 fails, the backup is put back, the service switched back to the old folder and started again. The
 previous folder is kept: ``server-update --back`` goes back to it and puts back the pre-update backup (an older
 version refuses a database a newer one has changed). Putting a backup back keeps the user accounts and paused logins
-as they are, and logs everyone out (``put_back``, D-101). What it does is recorded in server.json (``folder``,
+as they are, and logs everyone out (``put_back``, D-101); it puts back the invoice files as they were then, the
+ones added since moved aside (D-143). What it does is recorded in server.json (``folder``,
 ``previous_folder``, ``pre_update_backup``, ``history``) and in the record of installs (``~/.ap_coder/settings.json``),
 as the laptop updater does.
 """
@@ -37,12 +39,15 @@ import time
 import zipfile
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..core import paths
 from ..core.paths import PROJECT_DIR, private_dir
 from . import service
 from .offline import sha256 as file_sha256
+
+if TYPE_CHECKING:
+    from ..core.store.backup_files import FilesRestored
 
 Say = Callable[[str], None]
 REQUIRED = ("bundle_manifest.json", "pyproject.toml", "ap_coder/__init__.py", "scripts/launch.py")
@@ -166,28 +171,32 @@ def copy_database(source: Path, dest: Path) -> Path:
     return dest
 
 
-def put_back(backup: Path, db: Path) -> Path:
+def put_back(backup: Path, db: Path) -> FilesRestored:
     """``backup`` copied over the database (``copy_database``), keeping the user accounts, their passwords and roles,
     and the paused logins as they are now, and ending every session: a backup must not bring back an account turned
     off, a password changed since, or a session (D-101). A backup older than the accounts gets their tables, so the
-    server is never left with no account."""
+    server is never left with no account. Then the files of the data folder as the backup lists them (D-143; what is
+    there now and was not then is moved aside): what was done with them is returned. Never while a backup or a
+    restore runs (``backup_files.exclusive``: raises ``backup_files.Busy`` with nothing changed, B-1559)."""
+    from ..core.store import backup_files
     from ..core.store.users import carry_accounts, saved_accounts
 
-    saved: dict = {}
-    if db.exists():
-        conn = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True, timeout=30)
+    with backup_files.exclusive(db.parent):
+        saved: dict = {}
+        if db.exists():
+            conn = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True, timeout=30)
+            try:
+                saved = saved_accounts(conn)
+            finally:
+                conn.close()
+        copy_database(backup, db)
+        conn = sqlite3.connect(db, timeout=30)
         try:
-            saved = saved_accounts(conn)
+            with conn:
+                carry_accounts(conn, saved)
         finally:
             conn.close()
-    copy_database(backup, db)
-    conn = sqlite3.connect(db, timeout=30)
-    try:
-        with conn:
-            carry_accounts(conn, saved)
-    finally:
-        conn.close()
-    return db
+        return backup_files.restore_files(backup, db.parent)
 
 
 def private_copy(bundle: Path, folder: Path) -> Path:
@@ -199,14 +208,21 @@ def private_copy(bundle: Path, folder: Path) -> Path:
 
 
 def safety_copy(db: Path, label: str) -> Path:
-    stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-    dest = db.parent / "backups" / f"ap_coder-{stamp}-{label}.db"
-    copy_database(db, dest)
-    conn = sqlite3.connect(dest)
-    try:
-        conn.execute("PRAGMA journal_mode=DELETE")  # one self-contained file
-    finally:
-        conn.close()
+    """A backup of the database and the data folder's files as they are now (D-143), made without AP Coder's own
+    code opening the database (it may be a newer version's). Never while another backup or a restore runs (B-1559).
+    """
+    from ..core.store import backup_files
+
+    with backup_files.exclusive(db.parent):
+        stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+        dest = db.parent / "backups" / f"ap_coder-{stamp}-{label}.db"
+        copy_database(db, dest)
+        conn = sqlite3.connect(dest)
+        try:
+            conn.execute("PRAGMA journal_mode=DELETE")  # one self-contained file
+        finally:
+            conn.close()
+        backup_files.snapshot(dest, db.parent)
     return dest
 
 
@@ -424,7 +440,7 @@ def _update(bundle: Path, data: Path, db: Path, *, server: Server | None, dry_ru
             f'Stop the service: the task "{s.task_name}" (python -m ap_coder service stop)'
             if installed
             else "The service is not installed on this computer: nothing to stop",
-            f"Back up the database {db} to backups\\ap_coder-<date>-{label}.db",
+            f"Back up the database {db} and the invoice files to backups\\ap_coder-<date>-{label}.db",
             f"Unzip it next to the current folder: {new}",
             f"Set up the new folder from its wheelhouse (offline): {new / 'scripts' / 'launch.py'} --no-start --yes",
             "Update the database (the new version opens it once: its migrations)",
@@ -456,9 +472,13 @@ def _update(bundle: Path, data: Path, db: Path, *, server: Server | None, dry_ru
         if started:
             server.stop()
         if backup is not None:
-            put_back(backup, db)
-            say(f"The database is back as it was before the update ({backup.name}); the user accounts are kept as "
-                "they are, and everyone logs in again.")  # fmt: skip
+            try:  # whatever stops it, the old version is started again below: never a server left stopped (B-1565)
+                files = put_back(backup, db)
+                say(f"The database is back as it was before the update ({backup.name}); the user accounts are kept "
+                    f"as they are, and everyone logs in again. The files: {files.words()}.")  # fmt: skip
+            except Exception as exc:  # noqa: BLE001 - see above
+                say(f"The backup made before the update ({backup.name}) could not all be put back ({exc}): once the "
+                    f"old version runs, restore it from Settings → Data & backups.")  # fmt: skip
         switch_to(data, current)
         _record(data, {"from": old_version, "to": new_version, "result": f"rolled back: {reason}",
                        "backup": str(backup or ""), "bundle_hash": checked})  # fmt: skip
@@ -557,7 +577,8 @@ def go_back(data: Path, db: Path, *, server: Server | None = None, dry_run: bool
     since = updates[-1].get("at", "the update") if updates else "the update"
     say(f"Going back from AP Coder {_version(current)} ({current}) to {_version(previous)} ({previous}).")
     say(f"The database goes back to the backup made before the update ({backup.name}): what was done in AP Coder "
-        f"since {since} is not in it. A copy of the database as it is now is kept in backups. The user accounts, "
+        f"since {since} is not in it. A backup of the database and the files as they are now is kept in backups. "
+        "The invoice files go back as they were then; the ones added since are moved aside. The user accounts, "
         "their passwords and roles, and paused logins stay as they are now; everyone is logged out and logs in "
         "again.")  # fmt: skip
     server = server or Server(data, s, say)
@@ -565,8 +586,9 @@ def go_back(data: Path, db: Path, *, server: Server | None = None, dry_run: bool
     if dry_run:
         say(f'  1. Stop the service "{s.task_name}"' if installed
             else "  1. The service is not installed on this computer: nothing to stop")  # fmt: skip
-        say("  2. Copy the database as it is now to backups\\ap_coder-<date>-before-going-back.db")
-        say(f"  3. Put back {backup} (the user accounts kept as they are; everyone logged out)")
+        say("  2. Back up the database and the files as they are now: backups\\ap_coder-<date>-before-going-back.db")
+        say(f"  3. Put back {backup} and its files (the user accounts kept as they are; everyone logged out; files "
+            "added since moved to backups\\set-aside-<date>)")  # fmt: skip
         say(f"  4. Start the service from {previous} and wait for the dashboard to answer" if installed
             else f"  4. Switch to {previous}; no service to start")  # fmt: skip
         say("Nothing was changed (dry run).")
@@ -600,9 +622,10 @@ def go_back(data: Path, db: Path, *, server: Server | None = None, dry_run: bool
     try:
         if db.exists():
             kept = safety_copy(db, "before-going-back")
-            say(f"The database as it was is kept in {kept}")
-        put_back(backup, db)
+            say(f"The database and the files as they were are kept in {kept}")
+        files = put_back(backup, db)
         restored = True
+        say(f"The files: {files.words()}.")
         went_back()
     except (Exception, KeyboardInterrupt) as exc:  # noqa: BLE001 - see above
         stopped = "was interrupted (Ctrl+C)" if isinstance(exc, KeyboardInterrupt) else (
@@ -612,6 +635,9 @@ def go_back(data: Path, db: Path, *, server: Server | None = None, dry_run: bool
             went_back()
         elif kept is not None:
             copy_database(kept, db)  # the database as it was, whatever put_back had done of it
+            from ..core.store import backup_files
+
+            backup_files.restore_files(kept, db.parent)  # and the files
     running = previous if restored else current
     if installed:
         server.start()

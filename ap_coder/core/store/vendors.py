@@ -132,6 +132,11 @@ class VendorsMixin:
             row = conn.execute("SELECT * FROM vendors WHERE vendor_key = ?", (key,)).fetchone()
         return dict(row) if row else None
 
+    def held_vendors(self) -> list[dict[str, Any]]:
+        """The vendors on hold, here or in JD Edwards."""
+        with self._conn() as conn:
+            return fetch_rows(conn, "SELECT * FROM vendors WHERE status = 'on_hold' OR COALESCE(erp_hold, '') != ''")
+
     def find_vendor(self, name: str | None, gst_number: Any = None, erp_id: Any = None) -> dict[str, Any] | None:
         """The vendor list's row for an invoice's vendor: among the vendors whose names read as this one (the vendor
         master keeps a second one under "<name> #<ERP ID>", B-930), the one with the invoice's GST/HST number, else

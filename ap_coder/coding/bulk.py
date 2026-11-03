@@ -27,6 +27,7 @@ from ..core.schema import InvoiceCoding
 from ..core.store import REVIEW, Store
 from ..core.store._base import CHECKS_STAMP_KEY
 from ..core.store.summary import BIT
+from .vendors import moved_off_hold
 
 
 def _received_on(inv: dict[str, Any]) -> dt.date | None:
@@ -208,19 +209,22 @@ def queue_facts(row: dict[str, Any]) -> dict[str, int]:
 
 
 def bulk_approve(
-    store: Store, reference: ReferenceData, settings: Settings, invoice_ids: list[int], reviewer: str, login: str = ""
-) -> dict[str, Any]:
+    store: Store, reference: ReferenceData, settings: Settings, invoice_ids: list[int], reviewer: str, login: str = "",
+    server: bool = False,
+) -> dict[str, Any]:  # fmt: skip
     """Approve each invoice exactly as it is coded, if it is still clean. Returns approved / skipped.
 
     "As coded" is what the review screen shows: an earlier approver's corrections (a reopened or sent-back
-    invoice) when there are some, otherwise the AI's coding."""
+    invoice) when there are some, otherwise the AI's coding. ``server``: the company server, where a held vendor's
+    invoice coded to another vendor is the review screen's error (``VENDOR_CHANGED_FROM_HELD``, D-142)."""
     with store.session():  # one connection for every invoice (a no-op inside the caller's own session)
-        return _bulk_approve(store, reference, settings, invoice_ids, reviewer, login)
+        return _bulk_approve(store, reference, settings, invoice_ids, reviewer, login, server)
 
 
 def _bulk_approve(
-    store: Store, reference: ReferenceData, settings: Settings, invoice_ids: list[int], reviewer: str, login: str
-) -> dict[str, Any]:
+    store: Store, reference: ReferenceData, settings: Settings, invoice_ids: list[int], reviewer: str, login: str,
+    server: bool,
+) -> dict[str, Any]:  # fmt: skip
     approved: list[int] = []
     skipped: list[tuple[int, str]] = []
     stamp = store.checks_stamp()
@@ -251,6 +255,10 @@ def _bulk_approve(
             continue
         if _credit_note(bool((store.get_capture(invoice_id) or {}).get("credit_note")), coding.grand_total):
             skipped.append((invoice_id, "it is a credit note: a credit is always applied by a person"))
+            continue
+        moved = moved_off_hold(store, inv["ai_output"], coding) if server else []
+        if moved:  # a held vendor's, by the GST/HST number or bank account it shows (B-1551)
+            skipped.append((invoice_id, _plain(moved[0][2], moved[0][1])))
             continue
         output, report = finalise_coding(coding, reference, settings, store=store, exclude_invoice_id=invoice_id,
                                          received=_received_on(inv))  # fmt: skip

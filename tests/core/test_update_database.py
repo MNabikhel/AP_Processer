@@ -40,6 +40,21 @@ def test_an_older_database_is_backed_up_before_it_is_brought_up_to_date(tmp_path
     assert len(store.list_backups()) == 1
 
 
+def test_the_backup_before_an_update_restores_with_its_invoice_files(tmp_path):
+    """It held the database only: restoring it after the update brought back no invoice file lost since (D-143)."""
+    db = tmp_path / "ap_coder.db"
+    (tmp_path / "invoices").mkdir()
+    pdf = tmp_path / "invoices" / "a.pdf"
+    pdf.write_bytes(b"%PDF-1.4 a")
+    Store(db)
+    _set_schema(db, SCHEMA_VERSION - 1)
+    store = Store(db)
+    (backup,) = store.list_backups()
+    pdf.unlink()
+    store.restore_from(backup)
+    assert pdf.read_bytes() == b"%PDF-1.4 a"
+
+
 def test_a_new_or_current_database_is_not_backed_up(tmp_path):
     db = tmp_path / "ap_coder.db"
     Store(db)

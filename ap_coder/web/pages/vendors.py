@@ -34,6 +34,7 @@ from ap_coder.core.store import PARKED, REVIEW, Store
 from ap_coder.erp import recurring
 from ap_coder.erp.insights import vendor_workload
 from ap_coder.ops.help import help_for
+from ap_coder.web.access import may_lift_hold
 from ap_coder.web.core import (
     done,
     flash_message,
@@ -57,6 +58,8 @@ from ap_coder.web.files import (
 from ap_coder.web.invoice_view import gl_name
 
 router = page_router()  # each plain handler: one connection a request
+LIFT_HOLD = "Only an Approver can take a vendor off hold."
+HELD_NUMBERS = "Only an Approver can change the tax numbers of a vendor on hold."  # what the hold is matched by
 
 SORTS = {
     "spend": "Spend: high to low",
@@ -280,6 +283,9 @@ def vendors_page(
         statuses={ACTIVE: "Active", ON_HOLD: "On hold"},
         provinces={**PROVINCE_NAMES, OUTSIDE_CANADA: "Outside Canada"},
         on_hold=ON_HOLD,
+        may_lift_hold=may_lift_hold(request),
+        lift_hold=LIFT_HOLD,
+        held_numbers=HELD_NUMBERS,
         languages=vendor_mail.LANGUAGES,
         recurring=found,
         late=late,
@@ -311,6 +317,13 @@ def save_vendor(
         return refuse("That vendor is not in AP Coder.", 404)
     if status not in (ACTIVE, ON_HOLD):
         return refuse("Choose Active or On hold.")
+    if vendor["status"] == ON_HOLD and status == ACTIVE and not may_lift_hold(request):
+        return refuse(LIFT_HOLD, 403)
+    typed = {"expected_gst": expected_gst, "qst_number": qst_number, "pst_number": pst_number}
+    held = vendor["status"] == ON_HOLD or vendor.get("erp_hold")
+    changed = any(v.strip() != (vendor.get(k) or "").strip() for k, v in typed.items())
+    if held and changed and not may_lift_hold(request):
+        return refuse(HELD_NUMBERS, 403)  # cleared, the hold would no longer catch an invoice showing them (B-1554)
     if province and province not in PROVINCE_NAMES and province != OUTSIDE_CANADA:
         return refuse("Choose a province from the list.")
     name = vendor["vendor_name"] or ""

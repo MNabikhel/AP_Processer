@@ -16,9 +16,9 @@ of the [exceptions](#what-leaves-the-laptop).
 
 | | |
 |---|---|
-| **Laptop pilot** | Ready: checked end to end, the way a pilot tester uses it. Next: a 4-week shadow pilot with AP. |
+| **Laptop release** | Ready: checked end to end, the way a pilot tester uses it. Next: stage 0 connects AP Coder to the company's inbox, sign-in and JD Edwards, then a live pilot with a small AP team ([docs/PILOT_PLAN.md](docs/PILOT_PLAN.md)). |
 | **Company server** | Built, with HTTPS, logins and four roles; reviewed for security within the project and sized for about 500 users, not yet reviewed by a company's IT security team. Not installed yet: [docs/SERVER.md](docs/SERVER.md). |
-| **JD Edwards E1** | Approved invoices go out as JDE's standard batch files (F0411Z1/F0911Z1). The direct API connection is built and waits for the JDE team: [docs/JDE_E1.md](docs/JDE_E1.md). |
+| **JD Edwards E1** | Approved invoices go out as JDE's standard batch files (F0411Z1/F0911Z1). The direct API connection is built and waits for the JDE team: [docs/JDE_E1.md](docs/JDE_E1.md). In the pilot they go in as pending batches that AP approves and posts in E1, so E1's batch approval keeps a person's final check. |
 | **Finance AI Hub** | AP Coder's feed to Microsoft Fabric is built (off until an Admin turns it on): [docs/FINANCE_HUB.md](docs/FINANCE_HUB.md). |
 | **Quality** | About 4,500 automated tests run on every change, on Windows and Linux; the install and the update are checked on clean Windows and Mac machines. Every bug fixed gets its own test ([docs/BUGS.md](docs/BUGS.md)). |
 
@@ -32,7 +32,8 @@ of the [exceptions](#what-leaves-the-laptop).
    duplicates (under another vendor name too, or already in the ERP), vendor fraud signals, the PO match and
    payment terms.
 4. **A person reviews and approves.** Every correction is remembered for that vendor's next invoice. A vendor whose
-   record proves it can go touchless, once an AP lead switches that on (off by default).
+   record proves it can go touchless, once an AP lead switches that on (off by default, and off for the pilot until
+   the company's AI team has reviewed it).
 5. **Exports** approved invoices to JD Edwards or Excel/CSV, and covers the rest of the AP cycle: month-end
    accruals, the sales-tax claim, vendor statements, a duplicate payment audit and the audit trail.
 
@@ -105,7 +106,7 @@ Every place the network could be touched: [docs/HOW_IT_RUNS.md](docs/HOW_IT_RUNS
 
 | For | Read |
 |---|---|
-| The pilot tester | [QUICK_START.md](docs/QUICK_START.md) (one page), [GETTING_STARTED.md](docs/GETTING_STARTED.md) (step by step), [PILOT_PLAN.md](docs/PILOT_PLAN.md) (the 4-week pilot), [DEMO_RUN_SHEET.md](docs/DEMO_RUN_SHEET.md) (a live demo, with `scripts\demo.bat`), [KNOWN_LIMITS.md](docs/KNOWN_LIMITS.md) |
+| The pilot tester | [QUICK_START.md](docs/QUICK_START.md) (one page), [GETTING_STARTED.md](docs/GETTING_STARTED.md) (step by step), [PILOT_PLAN.md](docs/PILOT_PLAN.md) (stage 0, then the pilot), [DEMO_RUN_SHEET.md](docs/DEMO_RUN_SHEET.md) (a live demo, with `scripts\demo.bat`), [KNOWN_LIMITS.md](docs/KNOWN_LIMITS.md) |
 | IT, a laptop | [PILOT.md](docs/PILOT.md) (install, the offline bundle), [LM_STUDIO.md](docs/LM_STUDIO.md), [UPGRADING.md](docs/UPGRADING.md), [MAILBOX_SETUP.md](docs/MAILBOX_SETUP.md) |
 | IT, the company server | [SERVER.md](docs/SERVER.md) |
 | The JD Edwards team | [JDE_E1.md](docs/JDE_E1.md), [JDE_ORCHESTRATIONS.md](docs/JDE_ORCHESTRATIONS.md) |

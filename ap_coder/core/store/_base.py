@@ -460,18 +460,21 @@ class StoreCore:
         path = default_db_path() if path is None else path
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._before_migrating()
+        unsaved = self._before_migrating()
         with self._conn() as conn:
             conn.executescript(_SCHEMA)
             self._migrate(conn)
+            if unsaved:  # said on Settings → Data & backups (``backups.BACKUP_STATUS``)
+                conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('backup_status', ?)", (unsaved,))
 
-    def _before_migrating(self) -> None:
+    def _before_migrating(self) -> str:
         """An update's safety net, before the database is touched: a database made by a newer AP Coder is refused
         (never opened by this older one, so never downgraded), and one made by an older AP Coder is backed up first
-        (``backups/ap_coder-<date>-before-update-from-schema-<n>.db``), so the update can always be undone."""
+        (``backups/ap_coder-<date>-before-update-from-schema-<n>.db``, then its files: ``backup_files.before_update``),
+        so the update can always be undone. What to say when the files could not be saved is returned (B-1561)."""
         found = database_schema(self.path)
         if found is None or found == SCHEMA_VERSION:
-            return
+            return ""
         if found > SCHEMA_VERSION:
             from ... import __version__
 
@@ -480,8 +483,9 @@ class StoreCore:
                 f"{__version__} knows up to version {SCHEMA_VERSION}), so this older version does not open it: "
                 "nothing was changed. Start the newer AP Coder instead."
             )
-        stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-        self.backup_to(self.backup_dir() / f"ap_coder-{stamp}-before-update-from-schema-{found}.db")
+        from . import backup_files
+
+        return backup_files.before_update(self, found)
 
     def _migrate(self, conn: sqlite3.Connection) -> None:
         """Bring a database made by an older version up to date (recorded as settings.schema_version)."""

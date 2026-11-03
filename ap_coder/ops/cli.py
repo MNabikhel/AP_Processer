@@ -254,7 +254,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--since", default=None, help="Only invoices approved on or after this date (YYYY-MM-DD)")
 
     p = sub.add_parser(
-        "pilot-score", help="Shadow pilot: compare what AP Coder approved with what AP posted in JD Edwards"
+        "pilot-score", help="The pilot's score: compare what AP Coder approved with what AP posted in JD Edwards"
     )
     p.add_argument("--vouchers", required=True, help="The F0411 voucher export from JD Edwards (CSV or Excel)")
     p.add_argument("--distribution", default=None, help="The F0911 G/L distribution export (optional: the coding)")
@@ -294,6 +294,10 @@ def build_parser() -> argparse.ArgumentParser:
     from . import jde_cmd
 
     jde_cmd.add_parser(sub)  # the JD Edwards API connection (D-104)
+
+    from . import backup_cmd
+
+    backup_cmd.add_parser(sub)  # the backups from the console (D-143)
 
     p = sub.add_parser("hub", help="The finance hub feed (Microsoft Fabric): send what changed (docs/FINANCE_HUB.md)")
     hub = p.add_subparsers(dest="hub_command", required=True)
@@ -1017,6 +1021,12 @@ def _jde(args: argparse.Namespace) -> int:
     return jde_cmd.main(args)
 
 
+def _backup(args: argparse.Namespace) -> int:
+    from . import backup_cmd
+
+    return backup_cmd.main(args)
+
+
 def cmd_hub(args: argparse.Namespace) -> int:
     """``hub export [--full] [--dry-run]`` and ``hub status`` (D-103)."""
     from ..erp.hub.run import HubConfig, export, last_run
@@ -1082,7 +1092,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # An administrator's commands on the company server read no .env: the service's account can write the data
     # folder's (D-109). They need none of its settings.
-    admin = args.command == "server-update" or (args.command == "service" and args.action != "run")
+    admin = args.command in ("server-update", "backup") or (args.command == "service" and args.action != "run")
     settings = Settings() if admin else Settings.from_env(args.env_file)
     commands = {
         "serve": lambda: cmd_serve(args),
@@ -1103,6 +1113,7 @@ def main(argv: list[str] | None = None) -> int:
         "schema": lambda: cmd_schema(args),
         "users": lambda: cmd_users(args),
         "jde": lambda: _jde(args),
+        "backup": lambda: _backup(args),
         "hub": lambda: cmd_hub(args),
     }
     try:

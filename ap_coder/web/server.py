@@ -511,12 +511,9 @@ def run_background(store: Store) -> int:
         return 0
     from ap_coder.erp.hub.run import HubSchedule
 
-    try:
-        store.auto_backup()
-    except OSError:
-        pass
-    workers = start_background_work(EnvSettings(), store)
     backup, hub = DailyBackup(store), HubSchedule(store)
+    backup.start()  # the day's backup, on its own thread: the background work starts meanwhile (B-1553)
+    workers = start_background_work(EnvSettings(), store)
     try:
         while not halt.wait(30.0):
             backup.check()

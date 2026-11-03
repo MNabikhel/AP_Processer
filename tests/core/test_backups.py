@@ -1,8 +1,10 @@
 """Backups: consistent copies, once a day automatically, and a restore that can be undone."""
 
 import os
+import shutil
 import sqlite3
 import time
+from pathlib import Path
 
 import pytest
 
@@ -137,7 +139,526 @@ def test_a_daily_backup_made_in_the_same_second_as_another_is_pruned_like_the_ot
     for folder in (store.backup_dir(), second):
         for day in range(1, 16):  # 15 newer daily backups
             (folder / f"ap_coder-202602{day:02d}-090000.db").write_bytes(b"")
+            (folder / f"ap_coder-202602{day:02d}-090000.files.json").write_text('{"files": []}')  # complete
     store.auto_backup(keep=14, min_hours=0)
     for folder in (store.backup_dir(), second):
         names = sorted(p.name for p in folder.glob("ap_coder-*.db"))
         assert len(names) == 14 and not [n for n in names if "20260110" in n], (folder, names)
+
+
+# --- The files of a backup: the invoice files, saved emails and attachments too (D-143) ---------------------------
+
+
+def _data_folder(tmp_path, ground_truth, name: str = "data"):
+    """A data folder with an invoice and the files AP Coder keeps beside the database."""
+    data = tmp_path / name
+    (data / "invoices" / "originals").mkdir(parents=True)
+    (data / "emails" / "manager").mkdir(parents=True)
+    pdf = data / "invoices" / "a.pdf"
+    pdf.write_bytes(b"%PDF-1.4 the invoice a")
+    (data / "invoices" / "originals" / "a.jpg").write_bytes(b"the photo of a")
+    (data / "emails" / "manager" / "AP-1-reply.eml").write_bytes(b"From: the manager")
+    (data / "canada_tax_rates.csv").write_text("province,gst\nON,5\n")
+    store = Store(data / "ap_coder.db")
+    store.add_invoice(pdf, ground_truth, {})
+    return store, data
+
+
+def _object(folder, path):
+    """Where the backups in ``folder`` keep the content of the file ``path``."""
+    from ap_coder.core.paths import file_sha256
+
+    sha = file_sha256(path)
+    return folder / "files" / sha[:2] / sha
+
+
+def test_a_restore_brings_back_the_invoice_files_of_that_state(tmp_path, ground_truth):
+    """A backup held the database only: a restore after a file was lost brought back the invoice without its PDF."""
+    store, data = _data_folder(tmp_path, ground_truth)
+    backup = store.backup_now("manual")
+    pdf = data / "invoices" / "a.pdf"
+    pdf.unlink()  # lost since
+    (data / "emails" / "manager" / "AP-1-reply.eml").write_bytes(b"changed since")
+    later = data / "invoices" / "b.pdf"
+    later.write_bytes(b"%PDF-1.4 came in after the backup")
+    store.restore_state(backup)
+    assert pdf.read_bytes() == b"%PDF-1.4 the invoice a"
+    assert (data / "emails" / "manager" / "AP-1-reply.eml").read_bytes() == b"From: the manager"
+    assert store.invoice_file(store.get_invoice(1)) == pdf
+    # What was not in that state is kept aside, never deleted: the file that came in after, the reply as it was.
+    assert not later.exists()
+    (aside,) = store.backup_dir().glob("set-aside-*")
+    assert (aside / "invoices" / "b.pdf").read_bytes() == b"%PDF-1.4 came in after the backup"
+    assert (aside / "emails" / "manager" / "AP-1-reply.eml").read_bytes() == b"changed since"
+
+
+def test_the_safety_backup_of_a_restore_undoes_it_files_and_all(tmp_path, ground_truth):
+    store, data = _data_folder(tmp_path, ground_truth)
+    backup = store.backup_now("manual")
+    later = data / "invoices" / "b.pdf"
+    later.write_bytes(b"%PDF-1.4 b")
+    store.add_invoice(later, ground_truth, {})
+    done = store.restore_state(backup)
+    assert len(store.list_invoices()) == 1 and not later.exists()
+    store.restore_state(done.safety)
+    assert len(store.list_invoices()) == 2 and later.read_bytes() == b"%PDF-1.4 b"
+
+
+def test_a_daily_backup_copies_only_the_files_that_are_new(tmp_path, ground_truth, monkeypatch):
+    from ap_coder.core.store import backup_files
+
+    store, data = _data_folder(tmp_path, ground_truth)
+    store.backup_now()
+    copied = []
+    real = backup_files._copy_hashed
+    monkeypatch.setattr(
+        backup_files, "_copy_hashed", lambda source, out: copied.append(source.name) or real(source, out)
+    )
+    (data / "invoices" / "b.pdf").write_bytes(b"%PDF-1.4 b")
+    second = store.backup_now()
+    assert copied == ["b.pdf"]
+    held = backup_files.check(second)
+    assert held.files == 5 and held.invoices == 1 and not held.missing and not held.damaged
+
+
+def test_restoring_from_the_second_folder_alone_onto_an_empty_data_folder(tmp_path, ground_truth):
+    """A lost or broken computer: a new one with only the second backup folder gets back the database and every file."""
+    share = tmp_path / "share"
+    share.mkdir()
+    store, data = _data_folder(tmp_path, ground_truth)
+    store.set_setting("backup_copy_dir", str(share))
+    backup = store.backup_now()
+    assert (share / backup.name).is_file() and (share / f"{backup.stem}.files.json").is_file()
+    names = ("invoices/a.pdf", "invoices/originals/a.jpg", "emails/manager/AP-1-reply.eml", "canada_tax_rates.csv")
+    was = {name: (data / name).read_bytes() for name in names}
+    shutil.rmtree(data)  # the computer is lost, its backups folder too
+    new = Store(tmp_path / "new" / "ap_coder.db")
+    done = new.restore_state(share / backup.name)
+    assert done.files.put_back == 4 and not done.files.missing and not done.files.damaged
+    for name in names:
+        assert (tmp_path / "new" / name).read_bytes() == was[name], name
+    (inv,) = new.list_invoices()
+    found = new.invoice_file(new.get_invoice(inv["id"]))
+    assert found == (tmp_path / "new" / "invoices" / "a.pdf").resolve()  # found in its new place
+
+
+def test_a_restore_onto_a_data_folder_elsewhere_points_every_invoice_at_its_file_there(tmp_path, ground_truth):
+    """Read straight from the rows (Learning's files missing, teaching again from approvals), every invoice's file was
+    at the old computer's path after a restore onto a new one, until each was opened (B-1552)."""
+    store, data = _data_folder(tmp_path, ground_truth)
+    backup = store.backup_now("manual")
+    new = Store(tmp_path / "new" / "ap_coder.db")
+    new.restore_state(backup)
+    shutil.rmtree(data)
+    with new._conn() as conn:
+        (source,) = conn.execute("SELECT source_path FROM invoices").fetchone()
+    assert Path(source) == (tmp_path / "new" / "invoices" / "a.pdf").resolve()
+
+
+def test_pruning_keeps_every_file_a_kept_backup_needs_and_drops_the_rest(tmp_path, ground_truth, monkeypatch):
+    import datetime as dt
+    from types import SimpleNamespace
+
+    from ap_coder.core.store import backup_files, backups
+
+    day = [1]
+
+    class Clock(dt.datetime):  # one day later at each backup
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 11, day[0], 9, 0, 0)
+
+    monkeypatch.setattr(backups, "dt", SimpleNamespace(datetime=Clock, timedelta=dt.timedelta))
+    monkeypatch.setattr(backup_files, "GRACE", 0.0)  # (a file copied a moment ago is kept a day: a backup being made)
+    share = tmp_path / "share"
+    share.mkdir()
+    store, data = _data_folder(tmp_path, ground_truth)
+    store.set_setting("backup_copy_dir", str(share))
+    invoices = data / "invoices"
+    first = store.auto_backup(keep=2, min_hours=0)
+    only_first = invoices / "a.pdf"
+    gone = {folder: _object(folder, only_first) for folder in (store.backup_dir(), share)}
+    only_first.unlink()
+    (invoices / "manual.pdf").write_bytes(b"%PDF-1.4 kept by a labelled backup")
+    day[0] = 2
+    manual = store.backup_now("manual")
+    labelled = {folder: _object(folder, invoices / "manual.pdf") for folder in (store.backup_dir(), share)}
+    (invoices / "manual.pdf").unlink()
+    (invoices / "b.pdf").write_bytes(b"%PDF-1.4 b")
+    day[0] = 3
+    store.auto_backup(keep=2, min_hours=0)
+    (invoices / "c.pdf").write_bytes(b"%PDF-1.4 c")
+    day[0] = 4
+    store.auto_backup(keep=2, min_hours=0)
+    for folder in (store.backup_dir(), share):
+        assert not (folder / first.name).exists() and not (folder / f"{first.stem}.files.json").exists()
+        assert not gone[folder].exists(), folder  # needed by the pruned backup only
+        assert labelled[folder].exists(), folder  # a labelled backup is never pruned, nor its files
+        for kept in sorted(folder.glob("ap_coder-*.db")):
+            held = backup_files.check(kept, deep=True)
+            assert not held.missing and not held.damaged, (folder, kept.name)
+    assert (store.backup_dir() / manual.name).exists()
+
+
+def test_a_damaged_or_missing_file_is_reported_by_the_check_and_the_restore(tmp_path, ground_truth):
+    from ap_coder.core.store import backup_files
+
+    store, data = _data_folder(tmp_path, ground_truth)
+    backup = store.backup_now("manual")
+    _object(store.backup_dir(), data / "invoices" / "a.pdf").write_bytes(b"%PDF-1.4 the invoice A")  # same size
+    _object(store.backup_dir(), data / "emails" / "manager" / "AP-1-reply.eml").unlink()
+    held = backup_files.check(backup, deep=True)
+    assert held.damaged == ["invoices/a.pdf"] and held.missing == ["emails/manager/AP-1-reply.eml"]
+    quick = backup_files.check(backup)  # the page's check: there, and of the right size
+    assert quick.missing == ["emails/manager/AP-1-reply.eml"] and not quick.damaged
+    (data / "invoices" / "a.pdf").unlink()
+    (data / "emails" / "manager" / "AP-1-reply.eml").unlink()
+    done = store.restore_state(backup)
+    assert done.files.damaged == ["invoices/a.pdf"] and done.files.missing == ["emails/manager/AP-1-reply.eml"]
+    assert not (data / "invoices" / "a.pdf").exists()  # never a damaged copy put in its place
+    (event,) = [e for e in store.events() if e["action"] == "backup_restored"]
+    assert "2 could not be restored" in describe(event)
+
+
+def test_a_backup_list_of_files_never_writes_outside_the_data_folder(tmp_path, ground_truth):
+    """A planted list (a backup on a share others can write to) naming ``../`` or the .env is not followed."""
+    import json
+
+    store, data = _data_folder(tmp_path, ground_truth)
+    backup = store.backup_now("manual")
+    listed = backup.with_name(f"{backup.stem}.files.json")
+    found = json.loads(listed.read_text())
+    good = found["files"][0]
+    found["files"] += [{**good, "path": p} for p in ("../evil.pdf", ".env", "invoices/../../evil.pdf", "/tmp/evil.pdf",
+                                                     "backups/x.db", "invoices\\..\\..\\evil.pdf")]  # fmt: skip
+    listed.write_text(json.dumps(found))
+    store.restore_state(backup)
+    assert not (tmp_path / "evil.pdf").exists() and not (data / ".env").exists()
+    assert not (data / "backups" / "x.db").exists()
+
+
+def test_a_backup_made_before_files_were_backed_up_restores_its_database_and_leaves_the_files(tmp_path, ground_truth):
+    store, data = _data_folder(tmp_path, ground_truth)
+    backup = store.backup_now("manual")
+    backup.with_name(f"{backup.stem}.files.json").unlink()  # as a backup of an older AP Coder
+    (data / "invoices" / "b.pdf").write_bytes(b"%PDF-1.4 b")
+    done = store.restore_state(backup)
+    assert done.files.database_only and (data / "invoices" / "b.pdf").exists()
+
+
+def test_the_postings_ledger_is_merged_never_replaced_and_comes_back_on_a_new_computer(tmp_path, ground_truth):
+    """``jde_postings.jsonl`` is what JD Edwards holds (D-105): a restore keeps every line written since the backup."""
+    store, data = _data_folder(tmp_path, ground_truth)
+    ledger = data / "jde_postings.jsonl"
+    ledger.write_text('{"idem_key": "a", "status": "posted"}\n')
+    share = tmp_path / "share"
+    share.mkdir()
+    store.set_setting("backup_copy_dir", str(share))
+    backup = store.backup_now()
+    with ledger.open("a") as out:
+        out.write('{"idem_key": "b", "status": "posted"}\n')
+    store.restore_state(backup)
+    assert ledger.read_text().splitlines() == ['{"idem_key": "a", "status": "posted"}',
+                                               '{"idem_key": "b", "status": "posted"}']  # fmt: skip
+    new = Store(tmp_path / "new" / "ap_coder.db")
+    new.restore_state(share / backup.name)
+    assert (tmp_path / "new" / "jde_postings.jsonl").read_text() == '{"idem_key": "a", "status": "posted"}\n'
+
+
+def test_an_invoice_file_kept_outside_the_data_folder_is_in_the_backup(tmp_path, ground_truth):
+    """``watch --folder`` reads invoices where they are: their files are backed up too, put back in invoices/restored
+    (D-143)."""
+    store, data = _data_folder(tmp_path, ground_truth)
+    elsewhere = tmp_path / "scans" / "z.pdf"
+    elsewhere.parent.mkdir()
+    elsewhere.write_bytes(b"%PDF-1.4 z")
+    store.add_invoice(elsewhere, ground_truth, {})
+    backup = store.backup_now("manual")
+    elsewhere.unlink()
+    store.restore_state(backup)
+    assert (data / "invoices" / "restored" / "z.pdf").read_bytes() == b"%PDF-1.4 z"
+    found = [store.invoice_file(store.get_invoice(inv["id"])) for inv in store.list_invoices()]
+    assert (data / "invoices" / "restored" / "z.pdf").resolve() in found
+
+
+def test_a_backup_whose_files_cannot_be_saved_says_so(tmp_path, ground_truth, monkeypatch):
+    from ap_coder.core.store import backup_files
+
+    store, _data = _data_folder(tmp_path, ground_truth)
+
+    def full(source, out):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(backup_files, "_copy_hashed", full)
+    with pytest.raises(OSError, match="No space left"):
+        store.auto_backup()
+    assert store.get_setting("backup_status").startswith("failed")
+    monkeypatch.undo()
+    store.backup_now("manual")
+    assert store.get_setting("backup_status") == ""
+
+
+# --- The review of pilot8 (B-1556 to B-1563) ------------------------------------------------------------------------
+
+
+def _frozen_days(monkeypatch):
+    """``backups``' clock, one day later each time ``day[0]`` is moved on (the daily backups' names)."""
+    import datetime as dt
+    from types import SimpleNamespace
+
+    from ap_coder.core.store import backups
+
+    day = [1]
+
+    class Clock(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 11, day[0], 9, 0, 0)
+
+    monkeypatch.setattr(backups, "dt", SimpleNamespace(datetime=Clock, timedelta=dt.timedelta))
+    return day
+
+
+def test_a_restore_leaves_in_place_a_file_its_backup_could_not_read(tmp_path, ground_truth, monkeypatch):
+    """A file held open by a scanner when the backup was made is not in it: restoring that backup moved it aside, so
+    its invoice had no PDF (B-1556)."""
+    from ap_coder.core.store import backup_files
+
+    store, data = _data_folder(tmp_path, ground_truth)
+    locked = data / "invoices" / "locked.pdf"
+    locked.write_bytes(b"%PDF-1.4 held by the scanner")
+    real = backup_files._readable
+    monkeypatch.setattr(backup_files, "_readable", lambda p: "Permission denied" if p.name == "locked.pdf" else real(p))
+    backup = store.backup_now("manual")
+    monkeypatch.undo()
+    assert backup_files.check(backup).skipped == ["invoices/locked.pdf: Permission denied"]
+    done = store.restore_state(backup)
+    assert locked.read_bytes() == b"%PDF-1.4 held by the scanner" and "invoices/locked.pdf" not in done.files.set_aside
+
+
+def test_a_backup_whose_files_were_not_saved_is_not_the_days_backup(tmp_path, ground_truth, monkeypatch):
+    """Its database copy stayed, counted as the day's backup: none was tried again for 20 hours, and the page called
+    it one made before AP Coder backed up the files (B-1557)."""
+    from ap_coder.core.store import backup_files
+
+    store, _data = _data_folder(tmp_path, ground_truth)
+    real = backup_files.snapshot
+
+    def full(backup, data):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(backup_files, "snapshot", full)
+    with pytest.raises(OSError, match="No space left"):
+        store.auto_backup()
+    assert store.list_backups() == [] and store.get_setting("backup_status").startswith("failed")
+    monkeypatch.setattr(backup_files, "snapshot", real)
+    made = store.auto_backup()  # an hour later: tried again
+    assert made is not None and backup_files.check(made).complete
+
+
+def test_a_backup_cut_short_never_counts_as_the_days_backup(tmp_path, ground_truth):
+    """The dashboard closed while the day's first backup copied the files: its database copy, with no list, stopped
+    the daily backups for 20 hours (B-1557)."""
+    from ap_coder.core.store import backup_files
+
+    store, _data = _data_folder(tmp_path, ground_truth)
+    cut = store.backup_to(store.backup_dir() / "ap_coder-20261103-090000.db")  # the database copied, then cut short
+    assert "database only" in backup_files.state_words(backup_files.check(cut))
+    made = store.auto_backup()
+    assert made is not None and backup_files.check(made).complete
+
+
+def test_a_copy_to_the_second_folder_cut_short_leaves_no_backup_there(tmp_path, ground_truth, monkeypatch):
+    """The share dropped while the files were copied: it held the database alone, a backup that restores no file
+    (B-1558)."""
+    from ap_coder.core.store import backup_files
+
+    share = tmp_path / "share"
+    share.mkdir()
+    store, _data = _data_folder(tmp_path, ground_truth)
+    store.set_setting("backup_copy_dir", str(share))
+    real, calls = backup_files._copy_hashed, []
+
+    def flaky(source, out):
+        if str(share) in str(out):
+            calls.append(out)
+            if len(calls) == 2:
+                raise OSError(5, "The network name is no longer available")
+        return real(source, out)
+
+    monkeypatch.setattr(backup_files, "_copy_hashed", flaky)
+    store.backup_now()
+    assert store.get_setting("backup_copy_status").startswith("failed")
+    assert not list(share.glob("ap_coder-*.db")) and not list(share.glob("ap_coder-*.files.json"))
+
+
+def test_backups_without_their_files_never_push_out_the_last_complete_ones(tmp_path, ground_truth, monkeypatch):
+    """Retention counted every daily: database-only ones (cut short, or of an older AP Coder) pushed out the complete
+    ones, here and on the share (B-1558)."""
+    from ap_coder.core.store import backup_files
+
+    day = _frozen_days(monkeypatch)
+    share = tmp_path / "share"
+    share.mkdir()
+    store, _data = _data_folder(tmp_path, ground_truth)
+    store.set_setting("backup_copy_dir", str(share))
+    store.auto_backup(keep=2, min_hours=0)
+    day[0] = 2
+    second = store.auto_backup(keep=2, min_hours=0)
+    for folder in (store.backup_dir(), share):
+        for n in (3, 4, 5):
+            shutil.copy(second, folder / f"ap_coder-2026110{n}-090000.db")  # no list: the database only
+    day[0] = 6
+    store.auto_backup(keep=2, min_hours=0)
+    for folder in (store.backup_dir(), share):
+        kept = sorted(p.name for p in folder.glob("ap_coder-*.db"))
+        assert kept == ["ap_coder-20261102-090000.db", "ap_coder-20261105-090000.db", "ap_coder-20261106-090000.db"]
+        assert backup_files.check(folder / second.name, deep=True).complete
+
+
+def test_the_grace_period_keeps_the_files_of_a_backup_being_made(tmp_path, ground_truth):
+    """A file no list names yet (a backup being made, its list not written) is kept a day, then dropped."""
+    from ap_coder.core.store import backup_files
+
+    store, _data = _data_folder(tmp_path, ground_truth)
+    store.backup_now("manual")
+    fresh = store.backup_dir() / "files" / "ab" / ("ab" + "0" * 62)
+    fresh.parent.mkdir(parents=True, exist_ok=True)
+    fresh.write_bytes(b"copied a moment ago by a backup still being made")
+    backup_files.prune(store.backup_dir())
+    assert fresh.exists()
+    old = time.time() - backup_files.GRACE - 60
+    os.utime(fresh, (old, old))
+    backup_files.prune(store.backup_dir())
+    assert not fresh.exists()
+
+
+def test_a_restore_refuses_while_a_backup_is_being_made_in_another_process(tmp_path, ground_truth):
+    """A backup and a restore ran at once: the backup listed half the restored files, a pruning could remove the
+    backup being restored (B-1559). On the server the daily backup runs in the background process."""
+    import subprocess
+    import sys
+
+    from ap_coder.core.store import backup_files
+
+    store, data = _data_folder(tmp_path, ground_truth)
+    backup = store.backup_now("manual")
+    held = str(backup_files.lock_path(data))
+    holder = subprocess.Popen(
+        [sys.executable, "-c", "import pathlib, time; from ap_coder.core import paths; "
+         f"h = paths.try_lock(pathlib.Path({held!r})); print('held' if h else 'not', flush=True); time.sleep(30)"],
+        stdout=subprocess.PIPE, text=True,
+    )  # fmt: skip
+    try:
+        assert holder.stdout.readline().strip() == "held"
+        with pytest.raises(OSError, match="being made or restored"):
+            store.restore_state(backup)
+        assert store.auto_backup(min_hours=0) is None  # the daily one waits for the next check
+        with pytest.raises(OSError, match="being made or restored"):
+            store.backup_now("manual")
+        assert store.get_setting("backup_status") == ""  # busy is not a failure
+    finally:
+        holder.kill()
+        holder.wait()
+    assert store.restore_state(backup).files.put_back == 0
+
+
+def test_a_file_written_during_a_restore_is_not_moved_aside(tmp_path, ground_truth, monkeypatch):
+    """An upload in another web worker while a restore ran: its row in the restored database, its file moved aside
+    (B-1559)."""
+    from ap_coder.core.store import backup_files
+
+    store, data = _data_folder(tmp_path, ground_truth)
+    backup = store.backup_now("manual")
+    (data / "invoices" / "a.pdf").unlink()
+    upload = data / "invoices" / "uploaded-meanwhile.pdf"
+    real = backup_files._fetch
+
+    def meanwhile(entry, folders, part):
+        upload.write_bytes(b"%PDF-1.4 uploaded while the restore ran")
+        return real(entry, folders, part)
+
+    monkeypatch.setattr(backup_files, "_fetch", meanwhile)
+    done = store.restore_state(backup)
+    assert upload.exists() and "invoices/uploaded-meanwhile.pdf" not in done.files.set_aside
+
+
+def test_a_full_disk_while_restoring_is_said_as_such_not_as_a_damaged_backup(tmp_path, ground_truth, monkeypatch):
+    """B-1560."""
+    from ap_coder.core.store import backup_files
+
+    store, data = _data_folder(tmp_path, ground_truth)
+    backup = store.backup_now("manual")
+    (data / "invoices" / "a.pdf").unlink()
+    real = backup_files._copy_hashed
+
+    def full(source, out):
+        if ".restoring" in out.name:
+            raise OSError(28, "No space left on device")
+        return real(source, out)
+
+    monkeypatch.setattr(backup_files, "_copy_hashed", full)
+    done = store.restore_state(backup).files
+    assert not done.missing and not done.damaged and "not enough space" in done.words()
+
+
+def test_a_full_disk_never_stops_ap_coder_opening_after_an_update(tmp_path, ground_truth, monkeypatch):
+    """The backup before a migration copied every invoice file too: with room for the database copy only, AP Coder
+    no longer opened (B-1561). The database copy is what undoes a migration."""
+    from ap_coder.core.store import SCHEMA_VERSION, backup_files
+
+    store, _data = _data_folder(tmp_path, ground_truth)
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE settings SET value = ? WHERE key = 'schema_version'", (str(SCHEMA_VERSION - 1),))
+
+    def full(backup, data):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(backup_files, "snapshot", full)
+    opened = Store(store.path)  # the new version opens it
+    (made,) = opened.list_backups()
+    assert "before-update" in made.name and "invoice files" in opened.get_setting("backup_status")
+
+
+def test_an_invoice_file_in_the_install_folder_is_backed_up_but_not_the_samples(tmp_path, ground_truth, monkeypatch):
+    """The laptop's data folder is <install>/private: a file an update kept in private/backups/from-... was never
+    backed up, the whole install folder being left out instead of its samples (B-1562)."""
+    from ap_coder.core.store import backup_files
+
+    install = tmp_path / "AP Coder"
+    monkeypatch.setattr(backup_files, "PROJECT_DIR", install)
+    store = Store(install / "private" / "ap_coder.db")
+    kept = install / "private" / "backups" / "from-0.3.0" / "invoices" / "kept.pdf"
+    sample = install / "samples" / "northwind.pdf"
+    for path in (kept, sample):
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"%PDF-1.4 " + path.name.encode())
+        store.add_invoice(path, ground_truth, {})
+    listed = [e["path"] for e in backup_files.read_list(store.backup_now("manual"))["files"]]
+    assert listed == ["invoices/restored/kept.pdf"]
+
+
+def test_a_file_renamed_only_in_case_is_not_moved_aside_on_windows(tmp_path, ground_truth, monkeypatch):
+    """NTFS sees invoices/A.pdf and invoices/a.pdf as one file: the restore found it unchanged, then moved it aside
+    as one it did not list (B-1563)."""
+    from ap_coder.core.store import backup_files
+
+    store, data = _data_folder(tmp_path, ground_truth)
+    backup = store.backup_now("manual")
+    (data / "invoices" / "a.pdf").rename(data / "invoices" / "A.pdf")
+    monkeypatch.setattr(backup_files, "_case", str.lower, raising=False)  # as os.path.normcase on Windows
+    done = store.restore_state(backup)
+    assert "invoices/A.pdf" not in done.files.set_aside
+
+
+def test_a_file_from_before_the_restore_is_moved_aside_even_when_its_time_is_ahead_of_the_clock(tmp_path, ground_truth):
+    """On Windows a file's time can read a few milliseconds after the clock that started the restore: the file that
+    came in after the backup, but before the restore, was then kept instead of moved aside (B-1566)."""
+    store, data = _data_folder(tmp_path, ground_truth)
+    backup = store.backup_now("manual")
+    later = data / "invoices" / "b.pdf"
+    later.write_bytes(b"%PDF-1.4 came in after the backup")
+    ahead = time.time_ns() + 2_000_000_000  # two seconds ahead of the clock, as a coarse clock can read it
+    os.utime(later, ns=(ahead, ahead))
+    done = store.restore_state(backup)
+    assert not later.exists() and "invoices/b.pdf" in done.files.set_aside

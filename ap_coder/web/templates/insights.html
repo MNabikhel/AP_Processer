@@ -5,7 +5,7 @@
 {% block content %}
 {% if pilot %}
 <section class="card" aria-labelledby="pilot-title">
-  <h4 id="pilot-title">Shadow pilot: AP Coder against JD Edwards</h4>
+  <h4 id="pilot-title">Pilot score: AP Coder against JD Edwards</h4>
   <div class="table-wrap"><table class="apc-table"><tbody>
     {% for label, value in pilot.rows %}<tr><td>{{ label }}</td><td class="r"><b>{{ value }}</b></td></tr>{% endfor %}
   </tbody></table></div>

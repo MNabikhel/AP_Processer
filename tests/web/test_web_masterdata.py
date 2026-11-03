@@ -6,6 +6,7 @@ the files the earlier dashboard gave; destructive actions ask first; text from f
 from __future__ import annotations
 
 import io
+import re
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -146,6 +147,86 @@ def test_a_vendor_is_given_its_qst_and_pst_numbers_and_province(client, busy):
     assert 'value="PST-1234-5678"' in detail and '<option value="BC" selected>' in detail
     bad = client.post("/vendors/save", data={**data, "province": "XX"}, headers=PAGE)
     assert bad.status_code == 400
+
+
+@pytest.fixture
+def held(tmp_path):
+    """A server with a vendor on hold, one invoice from it, and a Clerk and an Approver logged in."""
+    from fastapi.testclient import TestClient
+
+    from ap_coder.core.store.users import APPROVER, CLERK
+    from ap_coder.web.app import create_app
+    from tests.webclient import add_clean, web_settings
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    add_clean(store)
+    v = store.vendor_summaries()[0]
+    store.save_vendor(v["vendor_key"], v["vendor_name"], ON_HOLD, notes="bank details changed")
+    app = create_app(web_settings(), store, start_reader=False, server=True)
+    clients = {}
+    for role in (CLERK, APPROVER):
+        uid = store.add_user(f"the.{role}", "correct horse battery", role=role, display_name=f"The {role.title()}")
+        with store._conn() as conn:
+            conn.execute("UPDATE users SET must_change = 0 WHERE id = ?", (uid,))
+        client = TestClient(app, base_url="https://localhost", client=("10.0.0.5", 50000), follow_redirects=False)
+        login = {"username": f"the.{role}", "password": "correct horse battery"}
+        assert client.post("/login", data=login, headers=PAGE).status_code in (200, 303)
+        clients[role] = client
+    return store, v["vendor_key"], clients
+
+
+def test_a_clerk_cannot_take_a_vendor_off_hold(held):
+    """D-142: a Clerk lifting a hold, then approving under the limit, would get around D-141's hold."""
+    store, key, clients = held
+    answer = clients["clerk"].post("/vendors/save", data={"key": key, "status": "active", "notes": "ok now"},
+                                   headers=PAGE)  # fmt: skip
+    assert answer.status_code == 403 and "Only an Approver can take a vendor off hold." in answer.text
+    saved = store.get_vendor(key)
+    assert saved["status"] == ON_HOLD and saved["notes"] == "bank details changed"
+    detail = clients["clerk"].get("/vendors?" + urlencode({"open": key})).text
+    assert re.search(r'<input type="radio" name="status" value="active"[^>]* disabled', detail)
+    assert "Only an Approver can take a vendor off hold." in detail
+
+
+def test_a_clerk_may_still_edit_a_held_vendors_notes_and_put_a_vendor_on_hold(held):
+    store, key, clients = held
+    data = {"key": key, "status": ON_HOLD, "notes": "called them", "province": "BC"}
+    follow(clients["clerk"], clients["clerk"].post("/vendors/save", data=data, headers=PAGE))
+    saved = store.get_vendor(key)
+    assert (saved["status"], saved["notes"], saved["province"]) == (ON_HOLD, "called them", "BC")
+    store.save_vendor(key, saved["display_name"], "active")
+    follow(clients["clerk"], clients["clerk"].post("/vendors/save", data={"key": key, "status": ON_HOLD}, headers=PAGE))
+    assert store.get_vendor(key)["status"] == ON_HOLD
+
+
+@pytest.mark.parametrize("field", ["expected_gst", "qst_number", "pst_number"])
+def test_a_clerk_cannot_change_a_held_vendors_tax_numbers(held, field):
+    """B-1554: a Clerk cleared a held vendor's GST/HST number (keeping the hold), so an invoice showing it no longer
+    tied to the held vendor and "Approve anyway" went through. The numbers the hold is matched by are an Approver's
+    to change while the vendor is on hold, as the hold itself is (D-142)."""
+    store, key, clients = held
+    numbers = {"expected_gst": "123456782RT0001", "qst_number": "1234567890TQ0001", "pst_number": "PST-1234-5678"}
+    store.save_vendor(key, store.get_vendor(key)["display_name"], ON_HOLD, numbers["expected_gst"],
+                      qst_number=numbers["qst_number"], pst_number=numbers["pst_number"])  # fmt: skip
+    form = {"key": key, "status": ON_HOLD, **numbers}
+    refused = clients["clerk"].post("/vendors/save", data={**form, field: ""}, headers=PAGE)
+    assert refused.status_code == 403 and "Only an Approver can change" in refused.text
+    assert store.get_vendor(key)[field] == numbers[field]
+    detail = clients["clerk"].get("/vendors?" + urlencode({"open": key})).text
+    assert re.search(rf'name="{field}" value="[^"]*"[^>]* readonly', detail)
+    follow(clients["approver"], clients["approver"].post("/vendors/save", data={**form, field: ""}, headers=PAGE))
+    assert store.get_vendor(key)[field] == ""
+
+
+def test_an_approver_takes_a_vendor_off_hold_and_it_is_in_the_audit_trail(held):
+    store, key, clients = held
+    detail = clients["approver"].get("/vendors?" + urlencode({"open": key})).text
+    assert not re.search(r'<input type="radio" name="status" value="active"[^>]* disabled', detail)
+    follow(clients["approver"], clients["approver"].post("/vendors/save", data={"key": key, "status": "active"},
+                                                         headers=PAGE))  # fmt: skip
+    assert store.get_vendor(key)["status"] == "active"
+    lifted = [e for e in store.events(None, ["vendor_updated"]) if e["detail"].get("status") == "active"]
+    assert lifted and lifted[0]["actor"] == "The Approver"
 
 
 def test_a_vendor_list_number_that_fails_the_cra_check_is_warned_about(client, busy):

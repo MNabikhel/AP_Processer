@@ -6,10 +6,11 @@ The roles, each able to do everything the one before it can (``core/store/users.
 * **Read-only** (``READ``): looks at the review queue, the invoices and their pages, the reports, the list of
   exports, Help, Insights, Spend, the Activity log and their own account. Changes nothing.
 * **Clerk** (``CLERK``): imports invoices, reviews and checks them, gives the first approval, parks, rejects,
-  reopens, undoes their own approval, approves in bulk, makes export batches and downloads them, keeps vendors' hold
-  and notes.
+  reopens, undoes their own approval, approves in bulk, makes export batches and downloads them, puts vendors on hold
+  and keeps their notes (taking a vendor off hold is an Approver's, D-142: ``access.may_lift_hold``).
 * **Approver** (``APPROVER``): also gives the second approval (over the approval limit) or sends the invoice back,
-  and gives the go-ahead to post vouchers to JD Edwards through the API (D-104; a Clerk may run its dry run).
+  gives the go-ahead to post vouchers to JD Edwards through the API (D-104; a Clerk may run its dry run), and takes
+  a vendor off hold.
 * **Admin** (``ADMIN``): everything else: Settings, the people who log in, JD Edwards setup (the API connection and
   its sync too), the account lists and tax setup, imports of the vendor master and the like, backups and restore,
   deleting, the Azure check, the learning memory's resets, the finance hub feed.
@@ -108,6 +109,7 @@ RULES: dict[tuple[str, str], str] = {
         # Sending an invoice to its manager, the request email, an answer given by email, withdrawing (D-138).
         "POST /review/{invoice_id:int}/manager", "GET /manager/{request_id:int}/email.eml",
         "POST /manager/{request_id:int}/record", "POST /manager/{request_id:int}/withdraw",
+        "GET /manager/{request_id:int}/reply",  # the reply kept with an answer given by email (B-1552)
         "POST /review/{invoice_id:int}/correct",
         # The queue: bulk approval, reopen, back from parked.
         "POST /review/bulk-approve", "POST /review/{invoice_id}/reopen", "POST /review/{invoice_id}/unpark",
@@ -118,7 +120,7 @@ RULES: dict[tuple[str, str], str] = {
         "POST /exports/batches/{batch:int}/download",  # the JD Edwards ZIP: its download is recorded (D-135)
         "GET /exports/batches/{batch:int}/approved-pdfs.zip", "GET /exports/jde/dry-run.txt",
         "POST /exports/batches/{batch:int}/jde-api/dry-run",  # the JDE API's dry run: nothing posted (D-104)
-        # Statements compared, vendors' hold and notes, looking at the setup and what was learned.
+        # Statements compared, vendors' hold and notes (off hold: an Approver's, D-142), the setup, what was learned.
         "POST /statements/upload", "POST /statements/emailed/{entry_id}/{n}",
         "GET /vendors", "POST /vendors/save",
         "GET /accounts", "GET /accounts/{table}.csv", "GET /accounts/bank/template.csv",

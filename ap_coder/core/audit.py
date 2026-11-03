@@ -470,7 +470,7 @@ def describe(event: dict[str, Any]) -> str:
     if action == "downloaded":  # on the server (D-109)
         return f"{d.get('file', '?')} ({d.get('path', '')})"
     if action in ("backup_made", "backup_restored"):
-        return str(d.get("file", "")) + (f" · {d['note']}" if d.get("note") else "")
+        return "".join([str(d.get("file", "")), *(f" · {d[k]}" for k in ("files", "note") if d.get(k))])
     return ""
 
 

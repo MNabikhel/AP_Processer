@@ -1,4 +1,4 @@
-{# Settings → About (pages/settings.py): the version, what this pilot shows (D-52) and, for IT, the folders. #}
+{# Settings → About (pages/settings.py): the version, what is shown (D-52) and, for IT, the folders. #}
 <div class="narrow">
 <section class="card">
   <h4>About this installation</h4>
@@ -15,9 +15,9 @@
 </section>
 
 <section class="card" id="show">
-  <h4>What this pilot shows</h4>
+  <h4>What is shown</h4>
   <p class="muted">{% if show_jde %}The JD Edwards E1 settings and export are shown: a Settings tab, and JD Edwards E1 on
-    Exports.{% else %}The pilot exports to Excel and CSV. The JD Edwards E1 settings and export are hidden.{% endif %}
+    Exports.{% else %}Exports go to Excel and CSV. The JD Edwards E1 settings and export are hidden.{% endif %}
     {% if developer_tools or developer_env %}The tools for developers are shown.{% else %}The tools for developers are
     hidden.{% endif %} Nothing is removed: tick or untick them here.</p>
   <form method="post" action="/settings/about/show" class="stack" data-busy="Saving…">

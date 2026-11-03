@@ -209,7 +209,7 @@ Open **GL accounts & tax**:
 5. **Fixed rules:** lines that must always go to one account (a vendor, words in the line, or both),
    whatever the AI says. Vendors your team always coded the same way are suggested.
 
-Optional, any time later; for the shadow pilot with JD Edwards, do the vendor master, the JD Edwards settings and
+Optional, any time later; for the pilot with JD Edwards ([PILOT_PLAN.md](PILOT_PLAN.md)), do the vendor master, the JD Edwards settings and
 the past coding before the first invoices, in that order (the welcome page's *Next step* leads you through them):
 AP Coder learns your coding from what you posted before, so the first invoices from each vendor are coded already.
 
@@ -227,7 +227,8 @@ AP Coder learns your coding from what you posted before, so the first invoices f
 - **Settings → Review:** your name (shown on approvals), the confidence threshold, an **approval
   limit** above which a second person must approve, the days to pay when an invoice shows no
   terms, and exchange rates to CAD if you are billed in other currencies.
-- **Settings → Data & backups:** a **second backup folder** (OneDrive or network) for the daily backups.
+- **Settings → Data & backups:** a **second backup folder** (OneDrive or network) for the daily backups (each holds
+  the database and the invoice files, so that folder alone brings everything back on a new PC).
 
 Then open **Help → Report a problem**, click **Copy** next to *The setup report* and **paste it** (or run
 `python -m ap_coder doctor` in `scripts\terminal.bat`). From it I can see row counts, whether every tax type is
@@ -344,7 +345,7 @@ Run these in `scripts\terminal.bat` as `python -m ap_coder <command>`.
 | `process <files/folders>` | batch processing without the dashboard; results also appear in the review queue. Files already processed are skipped (`--force` to redo), so it is safe to run again after Ctrl+C |
 | `labels` / `evaluate` | spreadsheet-based labelling and scoring (an alternative to reviewing in the dashboard) |
 | `read-pages [--minutes 240]` | have OvisOCR2 read the invoices waiting for it, then stop (Task Scheduler overnight); `--test` runs its self-test again |
-| `pilot-score --vouchers <F0411 export>` | shadow pilot: compare what AP Coder approved with what AP posted in JD Edwards |
+| `pilot-score --vouchers <F0411 export>` | the pilot's score: what AP Coder approved against what AP posted in JD Edwards (the parallel week, then the live weeks) |
 | `jde test` / `jde sync` / `jde status` | the JD Edwards API connection, when IT has set it up ([JDE_E1.md](JDE_E1.md)) |
 | `hub export` / `hub status` | the finance hub feed, when IT has switched it on ([FINANCE_HUB.md](FINANCE_HUB.md)) |
 | `service`, `server-update`, `users` | the company server only (server mode): see [SERVER.md](SERVER.md) |
@@ -377,4 +378,9 @@ One person at a time has AP Coder open: while the other's is still running (a sw
 double-click says whose AP Coder is open and asks them to close it, instead of opening theirs under their name.
 Keep the data folder on a local disk: the database must not live on a network share. To protect it
 against a lost or broken PC, set *Also copy each backup to* in Settings → Data & backups to a OneDrive or
-network folder: the daily backup copies go there (that is safe; only the live database must stay local).
+network folder: the daily backups go there, the database with the invoice files, saved emails and attachments it
+needs (each day only the new files are copied; that is safe, only the live database must stay local). On a new PC,
+install AP Coder, then either copy that folder's contents into the new data folder's `backups` folder and use
+*Restore this state* in Settings → Data & backups, or run
+`python -m ap_coder backup restore <backup name> --from "<that folder>"` in `scripts\terminal.bat` with AP Coder
+closed (`backup list --from "<that folder>"` lists them). The `.env` is not in a backup: set its values again.

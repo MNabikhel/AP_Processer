@@ -31,7 +31,8 @@ from ap_coder.ai import lessons
 from ap_coder.coding.tax import PROVINCE_NAMES
 from ap_coder.core import paths, ui
 from ap_coder.core.envfile import one_line, read_env, write_env
-from ap_coder.core.store import APPROVAL_CONTROLS, Store, tiny_fx_rates, unread_fx_text
+from ap_coder.core.store import APPROVAL_CONTROLS, Store, backup_files, tiny_fx_rates, unread_fx_text
+from ap_coder.core.store.backups import BACKUP_STATUS
 from ap_coder.web import identity
 from ap_coder.web.core import (
     DEVELOPER_TOOLS,
@@ -69,6 +70,7 @@ TABS: list[tuple[str, str]] = [
 ]
 TAB_KEYS = [key for key, _ in TABS]
 RESTORE_WORD = "RESTORE"
+BACKUP_WAIT = 5.0  # seconds Back up now waits for its backup before saying it goes on in the background (B-1553)
 
 
 def tab_url(tab: str) -> str:
@@ -76,7 +78,7 @@ def tab_url(tab: str) -> str:
 
 
 def shown_tabs(store: Store) -> list[tuple[str, str]]:
-    """The tab bar: every tab but JD Edwards E1 while it is hidden (the pilot exports to Excel and CSV only)."""
+    """The tab bar: every tab but JD Edwards E1 while it is hidden (on a laptop: Excel and CSV exports only)."""
     return [(key, label) for key, label in TABS if key != "jde" or jde_shown(store)]
 
 
@@ -144,7 +146,7 @@ def settings_tab(request: Request, tab: str) -> HTMLResponse:
 
         return render_tab(request, tab, **hub_context(request))
     if tab == "data":
-        return render_tab(request, tab, **data_context(get_store(request)))
+        return render_tab(request, tab, **data_context(get_store(request), request.query_params.get("restore", "")))
     return render_tab(request, tab, **about_context(get_store(request)))
 
 
@@ -424,9 +426,37 @@ def copy_status(store: Store) -> dict[str, str] | None:
     return {"ok": "yes" if state == "ok" else "", "when": when.replace("T", " "), "what": what}
 
 
-def data_context(store: Store) -> dict[str, Any]:
+def backup_row(backup: Path, seen: dict[str, int | None]) -> dict[str, Any]:
+    """One backup as the page lists it: when, what it holds, whether it was copied and whether all of it is there
+    (each file there with its size: ``backup_files.check``; ``seen`` shared by the backups, which share their files)."""
+    held = backup_files.check(backup, seen=seen)
+    state = backup_files.state_words(held)
+    copy = held.copy or {}
+    return {
+        "name": backup.name,
+        "made": dt.datetime.fromtimestamp(backup.stat().st_mtime).strftime("%Y-%m-%d %H:%M"),
+        "holds": backup_files.holds_words(backup, held),
+        "state": state[:1].upper() + state[1:],
+        "complete": held.complete,
+        "copied": ("Copied" if copy.get("ok") else "Not copied") if copy else "",
+        "copy_detail": f"{str(copy.get('when', '')).replace('T', ' ')}: {copy.get('what', '')}" if copy else "",
+    }
+
+
+def backup_failure(store: Store) -> str:
+    """``<when>: <why>`` of the last backup, when it failed ("" once one works)."""
+    status = store.get_setting(BACKUP_STATUS)
+    when, _, what = status.partition(" ")[2].partition(": ")
+    return f"{when.replace('T', ' ')}: {what}" if status else ""
+
+
+def data_context(store: Store, chosen: str = "") -> dict[str, Any]:
+    """``chosen``: the backup *Restore this state* was pressed for (``?restore=``): picked and shown in the restore
+    form, which still asks for RESTORE typed."""
     folder = invoice_dir(store)
     backups = store.list_backups()
+    seen: dict[str, int | None] = {}
+    kept = backup_files.kept_size(store.backup_dir()) + sum(b.stat().st_size for b in backups)
     return {
         "data_path": str(data_dir(store)),
         "db_size": size_text(store.path),
@@ -434,14 +464,11 @@ def data_context(store: Store) -> dict[str, Any]:
         "file_count": len(list(folder.glob("*"))) if folder.exists() else 0,
         "lesson_count": f"{store.metrics()['lines_reviewed']:,}",  # one definition: AP's own reviewed lines (B-532)
         "history_count": store.history_count(),  # past coding imported from the ERP, counted apart
-        "backups": [
-            {
-                "name": b.name,
-                "made": dt.datetime.fromtimestamp(b.stat().st_mtime).strftime("%Y-%m-%d %H:%M"),
-                "size": size_text(b),
-            }
-            for b in backups
-        ],
+        "backups": [backup_row(b, seen) for b in backups],
+        "backups_size": backup_files.size_words(kept),
+        "backup_failed": backup_failure(store),
+        "backup_running": store.backup_in_progress(),
+        "chosen": chosen if any(b.name == chosen for b in backups) else "",
         "copy_dir": store.get_setting("backup_copy_dir"),
         "copy_status": copy_status(store),
         "restore_word": RESTORE_WORD,
@@ -461,14 +488,31 @@ def open_data_folder(request: Request) -> JSONResponse:
     return open_folder_here(request, data_dir(get_store(request)), "data folder")
 
 
+def backup_in_background(request: Request, label: str) -> str:
+    """A backup on the backups' thread (``app.DailyBackup.now``), waited for ``BACKUP_WAIT`` seconds: a first one
+    copying every invoice file to a slow share goes on in the background, the page saying so (B-1553). "" when it
+    was made in time, else what to say; raises OSError when it failed."""
+    backups = request.app.state.daily_backup
+    thread = backups.now(label, actor=reviewer())
+    if thread is None:
+        return "A backup is being made already: this page says when it is done."
+    thread.join(BACKUP_WAIT)
+    if thread.is_alive():
+        return ("The backup is being made in the background (the first one copies every invoice file): this page says "
+                "when it is done.")  # fmt: skip
+    if isinstance(backups.outcome, OSError):
+        raise backups.outcome
+    return ""
+
+
 @router.post("/settings/data/backup")
 def backup_now(request: Request) -> JSONResponse:
-    store = get_store(request)
     try:
-        made = store.backup_now("manual", actor=reviewer())
+        later = backup_in_background(request, "manual")
     except OSError as exc:
         return refuse(f"The backup could not be made: {exc}")
-    return done(request, tab_url("data"), f"Backed up to {made.name}.")
+    made = request.app.state.daily_backup.outcome
+    return done(request, tab_url("data"), later or f"Backed up to {made.name}.")
 
 
 @router.post("/settings/data/backup-copy")
@@ -492,9 +536,12 @@ def save_backup_copy(request: Request, folder: str = Form("")) -> JSONResponse:
         return refuse("That is the local backups folder: choose a folder on OneDrive or a network drive.")
     store.set_setting("backup_copy_dir", folder, actor=reviewer())
     store.log_event("settings_changed", actor=reviewer(), detail={"keys": ["backup_copy_dir"]})
-    if folder:
-        store.backup_now()  # a first copy straight away (backup_now copies it)
     said = "Backups will be copied there too." if folder else "Backups are kept on this computer only."
+    if folder:  # a first copy straight away (backup_now copies it), on the backups' thread: every invoice file
+        try:
+            said += f" {backup_in_background(request, '')}".rstrip()
+        except OSError as exc:
+            said += f" The first backup could not be made: {exc}."
     return done(request, tab_url("data"), said)
 
 
@@ -517,16 +564,17 @@ def restore_backup(request: Request, name: str = Form(""), confirm: str = Form("
         return refuse("That backup is not in the backups folder any more.", status=404)
     had_copy_dir = bool(store.get_setting("backup_copy_dir").strip())
     try:
-        safety = store.restore_from(path, keep_accounts=server_mode(request))  # (D-101)
+        restored = store.restore_state(path, keep_accounts=server_mode(request))  # (D-101)
     except ValueError as exc:  # not an AP Coder backup: nothing was changed
         return refuse(f"Not restored: {exc}.")
-    except OSError as exc:  # the safety copy of the current database could not be made (a full disk): nothing changed
+    except OSError as exc:  # the safety copy of the current state could not be made (a full disk): nothing changed
         return refuse(f"Not restored: {exc}.")
     from ap_coder.web.pages.invoice import forget_all_drafts
 
     forget_all_drafts(request)  # edits made on the replaced invoices would open on the restored ones
     cleared = " The second backup folder was cleared: set it again below." if had_copy_dir else ""
-    said = f"Restored {name}. The previous database was saved as {safety.name}.{cleared}"
+    said = (f"Restored {name}. The files: {restored.files.words()}. The state before was saved as "
+            f"{restored.safety.name}.{cleared}")  # fmt: skip
     if server_mode(request):  # every session ended, this one too: the accounts stayed as they were
         said += " The user accounts are as they were; everyone is logged out: log in again."
         return done(request, f"/login?next={tab_url('data')}", said)
@@ -562,7 +610,7 @@ def about_context(store: Store) -> dict[str, Any]:
 
 @router.post("/settings/about/show")
 def save_shown(request: Request, show_jde: str = Form(""), developer: str = Form("")) -> JSONResponse:
-    """What this pilot shows (D-52): the JD Edwards E1 settings and export, and the developer tools. Logged."""
+    """What is shown (D-52): the JD Edwards E1 settings and export, and the developer tools. Logged."""
     store = get_store(request)
     changed, keys = [], []
     switches = [(SHOW_JDE, show_jde, "JD Edwards settings", jde_shown(store))]

@@ -548,7 +548,8 @@ def _bulk_approve_now(request: Request, ids: list[int]) -> JSONResponse:
     from ap_coder.web.pages.invoice import unsaved_edits
 
     editing = unsaved_edits(request)
-    result = bulk_approve(store, reference, settings, [i for i in ids if i not in editing], reviewer(), login=login())
+    result = bulk_approve(store, reference, settings, [i for i in ids if i not in editing], reviewer(), login=login(),
+                          server=server_mode(request))  # fmt: skip
     result["skipped"] = [(i, "it has edits open on its review screen") for i in ids if i in editing] + result["skipped"]
     waiting = sum(1 for i in result["approved"] if (store.get_invoice(i) or {}).get("status") == PENDING)
     messages = [flash_message(

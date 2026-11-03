@@ -1,8 +1,9 @@
-"""The shadow pilot's score: what AP Coder approved against what AP posted in JD Edwards (D-92).
+"""The pilot's score: what AP Coder approved against what AP posted in JD Edwards (D-92, D-145).
 
-During the shadow pilot the pilot tester runs real supplier invoices through AP Coder while AP keeps entering them in
-JD Edwards as before. ``python -m ap_coder pilot-score --vouchers F0411.xlsx [--distribution F0911.xlsx]`` reads an
-export from E1 and compares, invoice by invoice:
+In the pilot's parallel week AP Coder writes only into E1's test environment while AP keeps posting in production:
+the score compares with production. In the live weeks AP Coder's batches go in pending and AP approves and posts
+them: the score compares with what AP posted after review. ``python -m ap_coder pilot-score --vouchers F0411.xlsx
+[--distribution F0911.xlsx]`` reads an export from E1 and compares, invoice by invoice:
 
 - the voucher header (F0411: supplier AN8, invoice number, invoice date, gross amount, tax, currency, due date);
 - the G/L distribution (F0911, optional: account BU.Obj.Sub, amount, explanation), line by line, for what AP Coder
@@ -591,7 +592,7 @@ def _line_verdict(gl: str, account: Account | None, cc: str, t: dict[str, Any]) 
 
 
 def score(ours: list[Ours], posted: list[Posted], notes: list[str] | None = None) -> dict[str, Any]:
-    """The figures and the differences of a shadow pilot (see the module's docstring)."""
+    """The figures and the differences of a pilot (see the module's docstring)."""
     pairs, ours_only, posted_only = match(ours, posted)
     diffs: list[dict[str, Any]] = []
     header = {name: {"n": 0, "right": 0} for name in HEADER_FIELDS}
@@ -779,7 +780,7 @@ def _pct(a: int, b: int) -> str:
     return "-" if not b else f"{100 * a / b:.1f}% ({a}/{b})"
 
 
-def render_markdown(report: dict[str, Any], *, title: str = "Shadow pilot: AP Coder against JD Edwards") -> str:
+def render_markdown(report: dict[str, Any], *, title: str = "Pilot score: AP Coder against JD Edwards") -> str:
     inv, header, coding = report["invoices"], report["header"], report["coding"]
     lines = [f"# {title}", ""]
     if report.get("made"):
@@ -920,7 +921,7 @@ def run(
     store: Any, vouchers: str | Path, distribution: str | Path | None = None, out: str | Path | None = None, *,
     implied_decimals: bool = False, start: str = "", end: str = "", every_voucher: bool = False,
 ) -> tuple[dict[str, Any], Path]:  # fmt: skip
-    """Score the shadow pilot from the export files; writes the report and returns (report, folder written to).
+    """Score the pilot from the export files; writes the report and returns (report, folder written to).
     ``start``/``end``: invoice dates kept (default: the dates of the invoices approved in AP Coder, so the export may
     hold more; ``every_voucher`` keeps every voucher of the export)."""
     settings = jde.load(store)

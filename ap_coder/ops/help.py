@@ -219,8 +219,20 @@ CHECKS: dict[str, CheckHelp] = {
         FRAUD, "Vendor on hold",
         "AP put this vendor on hold on the Vendors page (the note there says why), or the ERP's vendor master "
         "marks it as blocked or inactive.",
-        "It can't be approved while the vendor is on hold: lift the hold on the Vendors page (a hold set in JD "
-        "Edwards is lifted in JD Edwards, then the vendor list imported or synced again), or reject the invoice.",
+        "It can't be approved while the vendor is on hold: lift the hold on the Vendors page (on the company server "
+        "an Approver or an Admin does that, not a Clerk; a hold set in JD Edwards is lifted in JD Edwards, then the "
+        "vendor list imported or synced again), or reject the invoice. Coding it to another vendor instead needs an "
+        "Approver too (Moved off a vendor on hold).",
+    ),
+    "VENDOR_CHANGED_FROM_HELD": CheckHelp(
+        FRAUD, "Moved off a vendor on hold",
+        "The invoice is a vendor's that is on hold, by the vendor read on it, its GST/HST number or the bank account "
+        "it asks to be paid to (one the held vendor was paid on here, or JD Edwards pays it on), but it is coded to "
+        "another vendor. Moving a held vendor's invoice onto another vendor "
+        "would get around the hold. On the company server only.",
+        "If the invoice really is the other vendor's (it was read wrong), an Approver or an Admin approves it with "
+        "“Approve anyway” and says why: a Clerk can't. Otherwise put the held vendor back, and reject it or "
+        "wait for the hold to be lifted.",
     ),
     "VENDOR_TAX_NUMBER_CHANGED": CheckHelp(
         FRAUD, "GST/HST number changed",
@@ -924,9 +936,10 @@ FAQ: list[tuple[str, str]] = [
         "I made a mistake. Can I undo it?",
         "Approvals record what was learned; you can forget lines from the coding memory on Learning & accuracy. "
         "Export batches can be "
-        "undone on the Exports page. For anything else, Settings → Data & backups restores the database to a "
-        "backup (one is made automatically once a day when AP Coder starts, the newest 14 are kept, and one before "
-        "any restore).",
+        "undone on the Exports page. For anything else, Settings → Data & backups → Restore this state puts AP Coder "
+        "back as it was at a backup: the database and the invoice files, saved emails and attachments (one is made "
+        "automatically once a day when AP Coder starts, the newest 14 are kept, and one before any restore). Files "
+        "that came in since are moved to a set-aside folder in backups, never deleted.",
     ),
     (
         "Who did what?",

@@ -141,23 +141,25 @@
   {% endfor %}
   <form method="post" action="/vendors/save" class="stack controls" data-busy="Saving…">
     <input type="hidden" name="key" value="{{ v.vendor_key }}">
+    {% set locked = (v.status == on_hold or v.erp_hold) and not may_lift_hold %}
     <div class="row">
       <fieldset class="radios"><legend class="muted small">Status</legend>
         {% for key, label in statuses.items() %}
-        <label class="check"><input type="radio" name="status" value="{{ key }}"{% if v.status == key %} checked{% endif %}> {{ label }}</label>
+        <label class="check"><input type="radio" name="status" value="{{ key }}"{% if v.status == key %} checked{% endif %}{% if v.status == on_hold and key != on_hold and not may_lift_hold %} disabled{% endif %}> {{ label }}</label>
         {% endfor %}
+        {% if v.status == on_hold and not may_lift_hold %}<p class="muted small">{{ lift_hold }} An Admin can too.</p>{% endif %}
       </fieldset>
       <label class="field grow">Expected GST/HST number
         <input type="text" name="expected_gst" value="{{ v.expected_gst }}" placeholder="e.g. 123456789RT0001"
-               title="Invoices showing a different number are flagged (a common sign of a fake invoice)."></label>
+               title="Invoices showing a different number are flagged (a common sign of a fake invoice)."{% if locked %} readonly{% endif %}></label>
     </div>
     <div class="row">
       <label class="field grow">QST number
         <input type="text" name="qst_number" value="{{ v.qst_number }}" placeholder="e.g. 1234567890TQ0001"
-               title="Québec suppliers: invoices showing a different QST number are flagged."></label>
+               title="Québec suppliers: invoices showing a different QST number are flagged."{% if locked %} readonly{% endif %}></label>
       <label class="field grow">PST number
         <input type="text" name="pst_number" value="{{ v.pst_number }}" placeholder="e.g. PST-1234-5678"
-               title="BC PST, Manitoba RST or Saskatchewan PST: invoices showing a different number are flagged."></label>
+               title="BC PST, Manitoba RST or Saskatchewan PST: invoices showing a different number are flagged."{% if locked %} readonly{% endif %}></label>
       <label class="field">Province
         <select name="province" title="Where the vendor is (its address). The tax charged depends on where goods are delivered to you, not on this.">
           <option value=""{% if not v.province %} selected{% endif %}>—</option>
@@ -165,6 +167,7 @@
         </select></label>
     </div>
     <p class="muted small">On hold: every new invoice from this vendor gets an error and needs an override to approve.</p>
+    {% if locked %}<p class="muted small">{{ held_numbers }} An Admin can too.</p>{% endif %}
     <label class="field full">Notes
       <textarea name="notes" rows="3" placeholder="e.g. bank details changed 2026-09, verified by phone">{{ v.notes }}</textarea></label>
     <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save vendor</button>

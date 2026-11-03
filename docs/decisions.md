@@ -113,7 +113,7 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
 - **D-89** · Confidence is two numbers
 - **D-90** · Meals and entertainment
 - **D-91** · Payment terms → JD Edwards payment terms code (VLPTC)
-- **D-92** · The shadow-pilot kit
+- **D-92** · The shadow-pilot kit (as the plan, replaced by D-145; `pilot-score` kept)
 - **D-93** · JD Edwards
 - **D-94** · First-time setup is the one exception to "nothing goes online"
 - **D-95** · Touchless never approves what bulk approval would refuse
@@ -122,7 +122,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
 - **D-98** · Roles in server mode
 - **D-100** · The company server runs AP Coder as a Windows scheduled task, and updates with a way back
 - **D-99** · The company server's network side and pages (with D-97's switch)
-- **D-101** · Server security review (changes D-97, D-99 and D-100 where they say otherwise)
+- **D-101** · Server security review (changes D-97, D-99 and D-100 where they say otherwise); its "a Clerk may
+  release a vendor's hold": replaced by D-142
 - **D-102** · What each role sees on the company server, and how the server speaks (with D-97 to D-99)
 - **D-103** · The finance hub feed (Microsoft Fabric)
 - **D-104** · JD Edwards through its AIS Server (the API connection), and the offline rule's named internal systems
@@ -295,3 +296,74 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   B-1544): the hold is lifted first, or the invoice rejected. As errors, the changed tax numbers take an error's
   share off the Reading. (`coding/vendors.py`, `web/invoice_view.py` `HARD_CODES`;
   `tests/web/test_web_review_voucher.py`)
+- **D-142** · On the company server only an **Approver or an Admin takes a vendor off hold** (On hold to Active on
+  the Vendors page); a Clerk is refused ("Only an Approver can take a vendor off hold.", the Active choice disabled
+  for them, with that sentence). Replaces D-101's "a Clerk may release a vendor's hold"; D-101's other point left for
+  later (a Clerk may reopen another person's approval) stands. Why: since D-141 a vendor on hold is never approved
+  anyway, and a Clerk who could lift the hold could then approve its invoices under the limit alone (B-1548; the
+  user's call). A Clerk still puts a vendor on hold and edits its notes and tax numbers, so the route stays a Clerk's
+  and only the lift is checked. A Manager (D-138) never reaches the Vendors page. On a laptop (no accounts) nothing
+  changes. The lift is in the audit trail as before (`vendor_updated`, "made active", with who). The other ways a
+  hold ends are an Admin's (the vendor master import, the JD Edwards sync's `erp_hold`, removing the demo) or keep it
+  (vendors merged, a vendor added on the review screen). The same rule on the review screen (B-1549): a held
+  vendor's invoice coded to another vendor (an existing one, or one added there under a name a letter off) is
+  `VENDOR_CHANGED_FROM_HELD`, an error an Approver or an Admin approves anyway with a reason; a Clerk's approval is
+  refused. The invoice is the held vendor's by its vendor as read, or by a GST/HST number or bank account (read, or
+  on screen) that is the held vendor's (given it, or on its approved invoices), so a near-identical new vendor
+  doesn't dodge it. Server only: the laptop is unchanged. A Clerk is not offered "Approve anyway" for it: the
+  approve bar says "Only an Approver can approve it." and why. Bulk approval on the server leaves such an invoice
+  for a person and says why (B-1551: one read under another vendor's name, asking to be paid to a held vendor's
+  bank account, was bulk-approved), whoever runs it: it gives no reason. The audit trail's approval says who and
+  from which vendor (its `changes`: vendor before and after, and the reason). While a vendor is on hold (here or in
+  JD Edwards), what the hold is matched by is an Approver's to change too (B-1554): a Clerk can't change its GST/HST,
+  QST or PST number on the Vendors page (shown read-only) nor replace them with *Add new vendor…* under its name;
+  its name and its bank accounts (on its approved invoices, and JD Edwards' `erp_bank`, B-1555) no Clerk edits.
+  The notes and the province stay a Clerk's. (`web/access.py` `may_lift_hold`,
+  `web/pages/vendors.py`, `web/templates/vendors.html`, `coding/vendors.py` `moved_off_hold`, `coding/bulk.py`,
+  `web/invoice_view.py` `_findings` and `analyse`, `web/pages/invoice.py` `_approve`;
+  `tests/web/test_web_masterdata.py`, `tests/web/test_web_review_voucher.py`, `tests/coding/test_vendors.py`)
+- **D-143** · Every backup is a whole state of AP Coder, not the database only (the pilot tester, 3 November 2026: "the
+  pdf should also be backed up... so we can easily restore previous states"). Beside each `ap_coder-<stamp>.db`, its
+  list of files `ap_coder-<stamp>.files.json` (each file's place, size, time and SHA-256, and the database's own); the
+  files themselves once per content in `backups/files/<2 digits>/<sha256>`. In it: the whole `invoices/` folder
+  (PDFs, pictures, `originals/`, `deleted/`, `statements/`, saved emails and their attachments), `emails/` (managers'
+  replies), `reference/`, the data folder's rate table and JD Edwards mapping, the postings ledger (merged on a
+  restore, never replaced: D-105) and an invoice's file kept elsewhere (back in `invoices/restored/`). Not in it: the
+  `.env` (passwords; a backup must not choose where AP Coder connects, as D-109), `server.json` (this server's
+  install), the JD Edwards installation id (a restore makes a new one), caches, logs, exports and models (made again
+  or bundled). Content-addressed, not a mirror: a daily backup copies only new or changed files (one unchanged since
+  the last list, by size and time, is not read again), a file deleted or changed since stays for every kept backup
+  that lists it, and pruning drops a file only when no kept list names it and it is a day old (a backup may be being
+  made). The second backup folder has the same layout (the list goes last), so it restores alone on a new computer.
+  A restore makes the listed places as they were: each file copied with its SHA-256 checked (missing or damaged ones
+  taken from the second folder, else said), what is there and was not then moved to `backups/set-aside-<stamp>/`,
+  never deleted; the accounts and sessions rules stay (D-101). Settings → Data & backups shows each backup's contents,
+  its second copy and a quick check (sizes); `python -m ap_coder backup now|list|check|restore [--from <folder>]`
+  for IT (`check` reads every file). A backup of an older version (no list) restores its database only, and says so.
+  Only a complete backup (with its list) is the day's, and one without never pushes a complete one out; one backup,
+  restore or update put-back at a time, by an OS lock in `backups/` shared by the server's processes (B-1557 to
+  B-1559).
+  (`core/store/backup_files.py`, `core/store/backups.py`, `ops/backup_cmd.py`, `ops/server_update.py` `put_back`;
+  `tests/core/test_backups.py`, `tests/ops/test_backup_cmd.py`, `tests/ops/test_server_update.py`)
+- **D-144** · **Touchless processing stays off** until the company's AI team has done a model-risk review of it
+  (invoices written to steer the AI reviewer included): an invoice approved without a person, on a model's say,
+  waits for that review (the user's call). PILOT_PLAN.md's week-3 "Touchless, if ready" item is removed; the plan
+  itself is to be rewritten once the pilot's design is settled. Nothing in the code changes: touchless is off by
+  default (Settings → Automation). (`docs/PILOT_PLAN.md`)
+- **D-145** · **Connect first, then a live pilot** (the user's decision; the plan was a shadow pilot, D-92, on a laptop:
+  its `pilot-score` is kept). **Stage 0** connects AP Coder to the company: the code into the company's repository; the
+  pilot computer in server mode (a laptop with an NVIDIA card for the pilot's handful of people, or a desktop; Windows
+  11 Pro, SERVER.md section 1); the AP inbox through a Power Automate flow (MAILBOX_SETUP.md; AP Coder never holds
+  mailbox credentials); single sign-on planned with IT (Entra ID or the company's AD) and built, Entra's sign-in through
+  Microsoft's cloud being an exception to the offline rule to record as one; JD Edwards read and write through the 7
+  orchestrations of JDE_ORCHESTRATIONS.md, tested in E1's test environment (PY); job costing built; the company's IT
+  security review (OWASP ASVS Level 2), and a penetration test if IT requires one, conditions for production write
+  access only. **The pilot**: the pilot tester and 3 to 4 clerks; one rule says which invoices AP Coder owns; a parallel
+  week writing only to PY, scored with `pilot-score` against production; then live, AP Coder creating *pending* voucher
+  batches that AP approves and posts in E1 (Manager Approval of Input), so E1's batch approval keeps a person's final
+  check; rollback steps written before going live; vouchers reconciled before the first payment run; the 5-part gate of
+  PILOT_PLAN.md, word for word, scored on live weeks 2 to 4; touchless off (D-144). Excel/CSV stays for anyone without
+  JD Edwards. Why: the user's call ("integrate the AP inbox, single sign in, and have read and write set up with JDE/E1,
+  and then the actual pilot once all integrations are ready... with a small AP team"). Docs only: nothing in the code
+  changes. (`docs/PILOT_PLAN.md`, `docs/HANDOFF.md` sections 6, 8, 10, `docs/KNOWN_LIMITS.md`, `README.md`,
+  `docs/PILOT.md`)
