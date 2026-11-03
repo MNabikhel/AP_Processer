@@ -4,7 +4,7 @@ This guide sets AP Coder up on one Windows Server for the whole AP team. It runs
 Windows service), staff open it in their browser over HTTPS and log in with their own account, and nothing is installed on their PCs. Everything stays
 offline: AP Coder and LM Studio run on the server and connect to nothing on the internet.
 
-The laptop pilot is not changed by any of this: a laptop still runs AP Coder for one person at 127.0.0.1, with no
+Laptop mode is not changed by any of this: a laptop still runs AP Coder for one person at 127.0.0.1, with no
 logins. The server mode is switched on by `AP_SERVER_MODE=1` (step 2).
 
 In this guide:

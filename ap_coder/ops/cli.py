@@ -254,7 +254,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--since", default=None, help="Only invoices approved on or after this date (YYYY-MM-DD)")
 
     p = sub.add_parser(
-        "pilot-score", help="Shadow pilot: compare what AP Coder approved with what AP posted in JD Edwards"
+        "pilot-score", help="The pilot's score: compare what AP Coder approved with what AP posted in JD Edwards"
     )
     p.add_argument("--vouchers", required=True, help="The F0411 voucher export from JD Edwards (CSV or Excel)")
     p.add_argument("--distribution", default=None, help="The F0911 G/L distribution export (optional: the coding)")

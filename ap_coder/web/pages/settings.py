@@ -76,7 +76,7 @@ def tab_url(tab: str) -> str:
 
 
 def shown_tabs(store: Store) -> list[tuple[str, str]]:
-    """The tab bar: every tab but JD Edwards E1 while it is hidden (the pilot exports to Excel and CSV only)."""
+    """The tab bar: every tab but JD Edwards E1 while it is hidden (on a laptop: Excel and CSV exports only)."""
     return [(key, label) for key, label in TABS if key != "jde" or jde_shown(store)]
 
 
@@ -562,7 +562,7 @@ def about_context(store: Store) -> dict[str, Any]:
 
 @router.post("/settings/about/show")
 def save_shown(request: Request, show_jde: str = Form(""), developer: str = Form("")) -> JSONResponse:
-    """What this pilot shows (D-52): the JD Edwards E1 settings and export, and the developer tools. Logged."""
+    """What is shown (D-52): the JD Edwards E1 settings and export, and the developer tools. Logged."""
     store = get_store(request)
     changed, keys = [], []
     switches = [(SHOW_JDE, show_jde, "JD Edwards settings", jde_shown(store))]

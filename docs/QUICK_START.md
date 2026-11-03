@@ -1,6 +1,6 @@
 # AP Coder: Quick start
 
-For the pilot tester on the laptop, and AP staff on the company server (to print: **Help** → **Quick start** →
+For AP Coder on a laptop, and AP staff on the company server (where the pilot runs) (to print: **Help** → **Quick start** →
 **Print**). In bold: pages and buttons.
 
 ## Install (once, about 10 minutes, on the laptop)

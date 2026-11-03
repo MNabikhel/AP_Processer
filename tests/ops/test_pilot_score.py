@@ -1,4 +1,4 @@
-"""The shadow pilot's score (D-92): AP Coder's approvals against a JD Edwards export of what AP posted.
+"""The pilot's score (D-92, D-145): AP Coder's approvals against a JD Edwards export of what AP posted.
 
 End to end on made-up invoices: the benchmark's generator makes three suppliers' invoices, the app's pipeline reads
 them (no AI model) into a temporary store, AP approves the true values, and a fake "posted in JD Edwards" export
@@ -254,7 +254,7 @@ def test_insights_shows_the_last_score(pilot, tmp_path):
     card = pilot_card(store)
     assert ("Invoices matched in JD Edwards", "8 of 9") in card["rows"]
     page = client_for(store).get("/insights").text
-    assert "Shadow pilot: AP Coder against JD Edwards" in page and "8 of 9" in page
+    assert "Pilot score: AP Coder against JD Edwards" in page and "8 of 9" in page
 
 
 def test_the_jde_test_import_checklist_is_its_own_section_and_its_command_runs():

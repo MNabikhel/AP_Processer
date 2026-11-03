@@ -209,7 +209,7 @@ Open **GL accounts & tax**:
 5. **Fixed rules:** lines that must always go to one account (a vendor, words in the line, or both),
    whatever the AI says. Vendors your team always coded the same way are suggested.
 
-Optional, any time later; for the shadow pilot with JD Edwards, do the vendor master, the JD Edwards settings and
+Optional, any time later; for the pilot with JD Edwards ([PILOT_PLAN.md](PILOT_PLAN.md)), do the vendor master, the JD Edwards settings and
 the past coding before the first invoices, in that order (the welcome page's *Next step* leads you through them):
 AP Coder learns your coding from what you posted before, so the first invoices from each vendor are coded already.
 
@@ -344,7 +344,7 @@ Run these in `scripts\terminal.bat` as `python -m ap_coder <command>`.
 | `process <files/folders>` | batch processing without the dashboard; results also appear in the review queue. Files already processed are skipped (`--force` to redo), so it is safe to run again after Ctrl+C |
 | `labels` / `evaluate` | spreadsheet-based labelling and scoring (an alternative to reviewing in the dashboard) |
 | `read-pages [--minutes 240]` | have OvisOCR2 read the invoices waiting for it, then stop (Task Scheduler overnight); `--test` runs its self-test again |
-| `pilot-score --vouchers <F0411 export>` | shadow pilot: compare what AP Coder approved with what AP posted in JD Edwards |
+| `pilot-score --vouchers <F0411 export>` | the pilot's score: what AP Coder approved against what AP posted in JD Edwards (the parallel week, then the live weeks) |
 | `jde test` / `jde sync` / `jde status` | the JD Edwards API connection, when IT has set it up ([JDE_E1.md](JDE_E1.md)) |
 | `hub export` / `hub status` | the finance hub feed, when IT has switched it on ([FINANCE_HUB.md](FINANCE_HUB.md)) |
 | `service`, `server-update`, `users` | the company server only (server mode): see [SERVER.md](SERVER.md) |

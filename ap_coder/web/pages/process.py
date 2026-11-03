@@ -308,7 +308,7 @@ HISTORY_WHY = "AP Coder learns your coding from what you posted before"
 
 def pilot_steps(store: Store) -> list[tuple[str, str, str]]:
     """The vendor master, the JD Edwards settings (when JD Edwards is the export) and the ERP's past coding, in the
-    order the shadow pilot needs them after the GL accounts (D-92): each supplier's address number (AN8) comes from
+    order the pilot needs them after the GL accounts (D-92): each supplier's address number (AN8) comes from
     the vendor master, the settings map the accounts, and the past coding warm-starts the coding of the first
     invoices."""
     from ap_coder.erp import jde
@@ -449,7 +449,7 @@ def next_step(steps: list[tuple[str, str, str]]) -> dict[str, Any] | None:
                 "href": STEP_LINKS[TAX_STEP],
                 "text": "GST, HST and QST each need a GL account (PST is added to each expense line, so it needs "
                         "none), so approved invoices can be posted. Then Save tax setup."}  # fmt: skip
-    if JDE_STEP in state:  # the shadow pilot with JD Edwards: the vendor master, its settings, the past coding (D-92)
+    if JDE_STEP in state:  # the pilot with JD Edwards: the vendor master, its settings, the past coding (D-92)
         if state[VENDOR_STEP][0] != "ok":
             return {"title": "Import your vendor master", "icon": "storefront", "href": STEP_LINKS[VENDOR_STEP],
                     "button": "Import the vendor master",

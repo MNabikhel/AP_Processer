@@ -400,7 +400,7 @@ The only outside connections are the ones someone chooses:
 - **`AP_ALLOW_INTERNET=1`**, the one opt-in, for developers and the bundle builder only. With it set in the
   terminal that runs APProcessor.bat, the installer also checks GitHub for updates, and the app may use a model
   server or Azure on the internet. `scripts/build_offline_bundle.py` sets it for itself, on IT's computer. Never
-  set it on a pilot laptop.
+  set it on a computer that runs AP Coder.
 - **The Azure check**, its own opt-in switch in Settings → Reading (off by default, no `AP_ALLOW_INTERNET`
   needed): once it is switched on with your organisation's Azure endpoint and key, the invoices AP Coder isn't
   sure of, and a small share of the others (capped per day), are sent to that one Azure resource for a second

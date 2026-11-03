@@ -182,7 +182,7 @@ def insights_page(request: Request) -> HTMLResponse:
 
 
 def pilot_card(store: Any) -> dict[str, Any] | None:
-    """The last shadow-pilot score (``python -m ap_coder pilot-score``, D-92) as shares, or None before the first."""
+    """The last pilot score (``python -m ap_coder pilot-score``, D-92) as shares, or None before the first."""
     from ap_coder.ops.pilot_score import last_figures
 
     f = last_figures(store)

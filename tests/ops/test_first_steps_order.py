@@ -1,4 +1,4 @@
-"""Getting started leads the pilot tester in the order the shadow pilot needs (D-92): GL accounts, the vendor
+"""Getting started leads the pilot tester in the order the pilot needs (D-92): GL accounts, the vendor
 master (with each supplier's JD Edwards address number), the JD Edwards settings, the ERP's past coding (to
 warm-start the coding), then the first invoices."""
 
