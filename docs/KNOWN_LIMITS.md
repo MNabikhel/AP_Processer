@@ -15,8 +15,8 @@ that turns them into decisions: [PILOT_PLAN.md](PILOT_PLAN.md).
    account mapping, tax areas) come from the JDE team through the worksheet ([JDE_E1.md](JDE_E1.md)).
 5. **No direct mailbox connection.** Invoices come in by upload, or as saved emails (.eml, .msg) and files that a
    company tool drops in the invoices folder ([MAILBOX_SETUP.md](MAILBOX_SETUP.md)).
-6. **Accuracy measured on samples, not on a company's invoices.** Every invoice waits for a person (touchless
-   processing is off) until each vendor has a track record.
+6. **Accuracy measured on samples, not on a company's invoices.** Every invoice waits for a person: touchless
+   processing is off until the company's AI team has done its model-risk review (D-144).
 7. **Coding is a GL account (and cost center) per line.** A line can be split across several accounts, by
    percentage or amount; job cost coding (job, cost code, cost type) is not built.
 8. **Scans and photos** are read by local OCR and OvisOCR2; handwriting and very poor scans need a person.
