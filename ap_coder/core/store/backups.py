@@ -334,6 +334,7 @@ class BackupsMixin:
             else:
                 conn.execute("DELETE FROM sessions")  # no one stays logged in by a session the backup knew
             carry_postings(conn, self.path, postings)
+            backup_files.repoint_invoices(conn, self.path.parent)  # restored onto a data folder at another path
             restored_dir = conn.execute("SELECT value FROM settings WHERE key = 'backup_copy_dir'").fetchone()
             conn.execute(
                 "DELETE FROM settings WHERE key IN ('backup_copy_dir', 'backup_copy_status', ?)", (BACKUP_STATUS,)

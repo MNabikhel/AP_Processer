@@ -6,7 +6,8 @@
   (the manager's own cost centers marked), AP's note. The manager it was sent to answers there: **Confirm**, or **Send
   back** with what to change (``POST /manager/<id>/answer``). AP downloads the ready-made email
   (``GET /manager/<id>/email.eml``) and records an answer given by email, the reply kept in the data folder
-  (``POST /manager/<id>/record``), or withdraws the request (``POST /manager/<id>/withdraw``).
+  (``POST /manager/<id>/record``; kept relative to the data folder, so it opens wherever the data folder is restored:
+  ``GET /manager/<id>/reply``, B-1552), or withdraws the request (``POST /manager/<id>/withdraw``).
 
 Either answer puts the invoice back in the review queue; AP approves it as before. Every handler checks the request
 is the asker's own (a Manager) or that the asker is AP: a Manager never opens another manager's request or any other
@@ -21,9 +22,10 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response
 
 from ap_coder.coding.manager_mail import request_email
+from ap_coder.core.store.backup_files import in_data_folder
 from ap_coder.core.store.managers import CONFIRMED, EMAIL, SCREEN, SENT_BACK, WAITING
 from ap_coder.core.store.users import MANAGER
 from ap_coder.web import document, identity
@@ -152,13 +154,13 @@ async def record(request: Request, request_id: int, decision: str = Form(""), by
         stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(reply.filename).stem)[:60] or "reply"
         target = folder / f"AP-{request_id}-{dt.datetime.now():%Y%m%d-%H%M%S}-{stem}{suffix}"
         target.write_bytes(data)
-        kept = str(target)
+        kept = target.relative_to(get_store(request).path.parent).as_posix()  # (B-1552)
     try:
         store.answer_manager_request(request_id, decision, by=by or req["manager_name"], actor=reviewer(),
                                      note=note, answered_at=when, reply_file=kept, via=EMAIL)  # fmt: skip
     except ValueError as exc:
         if kept:
-            Path(kept).unlink(missing_ok=True)
+            target.unlink(missing_ok=True)
         return refuse(str(exc))
     said = "confirmed the coding" if decision == CONFIRMED else "sent it back"
     return done(request, f"/review/{req['invoice_id']}",
@@ -182,6 +184,17 @@ def withdraw(request: Request, request_id: int) -> Any:
         f"/review/{req['invoice_id']}",
         flash_message("Request withdrawn: the invoice is back in the review queue.", "ok", icon="undo"),
     )
+
+
+@router.get("/manager/{request_id:int}/reply")
+def reply_file(request: Request, request_id: int) -> FileResponse:
+    """The manager's reply AP kept with the answer, found in the data folder as it is now (B-1552)."""
+    _ap_only()
+    req = _request(request, request_id)
+    path = in_data_folder(req.get("reply_file") or "", get_store(request).path.parent)
+    if path is None:
+        raise HTTPException(status_code=404, detail="The reply kept with this answer is not in the data folder.")
+    return FileResponse(path, filename=path.name)
 
 
 @router.get("/manager/{request_id:int}/email.eml")

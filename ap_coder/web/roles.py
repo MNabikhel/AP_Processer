@@ -108,6 +108,7 @@ RULES: dict[tuple[str, str], str] = {
         # Sending an invoice to its manager, the request email, an answer given by email, withdrawing (D-138).
         "POST /review/{invoice_id:int}/manager", "GET /manager/{request_id:int}/email.eml",
         "POST /manager/{request_id:int}/record", "POST /manager/{request_id:int}/withdraw",
+        "GET /manager/{request_id:int}/reply",  # the reply kept with an answer given by email (B-1552)
         "POST /review/{invoice_id:int}/correct",
         # The queue: bulk approval, reopen, back from parked.
         "POST /review/bulk-approve", "POST /review/{invoice_id}/reopen", "POST /review/{invoice_id}/unpark",

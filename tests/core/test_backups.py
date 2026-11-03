@@ -4,6 +4,7 @@ import os
 import shutil
 import sqlite3
 import time
+from pathlib import Path
 
 import pytest
 
@@ -238,6 +239,19 @@ def test_restoring_from_the_second_folder_alone_onto_an_empty_data_folder(tmp_pa
     (inv,) = new.list_invoices()
     found = new.invoice_file(new.get_invoice(inv["id"]))
     assert found == (tmp_path / "new" / "invoices" / "a.pdf").resolve()  # found in its new place
+
+
+def test_a_restore_onto_a_data_folder_elsewhere_points_every_invoice_at_its_file_there(tmp_path, ground_truth):
+    """Read straight from the rows (Learning's files missing, teaching again from approvals), every invoice's file was
+    at the old computer's path after a restore onto a new one, until each was opened (B-1552)."""
+    store, data = _data_folder(tmp_path, ground_truth)
+    backup = store.backup_now("manual")
+    new = Store(tmp_path / "new" / "ap_coder.db")
+    new.restore_state(backup)
+    shutil.rmtree(data)
+    with new._conn() as conn:
+        (source,) = conn.execute("SELECT source_path FROM invoices").fetchone()
+    assert Path(source) == (tmp_path / "new" / "invoices" / "a.pdf").resolve()
 
 
 def test_pruning_keeps_every_file_a_kept_backup_needs_and_drops_the_rest(tmp_path, ground_truth, monkeypatch):

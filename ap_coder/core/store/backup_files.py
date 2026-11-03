@@ -72,6 +72,56 @@ def _held(rel: str) -> bool:
     return (parts[0] in AREAS and len(parts) > 1) or rel in SETTINGS_FILES or rel == LEDGER_FILE
 
 
+def in_data_folder(stored: str, data: Path) -> Path | None:
+    """The file a stored path names, in the data folder ``data`` as it is now (B-1552): kept relative to it
+    (``emails/manager/x.eml``), or whole as an older AP Coder kept it (``D:\\APCoderData\\emails\\manager\\x.eml``,
+    maybe on another computer: found at the same place under one of ``AREAS`` here). None when it is not there, or the
+    path leads out of those places."""
+    stored = str(stored or "").strip()
+    windows = "\\" in stored or bool(PureWindowsPath(stored).drive)
+    pure = PureWindowsPath(stored) if windows else PurePosixPath(stored)
+    if not stored:
+        return None
+    if not (pure.is_absolute() or pure.drive):
+        rel = "/".join(pure.parts)
+        return data / rel if _held(rel) and (data / rel).is_file() else None
+    whole = Path(stored)
+    if whole.is_file() and any(_inside(whole, data / area) for area in AREAS):
+        return whole
+    parts = pure.parts
+    for i, part in enumerate(parts):
+        rel = "/".join(parts[i:])
+        if part in AREAS and _held(rel) and (data / rel).is_file():
+            return data / rel
+    return None
+
+
+def repoint_invoices(conn: sqlite3.Connection, data: Path) -> int:
+    """After a restore onto a data folder at another path (a new computer): each invoice whose file was kept in the
+    old one points at the same file here, the same SHA-256 (B-1552), so what reads the rows (not ``invoice_file``)
+    finds it too. How many were changed."""
+    changed = 0
+    for row in conn.execute("SELECT id, source_path, file_sha256, meta FROM invoices").fetchall():
+        stored = str(row[1] or "")
+        found = in_data_folder(stored, data) if stored and row[2] else None
+        try:
+            if found is None or found == Path(stored) or _sha_size(found)[0] != row[2]:
+                continue
+        except OSError:  # (held by another program: found when the invoice is opened, ``invoice_file``)
+            continue
+        try:
+            meta = json.loads(row[3]) if row[3] else None
+        except ValueError:
+            meta = None
+        if isinstance(meta, dict) and meta.get("source") == stored:
+            meta["source"] = str(found.resolve())
+        conn.execute("UPDATE invoices SET source_path = ?, meta = ? WHERE id = ?",
+                     (str(found.resolve()), json.dumps(meta, default=str) if isinstance(meta, dict) else row[3],
+                      row[0]))  # fmt: skip
+        changed += 1
+    return changed
+
+
 def _entries(found: dict[str, Any]) -> list[dict[str, Any]]:
     """The list's files that can be restored (a sound path and SHA-256)."""
     out = []

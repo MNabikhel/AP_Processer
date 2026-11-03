@@ -62,7 +62,7 @@
   </div>
 
   {% if req.status != "waiting" %}
-  <p>{% if req.status == "confirmed" %}{{ ui.pill("Confirmed", "ok") }} {{ req.answered_by }} confirmed it {{ req.answered_at | time_ago }}{% elif req.status == "sent_back" %}{{ ui.pill("Sent back", "warn") }} {{ req.answered_by }} sent it back {{ req.answered_at | time_ago }}: {{ req.answer_note }}{% else %}{{ ui.pill("Withdrawn", "info") }} AP brought it back before an answer.{% endif %}</p>
+  <p>{% if req.status == "confirmed" %}{{ ui.pill("Confirmed", "ok") }} {{ req.answered_by }} confirmed it {{ req.answered_at | time_ago }}{% elif req.status == "sent_back" %}{{ ui.pill("Sent back", "warn") }} {{ req.answered_by }} sent it back {{ req.answered_at | time_ago }}: {{ req.answer_note }}{% else %}{{ ui.pill("Withdrawn", "info") }} AP brought it back before an answer.{% endif %}{% if req.reply_file and not manager_view %} <a class="link" href="/manager/{{ req.id }}/reply"><span class="ms" aria-hidden="true">mail</span>Open the reply kept</a>{% endif %}</p>
   {% elif answerable %}
   <form method="post" action="/manager/{{ req.id }}/answer" class="stack" data-busy="Saving…">
     <p>Is this how the invoice should be coded to your cost centers?</p>
