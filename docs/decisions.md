@@ -336,6 +336,9 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   never deleted; the accounts and sessions rules stay (D-101). Settings → Data & backups shows each backup's contents,
   its second copy and a quick check (sizes); `python -m ap_coder backup now|list|check|restore [--from <folder>]`
   for IT (`check` reads every file). A backup of an older version (no list) restores its database only, and says so.
+  Only a complete backup (with its list) is the day's, and one without never pushes a complete one out; one backup,
+  restore or update put-back at a time, by an OS lock in `backups/` shared by the server's processes (B-1557 to
+  B-1559).
   (`core/store/backup_files.py`, `core/store/backups.py`, `ops/backup_cmd.py`, `ops/server_update.py` `put_back`;
   `tests/core/test_backups.py`, `tests/ops/test_backup_cmd.py`, `tests/ops/test_server_update.py`)
 - **D-144** · **Touchless processing stays off** until the company's AI team has done a model-risk review of it

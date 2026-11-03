@@ -400,12 +400,19 @@ window, started at boot like AP Coder.
   then `service start`. It refuses while AP Coder runs on the data folder, and asks first (`--yes` doesn't).
   `backup now` makes a backup. Copying a `.db` over `D:\APCoderData\ap_coder.db` by hand brings back neither the
   files nor the accounts as they are now: use the command.
-- **A new server** (the old one lost): install AP Coder (step 2) and the service, then restore from the share alone:
+- **A new server** (the old one lost): install AP Coder (step 2) and the service, then restore from the share alone,
+  **before making the first Admin (step 7)**:
   `.venv\Scripts\python.exe -m ap_coder backup list --from \\fileserver\Backups\APCoder`, then
   `backup restore <name> --from \\fileserver\Backups\APCoder`. The database and every file come back into the new
-  data folder; the backup's accounts come with it (there are none yet to keep). Set again what a backup does not
-  hold: the `.env`, the allowed folders, and the second backup folder (a restore clears it, so a backup never
-  chooses where later ones go).
+  data folder, and the backup's accounts with it, because the new server has none yet to keep. Once an account
+  exists, a restore keeps the accounts as they are (above): restored after step 7, only that new Admin could log
+  in, and the backup's other people would have to be added again. Set again what a backup does not hold: the
+  `.env`, the allowed folders, and the second backup folder (a restore clears it, so a backup never chooses where
+  later ones go).
+- **One at a time**: a backup, a restore and an update's put-back never run at once, on the server across its web
+  workers and its background process too (a lock beside the backups). A restore asked for while the day's backup is
+  being made says so and changes nothing: try again once the page no longer says a backup is being made. A file
+  uploaded while a restore runs is left in place, never moved aside.
 - **The finance hub feed** (off until an Admin turns it on, *Settings* → *Finance hub*): its share needs the same
   *Modify* for the service's account. Its schedule runs while staff use the dashboard; for a night run, add a
   scheduled task running `python -m ap_coder hub export` as the service's account (docs/FINANCE_HUB.md).

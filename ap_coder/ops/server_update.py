@@ -176,25 +176,27 @@ def put_back(backup: Path, db: Path) -> FilesRestored:
     and the paused logins as they are now, and ending every session: a backup must not bring back an account turned
     off, a password changed since, or a session (D-101). A backup older than the accounts gets their tables, so the
     server is never left with no account. Then the files of the data folder as the backup lists them (D-143; what is
-    there now and was not then is moved aside): what was done with them is returned."""
-    from ..core.store.backup_files import restore_files
+    there now and was not then is moved aside): what was done with them is returned. Never while a backup or a
+    restore runs (``backup_files.exclusive``: raises ``backup_files.Busy`` with nothing changed, B-1559)."""
+    from ..core.store import backup_files
     from ..core.store.users import carry_accounts, saved_accounts
 
-    saved: dict = {}
-    if db.exists():
-        conn = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True, timeout=30)
+    with backup_files.exclusive(db.parent):
+        saved: dict = {}
+        if db.exists():
+            conn = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True, timeout=30)
+            try:
+                saved = saved_accounts(conn)
+            finally:
+                conn.close()
+        copy_database(backup, db)
+        conn = sqlite3.connect(db, timeout=30)
         try:
-            saved = saved_accounts(conn)
+            with conn:
+                carry_accounts(conn, saved)
         finally:
             conn.close()
-    copy_database(backup, db)
-    conn = sqlite3.connect(db, timeout=30)
-    try:
-        with conn:
-            carry_accounts(conn, saved)
-    finally:
-        conn.close()
-    return restore_files(backup, db.parent)
+        return backup_files.restore_files(backup, db.parent)
 
 
 def private_copy(bundle: Path, folder: Path) -> Path:
@@ -207,18 +209,20 @@ def private_copy(bundle: Path, folder: Path) -> Path:
 
 def safety_copy(db: Path, label: str) -> Path:
     """A backup of the database and the data folder's files as they are now (D-143), made without AP Coder's own
-    code opening the database (it may be a newer version's)."""
-    from ..core.store.backup_files import snapshot
+    code opening the database (it may be a newer version's). Never while another backup or a restore runs (B-1559).
+    """
+    from ..core.store import backup_files
 
-    stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-    dest = db.parent / "backups" / f"ap_coder-{stamp}-{label}.db"
-    copy_database(db, dest)
-    conn = sqlite3.connect(dest)
-    try:
-        conn.execute("PRAGMA journal_mode=DELETE")  # one self-contained file
-    finally:
-        conn.close()
-    snapshot(dest, db.parent)
+    with backup_files.exclusive(db.parent):
+        stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+        dest = db.parent / "backups" / f"ap_coder-{stamp}-{label}.db"
+        copy_database(db, dest)
+        conn = sqlite3.connect(dest)
+        try:
+            conn.execute("PRAGMA journal_mode=DELETE")  # one self-contained file
+        finally:
+            conn.close()
+        backup_files.snapshot(dest, db.parent)
     return dest
 
 
@@ -468,9 +472,13 @@ def _update(bundle: Path, data: Path, db: Path, *, server: Server | None, dry_ru
         if started:
             server.stop()
         if backup is not None:
-            files = put_back(backup, db)
-            say(f"The database is back as it was before the update ({backup.name}); the user accounts are kept as "
-                f"they are, and everyone logs in again. The files: {files.words()}.")  # fmt: skip
+            try:  # whatever stops it, the old version is started again below: never a server left stopped (B-1565)
+                files = put_back(backup, db)
+                say(f"The database is back as it was before the update ({backup.name}); the user accounts are kept "
+                    f"as they are, and everyone logs in again. The files: {files.words()}.")  # fmt: skip
+            except Exception as exc:  # noqa: BLE001 - see above
+                say(f"The backup made before the update ({backup.name}) could not all be put back ({exc}): once the "
+                    f"old version runs, restore it from Settings → Data & backups.")  # fmt: skip
         switch_to(data, current)
         _record(data, {"from": old_version, "to": new_version, "result": f"rolled back: {reason}",
                        "backup": str(backup or ""), "bundle_hash": checked})  # fmt: skip
@@ -627,9 +635,9 @@ def go_back(data: Path, db: Path, *, server: Server | None = None, dry_run: bool
             went_back()
         elif kept is not None:
             copy_database(kept, db)  # the database as it was, whatever put_back had done of it
-            from ..core.store.backup_files import restore_files
+            from ..core.store import backup_files
 
-            restore_files(kept, db.parent)  # and the files
+            backup_files.restore_files(kept, db.parent)  # and the files
     running = previous if restored else current
     if installed:
         server.start()

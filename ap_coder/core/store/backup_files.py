@@ -27,19 +27,21 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
+import errno
 import hashlib
 import json
 import os
 import re
 import sqlite3
+import threading
 import time
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
-from ..paths import PROJECT_DIR
+from ..paths import PROJECT_DIR, try_lock
 from .postings import LEDGER_FILE
 
 FORMAT = 1
@@ -51,6 +53,65 @@ RESTORED = "invoices/restored"  # where an invoice file kept outside the data fo
 STILL_WRITING = (".part", ".partial", ".tmp", ".crdownload", ".download", ".restoring")
 GRACE = 86400.0  # a kept file no backup lists is dropped only after a day: a backup may be being made meanwhile
 _SHA = re.compile(r"[0-9a-f]{64}")
+_case = os.path.normcase  # how this computer compares names: Windows one file whatever its case (B-1563)
+
+
+# --- One at a time (B-1559) -------------------------------------------------------------------------------------------
+
+BUSY = "a backup is being made or restored just now: try again once it is done"
+_HOLDING = threading.local()  # how deep the thread holding the lock is in it
+_THIS_PROCESS = threading.Lock()
+
+
+class Busy(OSError):
+    """Another backup, a restore or an update's put-back is under way (``exclusive``)."""
+
+
+def lock_path(data: Path) -> Path:
+    return data / "backups" / ".lock"
+
+
+@contextlib.contextmanager
+def exclusive(data: Path) -> Iterator[None]:
+    """One backup, restore or update's put-back at a time on the data folder ``data``: in this process and in any
+    other (the server's web workers and its background process), by the operating system's own lock
+    (``paths.try_lock``: released when a process ends, crashed or not). The thread holding it enters again freely (a
+    restore's own safety backup). Raises ``Busy`` at once when another holds it: a daily backup waits for its next
+    check, a person is told to try again."""
+    if getattr(_HOLDING, "depth", 0):
+        _HOLDING.depth += 1
+        try:
+            yield
+        finally:
+            _HOLDING.depth -= 1
+        return
+    if not _THIS_PROCESS.acquire(blocking=False):
+        raise Busy(BUSY)
+    try:
+        handle = try_lock(lock_path(data))
+        if handle is None:
+            raise Busy(BUSY)
+        _HOLDING.depth = 1
+        try:
+            yield
+        finally:
+            _HOLDING.depth = 0
+            handle.close()
+    finally:
+        _THIS_PROCESS.release()
+
+
+def drop_old(dailies: list[Path], keep: int) -> None:
+    """Retention of the daily backups ``dailies`` (one folder's, any order): the newest ``keep``, and the newest
+    ``keep`` complete ones (with their list of files), so a backup cut short or of an older AP Coder (the database
+    alone) never pushes out a complete one (B-1558). The others go, with their lists."""
+    newest = sorted(dailies, key=lambda p: p.name, reverse=True)
+    complete = [p for p in newest if list_path(p).is_file()]
+    kept = set(newest[:keep]) | set(complete[:keep])
+    for old in newest:
+        if old not in kept:
+            old.unlink(missing_ok=True)
+            list_path(old).unlink(missing_ok=True)
 
 
 def list_path(backup: Path) -> Path:
@@ -120,6 +181,17 @@ def repoint_invoices(conn: sqlite3.Connection, data: Path) -> int:
                       row[0]))  # fmt: skip
         changed += 1
     return changed
+
+
+def _skipped(found: dict[str, Any]) -> list[str]:
+    """The places of the files a backup could not read when it was made (``{"path", "why"}``; a list of the first
+    version wrote ``"<path>: <why>"``)."""
+    out = []
+    for s in found.get("skipped") or []:
+        rel = s.get("path") if isinstance(s, dict) else str(s).partition(": ")[0]
+        if isinstance(rel, str) and _held(rel):
+            out.append(rel)
+    return out
 
 
 def _entries(found: dict[str, Any]) -> list[dict[str, Any]]:
@@ -247,11 +319,12 @@ def _inside(path: Path, folder: Path) -> bool:
 
 def _elsewhere(sources: Iterable[str], data: Path) -> list[Path]:
     """The invoices' files outside the folders a backup holds (a watched folder elsewhere, data an update kept aside
-    in ``backups/from-...``), there now; never the samples that come with AP Coder."""
+    in ``backups/from-...``, also inside the install folder: B-1562), there now; never the samples that come with
+    AP Coder."""
     out = []
     for stored in sources:
         path = Path(stored)
-        if any(_inside(path, data / area) for area in AREAS) or _inside(path, PROJECT_DIR):
+        if any(_inside(path, data / area) for area in AREAS) or _inside(path, PROJECT_DIR / "samples"):
             continue
         if path.is_file():
             out.append(path)
@@ -286,7 +359,7 @@ def snapshot(backup: Path, data: Path) -> dict[str, Any]:
                     return {"path": rel, "sha256": old["sha256"], "size": st.st_size, "mtime_ns": st.st_mtime_ns}
         why = _readable(source)
         if why:
-            skipped.append(f"{rel}: {why}")
+            skipped.append({"path": rel, "why": why})
             return None
         sha, size = _keep(source, folder)
         return {"path": rel, "sha256": sha, "size": size, "mtime_ns": st.st_mtime_ns}
@@ -310,6 +383,23 @@ def snapshot(backup: Path, data: Path) -> dict[str, Any]:
              "invoices": invoices, "files": entries, "skipped": skipped}  # fmt: skip
     _write_json(list_path(backup), found)
     return found
+
+
+def before_update(store: Any, found: int) -> str:
+    """The backup a ``Store`` makes before it brings a database of schema ``found`` up to date
+    (``backups/ap_coder-<date>-before-update-from-schema-<n>.db``): the database copy, which is what undoes the update,
+    then the files. Files that can't be saved (a nearly full disk) never stop AP Coder opening (B-1561): what to say
+    then is returned, as ``backup_status`` has it ("" when all is saved)."""
+    stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    made = store.backup_to(store.backup_dir() / f"ap_coder-{stamp}-before-update-from-schema-{found}.db")
+    try:
+        snapshot(made, store.path.parent)
+    except OSError as exc:
+        return (
+            f"failed {dt.datetime.now().isoformat(timespec='minutes')}: the database was backed up before the "
+            f"update ({made.name}), but not the invoice files ({exc}): free some space, then press Back up now"
+        )
+    return ""
 
 
 def _mtime(path: Path) -> float:
@@ -360,7 +450,8 @@ def check(backup: Path, deep: bool = False, seen: dict[str, int | None] | None =
     entries = _entries(found)
     held = Held(listed=True, invoices=found.get("invoices") if isinstance(found.get("invoices"), int) else None,
                 files=len(entries), size=sum(e["size"] for e in entries),
-                skipped=[str(s) for s in found.get("skipped") or []],
+                skipped=[f"{s['path']}: {s['why']}" if isinstance(s, dict) else str(s)
+                         for s in found.get("skipped") or []],
                 copy=found.get("copy") if isinstance(found.get("copy"), dict) else None)  # fmt: skip
     seen = {} if seen is None else seen
     for e in entries:
@@ -412,7 +503,7 @@ def holds_words(backup: Path, held: Held) -> str:
 def state_words(held: Held) -> str:
     """Whether everything a backup lists is there: ``complete``, ``1 file missing``..."""
     if not held.listed:
-        return "database only (made before AP Coder backed up the invoice files)"
+        return "database only (no list of its files: made by an older AP Coder, or cut short while it was made)"
     if held.database_damaged:
         return "the database copy is damaged"
     bad = [f"{files(len(held.missing))} missing" if held.missing else "",
@@ -531,8 +622,8 @@ class FilesRestored:
         if self.error:
             return f"they could not all be put back ({self.error}): fix that, then restore this backup again"
         if self.database_only:
-            return ("the backup holds the database only (made before AP Coder backed up the invoice files): the files "
-                    "were left as they are")  # fmt: skip
+            return ("the backup holds the database only (no list of its files: made by an older AP Coder, or cut "
+                    "short): the files were left as they are")  # fmt: skip
         said = f"{files(self.put_back + self.unchanged)} as they were ({self.put_back:,} put back)"
         if self.set_aside:
             said += f"; {files(len(self.set_aside))} added or changed since moved to backups/{self.aside.name}"
@@ -557,9 +648,17 @@ def _same(path: Path, entry: dict[str, Any]) -> bool:
     return st.st_mtime_ns == entry.get("mtime_ns") or _sha_size(path)[0] == entry["sha256"]
 
 
+NO_ROOM = (errno.ENOSPC, getattr(errno, "EDQUOT", errno.ENOSPC))
+
+
+def _writing(exc: OSError, part: Path) -> bool:
+    """``exc`` is about writing ``part`` here (a full disk...), not about reading the backup."""
+    return exc.errno in (*NO_ROOM, errno.EROFS) or str(getattr(exc, "filename", "") or "") == str(part)
+
+
 def _fetch(entry: dict[str, Any], folders: list[Path], part: Path) -> str:
     """The listed content copied to ``part``, from the first of ``folders`` that has it whole: "" when copied, else
-    "missing" or "damaged"."""
+    "missing" or "damaged". Raises OSError when ``part`` can't be written (a full disk: B-1560)."""
     why = "missing"
     for folder in folders:
         kept = object_path(folder, entry["sha256"])
@@ -569,8 +668,10 @@ def _fetch(entry: dict[str, Any], folders: list[Path], part: Path) -> str:
         try:
             if _copy_hashed(kept, part) == (entry["sha256"], entry["size"]):
                 return ""
-        except OSError:
-            pass
+        except OSError as exc:
+            if _writing(exc, part):
+                part.unlink(missing_ok=True)
+                raise
         why = "damaged"
     part.unlink(missing_ok=True)
     return why
@@ -599,14 +700,18 @@ def _merge_ledger(entry: dict[str, Any], folders: list[Path], path: Path) -> str
     return ""
 
 
-def restore_files(backup: Path, data: Path, also: Iterable[Path] = ()) -> FilesRestored:
+def restore_files(backup: Path, data: Path, also: Iterable[Path] = (), since: float | None = None) -> FilesRestored:
     """Put the files of the data folder back as ``backup`` lists them (``also``: other backup folders to take a file
-    from when it is missing or damaged in ``backup``'s own). What is here and was not then is moved aside."""
+    from when it is missing or damaged in ``backup``'s own). What is here and was not then is moved aside, but never a
+    file the backup could not read when it was made (B-1556), nor one written since the restore began (``since``: an
+    upload meanwhile, its row in the restored database: B-1559). A full disk stops it, said in ``error``."""
+    since = time.time() if since is None else since
     found = read_list(backup)
     if found is None:
         return FilesRestored(database_only=True)
     folders = [backup.parent, *also]
     wanted = {e["path"]: e for e in _entries(found)}
+    left = {_case(rel) for rel in [*wanted, *_skipped(found)]}  # (one file on Windows, whatever its case: B-1563)
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     done = FilesRestored(aside=data / "backups" / f"set-aside-{stamp}")
     n = 2
@@ -620,6 +725,20 @@ def restore_files(backup: Path, data: Path, also: Iterable[Path] = ()) -> FilesR
         os.replace(path, dest)
         done.set_aside.append(rel)
 
+    try:
+        _put_back(wanted, folders, data, done, set_aside)
+    except OSError as exc:  # writing here failed (a full disk): never said as a damaged backup (B-1560)
+        room = exc.errno in NO_ROOM
+        done.error = "there is not enough space on the disk" if room else str(exc)
+        return done
+    for rel in data_files(data):
+        if _case(rel) not in left and rel != LEDGER_FILE and _mtime(data / rel) < since:
+            set_aside(data / rel, rel)
+    return done
+
+
+def _put_back(wanted: dict[str, dict[str, Any]], folders: list[Path], data: Path, done: FilesRestored,
+              set_aside: Any) -> None:  # fmt: skip
     for rel, entry in wanted.items():
         target = data / rel
         if rel == LEDGER_FILE:
@@ -643,7 +762,3 @@ def restore_files(backup: Path, data: Path, also: Iterable[Path] = ()) -> FilesR
             done.put_back += 1
         else:
             done.unchanged += 1
-    for rel in data_files(data):
-        if rel not in wanted and rel != LEDGER_FILE:
-            set_aside(data / rel, rel)
-    return done

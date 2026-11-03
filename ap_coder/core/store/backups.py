@@ -96,16 +96,18 @@ class BackupsMixin:
         """The database and the files of the data folder (``backup_files``, D-143): a state that restores whole.
         A backup that fails raises OSError and is recorded (``backup_status``, shown on Settings → Data & backups).
         ``keep``: the daily backups kept in the second backup folder (``copy_backup``). While it is made,
-        ``backups/.making-<pid>-...`` says so (``backup_in_progress``: the page shows it, B-1553)."""
-        marker = self.backup_dir() / f".making-{os.getpid()}-{uuid.uuid4().hex[:8]}"
-        with contextlib.suppress(OSError):
-            marker.parent.mkdir(parents=True, exist_ok=True)
-            marker.write_text(_now()[:16].replace("T", " "), encoding="utf-8")
-        try:
-            return self._backup_now(label, actor, keep)
-        finally:
+        ``backups/.making-<pid>-...`` says so (``backup_in_progress``: the page shows it, B-1553). Never while another
+        backup or a restore runs (``backup_files.exclusive``: raises ``backup_files.Busy``, B-1559)."""
+        with backup_files.exclusive(self.path.parent):
+            marker = self.backup_dir() / f".making-{os.getpid()}-{uuid.uuid4().hex[:8]}"
             with contextlib.suppress(OSError):
-                marker.unlink()
+                marker.parent.mkdir(parents=True, exist_ok=True)
+                marker.write_text(_now()[:16].replace("T", " "), encoding="utf-8")
+            try:
+                return self._backup_now(label, actor, keep)
+            finally:
+                with contextlib.suppress(OSError):
+                    marker.unlink()
 
     def backup_in_progress(self) -> str:
         """When the backup being made now started ("" when none is), in this process or another (the server's
@@ -141,14 +143,17 @@ class BackupsMixin:
             made = self.backup_to(dest)
             try:
                 backup_files.snapshot(made, self.path.parent)
-            except OSError as exc:
-                raise OSError(f"the database was backed up to {made.name}, but not the invoice files ({exc})") from exc
+            except OSError as exc:  # no backup without its files: not one taken for the day's (B-1557)
+                made.unlink(missing_ok=True)
+                backup_files.list_path(made).unlink(missing_ok=True)
+                raise OSError(f"the invoice files could not be saved ({exc}), so no backup was made") from exc
         except OSError as exc:
             with contextlib.suppress(OSError, sqlite3.Error):
                 self.set_setting(BACKUP_STATUS, f"failed {_now()[:16]}: {exc}")
             raise
-        if self.get_setting(BACKUP_STATUS):
-            self.set_setting(BACKUP_STATUS, "")
+        with contextlib.suppress(OSError, sqlite3.Error):  # (a busy database: the backup is made all the same, B-1564)
+            if self.get_setting(BACKUP_STATUS):
+                self.set_setting(BACKUP_STATUS, "")
         if label == "manual":
             self.log_event("backup_made", actor=actor, detail={"file": made.name})
         if label in ("", "manual") or label.startswith("before-update"):
@@ -176,11 +181,23 @@ class BackupsMixin:
                 raise OSError(f"folder not found: {target}")
             if target.resolve() == made.parent.resolve():
                 raise OSError("that is the local backups folder; choose another one")
-            copied = Path(shutil.copy2(made, target / made.name))
-            backup_files.copy_files(made, target)
-            for old in sorted((p for p in target.glob("ap_coder-*.db") if _daily(p)), reverse=True)[keep:]:
-                old.unlink(missing_ok=True)
-                backup_files.list_path(old).unlink(missing_ok=True)
+            for stale in target.glob("ap_coder-*.db.part"):  # a copy cut short a day ago or more
+                with contextlib.suppress(OSError):
+                    if time.time() - stale.stat().st_mtime > 86400:
+                        stale.unlink()
+            # The database under a temporary name until its files and list are there: a copy cut short (the share
+            # gone meanwhile) leaves no backup there that restores no file (B-1558).
+            copied = target / made.name
+            part = copied.with_name(copied.name + ".part")
+            try:
+                shutil.copy2(made, part)
+                backup_files.copy_files(made, target)
+                os.replace(part, copied)
+            except BaseException:
+                with contextlib.suppress(OSError):
+                    part.unlink()
+                raise
+            backup_files.drop_old([p for p in target.glob("ap_coder-*.db") if _daily(p)], keep)
             backup_files.prune(target)
         except OSError as exc:
             self.set_setting("backup_copy_status", f"failed {_now()[:16]}: {exc}")
@@ -191,8 +208,17 @@ class BackupsMixin:
         return copied
 
     def auto_backup(self, keep: int = 14, min_hours: float = 20) -> Path | None:
-        """Back up at most once a day (call it at start-up) and keep the newest ``keep`` daily copies."""
-        daily = [p for p in self.list_backups() if _daily(p)]
+        """Back up at most once a day (call it at start-up) and keep the newest ``keep`` daily copies
+        (``backup_files.drop_old``). Only a complete backup (with its list of files) is the day's: one cut short is
+        made again at the next check (B-1557). None while another backup or a restore runs (B-1559)."""
+        try:
+            with backup_files.exclusive(self.path.parent):
+                return self._auto_backup(keep, min_hours)
+        except backup_files.Busy:
+            return None
+
+    def _auto_backup(self, keep: int, min_hours: float) -> Path | None:
+        daily = [p for p in self.list_backups() if _daily(p) and backup_files.list_path(p).is_file()]
         now = dt.datetime.now()
         for backup in daily:  # one made in the future (the clock was ahead) is old: it never stops the daily backups
             try:
@@ -204,9 +230,7 @@ class BackupsMixin:
         if not self.path.exists():
             return None
         made = self.backup_now(keep=keep)
-        for old in [p for p in self.list_backups() if _daily(p)][keep:]:
-            old.unlink(missing_ok=True)
-            backup_files.list_path(old).unlink(missing_ok=True)
+        backup_files.drop_old([p for p in self.list_backups() if _daily(p)], keep)
         backup_files.prune(self.backup_dir())  # the files only the backups dropped needed
         return made
 
@@ -306,7 +330,13 @@ class BackupsMixin:
         return self.restore_state(backup, keep_accounts=keep_accounts).safety
 
     def restore_state(self, backup: str | Path, *, keep_accounts: bool = False) -> Restored:
-        """``_restore_from`` with the background workers paused meanwhile (``restoring``)."""
+        """``_restore_from`` with the background workers paused meanwhile (``restoring``), never while a backup or
+        another restore runs (``backup_files.exclusive``: raises ``backup_files.Busy``, with nothing changed, B-1559;
+        so no pruning removes the backup being restored either)."""
+        with backup_files.exclusive(self.path.parent):
+            return self._restore_state(backup, keep_accounts=keep_accounts)
+
+    def _restore_state(self, backup: str | Path, *, keep_accounts: bool) -> Restored:
         key = str(self.path.resolve())
         marker = self.path.with_name(self.path.name + ".restoring")
         with _RESTORING_LOCK:
@@ -331,6 +361,7 @@ class BackupsMixin:
         The second backup folder is cleared after a restore: a backup file must not choose where later
         backups are copied (set it again in Settings)."""
         backup = Path(backup)
+        started = time.time()  # a file written after this (an upload meanwhile) is never moved aside (B-1559)
         with self._local_copy(backup) as copy:  # read from this computer, never written next to the backup
             self._check_backup_file(copy, backup.name)
             copy_dir = self.get_setting("backup_copy_dir").strip()
@@ -350,7 +381,7 @@ class BackupsMixin:
         # A file missing or damaged in the backup's folder is taken from the second one, when it has it.
         also = [Path(copy_dir).expanduser()] if copy_dir and not folder_refusal(copy_dir) else []
         try:  # (before the ledger is merged into the database below: on a new computer it comes from the backup)
-            files = backup_files.restore_files(backup, self.path.parent, also=also)
+            files = backup_files.restore_files(backup, self.path.parent, also=also, since=started)
         except OSError as exc:  # said, never a database restored without the accounts and sessions rules below
             files = backup_files.FilesRestored(error=str(exc))
         _NOT_FOUND.clear()  # a file looked for a moment ago may be back
