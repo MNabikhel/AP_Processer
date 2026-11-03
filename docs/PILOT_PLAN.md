@@ -105,5 +105,5 @@ sample:
 | Discounts taken in time | Insights → AP operations | more than before |
 | Days to approve | Insights → AP operations | shorter than before |
 
-If the pilot goes well, the next stage takes AP Coder to all of AP and two more finance teams, on a company
-server.
+If the pilot goes well, the next stage takes AP Coder to more of AP's districts, on a company server that also hosts
+the Finance AI Hub (finance's local-model and other workflows); the whole company comes after that.

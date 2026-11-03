@@ -17,5 +17,3 @@ v0.3.0-pilot6 a1bbbf19b098d533184d3e300c52e25910ef6cca AP Coder 0.3.0, pilot rel
 v0.3.0-handoff6 a1bbbf19b098d533184d3e300c52e25910ef6cca AP Coder handoff to the company's own AI coding agent: v0.3.0-pilot6 with docs/HANDOFF.md, the same commit (D-128)
 v0.3.0-pilot7 c362eb4c9a531cea7fa426ea423ab1f6832b22d3 AP Coder 0.3.0, pilot release 7: pilot6 plus manager confirmation of the coding, left to expense on a PO, who acts next and the vendor-change controls (D-138 to D-141, B-1544 to B-1547)
 v0.3.0-handoff7 c362eb4c9a531cea7fa426ea423ab1f6832b22d3 AP Coder handoff to the company's own AI coding agent: v0.3.0-pilot7 with docs/HANDOFF.md, the same commit (D-128)
-v0.3.0-pilot8 4e91ece8c14ff9e4d96af2b28a4bb63d16f123d7 AP Coder 0.3.0, pilot release 8: pilot7 plus held-vendor controls, whole-state backups, two-step sign-in with an authenticator app, and stage 0 then a live pilot (D-142 to D-146, B-1548 to B-1577)
-v0.3.0-handoff8 4e91ece8c14ff9e4d96af2b28a4bb63d16f123d7 AP Coder handoff to the company's own AI coding agent: v0.3.0-pilot8 with docs/HANDOFF.md, the same commit (D-128)
