@@ -333,7 +333,7 @@ decimal point, AEXP (amount, in the amount format) and CRCD (currency).
 
 For the pilot's parallel week (D-145) the batches go to a **JDE test environment first** (PY, or a CRP with a
 copy of production's setup), never to production. Production write access comes after the company's security
-review and penetration test; there AP Coder's batches go in pending, and AP approves and posts each one in E1, so
+review (and a penetration test if IT requires one); there AP Coder's batches go in pending, and AP approves and posts each one in E1, so
 E1's batch approval keeps a person's final check. One page for the person at IT who loads them; tick each box and
 send the answers in the last step back to the pilot tester. Where E1 is set up its own way at your company, your
 JDE administrator's word wins over this page.

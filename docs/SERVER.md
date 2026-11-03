@@ -69,11 +69,13 @@ Why these numbers:
   | The graphics card's day | 2 to 3 hours of reading (about 500 pages a working day, every invoice read) | 4 to 6 hours; about half with clean digital PDFs left out (step 6) |
 
   The reading runs in the background: nobody waits on it, but invoices come into the queue later on a busy day.
-- **Windows 11 Pro** also runs the server mode (on a shared desktop, for example): the service is a Task Scheduler
+- **Windows 11 Pro** also runs the server mode (on the pilot's laptop or desktop, for example): the service is a Task Scheduler
   task (step 6), not a Windows service, and Task Scheduler is part of Windows 11 too. CI tests AP Coder on Windows
   Server only (GitHub's Windows machines; the task itself is not registered there, its commands are checked), so run
-  `service install` and `service status` on the desktop before staff use it. Windows 11 Pro allows at most 20
-  devices connected to it at once; whether a desktop may serve the AP team is the company's IT's decision.
+  `service install` and `service status` on that computer before staff use it. Windows 11 Pro allows at most 20
+  devices connected to it at once; whether a laptop or desktop may serve the pilot is the company's IT's decision.
+  A laptop serving others stays docked and plugged in, with sleep off and its battery set to stop charging at about
+  80% (its battery then covers a power cut).
 - **Python**: the offline bundle has packages for Python 3.11 to 3.14. Install Python 3.12 from python.org's offline
   installer (copy it in): *Customize installation* → *Install for all users*, and *Add Python to environment
   variables*.

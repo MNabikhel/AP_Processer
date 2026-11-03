@@ -21,7 +21,7 @@ kept).
   it replaces, and files added since are set aside, never deleted. IT has `python -m ap_coder backup
   now|list|check|restore`, also onto a new computer from the share alone. The day's backup runs in the background.
 - **Touchless stays off** until the company's AI team has reviewed it (D-144).
-- **The pilot plan** (D-145): stage 0 connects AP Coder to the company (its repository, the shared desktop, the AP
+- **The pilot plan** (D-145): stage 0 connects AP Coder to the company (its repository, the pilot computer, the AP
   inbox, single sign-on, JD Edwards read and write in the test environment, job costing, a security review), then a
   live pilot with a small AP team ([PILOT_PLAN.md](PILOT_PLAN.md)).
 

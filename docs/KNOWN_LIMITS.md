@@ -5,8 +5,8 @@ that turns them into decisions: [PILOT_PLAN.md](PILOT_PLAN.md) (stage 0 connects
 pilot).
 
 1. **On a laptop, one person at a time.** The central server version (logins, roles, HTTPS, a Windows service:
-   [SERVER.md](SERVER.md)) is built and tested but not set up anywhere yet: stage 0 sets it up on the pilot's shared
-   desktop. Single sign-on (Entra ID or the company's AD) is not built: it is built in stage 0.
+   [SERVER.md](SERVER.md)) is built and tested but not set up anywhere yet: stage 0 sets it up on the pilot computer
+   (a laptop or desktop). Single sign-on (Entra ID or the company's AD) is not built: it is built in stage 0.
 2. **Speed without a graphics card.** OvisOCR2 reads a page in a few minutes on a laptop processor, in the
    background; the chat model takes 1 to 6 minutes for an invoice whose lines it must code. A line learned from an
    approval needs no model. A graphics card is many times faster.
@@ -28,5 +28,5 @@ pilot).
 9. **Python 3.11 or newer must be installed** on the laptop (IT installs it); the offline bundle brings everything
    else and never downloads anything.
 10. **Not yet reviewed by a company's IT security team.** It runs offline by design: it opens nothing to the
-    network and sends nothing out ([HOW_IT_RUNS.md](HOW_IT_RUNS.md)). The review and a focused penetration test are
-    in stage 0, before AP Coder gets production write access to JD Edwards.
+    network and sends nothing out ([HOW_IT_RUNS.md](HOW_IT_RUNS.md)). The review (and a penetration test if IT requires
+    one) is in stage 0, before AP Coder gets production write access to JD Edwards.

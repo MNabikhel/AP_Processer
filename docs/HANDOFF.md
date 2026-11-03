@@ -73,7 +73,7 @@ wheelhouse> -e ".[ocr,dev]"` (its wheels are Windows ones: a Linux agent or CI r
 Without it, build one on any computer with internet: `AP_ALLOW_INTERNET=1 python scripts/build_offline_bundle.py`
 (Windows, Python 3.11–3.14, plus that computer; `--platform` and `--python` choose others; `--dry-run` lists every
 address it downloads from, for the firewall). The same command makes the offline install zip for a laptop
-(`docs/PILOT.md`) and the bundle for the pilot's desktop in server mode (step 2 of section 8; `docs/SERVER.md`).
+(`docs/PILOT.md`) and the bundle for the pilot computer in server mode (step 2 of section 8; `docs/SERVER.md`).
 
 Then prove the copy works before changing anything (section 3): the default test tier passes,
 `python scripts/pilot_check.py` says 10 of 10 sample invoices read right, `python -m ap_coder serve --port 8501
@@ -363,12 +363,12 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
   (Read-only, Clerk, Approver, Admin, enforced per route in `web/roles.py`), HTTPS with the company's certificate, an
   allowed-hosts list, a Windows scheduled-task service (`python -m ap_coder service install ...`), `server-update
   <bundle.zip> --sha256` with rollback. All in `docs/SERVER.md`, step by step for IT.
-- **IT supplies:** Windows Server 2019–2025 (or, for the pilot, a shared desktop with Windows 11 Pro: `docs/SERVER.md`
+- **IT supplies:** Windows Server 2019–2025 (or, for the pilot, a laptop or desktop with Windows 11 Pro: `docs/SERVER.md`
   section 1), 8–16 cores, 32–64 GB RAM, an NVIDIA GPU with 12 GB+ for LM Studio, 60–200 GB SSD, Python 3.12, a
   service account, a DNS name and a certificate for it, a firewall rule for the port, LM Studio installed headless
   with the models.
-- **Not done:** never installed anywhere (stage 0 sets it up on the pilot's desktop); the company's security review
-  and a focused penetration test are in stage 0, before production write access to JD Edwards; no single sign-on.
+- **Not done:** never installed anywhere (stage 0 sets it up on the pilot computer); the company's security review
+  (and a penetration test if IT requires one) is in stage 0, before production write access to JD Edwards; no single sign-on.
 - **Single sign-on, to build in stage 0** (Entra ID or the company's AD; IT picks, D-145). Where it goes: the
   sign-in page and its session cookie are `web/pages/login.py`; who the person is on each request,
   `web/identity.py` (`Identity`); the accounts, their roles and sessions, `core/store/users.py`; what each role may
@@ -411,7 +411,7 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
 Nothing below is in the repository, and nothing of it may be committed. Collect it inside the company, keep it in
 the data folder or the company's own document store, and import it through the dashboard. The people are named
 nowhere in the code: ask whoever handed this over to you for the pilot tester, the AP lead who decides, the JDE /
-CNC contact, IT's contact for the pilot's desktop and the server, and who owns the company's repository and CI.
+CNC contact, IT's contact for the pilot computer and the server, and who owns the company's repository and CI.
 
 | What | From | Goes to |
 |---|---|---|
@@ -429,7 +429,7 @@ CNC contact, IT's contact for the pilot's desktop and the server, and who owns t
 | AIS address, environment, service user and role; the seven orchestrations | JDE / CNC team | Settings → API connection (6.2) |
 | How emails reach the invoices folder | IT / M365 admin | `docs/MAILBOX_SETUP.md` (6.8) |
 | Finance Hub landing zone or share | Data team | Settings → Finance hub (6.9) |
-| The pilot's desktop (or a server), certificate, service account, DNS name | IT | `docs/SERVER.md` (6.10) |
+| The pilot computer (or a server), certificate, service account, DNS name | IT | `docs/SERVER.md` (6.10) |
 | Coding policy; meals accounts; approval limit | AP lead | GL accounts & tax → Coding policy; Settings → Review |
 | The rule that says which invoices AP Coder owns in the pilot; today's touch time an invoice, timed | AP lead | `docs/PILOT_PLAN.md` |
 | E1's vouchers for the parallel week (F0411, and F0911 for the distribution; the columns are in `docs/JDE_E1.md`) | JDE team | `python -m ap_coder pilot-score` (the pilot's parallel week) |
@@ -449,8 +449,9 @@ check. Don't start the next while the last one's tests are red. Dates move with 
    `pilot_check.py`, get CI running in the company's system (section 3: the runners and hosts it needs). Replace the
    README's CI badge and links, which point at the original GitHub repository. *Done when* the tests are green on
    the company's CI and the dashboard opens.
-2. **The desktop in server mode.** IT buys the shared desktop and gives it a burn-in week, then sets it up in server
-   mode (`docs/SERVER.md`; Windows 11 Pro runs it): the service, the first Admin, the users, LM Studio with the
+2. **The pilot computer in server mode.** For the pilot's handful of people, a laptop with an NVIDIA card (16 GB or
+   more), docked, plugged in, sleep off, in a locked spot (or a desktop). IT gives it a burn-in week, then sets it up
+   in server mode (`docs/SERVER.md`; Windows 11 Pro runs it): the service, the first Admin, the users, LM Studio with the
    models. Import the company's master data there (section 7), the vendors' AN8s included. *Done when* the pilot
    tester and the clerks log in from their browsers and a real invoice is read and coded.
 3. **The AP inbox.** IT builds the Power Automate flow of `docs/MAILBOX_SETUP.md` (AP Coder never holds the
@@ -467,10 +468,10 @@ check. Don't start the next while the last one's tests are red. Dates move with 
    fallback. *Done when* a test batch posts in PY exactly as AP would have keyed it.
 6. **Job costing.** Build job, cost code and cost type on a line (6.4; about 3 to 4 weeks), each step a test first.
    *Done when* job lines are coded, learned and posted to PY.
-7. **The security review and a focused penetration test.** The company's IT security team reviews AP Coder (to
-   OWASP ASVS Level 2) and a firm tests it; book it early, firms need weeks of notice. Both are conditions for
-   production write access only: read access and the work in PY go ahead meanwhile. *Done when* both are signed
-   off, and with them stage 0.
+7. **The security review (and a penetration test if IT requires one).** The company's IT security team reviews AP
+   Coder (to OWASP ASVS Level 2); if it wants a firm to test it too, book it early, firms need weeks of notice. They
+   are conditions for production write access only: read access and the work in PY go ahead meanwhile. *Done when*
+   they are signed off, and with them stage 0.
 
 **The pilot** (`docs/PILOT_PLAN.md`):
 
@@ -525,7 +526,7 @@ production:
   repository, and a report of the dependencies' licences.
 - **Tax's test cases signed off by the company's Tax team**, and the JD Edwards vouchers proven in E1's test
   environment (stage 0) before production write access.
-- **One independent review of the code by a person** before the penetration test (stage 0), and the security review's
+- **One independent review of the code by a person** before production write access (stage 0), and the security review's
   findings fixed like bugs: a failing test first.
 
 ---
@@ -534,11 +535,11 @@ production:
 
 `docs/KNOWN_LIMITS.md` (ten points) and, for JD Edwards, the open questions in `docs/JDE_E1.md` and the "To confirm"
 list in `docs/JDE_ORCHESTRATIONS.md`. In short: the server mode not set up anywhere yet (stage 0 sets it up on the
-pilot's desktop); minutes a page without a graphics card; sample data until the company's is imported; JD Edwards
+pilot computer); minutes a page without a graphics card; sample data until the company's is imported; JD Edwards
 never tried against a real E1 (stage 0 tests read and write in PY); the mailbox flow set up in stage 0, no direct
 mailbox connection by design; single sign-on to build in stage 0; accuracy measured on samples only; job cost
-coding to build in stage 0; Python installed by IT; the security review and a penetration test in stage 0, before
-production write access.
+coding to build in stage 0; Python installed by IT; the security review (and a penetration test if IT requires one) in
+stage 0, before production write access.
 
 ---
 
