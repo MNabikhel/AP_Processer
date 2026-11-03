@@ -343,25 +343,36 @@ def test_guesses_at_one_account_from_many_addresses_pause_it(tmp_path, clock):
     assert store.authenticate("boss", GOOD, "10.9.1.3")["username"] == "boss"
 
 
+def _logged_in(store: Store, username: str, ip: str) -> dict:
+    """Both steps of a login (D-146): a known address is one a login went all the way through from."""
+    from tests.webclient import authenticator_code
+
+    found = store.authenticate(username, GOOD, ip)
+    return store.check_code(found["id"], authenticator_code(store, username), ip)
+
+
 def test_an_account_paused_from_anywhere_still_logs_in_from_its_own_address(tmp_path, clock):
+    from tests.webclient import enrol
+
     store = Store(tmp_path / "ap_coder.db")
-    store.add_user("ann", GOOD, must_change=False)
-    assert store.authenticate("ann", GOOD, "10.8.8.8")  # her desk
+    enrol(store, store.add_user("ann", GOOD, must_change=False))
+    assert _logged_in(store, "ann", "10.8.8.8")  # her desk
     clock.now += 60
     for n in range(12):
         _fail(store, "ann", f"203.0.113.{n}")
-    assert store.authenticate("ann", GOOD, "10.8.8.8")["username"] == "ann"
+    assert _logged_in(store, "ann", "10.8.8.8")["username"] == "ann"
     names = store.paused_usernames()
     assert names == [] or all(p["address"] != "*" for p in names)  # her login ended the account-wide count
 
 
 def test_a_shared_address_paused_by_guesses_keeps_the_people_who_log_in_there(tmp_path, clock):
     from ap_coder.core.store.users import LoginRefused
+    from tests.webclient import enrol
 
     store = Store(tmp_path / "ap_coder.db")
-    store.add_user("ann", GOOD, must_change=False)
+    enrol(store, store.add_user("ann", GOOD, must_change=False))
     store.add_user("cleo", GOOD, must_change=False)
-    assert store.authenticate("ann", GOOD, "10.1.1.1")  # the office's NAT
+    assert _logged_in(store, "ann", "10.1.1.1")  # the office's NAT
     for n in range(30):
         _fail(store, f"spray{n}", "10.1.1.1")
     assert store.authenticate("ann", GOOD, "10.1.1.1")["username"] == "ann"
@@ -692,9 +703,14 @@ def test_another_storage_account_is_refused_for_onelake(url):
 
 
 def test_a_login_lasts_30_idle_minutes_and_12_hours_unless_it_says_otherwise(tmp_path, clock):
+    from tests.webclient import enrol
+
     store = Store(tmp_path / "ap_coder.db")
     uid = store.add_user("ann", GOOD, must_change=False)
+    enrol(store, uid)  # (a session is only such an account's, D-146)
     token = store.start_session(uid)
+    clock.now += 29 * 60
+    assert store.session_user(token)
     clock.now += 31 * 60
     assert store.session_user(token) is None
     service.write_config(tmp_path, session_idle_minutes=60, session_hours=4)
@@ -707,8 +723,8 @@ def test_the_session_cookie_ends_with_the_browser(web):
     from tests.web.test_server_security import log_in
 
     answer = log_in(web["client"](), "clerk1")
-    cookie = answer.headers["set-cookie"].lower()
-    assert "ap_session=" in cookie and "max-age" not in cookie and "expires" not in cookie
+    (cookie,) = [c.lower() for c in answer.headers.get_list("set-cookie") if "ap_session=" in c]
+    assert "max-age" not in cookie and "expires" not in cookie
 
 
 def test_a_temporary_password_expires_after_3_days(tmp_path):

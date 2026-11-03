@@ -19,7 +19,7 @@ from ap_coder.web import roles
 from ap_coder.web.app import create_app
 from ap_coder.web.core import SHOW_JDE
 from tests.conftest import copy_database
-from tests.webclient import PAGE, web_settings
+from tests.webclient import enrol, sign_in, web_settings
 
 GOOD = "correct horse battery"
 FILES = (".csv", ".png", ".pdf", ".xlsx", ".zip", ".txt")
@@ -67,8 +67,9 @@ def _server(store: Store) -> tuple:
         uid = store.add_user(f"the.{role}", GOOD, role=role, display_name=f"The {role.title()}")
         with store._conn() as conn:
             conn.execute("UPDATE users SET must_change = 0 WHERE id = ?", (uid,))
+        enrol(store, uid)  # its authenticator app set up (D-146)
         client = TestClient(app, base_url="https://localhost", client=("10.0.0.5", 50000), follow_redirects=False)
-        answer = client.post("/login", data={"username": f"the.{role}", "password": GOOD}, headers=PAGE)
+        answer = sign_in(client, f"the.{role}", GOOD)
         assert answer.status_code in (200, 303), answer.text
         clients[role] = client
     return app, clients

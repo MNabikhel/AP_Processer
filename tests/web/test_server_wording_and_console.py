@@ -17,7 +17,7 @@ from ap_coder.web import core
 from ap_coder.web.app import create_app
 from ap_coder.web.pages import process
 from tests.conftest import SAMPLES
-from tests.webclient import PAGE, add_clean, web_settings
+from tests.webclient import PAGE, add_clean, enrol, sign_in, web_settings
 
 ROOT = Path(__file__).resolve().parents[2]
 GOOD = "correct horse battery"
@@ -40,7 +40,8 @@ def client_as(store: Store, role: str = "", name: str = "") -> TestClient:
         uid = store.add_user(username, GOOD, role=role, display_name=name or username.title())
         with store._conn() as conn:
             conn.execute("UPDATE users SET must_change = 0 WHERE id = ?", (uid,))
-        answer = client.post("/login", data={"username": username, "password": GOOD}, headers=PAGE)
+        enrol(store, uid)  # its authenticator app set up (D-146)
+        answer = sign_in(client, username, GOOD)
         assert answer.status_code in (200, 303), answer.text
     return client
 

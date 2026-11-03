@@ -1,7 +1,7 @@
 """Users (/admin/users), for an Admin when AP Coder runs as the company's server (D-97): who can log in, with which
-role; add a person (with a temporary password shown once), reset a password, change a role, turn an account off or
-back on. The last active Admin can't be demoted or turned off (``core/store/users.py``). Every change is in the
-Activity log.
+role; add a person (with a temporary password shown once), reset a password or an authenticator app (D-146), change
+a role, turn an account off or back on. The last active Admin can't be demoted or turned off
+(``core/store/users.py``). Every change is in the Activity log.
 
 A temporary password is never put in a message kept for the next page or in the database as it is: it waits in
 this process's memory under a one-off key, for the Admin who made it, and is shown once. With several web workers
@@ -12,8 +12,6 @@ readable.
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
 import secrets
 import threading
@@ -23,6 +21,7 @@ from typing import Any
 from fastapi import Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from ap_coder.core import authenticator
 from ap_coder.core.store.users import ANYWHERE, ROLE_LABELS, ROLES
 from ap_coder.web import identity
 from ap_coder.web.core import done, flash_message, get_store, page_router, refuse, render, reviewer, server_mode
@@ -46,27 +45,13 @@ def _shared(request: Request) -> bool:
     return getattr(request.app.state, "processes", 1) > 1
 
 
-def _stream(secret: bytes, nonce: bytes, size: int) -> bytes:
-    key = hmac.new(secret, b"temporary-password-stream", hashlib.sha256).digest()
-    return b"".join(hmac.new(key, nonce + n.to_bytes(4, "big"), hashlib.sha256).digest() for n in range(size // 32 + 1))
-
-
 def _seal(secret: bytes, data: bytes) -> bytes:
     """``data`` encrypted and authenticated with ``secret`` (HMAC-SHA256 as the stream and the tag)."""
-    nonce = secrets.token_bytes(16)
-    body = bytes(a ^ b for a, b in zip(data, _stream(secret, nonce, len(data)), strict=False))
-    tag = hmac.new(hmac.new(secret, b"temporary-password-tag", hashlib.sha256).digest(), nonce + body,
-                   hashlib.sha256).digest()  # fmt: skip
-    return nonce + tag + body
+    return authenticator.seal(secret, data, b"temporary-password")
 
 
 def _unseal(secret: bytes, sealed: bytes) -> bytes | None:
-    nonce, tag, body = sealed[:16], sealed[16:48], sealed[48:]
-    want = hmac.new(hmac.new(secret, b"temporary-password-tag", hashlib.sha256).digest(), nonce + body,
-                    hashlib.sha256).digest()  # fmt: skip
-    if not hmac.compare_digest(tag, want):
-        return None
-    return bytes(a ^ b for a, b in zip(body, _stream(secret, nonce, len(body)), strict=False))
+    return authenticator.unseal(secret, sealed, b"temporary-password")
 
 
 def _keep(request: Request, username: str, password: str) -> str:
@@ -160,6 +145,18 @@ def reset(request: Request, user_id: int) -> JSONResponse:
     key = _keep(request, found["username"], password)
     said = f"Password of {found['username']} reset: they are logged out everywhere."
     return done(request, f"{PATH}?shown={key}", flash_message(said, "ok"))
+
+
+@router.post(PATH + "/{user_id:int}/reset-authenticator")
+def reset_authenticator(request: Request, user_id: int) -> JSONResponse:
+    """A person's authenticator app forgotten (a phone lost or replaced, D-146): they set it up again at their next
+    login. If the phone was lost or stolen, reset their password too."""
+    _server_only(request)
+    found = _user(request, user_id)
+    get_store(request).reset_authenticator(user_id, actor=reviewer())
+    said = (f"Authenticator of {found['username']} reset: they are logged out everywhere and set it up again at their "
+            "next login.")  # fmt: skip
+    return done(request, PATH, flash_message(said, "ok"))
 
 
 @router.post(PATH + "/addresses/unlock")

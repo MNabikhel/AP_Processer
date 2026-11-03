@@ -272,8 +272,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     from ..core.store.users import ROLES
 
-    p = sub.add_parser("users", help="Server mode: the people who log in (add, list, reset, deactivate, activate, "
-                       "role)")  # fmt: skip
+    p = sub.add_parser("users", help="Server mode: the people who log in (add, list, reset, reset-2fa, deactivate, "
+                       "activate, role)")  # fmt: skip
     users = p.add_subparsers(dest="users_command", required=True)
     u = users.add_parser("add", help="Add a person (the password is asked for, twice)")
     u.add_argument("username")
@@ -282,6 +282,9 @@ def build_parser() -> argparse.ArgumentParser:
     u.add_argument("--name", default="", help="The name on their approvals (default: the username)")
     users.add_parser("list", help="Everyone who can log in, with their role")
     u = users.add_parser("reset", help="A new temporary password (asked for, twice); they choose their own at login")
+    u.add_argument("username")
+    u = users.add_parser("reset-2fa", help="Forget a person's authenticator app (a phone lost or replaced; the last "
+                         "Admin's too): they set it up again at their next login")  # fmt: skip
     u.add_argument("username")
     u = users.add_parser("deactivate", help="Turn an account off: it can no longer log in")
     u.add_argument("username")
@@ -969,7 +972,8 @@ def cmd_users(args: argparse.Namespace) -> int:
             print("No accounts yet. Add the first Admin: python -m ap_coder users add <username> --role admin")
         for u in found:
             state = "turned off" if not u["active"] else ("temporary password" if u["must_change"] else "active")
-            print(f"{u['username']:<24} {ROLE_LABELS[u['role']]:<10} {u['display_name']:<30} {state}")
+            codes = "codes set up" if u["totp_on"] else "codes not set up"  # the authenticator app (D-146)
+            print(f"{u['username']:<24} {ROLE_LABELS[u['role']]:<10} {u['display_name']:<30} {state}, {codes}")
         return 0
     username = fold_username(args.username)
     if action == "add":
@@ -987,7 +991,8 @@ def cmd_users(args: argparse.Namespace) -> int:
         except ValueError as exc:
             print(exc, file=sys.stderr)
             return 1
-        print(f"Added {username} ({ROLE_LABELS[role]}). They choose their own password at their first login.")
+        print(f"Added {username} ({ROLE_LABELS[role]}). They choose their own password at their first login, then "
+              "set up an authenticator app for a code at every login.")  # fmt: skip
         return 0
     user = store.find_user(username)
     if user is None:
@@ -1000,6 +1005,10 @@ def cmd_users(args: argparse.Namespace) -> int:
                 return 1
             store.reset_password(user["id"], actor=actor, password=password)
             print(f"Password of {username} reset: they are logged out everywhere and choose their own at login.")
+        elif action == "reset-2fa":
+            store.reset_authenticator(user["id"], actor=actor)
+            print(f"Authenticator of {username} reset: they are logged out everywhere and set up their authenticator "
+                  "app again at their next login.")  # fmt: skip
         elif action == "deactivate":
             store.deactivate_user(user["id"], actor=actor)
             print(f"{username} can no longer log in.")

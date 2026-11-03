@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from ap_coder.coding.line_tax import tax_code_of
 from ap_coder.core.config import Settings
 from ap_coder.core.store import Store
+from ap_coder.web import identity
 from ap_coder.web.app import create_app
 
 from .conftest import SAMPLE_STEM, SAMPLES
@@ -33,6 +34,45 @@ def client_for(store: Store, settings: Settings | None = None) -> TestClient:
 
 def post(client: TestClient, url: str, data: dict[str, Any] | None = None, **kwargs: Any) -> Any:
     return client.post(url, data=data or {}, headers=PAGE, **kwargs)
+
+
+def enrol(store: Store, user_id: int) -> str:
+    """Account ``user_id`` with its authenticator app set up already (server mode's second step, D-146): its secret,
+    to work out its codes (``authenticator_code``)."""
+    secret = store.authenticator_secret(user_id)
+    with store._conn() as conn:
+        conn.execute("UPDATE users SET totp_on = 1 WHERE id = ?", (user_id,))
+    return secret
+
+
+def authenticator_code(store: Store, username: str) -> str:
+    """The code ``username``'s authenticator app shows now (the store's clock). The step it last used is forgotten
+    first, so a test may log the same person in twice within 30 seconds; the refusal of a code used already is
+    tested on its own (tests/core/test_users.py)."""
+    from ap_coder.core import authenticator
+    from ap_coder.core.store import users
+
+    name = users.fold_username(username)
+    with store._conn() as conn:
+        (sealed,) = conn.execute("SELECT totp_secret FROM users WHERE username = ?", (name,)).fetchone()
+        conn.execute("UPDATE users SET totp_step = 0 WHERE username = ?", (name,))
+    secret = authenticator.open_secret(authenticator.load_key(store.path.parent), sealed)
+    return authenticator.code(secret, users._clock())
+
+
+def sign_in(client: TestClient, username: str, password: str, next: str = "/review", **data: Any) -> Any:  # noqa: A002
+    """A login in server mode: the password, then (when it was right) the authenticator's code (D-146). The answer
+    of the last step taken."""
+    answer = client.post("/login", data={"username": username, "password": password, "next": next, **data},
+                         headers=PAGE)  # fmt: skip
+    if answer.status_code != 200 or not str(answer.json().get("redirect", "")).startswith("/login/code"):
+        return answer
+    code = authenticator_code(client.app.state.store, username)
+    # The login half way's cookie sent as it was given: over plain HTTP the client keeps a Secure one but doesn't send
+    # it back (an explicit Cookie header is left as it is).
+    names = (identity.PENDING_COOKIE, identity.HTTP_PENDING_COOKIE)
+    pending = "; ".join(f"{name}={client.cookies.get(name)}" for name in names if client.cookies.get(name))
+    return client.post("/login/code", data={"code": code, "next": next}, headers={**PAGE, "Cookie": pending})
 
 
 def follow(client: TestClient, response: Any) -> str:

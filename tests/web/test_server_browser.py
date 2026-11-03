@@ -3,13 +3,16 @@ log out."""
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
+from ap_coder.core import authenticator
 from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.web.app import create_app
 from tests.browser import browser_on
 from tests.conftest import SAMPLE_STEM
-from tests.webclient import add_clean, known_vendors, web_settings
+from tests.webclient import add_clean, authenticator_code, enrol, known_vendors, web_settings
 
 GOOD = "correct horse battery"
 QC = "laurentides_QC_TPS_TVQ_SIL-4471"
@@ -28,6 +31,7 @@ def store(tmp_path):
         uid = store.add_user(username, GOOD, role=role, display_name=username.title())
         with store._conn() as conn:
             conn.execute("UPDATE users SET must_change = 0 WHERE id = ?", (uid,))
+        enrol(store, uid)  # their authenticator app set up (D-146)
     return store
 
 
@@ -37,7 +41,7 @@ def browser(chromium, store):
         yield opened
 
 
-def _log_in(browser, username: str, password: str = GOOD, path: str = "/review", lands: str = ""):
+def _log_in(browser, store: Store, username: str, password: str = GOOD, path: str = "/review", lands: str = ""):
     chromium, base = browser
     page = chromium.new_page(viewport=LAPTOP)
     errors: list[str] = []
@@ -46,6 +50,9 @@ def _log_in(browser, username: str, password: str = GOOD, path: str = "/review",
     assert "/login" in page.url  # nothing shows before logging in
     page.fill("input[name=username]", username)
     page.fill("input[name=password]", password)
+    page.click("button:has-text('Log in')")
+    page.wait_for_url("**/login/code*")  # the second step (D-146)
+    page.fill("input[name=code]", authenticator_code(store, username))
     page.click("button:has-text('Log in')")
     page.wait_for_url(f"**{lands or path}*")
     return page, errors
@@ -58,7 +65,7 @@ def _menu(page) -> set[str]:
 @pytest.mark.parametrize("username", list(ROLES))
 def test_in_a_browser_each_role_logs_in_sees_what_it_may_and_logs_out(browser, store, username):
     role = ROLES[username]
-    page, errors = _log_in(browser, username)
+    page, errors = _log_in(browser, store, username)
     _, base = browser
     foot = page.locator(".rail-foot").inner_text()
     assert username.title() in foot and {"readonly": "Read-only"}.get(role, role.title()) in foot
@@ -93,23 +100,39 @@ def test_in_a_browser_each_role_logs_in_sees_what_it_may_and_logs_out(browser, s
     assert errors == []
 
 
-def test_in_a_browser_a_temporary_password_is_changed_first(browser, store):
-    store.add_user("newbie", GOOD, role="clerk", display_name="New Bie")  # must choose their own
-    page, errors = _log_in(browser, "newbie", lands="/account/password")
+def test_in_a_browser_the_first_sign_in_sets_a_password_then_the_authenticator_app(browser, store):
+    """A new clerk (D-146): the temporary password the Admin gave, their own password, the QR code to scan (the
+    code here worked out from the secret shown beside it, as a phone would), then the review queue."""
+    chromium, base = browser
+    store.add_user("newbie", "abcd-efgh-jkmn-pqrs", role="clerk", display_name="New Bie")
+    page = chromium.new_page(viewport=LAPTOP)
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(base + "/review")
+    page.fill("input[name=username]", "newbie")
+    page.fill("input[name=password]", "abcd-efgh-jkmn-pqrs")
+    page.click("button:has-text('Log in')")
+    page.wait_for_url("**/login/new-password*")
     assert "Choose your own password" in page.content()
-    page.fill("input[name=current]", GOOD)
+    page.fill("input[name=current]", "abcd-efgh-jkmn-pqrs")
     page.fill("input[name=new]", "my very own password")
     page.fill("input[name=again]", "my very own password")
     page.click("button:has-text('Save the new password')")
+    page.wait_for_url("**/login/authenticator*")
+    assert page.locator("svg.apc-qr").is_visible()
+    assert "Microsoft Authenticator" in page.content()
+    secret = page.locator("[data-secret]").get_attribute("data-secret").replace(" ", "")
+    page.fill("input[name=code]", authenticator.code(secret, time.time()))
+    page.click("button:has-text('Confirm')")
     page.wait_for_url("**/review*")
-    assert "Password changed" in page.content()
+    assert "New Bie" in page.locator(".rail-foot").inner_text()
     assert errors == []
 
 
 def test_in_a_browser_read_only_opens_an_invoice_without_a_refusal(browser, store):
     """B-1100: opening an invoice posted its check, which Read-only is refused (a 403 toast); B-1101: its fields
     could be typed in. Read-only sees the stored checks, posts nothing and changes nothing."""
-    page, errors = _log_in(browser, "reader")
+    page, errors = _log_in(browser, store, "reader")
     _, base = browser
     posts: list[str] = []
     page.on("request", lambda r: posts.append(r.url) if r.method == "POST" else None)

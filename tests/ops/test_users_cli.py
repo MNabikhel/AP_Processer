@@ -63,3 +63,23 @@ def test_list_reset_role_and_deactivate(db, monkeypatch, capsys):
     assert "at least one active Admin" in capsys.readouterr().err
     assert store.user(boss)["role"] == "admin"
     assert cli.main(["--db", db, "users", "deactivate", "nobody"]) == 1
+
+
+def test_reset_2fa_at_the_console_lets_a_last_admin_who_lost_their_phone_set_it_up_again(db, capsys):
+    """The last Admin, their phone lost: no one can reset it on the Users page, so the server's console does (D-146)."""
+    from tests.webclient import enrol
+
+    store = Store(db)
+    boss = store.add_user("boss", GOOD, role="admin")
+    enrol(store, boss)
+    token = store.start_session(boss)
+    assert cli.main(["--db", db, "users", "list"]) == 0
+    assert "codes set up" in capsys.readouterr().out
+    assert cli.main(["--db", db, "users", "reset-2fa", "BOSS"]) == 0
+    out = capsys.readouterr().out
+    assert "set up their authenticator app again" in out and "logged out" in out
+    assert not store.user(boss)["totp_on"] and store.session_user(token) is None
+    assert store.events(actions=["authenticator_reset"])[0]["actor"] == "the server console"
+    assert cli.main(["--db", db, "users", "list"]) == 0
+    assert "codes not set up" in capsys.readouterr().out
+    assert cli.main(["--db", db, "users", "reset-2fa", "nobody"]) == 1

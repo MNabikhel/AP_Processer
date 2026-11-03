@@ -700,6 +700,11 @@ details.tech summary {cursor: pointer; font-size: 13px; color: var(--lg-muted); 
 .apc-login {max-width: 400px; margin: 10vh auto 0; padding: 0 16px; display: flex; flex-direction: column; gap: 16px;}
 .apc-login .stack {align-items: stretch;}
 .apc-login .apc-title {margin: 0;}
+/* Setting up an authenticator app (D-146): the QR code black on white whatever the theme, so a phone reads it. */
+.apc-login .apc-steps {padding-left: 20px; display: flex; flex-direction: column; gap: 10px;}
+.apc-login .apc-qr-box {display: flex; justify-content: center; margin: 8px 0;}
+.apc-login .apc-qr {background: #fff; border-radius: 6px; max-width: 100%; height: auto;}
+.apc-login code[data-secret] {display: block; margin: 6px 0; word-spacing: 4px; user-select: all;}
 .apc-me-links {display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 6px; font-size: 12px;}
 .apc-me-links a {color: var(--lg-muted);}
 .apc-me-links a:hover {color: var(--lg-text);}

@@ -19,7 +19,7 @@ from ap_coder.web import access, core, files, identity
 from ap_coder.web.app import create_app
 from ap_coder.web.pages import learning, process
 from tests.conftest import SAMPLES, chromium_path
-from tests.webclient import PAGE, add_clean, post
+from tests.webclient import PAGE, add_clean, enrol, post, sign_in
 
 STEM = "harbourview_NS_HST_HPS-2026-0347"
 OTHER = "northwind_ON_HST_NW-2026-0912"
@@ -49,7 +49,8 @@ def client_as(store, role: str = "", *, base_url: str = "https://localhost") -> 
         uid = store.add_user(username, GOOD, role=role, display_name=username.title())
         with store._conn() as conn:
             conn.execute("UPDATE users SET must_change = 0 WHERE id = ?", (uid,))
-        answer = client.post("/login", data={"username": username, "password": GOOD, "next": "/review"}, headers=PAGE)
+        enrol(store, uid)  # its authenticator app set up (D-146)
+        answer = sign_in(client, username, GOOD)
         assert answer.status_code in (200, 303), answer.text
     return client
 

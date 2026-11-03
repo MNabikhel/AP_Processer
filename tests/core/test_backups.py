@@ -662,3 +662,67 @@ def test_a_file_from_before_the_restore_is_moved_aside_even_when_its_time_is_ahe
     os.utime(later, ns=(ahead, ahead))
     done = store.restore_state(backup)
     assert not later.exists() and "invoices/b.pdf" in done.files.set_aside
+
+
+# --- Authenticator codes across a restore (D-146) -------------------------------------------------------------------
+
+
+def _codes_at(monkeypatch, when: float = 1_800_000_000.0):
+    """The store's clock fixed at ``when`` (the codes of an authenticator app follow it); the clock returned."""
+    from ap_coder.core.store import users
+
+    clock = [when]
+    monkeypatch.setattr(users, "_clock", lambda: clock[0])
+    return clock
+
+
+def test_authenticator_codes_still_work_after_a_restore_here_and_on_a_new_computer(tmp_path, ground_truth,
+                                                                                   monkeypatch):  # fmt: skip
+    """The key that seals the secrets is in the whole-state backup and comes back where there is none (a new
+    computer); here it stays as it is, and the accounts too (D-101)."""
+    from ap_coder.core import authenticator
+
+    clock = _codes_at(monkeypatch)
+    share = tmp_path / "share"
+    share.mkdir()
+    store, data = _data_folder(tmp_path, ground_truth)
+    boss = store.add_user("boss", "correct horse battery", role="admin")
+    secret = store.authenticator_secret(boss)
+    store.check_code(boss, authenticator.code(secret, clock[0]), "10.0.0.5")
+    key = (data / authenticator.KEY_FILE).read_bytes()
+    store.set_setting("backup_copy_dir", str(share))
+    backup = store.backup_now()
+    clock[0] += 60
+    done = store.restore_state(backup, keep_accounts=True)
+    assert authenticator.KEY_FILE not in done.files.set_aside
+    assert (data / authenticator.KEY_FILE).read_bytes() == key
+    assert store.check_code(boss, authenticator.code(secret, clock[0]), "10.0.0.5")["username"] == "boss"
+    shutil.rmtree(data)  # the computer is lost: a new one with the second backup folder only
+    new = Store(tmp_path / "new" / "ap_coder.db")
+    new.restore_state(share / backup.name, keep_accounts=True)
+    assert (tmp_path / "new" / authenticator.KEY_FILE).read_bytes() == key
+    clock[0] += 60
+    assert new.check_code(boss, authenticator.code(secret, clock[0]), "10.0.0.5")["username"] == "boss"
+
+
+def test_a_restore_never_replaces_or_sets_aside_the_key_of_the_accounts_here(tmp_path, ground_truth, monkeypatch):
+    """A backup made before anyone set up an authenticator app, or on another computer, does not hold this server's
+    key: the accounts a restore keeps here are sealed with it."""
+    from ap_coder.core import authenticator
+
+    clock = _codes_at(monkeypatch)
+    store, data = _data_folder(tmp_path, ground_truth)
+    older = store.backup_now("before-codes")  # no key yet
+    boss = store.add_user("boss", "correct horse battery", role="admin")
+    secret = store.authenticator_secret(boss)
+    store.check_code(boss, authenticator.code(secret, clock[0]), "10.0.0.5")
+    key = (data / authenticator.KEY_FILE).read_bytes()
+    done = store.restore_state(older, keep_accounts=True)
+    assert authenticator.KEY_FILE not in done.files.set_aside and (data / authenticator.KEY_FILE).read_bytes() == key
+    elsewhere, _ = _data_folder(tmp_path, ground_truth, "elsewhere")  # another server, its own key
+    elsewhere.authenticator_secret(elsewhere.add_user("ann", "correct horse battery"))
+    theirs = elsewhere.backup_now()
+    store.restore_state(theirs, keep_accounts=True)
+    assert (data / authenticator.KEY_FILE).read_bytes() == key
+    clock[0] += 60
+    assert store.check_code(boss, authenticator.code(secret, clock[0]), "10.0.0.5")["username"] == "boss"

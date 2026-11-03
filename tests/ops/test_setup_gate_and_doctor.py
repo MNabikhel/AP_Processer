@@ -109,7 +109,7 @@ def test_read_only_is_not_offered_the_export_batch_downloads(tmp_path, setup_dem
 
     from ap_coder.web.app import create_app
     from tests.web.test_server_role_pages import GOOD
-    from tests.webclient import PAGE, web_settings
+    from tests.webclient import enrol, sign_in, web_settings
 
     store = copy_database(setup_demo_template, tmp_path / "private" / "ap_coder.db")  # sample setup, then the demo
     batch = store.create_export_batch([i["id"] for i in store.list_invoices("approved")][:1], "xlsx")
@@ -117,8 +117,9 @@ def test_read_only_is_not_offered_the_export_batch_downloads(tmp_path, setup_dem
     uid = store.add_user("viewer", GOOD, role="readonly")
     with store._conn() as conn:
         conn.execute("UPDATE users SET must_change = 0 WHERE id = ?", (uid,))
+    enrol(store, uid)  # (D-146)
     client = TestClient(app, base_url="https://localhost", client=("10.0.0.5", 50000), follow_redirects=False)
-    assert client.post("/login", data={"username": "viewer", "password": GOOD}, headers=PAGE).status_code in (200, 303)
+    assert sign_in(client, "viewer", GOOD).status_code == 200
     page = client.get(f"/exports?batch={batch}", headers={"Accept": "text/html"}).text
     assert f"/exports/batches/{batch}/download" not in page and "approved-pdfs.zip" not in page
     assert client.get(f"/exports/batches/{batch}/download").status_code == 403

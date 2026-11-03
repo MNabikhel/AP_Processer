@@ -14,7 +14,8 @@
   <h4><span class="ms" aria-hidden="true">key</span> Temporary password for {{ temporary.username }}</h4>
   <p><code class="big">{{ temporary.password }}</code></p>
   <p class="muted">Give it to them yourself (in person or by phone): it is shown only this once. They choose their
-    own password when they first log in with it.</p>
+    own password when they first log in with it, then set up an authenticator app on their phone for a code at every
+    login.</p>
 </section>
 {% endif %}
 
@@ -22,7 +23,7 @@
   <h4>People</h4>
   <div class="table-wrap">
     <table class="apc-table">
-      <thead><tr><th>Username</th><th>Name</th><th>Role</th><th>Last login</th><th></th></tr></thead>
+      <thead><tr><th>Username</th><th>Name</th><th>Role</th><th>Last login</th><th>Sign-in codes</th><th></th></tr></thead>
       <tbody>
         {% for u in users %}
         <tr data-user="{{ u.username }}">
@@ -43,6 +44,7 @@
             {% endif %}
           </td>
           <td>{% if not u.active %}{{ ui.pill("Turned off", "gray") }}{% elif u.must_change %}{{ ui.pill("Temporary password", "warn") }}{% else %}{{ (u.last_login or "never") | replace("T", " ") }}{% endif %}</td>
+          <td>{% if u.totp_on %}{{ ui.pill("Codes set up", "ok") }}{% else %}{{ ui.pill("Not set up yet", "gray") }}{% endif %}</td>
           <td class="r">
             <div class="row end">
               {% if u.id == me %}
@@ -50,6 +52,11 @@
               {% else %}
               <form method="post" action="/admin/users/{{ u.id }}/reset" data-confirm="Reset the password of {{ u.username }}? They are logged out everywhere and get a temporary password.">
                 <button class="btn" type="submit"><span class="ms" aria-hidden="true">lock_reset</span>Reset password</button>
+              </form>
+              {% endif %}
+              {% if u.totp_on %}
+              <form method="post" action="/admin/users/{{ u.id }}/reset-authenticator" data-confirm="Reset the authenticator of {{ u.username }} (a phone lost or replaced)? They are logged out everywhere and set the app up again at their next login. If the phone was lost or stolen, reset their password too.">
+                <button class="btn" type="submit"><span class="ms" aria-hidden="true">phonelink_erase</span>Reset authenticator</button>
               </form>
               {% endif %}
               {% if u.active %}
@@ -126,7 +133,9 @@
       <select name="role">{% for key, label in roles %}<option value="{{ key }}"{% if key == "clerk" %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
     <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">person_add</span>Add</button>
   </form>
-  <p class="muted">AP Coder makes a temporary password and shows it once; they choose their own at their first login.</p>
+  <p class="muted">AP Coder makes a temporary password and shows it once; they choose their own at their first login,
+    then set up an authenticator app (Microsoft Authenticator, Google Authenticator or another) for a code at every
+    login.</p>
 </section>
 
 <section class="card">

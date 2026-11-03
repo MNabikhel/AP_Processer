@@ -114,6 +114,8 @@ ACTIONS = {
     "user_deactivated": ("person_off", "warn", "User turned off"),
     "user_activated": ("person", "info", "User turned back on"),
     "address_unlocked": ("lock_open", "info", "Address unpaused"),
+    "authenticator_enrolled": ("verified_user", "info", "Authenticator app set up"),  # (D-146)
+    "authenticator_reset": ("phonelink_erase", "warn", "Authenticator reset"),
 }
 
 
@@ -428,7 +430,7 @@ def describe(event: dict[str, Any]) -> str:
     if action == "file_found":
         return f"{d.get('from', '?')} → {d.get('to', '?')}"
     if action in _ACCOUNT_WORDS:
-        from .store.users import ROLE_LABELS
+        from .store.users import CODE_WHY, ROLE_LABELS
 
         def role(key: Any) -> str:
             return ROLE_LABELS.get(str(key or ""), str(key or "?"))
@@ -442,6 +444,8 @@ def describe(event: dict[str, Any]) -> str:
         if d.get("account") == "unknown":  # the text typed is not kept (D-101)
             words = _ACCOUNT_WORDS["login_failed_unknown" if action == "login_failed" else action]
             return words.format(user="an unknown account", name="", by=by, address="?", **roles)
+        if action == "login_failed" and d.get("why") == CODE_WHY:  # the second step (D-146)
+            return f"a login as {d.get('username') or '?'}: the authenticator code didn't match"
         if action == "address_unlocked" and d.get("username"):  # a username's pause there (B-1208)
             return f"logins as {d['username']} from {d.get('unpaused') or 'this server'} are no longer paused"
         return _ACCOUNT_WORDS[action].format(user=d.get("username") or "?", name=d.get("name") or "", by=by,
@@ -487,6 +491,8 @@ _ACCOUNT_WORDS = {  # server mode's accounts (D-97): who, in plain words
     "user_deactivated": "{user} can no longer log in",
     "user_activated": "{user} can log in again",
     "address_unlocked": "logins from {address} are no longer paused",
+    "authenticator_enrolled": "{user} set up their authenticator app: a code from it at every login",
+    "authenticator_reset": "{user} sets their authenticator app up again at the next login (logged out everywhere)",
 }
 
 

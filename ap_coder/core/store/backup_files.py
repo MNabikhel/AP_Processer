@@ -11,7 +11,9 @@ In a backup (``AREAS``, ``SETTINGS_FILES``): the whole ``invoices/`` folder (the
 ``originals/``, ``deleted/``, ``statements/``, the saved emails, their attachments set aside and the triage log in
 ``emails/``), the data folder's ``emails/`` (managers' replies), ``reference/`` (the command line's reference files),
 the rate table and JD Edwards mapping kept in the data folder, the JD Edwards postings ledger (merged on a restore,
-never replaced: ``_merge_ledger``), and an invoice's file kept anywhere else (``watch --folder``; put back in
+never replaced: ``_merge_ledger``), the key that seals the authenticator apps' secrets (``authenticator.key``, D-146:
+put back only where there is none, a new computer; never over the one here, which the accounts a restore keeps on the
+server are sealed with, nor set aside), and an invoice's file kept anywhere else (``watch --folder``; put back in
 ``invoices/restored/``). Not in it: the ``.env`` (passwords; and a backup must not choose where AP Coder connects),
 ``server.json`` (this server's own install, made by ``service install``), the JD Edwards installation id (a restore
 makes a new one, D-105), the caches, logs, exports and reports (made again), the OCR models (they come with AP Coder),
@@ -41,6 +43,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
+from ..authenticator import KEY_FILE
 from ..paths import PROJECT_DIR, try_lock
 from .postings import LEDGER_FILE
 
@@ -130,7 +133,7 @@ def _held(rel: str) -> bool:
     if (not rel or "\\" in rel or PureWindowsPath(rel).drive or PurePosixPath(rel).is_absolute()
             or any(p in ("", ".", "..") for p in parts)):  # fmt: skip
         return False
-    return (parts[0] in AREAS and len(parts) > 1) or rel in SETTINGS_FILES or rel == LEDGER_FILE
+    return (parts[0] in AREAS and len(parts) > 1) or rel in SETTINGS_FILES or rel in (LEDGER_FILE, KEY_FILE)
 
 
 def in_data_folder(stored: str, data: Path) -> Path | None:
@@ -240,7 +243,7 @@ def data_files(data: Path) -> list[str]:
                 rel = (Path(folder) / name).relative_to(data).as_posix()
                 if not name.lower().endswith(STILL_WRITING) and _held(rel):
                     found.append(rel)
-    return found + [name for name in (*SETTINGS_FILES, LEDGER_FILE) if (data / name).is_file()]
+    return found + [name for name in (*SETTINGS_FILES, LEDGER_FILE, KEY_FILE) if (data / name).is_file()]
 
 
 def _copy_hashed(source: Path, out: Path) -> tuple[str, int]:
@@ -736,7 +739,7 @@ def restore_files(
         done.error = "there is not enough space on the disk" if room else str(exc)
         return done
     for rel in data_files(data):
-        if _case(rel) not in left and rel != LEDGER_FILE and rel in present:
+        if _case(rel) not in left and rel not in (LEDGER_FILE, KEY_FILE) and rel in present:
             set_aside(data / rel, rel)
     return done
 
@@ -747,7 +750,7 @@ def _put_back(wanted: dict[str, dict[str, Any]], folders: list[Path], data: Path
         target = data / rel
         if rel == LEDGER_FILE:
             why = _merge_ledger(entry, folders, target)
-        elif _same(target, entry):
+        elif _same(target, entry) or (rel == KEY_FILE and target.exists()):
             done.unchanged += 1
             continue
         else:

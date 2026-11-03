@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+{# The steps of a login after the password (pages/login.py, D-146): a temporary password changed, the authenticator
+   app set up, or its code. Like the login page: nothing of AP Coder shows before the login is done, so no rail. #}
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="same-origin">
+  <title>{{ title }} · AP Coder</title>
+  <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/app.css?v={{ static_version }}">
+</head>
+<body data-page="login">
+  <main class="apc-login" id="main">
+    <img src="/assets/logo.svg" alt="AP Coder" height="28">
+    <div id="flashes" class="flashes">
+      {% for f in flashes %}
+      <div class="flash {{ f.tone }}" role="status"><span class="ms" aria-hidden="true">{{ f.icon }}</span>
+        <div><div class="flash-text">{{ f.text }}</div></div></div>
+      {% endfor %}
+    </div>
+    <section class="card">
+      {% if step == "/login/new-password" %}
+      <h1 class="apc-title">Choose your own password</h1>
+      <p class="muted">The password you were given is temporary. Choose your own to carry on: at least 12 characters,
+        and not your username or your name. A few words make a good one.</p>
+      <form method="post" action="/login/new-password" class="stack" data-busy="Saving…" data-urlencoded>
+        <input type="hidden" name="next" value="{{ next }}">
+        <input type="text" name="username" value="{{ username }}" autocomplete="username" hidden>
+        <label class="field">The password you were given
+          <input type="password" name="current" autocomplete="current-password" required autofocus></label>
+        <label class="field">New password
+          <input type="password" name="new" autocomplete="new-password" minlength="12" required></label>
+        <label class="field">New password again
+          <input type="password" name="again" autocomplete="new-password" minlength="12" required></label>
+        <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save the new password</button>
+      </form>
+      <p class="muted">Next you set up an authenticator app on your phone, for a code at every login.</p>
+      {% elif step == "/login/authenticator" %}
+      <h1 class="apc-title">Set up your authenticator app</h1>
+      {% if error %}
+      <p class="flash err" role="alert">{{ error }}</p>
+      {% else %}
+      <p>Each time you log in, AP Coder asks for your password and then a 6-digit code from an app on your phone.
+        Any authenticator app works: Microsoft Authenticator, Google Authenticator and others.</p>
+      <ol class="apc-steps">
+        <li>Open your authenticator app (or install one from your phone's app store) and add an account.</li>
+        <li>Scan this QR code with it.
+          <div class="apc-qr-box">{{ qr }}</div>
+          Can't scan it? Choose to type a key instead, and type this one (time-based):
+          <code class="big" data-secret="{{ secret }}">{{ secret }}</code>
+          <a class="muted" href="{{ uri }}">On this phone already? Open it in the app.</a></li>
+        <li>Type the 6-digit code the app now shows for AP Coder ({{ username }}).</li>
+      </ol>
+      <form method="post" action="/login/authenticator" class="stack" data-busy="Checking…" data-urlencoded>
+        <input type="hidden" name="next" value="{{ next }}">
+        <label class="field">Code from the app
+          <input type="text" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]*"
+                 maxlength="8" required autofocus></label>
+        <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">verified_user</span>Confirm</button>
+      </form>
+      <p class="muted">Keep the app on your phone. If you lose your phone or get a new one, ask an Admin to reset your
+        authenticator, and set it up again.</p>
+      {% endif %}
+      {% else %}
+      <h1 class="apc-title">Type your code</h1>
+      <p class="muted">Open your authenticator app and type the 6-digit code it shows for AP Coder ({{ username }}).</p>
+      <form method="post" action="/login/code" class="stack" data-busy="Logging in…" data-urlencoded>
+        <input type="hidden" name="next" value="{{ next }}">
+        <label class="field">Code
+          <input type="text" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]*"
+                 maxlength="8" required autofocus></label>
+        <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">login</span>Log in</button>
+      </form>
+      <p class="muted">Lost your phone, or got a new one? Ask an Admin to reset your authenticator.</p>
+      {% endif %}
+      <p class="muted"><a href="/login">Not you? Log in again.</a></p>
+    </section>
+  </main>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <script type="module" src="/static/js/app.js"></script>
+</body>
+</html>
