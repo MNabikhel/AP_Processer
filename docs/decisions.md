@@ -382,12 +382,15 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   cookie, kept by its SHA-256 for 15 minutes in the short-lived table, opening only its next step's page (OPEN
   routes, each checking the step); the session is made once the code is right, under a new token; a session of an
   account without its app set up is no login (so sessions from before end). **Recovery**: an Admin's *Reset
-  authenticator* on Users (audited, logs the person out); `users reset-2fa <user>` at the console for the last Admin.
+  authenticator* on Users, which resets the password too (a phone lost or stolen may go with it: a temporary one
+  shown once, as for a new account; audited, logs the person out, not one's own); `users reset-2fa <user>` at the
+  console for the last Admin, printing the temporary password once (the user's call).
   No recovery codes: a printed secret to lose or leave on a desk, while for a handful of people an Admin or the
   console resets an app in a minute. **The secret**: 20 bytes from `secrets`, kept sealed (HMAC-SHA256 as the stream
   and the tag, the temporary passwords' sealing of D-111, now shared) with this server's key, `authenticator.key` in
   the data folder (made at the first set-up, never in the database): a copy of the database alone gives no codes
-  away. **Backups** (D-143): the key is in every whole-state backup; a restore puts it back only where there is none
+  away. **Backups** (D-143): the key is in every whole-state backup (the share is IT's to protect, the user's call);
+  a restore puts it back only where there is none
   (a new computer, whose accounts come from the backup), never over the one here, which the accounts a restore keeps
   on the server (D-101) are sealed with, and never sets it aside; so codes work after a restore here and on a new
   server. A key lost while its accounts are kept: each code refused in words, an Admin resets each app. **The QR

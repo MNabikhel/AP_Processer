@@ -375,7 +375,8 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
   adds each person (a temporary password shown once); at the first login they choose their own password, then set up
   any authenticator app (Microsoft Authenticator, Google Authenticator...) from a QR code; every login after is the
   password, then the app's 6-digit code (TOTP, standard library, offline). An Admin resets a lost phone's app on the
-  Users page; the console's `users reset-2fa` is the last Admin's way back. Each secret is kept sealed with the key
+  Users page, with the password (a temporary one shown once); the console's `users reset-2fa` is the last Admin's
+  way back. Each secret is kept sealed with the key
   file `authenticator.key` in the data folder, which the whole-state backups hold (SERVER.md section 9).
   **The company supplies:** each person's username and role, and phones with an authenticator app (any).
 - **Entra ID sign-in, a possible later option.** Where it would go: the sign-in page and its steps,

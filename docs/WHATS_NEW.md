@@ -27,7 +27,7 @@ kept).
 - **A code from your phone at every login on the server** (D-146): after the password, AP Coder asks for the 6-digit
   code of an authenticator app (Microsoft Authenticator, Google Authenticator or any other). At the first login,
   after choosing their own password, each person scans a QR code to set the app up. An Admin resets a lost phone's
-  app on *Users*; the console's `users reset-2fa` is the last Admin's. It works offline, and after a restore or on a
+  app on *Users*, with a new temporary password; the console's `users reset-2fa` is the last Admin's. It works offline, and after a restore or on a
   new server. Single sign-on with the company's accounts is set aside for now. The laptop is unchanged.
 
 ## Managers confirm the coding, what's left on a PO, who acts next (D-138 to D-141)

@@ -417,6 +417,8 @@ window, started at boot like AP Coder.
   (a new server, whose accounts come from the backup), never over the one there, so after a restore here and on a
   new server everyone signs in with their codes as before. Keep the data folder's permissions as step 2 set them (the
   service's account and the administrators only): the key is as private as the data.
+  A backup holds the database and the key together: the second backup folder's share must be protected by IT like
+  the data folder (only the service's account and the administrators can read it).
 - **One at a time**: a backup, a restore and an update's put-back never run at once, on the server across its web
   workers and its background process too (a lock beside the backups). A restore asked for while the day's backup is
   being made says so and changes nothing: try again once the page no longer says a backup is being made. A file
@@ -459,8 +461,9 @@ From the server's console, the same:
 `users add` takes `--name` (the name on their approvals; default: the user name) and `--role` (`readonly`, `clerk`,
 `approver` or `admin`; default `clerk`; `--admin` is `--role admin`). On the console the temporary password is the one
 you type, twice (`add` and `reset`); the person changes it at their first sign-in. `activate` turns an account that
-was turned off on again, with its password as it was. `reset-2fa` forgets a person's authenticator app (see below):
-the way back in for the last Admin, whom no other Admin can reset.
+was turned off on again, with its password as it was. `reset-2fa` forgets a person's authenticator app and resets
+their password, printing a temporary one once (see below): the way back in for the last Admin, whom no other Admin
+can reset.
 
 **Sign-in codes** (D-146). Every login has two steps: the password, then the 6-digit code an authenticator app on
 the person's phone shows (it changes every 30 seconds). Any authenticator app works: Microsoft Authenticator, Google
@@ -473,10 +476,11 @@ Authenticator and others; the codes are worked out on the phone and on the serve
 - **A code** is taken 30 seconds early or late (a phone's clock a little off), and only once. Keep the server's clock
   right (Windows' time service: `w32tm /query /status`); the phones set theirs automatically. A wrong code counts as a
   wrong password does toward the pauses below.
-- **A new or lost phone**: an Admin clicks *Users* → *Reset authenticator*: the person is logged out everywhere and
-  sets the app up again at their next login. If the phone was lost or stolen, reset their password too. The last
-  Admin's, on the server's console: `users reset-2fa <username>`. There are no printed recovery codes: an Admin or
-  the console resets an app in a minute.
+- **A new or lost phone**: an Admin clicks *Users* → *Reset authenticator*. It resets the password too (a phone lost
+  or stolen may go with it): the person is logged out everywhere, the page shows a temporary password once, as when
+  a person is added; with it they choose their own password and set the app up again. An Admin's own is reset by
+  another Admin; the last Admin's, on the server's console: `users reset-2fa <username>`, which prints the temporary
+  password once. There are no printed recovery codes: an Admin or the console resets an app in a minute.
 
 Logins that don't match pause, in three ways:
 
@@ -584,8 +588,8 @@ installs in the administrator's `%USERPROFILE%\.ap_coder\settings.json`, as on a
 | `server-update` says the bundle is not newer | It is the version running, or older. To go back to the previous version: `server-update --back`. |
 | `server-update --back` says "Nothing to go back to" | No update was made with `server-update` since the last `--back`. To install an older version, ask for its bundle and the backup made before the update. |
 | Someone forgot their password, or is locked out | An Admin: *Users* → *Reset password*; or on the console `users reset <username>`. A lockout ends by itself after 15 minutes. |
-| "That code doesn't match" every time | The phone's clock: set it to set the time automatically. The server's: `w32tm /query /status`, then `w32tm /resync`. Still wrong: *Users* → *Reset authenticator*, and they set the app up again. |
-| A new phone, or a lost one | An Admin: *Users* → *Reset authenticator* (and *Reset password* if it was lost or stolen). The last Admin: `users reset-2fa <username>` on the console. |
+| "That code doesn't match" every time | The phone's clock: set it to set the time automatically. The server's: `w32tm /query /status`, then `w32tm /resync`. Still wrong: *Users* → *Reset authenticator* (a new temporary password too), and they set the app up again. |
+| A new phone, or a lost one | An Admin: *Users* → *Reset authenticator* (it resets the password too: give them the temporary password shown). The last Admin: `users reset-2fa <username>` on the console, which prints it. |
 | "AP Coder can't check your authenticator codes on this server: its key file ... is missing, damaged or not the one your app was set up with" | `authenticator.key` was deleted or changed in the data folder. Put it back from a copy of the data folder if you have one; otherwise reset each person's authenticator (*Users* → *Reset authenticator*; the last Admin with `users reset-2fa`): they set their apps up again. |
 | Pages are slow when many people work at once | `service status`, then Task Manager: when every core is busy, the server needs more cores (step 1); when they are not, `service install --workers N` with N up to the cores. The log names a worker started again after it stopped. |
 | Invoices wait long for OvisOCR2 | Set the model server to answer several requests together and raise `--llm-parallel` (step 8, point 6). |

@@ -819,17 +819,17 @@ class UsersMixin:
                 refusal = self._refused(conn, {"username": name}, ip, locks, CODE_WHY) or WRONG_CODE
         raise LoginRefused(refusal)
 
-    def reset_authenticator(self, user_id: int, *, actor: str = "") -> None:
-        """A person's authenticator app forgotten (a phone lost or replaced): they set it up again at their next login,
-        every session of theirs ends, and their tries that didn't match are forgotten (their pauses lifted)."""
+    def reset_authenticator(self, user_id: int, *, actor: str = "", by_user: int | None = None) -> str:
+        """A person's authenticator app forgotten (a phone lost or replaced): they set it up again at their next login.
+        Their password is reset with it (``reset_password``: a phone lost or stolen may go with the password): the
+        temporary one made here is returned, to be given to them once; every session of theirs ends and their pauses
+        are lifted."""
+        temporary = self.reset_password(user_id, actor=actor, by_user=by_user)
         with self._conn() as conn:
-            conn.execute("BEGIN IMMEDIATE")
             row = self._account(conn, user_id)
             conn.execute("UPDATE users SET totp_secret = '', totp_on = 0, totp_step = 0 WHERE id = ?", (row["id"],))
-            conn.execute("DELETE FROM sessions WHERE user_id = ?", (row["id"],))
-            self._end_pending(conn, row["id"])
-            conn.execute("DELETE FROM login_attempts WHERE username = ? AND ok = 0", (row["username"],))
             self._log(conn, "authenticator_reset", None, actor or None, {"username": row["username"]})
+        return temporary
 
     # --- A login half way: the password right, the code still to come (D-146) ----------------------------------------
 

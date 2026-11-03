@@ -54,8 +54,8 @@
                 <button class="btn" type="submit"><span class="ms" aria-hidden="true">lock_reset</span>Reset password</button>
               </form>
               {% endif %}
-              {% if u.totp_on %}
-              <form method="post" action="/admin/users/{{ u.id }}/reset-authenticator" data-confirm="Reset the authenticator of {{ u.username }} (a phone lost or replaced)? They are logged out everywhere and set the app up again at their next login. If the phone was lost or stolen, reset their password too.">
+              {% if u.totp_on and u.id != me %}
+              <form method="post" action="/admin/users/{{ u.id }}/reset-authenticator" data-confirm="Reset the authenticator of {{ u.username }} (a phone lost or replaced)? Their password is reset too: they are logged out everywhere, get a temporary password (shown once) and set the app up again at their next login.">
                 <button class="btn" type="submit"><span class="ms" aria-hidden="true">phonelink_erase</span>Reset authenticator</button>
               </form>
               {% endif %}

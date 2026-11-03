@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import getpass
+import re
 
 import pytest
 
@@ -78,7 +79,9 @@ def test_reset_2fa_at_the_console_lets_a_last_admin_who_lost_their_phone_set_it_
     assert cli.main(["--db", db, "users", "reset-2fa", "BOSS"]) == 0
     out = capsys.readouterr().out
     assert "set up their authenticator app again" in out and "logged out" in out
+    temporary = re.search(r"temporary password: (\S+)", out).group(1)  # printed this once
     assert not store.user(boss)["totp_on"] and store.session_user(token) is None
+    assert store.user(boss)["must_change"] and store.authenticate("boss", temporary, "127.0.0.1")
     assert store.events(actions=["authenticator_reset"])[0]["actor"] == "the server console"
     assert cli.main(["--db", db, "users", "list"]) == 0
     assert "codes not set up" in capsys.readouterr().out

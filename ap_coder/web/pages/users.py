@@ -34,6 +34,10 @@ OWN_RESET = (
     "This is your own account: change your password on the Your password page (/account/password). A reset here "
     "would log you out before its temporary password is shown."
 )
+OWN_AUTHENTICATOR = (
+    "This is your own account: ask another Admin to reset your authenticator (or IT, at the server's console: users "
+    "reset-2fa). A reset here would log you out before its temporary password is shown."
+)
 _waiting: dict[str, tuple[float, int, str, str]] = {}  # key -> (when, the Admin's id, username, password)
 _lock = threading.Lock()
 
@@ -149,14 +153,18 @@ def reset(request: Request, user_id: int) -> JSONResponse:
 
 @router.post(PATH + "/{user_id:int}/reset-authenticator")
 def reset_authenticator(request: Request, user_id: int) -> JSONResponse:
-    """A person's authenticator app forgotten (a phone lost or replaced, D-146): they set it up again at their next
-    login. If the phone was lost or stolen, reset their password too."""
+    """A person's authenticator app forgotten (a phone lost or replaced, D-146), and their password with it (a phone
+    lost or stolen may go with it): a temporary one shown once; they set the app up again at their next login."""
     _server_only(request)
     found = _user(request, user_id)
-    get_store(request).reset_authenticator(user_id, actor=reviewer())
-    said = (f"Authenticator of {found['username']} reset: they are logged out everywhere and set it up again at their "
-            "next login.")  # fmt: skip
-    return done(request, PATH, flash_message(said, "ok"))
+    me = identity.person()
+    if me is not None and me.user_id == found["id"]:  # it would log you out before the password is shown
+        return refuse(OWN_AUTHENTICATOR)
+    password = get_store(request).reset_authenticator(user_id, actor=reviewer(), by_user=me.user_id if me else None)
+    key = _keep(request, found["username"], password)
+    said = (f"Authenticator and password of {found['username']} reset: they are logged out everywhere, log in with "
+            "the temporary password below and set their authenticator app up again.")  # fmt: skip
+    return done(request, f"{PATH}?shown={key}", flash_message(said, "ok"))
 
 
 @router.post(PATH + "/addresses/unlock")

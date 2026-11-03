@@ -284,7 +284,8 @@ def build_parser() -> argparse.ArgumentParser:
     u = users.add_parser("reset", help="A new temporary password (asked for, twice); they choose their own at login")
     u.add_argument("username")
     u = users.add_parser("reset-2fa", help="Forget a person's authenticator app (a phone lost or replaced; the last "
-                         "Admin's too): they set it up again at their next login")  # fmt: skip
+                         "Admin's too) and reset their password: a temporary one is shown once; they set the app up "
+                         "again at their next login")  # fmt: skip
     u.add_argument("username")
     u = users.add_parser("deactivate", help="Turn an account off: it can no longer log in")
     u.add_argument("username")
@@ -1006,9 +1007,10 @@ def cmd_users(args: argparse.Namespace) -> int:
             store.reset_password(user["id"], actor=actor, password=password)
             print(f"Password of {username} reset: they are logged out everywhere and choose their own at login.")
         elif action == "reset-2fa":
-            store.reset_authenticator(user["id"], actor=actor)
-            print(f"Authenticator of {username} reset: they are logged out everywhere and set up their authenticator "
-                  "app again at their next login.")  # fmt: skip
+            temporary = store.reset_authenticator(user["id"], actor=actor)
+            print(f"Authenticator and password of {username} reset: they are logged out everywhere, log in with this "
+                  f"temporary password: {temporary}  (shown only now; it works for 3 days), choose their own and set "
+                  "up their authenticator app again.")  # fmt: skip
         elif action == "deactivate":
             store.deactivate_user(user["id"], actor=actor)
             print(f"{username} can no longer log in.")

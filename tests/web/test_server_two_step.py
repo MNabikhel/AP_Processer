@@ -176,7 +176,7 @@ def test_a_login_half_way_reaches_no_page_of_the_app(store, stage):
 
 
 def test_an_admin_resets_a_persons_authenticator_on_the_users_page_and_they_set_it_up_again(store):
-    account(store, "boss", "admin")
+    boss = account(store, "boss", "admin")
     ann = account(store, "ann")
     theirs = server_client(store)
     assert redirect(sign_in(theirs, "ann", GOOD)) == "/review"
@@ -184,12 +184,20 @@ def test_an_admin_resets_a_persons_authenticator_on_the_users_page_and_they_set_
     sign_in(admin, "boss", GOOD)
     page = admin.get("/admin/users").text
     assert f"/admin/users/{ann}/reset-authenticator" in page and "Codes set up" in page
+    assert f"/admin/users/{boss}/reset-authenticator" not in page  # their own: it would log them out first
     answer = admin.post(f"/admin/users/{ann}/reset-authenticator", headers=PAGE)
-    assert "set it up again" in admin.get(redirect(answer)).text
+    shown = admin.get(redirect(answer)).text
+    assert "set their authenticator app up again" in shown
+    temporary = re.search(r'<code class="big">([^<]+)</code>', shown).group(1)  # a new password too, shown once
+    assert temporary not in admin.get(redirect(answer)).text
     assert theirs.get("/review").status_code == 303  # logged out
     assert store.events(actions=["authenticator_reset"])[0]["actor"] == "Boss"
-    answer = theirs.post("/login", data={"username": "ann", "password": GOOD}, headers=PAGE)
-    assert redirect(answer).startswith("/login/authenticator")
+    refused = theirs.post("/login", data={"username": "ann", "password": GOOD}, headers=PAGE)
+    assert refused.status_code == 401  # the old password, with the phone, is worth nothing
+    answer = theirs.post("/login", data={"username": "ann", "password": temporary}, headers=PAGE)
+    assert redirect(answer).startswith("/login/new-password")  # then the app set up again
+    own = admin.post(f"/admin/users/{boss}/reset-authenticator", headers=PAGE)
+    assert own.status_code == 400 and "your own account" in own.json()["error"]
     clerk = server_client(store)
     sign_in(clerk, "ann", GOOD)
     assert clerk.post(f"/admin/users/{ann}/reset-authenticator", headers=PAGE).status_code in (401, 403)
