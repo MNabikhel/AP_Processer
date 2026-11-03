@@ -433,6 +433,70 @@ def test_restore_needs_restore_typed(client, store):
     assert store.events(actions=["backup_restored"])
 
 
+def test_data_tab_says_what_each_backup_holds_and_restores_its_files(client, store, tmp_path, ground_truth):
+    """Each backup says when, what it holds, whether it was copied and whether all of it is there; restoring it brings
+    back the invoice files too (D-143)."""
+    invoices = store.path.parent / "invoices"
+    invoices.mkdir()
+    (invoices / "a.pdf").write_bytes(b"%PDF-1.4 a")
+    store.add_invoice(invoices / "a.pdf", ground_truth, {})
+    share = tmp_path / "share"
+    share.mkdir()
+    store.set_setting("backup_copy_dir", str(share))
+    backup = store.backup_now()
+    text = client.get("/settings/data").text
+    row = text.split(f"<td>{backup.name}", 1)[1].split("</tr>", 1)[0]
+    assert "1 invoice" in row and "1 file" in row and "Copied" in row and "Complete" in row
+    assert f'href="/settings/data?restore={backup.name}#restore"' in row and "Restore this state" in row
+    assert "every invoice file" in text  # the page says what a backup holds and what restoring does
+    chosen = client.get(f"/settings/data?restore={backup.name}").text
+    assert (
+        f'<option value="{backup.name}" selected>' in chosen
+        and '<details class="st-details st-danger" id="restore" open>' in chosen
+    )
+
+    (invoices / "a.pdf").unlink()
+    (invoices / "b.pdf").write_bytes(b"%PDF-1.4 came in since")
+    text = follow(client, post(client, "/settings/data/restore", {"name": backup.name, "confirm": "RESTORE"}))
+    assert f"Restored {backup.name}." in text and "1 put back" in text and "1 file added or changed since" in text
+    assert (invoices / "a.pdf").read_bytes() == b"%PDF-1.4 a" and not (invoices / "b.pdf").exists()
+
+    sha = paths.file_sha256(invoices / "a.pdf")
+    (store.backup_dir() / "files" / sha[:2] / sha).unlink()
+    store.set_setting("backup_status", "failed 2026-11-03 09:00: No space left on device")
+    text = client.get("/settings/data").text
+    row = text.split(f"<td>{backup.name}", 1)[1].split("</tr>", 1)[0]
+    assert "1 file missing" in row
+    assert "The last backup failed 2026-11-03 09:00: No space left on device" in text
+
+
+def test_in_a_browser_restore_this_state_restores_that_backup_once_restore_is_typed(chromium, store):
+    from tests.browser import browser_on
+
+    older = store.backup_now("manual")
+    store.set_setting("fx_rates", "USD=9.99")  # done after the older backup: undone by restoring it
+    store.backup_now("manual")
+    s = Settings()
+    app = create_app(replace(s, llm=replace(s.llm, provider="off")), store, start_reader=False)
+    with browser_on(chromium, app) as (browser, base):
+        page = browser.new_page()
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(base + "/settings/data")
+        page.locator("tr", has_text=older.name).get_by_text("Restore this state").click()
+        page.wait_for_url("**restore=*")
+        assert page.locator("#restore").get_attribute("open") is not None
+        assert page.locator("select[name=name]").input_value() == older.name
+        button = page.locator('form[data-restore] button[type="submit"]')
+        assert button.is_disabled()
+        page.fill("input[name=confirm]", "RESTORE")
+        assert button.is_enabled()
+        button.click()
+        page.get_by_text(f"Restored {older.name}.").wait_for()
+        page.close()
+    assert errors == [] and store.get_setting("fx_rates") == ""
+
+
 def test_second_backup_folder(client, store, tmp_path):
     response = post(client, "/settings/data/backup-copy", {"folder": str(tmp_path / "missing")})
     assert response.status_code == 400 and "does not exist" in response.json()["error"]

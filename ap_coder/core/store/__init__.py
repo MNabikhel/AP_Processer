@@ -16,7 +16,8 @@ One class, ``Store``, built from a part per subject (D-69): ``_base`` (the schem
 helpers), ``accounts`` (GL accounts, cost centers, audit trail, bank accounts, tax setup), ``invoices`` (saving,
 approving, the ERP's register, the second approval), ``purchasing`` (POs, export batches, coding rules), ``capture``
 (supplier learning, touchless, reader scores, the page-reader and Azure queues), ``lessons`` (lessons and the AI
-reviewer's queue), ``vendors``, ``backups``, ``learning`` (the feedback memory, metrics), ``ephemeral`` (messages
+reviewer's queue), ``vendors``, ``backups`` (and ``backup_files``: the invoice files and others a backup holds,
+D-143), ``learning`` (the feedback memory, metrics), ``ephemeral`` (messages
 and uploads kept for a short while), ``samples``, ``users`` (server mode's accounts, sessions and login attempts,
 D-97), ``hub`` (what the finance hub feed reads, D-103), ``postings`` (the JD Edwards postings ledger kept across a
 restore, D-105), ``summary`` (the invoices' summary the lists, the search and the reports read, D-110), ``managers``

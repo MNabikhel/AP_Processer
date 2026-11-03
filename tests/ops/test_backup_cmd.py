@@ -1,0 +1,74 @@
+"""``python -m ap_coder backup now|list|check|restore`` (D-143): IT's way to the backups, also on a new computer."""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+
+from ap_coder.core.store import Store
+from ap_coder.ops import cli
+
+
+def _data(tmp_path, ground_truth, share=None):
+    data = tmp_path / "data"
+    (data / "invoices").mkdir(parents=True)
+    pdf = data / "invoices" / "a.pdf"
+    pdf.write_bytes(b"%PDF-1.4 a")
+    store = Store(data / "ap_coder.db")
+    store.add_invoice(pdf, ground_truth, {})
+    if share is not None:
+        share.mkdir()
+        store.set_setting("backup_copy_dir", str(share))
+    return store, data
+
+
+def test_now_and_list_say_what_each_backup_holds(tmp_path, ground_truth, capsys):
+    share = tmp_path / "share"
+    store, _ = _data(tmp_path, ground_truth, share)
+    assert cli.main(["--db", str(store.path), "backup", "now"]) == 0
+    out = capsys.readouterr().out
+    (made,) = store.list_backups()
+    assert made.name in out and "1 invoice" in out and "copied to" in out
+    assert cli.main(["--db", str(store.path), "backup", "list"]) == 0
+    out = capsys.readouterr().out
+    assert made.name in out and "1 invoice, 1 file" in out and "complete" in out
+    assert cli.main(["--db", str(store.path), "backup", "list", "--from", str(share)]) == 0
+    assert made.name in capsys.readouterr().out
+
+
+def test_restore_from_the_second_folder_onto_a_new_computer(tmp_path, ground_truth, capsys):
+    share = tmp_path / "share"
+    store, data = _data(tmp_path, ground_truth, share)
+    made = store.backup_now()
+    shutil.rmtree(data)  # the old computer is gone
+    new = tmp_path / "new" / "ap_coder.db"
+    code = cli.main(["--db", str(new), "backup", "restore", made.name, "--from", str(share), "--yes"])
+    assert code == 0, capsys.readouterr()
+    assert (tmp_path / "new" / "invoices" / "a.pdf").read_bytes() == b"%PDF-1.4 a"
+    assert len(Store(new).list_invoices()) == 1
+    assert "Restored" in capsys.readouterr().out
+
+
+def test_restore_asks_first_and_refuses_while_ap_coder_runs(tmp_path, ground_truth, capsys, monkeypatch):
+    store, data = _data(tmp_path, ground_truth)
+    made = store.backup_now("manual")
+    monkeypatch.setattr("builtins.input", lambda prompt="": "no")
+    assert cli.main(["--db", str(store.path), "backup", "restore", made.name]) == 1
+    assert "Nothing was changed" in capsys.readouterr().out
+    (data / ".ap_coder_server.json").write_text(json.dumps({"pid": os.getpid(), "port": 8501}))
+    assert cli.main(["--db", str(store.path), "backup", "restore", made.name, "--yes"]) == 1
+    assert "AP Coder is running" in capsys.readouterr().err
+    assert cli.main(["--db", str(store.path), "backup", "restore", "../ap_coder.db", "--yes"]) == 1
+    assert "No backup" in capsys.readouterr().err
+
+
+def test_check_reads_every_file_and_says_what_is_missing_or_damaged(tmp_path, ground_truth, capsys):
+    store, data = _data(tmp_path, ground_truth)
+    made = store.backup_now("manual")
+    assert cli.main(["--db", str(store.path), "backup", "check", made.name]) == 0
+    assert "complete" in capsys.readouterr().out
+    (kept,) = (store.backup_dir() / "files").glob("*/*")
+    kept.write_bytes(b"%PDF-1.4 b")  # the same size, another content
+    assert cli.main(["--db", str(store.path), "backup", "check"]) == 1
+    assert "damaged: invoices/a.pdf" in capsys.readouterr().out

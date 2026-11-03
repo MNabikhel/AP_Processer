@@ -924,9 +924,10 @@ FAQ: list[tuple[str, str]] = [
         "I made a mistake. Can I undo it?",
         "Approvals record what was learned; you can forget lines from the coding memory on Learning & accuracy. "
         "Export batches can be "
-        "undone on the Exports page. For anything else, Settings → Data & backups restores the database to a "
-        "backup (one is made automatically once a day when AP Coder starts, the newest 14 are kept, and one before "
-        "any restore).",
+        "undone on the Exports page. For anything else, Settings → Data & backups → Restore this state puts AP Coder "
+        "back as it was at a backup: the database and the invoice files, saved emails and attachments (one is made "
+        "automatically once a day when AP Coder starts, the newest 14 are kept, and one before any restore). Files "
+        "that came in since are moved to a set-aside folder in backups, never deleted.",
     ),
     (
         "Who did what?",

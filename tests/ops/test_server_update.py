@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from ap_coder.core import paths
-from ap_coder.core.store import Store
+from ap_coder.core.store import Store, backup_files
 from ap_coder.ops import cli, server_update, service
 
 GOOD = "correct horse battery"
@@ -167,6 +167,23 @@ def test_back_restores_the_pre_update_backup_and_the_previous_folder(server, cap
     assert safety[0].name in capsys.readouterr().out
     assert server_update.go_back(server["data"], server["db"], server=FakeServer(), yes=True) == 1
     assert "Nothing to go back to" in capsys.readouterr().err
+
+
+def test_back_puts_back_the_invoice_files_of_the_pre_update_backup(server, capsys):
+    """The pre-update backup held the database only: going back brought back no invoice file lost since (D-143)."""
+    invoices = server["data"] / "invoices"
+    invoices.mkdir()
+    (invoices / "a.pdf").write_bytes(b"%PDF-1.4 a")
+    assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=FakeServer()) == 0
+    (invoices / "a.pdf").unlink()  # lost on the new version
+    (invoices / "new.pdf").write_bytes(b"%PDF-1.4 came in on the new version")
+    assert server_update.go_back(server["data"], server["db"], server=FakeServer(), yes=True) == 0
+    assert (invoices / "a.pdf").read_bytes() == b"%PDF-1.4 a" and not (invoices / "new.pdf").exists()
+    (aside,) = (server["data"] / "backups").glob("set-aside-*")
+    assert (aside / "invoices" / "new.pdf").read_bytes() == b"%PDF-1.4 came in on the new version"
+    (kept,) = (server["data"] / "backups").glob("ap_coder-*-before-going-back.db")
+    assert "invoices/new.pdf" in [e["path"] for e in backup_files.read_list(kept)["files"]]  # it can be undone too
+    assert "1 file added or changed since moved to backups" in capsys.readouterr().out
 
 
 def test_back_dry_run_changes_nothing(server, capsys):

@@ -295,3 +295,23 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   B-1544): the hold is lifted first, or the invoice rejected. As errors, the changed tax numbers take an error's
   share off the Reading. (`coding/vendors.py`, `web/invoice_view.py` `HARD_CODES`;
   `tests/web/test_web_review_voucher.py`)
+- **D-143** · Every backup is a whole state of AP Coder, not the database only (the pilot tester, 3 November 2026: "the
+  pdf should also be backed up... so we can easily restore previous states"). Beside each `ap_coder-<stamp>.db`, its
+  list of files `ap_coder-<stamp>.files.json` (each file's place, size, time and SHA-256, and the database's own); the
+  files themselves once per content in `backups/files/<2 digits>/<sha256>`. In it: the whole `invoices/` folder
+  (PDFs, pictures, `originals/`, `deleted/`, `statements/`, saved emails and their attachments), `emails/` (managers'
+  replies), `reference/`, the data folder's rate table and JD Edwards mapping, the postings ledger (merged on a
+  restore, never replaced: D-105) and an invoice's file kept elsewhere (back in `invoices/restored/`). Not in it: the
+  `.env` (passwords; a backup must not choose where AP Coder connects, as D-109), `server.json` (this server's
+  install), the JD Edwards installation id (a restore makes a new one), caches, logs, exports and models (made again
+  or bundled). Content-addressed, not a mirror: a daily backup copies only new or changed files (one unchanged since
+  the last list, by size and time, is not read again), a file deleted or changed since stays for every kept backup
+  that lists it, and pruning drops a file only when no kept list names it and it is a day old (a backup may be being
+  made). The second backup folder has the same layout (the list goes last), so it restores alone on a new computer.
+  A restore makes the listed places as they were: each file copied with its SHA-256 checked (missing or damaged ones
+  taken from the second folder, else said), what is there and was not then moved to `backups/set-aside-<stamp>/`,
+  never deleted; the accounts and sessions rules stay (D-101). Settings → Data & backups shows each backup's contents,
+  its second copy and a quick check (sizes); `python -m ap_coder backup now|list|check|restore [--from <folder>]`
+  for IT (`check` reads every file). A backup of an older version (no list) restores its database only, and says so.
+  (`core/store/backup_files.py`, `core/store/backups.py`, `ops/backup_cmd.py`, `ops/server_update.py` `put_back`;
+  `tests/core/test_backups.py`, `tests/ops/test_backup_cmd.py`, `tests/ops/test_server_update.py`)

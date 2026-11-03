@@ -12,10 +12,13 @@ import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from . import backup_files
 from ._base import (
+    _NOT_FOUND,
     _RESTORING,
     _RESTORING_LOCK,
     _SCHEMA,
@@ -31,6 +34,15 @@ from .users import carry_accounts, saved_accounts
 # A daily backup, the ones pruned: ap_coder-YYYYMMDD-HHMMSS, and -2, -3 when another was made in the same second.
 # A labelled one (-manual, -before-restore, -before-update-...) is kept.
 DAILY = re.compile(r"ap_coder-\d{8}-\d{6}(-\d+)?")
+BACKUP_STATUS = "backup_status"  # the last backup that failed: "failed <when>: <why>" ("" once one works again)
+
+
+@dataclass
+class Restored:
+    """What a restore did: the backup of the state it replaced (``safety``), and what it did with the files."""
+
+    safety: Path
+    files: backup_files.FilesRestored
 
 
 def _daily(path: Path) -> bool:
@@ -80,7 +92,10 @@ class BackupsMixin:
         folder = self.backup_dir()
         return sorted(folder.glob("ap_coder-*.db"), reverse=True) if folder.exists() else []
 
-    def backup_now(self, label: str = "", actor: str | None = None) -> Path:
+    def backup_now(self, label: str = "", actor: str | None = None, keep: int = 14) -> Path:
+        """The database and the files of the data folder (``backup_files``, D-143): a state that restores whole.
+        A backup that fails raises OSError and is recorded (``backup_status``, shown on Settings → Data & backups).
+        ``keep``: the daily backups kept in the second backup folder (``copy_backup``)."""
         stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
         suffix = f"-{label}" if label else ""
         dest = self.backup_dir() / f"ap_coder-{stamp}{suffix}.db"
@@ -94,17 +109,29 @@ class BackupsMixin:
                     stale.unlink()
             except OSError:
                 pass
-        made = self.backup_to(dest)
+        try:
+            made = self.backup_to(dest)
+            try:
+                backup_files.snapshot(made, self.path.parent)
+            except OSError as exc:
+                raise OSError(f"the database was backed up to {made.name}, but not the invoice files ({exc})") from exc
+        except OSError as exc:
+            with contextlib.suppress(OSError, sqlite3.Error):
+                self.set_setting(BACKUP_STATUS, f"failed {_now()[:16]}: {exc}")
+            raise
+        if self.get_setting(BACKUP_STATUS):
+            self.set_setting(BACKUP_STATUS, "")
         if label == "manual":
             self.log_event("backup_made", actor=actor, detail={"file": made.name})
-        if label in ("", "manual"):
-            self.copy_backup(made)
+        if label in ("", "manual") or label.startswith("before-update"):
+            self.copy_backup(made, keep=keep)
         return made
 
     def copy_backup(self, made: Path, keep: int = 14) -> Path | None:
-        """Copy a backup to the second location set in Settings (e.g. a OneDrive or network folder), keeping
-        its newest ``keep`` daily copies. A copy that fails (folder offline) is recorded, never raised: the
-        local backup is there either way."""
+        """Copy a backup to the second location set in Settings (e.g. a OneDrive or network folder), with the files
+        it needs that are not there yet (``backup_files.copy_files``), keeping its newest ``keep`` daily copies and
+        the files they need. A copy that fails (folder offline) is recorded, never raised: the local backup is there
+        either way."""
         folder = self.get_setting("backup_copy_dir").strip()
         if not folder:
             return None
@@ -113,6 +140,7 @@ class BackupsMixin:
         refused = folder_refusal(folder)  # a folder saved before IT's list, or brought back by a restore (D-109)
         if refused:
             self.set_setting("backup_copy_status", f"failed {_now()[:16]}: {refused}")
+            backup_files.record_copy(made, False, _now()[:16], refused)
             return None
         try:
             target = Path(folder).expanduser()
@@ -121,12 +149,17 @@ class BackupsMixin:
             if target.resolve() == made.parent.resolve():
                 raise OSError("that is the local backups folder; choose another one")
             copied = Path(shutil.copy2(made, target / made.name))
+            backup_files.copy_files(made, target)
             for old in sorted((p for p in target.glob("ap_coder-*.db") if _daily(p)), reverse=True)[keep:]:
                 old.unlink(missing_ok=True)
+                backup_files.list_path(old).unlink(missing_ok=True)
+            backup_files.prune(target)
         except OSError as exc:
             self.set_setting("backup_copy_status", f"failed {_now()[:16]}: {exc}")
+            backup_files.record_copy(made, False, _now()[:16], str(exc))
             return None
         self.set_setting("backup_copy_status", f"ok {_now()[:16]}: {copied.name}")
+        backup_files.record_copy(made, True, _now()[:16], str(target))
         return copied
 
     def auto_backup(self, keep: int = 14, min_hours: float = 20) -> Path | None:
@@ -142,9 +175,11 @@ class BackupsMixin:
                 return None
         if not self.path.exists():
             return None
-        made = self.backup_now()
+        made = self.backup_now(keep=keep)
         for old in [p for p in self.list_backups() if _daily(p)][keep:]:
             old.unlink(missing_ok=True)
+            backup_files.list_path(old).unlink(missing_ok=True)
+        backup_files.prune(self.backup_dir())  # the files only the backups dropped needed
         return made
 
     @staticmethod
@@ -239,6 +274,10 @@ class BackupsMixin:
         return fresh and pid != os.getpid() and _pid_alive(pid)
 
     def restore_from(self, backup: str | Path, *, keep_accounts: bool = False) -> Path:
+        """``restore_state``; the safety backup of the state replaced."""
+        return self.restore_state(backup, keep_accounts=keep_accounts).safety
+
+    def restore_state(self, backup: str | Path, *, keep_accounts: bool = False) -> Restored:
         """``_restore_from`` with the background workers paused meanwhile (``restoring``)."""
         key = str(self.path.resolve())
         marker = self.path.with_name(self.path.name + ".restoring")
@@ -254,15 +293,18 @@ class BackupsMixin:
             with _RESTORING_LOCK:
                 _RESTORING.discard(key)
 
-    def _restore_from(self, backup: str | Path, *, keep_accounts: bool = False) -> Path:
-        """Replace the database with a backup. The current one is backed up first (returned). Every session ends
-        (everyone logs in again); ``keep_accounts`` (the server, D-101): the accounts and the lockouts stay as they
-        are now, not as the backup has them (``users.carry_accounts``).
+    def _restore_from(self, backup: str | Path, *, keep_accounts: bool = False) -> Restored:
+        """Put AP Coder back as it was at a backup: the database, and the files of the data folder as the backup lists
+        them (``backup_files.restore_files``; a file there now and not then is moved aside). The current state is
+        backed up first (``safety``). Every session ends (everyone logs in again); ``keep_accounts`` (the server,
+        D-101): the accounts and the lockouts stay as they are now, not as the backup has them
+        (``users.carry_accounts``).
         Raises ValueError, with nothing changed, when the file is not an AP Coder backup (``check_backup``).
         The second backup folder is cleared after a restore: a backup file must not choose where later
         backups are copied (set it again in Settings)."""
+        backup = Path(backup)
         with self._local_copy(backup) as copy:  # read from this computer, never written next to the backup
-            self._check_backup_file(copy, Path(backup).name)
+            self._check_backup_file(copy, backup.name)
             copy_dir = self.get_setting("backup_copy_dir").strip()
             safety = self.backup_now("before-restore")
             with self._conn() as conn:
@@ -275,6 +317,15 @@ class BackupsMixin:
             finally:
                 target.close()
                 source.close()
+        from ...ops.service import folder_refusal
+
+        # A file missing or damaged in the backup's folder is taken from the second one, when it has it.
+        also = [Path(copy_dir).expanduser()] if copy_dir and not folder_refusal(copy_dir) else []
+        try:  # (before the ledger is merged into the database below: on a new computer it comes from the backup)
+            files = backup_files.restore_files(backup, self.path.parent, also=also)
+        except OSError as exc:  # said, never a database restored without the accounts and sessions rules below
+            files = backup_files.FilesRestored(error=str(exc))
+        _NOT_FOUND.clear()  # a file looked for a moment ago may be back
         with self._conn() as conn:
             conn.executescript(_SCHEMA)  # an older backup may lack newer tables...
             self._migrate(conn)  # ...and columns
@@ -284,14 +335,16 @@ class BackupsMixin:
                 conn.execute("DELETE FROM sessions")  # no one stays logged in by a session the backup knew
             carry_postings(conn, self.path, postings)
             restored_dir = conn.execute("SELECT value FROM settings WHERE key = 'backup_copy_dir'").fetchone()
-            conn.execute("DELETE FROM settings WHERE key IN ('backup_copy_dir', 'backup_copy_status')")
+            conn.execute(
+                "DELETE FROM settings WHERE key IN ('backup_copy_dir', 'backup_copy_status', ?)", (BACKUP_STATUS,)
+            )
             # What the pages share (``summary_memo``) was worked out on the database as it was: the summary gets a new
             # id, so every process works it out again, whatever the restored generations' numbers (B-1310).
             conn.execute("INSERT INTO settings (key, value) VALUES ('summary_id', ?) ON CONFLICT(key) DO UPDATE SET "
                          "value = excluded.value", (uuid.uuid4().hex,))  # fmt: skip
-            detail = {"file": Path(backup).name, "safety_copy": safety.name}
+            detail = {"file": backup.name, "safety_copy": safety.name, "files": files.words()}
             if copy_dir or (restored_dir and str(restored_dir[0]).strip()):
                 detail["note"] = "second backup folder cleared: set it again in Settings (Data & backups)"
             self._log(conn, "backup_restored", detail=detail)
         _forget_learning(self.path)  # the lessons and learning counts kept for the database as it was (B-786)
-        return safety
+        return Restored(safety, files)
