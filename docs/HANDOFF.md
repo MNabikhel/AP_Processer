@@ -25,7 +25,7 @@ of the original repository. The tags themselves are in the bundle.
 
 | File | What it is | Use it when |
 |---|---|---|
-| `AP_Coder.bundle` | A git bundle: `main` with its whole history and the tags `v0.3.0-pilot1` to `v0.3.0-pilot7` (the laptop releases; pilot7 is the newest) and `v0.3.0-handoff7` (this handoff: pilot7 and these docs, the same commit; `v0.3.0-handoff1` to `-handoff5` were earlier ones) | Git is available: keeps every commit message, which explains why the code is as it is |
+| `AP_Coder.bundle` | A git bundle: `main` with its whole history and the tags `v0.3.0-pilot1` to `v0.3.0-pilot8` (the laptop releases; pilot8 is the newest) and `v0.3.0-handoff8` (this handoff: pilot8 and these docs, the same commit; `v0.3.0-handoff1` to `-handoff5` were earlier ones) | Git is available: keeps every commit message, which explains why the code is as it is |
 | `AP_Coder_source.zip` | The same files as `main`, no history | Only file transfers are allowed, or git isn't |
 | `HANDOFF.md` | This file | Read first |
 | `SHA256SUMS.txt` | The SHA-256 of the three files above | Check the transfer |
@@ -36,7 +36,7 @@ of the original repository. The tags themselves are in the bundle.
 git clone -b main AP_Coder.bundle AP_Processer   # a normal repository (cloning checks the bundle); origin = the bundle
 cd AP_Processer
 git bundle verify ../AP_Coder.bundle             # "The bundle records a complete history" (works only inside a repository)
-git tag                                          # v0.3.0-handoff1 to -handoff7, v0.3.0-pilot1 to -pilot7
+git tag                                          # v0.3.0-handoff1 to -handoff8, v0.3.0-pilot1 to -pilot8
 git log --oneline | head                         # the latest commits
 # Make the company's Git server the origin (an empty repository created there first):
 git remote set-url origin <the company's repository URL>
@@ -50,7 +50,7 @@ unzip AP_Coder_source.zip                        # makes AP_Processer/
 cd AP_Processer
 cat ap_coder/BUILD                               # must read $Format:%h %cI$ (git fills it in for each ZIP made later)
 git config user.name "<you>" && git config user.email "<you@company>"   # a fresh machine has none
-git init -b main && git add -A && git commit -m "AP Coder at the handoff (v0.3.0-handoff7), no history"
+git init -b main && git add -A && git commit -m "AP Coder at the handoff (v0.3.0-handoff8), no history"
 git remote add origin <the company's repository URL> && git push -u origin main
 ```
 
@@ -67,7 +67,7 @@ tag list names commits a route B repository doesn't have).
 the exact set this release was tested with is `docs/tested-packages.txt` (`pip install -c docs/tested-packages.txt
 -e ".[ocr,dev]"` when a newer package breaks something).
 With no internet, use a wheelhouse. The person who handed this over may also have given you the laptop release's
-offline install zip (`APProcessor-offline-0.3.0-<date>.zip` of the release `v0.3.0-pilot7`; Windows, Python
+offline install zip (`APProcessor-offline-0.3.0-<date>.zip` of the release `v0.3.0-pilot8`; Windows, Python
 3.11–3.14): its `wheelhouse/` folder installs everything on Windows with `pip install --no-index --find-links <that
 wheelhouse> -e ".[ocr,dev]"` (its wheels are Windows ones: a Linux agent or CI runner needs PyPI or a mirror).
 Without it, build one on any computer with internet: `AP_ALLOW_INTERNET=1 python scripts/build_offline_bundle.py`
@@ -106,7 +106,7 @@ Nothing connects to the internet at run time. It is a FastAPI web app on 127.0.0
 roles and HTTPS). Data lives in one SQLite database in a data folder outside the code. It is at pilot stage: built
 and tested on synthetic and public sample invoices, not yet on the company's invoices or systems.
 
-Status at the handoff (`v0.3.0-handoff7`: the laptop release `v0.3.0-pilot7` of 3 November 2026, the same commit,
+Status at the handoff (`v0.3.0-handoff8`: the laptop release `v0.3.0-pilot8` of 4 November 2026, the same commit,
 with these handoff docs; the build stamp `doctor` and `/healthz` report is that commit's). Each pilot release was
 checked by CI on Windows with the real LM Studio before it was tagged (`.github/workflows/release.yml`, D-129, D-130):
 
@@ -512,6 +512,21 @@ From `CLAUDE.md`, with why:
   everything.
 - One file to open per computer at the app folder's top (`APProcessor.bat`, `APProcessor.command`); a new top-level
   file must be added to `scripts/upgrade.py` `BUNDLE_TOP` (a test checks).
+
+**How changes are governed in the company's copy.** An AI coding agent wrote most of this code and its tests, so the
+tests prove the code agrees with the agent's reading of the rules, not that the rules are right for the company. Before
+production:
+- **Every change goes in through a pull request** that a named person on the company's AI team reviews and approves
+  before it merges (branch protection on the default branch). Add a `CODEOWNERS` file naming that team for the parts
+  that move money or controls: `coding/tax*.py`, `coding/taxreturn.py`, `coding/vendors.py`, `core/store/invoices.py`,
+  `web/roles.py`, `web/access.py`, `web/pages/login.py`, `erp/jde*.py`, `coding/bulk.py` and the touchless gates,
+  `ai/verifier.py`.
+- **CI adds, beside the tests, ruff and `pip-audit` it already runs:** a static security scan, secret scanning on the
+  repository, and a report of the dependencies' licences.
+- **Tax's test cases signed off by the company's Tax team**, and the JD Edwards vouchers proven in E1's test
+  environment (stage 0) before production write access.
+- **One independent review of the code by a person** before the penetration test (stage 0), and the security review's
+  findings fixed like bugs: a failing test first.
 
 ---
 

@@ -6,7 +6,24 @@ the demo: start AP Coder and click **Load demo invoices** (no Azure needed). The
 has a short tour, and the [pilot plan](PILOT_PLAN.md) suggests four weeks to a decision.
 
 Your existing data is safe. On first start the database upgrades itself (schema version 19), and a
-backup of the database is made automatically once a day when AP Coder starts (the newest 14 are kept).
+backup of AP Coder (the database and the invoice files) is made automatically once a day (the newest 14 are
+kept).
+
+## Controls on held vendors, whole-state backups, stage 0 then a live pilot (D-142 to D-145)
+
+- **Only an Approver lifts a hold** (D-142): on a company server a Clerk can put a vendor on hold but not take it
+  off, and can't approve a held vendor's invoice moved to another vendor (or to a new one under a near-identical
+  name, or showing the held vendor's GST/HST number or bank account), on screen or in bulk. An Approver can, with a
+  reason kept in the audit trail. The laptop is unchanged.
+- **Every backup is a whole state** (D-143): the database and every invoice PDF, picture, saved email and statement
+  it needs, also in the second backup folder (a network share), stored once and checked by fingerprint. *Settings*
+  → *Data & backups* shows what each backup holds and has **Restore this state**; restoring first backs up the state
+  it replaces, and files added since are set aside, never deleted. IT has `python -m ap_coder backup
+  now|list|check|restore`, also onto a new computer from the share alone. The day's backup runs in the background.
+- **Touchless stays off** until the company's AI team has reviewed it (D-144).
+- **The pilot plan** (D-145): stage 0 connects AP Coder to the company (its repository, the shared desktop, the AP
+  inbox, single sign-on, JD Edwards read and write in the test environment, job costing, a security review), then a
+  live pilot with a small AP team ([PILOT_PLAN.md](PILOT_PLAN.md)).
 
 ## Managers confirm the coding, what's left on a PO, who acts next (D-138 to D-141)
 
