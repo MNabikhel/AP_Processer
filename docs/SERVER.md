@@ -382,7 +382,7 @@ Admin).
 |---|---|
 | Read-only | Look at invoices, the review queue, reports, the exports list and Help. Change nothing. |
 | Clerk | Also import and process invoices, review and correct them, approve within the limit, park, reject, reopen, bulk approve, export batches, and put a vendor on hold or edit its notes and tax numbers (not take it off hold, D-142). |
-| Approver | Also give the second approval (always by another account than the first), take a vendor off hold, and post vouchers to JD Edwards through the API. |
+| Approver | Also give the second approval (always by another account than the first), take a vendor off hold (or approve a held vendor's invoice coded to another vendor), and post vouchers to JD Edwards through the API. |
 | Admin | Everything else: Settings, users, the JD Edwards setup, GL accounts and vendors imports, backups and restore, deleting, the Azure check, updating. |
 | Manager | Only confirms, or sends back, the coding of the invoices AP sends them (*Manager confirmations*): sees those invoices and nothing else of AP Coder. An Admin sets each Manager's cost centers on the users page; AP picks the Manager when sending (D-138). |
 

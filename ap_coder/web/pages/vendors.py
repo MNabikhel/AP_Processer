@@ -34,7 +34,7 @@ from ap_coder.core.store import PARKED, REVIEW, Store
 from ap_coder.erp import recurring
 from ap_coder.erp.insights import vendor_workload
 from ap_coder.ops.help import help_for
-from ap_coder.web import identity, roles
+from ap_coder.web.access import may_lift_hold
 from ap_coder.web.core import (
     done,
     flash_message,
@@ -45,7 +45,6 @@ from ap_coder.web.core import (
     refuse,
     render,
     reviewer,
-    server_mode,
 )
 from ap_coder.web.files import (
     NO_ROWS,
@@ -60,16 +59,6 @@ from ap_coder.web.invoice_view import gl_name
 
 router = page_router()  # each plain handler: one connection a request
 LIFT_HOLD = "Only an Approver can take a vendor off hold."
-
-
-def may_lift_hold(request: Request) -> bool:
-    """Whether the person asking may take a vendor off hold: anyone on a laptop; on the server an Approver or an
-    Admin, not a Clerk, who would then approve the vendor's invoices under the limit (D-142)."""
-    if not server_mode(request):
-        return True
-    me = identity.person()
-    return me is not None and roles.allowed(me.role, roles.APPROVER)
-
 
 SORTS = {
     "spend": "Spend: high to low",

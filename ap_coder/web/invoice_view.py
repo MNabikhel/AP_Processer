@@ -85,7 +85,7 @@ from ap_coder.coding.taxmath import math_check
 from ap_coder.coding.terms import describe as terms_describe
 from ap_coder.coding.terms import payment
 from ap_coder.coding.validation import COUNTED_IN_CODING, ERROR, INFO, Issue, off_text
-from ap_coder.coding.vendors import expected_tax_numbers
+from ap_coder.coding.vendors import expected_tax_numbers, moved_off_hold
 from ap_coder.core.config import Settings
 from ap_coder.core.memory import ACCEPTED, BULK, CODED, CORRECTED, pair_lines, vendor_key
 from ap_coder.core.reference_data import UNASSIGNED, ReferenceData, short_name
@@ -95,6 +95,7 @@ from ap_coder.core.store.accounts import CURRENCY_CHANGED
 from ap_coder.core.ui import TAX_LABELS, plural
 from ap_coder.ops.help import help_for
 from ap_coder.ops.offline import setup_contact
+from ap_coder.web import identity
 from ap_coder.web.document import clean_boxes
 
 # --- The form ------------------------------------------------------------------------------------------------------
@@ -1692,6 +1693,9 @@ def _findings(store: Store, inv: dict[str, Any], draft: Draft, coding: InvoiceCo
         report.issues = settle_absent(report.issues, draft.absent)
     from_list = sorted((draft.from_vendor.get("fields") or {}).keys())
     report.issues += not_printed(coding, from_list)
+    found = identity.person()
+    if found is not None and found.user_id:  # the company server: a held vendor's invoice moved (D-142); not a laptop
+        report.issues += [Issue(*f) for f in moved_off_hold(store, ai, coding)]
     typed = dates.issues + currency_issues(coding.currency)  # the dates and the currency as typed (D-75)
     if typed:
         report.issues = typed + report.issues

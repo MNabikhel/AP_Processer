@@ -7,7 +7,7 @@ The roles, each able to do everything the one before it can (``core/store/users.
   exports, Help, Insights, Spend, the Activity log and their own account. Changes nothing.
 * **Clerk** (``CLERK``): imports invoices, reviews and checks them, gives the first approval, parks, rejects,
   reopens, undoes their own approval, approves in bulk, makes export batches and downloads them, puts vendors on hold
-  and keeps their notes (taking a vendor off hold is an Approver's, D-142: ``pages/vendors.py`` ``may_lift_hold``).
+  and keeps their notes (taking a vendor off hold is an Approver's, D-142: ``access.may_lift_hold``).
 * **Approver** (``APPROVER``): also gives the second approval (over the approval limit) or sends the invoice back,
   gives the go-ahead to post vouchers to JD Edwards through the API (D-104; a Clerk may run its dry run), and takes
   a vendor off hold.

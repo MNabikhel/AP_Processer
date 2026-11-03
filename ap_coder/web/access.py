@@ -5,6 +5,8 @@ Two small answers the pages ask, kept here so they change in one place:
 * ``is_admin(request)``: whether the person asking is an Admin. On a laptop (no accounts) the person at the
   computer runs AP Coder, so yes. On the company server, only the account logged in with the Admin role
   (``identity.person()``, set by the login middleware, D-97).
+* ``may_lift_hold(request)``: whether the person asking may take a vendor off hold, or approve a held vendor's
+  invoice coded to another vendor (D-142): on a laptop yes; on the server an Approver or an Admin, not a Clerk.
 * ``person_key()``: whose edits a draft on the review screen is. None for this computer's own person; a
   logged-in account's id on the server; a colleague's (name, browser id) on the office network.
 """
@@ -14,7 +16,7 @@ from __future__ import annotations
 from typing import Any
 
 from ap_coder.ops import offline
-from ap_coder.web import identity
+from ap_coder.web import identity, roles
 
 ADMIN = "admin"
 
@@ -26,6 +28,16 @@ def is_admin(request: Any = None) -> bool:
         return True
     found = identity.person()
     return found is not None and found.role == ADMIN
+
+
+def may_lift_hold(request: Any = None) -> bool:
+    """Whether the person asking may take a vendor off hold, or approve a held vendor's invoice coded to another
+    vendor: on a laptop always; on the server an Approver or an Admin, not a Clerk, who would then approve the
+    vendor's invoices under the limit alone (D-142)."""
+    if not _server(request):
+        return True
+    found = identity.person()
+    return found is not None and roles.allowed(found.role, roles.APPROVER)
 
 
 def _server(request: Any) -> bool:

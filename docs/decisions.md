@@ -305,8 +305,17 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   and only the lift is checked. A Manager (D-138) never reaches the Vendors page. On a laptop (no accounts) nothing
   changes. The lift is in the audit trail as before (`vendor_updated`, "made active", with who). The other ways a
   hold ends are an Admin's (the vendor master import, the JD Edwards sync's `erp_hold`, removing the demo) or keep it
-  (vendors merged, a vendor added on the review screen). (`web/pages/vendors.py` `may_lift_hold`,
-  `web/templates/vendors.html`; `tests/web/test_web_masterdata.py`)
+  (vendors merged, a vendor added on the review screen). The same rule on the review screen (B-1549): a held
+  vendor's invoice coded to another vendor (an existing one, or one added there under a name a letter off) is
+  `VENDOR_CHANGED_FROM_HELD`, an error an Approver or an Admin approves anyway with a reason; a Clerk's approval is
+  refused. The invoice is the held vendor's by its vendor as read, or by a GST/HST number or bank account (read, or
+  on screen) that is the held vendor's (given it, or on its approved invoices), so a near-identical new vendor
+  doesn't dodge it. Server only: the laptop is unchanged. Bulk approval is not checked: it approves the coding as
+  read, or as an earlier approval stored it, so a vendor moved by a person was already an Approver's. The audit
+  trail's approval says who and from which vendor (its `changes`: vendor before and after, and the reason).
+  (`web/access.py` `may_lift_hold`, `web/pages/vendors.py`, `web/templates/vendors.html`, `coding/vendors.py`
+  `moved_off_hold`, `web/invoice_view.py` `_findings`, `web/pages/invoice.py` `_approve`;
+  `tests/web/test_web_masterdata.py`, `tests/web/test_web_review_voucher.py`, `tests/coding/test_vendors.py`)
 - **D-144** · **Touchless processing stays off** until the company's AI team has done a model-risk review of it
   (invoices written to steer the AI reviewer included): an invoice approved without a person, on a model's say,
   waits for that review (the user's call). PILOT_PLAN.md's week-3 "Touchless, if ready" item is removed; the plan
