@@ -359,7 +359,8 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
 
 ### 6.10 Server mode (one AP Coder for the team)
 
-- **What:** `AP_SERVER_MODE=1`: logins (AP Coder's own accounts; single sign-on to build in stage 0), four roles
+- **What:** `AP_SERVER_MODE=1`: logins (AP Coder's own accounts, with a code from an authenticator app at every
+  login, D-146), four roles
   (Read-only, Clerk, Approver, Admin, enforced per route in `web/roles.py`), HTTPS with the company's certificate, an
   allowed-hosts list, a Windows scheduled-task service (`python -m ap_coder service install ...`), `server-update
   <bundle.zip> --sha256` with rollback. All in `docs/SERVER.md`, step by step for IT.
@@ -368,14 +369,21 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
   service account, a DNS name and a certificate for it, a firewall rule for the port, LM Studio installed headless
   with the models.
 - **Not done:** never installed anywhere (stage 0 sets it up on the pilot computer); the company's security review
-  (and a penetration test if IT requires one) is in stage 0, before production write access to JD Edwards; no single sign-on.
-- **Single sign-on, to build in stage 0** (Entra ID or the company's AD; IT picks, D-145). Where it goes: the
-  sign-in page and its session cookie are `web/pages/login.py`; who the person is on each request,
-  `web/identity.py` (`Identity`); the accounts, their roles and sessions, `core/store/users.py`; what each role may
-  do, `web/roles.py` (unchanged by SSO: map the company's groups to the four roles). Entra ID signs in through
-  Microsoft's cloud, so under the offline rule (CLAUDE.md) it is an exception that needs a decision of its own, as
-  the AIS Server had (D-104: a named system an Admin turns on, its one address only); an on-premises ADFS on the
-  company network fits D-104 as it is.
+  (and a penetration test if IT requires one) is in stage 0, before production write access to JD Edwards; no single
+  sign-on with the company's accounts.
+- **Sign-in: built** (D-146, the user's call; single sign-on set aside for now). AP Coder's own accounts: an Admin
+  adds each person (a temporary password shown once); at the first login they choose their own password, then set up
+  any authenticator app (Microsoft Authenticator, Google Authenticator...) from a QR code; every login after is the
+  password, then the app's 6-digit code (TOTP, standard library, offline). An Admin resets a lost phone's app on the
+  Users page; the console's `users reset-2fa` is the last Admin's way back. Each secret is kept sealed with the key
+  file `authenticator.key` in the data folder, which the whole-state backups hold (SERVER.md section 9).
+  **The company supplies:** each person's username and role, and phones with an authenticator app (any).
+- **Entra ID sign-in, a possible later option.** Where it would go: the sign-in page and its steps,
+  `web/pages/login.py`; who the person is on each request, `web/identity.py` (`Identity`); the accounts, their roles
+  and sessions, `core/store/users.py`; what each role may do, `web/roles.py` (unchanged: map the company's groups to
+  the roles). Entra ID signs in through Microsoft's cloud, so under the offline rule (CLAUDE.md) it would be an
+  exception that needs a decision of its own, as the AIS Server had (D-104: a named system an Admin turns on, its one
+  address only); an on-premises ADFS on the company network fits D-104 as it is.
 
 ### 6.11 LM Studio and the models
 
@@ -457,9 +465,10 @@ check. Don't start the next while the last one's tests are red. Dates move with 
 3. **The AP inbox.** IT builds the Power Automate flow of `docs/MAILBOX_SETUP.md` (AP Coder never holds the
    mailbox's password); schedule `python -m ap_coder watch`. *Done when* a week of AP's mailbox lands in the review
    queue with nothing lost.
-4. **Single sign-on.** Plan it with IT (Entra ID or the company's AD; IT picks), then build it (6.10). Entra ID signs
-   in through Microsoft's cloud: an exception to the offline rule, recorded as a decision of its own. *Done when*
-   the clerks sign in with their company accounts.
+4. **AP Coder's logins and authenticator codes for the pilot team** (built, D-146; 6.10). The first Admin, then an
+   Admin adds the pilot tester and each clerk on *Users*; each signs in with the temporary password, chooses their
+   own, and sets up an authenticator app on their phone. *Done when* every one of them has signed in with a code
+   from their phone, and an Admin has reset one person's authenticator as a drill.
 5. **JD Edwards read and write, in PY.** Send the JDE worksheet and import the answers (6.1). The JDE team builds the
    seven orchestrations of `docs/JDE_ORCHESTRATIONS.md` in E1's test environment (PY): read first (it replaces the
    CSV imports of step 2), then write with dry runs. Write means AP Coder creates *pending* voucher batches; under
@@ -537,7 +546,8 @@ production:
 list in `docs/JDE_ORCHESTRATIONS.md`. In short: the server mode not set up anywhere yet (stage 0 sets it up on the
 pilot computer); minutes a page without a graphics card; sample data until the company's is imported; JD Edwards
 never tried against a real E1 (stage 0 tests read and write in PY); the mailbox flow set up in stage 0, no direct
-mailbox connection by design; single sign-on to build in stage 0; accuracy measured on samples only; job cost
+mailbox connection by design; AP Coder's own logins with authenticator codes (D-146), no single sign-on with the
+company's accounts (Entra ID a possible later option); accuracy measured on samples only; job cost
 coding to build in stage 0; Python installed by IT; the security review (and a penetration test if IT requires one) in
 stage 0, before production write access.
 

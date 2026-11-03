@@ -6,7 +6,8 @@ pilot).
 
 1. **On a laptop, one person at a time.** The central server version (logins, roles, HTTPS, a Windows service:
    [SERVER.md](SERVER.md)) is built and tested but not set up anywhere yet: stage 0 sets it up on the pilot computer
-   (a laptop or desktop). Single sign-on (Entra ID or the company's AD) is not built: it is built in stage 0.
+   (a laptop or desktop). People sign in with AP Coder's own accounts and a code from an authenticator app on their
+   phone (D-146); single sign-on with the company's accounts (Entra ID) is not built, a possible later option.
 2. **Speed without a graphics card.** OvisOCR2 reads a page in a few minutes on a laptop processor, in the
    background; the chat model takes 1 to 6 minutes for an invoice whose lines it must code. A line learned from an
    approval needs no model. A graphics card is many times faster.
