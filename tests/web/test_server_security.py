@@ -17,7 +17,7 @@ from ap_coder.core.store import Store, load_sample_setup, users
 from ap_coder.core.store.users import LOCKED, LoginRefused
 from ap_coder.web.app import create_app
 from ap_coder.web.identity import SESSION_COOKIE
-from tests.webclient import PAGE, add_clean, web_settings
+from tests.webclient import PAGE, add_clean, enrol, sign_in, web_settings
 
 GOOD = "correct horse battery"
 WRONG_PASSWORD = "wrong wrong wrong"
@@ -47,6 +47,7 @@ def account(store: Store, username: str, role: str = "clerk", password: str = GO
     uid = store.add_user(username, password, role=role, display_name=username.title())
     with store._conn() as conn:
         conn.execute("UPDATE users SET must_change = 0 WHERE id = ?", (uid,))
+    enrol(store, uid)  # its authenticator app set up (D-146)
     return uid
 
 
@@ -59,7 +60,8 @@ def client_of(app, ip: str = "10.0.0.5", base: str = "https://localhost") -> Tes
 
 
 def log_in(client: TestClient, username: str, password: str = GOOD):
-    return client.post("/login", data={"username": username, "password": password, "next": "/review"}, headers=PAGE)
+    """Both steps (D-146): the password, then the authenticator's code."""
+    return sign_in(client, username, password)
 
 
 def fail(store: Store, username: str, ip: str, times: int = 1, **options) -> str:
@@ -253,7 +255,7 @@ def test_an_admin_cannot_reset_their_own_password_on_the_users_page(store):
     account(store, "boss2", "admin")
     client = client_of(app_for(store))
     log_in(client, "boss")
-    assert f"/admin/users/{boss}/reset" not in client.get("/admin/users").text
+    assert f'action="/admin/users/{boss}/reset"' not in client.get("/admin/users").text
     refused = client.post(f"/admin/users/{boss}/reset", headers=PAGE)
     assert refused.status_code == 400 and "/account/password" in refused.json()["error"]
     assert "Your password" in refused.json()["error"]
@@ -350,12 +352,12 @@ def test_healthz_tells_only_the_console_the_servers_folder(store):
 def test_on_the_server_the_cookie_is_secure_and_hsts_sent_whatever_the_scheme(store):
     account(store, "ann")
     plain = client_of(app_for(store), base="http://localhost")  # behind a proxy that ends HTTPS
-    answer = log_in(plain, "ann")
-    assert "Secure" in answer.headers["set-cookie"]
+    answer = plain.post("/login", data={"username": "ann", "password": GOOD}, headers=PAGE)  # (its cookie, Secure,
+    assert "Secure" in answer.headers["set-cookie"]  # is not sent back over plain HTTP: the first step's alone)
     assert answer.headers["strict-transport-security"].startswith("max-age=")
     first_test = client_of(app_for(store, insecure_http=True), base="http://localhost")
     answer = log_in(first_test, "ann")
-    assert "Secure" not in answer.headers["set-cookie"]
+    assert "Secure" not in answer.headers["set-cookie"] and first_test.cookies.get("ap_session")
     assert "strict-transport-security" not in answer.headers
 
 

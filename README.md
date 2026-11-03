@@ -17,10 +17,10 @@ of the [exceptions](#what-leaves-the-laptop).
 | | |
 |---|---|
 | **Laptop release** | Ready: checked end to end, the way a pilot tester uses it. Next: stage 0 connects AP Coder to the company's inbox, sign-in and JD Edwards, then a live pilot with a small AP team ([docs/PILOT_PLAN.md](docs/PILOT_PLAN.md)). |
-| **Company server** | Built, with HTTPS, logins and four roles; reviewed for security within the project and sized for about 500 users, not yet reviewed by a company's IT security team. Not installed yet: [docs/SERVER.md](docs/SERVER.md). |
+| **Company server** | Built, with HTTPS, logins with a code from an authenticator app, and four roles; reviewed for security within the project and sized for about 500 users, not yet reviewed by a company's IT security team. Not installed yet: [docs/SERVER.md](docs/SERVER.md). |
 | **JD Edwards E1** | Approved invoices go out as JDE's standard batch files (F0411Z1/F0911Z1). The direct API connection is built and waits for the JDE team: [docs/JDE_E1.md](docs/JDE_E1.md). In the pilot they go in as pending batches that AP approves and posts in E1, so E1's batch approval keeps a person's final check. |
 | **Finance AI Hub** | AP Coder's feed to Microsoft Fabric is built (off until an Admin turns it on): [docs/FINANCE_HUB.md](docs/FINANCE_HUB.md). |
-| **Quality** | About 4,500 automated tests run on every change, on Windows and Linux; the install and the update are checked on clean Windows and Mac machines. Every bug fixed gets its own test ([docs/BUGS.md](docs/BUGS.md)). |
+| **Quality** | About 4,900 automated tests run on every change, on Windows and Linux; the install and the update are checked on clean Windows and Mac machines. Every bug fixed gets its own test ([docs/BUGS.md](docs/BUGS.md)). |
 
 ## What it does
 
@@ -98,7 +98,8 @@ Each exception is off until someone switches it on, on purpose:
   invoices AP Coder isn't sure of.
 - **The finance hub feed** (*Settings → Finance hub*): tables written to a shared folder Microsoft Fabric reads.
 - **The JD Edwards API** (*Settings → JD Edwards E1*): your company's own JD Edwards server, on the internal network.
-- **Server mode**: the dashboard on the office network, over HTTPS, with logins.
+- **Server mode**: the dashboard on the office network, over HTTPS, with logins: a password, then a code from an
+  authenticator app on the person's phone (D-146).
 
 Every place the network could be touched: [docs/HOW_IT_RUNS.md](docs/HOW_IT_RUNS.md).
 

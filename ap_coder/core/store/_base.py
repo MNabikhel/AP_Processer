@@ -587,9 +587,9 @@ class StoreCore:
         for column in ("manager_name", "manager_email"):
             if columns and column not in columns:
                 conn.execute(f"ALTER TABLE cost_centers ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
-        columns = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
-        if columns and "cost_centers" not in columns:
-            conn.execute("ALTER TABLE users ADD COLUMN cost_centers TEXT NOT NULL DEFAULT ''")
+        from .users import add_columns
+
+        add_columns(conn)  # the accounts' columns added since (a Manager's cost centers, the authenticator app's)
         # An invoice made from a picture remembers the picture's SHA-256 (intake/pictures.py), so the same photo sent
         # again is found (looked for whatever the version).
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(invoices)")}

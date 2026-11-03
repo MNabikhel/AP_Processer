@@ -46,7 +46,7 @@ GROUPS = {
     "Backups": ["backup_made", "backup_restored"],
     "Logins": ["login", "login_failed", "login_locked", "logout", "password_changed", "password_reset", "user_added",
                "role_changed", "user_cost_centers_set", "user_deactivated", "user_activated", "address_unlocked",
-               "downloaded"],
+               "downloaded", "authenticator_enrolled", "authenticator_reset"],
 }  # fmt: skip
 EVENTS_READ = 5000  # the newest events the page works on
 TIMELINE_SHOWN = 200

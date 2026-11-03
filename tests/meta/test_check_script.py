@@ -57,3 +57,12 @@ def test_the_default_run_leaves_out_browser_and_listed_tests():
     collected = [line for line in out.stdout.splitlines() if "::" in line]
     assert collected and not any("in_a_browser" in line for line in collected)
     assert "deselected" in out.stdout
+
+
+def test_help_prints_the_usage_and_checks_nothing(monkeypatch, capsys):
+    """B-1576: ``check.py --help`` took the flag for a file name and ran the check."""
+    monkeypatch.setattr(check, "pytest", lambda args: (_ for _ in ()).throw(AssertionError("ran the tests")))
+    for flag in ("--help", "-h"):
+        assert check.main([flag]) == 0
+        out = capsys.readouterr().out
+        assert "python scripts/check.py FILE..." in out and "check:" not in out

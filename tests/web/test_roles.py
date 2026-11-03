@@ -18,7 +18,7 @@ from ap_coder.core.store.users import ROLES
 from ap_coder.web import roles
 from ap_coder.web.app import create_app
 from ap_coder.web.identity import SESSION_COOKIE, Identity
-from tests.webclient import PAGE, web_settings
+from tests.webclient import PAGE, enrol, web_settings
 
 GOOD = "correct horse battery"
 
@@ -61,6 +61,7 @@ def setup(tmp_path_factory):
         uid = store.add_user(f"the.{role}", GOOD, role=role)
         with store._conn() as conn:
             conn.execute("UPDATE users SET must_change = 0 WHERE id = ?", (uid,))
+        enrol(store, uid)  # its authenticator app set up (D-146)
         tokens[role] = store.start_session(uid)
     client = TestClient(Probe(app), base_url="http://localhost", client=("10.0.0.5", 50000), follow_redirects=False)
     return app, tokens, client
@@ -125,6 +126,9 @@ def test_what_each_role_may_do(setup):
             "/account/password",
             "/account/sessions/end-others",
             "/login",
+            "/login/new-password",  # a login's own steps before its session (D-146)
+            "/login/authenticator",
+            "/login/code",
             "/who",
             "/shutdown",
         ):

@@ -14,17 +14,20 @@ Each item ends with something a person can check. The company's IT and the JDE t
 
 - [ ] **The code goes into the company's own repository** ([HANDOFF.md](HANDOFF.md) section 1), and its tests
       run green there.
-- [ ] **The pilot computer:** for the pilot's handful of people, a laptop with an NVIDIA graphics card (16 GB or
-      more), docked and plugged in, sleep off, in a locked spot (or a desktop), given a burn-in week and set up in
+- [ ] **The pilot computer:** for the pilot's handful of people, a laptop with an NVIDIA graphics card with 16 GB
+      of VRAM or more and 32 GB of memory ([SERVER.md](SERVER.md) section 1), docked and plugged in, sleep off, in a
+      locked spot (or a desktop), given a burn-in week and set up in
       server mode ([SERVER.md](SERVER.md): Windows 11 Pro runs it), with LM Studio, OvisOCR2 and the chat model on it
       (section 8). The pilot tester and the clerks log in from their browsers, each with their own account
       (section 10).
 - [ ] **The AP inbox:** a Power Automate flow saves the AP mailbox's emails into AP Coder's invoices folder
       ([MAILBOX_SETUP.md](MAILBOX_SETUP.md)). AP Coder never holds the mailbox's password. Check *Emails that
       need a person* on Import invoices each day.
-- [ ] **Single sign-on:** planned with IT (Entra ID or the company's Active Directory; IT picks), then built.
-      Signing in with Entra ID passes through Microsoft's cloud: an exception to AP Coder's offline rule, to be
-      decided and recorded as one ([HANDOFF.md](HANDOFF.md) 6.10). Until it is built, AP Coder's own accounts.
+- [ ] **Set up AP Coder's logins and authenticator codes for the pilot team** (D-146): an Admin adds the pilot
+      tester and each clerk on *Users*; each signs in with the temporary password, chooses their own password and
+      sets up an authenticator app on their phone (Microsoft Authenticator, Google Authenticator or any other), then
+      signs in with a code from it every time ([SERVER.md](SERVER.md) section 10). Single sign-on with the
+      company's accounts (Entra ID) is set aside for now ([HANDOFF.md](HANDOFF.md) 6.10).
 - [ ] **JD Edwards read and write** through the 7 orchestrations of [JDE_ORCHESTRATIONS.md](JDE_ORCHESTRATIONS.md),
       built by the JDE team and tested in E1's test environment (PY). *Read* brings in the suppliers, accounts,
       business units, open POs and past vouchers. *Write* means AP Coder creates **pending** voucher batches: under
@@ -33,7 +36,8 @@ Each item ends with something a person can check. The company's IT and the JDE t
 - [ ] **Job costing** (job, cost code, cost type on a line): built in AP Coder, about 3 to 4 weeks of work.
 - [ ] **The company's master data:** the GL accounts and cost centers, how each sales tax posts, the vendor list
       with each vendor's address number (AN8), open POs, bank accounts, and last year's posted AP lines
-      (*Learning & accuracy → Teach from past coding*), so each vendor is coded from its first invoice.
+      (*Learning & accuracy → Teach from past coding*), so each vendor is coded from its first invoice. Imported on
+      the pilot computer as soon as it is set up, before job costing ([HANDOFF.md](HANDOFF.md) section 8, step 2).
 - [ ] **A security review** by the company's IT security team (to OWASP ASVS Level 2), and **a penetration test if
       IT requires one.** They are needed before AP Coder gets *production* write access only: read access and the
       work in PY go ahead meanwhile. If IT wants a penetration test, book it early: firms need weeks of notice.

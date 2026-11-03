@@ -18,18 +18,22 @@ guides, the bug log (BUGS.md) and decisions (decisions.md), their older entries 
   reader `capture/reader/` (parts: labels, values, spatial, patterns, totals, line_items, entry: `read_fields`); the
   vision model `ai/page_reader.py`; their merged result `ai/reading.py`; the plain text `capture/transcript.py`.
 - The database (`Store`): the package `core/store/`, one part per subject (list in its `__init__.py`): `invoices.py`
-  (approvals `approve_invoice`/`final_approve`), `_base.py` (schema, `SCHEMA_VERSION`), `accounts.py` (`events`).
-  Who the reviewer is: `web/identity.py`.
+  (approvals `approve_invoice`/`final_approve`), `_base.py` (schema, `SCHEMA_VERSION`), `accounts.py` (`events`),
+  backups `backups.py` + `backup_files.py` (D-143; command line `ops/backup_cmd.py`), people `users.py`, managers
+  confirming the coding `managers.py` (D-138; their email `coding/manager_mail.py`, page `web/pages/manager.py`).
+  Who the reviewer is: `web/identity.py`. Server mode: `web/roles.py` (every route needs a rule,
+  `tests/web/test_roles.py`), `web/access.py`, `web/pages/login.py`; service and updates `ops/service.py`,
+  `ops/server_update.py`.
 - Checks (findings with a code): `coding/validation.py` (`validate_coding` gathers them), payment terms
   `coding/terms.py`, tax `coding/tax.py` (`check_taxes`, `place_of_supply`), the Tax check `coding/taxmath.py`, line
   tax codes `coding/line_tax.py`, ITCs and self-assessment `coding/taxreturn.py`, vendors `coding/vendors.py`. Every
   check code needs a `CheckHelp` in `ops/help.py` (`tests/ops/test_help.py` enforces it).
 - Exports: `erp/exports.py` (Excel/CSV), `erp/jde.py` (JD Edwards; its AIS API: `erp/jde_ais.py`, `jde_sync.py`,
-  `jde_post.py`). Reports: the rest of `erp/`.
+  `jde_post.py`; the JDE worksheet `erp/jde_worksheet.py`), Finance Hub `erp/hub/`. Reports: the rest of `erp/`.
 - The review screen: routes `web/pages/invoice.py`, view `web/invoice_view.py`, `web/templates/invoice.html`,
   `web/static/js/invoice.js` (the form) and `invoice_viewer.js` (the PDF beside it). Other pages:
   `web/pages/<page>.py` + `web/templates/<page>.html`; the review queue is `web/pages/review.py` (`coding/review.py`
-  is the line grid's edits).
+  is the line grid's edits; bulk approval `coding/bulk.py`).
   A page module's `router = page_router()` (`web/core.py`): each plain handler shares one database connection a
   request.
 - Amounts and dates: `capture/normalize.py` for what is read off an invoice, `core/safe.py` / `core/csvio.py` for

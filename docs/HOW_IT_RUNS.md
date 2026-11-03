@@ -388,6 +388,10 @@ can corrupt an open SQLite database).
 | **Data folder** `ap_coder.db` (`-wal`, `-shm`) | the database (`AP_DB_PATH` overrides) | `Store` |
 | `invoices/`, `invoices/deleted/`, `invoices/from-<folder>/` | invoice files; deleted ones; files copied out of an older folder | dashboard, `upgrade.repoint_files` |
 | `backups/ap_coder-YYYYMMDD-HHMMSS.db` | daily backup when the dashboard starts, newest 14 kept; `-manual`; `-before-update-from-schema-<n>`; `-before-update-file-paths` | `Store.auto_backup`, `backup_now`, `_before_migrating`, `upgrade._backed_up` |
+| `backups/ap_coder-<stamp>.files.json` | each backup's list of files: each one's place in the data folder, size, time and SHA-256, and the database's size and SHA-256 | `backup_files.snapshot` |
+| `backups/files/<2>/<sha256>` | the files of every backup, each content kept once, named by its SHA-256; one no backup kept lists is removed | `backup_files.snapshot`, `backup_files.prune` |
+| `backups/set-aside-<stamp>/` | the files a restore found that were not there at that backup (moved here, never deleted) | `backup_files.restore_files` |
+| `backups/.lock` | one backup, restore or update's put-back at a time (the operating system's lock) | `backup_files.exclusive` |
 | `backups/from-<folder>-<date>/` | an older install's data when the data folder had its own | `upgrade.adopt_legacy` |
 | `.env` | settings (Azure for developers, LM Studio address, reviewer…) | installer, Settings page, `adopt_legacy`, `envfile.retire` |
 | `.ap_coder_server.json` | the running server: pid, port, folder, version, token, user (the computer account) | `web/server.write_server_file` |
@@ -408,9 +412,12 @@ can corrupt an open SQLite database).
 | `logs/service.log` | what the server said (rotating) | the service host |
 | `finance_hub/` | the finance hub feed's own record of what was sent (`state.db`) | `hub export`, the schedule |
 
-**Backups**: one a day when the dashboard starts (`Store.auto_backup`, 20 hours apart, 14 kept), each a single
-self-contained SQLite file (`journal_mode=DELETE`); one before every schema migration and before an update repoints
-file paths; manual ones from Settings; optionally copied to a second folder. Restore from Settings → Data & backups.
+**Backups**: one a day when the dashboard starts (`Store.auto_backup`, 20 hours apart, 14 kept), each a whole state
+(D-143): the database as one self-contained SQLite file (`journal_mode=DELETE`), its file list
+`ap_coder-<stamp>.files.json`, and the files once per content in `backups/files/`; one before every schema
+migration and before an update repoints file paths; manual ones from Settings; optionally copied to a second folder
+(the same layout, so it restores on its own). Restore from Settings → Data & backups (or `python -m ap_coder backup
+restore`): the files added since that backup are moved to `backups/set-aside-<stamp>/`.
 
 **Logs**: on a server, `<data folder>\logs\service.log`. On a laptop, `~/.ap_coder/logs/launch.log` holds every
 start (a header line with the time, options, Python and folder;

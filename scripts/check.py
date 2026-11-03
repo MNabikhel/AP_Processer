@@ -93,6 +93,9 @@ def pytest(args: list[str]) -> subprocess.CompletedProcess:
 
 
 def main(argv: list[str]) -> int:
+    if any(a in ("-h", "--help") for a in argv):
+        print(__doc__.strip())
+        return 0
     files = argv or changed_files()
     if files is None:
         print("Not a git checkout: name the files to check, e.g. python scripts/check.py ap_coder/coding/tax.py")

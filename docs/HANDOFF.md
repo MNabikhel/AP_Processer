@@ -3,7 +3,7 @@
 **Read this first, then `CLAUDE.md`.** This file is the brief for an AI coding agent (Claude Code or similar) that
 takes over AP Coder inside the company it was built for, to connect it to the company's own systems. The
 handoff is **one way**: whoever built AP Coder up to here cannot be asked anything. Everything known is in this
-repository: this file, `CLAUDE.md`, `docs/` (guides, decisions, bug log, their archives) and 1,450+ commit messages.
+repository: this file, `CLAUDE.md`, `docs/` (guides, decisions, bug log, their archives) and some 1,600 commit messages.
 When this file and the code disagree, the code is right; fix this file.
 
 From the handoff on, **your copy is the main copy**. Nothing goes back to where it came from.
@@ -25,7 +25,7 @@ of the original repository. The tags themselves are in the bundle.
 
 | File | What it is | Use it when |
 |---|---|---|
-| `AP_Coder.bundle` | A git bundle: `main` with its whole history and the tags `v0.3.0-pilot1` to `v0.3.0-pilot8` (the laptop releases; pilot8 is the newest) and `v0.3.0-handoff8` (this handoff: pilot8 and these docs, the same commit; `v0.3.0-handoff1` to `-handoff5` were earlier ones) | Git is available: keeps every commit message, which explains why the code is as it is |
+| `AP_Coder.bundle` | A git bundle: `main` with its whole history and the tags `v0.3.0-pilot1` to `v0.3.0-pilot8` (the laptop releases; pilot8 is the newest) and `v0.3.0-handoff8` (this handoff: pilot8 and these docs, the same commit; `v0.3.0-handoff1` to `-handoff7` were earlier ones) | Git is available: keeps every commit message, which explains why the code is as it is |
 | `AP_Coder_source.zip` | The same files as `main`, no history | Only file transfers are allowed, or git isn't |
 | `HANDOFF.md` | This file | Read first |
 | `SHA256SUMS.txt` | The SHA-256 of the three files above | Check the transfer |
@@ -48,7 +48,8 @@ git push -u origin main --tags
 ```bash
 unzip AP_Coder_source.zip                        # makes AP_Processer/
 cd AP_Processer
-cat ap_coder/BUILD                               # must read $Format:%h %cI$ (git fills it in for each ZIP made later)
+cat ap_coder/BUILD                               # the placeholder $Format:%h %cI$, or a commit and date if the zip
+                                                 # came from git archive (then put the placeholder back, below)
 git config user.name "<you>" && git config user.email "<you@company>"   # a fresh machine has none
 git init -b main && git add -A && git commit -m "AP Coder at the handoff (v0.3.0-handoff8), no history"
 git remote add origin <the company's repository URL> && git push -u origin main
@@ -79,9 +80,10 @@ Then prove the copy works before changing anything (section 3): the default test
 `python scripts/pilot_check.py` says 10 of 10 sample invoices read right, `python -m ap_coder serve --port 8501
 --no-browser` answers on http://127.0.0.1:8501/healthz. `python -m ap_coder doctor` then shows six warnings that are
 expected on a fresh copy (the OCR and table-finder models not copied yet, LM Studio not running (two), and the
-sample setup); its "data folder" line names the folder it uses (see section 5). The OCR models come with the offline
-bundle's `models/` folder (`python scripts/fetch_models.py` copies them from there), or, with internet,
-`AP_ALLOW_INTERNET=1 python scripts/fetch_models.py` (add `--table-finder` for the table model).
+sample GL accounts and cost centers (two)); its "data folder" line names the folder it uses (see section 5). The
+OCR models come with the offline bundle's `models/` folder (`python scripts/fetch_models.py` copies them from
+there), or, with internet, `AP_ALLOW_INTERNET=1 python scripts/fetch_models.py` (add `--table-finder` for the table
+model).
 
 ---
 
@@ -106,14 +108,14 @@ Nothing connects to the internet at run time. It is a FastAPI web app on 127.0.0
 roles and HTTPS). Data lives in one SQLite database in a data folder outside the code. It is at pilot stage: built
 and tested on synthetic and public sample invoices, not yet on the company's invoices or systems.
 
-Status at the handoff (`v0.3.0-handoff8`: the laptop release `v0.3.0-pilot8` of 4 November 2026, the same commit,
+Status at the handoff (`v0.3.0-handoff8`: the laptop release `v0.3.0-pilot8` of 3 November 2026, the same commit,
 with these handoff docs; the build stamp `doctor` and `/healthz` report is that commit's). Each pilot release was
 checked by CI on Windows with the real LM Studio before it was tagged (`.github/workflows/release.yml`, D-129, D-130):
 
 | Part | State |
 |---|---|
 | Laptop release | Ready. A demo run sheet (`docs/DEMO_RUN_SHEET.md`) and an offline install zip for Windows. The pilot itself runs on the server mode, after stage 0 (section 8, `docs/PILOT_PLAN.md`) |
-| Company server | Built, security-reviewed, tested (HTTPS, logins, four roles, Windows service); not installed anywhere |
+| Company server | Built, security-reviewed within the project (not yet by the company's IT security team: stage 0), tested (HTTPS, logins, four roles, Windows service); not installed anywhere |
 | JD Edwards E1 | Batch-voucher export built and tested; AIS API built against a stand-in; never run against a real E1 |
 | Finance Hub | Feed to Microsoft Fabric built (off by default); not tried against a real workspace |
 | Mailbox | Saved emails dropped in a folder; no direct mailbox connection by design |
@@ -127,7 +129,7 @@ python -m ap_coder serve          # the dashboard on http://127.0.0.1:8501 or th
 python -m ap_coder doctor         # what is set up and what is missing
 python scripts/pilot_check.py     # reads the 10 sample invoices, compares with samples/ground_truth (no AI needed)
 python scripts/check.py           # after a change: ruff on the changed files, then their tests (a minute or two)
-python -m pytest -q               # the default test tier: all but the slow tests (about 4,000, 6 minutes)
+python -m pytest -q               # the default test tier: all but the slow tests (about 4,200, 6 to 9 minutes)
 python -m pytest -q -m ""         # everything, browser tests included (about 15 minutes; needs Playwright + Chromium)
 ruff check ap_coder tests scripts && ruff format --check ap_coder tests scripts
 ```
@@ -268,7 +270,7 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
   `APC_Voucher_Create` (PROOF and FINAL modes), `APC_Voucher_Status`; built and tested in PY in stage 0 (section 8).
   In the pilot `APC_Voucher_Create` makes *pending* batches: E1's batch approval (*Manager Approval of Input*) keeps
   a person's final check, as AP approves and posts each batch in E1. Also the AIS address, environment (a test one
-  first), a service user and role with the table and program security listed there, and the 13 "To confirm" points
+  first), a service user and role with the table and program security listed there, and the 14 "To confirm" points
   in that file. The password goes in the data folder's `.env` (`JDE_AIS_PASSWORD`), never in git.
 - **Not done:** never run against a real AIS; the orchestrations don't exist yet (stage 0 builds them);
   `ChangedSince` is always blank (full read each time).
@@ -359,23 +361,32 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
 
 ### 6.10 Server mode (one AP Coder for the team)
 
-- **What:** `AP_SERVER_MODE=1`: logins (AP Coder's own accounts; single sign-on to build in stage 0), four roles
+- **What:** `AP_SERVER_MODE=1`: logins (AP Coder's own accounts, with a code from an authenticator app at every
+  login, D-146), four roles
   (Read-only, Clerk, Approver, Admin, enforced per route in `web/roles.py`), HTTPS with the company's certificate, an
   allowed-hosts list, a Windows scheduled-task service (`python -m ap_coder service install ...`), `server-update
   <bundle.zip> --sha256` with rollback. All in `docs/SERVER.md`, step by step for IT.
 - **IT supplies:** Windows Server 2019–2025 (or, for the pilot, a laptop or desktop with Windows 11 Pro: `docs/SERVER.md`
-  section 1), 8–16 cores, 32–64 GB RAM, an NVIDIA GPU with 12 GB+ for LM Studio, 60–200 GB SSD, Python 3.12, a
-  service account, a DNS name and a certificate for it, a firewall rule for the port, LM Studio installed headless
-  with the models.
+  section 1), 8–16 cores, 32–64 GB RAM, an NVIDIA GPU with 12 GB+ of VRAM (16 GB+ for the pilot computer) for
+  LM Studio, 60–200 GB SSD, Python 3.12, a service account, a DNS name and a certificate for it, a firewall rule
+  for the port, LM Studio installed headless with the models.
 - **Not done:** never installed anywhere (stage 0 sets it up on the pilot computer); the company's security review
-  (and a penetration test if IT requires one) is in stage 0, before production write access to JD Edwards; no single sign-on.
-- **Single sign-on, to build in stage 0** (Entra ID or the company's AD; IT picks, D-145). Where it goes: the
-  sign-in page and its session cookie are `web/pages/login.py`; who the person is on each request,
-  `web/identity.py` (`Identity`); the accounts, their roles and sessions, `core/store/users.py`; what each role may
-  do, `web/roles.py` (unchanged by SSO: map the company's groups to the four roles). Entra ID signs in through
-  Microsoft's cloud, so under the offline rule (CLAUDE.md) it is an exception that needs a decision of its own, as
-  the AIS Server had (D-104: a named system an Admin turns on, its one address only); an on-premises ADFS on the
-  company network fits D-104 as it is.
+  (and a penetration test if IT requires one) is in stage 0, before production write access to JD Edwards; no single
+  sign-on with the company's accounts.
+- **Sign-in: built** (D-146, the user's call; single sign-on set aside for now). AP Coder's own accounts: an Admin
+  adds each person (a temporary password shown once); at the first login they choose their own password, then set up
+  any authenticator app (Microsoft Authenticator, Google Authenticator...) from a QR code; every login after is the
+  password, then the app's 6-digit code (TOTP, standard library, offline). An Admin resets a lost phone's app on the
+  Users page, with the password (a temporary one shown once); the console's `users reset-2fa` is the last Admin's
+  way back. Each secret is kept sealed with the key
+  file `authenticator.key` in the data folder, which the whole-state backups hold (SERVER.md section 9).
+  **The company supplies:** each person's username and role, and phones with an authenticator app (any).
+- **Entra ID sign-in, a possible later option.** Where it would go: the sign-in page and its steps,
+  `web/pages/login.py`; who the person is on each request, `web/identity.py` (`Identity`); the accounts, their roles
+  and sessions, `core/store/users.py`; what each role may do, `web/roles.py` (unchanged: map the company's groups to
+  the roles). Entra ID signs in through Microsoft's cloud, so under the offline rule (CLAUDE.md) it would be an
+  exception that needs a decision of its own, as the AIS Server had (D-104: a named system an Admin turns on, its one
+  address only); an on-premises ADFS on the company network fits D-104 as it is.
 
 ### 6.11 LM Studio and the models
 
@@ -422,7 +433,7 @@ CNC contact, IT's contact for the pilot computer and the server, and who owns th
 | Invoices already in E1 (the last 12 to 18 months) | E1 voucher export | Exports → Invoices already in the ERP (6.6) |
 | Last year's posted AP lines (vendor, description, GL, cost center) | JDE team / AP | Learning & accuracy → Teach from past coding |
 | Exchange rates (for invoices in other currencies; the approval limit uses them) | Treasury / AP lead | Settings → Review |
-| A second backup folder (a network share) | IT | Settings → Data → *Also copy each backup to* |
+| A second backup folder (a network share) | IT | Settings → Data & backups → *Also copy each backup to* |
 | Bank accounts that pay AP | Treasury | GL accounts & tax → Bank accounts (6.7) |
 | The JDE worksheet's answers (37 questions, tax areas, account mapping, AN8s) | JDE team | Settings → JD Edwards E1 → Import the answers (6.1) |
 | Payment terms → E1 terms codes | JDE team | Settings → JD Edwards E1 → terms table |
@@ -449,17 +460,19 @@ check. Don't start the next while the last one's tests are red. Dates move with 
    `pilot_check.py`, get CI running in the company's system (section 3: the runners and hosts it needs). Replace the
    README's CI badge and links, which point at the original GitHub repository. *Done when* the tests are green on
    the company's CI and the dashboard opens.
-2. **The pilot computer in server mode.** For the pilot's handful of people, a laptop with an NVIDIA card (16 GB or
-   more), docked, plugged in, sleep off, in a locked spot (or a desktop). IT gives it a burn-in week, then sets it up
+2. **The pilot computer in server mode.** For the pilot's handful of people, a laptop with an NVIDIA card with 16 GB
+   of VRAM or more and 32 GB of memory (`docs/SERVER.md` section 1), docked, plugged in, sleep off, in a locked spot
+   (or a desktop). IT gives it a burn-in week, then sets it up
    in server mode (`docs/SERVER.md`; Windows 11 Pro runs it): the service, the first Admin, the users, LM Studio with the
    models. Import the company's master data there (section 7), the vendors' AN8s included. *Done when* the pilot
    tester and the clerks log in from their browsers and a real invoice is read and coded.
 3. **The AP inbox.** IT builds the Power Automate flow of `docs/MAILBOX_SETUP.md` (AP Coder never holds the
    mailbox's password); schedule `python -m ap_coder watch`. *Done when* a week of AP's mailbox lands in the review
    queue with nothing lost.
-4. **Single sign-on.** Plan it with IT (Entra ID or the company's AD; IT picks), then build it (6.10). Entra ID signs
-   in through Microsoft's cloud: an exception to the offline rule, recorded as a decision of its own. *Done when*
-   the clerks sign in with their company accounts.
+4. **AP Coder's logins and authenticator codes for the pilot team** (built, D-146; 6.10). The first Admin, then an
+   Admin adds the pilot tester and each clerk on *Users*; each signs in with the temporary password, chooses their
+   own, and sets up an authenticator app on their phone. *Done when* every one of them has signed in with a code
+   from their phone, and an Admin has reset one person's authenticator as a drill.
 5. **JD Edwards read and write, in PY.** Send the JDE worksheet and import the answers (6.1). The JDE team builds the
    seven orchestrations of `docs/JDE_ORCHESTRATIONS.md` in E1's test environment (PY): read first (it replaces the
    CSV imports of step 2), then write with dry runs. Write means AP Coder creates *pending* voucher batches; under
@@ -537,7 +550,8 @@ production:
 list in `docs/JDE_ORCHESTRATIONS.md`. In short: the server mode not set up anywhere yet (stage 0 sets it up on the
 pilot computer); minutes a page without a graphics card; sample data until the company's is imported; JD Edwards
 never tried against a real E1 (stage 0 tests read and write in PY); the mailbox flow set up in stage 0, no direct
-mailbox connection by design; single sign-on to build in stage 0; accuracy measured on samples only; job cost
+mailbox connection by design; AP Coder's own logins with authenticator codes (D-146), no single sign-on with the
+company's accounts (Entra ID a possible later option); accuracy measured on samples only; job cost
 coding to build in stage 0; Python installed by IT; the security review (and a penetration test if IT requires one) in
 stage 0, before production write access.
 

@@ -22,8 +22,16 @@ that did not match.
   gets a new token) or an Admin resets it or turns the account off (all of them). They are kept in the database: a
   restart of AP Coder logs nobody out; a restore of a backup logs everybody out (``carry_accounts``).
 
-Every login, refusal, lockout, logout, password change, account added, role change and account turned off or on is
-an event of the audit trail (``core/audit.py`` says each in words).
+* **Two steps** (D-146): the password, then a code from the person's authenticator app (``core/authenticator.py``).
+  ``authenticate`` checks the password only: a right one is neither a login nor a try that didn't match, so wrong
+  codes go on counting toward the lockout whatever passwords come between them; ``check_code`` takes the code,
+  counted as a password is, refused when used already (``totp_step``), and records the login. The app is set up at
+  the first login, after the password is changed (``authenticator_secret``, then ``check_code``); an Admin's
+  ``reset_authenticator`` has it set up again. Between the two steps the login is half way (``start_pending``): kept
+  by its token's SHA-256 for 15 minutes, never a session; a session is only an account's whose app is set up.
+
+Every login, refusal, lockout, logout, password change, account added, role change, account turned off or on, and
+authenticator set up or reset is an event of the audit trail (``core/audit.py`` says each in words).
 """
 
 from __future__ import annotations
@@ -41,6 +49,7 @@ import time
 import unicodedata
 from typing import Any
 
+from .. import authenticator
 from ._base import _now
 
 READONLY, CLERK, APPROVER, ADMIN = "readonly", "clerk", "approver", "admin"
@@ -85,6 +94,17 @@ LOCKED = (
     "again, or ask an Admin to reset your password."
 )
 LAST_ADMIN = "AP Coder needs at least one active Admin: make another person an Admin first."
+WRONG_CODE = "That code doesn't match. Type the 6 digits your authenticator app shows now."
+CODE_WHY = "authenticator code"  # login_failed's why: the code didn't match (D-146)
+KEY_WHY = "authenticator key missing"
+KEY_MISSING = (
+    "AP Coder can't check your authenticator codes on this server: its key file (authenticator.key in the data "
+    "folder) is missing, damaged or not the one your app was set up with. Ask an Admin to reset your authenticator "
+    "(Users)."
+)
+ALREADY_SET_UP = "This account's authenticator app is set up already: an Admin resets it to set it up again."
+PENDING_KIND = "login-pending"  # a login half way, in the short-lived table (D-146)
+PENDING_SECONDS = 15 * 60  # time to change a password and set an app up; the code's step takes seconds
 EASY_PASSWORD = (
     "That password is too easy to guess: choose one that is not your username or your name, not a common password, "
     "and not one character or a short pattern repeated. A few unrelated words make a good one."
@@ -193,7 +213,7 @@ def _clean_display(name: Any) -> str:
     return " ".join(kept.split())[:MAX_DISPLAY_NAME].strip()
 
 
-_USER_COLUMNS = "id, username, display_name, role, active, must_change, created_at, last_login, cost_centers"
+_USER_COLUMNS = "id, username, display_name, role, active, must_change, created_at, last_login, cost_centers, totp_on"
 
 
 def _public(row: Any) -> dict[str, Any] | None:
@@ -202,6 +222,7 @@ def _public(row: Any) -> dict[str, Any] | None:
         return None
     found = {k: row[k] for k in row.keys() if k != "pw_hash"}
     found["active"], found["must_change"] = bool(found.get("active")), bool(found.get("must_change"))
+    found["totp_on"] = bool(found.get("totp_on"))
     found["name"] = found.get("display_name") or found.get("username") or ""
     found["role_label"] = ROLE_LABELS.get(found.get("role") or "", found.get("role") or "")
     return found
@@ -228,6 +249,20 @@ def same_approver(first_name: str | None, first_login: str | None, name: str | N
     if (name or "").strip().casefold() == (first_name or "").strip().casefold():
         return True
     return bool(login) and bool(first_login) and str(login).casefold() == str(first_login).casefold()
+
+
+# Columns of ``users`` added since it was made (looked for whatever the schema's version): the cost centers a Manager
+# answers for (D-138); each account's authenticator app (D-146): its secret, sealed, whether it is set up, and the
+# last step a code of it was used at.
+ADDED_COLUMNS = (("cost_centers", "TEXT NOT NULL DEFAULT ''"), ("totp_secret", "TEXT NOT NULL DEFAULT ''"),
+                 ("totp_on", "INTEGER NOT NULL DEFAULT 0"), ("totp_step", "INTEGER NOT NULL DEFAULT 0"))  # fmt: skip
+
+
+def add_columns(conn: Any) -> None:
+    columns = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
+    for column, kind in ADDED_COLUMNS:
+        if columns and column not in columns:
+            conn.execute(f"ALTER TABLE users ADD COLUMN {column} {kind}")
 
 
 # --- A restore keeps the accounts (D-101) ----------------------------------------------------------------------------
@@ -276,6 +311,8 @@ def carry_accounts(conn: Any, saved: dict[str, tuple[list[str], list[str], list[
                              [tuple(r[i] for i in keep) for r in rows])  # fmt: skip
     if "sessions" in tables or "sessions" in saved:
         conn.execute("DELETE FROM sessions")
+    if "ephemeral" in tables:  # and no login half way (D-146)
+        conn.execute("DELETE FROM ephemeral WHERE kind = ?", (PENDING_KIND,))
 
 
 class UsersMixin:
@@ -420,6 +457,7 @@ class UsersMixin:
                 self._log(conn, "login_failed", None, None, {"username": row["username"], "why": "password page"})
                 if lock:
                     conn.execute("DELETE FROM sessions WHERE user_id = ?", (row["id"],))
+                    self._end_pending(conn, row["id"])
                     self._log(conn, "login_locked", None, None, {"username": row["username"], "by": "username",
                                                                   "address": ip})  # fmt: skip
             if lock:
@@ -469,6 +507,7 @@ class UsersMixin:
             conn.execute("BEGIN IMMEDIATE")
             conn.execute("UPDATE users SET pw_hash = ?, must_change = 1 WHERE id = ?", (hashed, row["id"]))
             conn.execute("DELETE FROM sessions WHERE user_id = ?", (row["id"],))
+            self._end_pending(conn, row["id"])
             theirs = [r[0] for r in conn.execute(
                 "SELECT ip FROM login_attempts WHERE username = ? AND ip != '' UNION "
                 "SELECT ip FROM sessions WHERE user_id = ? AND ip != ''", (row["username"], row["id"]))]  # fmt: skip
@@ -647,13 +686,56 @@ class UsersMixin:
                 return True
         return False
 
+    def _count_try(self, conn: Any, key: str, ip: str, now: float, console: bool) -> tuple[int, tuple[bool, ...]]:
+        """A try recorded as one that did not match before what was typed is checked, in the transaction that checked
+        the pause (D-101): its id, and whether it pauses logins for ``key`` from ``ip``, from ``ip`` whatever the
+        username, or for ``key`` from anywhere."""
+        since = now - FAILURE_WINDOW
+        last_ok = conn.execute("SELECT MAX(at) FROM login_attempts WHERE username = ? AND ip = ? AND ok = 1",
+                               (key, ip)).fetchone()[0]  # fmt: skip
+        by_pair = (
+            1
+            + conn.execute(
+                "SELECT COUNT(*) FROM login_attempts WHERE username = ? AND ip = ? AND ok = 0 AND at > ?",
+                (key, ip, max(since, last_ok or 0)),
+            ).fetchone()[0]
+        )
+        by_ip = (
+            1
+            + conn.execute(
+                "SELECT COUNT(*) FROM login_attempts WHERE ip = ? AND ok = 0 AND at > ?", (ip, since)
+            ).fetchone()[0]
+        )
+        lock_pair = by_pair >= MAX_FAILURES
+        lock_ip = bool(ip) and not console and by_ip >= ADDRESS_FAILURES
+        attempt = conn.execute(
+            "INSERT INTO login_attempts (username, ip, at, ok, user_locked_until, ip_locked_until) "
+            "VALUES (?, ?, ?, 0, ?, ?)",
+            (key, ip, now, now + LOCK_SECONDS if lock_pair else None, now + LOCK_SECONDS if lock_ip else None),
+        ).lastrowid
+        lock_account = not self._known(conn, key, ip, now) and self._account_paused_until(conn, key, now) > now
+        return int(attempt), (lock_pair, lock_ip, lock_account)
+
+    def _refused(self, conn: Any, who: dict[str, Any], ip: str, locks: tuple[bool, ...], why: str = "") -> str:
+        """A try that didn't match, in the audit trail (``why``: what it was, when not the password), and the pause it
+        set off; ``LOCKED`` when it did, else ""."""
+        lock_pair, lock_ip, lock_account = locks
+        self._log(conn, "login_failed", None, None, {**who, "why": why} if why else who)
+        if not (lock_pair or lock_ip or lock_account):
+            return ""
+        by = "username" if lock_pair else "address" if lock_ip else "account"
+        self._log(conn, "login_locked", None, None, {**who, "by": by, "address": ip})
+        return LOCKED
+
     def authenticate(self, username: str, password: str, ip: str = "", *, console: bool = False) -> dict[str, Any]:
-        """The account whose username and password these are (its last login recorded); ``LoginRefused`` otherwise,
+        """The first step of a login: the account whose username and password these are; ``LoginRefused`` otherwise,
         with the same words whether the username exists or not (``WRONG``, or ``LOCKED`` while logins are paused).
-        A try made while paused is not counted and its password not checked. ``console``: the server's own console
-        (loopback, no proxy), never paused by address. The try is recorded, as one that did not match, before the
-        password is checked, in the transaction that checks the pause: tries sent at once wait for each other there,
-        so no more than ``MAX_FAILURES`` passwords are ever checked (D-101)."""
+        A right password is not yet a login (``check_code`` is, D-146): it is neither recorded as one nor as a try
+        that didn't match, so the count of wrong codes goes on. A try made while paused is not counted and its
+        password not checked. ``console``: the server's own console (loopback, no proxy), never paused by address.
+        The try is recorded, as one that did not match, before the password is checked, in the transaction that
+        checks the pause: tries sent at once wait for each other there, so no more than ``MAX_FAILURES`` passwords
+        are ever checked (D-101)."""
         name, ip, now = fold_username(username)[:200], str(ip or "")[:64], _clock()
         with self._conn() as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -661,30 +743,7 @@ class UsersMixin:
             key = name if row is not None else UNKNOWN + token_hash(name)[:32]  # the text typed is not kept
             if self._locked(conn, key, ip, now, console):
                 raise LoginRefused(LOCKED)
-            since = now - FAILURE_WINDOW
-            last_ok = conn.execute("SELECT MAX(at) FROM login_attempts WHERE username = ? AND ip = ? AND ok = 1",
-                                   (key, ip)).fetchone()[0]  # fmt: skip
-            by_pair = (
-                1
-                + conn.execute(
-                    "SELECT COUNT(*) FROM login_attempts WHERE username = ? AND ip = ? AND ok = 0 AND at > ?",
-                    (key, ip, max(since, last_ok or 0)),
-                ).fetchone()[0]
-            )
-            by_ip = (
-                1
-                + conn.execute(
-                    "SELECT COUNT(*) FROM login_attempts WHERE ip = ? AND ok = 0 AND at > ?", (ip, since)
-                ).fetchone()[0]
-            )
-            lock_pair = by_pair >= MAX_FAILURES
-            lock_ip = bool(ip) and not console and by_ip >= ADDRESS_FAILURES
-            attempt = conn.execute(
-                "INSERT INTO login_attempts (username, ip, at, ok, user_locked_until, ip_locked_until) "
-                "VALUES (?, ?, ?, 0, ?, ?)",
-                (key, ip, now, now + LOCK_SECONDS if lock_pair else None, now + LOCK_SECONDS if lock_ip else None),
-            ).lastrowid
-            lock_account = not self._known(conn, key, ip, now) and self._account_paused_until(conn, key, now) > now
+            attempt, locks = self._count_try(conn, key, ip, now, console)
         matches = verify_password(password, row["pw_hash"] if row is not None else _dummy_hash())
         if row is not None and row["active"] and matches and row["must_change"] and self._temporary_expired(row):
             with self._conn() as conn:
@@ -693,18 +752,119 @@ class UsersMixin:
         with self._conn() as conn:
             conn.execute("BEGIN IMMEDIATE")
             if row is not None and row["active"] and matches:
-                conn.execute("UPDATE login_attempts SET ok = 1, user_locked_until = NULL, ip_locked_until = NULL "
-                             "WHERE id = ?", (attempt,))  # fmt: skip
-                conn.execute("UPDATE users SET last_login = ? WHERE id = ?", (_now(), row["id"]))
-                self._log(conn, "login", None, row["display_name"] or name, {"username": name})
+                conn.execute("DELETE FROM login_attempts WHERE id = ?", (attempt,))
                 fresh = conn.execute(f"SELECT {_USER_COLUMNS} FROM users WHERE id = ?", (row["id"],)).fetchone()
                 return _public(fresh) or {}
             who = {"username": name} if row is not None else {"username": "", "account": "unknown"}
-            self._log(conn, "login_failed", None, None, who)
-            if lock_pair or lock_ip or lock_account:
-                by = "username" if lock_pair else "address" if lock_ip else "account"
-                self._log(conn, "login_locked", None, None, {**who, "by": by, "address": ip})
-        raise LoginRefused(LOCKED if lock_pair or lock_ip or lock_account else WRONG)
+            refusal = self._refused(conn, who, ip, locks)
+        raise LoginRefused(refusal or WRONG)
+
+    # --- The second step: the authenticator app (D-146) --------------------------------------------------------------
+
+    def authenticator_secret(self, user_id: int) -> str:
+        """The secret (base32) the person's authenticator app is set up with, shown while they do it: made now and
+        kept sealed with this server's key (made at the first set-up), or the one made before while it is not yet
+        confirmed (the page loaded again). ValueError once the app is set up (its secret is never shown again), or
+        when the key file is damaged (``KEY_MISSING``: never made again over it)."""
+        key = authenticator.load_key(self.path.parent, create=True)
+        if key is None:
+            raise ValueError(KEY_MISSING)
+        with self._conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = self._account(conn, user_id)
+            if row["totp_on"]:
+                raise ValueError(ALREADY_SET_UP)
+            kept = authenticator.open_secret(key, row["totp_secret"])
+            if kept:
+                return kept
+            secret = authenticator.new_secret()
+            conn.execute("UPDATE users SET totp_secret = ?, totp_step = 0 WHERE id = ?",
+                         (authenticator.seal_secret(key, secret), row["id"]))  # fmt: skip
+        return secret
+
+    def check_code(self, user_id: int, code: str, ip: str = "", *, console: bool = False) -> dict[str, Any]:
+        """The second step of a login: ``code``, from the account's authenticator app (a step either side of the
+        server's clock taken). When the app is not set up yet, the right code sets it up (``authenticator_secret``).
+        The login is then recorded, as ``authenticate`` did before D-146 (the try that matched, the last login), and
+        the account returned. Otherwise ``LoginRefused``: ``WRONG_CODE``, or ``LOCKED`` while logins are paused (a
+        wrong code counts as a wrong password does, and so does a code of a step used already), or ``KEY_MISSING``
+        when this server's key can't open the secret."""
+        key = authenticator.load_key(self.path.parent)
+        now, ip = _clock(), str(ip or "")[:64]
+        with self._conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = self._account(conn, user_id)
+            name = row["username"]
+            if self._locked(conn, name, ip, now, console):
+                raise LoginRefused(LOCKED)
+            secret = authenticator.open_secret(key, row["totp_secret"])
+            if secret is None and row["totp_on"]:
+                self._log(conn, "login_failed", None, None, {"username": name, "why": KEY_WHY})
+                refusal = KEY_MISSING
+            else:
+                attempt, locks = self._count_try(conn, name, ip, now, console)
+                step = None
+                if secret is not None and row["active"]:
+                    step = authenticator.matching_step(secret, code, now, after=int(row["totp_step"]))
+                if step is not None:
+                    conn.execute("UPDATE login_attempts SET ok = 1, user_locked_until = NULL, ip_locked_until = NULL "
+                                 "WHERE id = ?", (attempt,))  # fmt: skip
+                    conn.execute("UPDATE users SET totp_on = 1, totp_step = ?, last_login = ? WHERE id = ?",
+                                 (step, _now(), row["id"]))  # fmt: skip
+                    if not row["totp_on"]:
+                        self._log(conn, "authenticator_enrolled", None, row["display_name"] or name, {"username": name})
+                    self._log(conn, "login", None, row["display_name"] or name, {"username": name})
+                    fresh = conn.execute(f"SELECT {_USER_COLUMNS} FROM users WHERE id = ?", (row["id"],)).fetchone()
+                    return _public(fresh) or {}
+                refusal = self._refused(conn, {"username": name}, ip, locks, CODE_WHY) or WRONG_CODE
+        raise LoginRefused(refusal)
+
+    def reset_authenticator(self, user_id: int, *, actor: str = "", by_user: int | None = None) -> str:
+        """A person's authenticator app forgotten (a phone lost or replaced): they set it up again at their next login.
+        Their password is reset with it (``reset_password``: a phone lost or stolen may go with the password): the
+        temporary one made here is returned, to be given to them once; every session of theirs ends and their pauses
+        are lifted."""
+        temporary = self.reset_password(user_id, actor=actor, by_user=by_user)
+        with self._conn() as conn:
+            row = self._account(conn, user_id)
+            conn.execute("UPDATE users SET totp_secret = '', totp_on = 0, totp_step = 0 WHERE id = ?", (row["id"],))
+            self._log(conn, "authenticator_reset", None, actor or None, {"username": row["username"]})
+        return temporary
+
+    # --- A login half way: the password right, the code still to come (D-146) ----------------------------------------
+
+    def start_pending(self, user_id: int) -> str:
+        """A login half way for ``user_id``: its token, which only the browser keeps (the database its SHA-256), for
+        ``PENDING_SECONDS``. Not a session: it opens only the next steps (``web/pages/login.py``)."""
+        token, now = secrets.token_urlsafe(TOKEN_BYTES), _clock()
+        with self._conn() as conn:
+            conn.execute("DELETE FROM ephemeral WHERE kind = ? AND expires_at < ?", (PENDING_KIND, now))
+            conn.execute("INSERT INTO ephemeral (kind, token, value, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+                         (PENDING_KIND, token_hash(token), str(int(user_id)).encode("ascii"), now,
+                          now + PENDING_SECONDS))  # fmt: skip
+        return token
+
+    def pending_user(self, token: str | None) -> dict[str, Any] | None:
+        """The active account a login half way stands for; None when there is none, or past its time."""
+        if not token:
+            return None
+        with self._conn() as conn:
+            row = conn.execute("SELECT value, expires_at FROM ephemeral WHERE kind = ? AND token = ?",
+                               (PENDING_KIND, token_hash(token))).fetchone()  # fmt: skip
+            if row is None or row["expires_at"] < _clock():
+                return None
+            found = conn.execute(f"SELECT {_USER_COLUMNS} FROM users WHERE id = ? AND active = 1",
+                                 (int(bytes(row["value"])),)).fetchone()  # fmt: skip
+        return _public(found)
+
+    def end_pending(self, token: str | None) -> None:
+        with self._conn() as conn:
+            conn.execute("DELETE FROM ephemeral WHERE kind = ? AND token = ?", (PENDING_KIND, token_hash(token or "")))
+
+    @staticmethod
+    def _end_pending(conn: Any, user_id: int) -> None:
+        """Every login half way of ``user_id`` ends (its password reset, its authenticator reset)."""
+        conn.execute("DELETE FROM ephemeral WHERE kind = ? AND CAST(value AS TEXT) = ?", (PENDING_KIND, str(user_id)))
 
     # --- Sessions ---------------------------------------------------------------------------------------------------
 
@@ -743,6 +903,7 @@ class UsersMixin:
                 return None
             if (
                 not row["active"]
+                or not row["totp_on"]  # an account without its authenticator app: no session is a login (D-146)
                 or now - row["session_created"] >= self.session_absolute
                 or (now - row["last_seen"] > self.session_idle)
             ):

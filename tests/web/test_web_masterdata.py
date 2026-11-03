@@ -156,7 +156,7 @@ def held(tmp_path):
 
     from ap_coder.core.store.users import APPROVER, CLERK
     from ap_coder.web.app import create_app
-    from tests.webclient import add_clean, web_settings
+    from tests.webclient import add_clean, enrol, sign_in, web_settings
 
     store = Store(tmp_path / "private" / "ap_coder.db")
     add_clean(store)
@@ -168,9 +168,9 @@ def held(tmp_path):
         uid = store.add_user(f"the.{role}", "correct horse battery", role=role, display_name=f"The {role.title()}")
         with store._conn() as conn:
             conn.execute("UPDATE users SET must_change = 0 WHERE id = ?", (uid,))
+        enrol(store, uid)  # its authenticator app set up (D-146)
         client = TestClient(app, base_url="https://localhost", client=("10.0.0.5", 50000), follow_redirects=False)
-        login = {"username": f"the.{role}", "password": "correct horse battery"}
-        assert client.post("/login", data=login, headers=PAGE).status_code in (200, 303)
+        assert sign_in(client, f"the.{role}", "correct horse battery").status_code == 200
         clients[role] = client
     return store, v["vendor_key"], clients
 

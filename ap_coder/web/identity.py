@@ -22,7 +22,8 @@ what may be done). The session cookie (``session_cookie``) holds a token whose S
 (``core/store/users.py``); ``PERSON`` is then the account (``user_id``, ``role``), so approvals name the person and
 record ``user:<id>`` as their login, and what each request may do is the role's (``web/roles.py``, D-98): no
 session, the login page (a page) or a 401 (an action); a password to change first, the password page; a role that
-may not, a 403 page (or JSON for an action).
+may not, a 403 page (or JSON for an action). A login half way (the password right, the authenticator's code still to
+come, D-146) is no session: its own cookie (``pending_cookie``) is read only by the login's next steps.
 """
 
 from __future__ import annotations
@@ -56,6 +57,14 @@ SESSION_COOKIE = "__Host-ap_session"  # Secure (HTTPS): a browser takes it only 
 HTTP_SESSION_COOKIE = "ap_session"  # over --insecure-http, where the __Host- prefix isn't allowed
 LOGIN_PATH = "/login"
 PASSWORD_PATH = "/account/password"
+# A login half way (D-146): the password was right, its next steps (a temporary password changed, the authenticator
+# app set up, its code) still to come. Its own cookie, never a session: it opens only those steps (pages/login.py).
+PENDING_COOKIE = "__Host-ap_pending"
+HTTP_PENDING_COOKIE = "ap_pending"  # over --insecure-http
+NEW_PASSWORD_PATH = "/login/new-password"
+SET_UP_PATH = "/login/authenticator"
+CODE_PATH = "/login/code"
+LOGIN_FORMS = (LOGIN_PATH, NEW_PASSWORD_PATH, SET_UP_PATH, CODE_PATH)  # the forms sent before a session
 SESSION_ENDED = "You are not logged in (or your session ended): log in again."
 CHANGE_FIRST = "Choose a new password first (Your password), then carry on."
 THIS_COMPUTER = {"127.0.0.1", "localhost", "::1"}
@@ -200,6 +209,11 @@ def session_cookie(secure: bool) -> str:
     return SESSION_COOKIE if secure else HTTP_SESSION_COOKIE
 
 
+def pending_cookie(secure: bool) -> str:
+    """The cookie of a login half way (D-146), named as ``session_cookie`` is."""
+    return PENDING_COOKIE if secure else HTTP_PENDING_COOKIE
+
+
 def session_tokens(headers: list[tuple[bytes, bytes]], name: str) -> list[str]:
     """Every session cookie called ``name`` the request carries, in order."""
     found = []
@@ -336,7 +350,7 @@ class Identity:
         try:
             if refusal is None and user is not None and not roles.allowed(user["role"], need):
                 refusal = await run_in_threadpool(_not_allowed, scope, receive, user, page)
-            if refusal is None and path == LOGIN_PATH and not page and security.multipart(scope):
+            if refusal is None and path in LOGIN_FORMS and not page and security.multipart(scope):
                 refusal = JSONResponse({"ok": False, "error": security.NO_MULTIPART}, status_code=415)
             if refusal is not None:
                 refusal.headers["Cache-Control"] = "no-store"

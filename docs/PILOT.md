@@ -1,8 +1,8 @@
 # Pilot guide: AP Coder on one laptop, offline
 
 A short guide for running AP Coder on a Windows laptop (a Mac works the same way), to try it or show it. The
-company's pilot itself runs on a shared desktop in server mode, connected to the AP inbox and JD Edwards:
-[PILOT_PLAN.md](PILOT_PLAN.md) and [SERVER.md](SERVER.md).
+company's pilot itself runs on one pilot computer in server mode (a docked laptop with an NVIDIA card, or a
+desktop), connected to the AP inbox and JD Edwards: [PILOT_PLAN.md](PILOT_PLAN.md) and [SERVER.md](SERVER.md).
 To show it to someone, follow [DEMO_RUN_SHEET.md](DEMO_RUN_SHEET.md): `scripts\demo.bat` runs AP Coder on a data
 folder of its own, so a demo never mixes with the pilot's invoices. What it does not do yet:
 [KNOWN_LIMITS.md](KNOWN_LIMITS.md).
@@ -246,16 +246,16 @@ bundle with the internet cut off, on Windows and on a Mac that has only Python 3
    approved (Settings → JD Edwards E1 → *Supplier address numbers*, or the vendor master's ERP ID; *Add new
    vendor…* takes it too), and the export needs a *Default BU* or every account mapped, tax accounts included.
 
-## Touchless processing: when to turn it on
+## Touchless processing: off for the pilot (D-144)
 
-Touchless processing is **off** by default: every invoice is approved by a person. Leave it off for the
-first weeks of the pilot. Let the clerks review, correct and *Approve & teach*, and watch **Learning &
-accuracy → Supplier learning**: it shows, vendor by vendor, how often a field was corrected and how far
-each one is from the bar.
+Touchless processing is **off** by default, and stays off for the pilot and until the company's AI team
+has done its model-risk review (D-144): every invoice is approved by a person. Let the clerks review,
+correct and *Approve & teach*, and watch **Learning & accuracy → Supplier learning**: it shows, vendor by
+vendor, how often a field was corrected and how far each one is from the bar.
 
-When several of your regular vendors are close to the bar and the corrections have settled, an AP lead
-turns it on in **Settings → Automation** (with a confirmation; recorded in the Activity log with their
-name). From then on, a vendor that meets the bar goes touchless by itself:
+Once that review allows it, and several of your regular vendors are close to the bar with the corrections
+settled, an AP lead turns it on in **Settings → Automation** (with a confirmation; recorded in the Activity
+log with their name). From then on, a vendor that meets the bar goes touchless by itself:
 
 - at least 20 invoices reviewed by a person;
 - header fields read right at least 99% of the time, with 95% confidence, since its last correction, and
