@@ -39,7 +39,7 @@ from markupsafe import Markup
 from ap_coder.capture.confidence import LABELS
 from ap_coder.capture.workflow import learn_from_approval, on_reopen, taught_message
 from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCE_NAMES
-from ap_coder.coding.vendors import MOVED_OFF_HOLD, mask_account
+from ap_coder.coding.vendors import MOVED_OFF_HOLD, ON_HOLD, mask_account
 from ap_coder.core import audit, ui
 from ap_coder.core.memory import ACCEPTED, CODED, CORRECTED, vendor_key
 from ap_coder.core.reference_data import ReferenceData
@@ -629,6 +629,10 @@ def add_vendor(
         return refuse("Only an Admin sets a vendor's JD Edwards address number (Settings → JD Edwards E1).", 403)
     if an8 and (not an8.isdigit() or len(an8) > 8):
         return refuse(f"“{an8}” is not a JD Edwards address number (AN8): digits only, up to 8.")
+    before = store.get_vendor(vendor_key(name)) or {}
+    if (before.get("status") == ON_HOLD or before.get("erp_hold")) and not may_lift_hold(request):
+        held = before.get("display_name") or name  # its numbers replaced, the hold would not catch them (B-1554)
+        return refuse(f"{held} is on hold: only an Approver can change its tax numbers. Pick it from the list.", 403)
     try:
         store.add_vendor_here(name, gst=gst, qst=qst, pst=pst, province=province, actor=reviewer(),
                               invoice_id=invoice_id)  # fmt: skip

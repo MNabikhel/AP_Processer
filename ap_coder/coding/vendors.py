@@ -490,8 +490,8 @@ _HOLD_WORDS = {"hold", "on hold", "on_hold", "blocked", "inactive", "suspended",
 
 def held_vendor(store: Store, name: Any, gst: Any = None, bank: Any = None) -> tuple[dict[str, Any], str] | None:
     """The vendor on hold behind an invoice's details, and what ties it: its name ("name"), its GST/HST number given
-    the vendor or printed on its approved invoices ("gst"), or the bank account its approved invoices were paid to
-    ("bank"). None when no vendor on hold is behind them (B-1549)."""
+    the vendor or printed on its approved invoices ("gst"), or the bank account its approved invoices were paid to or
+    JD Edwards pays it on ("bank", ``erp_bank``: B-1555). None when no vendor on hold is behind them (B-1549)."""
     held = store.held_vendors()
     if not held:
         return None
@@ -505,8 +505,10 @@ def held_vendor(store: Store, name: Any, gst: Any = None, bank: Any = None) -> t
         if real and any(same_tax_number(n, gst) for n in [v.get("expected_gst"), *(h["gst_hst_number"] for h in
                                                                                   approved)]):  # fmt: skip
             return v, "gst"
-        if bank_digits(bank)[0] and any(same_bank_account(bank, h["bank_account"]) for h in approved
-                                        if bank_digits(h["bank_account"])[0]):  # fmt: skip
+        if bank_digits(bank)[0] and (
+            _jde_pays_on(v.get("erp_bank"), bank)
+            or any(same_bank_account(bank, h["bank_account"]) for h in approved if bank_digits(h["bank_account"])[0])
+        ):
             return v, "bank"
     return None
 
@@ -562,6 +564,13 @@ def _jde_bank_findings(coding: InvoiceCoding, vendor: dict[str, Any] | None) -> 
              f"the bank details printed for payment ({shown}) are not the account JD Edwards pays this vendor on "
              f"({jde_bank}): confirm by phone, on a number from your vendor file, not from the invoice, before paying "
              "or changing the vendor's banking")]  # fmt: skip
+
+
+def _jde_pays_on(jde_bank: Any, printed: Any) -> bool:
+    """Whether ``printed`` is the account JD Edwards pays a vendor on (``erp_bank``, "transit …last 4"): the same last
+    4 digits and transit, as VENDOR_BANK_NOT_JDE reads them."""
+    jde_bank, shown = str(jde_bank or "").strip(), mask_account(printed)
+    return bool(jde_bank) and shown != "(none)" and shown[-4:] == jde_bank[-4:] and _same_transit(jde_bank, printed)
 
 
 def _same_transit(jde_bank: str, printed: Any) -> bool:
