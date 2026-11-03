@@ -700,12 +700,16 @@ def _merge_ledger(entry: dict[str, Any], folders: list[Path], path: Path) -> str
     return ""
 
 
-def restore_files(backup: Path, data: Path, also: Iterable[Path] = (), since: float | None = None) -> FilesRestored:
+def restore_files(
+    backup: Path, data: Path, also: Iterable[Path] = (), present: set[str] | None = None
+) -> FilesRestored:
     """Put the files of the data folder back as ``backup`` lists them (``also``: other backup folders to take a file
     from when it is missing or damaged in ``backup``'s own). What is here and was not then is moved aside, but never a
-    file the backup could not read when it was made (B-1556), nor one written since the restore began (``since``: an
-    upload meanwhile, its row in the restored database: B-1559). A full disk stops it, said in ``error``."""
-    since = time.time() if since is None else since
+    file the backup could not read when it was made (B-1556), nor one written since the restore began (``present``:
+    the files there when it began; an upload meanwhile, its row in the restored database: B-1559). Which files were
+    there is a list, not a time: a file's time can read ahead of the clock on Windows (B-1566). A full disk stops it,
+    said in ``error``."""
+    present = set(data_files(data)) if present is None else present
     found = read_list(backup)
     if found is None:
         return FilesRestored(database_only=True)
@@ -732,7 +736,7 @@ def restore_files(backup: Path, data: Path, also: Iterable[Path] = (), since: fl
         done.error = "there is not enough space on the disk" if room else str(exc)
         return done
     for rel in data_files(data):
-        if _case(rel) not in left and rel != LEDGER_FILE and _mtime(data / rel) < since:
+        if _case(rel) not in left and rel != LEDGER_FILE and rel in present:
             set_aside(data / rel, rel)
     return done
 

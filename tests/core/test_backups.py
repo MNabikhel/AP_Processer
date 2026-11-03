@@ -649,3 +649,16 @@ def test_a_file_renamed_only_in_case_is_not_moved_aside_on_windows(tmp_path, gro
     monkeypatch.setattr(backup_files, "_case", str.lower, raising=False)  # as os.path.normcase on Windows
     done = store.restore_state(backup)
     assert "invoices/A.pdf" not in done.files.set_aside
+
+
+def test_a_file_from_before_the_restore_is_moved_aside_even_when_its_time_is_ahead_of_the_clock(tmp_path, ground_truth):
+    """On Windows a file's time can read a few milliseconds after the clock that started the restore: the file that
+    came in after the backup, but before the restore, was then kept instead of moved aside (B-1566)."""
+    store, data = _data_folder(tmp_path, ground_truth)
+    backup = store.backup_now("manual")
+    later = data / "invoices" / "b.pdf"
+    later.write_bytes(b"%PDF-1.4 came in after the backup")
+    ahead = time.time_ns() + 2_000_000_000  # two seconds ahead of the clock, as a coarse clock can read it
+    os.utime(later, ns=(ahead, ahead))
+    done = store.restore_state(backup)
+    assert not later.exists() and "invoices/b.pdf" in done.files.set_aside

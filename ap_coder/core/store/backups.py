@@ -361,7 +361,8 @@ class BackupsMixin:
         The second backup folder is cleared after a restore: a backup file must not choose where later
         backups are copied (set it again in Settings)."""
         backup = Path(backup)
-        started = time.time()  # a file written after this (an upload meanwhile) is never moved aside (B-1559)
+        # The files here now: one written after (an upload meanwhile) is never moved aside (B-1559, B-1566).
+        present = set(backup_files.data_files(self.path.parent))
         with self._local_copy(backup) as copy:  # read from this computer, never written next to the backup
             self._check_backup_file(copy, backup.name)
             copy_dir = self.get_setting("backup_copy_dir").strip()
@@ -381,7 +382,7 @@ class BackupsMixin:
         # A file missing or damaged in the backup's folder is taken from the second one, when it has it.
         also = [Path(copy_dir).expanduser()] if copy_dir and not folder_refusal(copy_dir) else []
         try:  # (before the ledger is merged into the database below: on a new computer it comes from the backup)
-            files = backup_files.restore_files(backup, self.path.parent, also=also, since=started)
+            files = backup_files.restore_files(backup, self.path.parent, also=also, present=present)
         except OSError as exc:  # said, never a database restored without the accounts and sessions rules below
             files = backup_files.FilesRestored(error=str(exc))
         _NOT_FOUND.clear()  # a file looked for a moment ago may be back
