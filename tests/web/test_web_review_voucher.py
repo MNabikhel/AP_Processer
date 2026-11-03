@@ -255,6 +255,38 @@ def test_an_approver_may_approve_it_and_the_audit_trail_says_who_moved_it_from_w
     assert kept and kept[0]["override_reason"] == "checked"
 
 
+def _paid_like_pacific(store) -> int:
+    """Pacific Office Supply (on hold) paid on bank account 004-12345-1234567 before; a new invoice read as Chinook
+    Courier (in the vendor list, no invoice yet), with Chinook's GST/HST number but Pacific's bank account."""
+    inv = store.get_invoice(_id(store, "Pacific"))
+    earlier = {**inv["ai_output"], "invoice_number": "EARLIER-1", "remit_bank_account": "004-12345-1234567"}
+    store.approve_invoice(store.add_invoice(store.path.parent / "earlier.pdf", earlier, {}), earlier, "jane")
+    chinook = {**inv["ai_output"], "vendor_name": "Chinook Courier & Office Services Ltd.", "invoice_number": "CH-1",
+               "gst_hst_registration_number": "823145966 RT0001", "remit_bank_account": "004-12345-1234567",
+               "confidence_score": 0.99}  # fmt: skip
+    return store.add_invoice(store.path.parent / "chinook.pdf", chinook, {"requires_review": False,
+                                                                          "adjusted_confidence": 0.97})  # fmt: skip
+
+
+def test_a_clerks_bulk_approval_leaves_out_an_invoice_paid_to_a_held_vendors_account(held, store):
+    """B-1551: bulk approval approved, as coded, an invoice read under another vendor's name that asks to be paid to
+    a held vendor's bank account: no screen, so no VENDOR_CHANGED_FROM_HELD. It is left for a person now, with why."""
+    clients, _ = held
+    invoice_id = _paid_like_pacific(store)
+    answer = clients["clerk"].post("/review/bulk-approve", data={"ids": [invoice_id]}, headers=PAGE)
+    assert answer.json()["ok"] and store.get_invoice(invoice_id)["status"] == REVIEW
+    said = clients["clerk"].get(answer.json()["redirect"]).text
+    assert "Pacific Office Supply" in said and "only an Approver can approve it" in said
+
+
+def test_a_clerk_is_not_offered_approve_anyway_for_a_held_vendors_invoice_coded_to_another_vendor(held, store):
+    clients, invoice_id = held
+    moved = form_of(store, invoice_id, vendor_name="Chinook Courier & Office Services Ltd.")
+    bar = check(clients["clerk"], invoice_id, moved)["sections"]["bar"]
+    assert 'name="override"' not in bar and "Only an Approver can approve" in bar
+    assert 'name="override"' in check(clients["approver"], invoice_id, moved)["sections"]["bar"]
+
+
 def test_on_a_laptop_moving_a_held_vendors_invoice_is_as_before(client, store):
     from ap_coder.core.memory import vendor_key
 

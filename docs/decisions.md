@@ -310,11 +310,13 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   `VENDOR_CHANGED_FROM_HELD`, an error an Approver or an Admin approves anyway with a reason; a Clerk's approval is
   refused. The invoice is the held vendor's by its vendor as read, or by a GST/HST number or bank account (read, or
   on screen) that is the held vendor's (given it, or on its approved invoices), so a near-identical new vendor
-  doesn't dodge it. Server only: the laptop is unchanged. Bulk approval is not checked: it approves the coding as
-  read, or as an earlier approval stored it, so a vendor moved by a person was already an Approver's. The audit
-  trail's approval says who and from which vendor (its `changes`: vendor before and after, and the reason).
-  (`web/access.py` `may_lift_hold`, `web/pages/vendors.py`, `web/templates/vendors.html`, `coding/vendors.py`
-  `moved_off_hold`, `web/invoice_view.py` `_findings`, `web/pages/invoice.py` `_approve`;
+  doesn't dodge it. Server only: the laptop is unchanged. A Clerk is not offered "Approve anyway" for it: the
+  approve bar says "Only an Approver can approve it." and why. Bulk approval on the server leaves such an invoice
+  for a person and says why (B-1551: one read under another vendor's name, asking to be paid to a held vendor's
+  bank account, was bulk-approved), whoever runs it: it gives no reason. The audit trail's approval says who and
+  from which vendor (its `changes`: vendor before and after, and the reason). (`web/access.py` `may_lift_hold`,
+  `web/pages/vendors.py`, `web/templates/vendors.html`, `coding/vendors.py` `moved_off_hold`, `coding/bulk.py`,
+  `web/invoice_view.py` `_findings` and `analyse`, `web/pages/invoice.py` `_approve`;
   `tests/web/test_web_masterdata.py`, `tests/web/test_web_review_voucher.py`, `tests/coding/test_vendors.py`)
 - **D-144** · **Touchless processing stays off** until the company's AI team has done a model-risk review of it
   (invoices written to steer the AI reviewer included): an invoice approved without a person, on a model's say,

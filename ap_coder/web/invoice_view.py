@@ -85,7 +85,7 @@ from ap_coder.coding.taxmath import math_check
 from ap_coder.coding.terms import describe as terms_describe
 from ap_coder.coding.terms import payment
 from ap_coder.coding.validation import COUNTED_IN_CODING, ERROR, INFO, Issue, off_text
-from ap_coder.coding.vendors import expected_tax_numbers, moved_off_hold
+from ap_coder.coding.vendors import MOVED_OFF_HOLD, expected_tax_numbers, moved_off_hold
 from ap_coder.core.config import Settings
 from ap_coder.core.memory import ACCEPTED, BULK, CODED, CORRECTED, pair_lines, vendor_key
 from ap_coder.core.reference_data import UNASSIGNED, ReferenceData, short_name
@@ -96,6 +96,7 @@ from ap_coder.core.ui import TAX_LABELS, plural
 from ap_coder.ops.help import help_for
 from ap_coder.ops.offline import setup_contact
 from ap_coder.web import identity
+from ap_coder.web.access import may_lift_hold
 from ap_coder.web.document import clean_boxes
 
 # --- The form ------------------------------------------------------------------------------------------------------
@@ -1777,6 +1778,10 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     # What makes the voucher invalid is never approved anyway; the rest of the errors only with a reason (D-75).
     hard = [i for i in errors if is_hard(i)]
     soft = [i for i in errors if not is_hard(i)]
+    if not may_lift_hold():  # a Clerk on the server: no "Approve anyway" for a held vendor's invoice moved (D-142)
+        hard += [Issue(i.severity, i.code, f"Only an Approver can approve it. {i.message[:1].upper()}{i.message[1:]}")
+                 for i in soft if i.code == MOVED_OFF_HOLD]  # fmt: skip
+        soft = [i for i in soft if i.code != MOVED_OFF_HOLD]
     blockers = ordered_blockers(line_pick, bank, hard)
     key = override_key(soft) if soft else ""
     reason = draft.override_reason.strip()
@@ -2021,7 +2026,8 @@ def currency_issues(currency: str) -> list[Any]:
 # The checks shown under the field they are about (their own words), besides FIELD_FLAGS' notes: {code: field}.
 CODE_FIELDS = {
     "MISSING_VENDOR": "vendor_name", "VENDOR_NOT_IN_MASTER": "vendor_name", "VENDOR_ADDED_HERE": "vendor_name",
-    "VENDOR_ON_HOLD": "vendor_name", "JDE_NO_AN8": "vendor_name", "JDE_BAD_AN8": "vendor_name",
+    "VENDOR_ON_HOLD": "vendor_name", "VENDOR_CHANGED_FROM_HELD": "vendor_name", "JDE_NO_AN8": "vendor_name",
+    "JDE_BAD_AN8": "vendor_name",
     "MISSING_INVOICE_NUMBER": "invoice_number", "JDE_INVOICE_NUMBER_LONG": "invoice_number",
     "DUPLICATE_INVOICE": "invoice_number", "DUPLICATE_IN_ERP": "invoice_number",
     "INVOICE_DATE_NOT_FOUND": "invoice_date", "OLD_INVOICE_DATE": "invoice_date", "FUTURE_INVOICE_DATE": "invoice_date",

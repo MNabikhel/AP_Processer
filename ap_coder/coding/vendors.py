@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 
 ERROR, WARNING, INFO = "error", "warning", "info"
 ON_HOLD, ACTIVE = "on_hold", "active"
+MOVED_OFF_HOLD = "VENDOR_CHANGED_FROM_HELD"  # a held vendor's invoice coded to another vendor (D-142)
 # vendors.in_master: 0 a vendor AP only set controls for, 1 in the vendor master imported from the ERP, 2 added to
 # the vendor list from the review screen (a new vendor: set up in the ERP before it is paid).
 IN_ERP, ADDED_HERE = 1, 2
@@ -523,7 +524,7 @@ def moved_off_hold(store: Store, read: dict[str, Any], coding: InvoiceCoding) ->
             name = vendor.get("display_name") or vendor["vendor_key"]
             why = {"name": f"was read as {name}", "gst": f"shows the GST/HST number of {name}",
                    "bank": f"shows the bank account {name} is paid to"}[tie]  # fmt: skip
-            return [(ERROR, "VENDOR_CHANGED_FROM_HELD", f"this invoice {why}, a vendor on hold, but is coded to "
+            return [(ERROR, MOVED_OFF_HOLD, f"this invoice {why}, a vendor on hold, but is coded to "
                      "another vendor: only an Approver can approve it")]  # fmt: skip
     return []
 

@@ -33,10 +33,10 @@ def is_admin(request: Any = None) -> bool:
 def may_lift_hold(request: Any = None) -> bool:
     """Whether the person asking may take a vendor off hold, or approve a held vendor's invoice coded to another
     vendor: on a laptop always; on the server an Approver or an Admin, not a Clerk, who would then approve the
-    vendor's invoices under the limit alone (D-142)."""
-    if not _server(request):
-        return True
+    vendor's invoices under the limit alone (D-142). Without ``request``, an account logged in is the server."""
     found = identity.person()
+    if not (_server(request) or (found is not None and found.user_id)):
+        return True
     return found is not None and roles.allowed(found.role, roles.APPROVER)
 
 

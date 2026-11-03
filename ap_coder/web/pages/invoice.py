@@ -39,7 +39,7 @@ from markupsafe import Markup
 from ap_coder.capture.confidence import LABELS
 from ap_coder.capture.workflow import learn_from_approval, on_reopen, taught_message
 from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCE_NAMES
-from ap_coder.coding.vendors import mask_account
+from ap_coder.coding.vendors import MOVED_OFF_HOLD, mask_account
 from ap_coder.core import audit, ui
 from ap_coder.core.memory import ACCEPTED, CODED, CORRECTED, vendor_key
 from ap_coder.core.reference_data import ReferenceData
@@ -837,7 +837,7 @@ def _approve(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     query = _nav_query(form)
     analysis = view.analyse(store, settings, reference, inv, draft, reviewer())
     _fix_first(analysis)
-    moved = next((i for i in analysis.errors if i.code == "VENDOR_CHANGED_FROM_HELD"), None)
+    moved = next((i for i in analysis.errors if i.code == MOVED_OFF_HOLD), None)
     if moved and not may_lift_hold(request):  # a Clerk: a held vendor's invoice coded to another vendor (D-142)
         return refuse(moved.message[:1].upper() + moved.message[1:] + ".", 403)
     if not analysis.allow:
