@@ -144,8 +144,9 @@
     <div class="row">
       <fieldset class="radios"><legend class="muted small">Status</legend>
         {% for key, label in statuses.items() %}
-        <label class="check"><input type="radio" name="status" value="{{ key }}"{% if v.status == key %} checked{% endif %}> {{ label }}</label>
+        <label class="check"><input type="radio" name="status" value="{{ key }}"{% if v.status == key %} checked{% endif %}{% if v.status == on_hold and key != on_hold and not may_lift_hold %} disabled{% endif %}> {{ label }}</label>
         {% endfor %}
+        {% if v.status == on_hold and not may_lift_hold %}<p class="muted small">{{ lift_hold }} An Admin can too.</p>{% endif %}
       </fieldset>
       <label class="field grow">Expected GST/HST number
         <input type="text" name="expected_gst" value="{{ v.expected_gst }}" placeholder="e.g. 123456789RT0001"

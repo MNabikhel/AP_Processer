@@ -39,7 +39,7 @@ from markupsafe import Markup
 from ap_coder.capture.confidence import LABELS
 from ap_coder.capture.workflow import learn_from_approval, on_reopen, taught_message
 from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCE_NAMES
-from ap_coder.coding.vendors import mask_account
+from ap_coder.coding.vendors import MOVED_OFF_HOLD, mask_account
 from ap_coder.core import audit, ui
 from ap_coder.core.memory import ACCEPTED, CODED, CORRECTED, vendor_key
 from ap_coder.core.reference_data import ReferenceData
@@ -49,7 +49,7 @@ from ap_coder.core.store.users import same_approver
 from ap_coder.erp import jde, stamp
 from ap_coder.web import document, identity
 from ap_coder.web import invoice_view as view
-from ap_coder.web.access import is_admin, key_of, person_key
+from ap_coder.web.access import is_admin, key_of, may_lift_hold, person_key
 from ap_coder.web.core import (
     can,
     done,
@@ -837,6 +837,9 @@ def _approve(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     query = _nav_query(form)
     analysis = view.analyse(store, settings, reference, inv, draft, reviewer())
     _fix_first(analysis)
+    moved = next((i for i in analysis.errors if i.code == MOVED_OFF_HOLD), None)
+    if moved and not may_lift_hold(request):  # a Clerk: a held vendor's invoice coded to another vendor (D-142)
+        return refuse(moved.message[:1].upper() + moved.message[1:] + ".", 403)
     if not analysis.allow:
         bar = analysis.live["bar"]
         first = bar["first"]  # the first thing that keeps it closed, in screen order (B-797)

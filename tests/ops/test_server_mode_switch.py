@@ -1,4 +1,4 @@
-"""The server-mode switch (D-97): off unless asked for, so the laptop pilot is unchanged."""
+"""The server-mode switch (D-97): off unless asked for, so laptop mode is unchanged."""
 
 import pytest
 

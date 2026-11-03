@@ -67,7 +67,7 @@ FORMAT_SETTING = "export_format"  # the format of the last batch made: the page 
 
 
 def shown_formats(store: Store, *keep: str) -> list[str]:
-    """The export formats offered: JD Edwards E1 only once its settings are shown (Settings → About; the pilot exports
+    """The export formats offered: JD Edwards E1 only once its settings are shown (Settings → About; a laptop exports
     to Excel and CSV), or when ``keep`` names it (a JD Edwards batch made before, a link to it)."""
     return [f for f in exports.FORMATS if f != jde.FORMAT or jde_shown(store) or f in keep]
 

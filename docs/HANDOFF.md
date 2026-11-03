@@ -72,8 +72,8 @@ offline install zip (`APProcessor-offline-0.3.0-<date>.zip` of the release `v0.3
 wheelhouse> -e ".[ocr,dev]"` (its wheels are Windows ones: a Linux agent or CI runner needs PyPI or a mirror).
 Without it, build one on any computer with internet: `AP_ALLOW_INTERNET=1 python scripts/build_offline_bundle.py`
 (Windows, Python 3.11–3.14, plus that computer; `--platform` and `--python` choose others; `--dry-run` lists every
-address it downloads from, for the firewall). The same command makes the offline install zip for the pilot laptop
-(step 2 of section 8; `docs/PILOT.md`).
+address it downloads from, for the firewall). The same command makes the offline install zip for a laptop
+(`docs/PILOT.md`) and the bundle for the pilot's desktop in server mode (step 2 of section 8; `docs/SERVER.md`).
 
 Then prove the copy works before changing anything (section 3): the default test tier passes,
 `python scripts/pilot_check.py` says 10 of 10 sample invoices read right, `python -m ap_coder serve --port 8501
@@ -112,7 +112,7 @@ checked by CI on Windows with the real LM Studio before it was tagged (`.github/
 
 | Part | State |
 |---|---|
-| Laptop pilot | Ready. A demo run sheet (`docs/DEMO_RUN_SHEET.md`) and an offline install zip for Windows |
+| Laptop release | Ready. A demo run sheet (`docs/DEMO_RUN_SHEET.md`) and an offline install zip for Windows. The pilot itself runs on the server mode, after stage 0 (section 8, `docs/PILOT_PLAN.md`) |
 | Company server | Built, security-reviewed, tested (HTTPS, logins, four roles, Windows service); not installed anywhere |
 | JD Edwards E1 | Batch-voucher export built and tested; AIS API built against a stand-in; never run against a real E1 |
 | Finance Hub | Feed to Microsoft Fabric built (off by default); not tried against a real workspace |
@@ -198,9 +198,9 @@ Starting points: `ai/pipeline.py` (`finalise_coding`), `core/schema.py`, `web/pa
   The made-up email domain `company-made-up.example` (in `bench/emails.py` and one test) is not a real address.
 - **Never in the repository:** the company's data. It lives in the **data folder** (`core/paths.py` `private_dir`):
   `AP_PRIVATE_DIR` if set, else the folder the launcher or installer recorded in `~/.ap_coder/settings.json`
-  (`~/APCoder` on a pilot laptop), else `private/` in the checkout (git-ignored): a developer checkout installed with
+  (`~/APCoder` on a laptop install), else `private/` in the checkout (git-ignored): a developer checkout installed with
   pip uses `private/` only when no install was ever made on that computer. **On a computer where the launcher or
-  installer ran (the pilot laptop), a checkout uses that install's data folder, which may hold the company's real
+  installer ran (a laptop install), a checkout uses that install's data folder, which may hold the company's real
   invoices**: set `AP_PRIVATE_DIR=<checkout>/private` there before `serve`, `doctor`, `demo` or `process`, and check
   the folder `doctor`'s "data folder" line names. It holds `ap_coder.db`, `invoices/`, `emails/`, `backups/`, `logs/`,
   and a `.env` with any secrets (AIS password, Azure keys, the Finance Hub's client secret). `.gitignore` keeps
@@ -245,8 +245,11 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
   standard Oracle table), VNEDLN numbering, whether line numbers load as 1 or 1000, the tax area names, blank VLCRR,
   VLGLBA. The worksheet also asks (`info:` questions) whether code E with no tax area posts lines as sent and whether
   BUs are right-justified. `docs/JDE_E1.md` has the open questions.
-- **Prove it:** the shadow pilot scores AP Coder's vouchers against what AP posted in E1:
+- **Prove it:** the pilot's parallel week scores AP Coder's vouchers (written to E1's test environment, PY)
+  against what AP posted in production:
   `python -m ap_coder pilot-score --vouchers F0411.xlsx [--distribution F0911.xlsx]` (writes `pilot_score/`).
+- **A person's final check stays in E1:** in the pilot the vouchers go in as *pending* batches; under E1's batch
+  approval (*Manager Approval of Input*) AP approves each batch and posts it in E1.
 - **Code and tests:** `erp/jde.py`, `erp/jde_worksheet.py`, `web/pages/settings_jde.py`, `web/pages/exports.py`;
   `tests/erp/test_jde*.py`, `tests/ops/test_laptop_walk_jde.py`, `tests/ops/test_pilot_score_jde.py`. Guide:
   `docs/JDE_E1.md`.
@@ -262,11 +265,13 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
   (step 2). Command line: `python -m ap_coder jde test|sync|status [--retry]`.
 - **The company supplies:** **seven orchestrations the JDE team builds** (specified in `docs/JDE_ORCHESTRATIONS.md`):
   `APC_Suppliers_Read`, `APC_Accounts_Read`, `APC_BusinessUnits_Read`, `APC_OpenPOs_Read`, `APC_Vouchers_Read`,
-  `APC_Voucher_Create` (PROOF and FINAL modes), `APC_Voucher_Status`; the AIS address, environment (a test one first),
-  a service user and role with the table and program security listed there, and the 13 "To confirm" points in that
-  file. The password goes in the data folder's `.env` (`JDE_AIS_PASSWORD`), never in git.
-- **Not done:** never run against a real AIS; the orchestrations don't exist yet; `ChangedSince` is always blank
-  (full read each time).
+  `APC_Voucher_Create` (PROOF and FINAL modes), `APC_Voucher_Status`; built and tested in PY in stage 0 (section 8).
+  In the pilot `APC_Voucher_Create` makes *pending* batches: E1's batch approval (*Manager Approval of Input*) keeps
+  a person's final check, as AP approves and posts each batch in E1. Also the AIS address, environment (a test one
+  first), a service user and role with the table and program security listed there, and the 13 "To confirm" points
+  in that file. The password goes in the data folder's `.env` (`JDE_AIS_PASSWORD`), never in git.
+- **Not done:** never run against a real AIS; the orchestrations don't exist yet (stage 0 builds them);
+  `ChangedSince` is always blank (full read each time).
 - **Code and tests:** the three modules, `web/pages/settings_jde.py`, `web/pages/exports.py` (the `jde-api` routes);
   `tests/erp/test_jde_ais*.py`, `test_jde_sync*.py`, `test_jde_post*.py`, `test_jde_api_web.py`; stand-in
   `tests/fake_ais.py`.
@@ -288,13 +293,14 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
   prompt, fixed rules (vendor and/or words → GL and cost center), and an optional import of past ERP coding to teach
   the memory before the first approval.
 - **Import:** GL accounts & tax page → upload CSV/Excel (code, description, optional category and a *meals* column
-  for the 50% tax credit accounts); cost centers the same way. The pilot runs without cost centers (D-53): with them,
-  each line needs one. Learning & accuracy → *Teach from past coding* (vendor, description, gl_code, cost_center).
+  for the 50% tax credit accounts); cost centers the same way. The laptop release runs without cost centers by
+  default (D-53); the pilot codes them (its gate counts a line right with its GL account and cost center): with
+  them, each line needs one. Learning & accuracy → *Teach from past coding* (vendor, description, gl_code, cost_center).
 - **The company supplies:** the posting accounts AP uses (JDE object/subsidiary), the BUs as cost centers if lines
   are coded to them, which accounts are meals and entertainment, the coding policy's rules.
 - **A line can be split** across several GL accounts (cost centers) by percentage or amount (D-126). **Job cost coding
-  (job, cost code, cost type) is not built**; if AP codes to jobs, design it as a new line dimension mapped to E1's
-  account (BU.Object.Subsidiary or subledger), learned like the GL account.
+  (job, cost code, cost type) is not built yet: to build in stage 0** (about 3 to 4 weeks, D-145). Design it as a new
+  line dimension mapped to E1's account (BU.Object.Subsidiary or subledger), learned like the GL account.
 - **Code and tests:** `core/store/accounts.py`, `core/reference_data.py`, `coding/rules.py`;
   `tests/core/test_reference_data.py`, `tests/coding/test_rules.py`, `tests/coding/test_split.py`.
 
@@ -335,7 +341,7 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
   statement, payment reminder, bank-change request (flagged), not for AP), reads the invoices and sets the rest aside
   for a person. Picked up by *Import invoices → Process* or `python -m ap_coder watch [--every 60]` (a scheduled
   task). The recommended flow (Power Automate on the shared mailbox → a synced library → the folder) is in
-  `docs/MAILBOX_SETUP.md`; it has not been tried here.
+  `docs/MAILBOX_SETUP.md`; it is set up in stage 0 (D-145) and has not been tried here yet.
 - **Code and tests:** `intake/`; `tests/intake/`.
 
 ### 6.9 Finance Hub feed (Microsoft Fabric)
@@ -353,20 +359,23 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
 
 ### 6.10 Server mode (one AP Coder for the team)
 
-- **What:** `AP_SERVER_MODE=1`: logins (AP Coder's own accounts; no SSO yet), four roles (Read-only, Clerk,
-  Approver, Admin, enforced per route in `web/roles.py`), HTTPS with the company's certificate, an allowed-hosts list,
-  a Windows scheduled-task service (`python -m ap_coder service install ...`), `server-update <bundle.zip> --sha256`
-  with rollback. All in `docs/SERVER.md`, step by step for IT.
-- **IT supplies:** Windows Server 2019–2025, 8–16 cores, 32–64 GB RAM, an NVIDIA GPU with 12 GB+ for LM Studio,
-  60–200 GB SSD, Python 3.12, a service account, a DNS name and a certificate for it, a firewall rule for the port,
-  LM Studio installed headless with the models.
-- **Not done:** never installed anywhere; not reviewed by the company's security team; no Entra ID sign-in.
-- **Where single sign-on would go:** the sign-in page and its session cookie are `web/pages/login.py`; who the
-  person is on each request, `web/identity.py` (`Identity`); the accounts, their roles and sessions,
-  `core/store/users.py`; what each role may do, `web/roles.py` (unchanged by SSO: map the company's groups to the
-  four roles). Entra ID signs in through Microsoft's cloud, so under the offline rule (CLAUDE.md) it needs a
-  decision of its own, as the AIS Server had (D-104: a named system an Admin turns on, its one address only); an
-  on-premises ADFS on the company network fits D-104 as it is.
+- **What:** `AP_SERVER_MODE=1`: logins (AP Coder's own accounts; single sign-on to build in stage 0), four roles
+  (Read-only, Clerk, Approver, Admin, enforced per route in `web/roles.py`), HTTPS with the company's certificate, an
+  allowed-hosts list, a Windows scheduled-task service (`python -m ap_coder service install ...`), `server-update
+  <bundle.zip> --sha256` with rollback. All in `docs/SERVER.md`, step by step for IT.
+- **IT supplies:** Windows Server 2019–2025 (or, for the pilot, a shared desktop with Windows 11 Pro: `docs/SERVER.md`
+  section 1), 8–16 cores, 32–64 GB RAM, an NVIDIA GPU with 12 GB+ for LM Studio, 60–200 GB SSD, Python 3.12, a
+  service account, a DNS name and a certificate for it, a firewall rule for the port, LM Studio installed headless
+  with the models.
+- **Not done:** never installed anywhere (stage 0 sets it up on the pilot's desktop); the company's security review
+  and a focused penetration test are in stage 0, before production write access to JD Edwards; no single sign-on.
+- **Single sign-on, to build in stage 0** (Entra ID or the company's AD; IT picks, D-145). Where it goes: the
+  sign-in page and its session cookie are `web/pages/login.py`; who the person is on each request,
+  `web/identity.py` (`Identity`); the accounts, their roles and sessions, `core/store/users.py`; what each role may
+  do, `web/roles.py` (unchanged by SSO: map the company's groups to the four roles). Entra ID signs in through
+  Microsoft's cloud, so under the offline rule (CLAUDE.md) it is an exception that needs a decision of its own, as
+  the AIS Server had (D-104: a named system an Admin turns on, its one address only); an on-premises ADFS on the
+  company network fits D-104 as it is.
 
 ### 6.11 LM Studio and the models
 
@@ -402,7 +411,7 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
 Nothing below is in the repository, and nothing of it may be committed. Collect it inside the company, keep it in
 the data folder or the company's own document store, and import it through the dashboard. The people are named
 nowhere in the code: ask whoever handed this over to you for the pilot tester, the AP lead who decides, the JDE /
-CNC contact, IT's contact for the laptop and the server, and who owns the company's repository and CI.
+CNC contact, IT's contact for the pilot's desktop and the server, and who owns the company's repository and CI.
 
 | What | From | Goes to |
 |---|---|---|
@@ -420,46 +429,64 @@ CNC contact, IT's contact for the laptop and the server, and who owns the compan
 | AIS address, environment, service user and role; the seven orchestrations | JDE / CNC team | Settings → API connection (6.2) |
 | How emails reach the invoices folder | IT / M365 admin | `docs/MAILBOX_SETUP.md` (6.8) |
 | Finance Hub landing zone or share | Data team | Settings → Finance hub (6.9) |
-| Server, certificate, service account, DNS name | IT | `docs/SERVER.md` (6.10) |
+| The pilot's desktop (or a server), certificate, service account, DNS name | IT | `docs/SERVER.md` (6.10) |
 | Coding policy; meals accounts; approval limit | AP lead | GL accounts & tax → Coding policy; Settings → Review |
-| A sample of real invoices with what AP coded | AP | The shadow pilot (`docs/PILOT_PLAN.md`) and `pilot-score` |
-| E1's vouchers for the pilot period (F0411, and F0911 for the distribution; the columns are in `docs/JDE_E1.md`) | JDE team | `python -m ap_coder pilot-score` (step 2's "done when") |
+| The rule that says which invoices AP Coder owns in the pilot; today's touch time an invoice, timed | AP lead | `docs/PILOT_PLAN.md` |
+| E1's vouchers for the parallel week (F0411, and F0911 for the distribution; the columns are in `docs/JDE_E1.md`) | JDE team | `python -m ap_coder pilot-score` (the pilot's parallel week) |
 | LM Studio and the models (a chat model: Gemma 4 12B or Qwen 3.5 9B; OvisOCR2's GGUF and vision file) | IT, from LM Studio's model catalogue | `docs/LM_STUDIO.md`, `docs/PILOT.md` "What you need" |
 
 ---
 
 ## 8. The recommended order of work
 
-Each step ends with something a person can check. Don't start the next while the last one's tests are red.
+Two stages (D-145; the checklist is `docs/PILOT_PLAN.md`): **stage 0** connects AP Coder to the company's systems,
+then **the pilot** runs on them with the pilot tester and 3 to 4 clerks. Each step ends with something a person can
+check. Don't start the next while the last one's tests are red. Dates move with the approvals, not with the build.
 
-1. **Land the code.** Import it (section 1), run the default test tier and `pilot_check.py`, get CI running in the
-   company's system (section 3: the runners and hosts it needs). Replace the README's CI badge and links, which point
-   at the original GitHub repository. *Done when* the tests are green on the company's CI and the dashboard opens.
-2. **The laptop pilot on the company's master data, no connections yet.** Import the GL accounts, tax accounts, vendor
-   master, bank accounts (section 7) on the pilot tester's laptop (the offline install zip; `docs/PILOT.md`). Also
-   import the vendors' AN8s and the JDE account mapping sheet (or set a Default BU) from the worksheet: `pilot-score`
-   matches suppliers by AN8 and compares accounts as BU.Object.Subsidiary; nothing is sent to E1. Run the four-week
-   shadow pilot of `docs/PILOT_PLAN.md` without its ERP and mailbox items (week 2's "Export approved invoices to the
-   ERP" makes a file that is not loaded; week 3's mailbox watcher and JDE worksheet are steps 3 and 4 here): AP keeps
-   working as today, AP Coder reads the same invoices, `pilot-score` compares. *Done when* the pilot score is written
-   up and the AP lead decides whether to go on to live use (the four weeks and the decision are in
-   `docs/PILOT_PLAN.md`).
-3. **JD Edwards through batch files.** Send the JDE worksheet; import the answers; make dry runs; load a batch into
-   E1's **test** environment through R04110ZA; compare with what AP would have keyed. Resolve every point of
-   `jde.UNCONFIRMED`. *Done when* a test batch posts in E1 exactly as AP would have.
-4. **Mailbox intake.** IT builds the flow of `docs/MAILBOX_SETUP.md`; schedule `python -m ap_coder watch`. *Done
-   when* a week of AP's mailbox lands in the review queue with nothing lost.
-5. **The server.** IT provisions it (`docs/SERVER.md`); install the service, the first Admin, the users; LM Studio
-   headless on the GPU; the security team's review. *Done when* the AP team works from it and the laptop is retired.
-6. **The JD Edwards API.** The JDE team builds the seven orchestrations in a test environment; step 1 (read) first
-   (it replaces the CSV imports of 2), then step 2 (post) with dry runs, then production. *Done when* vouchers post
-   through the API with the batch files kept as the fallback.
-7. **The Finance Hub.** Point the feed at the landing zone; the data team builds the reports. *Done when* the hub
-   shows AP Coder's invoices and accuracy.
+**Stage 0: connect to the company**, in this order. It ends when the company's IT and the JDE team sign it off.
 
-Likely company-specific work to weigh along the way: job cost coding (6.4), single sign-on with Entra ID (6.10),
-the company's own approval workflow, and any invoice layouts the shadow pilot shows it reads badly (each one: a test
-first, then the fix, see section 9).
+1. **Land the code.** Import it into the company's repository (section 1), run the default test tier and
+   `pilot_check.py`, get CI running in the company's system (section 3: the runners and hosts it needs). Replace the
+   README's CI badge and links, which point at the original GitHub repository. *Done when* the tests are green on
+   the company's CI and the dashboard opens.
+2. **The desktop in server mode.** IT buys the shared desktop and gives it a burn-in week, then sets it up in server
+   mode (`docs/SERVER.md`; Windows 11 Pro runs it): the service, the first Admin, the users, LM Studio with the
+   models. Import the company's master data there (section 7), the vendors' AN8s included. *Done when* the pilot
+   tester and the clerks log in from their browsers and a real invoice is read and coded.
+3. **The AP inbox.** IT builds the Power Automate flow of `docs/MAILBOX_SETUP.md` (AP Coder never holds the
+   mailbox's password); schedule `python -m ap_coder watch`. *Done when* a week of AP's mailbox lands in the review
+   queue with nothing lost.
+4. **Single sign-on.** Plan it with IT (Entra ID or the company's AD; IT picks), then build it (6.10). Entra ID signs
+   in through Microsoft's cloud: an exception to the offline rule, recorded as a decision of its own. *Done when*
+   the clerks sign in with their company accounts.
+5. **JD Edwards read and write, in PY.** Send the JDE worksheet and import the answers (6.1). The JDE team builds the
+   seven orchestrations of `docs/JDE_ORCHESTRATIONS.md` in E1's test environment (PY): read first (it replaces the
+   CSV imports of step 2), then write with dry runs. Write means AP Coder creates *pending* voucher batches; under
+   E1's batch approval (*Manager Approval of Input*) AP approves each batch and posts it in E1, so a person makes the
+   final check. Resolve every point of `jde.UNCONFIRMED` and the "To confirm" list; the batch files stay as the
+   fallback. *Done when* a test batch posts in PY exactly as AP would have keyed it.
+6. **Job costing.** Build job, cost code and cost type on a line (6.4; about 3 to 4 weeks), each step a test first.
+   *Done when* job lines are coded, learned and posted to PY.
+7. **The security review and a focused penetration test.** The company's IT security team reviews AP Coder (to
+   OWASP ASVS Level 2) and a firm tests it; book it early, firms need weeks of notice. Both are conditions for
+   production write access only: read access and the work in PY go ahead meanwhile. *Done when* both are signed
+   off, and with them stage 0.
+
+**The pilot** (`docs/PILOT_PLAN.md`):
+
+8. **A parallel week, then four measured live weeks.** One rule decides which invoices AP Coder owns, so each is
+   entered in one system only. In the parallel week AP Coder writes only into PY, scored with `pilot-score` against
+   what AP posted in production. Then live: AP Coder creates pending batches and AP approves and posts them in E1,
+   with no double keying. Rollback steps and their triggers are written down before going live; AP Coder's vouchers
+   are reconciled before the first payment run that pays them. Touchless processing stays off (D-144). *Done when*
+   the 5-part gate of `docs/PILOT_PLAN.md` is scored on live weeks 2 to 4 and the AP lead decides go or no-go.
+
+Then, if it goes well: all of AP and two more finance teams on a company server (6.10), and the Finance Hub (point
+the feed at the landing zone; the data team builds the reports. *Done when* the hub shows AP Coder's invoices and
+accuracy).
+
+Likely company-specific work to weigh along the way: the company's own approval workflow, and any invoice layouts
+the parallel week shows it reads badly (each one: a test first, then the fix, see section 9).
 
 ---
 
@@ -491,10 +518,12 @@ From `CLAUDE.md`, with why:
 ## 10. Known limits and open questions
 
 `docs/KNOWN_LIMITS.md` (ten points) and, for JD Edwards, the open questions in `docs/JDE_E1.md` and the "To confirm"
-list in `docs/JDE_ORCHESTRATIONS.md`. In short: one laptop until the server is set up; minutes a page without a
-graphics card; sample data until the company's is imported; JD Edwards never tried against a real E1; no direct
-mailbox connection; accuracy measured on samples only; no job cost coding; Python installed by IT; no security
-review yet.
+list in `docs/JDE_ORCHESTRATIONS.md`. In short: the server mode not set up anywhere yet (stage 0 sets it up on the
+pilot's desktop); minutes a page without a graphics card; sample data until the company's is imported; JD Edwards
+never tried against a real E1 (stage 0 tests read and write in PY); the mailbox flow set up in stage 0, no direct
+mailbox connection by design; single sign-on to build in stage 0; accuracy measured on samples only; job cost
+coding to build in stage 0; Python installed by IT; the security review and a penetration test in stage 0, before
+production write access.
 
 ---
 
@@ -510,7 +539,8 @@ review yet.
 | Place of supply | The province whose sales tax applies (where the goods or services are delivered) |
 | OvisOCR2 | The small vision model that reads every page, in LM Studio |
 | Touchless | An invoice approved without a person, for a vendor with a track record (off by default) |
-| Shadow pilot | AP works as today while AP Coder reads the same invoices; the two are compared |
+| Parallel week | The pilot's first week: AP Coder writes only into E1's test environment (PY), scored with `pilot-score` against what AP posted in production |
+| PY | E1's test environment |
 | Data folder | Where the company's data lives, outside the code (`~/APCoder` on a laptop, `private/` in a checkout) |
 | CloseDesk | The original builder's Outlook assistant, where the page reader idea and `ai/figures.py` came from; not part of AP Coder, nothing to install |
-| Pilot tester | The person running the pilot on the laptop |
+| Pilot tester | The person running the pilot |

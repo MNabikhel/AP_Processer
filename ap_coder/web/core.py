@@ -472,7 +472,7 @@ def stale_page(form: Any, shown: Any) -> JSONResponse | None:
     return refuse(STALE_PAGE, 409)
 
 
-# --- What this pilot shows (Settings → About, D-52) -----------------------------------------------------------------
+# --- What is shown (Settings → About, D-52) -----------------------------------------------------------------------
 SHOW_JDE = "show_jde_settings"  # "1": Settings → JD Edwards E1 is a tab, and JD Edwards E1 an export format
 DEVELOPER_TOOLS = "show_developer_tools"  # "1": Learning → Readers, the training data, What's new for developers
 DEVELOPER_ENV = "AP_DEVELOPER_TOOLS"  # =1: the same, for a developer's computer
@@ -486,7 +486,7 @@ def _switch(store: Store, key: str) -> bool:
 
 
 def jde_shown(store: Store) -> bool:
-    """Whether the JD Edwards E1 settings and export are shown: off for the laptop pilot (Excel and CSV exports only),
+    """Whether the JD Edwards E1 settings and export are shown: off on a laptop (Excel and CSV exports only),
     on at first on the company server (D-102); a switch on Settings → About shows or hides them, nothing is removed.
     A database already set up for JD Edwards (its settings saved, or a JD Edwards batch made) has it turned on, once
     and stored, so an update takes nothing away (B-526)."""

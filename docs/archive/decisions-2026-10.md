@@ -1028,10 +1028,11 @@ that is reversed keeps its line, marked "replaced by D-NN".
   checks and unzips that copy. The code folder is locked down (`icacls C:\APCoder /inheritance:r`, Administrators
   and SYSTEM full control, the service account read and run, docs/SERVER.md step 5); the folders `server-update`
   makes are inside it and inherit that, so nothing is applied by code. Left for later, by design: a Clerk may release
-  a vendor's hold and reopen another person's approval (separation of duties). Why: a reviewer's walk of the server
-  mode found each of these a way past, or around, D-97's logins. (`core/store/users.py`, `core/store/backups.py`,
-  `ops/server_update.py`, `web/identity.py`, `web/pages/login.py`, `web/pages/users.py`, `web/pages/activity.py`,
-  `web/app.py`, `web/security.py`; `tests/web/test_server_security.py`, `tests/ops/test_server_update.py`)
+  a vendor's hold (replaced by D-142) and reopen another person's approval (separation of duties). Why: a reviewer's
+  walk of the server mode found each of these a way past, or around, D-97's logins. (`core/store/users.py`,
+  `core/store/backups.py`, `ops/server_update.py`, `web/identity.py`, `web/pages/login.py`, `web/pages/users.py`,
+  `web/pages/activity.py`, `web/app.py`, `web/security.py`; `tests/web/test_server_security.py`,
+  `tests/ops/test_server_update.py`)
 - **D-102** · What each role sees on the company server, and how the server speaks (with D-97 to D-99). (1) **A page
   offers only what the role may use**, from `web/roles.py`'s table (`core.can`, which takes a link's path without its
   query): forms, links and the review screen's buttons to a route the role is refused are left out, a list the role

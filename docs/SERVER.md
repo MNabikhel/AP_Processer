@@ -4,7 +4,7 @@ This guide sets AP Coder up on one Windows Server for the whole AP team. It runs
 Windows service), staff open it in their browser over HTTPS and log in with their own account, and nothing is installed on their PCs. Everything stays
 offline: AP Coder and LM Studio run on the server and connect to nothing on the internet.
 
-The laptop pilot is not changed by any of this: a laptop still runs AP Coder for one person at 127.0.0.1, with no
+Laptop mode is not changed by any of this: a laptop still runs AP Coder for one person at 127.0.0.1, with no
 logins. The server mode is switched on by `AP_SERVER_MODE=1` (step 2).
 
 In this guide:
@@ -27,10 +27,10 @@ Contents: [1. What the server needs](#1-what-the-server-needs) · [2. Install](#
 
 | | Minimum | Better |
 |---|---|---|
-| Windows | Windows Server 2019, 2022 or 2025, 64-bit | |
+| Windows | Windows Server 2019, 2022 or 2025, 64-bit (or Windows 11 Pro: below) | |
 | Processor | 8 cores (the OCR of scans runs on the processor) | 16 cores |
 | Memory | 32 GB | 64 GB |
-| Graphics card (for LM Studio) | NVIDIA with 12 GB of VRAM | 16 GB of VRAM or more |
+| Graphics card (for LM Studio) | NVIDIA with 12 GB of VRAM (an estimate) | 16 GB of VRAM or more (an estimate) |
 | Disk | 60 GB free on an SSD | 200 GB |
 | Python | Python 3.12, 64-bit, installed for all users | |
 | LM Studio | 0.4.8 or newer, with its models copied in | |
@@ -39,9 +39,10 @@ Why these numbers:
 
 - **The models** (docs/LM_STUDIO.md): the chat model Gemma 4 12B is about 7.2 GB, or Qwen 3.5 9B about 6.5 GB;
   OvisOCR2, the page reader that reads every page of every invoice, about 1 GB; the embedding model under 1 GB; plus
-  the room each needs for its context (16,384 and 20,480 tokens). On 8 GB of VRAM they spill into the server's
-  memory and are slower; 12 GB holds them, 16 GB leaves room. Without a graphics card AP Coder still works, but
-  reading each page takes minutes instead of seconds.
+  the room each needs for its context (16,384 and 20,480 tokens). Estimated from those sizes (none of the
+  graphics-card figures in this section has been measured on a graphics card): on 8 GB of VRAM they spill into the
+  server's memory and are slower; 12 GB holds them, 16 GB leaves room. Without a graphics card AP Coder still works,
+  but reading each page takes minutes on the processor instead of seconds (estimated) on a graphics card.
 - **Disk**: each AP Coder version is 2 to 3 GB (its packages and OCR models), and two are kept (the current one and
   the previous one, to go back to). The models are about 10 GB. The data grows with the invoices (about 0.5 MB each,
   kept with the database) and 14 daily copies of the database.
@@ -57,7 +58,8 @@ Why these numbers:
   | 100 | 82 pages gave up after 2 minutes | half in 6.9 s, 95% in 22 s (all 4 cores busy) |
 
   Memory: 2 GB for the 4 workers and the background process with 25 people, 5 GB with 100. *Estimated* (the
-  processor and memory from that measurement; the graphics card from an assumed 15 s a page, not measured here):
+  processor and memory from that measurement; the graphics card's rows are estimates, from an assumed 15 s a page,
+  not measured on a graphics card):
 
   | | 5,000 invoices a month, 25 people | 10,000 invoices a month, 50 people at once |
   |---|---|---|
@@ -67,6 +69,11 @@ Why these numbers:
   | The graphics card's day | 2 to 3 hours of reading (about 500 pages a working day, every invoice read) | 4 to 6 hours; about half with clean digital PDFs left out (step 6) |
 
   The reading runs in the background: nobody waits on it, but invoices come into the queue later on a busy day.
+- **Windows 11 Pro** also runs the server mode (on a shared desktop, for example): the service is a Task Scheduler
+  task (step 6), not a Windows service, and Task Scheduler is part of Windows 11 too. CI tests AP Coder on Windows
+  Server only (GitHub's Windows machines; the task itself is not registered there, its commands are checked), so run
+  `service install` and `service status` on the desktop before staff use it. Windows 11 Pro allows at most 20
+  devices connected to it at once; whether a desktop may serve the AP team is the company's IT's decision.
 - **Python**: the offline bundle has packages for Python 3.11 to 3.14. Install Python 3.12 from python.org's offline
   installer (copy it in): *Customize installation* → *Install for all users*, and *Add Python to environment
   variables*.
@@ -374,8 +381,8 @@ Admin).
 | Role | Can |
 |---|---|
 | Read-only | Look at invoices, the review queue, reports, the exports list and Help. Change nothing. |
-| Clerk | Also import and process invoices, review and correct them, approve within the limit, park, reject, reopen, bulk approve, and export batches. |
-| Approver | Also give the second approval (always by another account than the first), and post vouchers to JD Edwards through the API. |
+| Clerk | Also import and process invoices, review and correct them, approve within the limit, park, reject, reopen, bulk approve, export batches, and put a vendor on hold or edit its notes and tax numbers (not take it off hold, D-142). |
+| Approver | Also give the second approval (always by another account than the first), take a vendor off hold (or approve a held vendor's invoice coded to another vendor), and post vouchers to JD Edwards through the API. |
 | Admin | Everything else: Settings, users, the JD Edwards setup, GL accounts and vendors imports, backups and restore, deleting, the Azure check, updating. |
 | Manager | Only confirms, or sends back, the coding of the invoices AP sends them (*Manager confirmations*): sees those invoices and nothing else of AP Coder. An Admin sets each Manager's cost centers on the users page; AP picks the Manager when sending (D-138). |
 

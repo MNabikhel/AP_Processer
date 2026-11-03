@@ -14,8 +14,8 @@ The code is in `ap_coder/erp/jde.py` (pure logic), the settings in `ap_coder/web
 
 ## Using it
 
-The pilot exports to Excel and CSV, so the JD Edwards E1 tab and export format are hidden until **Settings → About
-→ Show JD Edwards settings** is ticked (D-52). A database already set up for JD Edwards (its settings saved, or a JD
+On a laptop, exports go to Excel and CSV, so the JD Edwards E1 tab and export format are hidden until **Settings →
+About → Show JD Edwards settings** is ticked (D-52); on the company server they are shown from the start (D-102). A database already set up for JD Edwards (its settings saved, or a JD
 Edwards batch made) has it turned on by itself when it is updated: nothing is taken away.
 
 1. **Settings → JD Edwards E1** (once *Show JD Edwards settings* is on): company, user ID, batch prefix, document type, the amount and account
@@ -331,8 +331,10 @@ decimal point, AEXP (amount, in the amount format) and CRCD (currency).
 
 ## Test import checklist (for the pilot tester's IT)
 
-For the shadow pilot (D-92) the batches go to a **JDE test environment first** (a CRP or test environment with a
-copy of production's setup), never to production. One page for the person at IT who loads them; tick each box and
+For the pilot's parallel week (D-145) the batches go to a **JDE test environment first** (PY, or a CRP with a
+copy of production's setup), never to production. Production write access comes after the company's security
+review and penetration test; there AP Coder's batches go in pending, and AP approves and posts each one in E1, so
+E1's batch approval keeps a person's final check. One page for the person at IT who loads them; tick each box and
 send the answers in the last step back to the pilot tester. Where E1 is set up its own way at your company, your
 JDE administrator's word wins over this page.
 
@@ -400,8 +402,9 @@ Send the pilot tester, who passes it on to the company's AP Coder developer (no 
 - each error message as E1 wrote it (the text, not a screenshot of the whole screen), with its voucher;
 - your answers to anything above marked "confirm with your JDE administrator".
 
-Then, for the shadow pilot's score, export from the test environment (or from production for the invoices AP
-entered by hand) the vouchers of the same days: **F0411** with RPAN8, RPVINV, RPDIVJ, RPAG, RPSTAM, RPCRCD, RPDDJ,
+Then, for the pilot's score (`pilot-score`), export the vouchers of the same days: in the parallel week from
+production, what AP posted (AP Coder's own are in the test environment); in the live weeks, what AP posted after
+review: **F0411** with RPAN8, RPVINV, RPDIVJ, RPAG, RPSTAM, RPCRCD, RPDDJ,
 RPDOC, RPDCT, RPKCO, RPSFX (RPTXA1 and RPEXR1 if you can; RPACR and RPCTAM when there are foreign-currency vouchers)
 and **F0911** with GLDOC, GLDCT, GLKCO, GLANI (or GLMCU, GLOBJ, GLSUB), GLAA, GLEXA, GLLT (GLACR for foreign
 currency). Keep RPDOC and RPSFX: without them a voucher entered twice, or a credit memo with the invoice's number,

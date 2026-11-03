@@ -1,93 +1,104 @@
-# Pilot plan: four weeks to a decision
+# Pilot plan: connect first, then a live pilot
 
-A suggested way to run the AP Coder pilot so that, after a month, you can show leadership real
-numbers from your own invoices. Everything stays on the AP computer (or a company server:
-[SERVER.md](SERVER.md)): invoices are read on the laptop, by OCR and by OvisOCR2 in LM Studio.
+The plan in two stages (D-145). **Stage 0** connects AP Coder to the company's systems: its inbox, its
+sign-in and JD Edwards. **Stage 1** is the pilot: the pilot tester and 3 to 4 AP clerks process real
+invoices end to end, and after four measured weeks a 5-part gate decides whether it goes on. Dates move
+with the approvals: the build is not what holds it up. If approvals slip, the pilot moves later.
 
-## Before week 1: set up (half a day)
+A person approves every invoice throughout: **touchless processing stays off** for the pilot and until
+the company's AI team has done its model-risk review (D-144).
 
-- [ ] IT installs LM Studio with OvisOCR2 and the chat model (AP Coder starts without LM Studio, but the pilot
-      runs with it: without OvisOCR2 every invoice waits for a person, and the chat model reviews each invoice);
-      start its server, then install AP Coder (GETTING_STARTED.md, steps 1 to 3). AP Coder finds OvisOCR2 and runs its
-      self-test on its own (10 to 20 minutes the first time): check *Settings → Reading* shows it passed.
-- [ ] Try the demo for 15 minutes (*Load demo invoices*), then *Remove demo invoices*.
-- [ ] **GL accounts & tax:** import your chart of accounts (and cost centers if you code to them);
-      check how each sales tax posts (GST/HST and QST recoverable, PST expensed).
-- [ ] **Vendors:** import the vendor list from the ERP (vendor IDs, terms, default GL, blocked).
-- [ ] **Purchase orders:** import open POs with quantities received, if you use POs.
-- [ ] **Exports:** import the ERP's invoice list for the last 12 to 18 months (catches bills already
-      entered), and set up the custom export layout if your ERP needs one.
-- [ ] **Learning & accuracy → Teach from past coding:** import last year's posted AP lines, so the AI
-      knows how each vendor is coded from the first invoice.
-- [ ] **Settings:** your name, the approval limit (if two people approve), the second backup folder
-      (OneDrive), and exchange rates if you are billed in USD or EUR. Leave **Settings → Automation**
-      (touchless processing) off for now.
+## Stage 0: connect to the company
 
-## Week 1: shadow mode
+Each item ends with something a person can check. The company's IT and the JDE team sign stage 0 off.
 
-Process the week's invoices in AP Coder **and** code them the usual way. Do not export yet.
+- [ ] **The code goes into the company's own repository** ([HANDOFF.md](HANDOFF.md) section 1), and its tests
+      run green there.
+- [ ] **The desktop:** one shared desktop, bought and given a burn-in week, set up in server mode
+      ([SERVER.md](SERVER.md): Windows 11 Pro runs it), with LM Studio, OvisOCR2 and the chat model on it
+      (section 8). The pilot tester and the clerks log in from their browsers, each with their own account
+      (section 10).
+- [ ] **The AP inbox:** a Power Automate flow saves the AP mailbox's emails into AP Coder's invoices folder
+      ([MAILBOX_SETUP.md](MAILBOX_SETUP.md)). AP Coder never holds the mailbox's password. Check *Emails that
+      need a person* on Import invoices each day.
+- [ ] **Single sign-on:** planned with IT (Entra ID or the company's Active Directory; IT picks), then built.
+      Signing in with Entra ID passes through Microsoft's cloud: an exception to AP Coder's offline rule, to be
+      decided and recorded as one ([HANDOFF.md](HANDOFF.md) 6.10). Until it is built, AP Coder's own accounts.
+- [ ] **JD Edwards read and write** through the 7 orchestrations of [JDE_ORCHESTRATIONS.md](JDE_ORCHESTRATIONS.md),
+      built by the JDE team and tested in E1's test environment (PY). *Read* brings in the suppliers, accounts,
+      business units, open POs and past vouchers. *Write* means AP Coder creates **pending** voucher batches: under
+      E1's batch approval (*Manager Approval of Input*), AP approves each batch and posts it in E1, so a person
+      always makes the final check in E1. Fill in the JDE worksheet first ([JDE_E1.md](JDE_E1.md)).
+- [ ] **Job costing** (job, cost code, cost type on a line): built in AP Coder, about 3 to 4 weeks of work.
+- [ ] **The company's master data:** the GL accounts and cost centers, how each sales tax posts, the vendor list
+      with each vendor's address number (AN8), open POs, bank accounts, and last year's posted AP lines
+      (*Learning & accuracy → Teach from past coding*), so each vendor is coded from its first invoice.
+- [ ] **A security review** by the company's IT security team (to OWASP ASVS Level 2) and **a focused penetration
+      test.** Both are needed before AP Coder gets *production* write access only: read access and the work in PY go
+      ahead meanwhile. Book the penetration test early: firms need weeks of notice.
 
-- [ ] 20 to 50 invoices, a representative mix (top vendors, several provinces, a few French invoices,
-      credit notes, PO invoices).
-- [ ] Review each one; correct what is wrong and click **Approve & teach** (each correction trains that
-      vendor; the confirmation says how far it is from touchless).
-- [ ] Note anything AP Coder missed or flagged wrongly (Activity keeps the trail).
-- [ ] Friday: **Learning & accuracy** (AI accuracy against the 90% target, and *Supplier learning*:
-      which vendors are getting close to touchless) and **Insights**.
+## Stage 1: the pilot
 
-## Week 2: rules and real exports
+The pilot tester and 3 to 4 clerks, on real invoices from the AP inbox.
 
-- [ ] **GL accounts & tax → Fixed rules:** add the suggested rules, and rules for what you corrected
-      twice in week 1.
-- [ ] Export approved invoices to the ERP from the **Exports** page; attach the **Approved PDFs** if
-      your ERP keeps invoice images.
-- [ ] Use **Ask the vendor** for missing GST/HST numbers, PO numbers and price differences.
-- [ ] Answer vendor calls with the **Invoice directory**.
+### Before the parallel week
 
-## Week 3: the full cycle
+- [ ] **One rule decides which invoices AP Coder owns**, so each invoice is entered in one system only. Write it
+      down and give it to every clerk.
+- [ ] **Time today's work:** the AP touch time an invoice, timed before the pilot (the gate's baseline).
+- [ ] **Rollback steps** and what triggers them are written down before going live: how AP goes back to keying in
+      E1, and what happens to the batches AP Coder made.
+- [ ] Leave **Settings → Automation** (touchless processing) off (D-144).
 
-- [ ] Reconcile the statements of your three largest vendors (**Vendor statements**).
-- [ ] Turn on the **folder watcher** (`watch`, or Task Scheduler with `--once`) and have the AP mailbox's
-      emails saved into the invoices folder ([MAILBOX_SETUP.md](MAILBOX_SETUP.md)): check *Emails that need a
-      person* on Import invoices each day.
-- [ ] When JD Edwards is in scope: tick **Settings → About → Show JD Edwards settings**, send the JDE team the
-      worksheet (**Settings → JD Edwards E1 → Download the worksheet**), import their answers, and read
-      **Exports → Dry run** before the first test load. (The pilot itself exports to Excel or CSV.) Once it is on,
-      every vendor needs its JD Edwards address number (AN8) before its invoices can be approved: import it as the
-      vendor master's ERP ID, or add it in **Settings → JD Edwards E1 → Supplier address numbers** (a vendor added
-      with *Add new vendor…* on the review screen can take it there). The JD Edwards export also needs a business
-      unit for every account: set a **Default BU**, or map every GL account, the tax accounts (e.g. GST/HST and QST
-      recoverable) included; the Welcome checklist says which are missing.
-- [ ] Look at **Vendors that make work** and ask the worst offenders for better invoices.
-- [ ] **Touchless, if ready:** when several regular vendors are close to the bar on *Learning & accuracy
-      → Supplier learning* and corrections have settled, an AP lead turns on touchless processing in
-      **Settings → Automation**. Check *Largest invoice approved without a person* (5,000.00 CAD by
-      default) and use *Keep supervised* for any vendor that should always go to a person.
+### The parallel week
 
-## Week 4: close and decide
+- [ ] AP Coder writes **only into PY**; AP keeps posting in production as today.
+- [ ] Score the week with `python -m ap_coder pilot-score` against what AP posted in production (F0411, and F0911
+      for the distribution: the JDE team exports them; the columns are in [JDE_E1.md](JDE_E1.md)).
+- [ ] Fix what the score shows before going live.
 
-- [ ] **Pilot score:** the JDE team exports E1's vouchers for the pilot days (F0411, and F0911 for the
-      distribution; the columns are in [JDE_E1.md](JDE_E1.md)); run `python -m ap_coder pilot-score` on them.
-- [ ] **Month-end:** the accruals schedule for the close.
-- [ ] **Sales tax:** the ITCs and ITRs for the period, and the PST/QST to self-assess, checked
-      against the GL.
-- [ ] **Exports:** run the **duplicate payment audit** (*Run the audit*).
-- [ ] **Activity:** download the **controls report**.
-- [ ] **Insights:** edit the assumptions (minutes per invoice, hourly cost, monthly volume) and
-      download the **one-page business case** (totals only, safe to share).
+### Live: four measured weeks
+
+- [ ] For the invoices it owns, AP Coder creates pending voucher batches in E1; AP approves and posts each batch
+      in E1. Nobody keys them twice.
+- [ ] Reconcile AP Coder's vouchers before the first payment run that pays them, and check the daily control
+      totals tie.
+- [ ] Each week the pilot tester blind re-codes about 50 invoices (codes them without seeing AP Coder's coding),
+      for the gate's missed errors.
+- [ ] Each Friday: **Learning & accuracy** (the coding as proposed) and **Insights**.
+- [ ] Mid-way: an interim report.
+- [ ] After week 4: the gate, scored on live weeks 2 to 4, then the go/no-go.
+
+Exports to Excel or CSV stay on the **Exports** page for anyone who doesn't use JD Edwards.
+
+## The go/no-go gate
+
+It is scored on live weeks 2–4, on at least 800 invoices from at least 80 vendors, with no vendor over 5% of the
+sample:
+
+1. **Coding:** at least 90% of repeat-vendor lines and at least 85% of all lines right, as AP Coder proposed them
+   before review. A right line has the GL account and cost center, plus job, cost code and cost type on job lines.
+   Also: at least 97% of vouchers posted exactly as AP Coder created them, and errors that both reviews missed at 2%
+   or less (the pilot tester blind re-codes about 50 invoices a week).
+2. **First-time match:** at least 60% of invoices need no change; the target is 70%.
+3. **Time:** AP touch time is at least 2 minutes an invoice below a baseline timed before the pilot, and the lower
+   bound of that saving stays above break-even.
+4. **Exceptions:** 15% or less (the market average is 18.4%, Ardent); technical failures 2% or less.
+5. **Controls (any failure stops the pilot):** zero duplicate vouchers, zero vouchers to the wrong supplier, daily
+   control totals that tie, every batch approved in E1 before posting.
 
 ## What to bring to the decision
 
 | Measure | Where | Good sign |
 | --- | --- | --- |
-| AI coding accuracy | Learning & accuracy | at or above 90%, rising week on week |
-| Approved as coded | Insights | most invoices need no change |
-| Minutes per invoice | Insights (assumptions) | well below today's manual time |
-| Touchless rate | Settings → Automation | rising; Ardent Partners puts the average at 32.6%, best in class about 49% |
-| Errors found in touchless invoices | Settings → Automation | none, or very few, in the audited 5% |
-| Duplicates stopped, fraud signals | Insights, Activity | any caught is money kept |
+| Coding as proposed, fields and vouchers as posted | `pilot-score` report (`pilot_score.md`), Insights | the gate's 1 met |
+| Approved as coded | Insights | at least 60% need no change (the gate's 2) |
+| Minutes per invoice | Insights (assumptions), the timed baseline | at least 2 minutes saved (the gate's 3) |
+| Exceptions and technical failures | counted by the pilot tester (the review queue, Activity) | within the gate's 4 |
+| Duplicates stopped, fraud signals | Insights, Activity | any caught is money kept; no duplicate voucher |
+| Controls | Activity → controls report, E1's batch approvals | every batch approved in E1 before posting |
 | Discounts taken in time | Insights → AP operations | more than before |
 | Days to approve | Insights → AP operations | shorter than before |
 
-Phase 2 items to raise if the pilot goes well: a shared server version (several AP people at once,
-database on a server), approval routing to budget owners, and a direct ERP connection.
+If the pilot goes well, the next stage takes AP Coder to all of AP and two more finance teams, on a company
+server.

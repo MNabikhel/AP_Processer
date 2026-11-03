@@ -1,7 +1,8 @@
 # Pilot guide: AP Coder on one laptop, offline
 
-A short guide for running the pilot on a Windows laptop (a Mac works the same way). For the four-week
-plan that turns the pilot into a decision, see [PILOT_PLAN.md](PILOT_PLAN.md).
+A short guide for running AP Coder on a Windows laptop (a Mac works the same way), to try it or show it. The
+company's pilot itself runs on a shared desktop in server mode, connected to the AP inbox and JD Edwards:
+[PILOT_PLAN.md](PILOT_PLAN.md) and [SERVER.md](SERVER.md).
 To show it to someone, follow [DEMO_RUN_SHEET.md](DEMO_RUN_SHEET.md): `scripts\demo.bat` runs AP Coder on a data
 folder of its own, so a demo never mixes with the pilot's invoices. What it does not do yet:
 [KNOWN_LIMITS.md](KNOWN_LIMITS.md).
@@ -236,10 +237,11 @@ bundle with the internet cut off, on Windows and on a Mac that has only Python 3
    reject). Each corrected field is recorded for that vendor and updates its template; the confirmation
    says what was learned and how far the vendor is from touchless. *Learning & accuracy → Supplier
    learning* shows each vendor's training. Bulk approvals nobody opened don't count toward touchless.
-4. **Export:** the pilot exports to Excel or CSV: *Exports* → pick the approved invoices → *Excel workbook*
-   (the first time) or *CSV, one row per GL line* → download the batch and import it into the ERP. Exports opens
+4. **Export:** on a laptop, to Excel or CSV (for anyone without JD Edwards; the company's pilot writes pending
+   batches to JD Edwards instead, which AP approves and posts in E1): *Exports* → pick the approved invoices →
+   *Excel workbook* (the first time) or *CSV, one row per GL line* → download the batch and import it into the ERP. Exports opens
    on the format used last. **JD Edwards E1** (a ZIP of F0411Z1 / F0911Z1 CSVs to load with R04110ZA) is hidden
-   for the pilot: *Settings → About → Show JD Edwards settings* shows its settings tab and export format again
+   on a laptop: *Settings → About → Show JD Edwards settings* shows its settings tab and export format again
    ([JDE_E1.md](JDE_E1.md)). With it on, each vendor needs its address number (AN8) before its invoices can be
    approved (Settings → JD Edwards E1 → *Supplier address numbers*, or the vendor master's ERP ID; *Add new
    vendor…* takes it too), and the export needs a *Default BU* or every account mapped, tax accounts included.
@@ -398,7 +400,7 @@ The only outside connections are the ones someone chooses:
 - **`AP_ALLOW_INTERNET=1`**, the one opt-in, for developers and the bundle builder only. With it set in the
   terminal that runs APProcessor.bat, the installer also checks GitHub for updates, and the app may use a model
   server or Azure on the internet. `scripts/build_offline_bundle.py` sets it for itself, on IT's computer. Never
-  set it on a pilot laptop.
+  set it on a computer that runs AP Coder.
 - **The Azure check**, its own opt-in switch in Settings → Reading (off by default, no `AP_ALLOW_INTERNET`
   needed): once it is switched on with your organisation's Azure endpoint and key, the invoices AP Coder isn't
   sure of, and a small share of the others (capped per day), are sent to that one Azure resource for a second

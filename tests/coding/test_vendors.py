@@ -185,6 +185,32 @@ def test_a_hold_on_the_name_survives_a_match_by_tax_number(tmp_path, ground_trut
     assert codes.get("VENDOR_ON_HOLD") == "error"
 
 
+def test_a_held_vendors_gst_number_or_bank_account_on_an_invoice_coded_to_another_vendor_is_said(
+    tmp_path, ground_truth
+):
+    """B-1549: under a near-identical new name, the GST/HST number or the bank account read off the invoice is still
+    the held vendor's (D-142)."""
+    from ap_coder.coding.vendors import held_vendor, moved_off_hold
+
+    store = Store(tmp_path / "ap.db")
+    held = {**ground_truth, "remit_bank_account": "004-12345-1234567"}
+    first = store.add_invoice(tmp_path / "a.pdf", held, {})
+    store.approve_invoice(first, held, "jane")
+    store.save_vendor(store.vendor_key_for(held["vendor_name"]), held["vendor_name"], "on_hold")
+    gst = ground_truth["gst_hst_registration_number"]
+    assert held_vendor(store, "Northwnd IT Solutions", gst)[1] == "gst"
+    assert held_vendor(store, "Northwnd IT Solutions", "", "Transit 12345 Inst 004 Account 1234567")[1] == "bank"
+    assert held_vendor(store, "Someone Else Ltd", "", "") is None
+    moved = InvoiceCoding.model_validate({**held, "vendor_name": "Northwnd IT Solutions", "invoice_number": "B-2",
+                                          "gst_hst_registration_number": ""})  # fmt: skip
+    read = {**held, "vendor_name": "Northwnd IT Solutions"}
+    [(severity, code, message)] = moved_off_hold(store, read, moved)
+    assert (severity, code) == ("error", "VENDOR_CHANGED_FROM_HELD") and "GST/HST number" in message
+    elsewhere = {"gst_hst_registration_number": "", "remit_bank_account": ""}  # nothing of the held vendor's
+    other = InvoiceCoding.model_validate({**moved.model_dump(), **elsewhere})
+    assert moved_off_hold(store, {**read, **elsewhere}, other) == []
+
+
 @pytest.mark.parametrize(
     "a, b, same",
     [
