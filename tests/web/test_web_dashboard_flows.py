@@ -16,7 +16,7 @@ from types import SimpleNamespace
 import pytest
 
 from ap_coder.coding.rules import Rule
-from ap_coder.core.store import APPROVED, PENDING, REJECTED, Store, load_sample_setup
+from ap_coder.core.store import APPROVED, PENDING, REJECTED, Store, load_sample_purchase_orders, load_sample_setup
 from ap_coder.web.core import invoice_dir
 from tests.conftest import SAMPLE_STEM, SAMPLES, fill_from
 from tests.web.test_web_invoice import check, form_of
@@ -77,6 +77,65 @@ def test_the_pos_coding_is_applied_on_the_review_screen(client, store, setup_dem
 
     follow(client, post(client, f"/review/{invoice_id}/approve", form_of(store, invoice_id, po)))
     assert store.get_invoice(invoice_id)["final_output"]["line_items"][0]["predicted_gl_code"] == "1510"
+
+
+def test_the_po_match_shows_what_is_left_to_expense_and_over_it_still_approves(client, store, tmp_path):
+    """Each PO line's left to expense (its GL account and cost center beside it) and the whole PO's: over it is said in
+    amber, never as an error, and the invoice is approved as before."""
+    load_sample_purchase_orders(store)
+    sample = gt()  # bills every line of PO-88213 in full
+    earlier = {
+        **sample,
+        "invoice_number": "NW-2026-0800",
+        "line_items": sample["line_items"][:1],
+        "subtotal": 4350.0,
+        "grand_total": 4915.5,
+    }  # the three laptops, billed before
+    store.approve_invoice(store.add_invoice(tmp_path / "a.pdf", earlier, {}), earlier, "jane")
+    invoice_id = add_clean(store)
+    po = check(client, invoice_id)["sections"]["po"]
+    assert "Left to expense" in po and "GL 6010 · CC400" in po
+    assert 'title="4,350.00 on the PO line, less 4,350.00 on other invoices and 4,350.00 on this one"' in po
+    assert po.count('<span class="rvw-warn">over by 4,350.00</span>') == 2  # the laptops' line, and the whole PO
+    assert po.count("over by") == 2 and "Whole PO" in po
+    assert "Left to expense" in client.get(f"/review/{invoice_id}").text
+    follow(client, post(client, f"/review/{invoice_id}/approve", form_of(store, invoice_id)))
+    assert store.get_invoice(invoice_id)["status"] == APPROVED
+
+
+def test_in_a_browser_left_to_expense_shows_without_scrolling_sideways(chromium, store, tmp_path):
+    """B-1547: the PO match had seven columns in the review screen's narrow right column, so Left to expense (D-139)
+    was off to the right: seen only by scrolling the table sideways. Four columns now, each line's PO line, coding
+    and status under its description: the whole table fits the card at 1366 px."""
+    from dataclasses import replace as _replace
+
+    from ap_coder.core.config import Settings
+    from ap_coder.web.app import create_app
+    from tests.browser import browser_on
+
+    load_sample_purchase_orders(store)
+    invoice_id = add_clean(store)  # bills PO-88213
+    s = Settings()
+    app = create_app(_replace(s, llm=_replace(s.llm, provider="off")), store, start_reader=False)
+    with browser_on(chromium, app) as (browser, base):
+        page = browser.new_page(viewport={"width": 1366, "height": 900})
+        page.goto(f"{base}/review/{invoice_id}")
+        page.wait_for_selector("[data-po-match] table")
+        widths = page.evaluate(
+            "() => { const w = document.querySelector('[data-po-match]'); return [w.scrollWidth, w.clientWidth,"
+            " [...w.querySelectorAll('thead th')].map(t => t.innerText + ': ' + Math.round(t.offsetWidth))]; }"
+        )
+        assert widths[0] <= widths[1] + 1, widths
+        assert "Left to expense" in page.inner_text("[data-po-match] thead")
+
+
+def test_without_a_po_nothing_about_left_to_expense_shows_and_it_approves(client, store):
+    load_sample_purchase_orders(store)
+    invoice_id = add_clean(store, po_number="")
+    assert check(client, invoice_id)["sections"]["po"].strip() == ""
+    assert "Left to expense" not in client.get(f"/review/{invoice_id}").text
+    follow(client, post(client, f"/review/{invoice_id}/approve", form_of(store, invoice_id)))
+    assert store.get_invoice(invoice_id)["status"] == APPROVED
 
 
 def test_ask_the_vendor_on_the_review_screen(client, store):

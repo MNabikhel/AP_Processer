@@ -4,9 +4,9 @@ Each vendor is identified by its normalised name (``memory.vendor_key``). Its hi
 invoices already in the database; a small ``vendors`` table holds what AP sets by hand (on hold,
 expected GST/HST number, notes). ``vendor_findings`` turns that into checks on a new invoice:
 
-* VENDOR_ON_HOLD (error): AP put this vendor on hold
-* VENDOR_TAX_NUMBER_CHANGED (warning): GST/HST number differs from earlier invoices / the vendor master,
-  a classic sign of a fake invoice or changed payment details
+* VENDOR_ON_HOLD (error, never approved anyway: B-1544): AP put this vendor on hold, or JD Edwards did
+* VENDOR_TAX_NUMBER_CHANGED (error, approved only with a reason: D-141): GST/HST number differs from earlier invoices /
+  the vendor master, a classic sign of a fake invoice or changed payment details
 * AMOUNT_UNUSUAL (warning): far above what this vendor usually bills
 * POSSIBLE_DUPLICATE_AMOUNT (warning): same vendor, same total, close date, different invoice number
 * VENDOR_NEW (info): first invoice from this vendor, or none approved yet (no penalty, but never touchless)
@@ -15,12 +15,17 @@ expected GST/HST number, notes). ``vendor_findings`` turns that into checks on a
 * VENDOR_NOT_IN_MASTER (error): a vendor master was imported from the ERP and this vendor is not in it
   (by name or GST/HST number): pick the vendor from the list, or add it as a new vendor
 * VENDOR_ADDED_HERE (error): a new vendor added to the vendor list from the review screen, not yet in the ERP
-* VENDOR_QST_CHANGED / VENDOR_PST_CHANGED (warning): the QST or PST number differs from the vendor's
+* VENDOR_QST_CHANGED / VENDOR_PST_CHANGED (error, with a reason: D-141): the QST or PST number differs from the
+  vendor's
 * VENDOR_MATCHED_BY_TAX_NUMBER (info): not found by name, but the GST/HST number belongs to a master vendor
 * CREDIT_NOTE_FOR (info) / CREDIT_NOTE_ORIGINAL_UNKNOWN (info) / CREDIT_EXCEEDS_INVOICE (warning): the invoice a
   credit note credits, found or not, and a credit larger than it
-* VENDOR_BANK_CHANGED (warning): the bank details printed for payment differ from the ones on this vendor's approved
-  invoices, the most common payment fraud (a fake "our banking details have changed")
+* VENDOR_BANK_CHANGED (error, with a reason: D-141): the bank details printed for payment differ from the ones on
+  this vendor's approved invoices, the most common payment fraud (a fake "our banking details have changed"); and
+  VENDOR_BANK_NOT_JDE (error, with a reason): not the account JD Edwards pays the vendor on
+
+The changed numbers and bank details are errors that "Approve anyway" covers only with a reason (how the change was
+confirmed), which the approval keeps in the audit trail (D-141).
 
 Entry points: ``vendor_findings``, ``norm_invoice_number`` (how invoice numbers compare everywhere),
 ``master_vendor_id``, and ``master_columns`` / ``master_rows`` (the vendor master import).
@@ -249,13 +254,13 @@ def norm_pst_number(value: Any) -> str:
 
 
 # (severity, check code, invoice field, vendor list column, the history key from ``Store.vendor_invoices``, name,
-# normaliser, same?) for each tax registration number an invoice prints.
+# normaliser, same?) for each tax registration number an invoice prints. An error: approved only with a reason (D-141).
 _TAX_NUMBERS = (
-    (WARNING, "VENDOR_TAX_NUMBER_CHANGED", "gst_hst_registration_number", "expected_gst", "gst_hst_number",
+    (ERROR, "VENDOR_TAX_NUMBER_CHANGED", "gst_hst_registration_number", "expected_gst", "gst_hst_number",
      "GST/HST number", norm_tax_number, same_tax_number),
-    (WARNING, "VENDOR_QST_CHANGED", "qst_registration_number", "qst_number", "qst_number", "QST number",
+    (ERROR, "VENDOR_QST_CHANGED", "qst_registration_number", "qst_number", "qst_number", "QST number",
      norm_tax_number, same_qst_number),
-    (WARNING, "VENDOR_PST_CHANGED", "pst_registration_number", "pst_number", "pst_number", "PST number",
+    (ERROR, "VENDOR_PST_CHANGED", "pst_registration_number", "pst_number", "pst_number", "PST number",
      norm_pst_number, lambda a, b: norm_pst_number(a) == norm_pst_number(b)),
 )  # fmt: skip
 
@@ -412,8 +417,8 @@ def vendor_findings(
         shown = mask_account(account)
         if shown in usual:  # the same account number at another bank or branch
             shown = f"{shown}, at a different bank or branch number"
-        findings.append(
-            (WARNING, "VENDOR_BANK_CHANGED",
+        findings.append(  # an error: approved only with a reason, how the change was confirmed (D-141)
+            (ERROR, "VENDOR_BANK_CHANGED",
              f"the bank details printed for payment ({shown}) differ from the ones on this vendor's "
              f"approved invoices ({', '.join(usual)}): confirm by phone, on a number from your vendor file, not from "
              "the invoice, before paying or changing the vendor's banking")
@@ -509,7 +514,7 @@ def _jde_bank_findings(coding: InvoiceCoding, vendor: dict[str, Any] | None) -> 
         return []
     branch = bank_branch(printed)
     shown = f"{branch} {shown}" if branch and not _same_transit(jde_bank, printed) else shown
-    return [(WARNING, "VENDOR_BANK_NOT_JDE",
+    return [(ERROR, "VENDOR_BANK_NOT_JDE",  # approved only with a reason (D-141)
              f"the bank details printed for payment ({shown}) are not the account JD Edwards pays this vendor on "
              f"({jde_bank}): confirm by phone, on a number from your vendor file, not from the invoice, before paying "
              "or changing the vendor's banking")]  # fmt: skip

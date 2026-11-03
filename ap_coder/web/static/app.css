@@ -518,6 +518,8 @@ pre {white-space: pre-wrap; overflow-wrap: anywhere; background: var(--lg-head);
 .grid-3-2 {display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; align-items: start;}
 .col {display: flex; flex-direction: column; gap: 16px; min-width: 0;}
 @media (max-width: 1100px) {.grid-3-2 {grid-template-columns: minmax(0, 1fr);}}
+/* A manager's own cost centers on a request to confirm (manager.html, D-138) */
+.apc-table tr.mine td {background: color-mix(in srgb, var(--apc-warn-dot) 12%, transparent);}
 .narrow {max-width: 860px; display: flex; flex-direction: column; gap: 16px;}
 .row {display: flex; flex-wrap: wrap; align-items: center; gap: 8px;}
 .row.end {justify-content: flex-end;}
@@ -544,7 +546,8 @@ pre {white-space: pre-wrap; overflow-wrap: anywhere; background: var(--lg-head);
 .btn:disabled, .btn[aria-disabled="true"] {background: var(--lg-hover); border-color: var(--lg-hairline); color: var(--lg-subtle);
   cursor: not-allowed;}
 .btn.busy, a.busy {opacity: .7; cursor: progress;}
-input[type="text"], input[type="search"], input[type="number"], input[type="date"], select, textarea {
+input[type="text"], input[type="email"], input[type="search"], input[type="number"], input[type="date"], select,
+textarea {
   height: 34px; border: 1px solid var(--lg-border); border-radius: var(--lg-r); background: var(--lg-surface);
   color: var(--lg-text); font: 14px Inter, system-ui, sans-serif; padding: 0 10px;}
 textarea {height: auto; padding: 8px 10px; line-height: 1.45;}

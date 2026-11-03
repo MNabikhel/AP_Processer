@@ -8,6 +8,21 @@ has a short tour, and the [pilot plan](PILOT_PLAN.md) suggests four weeks to a d
 Your existing data is safe. On first start the database upgrades itself (schema version 19), and a
 backup of the database is made automatically once a day when AP Coder starts (the newest 14 are kept).
 
+## Managers confirm the coding, what's left on a PO, who acts next (D-138 to D-141)
+
+- **Send to manager** (D-138): on the review screen (under Park), AP can ask the manager of the invoice's cost centers to confirm
+  how it is coded. On the laptop, AP Coder makes the request email (Outlook opens it as a draft, the invoice
+  attached) and AP records the reply, kept with the invoice; on a company server, a **Manager** account answers on
+  screen and sees only what was sent to it. Either answer brings the invoice back to the review queue; approving
+  works as before. The screen says if the coding changed after it was confirmed.
+- **Left to expense on a PO** (D-139): the PO match shows, line by line and for the whole PO, what is left after
+  this invoice (from an *Open amount* column in the PO file, when it has one). Over is shown, never blocked.
+- **Next to act** (D-140): the Invoice directory says who each invoice waits for: AP, a manager, a second approver,
+  or no one.
+- **Changed vendor details need a reason** (D-141): new bank details on an invoice, or a GST/HST, QST or PST number
+  that differs from the vendor's, are approved only with **Approve anyway** and how the change was confirmed, kept
+  in the audit trail. A vendor on hold can't be approved until the hold is lifted (B-1544).
+
 ## The pilot releases (D-113 to D-137)
 
 Newest first; each pilot release's own notes are on its GitHub release page, and every fix is a line in

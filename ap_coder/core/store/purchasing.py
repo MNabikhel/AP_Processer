@@ -63,11 +63,12 @@ class PurchasingMixin:
                     used.add(number)
                     conn.execute(
                         """INSERT INTO po_lines (po_key, line_number, description, quantity, unit_price, amount,
-                           received_quantity, gl_code, cost_center, amount_only)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                           received_quantity, gl_code, cost_center, amount_only, open_amount)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (key, number, row["description"], row["quantity"], row["unit_price"], row["amount"],
                          row.get("received_quantity"), _clean_code(row.get("gl_code")),
-                         _clean_code(row.get("cost_center")), int(bool(row.get("amount_only")))),
+                         _clean_code(row.get("cost_center")), int(bool(row.get("amount_only"))),
+                         row.get("open_amount")),
                     )  # fmt: skip
             counts = {
                 "orders": len(orders),
@@ -139,10 +140,11 @@ class PurchasingMixin:
             ]
 
     def po_invoices(self, key: str, exclude_id: int | None = None) -> list[dict[str, Any]]:
-        """Invoices quoting this PO (in review or approved), with their current coding."""
+        """Invoices quoting this PO (in review or approved), with their current coding and export batch (None: not
+        exported yet)."""
         with self._conn() as conn:
             rows = conn.execute(
-                "SELECT id, status, invoice_number, invoice_date, ai_output, final_output FROM invoices "
+                "SELECT id, status, invoice_number, invoice_date, ai_output, final_output, export_batch FROM invoices "
                 "WHERE po_key = ? AND status IN " + _ACTIVE_IN + " ORDER BY id",
                 (key, *ACTIVE_STATUSES),
             ).fetchall()
@@ -153,6 +155,7 @@ class PurchasingMixin:
                 "invoice_number": r["invoice_number"],
                 "invoice_date": r["invoice_date"],
                 "coding": json.loads(r["final_output"] or r["ai_output"] or "{}"),
+                "export_batch": r["export_batch"],
             }  # fmt: skip
             for r in rows
             if r["id"] != exclude_id

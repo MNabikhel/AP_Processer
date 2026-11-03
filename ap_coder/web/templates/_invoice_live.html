@@ -168,15 +168,20 @@
   <a class="link" href="/purchase-orders"><span class="ms" aria-hidden="true">shopping_cart</span>Purchase orders</a>
   {% else %}
   {{ head("Matched to " ~ p.label, aside=ui.pill(p.status[0], p.status[1])) }}
-  <div class="table-wrap"><table class="apc-table">
-    <thead><tr><th>#</th><th>Invoice line</th><th>PO line</th><th class="r">Billed / ordered{% if p.received %} / received{% endif %}</th><th class="r">Unit price</th><th></th></tr></thead>
+  {# Four columns, to fit the review screen's right column: each line's PO line, coding and status under its
+     description, so Left to expense (D-139) is in view without scrolling sideways (B-1547). #}
+  <div class="table-wrap" data-po-match><table class="apc-table po-match">
+    <thead><tr><th>#</th><th>Line</th><th class="r">Billed / ordered{% if p.received %} / received{% endif %}</th><th class="r">Left to expense</th></tr></thead>
     <tbody>{% for r in p.rows %}
-      <tr><td>{{ r.line }}</td><td class="w">{{ r.description }}</td>
-        <td class="w">{% if r.po_line %}{{ r.po_line }}{% else %}<span class="rvw-muted">not on the PO</span>{% endif %}</td>
-        <td class="r">{{ r.qty }}</td>
-        <td class="r">{% if r.price_po %}<b class="rvw-warn">{{ r.price }}</b> <span class="rvw-muted">PO {{ r.price_po }}</span>{% else %}{{ r.price }}{% endif %}</td>
-        <td>{% for text, tone in r.pills %}{{ ui.pill(text, tone) }} {% endfor %}</td></tr>
+      <tr><td>{{ r.line }}</td>
+        <td class="w">{{ r.description }}
+          <div class="muted small">{% if r.po_line %}PO {{ r.po_line }}{% if r.coding %} · {{ r.coding }}{% endif %}{% else %}<span class="rvw-muted">not on the PO</span>{% endif %}</div>
+          {% if r.pills %}<div class="po-pills">{% for text, tone in r.pills %}{{ ui.pill(text, tone) }} {% endfor %}</div>{% endif %}</td>
+        <td class="r">{{ r.qty }}<div class="small">{% if r.price_po %}<b class="rvw-warn">{{ r.price }}</b> <span class="rvw-muted">PO {{ r.price_po }}</span>{% else %}<span class="rvw-muted">at {{ r.price }}</span>{% endif %}</div></td>
+        <td class="r"{% if r.left_how %} title="{{ r.left_how }}"{% endif %}>{% if r.over %}<span class="rvw-warn">{{ r.left }}</span>{% else %}{{ r.left }}{% endif %}</td></tr>
     {% endfor %}</tbody>
+    <tfoot><tr><td></td><td class="w" colspan="2">Whole PO, after this invoice</td>
+      <td class="r">{% if p.total_over %}<span class="rvw-warn">{{ p.total_left }}</span>{% else %}{{ p.total_left }}{% endif %}</td></tr></tfoot>
   </table></div>
   <p class="muted">{{ p.notes }}</p>
   {% if p.differs and not live.read_only %}

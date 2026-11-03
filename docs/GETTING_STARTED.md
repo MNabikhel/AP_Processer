@@ -218,8 +218,9 @@ AP Coder learns your coding from what you posted before, so the first invoices f
 - **Past coding:** on **Learning & accuracy**, *Teach from past coding* with last year's posted AP
   lines (vendor, description, GL, cost center) so the AI starts with your history.
 - **Purchase orders:** import your open POs (one row per PO line, from the ERP; the *Template*
-  button shows the columns). Include the quantity received to get three-way matching. Re-import
-  the export regularly; a PO in the file replaces its earlier lines.
+  button shows the columns). Include the quantity received to get three-way matching, and the
+  open amount (optional, JD Edwards' AOPN) for what the review screen shows as left to expense on
+  each PO line. Re-import the export regularly; a PO in the file replaces its earlier lines.
 - **Exports → Custom layout for your ERP:** if your ERP's import needs its own columns.
 - **Exports → ERP invoice register:** the ERP's list of AP invoices (last 12 to 18 months), so a bill
   already entered there is caught, and the duplicate payment audit covers it.
@@ -353,6 +354,18 @@ names one folder's `.venv`. An update unzipped **over** the old folder keeps tha
 folder removes the old folder's `.venv` once it has checked itself, and the task then fails to start: open it in
 Task Scheduler and change the program and *start in* folder to the new one. An update also stops a `watch` or
 `read-pages` of the older version that is still running, so old code never reads invoices into your data.
+
+### A manager confirms the coding (D-138)
+
+On the invoice, **Park** → *Or send it to the manager*: their name and email → **Send to manager**. The invoice is
+parked, waiting for them. Download the request email it offers (Outlook opens it as a draft, the invoice attached),
+send it, and when they reply, record the answer on the same page (**Manager confirmations**), keeping their reply.
+Confirmed or sent back, the invoice comes back to the review queue to approve as usual; the screen says if the
+coding changed after it was confirmed. On a company server, a Manager account answers on screen instead.
+
+On an invoice with a PO, the PO match says what is **left to expense** on each PO line and the whole PO after this
+invoice (D-139): a guide, approving over it still works. The **Invoice directory**'s *Next to act* column says who
+each invoice is waiting for (D-140).
 
 ### Two people approving (second approval)
 

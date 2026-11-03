@@ -35,6 +35,12 @@
               </select>
               <button class="btn" type="submit">Change</button>
             </form>
+            {% if u.role == "manager" %}
+            <form method="post" action="/admin/users/{{ u.id }}/cost-centers" class="row">
+              <input type="text" name="cost_centers" value="{{ u.cost_centers }}" maxlength="500" placeholder="their cost centers, e.g. CC-200, CC-300" aria-label="Cost centers {{ u.username }} answers for">
+              <button class="btn" type="submit">Save</button>
+            </form>
+            {% endif %}
           </td>
           <td>{% if not u.active %}{{ ui.pill("Turned off", "gray") }}{% elif u.must_change %}{{ ui.pill("Temporary password", "warn") }}{% else %}{{ (u.last_login or "never") | replace("T", " ") }}{% endif %}</td>
           <td class="r">

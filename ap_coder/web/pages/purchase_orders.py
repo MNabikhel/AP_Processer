@@ -52,6 +52,7 @@ FIELD_LABELS = {
     "quantity": "Quantity ordered",
     "unit_price": "Unit price",
     "amount": "Line amount",
+    "open_amount": "Open amount",
     "received_quantity": "Quantity received",
     "gl_code": "GL account",
     "cost_center": "Cost center",

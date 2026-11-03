@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{# A manager confirms an invoice's cost allocation (pages/manager.py, D-138): the waiting requests, or one request with
+   its invoice, its lines and the answer (the manager's on screen, or AP recording one given by email). #}
+{% block header %}
+<header class="apc-head apc-anim"><div>
+  {{ ui.breadcrumbs(["AP Coder", "Work"]) }}
+  <h1 class="apc-title">{% if req %}Confirm the cost allocation{% else %}Manager confirmations{% endif %}</h1>
+  <div class="apc-sub">{% if req %}{{ inv.vendor_name or "Invoice" }} · {{ inv.invoice_number or "no number" }} · {{ total | money(inv.currency) }} before tax to confirm{% elif manager_view %}Invoices accounts payable asked you to confirm: how each line is coded to your cost centers.{% else %}Invoices sent to a manager to confirm their coding. Each comes back to the review queue once answered.{% endif %}</div>
+</div></header>
+{% endblock %}
+{% block content %}
+{% if not req %}
+<section class="card">
+  {% if not waiting %}
+  <div class="pad">{{ ui.empty_note("Nothing waiting", " No invoice is waiting for a manager." if not manager_view else " Nothing is waiting for you.", "how_to_reg") }}</div>
+  {% else %}
+  <div class="table-wrap">
+    <table class="apc-table">
+      <thead><tr><th>Vendor</th><th>Invoice</th><th class="r">Total</th><th>Cost centers</th>{% if not manager_view %}<th>Manager</th>{% endif %}<th>Sent</th><th></th></tr></thead>
+      <tbody>
+        {% for r in waiting %}
+        <tr>
+          <td class="w"><a href="/manager/{{ r.id }}"><b>{{ r.vendor_name or "?" }}</b></a></td>
+          <td>{{ r.invoice_number or "—" }}</td>
+          <td class="r">{{ r.grand_total | money(r.currency) }}</td>
+          <td>{{ r.cost_centers | join(", ") or "—" }}</td>
+          {% if not manager_view %}<td>{{ r.manager_name }}</td>{% endif %}
+          <td>{{ r.sent_at | time_ago }} by {{ r.sent_by }}</td>
+          <td><a class="btn" href="/manager/{{ r.id }}">{% if manager_view %}Open{% else %}Open or record the answer{% endif %}</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+{% else %}
+<div class="grid-3-2">
+<section class="card">
+  <h4><span class="ms" aria-hidden="true">receipt_long</span> The invoice</h4>
+  <dl class="apc-kv">
+    <dt>Vendor</dt><dd>{{ inv.vendor_name or "?" }}</dd>
+    <dt>Invoice</dt><dd>{{ inv.invoice_number or "—" }} · {{ inv.invoice_date or "no date" }}</dd>
+    <dt>Total</dt><dd>{{ inv.grand_total | money(inv.currency) }}</dd>
+    <dt>Sent</dt><dd>{{ req.sent_at | time_ago }} by {{ req.sent_by }} to {{ req.manager_name }}{% if req.manager_email %} ({{ req.manager_email }}){% endif %}</dd>
+  </dl>
+  {% if req.note %}<p><b>Note from AP:</b> {{ req.note }}</p>{% endif %}
+  <h4><span class="ms" aria-hidden="true">account_tree</span> How it is coded</h4>
+  <div class="table-wrap">
+    <table class="apc-table">
+      <thead><tr><th class="r">Line</th><th>Description</th><th>GL account</th><th>Cost center</th><th class="r">Amount</th></tr></thead>
+      <tbody>
+        {% for li in req.lines %}
+        <tr{% if li.cost_center in req.cost_centers and manager_view %} class="mine"{% endif %}>
+          <td class="r">{{ li.line }}</td><td class="w">{{ li.description }}</td><td>{{ li.gl_code or "—" }}</td>
+          <td>{{ li.cost_center or "—" }}</td><td class="r">{{ li.amount | money }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot><tr><td></td><td colspan="3"><b>Lines in all</b> (before tax)</td><td class="r"><b>{{ total | money(inv.currency) }}</b></td></tr></tfoot>
+    </table>
+  </div>
+
+  {% if req.status != "waiting" %}
+  <p>{% if req.status == "confirmed" %}{{ ui.pill("Confirmed", "ok") }} {{ req.answered_by }} confirmed it {{ req.answered_at | time_ago }}{% elif req.status == "sent_back" %}{{ ui.pill("Sent back", "warn") }} {{ req.answered_by }} sent it back {{ req.answered_at | time_ago }}: {{ req.answer_note }}{% else %}{{ ui.pill("Withdrawn", "info") }} AP brought it back before an answer.{% endif %}</p>
+  {% elif answerable %}
+  <form method="post" action="/manager/{{ req.id }}/answer" class="stack" data-busy="Saving…">
+    <p>Is this how the invoice should be coded to your cost centers?</p>
+    <label class="field">What to change (needed to send it back)<textarea name="note" rows="3" maxlength="2000" placeholder="e.g. line 2 belongs to CC-410"></textarea></label>
+    <div class="row">
+      <button class="btn primary" type="submit" name="decision" value="confirmed"><span class="ms" aria-hidden="true">how_to_reg</span>Confirm</button>
+      <button class="btn" type="submit" name="decision" value="sent_back"><span class="ms" aria-hidden="true">undo</span>Send back to AP</button>
+    </div>
+  </form>
+  {% elif not manager_view %}
+  <div class="row">
+    <a class="btn" href="/manager/{{ req.id }}/email.eml"><span class="ms" aria-hidden="true">forward_to_inbox</span>Download the request email</a>
+    <a class="btn" href="/review/{{ req.invoice_id }}"><span class="ms" aria-hidden="true">open_in_new</span>Open the invoice</a>
+  </div>
+  <form method="post" action="/manager/{{ req.id }}/record" class="stack" enctype="multipart/form-data" data-busy="Recording…">
+    <h4><span class="ms" aria-hidden="true">mark_email_read</span> Record the manager's answer</h4>
+    <div class="row">
+      <label class="check"><input type="radio" name="decision" value="confirmed" required> Confirmed</label>
+      <label class="check"><input type="radio" name="decision" value="sent_back"> Sent back</label>
+    </div>
+    <label class="field">Answered by<input type="text" name="by" value="{{ req.manager_name }}" maxlength="120" required></label>
+    <label class="field">Answered on<input type="date" name="answered_on" value="{{ today }}" min="{{ req.sent_at[:10] }}" max="{{ today }}"></label>
+    <label class="field">What they said (needed when sent back)<textarea name="note" rows="3" maxlength="2000"></textarea></label>
+    <label class="field">The reply email, kept with the invoice (.eml, .msg, PDF or a picture)<input type="file" name="reply" accept=".eml,.msg,.pdf,.txt,.png,.jpg,.jpeg"></label>
+    <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Record the answer</button>
+  </form>
+  <form method="post" action="/manager/{{ req.id }}/withdraw" data-confirm="Bring the invoice back to the review queue without the manager's answer?">
+    <button class="btn" type="submit"><span class="ms" aria-hidden="true">undo</span>Withdraw the request</button>
+  </form>
+  {% endif %}
+</section>
+<section class="card">
+  <h4><span class="ms" aria-hidden="true">description</span> The invoice's pages</h4>
+  {% if pages %}
+  {% for n in range(1, pages + 1) %}<img class="page-img" src="/manager/{{ req.id }}/page/{{ n }}.png" alt="Page {{ n }} of the invoice" loading="lazy" style="width:100%;margin-bottom:8px">{% endfor %}
+  {% else %}
+  <p class="muted">The invoice's file can't be shown here (it was moved or is damaged).</p>
+  {% endif %}
+</section>
+</div>
+{% endif %}
+{% endblock %}

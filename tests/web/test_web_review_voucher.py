@@ -141,6 +141,50 @@ def test_the_hard_codes_are_errors_raised_somewhere():
     assert invoice_view.HARD_CODES <= set(CHECKS)
 
 
+def test_a_vendor_on_hold_is_never_approved_anyway(client, store):
+    """B-1544: the Help says "Do not approve until the hold is lifted", but "Approve anyway" with a reason went over a
+    vendor on hold. The hold is now lifted first (on the Vendors page, or in JD Edwards), or the invoice rejected."""
+    from ap_coder.core.memory import vendor_key
+
+    invoice_id = clean_invoice(client, store)
+    name = store.get_invoice(invoice_id)["vendor_name"]
+    store.save_vendor(vendor_key(name), name, "on_hold", notes="disputed bill", actor="jane")
+    data = form_of(store, invoice_id)
+    answer = check(client, invoice_id, data)
+    assert not answer["allow"] and 'name="override"' not in answer["sections"]["bar"]
+    assert "on hold" in answer["sections"]["bar"]
+    tried = {**data, "override": "x", "override_reason": "paying anyway", "why_done": "1"}
+    refused = client.post(f"/review/{invoice_id}/approve", headers=PAGE, data=tried)
+    assert refused.status_code == 400 and refused.json()["error"].startswith("Not ready:")
+    assert store.get_invoice(invoice_id)["status"] == REVIEW
+
+
+def test_changed_bank_details_need_a_reason_kept_with_the_approval(client, store):
+    """D-141: new bank details on an invoice (the most common payment fraud) are approved only with "Approve anyway"
+    and a reason (how the change was confirmed), which the audit trail keeps with the approval."""
+    invoice_id = clean_invoice(client, store)
+    inv = store.get_invoice(invoice_id)
+    earlier = {**inv["ai_output"], "invoice_number": "EARLIER-1", "invoice_date": "2026-01-15",
+               "remit_bank_account": "004-12345-1234567"}  # fmt: skip
+    first = store.add_invoice(store.path.parent / "earlier.pdf", earlier, {})
+    store.approve_invoice(first, earlier, "jane")
+    with store._conn() as conn:  # this invoice prints other bank details (read off the invoice: not on the form)
+        other = json.dumps({**inv["ai_output"], "remit_bank_account": "010-00999-99887766"})
+        conn.execute("UPDATE invoices SET ai_output = ? WHERE id = ?", (other, invoice_id))
+    data = form_of(store, invoice_id)
+    answer = check(client, invoice_id, data)
+    assert not answer["allow"] and "Approve anyway, despite" in answer["sections"]["bar"]
+    refused = client.post(f"/review/{invoice_id}/approve", data={**data, "why_done": "1"}, headers=PAGE)
+    assert refused.status_code == 400 and "Approve anyway" in refused.json()["error"]
+    key = re.search(r'name="override" value="([0-9a-f]+)"', answer["sections"]["bar"]).group(1)
+    why = "Called the vendor on the number in our file: new account confirmed"
+    data = {**data, "override": key, "override_reason": why, "why_done": "1"}
+    assert client.post(f"/review/{invoice_id}/approve", data=data, headers=PAGE).json()["ok"]
+    approved = next(e for e in store.events(invoice_id) if e["action"] == "approved")
+    bank = [i for i in approved["detail"]["open_issues"] if i["code"] == "VENDOR_BANK_CHANGED"]
+    assert bank == [{"code": "VENDOR_BANK_CHANGED", "severity": "error", "line": None, "override_reason": why}]
+
+
 # --- 3. Errors next to the field ---------------------------------------------------------------------------------
 
 

@@ -426,6 +426,7 @@ class InvoicesMixin:
             )
             if cur.rowcount == 0:
                 raise ValueError(f"invoice {invoice_id} is not parked")
+            self.withdraw_manager_requests(invoice_id, actor, conn)  # back before the manager answered (D-138)
             self._log(conn, "unparked", invoice_id, actor)
 
     def parked(self) -> list[dict[str, Any]]:
@@ -493,9 +494,8 @@ class InvoicesMixin:
             if keep_approved and row is not None and row["status"] in (APPROVED, PENDING):
                 raise ValueError(f"invoice {invoice_id} was approved meanwhile: reopen it before deleting it")
             conn.execute("DELETE FROM invoices WHERE id = ?", (invoice_id,))
-            # What capture read, and the supplier accuracy measured on it, go with the invoice: a deleted
-            # invoice (a duplicate upload, a demo) must not count towards a supplier's autonomy, a reader's
-            # record or the confidence calibration, and is no longer waiting for the page reader.
+            # What capture read and the supplier accuracy measured on it go with the invoice (a duplicate, a demo): it
+            # no longer counts for a supplier's autonomy, a reader's record or the calibration, nor waits to be read.
             for table in (
                 "invoice_capture",
                 "supplier_outcomes",
@@ -506,6 +506,7 @@ class InvoicesMixin:
                 "invoice_drafts",
             ):
                 conn.execute(f"DELETE FROM {table} WHERE invoice_id = ?", (invoice_id,))
+            self.withdraw_manager_requests(invoice_id, actor or "", conn)  # kept as history, no longer waiting
             if row is not None:
                 self._log(conn, "deleted", invoice_id, actor, {
                     "file": row["file_name"], "vendor": row["vendor_name"], "invoice_number": row["invoice_number"],

@@ -196,6 +196,15 @@ def change_role(request: Request, user_id: int, role: str = Form("")) -> JSONRes
     return done(request, PATH, f"{found['username']} is now {ROLE_LABELS.get(role, role)}.")
 
 
+@router.post(PATH + "/{user_id:int}/cost-centers")
+def change_cost_centers(request: Request, user_id: int, cost_centers: str = Form("")) -> JSONResponse:
+    """The cost centers a Manager answers for (D-138): shown when AP picks who to send an invoice to."""
+    _server_only(request)
+    found = _user(request, user_id)
+    kept = get_store(request).set_user_cost_centers(user_id, cost_centers, actor=reviewer())
+    return done(request, PATH, f"{found['username']} answers for {kept or 'no cost center'}.")
+
+
 @router.post(PATH + "/{user_id:int}/deactivate")
 def deactivate(request: Request, user_id: int) -> JSONResponse:
     _server_only(request)

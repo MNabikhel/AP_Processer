@@ -377,6 +377,7 @@ Admin).
 | Clerk | Also import and process invoices, review and correct them, approve within the limit, park, reject, reopen, bulk approve, and export batches. |
 | Approver | Also give the second approval (always by another account than the first), and post vouchers to JD Edwards through the API. |
 | Admin | Everything else: Settings, users, the JD Edwards setup, GL accounts and vendors imports, backups and restore, deleting, the Azure check, updating. |
+| Manager | Only confirms, or sends back, the coding of the invoices AP sends them (*Manager confirmations*): sees those invoices and nothing else of AP Coder. An Admin sets each Manager's cost centers on the users page; AP picks the Manager when sending (D-138). |
 
 Pages show each person only what their role may use; the server refuses the rest anyway. The JD Edwards settings
 are on *Settings* → *JD Edwards E1* from the start on the server (step 2).

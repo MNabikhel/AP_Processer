@@ -94,3 +94,40 @@ def test_another_vendors_erp_bill_with_the_same_number_and_amount_is_still_found
         ("ERP", "Other Supplies Ltd", 500.0),
     ]  # fmt: skip
     assert [h.source for h in search.find(store, "other supplies")] == ["ERP"]
+
+
+def test_who_acts_next_on_an_invoice_in_each_state():
+    """D-140: the directory says who has to act next, and what, beside where the invoice stands."""
+    from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW
+    from ap_coder.erp.search import next_to_act
+
+    def row(status, **kw):
+        return {"status": status, **kw}
+
+    assert next_to_act(row(REVIEW)) == "AP: review it and approve it"
+    assert next_to_act(row(PARKED, parked_reason="Bob Manager to confirm the cost allocation")) == (
+        "Bob Manager: confirm the cost allocation"
+    )
+    assert next_to_act(row(PARKED, parked_reason="buyer to confirm the price", follow_up="2026-11-09")) == (
+        "AP, once it has: buyer to confirm the price (follow up 2026-11-09)"
+    )
+    assert next_to_act(row(PENDING, reviewer="Ann")) == "A second approver (not Ann): approve it or send it back"
+    assert next_to_act(row(APPROVED)) == "AP: export it to the ERP"
+    assert next_to_act(row(APPROVED, export_batch=7)) == "No one: in the ERP (batch 7)"
+    assert next_to_act(row(REJECTED)) == "No one: rejected"
+    assert next_to_act(row(FAILED)) == "AP: process it again or enter it by hand"
+
+
+def test_the_directory_shows_who_acts_next_by_default(tmp_path):
+    from ap_coder.core.store import Store
+    from ap_coder.erp import directory
+    from tests.webclient import add_clean
+
+    store = Store(tmp_path / "a.db")
+    add_clean(store)
+    query = directory.Query.from_params({})
+    assert "next" in query.columns
+    (r,) = directory.run(store, query).rows
+    assert directory.cell(r, "next") == "AP: review it and approve it"
+    with __import__("pytest").raises(directory.FilterError, match="Next to act"):
+        directory.condition("next", "AP")

@@ -182,6 +182,15 @@ CREATE TABLE IF NOT EXISTS line_texts (
     invoice_id INTEGER, at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS line_texts_key ON line_texts (supplier_key, id);
 CREATE INDEX IF NOT EXISTS line_texts_invoice ON line_texts (invoice_id);
+CREATE TABLE IF NOT EXISTS manager_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, invoice_id INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'waiting',
+    sent_at TEXT NOT NULL, sent_by TEXT NOT NULL DEFAULT '', manager_name TEXT NOT NULL DEFAULT '',
+    manager_email TEXT NOT NULL DEFAULT '', manager_user INTEGER, cost_centers TEXT NOT NULL DEFAULT '[]',
+    lines TEXT NOT NULL DEFAULT '[]', note TEXT NOT NULL DEFAULT '', answered_at TEXT, answered_by TEXT NOT NULL
+    DEFAULT '', answer_note TEXT NOT NULL DEFAULT '', reply_file TEXT NOT NULL DEFAULT '', via TEXT NOT NULL
+    DEFAULT '');
+CREATE INDEX IF NOT EXISTS manager_requests_invoice ON manager_requests (invoice_id, id);
+CREATE INDEX IF NOT EXISTS manager_requests_user ON manager_requests (manager_user, status);
 CREATE TABLE IF NOT EXISTS reader_outcomes (
     id INTEGER PRIMARY KEY AUTOINCREMENT, invoice_id INTEGER, reader TEXT NOT NULL, field TEXT NOT NULL,
     read_value TEXT, final_value TEXT, correct INTEGER NOT NULL, evidence TEXT NOT NULL DEFAULT '',
@@ -568,6 +577,15 @@ class StoreCore:
         for column in ("qst_number", "pst_number", "province", "erp_bank", "erp_hold"):  # erp_hold: JDE's (D-105)
             if columns and column not in columns:
                 conn.execute(f"ALTER TABLE vendors ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
+        # Each cost center's manager, who confirms the cost allocation when AP asks (D-138), and in server mode the
+        # cost centers a Manager account answers for (looked for whatever the version).
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(cost_centers)")}
+        for column in ("manager_name", "manager_email"):
+            if columns and column not in columns:
+                conn.execute(f"ALTER TABLE cost_centers ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
+        if columns and "cost_centers" not in columns:
+            conn.execute("ALTER TABLE users ADD COLUMN cost_centers TEXT NOT NULL DEFAULT ''")
         # An invoice made from a picture remembers the picture's SHA-256 (intake/pictures.py), so the same photo sent
         # again is found (looked for whatever the version).
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(invoices)")}
@@ -584,6 +602,11 @@ class StoreCore:
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(erp_invoices)")}
         if columns and "copies" not in columns:
             conn.execute("ALTER TABLE erp_invoices ADD COLUMN copies INTEGER NOT NULL DEFAULT 1")
+        # A PO line keeps what the ERP had left open on it when the POs were imported (the import's optional open
+        # amount), for what is left to expense on the review screen (looked for whatever the version).
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(po_lines)")}
+        if "open_amount" not in columns:
+            conn.execute("ALTER TABLE po_lines ADD COLUMN open_amount REAL")
         # Template snapshots go by the order of approval (``seq``), not by a time to the second (B-780): a table made
         # before it (this version, unreleased) is rebuilt, its snapshots kept in the order they were taken.
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(template_snapshots)")}

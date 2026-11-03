@@ -55,7 +55,7 @@ from ap_coder.coding.line_tax import (
     tax_learned,
 )
 from ap_coder.coding.line_tax import options as tax_code_options
-from ap_coder.coding.po import match_invoice, po_label
+from ap_coder.coding.po import LineLeft, match_invoice, po_label
 from ap_coder.coding.review import (
     codes_to_pick,
     coding_from_inputs,
@@ -1455,8 +1455,9 @@ def po_section(store: Store, coding: InvoiceCoding, invoice_id: int) -> dict[str
     rows = []
     for m in match.lines:
         if m.po_line is None:
-            rows.append({"line": m.invoice_line, "description": m.description, "po_line": "", "qty": "",
-                         "price": "", "price_po": "", "pills": [("Not on PO", "warn")]})  # fmt: skip
+            rows.append({"line": m.invoice_line, "description": m.description, "po_line": "", "coding": "", "qty": "",
+                         "price": "", "price_po": "", "left": "", "over": False, "left_how": "",
+                         "pills": [("Not on PO", "warn")]})  # fmt: skip
             continue
         if m.amount_only:  # a PO line with only an amount: compare amounts
             qty = f"{signed(m.billed_before_amount + m.amount)} / {signed(m.po_amount)}"
@@ -1465,21 +1466,49 @@ def po_section(store: Store, coding: InvoiceCoding, invoice_id: int) -> dict[str
             if received:
                 qty += f" / {_fmt_qty(m.received)}"
         pills = [(flags[p], "info" if p == "coding" else "warn") for p in m.problems if p in flags] or [("OK", "ok")]
+        left = match.left[m.po_line]
         rows.append({"line": m.invoice_line, "description": m.description,
-                     "po_line": f"{m.po_line} · {m.po_description}", "qty": qty, "price": signed(m.unit_price),
-                     "price_po": signed(m.po_unit_price) if "price" in m.problems else "", "pills": pills})  # fmt: skip
+                     "po_line": f"{m.po_line} · {m.po_description}",
+                     "coding": " · ".join(x for x in (f"GL {m.po_gl}" if m.po_gl else "", m.po_cc) if x),
+                     "qty": qty, "price": signed(m.unit_price),
+                     "price_po": signed(m.po_unit_price) if "price" in m.problems else "",
+                     "left": _left_text(left.left), "over": left.left < 0, "left_how": _left_how(left),
+                     "pills": pills})  # fmt: skip
     notes = [f"PO total {signed(po.get('total'))}"]
     if match.other_invoices:
         notes.append(f"{signed(match.billed_before)} already invoiced on "
                      + ", ".join(f"#{o['id']}" for o in match.other_invoices[:5]))  # fmt: skip
     notes.append(f"{'closed' if po.get('status') == 'closed' else 'open'}, for "
                  f"{(po.get('vendor_name') or '?').rstrip('.')}")  # fmt: skip
+    opened = any(line.open_amount is not None for line in match.left.values())
+    how = ("Left to expense: each PO line's amount less what this and the other invoices bill on it"
+           + ("; where the PO import gave an open amount (as the ERP had it at the last PO import), that amount "
+              "less this invoice and the ones not exported yet" if opened else "") + ".")  # fmt: skip
     return {
         "found": True, "label": label, "rows": rows, "received": received,
         "status": (f"{plural(problems, 'line')} to check", "warn") if problems else ("Matches the PO", "ok"),
-        "notes": " · ".join(notes) + ". Billed quantities include earlier invoices on this PO.",
+        "notes": " · ".join(notes) + ". Billed quantities include earlier invoices on this PO. " + how,
         "differs": len(match.coding_differs),
+        "total_left": _left_text(match.total_left), "total_over": match.total_left < 0,
     }  # fmt: skip
+
+
+def _left_text(left: float) -> str:
+    """What is left to expense as the PO match shows it: below zero, "over by" that much (amber, never an error)."""
+    return f"over by {signed(-left)}" if left < 0 else signed(left)
+
+
+def _left_how(line: LineLeft) -> str:
+    """How a PO line's left to expense was worked out (its cell's tooltip)."""
+    if line.open_amount is None:
+        return (
+            f"{signed(line.amount)} on the PO line, less {signed(line.others)} on other invoices and "
+            f"{signed(line.this_invoice)} on this one"
+        )
+    return (
+        f"{signed(line.open_amount)} open in the ERP when the PO was imported, less {signed(line.others)} on "
+        f"invoices not exported yet and {signed(line.this_invoice)} on this one"
+    )
 
 
 def tax_check(coding: InvoiceCoding, reference: ReferenceData) -> list[dict[str, Any]]:
@@ -1896,6 +1925,8 @@ HARD_CODES = frozenset({
     "POSTING_UNBALANCED", "INVOICE_DATE_INVALID", "DUE_DATE_INVALID", "DATE_AMBIGUOUS", "CURRENCY_UNKNOWN",
     # An account that is wrong or missing would post to the wrong (or a blank) GL (B-926).
     "GL_IS_TAX_ACCOUNT", "GL_UNKNOWN", "CC_UNKNOWN", "TAX_GL_UNMAPPED", "TAX_GL_UNKNOWN",
+    # A vendor on hold: the hold is lifted first (the Vendors page, or JD Edwards), or the invoice rejected (B-1544).
+    "VENDOR_ON_HOLD",
 })  # fmt: skip
 
 

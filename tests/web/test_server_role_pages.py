@@ -129,7 +129,8 @@ def test_no_page_offers_a_role_what_it_is_refused(servers, role, state):
                 seen.add(link)
                 per_path[path] += 1
                 todo.append(link.split("#")[0])
-    assert walked > 10
+    # A Manager opens only its requests, its account and Help (D-138): two or three pages; every other role many.
+    assert walked > (1 if role == "manager" else 10)
     assert sorted(set(wrong)) == [], "\n".join(sorted(set(wrong)))
 
 

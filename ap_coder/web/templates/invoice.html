@@ -95,6 +95,12 @@
   {% if sent_back.reopened_by %}<div class="rvw-status-sub">Rejected for: {{ sent_back.reason }}. Fix what is needed and approve it, or reject it again.</div></div>
   {% else %}<div class="rvw-status-sub">{{ sent_back.reason }}. The approved coding is kept below; fix what is needed and approve again.</div></div>{% endif %}
 {% endif %}
+{% if mode == "review" and manager and manager.answer %}{% set ma = manager.answer %}
+{# The manager's answer to the last request (D-138): confirmed, or sent back with what to change. #}
+<div class="rvw-status {{ 'warn' if ma.status == 'sent_back' or manager.changed else 'ok' }}" role="status" data-manager-answer><div class="rvw-status-title"><span class="ms" aria-hidden="true">{{ 'undo' if ma.status == 'sent_back' else 'how_to_reg' }}</span>
+  <span>{% if ma.status == "sent_back" %}{{ ma.answered_by }} sent the coding back {{ ma.answered_at | time_ago }}{% else %}{{ ma.answered_by }} confirmed the coding {{ ma.answered_at | time_ago }}{% endif %}{% if ma.via == "email" %} (by email, recorded){% endif %}</span></div>
+  <div class="rvw-status-sub">{% if ma.status == "sent_back" %}{{ ma.answer_note }}. Change the coding, then approve it or send it again.{% elif manager.changed %}The coding has changed since: the lines below are not the ones confirmed. Send it again, or approve knowing it changed.{% else %}The lines below are the ones confirmed: approve it as usual.{% endif %} <a href="/manager/{{ ma.id }}">See the request</a></div></div>
+{% endif %}
 
 <div class="inv-split">
   {% include "_invoice_document.html" %}
@@ -315,8 +321,10 @@
     <span class="inv-checking small muted" data-checking role="status" aria-live="polite"></span>
     {% if can("/review/1/approve") %}{# server mode: only a role that may approve sees these (web/roles.py, D-98) #}
     <details class="pop up" data-park>
-      <summary class="btn" title="Set it aside while waiting for information (P)" aria-keyshortcuts="p"><span class="ms" aria-hidden="true">pause_circle</span>Park</summary>
-      <form class="pop-body stack" method="post" action="/review/{{ inv.id }}/park">
+      <summary class="btn" title="Set it aside while waiting for information, or send it to the manager to confirm the coding (P)" aria-keyshortcuts="p"><span class="ms" aria-hidden="true">pause_circle</span>Park</summary>
+      {# One panel holds Park's form and, below it, Send to manager: two panels would sit at the same spot (B-1545). #}
+      <div class="pop-body">
+      <form class="stack" method="post" action="/review/{{ inv.id }}/park">
         <p class="muted">Set it aside while waiting for information.</p>
         <label class="field">Waiting for<input type="text" name="reason" required placeholder="e.g. buyer to confirm the price"></label>
         <label class="field">Follow up on<input type="date" name="follow_up" min="{{ today }}"></label>
@@ -324,6 +332,24 @@
         {% if nav.next_id %}<input type="hidden" name="next_id" value="{{ nav.next_id }}">{% endif %}
         <button class="btn" type="submit"><span class="ms" aria-hidden="true">pause_circle</span>Park</button>
       </form>
+      {% if can("/review/1/manager") %}
+      {# Or ask the manager of the cost centers to confirm the coding (D-138): the fields belong to the invoice's
+         form, posted to /manager instead of /approve, so the lines on screen go with the request. Inside Park: both
+         set the invoice aside while someone else answers, and the action bar keeps its width. #}
+      <div class="stack inv-manager" data-manager>
+        <p class="muted"><b>Or send it to the manager</b> of these cost centers to confirm the coding. It waits, parked, and comes back here when they answer.</p>
+        {% if manager and manager.users %}
+        <label class="field">Manager<select name="manager_user" form="inv">{% for u in manager.users %}<option value="{{ u.id }}"{% if manager.suggested and manager.suggested.name == (u.display_name or u.username) %} selected{% endif %}>{{ u.display_name or u.username }}{% if u.cost_centers %} · {{ u.cost_centers }}{% endif %}</option>{% endfor %}</select></label>
+        {% else %}
+        <label class="field">Manager<input type="text" name="manager_name" form="inv" maxlength="120" value="{{ manager.suggested.name if manager and manager.suggested else '' }}" placeholder="first and last name"></label>
+        <label class="field">Their email (for the request email)<input type="email" name="manager_email" form="inv" maxlength="200" value="{{ manager.suggested.email if manager and manager.suggested else '' }}" placeholder="name@company.com"></label>
+        <label class="check"><input type="checkbox" name="remember_manager" value="1" form="inv" checked> Remember them as the manager of these cost centers</label>
+        {% endif %}
+        <label class="field">Note (optional)<input type="text" name="manager_note" form="inv" maxlength="2000" placeholder="e.g. new vendor for the site"></label>
+        <button class="btn" type="submit" form="inv" formaction="/review/{{ inv.id }}/manager" formnovalidate><span class="ms" aria-hidden="true">forward_to_inbox</span>Send to manager</button>
+      </div>
+      {% endif %}
+      </div>
     </details>
     <details class="pop up" data-reject>
       <summary class="btn" title="Not ours, or not to be paid (X opens this)" aria-keyshortcuts="x"><span class="ms" aria-hidden="true">block</span>Reject</summary>
@@ -402,7 +428,8 @@
   {% elif mode == "parked" %}
   <div class="card-head"><div>
     <h4><span class="ms" aria-hidden="true">pause_circle</span>Parked</h4>
-    <p class="muted">Waiting for: {{ inv.parked_reason }}{% if inv.follow_up %} · follow up {{ inv.follow_up }}{% endif %}</p></div>
+    <p class="muted">Waiting for: {{ inv.parked_reason }}{% if inv.follow_up %} · follow up {{ inv.follow_up }}{% endif %}{% if manager and manager.waiting %} · sent {{ manager.waiting.sent_at | time_ago }} by {{ manager.waiting.sent_by }}{% endif %}</p></div>
+    {% if manager and manager.waiting and can("/manager/1", "GET") %}<a class="btn" href="/manager/{{ manager.waiting.id }}"><span class="ms" aria-hidden="true">how_to_reg</span>{% if can("/manager/1/record") %}The request: email, answer{% else %}The request{% endif %}</a>{% endif %}
     {% if can("/review/1/resume") %}<form method="post" action="/review/{{ inv.id }}/resume"><button class="btn primary" type="submit" title="Back to the review queue, to be approved"><span class="ms" aria-hidden="true">play_circle</span>Un-park</button></form>{% endif %}
   </div>
   {% elif mode == "approved" %}
@@ -461,7 +488,18 @@
 <div class="inv-split">
   {% include "_invoice_document.html" %}
   <div class="col">
-    {% if posting %}
+    {% if manager and manager.waiting %}
+    {# Waiting for the manager: the lines as sent, not the coding as first read; the edits on screen come back when
+       they answer (B-1546). #}
+    {% set w = manager.waiting %}
+    <section class="card inv-posting">{{ live_ui.head("Coding sent to " ~ w.manager_name, "The lines as they were coded when sent. The edits on the sender's screen come back when the manager answers.") }}
+      <ol class="inv-sent-lines">{% for li in w.lines %}
+        <li><span class="d">{{ li.line }}. {{ li.description or "(no description)" }}</span>
+          <span class="c">GL {{ li.gl_code or "none" }} · cost center {{ li.cost_center or "none" }}</span><b>{{ "{:,.2f}".format(li.amount) }}</b></li>
+      {% endfor %}</ol>
+      {% if can("/manager/1", "GET") %}<p class="small muted"><a href="/manager/{{ w.id }}">See the request</a></p>{% endif %}
+    </section>
+    {% elif posting %}
     <section class="card inv-posting">{{ live_ui.head("GL posting") }}{{ live_ui.posting_table(posting) }}</section>
     {% endif %}
     {% include "_invoice_notes.html" %}

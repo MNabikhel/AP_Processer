@@ -4,6 +4,7 @@ code), what AP Coder proposed and what AP approved, and whether AP Coder had it 
 from __future__ import annotations
 
 import copy
+import re
 
 from ap_coder.ai import lessons
 from ap_coder.core.store import Store
@@ -48,7 +49,9 @@ def test_each_correction_and_whether_it_was_right_the_next_time(tmp_path, ground
     assert page.index("Corrections") < page.index("Teach from past coding")  # the first thing on the page
     assert "GL account of lines like" in page and "Right the next time" in page and "Corrected again" in page
     assert "Tax code of “Delivery &amp; handling”" in page
-    assert "manager" not in page.lower()
+    # The page never calls the pilot tester a "manager" (the menu's Manager confirmations, a cost center's manager
+    # confirming the coding, D-138, is another person).
+    assert "manager" not in re.sub(r"(?s)<nav.*?</nav>", "", page).lower()
 
 
 def test_no_corrections_section_before_any_correction(tmp_path, ground_truth):

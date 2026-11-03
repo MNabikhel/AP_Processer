@@ -20,8 +20,8 @@ from tests.browser import browser_on
 
 PAGE = {"X-AP-Coder": "1"}
 CORE = ["Review queue", "Import invoices", "Invoice directory", "Exports", "GL accounts & tax", "Settings", "Help"]
-MORE = ["Month-end", "Sales tax", "Vendor statements", "Vendors", "Purchase orders", "Learning & accuracy", "Spend",
-        "Insights", "Activity"]  # fmt: skip
+MORE = ["Manager confirmations", "Month-end", "Sales tax", "Vendor statements", "Vendors", "Purchase orders",
+        "Learning & accuracy", "Spend", "Insights", "Activity"]  # fmt: skip
 
 
 def _settings() -> Settings:

@@ -66,6 +66,16 @@ PAGES: list[Page] = [
         module="accounts",
     ),
     Page(
+        "manager",
+        "Manager confirmations",
+        "/manager",
+        "how_to_reg",
+        W,
+        "Invoices sent to a manager to confirm their cost allocation: the ones still waiting, and what to do next.",
+        module="manager",
+        more=True,
+    ),
+    Page(
         "month_end",
         "Month-end",
         "/month-end",

@@ -44,8 +44,10 @@ from typing import Any
 from ._base import _now
 
 READONLY, CLERK, APPROVER, ADMIN = "readonly", "clerk", "approver", "admin"
-ROLES = (READONLY, CLERK, APPROVER, ADMIN)  # each can do what the one before it can, and more (web/roles.py)
-ROLE_LABELS = {READONLY: "Read-only", CLERK: "Clerk", APPROVER: "Approver", ADMIN: "Admin"}
+MANAGER = "manager"  # confirms the cost allocation of the invoices sent to them, nothing else (D-138)
+ROLES = (READONLY, CLERK, APPROVER, ADMIN, MANAGER)  # each of the first four can do what the one before it can, and
+# more; a Manager is outside that ladder (web/roles.py)
+ROLE_LABELS = {READONLY: "Read-only", CLERK: "Clerk", APPROVER: "Approver", ADMIN: "Admin", MANAGER: "Manager"}
 
 MIN_PASSWORD = 12
 SCRYPT_N, SCRYPT_R, SCRYPT_P = 2**14, 8, 1
@@ -191,7 +193,7 @@ def _clean_display(name: Any) -> str:
     return " ".join(kept.split())[:MAX_DISPLAY_NAME].strip()
 
 
-_USER_COLUMNS = "id, username, display_name, role, active, must_change, created_at, last_login"
+_USER_COLUMNS = "id, username, display_name, role, active, must_change, created_at, last_login, cost_centers"
 
 
 def _public(row: Any) -> dict[str, Any] | None:
@@ -326,7 +328,7 @@ class UsersMixin:
 
     def list_users(self) -> list[dict[str, Any]]:
         """Every account, Admins first, then by username."""
-        order = " ".join(f"WHEN '{r}' THEN {n}" for n, r in enumerate(reversed(ROLES)))
+        order = " ".join(f"WHEN '{r}' THEN {n}" for n, r in enumerate((ADMIN, APPROVER, CLERK, READONLY, MANAGER)))
         with self._conn() as conn:
             rows = conn.execute(f"SELECT {_USER_COLUMNS} FROM users ORDER BY CASE role {order} END, username")
             return [u for u in map(_public, rows.fetchall()) if u is not None]
@@ -359,6 +361,17 @@ class UsersMixin:
             conn.execute("UPDATE users SET role = ? WHERE id = ?", (role, row["id"]))
             self._log(conn, "role_changed", None, actor or None,
                       {"username": row["username"], "from": row["role"], "to": role})  # fmt: skip
+
+    def set_user_cost_centers(self, user_id: int, codes: str, *, actor: str = "") -> str:
+        """The cost centers a Manager account answers for (D-138), as typed ("CC-200, CC-300"): kept cleaned, comma
+        separated. Returns what is kept."""
+        kept = ", ".join(dict.fromkeys(c.strip() for c in str(codes).replace(";", ",").split(",") if c.strip()))
+        with self._conn() as conn:
+            row = self._account(conn, user_id)
+            conn.execute("UPDATE users SET cost_centers = ? WHERE id = ?", (kept[:500], row["id"]))
+            self._log(conn, "user_cost_centers_set", None, actor or None,
+                      {"username": row["username"], "cost_centers": kept[:500]})  # fmt: skip
+        return kept[:500]
 
     def deactivate_user(self, user_id: int, *, actor: str = "") -> None:
         """The account can no longer log in, and its sessions end; the last active Admin stays (``LAST_ADMIN``)."""
