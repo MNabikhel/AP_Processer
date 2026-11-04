@@ -408,5 +408,6 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   invoices folder by a scheduled task; AP Coder still never holds the mailbox's password. IT can own the flow instead
   if it prefers. The model register (each local model's publisher and licence) is listed for the AI team before the
   security review. The gate of PILOT_PLAN.md is worded as the proposal's copies (after AP's review in AP Coder; the
-  break-even figure; approved in JD Edwards). Docs only: nothing in the code changes. (`docs/HANDOFF.md` sections 7
+  break-even of its base case, named without a figure so the two copies can't drift; approved in JD Edwards).
+  Docs only: nothing in the code changes. (`docs/HANDOFF.md` sections 7
   and 8, `docs/MAILBOX_SETUP.md`, `docs/PILOT_PLAN.md`)
