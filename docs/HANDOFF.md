@@ -495,9 +495,10 @@ check. Don't start the next while the last one's tests are red. Dates move with 
    are reconciled before the first payment run that pays them. Touchless processing stays off (D-144). *Done when*
    the 5-part gate of `docs/PILOT_PLAN.md` is scored on live weeks 2 to 4 and the AP lead decides go or no-go.
 
-Then, if it goes well: all of AP and two more finance teams on a company server (6.10), and the Finance Hub (point
-the feed at the landing zone; the data team builds the reports. *Done when* the hub shows AP Coder's invoices and
-accuracy).
+Then, if it goes well: AP Coder for more of AP's districts on a company server (6.10) that also becomes the Finance
+AI Hub, where finance runs its local-model and other workflows beside AP Coder (and the company's approved Claude
+where the AI team allows it); the whole company after that. And the Finance Hub feed (point the feed at the landing
+zone; the data team builds the reports. *Done when* the hub shows AP Coder's invoices and accuracy).
 
 Likely company-specific work to weigh along the way: the company's own approval workflow, and any invoice layouts
 the parallel week shows it reads badly (each one: a test first, then the fix, see section 9).
