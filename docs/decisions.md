@@ -402,3 +402,10 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   `web/pages/login.py`, `web/templates/login_step.html`, `web/identity.py`, `web/roles.py`, `web/pages/users.py`,
   `ops/cli.py`; `tests/core/test_authenticator.py`, `tests/core/test_users.py`, `tests/core/test_backups.py`,
   `tests/web/test_server_two_step.py`, `tests/web/test_server_browser.py`, `tests/ops/test_users_cli.py`)
+- **D-147** · **The developer builds the AP inbox's Power Automate flow in stage 0, and IT gives the flow's account
+  access to the AP shared mailbox** (the user's decision, 3 November 2026; the plan had IT building it). The flow is
+  the one of MAILBOX_SETUP.md, unchanged: the whole email as .eml into a synced library, moved into AP Coder's
+  invoices folder by a scheduled task; AP Coder still never holds the mailbox's password. IT can own the flow instead
+  if it prefers. The model register (each local model's publisher and licence) is listed for the AI team before the
+  security review. Docs only: nothing in the code changes. (`docs/HANDOFF.md` sections 7 and 8,
+  `docs/MAILBOX_SETUP.md`)
