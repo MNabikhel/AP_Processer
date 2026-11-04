@@ -83,14 +83,14 @@ sample:
 
 1. **Coding:** at least 90% of repeat-vendor lines and at least 85% of all lines right, as AP Coder proposed them
    before review. A right line has the GL account and cost center, plus job, cost code and cost type on job lines.
-   Also: at least 97% of vouchers posted exactly as AP Coder created them, and errors that both reviews missed at 2%
-   or less (the pilot tester blind re-codes about 50 invoices a week).
+   Also: at least 97% of vouchers posted exactly as AP Coder created them (after AP's review in AP Coder), and errors
+   that both reviews missed at 2% or less (the pilot tester blind re-codes about 50 invoices a week).
 2. **First-time match:** at least 60% of invoices need no change; the target is 70%.
 3. **Time:** AP touch time is at least 2 minutes an invoice below a baseline timed before the pilot, and the lower
-   bound of that saving stays above break-even.
+   bound of that saving stays above break-even (1.5 minutes in the proposal's base case).
 4. **Exceptions:** 15% or less (the market average is 18.4%, Ardent); technical failures 2% or less.
 5. **Controls (any failure stops the pilot):** zero duplicate vouchers, zero vouchers to the wrong supplier, daily
-   control totals that tie, every batch approved in E1 before posting.
+   control totals that tie, every batch approved in JD Edwards before posting.
 
 ## What to bring to the decision
 
@@ -101,7 +101,7 @@ sample:
 | Minutes per invoice | Insights (assumptions), the timed baseline | at least 2 minutes saved (the gate's 3) |
 | Exceptions and technical failures | counted by the pilot tester (the review queue, Activity) | within the gate's 4 |
 | Duplicates stopped, fraud signals | Insights, Activity | any caught is money kept; no duplicate voucher |
-| Controls | Activity → controls report, E1's batch approvals | every batch approved in E1 before posting |
+| Controls | Activity → controls report, E1's batch approvals | every batch approved in JD Edwards before posting |
 | Discounts taken in time | Insights → AP operations | more than before |
 | Days to approve | Insights → AP operations | shorter than before |
 

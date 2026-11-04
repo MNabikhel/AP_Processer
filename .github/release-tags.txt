@@ -19,5 +19,3 @@ v0.3.0-pilot7 c362eb4c9a531cea7fa426ea423ab1f6832b22d3 AP Coder 0.3.0, pilot rel
 v0.3.0-handoff7 c362eb4c9a531cea7fa426ea423ab1f6832b22d3 AP Coder handoff to the company's own AI coding agent: v0.3.0-pilot7 with docs/HANDOFF.md, the same commit (D-128)
 v0.3.0-pilot8 37cbef20c4fb3f6ad0e17160a56aaeb9c9192c40 AP Coder 0.3.0, pilot release 8: pilot7 plus held-vendor controls, whole-state backups, two-step sign-in with an authenticator app, and stage 0 then a live pilot (D-142 to D-146, B-1548 to B-1577)
 v0.3.0-handoff8 37cbef20c4fb3f6ad0e17160a56aaeb9c9192c40 AP Coder handoff to the company's own AI coding agent: v0.3.0-pilot8 with docs/HANDOFF.md, the same commit (D-128)
-v0.3.0-pilot9 60a57ed10f55ddc0cd13424c89f3e3291988fd9f AP Coder 0.3.0, pilot release 9: pilot8 plus the stage 0 docs: the developer builds the AP inbox's flow, IT gives it mailbox access, and the model register for the AI team (D-147)
-v0.3.0-handoff9 60a57ed10f55ddc0cd13424c89f3e3291988fd9f AP Coder handoff to the company's own AI coding agent: v0.3.0-pilot9 with docs/HANDOFF.md, the same commit (D-128)
