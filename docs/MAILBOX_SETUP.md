@@ -12,7 +12,8 @@ fine: AP Coder waits until a file has not changed for 5 seconds.
 
 ## Option 1: Power Automate on the shared mailbox (recommended)
 
-A cloud flow, owned by IT, on the AP shared mailbox:
+A cloud flow on the AP shared mailbox. The developer builds it in stage 0 (D-147), and IT gives the flow's account
+access to the mailbox; IT can own the flow instead if it prefers:
 
 | Step | Connector and action | Settings |
 |---|---|---|
