@@ -1,9 +1,10 @@
 """Activity: the audit trail of everything that changed data, with a search and filters, the controls report for
 internal audit, and a link to the duplicate payment audit (on Exports: one place for it, B-513).
 
-Everything here only reads: the filters (``?group=Backups&person=Ann&q=northwind&view=table``) and the controls
-report's period (``?start=…&end=…``) are in the address, and the downloads (``/activity/events.csv``, the filtered
-events; ``/activity/controls-report``) are GETs. The duplicate pairs download from Exports (``/exports?audit=1``).
+Everything here only reads: the filters (``?group=Backups&person=Ann&q=northwind&view=table``), the page of events
+(``&before=<an event's id>``: the older ones) and the controls report's period (``?start=…&end=…``) are in the
+address, and the downloads (``/activity/events.csv``, every filtered event; ``/activity/controls-report``) are GETs.
+The duplicate pairs download from Exports (``/exports?audit=1``).
 """
 
 from __future__ import annotations
@@ -11,15 +12,17 @@ from __future__ import annotations
 import csv
 import datetime as dt
 import io
+from collections.abc import Iterable, Iterator
 from typing import Any
 from urllib.parse import urlencode
 
 from fastapi import Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
 
 from ap_coder.core import ui
 from ap_coder.core.audit import ACTIONS, describe
 from ap_coder.core.safe import csv_row
+from ap_coder.core.store import Store
 from ap_coder.erp import controls, insights
 from ap_coder.web.access import is_admin
 from ap_coder.web.core import address_day, get_store, page_router, render, server_mode
@@ -48,9 +51,9 @@ GROUPS = {
                "role_changed", "user_cost_centers_set", "user_deactivated", "user_activated", "address_unlocked",
                "downloaded", "authenticator_enrolled", "authenticator_reset"],
 }  # fmt: skip
-EVENTS_READ = 5000  # the newest events the page works on
-TIMELINE_SHOWN = 200
+TIMELINE_SHOWN = 200  # the events a page of the timeline shows; the older ones are on the next (B-1597)
 TABLE_SHOWN = 1000
+CSV_CHUNK = 1000  # the CSV's rows sent at a time
 
 VIEWS = ("timeline", "table")
 DELETIONS = ("deleted", "accounts_deleted", "lessons_forgotten")
@@ -86,41 +89,46 @@ def searchable(event: dict[str, Any]) -> str:
                      str(event["invoice_id"] or ""), invoice_label(event), event["actor"] or ""]).lower()  # fmt: skip
 
 
-def filter_events(events: list[dict[str, Any]], group: str, person: str, query: str) -> list[dict[str, Any]]:
-    """The events of ``group`` ("All" or a key of GROUPS), by ``person`` ("Everyone" or a name), whose text holds
-    ``query`` (any case). A search that matches nothing is simply an empty list."""
+def filter_events(store: Store, group: str, person: str, query: str, *, hidden: Iterable[str] = (),
+                  before: int | None = None, limit: int | None = None) -> Iterator[dict[str, Any]]:  # fmt: skip
+    """Every event (not only the newest few thousand, B-1597) of ``group`` ("All" or a key of GROUPS), by ``person``
+    ("Everyone" or a name), whose text holds ``query`` (any case), but none of the ``hidden`` actions; newest first,
+    older than event ``before``, ``limit`` at most. SQLite picks them by group and person; the words are looked for
+    in each as the page shows it (``searchable``). A search that matches nothing is simply none."""
     query = (query or "").strip().lower()
-    actions = GROUPS.get(group)
-    return [
-        e
-        for e in events
-        if (actions is None or e["action"] in actions)
-        and (person in ("", "Everyone") or e["actor"] == person)
-        and (not query or query in searchable(e))
-    ]
+    return store.find_events(actions=GROUPS.get(group), hidden=hidden,
+                             actor=None if person in ("", "Everyone") else person, before=before, limit=limit,
+                             matches=(lambda e: query in searchable(e)) if query else None)  # fmt: skip
 
 
-def table_rows(events: list[dict[str, Any]]) -> list[dict[str, str]]:
-    return [
-        {
-            "When": str(e["created_at"] or "").replace("T", " ")[:19],
-            "Who": e["actor"] or "",
-            "What": ACTIONS.get(e["action"], ("", "", e["action"]))[2],
-            "Invoice": invoice_label(e),
-            "Details": describe(e),
-        }
-        for e in events
-    ]
+def table_row(e: dict[str, Any]) -> dict[str, str]:
+    return {
+        "When": str(e["created_at"] or "").replace("T", " ")[:19],
+        "Who": e["actor"] or "",
+        "What": ACTIONS.get(e["action"], ("", "", e["action"]))[2],
+        "Invoice": invoice_label(e),
+        "Details": describe(e),
+    }
 
 
-def events_csv(events: list[dict[str, Any]]) -> bytes:
-    """The events as a CSV for Excel (UTF-8 with BOM; text a spreadsheet would run as a formula is defused)."""
+def table_rows(events: Iterable[dict[str, Any]]) -> list[dict[str, str]]:
+    return [table_row(e) for e in events]
+
+
+def events_csv(events: Iterable[dict[str, Any]]) -> Iterator[bytes]:
+    """The events as a CSV for Excel (UTF-8 with BOM; text a spreadsheet would run as a formula is defused), sent a
+    few rows at a time as they are read: a year of events is never held at once."""
     out = io.StringIO()
     writer = csv.writer(out)
+    out.write("﻿")
     writer.writerow(["When", "Who", "What", "Invoice", "Details"])
-    for row in table_rows(events):
-        writer.writerow(csv_row(list(row.values())))
-    return ("﻿" + out.getvalue()).encode("utf-8")
+    for n, e in enumerate(events, 1):
+        writer.writerow(csv_row(list(table_row(e).values())))
+        if n % CSV_CHUNK == 0:
+            yield out.getvalue().encode("utf-8")
+            out.seek(0)
+            out.truncate()
+    yield out.getvalue().encode("utf-8")
 
 
 def controls_period(start: str | None, end: str | None, today: dt.date | None = None) -> tuple[dt.date, dt.date]:
@@ -138,27 +146,32 @@ def _filters(request: Request) -> tuple[str, str, str, str]:
     return group, q.get("person") or "Everyone", q.get("q") or "", view if view in VIEWS else "timeline"
 
 
+def _before(request: Request) -> int | None:
+    """The page of events asked for: those older than this event (None: the newest)."""
+    try:
+        before = int(request.query_params.get("before") or 0)
+    except ValueError:
+        return None
+    return before if before > 0 else None
+
+
 ACCOUNT_GROUP = "Logins"  # logins, refusals, lockouts and changes to accounts: an Admin's to see (D-101)
 
 
-def _events(request: Request) -> list[dict[str, Any]]:
-    """The newest events, as the person asking may see them: on the server, the login and account events only to an
-    Admin (a refusal names the account tried, and the addresses people log in from are theirs)."""
-    events = get_store(request).events(limit=EVENTS_READ)
-    if is_admin(request):
-        return events
-    hidden = set(GROUPS[ACCOUNT_GROUP])
-    return [e for e in events if e["action"] not in hidden]
+def _hidden(request: Request) -> tuple[str, ...]:
+    """The events the person asking may not see: on the server, the login and account events are an Admin's only (a
+    refusal names the account tried, and the addresses people log in from are theirs)."""
+    return () if is_admin(request) else tuple(GROUPS[ACCOUNT_GROUP])
 
 
 def _groups(request: Request) -> list[str]:
     return ["All", *(g for g in GROUPS if g != ACCOUNT_GROUP or is_admin(request))]
 
 
-def distinct_people(events: list[dict[str, Any]]) -> list[str]:
-    """The people the events are by, a renamed one once under the name it has now: saving your name in Settings is
-    recorded under the old one (the computer login, before a name was saved), ``{"reviewer": {"from", "to"}}``
-    (B-1305)."""
+def distinct_people(actors: Iterable[str], events: Iterable[dict[str, Any]]) -> list[str]:
+    """The people the events are by (``actors``), a renamed one once under the name it has now: saving your name in
+    Settings is recorded under the old one (the computer login, before a name was saved), ``{"reviewer": {"from",
+    "to"}}`` in a ``settings_changed`` event of ``events`` (B-1305)."""
     renamed: dict[str, str] = {}
     for e in sorted(events, key=lambda e: e["id"]):
         rename = (e.get("detail") or {}).get("reviewer") if e["action"] == "settings_changed" else None
@@ -172,14 +185,15 @@ def distinct_people(events: list[dict[str, Any]]) -> list[str]:
             seen.add(name)
         return name
 
-    return sorted({now(e["actor"]) for e in events if e["actor"]})
+    return sorted({now(actor) for actor in actors if actor})
 
 
 @router.get("/activity", response_class=HTMLResponse)
 def activity_page(request: Request) -> HTMLResponse:
     store = get_store(request)
-    events = _events(request)
+    hidden = _hidden(request)
     group, person, query, view = _filters(request)
+    before = _before(request)
     params = {"group": group, "person": person, "q": query, "view": view}
     start, end = controls_period(request.query_params.get("start"), request.query_params.get("end"))
     params.update(start=start.isoformat(), end=end.isoformat())
@@ -189,32 +203,43 @@ def activity_page(request: Request) -> HTMLResponse:
         keep = {k: v for k, v in merged.items() if v not in ("", None, "All", "Everyone", "timeline")}
         return "/activity" + (f"?{urlencode(keep)}" if keep else "")
 
-    if not events:
-        return render(request, "activity.html", "activity", events=[], url=url)
+    total = store.count_events(hidden=hidden)  # every event, counted by SQLite (B-1597)
+    if not total:
+        return render(request, "activity.html", "activity", total=0, url=url)
 
     today = dt.date.today()
-    week = sum(1 for e in events if str(e["created_at"])[:10] >= (today - dt.timedelta(days=7)).isoformat())
+    week = store.count_events(hidden=hidden, since=(today - dt.timedelta(days=7)).isoformat())
     # Each invoice's standing approval once, as on Insights and Learning (D-39): one taken back and given again is
     # one, one taken back and not given again is none.
     clean, approved = insights.approved_as_coded(store)
-    people = sorted({e["actor"] for e in events if e["actor"]})  # the Person filter: every name events carry
-    persons = distinct_people(events)
+    people = store.event_actors(hidden)  # the Person filter: every name events carry
+    persons = distinct_people(people, store.find_events(actions=["settings_changed"], hidden=hidden))
     tiles = [
-        ("Events", len(events), "blue", f"{week} in the last 7 days"),
+        ("Events", total, "blue", f"{week} in the last 7 days"),
         ("Invoices approved", approved, "green", insights.approvals_note(clean, insights.filled_in_count(store),
                                                                          approved)),  # (D-112)
         ("People", len(persons), "violet", (", ".join(persons[:3]) + (
             f" and {len(persons) - 3} more" if len(persons) > 3 else "")) or "none recorded yet"),  # (B-1009, B-1305)
-        ("Deletions", sum(1 for e in events if e["action"] in DELETIONS), "amber", "invoices, accounts, lessons"),
+        ("Deletions", store.count_events(actions=DELETIONS, hidden=hidden), "amber", "invoices, accounts, lessons"),
     ]  # fmt: skip
 
-    shown = filter_events(events, group, person, query)
+    # A page of the events that match, and whether older ones follow: their page starts after its last (B-1597).
+    size = TABLE_SHOWN if view == "table" else TIMELINE_SHOWN
+    shown = list(filter_events(store, group, person, query, hidden=hidden, before=before, limit=size + 1))
+    older = url(before=shown[size - 1]["id"]) if len(shown) > size else ""
+    shown = shown[:size]
+    # How many match: counted by SQLite; for a search (each event's words looked for), only when this page has them all.
+    if not query.strip():
+        matching = store.count_events(actions=GROUPS.get(group), hidden=hidden,
+                                      actor=None if person in ("", "Everyone") else person)  # fmt: skip
+    else:
+        matching = len(shown) if before is None and not older else None
     report = controls.build(store, start, end, duties=server_mode(request)) if start <= end else None
     return render(
         request,
         "activity.html",
         "activity",
-        events=events,
+        total=total,
         tiles=tiles,
         groups=_groups(request),
         people=people,
@@ -223,10 +248,11 @@ def activity_page(request: Request) -> HTMLResponse:
         query=query,
         view=view,
         shown=shown,
-        timeline=timeline_items(shown[:TIMELINE_SHOWN]),
-        timeline_more=max(0, len(shown) - TIMELINE_SHOWN),
-        rows=table_rows(shown[:TABLE_SHOWN]),
-        table_more=max(0, len(shown) - TABLE_SHOWN),
+        matching=matching,
+        timeline=timeline_items(shown) if view == "timeline" else [],
+        rows=table_rows(shown) if view == "table" else [],
+        older=older,
+        newest=url() if before else "",
         url=url,
         csv_url=url().replace("/activity", "/activity/events.csv", 1),
         start=start,
@@ -238,10 +264,14 @@ def activity_page(request: Request) -> HTMLResponse:
 
 @router.get("/activity/events.csv")
 def activity_csv(request: Request) -> Response:
-    """The events the page shows with the same filters, all of them (not only the newest 200)."""
+    """The events the page shows with the same filters, all of them (not only a page), sent as they are read
+    (B-1597)."""
     group, person, query, _ = _filters(request)
-    shown = filter_events(_events(request), group, person, query)
-    return download(events_csv(shown), f"ap_coder_activity_{dt.date.today()}.csv", "text/csv; charset=utf-8")
+    shown = filter_events(get_store(request), group, person, query, hidden=_hidden(request))
+    name = f"ap_coder_activity_{dt.date.today()}.csv"
+    return StreamingResponse(events_csv(shown), media_type="text/csv; charset=utf-8",
+                             headers={"Content-Disposition": f'attachment; filename="{name}"',
+                                      "Cache-Control": "no-store"})  # fmt: skip
 
 
 @router.get("/activity/controls-report")

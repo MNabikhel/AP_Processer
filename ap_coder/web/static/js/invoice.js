@@ -123,7 +123,12 @@ async function check() {
       lastCheckOk = Boolean(answer.ok);
       lastDraft = Boolean(answer.draft); // kept as a draft (an edit of the coding), not a tick of "Approve anyway"
       if (answer.ok) applySections(answer, body);
-      else if (answer.error) toast({ text: answer.error, tone: "err" }, 9000);
+      else if (answer.redirect) {
+        // The session ended: the edits are kept in this tab ("apc:session-ended"), then the login, back here (B-1594)
+        form.dataset.sending = "1"; // nothing more is checked or sent from this page
+        follow(answer);
+        break;
+      } else if (answer.error) toast({ text: answer.error, tone: "err" }, 9000);
     } while (queued);
   })();
   if (checking) checking.textContent = "Checking…";
@@ -156,9 +161,11 @@ let lastCheckOk = false; // the last check answered (its edits are kept as a dra
 let lastDraft = false; // the last check kept the edits as a draft
 let edited = false; // an edit made on this page (the opening check keeps nothing new)
 
+/** The time now as the server says a draft's (invoice.py ``_when``): "12:37 a.m.", never "0:37" (B-1596). */
 function clock() {
   const d = new Date();
-  return `${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`;
+  const h = d.getHours();
+  return `${h % 12 || 12}:${String(d.getMinutes()).padStart(2, "0")} ${h < 12 ? "a.m." : "p.m."}`;
 }
 
 function soon(ms = 450) {
@@ -2593,6 +2600,44 @@ function reachApprovalUndo(box) {
   setTimeout(() => (said.textContent = `${text}. To undo it: Ctrl+Z, or Shift+Tab to its Undo button.`), 400);
 }
 
+/* ---------- The session ended (server mode, B-1594) ----------
+   A check or the approval answered "not logged in": what is on the screen is kept in this browser tab with whose it
+   is, and the login comes back here. Back on this invoice as the same person, it is checked once (which keeps it as
+   their draft) and the screen is drawn again with it; anyone else logging in on the tab never sees it: it is dropped
+   the first time the invoice opens. */
+const UNSAVED = `apc-unsaved-${invoiceId}`;
+const account = form?.dataset.account || "";
+
+document.addEventListener("apc:session-ended", () => {
+  if (!form || readOnly || !account) return;
+  try {
+    const fields = [...formData()].filter(([, v]) => typeof v === "string");
+    sessionStorage.setItem(UNSAVED, JSON.stringify({ account, fields }));
+  } catch {
+    /* not kept: the edits made since the session ended are lost, as before */
+  }
+});
+
+/** The edits kept when the session ended, for the person logged in now (else none); taken once, whoever opens it. */
+function unsaved() {
+  try {
+    const kept = JSON.parse(sessionStorage.getItem(UNSAVED) || "null");
+    sessionStorage.removeItem(UNSAVED);
+    return kept && account && kept.account === account && !readOnly ? kept.fields : null;
+  } catch {
+    return null;
+  }
+}
+
+async function putBack(fields) {
+  const body = new FormData();
+  for (const [k, v] of fields) body.append(k, v);
+  const answer = await post(`${base}/check`, body);
+  if (answer.ok && answer.draft) return location.reload(); // drawn again with them: the draft they are now
+  if (answer.error) toast({ text: `Your edits from before you logged in again were not kept: ${answer.error}`, tone: "err" }, 9000);
+  return check().then(() => focusFirstToCheck());
+}
+
 /* ---------- Start ---------- */
 
 /** Read-only: every box of the form shown as it is, none to change (the server refuses a change anyway). */
@@ -2617,5 +2662,7 @@ showBarState();
 document.querySelectorAll('[data-grid="lines"] textarea[name="line_description"]').forEach((t) => showRemark(t, false));
 // The queue shows what this screen shows: check once on opening (today's checks, and any draft kept); then the
 // focus goes to the first thing to check, unless the clerk is somewhere already.
+const kept = unsaved();
 if (readOnly) lockFields();
+else if (form && kept) putBack(kept);
 else if (form) check().then(() => focusFirstToCheck());

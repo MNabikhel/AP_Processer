@@ -2,7 +2,7 @@
    The server reads and codes in the background (job "process"); this polls /process/status and draws each invoice
    as it is done, then reloads the page (the job card stays, with the summary). */
 
-import { HEADERS, escapeHtml, follow, messageElement, pollJob, toast } from "./app.js";
+import { HEADERS, escapeHtml, follow, messageElement, noAnswer, pollJob, toast } from "./app.js";
 
 const form = document.getElementById("upload-form");
 const input = document.getElementById("upload-files");
@@ -100,7 +100,7 @@ function upload() {
       if (e.lengthComputable) label.textContent = `Uploading… ${Math.round((100 * e.loaded) / e.total)}%`;
     };
     xhr.onload = () => resolve(xhr.response || { ok: false, error: `That didn't work (${xhr.status}).` });
-    xhr.onerror = () => resolve({ ok: false, error: "AP Coder didn't answer. Is it still running?" });
+    xhr.onerror = () => resolve({ ok: false, error: noAnswer() });
     xhr.send(body);
   });
 }
