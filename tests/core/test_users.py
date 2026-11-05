@@ -296,6 +296,31 @@ def test_a_session_lookup_never_waits_behind_another_writer_to_note_its_use(stor
     assert store.session_user(token) and _last_seen(store, token) == clock.now  # ...but by the next request
 
 
+def _sessions(store) -> int:
+    with sqlite3.connect(store.path) as conn:
+        return conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+
+
+def test_the_first_request_after_a_session_expired_never_waits_behind_another_writer(store, clock):
+    uid = with_app(store)
+    token = store.start_session(uid)
+    clock.now += 30 * 60 + 1  # unused for its idle minutes: the next request finds it ended
+    writer = sqlite3.connect(store.path, isolation_level=None, check_same_thread=False)
+    writer.execute("BEGIN IMMEDIATE")  # another request's write, a long one (an import, a month end)
+    done = threading.Timer(2, writer.rollback)
+    done.start()
+    try:
+        started = time.monotonic()
+        assert store.session_user(token) is None  # off to the login page at once
+        waited = time.monotonic() - started
+    finally:
+        done.join()
+        writer.close()
+    assert waited < 1
+    assert _sessions(store) == 1  # not deleted this time...
+    assert store.session_user(token) is None and _sessions(store) == 0  # ...but by the next look at it
+
+
 def test_a_poll_reads_the_session_without_renewing_it(store, clock):
     uid = with_app(store)
     token = store.start_session(uid)

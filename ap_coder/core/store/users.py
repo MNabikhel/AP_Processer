@@ -138,6 +138,19 @@ def token_hash(token: str) -> str:
     return hashlib.sha256(str(token).encode("utf-8")).hexdigest()
 
 
+def _briefly(conn: Any, sql: str, params: tuple[Any, ...]) -> None:
+    """``sql`` if the database takes it within ``SEEN_WAIT_MS``, else nothing (another writer holds it): a session's
+    use noted, or one past its time dropped, never holds a page up (B-1579, B-1584)."""
+    waits = conn.execute("PRAGMA busy_timeout").fetchone()[0]
+    conn.execute(f"PRAGMA busy_timeout = {SEEN_WAIT_MS}")
+    try:
+        conn.execute(sql, params)
+    except sqlite3.OperationalError:
+        pass
+    finally:
+        conn.execute(f"PRAGMA busy_timeout = {int(waits)}")
+
+
 def _b64(data: bytes) -> str:
     return base64.b64encode(data).decode("ascii")
 
@@ -902,25 +915,20 @@ class UsersMixin:
             ).fetchone()
             if row is None:
                 return None
-            if (
-                not row["active"]
-                or not row["totp_on"]  # an account without its authenticator app: no session is a login (D-146)
-                or now - row["session_created"] >= self.session_absolute
-                or (now - row["last_seen"] > self.session_idle)
-            ):
+            if now - row["session_created"] >= self.session_absolute or now - row["last_seen"] > self.session_idle:
+                # Past its time, for good: dropped if the database lets it at once, else by a later look or the
+                # clean-up at the next login (B-1584).
+                _briefly(conn, "DELETE FROM sessions WHERE token_hash = ?", (digest,))
+                return None
+            # An account without its authenticator app (no session is a login, D-146), or turned off: dropped whatever
+            # the wait, as setting the app up later would make the session a login again.
+            if not row["active"] or not row["totp_on"]:
                 conn.execute("DELETE FROM sessions WHERE token_hash = ?", (digest,))
                 return None
             if renew and now - row["last_seen"] >= SEEN_EVERY:
                 # Best effort, and never long: a busy database fails no page over it (B-1293) nor holds one up behind
                 # another writer (B-1579); the next request records it.
-                waits = conn.execute("PRAGMA busy_timeout").fetchone()[0]
-                conn.execute(f"PRAGMA busy_timeout = {SEEN_WAIT_MS}")
-                try:
-                    conn.execute("UPDATE sessions SET last_seen = ? WHERE token_hash = ?", (now, digest))
-                except sqlite3.OperationalError:
-                    pass
-                finally:
-                    conn.execute(f"PRAGMA busy_timeout = {int(waits)}")
+                _briefly(conn, "UPDATE sessions SET last_seen = ? WHERE token_hash = ?", (now, digest))
         found = _public(row) or {}
         for key in ("session_created", "last_seen"):
             found.pop(key, None)
