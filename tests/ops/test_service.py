@@ -354,6 +354,26 @@ def test_stop_ends_only_the_running_host_never_a_process_a_stale_record_names(da
     assert ["taskkill", "/PID", "4242", "/T", "/F"] in commands
 
 
+def test_stop_reads_the_host_record_once_the_lock_says_a_host_runs(data, commands, monkeypatch):
+    """B-1677: stop read host.json before it asked whether a host holds the lock. A record left by a host that was
+    killed (its number an AP Coder watch's since) was read, then a new host took the lock and wrote its own: stop
+    ended the watch. The record is read once the lock says a host runs: the one that holds it wrote it."""
+    (data / "server.json").write_text(json.dumps({"insecure_http": True}))
+    record = service.host_record(data)
+    record.parent.mkdir(parents=True)
+    record.write_text(json.dumps({"pid": 4242}))  # the killed host's; 4242 is a watch's now
+
+    def a_host_starts_meanwhile(folder):  # it takes the lock and writes host.json at once
+        record.write_text(json.dumps({"pid": 5151}))
+        return True
+
+    monkeypatch.setattr(service, "host_running", a_host_starts_meanwhile)
+    monkeypatch.setattr(service, "process_alive", lambda pid: pid in (4242, 5151))
+    monkeypatch.setattr(service, "process_image", lambda pid: str(service.folder_python(service.PROJECT_DIR)))
+    assert main("stop") == 0
+    assert [cmd for cmd in commands if cmd[0] == "taskkill"] == [["taskkill", "/PID", "5151", "/T", "/F"]]
+
+
 # --- On Windows (GitHub's runner: an administrator), the task really installed and removed --------------------------
 
 
