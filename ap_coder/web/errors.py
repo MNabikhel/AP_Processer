@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from ap_coder.core import paths
@@ -112,4 +113,6 @@ class FriendlyErrors:
         except Exception as exc:
             if started:  # half an answer was sent: nothing better can be said now
                 raise
-            await response(Request(scope, receive), exc)(scope, receive, send)
+            # the log written and the page frame read on a threadpool thread, never holding up the other requests
+            answer = await run_in_threadpool(response, Request(scope, receive), exc)
+            await answer(scope, receive, send)

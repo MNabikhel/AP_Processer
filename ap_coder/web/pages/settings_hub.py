@@ -12,6 +12,7 @@ import urllib.parse
 from typing import Any
 
 from fastapi import Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
 from ap_coder.erp.hub import landing, onelake
@@ -28,7 +29,7 @@ from ap_coder.erp.hub.run import (
     save_config,
 )
 from ap_coder.erp.hub.tables import HUB_SCHEMA_VERSION, TABLES
-from ap_coder.web.core import done, get_store, page_router, posted_form, refuse, reviewer, server_mode
+from ap_coder.web.core import done, get_store, one_connection, page_router, posted_form, refuse, reviewer, server_mode
 
 router = page_router()  # each plain handler: one connection a request
 
@@ -68,8 +69,13 @@ def _web_address(text: str) -> bool:
 @router.post("/settings/hub")
 async def save_hub(request: Request) -> JSONResponse:
     """The whole tab's one form. Unticked boxes are off; a client secret left blank is kept."""
-    store = get_store(request)
     form = await posted_form(request)
+    return await run_in_threadpool(_save_hub, request, form)
+
+
+@one_connection
+def _save_hub(request: Request, form: Any) -> JSONResponse:
+    store = get_store(request)
     before = HubConfig.load(store)
     mode, fmt = str(form.get("mode") or FOLDER), str(form.get("format") or "auto")
     try:
@@ -119,12 +125,15 @@ async def save_hub(request: Request) -> JSONResponse:
 @router.post("/settings/hub/run")
 async def run_hub(request: Request) -> JSONResponse:
     """Run now (a full rebuild when ticked), recorded with the person who ran it."""
-    store = get_store(request)
     form = await posted_form(request)
+    return await run_in_threadpool(_run_hub, request, form)
+
+
+@one_connection
+def _run_hub(request: Request, form: Any) -> JSONResponse:
+    store = get_store(request)
     config = HubConfig.load(store)
     if not config.enabled:
         return refuse("The finance hub feed is off: turn it on and save first.")
-    from starlette.concurrency import run_in_threadpool
-
-    result = await run_in_threadpool(export, store, config, full=_on(form, "full"), actor=reviewer())
+    result = export(store, config, full=_on(form, "full"), actor=reviewer())
     return done(request, URL, result.summary(), tone="ok" if result.ok else "err")

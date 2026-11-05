@@ -30,6 +30,7 @@ from typing import Any
 
 from dotenv import dotenv_values
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -352,8 +353,9 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
         wants_page = request.method == "GET" and "text/html" in request.headers.get("accept", "")
         if not wants_page:
             return JSONResponse({"ok": False, "error": str(exc.detail)}, status_code=exc.status_code)
-        return core.render(request, "error.html", "", status_code=exc.status_code, title="Not found",
-                           code=exc.status_code, detail=str(exc.detail))  # fmt: skip
+        # the page frame reads the database: on a threadpool thread, never holding up the other requests
+        return await run_in_threadpool(core.render, request, "error.html", "", status_code=exc.status_code,
+                                       title="Not found", code=exc.status_code, detail=str(exc.detail))  # fmt: skip
 
     @app.exception_handler(RequestValidationError)
     async def unreadable(request: Request, exc: RequestValidationError) -> Any:
@@ -363,8 +365,8 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
         wants_page = request.method == "GET" and "text/html" in request.headers.get("accept", "")
         if not wants_page:
             return JSONResponse({"ok": False, "error": detail}, status_code=422)
-        return core.render(request, "error.html", "", status_code=422, title="Not understood", code=422,
-                           detail=detail)  # fmt: skip
+        return await run_in_threadpool(core.render, request, "error.html", "", status_code=422, title="Not understood",
+                                       code=422, detail=detail)  # fmt: skip
 
     @app.exception_handler(OverflowError)
     async def too_large(request: Request, exc: OverflowError) -> Any:
