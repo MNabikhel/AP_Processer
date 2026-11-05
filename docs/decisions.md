@@ -1048,3 +1048,60 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     reading status. Never for what a check, an approval, an export or a posting decides with (the vendor IDs, the
     approved numbers, a vendor's invoices, the checks an approval runs): those follow every change, as before.
   - (`core/store/summary.py`; `tests/core/test_kept_answers.py`)
+- **D-166** · **Import invoices lists the folder once by name; month-end works out only the POs whose billing changed;
+  the reports a page only shows settle** (phase 2 part 3, B-1725; measured as thread CPU on the 100,000-invoice
+  database, alone and right after a change made elsewhere, against e889dc4).
+  - **Import invoices (GET /process):** D-162's "a seed artefact" was not one. The seed notes its files as an upgrade
+    does (`fill_seen_files`: each invoice's own file, its place trusted), and a real installation after an update, a
+    restore (the files put back at their own times, `seen_files` as backed up) or with 100,000 files is in that state.
+    Each list worked out again (the folder, a pick-up's notes or the invoices changed, or a minute on, in each worker)
+    took 3.7 s: `invoice_files`, `emails_in` and `other_files` each made a Path of every file. And `not_read_here`
+    listed the folder again at every view (0.6 s).
+    - Now one `os.scandir` by name gives the three lists (`process.folder_names`: the same names in the same order, a
+      test against the three); each file is looked at by its place as a string; the names not read are kept with
+      the list.
+    - 1.46 s afresh (the names 0.4, each file's size and time 0.4, the one query 0.6); nothing on a kept view.
+    - Its setup steps read every vendor of the vendor master, each column (20,000: 0.23 s), at every view, to count
+      them and those with an address number: now two columns, the counts kept until the vendor list or the numbers
+      set in Settings → JD Edwards change. The steps 0.25 s → 45 ms.
+  - **Month-end, received not invoiced:** every approval moved its stamp, so each visit decoded 69,000 codings (6.5 s).
+    - Each received PO's accruals are kept in the process (`accruals._PARTS`) with a digest of what they came from:
+      the database's `summary_id`, the PO and its lines, its billing invoices (which ones, their dates and PO, read
+      from the summary at each ask) and those invoices' vendors' change counts (`changes/vendor/<key>`, D-159).
+    - After a change, only the POs whose billing moved have their invoices decoded. Nothing read in a write under way
+      is kept, nor a PO billed by an invoice with no vendor key. Each answer is what working every PO out afresh
+      gives: a test after each kind of change, a restore and a write undone.
+    - At 100,000 invoices: 0.66 s when no PO's billing changed; 1.5 s after a change to the vendor with the most
+      billing invoices (1,156); 6.1 s the first time in a worker.
+    - The invoices not in the ERP yet (0.9 s at every visit) are kept per change. What is asked: the period end, the
+      G/L date's cutoff, the batches made after it and the tax setup; the POs' change count is part of what the
+      received lines are asked for. A change to any of these is another question, worked out at once.
+  - **Settled under a stream of changes (D-164):** only what a page shows, never what a check, an approval, an export
+    batch or a posting decides with. Each module's `SETTLE_SECONDS`:
+    - the recurring vendors (the queue's pill, Vendors, Month-end), 60 s: 0.83 s → 2 ms after a change;
+    - Spend's figures and currencies, 30 s: 2.2 s → 3 ms;
+    - Insights (`insights.shown`, `shown_operations`), kept per change, 60 s: 1.76 s at every visit → 6 ms;
+    - the Month-end page's schedule, 30 s: 8.9 s → 0.1 s after a change (the CSV, booked from: 10.1 → 1.8 s).
+    - **The lengths:** a settled request costs nothing, and a worker works an answer out at most once a `settle`.
+      The pill is asked at each view of the queue, the busiest page: 0.8 s every 60 s is 1.3% of a core a worker
+      (8% at 10 s), and a regular invoice is late by days. A change of one's own may show on a report up to that
+      long after. What is downloaded (the accruals CSV, the business case) is worked out afresh.
+  - **Exports:** what an undone batch held (`exported_totals`, every export event decoded: 0.54 s, read in every
+    worker after each batch made) is read only when an undone batch is listed: the others show their own invoices'
+    totals (`batch_totals`, kept per change, not settled, so a batch just made shows its amounts).
+  - **B-1725:** `postings.ensure` takes a column another connection added meanwhile as there. It stays at each
+    connection (45 µs): putting the table in the schema would not remove a concurrent add (a laptop's dashboard and
+    a command line migrating at once), and needs no schema change.
+  - **Not done:**
+    - `/search/export.xlsx`, 11.9 s at 50,000 rows: openpyxl writing the cells. A job a person waits on moves that
+      CPU, it doesn't cut it; a lighter writer is `erp/exports.streamed_sheet`'s.
+    - `/search/export.csv`, 1.8 s at 50,000 rows: the directory's reads and cells, none of it waste in the page.
+    - Sales tax, 1.25 s at every visit (`taxreturn.build`, `self_assessment`): within a report's 3 s. A kept answer
+      would follow the tax rates file in the data folder, the sites and JD Edwards' settings, which
+      `coding/taxreturn.py` reads: it belongs there.
+    - Month-end's first visit in a worker (8.5 s) and its 0.66 s kept path: D-162's summary table of each invoice's
+      PO-billing lines (`core/store/summary.py`).
+  - (`web/pages/process.py`, `erp/accruals.py`, `erp/recurring.py`, `erp/spend.py`, `erp/insights.py`,
+    `core/store/{purchasing,postings,vendors}.py`, `web/pages/{month_end,exports,insights}.py`;
+    `tests/web/test_web_process.py`, `tests/erp/test_accruals.py`, `tests/erp/test_insights.py`,
+    `tests/erp/test_suggest_recurring.py`, `tests/core/test_kept_answers.py`, `tests/core/test_store_races.py`)

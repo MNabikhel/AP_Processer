@@ -446,6 +446,36 @@ def test_the_import_page_lists_the_folder_once_by_name_as_the_pick_up_and_its_wa
     assert "a.txt" not in documents and "alone.txt" in documents and "..eml" in emails and "letter.docx" in others
 
 
+def test_the_vendor_master_step_follows_the_vendor_list_and_the_numbers_set_whoever_changed_them(tmp_path):
+    """D-166: the setup step's count of the vendor master, and of its vendors with an address number (AN8), is kept in
+    each process until the vendor list changes (``changes/vendors``: another Store, plain SQL) or the numbers set in
+    Settings → JD Edwards do (what it is asked): 20,000 vendors read at every view of Import invoices took 0.23 s."""
+    from ap_coder.erp import jde
+    from ap_coder.web.core import SHOW_JDE
+    from ap_coder.web.pages.process import VENDOR_STEP, pilot_steps
+    from tests.core.test_kept_answers import _plain
+
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    other.set_setting(SHOW_JDE, "1")
+
+    def step() -> str:
+        return next(s for s in pilot_steps(store) if s[1] == VENDOR_STEP)[2]
+
+    assert step().startswith("on Vendors: import")
+    other.import_vendor_master([{"vendor_name": "Northwind Supply", "status": "active"}])
+    assert step().startswith("1 vendor, but no address number")
+    _plain(store, "UPDATE vendors SET erp_id = '1001' WHERE in_master = 1")
+    assert step() == "1 vendor, 1 with an address number (AN8)"
+    _plain(store, "UPDATE vendors SET erp_id = '' WHERE in_master = 1")
+    assert step().startswith("1 vendor, but no address number")
+    settings = jde.load(other)
+    settings.an8_overrides = {store.master_vendor_ids()[0][0]: "2002"}
+    jde.save(other, settings)
+    assert step() == "1 vendor, 1 with an address number (AN8)"
+    other.import_vendor_master([{"vendor_name": "Harbourview Paper", "status": "active"}])
+    assert step() == "2 vendors, 1 with an address number (AN8)"
+
+
 def test_an_older_database_lists_none_of_its_invoices_files_as_new(app, client, store):
     """B-1633: a database from before has no record of what the pick-up read: its invoices' own files count as read
     (once, when this version opens it), so none is listed as new."""

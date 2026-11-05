@@ -340,25 +340,30 @@ def pilot_steps(store: Store) -> list[tuple[str, str, str]]:
     from ap_coder.web.core import jde_shown
 
     shown = jde_shown(store)
-    vendors = store.master_vendors()
+    # its ERP ID, else the number set in Settings → JD Edwards → Supplier address numbers (B-1002)
+    overrides = dict(jde.load(store).an8_overrides) if shown else {}
+
+    def counted() -> tuple[int, int]:  # (the vendor master's vendors, those with an address number)
+        vendors = store.master_vendor_ids()
+        return len(vendors), sum(1 for key, erp_id in vendors if str(erp_id or "").strip().isdigit()
+                                 or str(overrides.get(key or "") or "").strip().isdigit())  # fmt: skip
+
+    # Kept until the vendor list or the numbers set change: 20,000 vendors read at every view took 0.23 s (D-166).
+    vendors, an8 = store.summary_memo("master_vendors_counted", counted, topic="", changes="vendors", asked=overrides)
     if not vendors:
         what = "the ERP's vendor list" + (", with each supplier's address number (AN8)" if shown else "")
         vendor = ("todo", VENDOR_STEP, f"on Vendors: import {what}")
     elif shown:
-        # its ERP ID, else the number set in Settings → JD Edwards → Supplier address numbers (B-1002)
-        overrides = jde.load(store).an8_overrides
-        an8 = sum(1 for v in vendors if str(v.get("erp_id") or "").strip().isdigit()
-                  or str(overrides.get(v.get("vendor_key") or "") or "").strip().isdigit())  # fmt: skip
         vendor = (
             ("ok" if an8 else "todo"),
             VENDOR_STEP,
-            f"{ui.plural(len(vendors), 'vendor')}, {an8} with an address number (AN8)"
+            f"{ui.plural(vendors, 'vendor')}, {an8} with an address number (AN8)"
             if an8
-            else f"{ui.plural(len(vendors), 'vendor')}, but no address number (AN8): import it as the ERP ID, or set "
+            else f"{ui.plural(vendors, 'vendor')}, but no address number (AN8): import it as the ERP ID, or set "
             "it in Settings → JD Edwards → Supplier address numbers",
         )
     else:
-        vendor = ("ok", VENDOR_STEP, ui.plural(len(vendors), "vendor"))
+        vendor = ("ok", VENDOR_STEP, ui.plural(vendors, "vendor"))
     steps = [vendor]
     if shown:
         saved = bool(store.get_setting(jde.SETTING_KEY))
@@ -741,10 +746,10 @@ def folder_files(store: Store) -> tuple[list[dict[str, Any]], list[str]]:
     """(the files in the invoices folder not processed yet, saved emails too: their attachments are read; the names
     of its files of a kind not read, ``not_read_here``), as the pick-up last read them: a page view reads none, it
     looks at their size and time (``Store.unseen_files``, D-155). The invoices folder keeps the processed files:
-    reading every one on each view took 7 s at 100,000 invoices, and listing them 1.3 s (``folder_names``), so the list
-    is worked out again only once the folder (a file added, removed or renamed), what a pick-up read or the invoices
-    changed, or a minute on (a scan written over another of its name). Listed at the folder's resolved place, as the
-    pick-up notes them (``read_file``)."""
+    reading every one on each view took 7 s at 100,000 invoices, and looking at each one's size and time still takes
+    1.5 s, so the list is worked out again only once the folder (a file added, removed or renamed), what a pick-up
+    read or the invoices changed, or a minute on (a scan written over another of its name). Listed at the folder's
+    resolved place, as the pick-up notes them (``read_file``)."""
     folder = invoice_dir(store).resolve()
     try:
         stamp = (folder.stat().st_mtime_ns, store.files_stamp())
