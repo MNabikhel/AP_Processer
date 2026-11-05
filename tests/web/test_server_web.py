@@ -223,7 +223,7 @@ def test_on_the_server_the_data_workbook_is_made_in_the_background_and_the_last_
     log_in(clerk, "ann")
     log_in(reader, "rita")
     missing = reader.get("/spend/data.xlsx", headers={"Accept": "text/html"})
-    assert missing.status_code == 404 and "No workbook has been made yet" in missing.text
+    assert missing.status_code == 404 and "a Clerk makes it on Spend with Make the Excel workbook" in missing.text
     assert "Make the Excel workbook" in clerk.get("/spend").text
     assert (
         "a Clerk makes it here" in reader.get("/spend").text and 'action="/spend/data"' not in reader.get("/spend").text

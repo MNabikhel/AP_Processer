@@ -587,8 +587,15 @@ def lesson_retire(request: Request, lesson_id: int = Form(...), retired: str = F
                 else "Restored: the AI reads it again.")  # fmt: skip
 
 
+def _suppliers_url(shown: str) -> str:
+    """Supplier learning with as many vendors listed as when a vendor was acted on: one past the first stays in view."""
+    listed = _shown(shown)
+    return "/learning?tab=suppliers" + (f"&shown={listed}" if listed > SUPPLIERS_SHOWN else "")
+
+
 @router.post("/learning/suppliers/hold")
-def supplier_hold(request: Request, key: str = Form(...), reason: str = Form("")) -> JSONResponse:
+def supplier_hold(request: Request, key: str = Form(...), reason: str = Form(""),
+                  shown: str = Form("")) -> JSONResponse:  # fmt: skip
     """Keep a vendor supervised: every invoice goes to a person, whatever its record, until allowed again."""
     from ap_coder.capture.supplier import HELD
 
@@ -598,11 +605,11 @@ def supplier_hold(request: Request, key: str = Form(...), reason: str = Form("")
         return refuse("That vendor is no longer in AP Coder's supplier learning.", 404)
     name = profile["display_name"] or key
     store.set_supplier_state(key, HELD, reviewer(), reason=reason.strip() or "kept supervised on the Learning page")
-    return done(request, "/learning?tab=suppliers", f"{name} is kept supervised: every invoice is reviewed.")
+    return done(request, _suppliers_url(shown), f"{name} is kept supervised: every invoice is reviewed.")
 
 
 @router.post("/learning/suppliers/allow")
-def supplier_allow(request: Request, key: str = Form(...)) -> JSONResponse:
+def supplier_allow(request: Request, key: str = Form(...), shown: str = Form("")) -> JSONResponse:
     from ap_coder.capture.supplier import SUPERVISED
 
     store = get_store(request)
@@ -611,18 +618,18 @@ def supplier_allow(request: Request, key: str = Form(...)) -> JSONResponse:
         return refuse("That vendor is no longer in AP Coder's supplier learning.", 404)
     name = profile["display_name"] or key
     store.set_supplier_state(key, SUPERVISED, reviewer(), reason="allowed again on the Learning page")
-    return done(request, "/learning?tab=suppliers", f"{name} can skip review again once it meets the bar.")
+    return done(request, _suppliers_url(shown), f"{name} can skip review again once it meets the bar.")
 
 
 @router.post("/learning/suppliers/reset-layout")
-def supplier_reset_layout(request: Request, key: str = Form(...)) -> JSONResponse:
+def supplier_reset_layout(request: Request, key: str = Form(...), shown: str = Form("")) -> JSONResponse:
     """Forget a vendor's layout (what its template learned): its next invoices are read as a new vendor's (D-71)."""
     store = get_store(request)
     profile = store.get_supplier_profile(key)
     if profile is None or not store.reset_supplier_layout(key, reviewer()):
         return refuse("That vendor is no longer in AP Coder's supplier learning.", 404)
     name = profile["display_name"] or key
-    return done(request, "/learning?tab=suppliers",
+    return done(request, _suppliers_url(shown),
                 f"{name}'s layout is reset: its next invoices are read as a new vendor's, and approving them teaches "
                 "it again.")  # fmt: skip
 

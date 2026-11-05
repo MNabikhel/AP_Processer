@@ -208,7 +208,8 @@ def spend_workbook(request: Request) -> Response:
                         XLSX)  # fmt: skip
     path = workbook_path(store)
     if path is None:
-        raise HTTPException(status_code=404, detail="No workbook has been made yet: on Spend, Make the workbook.")
+        raise HTTPException(status_code=404, detail="No workbook has been made yet: a Clerk makes it on Spend with "
+                                                    "Make the Excel workbook.")  # fmt: skip
     made = dt.datetime.fromtimestamp(path.stat().st_mtime)
     return FileResponse(path, media_type=XLSX, filename=f"ap_coder_data_{made:%Y-%m-%d_%H%M}.xlsx",
                         headers={"Cache-Control": "no-store"})  # fmt: skip
