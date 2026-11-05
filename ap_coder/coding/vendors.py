@@ -353,7 +353,7 @@ def vendor_findings(
     elif store.has_vendor_master() and not (master and master.get("in_master")):
         number = norm_tax_number(coding.gst_hst_registration_number)
         real = sum(c.isdigit() for c in number) >= 9  # a Business Number, not "N/A" or "pending"
-        by_number = [v for v in store.master_vendors() if real and same_tax_number(v["expected_gst"], number)]
+        by_number = store.master_by_tax_number(number) if real else []
         if by_number:
             master = by_number[0]
             findings.append(

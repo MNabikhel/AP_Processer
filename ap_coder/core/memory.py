@@ -202,6 +202,23 @@ class RowsCache:
         return new[3]
 
 
+# The vendors whose lessons go past the whole memory's cap (``Store.learning_rows``): their older lessons (the store's
+# ``_PAST_MEMORY``) and the GL suggestions' index extended by them (``suggest._PAST``) are kept for this many vendors
+# and this many of their lessons at most in each process, the latest used always (D-159).
+PAST_KEPT, PAST_ROWS_KEPT = 32, 60_000
+
+
+class WithPast(list):
+    """``Store.learning_rows`` of a vendor with lessons past the whole memory's cap: the whole memory's rows
+    (``shared``, the same list while its lessons are the same), then the vendor's lessons it does not hold (``past``,
+    the same list too while they are). ``key``: whose (the database, the vendor). The GL suggestions build the shared
+    rows' index once and extend it by the past ones (``suggest._with_past``)."""
+
+    def __init__(self, shared: list[dict[str, Any]], past: list[dict[str, Any]], key: Any) -> None:
+        super().__init__(shared + past)
+        self.shared, self.past, self.key = shared, past, key
+
+
 _AGGREGATED = RowsCache()
 
 

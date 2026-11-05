@@ -271,3 +271,234 @@ def test_a_restore_gives_the_database_a_new_summary_id_so_nothing_kept_from_befo
     with sqlite3.connect(store.path) as conn:  # the count is again the one kept before the restore
         conn.execute("UPDATE vendors SET display_name = 'Acme restored'")
     assert kept()[0][1] == "Acme restored"
+
+
+# --- The uses (D-159's "What is kept"): each filled, changed through another Store or plain SQL, asked again -------
+
+
+def _master(conn, key: str, erp_id: str, gst: str, in_master: int = 1) -> None:
+    conn.execute("INSERT INTO vendors (vendor_key, display_name, erp_id, expected_gst, in_master, updated_at) VALUES "
+                 "(?, ?, ?, ?, ?, ?)", (key, key.title(), erp_id, gst, in_master, NOW))  # fmt: skip
+
+
+def test_the_vendor_masters_ids_follow_a_change_made_through_another_store_or_plain_sql(tmp_path):
+    """``vendor_ids``, kept on ``changes/vendors``: an ERP ID changed, a vendor added or deleted by another Store or
+    plain SQL is in the next answer; while nothing changed it is not worked out again."""
+    store = Store(tmp_path / "ap.db")
+    other = Store(store.path)
+    with sqlite3.connect(store.path) as conn:
+        _master(conn, "acme", "S1", "123456789 RT0001")
+    first = store.vendor_ids()
+    assert first == {"acme": "S1", "gst:123456789rt0001": "S1", "bnx:123456789": "S1"}
+    assert store.vendor_ids() is first  # kept
+    with other._conn() as conn:
+        conn.execute("UPDATE vendors SET erp_id = 'S2' WHERE vendor_key = 'acme'")
+    assert store.vendor_ids()["acme"] == "S2"
+    with sqlite3.connect(store.path) as conn:
+        _master(conn, "beta", "B1", "987654321")
+    assert store.vendor_ids() == store._vendor_ids() and store.vendor_ids()["bn:987654321"] == "B1"
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("DELETE FROM vendors WHERE vendor_key = 'acme'")
+    assert store.vendor_ids() == {"beta": "B1", "gst:987654321": "B1", "bn:987654321": "B1"}
+
+
+def test_the_masters_vendors_found_by_a_tax_number_are_the_whole_lists_and_follow_a_change(tmp_path):
+    """``master_by_tax_number``: the master's vendors ``same_tax_number`` matches, in the list's order, as reading
+    the whole master gives them (a Business Number for a full account and back; two full accounts only the same). Its
+    numbers are kept on ``changes/vendors``: a number changed through another Store, a vendor put in the master by
+    plain SQL, are found by what they are now."""
+    from ap_coder.coding.vendors import norm_tax_number, same_tax_number
+
+    store = Store(tmp_path / "ap.db")
+    other = Store(store.path)
+    with sqlite3.connect(store.path) as conn:
+        for key, gst, in_master in (
+            ("acme", "123456789 RT0001", 1),
+            ("acme #2", "123456789", 1),
+            ("beta", "123456789RT0002", 1),
+            ("gamma", "987654321RT0001", 0),
+            ("delta", "N/A", 1),
+            ("epsilon", "", 1),
+            ("zeta", "1234567890TQ0001", 1),
+        ):
+            _master(conn, key, key[:2].upper(), gst, in_master)
+
+    def whole(number):
+        return [v for v in store.master_vendors() if same_tax_number(v["expected_gst"], norm_tax_number(number))]
+
+    asked = ("123456789RT0001", "123 456 789", "123456789 rt 0002", "123456789RT0003", "987654321RT0001", "n/a",
+             "1234567890TQ0001", "555555555", "")  # fmt: skip
+    for number in asked:
+        assert store.master_by_tax_number(number) == whole(number), number
+    assert [v["vendor_key"] for v in store.master_by_tax_number("123456789")] == ["acme", "acme #2", "beta"]
+    with other._conn() as conn:
+        conn.execute("UPDATE vendors SET expected_gst = '555555555 RT0001' WHERE vendor_key = 'beta'")
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE vendors SET in_master = 1 WHERE vendor_key = 'gamma'")
+    for number in asked:
+        assert store.master_by_tax_number(number) == whole(number), number
+    assert [v["vendor_key"] for v in store.master_by_tax_number("555555555")] == ["beta"]
+    assert [v["vendor_key"] for v in store.master_by_tax_number("987654321RT0001")] == ["gamma"]
+
+
+def test_the_held_vendors_approved_numbers_follow_an_approval_made_elsewhere_and_what_is_asked(tmp_path, ground_truth):
+    """``approved_numbers``, kept on ``changes/approved`` and the vendors asked: an approval through another Store,
+    an approved coding changed by plain SQL, are in the next answer; other vendors asked get their own; each caller
+    gets lists of its own."""
+    store = Store(tmp_path / "ap.db")
+    other = Store(store.path)
+    invoice = _invoice(store, tmp_path, ground_truth, "H-1", "Acme Supply")
+    key = store.get_invoice(invoice)["vendor_key"]
+    assert store.approved_numbers([key]) == {}
+    coding = {**ground_truth, "vendor_name": "Acme Supply", "gst_hst_registration_number": "123456789RT0001",
+              "remit_bank_account": "004-12345-1234567"}  # fmt: skip
+    other.approve_invoice(invoice, coding, "Jordan Lee")
+    assert store.approved_numbers([key]) == {key: [("123456789RT0001", "004-12345-1234567")]}
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE invoices SET final_output = json_set(final_output, '$.remit_bank_account', '999') "
+                     "WHERE id = ?", (invoice,))  # fmt: skip
+    assert store.approved_numbers([key]) == {key: [("123456789RT0001", "999")]}
+    assert store.approved_numbers(["beta"]) == {} and store.approved_numbers(["beta", key])[key]
+    mine = store.approved_numbers([key])
+    mine[key].append(("changed", "by the caller"))
+    assert store.approved_numbers([key]) == {key: [("123456789RT0001", "999")]}
+
+
+def test_a_lines_suggestions_follow_the_lessons_and_the_gl_accounts_changed_elsewhere_and_are_the_callers_own(
+    tmp_path,
+):
+    """``suggest_gl``'s answers, kept with the memory and the reference data they came from (``_Memory.said``): a
+    lesson added through another Store is a new memory, a GL account's description changed by plain SQL new
+    reference data (the accounts named the same: the same memory); each caller gets copies."""
+    from ap_coder.ai.suggest import suggest_gl
+
+    store = Store(tmp_path / "ap.db")
+    other = Store(store.path)
+    accounts = [{"code": "6000", "description": "Office supplies", "category": "Opex"},
+                {"code": "6230", "description": "Cleaning supplies", "category": "Opex"}]  # fmt: skip
+    store.save_accounts("gl_accounts", accounts)
+    lesson = {"vendor_name": "Acme", "description": "Nitrile gloves", "gl_code": "6000", "amount": 1.0,
+              "date": "2025-01-01"}  # fmt: skip
+    store.import_history([lesson])
+
+    def asked(line: str) -> list[tuple[str, str]]:
+        found = suggest_gl(line, "Acme", store.learning_rows("Acme"), store.reference_data())
+        return [(s.gl_code, s.reasons[0]) for s in found]
+
+    gloves = asked("Nitrile gloves")
+    assert gloves == [("6000", "coded this way 1 time for similar lines from this vendor")]
+    mine = suggest_gl("Nitrile gloves", "Acme", store.learning_rows("Acme"), store.reference_data())
+    mine[0].reasons.insert(0, "changed by the caller")
+    mine[0].gl_code = "9999"
+    assert asked("Nitrile gloves") == gloves and asked("Disinfectant 4 L") == []
+    other.import_history([{**lesson, "gl_code": "6230", "date": "2025-02-01"}])  # AP coded it otherwise since
+    assert asked("Nitrile gloves")[0] == ("6230", "coded this way 1 time for similar lines from this vendor")
+    assert asked("Disinfectant 4 L") == []  # (asked of this memory, before the account's description changes)
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE gl_accounts SET description = 'Cleaning supplies, disinfectant' WHERE code = '6230'")
+    assert asked("Disinfectant 4 L") == [("6230", "account description mentions “disinfectant”")]
+
+
+def test_the_queues_checks_follow_a_change_made_elsewhere_the_checks_stamp_and_what_is_asked(
+    tmp_path, ground_truth, monkeypatch
+):
+    """``bulk.queue_checks``, kept on the summary's ``queue`` topic, the checks stamp, laptop or server and the
+    invoices asked: a finding stored by plain SQL, an invoice parked through another Store, a change of settings
+    (their checks then made against others: counted) are in the next answer; fewer than ``KEEP_FROM`` invoices are
+    worked out each time; each caller gets rows and lists of its own, the findings in them read-only."""
+    from ap_coder.coding import bulk
+
+    store = Store(tmp_path / "ap.db")
+    other = Store(store.path)
+    checked = {"requires_review": True, "checks_stamp": store.checks_stamp(), "issues": []}
+    ids = []
+    for name in ("Q-1", "Q-2", "Q-3"):
+        (tmp_path / f"{name}.pdf").write_bytes(name.encode())
+        ids.append(store.add_invoice(tmp_path / f"{name}.pdf", {**ground_truth, "invoice_number": name}, checked))
+    worked = []
+    real = bulk._queue_checks
+    monkeypatch.setattr(bulk, "_queue_checks", lambda *a: worked.append(1) or real(*a))
+    monkeypatch.setattr(bulk, "KEEP_FROM", 3)
+
+    def asked(which=tuple(ids), recheck=False):
+        return bulk.queue_checks(store, list(which), recheck=recheck)
+
+    first = asked()
+    assert sorted(first[0]) == ids and first[1] == 0 and all(c["found"] == [] for c in first[0].values())
+    assert asked() == first and len(worked) == 1  # kept
+    first[0][ids[0]]["found"].append({"severity": "error", "code": "CHANGED_BY_THE_CALLER"})
+    first[0][ids[0]]["q_pick"] = "changed by the caller"
+    assert asked()[0][ids[0]] == {**first[0][ids[0]], "found": [], "q_pick": ""} and len(worked) == 1  # copies
+    found = '[{"severity": "error", "code": "TOTAL_MISMATCH", "message": "Totals differ"}]'
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE invoices SET validation = json_set(validation, '$.issues', json(?)) WHERE id = ?",
+                     (found, ids[0]))  # fmt: skip
+    mismatch = asked()[0][ids[0]]["found"]
+    assert mismatch == [{"severity": "error", "code": "TOTAL_MISMATCH"}]
+    with pytest.raises(TypeError):
+        mismatch[0]["code"] = "CHANGED_BY_THE_CALLER"
+    other.park_invoice(ids[1], "Jordan Lee", "waiting for the buyer")
+    assert sorted(asked()[0]) == [ids[0], ids[2]] and len(worked) == 3
+    with sqlite3.connect(store.path) as conn:  # a change of settings: their checks were made against others
+        conn.execute("INSERT INTO settings (key, value) VALUES ('default_terms_days', '45')")
+    assert asked()[1] == 2 and len(worked) == 4
+    assert asked(recheck=True)[1] == 2 and len(worked) == 5  # the laptop's (no GL accounts: nothing checked again)
+    assert asked(recheck=True)[1] == 2 and asked()[1] == 2 and len(worked) == 6
+    assert sorted(asked([ids[2], ids[0], ids[1]])[0]) == [ids[0], ids[2]] and len(worked) == 7  # asked otherwise
+    asked(ids[:2])
+    asked(ids[:2])
+    assert len(worked) == 9  # fewer than KEEP_FROM: worked out each time
+    key = summary_module.TOPICS["queue"]  # one the summary could not work out: each change to it counts
+    row = {"status": "review", "broken": summary_module.BIT["queue"], **dict.fromkeys(summary_module.QUEUE_READ[1:])}
+    assert key(row) != key(row) and key({**row, "broken": 0}) == key({**row, "broken": 0})
+
+
+def test_the_queues_lists_follow_a_change_made_elsewhere_and_are_the_callers_own(tmp_path, ground_truth):
+    """``list_invoices`` of the queue's lists (review, parked, pending), kept on the summary's ``listed`` topic: a
+    confidence worked out through another Store, an invoice number changed by plain SQL, a park, are in the next
+    lists, as reading them afresh gives them; each caller gets rows of its own."""
+    from ap_coder.core.store import PARKED, PENDING, REVIEW
+
+    store = Store(tmp_path / "ap.db")
+    other = Store(store.path)
+    a, b, c = (_invoice(store, tmp_path, ground_truth, name) for name in ("L-1", "L-2", "L-3"))
+
+    def fresh(*statuses):
+        listed, marks = ", ".join(summary_module.LISTED_COLUMNS), ", ".join("?" * len(statuses))
+        return store.summary_fetch(f"SELECT {listed} FROM invoice_summary WHERE status IN ({marks}) ORDER BY "
+                                   "requires_review DESC, adjusted_confidence ASC, id ASC", statuses)  # fmt: skip
+
+    def ids(*statuses):
+        listed = store.list_invoices(statuses=statuses)
+        assert listed == fresh(*statuses), statuses
+        return [r["id"] for r in listed]
+
+    first = store.list_invoices(REVIEW)
+    assert [r["id"] for r in first] == [a, b, c] and first == fresh(REVIEW)
+    first[0]["invoice_number"] = "changed by the caller"
+    first.pop()
+    assert store.list_invoices(REVIEW) == fresh(REVIEW)
+    other.refresh_confidence(b, 0.12, True)
+    assert ids(REVIEW) == [a, c, b]
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE invoices SET invoice_number = 'L-9' WHERE id = ?", (c,))
+    assert store.list_invoices(REVIEW)[1]["invoice_number"] == "L-9" and ids(REVIEW) == [a, c, b]
+    other.park_invoice(a, "Jordan Lee", "waiting for the buyer")
+    assert ids(REVIEW) == [c, b] and ids(PARKED) == [a] and ids(REVIEW, PARKED, PENDING) == [a, c, b]
+
+
+def test_previous_and_next_step_through_the_kept_queue_as_another_store_or_plain_sql_changes_it(tmp_path, ground_truth):
+    """The invoice page's Previous and Next (``navigation``) read the queue's kept list: an invoice parked through
+    another Store, a confidence changed by plain SQL, move them at once."""
+    from ap_coder.web.pages.invoice import navigation
+
+    store = Store(tmp_path / "ap.db")
+    other = Store(store.path)
+    a, b, c = (_invoice(store, tmp_path, ground_truth, name) for name in ("N-1", "N-2", "N-3"))
+    assert navigation(store, a, {})["ids"] == [a, b, c] and navigation(store, a, {})["next"] == f"/review/{b}"
+    other.park_invoice(b, "Jordan Lee", "waiting for the buyer")
+    assert navigation(store, a, {})["next"] == f"/review/{c}"
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE invoices SET adjusted_confidence = 0.5 WHERE id = ?", (a,))
+        conn.execute("UPDATE invoices SET adjusted_confidence = 0.05 WHERE id = ?", (c,))
+    assert navigation(store, a, {})["ids"] == [c, a] and navigation(store, a, {})["prev"] == f"/review/{c}"
