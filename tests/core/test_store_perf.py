@@ -391,3 +391,34 @@ def test_the_queue_checks_an_invoice_again_once_per_change_of_settings(tmp_path,
     queue = [i for i in store.list_invoices() if i["status"] == REVIEW]
     bulk.sort_for_bulk(store, queue)
     assert len(calls) == 3
+
+
+def test_a_vendors_lessons_count_their_corrections_off_an_index_and_an_older_database_gets_it(tmp_path, monkeypatch):
+    """B-1714: the review screen's "Learned" hints (``lessons_for``) counted each lesson's corrections, and the ones
+    agreeing with it, by reading every approval that saw its situation: 1.4 s for the biggest vendor at 100,000
+    invoices (220,000 approvals of its situations, 2.5% of them corrections). Both counts are read off one index now,
+    and an older database's index by situation alone is replaced by it."""
+    store = Store(tmp_path / "ap.db")
+    row = {"key": "acme|invoice|invoice_number|", "vendor": "Acme", "kind": "invoice", "field": "invoice_number",
+           "value": "A-1", "proposed": "1", "corrected": True}  # fmt: skip
+    for n, value in ((1, "A-0"), (2, "A-1"), (3, "A-1")):
+        store.record_lesson({**row, "value": value}, invoice_id=n)
+    store.record_lesson({**row, "corrected": False}, invoice_id=4)  # confirmed
+    plan = _plan(store, monkeypatch, lambda: store.lessons_for("acme"), "lessons")
+    assert plan.count("COVERING INDEX lesson_approvals_counted") == 2, plan
+    assert [(r["corrected"], r["agreeing"]) for r in store.lessons_for("acme")] == [(3, 2)]
+
+    def indexes() -> set[str]:
+        with sqlite3.connect(store.path) as conn:
+            return {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'index' AND "
+                                               "tbl_name = 'lesson_approvals' AND sql IS NOT NULL")}  # fmt: skip
+
+    assert indexes() == {"lesson_approvals_counted"}
+    with sqlite3.connect(store.path) as conn:  # as schema 24 left it
+        conn.execute("DROP INDEX lesson_approvals_counted")
+        conn.execute("CREATE INDEX lesson_approvals_situation ON lesson_approvals (situation)")
+        conn.execute("UPDATE settings SET value = '24' WHERE key = 'schema_version'")
+    assert indexes() == {"lesson_approvals_situation"}
+    store = Store(store.path)
+    assert indexes() == {"lesson_approvals_counted"}
+    assert [(r["corrected"], r["agreeing"]) for r in store.lessons_for("acme")] == [(3, 2)]
