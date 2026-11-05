@@ -159,9 +159,11 @@ def main(argv: list[str] | None = None) -> int:
         return load.main_load(a)
     if getattr(a, "run", None) is not None:
         return a.run(a)
-    if getattr(a, "quick", False):  # smaller sizes, unless given
+    if getattr(a, "quick", False):  # smaller sizes, unless given (also as the default value: B-1724)
+        args = sys.argv[1:] if argv is None else argv
+        given = [arg.split("=", 1)[0] for arg in args if arg.startswith("--") and arg != "--"]
         for key, value in QUICK[a.cmd].items():
-            if key != "took" and getattr(a, key) == parsers[a.cmd].get_default(key):
+            if key != "took" and not any(f"--{key}".startswith(option) for option in given):  # (or abbreviated)
                 setattr(a, key, value)
     if a.cmd == "fake-model":
         return fake_model.run_command(a)

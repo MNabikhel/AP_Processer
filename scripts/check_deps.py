@@ -48,7 +48,7 @@ def applies(requirement: str) -> bool:
 
 
 def requirement_name(requirement: str) -> str:
-    """The normalised package name of a requirement string (``Rapidocr_ONNXRuntime>=1`` -> ``rapidocr-onnxruntime``)."""
+    """The normalised package name of a requirement string (``Pillow_HEIF>=0.18`` -> ``pillow-heif``)."""
     name = re.split(r"[<>=!~;\[ (]", requirement.strip(), maxsplit=1)[0]
     return re.sub(r"[-_.]+", "-", name).lower()
 

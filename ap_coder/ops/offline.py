@@ -9,12 +9,13 @@ a named internal system an Admin enables: JD Edwards' AIS Server (``erp/jde_ais.
 on the company network.
 ``tests/offline/test_offline_guard.py`` proves it: every flow runs with any connection but to this computer refused.
 
-RapidOCR 3 (the PP-OCRv5 reader) would download its model files into its own package folder the first time
-it is used. AP Coder never lets it: ``scripts/fetch_models.py`` copies them from the ``models/`` folder of
-the offline bundle, the capture code asks :func:`ppocrv5_ready` (every file there, with the right SHA-256)
-before using that engine and builds it with those files' paths (:func:`ppocrv5_engine_params`), so
-RapidOCR's own downloader never runs. With the models missing it falls back to the other engine
-(rapidocr-onnxruntime, whose PP-OCRv4 models come inside its package).
+RapidOCR 3 runs both OCR models: PP-OCRv4, the first read, whose model files come inside its package, and PP-OCRv5,
+the second read, whose files come in the ``models/`` folder of the offline bundle (D-163). It would download a model
+file into its own package folder the first time it is used, if the file were not there. AP Coder never lets it:
+``scripts/fetch_models.py`` copies the files from the bundle's ``models/`` folder, the capture code asks
+:func:`ppocrv4_ready` / :func:`ppocrv5_ready` (every file of that model there, with the right SHA-256) before using
+an engine and builds it with those files' paths (:func:`ppocrv4_engine_params`, :func:`ppocrv5_engine_params`), so
+RapidOCR's own downloader never runs. With one model's files missing, the other model reads alone.
 
 :func:`offline_checks` adds the matching lines to ``python -m ap_coder doctor``.
 """
@@ -38,8 +39,17 @@ log = logging.getLogger(__name__)
 
 PASS, WARN, FAIL, SKIP = "PASS", "WARN", "FAIL", "SKIP"  # the same words as doctor.py
 
-# The models the PP-OCRv5 engine of capture/layout.py uses (onnxruntime, mobile det + rec, the default
-# angle classifier), as RapidOCR 3.4 lists them. Used only when RapidOCR's own list cannot be read.
+# The models the two engines of capture/layout.py use (onnxruntime, mobile det + rec, the default angle classifier), as
+# RapidOCR 3.4 lists them. Used only when RapidOCR's own list cannot be read. The PP-OCRv4 ones come inside its package:
+# the very files rapidocr-onnxruntime 1.4.4 carried (D-163).
+_PPOCRV4_FALLBACK = (
+    ("ch_PP-OCRv4_det_infer.onnx", "onnx/PP-OCRv4/det/ch_PP-OCRv4_det_infer.onnx",
+     "d2a7720d45a54257208b1e13e36a8479894cb74155a5efe29462512d42f49da9"),
+    ("ch_ppocr_mobile_v2.0_cls_infer.onnx", "onnx/PP-OCRv4/cls/ch_ppocr_mobile_v2.0_cls_infer.onnx",
+     "e47acedf663230f8863ff1ab0e64dd2d82b838fceb5957146dab185a89d6215c"),
+    ("ch_PP-OCRv4_rec_infer.onnx", "onnx/PP-OCRv4/rec/ch_PP-OCRv4_rec_infer.onnx",
+     "48fc40f24f6d2a207a2b1091d3437eb3cc3eb6b676dc3ef9c37384005483683b"),
+)  # fmt: skip
 _PPOCRV5_FALLBACK = (
     ("ch_PP-OCRv5_mobile_det.onnx", "onnx/PP-OCRv5/det/ch_PP-OCRv5_mobile_det.onnx",
      "4d97c44a20d30a81aad087d6a396b08f786c4635742afc391f6621f5c6ae78ae"),
@@ -117,13 +127,13 @@ def _package_dir(module: str) -> Path | None:
 
 
 def ppocrv5_installed() -> bool:
+    """RapidOCR 3 and ONNX Runtime, which run both OCR models."""
     return _package_dir("rapidocr") is not None and _package_dir("onnxruntime") is not None
 
 
 def ppocrv4_installed() -> bool:
-    """rapidocr-onnxruntime, which carries its PP-OCRv4 models inside the package (nothing to download)."""
-    folder = _package_dir("rapidocr_onnxruntime")
-    return folder is not None and any((folder / "models").glob("*.onnx"))
+    """RapidOCR 3 with its PP-OCRv4 model files, which come inside its package (looked at, not hashed)."""
+    return ppocrv5_installed() and not missing_models(models=ppocrv4_files())
 
 
 def model_dir() -> Path | None:
@@ -132,8 +142,18 @@ def model_dir() -> Path | None:
     return folder / "models" if folder else None
 
 
+def ppocrv4_params() -> dict:
+    """The settings capture/layout.py gives RapidOCR 3 for PP-OCRv4: the models and settings rapidocr-onnxruntime 1.4.4
+    read with (D-163)."""
+    from rapidocr import ModelType, OCRVersion
+
+    return {"Det.ocr_version": OCRVersion.PPOCRV4, "Rec.ocr_version": OCRVersion.PPOCRV4,
+            "Det.model_type": ModelType.MOBILE, "Rec.model_type": ModelType.MOBILE,
+            "Global.log_level": "error"}  # fmt: skip
+
+
 def ppocrv5_params() -> dict:
-    """The settings capture/layout.py gives RapidOCR 3 (a test keeps the two the same)."""
+    """The settings capture/layout.py gives RapidOCR 3 for PP-OCRv5 (a test keeps the two the same)."""
     from rapidocr import ModelType, OCRVersion
 
     return {"Det.ocr_version": OCRVersion.PPOCRV5, "Rec.ocr_version": OCRVersion.PPOCRV5,
@@ -142,15 +162,30 @@ def ppocrv5_params() -> dict:
 
 
 @functools.lru_cache(maxsize=1)
+def ppocrv4_files() -> tuple[ModelFile, ...]:
+    """The model files RapidOCR 3 needs for the PP-OCRv4 engine (as :func:`ppocrv5_files`)."""
+    return _model_files(ppocrv4_params, _PPOCRV4_FALLBACK)
+
+
+@functools.lru_cache(maxsize=1)
 def ppocrv5_files() -> tuple[ModelFile, ...]:
     """The model files RapidOCR 3 needs for the PP-OCRv5 engine, from its own model list when it can be
     read (so a newer RapidOCR is followed), else the list above."""
+    return _model_files(ppocrv5_params, _PPOCRV5_FALLBACK)
+
+
+def ocr_files() -> tuple[ModelFile, ...]:
+    """Every model file of the two OCR engines, once (they share the angle classifier)."""
+    return tuple({f.name: f for f in (*ppocrv4_files(), *ppocrv5_files())}.values())
+
+
+def _model_files(params: Callable[[], dict], fallback: tuple[tuple[str, str, str], ...]) -> tuple[ModelFile, ...]:
     try:
         from rapidocr.inference_engine.base import FileInfo, InferSession
         from rapidocr.main import DEFAULT_CFG_PATH
         from rapidocr.utils.parse_parameters import ParseParams
 
-        cfg = ParseParams.update_batch(ParseParams.load(DEFAULT_CFG_PATH), ppocrv5_params())
+        cfg = ParseParams.update_batch(ParseParams.load(DEFAULT_CFG_PATH), params())
         files = []
         for task in (cfg.Det, cfg.Cls, cfg.Rec):
             info = InferSession.get_model_url(FileInfo(engine_type=task.engine_type, ocr_version=task.ocr_version,
@@ -162,7 +197,7 @@ def ppocrv5_files() -> tuple[ModelFile, ...]:
             return tuple(files)
     except Exception as exc:  # an older/newer RapidOCR with another layout: use the known list
         log.debug("RapidOCR model list not readable (%s); using the built-in list", exc)
-    return tuple(ModelFile(name, _FALLBACK_BASE + path, sha) for name, path, sha in _PPOCRV5_FALLBACK)
+    return tuple(ModelFile(name, _FALLBACK_BASE + path, sha) for name, path, sha in fallback)
 
 
 def sha256(path: Path) -> str:
@@ -183,14 +218,17 @@ def _sha256_once(path: Path, stat: os.stat_result) -> str:
     return _checked[key]
 
 
-def missing_models(folder: Path | None = None, verify: bool = False) -> list[ModelFile]:
-    """The PP-OCRv5 model files not in ``folder`` (default: RapidOCR's own); ``verify`` also checks
-    each file's SHA-256 (once per file version), so a half-copied or damaged file counts as missing."""
+def missing_models(folder: Path | None = None, verify: bool = False,
+                   models: tuple[ModelFile, ...] | None = None) -> list[ModelFile]:  # fmt: skip
+    """The OCR model files of ``models`` (default: both engines', :func:`ocr_files`) not in ``folder`` (default:
+    RapidOCR's own); ``verify`` also checks each file's SHA-256 (once per file version), so a half-copied or damaged
+    file counts as missing."""
     folder = folder or model_dir()
+    models = ocr_files() if models is None else models
     if folder is None:
-        return list(ppocrv5_files())
+        return list(models)
     out = []
-    for f in ppocrv5_files():
+    for f in models:
         path = folder / f.name
         try:
             stat = path.stat()
@@ -202,32 +240,50 @@ def missing_models(folder: Path | None = None, verify: bool = False) -> list[Mod
     return out
 
 
+def ppocrv4_engine_params() -> dict:
+    """:func:`ppocrv4_params` plus the path of each model file on disk (as :func:`ppocrv5_engine_params`)."""
+    return _engine_params(ppocrv4_params(), ppocrv4_files())
+
+
 def ppocrv5_engine_params() -> dict:
     """:func:`ppocrv5_params` plus the path of each model file on disk. RapidOCR downloads a model only when
     it is given no path (or the file at its default path fails the checksum); given the paths, it never does."""
+    return _engine_params(ppocrv5_params(), ppocrv5_files())
+
+
+def _engine_params(params: dict, models: tuple[ModelFile, ...]) -> dict:
     folder = model_dir()
-    params = ppocrv5_params()
     if folder is not None:
-        for task, model in zip(("Det", "Cls", "Rec"), ppocrv5_files(), strict=False):
+        for task, model in zip(("Det", "Cls", "Rec"), models, strict=False):
             params[f"{task}.model_path"] = str(folder / model.name)
     return params
 
 
-_warned = False
+_warned: set[str] = set()  # the models whose missing files were logged (once each)
+
+
+def ppocrv4_ready() -> bool:
+    """RapidOCR 3 is installed and its PP-OCRv4 models (inside its package) are on disk, each with the right size and
+    SHA-256, so using it needs no download (as :func:`ppocrv5_ready`)."""
+    return _ready("PP-OCRv4", ppocrv4_files())
 
 
 def ppocrv5_ready() -> bool:
     """RapidOCR 3 is installed and its PP-OCRv5 models are on disk, each with the right size and SHA-256, so
     using it needs no download (a damaged file would make RapidOCR fetch it again: it counts as missing)."""
-    global _warned
+    return _ready("PP-OCRv5", ppocrv5_files())
+
+
+def _ready(name: str, models: tuple[ModelFile, ...]) -> bool:
     if not ppocrv5_installed():
         return False
-    missing = missing_models(verify=True)
-    if missing and not _warned:
-        _warned = True
+    missing = missing_models(verify=True, models=models)
+    if missing and name not in _warned:
+        _warned.add(name)
         log.warning(
-            "PP-OCRv5 models missing or damaged (%s): scans are read with one OCR engine. They come from the "
+            "%s models missing or damaged (%s): scans are read with one OCR engine. They come from the "
             "offline bundle's models/ folder: 'python scripts/fetch_models.py' copies them.",
+            name,
             ", ".join(f.name for f in missing),
         )
     return not missing
@@ -242,7 +298,7 @@ def table_finder_file() -> ModelFile:
 
 def bundle_models() -> tuple[ModelFile, ...]:
     """Every model file the offline bundle carries in its models/ folder: the OCR models and the table finder."""
-    return (*ppocrv5_files(), table_finder_file())
+    return (*ocr_files(), table_finder_file())
 
 
 def table_finder_dirs() -> list[Path]:
@@ -387,19 +443,19 @@ def offline_checks() -> list[tuple[str, str, str]]:
     """(area, status, detail) lines for ``doctor``: OCR engines and models, the data folder, and the
     dashboard's network settings. Reads files only; never connects anywhere."""
     out: list[tuple[str, str, str]] = []
-    v4, v5 = ppocrv4_installed(), ppocrv5_installed()
     from_bundle = "run APProcessor.bat (it installs from the offline bundle)"
-    v4_detail = "rapidocr-onnxruntime, models inside the package" if v4 else f"not installed: {from_bundle}"
-    out.append(("OCR PP-OCRv4", PASS if v4 else WARN, v4_detail))
-    if not v5:
-        out.append(("OCR PP-OCRv5", WARN if v4 else SKIP, f"RapidOCR 3 not installed: {from_bundle}"))
-    else:
-        missing = missing_models(verify=True)  # as ppocrv5_ready() checks them (each file hashed once per version)
-        out.append(("OCR PP-OCRv5", PASS if not missing else WARN,
-                    f"{len(ppocrv5_files())} model files present" if not missing else
+    usable = []
+    for area, models in (("OCR PP-OCRv4", ppocrv4_files()), ("OCR PP-OCRv5", ppocrv5_files())):
+        if not ppocrv5_installed():
+            out.append((area, WARN, f"RapidOCR 3 not installed: {from_bundle}"))
+            continue
+        missing = missing_models(verify=True, models=models)  # as _ready() checks them (each hashed once per version)
+        usable.append(not missing)
+        out.append((area, PASS if not missing else WARN,
+                    f"{len(models)} model files present" if not missing else
                     "models missing or damaged (" + ", ".join(f.name for f in missing) + "): scans get one OCR read; "
                     "copy them from the offline bundle: python scripts/fetch_models.py"))  # fmt: skip
-    if not v4 and not v5:
+    if not any(usable):
         out.append(("OCR", WARN, "no local OCR: scanned invoices and photos can't be read here (text PDFs can)"))
     if table_finder_path() is not None and onnxruntime_installed():
         out.append(("table finder", PASS, f"{TABLE_FINDER_NAME} present"))

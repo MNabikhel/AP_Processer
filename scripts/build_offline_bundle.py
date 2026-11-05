@@ -16,8 +16,8 @@ The ZIP (in ``dist/``) holds one ``APProcessor/`` folder:
   the optional Azure check, installed by the launcher when it can), as wheels for each platform and Python version
   asked for, plus pip, setuptools and wheel (where a package of the OCR add-on has no wheel, that target gets the
   rest without it: the launcher runs AP Coder without OCR; one without the Azure packages simply lacks them)
-* ``models/``: the PP-OCRv5 OCR models (``scripts/fetch_models.py`` copies them into place) and the table finder's
-  model (read where it is)
+* ``models/``: the OCR models, PP-OCRv4 and PP-OCRv5 (``scripts/fetch_models.py`` copies them into place), and the
+  table finder's model (read where it is)
 * ``bundle_manifest.json``: what is inside: the version, when it was built, and every file with its SHA-256
   (``files``). Unzipped over an older version, the launcher removes the files under ap_coder/, scripts/, tests/,
   samples/, wheelhouse/ and models/ that this list does not name (the older version's), and AP Coder's own
@@ -50,7 +50,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import check_deps  # noqa: E402
-from check_deps import requirement_name, tomllib  # noqa: E402  (tomllib, or pip's copy on Python 3.10)
+from check_deps import tomllib  # noqa: E402  (tomllib, or pip's copy on Python 3.10)
 
 # Where the build downloads from (for IT's firewall rules): pip's index and its files, then the OCR models' site.
 PIP_HOSTS = ("pypi.org", "files.pythonhosted.org")
@@ -66,10 +66,6 @@ DEFAULT_EXTRAS = ["ocr", "dev", "azure"]
 # manifest says so). azure: the optional Azure check's packages, so switching it on needs no download.
 OPTIONAL_EXTRAS = ("azure",)
 BUILD_TOOLS = ["pip", "setuptools>=68", "wheel"]  # an offline editable install builds with setuptools
-# Pure-Python packages whose metadata says Python < 3.13 but that work on 3.13 and 3.14 (rapidocr-onnxruntime, the
-# second OCR engine: it reads scans right there). Downloaded for every Python version, whatever their marker in
-# pyproject says, with pip's --ignore-requires-python (the launcher installs them the same way).
-IGNORE_REQUIRES_PYTHON = {"rapidocr-onnxruntime"}
 TOP = "APProcessor"
 
 # Never in the bundle: data, settings, environments and build output.
@@ -153,22 +149,15 @@ def pip_commands(reqs: list[str], wheelhouse: Path, platforms: list[str], python
                  current: bool = True, plain: list[str] | None = None,
                  optional: list[str] | None = None) -> list[dict]:  # fmt: skip
     """``pip download`` commands ({"target", "cmd"}): this computer's own Python, then each platform and
-    Python version (wheels only: nothing can be compiled on the offline computer). "also": the
-    IGNORE_REQUIRES_PYTHON packages (without their marker) with ``--ignore-requires-python``, run after ``cmd``.
-    Given ``plain`` (the requirements without the OCR add-on), each also has a "fallback" command, run instead
-    when ``cmd`` fails (then without "also": those packages are part of the OCR add-on). Given ``optional`` (the
-    OPTIONAL_EXTRAS' requirements), each also has an "optional" command, run after the others: when it fails, that
+    Python version (wheels only: nothing can be compiled on the offline computer). Given ``plain`` (the requirements
+    without the OCR add-on), each also has a "fallback" command, run instead when ``cmd`` fails. Given ``optional``
+    (the OPTIONAL_EXTRAS' requirements), each also has an "optional" command, run after the others: when it fails, that
     target is only without them."""
     args = ["download", "--disable-pip-version-check", "--dest", str(wheelhouse)]
-    loose = [r.split(";")[0].strip() for r in reqs if requirement_name(r) in IGNORE_REQUIRES_PYTHON]
-    strict = [r for r in reqs if requirement_name(r) not in IGNORE_REQUIRES_PYTHON]
-    plain = None if plain is None else [r for r in plain if requirement_name(r) not in IGNORE_REQUIRES_PYTHON]
 
     def step(target: str, cmd: list[str]) -> dict:
-        found = {"target": target, "cmd": [*cmd, *strict]}
-        if loose:
-            found["also"] = [*cmd, "--ignore-requires-python", *loose]
-        if plain is not None and plain != strict:
+        found = {"target": target, "cmd": [*cmd, *reqs]}
+        if plain is not None and plain != reqs:
             found["fallback"] = [*cmd, *plain]
         if optional:
             found["optional"] = [*cmd, *optional]
@@ -322,8 +311,6 @@ def build(args: argparse.Namespace) -> int:
             result = subprocess.run(step["fallback"], cwd=ROOT, capture_output=True, text=True)
             if result.returncode == 0:
                 without_ocr.append(target)
-        elif result.returncode == 0 and step.get("also"):
-            result = subprocess.run(step["also"], cwd=ROOT, capture_output=True, text=True)
         if result.returncode != 0:
             print(result.stdout[-3000:] + result.stderr[-3000:])
             print(f"pip download failed for {target}: see the messages above.")

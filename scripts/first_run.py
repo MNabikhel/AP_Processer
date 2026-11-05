@@ -4,7 +4,7 @@ APProcessor.command) uses its ``choose_data_dir``; run on its own, it does both 
 * records the data folder (database, invoices, outputs) outside the code, default ``~/APCoder``, so
   unzipping a newer version never loses or duplicates your data; an existing choice is kept, and data an
   older version kept inside its code folder (``private/``) is moved there
-* puts the PP-OCRv5 OCR models in place (``scripts/fetch_models.py``: copied from the offline bundle's
+* puts the OCR models in place (``scripts/fetch_models.py``: copied from the offline bundle's
   ``models/`` folder, never downloaded unless ``AP_ALLOW_INTERNET=1``); if that fails, OCR still works
   with one engine and this says where they come from
 
