@@ -43,7 +43,7 @@ Contents: [1 The files](#1-the-files-that-start-ap-coder) ·
 | `scripts/upgrade.py` | Taking over from older installs: record, data move, file paths, stale files, clean-up. |
 | `scripts/check_deps.py` | Which requirements in `pyproject.toml` are missing or too old. |
 | `scripts/first_run.py` | `choose_data_dir` (used by the launcher); run alone it also copies the models. |
-| `scripts/fetch_models.py` | Copies the PP-OCRv5 OCR models from the bundle's `models/` into place. |
+| `scripts/fetch_models.py` | Copies the OCR models from the bundle's `models/` into place (PP-OCRv4's come with RapidOCR). |
 | `scripts/pilot_check.py` | The self-check: reads the ten sample invoices with no AI model and no Azure. |
 | `scripts/build_offline_bundle.py` | IT, on a computer with internet: builds the offline ZIP (code, `wheelhouse/`, `models/`, `bundle_manifest.json`). |
 | `ap_coder/ops/cli.py:cmd_serve` → `ap_coder/web/server.py:serve` | The dashboard server (`python -m ap_coder serve`). |
@@ -168,7 +168,7 @@ Python 3.12"*).
   the hint then names it (`sudo apt install python3.12-venv`) instead of "reinstall Python".
 
 What the .venv has been through is kept in `.venv/ap_coder_launcher.json` (`STATE`: `setup_done`, `fingerprint`,
-`version`, `build`, `commit`, `port`, `self_check`, and the "tried once" marks `ocr_failed`, `ocr2_failed`,
+`version`, `build`, `commit`, `port`, `self_check`, and the "tried once" marks `ocr_failed`,
 `azure_failed`, `models_failed` (with `models_tries`: a failed download's starts today); it goes with the .venv when
 that is remade. The fingerprint is `pyproject.toml` plus the build (`ap_coder/core/paths.py:build_stamp`: the
 commit in `ap_coder/BUILD`, which GitHub's ZIP and the offline bundle fill in; a checkout's HEAD; else a hash of the
@@ -198,11 +198,9 @@ code), so a newer build of the same version is an update too.
    "already satisfied" lines hidden. First install: `-e .[ocr]`, then `-e .` if the OCR add-on fails (AP Coder runs
    without OCR; not tried again until `pyproject.toml` changes: `ocr_failed`). Later: only the missing
    requirements. A full disk (`DISK_FULL`) is said as that, with the size of the older installs' .venv folders.
-6. **Python 3.13+** (`ensure_second_ocr`): `rapidocr-onnxruntime` says "below 3.13" in its metadata but is pure
-   Python: installed with `--ignore-requires-python` from the wheelhouse, once per version.
-7. **The optional Azure check's packages** (`ensure_azure`): from the wheelhouse only, when it carries them; never
+6. **The optional Azure check's packages** (`ensure_azure`): from the wheelhouse only, when it carries them; never
    from the internet, never a reason to stop.
-8. **Registration** (`refresh_registration`): unzipped over an older version, `ap_coder` is registered again
+7. **Registration** (`refresh_registration`): unzipped over an older version, `ap_coder` is registered again
    (`--no-deps -e .`) so the running server reports the new version.
 
 ## 6. Update and takeover from an older install
@@ -285,13 +283,14 @@ or data) is not found again on later starts (`upgrade.left_to_clean`), so it is 
 * **Data folder** (`scripts/launch.py:ensure_data_folder`): created with `invoices/`; the readiness line checks it is
   writable (`readiness`).
 * **Database too new**: see above.
-* **OCR models** (`scripts/launch.py:ensure_models` → `scripts/fetch_models.py:setup`): RapidOCR 3's PP-OCRv5 models
-  (det, cls, rec) are copied from the bundle's `models/` into RapidOCR's package folder inside `.venv`, only when
-  missing (SHA-256 checked on the first run, `ap_coder/ops/offline.py:missing_models`). Never downloaded offline; a
+* **OCR models** (`scripts/launch.py:ensure_models` → `scripts/fetch_models.py:setup`): RapidOCR 3's models, PP-OCRv4
+  (det, cls, rec: inside its package) and PP-OCRv5 (det, rec; the same cls), are copied from the bundle's `models/`
+  into RapidOCR's package folder inside `.venv`, only when missing (SHA-256 checked on the first run,
+  `ap_coder/ops/offline.py:missing_models`). Never downloaded offline; a
   failure is said once and not retried until the bundle's `models/` folder changes (`models_attempt`). From the code
   alone each download is tried 3 times; a failure is said in plain words (the error in the log) and tried again at
-  the next start, up to 3 starts a day (`models_due`). Without them,
-  scans are read by the second engine (`rapidocr-onnxruntime`, PP-OCRv4 models inside its package).
+  the next start, up to 3 starts a day (`models_due`). Without the PP-OCRv5 models,
+  scans are read by PP-OCRv4 alone (D-163).
 * **Table finder** (`ap_coder/ops/offline.py:table_finder_path`): RapidLayout's `yolov8n_layout_general6.onnx` is read in
   place from the bundle's `models/`, else `<data>/models/`, else `AP_TABLE_FINDER_MODEL`; SHA-256 checked; never
   copied or downloaded. Without it, line items are read as before.
@@ -414,7 +413,7 @@ can corrupt an open SQLite database).
 
 | Where | What | Written by |
 | --- | --- | --- |
-| **Code folder** `.venv/` | AP Coder's own Python and packages; the PP-OCRv5 models inside RapidOCR's package | `launch.ensure_venv`, pip, `fetch_models` |
+| **Code folder** `.venv/` | AP Coder's own Python and packages; the OCR models inside RapidOCR's package | `launch.ensure_venv`, pip, `fetch_models` |
 | `.venv/ap_coder_launcher.json` | the launcher's state (above) | `launch.save_state` |
 | `.ap_coder_launch.lock` | the one-start-at-a-time lock (empty) | `launch.take_lock` |
 | `.ap_coder_install.json` | marker: a folder the launcher set up (version, build), so a later version may remove it | `upgrade.write_marker` |

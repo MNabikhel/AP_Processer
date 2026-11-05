@@ -8,11 +8,13 @@ import ipaddress
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -98,16 +100,21 @@ def test_capture_reads_an_invoice_offline(no_network):
 
 @ocr
 def test_missing_ppocrv5_models_mean_one_engine_not_a_download(no_network, monkeypatch, tmp_path):
-    monkeypatch.setattr(offline, "model_dir", lambda: tmp_path)  # an empty models folder
-    monkeypatch.setattr(offline, "_warned", False)
-    assert not offline.ppocrv5_ready()
-    if layout._installed("rapidocr_onnxruntime"):
-        assert layout.second_engine_name() == layout._engine_name() == "rapidocr"
-        result = analyze(SAMPLES / f"{SAMPLE_STEM}.pdf", ocr=True)
-        assert result.layout_source == "ocr" and result.fields["grand_total"].value
-    # With only RapidOCR 3 installed, OCR is unavailable rather than downloading.
-    monkeypatch.setattr(layout, "_installed", lambda module: module == "rapidocr")
-    assert not layout.ocr_available()
+    """Without the PP-OCRv5 models (they come in the offline bundle), PP-OCRv4 reads alone from the files inside
+    RapidOCR's package; without those too, OCR is unavailable rather than downloading."""
+    package = offline.model_dir()
+    monkeypatch.setattr(offline, "model_dir", lambda: tmp_path)
+    monkeypatch.setattr(offline, "_warned", set())
+    monkeypatch.setattr(layout, "_ENGINES", {})
+    for model in offline.ppocrv4_files():
+        shutil.copyfile(package / model.name, tmp_path / model.name)
+    assert offline.ppocrv4_ready() and not offline.ppocrv5_ready()
+    assert layout.second_engine_name() == layout._engine_name() == "ppocrv4"
+    result = analyze(SAMPLES / f"{SAMPLE_STEM}.pdf", ocr=True)
+    assert result.layout_source == "ocr" and result.fields["grand_total"].value
+    for model in offline.ppocrv4_files():
+        (tmp_path / model.name).unlink()  # an empty models folder
+    assert not offline.ppocrv4_ready() and not layout.ocr_available()
     assert no_network == []
 
 
@@ -253,26 +260,72 @@ def test_onnx_runtime_never_reports_to_microsoft(before):
     assert out.stdout.split() == ["1", "1"]
 
 
-def test_ppocrv5_settings_match_the_capture_engine(monkeypatch):
+@pytest.mark.parametrize("engine", ["ppocrv4", "ppocrv5"])
+def test_the_ocr_settings_match_the_capture_engines(monkeypatch, engine):
     rapidocr = pytest.importorskip("rapidocr")
     seen = {}
 
     class FakeRapidOCR:
         def __init__(self, params=None):
             seen["params"] = params
+            self.text_det, self.text_rec = SimpleNamespace(), SimpleNamespace(postprocess_op=SimpleNamespace())
 
     monkeypatch.setattr(rapidocr, "RapidOCR", FakeRapidOCR)
     monkeypatch.setattr(layout, "_ENGINES", {})
-    layout._engine("ppocrv5")
-    assert seen["params"] == offline.ppocrv5_engine_params()
-    assert {k: v for k, v in seen["params"].items() if not k.endswith(".model_path")} == offline.ppocrv5_params()
-    names = [m.name for m in offline.ppocrv5_files()]
-    assert names == [n for n, _, _ in offline._PPOCRV5_FALLBACK]  # RapidOCR's own list agrees with ours
+    layout._engine(engine)
+    assert seen["params"] == getattr(offline, f"{engine}_engine_params")()
+    unpathed = {k: v for k, v in seen["params"].items() if not k.endswith(".model_path")}
+    assert unpathed == getattr(offline, f"{engine}_params")()
+    files = getattr(offline, f"{engine}_files")()
+    fallback = getattr(offline, f"_{engine.upper()}_FALLBACK")
+    assert [(m.name, m.sha256) for m in files] == [(n, sha) for n, _, sha in fallback]  # RapidOCR's list agrees
     # Each model by its path on disk: RapidOCR's downloader runs only for a model given no path.
     folder = offline.model_dir()
     assert [seen["params"][f"{task}.model_path"] for task in ("Det", "Cls", "Rec")] == [
-        str(folder / name) for name in names
+        str(folder / m.name) for m in files
     ]
+
+
+def test_the_ppocrv4_engine_orders_and_scores_lines_as_rapidocr_onnxruntime_did():
+    """D-163: RapidOCR 3 reads PP-OCRv4 as rapidocr-onnxruntime 1.4.4 did, which the reader is tuned on. Its box
+    order: three boxes each 8 pixels below the last stay as that package put them (RapidOCR 3 makes them one line,
+    left to right); and a line's score is the plain mean of its characters', not rounded to 5 decimals."""
+    np = pytest.importorskip("numpy")
+
+    def box(x, y):
+        return [[x, y], [x + 40, y], [x + 40, y + 6], [x, y + 6]]
+
+    boxes = np.array([box(100, 0), box(50, 8), box(0, 16), box(300, 40), box(200, 41)], dtype=np.float32)
+    order = [[int(b[0][0]), int(b[0][1])] for b in layout._boxes_in_order(boxes)]
+    assert order == [[50, 8], [100, 0], [0, 16], [200, 41], [300, 40]]  # as rapidocr-onnxruntime 1.4.4 gives them
+    assert layout._boxes_in_order(boxes).dtype == np.float32
+
+    decoder = SimpleNamespace(character=["blank", "A", "B", " "], get_ignored_tokens=lambda: [0])
+    tokens = np.array([[1, 1, 0, 2, 0, 0], [0, 0, 0, 0, 0, 0]])
+    probs = np.array([[0.9, 0.8, 0.99, 0.7123456, 0.9, 0.9], [0.9] * 6], dtype=np.float32)
+    lines, words = layout._decode_lines(decoder, tokens, probs, False, (1.0,), 1.0, remove_duplicate=True)
+    assert lines == [("AB", np.mean([float(np.float32(0.9)), float(np.float32(0.7123456))]).tolist()), ("", 0.0)]
+    assert lines[0][1] != round(lines[0][1], 5) and words == []
+
+
+@ocr
+def test_the_ppocrv4_engine_takes_both_steps_as_rapidocr_onnxruntime_did(no_network):
+    """The two steps are the ones RapidOCR 3 runs (a release that renamed them would leave them unused): three words
+    each 7 pixels lower than the last come in rapidocr-onnxruntime's order (RapidOCR 3's own: TOTAL, NUMBER, INVOICE),
+    with unrounded scores."""
+    np = pytest.importorskip("numpy")
+    from PIL import Image, ImageDraw, ImageFont
+
+    if not offline.ppocrv4_ready():
+        pytest.skip("RapidOCR 3's PP-OCRv4 models are not here")
+    img = Image.new("RGB", (900, 200), "white")
+    draw = ImageDraw.Draw(img)
+    for i, (text, x) in enumerate((("INVOICE", 600), ("NUMBER", 330), ("TOTAL", 60))):
+        draw.text((x, 40 + 7 * i), text, fill="black", font=ImageFont.load_default(size=26))
+    lines = layout._engine("ppocrv4")(np.asarray(img))
+    assert [text for _quad, text, _score in lines] == ["NUMBER", "INVOICE", "TOTAL"]
+    assert any(score != round(score, 5) for _quad, _text, score in lines)
+    assert no_network == []
 
 
 def test_a_damaged_model_file_counts_as_missing_and_is_checked_once(tmp_path, monkeypatch):
@@ -283,7 +336,7 @@ def test_a_damaged_model_file_counts_as_missing_and_is_checked_once(tmp_path, mo
     monkeypatch.setattr(offline, "ppocrv5_files", lambda: models)
     monkeypatch.setattr(offline, "ppocrv5_installed", lambda: True)
     monkeypatch.setattr(offline, "model_dir", lambda: tmp_path)
-    monkeypatch.setattr(offline, "_warned", False)
+    monkeypatch.setattr(offline, "_warned", set())
     for name, data in contents.items():
         (tmp_path / name).write_bytes(data)
     reads: list[Path] = []
@@ -318,7 +371,7 @@ def fake_models(monkeypatch):
         offline.ModelFile(name, f"https://models.invalid/{name}", hashlib.sha256(data).hexdigest())
         for name, data in contents.items()
     )
-    monkeypatch.setattr(offline, "ppocrv5_files", lambda: models)
+    monkeypatch.setattr(offline, "ocr_files", lambda: models)
     return contents
 
 
@@ -399,11 +452,13 @@ def test_bundle_dry_run_plans_without_writing(tmp_path, capsys, no_network):
     # Without the OCR add-on when a package of it has no wheel there: the same command, minus its packages.
     assert all("onnxruntime>=1.17" in s["cmd"] and "onnxruntime>=1.17" not in s["fallback"] for s in cross)
     assert all("fastapi>=0.115,<1" in s["fallback"] for s in cross)
-    # The second OCR engine says Python < 3.13 but works there: downloaded for every version, ignoring that.
-    assert all(s["also"][-2:] == ["--ignore-requires-python", "rapidocr-onnxruntime>=1.3"] for s in cross)
-    assert not any("rapidocr-onnxruntime" in arg for s in cross for arg in s["cmd"] + s["fallback"])
-    assert cross[-1]["also"][:-2] == cross[-1]["cmd"][: len(cross[-1]["also"]) - 2]  # same target, same pip
-    assert len(plan["models"]) == 4  # the three PP-OCRv5 models and the table finder
+    # RapidOCR 3 runs both OCR models (D-163): one pip download a target, every package for every Python.
+    assert not any("also" in s for s in plan["pip_commands"])
+    # PP-OCRv4's three models, PP-OCRv5's two (the angle classifier is the same one) and the table finder.
+    assert [m["name"] for m in plan["models"]] == [
+        "ch_PP-OCRv4_det_infer.onnx", "ch_ppocr_mobile_v2.0_cls_infer.onnx", "ch_PP-OCRv4_rec_infer.onnx",
+        "ch_PP-OCRv5_mobile_det.onnx", "ch_PP-OCRv5_rec_mobile_infer.onnx", "yolov8n_layout_general6.onnx",
+    ]  # fmt: skip
     assert plan["models"][-1] == {
         "name": "yolov8n_layout_general6.onnx",
         "url": "https://www.modelscope.cn/models/RapidAI/RapidLayout/resolve/v1.2.0/onnx/360/yolov8n_layout_general6.onnx",
@@ -492,13 +547,10 @@ def test_bundle_leaves_out_ocr_only_where_it_has_no_wheel(tmp_path, monkeypatch,
     assert manifest["without_ocr"] == ["macosx_13_0_x86_64, Python 3.14"]
     assert manifest["targets"][1:] == ["win_amd64, Python 3.14", "macosx_14_0_arm64, Python 3.14",
                                        "macosx_13_0_x86_64, Python 3.14"]  # fmt: skip
-    # This computer and 2 targets: everything, then rapidocr-onnxruntime ignoring its Requires-Python; the Intel
-    # Mac: everything (failed), then everything but the OCR add-on; then, for each of the 4, the optional Azure
-    # packages on their own.
-    assert len(downloads) == 12 and sum("azure-identity>=1.17" in cmd for cmd in downloads) == 4
+    # This computer and 2 targets: everything; the Intel Mac: everything (failed), then everything but the OCR add-on;
+    # then, for each of the 4, the optional Azure packages on their own.
+    assert len(downloads) == 9 and sum("azure-identity>=1.17" in cmd for cmd in downloads) == 4
     assert manifest["without_azure"] == [] and "azure-identity>=1.17" in manifest["optional_requirements"]
-    assert sum("--ignore-requires-python" in cmd for cmd in downloads) == 3
-    assert not any("--ignore-requires-python" in cmd and "macosx_13_0_x86_64" in cmd for cmd in downloads)
     assert "No matching distribution found for onnxruntime" in capsys.readouterr().out
     assert list(out.glob("APProcessor-offline-*.zip"))
 
@@ -645,14 +697,13 @@ def test_check_deps():
     assert "fastapi>=0.115,<1" in check_deps.requirements()
     assert "rapidocr>=3.4,<3.5" not in check_deps.requirements()
     assert {"rapidocr>=3.4,<3.5", "pytest>=8"} <= set(check_deps.requirements(extras=("ocr", "dev")))
-    assert check_deps.requirement_name("Rapidocr_ONNXRuntime>=1.3; sys_platform == 'win32'") == "rapidocr-onnxruntime"
+    assert check_deps.requirement_name("Pillow_HEIF>=0.18; sys_platform == 'win32'") == "pillow-heif"
+    assert not any(r.startswith("rapidocr-onnxruntime") for r in check_deps.requirements(extras=("ocr",)))  # D-163
 
 
-def test_python_3_13_does_not_need_the_ocr_package_it_cannot_install(monkeypatch):
-    """rapidocr-onnxruntime is published for Python up to 3.12: on 3.13 it is not asked for (RapidOCR 3 reads)."""
+def test_a_package_only_for_older_pythons_is_not_asked_for_on_newer_ones(monkeypatch):
     check_deps = _script("check_deps")
-    (pinned,) = [r for r in check_deps.requirements(extras=("ocr",)) if r.startswith("rapidocr-onnxruntime")]
-    assert "python_version < '3.13'" in pinned
+    pinned = "surely-not-installed-package>=1.3; python_version < '3.13'"
     monkeypatch.setattr(check_deps, "Requirement", None)  # the fallback without packaging understands it too
     monkeypatch.setattr(check_deps.sys, "version_info", (3, 13, 0))
     assert not check_deps.applies(pinned) and check_deps.problem(pinned) == ""

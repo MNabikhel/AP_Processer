@@ -133,7 +133,7 @@ QUIET_PIP_LINES = (  # pip's progress lines: in the log, not in the window
     "Stored in",
     " ",
 )
-OCR_PACKAGES = {"rapidocr", "onnxruntime", "rapidocr-onnxruntime", "pillow-heif"}  # scans and photos
+OCR_PACKAGES = {"rapidocr", "onnxruntime", "pillow-heif"}  # scans and photos
 
 
 class SetupError(Exception):
@@ -1108,41 +1108,13 @@ def cannot_set_up() -> SetupError | None:
     return None
 
 
-# The second OCR engine (PP-OCRv4, models inside the package) is pure Python but says "Python below 3.13" in its
-# metadata, so pip leaves it out on 3.13 and newer (pyproject's marker). It works there: installed on its own,
-# without that check, so a scan is read by two engines on every Python.
-SECOND_OCR = "rapidocr-onnxruntime>=1.3"
-
-
-def ensure_second_ocr(state: dict) -> str:
-    """On Python 3.13 or newer, the second OCR engine from the wheelhouse when it is missing (once per version of
-    AP Coder if it can't be installed). Returns a note for the readiness lines ("" when nothing to say)."""
-    if sys.version_info[:2] < (3, 13) or importlib.util.find_spec("rapidocr_onnxruntime") is not None:
-        return ""
-    if importlib.util.find_spec("rapidocr") is None or state.get("ocr2_failed") == fingerprint():
-        return ""  # no OCR add-on at all (said already), or tried for this version
-    if pip_source() is None:
-        return ""
-    say("Installing the second OCR engine (it reads scans a second way; its metadata predates this Python).")
-    if pip_install(["--ignore-requires-python", SECOND_OCR]):
-        importlib.invalidate_caches()
-        state.pop("ocr2_failed", None)
-        return ""
-    state["ocr2_failed"] = fingerprint()
-    return "The second OCR engine could not be installed: scans are read by one OCR engine (and OvisOCR2)."
-
-
 def ensure_packages(state: dict, extras: tuple[str, ...] = ("ocr",)) -> tuple[str, str, bool]:
     """Install only what is missing or too old: nothing when everything is in place. Offline (the default)
     only from the bundle's wheelhouse/ folder. Returns (level, summary line, whether pip installed something).
-    On Python 3.13 or newer the second OCR engine is added too (``ensure_second_ocr``), and the optional Azure
-    check's packages when the wheelhouse has them (``ensure_azure``: never a reason to stop)."""
+    The optional Azure check's packages are added when the wheelhouse has them (``ensure_azure``: never a reason to
+    stop)."""
     level, summary, installed = _ensure_packages(state, extras)
     refresh_registration()
-    if "ocr" in extras and level != "fail":
-        note = ensure_second_ocr(state)
-        if note and level == "ok":
-            level, summary = "warn", f"{summary}. {note}"
     ensure_azure(state)
     return level, summary, installed
 
@@ -1372,9 +1344,10 @@ def _models_failed(state: dict, attempt: str, online: bool) -> str:
 
 
 def ensure_models(first: bool, state: dict) -> None:
-    """The PP-OCRv5 OCR models, put in place only when missing (checksums checked on the first run): copied from
-    the offline bundle's models/ folder; downloaded only when the setup may (:func:`setup_online`: the code alone,
-    or AP_ALLOW_INTERNET=1), with the table finder's model then too (into the data folder's models/ folder, so the
+    """The OCR models (PP-OCRv4's come inside RapidOCR's package), put in place only when missing (checksums checked
+    on the first run): copied from the offline bundle's models/ folder; downloaded only when the setup may
+    (:func:`setup_online`: the code alone, or AP_ALLOW_INTERNET=1), with the table finder's model then too (into the
+    data folder's models/ folder, so the
     code folder never looks like a bundle). A download is tried 3 times; when it still fails it is said plainly and
     tried again at the next start (up to MODEL_TRIES_A_DAY starts a day). A copy from the bundle that failed is said
     once, and tried again when the bundle's models folder changes."""

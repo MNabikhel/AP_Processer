@@ -48,19 +48,19 @@ def engine(monkeypatch):
 
 def test_outside_the_cache_every_read_runs_the_engine(engine):
     png = _png()
-    layout.ocr_image(png, 1, "rapidocr")
-    layout.ocr_image(png, 1, "rapidocr")
-    assert engine == ["rapidocr", "rapidocr"]
+    layout.ocr_image(png, 1, "ppocrv4")
+    layout.ocr_image(png, 1, "ppocrv4")
+    assert engine == ["ppocrv4", "ppocrv4"]
 
 
 def test_inside_the_cache_a_page_is_ocrd_once_by_each_engine(engine, tmp_path):
     png = _png()
     with layout.ocr_cache(tmp_path / "ocr"):
-        first = layout.ocr_image(png, 1, "rapidocr")
-        again = layout.ocr_image(png, 1, "rapidocr")
+        first = layout.ocr_image(png, 1, "ppocrv4")
+        again = layout.ocr_image(png, 1, "ppocrv4")
         layout.ocr_image(png, 1, "ppocrv5")  # another engine: its own reading
-        layout.ocr_image(_png(1), 1, "rapidocr")  # another page
-    assert engine == ["rapidocr", "ppocrv5", "rapidocr"]
+        layout.ocr_image(_png(1), 1, "ppocrv4")  # another page
+    assert engine == ["ppocrv4", "ppocrv5", "ppocrv4"]
     assert [w.text for w in again.words] == [w.text for w in first.words] and first.words
     assert [line.text for line in again.lines] == [line.text for line in first.lines]
     assert len(list((tmp_path / "ocr").glob("*.json"))) == 3
@@ -70,11 +70,11 @@ def test_inside_the_cache_a_page_is_ocrd_once_by_each_engine(engine, tmp_path):
 def test_a_damaged_reading_is_read_again(engine, tmp_path):
     png = _png()
     with layout.ocr_cache(tmp_path):
-        layout.ocr_image(png, 1, "rapidocr")
+        layout.ocr_image(png, 1, "ppocrv4")
         (cached,) = tmp_path.glob("*.json")
         cached.write_text("{not json", encoding="utf-8")
-        page = layout.ocr_image(png, 1, "rapidocr")
-    assert engine == ["rapidocr", "rapidocr"] and page.words
+        page = layout.ocr_image(png, 1, "ppocrv4")
+    assert engine == ["ppocrv4", "ppocrv4"] and page.words
 
 
 def test_the_cache_keeps_the_newest_readings(engine, tmp_path, monkeypatch):
@@ -84,7 +84,7 @@ def test_the_cache_keeps_the_newest_readings(engine, tmp_path, monkeypatch):
     monkeypatch.setattr(layout, "OCR_CACHE_MAX_FILES", 2)
     with layout.ocr_cache(tmp_path):
         for mark in range(4):
-            layout.ocr_image(_png(mark), 1, "rapidocr")
+            layout.ocr_image(_png(mark), 1, "ppocrv4")
     files = sorted(tmp_path.glob("*.json"))
     for age, path in enumerate(files):
         os.utime(path, (time.time() - 1000 * (age + 1),) * 2)  # files[0] is the newest

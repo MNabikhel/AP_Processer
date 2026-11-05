@@ -48,7 +48,6 @@ def launch(tmp_path, monkeypatch):
     monkeypatch.setattr(module, "STATE", venv / "ap_coder_launcher.json")
     monkeypatch.setattr(module, "WINDOWS", False)
     monkeypatch.setattr(module, "MAC", False)
-    monkeypatch.setattr(module, "ensure_second_ocr", lambda state: "")
     return module
 
 

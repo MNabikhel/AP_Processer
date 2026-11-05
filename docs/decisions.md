@@ -753,3 +753,32 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `coding/bulk.py`, `coding/vendors.py`, `ai/suggest.py`, `ai/line_match.py`, `docs/HOW_IT_RUNS.md`;
     `tests/core/test_kept_answers.py`, `tests/core/test_backups.py`, `tests/erp/test_invoice_summary.py`,
     `tests/ai/test_coding_no_ai.py`, `tests/ops/test_real_world_findings.py`)
+- **D-163** · **RapidOCR 3 runs PP-OCRv4 too, read exactly as rapidocr-onnxruntime read it, on every Python; that package
+  is gone.** The first read, which the rule reader and the confidence table are tuned on, was rapidocr-onnxruntime
+  1.4.4, published for Python up to 3.12: on 3.13 and 3.14 scans were read by PP-OCRv5 alone (its second read the same
+  model on an enlarged page), unless the launcher's install past its metadata worked.
+  - **What 1.4.4 ran:** PP-OCRv4 mobile det and rec (`ch_PP-OCRv4_det_infer.onnx`, `ch_PP-OCRv4_rec_infer.onnx`, its
+    characters in the model) and the v2.0 angle classifier (`ch_ppocr_mobile_v2.0_cls_infer.onnx`), on ONNX Runtime.
+    Pages over 2,000 pixels a side shrunk; det with the smaller side made 736, threshold 0.3, box threshold 0.5, unclip
+    ratio 1.6, dilation, the fast score, boxes under 4 pixels dropped; the angle classifier on (0.9); rec at 48 x 320
+    in batches of 6; lines scoring under 0.5 dropped.
+  - **RapidOCR 3.4.5** carries the same three files in its package (the same SHA-256), and its default settings are
+    those. The pre- and post-processing, the crops and the ONNX Runtime session options are the same code. Two steps
+    differ; `capture/layout.py` (`_read_as_rapidocr_onnxruntime`) takes them as 1.4.4 did:
+    - the boxes' order: 1.4.4 sorts them by their top left corner and swaps neighbours under 10 pixels apart; 3.4
+      groups them into lines first, which orders some differently, and the order sets which lines are recognised in
+      one batch (`_boxes_in_order`);
+    - a line's score: 3.4 rounds each character's probability, and their mean, to 5 decimals (`_decode_lines`).
+    - 3.4 also drops a line whose text is blank; 1.4.4 never gave one in the lines measured below.
+  - **The proof** (Python 3.12, both installed): see the measurements below.
+  - **The bundle:** the rapidocr-onnxruntime wheel (14,915,192 bytes, one for every target) goes; the PP-OCRv4 det and
+    rec (15,603,475 bytes, stored as the ZIP stores every model) join `models/` as PP-OCRv5's are, so
+    `scripts/fetch_models.py` puts back a damaged copy and `--check` checks them: 0.7 MB more. Left out, the bundle
+    would be 14.9 MB smaller (RapidOCR's wheel has them).
+  - **Names:** the engines are "ppocrv4" (was "rapidocr") and "ppocrv5". The app's OCR cache keys a reading by RapidOCR's
+    version, so each page kept is read once more; the bench's `AP_OCR_CACHE` keeps its names.
+  - **Gone:** `ensure_second_ocr` (the launcher installed 1.4.4 on 3.13+ with `--ignore-requires-python`), and the
+    bundle builder's downloads past a package's metadata (`IGNORE_REQUIRES_PYTHON`).
+  - (`capture/layout.py`, `ops/offline.py`, `ai/reading.py`, `scripts/launch.py`, `scripts/fetch_models.py`,
+    `scripts/build_offline_bundle.py`, `pyproject.toml`, `docs/HOW_IT_RUNS.md`, `docs/tested-packages.txt`;
+    `tests/offline/test_offline.py`, `tests/launcher/test_launch.py`, `tests/capture/test_reading_once.py`)

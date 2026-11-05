@@ -52,7 +52,6 @@ python-dotenv==1.2.4
 python-multipart==0.0.32
 PyYAML==6.0.3
 rapidocr==3.4.5
-rapidocr-onnxruntime==1.4.4
 requests==2.34.2
 ruff==0.17.3
 shapely==2.2.0
