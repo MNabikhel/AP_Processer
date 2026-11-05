@@ -250,16 +250,16 @@ class InvoicesMixin:
             r["exported_at"] = batches.get(r["export_batch"]) if r["export_batch"] else None
         return rows
 
-    def erp_register(self) -> list[dict[str, Any]]:
-        """Every invoice in the imported ERP register."""
+    def erp_register(self, numbers: list[str] | None = None) -> list[dict[str, Any]]:
+        """Every invoice in the imported ERP register; with ``numbers``, those with one of these invoice numbers (as
+        compared: ``norm_invoice_number``), in the same order."""
+        sql = (
+            "SELECT vendor_key, vendor_name, invoice_number, number_key, invoice_date, total, copies FROM erp_invoices"
+        )
         with self._conn() as conn:
-            return [
-                dict(r)
-                for r in conn.execute(
-                    "SELECT vendor_key, vendor_name, invoice_number, number_key, invoice_date, total, copies "
-                    "FROM erp_invoices"
-                )
-            ]
+            if numbers is None:
+                return [dict(r) for r in conn.execute(sql)]
+            return fetch_rows(conn, f"{sql} WHERE {_in_list('number_key')} ORDER BY rowid", (json.dumps(numbers),))
 
     def in_erp(self, vendor_name: str, invoice_number: str, grand_total: float | None) -> list[dict[str, Any]]:
         """This vendor's invoices with the same number already in the ERP (a credit note is not a duplicate

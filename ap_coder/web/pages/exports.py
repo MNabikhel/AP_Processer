@@ -113,7 +113,8 @@ def jde_left_out(store: Store, batch: int) -> tuple[list[dict[str, Any]], dict[i
     known = store.export_batch(batch)
     if known and known["format"] == jde.FORMAT:
         return invoices, {}
-    left_out = jde.validate(invoices, jde.load(store), store.vendor_ids(), jde.prior_records(store, exclude_ids=ids))
+    prior = jde.prior_records(store, exclude_ids=ids, invoices=invoices)  # only what has their numbers (D-156)
+    left_out = jde.validate(invoices, jde.load(store), store.vendor_ids(), prior)
     return invoices, left_out
 
 
@@ -147,7 +148,7 @@ def jde_check(store: Store, invoice_ids: list[int]) -> tuple[list[int], dict[int
     settings = jde.load(store)
     blocking = jde.settings_problems(settings)
     invoices = store.get_invoices(invoice_ids)
-    problems = jde.validate(invoices, settings, store.vendor_ids(), jde.prior_records(store))
+    problems = jde.validate(invoices, settings, store.vendor_ids(), jde.prior_records(store, invoices=invoices))
     ok = [] if blocking else [i["id"] for i in invoices if i["id"] not in problems]
     return ok, problems, blocking
 
@@ -415,7 +416,8 @@ def jde_dry_run(request: Request) -> Response:
     back. Nothing is exported and no batch is made."""
     store = get_store(request)
     invoices = store.get_invoices([r["id"] for r in store.unexported_approved()])
-    report = jde.dry_run(invoices, jde.load(store), store.vendor_ids(), prior=jde.prior_records(store),
+    prior = jde.prior_records(store, invoices=invoices)  # only what has their numbers (D-156)
+    report = jde.dry_run(invoices, jde.load(store), store.vendor_ids(), prior=prior,
                          batch="(next)", fx_rates=store.fx_rates())  # fmt: skip
     return download(jde.dry_run_text(report).encode("utf-8"), "ap_coder_jde_dry_run.txt", "text/plain; charset=utf-8")
 
