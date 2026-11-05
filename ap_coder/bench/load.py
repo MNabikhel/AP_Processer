@@ -31,8 +31,9 @@ What it runs:
   not hidden by people who click less. A person over a minute behind starts again from now (people don't queue
   clicks); how often that happened is reported.
 
-What it measures: for every route (ids taken out), the count, p50/p95/p99/max, the status codes, refusals (4xx), the
-requests over 30 seconds, errors (5xx, no answer); the server's own milliseconds from its access logs; throughput over
+What it measures: for every route (ids taken out), the count, p50/p95/p99/max (a request without an answer counted at
+its time, at least ``--timeout``), the status codes, refusals (4xx), the requests over 30 seconds, errors (5xx, no
+answer); the server's own milliseconds from its access logs; throughput over
 time; each server process's CPU and memory over time (``/proc``, or psutil when it is installed); "database is
 locked", tracebacks and 5xx lines in the server's logs; the harness's own CPU (it must stay well under one core for
 the figures to be the server's). After the run, with the server stopped: no invoice approved or exported twice, one
@@ -1419,15 +1420,22 @@ def stats(values: list[float]) -> dict[str, Any]:
     return out
 
 
-def route_table(samples: list[tuple]) -> dict[str, dict[str, Any]]:
+def waited(sample: tuple, timeout: float, at: int = 3) -> float:
+    """A request's seconds in the percentiles (``at`` 3: from when it was due; 4: from when it was sent). One without
+    an answer (a timeout, a dropped connection) counts at least ``timeout``: a server that answers fewer requests never
+    looks quicker for it."""
+    return sample[at] if not sample[7] else max(sample[at], timeout)
+
+
+def route_table(samples: list[tuple], timeout: float) -> dict[str, dict[str, Any]]:
     by: dict[str, list[tuple]] = collections.defaultdict(list)
     for s in samples:
         by[s[0]].append(s)
     table = {}
     for route, rows in sorted(by.items()):
         answered = [r for r in rows if not r[7]]
-        entry = stats([r[3] for r in answered])
-        entry["service"] = stats([r[4] for r in answered])
+        entry = stats([waited(r, timeout) for r in rows])
+        entry["service"] = stats([waited(r, timeout, 4) for r in rows])
         entry["kind"] = collections.Counter(r[1] for r in rows).most_common(1)[0][0]
         entry["statuses"] = dict(sorted(collections.Counter(str(r[2]) for r in answered).items()))
         entry["refused"] = sum(1 for r in answered if 400 <= r[2] < 500)
@@ -1440,13 +1448,13 @@ def route_table(samples: list[tuple]) -> dict[str, dict[str, Any]]:
     return table
 
 
-def timeline(samples: list[tuple], every: float = 10.0) -> list[dict[str, Any]]:
+def timeline(samples: list[tuple], timeout: float, every: float = 10.0) -> list[dict[str, Any]]:
     buckets: dict[int, list[tuple]] = collections.defaultdict(list)
     for s in samples:
         buckets[int(s[5] // every)].append(s)
     return [{"t": k * every, "requests": len(rows), "per_second": round(len(rows) / every, 2),
              "errors": sum(1 for r in rows if r[7] or r[2] >= 500),
-             "p95": quantile(sorted(r[3] for r in rows if not r[7]), 0.95)}
+             "p95": quantile(sorted(waited(r, timeout) for r in rows), 0.95)}
             for k, rows in sorted(buckets.items())]  # fmt: skip
 
 
@@ -1533,17 +1541,17 @@ def audit(db: Path, since: str, seed: int = 1) -> dict[str, Any]:
 # --- The report, and the gate ---------------------------------------------------------------------------------------
 
 
-def _pooled(samples: list[tuple], test: Any) -> dict[str, Any]:
-    return stats([s[3] for s in samples if not s[7] and test(s)])
+def _pooled(samples: list[tuple], test: Any, timeout: float) -> dict[str, Any]:
+    return stats([waited(s, timeout) for s in samples if test(s)])
 
 
 def build_report(run: Run, cfg: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
     samples = run.samples
-    table = route_table(samples)
+    table = route_table(samples, run.timeout)
     measured = max(run.duration + run.ramp, 1e-9)
-    pages = _pooled(samples, lambda s: s[1] == "page")
+    pages = _pooled(samples, lambda s: s[1] == "page", run.timeout)
     actions = _pooled(samples, lambda s: s[1] == "action" and s[0].startswith("POST")
-                      and s[0].endswith(ACTIONS))  # fmt: skip
+                      and s[0].endswith(ACTIONS), run.timeout)  # fmt: skip
     fives = sum(r["errors_5xx"] for r in table.values())
     no_answer = sum(sum(r["no_answer"].values()) for r in table.values())
     slow = sum(r["over_30s"] for r in table.values())
@@ -1570,7 +1578,7 @@ def build_report(run: Run, cfg: dict[str, Any], extra: dict[str, Any]) -> dict[s
         "scenarios": {k: dict(v) for k, v in sorted(run.scenarios.items())},
         "problems": run.problems[:50],
         "routes": table,
-        "timeline": timeline(samples),
+        "timeline": timeline(samples, run.timeout),
         **extra,
     }
 

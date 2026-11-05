@@ -68,3 +68,32 @@ Paper</textarea><select form="inv" name="tax"><option value="GST">GST<option val
     screen.apply({"allow": False, "sections": {"bar": '<input type="checkbox" name="override" value="k2" form="inv" '
                                                       "checked>"}})  # fmt: skip
     assert screen.allow is False and screen.data("inv")[-1] == ("override", "k2")
+
+
+def _run(samples=(), timeout=120.0, ramp=0.0, duration=60.0):
+    run = load.Run("http://127.0.0.1:1", "127.0.0.1", 3, duration, ramp, 1.0, timeout, 1)
+    run.samples = list(samples)
+    return run
+
+
+def _sample(route, seconds, kind="page", error="", end=1.0):
+    return (route, kind, 0 if error else 200, seconds, seconds, end, 100, error)
+
+
+def test_a_request_without_an_answer_counts_at_least_the_timeout_in_every_percentile():
+    # 90 pages at 1 s, 10 timed out at 121 s: the p95 is the timeouts', not 1 s; a connection dropped after 10 ms is
+    # no quick answer either.
+    samples = [_sample("GET /review", 1.0) for _ in range(90)] + [_sample("GET /review", 121.0, error="timeout")
+                                                                  for _ in range(10)]  # fmt: skip
+    samples += [_sample("POST /review/{id}/approve", 0.2, "action") for _ in range(9)]
+    samples.append(_sample("POST /review/{id}/approve", 0.01, "action", error="ConnectError"))
+    report = load.build_report(_run(samples), {}, {})
+    route = report["routes"]["GET /review"]
+    assert route["p95"] == 121.0 and route["p50"] == 1.0 and route["n"] == route["count"] == 100
+    assert route["no_answer"] == {"timeout": 10} and report["requests"]["no_answer"] == 11  # still said apart
+    assert report["pages"]["p95"] == 121.0 and not report["targets"]["pages p95 <= 1.5 s"]
+    assert report["actions"]["p95"] == 120.0 and not report["targets"]["actions p95 <= 1.0 s"]
+    assert report["routes"]["POST /review/{id}/approve"]["max"] == 120.0
+    assert report["timeline"][0]["p95"] == 121.0
+    baseline = {"routes": {"GET /review": {"n": 100, "p95": 1.0}}}
+    assert any(p.startswith("GET /review: p95 121.000 s") for p in load.gate(report, baseline, 1.5))
