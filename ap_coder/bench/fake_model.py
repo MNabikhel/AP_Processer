@@ -15,7 +15,7 @@ the same names in JSON):
 - ``slots``: the requests answered at once (LM Studio's concurrent predictions, one GPU for every model); the rest
   wait in line, first come first served;
 - ``fail_rate``: the share answered 500; ``hang_rate``: the share that never answer (they keep their slot until
-  ``release_hung``, the client gives up, or the server goes down);
+  ``release_hung``, the client gives up, or the server goes down); both taken as a request gets its slot;
 - ``down``: every request is dropped unanswered, the connection closed (a killed server); ``down_after``: down once
   that many answers were given (counted once);
 - ``models``: what LM Studio lists (ids, or dicts as ``model_spec`` takes); changed while it runs, a swapped model;
@@ -516,8 +516,6 @@ class FakeModel:
             self._history.append(entry)
             self._in_flight += 1
             self._max_in_flight = max(self._max_in_flight, self._in_flight)
-            hang = self._rng.random() < self._state["hang_rate"]
-            fail = self._rng.random() < self._state["fail_rate"]
             self._ticket += 1
             ticket = self._ticket
             self._line.append(ticket)
@@ -533,6 +531,9 @@ class FakeModel:
                 self._cond.notify_all()
                 raise
             self._line.pop(0)
+            # Decided as it takes its slot, from the rates now: one in line when a hang drill ends is answered.
+            hang = self._rng.random() < self._state["hang_rate"]
+            fail = self._rng.random() < self._state["fail_rate"]
             self._active += 1
             self._max_active = max(self._max_active, self._active)
             entry["wait"] = round(time.monotonic() - arrived, 3)
