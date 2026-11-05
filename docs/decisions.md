@@ -429,3 +429,44 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   with `lms load`, a vision-batching engine, `llm_parallel` matched to its concurrent predictions, the API token on, a
   firewall that admits the AP Coder server only. (6) **Measured, not guessed**: `python -m ap_coder.bench load` and
   `bench volume` / `bench day`; the numbers in docs/SCALE.md. Docs only so far: the code changes follow, phase by phase.
+- **D-149** · **A model server named in the company's DNS** (B-1605; changes D-104's rule on model servers where it
+  says otherwise). Stage 2 reaches the models on another machine by its company name (`macstudio.corp…`), and the
+  offline rule refused every dotted name that wasn't `.local`, `.lan` or `.home` unless internet access was on. Now
+  a name under a domain listed in `AP_COMPANY_DOMAINS` (the `.env`, comma-separated) is judged as a bare name is
+  (B-974): allowed while every address it resolves to is private or loopback, refused if one is public; the lookup
+  is kept 30 s. Other dotted names are never looked up at all, because the offline proof counts every lookup
+  (`tests/offline/test_offline_guard.py`): the company network is named by an Admin, not guessed, as JD Edwards' one
+  saved address is (D-104). The refusal says to add the domain to `AP_COMPANY_DOMAINS` instead of turning on internet
+  access, and keeps that whole sentence (`check_server` cuts other errors to 160 characters). (`core/config.py`,
+  `ai/local_llm.py`; `tests/web/test_platform_security.py`, `tests/ai/test_local_llm.py`)
+- **D-150** · **Background polls are not activity; schema 20** (B-1579, B-1580, B-1581, B-1584; changes D-109's idle
+  rule where it says otherwise). A tab left open logged out at 30 idle minutes only if nothing polled: the reader
+  panel and job status renewed the session for as long as the tab stayed open (up to the 12-hour limit). The routes
+  in `web/identity.POLLS` (`/process/status`, `/jobs/*`, `/review/N/reader`, `/settings/reading/self-test`) look the
+  session up with `session_user(renew=False)`. Any new route a page polls on a timer goes in that list. The
+  `last_seen` write and the delete of an expired session use a 0.2 s wait and are left to a later request when the
+  database is busy (`users._briefly`): a page never waits behind another writer just to note that someone is still
+  there. The delete of a session refused for its account (turned off, no authenticator app) keeps the normal wait,
+  so an old session can't come back once the app is set up. Schema 20 adds six indexes: `invoices(export_batch)`,
+  `feedback(invoice_id)`, `events(action, created_at)`, `sessions(user_id)`, `ephemeral(expires_at)` and
+  `vendors(erp_id)`; on a 12,000-invoice database they take 0.09 s. (`web/identity.py`, `core/store/users.py`,
+  `core/store/_base.py`; `tests/core/test_users.py`, `tests/web/test_server_web.py`, `tests/core/test_store_perf.py`)
+- **D-151** · **One pick-up at a time, and the service host is told by its lock** (B-1585 to B-1590).
+  - **Pick-up:** a scheduled `watch`, the dashboard's Process button (with uploads and retry) and `ap_coder process
+    <files>` take one OS lock in the data folder (`mailbox.pickup_lock`). Each re-checks `find_by_hash` while it
+    holds the lock, so a file is stored once.
+  - **When it's busy:** a watch skips its check and says so. The dashboard and the command wait
+    (`mailbox.wait_for_pickup`), because a person asked.
+  - **The service host:** it holds `service\host.lock` while it runs. `service status`, `install` and `stop` judge a
+    running host by that lock, never by the process number in `host.json`, which may belong to another process after
+    a reboot. The host writes `host.json` straight after taking the lock, so the record is the running host's.
+  - **`server-update`:** it uses the fixed task name ("AP Coder", or `--task-name`), never `server.json`'s, as the
+    service commands do (B-1500).
+  - (`ops/service.py`, `ops/server_update.py`, `intake/mailbox.py`, `ops/cli.py`, `web/pages/process.py`;
+    `tests/ops/test_service.py`, `tests/ops/test_server_update.py`, `tests/ops/test_controls_watch.py`,
+    `tests/web/test_web_process.py`)
+- **D-152** · **Work typed after a session ended comes back** (B-1594). A 401 on any POST sends the person to
+  `/login?next=<this page>`. Before that, the review screen keeps the form in the browser tab's sessionStorage
+  together with the username. Back on that invoice as the same person, it becomes their draft; anyone else who opens
+  that invoice in the tab drops it without seeing it. Nothing is kept on the server for a session that has ended.
+  (`web/static/js/invoice.js`, `web/static/js/app.js`, `web/pages/login.py`; `tests/web/test_server_browser.py`)
