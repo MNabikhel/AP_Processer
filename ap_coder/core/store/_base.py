@@ -102,8 +102,8 @@ _METRICS: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {}
 # What a vendor's lessons say as last worked out, per (database, vendor key): (their stamp, ``VendorLessons``), the
 # latest used last (``Store.vendor_lessons``).
 _VENDOR_LESSONS: dict[tuple[str, str], tuple[tuple[Any, ...], Any]] = {}
-# A vendor's lessons the whole memory does not hold, as last read, per (database, vendor key): (their stamp, rows)
-# (``Store.learning_rows``).
+# A vendor's lessons the whole memory does not hold, as last read, per (database, vendor key): (their stamp, rows), the
+# latest used last, ``memory.PAST_KEPT`` vendors and ``PAST_ROWS_KEPT`` lessons at most (``Store.learning_rows``).
 _PAST_MEMORY: dict[tuple[str, str], tuple[tuple[Any, ...], list[dict[str, Any]]]] = {}
 
 

@@ -139,7 +139,7 @@ class Index:
     number of different accounts the lines it is in went to (1.0 for a word never seen)."""
 
     def __init__(self, entries: list[frozenset[str]], accounts: list[str]) -> None:
-        self.entries = entries
+        self.entries, self.accounts = entries, accounts
         by_word: dict[str, list[int]] = defaultdict(list)
         word_accounts: dict[str, set[str]] = defaultdict(set)
         for i, (ks, gl) in enumerate(zip(entries, accounts, strict=True)):
@@ -151,6 +151,31 @@ class Index:
         self._by_letter: dict[str, list[str]] = defaultdict(list)
         for k in self.by_word:
             self._by_letter[k[0]].append(k)
+
+    def extended(self, entries: list[frozenset[str]], accounts: list[str]) -> Index:
+        """A new index of this one's lines and then ``entries`` (and their ``accounts``): what one built of them all
+        holds, in the same order, without going over this one's lines again. This one stays as it is (its dicts and
+        lists are copied where the new lines change them)."""
+        out = Index.__new__(Index)
+        out.entries, out.accounts = self.entries + entries, self.accounts + accounts
+        out.by_word, out.weight = dict(self.by_word), dict(self.weight)
+        out._by_letter = defaultdict(list, self._by_letter)
+        words: dict[str, None] = {}  # the words the new lines have, in the order first seen
+        letters: set[str] = set()  # the first letters of the words new to it (their lists copied)
+        for i, ks in enumerate(entries, start=len(self.entries)):
+            for k in ks:
+                if k not in words:
+                    words[k] = None
+                    out.by_word[k] = list(self.by_word.get(k, ()))
+                    if k not in self.by_word:
+                        if k[0] not in letters:
+                            letters.add(k[0])
+                            out._by_letter[k[0]] = list(self._by_letter.get(k[0], ()))
+                        out._by_letter[k[0]].append(k)
+                out.by_word[k].append(i)
+        for k in words:
+            out.weight[k] = 1.0 / len({out.accounts[i] for i in out.by_word[k]})
+        return out
 
     def similar(
         self, line: frozenset[str], min_similarity: float = 0.0, own_codes: Callable[[int], bool] | None = None
