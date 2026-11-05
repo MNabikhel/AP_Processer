@@ -1,10 +1,11 @@
 """What a process keeps between requests (D-159, ``Store.summary_memo``): a kept answer holds only while a stamp read
 from the database before the work says nothing it depends on changed, whichever connection changed it (another
 Store, plain SQL); the counts of changes the triggers keep (``changes/<kind>``); an answer worked out inside a write
-that is undone; a restore."""
+that is undone; a restore; the answers kept on them (D-162)."""
 
 from __future__ import annotations
 
+import datetime as dt
 import sqlite3
 import threading
 import time
@@ -336,3 +337,36 @@ def test_the_readers_scorecard_follows_their_outcomes(tmp_path):
     assert fields() == [("rules", 1, 1)]
     store.reader_scorecard()[0]["fields"] = 99  # (each caller has its own copy)
     assert fields() == [("rules", 1, 1)]
+
+
+def _po_line(n: int, received: float) -> dict:
+    return {"po_number": "PO-1", "vendor_name": "Acme Supply", "line_number": n, "description": f"Bolts size {n}",
+            "quantity": 10.0, "unit_price": 2.0, "amount": 20.0, "received_quantity": received, "gl_code": "6010",
+            "cost_center": "", "status": "open", "amount_only": False, "open_amount": None}  # fmt: skip
+
+
+def test_month_ends_received_not_invoiced_lines_follow_the_pos_and_the_invoices_billing_them(tmp_path):
+    """Month-end's received, not invoiced PO lines, kept per period end on ``changes/purchase_orders`` and the
+    summary's generation (an invoice billing them)."""
+    from ap_coder.erp import accruals
+
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    other.import_purchase_orders([_po_line(1, 4.0), _po_line(2, 1.0)])
+    september, october = dt.date(2026, 9, 30), dt.date(2026, 10, 31)
+
+    def received(end: dt.date = october) -> list[tuple]:
+        found = [a for a in accruals.build(store, end) if a.source == accruals.RECEIVED]
+        assert found == accruals._received_not_invoiced(store, end)
+        return [(a.reference, a.amount) for a in found]
+
+    assert received() == [("PO-1 line 1", 8.0), ("PO-1 line 2", 2.0)]
+    _plain(store, "UPDATE po_lines SET received_quantity = 3 WHERE line_number = 2")
+    assert received() == [("PO-1 line 1", 8.0), ("PO-1 line 2", 6.0)]
+    line = {"line_number": 1, "description": "Bolts size 1", "quantity": 4, "unit_price": 2.0, "amount": 8.0}
+    bill = {"vendor_name": "Acme Supply", "invoice_number": "B-1", "po_number": "PO-1", "invoice_date": "2026-10-03",
+            "currency": "CAD", "line_items": [line], "subtotal": 8.0, "grand_total": 8.4}  # fmt: skip
+    other.add_invoice(tmp_path / "b.pdf", bill, {})  # (the summary's generation)
+    assert received() == [("PO-1 line 2", 6.0)]
+    assert received(september) == [("PO-1 line 1", 8.0), ("PO-1 line 2", 6.0)]  # (billed after it)
+    _plain(store, "DELETE FROM po_lines WHERE line_number = 2")
+    assert received() == []

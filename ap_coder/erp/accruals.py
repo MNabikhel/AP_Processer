@@ -269,7 +269,9 @@ def build(store: Store, period_end: dt.date, undated: list[Accrual] | None = Non
     """The accruals at ``period_end``; ``undated``: filled with the invoices not in the ERP yet that have no invoice
     date, not accrued until they have one (B-474), read in the same go; ``left_out``: with the expected recurring
     invoices not accrued, as their vendor's received, not invoiced PO lines are (``ON_PO``)."""
-    received = _received_not_invoiced(store, period_end)
+    # Kept until a PO or an invoice changes (D-162): 69,000 codings read and decoded at 100,000 invoices.
+    received = store.summary_memo("received_not_invoiced", lambda: _received_not_invoiced(store, period_end),
+                                  changes="purchase_orders", asked=period_end)  # fmt: skip
     expected = _expected_recurring(store, period_end, received, left_out)
     return received + _not_in_erp(store, period_end, undated) + expected
 
