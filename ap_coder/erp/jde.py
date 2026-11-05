@@ -1148,9 +1148,9 @@ def prior_records(store: Any, exclude_ids: Iterable[int] = (),
         return {"exported": exported, "register": store.erp_register()}
     numbers = sorted({norm_invoice_number((inv.get("final_output") or {}).get("invoice_number")) for inv in invoices}
                      - {""})  # fmt: skip
-    ids = [r["id"] for r in store.summary_rows("export_batch IS NOT NULL AND number_key IN (SELECT value FROM "
-                                               "json_each(?))", (json.dumps(numbers),), "id")]  # fmt: skip
-    exported = [r for r in store.search_rows(ids=ids, exported=True) if r["id"] not in exclude] if ids else []
+    picked = store.search_rows(where="number_key IN (SELECT value FROM json_each(?))", params=(json.dumps(numbers),),
+                               exported=True) if numbers else []  # fmt: skip
+    exported = [r for r in picked if r["id"] not in exclude]
     return {"exported": exported, "register": store.erp_register(numbers)}
 
 
