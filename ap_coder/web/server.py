@@ -220,9 +220,45 @@ def server_config(app: Any, host: str, port: int, certfile: str | None, keyfile:
                           **more)  # fmt: skip
 
 
-def default_workers() -> int:
-    """How many web workers the company server runs when nothing says (D-111): one per core, at most 8."""
-    return max(1, min(os.cpu_count() or 1, 8))
+WORKER_MB = 1500  # what a web worker uses on a 300,000-invoice database, its threads capped (D-153)
+
+
+def default_workers(cores: int | None = None, memory_mb: float | None = None) -> int:
+    """How many web workers the company server runs when nothing says (D-153; D-111 had one per core, at most 8):
+    one per core but an eighth of them, left to the background process and the database, and only as many as fit
+    at WORKER_MB each in the memory not kept for those and the system (``spare_mb``). 32 cores and 64 GB: 28."""
+    cores = cores or os.cpu_count() or 1
+    by_cores = cores - cores // 8
+    total = memory_mb if memory_mb is not None else memory_total_mb()
+    by_memory = int(spare_mb(total) // WORKER_MB) if total else by_cores
+    return max(1, min(by_cores, by_memory, 64))
+
+
+def spare_mb(total_mb: float) -> float:
+    """What the web workers may use of ``total_mb``: a quarter (at least 4 GB) is kept for the system, the background
+    process (OCR) and the database's own cache."""
+    return total_mb - max(4000.0, total_mb / 4)
+
+
+def memory_total_mb() -> float | None:
+    """This computer's memory in MB (None where it can't be told)."""
+    if os.name == "nt":
+        import ctypes
+
+        class Status(ctypes.Structure):  # MEMORYSTATUSEX
+            _fields_ = [("length", ctypes.c_ulong), ("load", ctypes.c_ulong), *(
+                (name, ctypes.c_ulonglong) for name in ("total", "free", "pagefile", "pagefree", "virtual",
+                                                        "virtualfree", "extended"))]  # fmt: skip
+
+        status = Status()
+        status.length = ctypes.sizeof(Status)
+        if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):  # type: ignore[attr-defined]
+            return None
+        return status.total / 1e6
+    try:
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1e6
+    except (OSError, ValueError, AttributeError):
+        return None
 
 
 def serve(host: str = "127.0.0.1", port: int = 8501, open_browser: bool = True, store: Store | None = None, *,

@@ -86,7 +86,7 @@ class ServerSettings:
     task_name: str = TASK_NAME
     folder: str = ""  # the AP Coder folder the service runs ("" = this one); server-update changes it
     allowed_folders: tuple[str, ...] = ()  # the folders an Admin may name on the Settings pages (D-109)
-    workers: int = 0  # web worker processes (D-111); 0: one per core, at most 8 (``server.default_workers``)
+    workers: int = 0  # web worker processes (D-111); 0: for the cores and the memory (``server.default_workers``)
     llm_parallel: int = 1  # requests sent to LM Studio (or another model server) at once (D-111)
     worker_threads: int = 0  # requests each web worker runs at once (D-153); 0: ``app.WORKER_THREADS``
 
@@ -903,7 +903,7 @@ def add_parser(sub: Any) -> None:
     p.add_argument("--allowed-folders", default=None,
                    help="The folders Admins may name for backup copies and the finance hub, ;-separated")  # fmt: skip
     p.add_argument("--workers", type=int, default=None,
-                   help="Web worker processes (default: one per core, at most 8; 1: all in one process)")  # fmt: skip
+                   help="Web worker processes (default: for the cores and memory; 1: all in one process)")  # fmt: skip
     p.add_argument("--llm-parallel", type=int, default=None,
                    help="Requests sent to LM Studio at once (default 1; docs/SERVER.md, step 8)")  # fmt: skip
     p.add_argument("--no-start", action="store_true", help="install: don't start it yet")

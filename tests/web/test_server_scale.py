@@ -398,14 +398,15 @@ def test_a_worker_stuck_waiting_for_a_connection_is_woken_to_stop(monkeypatch):
     assert len(woken) == 2  # while it ran, and no more once it ended
 
 
-def test_the_service_starts_one_worker_per_core_at_most_8_unless_server_json_says(tmp_path, monkeypatch):
+def test_the_service_starts_workers_for_the_cores_and_memory_unless_server_json_says(tmp_path, monkeypatch):
     from ap_coder.ops import service
 
     for var in ("AP_SERVER_WORKERS", "AP_LLM_PARALLEL"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr(server.os, "cpu_count", lambda: 32)
+    monkeypatch.setattr(server, "memory_total_mb", lambda: 64_000.0)  # the stage 2 server (D-153: no cap of 8)
     cmd = service.serve_command(service.settings(tmp_path), "python")
-    assert cmd[cmd.index("--workers") + 1] == "8"
+    assert cmd[cmd.index("--workers") + 1] == "28"
     assert service.serve_env(service.settings(tmp_path), tmp_path)["AP_LLM_PARALLEL"] == "1"
     service.write_config(tmp_path, workers=3, llm_parallel=4)
     s = service.settings(tmp_path)

@@ -201,3 +201,16 @@ def test_an_export_batch_is_made_on_a_thread_never_on_the_workers_event_loop(sto
     assert seen and seen[0].startswith("AnyIO worker thread")
 
 
+# --- How many workers --------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("cores", "gb", "workers"),
+    [(32, 64, 28), (4, 16, 4), (4, 8, 2), (8, 32, 7), (64, 64, 32), (2, 4, 1), (16, None, 14)],
+)
+def test_the_default_number_of_workers_follows_the_cores_and_the_memory(cores, gb, workers, monkeypatch):
+    """The stage 2 server (32 vCPU, 64 GB): 28 workers, about 1.5 GB each with their threads capped, a quarter of
+    the memory and an eighth of the cores left to the background process, the database and the system."""
+    if gb is None:
+        monkeypatch.setattr(server, "memory_total_mb", lambda: None)  # memory unknown: by the cores
+    assert server.default_workers(cores, gb * 1000 if gb else None) == workers
