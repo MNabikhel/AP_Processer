@@ -460,3 +460,31 @@ def test_each_vendors_lesson_counts_follow_the_coding_memory_and_its_vendor_list
     assert row() == (0, None, "active", "")
     other.save_vendor(key, ground_truth["vendor_name"], "on_hold", notes="Call first", actor="Jordan Lee")
     assert row() == (0, None, "on_hold", "Call first")
+
+
+def test_the_lessons_tabs_rows_follow_the_lessons_and_each_approvals_word_on_them(tmp_path, ground_truth):
+    """Learning → Lessons: its rows (each lesson, whether it reaches the AI, how it did since), kept on
+    ``changes/situations`` (``lessons``, ``lesson_approvals``)."""
+    from ap_coder.ai import lessons
+    from ap_coder.web.pages import learning
+
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    proposed = {**ground_truth, "invoice_number": "ACCT 1"}
+    key = lessons.situation(ground_truth["vendor_name"], lessons.INVOICE, "invoice_number")
+
+    def rows() -> list[tuple]:
+        found = learning.lessons_context(store)["lessons"]
+        assert found == learning.lesson_rows(store)
+        return [(r["situation"], r["corrected"], r["reaches"], r["effect"]["before"]["corrected"]) for r in found]
+
+    assert rows() == []
+    lessons.record(other, 1, proposed, {**ground_truth, "invoice_number": "1-2026"})
+    assert rows() == [(key, 1, False, 1)]  # (once: it waits)
+    lessons.record(other, 2, proposed, {**ground_truth, "invoice_number": "1-2026"})
+    assert rows() == [(key, 2, True, 2)]  # (twice to the same value)
+    _plain(store, "UPDATE lesson_approvals SET corrected = 0 WHERE invoice_id = 2")
+    assert rows() == [(key, 2, True, 1)]
+    _plain(store, "UPDATE lessons SET retired = 1")
+    assert rows() == [(key, 2, False, 1)]
+    _plain(store, "DELETE FROM lessons")
+    assert rows() == []

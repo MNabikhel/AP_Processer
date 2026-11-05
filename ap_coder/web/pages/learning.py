@@ -546,6 +546,16 @@ def learning_page(request: Request) -> HTMLResponse:
 def lessons_context(store: Store) -> dict[str, Any]:
     from ap_coder.ai import lessons
 
+    # Kept until a lesson or an approval's word on one changes (``changes/situations``, D-162): read, not changed.
+    rows = store.summary_memo("lessons_tab", lambda: lesson_rows(store), topic="", changes="situations")
+    return {"lessons": rows, "why_after": lessons.why_after(store)}
+
+
+def lesson_rows(store: Store) -> list[dict[str, Any]]:
+    """The Lessons tab's rows (``Store.list_lessons``: 500 at most, the most corrected since its reason first): what
+    each is about, whether it reaches the AI and how it did since (``lessons.effect``)."""
+    from ap_coder.ai import lessons
+
     rows = []
     listed = store.list_lessons(include_retired=True)
     history = store.lesson_history([lesson["situation"] for lesson in listed])
@@ -556,7 +566,7 @@ def lessons_context(store: Store) -> dict[str, Any]:
             what = f"{noun} of lines like “{lesson['pattern']}”"
         rows.append({**lesson, "what": what[:1].upper() + what[1:], "reaches": lessons.reaches_ai(lesson),
                      "effect": lessons.effect(history.get(lesson["situation"]) or [], lesson)})  # fmt: skip
-    return {"lessons": rows, "why_after": lessons.why_after(store)}
+    return rows
 
 
 @router.post("/learning/lessons/explain")
