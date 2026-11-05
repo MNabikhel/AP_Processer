@@ -1358,14 +1358,19 @@ if (reader) {
   const every = Math.max(5, Number(reader.dataset.poll) || 20) * 1000;
   const look = async () => {
     try {
-      const response = await fetch(`${base}/reader`, { headers: { Accept: "application/json" }, cache: "no-store" });
+      // seen: what the panel shows; while it still is, the answer is only "same" (D-160)
+      const seen = encodeURIComponent(reader.dataset.tag || "");
+      const response = await fetch(`${base}/reader?seen=${seen}`, { headers: { Accept: "application/json" }, cache: "no-store" });
       const answer = await response.json();
       if (!answer.poll) {
         await flush(); // the edits are kept: the page then shows the reading, or offers to start over from it
         location.reload();
         return;
       }
-      reader.innerHTML = answer.html; // drawn by the server, every text escaped
+      if (!answer.same) {
+        reader.innerHTML = answer.html; // drawn by the server, every text escaped
+        reader.dataset.tag = answer.tag || "";
+      }
     } catch {
       /* not answering now: look again later */
     }

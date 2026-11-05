@@ -481,6 +481,27 @@ def test_an_invoice_not_read_by_ovisocr2_can_be_put_in_its_queue(client, store):
     assert 'data-poll="' in client.get(f"/review/{inv_id}").text
 
 
+def test_the_reader_poll_answers_only_same_while_the_panel_is_what_the_page_shows(client, store):
+    """D-160: the poll put the reader panel in again every 20 seconds, though it was the same each time. The page's
+    ``data-tag`` says what the panel shows; the poll sends it back (``?seen=``) and hears ``same``, without it."""
+    import json
+
+    inv_id = store.list_invoices(REVIEW)[0]["id"]
+    client.post(f"/review/{inv_id}/read-pages", headers=PAGE)  # in OvisOCR2's queue: the page keeps looking
+    page = client.get(f"/review/{inv_id}").text
+    tag = re.search(r'<div data-reader[^>]* data-poll="\d+" data-tag="([0-9a-f]+)"', page)[1]
+    same = client.get(f"/review/{inv_id}/reader?seen={tag}")
+    assert same.json() == {"state": "waiting", "poll": True, "tag": tag, "same": True} and len(same.content) < 90
+    whole = client.get(f"/review/{inv_id}/reader")  # (a page drawn before: the panel, as it was answered)
+    assert not whole.json()["same"] and whole.json()["tag"] == tag and "html" in whole.json()
+    with store._conn() as conn:  # cut off by the model server: the panel says so
+        conn.execute("UPDATE page_reads SET tries = 1, error = 'cut off' WHERE invoice_id = ?", (inv_id,))
+    changed = client.get(f"/review/{inv_id}/reader?seen={tag}").json()
+    assert not changed["same"] and changed["tag"] != tag and "Last time: cut off" in changed["html"]
+    assert len(json.dumps(changed)) > 2 * len(same.content)
+    assert client.get(f"/review/{inv_id}/reader?seen={changed['tag']}").json()["same"]
+
+
 def test_the_reading_coming_in_keeps_the_reviewers_edits(client, store):
     inv_id = store.list_invoices(REVIEW)[0]["id"]
     check(client, inv_id, form_of(store, inv_id, vendor_name="Typed by me"))
@@ -1455,6 +1476,44 @@ def test_in_a_browser_ticking_approve_anyway_by_its_words_never_scrolls_either(b
     page.wait_for_timeout(500)
     assert page.evaluate("document.querySelector('[data-live=bar] [name=override]').checked")
     assert abs(page.evaluate("window.scrollY") - before) < 40 and errors == []
+
+
+def test_in_a_browser_the_reader_poll_draws_the_panel_again_only_once_it_changed(browser, client, store):
+    """D-160: the poll sends what the panel shows (``?seen=<data-tag>``); while the answer is "same" the panel is left
+    as it is, and a changed one is drawn, its tag the one sent from then on."""
+    inv_id = store.list_invoices(REVIEW)[0]["id"]
+    client.post(f"/review/{inv_id}/read-pages", headers=PAGE)  # in OvisOCR2's queue: the page keeps looking
+    chromium, base = browser
+    page = chromium.new_page(viewport={"width": 1400, "height": 1000})
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    polls: list[str] = []
+    page.on("request", lambda r: "/reader" in r.url and polls.append(r.url.split("?", 1)[-1]))
+    page.clock.install()
+    page.goto(f"{base}/review/{inv_id}")
+    page.wait_for_selector(".iv-sheet:not(.loading)")
+    tag = page.get_attribute("[data-reader]", "data-tag")
+    page.evaluate("window.panel = document.querySelector('[data-reader]').firstChild")
+
+    def poll_number(n):
+        for _ in range(120):  # (however the poll paces itself: at most 10 minutes of the page's clock)
+            if len(polls) >= n:
+                break
+            page.clock.run_for(5_000)
+            page.wait_for_timeout(20)
+        wait_until(page, lambda: len(polls) >= n)
+        page.wait_for_load_state("networkidle")
+
+    poll_number(1)
+    assert polls == [f"seen={tag}"] and page.evaluate("document.querySelector('[data-reader]').firstChild === panel")
+    with store._conn() as conn:  # cut off by the model server: the panel says so
+        conn.execute("UPDATE page_reads SET tries = 1, error = 'cut off' WHERE invoice_id = ?", (inv_id,))
+    poll_number(2)
+    wait_until(page, lambda: "Last time: cut off" in page.inner_text("[data-reader]"))
+    fresh = page.get_attribute("[data-reader]", "data-tag")
+    assert fresh != tag and polls[1] == f"seen={tag}"
+    poll_number(3)
+    assert polls[2] == f"seen={fresh}" and errors == []
 
 
 def test_a_huge_line_amount_is_refused_in_words_not_a_server_error(client, store):

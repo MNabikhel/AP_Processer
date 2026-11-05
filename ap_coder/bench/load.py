@@ -73,7 +73,7 @@ from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 ROLE_MIX = (("clerk", 0.70), ("approver", 0.20), ("admin", 0.05), ("readonly", 0.05))
 SCENARIOS = {  # each role's scenarios, by weight
@@ -546,6 +546,7 @@ CSS_URL = re.compile(r"""url\(\s*["']?(/(?:fonts|static|assets)/[^"')\s]+)["']?\
 INVOICE_LINK = re.compile(r'href="/review/(\d+)"')
 VENDOR_LABEL = re.compile(r'aria-label="Review invoice from ([^"]+)"')
 READER_POLL = re.compile(r'<div data-reader[^>]*\bdata-poll="(\d+)"')
+READER_TAG = re.compile(r'<div data-reader[^>]*\bdata-tag="([^"]*)"')  # what its panel shows, which the poll sends back
 INVOICE_URL = re.compile(r"^/review/(\d+)(?:[?#]|$)")
 ACCESS_LOG = re.compile(r"access(?:-\d+)?\.log(?:\.\d+)?")  # a web worker's access log, or one rotated from it
 
@@ -710,6 +711,8 @@ class Screen:
         self.editable = bool(inv) and "data-readonly" not in inv["attrs"] and inv["method"] == "post"
         poll = READER_POLL.search(page)
         self.poll = int(poll.group(1)) if poll else 0
+        tag = READER_TAG.search(page)
+        self.tag = tag.group(1) if tag else ""
         viewer = json_script(page, "viewer-data") or {}
         self.pages = [p["src"] for p in viewer.get("pages", []) if isinstance(p, dict) and p.get("src")]
         seed = json_script(page, "vendor-seed") or {}  # the vendor list's address (none to fetch: an empty list)
@@ -1105,14 +1108,19 @@ class Person:
         return screen
 
     async def watch_reader(self, screen: Screen) -> None:
-        """The reader's poll while the screen is open (invoice.js: every data-poll seconds, at least 5)."""
+        """The reader's poll while the screen is open (invoice.js: every data-poll seconds, at least 5), with what its
+        panel shows (``?seen=``: the answer is only "same" while it still is)."""
         every = max(5, screen.poll)
         while time.monotonic() + every < self.run.deadline:
             await asyncio.sleep(every)
             try:
-                answer = await self.send("GET", f"/review/{screen.id}/reader", "poll", accept="application/json")
-                if not answer.json().get("poll"):
+                answer = await self.send("GET", f"/review/{screen.id}/reader?seen={quote(screen.tag)}", "poll",
+                                         accept="application/json")  # fmt: skip
+                found = answer.json()
+                if not found.get("poll"):
                     return
+                if not found.get("same"):
+                    screen.tag = str(found.get("tag") or "")
             except (StepFailed, LoggedOut, ValueError):
                 continue
 

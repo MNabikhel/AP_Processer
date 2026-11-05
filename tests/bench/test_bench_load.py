@@ -102,6 +102,20 @@ Paper</textarea><select form="inv" name="tax"><option value="GST">GST<option val
     assert screen.allow is False and screen.data("inv")[-1] == ("override", "k2")
 
 
+def test_a_screen_fetches_the_vendor_list_its_page_names_and_its_reader_poll_sends_the_panels_tag():
+    """D-160: the vendor list is fetched from the address in #vendor-seed (none for an empty list), and the reader
+    poll sends what its panel shows (``data-tag``)."""
+    page = """<form id="inv" method="post" action="/review/7/approve"></form>
+      <script type="application/json" id="vendor-seed">{"url": "/review/vendors.json?v=ab12", "count": 3}</script>
+      <div data-reader data-state="waiting" data-poll="20" data-tag="c0ffee">waiting</div>"""
+    screen = load.Screen(7, page)
+    assert screen.editable and screen.vendors == "/review/vendors.json?v=ab12"
+    assert (screen.poll, screen.tag) == (20, "c0ffee")
+    assert load.Screen(7, page.replace('"count": 3', '"count": 0')).vendors == ""
+    assert load.route_of("GET", "/review/7/reader?seen=c0ffee") == "GET /review/{id}/reader"
+    assert load.route_of("GET", "/review/vendors.json?v=ab12") == "GET /review/vendors.json"
+
+
 def test_a_screen_leaves_out_the_rows_of_its_templates_as_the_page_does():
     """B-1622: the review screen's new-row templates (``<template id="line-template">``, a new tax row) were taken for
     rows of the form: every check the load test sent had an empty line and a GST row more than the browser's, so each

@@ -541,6 +541,8 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
     may_edit = can(request, f"/review/{invoice_id}/check")  # server mode: Read-only looks and changes nothing (D-98)
     capture = view.capture_of(store, invoice_id)  # read once: the document card and the checks use it
     context["doc"] = _document(store, settings, inv, status, editable and may_edit, capture)
+    may_read = can(request, f"/review/{invoice_id}/read-pages")
+    context["doc"]["reader_tag"] = reader_tag(context["doc"]["reader"], may_read)  # what its poll sends back (D-160)
     if not editable:
         mode = _mode(inv)
         if mode in ("approved", "pending", "rejected", "parked"):  # nothing left to read: no reading tools' warning
@@ -822,19 +824,28 @@ def page_words(request: Request, invoice_id: int) -> JSONResponse:
 
 
 @router.get("/review/{invoice_id:int}/reader")
-def reader_progress(request: Request, invoice_id: int) -> JSONResponse:
-    """OvisOCR2's progress on this invoice, for the page to follow while it waits or reads."""
+def reader_progress(request: Request, invoice_id: int, seen: str = "") -> JSONResponse:
+    """OvisOCR2's progress on this invoice, for the page to follow while it waits or reads. ``seen``: the ``tag`` of
+    what the page's panel shows (``reader_tag``): while it still is, the answer says ``same``, without the panel."""
     store, settings = get_store(request), get_settings(request)
     inv = _invoice(store, invoice_id)
     status = reading_status_or_none(settings, store)
     state = view.reader_state(store, settings, inv, status)
     if inv["status"] == REVIEW and lm_studio_off(status):
         state = folded_reader(state)  # as the screen drew it (B-444)
-    html = templates.env.get_template("_invoice_live.html").module.reader(
-        state, invoice_id, can(request, f"/review/{invoice_id}/read-pages")
-    )
-    return JSONResponse({"state": state["state"], "poll": state["poll"], "html": str(html)},
-                        headers={"Cache-Control": "no-store"})  # fmt: skip
+    may = can(request, f"/review/{invoice_id}/read-pages")
+    tag = reader_tag(state, may)
+    answer = {"state": state["state"], "poll": state["poll"], "tag": tag, "same": bool(seen) and seen == tag}
+    if not answer["same"]:
+        answer["html"] = str(templates.env.get_template("_invoice_live.html").module.reader(state, invoice_id, may))
+    return JSONResponse(answer, headers={"Cache-Control": "no-store"})
+
+
+def reader_tag(state: dict[str, Any], may: bool) -> str:
+    """What the reader panel shows (``_invoice_live.html`` ``reader`` of this state, its button if the role ``may``) in
+    a few letters: the page's ``data-tag``, which its poll sends back (``?seen=``) to hear only that nothing changed."""
+    shown = json.dumps([state, may], sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.blake2b(shown.encode(), digest_size=6).hexdigest()
 
 
 @router.get("/review/{invoice_id:int}/approved.pdf")
