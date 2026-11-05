@@ -207,3 +207,28 @@ def test_in_a_browser_edits_kept_when_the_session_ended_are_never_shown_to_someo
     assert page.locator('[form="inv"][name="invoice_number"]').input_value() == number
     assert page.evaluate("Object.keys(sessionStorage).filter(k => k.startsWith('apc-unsaved'))") == []
     assert errors == []
+
+
+def _unanswered(page, base: str, invoice: int) -> str:
+    """What the review screen says when AP Coder doesn't answer an edit's check."""
+    page.goto(f"{base}/review/{invoice}")
+    page.wait_for_selector("[data-approve]:not([disabled])")
+    page.route("**/check", lambda route: route.abort())
+    page.locator('[form="inv"][name="invoice_number"]').fill("NO-ANSWER")
+    page.wait_for_selector("#toasts > *")
+    return page.locator("#toasts").inner_text()
+
+
+def test_in_a_browser_no_answer_is_said_in_the_servers_words_on_the_server(browser, chromium, store):
+    """B-1595: on the server, a request that got no answer told the person to "start it again with the AP Coder
+    shortcut", which only a laptop has. The server's people are told the server didn't answer, and to tell IT if it
+    keeps happening; a laptop keeps its own words."""
+    invoice = store.list_invoices("review")[0]["id"]
+    page, errors = _log_in(browser, store, "clara", path=f"/review/{invoice}")
+    said = _unanswered(page, browser[1], invoice)
+    assert "The AP Coder server didn't answer" in said and "tell IT" in said and "shortcut" not in said, said
+    with browser_on(chromium, create_app(web_settings(), store, start_reader=False)) as (laptop, base):
+        page = laptop.new_page(viewport=LAPTOP)
+        said = _unanswered(page, base, invoice)
+        assert "Start it again with the AP Coder shortcut" in said and "IT" not in said.split(), said
+    assert errors == []

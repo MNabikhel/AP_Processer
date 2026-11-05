@@ -67,6 +67,14 @@ export function toast(msg, ms = 6000) {
   return el;
 }
 
+/** What to say when AP Coder gave no answer at all: a laptop's is started again by its shortcut; the company server's
+    people can't start it, IT runs it (B-1595). */
+export function noAnswer() {
+  return document.body?.hasAttribute("data-server")
+    ? "The AP Coder server didn't answer. Try again in a moment; if it keeps happening, tell IT."
+    : "AP Coder didn't answer. Is it still running? Start it again with the AP Coder shortcut.";
+}
+
 /** POST to the dashboard with the page header; returns the JSON answer (an {error} on failure). An answer that is a
     file (a batch's JD Edwards ZIP, downloaded by POST: D-135) is saved under its name. */
 export async function post(url, body) {
@@ -74,7 +82,7 @@ export async function post(url, body) {
   try {
     response = await fetch(url, { method: "POST", headers: HEADERS, body, credentials: "same-origin" });
   } catch {
-    return { ok: false, error: "AP Coder didn't answer. Is it still running? Start it again with the AP Coder shortcut." };
+    return { ok: false, error: noAnswer() };
   }
   const disposition = response.headers.get("content-disposition") || "";
   if (response.ok && /^attachment/i.test(disposition)) {

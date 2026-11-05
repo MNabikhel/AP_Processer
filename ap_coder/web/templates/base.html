@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="/static/picker.css?v={{ static_version }}">
   {% block head %}{% endblock %}
 </head>
-<body data-page="{{ page }}">
+<body data-page="{{ page }}"{% if server_mode %} data-server{% endif %}>
   <a class="skip" href="#main">Skip to the page</a>
   <div class="shell">
     <aside class="rail" aria-label="AP Coder">
