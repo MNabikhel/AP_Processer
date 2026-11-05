@@ -395,12 +395,13 @@ def _client(store: Any) -> jde_ais.AisClient:
         return _CLIENTS.setdefault(where, made)  # not signed in yet: one made at the same time is simply dropped
 
 
-def _ask(store: Any, an8: str, number: str, printed: str, big: bool) -> tuple[list[dict[str, Any]], bool]:
-    """The vouchers in JDE that may be this invoice, and whether they were asked by its number."""
+def _ask(store: Any, an8: str, printed: str, big: bool) -> tuple[list[dict[str, Any]], bool]:
+    """The vouchers in JDE that may be this invoice, and whether they were asked by its number (as printed: JDE
+    matches it exactly)."""
     c = _client(store)
     since = (_now().date() - dt.timedelta(days=c.cfg.voucher_days)).strftime(c.ais.get("date_format") or "%Y-%m-%d")
     if not an8:
-        return c.rows("vouchers", {"invoice": number, "since": since}, max_pages=LIVE_PAGES), True
+        return c.rows("vouchers", {"invoice": printed, "since": since}, max_pages=LIVE_PAGES), True
     if not big:
         # Every page of the supplier's vouchers of the sync's window (the invoice numbers are compared here, written
         # any way): a supplier with more vouchers than a page is checked to the last one.
@@ -434,7 +435,7 @@ def live_findings(store: Any, coding: Any, exclude_invoice_id: int | None = None
         if down and now - down[0] < DOWN_SECONDS:
             return [_not_reached(store, down[1]), *_in_register(store, coding, an8, ids)]
         try:
-            rows, by_number = _ask(store, an8, number, str(coding.invoice_number or "").strip(), big)
+            rows, by_number = _ask(store, an8, str(coding.invoice_number or "").strip(), big)
         except jde_ais.AisError as exc:
             if not isinstance(exc, jde_ais.TooManyPages):  # too wide a question is this invoice's, not JDE down
                 with _LOCK:

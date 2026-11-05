@@ -146,6 +146,15 @@ def test_the_live_check_finds_a_voucher_already_in_jde(store, ais):
     assert "DUPLICATE_IN_ERP" in codes  # through the review screen's vendor checks
 
 
+def test_a_supplier_without_an_an8_is_asked_by_the_invoice_number_as_printed(store, ais):
+    """B-1607: for a supplier with no AN8 the live check asked JD Edwards for the invoice number as AP Coder compares
+    it ("7001" for "INV-7001"), which the orchestration matches exactly: the voucher already there was never found."""
+    connect(store, ais)  # no supplier sync: no AN8 for Acme
+    found = jde_sync.live_findings(store, _coding())
+    assert [c for _, c, _ in found] == ["DUPLICATE_IN_ERP"] and "voucher 90001 PV" in found[0][2]
+    assert ais.orchestration_calls("vouchers")[0]["InvoiceNumber"] == "INV-7001"
+
+
 def test_a_voucher_the_sync_put_in_the_register_is_said_with_its_voucher_number_and_paid(store, ais):
     """B-1217: once the nightly sync had put the voucher in the register, the review screen said only "already in the
     ERP (dated ...), total ...": the live check's voucher number and paid status were left out. JD Edwards' own answer

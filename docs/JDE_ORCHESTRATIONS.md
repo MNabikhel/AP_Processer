@@ -130,7 +130,8 @@ added up): `Key` (KCO-DCT-DOC-SFX), `DocumentNumber` (RPDOC), `DocumentType` (RP
 out. While an invoice is reviewed AP Coder asks with the supplier's number and the same `FromInvoiceDate`, page after
 page (`AfterKey`), and compares invoice numbers itself (it ignores dashes, spaces and leading zeros), so the
 orchestration need not match numbers loosely. A supplier with more than 40 pages of vouchers even then is asked by its
-number and the `InvoiceNumber` as printed, which the orchestration matches exactly.
+number and the `InvoiceNumber` as printed, which the orchestration matches exactly; a supplier with no AN8 by that
+`InvoiceNumber` and the `FromInvoiceDate`.
 
 ## The voucher (step 2)
 
