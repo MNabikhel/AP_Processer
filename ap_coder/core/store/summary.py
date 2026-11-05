@@ -661,6 +661,23 @@ class SummaryMixin:
             self._summary_fresh(conn)
             return fetch_rows(conn, sql, tuple(params))
 
+    @contextmanager
+    def summary_snapshot(self) -> Iterator[None]:
+        """Every read of this database inside, in this thread, sees it as it was at the first of them (one read
+        transaction, on one connection): figures read in several queries agree, an approval meanwhile in all of them
+        or none. The summary is brought up to date first, in a transaction of its own."""
+        with self.session(), self._conn() as conn:
+            if conn.in_transaction:  # inside the caller's own transaction: its reads agree already
+                yield
+                return
+            self._summary_fresh(conn)
+            conn.commit()
+            conn.execute("BEGIN")
+            try:
+                yield
+            finally:
+                conn.commit()  # nothing written: it ends the read
+
     def summary_query(self, sql: str, params: tuple[Any, ...] | list[Any] = ()) -> list[sqlite3.Row]:
         """Any query of the summary's tables (fresh)."""
         with self._conn() as conn:

@@ -219,7 +219,14 @@ def figures(store: Store, start: dt.date, end: dt.date, currency: str, category:
     """What the Spend page shows of ``parts(store, start, end)`` in ``currency``, or with ``rates`` of every line of a
     currency with a rate in CAD (``in_cad``; ``currency`` is then "CAD"): ``lines`` (whether there are any), ``total``
     (rounded to the cent), ``invoices``, ``months``, ``by_month`` (``by_month_and_category`` with ``category``) and
-    ``by``: for each key of ``BY``, its ``total_by``."""
+    ``by``: for each key of ``BY``, its ``total_by``. Read in one read transaction: an approval meanwhile is in every
+    figure or none."""
+    with store.summary_snapshot():
+        return _figures(store, start, end, currency, category, rates)
+
+
+def _figures(store: Store, start: dt.date, end: dt.date, currency: str, category: dict[str, str],
+             rates: dict[str, float] | None) -> dict[str, Any]:  # fmt: skip
     first, last = start.isoformat(), end.isoformat()
     # SQLite sums the lines in ``currency``; converted, those in CAD (each line rounded to the cent: ``_in_cad``).
     if rates is None:
