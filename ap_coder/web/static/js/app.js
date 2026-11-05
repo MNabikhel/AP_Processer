@@ -174,7 +174,7 @@ function pause(ms) {
     or null once a look was answered by the login (``loggedOut``): nothing more is asked then (B-1712). Nothing is
     asked while the tab is hidden. After an answer the same as the last (or none), the wait is half as long again, up
     to ``mostMs`` (three times ``everyMs``); a change starts again at ``everyMs``. ``firstMs``: the wait before the
-    first look. */
+    first look. ``url`` may be a function, asked at each look (the reader panel's says what it shows, D-160). */
 export async function poll(url, onAnswer, { everyMs, mostMs = 3 * everyMs, firstMs = 0 }) {
   let wait = everyMs;
   let last = null;
@@ -182,7 +182,8 @@ export async function poll(url, onAnswer, { everyMs, mostMs = 3 * everyMs, first
   for (;;) {
     let seen = null;
     try {
-      const response = await fetchWithin(url, { headers: { Accept: "application/json" }, cache: "no-store" });
+      const address = typeof url === "function" ? url() : url;
+      const response = await fetchWithin(address, { headers: { Accept: "application/json" }, cache: "no-store" });
       if (loggedOut(response)) return null;
       const text = await response.text();
       const answer = JSON.parse(text);

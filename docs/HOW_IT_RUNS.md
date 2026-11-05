@@ -423,6 +423,14 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   invoice written moves the summary's generation, so month-end, the audit and Spend are worked out again after each
   write.
 
+  The review screen's (D-160): its vendor list (`ap_coder/web/pages/invoice.py:vendor_list`, `summary_memo` on
+  `changes/vendors`: its JSON, gzipped, version and index, about 21 MB for 19,000 vendors), which the screen fetches
+  from `GET /review/vendors.json?v=<version>` (a laptop's browser keeps it; the server's answers behind the login are
+  `no-store`, B-1070); and each vendor's invoices (`ap_coder/core/store/vendors.py:_keep_vendor_rows`, a cache of its
+  own: the vendors asked most recently, at most 20,000 rows and 4,096 vendors, about 20 MB; stamped by `summary_id` and
+  `changes/vendor/<key>`). The page pictures are not kept in a server worker's memory: they are drawn once into the
+  data folder's `.cache/pages/` (`ap_coder/web/document.py:_kept_png`), shared by all the workers.
+
 ## 9. The data folder and everything AP Coder writes
 
 Default data folder `~/APCoder` (`C:\Users\<you>\APCoder`); `AP_PRIVATE_DIR` overrides it, the record
@@ -461,6 +469,7 @@ can corrupt an open SQLite database).
 | Next to an older install | `<folder>.removing-<date>` while it is deleted | `upgrade.remove_folder` |
 | **Server mode only:** `server.json` | the server's settings (port, address, certificate, host names, proxy) | `service install`, `server-update` |
 | `tls/` | the HTTPS certificate and its key, where IT puts them ([SERVER.md](SERVER.md)) | IT |
+| `.cache/pages/<2>/` | the review screen's page pictures, drawn once for all the web workers: named by the file's SHA-256, the page, the scale, the dpi, the size cap and the drawing's version; at most 1 GB, the oldest written removed first; none written while the disk has less than the backups' reserve free (D-160) | `web/document.py` `_kept_png` |
 | `service/run.cmd` (and the task's XML, `host.json`, `host.lock`, `stopped`) | what the scheduled task runs | `service install`, `server-update` |
 | `logs/service.log` | what the server said (rotating) | the service host |
 | `finance_hub/` | the finance hub feed's own record of what was sent (`state.db`) | `hub export`, the schedule |

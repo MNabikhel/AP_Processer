@@ -326,6 +326,26 @@ def test_on_the_server_a_restore_removes_the_data_workbook_of_the_replaced_invoi
     assert clerk.get("/spend/data.xlsx", headers={"Accept": "text/html"}).status_code == 404
 
 
+def test_on_the_server_a_page_picture_is_drawn_once_for_all_the_web_workers(store, monkeypatch):
+    """D-160: each worker drew the pictures it was asked for into its own memory. On the server they are put in the
+    data folder's .cache/pages, and another worker reads them back; the browser still keeps none (B-1070)."""
+    from ap_coder.web import document
+
+    account(store, "ann", "clerk")
+    invoice_id = add_clean(store)
+    one, two = server_client(store), server_client(store)  # two web workers
+    in_memory = document._png_cached.cache_info().currsize
+    for client in (one, two):
+        log_in(client, "ann")
+    first = one.get(f"/review/{invoice_id}/page/1.png?scale=2")
+    assert first.status_code == 200 and first.headers["cache-control"] == "no-store"
+    (kept,) = (store.path.parent / ".cache" / "pages").glob("*/*.png")
+    assert kept.read_bytes() == first.content
+    monkeypatch.setattr(document, "_draw_png", lambda *a: pytest.fail("drawn again"))
+    assert two.get(f"/review/{invoice_id}/page/1.png?scale=2").content == first.content
+    assert document._png_cached.cache_info().currsize == in_memory  # none kept in a worker's memory
+
+
 def test_the_menu_shows_only_what_the_role_may_open(store):
     account(store, "reader", "readonly")
     account(store, "boss", "admin")

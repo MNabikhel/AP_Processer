@@ -21,11 +21,11 @@ What it runs:
   kept). Each logs in (the password, then a code worked out
   now by the app's own ``authenticator.code``), then works in weighted scenarios: the queue (tabs, filters, sorts,
   search, "show more"), an invoice opened as a browser opens it (the page, its styles, scripts and fonts, one to three
-  page images, the reader's poll while it is open), 3 to 6 edits each checked, then approve (with
-  "approve anyway" when only errors keep it closed), park or reject; second approvals; the directory, its CSV and
-  Excel exports; Insights, Spend, Month-end and the other reports; an upload with its job polled; a bulk approval
-  (at most 50); an export batch (JD Edwards when it is set up). POSTs carry what the page's fetch sends (the
-  ``X-AP-Coder`` header, the Origin, ``Sec-Fetch-Site``) as multipart form data.
+  page images, the vendor list through the cache, the reader's poll while it is open), 3 to 6 edits each checked,
+  then approve (with "approve anyway" when only errors keep it closed), park or reject; second approvals; the
+  directory, its CSV and Excel exports; Insights, Spend, Month-end and the other reports; an upload with its job
+  polled; a bulk approval (at most 50); an export batch (JD Edwards when it is set up). POSTs carry what the page's
+  fetch sends (the ``X-AP-Coder`` header, the Origin, ``Sec-Fetch-Site``) as multipart form data.
 - **Think time**: lognormal around ``--think`` seconds between scenarios, a third of it between the steps of one.
   Each person keeps a schedule (scheduled start, against coordinated omission): a step is due a think time after the
   previous one was due, and its time is counted from when it was due, so a slow server's waits are in the figures,
@@ -74,7 +74,7 @@ from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 ROLE_MIX = (("clerk", 0.70), ("approver", 0.20), ("admin", 0.05), ("readonly", 0.05))
 SCENARIOS = {  # each role's scenarios, by weight
@@ -550,6 +550,7 @@ CSS_URL = re.compile(r"""url\(\s*["']?(/(?:fonts|static|assets)/[^"')\s]+)["']?\
 INVOICE_LINK = re.compile(r'href="/review/(\d+)"')
 VENDOR_LABEL = re.compile(r'aria-label="Review invoice from ([^"]+)"')
 READER_POLL = re.compile(r'<div data-reader[^>]*\bdata-poll="(\d+)"')
+READER_TAG = re.compile(r'<div data-reader[^>]*\bdata-tag="([^"]*)"')  # what its panel shows, which the poll sends back
 INVOICE_URL = re.compile(r"^/review/(\d+)(?:[?#]|$)")
 ACCESS_LOG = re.compile(r"access(?:-\d+)?\.log(?:\.\d+)?")  # a web worker's access log, or one rotated from it
 
@@ -714,8 +715,12 @@ class Screen:
         self.editable = bool(inv) and "data-readonly" not in inv["attrs"] and inv["method"] == "post"
         poll = READER_POLL.search(page)
         self.poll = int(poll.group(1)) if poll else 0
+        tag = READER_TAG.search(page)
+        self.tag = tag.group(1) if tag else ""
         viewer = json_script(page, "viewer-data") or {}
         self.pages = [p["src"] for p in viewer.get("pages", []) if isinstance(p, dict) and p.get("src")]
+        seed = json_script(page, "vendor-seed") or {}  # the vendor list's address (none to fetch: an empty list)
+        self.vendors = str(seed.get("url") or "") if isinstance(seed, dict) and seed.get("count") else ""
         options = json_script(page, "gl-options") or []
         self.accounts = [str(o[0] if isinstance(o, list) else o.get("value", o.get("code", ""))) for o in options
                          if isinstance(o, list | dict)]  # fmt: skip
@@ -1082,17 +1087,23 @@ class Person:
 
     async def open_invoice(self, invoice_id: int, due: float | None = None, url: str = "") -> Screen | None:
         """The review screen as the browser opens it: the page and its files, the first page image (sometimes more
-        pages, sometimes zoomed in) and the reader's poll (no check on opening: the page is drawn with its checks)."""
+        pages, sometimes zoomed in), the vendor list (an editable screen's) and the reader's poll (no check on
+        opening: the page is drawn with its checks)."""
         page = await self.page(url or f"/review/{invoice_id}", due, route="GET /review/{id}")
         if page is None:
             return None
         screen = Screen(invoice_id, page)
+        fetched = []
         if screen.pages:
             want = [screen.pages[0]] + [p for p in screen.pages[1:3] if self.rng.random() < 0.5]
             if self.rng.random() < 0.2:
                 first = screen.pages[0]
                 want.append(f"{first}{'&' if '?' in first else '?'}scale=2")
-            found = await asyncio.gather(*(self.static(p, "image") for p in want), return_exceptions=True)
+            fetched += [self.static(p, "image") for p in want]
+        if screen.editable and screen.vendors:  # the vendor list, as invoice.js fetches it (D-160): through the cache
+            fetched.append(self.static(screen.vendors, "vendors"))
+        if fetched:
+            found = await asyncio.gather(*fetched, return_exceptions=True)
             failed = next((f for f in found if isinstance(f, BaseException)), None)
             if failed is not None:
                 raise failed
@@ -1101,14 +1112,19 @@ class Person:
         return screen
 
     async def watch_reader(self, screen: Screen) -> None:
-        """The reader's poll while the screen is open (invoice.js: every data-poll seconds, at least 5)."""
+        """The reader's poll while the screen is open (invoice.js: every data-poll seconds, at least 5), with what its
+        panel shows (``?seen=``: the answer is only "same" while it still is)."""
         every = max(5, screen.poll)
         while time.monotonic() + every < self.run.deadline:
             await asyncio.sleep(every)
             try:
-                answer = await self.send("GET", f"/review/{screen.id}/reader", "poll", accept="application/json")
-                if not answer.json().get("poll"):
+                answer = await self.send("GET", f"/review/{screen.id}/reader?seen={quote(screen.tag)}", "poll",
+                                         accept="application/json")  # fmt: skip
+                found = answer.json()
+                if not found.get("poll"):
                     return
+                if not found.get("same"):
+                    screen.tag = str(found.get("tag") or "")
             except (StepFailed, LoggedOut, ValueError):
                 continue
 

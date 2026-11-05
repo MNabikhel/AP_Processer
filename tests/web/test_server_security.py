@@ -372,9 +372,12 @@ def test_every_response_behind_the_login_is_not_stored_by_the_browser(store):
     log_in(client, "boss")
     client.post("/spend/data", headers=PAGE)  # the data workbook: made in the background on the server (D-156)
     assert app.state.jobs.get("spend-data").wait(60)
+    # the vendor list too, at the version the page asks for (D-160: B-1070 stands for it)
+    version = client.get(f"/review/{invoice_id}").text.split("/review/vendors.json?v=")[1].split('"')[0]
     for path in (f"/review/{invoice_id}/page/1.png", "/review", "/activity/events.csv", "/exports/duplicates.csv",
                  "/activity/controls-report", "/spend/data.xlsx", "/insights/business-case",
-                 "/settings/jde/worksheet.xlsx", f"/review/{invoice_id}/words"):  # fmt: skip
+                 "/settings/jde/worksheet.xlsx", f"/review/{invoice_id}/words",
+                 f"/review/vendors.json?v={version}"):  # fmt: skip
         answer = client.get(path)
         assert answer.status_code == 200, path
         assert answer.headers.get("cache-control") == "no-store", path

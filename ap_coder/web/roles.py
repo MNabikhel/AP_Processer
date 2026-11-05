@@ -76,6 +76,7 @@ RULES: dict[tuple[str, str], str] = {
         "GET /review", "GET /review/{invoice_id:int}", "GET /review/{invoice_id:int}/page/{number:int}.png",
         "GET /review/{invoice_id:int}/words", "GET /review/{invoice_id:int}/reader",
         "GET /review/{invoice_id:int}/approved.pdf",
+        "GET /review/vendors.json",  # the vendor list the screen picks from (no bank details in it, D-160)
         "GET /search", "GET /search/export.csv", "GET /search/export.xlsx", "GET /search/{invoice_id:int}/approved.pdf",
         # The exports list, the reports and their downloads.
         "GET /exports", "GET /exports/duplicates.csv",
