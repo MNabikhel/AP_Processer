@@ -72,6 +72,7 @@ TEMPORARY_SECONDS = 72 * 3600  # a temporary password (a new account, a reset) n
 TEMPORARY_EXPIRED = ("Your temporary password has expired (it lasts 3 days): ask an Admin for a new one (Users → "
                      "Reset password).")  # fmt: skip
 SEEN_EVERY = 60  # seconds between two writes of a session's last use
+SEEN_WAIT_MS = 200  # how long that write may wait for another writer before it is left to the next request
 MAX_FAILURES = 5  # tries that don't match within FAILURE_WINDOW for one username from one address...
 ADDRESS_FAILURES = 30  # ...or from one address, whatever the usernames...
 FAILURE_WINDOW = 15 * 60
@@ -910,10 +911,16 @@ class UsersMixin:
                 conn.execute("DELETE FROM sessions WHERE token_hash = ?", (digest,))
                 return None
             if now - row["last_seen"] >= SEEN_EVERY:
-                try:  # best effort: a busy database fails no page over it, the next request records it (B-1293)
+                # Best effort, and never long: a busy database fails no page over it (B-1293) nor holds one up behind
+                # another writer (B-1579); the next request records it.
+                waits = conn.execute("PRAGMA busy_timeout").fetchone()[0]
+                conn.execute(f"PRAGMA busy_timeout = {SEEN_WAIT_MS}")
+                try:
                     conn.execute("UPDATE sessions SET last_seen = ? WHERE token_hash = ?", (now, digest))
                 except sqlite3.OperationalError:
                     pass
+                finally:
+                    conn.execute(f"PRAGMA busy_timeout = {int(waits)}")
         found = _public(row) or {}
         for key in ("session_created", "last_seen"):
             found.pop(key, None)
