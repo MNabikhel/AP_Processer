@@ -43,3 +43,19 @@ def test_with_no_probes_named_the_default_ones_run():
     assert tool.parse(["pipeline", "--n", "3"]).probes == ["pipeline"]
     with pytest.raises(SystemExit):
         tool.parse(["taxes"])
+
+
+def test_the_code_compared_with_sees_the_models_this_checkout_has(tmp_path):
+    """The optional models a checkout holds (``models/``, git-ignored: the table finder) change what is read; the
+    checkout of the ref has none, so a comparison showed a difference no code made (B-1699)."""
+    tool = _tool()
+    root, before = tmp_path / "root", tmp_path / "before"
+    (root / "models").mkdir(parents=True)
+    (root / "models" / "finder.onnx").write_bytes(b"model")
+    before.mkdir()
+    tool.share_models(root, before)
+    assert (before / "models" / "finder.onnx").read_bytes() == b"model"
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    tool.share_models(tmp_path / "none", bare)
+    assert not (bare / "models").exists()
