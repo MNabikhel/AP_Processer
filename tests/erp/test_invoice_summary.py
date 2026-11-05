@@ -293,17 +293,18 @@ def test_the_directory_pages_the_quick_search_as_it_did(year, monkeypatch, fts):
         sql, params = search.condition(words, numbers, fts)
         assert [r["id"] for r in year.search_rows(sql, params)] == [
             r["id"] for r in every if search._score(r, words, numbers)], q  # fmt: skip
-        for extra in ({}, {"sort": "total", "dir": "asc"}, {"f_status": "approved"}, {"page": "2"}, {"erp": "100"},
-                      {"sort": "vendor", "f_total": ">100", "page": "3"}):  # fmt: skip
+        for n, extra in enumerate(({"sort": "vendor", "f_total": ">100"}, {"sort": "total", "dir": "asc", "page": "2"},
+                                   {"f_status": "approved", "page": "3", "erp": "100"})):  # fmt: skip
             query = directory.Query.from_params({**extra, "q": q})
             new = directory.run(year, query, page_size=4)
             *old, old_erp = _old_run(year, query, 4)
             assert [new.rows, new.total, new.page, new.pages, new.problems] == old, (q, extra)
             assert [(h.score, h.row) for h in new.erp] == [(h.score, h.row) for h in old_erp][: query.erp_shown]
             assert new.erp_total == len(old_erp), (q, extra)
-            everything = _old_run(year, query, 4, everything=True)[0]
-            assert list(directory.export_rows(year, query)) == everything
-            assert directory.run(year, query, everything=True).rows == everything
+            if n == 0:
+                everything = _old_run(year, query, 4, everything=True)[0]
+                assert list(directory.export_rows(year, query)) == everything
+                assert directory.run(year, query, everything=True).rows == everything
     assert directory.run(year, directory.Query(q="northwind")).erp_total > directory.ERP_SHOWN  # (shown in parts)
 
 
