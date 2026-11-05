@@ -1,12 +1,12 @@
 # Phase 2 part 2: where a web worker's CPU goes (2026-11-05)
 
-Repo `/home/user/int`, the seeded 100k server folder (`bench_data/S/s100k`: 100,000 invoices, 20,000 vendors in the
+The code of phase 2 part 1 (`scale-int`), the seeded 100k server folder (`bench_data/S/s100k`: 100,000 invoices, 20,000 vendors in the
 master, 2,708 in review, 421k lessons, JD Edwards in use). The app is opened as one web worker of the server runs it
 (`create_app(server=True, background=False, processes=4)` plus the `Recycle` middleware), signed in by the real login
 (password, then the authenticator's code). CPU is process CPU (`time.process_time()`: every thread, the threadpool's
 included; nothing else runs in the process: 0.06 ms of CPU in 3 idle seconds). The fixed costs were measured through
 real uvicorn (h11, asyncio: no httptools or uvloop here), with the server process's own CPU from `/proc`. Scripts and
-outputs: this folder (list at the end). **m** = measured, **e** = estimated.
+outputs: the investigation's scratch folder, outside the repo (list at the end). **m** = measured, **e** = estimated.
 
 ## Verdict
 - **At 100 people the load asks for 4.5 times the machine.**
@@ -313,5 +313,4 @@ the 4-core budget at 60%. Two more things matter for latency:
     `cpu_after_write.py` (parks and unparks).
   - Smaller checks: `cpu_testclient_floor.py` (the TestClient's own 2 ms a request), `cpu_idle_check.py`,
     `cpu_search_sql.py`, `cpu_explore.py`.
-  - Run with `/home/user/AP_Processer/.venv/bin/python` from this folder (`cpu_common.py` puts `/home/user/int` on
-    the path).
+  - Run with the project's Python from that folder (`cpu_common.py` puts the checkout on the path).
