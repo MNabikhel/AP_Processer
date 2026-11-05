@@ -274,7 +274,9 @@ def exports_page(
     if chosen and again_fmt == jde.FORMAT:
         invoices, missing = jde_left_out(store, chosen["id"])
         left_out = (len(missing), len(invoices))
-    totals, exported = store.batch_totals(), store.exported_totals()
+    totals = store.batch_totals()
+    # What an undone batch held, from the audit trail (0.5 s at 100,000 invoices): read only when one is shown (D-166).
+    exported = store.exported_totals() if any(not totals.get(b["id"]) for b in batches) else {}
 
     # JD Edwards through the API (D-104): the chosen batch's vouchers and the queue
     jde_api = api_context(store, chosen)
