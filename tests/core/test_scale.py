@@ -61,8 +61,9 @@ def app_db(tmp_path):
 
 
 def _rows(page: str) -> list[int]:
-    return [int(i) for i in re.findall(r'class="rq-row[^"]*"[^>]*>\s*<a[^>]*href="/review/(\d+)"', page)] or [
-        int(i) for i in dict.fromkeys(re.findall(r'href="/review/(\d+)"', page))
+    link = r'href="/review/(\d+)(?:\?[^"]*)?"'  # a row's link keeps the queue's view (?limit=…)
+    return [int(i) for i in re.findall(r'class="rq-row[^"]*"[^>]*>\s*<a[^>]*' + link, page)] or [
+        int(i) for i in dict.fromkeys(re.findall(link, page))
     ]
 
 
