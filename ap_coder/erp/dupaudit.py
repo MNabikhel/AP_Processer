@@ -201,6 +201,12 @@ def _close_pairs(group: list[Bill], dated: dict[str, dt.date | None], most: int)
 
 
 def find(store: Store) -> list[Pair]:
+    """Every pair the audit finds, strongest reason first: kept until an invoice or the ERP register changes (D-162),
+    its page and its CSV sharing them. Read it, don't change it."""
+    return store.summary_memo("duplicate_pairs", lambda: _find(store), changes="register")
+
+
+def _find(store: Store) -> list[Pair]:
     all_bills = bills(store)
     pairs: dict[tuple, Pair] = {}
 

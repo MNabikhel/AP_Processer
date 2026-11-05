@@ -370,3 +370,32 @@ def test_month_ends_received_not_invoiced_lines_follow_the_pos_and_the_invoices_
     assert received(september) == [("PO-1 line 1", 8.0), ("PO-1 line 2", 6.0)]  # (billed after it)
     _plain(store, "DELETE FROM po_lines WHERE line_number = 2")
     assert received() == []
+
+
+def test_the_duplicate_audits_pairs_follow_the_invoices_and_the_erp_register(tmp_path, ground_truth):
+    """The duplicate payment audit's pairs (its page and its CSV), kept on the summary's generation (the approved
+    invoices) and ``changes/register`` (the ERP's invoice register)."""
+    from ap_coder.erp import dupaudit
+
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    first, second = (_invoice(other, tmp_path, ground_truth, name) for name in ("A-100", "B-100"))
+    other.approve_invoice(first, {**ground_truth, "invoice_number": "A-100"}, "Jordan Lee")
+
+    def pairs() -> list[tuple]:
+        found = dupaudit.find(store)
+        assert found == dupaudit._find(store)
+        return [(p.reason, p.first.source, p.second.source) for p in found]
+
+    assert pairs() == []
+    other.approve_invoice(second, {**ground_truth, "invoice_number": "A-100"}, "Jordan Lee")  # approved twice
+    assert pairs() == [(dupaudit.EXACT, "AP Coder", "AP Coder")]
+    _plain(store, "UPDATE invoices SET status = 'review' WHERE id = ?", second)
+    assert pairs() == []
+    row = {"vendor_name": ground_truth["vendor_name"], "invoice_number": "A-100",
+           "invoice_date": ground_truth["invoice_date"], "total": ground_truth["grand_total"]}  # fmt: skip
+    other.import_erp_register([row])
+    assert [p[0] for p in pairs()] == [dupaudit.EXACT]  # (not exported: the ERP's row is another)
+    _plain(store, "UPDATE erp_invoices SET copies = 2")
+    assert [p[0] for p in pairs()] == [dupaudit.EXACT, dupaudit.EXACT]  # (and the ERP's twice)
+    _plain(store, "DELETE FROM erp_invoices")
+    assert pairs() == []
