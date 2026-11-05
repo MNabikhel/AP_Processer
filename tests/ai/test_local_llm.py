@@ -999,6 +999,25 @@ def test_a_refused_server_name_says_to_add_its_domain_to_the_company_domains(rea
     config.forget_resolved()
 
 
+@pytest.mark.parametrize("url", ["http://gpu-box:1234/v1", "http://studio.local:1234/v1", "http://mac.lan:1234/v1",
+                                 "http://ai.home:1234/v1"])  # fmt: skip
+def test_a_local_name_on_the_internet_is_not_told_to_add_a_company_domain(url, monkeypatch):
+    """B-1675: a bare, .local, .lan or .home name that resolves to an internet address was told to add its domain to
+    AP_COMPANY_DOMAINS: it has none to add, and it is refused for its address, as a company name is."""
+    import socket
+
+    from ap_coder.core import config
+
+    monkeypatch.delenv("AP_ALLOW_INTERNET", raising=False)
+    monkeypatch.delenv("AP_COMPANY_DOMAINS", raising=False)
+    public = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+    monkeypatch.setattr(config.socket, "getaddrinfo", lambda host, *a, **k: public)
+    config.forget_resolved()
+    said = local_llm.refused_address(url)
+    assert "is not on this computer or the office network" in said and "AP_COMPANY_DOMAINS" not in said
+    config.forget_resolved()
+
+
 COMPANY_SERVER = "macstudio.corp.acme-foods.ca"
 
 

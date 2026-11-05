@@ -29,14 +29,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
-from ..core.config import (
-    COMPANY_DOMAINS_ENV,
-    _address,
-    _company_domain,
-    _on_this_network,
-    judged_by_lookup,
-    pinned_addresses,
-)
+from ..core.config import COMPANY_DOMAINS_ENV, _address, _on_this_network, judged_by_lookup, pinned_addresses
 
 if TYPE_CHECKING:
     from ..core.config import LocalLLMSettings, Settings
@@ -120,7 +113,9 @@ def refused_address(url: str) -> str:
         return ""
     name = host.rsplit("@", 1)[-1]
     hostname = (urlparse(url).hostname or "").lower()
-    if _address(hostname) is None and not _company_domain(hostname):  # a name, outside the company's DNS domains
+    # A dotted name, outside .local/.lan/.home and the company's DNS domains: never looked up (a bare or local name, or
+    # a company one, is refused for the internet address it has, and has no domain to add: B-1675).
+    if _address(hostname) is None and not judged_by_lookup(host):
         return (f"{name} is on another network: this offline build does not contact it. To use a model server named "
                 f"in the company's network, add its domain to {COMPANY_DOMAINS_ENV} in the .env file "
                 f"({INTERNET_ENV}=1, for developers, allows any server)")  # fmt: skip
