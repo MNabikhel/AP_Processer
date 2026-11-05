@@ -38,7 +38,7 @@ from ..core.paths import PROJECT_DIR, env_path
 from ..core.reference_data import ReferenceData, load_reference_data, load_table, parse_policy_notes
 from ..core.schema import build_json_schema
 from ..core.store import SAMPLE_DATA_DIR, Store, default_db_path, private_dir
-from ..intake.mailbox import EMAIL_EXTENSIONS, emails_in, unpack, unpack_folder
+from ..intake.mailbox import EMAIL_EXTENSIONS, emails_in, pickup_lock, unpack, unpack_folder
 from . import server_update, service
 from .doctor import FAIL, Check, exit_code, format_checks, run_checks
 from .share_report import build_share_report
@@ -563,7 +563,20 @@ def _sorted_line(mail: Any) -> str:
 
 def watch_once(args: argparse.Namespace, settings: Settings, store: Store, folder: Path) -> tuple[int, int]:
     """One check of the watched folder: (invoices processed, of which failed); an email that could not be read
-    counts as one of each."""
+    counts as one of each. None while another pick-up reads into the same database (``pickup_lock``, B-1587)."""
+    lock = pickup_lock(store.path.parent)
+    if lock is None:
+        later = "run it again in a moment" if args.once else "the next check picks them up"
+        print(f"{time.strftime('%H:%M:%S')} the dashboard (or another watch) is reading invoices into this database: "
+              f"this check is skipped ({later})", file=sys.stderr)  # fmt: skip
+        return 0, 0
+    try:
+        return _check(args, settings, store, folder)
+    finally:
+        lock.close()
+
+
+def _check(args: argparse.Namespace, settings: Settings, store: Store, folder: Path) -> tuple[int, int]:
     from ..intake.inbox import log_sorted
 
     done = failed = 0

@@ -38,6 +38,7 @@ from email.message import EmailMessage
 from pathlib import Path
 
 from ..ai.extraction import DOCUMENT_EXTENSIONS
+from ..core.paths import try_lock
 from . import triage
 from .msgfile import MsgError, html_to_text, read_msg
 
@@ -64,6 +65,7 @@ UNREADABLE_FOLDER = "could not read"  # inside DONE_FOLDER
 PERSON_FOLDER = "needs a person"  # inside DONE_FOLDER: emails and attachments a person must look at
 STATEMENTS_FOLDER = "statements"  # in the invoices folder: statements of account taken out of emails
 TRIAGE_LOG = "triage.jsonl"  # inside DONE_FOLDER: one line per email sorted
+PICKUP_LOCK = ".ap_coder_pickup.lock"  # in the data folder, beside the database: held by the pick-up reading (B-1587)
 _MAGIC = {b"%PDF": ".pdf", b"\xff\xd8\xff": ".jpg", b"\x89PNG": ".png", b"II*\x00": ".tif", b"MM\x00*": ".tif",
           b"BM": ".bmp"}  # fmt: skip
 _TYPES = {"application/pdf": ".pdf", "image/jpeg": ".jpg", "image/png": ".png", "image/tiff": ".tif",
@@ -519,3 +521,13 @@ def unpack_folder(folder: Path, now: float | None = None) -> list[Unpacked]:
         except Exception as exc:  # noqa: BLE001 - anything else about this one email: file it away, go on
             out.append(_unreadable(path, folder, exc))
     return out
+
+
+def pickup_lock(data: Path) -> object | None:
+    """The one pick-up of new invoices at a time into the database of the data folder ``data`` (B-1587): a scheduled
+    ``watch`` and the dashboard's imports (its Process button, uploads) each hold it while they unpack the saved
+    emails and read new files into the review queue, and once they hold it check that a file is not stored yet.
+    Without it, two pick-ups both listed a new file as not stored and both stored it. The operating system's lock
+    (``paths.try_lock``: kept while the returned file is open, released when a process ends, crashed or not); None
+    while another pick-up holds it."""
+    return try_lock(data / PICKUP_LOCK)

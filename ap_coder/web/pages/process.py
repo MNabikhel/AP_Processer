@@ -40,6 +40,7 @@ from ap_coder.intake.mailbox import (
     MAX_EMAIL_BYTES,
     Unpacked,
     emails_in,
+    pickup_lock,
     safe_name,
     unpack,
     unpack_folder,
@@ -52,6 +53,7 @@ from ap_coder.web.access import is_admin
 from ap_coder.web.core import (
     cache_dir,
     can,
+    data_dir,
     done,
     flash_message,
     get_settings,
@@ -77,6 +79,7 @@ router = page_router()  # each plain handler: one connection a request
 
 JOB = "process"
 STILL_SAVING_SECONDS = 60  # a file changed this recently whose end is missing is still being written
+PICKUP_WAIT = 2.0  # seconds between looks at the pick-up lock while a scheduled watch holds it
 ACCEPT = sorted(SUPPORTED_EXTENSIONS | EMAIL_EXTENSIONS)  # what the upload takes: PDFs, scans, photos, saved emails
 # The largest invoice uploaded (B-981): as a spreadsheet (web/files.py); a saved email up to what the mailbox reads.
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
@@ -179,6 +182,19 @@ def split_new(store: Store, files: list[Path]) -> tuple[list[Path], list[Path]]:
             todo.append(path)
         seen.add(digest)
     return todo, already
+
+
+def still_new(store: Store, files: list[Path]) -> tuple[list[Path], list[Path]]:
+    """(the files still to read, the ones stored since they were listed): checked again once the import holds the
+    pick-up lock, as another pick-up (a scheduled watch) may have stored them meanwhile (B-1587). A file gone or
+    locked meanwhile (a picture the other one made a PDF of) is in neither: the next pick-up sees it if it is there."""
+    todo, stored = [], []
+    for path in files:
+        try:
+            (stored if store.find_by_hash(path) is not None else todo).append(path)
+        except OSError:
+            continue
+    return todo, stored
 
 
 def email_line(mail: Unpacked, already: list[Path] | None = None) -> tuple[str, str]:
@@ -578,7 +594,19 @@ def process_files(store: Store, settings: Settings, paths: list[Path], *, alread
     actor = reviewer()  # who started it (the job's thread has no request to say)
 
     def work(job: Job) -> dict[str, Any]:
-        todo, skipped, mails = list(paths), list(already or []), list(emails or [])
+        lock = pickup_lock(data_dir(store))
+        while lock is None:  # a scheduled watch is reading invoices into this database: after it (B-1587)
+            job.step(0, len(paths), "Waiting for the scheduled pick-up of the invoices folder to finish")
+            time.sleep(PICKUP_WAIT)
+            lock = pickup_lock(data_dir(store))
+        try:
+            return read(job)
+        finally:
+            lock.close()
+
+    def read(job: Job) -> dict[str, Any]:
+        todo, stored = still_new(store, paths)  # listed before the lock: one stored since by another is not read
+        skipped, mails = [*(already or []), *stored], list(emails or [])
         if folder_emails:
             unpacked = unpack_folder(invoice_dir(store))
             mails += unpacked

@@ -243,3 +243,22 @@ def test_watch_once_fails_when_every_email_could_not_be_read(tmp_path):
     (inbox / "bad.msg").write_bytes(b"not an outlook email" * 40)
     os.utime(inbox / "bad.msg", (1_700_000_000, 1_700_000_000))
     assert cli.main(_watch_args(tmp_path, "--once")) == 1
+
+
+def test_watch_skips_its_check_while_the_dashboard_reads_into_the_same_database(tmp_path, capsys):
+    """B-1587: the dashboard's import holds the pick-up lock; the watch reads nothing then, and says so."""
+    from ap_coder.intake.mailbox import pickup_lock
+    from ap_coder.ops import cli
+
+    inbox = tmp_path / "in"
+    inbox.mkdir()
+    shutil.copy(SAMPLES / f"{SAMPLE_STEM}.pdf", inbox / "new.pdf")
+    os.utime(inbox / "new.pdf", (time.time() - 60, time.time() - 60))
+    args = _watch_args(tmp_path, "--once")
+    held = pickup_lock(tmp_path)  # the data folder: the database's
+    try:
+        assert cli.main(args) == 0
+    finally:
+        held.close()
+    assert "this check is skipped" in capsys.readouterr().err
+    assert Store(tmp_path / "a.db").list_invoices() == []
