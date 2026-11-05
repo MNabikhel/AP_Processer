@@ -576,7 +576,8 @@ class Field:
 class Forms(HTMLParser):
     """A page's forms as a browser has them: each form's action, method and attributes; every field in document
     order with its form (a field's ``form=`` attribute, else the form around it) and its [data-live] section; each
-    form's submit buttons (disabled or not)."""
+    form's submit buttons (disabled or not). What a ``<template>`` holds (a new row drawn by the page) is no part of
+    the page (B-1622)."""
 
     def __init__(self, form: str | None = None, section: str | None = None) -> None:
         super().__init__(convert_charrefs=True)
@@ -590,11 +591,15 @@ class Forms(HTMLParser):
         self._options: list[tuple[str | None, str, bool]] = []
         self._text: list[str] | None = None
         self._textarea: Field | None = None
+        self._template = 0  # inside a <template>, this deep
 
     def _section(self) -> str | None:
         return next((s for _, s in reversed(self._stack) if s), None)
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self._template += tag == "template"
+        if self._template:
+            return
         a = {k: v if v is not None else "" for k, v in attrs}
         if tag not in VOID:
             self._stack.append((tag, a.get("data-live")))
@@ -631,6 +636,8 @@ class Forms(HTMLParser):
             self._text = []
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if self._template:
+            return
         self.handle_starttag(tag, attrs)
         if tag not in VOID and self._stack:
             self._stack.pop()
@@ -646,6 +653,9 @@ class Forms(HTMLParser):
         self._text = None
 
     def handle_endtag(self, tag: str) -> None:
+        if self._template:
+            self._template -= tag == "template"
+            return
         if tag == "option":
             self._end_option()
         elif tag == "select" and self._select is not None:
