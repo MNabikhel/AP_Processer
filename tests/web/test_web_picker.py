@@ -499,6 +499,21 @@ def test_in_a_browser_checking_shows_while_a_check_runs_and_goes_after_even_when
     assert errors == []
 
 
+def test_in_a_browser_draft_saved_says_its_time_as_the_server_does_b1596(browser, store):
+    """B-1596: "Draft saved 0:37" read as a duration, the 24-hour clock B-997 had put right only in the server's
+    wording ("today at 12:37 a.m."): the screen says the time the same way."""
+    import datetime as dt
+
+    page, errors = _review(browser, store.list_invoices(REVIEW)[0]["id"])
+    for at, said in ((dt.datetime(2026, 11, 5, 0, 37), "12:37 a.m."), (dt.datetime(2026, 11, 5, 16, 5), "4:05 p.m.")):
+        page.clock.set_fixed_time(at)
+        with page.expect_response(lambda r: r.url.endswith("/check")):
+            page.fill("[name=invoice_number][form=inv]", f"A-{at.hour}")
+        page.wait_for_function("() => document.querySelector('[data-checking]').textContent.startsWith('Draft saved')")
+        assert page.locator("[data-checking]").inner_text() == f"Draft saved {said}"
+    assert errors == []
+
+
 # --- The second review's findings (B-590, B-593, B-595 to B-597, D-56) -------------------------------------------
 
 

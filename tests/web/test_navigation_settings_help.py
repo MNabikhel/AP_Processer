@@ -384,6 +384,32 @@ def test_report_a_problem_opens_at_once_and_fetches_the_setup_report(client, mon
     assert "## report" in client.get("/help/report").text  # once made, the page has it at once
 
 
+def test_report_a_problem_writes_nothing_and_names_each_invoice_by_its_number(client, store, monkeypatch):
+    """B-1606: each view of Report a problem (a GET) wrote share_report_key.csv into the data folder, and read the
+    invoices one at a time. Its doc numbers followed the review order, so they changed from one view to the next and
+    that file was the only record of which was which. An invoice is now doc-<its number in AP Coder> (doc-07 is #7),
+    the same at every view, and the page writes nothing."""
+    from tests.webclient import SAMPLE_STEM, SAMPLES, add_clean, gt
+
+    first = add_clean(store)
+    second = store.add_invoice(SAMPLES / f"{SAMPLE_STEM}.pdf", {**gt(), "invoice_number": "INV-2"},
+                               {"requires_review": True, "adjusted_confidence": 0.5})  # reviewed first  # fmt: skip
+    folder = store.path.parent
+
+    def files() -> set[str]:
+        return {str(p.relative_to(folder)) for p in folder.rglob("*") if not p.name.endswith(("-wal", "-shm"))}
+
+    before = files()
+
+    def one_at_a_time(self, invoice_id):
+        raise AssertionError("the invoices are read in one query")
+
+    monkeypatch.setattr(Store, "get_invoice", one_at_a_time)
+    page = client.get("/help/report").text
+    assert f"| doc-{first:02d} |" in page and f"| doc-{second:02d} |" in page
+    assert files() == before
+
+
 def test_the_offline_doctor_report_has_no_cloud_lines(monkeypatch):
     from ap_coder.ops.doctor import FAIL, PASS, SKIP, Check, format_checks
 

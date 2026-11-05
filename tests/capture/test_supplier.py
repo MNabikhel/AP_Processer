@@ -96,6 +96,25 @@ def test_amounts(text, value):
     assert parse_amount(text) == value
 
 
+@pytest.mark.parametrize(
+    "text",
+    ["1,234.56", "1 234,56 $", "1.234,56", "(12.00)", "-12.00", "113.00-", "12.00 CR", "392.99.CR", "$1,234.56",
+     "CAD 99", "45.10 USD", "€ 10,00", "1 050.00", "0,50", "0.125", "$-113.00", "-$113.00", "$.65", "1,234.567",
+     "12,345.6789", "1.3023", "1;864.71"],
+)  # fmt: skip
+def test_an_amount_is_read_as_the_reader_reads_it(text):
+    """B-1604: template learning's own amount parser read "0.125" as 125.0, dropped the minus of "$-113.00" and read a
+    date as 20260912: the number is now read by capture/normalize.py, the text still one amount only."""
+    from ap_coder.capture import normalize
+
+    assert parse_amount(text) == normalize.parse_amount(text) is not None
+
+
+@pytest.mark.parametrize("text", ["2026-09-12", "12/09/2026", "12 34", "1.2.3", "INV-2026", "C$ 12.00 net"])
+def test_a_text_that_is_not_one_amount_is_none(text):
+    assert parse_amount(text) is None
+
+
 def test_dates():
     assert parse_date("2026-09-12") == "2026-09-12"
     assert parse_date("Oct 7, 2026") == "2026-10-07"

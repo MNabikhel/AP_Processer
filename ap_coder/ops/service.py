@@ -42,11 +42,11 @@ from typing import Any
 from xml.sax.saxutils import escape
 
 from .. import __version__
-from ..core.paths import PROJECT_DIR, private_dir, same_folder
+from ..core.paths import PROJECT_DIR, private_dir, same_folder, try_lock
 
 WINDOWS = os.name == "nt"
 CONFIG_FILE = "server.json"  # in the data folder
-SERVICE_DIR = "service"  # in the data folder: run.cmd, the task's XML, host.json, stopped
+SERVICE_DIR = "service"  # in the data folder: run.cmd, the task's XML, host.json, host.lock, stopped
 LOG_DIR = "logs"
 LOG_FILE = "service.log"
 TASK_NAME = "AP Coder"
@@ -290,6 +290,21 @@ def stop_flag(data: Path) -> Path:
 
 def host_record(data: Path) -> Path:
     return service_dir(data) / "host.json"
+
+
+def host_lock(data: Path) -> Path:
+    """Held by the running host (``try_lock``): the operating system releases it when the host ends, killed or not."""
+    return service_dir(data) / "host.lock"
+
+
+def host_running(data: Path) -> bool:
+    """A service host runs: it holds ``host_lock``. Not host.json's process number, which after a reboot or a kill
+    may be another program's (B-1588). Told by taking the lock, released at once when it was free."""
+    lock = try_lock(host_lock(data))
+    if lock is None:
+        return True
+    lock.close()
+    return False
 
 
 def log_path(data: Path) -> Path:
@@ -622,14 +637,16 @@ def run_host(
     start, so a change in server.json applies at the next restart."""
     if stop_flag(data).exists():
         return 0  # stopped on purpose: the repeating trigger starts nothing
-    record = host_record(data)
-    other = int(_read_json(record).get("pid") or 0)
-    if other and other != os.getpid() and process_alive(other):
-        return 0  # a host is running already
-    log = host_logger(data)
+    # A host is running already when it holds the lock. Not when host.json names a live process: after a reboot or a
+    # kill that number may be another program's, and the service would stay down (B-1585).
+    lock = try_lock(host_lock(data))
+    if lock is None:
+        return 0
+    record = host_record(data)  # at once: while the lock is held, host.json is this host's (``stop`` relies on it)
     record.parent.mkdir(parents=True, exist_ok=True)
     record.write_text(json.dumps({"pid": os.getpid(), "started": dt.datetime.now().isoformat(timespec="seconds"),
                                   "folder": str(PROJECT_DIR), "version": __version__}), encoding="utf-8")  # fmt: skip
+    log = host_logger(data)
     log.info("Service host started (AP Coder %s, %s, process %s)", __version__, PROJECT_DIR, os.getpid())
     delay = RESTART_FIRST
     try:
@@ -672,6 +689,7 @@ def run_host(
         with contextlib.suppress(OSError):
             if int(_read_json(record).get("pid") or 0) == os.getpid():
                 record.unlink()
+        lock.close()
     return 0
 
 
@@ -697,8 +715,10 @@ def stop(data: Path, s: ServerSettings, say: Say = print) -> int:
     )
     stopped = dashboard_stopped(data, s)
     run_command(["schtasks", "/end", "/tn", s.task_name], capture_output=True)
+    # Only the running host: it holds the host lock and wrote host.json as soon as it held it. A record left by a host
+    # that was killed may name a number another process has since, an AP Coder watch among them (B-1590).
     host = int(_read_json(host_record(data)).get("pid") or 0)
-    if host and host != os.getpid() and runs_python_of(host, s.code_folder):
+    if host and host != os.getpid() and host_running(data) and runs_python_of(host, s.code_folder):
         terminate(host)
     if not stopped:
         say("The dashboard did not stop: end python.exe in Task Manager (Details), then run this again.")
@@ -730,8 +750,7 @@ def install(data: Path, s: ServerSettings, args: argparse.Namespace, say: Say = 
             say(f"5. Start it: {shown(['schtasks', '/run', '/tn', s.task_name])}")
         say("Nothing was changed (dry run).")
         return 0
-    host = int(_read_json(host_record(data)).get("pid") or 0)
-    if host and process_alive(host):  # installed again while running: the new settings apply from the restart
+    if host_running(data):  # installed again while running: the new settings apply from the restart
         stop(data, s, say)
     save_settings(data, s)
     write_runner(data, folder)
@@ -780,7 +799,7 @@ def status(data: Path, s: ServerSettings, say: Say = print) -> int:
         return 1
     say(f'Scheduled task "{s.task_name}": {_task_state(done)} (runs as {s.account})')
     host = _read_json(host_record(data))
-    if host and process_alive(int(host.get("pid") or 0)):
+    if host_running(data):
         say(f"Service host: running since {host.get('started', '?')} (process {host.get('pid')}, AP Coder "
             f"{host.get('version', '?')}, {host.get('folder', '?')})")  # fmt: skip
     else:

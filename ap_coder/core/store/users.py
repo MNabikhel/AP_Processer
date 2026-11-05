@@ -72,6 +72,7 @@ TEMPORARY_SECONDS = 72 * 3600  # a temporary password (a new account, a reset) n
 TEMPORARY_EXPIRED = ("Your temporary password has expired (it lasts 3 days): ask an Admin for a new one (Users → "
                      "Reset password).")  # fmt: skip
 SEEN_EVERY = 60  # seconds between two writes of a session's last use
+SEEN_WAIT_MS = 200  # how long that write may wait for another writer before it is left to the next request
 MAX_FAILURES = 5  # tries that don't match within FAILURE_WINDOW for one username from one address...
 ADDRESS_FAILURES = 30  # ...or from one address, whatever the usernames...
 FAILURE_WINDOW = 15 * 60
@@ -135,6 +136,19 @@ def fold_username(username: Any) -> str:
 
 def token_hash(token: str) -> str:
     return hashlib.sha256(str(token).encode("utf-8")).hexdigest()
+
+
+def _briefly(conn: Any, sql: str, params: tuple[Any, ...]) -> None:
+    """``sql`` if the database takes it within ``SEEN_WAIT_MS``, else nothing (another writer holds it): a session's
+    use noted, or one past its time dropped, never holds a page up (B-1579, B-1584)."""
+    waits = conn.execute("PRAGMA busy_timeout").fetchone()[0]
+    conn.execute(f"PRAGMA busy_timeout = {SEEN_WAIT_MS}")
+    try:
+        conn.execute(sql, params)
+    except sqlite3.OperationalError:
+        pass
+    finally:
+        conn.execute(f"PRAGMA busy_timeout = {int(waits)}")
 
 
 def _b64(data: bytes) -> str:
@@ -885,10 +899,10 @@ class UsersMixin:
             )
         return token
 
-    def session_user(self, token: str | None) -> dict[str, Any] | None:
+    def session_user(self, token: str | None, *, renew: bool = True) -> dict[str, Any] | None:
         """The active account a session token stands for, or None (no such session, unused for ``session_idle``
         seconds, older than ``session_absolute``, or its account turned off). Its last use is recorded (at most once
-        a minute)."""
+        a minute), unless ``renew`` is False: a page's automatic poll, which is no one using it (B-1580)."""
         if not token:
             return None
         digest, now = token_hash(token), _clock()
@@ -901,19 +915,20 @@ class UsersMixin:
             ).fetchone()
             if row is None:
                 return None
-            if (
-                not row["active"]
-                or not row["totp_on"]  # an account without its authenticator app: no session is a login (D-146)
-                or now - row["session_created"] >= self.session_absolute
-                or (now - row["last_seen"] > self.session_idle)
-            ):
+            if now - row["session_created"] >= self.session_absolute or now - row["last_seen"] > self.session_idle:
+                # Past its time, for good: dropped if the database lets it at once, else by a later look or the
+                # clean-up at the next login (B-1584).
+                _briefly(conn, "DELETE FROM sessions WHERE token_hash = ?", (digest,))
+                return None
+            # An account without its authenticator app (no session is a login, D-146), or turned off: dropped whatever
+            # the wait, as setting the app up later would make the session a login again.
+            if not row["active"] or not row["totp_on"]:
                 conn.execute("DELETE FROM sessions WHERE token_hash = ?", (digest,))
                 return None
-            if now - row["last_seen"] >= SEEN_EVERY:
-                try:  # best effort: a busy database fails no page over it, the next request records it (B-1293)
-                    conn.execute("UPDATE sessions SET last_seen = ? WHERE token_hash = ?", (now, digest))
-                except sqlite3.OperationalError:
-                    pass
+            if renew and now - row["last_seen"] >= SEEN_EVERY:
+                # Best effort, and never long: a busy database fails no page over it (B-1293) nor holds one up behind
+                # another writer (B-1579); the next request records it.
+                _briefly(conn, "UPDATE sessions SET last_seen = ? WHERE token_hash = ?", (now, digest))
         found = _public(row) or {}
         for key in ("session_created", "last_seen"):
             found.pop(key, None)

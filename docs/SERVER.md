@@ -222,9 +222,11 @@ and `--llm-parallel` (below), `--no-start`.
 `--account`, `--task-name` and `--folder` are never taken from `server.json`: the service's account can change that
 file, and these three say what the task runs, as whom, and which task your `schtasks` commands change. Each
 `service install|start|stop|status|remove` uses the ones given on its own command line, else the defaults (the
-folder: the one you run it from). So when you chose another account, task name or folder, give them again each time;
+folder: the one you run it from); `server-update` takes `--task-name` the same way. So when you chose another
+account, task name or folder, give them again each time;
 `SYSTEM` and the other built-in accounts are used only when `--account` names them. `service stop` ends only the
-service's own `python.exe` (its `.venv`'s, or the Python that `.venv` was made with) when it will not stop by itself.
+service's own `python.exe` (its `.venv`'s, or the Python that `.venv` was made with) when it will not stop by itself,
+and the service host only while it runs (it holds `service\host.lock`).
 
 **Workers** (`--workers N`, kept in `server.json` as `"workers"`; default one per processor core, at most 8): one
 Python process answers about 1.6 pages a second however many cores the server has, so the service runs N *web
@@ -333,6 +335,10 @@ window, started at boot like AP Coder.
 
 5. **Check it**: `lms server status` and `lms ps` (as that account) show the server and the loaded model; in AP Coder,
    *Settings* → *Reading* → *Check again*. AP Coder finds LM Studio at `http://127.0.0.1:1234/v1`, its usual place.
+   On another computer of the company network instead (a Mac Studio), give its address in the .env
+   (`AP_LLM_BASE_URL`, `AP_PAGE_READER_BASE_URL`). A name in the company's DNS (`macstudio.corp.example.com`) also
+   needs that DNS domain named, `AP_COMPANY_DOMAINS=corp.example.com` (several: comma-separated): such a name is used
+   while every address it has is private, and no other name is looked up.
 6. **Several requests at once** (for 5,000 invoices a month and more). One request at a time leaves most of a
    graphics card idle; a server that answers several together (continuous batching) reads 2 to 4 pages in about
    the time of one and a half (estimated, from llama.cpp's published batching figures; not measured here). Two
@@ -352,7 +358,13 @@ window, started at boot like AP Coder.
 ## 9. Backups
 
 - **Every day, automatically**: a backup in `D:\APCoderData\backups`, when AP Coder starts and once a day while it
-  runs; the newest 14 are kept. It is made in the background: AP Coder serves pages meanwhile, and *Settings* →
+  runs; the newest 14 are kept.
+  - **When:** set `AP_BACKUP_HOURS=1-5` in the `.env` so the daily copy starts between 1 and 5 in the morning, not
+    during the working day. A year's database is 7-9 GB: the copy takes minutes of disk work. If the server was off
+    during those hours, the backup is made as soon as the last one is 30 hours old, so no day is skipped (B-1671).
+  - **Room:** a backup starts only when the copy and 512 MB more fit on the disk. A full disk would stop every write
+    to the database. Otherwise *Settings* → *Data & backups* says it was not made and why (B-1670).
+  - Plan the disk for 14 daily copies of the database, plus the invoice files once. It is made in the background: AP Coder serves pages meanwhile, and *Settings* →
   *Data & backups* says while one is being made (B-1553). An update adds its own (`...-before-update-<version>`),
   made before the update goes on, kept until you delete it. Each backup is AP Coder as it was at that moment,
   restorable whole (D-143):

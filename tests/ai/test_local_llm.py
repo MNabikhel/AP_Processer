@@ -970,3 +970,30 @@ def test_lm_studio_listing_counts_a_loaded_model_listed_without_a_key(monkeypatc
     assert [m.key for m in local_llm.parse_lm_studio_listing(v1).models] == ["qwen/qwen3.5-9b"]
     monkeypatch.setattr(local_llm, "_fetch_json", lambda url, *a: {"data": [{"id": "x"}]})  # not LM Studio
     assert local_llm._lm_studio_listing("http://127.0.0.1:1234", "", 1.0) is None
+
+
+def test_a_refused_server_name_says_to_add_its_domain_to_the_company_domains(real_fetch, monkeypatch):
+    """B-1605: a model server named in the company's DNS but not under AP_COMPANY_DOMAINS was refused with only
+    AP_ALLOW_INTERNET=1 named as the way out (which opens the internet too). The chat model's and the page reader's
+    message now say to add its domain to AP_COMPANY_DOMAINS; an address, or a name already in those domains, isn't
+    told so."""
+    import socket
+
+    from ap_coder.ai import page_reader
+    from ap_coder.core import config
+
+    monkeypatch.delenv("AP_ALLOW_INTERNET", raising=False)
+    monkeypatch.setenv("AP_COMPANY_DOMAINS", "corp.acme-foods.ca")
+    public = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+    monkeypatch.setattr(config.socket, "getaddrinfo", lambda host, *a, **k: public)
+    config.forget_resolved()
+    said = local_llm.refused_address("http://macstudio.lab.acme-foods.ca:1234/v1")
+    status = local_llm.check_server(LocalLLMSettings(base_url="http://macstudio.lab.acme-foods.ca:1234/v1"),
+                                    use_cache=False)  # fmt: skip
+    assert status.error == said  # Settings → Reading says it whole
+    assert "macstudio.lab.acme-foods.ca" in said and "add its domain to AP_COMPANY_DOMAINS in the .env file" in said
+    with pytest.raises(page_reader.PageReaderError, match="add its domain to AP_COMPANY_DOMAINS"):
+        page_reader._post_json("http://macstudio.lab.acme-foods.ca:1234/api/v1/models/load", {}, "", 1.0)
+    assert "AP_COMPANY_DOMAINS" not in local_llm.refused_address("http://93.184.216.34:1234/v1")
+    assert "AP_COMPANY_DOMAINS" not in local_llm.refused_address("http://gpu.corp.acme-foods.ca:1234/v1")  # public
+    config.forget_resolved()

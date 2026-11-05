@@ -1,6 +1,7 @@
 """The database does no more work than a page needs: one-off clean-ups run once, indexes are used, the background
 workers reuse one store (the SQL statements and connections counted)."""
 
+import re
 import sqlite3
 import threading
 import time
@@ -114,6 +115,96 @@ def test_the_lookups_by_file_total_and_event_use_an_index(tmp_path, monkeypatch)
     assert "invoices_total" in found
     assert store.duplicates_elsewhere("Other", "A-1", 11.005) and not store.duplicates_elsewhere("Other", "A-1", 11.02)
     assert "events_action" in _plan(store, monkeypatch, lambda: store.latest_events("processed", ids), "events")
+
+
+def _plans(store: Store, monkeypatch, call, table: str, where: str) -> list[str]:
+    """The query plans of the SELECTs, UPDATEs and DELETEs on ``table`` that ``call`` runs whose condition has
+    ``where`` (each statement traced, then explained)."""
+    seen = _statements(monkeypatch)
+    call()
+    monkeypatch.undo()
+    asked = sorted({s for s in seen if s.split(" ", 1)[0] in ("SELECT", "UPDATE", "DELETE")
+                    and re.search(rf"\b(FROM|UPDATE|JOIN) {table}\b", s) and where in s})  # fmt: skip
+    assert asked, seen
+    with sqlite3.connect(store.path) as conn:
+        return [" | ".join(str(r[-1]) for r in conn.execute("EXPLAIN QUERY PLAN " + s)) for s in asked]
+
+
+def test_the_lookups_by_batch_invoice_event_kind_account_expiry_and_erp_number_use_an_index(tmp_path, monkeypatch):
+    """B-1581: an export undone, an empty batch, who may post a batch, a reopen or delete (the coding memory
+    withdrawn), the events of a kind since a day, an account's sessions, the expired one-off values and the supplier
+    sync's vendors by JD Edwards number each read their whole table (a year's invoices, events and coding memory)."""
+    from ap_coder.core.store.users import POSTER_NOT_APPROVER
+    from ap_coder.erp import jde_sync
+    from tests.webclient import add_clean, gt
+
+    store = Store(tmp_path / "ap.db")
+    ids = [add_clean(store, invoice_number=f"N-{i}") for i in range(3)]
+    for i in ids:
+        store.approve_invoice(i, {**gt(), "invoice_number": f"N-{i}"}, "Ann")
+    batch = store.create_export_batch(ids[:2], "csv", actor="Ann")
+    store.set_setting(POSTER_NOT_APPROVER, "1")
+    ann, boss = store.add_user("ann", "correct horse battery"), store.add_user("boss", "correct horse battery")
+    token = store.start_session(ann)
+    jde = type("Ais", (), {"rows": lambda self, part: [{"name": "Acme Ltd", "an8": "1001", "bank_last4": "1234"}]})
+    lookups = [
+        (lambda: store.posting_refusal(batch, ann), "events", "export_batch =", "invoices_export_batch"),
+        (lambda: store.undo_export_batch(batch, actor="Ann"), "invoices", "export_batch =", "invoices_export_batch"),
+        (lambda: store.delete_empty_batches({batch}), "invoices", "export_batch =", "invoices_export_batch"),
+        (lambda: store.reopen(ids[2], "Bob", "wrong supplier"), "feedback", "invoice_id =", "feedback_invoice"),
+        (lambda: store.delete_invoice(ids[1], True, "Ann"), "feedback", "invoice_id =", "feedback_invoice"),
+        (lambda: store.touchless_summary(), "events", "created_at >=", "events_action_at"),
+        (lambda: store.approval_controls("USD", "2026-01-01T00:00:00"), "events", "created_at >=", "events_action_at"),
+        (lambda: store.vouched_for(boss, ann), "events", "created_at >=", "events_action_at"),
+        (lambda: store.other_sessions(ann, token), "sessions", "user_id =", "sessions_user"),
+        (lambda: store.end_sessions(ann, keep=token), "sessions", "user_id =", "sessions_user"),
+        (lambda: store.deactivate_user(ann, actor="boss"), "sessions", "user_id =", "sessions_user"),
+        (lambda: store.keep_ephemeral("upload", b"x", 60), "ephemeral", "expires_at <", "ephemeral_expires"),
+        (lambda: jde_sync.sync_suppliers(store, jde(), "Ann"), "vendors", "erp_id =", "vendors_erp_id"),
+    ]  # fmt: skip
+    for call, table, where, index in lookups:
+        for plan in _plans(store, monkeypatch, call, table, where):
+            assert index in plan and "SCAN" not in plan, (table, where, plan)
+
+
+def test_finding_an_invoices_vendor_seeks_its_name_in_the_vendor_list_and_picks_the_same_one(tmp_path, monkeypatch):
+    """B-1582: find_vendor read the whole vendor list (a 20,000-vendor master) at every look, 3 or 4 an invoice: its
+    test of a second vendor by the name ("<name> #<ERP ID>", B-930) defeated the vendor key's index. The same vendor
+    is picked as before: by the GST/HST number, else the ERP ID, else the name's own, the first kept of several."""
+    store = Store(tmp_path / "ap.db")
+    gst = "123456789RT0001"
+    with store._conn() as conn:
+        for key, number, erp in (("acme #2002", gst, "2002"), ("acme", "", "1000"), ("acme #1001", gst, "1001"),
+                                 ("acme #1002", "", "1002"), ("acme $", "", "9"), ("acme 1", "", "8"),
+                                 ("acmee #1003", "", "7"), ("acm #1", "", "6"), ("acme #", "", "5")):  # fmt: skip
+            conn.execute("INSERT INTO vendors (vendor_key, display_name, expected_gst, erp_id, updated_at) "
+                         "VALUES (?, ?, ?, ?, '')", (key, key.title(), number, erp))  # fmt: skip
+    picked = {
+        (number, erp): store.find_vendor("Acme Ltd", number, erp)["vendor_key"]
+        for number, erp in (("", ""), (gst, ""), ("", "1002"), ("", "5"), ("", "9"), ("", "7"), ("", "6"))
+    }
+    assert picked == {("", ""): "acme", (gst, ""): "acme #2002", ("", "1002"): "acme #1002", ("", "5"): "acme #",
+                      ("", "9"): "acme", ("", "7"): "acme", ("", "6"): "acme"}  # fmt: skip
+    plans = _plans(store, monkeypatch, lambda: store.find_vendor("Acme Ltd", gst), "vendors", "vendor_key")
+    assert plans and all("SCAN" not in plan and "USING INDEX" in plan for plan in plans), plans
+
+
+def test_a_vendors_invoices_without_a_po_are_read_from_the_vendors_invoices_not_from_every_one_without_a_po(
+    tmp_path, monkeypatch
+):
+    """B-1583: the month end's accruals read, for each vendor with an open PO received, its invoices that quote no PO
+    through the PO's index, where "no PO" is nearly every invoice (89%): the whole table, vendor after vendor."""
+    from tests.webclient import add_clean
+
+    store = Store(tmp_path / "ap.db")
+    kept = [add_clean(store, invoice_number="N-1", po_number=""), add_clean(store, invoice_number="N-2", po_number="")]
+    add_clean(store, invoice_number="N-3")  # quotes a PO (the sample's)
+    store.reject_invoice(add_clean(store, invoice_number="N-4", po_number=""), "Ann", "not ours")  # no longer active
+    add_clean(store, invoice_number="N-5", po_number="", vendor_name="Another Vendor Inc")
+    key = store.get_invoice(kept[0])["vendor_key"]
+    assert [i["id"] for i in store.vendor_invoices_without_po(key)] == kept
+    (plan,) = _plans(store, monkeypatch, lambda: store.vendor_invoices_without_po(key), "invoices", "po_key")
+    assert "invoices_vendor" in plan and "SCAN" not in plan and "invoices_po" not in plan, plan
 
 
 def test_one_vendors_history_is_read_once_per_page(tmp_path, monkeypatch):

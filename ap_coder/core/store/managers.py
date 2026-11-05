@@ -171,17 +171,21 @@ class ManagersMixin:
             raise ValueError(f"unknown answer {answer!r}")
         if answer == SENT_BACK and not note.strip():
             raise ValueError("Say what the manager wants changed.")
+        meanwhile = "This request was answered or withdrawn meanwhile."
         with self._conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")  # read and answered in one go: two answers at once keep one (B-1578)
             req = conn.execute("SELECT * FROM manager_requests WHERE id = ?", (request_id,)).fetchone()
             if req is None or req["status"] != WAITING:
-                raise ValueError("This request was answered or withdrawn meanwhile.")
+                raise ValueError(meanwhile)
             at = answered_at or _now()
-            conn.execute(
+            cur = conn.execute(
                 "UPDATE manager_requests SET status = ?, answered_at = ?, answered_by = ?, answer_note = ?, "
                 "reply_file = ?, via = ? WHERE id = ? AND status = ?",
                 (answer, at, " ".join(by.split())[:MAX_NAME] or req["manager_name"], note.strip()[:MAX_NOTE],
                  reply_file, via, request_id, WAITING),
             )  # fmt: skip
+            if cur.rowcount == 0:
+                raise ValueError(meanwhile)
             conn.execute(
                 "UPDATE invoices SET status = ?, parked_reason = NULL, follow_up = NULL WHERE id = ? AND status = ?",
                 (REVIEW, req["invoice_id"], PARKED),
