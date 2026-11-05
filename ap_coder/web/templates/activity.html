@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block head %}<link rel="stylesheet" href="/static/analytics.css?v={{ static_version }}">{% endblock %}
 {% block content %}
-{% if not events %}
+{% if not total %}
 <section class="card">{{ ui.empty_state("No activity yet", "Everything that changes data is recorded here.") }}</section>
 {% else %}
 <div class="apc-tiles apc-anim">
@@ -64,7 +64,7 @@
     <button class="btn sm" type="submit">Search</button>
   </form>
   <div class="card-head an-count">
-    <span class="muted">{{ shown | length | num }} of {{ events | length | plural("event") }}</span>
+    <span class="muted">{% if matching is none %}Those that match your search, newest first, of {{ total | plural("event") }}{% else %}{{ matching | num }} of {{ total | plural("event") }}{% endif %}</span>
     <a class="btn sm" href="{{ csv_url }}" download><span class="ms" aria-hidden="true">download</span>Download CSV</a>
   </div>
   <nav class="tabs" aria-label="View">
@@ -75,13 +75,19 @@
   {{ ui.empty_note("No events match", " Try another search, filter or person.", "search_off") }}
   {% elif view == "timeline" %}
   {{ ui.timeline(timeline) }}
-  {% if timeline_more %}<p class="muted">Showing the newest {{ timeline | length }}; use the table or the CSV for everything.</p>{% endif %}
   {% else %}
   <div class="table-wrap an-scroll"><table class="apc-table">
     <thead><tr><th>When</th><th>Who</th><th>What</th><th>Invoice</th><th>Details</th></tr></thead>
     <tbody>{% for r in rows %}<tr><td>{{ r.When }}</td><td>{{ r.Who }}</td><td>{{ r.What }}</td><td>{{ r.Invoice }}</td><td class="w">{{ r.Details }}</td></tr>{% endfor %}</tbody>
   </table></div>
-  {% if table_more %}<p class="muted">Showing {{ rows | length | num }}; the CSV has all {{ shown | length | num }}.</p>{% endif %}
+  {% endif %}
+  {% if older or newest %}
+  {# A page of events at a time (B-1597): the CSV has every one that matches. #}
+  <div class="row">
+    {% if newest %}<a class="btn sm" href="{{ newest }}#log"><span class="ms" aria-hidden="true">first_page</span>Newest</a>{% endif %}
+    {% if older %}<a class="btn sm" href="{{ older }}#log" data-older><span class="ms" aria-hidden="true">chevron_right</span>Older events</a>{% endif %}
+    <span class="muted">{{ shown | length | num }} on this page; the CSV has every one that matches.</span>
+  </div>
   {% endif %}
 </section>
 {% endif %}

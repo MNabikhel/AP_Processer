@@ -240,11 +240,45 @@ def test_activity_text_is_escaped(client, store):
     assert "<script>alert(1)</script>" not in text and "&lt;script&gt;alert(1)&lt;/script&gt;" in text
 
 
-def test_filter_events_and_controls_period_helpers():
-    events = [{"action": "backup_made", "actor": "Ann", "detail": {}, "invoice_id": None, "created_at": "2026-01-01"}]
-    assert filter_events(events, "Backups", "Ann", "") == events
-    assert filter_events(events, "Invoices", "Everyone", "") == []
-    assert filter_events(events, "All", "Everyone", "zzz") == []
+def test_the_activity_csv_and_pages_cover_every_event_not_only_the_newest_5000(client, store):
+    """B-1597: the Activity CSV, "all of them", stopped at the newest 5,000 events, and the page's search and Person
+    list saw only those: a few hours of work on the server. Every matching event is in the CSV, the search and the
+    Person list cover them all, and the table pages through them to the oldest."""
+    import json
+    import re
+    from html import unescape
+
+    many = 5_100
+    with store._conn() as conn:
+        conn.execute("INSERT INTO events (action, actor, detail, created_at) VALUES ('note', 'Olga', ?, ?)",
+                     (json.dumps({"text": "the very first note"}), "2025-01-02T09:00:00"))  # fmt: skip
+        conn.executemany("INSERT INTO events (action, actor, detail, created_at) VALUES ('backup_made', 'Ann', ?, ?)",
+                         [(json.dumps({"file": f"b{n}.db"}), "2026-01-01T09:00:00") for n in range(many)])  # fmt: skip
+    rows = client.get("/activity/events.csv").text.lstrip("\ufeff").strip().splitlines()
+    assert len(rows) == 1 + many + 1 and "the very first note" in rows[-1]
+    by_olga = client.get("/activity/events.csv", params={"person": "Olga"}).text.lstrip("\ufeff").strip().splitlines()
+    assert len(by_olga) == 2 and "the very first note" in by_olga[1]
+    assert '<option value="Olga">' in client.get("/activity").text  # the Person list names who did only the oldest
+    found = client.get("/activity", params={"q": "very first"}).text
+    assert "the very first note" in found and "No events match" not in found
+    seen, url, text = 0, "/activity?view=table", ""
+    while url:  # the table, page by page, to the oldest
+        text = client.get(url).text
+        seen += text.count("<tr><td>")
+        older = re.search(r'href="([^"]+)"[^>]*data-older', text)
+        url = unescape(older.group(1)) if older else ""
+    assert seen == many + 1 and "the very first note" in text
+
+
+def test_filter_events_and_controls_period_helpers(store):
+    store.log_event("backup_made", actor="Ann")
+    events = store.events()  # the store's events, read by SQLite (B-1597)
+    assert list(filter_events(store, "Backups", "Ann", "")) == events
+    assert list(filter_events(store, "Backups", "Ann", "backup MADE")) == events  # the words shown, any case
+    assert list(filter_events(store, "Backups", "Bob", "")) == []
+    assert list(filter_events(store, "Backups", "Ann", "", hidden=["backup_made"])) == []
+    assert list(filter_events(store, "Invoices", "Everyone", "")) == []
+    assert list(filter_events(store, "All", "Everyone", "zzz")) == []
     import datetime as dt
 
     today = dt.date(2026, 3, 15)
