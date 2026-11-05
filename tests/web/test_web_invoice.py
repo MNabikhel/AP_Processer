@@ -1021,6 +1021,18 @@ def test_opening_an_invoice_does_what_its_screens_check_did(client, store):
     assert [d for i, _, d in store.invoice_drafts() if i == invoice_id][0]["check"] == said
 
 
+def test_a_kept_draft_with_a_date_typed_another_way_opens_with_it_as_its_check_puts_it(client, store):
+    """The screen's check on opening put a date typed another way ("Oct 5, 2026") in its field as YYYY-MM-DD; the page
+    that does that check itself (D-154) opened with it as typed. It opens as that check showed it; the draft keeps
+    what was typed (its time, B-997)."""
+    invoice_id = store.list_invoices(REVIEW)[0]["id"]
+    answer = check(client, invoice_id, form_of(store, invoice_id, invoice_date="Oct 5, 2026"))
+    assert answer["header"]["values"]["invoice_date"] == "2026-10-05"
+    page = client.get(f"/review/{invoice_id}").text
+    assert re.search(r'<input [^>]*name="invoice_date" value="2026-10-05"', page)
+    assert client.app.state.invoice_drafts[invoice_id]["header"]["invoice_date"] == "Oct 5, 2026"
+
+
 def test_opening_an_invoice_never_waits_for_another_writer_and_leaves_its_bookkeeping_to_the_next(client, store):
     """What the opening keeps (the queue's confidence, a draft's blocker) waited behind another writer (an import, a
     restore) up to 30 s, then failed the page. It waits a moment at most, and the next open or check keeps it."""

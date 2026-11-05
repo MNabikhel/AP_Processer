@@ -28,6 +28,7 @@ import json
 import sqlite3
 import threading
 from copy import copy
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
@@ -568,7 +569,8 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         context["lm_off"], context["banner"] = LM_STUDIO_OFF, ""
     page = render(
         request, "invoice.html", "review", mode="review", reading_status=status, **context,
-        draft=draft, kept=kept, live=_shown_live(request, analysis.live, may_edit), sure=sure,
+        draft=replace(draft, header={**draft.header, **analysis.filled}),  # as its check puts it: a date as YYYY-MM-DD
+        kept=kept, live=_shown_live(request, analysis.live, may_edit), sure=sure,
         grid={**view.grid(reference, draft, inv.get("ai_output") or {},
                           view.vendor_accounts(store, draft.header.get("vendor_name") or "")),
               "tax_marks": analysis.live.get("tax_marks") or {}},
