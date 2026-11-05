@@ -306,6 +306,29 @@ def test_a_stale_host_record_never_keeps_the_service_down(data):
     again.close()
 
 
+def test_status_and_install_tell_a_running_host_by_its_lock_not_host_json(data, commands, monkeypatch, capsys):
+    """B-1588: status said "Service host: running" when host.json named a live process (a number reused after a
+    reboot), and install then stopped the service first: with --no-start the service stayed stopped. The lock the
+    running host holds (B-1585) says it."""
+    (data / "server.json").write_text(json.dumps({"insecure_http": True}))
+    service.host_record(data).parent.mkdir(parents=True)
+    service.host_record(data).write_text(json.dumps({"pid": 4242, "started": "2026-11-01T08:00:00"}))
+    monkeypatch.setattr(service, "process_alive", lambda pid: pid == 4242)  # the number is another program's now
+    monkeypatch.setattr(service, "_local", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("no dashboard")))
+    assert main("status") == 0
+    assert "Service host: not running" in capsys.readouterr().out
+    assert main("install", "--no-start") == 0
+    assert not service.stop_flag(data).exists() and ["schtasks", "/end", "/tn", "AP Coder"] not in commands
+    held = paths.try_lock(service.host_lock(data))  # a host running
+    try:
+        assert main("status") == 0
+        assert "Service host: running since 2026-11-01T08:00:00 (process 4242" in capsys.readouterr().out
+        assert main("install", "--no-start") == 0  # installed again while it runs: stopped, to apply the settings
+        assert service.stop_flag(data).exists() and ["schtasks", "/end", "/tn", "AP Coder"] in commands
+    finally:
+        held.close()
+
+
 # --- On Windows (GitHub's runner: an administrator), the task really installed and removed --------------------------
 
 

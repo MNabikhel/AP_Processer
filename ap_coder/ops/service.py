@@ -297,6 +297,16 @@ def host_lock(data: Path) -> Path:
     return service_dir(data) / "host.lock"
 
 
+def host_running(data: Path) -> bool:
+    """A service host runs: it holds ``host_lock``. Not host.json's process number, which after a reboot or a kill
+    may be another program's (B-1588). Told by taking the lock, released at once when it was free."""
+    lock = try_lock(host_lock(data))
+    if lock is None:
+        return True
+    lock.close()
+    return False
+
+
 def log_path(data: Path) -> Path:
     return data / LOG_DIR / LOG_FILE
 
@@ -738,8 +748,7 @@ def install(data: Path, s: ServerSettings, args: argparse.Namespace, say: Say = 
             say(f"5. Start it: {shown(['schtasks', '/run', '/tn', s.task_name])}")
         say("Nothing was changed (dry run).")
         return 0
-    host = int(_read_json(host_record(data)).get("pid") or 0)
-    if host and process_alive(host):  # installed again while running: the new settings apply from the restart
+    if host_running(data):  # installed again while running: the new settings apply from the restart
         stop(data, s, say)
     save_settings(data, s)
     write_runner(data, folder)
@@ -788,7 +797,7 @@ def status(data: Path, s: ServerSettings, say: Say = print) -> int:
         return 1
     say(f'Scheduled task "{s.task_name}": {_task_state(done)} (runs as {s.account})')
     host = _read_json(host_record(data))
-    if host and process_alive(int(host.get("pid") or 0)):
+    if host_running(data):
         say(f"Service host: running since {host.get('started', '?')} (process {host.get('pid')}, AP Coder "
             f"{host.get('version', '?')}, {host.get('folder', '?')})")  # fmt: skip
     else:
