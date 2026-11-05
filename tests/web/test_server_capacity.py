@@ -380,16 +380,22 @@ def test_a_worker_ending_waits_for_its_own_work_started_after_it_looked(store, m
         app = create_app(web_settings(), store, start_reader=False, background=processes == 1, processes=processes)
         monkeypatch.setattr(app.state.daily_backup, "start", lambda: None)  # (a laptop's own backup at the start)
         gate = threading.Event()
-        threading.Timer(0.6, gate.set).start()
         if what == "job":
+            threading.Timer(0.6, gate.set).start()
             assert app.state.jobs.get("process").start(lambda job: gate.wait(10) and {})
         elif what == "backup":
+            threading.Timer(0.6, gate.set).start()
             app.state.daily_backup.thread = threading.Thread(target=gate.wait, args=(10,), daemon=True)
             app.state.daily_backup.thread.start()
         else:
             app.state.import_queue = ImportQueue()
             app.state.import_queue.waiting.append((None, None, 1))
-            threading.Timer(0.6, app.state.import_queue.waiting.clear).start()
+
+            def imported() -> None:  # one timer, the gate first: with two, the queue could empty before the gate was
+                gate.set()  # set (both 0.6 s; under load either fires first), and the lifespan ended rightly with
+                app.state.import_queue.waiting.clear()  # ``done`` still False
+
+            threading.Timer(0.6, imported).start()
 
         async def lifespan() -> None:
             async with app.router.lifespan_context(app):
