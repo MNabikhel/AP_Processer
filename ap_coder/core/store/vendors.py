@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import threading
+from collections import OrderedDict
 from typing import Any
 
 from ..memory import vendor_key
@@ -25,6 +27,30 @@ from .summary import fetch_rows
 # An invoice's coding as approved, else as read (a blank one counts as none), for json_extract: no invoice's whole AI
 # output is parsed for a few fields.
 _DOC = "COALESCE(NULLIF(NULLIF(final_output, 'null'), '{}'), NULLIF(ai_output, 'null'), '{}')"
+
+# Each vendor's invoices (``vendor_invoices``), kept in this process for the vendors asked most recently (D-160): at
+# most VENDOR_ROWS_KEPT rows in all (about 14 MB) and VENDOR_KEYS_KEPT vendors (each name typed on the review screen is
+# asked for, most with no invoices), the rows held counted as they are kept and dropped.
+VENDOR_ROWS_KEPT = 20_000
+VENDOR_KEYS_KEPT = 4_096
+_VENDOR_ROWS: OrderedDict[tuple[str, str], tuple[tuple[Any, ...], list[dict[str, Any]]]] = OrderedDict()
+_VENDOR_ROWS_HELD = 0
+_VENDOR_ROWS_LOCK = threading.Lock()
+
+
+def _keep_vendor_rows(key: tuple[str, str], stamp: tuple[Any, ...], rows: list[dict[str, Any]]) -> None:
+    """``rows`` kept as the newest; the vendors asked longest ago go while over either cap. A vendor of more rows than
+    the cap is not kept."""
+    global _VENDOR_ROWS_HELD
+    if len(rows) > VENDOR_ROWS_KEPT:
+        return
+    with _VENDOR_ROWS_LOCK:
+        before = _VENDOR_ROWS.pop(key, None)
+        _VENDOR_ROWS[key] = (stamp, rows)
+        _VENDOR_ROWS_HELD += len(rows) - (len(before[1]) if before else 0)
+        while _VENDOR_ROWS_HELD > VENDOR_ROWS_KEPT or len(_VENDOR_ROWS) > VENDOR_KEYS_KEPT:
+            _, (_, dropped) = _VENDOR_ROWS.popitem(last=False)
+            _VENDOR_ROWS_HELD -= len(dropped)
 
 
 def _distinct(first: dict[str, Any], row: dict[str, Any]) -> bool:
@@ -419,9 +445,29 @@ class VendorsMixin:
         return row[0] if row else ""
 
     def vendor_invoices(self, key: str) -> list[dict[str, Any]]:
-        """This vendor's invoices (newest first) with the GST/HST number and bank account each one carried. Read once
-        per page while nothing changes (``_session_memo``): the vendor checks and the tax-number notes both ask."""
-        return self._session_memo(("vendor_invoices", key), lambda: self._vendor_invoices(key))
+        """This vendor's invoices (newest first) with the GST/HST number and bank account each one carried: the vendor
+        checks and the tax-number notes both ask, at every check of the review screen. Kept in this process for each
+        vendor (``_keep_vendor_rows``, D-160) while its stamp, read before the rows, holds: the database's
+        ``summary_id`` and the vendor's count of changes (``changes/vendor/<key>``, kept by triggers: an invoice of its
+        added or deleted, or a column listed here changed, whoever changed it). Inside a write under way they are read
+        afresh and not kept: it may yet be undone. Each caller gets rows of its own."""
+        with self._conn() as conn:
+            stamp = tuple(conn.execute(
+                "SELECT (SELECT value FROM settings WHERE key = 'summary_id'), "
+                "(SELECT value FROM settings WHERE key = ?)", (f"changes/vendor/{key}",),
+            ).fetchone())  # fmt: skip
+            writing = conn.in_transaction
+        if writing:
+            return self._vendor_invoices(key)
+        kept = (str(self.path), key)
+        with _VENDOR_ROWS_LOCK:
+            hit = _VENDOR_ROWS.get(kept)
+            if hit is not None and hit[0] == stamp:
+                _VENDOR_ROWS.move_to_end(kept)
+        if hit is None or hit[0] != stamp:
+            hit = (stamp, self._vendor_invoices(key))
+            _keep_vendor_rows(kept, *hit)
+        return [dict(r) for r in hit[1]]
 
     def approved_numbers(self, keys: list[str]) -> dict[str, list[tuple[Any, Any]]]:
         """{vendor key: [(the GST/HST number, the bank account) each approved invoice of it carried]}, for the vendors
@@ -452,7 +498,7 @@ class VendorsMixin:
                 dict(r)
                 for r in conn.execute(
                     f"""SELECT id, status, export_batch, vendor_name, invoice_number, invoice_date, currency,
-                              grand_total, adjusted_confidence, requires_review, created_at, reviewed_at, {fields}
+                              grand_total, created_at, reviewed_at, {fields}
                        FROM invoices WHERE vendor_key = ? ORDER BY id DESC""",
                     (key,),
                 )

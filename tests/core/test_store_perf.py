@@ -209,7 +209,8 @@ def test_a_vendors_invoices_without_a_po_are_read_from_the_vendors_invoices_not_
 
 def test_one_vendors_history_is_read_once_per_page(tmp_path, monkeypatch):
     """vendor_findings and expected_tax_numbers each read every invoice of the vendor, with its whole AI output and
-    final coding parsed for five fields: now read once while nothing changes (inside a session), by json_extract."""
+    final coding parsed for five fields: now read once, by json_extract, and kept while nothing of the vendor's
+    changes (from one page to the next: D-160)."""
     from ap_coder.coding.vendors import expected_tax_numbers, vendor_findings
     from ap_coder.core.schema import InvoiceCoding
     from tests.webclient import add_clean, gt
@@ -231,15 +232,15 @@ def test_one_vendors_history_is_read_once_per_page(tmp_path, monkeypatch):
     with store.session():
         vendor_findings(coding, store)
         expected_tax_numbers(coding, store)
-        assert reads() == 1
+        assert reads() == 0  # kept since it was read above
         assert not [s for s in seen if "ORDER BY id DESC" in s and "ai_output, final_output" in s]
         store.reject_invoice(ids[1], "Ann", "duplicate")  # a change: read again
         history = store.vendor_invoices(key)
-        assert reads() == 2 and [h["status"] for h in history] == ["review", "rejected", "approved"]
+        assert reads() == 1 and [h["status"] for h in history] == ["review", "rejected", "approved"]
         with sqlite3.connect(store.path) as other:  # another connection's change: read again too
             other.execute("UPDATE invoices SET status = 'parked' WHERE id = ?", (ids[2],))
         assert store.vendor_invoices(key)[0]["status"] == "parked"
-        assert reads() == 3
+        assert reads() == 2
 
 
 def test_the_reference_data_is_built_again_only_when_it_changes(tmp_path, monkeypatch):

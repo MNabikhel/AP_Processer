@@ -271,3 +271,90 @@ def test_a_restore_gives_the_database_a_new_summary_id_so_nothing_kept_from_befo
     with sqlite3.connect(store.path) as conn:  # the count is again the one kept before the restore
         conn.execute("UPDATE vendors SET display_name = 'Acme restored'")
     assert kept()[0][1] == "Acme restored"
+
+
+# --- Each vendor's invoices (``Store.vendor_invoices``, D-160) --------------------------------------------------------
+
+
+def _vendor_reads(store: Store, monkeypatch) -> list[str]:
+    """Each vendor whose invoices are read from the database from now on."""
+    read: list[str] = []
+    real = type(store)._vendor_invoices
+    monkeypatch.setattr(type(store), "_vendor_invoices", lambda self, key: read.append(key) or real(self, key))
+    return read
+
+
+def test_each_vendors_invoices_are_kept_until_its_count_moves_whoever_changed_it(tmp_path, ground_truth, monkeypatch):
+    """Every check read all of its vendor's invoices twice (220 ms for a vendor of 7,800 on the 100k database): they
+    are kept per vendor while ``summary_id`` and its ``changes/vendor/<key>`` hold, a change by another worker or plain
+    SQL included; another vendor's change, or a check's confidence, reads nothing again."""
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    acme = _invoice(store, tmp_path, ground_truth, "V-1", "Acme Supply")
+    beta = _invoice(store, tmp_path, ground_truth, "V-2", "Beta Ltd")
+    key = store.get_invoice(acme)["vendor_key"]
+    read = _vendor_reads(store, monkeypatch)
+    first = store.vendor_invoices(key)
+    assert [r["id"] for r in first] == [acme] and read == [key]
+    first[0]["status"] = "changed by its caller"  # each caller's own rows
+    assert store.vendor_invoices(key)[0]["status"] == "review" and read == [key]
+    assert "adjusted_confidence" not in first[0] and "requires_review" not in first[0]  # (read by nothing)
+    store.refresh_confidence(acme, 0.12, True)
+    other.park_invoice(beta, "Ann", "waiting")  # another vendor's
+    assert other.vendor_invoices(key)[0]["status"] == "review" and read == [key]  # (one process: one copy kept)
+    other.park_invoice(acme, "Ann", "waiting for the PO")  # another worker's change
+    assert store.vendor_invoices(key)[0]["status"] == "parked" and read == [key, key]
+    with sqlite3.connect(store.path) as conn:  # plain SQL
+        conn.execute("UPDATE invoices SET invoice_date = '2026-02-02' WHERE id = ?", (acme,))
+    assert store.vendor_invoices(key)[0]["invoice_date"] == "2026-02-02" and len(read) == 3
+    backup = store.backup_now("manual")
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE invoices SET invoice_date = '2026-03-03' WHERE id = ?", (acme,))
+    assert store.vendor_invoices(key)[0]["invoice_date"] == "2026-03-03" and len(read) == 4
+    store.restore_from(backup)  # the backup's count, under a new summary_id
+    assert store.vendor_invoices(key)[0]["invoice_date"] == "2026-02-02" and len(read) == 5
+
+
+def test_each_vendors_invoices_read_in_a_write_that_is_undone_are_not_kept(tmp_path, ground_truth, monkeypatch):
+    """Inside a write under way the vendor's count includes that write, and the rows read show it: kept, they would be
+    served once a later change brought the count back to that number, though the write was undone."""
+    store = Store(tmp_path / "ap.db")
+    acme = _invoice(store, tmp_path, ground_truth, "V-1", "Acme Supply")
+    key = store.get_invoice(acme)["vendor_key"]
+    read = _vendor_reads(store, monkeypatch)
+    with pytest.raises(RuntimeError), store.session(), store._conn() as conn:
+        conn.execute("UPDATE invoices SET status = 'rejected' WHERE id = ?", (acme,))
+        assert store.vendor_invoices(key)[0]["status"] == "rejected"
+        assert store.vendor_invoices(key)[0]["status"] == "rejected" and len(read) == 2  # afresh each time
+        raise RuntimeError("undone")
+    with sqlite3.connect(store.path) as conn:  # another worker's change: the count is again the undone write's
+        conn.execute("UPDATE invoices SET invoice_date = '2026-02-02' WHERE id = ?", (acme,))
+    found = store.vendor_invoices(key)[0]
+    assert (found["status"], found["invoice_date"]) == ("review", "2026-02-02") and len(read) == 3
+    assert store.vendor_invoices(key)[0]["status"] == "review" and len(read) == 3  # kept now
+
+
+def test_vendors_asked_with_no_invoices_are_not_kept_for_ever(tmp_path, ground_truth, monkeypatch):
+    """A name typed on the review screen is asked for, most with no invoices: at most ``VENDOR_KEYS_KEPT`` vendors are
+    kept (B-1724's idea: 20,000 names kept 27.6 MB, and each new one summed them all), and ``VENDOR_ROWS_KEPT`` rows in
+    all, counted as they are kept; one vendor of more rows than that is not kept."""
+    from ap_coder.core.store import vendors as vendors_module
+
+    monkeypatch.setattr(vendors_module, "_VENDOR_ROWS", type(vendors_module._VENDOR_ROWS)())
+    monkeypatch.setattr(vendors_module, "_VENDOR_ROWS_HELD", 0)
+    monkeypatch.setattr(vendors_module, "VENDOR_KEYS_KEPT", 50)
+    monkeypatch.setattr(vendors_module, "VENDOR_ROWS_KEPT", 3)
+    store = Store(tmp_path / "ap.db")
+    for name in ("A-1", "A-2", "A-3"):
+        _invoice(store, tmp_path, ground_truth, name, "Acme Supply")
+    beta = store.get_invoice(_invoice(store, tmp_path, ground_truth, "B-1", "Beta Ltd"))["vendor_key"]
+    acme = store.get_invoice(store.list_invoices()[0]["id"])["vendor_key"]
+    for n in range(200):
+        assert store.vendor_invoices(f"nobody {n}") == []
+    kept = vendors_module._VENDOR_ROWS
+    assert len(kept) == 50 and list(kept)[-1][1] == "nobody 199" and vendors_module._VENDOR_ROWS_HELD == 0
+    assert len(store.vendor_invoices(acme)) == 3 and vendors_module._VENDOR_ROWS_HELD == 3
+    assert len(store.vendor_invoices(beta)) == 1  # the rows over the cap: the vendor asked longest ago goes
+    assert (str(store.path), acme) not in kept and vendors_module._VENDOR_ROWS_HELD == 1
+    assert sum(len(rows) for _, rows in kept.values()) == vendors_module._VENDOR_ROWS_HELD and len(kept) <= 50
+    _invoice(store, tmp_path, ground_truth, "A-4", "Acme Supply")
+    assert len(store.vendor_invoices(acme)) == 4 and (str(store.path), acme) not in kept  # more than the cap alone
