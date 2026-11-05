@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import sqlite3
 import threading
 from copy import copy
 from pathlib import Path
@@ -163,8 +164,8 @@ def unsaved_edits(request: Request) -> set[int]:
 
 def forget_draft(request: Request, invoice_id: int) -> None:
     """Drop the edits of the person asking (Start over)."""
+    get_store(request).drop_invoice_drafts(invoice_id, _person(person_key()))  # first: it may be left undone
     _drafts(request).pop(invoice_id, None)
-    get_store(request).drop_invoice_drafts(invoice_id, _person(person_key()))
 
 
 def forget_everyones_draft(request: Request, invoice_id: int) -> None:
@@ -225,8 +226,8 @@ def _keep_draft(request: Request, invoice_id: int, draft: view.Draft, keep: bool
             return  # nothing new to keep
         at = before["saved_at"] if same and before.get("saved_at") else dt.datetime.now().isoformat(timespec="minutes")
         kept = {**edits, "saved_at": at, **({"check": check} if check is not None else {})}
+        get_store(request).save_invoice_draft(invoice_id, _person(person_key()), kept)  # first: it may be left undone
         _drafts(request)[invoice_id] = kept
-        get_store(request).save_invoice_draft(invoice_id, _person(person_key()), kept)
     elif invoice_id in _drafts(request):
         forget_draft(request, invoice_id)
 
@@ -585,9 +586,14 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         draft_from=_when(saved_at),
     )  # fmt: skip
     # What the screen's check did once it opened, a second request (the screen's own checks again, whose answer the
-    # page drew already): written once the page is drawn, so nothing it reads comes after.
+    # page drew already): written once the page is drawn, so nothing it reads comes after. Behind another writer it
+    # is left to the next open or check: the page never waits for it.
     if may_edit:
-        _keep_checked(request, store, invoice_id, draft, analysis)
+        try:
+            with store.briefly():
+                _keep_checked(request, store, invoice_id, draft, analysis)
+        except sqlite3.OperationalError:
+            pass
     return page
 
 

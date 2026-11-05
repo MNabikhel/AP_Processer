@@ -1021,6 +1021,46 @@ def test_opening_an_invoice_does_what_its_screens_check_did(client, store):
     assert [d for i, _, d in store.invoice_drafts() if i == invoice_id][0]["check"] == said
 
 
+def test_opening_an_invoice_never_waits_for_another_writer_and_leaves_its_bookkeeping_to_the_next(client, store):
+    """What the opening keeps (the queue's confidence, a draft's blocker) waited behind another writer (an import, a
+    restore) up to 30 s, then failed the page. It waits a moment at most, and the next open or check keeps it."""
+    import sqlite3
+    import threading
+    import time
+
+    first, second = [inv["id"] for inv in store.list_invoices(REVIEW)][:2]
+    check(client, first)
+    worked_out = store.get_invoice(first)["adjusted_confidence"]
+    with store._conn() as conn:
+        conn.execute("UPDATE invoices SET adjusted_confidence = 0.123 WHERE id = ?", (first,))
+    check(client, second, form_of(store, second, grand_total="lots"))  # a draft that can't be coded: no confidence
+    blocker = client.app.state.invoice_drafts[second]["check"]
+    before = {**client.app.state.invoice_drafts[second], "check": {"why": "what it said before"}}
+    client.app.state.invoice_drafts[second] = dict(before)
+    store.save_invoice_draft(second, "", before)
+
+    def kept() -> tuple[Any, Any, Any]:
+        stored = [d for i, _, d in store.invoice_drafts() if i == second][0]["check"]
+        return store.get_invoice(first)["adjusted_confidence"], stored, client.app.state.invoice_drafts[second]["check"]
+
+    other = sqlite3.connect(store.path, timeout=30, check_same_thread=False)
+    other.execute("BEGIN IMMEDIATE")  # another writer holds the database
+    threading.Timer(5, other.rollback).start()  # (without the fix the first page waits for it)
+    took = []
+    for invoice_id in (first, second):
+        t0 = time.monotonic()
+        assert client.get(f"/review/{invoice_id}").status_code == 200
+        took.append(time.monotonic() - t0)
+    held = kept()
+    while other.in_transaction:
+        time.sleep(0.1)
+    other.close()
+    assert max(took) < 3, took
+    assert held == (0.123, {"why": "what it said before"}, {"why": "what it said before"})  # left for the next
+    assert client.get(f"/review/{first}").status_code == client.get(f"/review/{second}").status_code == 200
+    assert kept() == (worked_out, blocker, blocker)
+
+
 def test_in_a_browser_enter_in_a_review_field_never_approves(browser, client, store):
     """Plain Enter in a text box of the review form is no approval (only the button and Ctrl+Enter approve)."""
     invoice_id = clean_invoice(client, store)
