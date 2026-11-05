@@ -18,7 +18,7 @@
    Everything from the server is either HTML it escaped (the sections, the rows) or set as text here.
 */
 
-import { HEADERS, fetchWithin, follow, poll, post, toast } from "./app.js";
+import { ACTION_MS, HEADERS, fetchWithin, follow, noAnswer, poll, post, toast } from "./app.js";
 import { openFor, register } from "./ctxmenu.js";
 import { InvoiceViewer } from "./invoice_viewer.js";
 import { enhance, fold, refresh, registerGroups, setAction, setSource, setValue } from "./picker.js";
@@ -571,7 +571,9 @@ const vendorList = { whole: !seed.url || !seed.count, loading: null, tries: 0, f
 function loadVendors() {
   if (vendorList.whole || vendorList.loading) return vendorList.loading;
   const wait = window.AP_VENDORS_RETRY_MS ?? VENDORS_RETRY_MS;
-  if (vendorList.tries >= VENDORS_TRIES || (vendorList.failedAt && Date.now() - vendorList.failedAt < wait)) return null;
+  if (vendorList.tries >= VENDORS_TRIES || (vendorList.failedAt && performance.now() - vendorList.failedAt < wait)) {
+    return null;
+  }
   vendorList.tries += 1;
   vendorList.loading = (async () => {
     try {
@@ -582,7 +584,8 @@ function loadVendors() {
       vendors = { enforced: Boolean(got.enforced), list: got.list.filter((v) => !added.has(v.key)).concat(addedHere) };
       vendorList.whole = true;
     } catch {
-      vendorList.failedAt = Date.now(); // (the session ended: the login page, no JSON)
+      vendorList.failedAt = performance.now(); // as time passes, whatever the clock says (B-1718); also: the session
+      // ended (the login page, no JSON)
     }
     vendorList.loading = null;
     showVendorMatch();
@@ -989,9 +992,16 @@ function showField(name) {
 
 let words = null;
 
+/** The words on the page, asked for once. Waited for as an action is: a scan's pages are read again when their OCR
+    isn't kept (an OCR update since it came in), or a busy server takes a while (B-1715). */
 async function loadWords() {
   if (words) return words;
-  const response = await fetchWithin(`${base}/words`, { headers: { Accept: "application/json" } });
+  let response;
+  try {
+    response = await fetchWithin(`${base}/words`, { headers: { Accept: "application/json" } }, ACTION_MS);
+  } catch {
+    throw new Error(noAnswer());
+  }
   const answer = await response.json().catch(() => ({ ok: false, error: "The words on the page can't be read." }));
   if (!answer.ok) throw new Error(answer.error);
   words = answer.words;

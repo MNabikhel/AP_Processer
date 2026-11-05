@@ -79,8 +79,8 @@ export function noAnswer() {
 }
 
 // Every request has a deadline (D-161): past it, it is given up as one that got no answer (noAnswer's words).
-export const LOOK_MS = 30000; // a look: a poll, the words on the page
-export const ACTION_MS = 5 * 60000; // an action (post) and the setup report; a form marked data-long has none
+export const LOOK_MS = 30000; // a look: a poll, the vendor list
+export const ACTION_MS = 5 * 60000; // an action (post), the setup report, the words on the page; data-long: none
 
 /** fetch(url, options), given up (an AbortError) once ``ms`` have passed without the answer and its body; 0: never. */
 export function fetchWithin(url, options = {}, ms = LOOK_MS) {

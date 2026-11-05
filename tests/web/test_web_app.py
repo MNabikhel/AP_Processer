@@ -723,8 +723,8 @@ def test_in_a_browser_a_poll_stops_once_the_laptop_asks_who_they_are_again(chrom
 
 # The actions the server runs whole in their request, however long they take: a restore (a safety backup first, of a
 # database of gigabytes), years of past coding taught, the imports of large lists, a finance hub run, the bulk
-# approval of a long queue. Their forms are marked data-long: app.js waits for them (any other action gives up after
-# five minutes, with "didn't answer").
+# approval of a long queue, the page reader's model loaded. Their forms are marked data-long: app.js waits for them
+# (any other action gives up after five minutes, with "didn't answer").
 LONG_ACTIONS = {
     "settings_data.html": ["/settings/data/restore"],
     "learning.html": ["/learning/history/teach"],
@@ -735,6 +735,7 @@ LONG_ACTIONS = {
     "settings_jde.html": ["/settings/jde/gl-map/import", "/settings/jde/worksheet"],
     "settings_hub.html": ["/settings/hub/run"],
     "review.html": ["/review/bulk-approve"],
+    "settings_reading.html": ["/settings/reading/load-model"],  # up to 5 minutes a try, after the long lane (B-1717)
 }
 
 

@@ -892,6 +892,28 @@ def test_in_a_browser_a_vendor_list_that_did_not_come_is_asked_for_again_at_the_
     assert errors == []
 
 
+def test_in_a_browser_a_failed_vendor_list_is_asked_for_again_though_the_clocks_time_was_set_back(browser, store):
+    """B-1718: the wait before the vendor list is asked for again was timed by the computer's clock: set back after a
+    failure (a time sync, someone changing the time), the list wasn't asked for again until the clock caught up (an
+    hour back: an hour of "Couldn't load the vendor list" and no "add as a new vendor"). The wait is timed as it
+    passes."""
+    inv, other = _agence(store)
+    page, errors = _held_open(browser, inv["id"], lambda r, n: r.abort() if n == 1 else r.continue_(), clock=True)
+    match = page.locator(SAID)
+    vendor = page.locator("#vendor-name")
+    vendor.fill(other["name"])
+    wait_until(page, lambda: match.inner_text().startswith("Couldn't load the vendor list"))
+    page.clock.set_system_time((page.evaluate("Date.now()") - 3_600_000) / 1000)  # an hour back (in seconds)
+    page.clock.run_for(5_100)
+    vendor.fill(other["name"][:-1])  # a need, the wait over: asked for again
+    wait_until(page, lambda: len(page.asked) == 2)
+    assert len(page.asked) == 2
+    vendor.fill(other["name"])
+    wait_until(page, lambda: other["id"] in match.inner_text())
+    assert match.inner_text().startswith("In the vendor list"), match.inner_text()
+    assert errors == []
+
+
 def test_in_a_browser_a_vendor_list_that_never_comes_is_asked_for_a_few_times_only(browser, store):
     inv, other = _agence(store)
     page, errors = _held_open(browser, inv["id"], lambda r, n: r.fulfill(status=503, body="busy"), retry_ms=20)

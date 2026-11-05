@@ -148,12 +148,23 @@ def _kept_png(folder: Path, stamp: tuple[str, int, int], number: int, scale: int
     sha = _sha256(*stamp)
     target = folder / sha[:2] / f"{sha}-p{number}-s{scale}-{DPI}dpi-{max_side(scale)}px-d{DRAWING}.png"
     try:
-        return target.read_bytes()
+        kept = target.read_bytes()
+        if _whole_png(kept):
+            return kept
     except OSError:  # not there yet (or, on Windows, being put there)
         pass
     png = _draw_png(*stamp, number, scale)
     _keep(folder, target, png)
     return png
+
+
+_PNG_START, _PNG_END = b"\x89PNG\r\n\x1a\n", b"\x00\x00\x00\x00IEND\xaeB`\x82"
+
+
+def _whole_png(data: bytes) -> bool:
+    """Whether a picture read back is whole: a server stopped hard (the power lost, a reset) just after one was put
+    there can leave it empty, cut short or zero-filled; it is drawn again and put back then (B-1716)."""
+    return data.startswith(_PNG_START) and data.endswith(_PNG_END)
 
 
 def _keep(folder: Path, target: Path, png: bytes) -> None:

@@ -275,6 +275,21 @@ def test_a_picture_that_cant_be_kept_is_still_shown_and_nothing_half_written_is_
     assert len(drawn) == 3 and _kept(folder) == []
 
 
+def test_a_picture_cut_short_or_empty_in_the_shared_folder_is_drawn_again_and_put_back(tmp_path, monkeypatch):
+    """B-1716: a server stopped hard (the power lost, a reset) just after a worker put a picture in the shared folder
+    can leave it empty, cut short or zero-filled at its own name: every worker then served it as it was, a broken
+    page, until it was pruned (weeks, at a 1 GB cap). It is drawn again and put back."""
+    drawn = _drawn(monkeypatch)
+    folder = tmp_path / "pages"
+    good = page_png(SAMPLE, 1, kept_in=folder)
+    (kept,) = _kept(folder)
+    for broken in (good[: len(good) // 3], b"", bytes(len(good)), good[:-1]):
+        kept.write_bytes(broken)
+        assert page_png(SAMPLE, 1, kept_in=folder) == good
+        assert kept.read_bytes() == good and _kept(folder) == [kept]
+    assert page_png(SAMPLE, 1, kept_in=folder) == good and len(drawn) == 5  # a whole one is read back, not drawn
+
+
 def test_on_windows_a_picture_being_read_is_left_as_it_is_and_a_refused_rename_is_tried_again(tmp_path, monkeypatch):
     """Windows refuses to replace a file another process has open (B-1689): a picture another worker is reading."""
     folder = tmp_path / "pages"

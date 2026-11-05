@@ -885,13 +885,15 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       cookie no good). The job pages then go there and come back after it; the review screen stays as it is, and
       its next check goes to the login with the edits kept (B-1594).
     - `watchJob` asks `/jobs/<name>?only=done,note`: the state, done and note, not the job's 500 lines.
-  - **Deadlines** (`fetchWithin`, AbortController): a look 30 s, an action (`post`) and the setup report 5 minutes;
-    past it, the existing "didn't answer" wording. `post(url, body, {ms})` takes 0 for none.
+  - **Deadlines** (`fetchWithin`, AbortController): a look 30 s, an action (`post`), the setup report and the words
+    on the page (a scan's pages may be read again, B-1715) 5 minutes; past it, the existing "didn't answer" wording.
+    `post(url, body, {ms})` takes 0 for none.
     - A form marked `data-long` is sent with none: the actions the server runs whole in the request, however long
       they take. Restore (a safety backup first, of a database of gigabytes), Past coding → Teach, the imports (GL
       accounts and cost centers, bank accounts, vendor master, payment register, purchase orders, the JD Edwards GL
-      map and worksheet), a Finance Hub run and the bulk approval of clean invoices (its list grows with the
-      queue). The JD Edwards posting and sync run as jobs already; an export batch keeps its 5 minutes.
+      map and worksheet), a Finance Hub run, the bulk approval of clean invoices (its list grows with the queue)
+      and the page reader's model loaded (up to 5 minutes a try, B-1717). The JD Edwards posting and sync run as
+      jobs already; an export batch keeps its 5 minutes.
   - **The workers' balance:** a busy worker hands its connections back (`server.HandBack`): while requests wait for
     one of its threads, or for its long routes' lane (`core.run_heavy`: two reports taking its CPU, more waiting),
     its answers say `Connection: close`. A pool or a lane full with nobody waiting is not busy. `KEEP_ALIVE_SECONDS`
