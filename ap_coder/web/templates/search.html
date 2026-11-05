@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block head %}<link rel="stylesheet" href="/static/data.css?v={{ static_version }}">{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url('/static/data.css') }}">{% endblock %}
 {% macro hidden_except(skip) %}{% for k, v in query.params(page=1) if k not in skip %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}{% endmacro %}
 {% macro col_item(c, shown) %}<li class="dir-col" draggable="true">
   <span class="ms dir-grip" aria-hidden="true">drag_indicator</span>
@@ -203,4 +203,4 @@
 </section>
 {% endif %}
 {% endblock %}
-{% block scripts %}<script type="module" src="/static/js/directory.js?v={{ static_version }}"></script>{% endblock %}
+{% block scripts %}<script type="module" src="{{ static_url('/static/js/directory.js') }}"></script>{% endblock %}

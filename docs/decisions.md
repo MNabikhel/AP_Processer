@@ -753,6 +753,105 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `coding/bulk.py`, `coding/vendors.py`, `ai/suggest.py`, `ai/line_match.py`, `docs/HOW_IT_RUNS.md`;
     `tests/core/test_kept_answers.py`, `tests/core/test_backups.py`, `tests/erp/test_invoice_summary.py`,
     `tests/ai/test_coding_no_ai.py`, `tests/ops/test_real_world_findings.py`)
+- **D-161** · **Static files from memory at kept addresses, no compression, polls that wait, and a busy web worker
+  that hands its connections back** (B-1712; the phase 2 load run's 16-57 s static waits and its workers at 0.34 to
+  1.0 cores).
+  - **Static files from memory:** `core.read_static` reads the styles, scripts, fonts and logo once when AP Coder
+    starts. `app.StaticFromMemory` answers a GET or HEAD of one on the event loop: after the Host check, with the
+    security headers and the access log, before the session, the errors page and the backup check.
+    - At its plain address, the same status, headers and 304s as Starlette's `StaticFiles` (its ETag and
+      Last-Modified, so a browser's copy stays good across the change), laptop and server; a test compares every
+      file, both modes, for GET, HEAD, Range, If-None-Match, If-Modified-Since, POST and a file that isn't there.
+    - `StaticFiles` still answers what memory doesn't: a POST, a file that isn't there, a Range (at the file's plain
+      address). A file whose real path is outside its folder (a link out of it) is left out, as `StaticFiles` refuses
+      it (`follow_symlink=False`).
+    - Why: a static file costs about a millisecond, but `StaticFiles` read it on one of the worker's 4 threads
+      (D-153), behind pages of 1-2 s. Server CPU a request through uvicorn (server mode, four runs of 3,000 each):
+      a 304 0.85-1.03 → 0.41-0.47 ms, app.css 1.49-2.52 → 0.49-0.50 ms, app.js 1.46-2.52 → 0.45-0.46 ms, the 373 KB
+      icon font 3.26-4.38 → 0.50-0.56 ms; and no thread.
+    - A file edited while AP Coder runs is answered as it was at the start (a developer restarts `serve`).
+  - **Kept addresses:** the pages link each file at `/static/<build>/...` (`/fonts/<build>/...`,
+    `/assets/<build>/...`) through `core.static_url`, with `Cache-Control: public, max-age=31536000, immutable`; the
+    kept stylesheet names the fonts at theirs (its own ETag).
+    - The build is a hash of the files' contents, not the commit: a checkout's commit doesn't change with an edit not
+      yet committed (the edited script would be kept a year), and an update that changes no file keeps everyone's
+      copies.
+    - Another build's address (a page drawn before an update) answers the file as it is now with `no-cache`, for
+      `/static`, `/fonts` and `/assets` alike: never kept a year under an address that isn't its own. The plain
+      addresses answer as before (`/static` `no-cache`, `/fonts` and `/assets` without Cache-Control). Pages stay
+      `no-store`.
+    - Every template uses `static_url` (a test fails on a plain address: a page script loaded at its plain address
+      would be a second app.js module beside the page's own).
+  - **Measured** (bench load, a 3,000-invoice seed, 60 people, think 4 s, 2 web workers, 180 s; the 4 cores shared
+    with other agents).
+    - The first build (lost before it was pushed, rebuilt as written here), before → from memory → kept addresses
+      too: requests 22,834 → 26,344 → 6,045 (27,506 more from the browsers' caches); `/static` p95 1.82 s → 130 ms →
+      67 ms; `/fonts` and `/assets` p95 1.79 and 1.96 s → 25 and 52 ms; pages p50 3.25 s → 466 ms → 269 ms, p95
+      49.4 s → 6.10 s → 1.67 s; actions p95 50.8 s → 12.3 s → 2.05 s; requests over 30 s 745 → 0 → 0.
+    - The rebuild, all of D-161 against main, on a machine busier than the first build's (other agents' tests on its
+      cores), saturated both times: the people's work done +63% (requests other than static files 1,319 → 2,147;
+      invoices opened 140 → 252, checks 170 → 356), the workers at 1.11 and 0.33 → 1.07 and 1.02 cores; `/static` p95
+      7.51 s → 212 ms, `/fonts` 13.8 s → 59 ms; the pages stayed past what the people asked (p95 64 → 62 s).
+    - The rebuild, lighter (30 people, think 10 s): the same work in 5,193 → 1,681 requests (5,696 more from the
+      caches); `/static` p95 493 → 70 ms; pages p50 792 → 709 ms, p95 3.34 → 3.19 s; actions p95 1.95 → 1.56 s.
+  - **No compression** (laptop and server).
+    - gzip's CPU a MB of AP Coder's HTML and JSON (the first build, on the 100k database): level 1 4.4-6.6 ms, level
+      4 7.3-11.7, level 6 14-18, level 9 (Starlette's `GZipMiddleware` default) 60-75.
+    - The review screen (3.6 MB there, 565-630 ms of CPU): level 1 16-24 ms for 0.53 MB, level 9 241-271 ms. The
+      queue (85 KB): level 1 0.5 ms for 9 KB.
+    - On the office's gigabit network 3.6 MB take about 29 ms, which cost the server nothing; level 1 would cost 4-5
+      core-s a minute at 100 people (3% of the 4-core budget) and save no time anyone sees.
+    - Where it matters (a VPN at 20 Mb/s: 1.4 s against 0.2 s), IIS in front compresses `text/html` and
+      `application/json` only, at its lowest level (SERVER.md); never a download (CSV, xlsx, PDF, PNG, ZIP). Static
+      files are not compressed either: each browser fetches them once a build. Revisit if the review screen's
+      vendor list leaves the page.
+  - **Polls** (`app.js` `poll`, used by `pollJob` and the review screen's reading):
+    - Nothing while the tab is hidden; a look at once when it is shown again.
+    - After an answer the same as the last (or none), the wait is half as long again, up to three times the pace (a
+      job's at least 5 s); a change starts again at the pace.
+    - A look answered by the login stops it (B-1712): a 401, or a GET sent on to `/login`, or to `/who` (a laptop
+      shared on the office network asks a colleague's name again once AP Coder started again: a new key makes the
+      cookie no good). The job pages then go there and come back after it; the review screen stays as it is, and
+      its next check goes to the login with the edits kept (B-1594).
+    - `watchJob` asks `/jobs/<name>?only=done,note`: the state, done and note, not the job's 500 lines.
+  - **Deadlines** (`fetchWithin`, AbortController): a look 30 s, an action (`post`) and the setup report 5 minutes;
+    past it, the existing "didn't answer" wording. `post(url, body, {ms})` takes 0 for none.
+    - A form marked `data-long` is sent with none: the actions the server runs whole in the request, however long
+      they take. Restore (a safety backup first, of a database of gigabytes), Past coding → Teach, the imports (GL
+      accounts and cost centers, bank accounts, vendor master, payment register, purchase orders, the JD Edwards GL
+      map and worksheet), a Finance Hub run and the bulk approval of clean invoices (its list grows with the
+      queue). The JD Edwards posting and sync run as jobs already; an export batch keeps its 5 minutes.
+  - **The workers' balance:** a busy worker hands its connections back (`server.HandBack`): while requests wait for
+    one of its threads, or for its long routes' lane (`core.run_heavy`: two reports taking its CPU, more waiting),
+    its answers say `Connection: close`. A pool or a lane full with nobody waiting is not busy. `KEEP_ALIVE_SECONDS`
+    stays 75.
+    - How a connection finds a worker: the workers listen on one socket, and the first to `accept()` takes it, on
+      Linux (epoll; uvicorn sets no `SO_REUSEPORT`) and on Windows (uvicorn's supervisor shares the listening socket,
+      B-1711, and each worker runs the selector loop, so every worker's `select()` wakes: B-1441 saw two woken for
+      one). A free worker's loop usually wins it: a busy one waits for the GIL behind its threads.
+    - What kept people on a busy worker is the browser keeping its connections (minutes: Chrome up to 5, Firefox
+      about 2) and the server 75 s. The harness's people closed theirs after 5 s unused (httpx's default), which hid
+      it: `bench load --keep-alive 300` keeps them as a browser does (the default stays 5, so earlier runs compare).
+    - Measured in the first build with people keeping connections 300 s: 50 people, think 10 s, 4 workers: one
+      worker did 54% of the work. Saturated (60 people, think 4 s, 2 workers), three pairs back to back: pages p95
+      5.2 / 24.0 / 33.3 s with 75 s alone, 4.1 / 19.6 / 16.6 s with HandBack; requests over 30 s 0 / 147 / 343
+      against 0 / 74 / 9. With the default people (5 s) no difference beyond the noise.
+    - The rebuild, people keeping connections 300 s (30 people, think 10 s, 2 workers), two pairs, the second in the
+      other order: the workers at 0.40 / 0.90 and 0.48 / 0.81 cores without HandBack, 0.67 / 0.65 and 0.64 / 0.64
+      with it; pages p95 4.68 and 19.7 s without, 6.41 and 5.44 s with (the machine's load average 4-6 from other
+      agents' tests: the balance is the steady result, the latencies are noise).
+    - The rebuild's saturated pair (above) at the default 5 s: 1.11 / 0.33 cores before, 1.07 / 1.02 after.
+    - A shorter keep-alive was refused: at 5 s, 12 requests got no answer in the saturated run (B-1295's race: an
+      idle connection closed as the browser sent on it).
+    - `Connection: close` comes in the answer: it arrives whole, the browser opens a new connection for its next
+      request, nothing is lost, and IIS ARR in front does the same. A new HTTPS connection costs the worker that
+      takes it 1.2 ms (0.4 ms resumed).
+  - **Not done:** the import's poll still sends its lines (up to 500, 57 KB; process.js shows them all); an upload
+    (XHR) has no deadline (it may take minutes); a poll without a session still draws the login page once before
+    it stops (`identity.py`); the access log writes on the event loop (`security.py`).
+  - (`web/core.py`, `web/app.py`, `web/server.py`, `web/templates/*`, `web/static/js/{app,invoice,help}.js`,
+    `bench/load.py`; `tests/web/test_web_app.py`, `test_server_browser.py`, `test_server_capacity.py`,
+    `test_web_settings.py`)
 - **D-162** · **The reports and pages still slow at 100,000 invoices: kept per change, listed a part at a time, or read
   without waste** (phase 2 part 2).
   - **Kept in each process** (`Store.summary_memo`, D-159's rule: a stamp read from the database before the work), on

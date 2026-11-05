@@ -18,7 +18,7 @@
    Everything from the server is either HTML it escaped (the sections, the rows) or set as text here.
 */
 
-import { HEADERS, follow, post, toast } from "./app.js";
+import { HEADERS, fetchWithin, follow, poll, post, toast } from "./app.js";
 import { openFor, register } from "./ctxmenu.js";
 import { InvoiceViewer } from "./invoice_viewer.js";
 import { enhance, fold, registerGroups, setAction, setSource, setValue } from "./picker.js";
@@ -926,7 +926,7 @@ let words = null;
 
 async function loadWords() {
   if (words) return words;
-  const response = await fetch(`${base}/words`, { headers: { Accept: "application/json" } });
+  const response = await fetchWithin(`${base}/words`, { headers: { Accept: "application/json" } });
   const answer = await response.json().catch(() => ({ ok: false, error: "The words on the page can't be read." }));
   if (!answer.ok) throw new Error(answer.error);
   words = answer.words;
@@ -1286,22 +1286,16 @@ document.addEventListener("apc:ask-why", (event) => {
 const reader = document.querySelector("[data-reader][data-poll]");
 if (reader) {
   const every = Math.max(5, Number(reader.dataset.poll) || 20) * 1000;
-  const look = async () => {
-    try {
-      const response = await fetch(`${base}/reader`, { headers: { Accept: "application/json" }, cache: "no-store" });
-      const answer = await response.json();
-      if (!answer.poll) {
-        await flush(); // the edits are kept: the page then shows the reading, or offers to start over from it
-        location.reload();
-        return;
-      }
+  // Looked at less often while nothing changes, never while the tab is hidden, and no more once the session ended.
+  poll(`${base}/reader`, async (answer) => {
+    if (answer.poll) {
       reader.innerHTML = answer.html; // drawn by the server, every text escaped
-    } catch {
-      /* not answering now: look again later */
+      return false;
     }
-    setTimeout(look, every);
-  };
-  setTimeout(look, every);
+    await flush(); // the edits are kept: the page then shows the reading, or offers to start over from it
+    location.reload();
+    return true;
+  }, { everyMs: every, firstMs: every });
 }
 
 /* ---------- Keys ---------- */

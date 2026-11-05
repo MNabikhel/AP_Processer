@@ -55,6 +55,27 @@ def test_a_browser_keeps_static_files_as_their_headers_say():
         "/fonts/Inter.woff2"]  # fmt: skip
 
 
+def test_a_person_keeps_a_connection_unused_as_long_as_keep_alive_says(monkeypatch):
+    """httpx's 5 s by default, so earlier runs compare; a browser keeps its own for minutes (``--keep-alive 300``),
+    which kept people on the web worker that took them (D-161)."""
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    load.add_parser(parser.add_subparsers(dest="cmd"))
+    assert parser.parse_args(["load"]).keep_alive == load.KEEP_ALIVE == 5.0
+    assert parser.parse_args(["load", "--keep-alive", "300"]).keep_alive == 300.0
+    limits, made = [], httpx.Limits
+    monkeypatch.setattr(httpx, "Limits", lambda **kw: limits.append(kw) or made(**kw))
+
+    async def person() -> None:
+        run = _run()
+        run.keep_alive = 300.0
+        await load.Person(run, load.Account("pat", "pw", "secret", "clerk"), 0, 0.0).close()
+
+    asyncio.run(person())
+    assert limits == [{"max_connections": 6, "max_keepalive_connections": 6, "keepalive_expiry": 300.0}]
+
+
 def test_a_304_keeps_what_the_browser_stored_so_a_font_stays_fresh_after_it_is_checked_again():
     # Starlette's StaticFiles (the fonts, the logo): no Cache-Control, so a tenth of the file's age; its 304 carries
     # the ETag and the Date but no Last-Modified. The stored headers are updated with the 304's, the rest kept.
@@ -197,6 +218,6 @@ def test_the_requests_a_second_of_each_minute_are_over_the_seconds_it_covers():
     # long, with 15 requests in one span (0.5 a second again).
     samples = [_sample("GET /review", 1.0, end=t) for t in [5.0] * 15 + [15.0] * 15 + [75.0] * 15]
     cfg = {"users": 3, "duration": 90.0, "workers": 1, "ramp": 0.0, "think": 1.0, "invoices": 10, "data": "a folder",
-           "model": "a stand-in", "host": "127.0.0.1"}  # fmt: skip
+           "model": "a stand-in", "host": "127.0.0.1", "keep_alive": 5.0}  # fmt: skip
     text = load.markdown(load.build_report(_run(samples, duration=90.0), cfg, {"started": "2026-11-05T09:00:00"}))
     assert "| 0 min | 0.5 | 0 | 1.00 s |" in text and "| 1 min | 0.5 | 0 | 1.00 s |" in text

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% from "_sheet.html" import upload_form, preview, columns %}
 {% from "_tiles.html" import tile_row %}
-{% block head %}<link rel="stylesheet" href="/static/data.css?v={{ static_version }}">{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url('/static/data.css') }}">{% endblock %}
 {% macro spend(v) %}{% for cur, t in spend_items(v) %}{{ t | money }} <span class="muted">{{ cur }}</span>{% if not loop.last %} · {% endif %}{% else %}<span class="muted">—</span>{% endfor %}{% endmacro %}
 {% macro accuracy(value) %}{% if value is none %}<span class="muted">—</span>{% else %}<b class="{{ 'ok' if value >= target else 'warn-text' }}">{{ value | pct }}</b>{% endif %}{% endmacro %}
 {% macro status_pills(v) %}{{ ui.pill("On hold", "warn", "front_hand") if v.status == on_hold else ui.pill("On hold in JD Edwards", "warn", "front_hand") if v.erp_hold else ui.pill("Active", "ok") }}{% if number_problems(v) %} {{ ui.pill("Tax number to check", "warn", "warning") }}{% endif %}{% if v.added_here %} {{ ui.pill("Added here: set up in JD Edwards", "warn", "person_add") }}{% elif has_master and not v.in_master %} {{ ui.pill("Not in master", "warn", "gpp_maybe") }}{% endif %}{% endmacro %}
@@ -14,7 +14,7 @@
   {% if master_error %}<div class="flash err"><span class="ms" aria-hidden="true">error</span><div>{{ master_error }}</div></div>{% endif %}
   {% if master %}
   {{ preview(master, "/vendors", {"file": master.token}) }}
-  <form method="post" action="/vendors/master/import" class="stack" data-busy="Importing…">
+  <form method="post" action="/vendors/master/import" class="stack" data-busy="Importing…" data-long>
     {{ columns(master) }}
     <div class="row">
       <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">upload</span>Import vendors</button>

@@ -69,7 +69,7 @@
             <thead><tr><th>Vendor</th><th>Invoice</th><th class="r">Total</th></tr></thead>
             <tbody>{% for i in candidates %}<tr><td>{{ i.vendor_name }}</td><td>{{ i.invoice_number }}</td><td class="r">{{ i.grand_total | money }}</td></tr>{% endfor %}</tbody>
           </table></div>
-          <form method="post" action="/review/bulk-approve" data-busy="Approving…">
+          <form method="post" action="/review/bulk-approve" data-busy="Approving…" data-long>
             {% for i in candidates %}<input type="hidden" name="ids" value="{{ i.id }}">{% endfor %}
             <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">done_all</span>Approve them</button>
           </form>
@@ -229,5 +229,5 @@
 {% block scripts %}
 {# The queue as it was left (its filter, search, sort and where it was scrolled to) when you come back from an
    invoice (D-60). #}
-<script type="module" src="/static/js/queue.js?v={{ static_version }}"></script>
+<script type="module" src="{{ static_url('/static/js/queue.js') }}"></script>
 {% endblock %}

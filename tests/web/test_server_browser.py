@@ -4,6 +4,7 @@ log out."""
 from __future__ import annotations
 
 import json
+import threading
 import time
 
 import pytest
@@ -11,7 +12,7 @@ import pytest
 from ap_coder.core import authenticator
 from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.web.app import create_app
-from tests.browser import browser_on
+from tests.browser import browser_on, wait_until
 from tests.conftest import SAMPLE_STEM
 from tests.webclient import add_clean, authenticator_code, enrol, known_vendors, web_settings
 
@@ -235,4 +236,67 @@ def test_in_a_browser_no_answer_is_said_in_the_servers_words_on_the_server(brows
         page = laptop.new_page(viewport=LAPTOP)
         said = _unanswered(page, base, invoice)
         assert "Start it again with the AP Coder shortcut" in said and "IT" not in said.split(), said
+    assert errors == []
+
+
+def _job_running(app) -> threading.Event:
+    """An import under way in ``app`` until the event returned is set (the Import invoices page follows it)."""
+    release = threading.Event()
+
+    def work(job) -> None:
+        job.step(1, 3, note="Reading invoice 1 of 3")
+        release.wait(60)
+
+    assert app.state.jobs.get("process").start(work, total=3)
+    return release
+
+
+def test_in_a_browser_a_job_page_stops_asking_once_the_session_ended(chromium, store):
+    """B-1712: after the session ended, a page following a job (Import invoices) kept asking for its progress every
+    0.8 s, each answered by the login page, for as long as the tab stayed open. Its look sent on to the login stops
+    it: the page goes to the login, and comes back after it."""
+    app = create_app(web_settings(), store, start_reader=False, server=True)
+    release = _job_running(app)
+    try:
+        with browser_on(chromium, app) as opened:
+            page, errors = _log_in(opened, store, "boss", path="/process")
+            looks: list[float] = []
+            page.on("request", lambda r: looks.append(time.monotonic()) if "/process/status" in r.url else None)
+            wait_until(page, lambda: looks)
+            _session_ends(store, "boss")
+            ended = time.monotonic()
+            wait_until(page, lambda: "/login" in page.url, timeout=6)
+            assert "/login?next=%2Fprocess" in page.url
+            page.wait_for_timeout(2500)
+            assert len([t for t in looks if t > ended]) <= 1, looks
+            _again(page, store, "boss")
+            page.wait_for_url("**/process")
+            assert errors == []
+    finally:
+        release.set()
+
+
+def test_in_a_browser_the_review_screen_stops_following_the_reading_once_the_session_ended(browser, store):
+    """While OvisOCR2 has the invoice in its queue, the review screen looks at its progress every 20 seconds: after the
+    session ended it kept looking, each answered by the login page. It stops (B-1712); the next edit's check goes to
+    the login and keeps the edits (B-1594)."""
+    invoice = store.list_invoices("review")[0]["id"]
+    store.queue_page_read(invoice, "not read yet", requested_by="Boss")
+    page, errors = _log_in(browser, store, "boss", path="/review")
+    looks: list[str] = []
+    page.on("requestfinished", lambda r: looks.append(r.url) if f"/review/{invoice}/reader" in r.url else None)
+    page.clock.install()
+    page.goto(f"{browser[1]}/review/{invoice}")
+    page.wait_for_selector("[data-reader][data-poll]", state="attached")
+    page.clock.run_for(21_000)
+    wait_until(page, lambda: len(looks) == 1)
+    _session_ends(store, "boss")
+    page.clock.run_for(21_000)
+    wait_until(page, lambda: any("/login?next=" in u for u in looks))  # answered by the login (once the time moves on
+    page.wait_for_timeout(300)  # in jumps, a look under way must end first, or its 30 s deadline would cut it)
+    for _ in range(6):  # six minutes
+        page.clock.run_for(60_000)
+        page.wait_for_timeout(50)
+    assert len([u for u in looks if u.endswith("/reader")]) == 2, looks
+    assert "/review/" in page.url  # the screen stays as it is, with the edits
     assert errors == []

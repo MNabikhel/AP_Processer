@@ -1,12 +1,12 @@
 /* Help: the checks filter as you type (a group with a match opens, one without hides); Enter still searches on the
    server. Report a problem: the setup report comes after the page (it takes a few seconds), and each Copy button
    copies its report (data-copy-from names the text box), waiting for the setup report if it isn't there yet. */
-import { toast } from "./app.js";
+import { ACTION_MS, fetchWithin, toast } from "./app.js";
 
 let setupReady = Promise.resolve();
 const setupBox = document.getElementById("setup-report");
 if (setupBox && setupBox.dataset.url && !setupBox.value) {
-  setupReady = fetch(setupBox.dataset.url, { cache: "no-store" })
+  setupReady = fetchWithin(setupBox.dataset.url, { cache: "no-store" }, ACTION_MS)
     .then((response) => (response.ok ? response.text() : Promise.reject(new Error(String(response.status)))))
     .then((text) => {
       setupBox.value = text;

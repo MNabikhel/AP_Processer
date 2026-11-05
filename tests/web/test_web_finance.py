@@ -20,7 +20,7 @@ from ap_coder.coding import taxreturn
 from ap_coder.core.store import APPROVED, PARKED, REJECTED, REVIEW, Store
 from ap_coder.erp import accruals, dupaudit, export_layout, exports, stamp
 from ap_coder.erp import statements as stm
-from ap_coder.web import files
+from ap_coder.web import core, files
 from ap_coder.web.pages import exports as export_page
 from tests.conftest import fill_from
 
@@ -70,7 +70,7 @@ def test_pages_draw_on_an_empty_database(client, url):
     response = client.get(url)
     assert response.status_code == 200
     assert "is on its way" not in response.text  # not the placeholder any more
-    assert "/static/data.css" in response.text
+    assert core.static_url("/static/data.css") in response.text
 
 
 @pytest.mark.parametrize("url", FINANCE_PAGES)

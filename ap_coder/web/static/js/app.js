@@ -12,6 +12,8 @@
      form[data-busy="Saving…"]        the button says so while the request runs
      a[data-busy="Gathering…"]        a link to a slow page says so until the page comes
      form[data-job]                   after it starts a job, show its progress (#job card), reload when done
+     form[data-long]                  an action the server runs whole in the request (a restore, an import):
+                                      waited for however long it takes (any other gives up after ACTION_MS)
      select[data-autosubmit]          submit its (GET) form on change
      input[type=checkbox][data-enables]  enables the submit button of its form while ticked
      [data-dismiss]                   removes its message
@@ -76,19 +78,43 @@ export function noAnswer() {
     : "AP Coder didn't answer. Is it still running? Start it again with the AP Coder shortcut.";
 }
 
-/** POST to the dashboard with the page header; returns the JSON answer (an {error} on failure). An answer that is a
-    file (a batch's JD Edwards ZIP, downloaded by POST: D-135) is saved under its name. */
-export async function post(url, body) {
+// Every request has a deadline (D-161): past it, it is given up as one that got no answer (noAnswer's words).
+export const LOOK_MS = 30000; // a look: a poll, the words on the page
+export const ACTION_MS = 5 * 60000; // an action (post) and the setup report; a form marked data-long has none
+
+/** fetch(url, options), given up (an AbortError) once ``ms`` have passed without the answer and its body; 0: never. */
+export function fetchWithin(url, options = {}, ms = LOOK_MS) {
+  if (!ms) return fetch(url, options);
+  const deadline = new AbortController();
+  setTimeout(() => deadline.abort(), ms); // (once the body is read, aborting changes nothing)
+  return fetch(url, { ...options, signal: deadline.signal });
+}
+
+/** Whether an answer is the login's, the session having ended: a 401, or a look (a GET) sent on to the login page,
+    or to "Who are you?" (a laptop shared on the office network asks again after AP Coder started again). */
+export function loggedOut(response) {
+  if (response.status === 401) return true;
+  const path = response.redirected ? new URL(response.url).pathname : "";
+  return path === "/login" || path.startsWith("/login/") || path === "/who";
+}
+
+/** POST to the dashboard with the page header; returns the JSON answer (an {error} on failure, or past ``ms``: 0
+    waits however long it takes). An answer that is a file (a batch's JD Edwards ZIP, downloaded by POST: D-135) is
+    saved under its name. */
+export async function post(url, body, { ms = ACTION_MS } = {}) {
   let response;
+  let file = null;
   try {
-    response = await fetch(url, { method: "POST", headers: HEADERS, body, credentials: "same-origin" });
+    response = await fetchWithin(url, { method: "POST", headers: HEADERS, body, credentials: "same-origin" }, ms);
+    const attached = response.ok && /^attachment/i.test(response.headers.get("content-disposition") || "");
+    if (attached) file = await response.blob(); // (within the deadline too)
   } catch {
     return { ok: false, error: noAnswer() };
   }
   const disposition = response.headers.get("content-disposition") || "";
-  if (response.ok && /^attachment/i.test(disposition)) {
+  if (file) {
     const link = document.createElement("a");
-    link.href = URL.createObjectURL(await response.blob());
+    link.href = URL.createObjectURL(file);
     link.download = decodeURIComponent((/filename\*=UTF-8''([^;]+)/i.exec(disposition) || [, "download"])[1]);
     document.body.append(link);
     link.click();
@@ -122,22 +148,64 @@ export function follow(answer) {
   return false;
 }
 
-/** Poll a job's status URL until it is no longer running; onUpdate(snapshot) after each answer. */
-export async function pollJob(url, onUpdate, everyMs = 800) {
+/** Wait ``ms``, and while the tab is hidden, until it is shown again: then at once (a look when it is back). */
+function pause(ms) {
+  return new Promise((resolve) => {
+    let hidden = document.hidden;
+    let due = false;
+    const changed = () => {
+      if (document.hidden) hidden = true;
+      else if (hidden || due) end();
+    };
+    const timer = setTimeout(() => {
+      due = true;
+      if (!document.hidden) end();
+    }, ms);
+    function end() {
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", changed);
+      resolve();
+    }
+    document.addEventListener("visibilitychange", changed);
+  });
+}
+
+/** Look at ``url`` (its JSON) until ``onAnswer(answer)`` says it is done (true; it may be async): returns that answer,
+    or null once a look was answered by the login (``loggedOut``): nothing more is asked then (B-1712). Nothing is
+    asked while the tab is hidden. After an answer the same as the last (or none), the wait is half as long again, up
+    to ``mostMs`` (three times ``everyMs``); a change starts again at ``everyMs``. ``firstMs``: the wait before the
+    first look. */
+export async function poll(url, onAnswer, { everyMs, mostMs = 3 * everyMs, firstMs = 0 }) {
+  let wait = everyMs;
+  let last = null;
+  await pause(firstMs);
   for (;;) {
-    let snap = null;
+    let seen = null;
     try {
-      const response = await fetch(url, { headers: { Accept: "application/json" }, cache: "no-store" });
-      snap = await response.json();
+      const response = await fetchWithin(url, { headers: { Accept: "application/json" }, cache: "no-store" });
+      if (loggedOut(response)) return null;
+      const text = await response.text();
+      const answer = JSON.parse(text);
+      seen = text;
+      if (await onAnswer(answer)) return answer;
     } catch {
-      snap = null;
+      /* no answer (or none to read): looked at again later */
     }
-    if (snap) {
-      onUpdate(snap);
-      if (snap.state !== "running") return snap;
-    }
-    await new Promise((resolve) => setTimeout(resolve, everyMs));
+    wait = seen !== null && seen !== last ? everyMs : Math.min(mostMs, wait * 1.5);
+    last = seen ?? last;
+    await pause(wait);
   }
+}
+
+/** Poll a job's status URL until it is no longer running; onUpdate(snapshot) after each answer. Returns the last
+    snapshot, or null when the session ended (the page is then drawn again: the login, back here after it). While
+    nothing changes it is asked less often, up to 5 seconds apart. */
+export function pollJob(url, onUpdate, everyMs = 800) {
+  const done = (snap) => {
+    onUpdate(snap);
+    return snap.state !== "running";
+  };
+  return poll(url, done, { everyMs, mostMs: Math.max(5000, 3 * everyMs) });
 }
 
 /** The button a form is sent with: the one clicked (it may sit outside the form, with form="id"), else its first. */
@@ -165,9 +233,12 @@ function setBusy(form, busy, submitter) {
   }
 }
 
-/** Show a running job in the #job card (Process invoices), and reload the page when it is done. */
+/** Follow a running job, and reload the page when it is done (or the session ended). It asks only for the job's state,
+    done and note (``?only=``), never its 500 lines. */
 export function watchJob(statusUrl, onUpdate) {
-  return pollJob(statusUrl, onUpdate || (() => {})).then((snap) => {
+  const url = new URL(statusUrl, location.href);
+  url.searchParams.set("only", "done,note");
+  return pollJob(url.pathname + url.search, onUpdate || (() => {})).then((snap) => {
     location.reload();
     return snap;
   });
@@ -183,7 +254,7 @@ async function submitForm(form, submitter) {
   setBusy(form, true, submitter);
   // A button with its own formaction sends the form there (the review screen's "Send to manager", D-138).
   const action = submitter && submitter.hasAttribute && submitter.hasAttribute("formaction") ? submitter.formAction : form.action;
-  const answer = await post(action, body);
+  const answer = await post(action, body, { ms: form.hasAttribute("data-long") ? 0 : ACTION_MS });
   if (answer.ask_why) {
     // The server asks a question before going on (invoice.js answers it, then sends the form again).
     delete form.dataset.sending;
