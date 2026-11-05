@@ -119,10 +119,11 @@ class InvoicesMixin:
                 })  # fmt: skip
             return invoice_id
 
-    def find_by_hash(self, path: str | Path, include_failed: bool = False) -> dict[str, Any] | None:
+    def find_by_hash(self, path: str | Path, include_failed: bool = False,
+                     sha: str | None = None) -> dict[str, Any] | None:  # fmt: skip
         """The latest invoice made from this exact file, or from this exact picture made into a PDF (failed attempts
-        only if ``include_failed``)."""
-        sha = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+        only if ``include_failed``). ``sha``: its SHA-256, when the caller read it already."""
+        sha = sha or hashlib.sha256(Path(path).read_bytes()).hexdigest()
         sql = "SELECT id, status FROM invoices WHERE (file_sha256 = ? OR original_sha256 = ?)"
         if not include_failed:
             sql += f" AND status != '{FAILED}'"
