@@ -550,6 +550,7 @@ class Recycle:
         self.served = 0
         self.why = ""  # what made it due
         self.stopping: Any = None  # the restart lock, held until this process ends
+        self.unfound = False  # whether it said uvicorn's server was not found
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         try:
@@ -584,6 +585,11 @@ class Recycle:
 
         found = uvicorn_server()
         if found is None:
+            if not self.unfound:  # (said once: it is asked again after each request)
+                self.unfound = True
+                logging.getLogger(__name__).warning(
+                    "A web worker (process %s) is not started afresh after %s: uvicorn's server was not found.",
+                    os.getpid(), self.why)  # fmt: skip
             return
         self.stopping = try_lock(self.data / RECYCLE_LOCK)
         if self.stopping is None:

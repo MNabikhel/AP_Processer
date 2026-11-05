@@ -260,6 +260,19 @@ def test_a_worker_ending_lets_its_requests_under_way_finish_however_long_they_ta
     assert found.should_exit and found.config.timeout_graceful_shutdown == server.RECYCLE_GRACE_SECONDS >= 3600
 
 
+def test_a_worker_due_whose_uvicorn_server_is_not_found_says_so_once(tmp_path, monkeypatch, caplog):
+    """Found through uvicorn's SIGTERM handler: a uvicorn that changes it, or a worker run another way, would never be
+    started afresh and said nothing. It is said in the server's log, once."""
+    import logging
+
+    worker, _, _ = _recycle(tmp_path, monkeypatch, max_requests=1)
+    monkeypatch.setattr(server, "uvicorn_server", lambda: None)
+    caplog.set_level(logging.WARNING)
+    _serve(worker, 3)
+    said = [r.getMessage() for r in caplog.records if "not found" in r.getMessage()]
+    assert len(said) == 1 and "is not started afresh" in said[0], caplog.text
+
+
 def test_a_worker_ending_takes_no_new_connection_and_stops_a_moment_later(tmp_path, monkeypatch):
     """The other workers take the new connections; those it took already have DRAIN_SECONDS to ask before uvicorn
     stops it. The supervisor is told which worker is ending (``RECYCLE_PID``): it doesn't ask that one "alive?"."""
@@ -426,6 +439,26 @@ def test_the_ending_workers_note_goes_once_it_ended_at_the_start_and_after_ten_m
     monkeypatch.setattr(server, "_announce_when_up", lambda *a: None)
     assert server._serve_workers("127.0.0.1", 8599, store, None, None, None, True, 2) == 0
     assert seen == [False]
+
+
+def test_the_uvicorn_asked_for_is_one_whose_supervisor_the_server_starts():
+    """The server builds uvicorn's supervisor without a target, as uvicorn 0.52 on does; pyproject and requirements.txt
+    asked for 0.30 on, so an older one already installed passed the setup and the server with several workers failed
+    as it started."""
+    import inspect
+    import re
+    import tomllib
+
+    from uvicorn.supervisors.multiprocess import Multiprocess
+
+    assert "target" not in inspect.signature(Multiprocess.__init__).parameters
+    root = Path(__file__).resolve().parents[2]
+    project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]["dependencies"]
+    (asked,) = [d for d in project if d.startswith("uvicorn")]
+    listed = [line.split("#")[0].strip() for line in (root / "requirements.txt").read_text("utf-8").splitlines()]
+    assert asked in listed
+    lowest = re.search(r">=(\d+)\.(\d+)", asked)
+    assert lowest and (int(lowest[1]), int(lowest[2])) >= (0, 52), asked
 
 
 def test_each_worker_ends_after_a_number_of_requests_of_its_own(tmp_path):
