@@ -241,6 +241,7 @@ def build(out: Path, *, invoices: int = 12_000, vendors: int = 3_000, master: in
 
     try:
         from ap_coder.core.store import Store
+        from ap_coder.core.store.folder import fill_seen_files
 
         store = Store(db)
         the_vendors = _reference(store, rng, vendors, master, gl, cost_centers)
@@ -259,6 +260,8 @@ def build(out: Path, *, invoices: int = 12_000, vendors: int = 3_000, master: in
         counts, totals = _write(store, out, plan, templates, the_vendors, people, files, workers)
         lap("clones")
         _summary(store)
+        with store._conn() as conn:  # what a pick-up read, as an upgrade notes it: else Import invoices lists them all
+            fill_seen_files(conn, again=True)
         lap("summary")
         counts["register"] = _register(store, plan, totals, the_vendors, rng, register)
         lap("register")

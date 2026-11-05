@@ -74,14 +74,15 @@ class FolderMixin:
         return {r[0] for r in rows}
 
 
-def fill_seen_files(conn: Any) -> None:
+def fill_seen_files(conn: Any, again: bool = False) -> None:
     """An older database's start of ``seen_files``: each invoice's own file as it was processed, its size and time
-    unknown (so its place is trusted). Once, whatever the schema version (``_base._migrate``)."""
-    if conn.execute("SELECT 1 FROM settings WHERE key = 'seen_files'").fetchone():
+    unknown (so its place is trusted). Once, whatever the schema version (``_base._migrate``); ``again``: whatever was
+    done before (the bench's seed, which writes its invoices without a pick-up)."""
+    if not again and conn.execute("SELECT 1 FROM settings WHERE key = 'seen_files'").fetchone():
         return
     conn.execute("INSERT OR IGNORE INTO seen_files (path, sha256) SELECT source_path, file_sha256 FROM invoices "
                  "WHERE COALESCE(source_path, '') != '' AND file_sha256 IS NOT NULL")  # fmt: skip
-    conn.execute("INSERT INTO settings (key, value) VALUES ('seen_files', '1')")
+    conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('seen_files', '1')")
 
 
 def add_register_keys(conn: Any, columns: Any) -> None:
