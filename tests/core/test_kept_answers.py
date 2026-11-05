@@ -405,7 +405,7 @@ def test_the_queues_checks_follow_a_change_made_elsewhere_the_checks_stamp_and_w
     """``bulk.queue_checks``, kept on the summary's ``queue`` topic, the checks stamp, laptop or server and the
     invoices asked: a finding stored by plain SQL, an invoice parked through another Store, a change of settings
     (their checks then made against others: counted) are in the next answer; fewer than ``KEEP_FROM`` invoices are
-    worked out each time; each caller gets copies."""
+    worked out each time; each caller gets rows and lists of its own, the findings in them read-only."""
     from ap_coder.coding import bulk
 
     store = Store(tmp_path / "ap.db")
@@ -433,7 +433,10 @@ def test_the_queues_checks_follow_a_change_made_elsewhere_the_checks_stamp_and_w
     with sqlite3.connect(store.path) as conn:
         conn.execute("UPDATE invoices SET validation = json_set(validation, '$.issues', json(?)) WHERE id = ?",
                      (found, ids[0]))  # fmt: skip
-    assert asked()[0][ids[0]]["found"] == [{"severity": "error", "code": "TOTAL_MISMATCH"}]
+    mismatch = asked()[0][ids[0]]["found"]
+    assert mismatch == [{"severity": "error", "code": "TOTAL_MISMATCH"}]
+    with pytest.raises(TypeError):
+        mismatch[0]["code"] = "CHANGED_BY_THE_CALLER"
     other.park_invoice(ids[1], "Jordan Lee", "waiting for the buyer")
     assert sorted(asked()[0]) == [ids[0], ids[2]] and len(worked) == 3
     with sqlite3.connect(store.path) as conn:  # a change of settings: their checks were made against others

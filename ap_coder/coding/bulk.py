@@ -23,6 +23,7 @@ import sqlite3
 import threading
 import time
 from collections.abc import Callable
+from types import MappingProxyType
 from typing import Any
 
 from ..ai.pipeline import finalise_coding
@@ -198,14 +199,15 @@ def _stale(row: dict[str, Any], stamp: str) -> bool:
 def _today(rows: list[dict[str, Any]], stamp: str) -> list[list[dict[str, Any]]]:
     """Each invoice's findings by today's checks (severity and code) from its queue facts, as ``issues_today`` gives
     them: the stored ones, or the queue's re-check with the stored findings made after processing (``_kept``). One
-    not checked again yet (``_stale``): its latest. The findings of all are decoded in one go."""
+    not checked again yet (``_stale``): its latest. The findings of all are decoded in one go, each read-only (the
+    answers kept share them, ``queue_checks``)."""
     stored = json.loads("[" + ",".join(r["q_found"] or "[]" for r in rows) + "]")
     rechecked = json.loads("[" + ",".join(r["r_found"] or "null" for r in rows) + "]")
     out = []
     for row, kept, again in zip(rows, stored, rechecked, strict=True):
-        found = [{"severity": severity, "code": code} for severity, code in kept]
+        found = [MappingProxyType({"severity": severity, "code": code}) for severity, code in kept]
         if row["q_stamp"] is not None and row["q_stamp"] != stamp and again is not None:
-            today = [{"severity": severity, "code": code} for severity, code in again]
+            today = [MappingProxyType({"severity": severity, "code": code}) for severity, code in again]
             codes = {t["code"] for t in today}
             found = today + [i for i in _kept(found) if i["code"] not in codes]
         out.append(found)  # (else no re-check, or its coding can't be read: the stored checks stand)
@@ -228,7 +230,7 @@ def queue_checks(
     for a re-check under way; without it (the server's background process does it, ``QueueRecheck``), it shows its
     earlier checks meanwhile. From ``KEEP_FROM`` invoices asked, kept in each process while the queue's facts in the
     summary (``queue``), the checks stamp, laptop or server, and the invoices asked are the same (D-159): the queue
-    and each of its tabs ask them. Each caller gets copies."""
+    and each of its tabs ask them. Each caller gets rows and lists of its own (the findings in them are read-only)."""
     if not ids:
         return {}, 0
     if recheck is None:
@@ -240,7 +242,7 @@ def queue_checks(
     asked = (store.checks_stamp(), recheck, tuple(int(i) for i in ids))
     checks, stale = store.summary_memo("queue_checks", lambda: _queue_checks(store, list(asked[2]), settings, recheck),
                                        "queue", asked=asked)  # fmt: skip
-    return {i: {**r, "found": [dict(f) for f in r["found"]]} for i, r in checks.items()}, stale
+    return {i: {**r, "found": list(r["found"])} for i, r in checks.items()}, stale
 
 
 def _queue_checks(
