@@ -679,7 +679,12 @@ class CaptureMixin:
 
     def reader_scorecard(self) -> list[dict[str, Any]]:
         """Each reader's record against AP's approvals: {reader, fields (compared), agreed (with AP), rate,
-        invoices}. Reader "fused" is the combined value AP saw on the review screen."""
+        invoices}. Reader "fused" is the combined value AP saw on the review screen. Kept until a reader outcome
+        changes (D-162)."""
+        kept = self.summary_memo("reader_scorecard", self._reader_scorecard, topic="", changes="readers")
+        return [dict(r) for r in kept]
+
+    def _reader_scorecard(self) -> list[dict[str, Any]]:
         with self._conn() as conn:
             rows = conn.execute(
                 """SELECT reader, COUNT(*) fields, SUM(correct) agreed, COUNT(DISTINCT invoice_id) invoices

@@ -38,7 +38,15 @@ class SuppliersMixin:
     def all_supplier_stats(self, keys: list[str], window: int = 200, fields: bool = True) -> dict[str, Any]:
         """{key: ``supplier_stats(key, window)``} of these suppliers, in two queries; without ``fields``, in one, each
         header field's figures (``SupplierStats.fields``, ``supplier_fields``) left empty: every other figure is the
-        same, worked out of each invoice's."""
+        same, worked out of each invoice's. Without ``fields``, kept until a supplier outcome changes (D-162): read
+        it, don't change it."""
+        if not fields:
+            return self.summary_memo(f"supplier_stats/{window}",  # type: ignore[attr-defined]
+                                     lambda: self._all_supplier_stats(keys, window, False), topic="",
+                                     changes="suppliers", asked=tuple(keys))  # fmt: skip
+        return self._all_supplier_stats(keys, window, True)
+
+    def _all_supplier_stats(self, keys: list[str], window: int, fields: bool) -> dict[str, Any]:
         from ...capture.supplier import SupplierStats
 
         invoices: dict[str, list[dict[str, Any]]] = {key: [] for key in keys}
@@ -57,7 +65,13 @@ class SuppliersMixin:
 
     def supplier_fields(self, keys: list[str], window: int = 200) -> dict[str, dict[str, Any]]:
         """{key: {field: ``FieldStat``}}: each header field read and read right over the supplier's window, as
-        ``supplier_stats(key, window).fields``, for these suppliers in one query."""
+        ``supplier_stats(key, window).fields``, for these suppliers in one query; kept until a supplier outcome
+        changes (D-162): read it, don't change it."""
+        return self.summary_memo(f"supplier_fields/{window}",  # type: ignore[attr-defined]
+                                 lambda: self._supplier_fields(keys, window), topic="", changes="suppliers",
+                                 asked=tuple(keys))  # fmt: skip
+
+    def _supplier_fields(self, keys: list[str], window: int) -> dict[str, dict[str, Any]]:
         from ...capture.supplier import FieldStat
 
         found: dict[str, dict[str, FieldStat]] = {key: {} for key in keys}

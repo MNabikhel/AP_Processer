@@ -1234,6 +1234,7 @@ def outcome_rows(proposed: Any, final: Any, fields: Iterable[str] = FIELDS) -> l
     return rows
 
 
+@lru_cache(maxsize=65536)  # a pure search, asked twice for each vendor listed
 def clean_fields_needed(correct: int, n: int, target: float, z: float = 1.96, limit: int = 1_000_000) -> int | None:
     """How many more correct fields in a row would lift the lower bound to ``target`` (None: out of reach)."""
     if wilson_lower(correct, n, z) >= target:

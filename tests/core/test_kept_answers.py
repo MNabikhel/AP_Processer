@@ -271,3 +271,68 @@ def test_a_restore_gives_the_database_a_new_summary_id_so_nothing_kept_from_befo
     with sqlite3.connect(store.path) as conn:  # the count is again the one kept before the restore
         conn.execute("UPDATE vendors SET display_name = 'Acme restored'")
     assert kept()[0][1] == "Acme restored"
+
+
+# --- The answers kept on these counts (D-162): each filled, its data changed through another Store or plain SQL, then
+# the new answer ------------------------------------------------------------------------------------------------------
+
+
+def _plain(store: Store, sql: str, *args) -> None:
+    with sqlite3.connect(store.path) as conn:
+        conn.execute(sql, args)
+
+
+def test_every_vendors_supplier_record_and_the_drawn_vendors_field_figures_follow_their_outcomes(tmp_path):
+    """Supplier learning and Settings → Automation: every vendor's record (``all_supplier_stats`` without fields) and
+    the drawn vendors' field figures (``supplier_fields``), kept on ``changes/suppliers``, per window and vendors."""
+    from dataclasses import replace
+
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    rows = [
+        {"field": "invoice_number", "ai_value": "1", "final_value": "1", "correct": True},
+        {"field": "invoice_date", "ai_value": "2026-01-01", "final_value": "2026-01-02", "correct": False},
+    ]
+    other.record_outcomes("name:acme", 1, rows, display_name="Acme", at=NOW)
+    keys = ["name:acme", "name:beta"]
+
+    def kept(window: int = 200):
+        return store.all_supplier_stats(keys, window, fields=False), store.supplier_fields(keys, window)
+
+    def fresh(window: int = 200):
+        each = {key: store.supplier_stats(key, window) for key in keys}
+        return {key: replace(s, fields={}) for key, s in each.items()}, {key: s.fields for key, s in each.items()}
+
+    assert kept() == fresh() and kept()[0]["name:beta"].invoices == 0
+    assert kept()[0] is kept()[0] and kept()[1] is kept()[1]  # reused while nothing changed
+    other.record_outcomes("name:beta", 2, rows, display_name="Beta", at=NOW)
+    assert kept() == fresh() and kept()[0]["name:beta"].invoices == 1
+    _plain(store, "UPDATE supplier_outcomes SET correct = 1 WHERE supplier_key = 'name:beta'")
+    assert kept() == fresh() and kept()[1]["name:beta"]["invoice_date"].correct == 1
+    _plain(store, "DELETE FROM supplier_outcomes WHERE supplier_key = 'name:acme'")
+    assert kept() == fresh() and kept()[0]["name:acme"].invoices == 0
+    assert kept(1) == fresh(1) and store.supplier_fields(keys[:1]) == {"name:acme": {}}
+
+
+def test_the_readers_scorecard_follows_their_outcomes(tmp_path):
+    """Settings → Reading and Learning → Readers: the readers' scorecard, kept on ``changes/readers``."""
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+
+    def read(correct: bool) -> list[dict]:
+        return [{"reader": "rules", "field": "invoice_number", "read_value": "1", "final_value": "1",
+                 "correct": correct}]  # fmt: skip
+
+    def fields() -> list[tuple]:
+        card = store.reader_scorecard()
+        assert card == store._reader_scorecard()
+        return [(r["reader"], r["fields"], r["agreed"]) for r in card]
+
+    other.record_reader_outcomes(1, read(True), at=NOW)
+    assert fields() == [("rules", 1, 1)]
+    other.record_reader_outcomes(2, read(False), at=NOW)
+    assert fields() == [("rules", 2, 1)]
+    _plain(store, "UPDATE reader_outcomes SET correct = 1")
+    assert fields() == [("rules", 2, 2)]
+    _plain(store, "DELETE FROM reader_outcomes WHERE invoice_id = 1")
+    assert fields() == [("rules", 1, 1)]
+    store.reader_scorecard()[0]["fields"] = 99  # (each caller has its own copy)
+    assert fields() == [("rules", 1, 1)]
