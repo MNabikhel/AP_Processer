@@ -549,14 +549,14 @@ class SummaryMixin:
             return fetch_rows(conn, f"SELECT {columns} FROM {_tables(columns)} WHERE {where} ORDER BY {order}",
                               tuple(params))  # fmt: skip
 
-    def search_rows(self, ids: list[int] | None = None, exported: bool = False) -> list[dict[str, Any]]:
+    def search_rows(self, where: str = "1", params: tuple[Any, ...] | list[Any] = (), exported: bool = False
+                    ) -> list[dict[str, Any]]:  # fmt: skip
         """Every invoice's identifying fields and where it stands (for the invoice directory's quick search), with
         the date of its export batch and its GST/HST number (the JD Edwards duplicate check finds a supplier by
-        it); only ``ids``' when given, only those in an export batch with ``exported``. From the invoices' summary
-        (D-110)."""
-        where, params = ("1", ()) if ids is None else (_in_list("id"), (json.dumps([int(i) for i in ids]),))
+        it); only those ``where`` keeps (the caller's SQL over the summary's columns: ``search.condition``), only
+        those in an export batch with ``exported``. From the invoices' summary (D-110)."""
         if exported:
-            where += " AND export_batch IS NOT NULL"
+            where = f"({where}) AND export_batch IS NOT NULL"
         with self._conn() as conn:
             self._summary_fresh(conn)
             batches = {r["id"]: r["created_at"] for r in conn.execute("SELECT id, created_at FROM export_batches")}
@@ -567,8 +567,33 @@ class SummaryMixin:
                           second_reviewed_at, export_batch, parked_reason, follow_up, error,
                           gst_number AS gst_hst_registration_number
                    FROM invoice_summary WHERE {where} ORDER BY id DESC""",
-                params,
+                tuple(params),
             )
+        for r in rows:
+            r["exported_at"] = batches.get(r["export_batch"]) if r["export_batch"] else None
+        return rows
+
+    def directory_ids(
+        self, rows_sql: str, where: str, params: list[Any], order: str, limit: int, offset: int = 0
+    ) -> list[int]:
+        """The ids of the invoice directory's rows (``directory_rows``), in their order: an export then reads their
+        rows a part at a time (``directory_rows_of``)."""
+        with self._conn() as conn:
+            self._summary_fresh(conn)
+            sql = f"{rows_sql} SELECT id FROM rows WHERE {where} ORDER BY {order} LIMIT ? OFFSET ?"
+            return [r[0] for r in conn.execute(sql, [*params, limit, offset])]
+
+    def directory_rows_of(self, rows_sql: str, fields: str, ids: list[int]) -> list[dict[str, Any]]:
+        """The invoice directory's rows of these invoices in this order (one gone meanwhile left out), with the date
+        each one's export batch was made."""
+        with self._conn() as conn:
+            self._summary_fresh(conn)
+            page = conn.execute(f"{rows_sql} SELECT {fields} FROM rows WHERE {_in_list('id')}", (json.dumps(ids),))
+            found = {r["id"]: dict(r) for r in page}
+            rows = [found[i] for i in ids if i in found]
+            wanted = sorted({r["export_batch"] for r in rows if r["export_batch"]})
+            made = f"SELECT id, created_at FROM export_batches WHERE {_in_list('id')}"
+            batches = {b["id"]: b["created_at"] for b in conn.execute(made, (json.dumps(wanted),))}
         for r in rows:
             r["exported_at"] = batches.get(r["export_batch"]) if r["export_batch"] else None
         return rows

@@ -19,7 +19,8 @@ The chosen columns, filters and sort are a URL query (``query_string``), so a la
 by name as a preset (Settings: ``directory_presets``, one of them the default).
 
 Entry points: ``Query.from_params`` (the page's address), ``run`` (a page of rows, or all for an export),
-``cell``, and the presets (``presets``, ``save_preset``, ``set_default``...).
+``export_rows`` (all of them, a part at a time), ``cell``, and the presets (``presets``, ``save_preset``,
+``set_default``...).
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import parse_qsl, urlencode
@@ -38,6 +40,7 @@ TEXT, MONEY, DATE, NUMBER, STATUS, WHERE = "text", "money", "date", "number", "s
 STATUSES = (REVIEW, PARKED, PENDING, APPROVED, REJECTED, FAILED)
 PAGE_SIZE = 100
 EXPORT_LIMIT = 50_000
+ERP_SHOWN = 50  # the quick search's hits in the ERP register shown at first, and how many more each time
 PRESETS_SETTING = "directory_presets"
 DEFAULT_SETTING = "directory_default"
 MAX_PRESETS = 30
@@ -93,7 +96,8 @@ ROWS_SQL = """
 WITH rows AS (
   SELECT id, status, file_name, vendor_name, invoice_number, invoice_date, due_date, currency, grand_total,
          created_at, reviewed_at, reviewer, second_reviewer, second_reviewed_at, export_batch, parked_reason,
-         follow_up, error, po_number, subtotal, tax_total, gl_codes, first_gl, line_gls
+         follow_up, error, po_number, subtotal, tax_total, gl_codes, first_gl, line_gls,
+         plain_name, number_key, raw_number, po_key
   FROM invoice_summary)
 """
 
@@ -109,7 +113,8 @@ class Query:
     sort: str = DEFAULT_SORT
     descending: bool = True
     page: int = 1
-    q: str = ""  # the quick search (search.find), on top of the filters
+    q: str = ""  # the quick search (search.condition), on top of the filters
+    erp_shown: int = ERP_SHOWN  # how many of its hits in the ERP register are shown
 
     @classmethod
     def from_params(cls, params: Any) -> Query:
@@ -135,6 +140,7 @@ class Query:
             descending=values.get("dir", "desc" if sort == DEFAULT_SORT or sort not in COLUMNS else "asc") == "desc",
             page=page,
             q=str(values.get("q") or "").strip()[:200],
+            erp_shown=_shown(values.get("erp")),
         )
 
     def params(self, **change: Any) -> list[tuple[str, str]]:
@@ -145,6 +151,8 @@ class Query:
         pairs += [("sort", q.sort), ("dir", "desc" if q.descending else "asc")]
         if q.q:
             pairs.append(("q", q.q))
+            if q.erp_shown != ERP_SHOWN:
+                pairs.append(("erp", str(q.erp_shown)))
         if q.page > 1:
             pairs.append(("page", str(q.page)))
         return pairs
@@ -275,9 +283,10 @@ def condition(key: str, typed: str) -> tuple[str, list[Any]]:
     return _compare(col.sql, typed, col.kind)
 
 
-def where(query: Query, ids: list[int] | None = None) -> tuple[str, list[Any], dict[str, str]]:
+def where(query: Query) -> tuple[str, list[Any], dict[str, str]]:
     """The query's ``WHERE`` (``1`` when nothing is filtered), its parameters, and each filter that can't be read
-    (column key -> what to type instead; those filters are left out)."""
+    (column key -> what to type instead; those filters are left out). The quick search is one more condition
+    (``search.condition``): its hits are counted, sorted and paged by SQLite like the rest (D-157)."""
     parts, params, problems = [], [], {}
     for key, typed in query.filters.items():
         try:
@@ -287,11 +296,13 @@ def where(query: Query, ids: list[int] | None = None) -> tuple[str, list[Any], d
             continue
         parts.append(f"({sql})")
         params += values
-    if ids is not None:
-        # The quick search's hits (up to EXPORT_LIMIT) as one JSON list: one '?' however many there are, as SQLite
-        # takes only so many bound variables (32,766 on a stock build, 999 on older ones).
-        parts.append("id IN (SELECT value FROM json_each(?))" if ids else "0")
-        params += [json.dumps([int(i) for i in ids])] if ids else []
+    if query.q:
+        from ..core.store.summary import fts_available
+        from . import search
+
+        sql, values = search.condition(*search.parts(query.q), fts_available())
+        parts.append(f"({sql})")
+        params += values
     return " AND ".join(parts) or "1", params, problems
 
 
@@ -319,7 +330,8 @@ class Result:
     page: int
     pages: int
     problems: dict[str, str]
-    erp: list[Any] = field(default_factory=list)  # quick-search hits in the ERP register (search.Hit)
+    erp: list[Any] = field(default_factory=list)  # quick-search hits in the ERP register (search.Hit), those shown
+    erp_total: int = 0  # how many there are
 
     @property
     def first(self) -> int:
@@ -331,15 +343,14 @@ class Result:
 
 
 def run(store: Any, query: Query, *, page_size: int = PAGE_SIZE, everything: bool = False) -> Result:
-    """The query's rows (one page, or ``everything`` up to EXPORT_LIMIT for an export)."""
-    ids, erp = None, []
-    if query.q:
-        from .search import find
+    """The query's rows (one page, or ``everything`` up to EXPORT_LIMIT for an export), and on a page the quick
+    search's hits in the ERP register (the first ``query.erp_shown``, best first)."""
+    erp: list[Any] = []
+    if query.q and not everything:
+        from .search import erp_hits, parts
 
-        hits = find(store, query.q, limit=EXPORT_LIMIT)
-        ids = [h.row["id"] for h in hits if h.source != "ERP"]
-        erp = [h for h in hits if h.source == "ERP"]
-    sql_where, params, problems = where(query, ids)
+        erp = erp_hits(store, *parts(query.q))
+    sql_where, params, problems = where(query)
     total = store.directory_count(ROWS_SQL, sql_where, params)
     if everything:
         limit, offset, page, pages = EXPORT_LIMIT, 0, 1, 1
@@ -348,7 +359,29 @@ def run(store: Any, query: Query, *, page_size: int = PAGE_SIZE, everything: boo
         page = min(query.page, pages)
         limit, offset = page_size, (page - 1) * page_size
     rows = store.directory_rows(ROWS_SQL, ROW_FIELDS, sql_where, params, order_by(query), limit, offset)
-    return Result(rows, total, page, pages, problems, erp)
+    return Result(rows, total, page, pages, problems, erp[: query.erp_shown], len(erp))
+
+
+EXPORT_CHUNK = 1_000  # the rows an export reads at a time
+
+
+def export_rows(store: Any, query: Query) -> Iterator[dict[str, Any]]:
+    """``run(store, query, everything=True)``'s rows, in its order, read a part at a time (an export writes each as
+    it comes, never holding them all)."""
+    sql_where, params, _ = where(query)
+    ids = store.directory_ids(ROWS_SQL, sql_where, params, order_by(query), EXPORT_LIMIT)
+    for start in range(0, len(ids), EXPORT_CHUNK):
+        yield from store.directory_rows_of(ROWS_SQL, ROW_FIELDS, ids[start : start + EXPORT_CHUNK])
+
+
+def _shown(value: Any) -> int:
+    """How many of the quick search's hits in the ERP register to show (``erp`` in the address): ERP_SHOWN, or more
+    in steps of it ("Show more"), up to EXPORT_LIMIT."""
+    try:
+        wanted = int(value or ERP_SHOWN)
+    except ValueError:
+        return ERP_SHOWN
+    return min(max(ERP_SHOWN, -(-wanted // ERP_SHOWN) * ERP_SHOWN), EXPORT_LIMIT)
 
 
 def cell(row: dict[str, Any], key: str) -> Any:
@@ -371,7 +404,7 @@ def cell(row: dict[str, Any], key: str) -> Any:
 def _clean(query_string: str) -> str:
     """A saved query's string rebuilt from the keys the directory knows (never anything else), without its page."""
     q = Query.from_params(parse_qsl(query_string or "", keep_blank_values=False))
-    q.page = 1
+    q.page, q.erp_shown = 1, ERP_SHOWN
     return q.query_string()
 
 

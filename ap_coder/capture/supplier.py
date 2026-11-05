@@ -1309,16 +1309,34 @@ class SupplierStats:
             inv["sources"].add(r.get("source") or "review")
             inv["rows"].append(r)
         history = sorted(by_invoice.values(), key=lambda h: (h["at"], str(h["invoice_id"])), reverse=True)
-        recent = history[:window]
-        stats = cls(key=key, invoices=total_invoices if total_invoices is not None else len(history))
-        stats.window_invoices = len(recent)
-        for inv in recent:
+        fields: dict[str, FieldStat] = {}
+        for inv in history[:window]:
             for r in inv["rows"]:
-                fs = stats.fields.setdefault(r["field"], FieldStat())
+                fs = fields.setdefault(r["field"], FieldStat())
                 fs.n += 1
                 fs.correct += 1 if r["correct"] else 0
-        stats.n = sum(f.n for f in stats.fields.values())
-        stats.correct = sum(f.correct for f in stats.fields.values())
+        return cls.from_invoices(history, fields, key=key, window=window, total_invoices=total_invoices)
+
+    @classmethod
+    def from_invoices(
+        cls, invoices: Iterable[dict[str, Any]], fields: dict[str, FieldStat] | None, key: str = "",
+        window: int = 200, total_invoices: int | None = None,
+    ) -> SupplierStats:  # fmt: skip
+        """From each invoice's figures (``invoice_id``, ``at``, ``fields``, ``corrections``, ``sources``) and the
+        header fields' over the last ``window`` of them: what ``from_rows`` works out of the rows, or SQLite for every
+        supplier at once (``Store.all_supplier_stats``, D-157). ``fields`` None: not worked out (``fields`` left
+        empty), the fields read and read right counted from the invoices' figures, as many."""
+        history = sorted(invoices, key=lambda h: (h["at"], str(h["invoice_id"])), reverse=True)
+        recent = history[:window]
+        stats = cls(key=key, invoices=total_invoices if total_invoices is not None else len(history),
+                    fields=fields or {})  # fmt: skip
+        stats.window_invoices = len(recent)
+        if fields is None:
+            stats.n = sum(h["fields"] for h in recent)
+            stats.correct = sum(h["fields"] - h["corrections"] for h in recent)
+        else:
+            stats.n = sum(f.n for f in stats.fields.values())
+            stats.correct = sum(f.correct for f in stats.fields.values())
         stats.touchless_rate = sum(1 for h in recent if not h["corrections"]) / len(recent) if recent else 0.0
         for h in history:
             if h["corrections"]:

@@ -11,6 +11,7 @@ import collections
 import contextvars
 import datetime as dt
 import hashlib
+import json
 import logging
 import os
 import re
@@ -654,14 +655,18 @@ def process_files(store: Store, settings: Settings, paths: list[Path], *, alread
 def not_processed(store: Store, files: list[Path]) -> tuple[list[Path], list[Path]]:
     """(the files never processed, the files that can't be read now): a file still being written by a scanner, open
     in another program or a cloud placeholder not downloaded is left for the next pick-up, never a broken page."""
-    new, unreadable = [], []
+    digests, unreadable = {}, []
     for path in files:
         try:
-            if store.find_by_hash(path, include_failed=True) is None:
-                new.append(path)
+            digests[path] = hashlib.sha256(path.read_bytes()).hexdigest()
         except OSError:
             unreadable.append(path)
-    return new, unreadable
+    # The invoices made from them (``find_by_hash``, failed ones too), asked in one query, not one a file (D-157).
+    known = {r["value"] for r in store.summary_fetch(
+        "SELECT value FROM json_each(?) WHERE EXISTS (SELECT 1 FROM invoices WHERE file_sha256 = value) OR "
+        "EXISTS (SELECT 1 FROM invoices WHERE original_sha256 = value)", (json.dumps(sorted(set(digests.values()))),),
+    )} if digests else set()  # fmt: skip
+    return [p for p, digest in digests.items() if digest not in known], unreadable
 
 
 def not_read_here(folder: Path) -> list[str]:

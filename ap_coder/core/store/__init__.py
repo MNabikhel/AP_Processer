@@ -21,7 +21,8 @@ D-143), ``learning`` (the feedback memory, metrics), ``ephemeral`` (messages
 and uploads kept for a short while), ``samples``, ``users`` (server mode's accounts, sessions and login attempts,
 D-97), ``hub`` (what the finance hub feed reads, D-103), ``postings`` (the JD Edwards postings ledger kept across a
 restore, D-105), ``summary`` (the invoices' summary the lists, the search and the reports read, D-110), ``managers``
-(a manager confirming an invoice's cost allocation, D-138). A test
+(a manager confirming an invoice's cost allocation, D-138), ``suppliers`` (every supplier's record at once, for the
+pages that list them, D-157). A test
 that patches a module-level name (``_now``, ``json``...) patches it in the part that uses it.
 """
 
@@ -110,6 +111,7 @@ from .lessons import LessonsMixin
 from .managers import ManagersMixin
 from .purchasing import PurchasingMixin
 from .summary import SummaryMixin
+from .suppliers import SuppliersMixin
 from .users import UsersMixin
 from .vendors import VendorsMixin
 
@@ -121,6 +123,7 @@ class Store(
     InvoicesMixin,
     PurchasingMixin,
     CaptureMixin,
+    SuppliersMixin,
     LessonsMixin,
     VendorsMixin,
     BackupsMixin,

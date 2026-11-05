@@ -33,7 +33,8 @@ from .fx import _FX_RATE, APPROVAL_CONTROLS, parse_fx_rates, tiny_fx_rates, unre
 # 18: users, sessions, login_attempts (by _SCHEMA: server mode's accounts, D-97), later vendors.erp_bank (D-104) and
 # vendor_aliases (by _SCHEMA: a vendor name read wrong, as AP corrected it, D-119), line_texts (by _SCHEMA: a
 # supplier's line descriptions as AP approved them, D-120)
-SCHEMA_VERSION = 20  # 19: the invoices' summary and its triggers (summary.py, ``_summary_migrate``, D-110), 20: indexes
+SCHEMA_VERSION = 22  # 19: the invoices' summary and its triggers (summary.py, ``_summary_migrate``, D-110), 20: indexes
+# (below), 22: the ERP register's vendor names and invoice numbers as the quick search compares them (D-157)
 # Schema 20's indexes (B-1581), for: an export batch's invoices (undo, an empty batch, who may post it), an invoice's
 # coding memory (withdrawn at a reopen, rejection or delete), the events of a kind since a day (touchless figures,
 # the approval controls, who vouched for an account), an account's sessions, the expired one-off values, and a
@@ -166,7 +167,8 @@ CREATE INDEX IF NOT EXISTS purchase_orders_vendor ON purchase_orders (vendor_key
 CREATE TABLE IF NOT EXISTS erp_invoices (
     vendor_key TEXT NOT NULL, number_key TEXT NOT NULL, total REAL NOT NULL, vendor_name TEXT NOT NULL,
     invoice_number TEXT NOT NULL, invoice_date TEXT NOT NULL DEFAULT '', imported_at TEXT NOT NULL,
-    copies INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (vendor_key, number_key, total));
+    copies INTEGER NOT NULL DEFAULT 1, plain_name TEXT NOT NULL DEFAULT '', raw_number TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (vendor_key, number_key, total));
 CREATE TABLE IF NOT EXISTS coding_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT, vendor TEXT NOT NULL DEFAULT '', contains TEXT NOT NULL DEFAULT '',
     gl_code TEXT NOT NULL, cost_center TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, created_by TEXT);
@@ -621,6 +623,16 @@ class StoreCore:
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(erp_invoices)")}
         if columns and "copies" not in columns:
             conn.execute("ALTER TABLE erp_invoices ADD COLUMN copies INTEGER NOT NULL DEFAULT 1")
+        # The ERP register keeps its vendor names and invoice numbers as the quick search compares them, so a search
+        # reads only the rows it may find (schema 22, D-157; looked for whatever the version).
+        if columns and "plain_name" not in columns:
+            from ...erp.search import register_keys
+
+            conn.execute("ALTER TABLE erp_invoices ADD COLUMN plain_name TEXT NOT NULL DEFAULT ''")
+            conn.execute("ALTER TABLE erp_invoices ADD COLUMN raw_number TEXT NOT NULL DEFAULT ''")
+            rows = conn.execute("SELECT rowid, vendor_name, invoice_number FROM erp_invoices").fetchall()
+            conn.executemany("UPDATE erp_invoices SET plain_name = ?, raw_number = ? WHERE rowid = ?",
+                             [(*register_keys(r[1], r[2]), r[0]) for r in rows])  # fmt: skip
         # A PO line keeps what the ERP had left open on it when the POs were imported (the import's optional open
         # amount), for what is left to expense on the review screen (looked for whatever the version).
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(po_lines)")}

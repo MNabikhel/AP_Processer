@@ -3,11 +3,13 @@
 One search box: words of the vendor name, an invoice or PO number (however it is written), or an amount.
 Each match says where the invoice stands; the ERP's invoice register (Exports page) is searched too.
 
-Entry points: ``find`` (the hits, best first) and ``where`` (where an invoice stands, in a sentence).
+Entry points: ``find`` (the hits, best first), ``condition`` (the invoices it finds, as SQL: the invoice directory
+counts and pages them), ``erp_hits`` (the ERP register's) and ``where`` (where an invoice stands, in a sentence).
 """
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -18,6 +20,7 @@ from ..coding.vendors import norm_invoice_number
 from ..core.memory import vendor_key
 from ..core.safe import parse_amount
 from ..core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store
+from ..core.store.summary import fts_available
 
 LIMIT = 50
 
@@ -97,6 +100,13 @@ def search_keys(row: dict[str, Any]) -> tuple[str, str, str]:
         _raw(number)  # fmt: skip
 
 
+def register_keys(vendor_name: str, invoice_number: str) -> tuple[str, str]:
+    """(the vendor name, the invoice number's letters and digits) of an ERP register row as ``_score`` reads them:
+    what the register keeps for the quick search (``plain_name``, ``raw_number``, D-157)."""
+    keys = search_keys({"vendor_name": vendor_name, "invoice_number": invoice_number})
+    return keys[0], keys[2]
+
+
 def _score(row: dict[str, Any], words: list[str], numbers: list[str]) -> int:
     """0 unless every part of the query matches: the words in the vendor (or file) name, and each number as
     the invoice number, the PO, the amount, or part of the name ("3m")."""
@@ -147,69 +157,138 @@ def _tokens(query: str) -> list[str]:
     return out
 
 
-def _candidates(store: Store, words: list[str], numbers: list[str]) -> set[int]:
-    """The invoices ``_score`` may match (every one it matches among them), from the invoices' summary and its search
-    index (D-110): each word in the vendor or file name, and each number as the invoice number (normalised or a
-    part of it), the PO, the amount or a word of the name."""
+def parts(query: str) -> tuple[list[str], list[str]]:
+    """(the words, the numbers) of a quick search, as ``_score`` reads them; each once (every one must match)."""
+    tokens = [t.lower() for t in _tokens(query)]
+    numbers = [w for w in tokens if any(c.isdigit() for c in w)]
+    words = [_plain(w.strip(",.")) for w in tokens if w not in numbers and len(w.strip(",.")) > 1]
+    return list(dict.fromkeys(words)), list(dict.fromkeys(numbers))
+
+
+def _contains(column: str, text: str, fts: bool) -> tuple[str, list[Any]]:
+    """The summary's ``column`` (``plain_name`` or ``raw_number``) contains ``text``, as Python's ``in`` says it:
+    narrowed first by the FTS5 trigram index when there is one and ``text`` is three characters or more (D-110)."""
+    exact = f"instr({column}, ?) > 0"
+    if not fts or len(text) < 3:
+        return exact, [text]
+    phrase = '"' + text.replace('"', '""') + '"'
+    return f"id IN (SELECT rowid FROM invoice_search WHERE invoice_search MATCH ?) AND {exact}", [
+        f"{column} : {phrase}", text]  # fmt: skip
+
+
+def _amount(column: str, amount: float) -> tuple[str, list[Any]]:
+    """``column`` is ``amount`` (or its credit), to the half cent, as ``_score`` compares them (by the column's index
+    first)."""
+    size = abs(amount)
+    return (f"({column} BETWEEN ? AND ? OR {column} BETWEEN ? AND ?) AND abs(abs({column}) - ?) < 0.005",
+            [size - 0.0051, size + 0.0051, -size - 0.0051, -size + 0.0051, size])  # fmt: skip
+
+
+def condition(words: list[str], numbers: list[str], fts: bool) -> tuple[str, list[Any]]:
+    """The invoices ``_score`` matches, every one and no other, as a SQL condition over the invoices' summary (its
+    ``plain_name``, ``number_key``, ``raw_number``, ``po_key`` and ``grand_total``, D-110): each word in the vendor or
+    file name, and each number as the invoice number (normalised or a part of it), the PO, the amount or a word of
+    the name. The directory counts and pages the hits in SQL with it (D-157)."""
     if not words and not numbers:
-        return set()
-    found: set[int] | None = None
+        return "0", []
+    where, params = [], []
     for w in words:
-        found = _narrowed(found, store.summary_containing("plain_name", w))
-        if not found:
-            return set()
+        sql, values = _contains("plain_name", w, fts)
+        where.append(f"({sql})")
+        params += values
     for token in numbers:
-        number, amount, raw = norm_invoice_number(token), parse_amount(token), _raw(token)
-        plain = _plain(token)
-        ids = store.summary_containing("plain_name", plain) if plain else set()  # a vendor name with a digit in it
-        if len(raw) >= 3:
-            ids |= store.summary_containing("raw_number", raw)
-        where, params = [], []
+        number, amount, raw, plain = norm_invoice_number(token), parse_amount(token), _raw(token), _plain(token)
+        either, values = [], []
         if number:
-            where.append("number_key = ?")
-            params.append(number)
+            either.append("number_key = ?")
+            values.append(number)
             if po_key(token):
-                where.append("po_key = ?")
-                params.append(po_key(token))
+                either.append("po_key = ?")
+                values.append(po_key(token))
+        if len(raw) >= 3:
+            sql, more = _contains("raw_number", raw, fts)
+            either.append(sql)
+            values += more
         if amount is not None:
-            size = abs(amount)
-            where.append("grand_total BETWEEN ? AND ? OR grand_total BETWEEN ? AND ?")
-            params += [size - 0.0051, size + 0.0051, -size - 0.0051, -size + 0.0051]
-        if where:
-            ids |= {r["id"] for r in store.summary_rows(" OR ".join(f"({w})" for w in where), params, "id")}
-        found = _narrowed(found, ids)
-        if not found:
-            return set()
-    return found or set()
+            sql, more = _amount("grand_total", amount)
+            either.append(sql)
+            values += more
+        if plain and " " not in plain:  # one of the name's words: a vendor name with a digit in it ("3m")
+            sql, more = _contains("plain_name", plain, fts)
+            either.append(f"{sql} AND instr(' ' || plain_name || ' ', ?) > 0")
+            values += [*more, f" {plain} "]
+        if not either:
+            return "0", []
+        where.append("(" + " OR ".join(f"({e})" for e in either) + ")")
+        params += values
+    return " AND ".join(where), params
 
 
-def _narrowed(found: set[int] | None, ids: set[int]) -> set[int]:
-    return ids if found is None else found & ids
+def _in_register(words: list[str], numbers: list[str]) -> tuple[str, list[Any]]:
+    """The ERP register's rows ``_score`` may match (every one it matches among them), as a SQL condition over its
+    vendor name and invoice number as the quick search compares them (``plain_name``, ``raw_number``): a number
+    normalised is always a part of its letters and digits ("INV-0042": "42" in "inv0042")."""
+    if not words and not numbers:
+        return "0", []
+    where, params = [], []
+    for w in words:
+        where.append("instr(plain_name, ?) > 0")
+        params.append(w)
+    for token in numbers:
+        number, amount, raw, plain = norm_invoice_number(token), parse_amount(token), _raw(token), _plain(token)
+        either = [("instr(raw_number, ?) > 0", [text]) for text in dict.fromkeys(
+            t for t in (number, raw if len(raw) >= 3 else "") if t)]  # fmt: skip
+        if amount is not None:
+            either.append(_amount("total", amount))
+        if plain and " " not in plain:
+            either.append(("instr(' ' || plain_name || ' ', ?) > 0", [f" {plain} "]))
+        if not either:
+            return "0", []
+        where.append("(" + " OR ".join(f"({sql})" for sql, _ in either) + ")")
+        params += [v for _, values in either for v in values]
+    return " AND ".join(where), params
 
 
-def _ours(store: Store, erp: dict[str, Any]) -> bool:
-    """Whether an ERP register row is an exported invoice's own (the same number and amount, the same vendor)."""
+def _ours(erp: dict[str, Any], exported: list[dict[str, Any]]) -> bool:
+    """Whether an ERP register row is an exported invoice's own (the same number and amount, the same vendor), among
+    the exported invoices with its number."""
     total = round(erp["total"] or 0, 2)
     return any(
         round(r["grand_total"] or 0, 2) == total and _same_vendor(erp["vendor_key"], vendor_key(r["vendor_name"] or ""))
-        for r in store.summary_rows("number_key = ? AND export_batch", (erp["number_key"],), "vendor_name, grand_total")
+        for r in exported
     )
 
 
-def find(store: Store, query: str, limit: int = LIMIT) -> list[Hit]:
-    tokens = [t.lower() for t in _tokens(query)]
-    if not tokens:
-        return []
-    numbers = [w for w in tokens if any(c.isdigit() for c in w)]
-    words = [_plain(w.strip(",.")) for w in tokens if w not in numbers and len(w.strip(",.")) > 1]
-    rows = store.search_rows(ids=sorted(_candidates(store, words, numbers)))
-    hits = [Hit(s, r) for r in rows if (s := _score(r, words, numbers))]
-    # An exported invoice's own row in the ERP register is the same bill: shown once, as the AP Coder invoice. Its
-    # own row: the same number and amount (with its sign: a credit is another document), and the same vendor.
-    for r in store.erp_register():
+def erp_hits(store: Store, words: list[str], numbers: list[str]) -> list[Hit]:
+    """The quick search's hits in the ERP register, best first (in the register's order among equals). An exported
+    invoice's own row there is the same bill: shown once, as the AP Coder invoice. Its own row: the same number and
+    amount (with its sign: a credit is another document), and the same vendor."""
+    where, params = _in_register(words, numbers)
+    scored = []
+    for r in store.erp_register_rows(where, params):
         row = {"vendor_name": r["vendor_name"], "invoice_number": r["invoice_number"], "grand_total": r["total"],
                "invoice_date": r["invoice_date"], "po_key": ""}  # fmt: skip
-        if (s := _score(row, words, numbers)) and not _ours(store, r):
-            hits.append(Hit(s, row, "ERP"))
+        if s := _score(row, words, numbers):
+            scored.append((s, r, row))
+    keys = sorted({r["number_key"] for _, r, _ in scored})
+    exported: dict[str, list[dict[str, Any]]] = {}
+    if keys:  # the exported invoices with these numbers, in one read
+        for x in store.summary_rows("export_batch AND number_key IN (SELECT value FROM json_each(?))",
+                                    (json.dumps(keys),), "number_key, vendor_name, grand_total"):  # fmt: skip
+            exported.setdefault(x["number_key"], []).append(x)
+    hits = [Hit(s, row, "ERP") for s, r, row in scored if not _ours(r, exported.get(r["number_key"], []))]
+    hits.sort(key=lambda h: -h.score)
+    return hits
+
+
+def find(store: Store, query: str, limit: int = LIMIT) -> list[Hit]:
+    """The quick search's hits, best first: the invoices in AP Coder (the latest first among equals), then the ERP
+    register's."""
+    words, numbers = parts(query)
+    if not words and not numbers:
+        return []
+    sql, params = condition(words, numbers, fts_available())
+    hits = [Hit(s, r) for r in store.search_rows(where=sql, params=params) if (s := _score(r, words, numbers))]
+    hits += erp_hits(store, words, numbers)
     hits.sort(key=lambda h: (-h.score, h.source != "AP Coder", -(h.row.get("id") or 0)))
     return hits[:limit]

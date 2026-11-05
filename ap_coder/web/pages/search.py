@@ -9,6 +9,7 @@ APPROVED stamp (``GET /search/<id>/approved.pdf``).
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 
 from fastapi import Form, HTTPException, Request
@@ -122,19 +123,24 @@ def search_page(request: Request) -> HTMLResponse:
         all_columns=directory.COLUMNS,
         default_columns=list(directory.DEFAULT_COLUMNS),
         export_limit=directory.EXPORT_LIMIT,
+        erp_step=directory.ERP_SHOWN,
     )
 
 
-def _export_rows(request: Request) -> tuple[list[tuple[str, str]], list[dict[str, Any]], directory.Result]:
+def _export_rows(request: Request) -> tuple[list[tuple[str, str]], Iterator[dict[str, Any]]]:
+    """(the columns shown, the filtered rows' cells as they come: read a part at a time while the file is written)."""
     store = get_store(request)
     query = _query(request)
-    result = directory.run(store, query, everything=True)
     columns = [(k, directory.COLUMNS[k].label) for k in query.columns]
-    rows = [{k: directory.cell(r, k) for k, _ in columns} for r in result.rows]
-    for row in rows:  # the status in plain words, as the page says it (B-1186)
-        if row.get("status") in STATUS:
-            row["status"] = STATUS[row["status"]][0]
-    return columns, rows, result
+
+    def rows() -> Iterator[dict[str, Any]]:
+        for r in directory.export_rows(store, query):
+            row = {k: directory.cell(r, k) for k, _ in columns}
+            if row.get("status") in STATUS:  # the status in plain words, as the page says it (B-1186)
+                row["status"] = STATUS[row["status"]][0]
+            yield row
+
+    return columns, rows()
 
 
 @router.get("/search/export.csv")
@@ -145,7 +151,7 @@ def export_csv(request: Request) -> Response:
 
     from ap_coder.erp.exports import csv_amount
 
-    columns, rows, _ = _export_rows(request)
+    columns, rows = _export_rows(request)
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow([label for _, label in columns])
@@ -162,11 +168,11 @@ def export_xlsx(request: Request) -> Response:
 
     from openpyxl import Workbook
 
-    from ap_coder.erp.exports import _sheet
+    from ap_coder.erp.exports import streamed_sheet
 
-    columns, rows, _ = _export_rows(request)
-    wb = Workbook()
-    _sheet(wb.active, "Invoices", columns, rows)
+    columns, rows = _export_rows(request)
+    wb = Workbook(write_only=True)  # each row written as it comes, not the whole sheet held (D-157)
+    streamed_sheet(wb.create_sheet(), "Invoices", columns, rows)
     buf = io.BytesIO()
     wb.save(buf)
     return download(buf.getvalue(), "invoice_directory.xlsx", XLSX)

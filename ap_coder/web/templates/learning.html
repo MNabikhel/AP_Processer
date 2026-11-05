@@ -192,7 +192,7 @@
   read right {{ "{:.0%}".format(policy.min_lower_bound) }} of the time. In practice a new vendor needs about
   {{ typical }} invoices approved without a correction; each vendor below says how many more it needs.</p>
 {% for s in suppliers %}
-<section class="card an-supplier" aria-label="{{ s.name }}">
+<section class="card an-supplier" aria-label="{{ s.name }}" id="vendor-{{ loop.index }}">
   {{ s.row }}
   <div class="an-supplier-actions">
     <details class="tech">
@@ -241,6 +241,10 @@
   </div>
 </section>
 {% endfor %}
+{% if suppliers_total > suppliers | length %}
+<p class="row"><span class="muted">{{ suppliers | length }} of {{ suppliers_total }} vendors shown, those to act on first.</span>
+  <a class="btn sm" href="{{ url(tab='suppliers', shown=shown + suppliers_step) }}#vendor-{{ suppliers | length + 1 }}">Show more</a></p>
+{% endif %}
 {% endif %}
 
 {% elif tab == "lessons" %}

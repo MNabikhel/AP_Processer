@@ -137,6 +137,47 @@ def test_the_folder_pick_up_lists_and_processes_new_files(app, client, store):
     assert "No new files" in client.get("/process").text
 
 
+def test_the_saved_emails_are_found_by_their_names_first(tmp_path):
+    """Whether a path is a file is asked of the saved emails only, not of every invoice in the folder (D-157): the
+    same emails."""
+    from ap_coder.intake.mailbox import EMAIL_EXTENSIONS, emails_in
+
+    folder = tmp_path / "invoices"
+    folder.mkdir()
+    for name in ("a.pdf", "C.PDF", "note.docx", "mail.eml", "MAIL2.MSG", ".hidden.eml", "plain", "dot.eml."):
+        (folder / name).write_bytes(name.encode())
+    (folder / "folder.eml").mkdir()
+    old = sorted(p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in EMAIL_EXTENSIONS)
+    assert emails_in(folder) == old and [p.name for p in old] == [".hidden.eml", "MAIL2.MSG", "mail.eml"]
+
+
+def test_the_files_not_processed_are_found_in_one_query(store, tmp_path):
+    """Each file's SHA-256 against every invoice's in one query, not one query a file (D-157): the same files new
+    (an invoice of a picture made into a PDF, and a failed one, count as processed) and the same ones unreadable."""
+    from ap_coder.web.pages.process import not_processed
+
+    folder = tmp_path / "in"
+    folder.mkdir()
+    files = []
+    for n in range(6):
+        files.append(folder / f"f{n}.pdf")
+        files[-1].write_bytes(f"%PDF-1.4 {n}".encode())
+    store.add_invoice(files[0], {"vendor_name": "A", "invoice_number": "1", "grand_total": 1}, {"issues": []})
+    store.add_invoice(files[1], None, None, error="could not be read")
+    store.add_invoice(tmp_path / "made.pdf", {"vendor_name": "B", "invoice_number": "2", "grand_total": 2},
+                      {"issues": []}, original_sha256=hashlib.sha256(files[2].read_bytes()).hexdigest())  # fmt: skip
+    shutil.copy(files[3], folder / "copy of f3.pdf")
+    files += [folder / "copy of f3.pdf", folder / "gone.pdf"]
+    store.add_invoice(files[3], {"vendor_name": "C", "invoice_number": "3", "grand_total": 3}, {"issues": []})
+    old_new, old_unreadable = [], []
+    for path in files:
+        try:
+            (old_new if store.find_by_hash(path, include_failed=True) is None else []).append(path)
+        except OSError:
+            old_unreadable.append(path)
+    assert not_processed(store, files) == (old_new, old_unreadable) == (files[4:6], [files[7]])
+
+
 def test_a_scheduled_watch_and_the_process_button_store_a_new_file_once(app, client, store, tmp_path, monkeypatch):
     """B-1587: a scheduled ``watch`` and the dashboard's Process button had no lock in common. Both listed a new file
     as not stored yet, both read it, and it was stored twice (two invoices of the same file). Here they really run
