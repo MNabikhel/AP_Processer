@@ -445,13 +445,18 @@ app, changes a role, and turns an account off or on again (an Admin can't turn o
 | Role | Can |
 |---|---|
 | Read-only | Look at invoices, the review queue, reports, the exports list and Help. Change nothing. |
-| Clerk | Also import and process invoices, review and correct them, approve within the limit, park, reject, reopen, bulk approve, export batches, and put a vendor on hold or edit its notes (not take it off hold, nor change a held vendor's tax numbers, D-142). |
+| Clerk | Also import and process invoices, review and correct them, approve within the limit, park, reject, reopen, bulk approve, export batches, make the Spend page's Excel workbook, and put a vendor on hold or edit its notes (not take it off hold, nor change a held vendor's tax numbers, D-142). |
 | Approver | Also give the second approval (always by another account than the first), take a vendor off hold, change a held vendor's tax numbers, approve a held vendor's invoice coded to another vendor, and post vouchers to JD Edwards through the API. |
 | Admin | Everything else: Settings, users, the JD Edwards setup, GL accounts and vendors imports, backups and restore, deleting, the Azure check, updating. |
 | Manager | Only confirms, or sends back, the coding of the invoices AP sends them (*Manager confirmations*): sees those invoices and nothing else of AP Coder. An Admin sets each Manager's cost centers on the users page; AP picks the Manager when sending (D-138). |
 
 Pages show each person only what their role may use; the server refuses the rest anyway. The JD Edwards settings
 are on *Settings* → *JD Edwards E1* from the start on the server (step 2).
+
+The *Spend* page's Excel workbook (every invoice, its lines and its posting) takes minutes for a year of invoices: on
+the server a Clerk or above clicks *Make the Excel workbook* and it is made in the background, one at a time for
+everyone, the page saying how far it got; *All invoice data (Excel)* then downloads the one made last, with when it was
+made (D-156). On a laptop it is made as it is downloaded, as before.
 
 From the server's console, the same:
 

@@ -13,13 +13,15 @@ from __future__ import annotations
 import datetime as dt
 import io
 import json
+import warnings
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 from ..coding.tax import PLACE_OF_SUPPLY
 from ..core.reference_data import ReferenceData
-from ..core.safe import neutralise_sheet, xlsx_row
+from ..core.safe import FORMULA_START, xlsx_row
 from ..core.store import APPROVED, FAILED, Store
 from ..core.store.summary import broken, whole
 from .exports import distribution
@@ -293,11 +295,84 @@ INVOICE_COLUMNS = [
 ]  # fmt: skip
 
 
+WORKBOOK_BATCH = 500  # the invoices the data workbook reads at a time
+WIDTH_ROWS = 200  # the rows of a sheet (its header too) the widths of its columns are worked out from
+
+
 def workbook(store: Store, reference: ReferenceData | None) -> bytes:
     """Every invoice (not the unreadable ones), its lines and its posting, as an Excel workbook with three
-    tables that join on "AP Coder #"."""
+    tables that join on "AP Coder #" (``write_workbook``)."""
+    out = io.BytesIO()
+    write_workbook(store, reference, out)
+    return out.getvalue()
+
+
+class _Sheet:
+    """A sheet of the data workbook in openpyxl's write-only mode, its rows written as they come (a year of invoices'
+    cells are never held at once): its first ``WIDTH_ROWS`` held until its columns' widths are known (set before any
+    row is written); text a spreadsheet would run as a formula stored as text."""
+
+    def __init__(self, wb: Any, name: str, header: list[str]) -> None:
+        self.ws, self.name, self.header, self.columns, self.rows = wb.create_sheet(name), name, header, len(header), 0
+        self.held: list[list[Any]] | None = []
+        self.append(header)
+
+    def append(self, row: list[Any]) -> None:
+        self.rows += 1
+        if self.held is None:
+            self.ws.append(self._cells(row))
+            return
+        self.held.append(row)
+        if len(self.held) == WIDTH_ROWS:
+            self._start()
+
+    def _cells(self, row: list[Any]) -> list[Any]:
+        from openpyxl.cell import WriteOnlyCell
+
+        cells = []
+        for value in row:
+            if isinstance(value, str) and value.startswith(FORMULA_START):  # as ``neutralise_sheet`` stores it
+                value = WriteOnlyCell(self.ws, value=value)
+                value.data_type, value.quotePrefix = "s", True
+            cells.append(value)
+        return cells
+
+    def _start(self) -> None:
+        from openpyxl.utils import get_column_letter
+
+        held, self.held = self.held or [], None
+        for n in range(self.columns):
+            width = max(len(str((row[n] if n < len(row) else None) or "")) for row in held)
+            self.ws.column_dimensions[get_column_letter(n + 1)].width = min(max(width + 2, 9), 48)
+        self.ws.freeze_panes = "A2"
+        for row in held:
+            self.ws.append(self._cells(row))
+
+    def close(self) -> None:
+        from openpyxl.utils import get_column_letter
+        from openpyxl.worksheet.filters import AutoFilter
+        from openpyxl.worksheet.table import Table, TableColumn, TableStyleInfo
+
+        if self.held is not None:
+            self._start()
+        if self.rows > 1:  # an Excel table (filters, and a named source for Power BI)
+            ref = f"A1:{get_column_letter(self.columns)}{self.rows}"
+            # Its columns named by the header, as openpyxl names them from the cells of a sheet it holds.
+            columns = [TableColumn(id=n, name=str(h)) for n, h in enumerate(self.header, 1)]
+            table = Table(displayName=f"{self.name}Table", ref=ref, autoFilter=AutoFilter(ref=ref),
+                          tableColumns=columns)  # fmt: skip
+            table.tableStyleInfo = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True)
+            with warnings.catch_warnings():  # "you must add table columns manually": they are, above
+                warnings.simplefilter("ignore", UserWarning)
+                self.ws.add_table(table)
+
+
+def write_workbook(store: Store, reference: ReferenceData | None, out: Any,
+                   step: Callable[[int, int], None] | None = None) -> None:  # fmt: skip
+    """``workbook`` written to ``out`` (a path or a binary file), the invoices read ``WORKBOOK_BATCH`` at a time and
+    the sheets in openpyxl's write-only mode (at 100,000 invoices: tens of GB of cells otherwise, D-156); ``step(done,
+    total)``: after each batch of invoices."""
     from openpyxl import Workbook
-    from openpyxl.worksheet.table import Table, TableStyleInfo
 
     accounts = accounts_by_code(reference)
 
@@ -309,9 +384,9 @@ def workbook(store: Store, reference: ReferenceData | None) -> bytes:
 
     columns = ("id", "status", "reviewer", "reviewed_at", "second_reviewer", "second_reviewed_at", "export_batch",
                "created_at", "due_date", "ai_output", "final_output")  # fmt: skip
-    rows = [r for r in store.invoice_columns(columns) if r["status"] != FAILED]
+    ids = [r["id"] for r in store.summary_rows("status != ?", (FAILED,), "id")]
     treatments = store.tax_treatments()
-    wb = Workbook()
+    wb = Workbook(write_only=True)
     sheets = {
         "Invoices": [label for _, label in INVOICE_COLUMNS],
         "Lines": ["AP Coder #", "Vendor", "Invoice #", "Invoice date", "Line", "Description", "Quantity",
@@ -319,67 +394,56 @@ def workbook(store: Store, reference: ReferenceData | None) -> bytes:
         "Posting": ["AP Coder #", "Vendor", "Invoice #", "Invoice date", "Kind", "GL account", "GL name",
                     "Cost center", "Description", "Net", "Non-recoverable tax", "Amount", "Currency"],
     }  # fmt: skip
-    ws_by_name = {}
-    for n, (name, header) in enumerate(sheets.items()):
-        ws = wb.active if n == 0 else wb.create_sheet()
-        ws.title = name
-        ws.append(header)
-        ws_by_name[name] = ws
-    for r in rows:
-        doc = r["final_output"] or r["ai_output"] or {}
-        merged = {**doc, **{k: r[k] for k in r if k not in ("ai_output", "final_output")}}
-        # the ship-to printed, else the place of supply worked out when it was coded (pipeline)
-        merged["ship_to_province"] = doc.get("ship_to_province") or doc.get(PLACE_OF_SUPPLY) or ""
-        ws_by_name["Invoices"].append(xlsx_row([merged.get(k) for k, _ in INVOICE_COLUMNS]))
-        head = [r["id"], doc.get("vendor_name"), doc.get("invoice_number"), doc.get("invoice_date")]
-        for li in doc.get("line_items") or []:
-            gl = li.get("predicted_gl_code") or ""
-            ws_by_name["Lines"].append(
-                xlsx_row(
-                    [
-                        *head,
-                        li.get("line_number"),
-                        li.get("description"),
-                        li.get("quantity"),
-                        li.get("unit_price"),
-                        li.get("amount"),
-                        gl,
-                        gl_name(gl),
-                        category(gl),
-                        li.get("predicted_cost_center"),
-                        doc.get("currency"),
-                    ]
+    ws_by_name = {name: _Sheet(wb, name, header) for name, header in sheets.items()}
+    for start in range(0, len(ids), WORKBOOK_BATCH):
+        for r in store.invoice_columns(columns, ids=ids[start : start + WORKBOOK_BATCH]):
+            if r["status"] == FAILED:  # failed since the list was read
+                continue
+            doc = r["final_output"] or r["ai_output"] or {}
+            merged = {**doc, **{k: r[k] for k in r if k not in ("ai_output", "final_output")}}
+            # the ship-to printed, else the place of supply worked out when it was coded (pipeline)
+            merged["ship_to_province"] = doc.get("ship_to_province") or doc.get(PLACE_OF_SUPPLY) or ""
+            ws_by_name["Invoices"].append(xlsx_row([merged.get(k) for k, _ in INVOICE_COLUMNS]))
+            head = [r["id"], doc.get("vendor_name"), doc.get("invoice_number"), doc.get("invoice_date")]
+            for li in doc.get("line_items") or []:
+                gl = li.get("predicted_gl_code") or ""
+                ws_by_name["Lines"].append(
+                    xlsx_row(
+                        [
+                            *head,
+                            li.get("line_number"),
+                            li.get("description"),
+                            li.get("quantity"),
+                            li.get("unit_price"),
+                            li.get("amount"),
+                            gl,
+                            gl_name(gl),
+                            category(gl),
+                            li.get("predicted_cost_center"),
+                            doc.get("currency"),
+                        ]
+                    )
                 )
-            )
-        for e in distribution(doc, treatments):
-            gl = e.get("gl_code") or ""
-            ws_by_name["Posting"].append(
-                xlsx_row(
-                    [
-                        *head,
-                        e.get("kind"),
-                        gl,
-                        gl_name(gl),
-                        e.get("cost_center"),
-                        e.get("description"),
-                        e.get("net_amount"),
-                        e.get("non_recoverable_tax"),
-                        e.get("amount"),
-                        doc.get("currency"),
-                    ]
+            for e in distribution(doc, treatments):
+                gl = e.get("gl_code") or ""
+                ws_by_name["Posting"].append(
+                    xlsx_row(
+                        [
+                            *head,
+                            e.get("kind"),
+                            gl,
+                            gl_name(gl),
+                            e.get("cost_center"),
+                            e.get("description"),
+                            e.get("net_amount"),
+                            e.get("non_recoverable_tax"),
+                            e.get("amount"),
+                            doc.get("currency"),
+                        ]
+                    )
                 )
-            )
-    for name, ws in ws_by_name.items():
-        neutralise_sheet(ws)
-        last = ws.cell(row=1, column=ws.max_column).column_letter
-        if ws.max_row > 1:  # an Excel table (filters, and a named source for Power BI)
-            table = Table(displayName=f"{name}Table", ref=f"A1:{last}{ws.max_row}")
-            table.tableStyleInfo = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True)
-            ws.add_table(table)
-        for col in ws.columns:
-            width = max(len(str(c.value or "")) for c in list(col)[:200])
-            ws.column_dimensions[col[0].column_letter].width = min(max(width + 2, 9), 48)
-        ws.freeze_panes = "A2"
-    out = io.BytesIO()
+        if step is not None:
+            step(min(start + WORKBOOK_BATCH, len(ids)), len(ids))
+    for sheet in ws_by_name.values():
+        sheet.close()
     wb.save(out)
-    return out.getvalue()

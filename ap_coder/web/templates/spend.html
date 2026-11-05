@@ -1,7 +1,15 @@
 {% extends "base.html" %}
 {% block head %}<link rel="stylesheet" href="/static/analytics.css?v={{ static_version }}">{% endblock %}
-{% block aside %}<a class="btn" href="/spend/data.xlsx" download title="Every invoice, its lines and its GL posting, as three Excel tables that join on AP Coder #: ready for pivot tables or Power BI.">
-  <span class="ms" aria-hidden="true">table_view</span>All invoice data (Excel)</a>{% endblock %}
+{% block aside %}{% if workbook %}{# the company server: made in the background, one for everyone (D-156) #}
+{% if workbook.making %}<span class="muted" data-job-status="{{ workbook.status }}" role="status">Making the workbook: {{ workbook.making }}</span>
+{% elif not workbook.may_make %}{% if not workbook.made %}<span class="muted">No Excel workbook of the data made yet: a Clerk makes it here.</span>{% endif %}
+{% else %}<form method="post" action="/spend/data" data-busy="Making the workbook…">
+  <button class="btn" type="submit" title="Every invoice, its lines and its GL posting, as three Excel tables that join on AP Coder #: made in the background, a few minutes for a year of invoices.">
+  <span class="ms" aria-hidden="true">table_view</span>{% if workbook.made %}Make it again{% else %}Make the Excel workbook{% endif %}</button></form>{% endif %}
+{% if workbook.made %}<a class="btn" href="/spend/data.xlsx" download title="Every invoice, its lines and its GL posting, as three Excel tables that join on AP Coder #: ready for pivot tables or Power BI.">
+  <span class="ms" aria-hidden="true">download</span>All invoice data (Excel), made {{ workbook.made }}</a>{% endif %}
+{% else %}<a class="btn" href="/spend/data.xlsx" download title="Every invoice, its lines and its GL posting, as three Excel tables that join on AP Coder #: ready for pivot tables or Power BI.">
+  <span class="ms" aria-hidden="true">table_view</span>All invoice data (Excel)</a>{% endif %}{% endblock %}
 {% macro breakdown(title, label, items, with_names) %}
 <section class="card" aria-label="{{ title }}">
   <h4>{{ title }}</h4>

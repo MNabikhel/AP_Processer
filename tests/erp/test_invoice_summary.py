@@ -165,7 +165,7 @@ def test_spend_gives_what_it_gave(year):
             )
 
 
-def test_the_spend_page_shows_what_it_showed(year):
+def test_the_spend_page_shows_what_it_showed(year, tmp_path):
     """D-156: the Spend page's figures summed by SQLite, not every cost line of the period made a Python object: the
     page as it was (``tests/reports_reference.py``), word for word, in each currency and all in CAD, over each period,
     with a rate that makes conversions land on half a cent, and with dates it can't read or backwards."""
@@ -179,6 +179,9 @@ def test_the_spend_page_shows_what_it_showed(year):
     client = client_for(year)
     client.app.add_api_route("/old-spend", old.spend_page)
     year.set_setting("fx_rates", "USD=1.25")  # a line of 0.75 USD is 0.9375 CAD
+    usd = next(d for d in _docs() if d["currency"] == "USD")  # one more in USD, approved: the year's may wait
+    invoice_id, output = _add(year, tmp_path, "usd", {**usd, "invoice_number": "USD-9", "invoice_date": "2026-02-10"})
+    year.approve_invoice(invoice_id, output, "Jordan Lee")
     periods = [*PERIODS, (dt.date(2026, 9, 1), dt.date(2026, 1, 1)), (dt.date(2030, 1, 1), dt.date(2030, 2, 1))]
     for start, end in periods:
         for currency in ("", "All, in CAD", "CAD", "USD", "EUR"):

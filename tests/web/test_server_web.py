@@ -207,6 +207,41 @@ def test_a_role_that_may_not_gets_a_403_page_or_a_json_refusal(store):
     assert action.status_code == 403 and "Your role (Clerk) can't do this" in action.json()["error"]
 
 
+def test_on_the_server_the_data_workbook_is_made_in_the_background_and_the_last_one_downloaded(store):
+    """D-156: a year of invoices takes minutes to write as a workbook, past any page's wait: on the company server a
+    Clerk makes it in the background (one at a time, for everyone, its progress on the page), and the download is the
+    one made last, the same as one made on the spot. Read-only downloads it, and can't start it (it changes nothing)."""
+    from ap_coder.erp import spend
+    from tests import reports_reference as ref
+
+    account(store, "ann", "clerk")
+    account(store, "rita", "readonly")
+    add_clean(store)
+    app = create_app(web_settings(), store, start_reader=False, server=True)
+    clerk, reader = (TestClient(app, base_url="https://localhost", client=("10.0.0.5", 50000), follow_redirects=False)
+                     for _ in range(2))  # fmt: skip
+    log_in(clerk, "ann")
+    log_in(reader, "rita")
+    missing = reader.get("/spend/data.xlsx", headers={"Accept": "text/html"})
+    assert missing.status_code == 404 and "No workbook has been made yet" in missing.text
+    assert "Make the Excel workbook" in clerk.get("/spend").text
+    assert (
+        "a Clerk makes it here" in reader.get("/spend").text and 'action="/spend/data"' not in reader.get("/spend").text
+    )
+    assert reader.post("/spend/data", headers=PAGE).status_code == 403
+    answer = clerk.post("/spend/data", headers=PAGE).json()
+    assert answer == {"ok": True, "job": "spend-data", "status": "/jobs/spend-data"}
+    assert app.state.jobs.get("spend-data").wait(60)
+    assert reader.get(answer["status"]).json()["state"] == "done"  # what Read-only may download, it sees made
+    got = reader.get("/spend/data.xlsx")
+    assert got.status_code == 200 and got.headers["cache-control"] == "no-store"
+    assert ref.workbook_contents(got.content) == ref.workbook_contents(spend.workbook(store, store.reference_data()))
+    assert (
+        "All invoice data (Excel), made " in reader.get("/spend").text and "Make it again" in clerk.get("/spend").text
+    )
+    assert not list((store.path.parent / ".cache" / "downloads").glob("*.part"))  # put in its place once whole
+
+
 def test_the_menu_shows_only_what_the_role_may_open(store):
     account(store, "reader", "readonly")
     account(store, "boss", "admin")
