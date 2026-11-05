@@ -151,9 +151,11 @@ class VendorsMixin:
         if aliased:  # a name AP corrected to this vendor's (D-119)
             name, key = aliased, vendor_key(aliased)
         with self._conn() as conn:
+            # The keys starting "<key> #" are those from "<key> #" up to "<key> $": a seek in the vendor key's index,
+            # not a read of the whole list (B-1582); in the order they were kept, as before.
             rows = [dict(r) for r in conn.execute(
-                "SELECT * FROM vendors WHERE vendor_key = ? OR substr(vendor_key, 1, ?) = ?",
-                (key, len(key) + 2, f"{key} #"),
+                "SELECT * FROM vendors WHERE vendor_key = ? OR (vendor_key >= ? AND vendor_key < ?) ORDER BY rowid",
+                (key, f"{key} #", f"{key} $"),
             )]  # fmt: skip
         own = next((r for r in rows if r["vendor_key"] == key), None)
         if len(rows) < 2:

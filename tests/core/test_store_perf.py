@@ -167,6 +167,28 @@ def test_the_lookups_by_batch_invoice_event_kind_account_expiry_and_erp_number_u
             assert index in plan and "SCAN" not in plan, (table, where, plan)
 
 
+def test_finding_an_invoices_vendor_seeks_its_name_in_the_vendor_list_and_picks_the_same_one(tmp_path, monkeypatch):
+    """B-1582: find_vendor read the whole vendor list (a 20,000-vendor master) at every look, 3 or 4 an invoice: its
+    test of a second vendor by the name ("<name> #<ERP ID>", B-930) defeated the vendor key's index. The same vendor
+    is picked as before: by the GST/HST number, else the ERP ID, else the name's own, the first kept of several."""
+    store = Store(tmp_path / "ap.db")
+    gst = "123456789RT0001"
+    with store._conn() as conn:
+        for key, number, erp in (("acme #2002", gst, "2002"), ("acme", "", "1000"), ("acme #1001", gst, "1001"),
+                                 ("acme #1002", "", "1002"), ("acme $", "", "9"), ("acme 1", "", "8"),
+                                 ("acmee #1003", "", "7"), ("acm #1", "", "6"), ("acme #", "", "5")):  # fmt: skip
+            conn.execute("INSERT INTO vendors (vendor_key, display_name, expected_gst, erp_id, updated_at) "
+                         "VALUES (?, ?, ?, ?, '')", (key, key.title(), number, erp))  # fmt: skip
+    picked = {
+        (number, erp): store.find_vendor("Acme Ltd", number, erp)["vendor_key"]
+        for number, erp in (("", ""), (gst, ""), ("", "1002"), ("", "5"), ("", "9"), ("", "7"), ("", "6"))
+    }
+    assert picked == {("", ""): "acme", (gst, ""): "acme #2002", ("", "1002"): "acme #1002", ("", "5"): "acme #",
+                      ("", "9"): "acme", ("", "7"): "acme", ("", "6"): "acme"}  # fmt: skip
+    plans = _plans(store, monkeypatch, lambda: store.find_vendor("Acme Ltd", gst), "vendors", "vendor_key")
+    assert plans and all("SCAN" not in plan and "USING INDEX" in plan for plan in plans), plans
+
+
 def test_one_vendors_history_is_read_once_per_page(tmp_path, monkeypatch):
     """vendor_findings and expected_tax_numbers each read every invoice of the vendor, with its whole AI output and
     final coding parsed for five fields: now read once while nothing changes (inside a session), by json_extract."""
