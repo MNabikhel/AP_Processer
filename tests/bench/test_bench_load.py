@@ -1,7 +1,10 @@
 """``python -m ap_coder.bench load``: people working on the real server (server mode) at once, each as a browser; the
 checks of the database after the run; the report and its gate."""
 
+import asyncio
 import json
+
+import httpx
 
 from ap_coder.bench import load
 from ap_coder.bench.__main__ import main
@@ -30,7 +33,7 @@ def test_three_people_work_on_the_real_server_and_the_report_says_how_it_went(tm
 def test_the_gate_fails_on_errors_and_on_a_route_slower_than_its_baseline():
     def report(p95: float, n: int = 50, errors: int = 0) -> dict:
         return {"routes": {"GET /review": {"n": n, "p95": p95}}, "counts": {}, "audit": {}, "logs": {},
-                "requests": {"errors_5xx": errors, "no_answer": 0, "over_30s": 0}}  # fmt: skip
+                "requests": {"errors_5xx": errors, "no_answer": 0, "cut_off": 0, "over_30s": 0}}  # fmt: skip
 
     baseline = report(0.40)
     assert load.gate(report(0.55), baseline, 1.5) == []
@@ -97,3 +100,30 @@ def test_a_request_without_an_answer_counts_at_least_the_timeout_in_every_percen
     assert report["timeline"][0]["p95"] == 121.0
     baseline = {"routes": {"GET /review": {"n": 100, "p95": 1.0}}}
     assert any(p.startswith("GET /review: p95 121.000 s") for p in load.gate(report, baseline, 1.5))
+
+
+def test_a_request_still_under_way_when_the_run_stops_its_people_is_recorded_as_cut_off(monkeypatch):
+    async def never(request):
+        await asyncio.Event().wait()
+
+    async def stuck(run, account, index, start):  # a person whose page never comes
+        me = load.Person(run, account, index, start)
+        await me.client.aclose()
+        me.client = httpx.AsyncClient(base_url=run.base, transport=httpx.MockTransport(never))
+        try:
+            await me.page("/review", due=start)
+        finally:
+            await me.close()
+
+    monkeypatch.setattr(load, "person", stuck)
+    monkeypatch.setattr(load, "STOP_GRACE", 0.0)  # stopped as soon as every timeout is past
+    run = _run(timeout=0.15, duration=0.1)
+    asyncio.run(load.drive(run, [load.Account("pat", "pw", "secret", "clerk")]))
+    (sample,) = run.samples
+    assert sample[0] == "GET /review" and sample[7] == "cut off" and 0.24 <= sample[3] < 5
+    assert run.counts["people stopped at the end, a request still under way"] == 1
+    report = load.build_report(run, {}, {})
+    r = report["requests"]
+    assert r["cut_off"] == 1 and r["no_answer"] == 0 and report["routes"]["GET /review"]["no_answer"] == {"cut off": 1}
+    assert report["pages"]["n"] == 1 and report["pages"]["p95"] >= 0.24
+    assert load.gate(report, None, 1.5)[0].startswith("errors: 0 5xx, 0 without an answer, 1 cut off at the end")

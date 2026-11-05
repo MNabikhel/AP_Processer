@@ -33,12 +33,12 @@ What it runs:
 
 What it measures: for every route (ids taken out), the count, p50/p95/p99/max (a request without an answer counted at
 its time, at least ``--timeout``), the status codes, refusals (4xx), the requests over 30 seconds, errors (5xx, no
-answer); the server's own milliseconds from its access logs; throughput over
-time; each server process's CPU and memory over time (``/proc``, or psutil when it is installed); "database is
-locked", tracebacks and 5xx lines in the server's logs; the harness's own CPU (it must stay well under one core for
-the figures to be the server's). After the run, with the server stopped: no invoice approved or exported twice, one
-approval event per approved invoice, the invoices' summary equal to a recomputation, no login paused and no upload
-refused for these honest people.
+answer, cut off: still under way when the run stopped its people); the server's own milliseconds from its access
+logs; throughput over time; each server process's CPU and memory over time (``/proc``, or psutil when it is
+installed); "database is locked", tracebacks and 5xx lines in the server's logs; the harness's own CPU (it must stay
+well under one core for the figures to be the server's). After the run, with the server stopped: no invoice approved
+or exported twice, one approval event per approved invoice, the invoices' summary equal to a recomputation, no login
+paused and no upload refused for these honest people.
 
 Output: ``OUT/report.json`` and ``OUT/report.md``, plus the server's output (``server.log``). The exit code is 1 when
 anything failed (an error, a correctness check) or, with ``--baseline`` (an earlier ``report.json``), when a route's
@@ -94,6 +94,8 @@ EDIT_WORDS = ("(checked)", "per PO", "as quoted", "see note")
 QUICK = {"users": 3, "duration": 20.0, "ramp": 5.0, "workers": 1, "think": 3.0, "seed_invoices": 200}
 
 SLOW_SECONDS = 30.0  # a request answered later than this counts as a timeout
+STOP_GRACE = 15.0  # seconds past the run's end and every timeout before the people still under way are stopped
+CUT_OFF = "cut off"  # a request still under way then: recorded with its time so far
 STEP_THINK = 1 / 3  # the think time between the steps of one scenario: this share of --think
 THINK_SIGMA = 0.6  # the lognormal's spread: its p95 is about 2.7 times its median
 MAX_LAG = 60.0  # a person this far behind their schedule starts again from now
@@ -896,6 +898,7 @@ class Person:
                 body, sent["Content-Type"] = multipart(fields or [], files or [])
         start = time.monotonic()
         answer, status, size, error = None, 0, 0, ""
+        stopped: asyncio.CancelledError | None = None
         try:
             answer = await self.client.request(method, url, content=body, headers=sent)
             status, size = answer.status_code, answer.num_bytes_downloaded  # on the wire (compressed, if it is)
@@ -903,9 +906,15 @@ class Person:
             error = "timeout"
         except httpx.HTTPError as exc:
             error = type(exc).__name__
+        except asyncio.CancelledError as exc:
+            if not run.stopping:  # the poll of a page the person left: the browser drops it too
+                raise
+            stopped, error = exc, CUT_OFF  # still under way as the run stopped its people: the slowest, recorded
         end = time.monotonic()
         run.record(route or route_of(method, url), kind, status, end - (start if due is None else due), end - start,
                    end, size, error)  # fmt: skip
+        if stopped is not None:
+            raise stopped
         if answer is None:
             raise StepFailed(error)
         if status >= 500:
@@ -1378,6 +1387,7 @@ class Run:
     vendor_words: set[str] = field(default_factory=set)
     problems: list[str] = field(default_factory=list)
     jde: bool | None = None
+    stopping: bool = False  # the people still under way are being stopped: their requests are recorded as cut off
 
     @property
     def post_headers(self) -> dict[str, str]:
@@ -1393,7 +1403,8 @@ async def drive(run: Run, people: list[Account]) -> None:
     run.t0, run.deadline = now, now + run.ramp + run.duration
     spacing = run.ramp / max(1, len(people) - 1) if len(people) > 1 else 0.0
     tasks = [asyncio.create_task(person(run, a, i, now + i * spacing)) for i, a in enumerate(people)]
-    _, late = await asyncio.wait(tasks, timeout=run.ramp + run.duration + run.timeout + 15)
+    _, late = await asyncio.wait(tasks, timeout=run.ramp + run.duration + run.timeout + STOP_GRACE)
+    run.stopping = True
     for task in late:  # stuck past every timeout: stopped, said in the report
         task.cancel()
         run.counts["people stopped at the end, a request still under way"] += 1
@@ -1553,7 +1564,8 @@ def build_report(run: Run, cfg: dict[str, Any], extra: dict[str, Any]) -> dict[s
     actions = _pooled(samples, lambda s: s[1] == "action" and s[0].startswith("POST")
                       and s[0].endswith(ACTIONS), run.timeout)  # fmt: skip
     fives = sum(r["errors_5xx"] for r in table.values())
-    no_answer = sum(sum(r["no_answer"].values()) for r in table.values())
+    cut_off = sum(r["no_answer"].get(CUT_OFF, 0) for r in table.values())
+    no_answer = sum(sum(r["no_answer"].values()) for r in table.values()) - cut_off
     slow = sum(r["over_30s"] for r in table.values())
     targets = {f"pages {k} <= {v} s": pages[k] is not None and pages[k] <= v for k, v in PAGE_TARGETS.items()}
     targets[f"actions p95 <= {ACTION_TARGET_P95} s"] = (
@@ -1567,6 +1579,7 @@ def build_report(run: Run, cfg: dict[str, Any], extra: dict[str, Any]) -> dict[s
             "per_second": round(len(samples) / measured, 2),
             "errors_5xx": fives,
             "no_answer": no_answer,
+            "cut_off": cut_off,
             "over_30s": slow,
             "refused_4xx": sum(r["refused"] for r in table.values()),
         },  # fmt: skip
@@ -1588,9 +1601,9 @@ def gate(report: dict[str, Any], baseline: dict[str, Any] | None, factor: float)
     its baseline's (and more than ``REGRESSION_FLOOR`` above it)."""
     problems = []
     r = report["requests"]
-    if r["errors_5xx"] or r["no_answer"] or r["over_30s"]:
-        problems.append(f"errors: {r['errors_5xx']} 5xx, {r['no_answer']} without an answer, {r['over_30s']} over "
-                        f"{SLOW_SECONDS:.0f} s")  # fmt: skip
+    if r["errors_5xx"] or r["no_answer"] or r["cut_off"] or r["over_30s"]:
+        problems.append(f"errors: {r['errors_5xx']} 5xx, {r['no_answer']} without an answer, {r['cut_off']} cut off at "
+                        f"the end, {r['over_30s']} over {SLOW_SECONDS:.0f} s")  # fmt: skip
     logs = report.get("logs") or {}
     if logs.get("database_locked") or logs.get("access_5xx"):
         problems.append(f"server logs: {logs.get('database_locked', 0)} 'database is locked', "
@@ -1636,7 +1649,7 @@ def markdown(report: dict[str, Any]) -> str:
         "",
         "## Summary",
         f"- Requests: {r['total']} ({r['per_second']}/s); 5xx {r['errors_5xx']}, without an answer {r['no_answer']}, "
-        f"over 30 s {r['over_30s']}; refused (4xx) {r['refused_4xx']}.",
+        f"cut off at the end {r['cut_off']}, over 30 s {r['over_30s']}; refused (4xx) {r['refused_4xx']}.",
         f"- Pages: p50 {_s(pages['p50'])}, p95 {_s(pages['p95'])}, p99 {_s(pages['p99'])} ({pages['n']}); actions "
         f"(check, approve, park, reject, final approval): p50 {_s(actions['p50'])}, p95 {_s(actions['p95'])} "
         f"({actions['n']}). Timed from when each step was due (scheduled start).",
@@ -1747,7 +1760,7 @@ def main_load(a: argparse.Namespace) -> int:
     r, p, ac, cores = report["requests"], report["pages"], report["actions"], report["harness"]["process_cores"]
     print(f"{a.users} people, {a.duration:.0f} s, {a.workers} worker(s): {r['total']} requests ({r['per_second']}/s), "
           f"pages p50 {_s(p['p50'])} p95 {_s(p['p95'])}, actions p95 {_s(ac['p95'])}; 5xx {r['errors_5xx']}, no answer "
-          f"{r['no_answer']}, over 30 s {r['over_30s']}; harness {cores} cores")  # fmt: skip
+          f"{r['no_answer']}, cut off {r['cut_off']}, over 30 s {r['over_30s']}; harness {cores} cores")  # fmt: skip
     for problem in report["gate"]["problems"]:
         print(f"FAIL: {problem}")
     print(f"report: {Path(a.out) / 'report.md'}")
