@@ -325,7 +325,10 @@ _TOPIC_COLUMNS = tuple(dict.fromkeys(("id", "status", "vendor_key", "vendor_name
                                       *QUEUE_READ, *LISTED_COLUMNS)))  # fmt: skip
 _MEMO: dict[tuple[str, str], tuple[Any, Any]] = {}  # ``summary_memo``: (database, name) -> (stamp, value)
 _MEMO_LOCK = threading.Lock()
-_COMPUTING: dict[tuple[str, str], threading.Lock] = {}  # one ``summary_memo`` worked out at a time, by name
+# One ``summary_memo`` worked out at a time, by name and what is asked (its ``repr``'s hash: two asks hashed alike only
+# wait for each other); past COMPUTING_KEPT, the locks no page holds are let go.
+_COMPUTING: dict[tuple[str, str, int], threading.Lock] = {}
+COMPUTING_KEPT = 256
 MEMO_WAIT = 600.0  # seconds a page waits for another one working the same value out (then works it out itself)
 _FTS: dict[str, bool] = {}  # whether this process's SQLite has FTS5 with the trigram tokenizer
 _FTS_LOCK = threading.Lock()
@@ -625,13 +628,18 @@ class SummaryMixin:
         if writing:
             return compute()
         key = (str(self.path), name)
+        working = (*key, hash(repr(asked)))
         with _MEMO_LOCK:
             hit = _MEMO.get(key)
-            computing = _COMPUTING.setdefault(key, threading.Lock())
+            computing = _COMPUTING.setdefault(working, threading.Lock())
+            if len(_COMPUTING) > COMPUTING_KEPT:
+                for idle in [k for k, lock in _COMPUTING.items() if k != working and not lock.locked()]:
+                    del _COMPUTING[idle]
         if hit is not None and hit[0] == stamp:
             return hit[1]
-        # One page works it out; the others asking meanwhile wait for it (not all at once, after each change: under
-        # load, many working out the same 100,000 rows at once each take many times longer).
+        # One page works it out; the others asking the same meanwhile wait for it (not all at once, after each change:
+        # under load, many working out the same 100,000 rows at once each take many times longer). Another ask of the
+        # name doesn't wait: that answer is not its own (B-1722).
         got = computing.acquire(timeout=MEMO_WAIT)
         try:
             with _MEMO_LOCK:

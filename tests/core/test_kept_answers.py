@@ -201,7 +201,7 @@ def test_an_answer_worked_out_in_a_write_that_is_undone_is_neither_kept_nor_reus
 
     kept = Kept(store, "names", names, topic="", changes="vendors")
     assert kept() == {"acme": "Acme"} and kept.worked == 1
-    held = summary_module._COMPUTING[(str(store.path), "names")]
+    held = summary_module._COMPUTING[(str(store.path), "names", hash(repr(None)))]
     held.acquire()  # another page working it out
     try:
         with pytest.raises(RuntimeError), store.session(), store._conn() as conn:
@@ -242,6 +242,36 @@ def test_a_page_waits_for_another_working_the_same_answer_out(tmp_path):
     first.join(5)
     second.join(5)
     assert kept.worked == 1 and kept() == ["worked out"] and kept.worked == 1
+
+
+def test_pages_asking_one_name_for_different_things_work_them_out_at_once(tmp_path, monkeypatch):
+    """Month-end for three period ends asked together (one name, three ``asked``) was worked out one after the other:
+    each page waited for another's work, whose answer it could not use. Only the same ask waits; the locks of asks
+    no page is working out are let go past ``COMPUTING_KEPT``."""
+    monkeypatch.setattr(summary_module, "_COMPUTING", {})
+    store = Store(tmp_path / "ap.db")
+    started = {n: threading.Event() for n in (1, 2, 3)}
+    go = threading.Event()
+
+    def month_end(n: int) -> int:
+        started[n].set()
+        go.wait(5)
+        return n
+
+    def ask(n: int) -> None:
+        store.summary_memo("received_not_invoiced", lambda: month_end(n), changes="purchase_orders", asked=n)
+
+    threads = [threading.Thread(target=ask, args=(n,)) for n in started]
+    for thread in threads:
+        thread.start()
+    together = all(event.wait(3) for event in started.values())
+    go.set()
+    for thread in threads:
+        thread.join(5)
+    assert together
+    for n in range(2 * summary_module.COMPUTING_KEPT):
+        store.summary_memo("received_not_invoiced", lambda: n, changes="purchase_orders", asked=n)
+    assert len(summary_module._COMPUTING) <= summary_module.COMPUTING_KEPT + 1
 
 
 def test_what_an_answer_is_for_is_in_its_stamp_and_only_the_latest_is_kept(tmp_path):
