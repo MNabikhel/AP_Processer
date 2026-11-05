@@ -388,14 +388,15 @@ def _ask(store: Any, an8: str, number: str, printed: str, big: bool) -> tuple[li
 
 def live_findings(store: Any, coding: Any, exclude_invoice_id: int | None = None) -> list[tuple[str, str, str]]:
     """(severity, code, message) of the live check: DUPLICATE_IN_ERP for a voucher already in JDE with this supplier
-    and invoice number (not the one AP Coder posted for this invoice), or JDE_NOT_REACHED when JDE can't be asked.
-    Nothing when step 1 is off."""
+    and invoice number (not the one AP Coder posted for this invoice), or JDE_NOT_REACHED when JDE can't be asked
+    (with the register's copies, by the supplier's AN8 as well as its name). Nothing when step 1 is off."""
     cfg = jde_ais.load(store)
     number = norm_invoice_number(getattr(coding, "invoice_number", ""))
     if not cfg.step1 or not number:
         return []
     final = {"vendor_name": coding.vendor_name, "gst_hst_registration_number": coding.gst_hst_registration_number}
-    an8 = jde.resolve_an8(final, store.vendor_ids(), jde.load(store))
+    ids = store.vendor_ids()
+    an8 = jde.resolve_an8(final, ids, jde.load(store))
     where = str(store.path)
     now = time.monotonic()
     with _LOCK:
@@ -405,14 +406,14 @@ def live_findings(store: Any, coding: Any, exclude_invoice_id: int | None = None
     rows: list[dict[str, Any]] | None = cached[1] if cached and now - cached[0] < CACHE_SECONDS else None
     if rows is None:
         if down and now - down[0] < DOWN_SECONDS:
-            return [_not_reached(store, down[1])]
+            return [_not_reached(store, down[1]), *_in_register(store, coding, an8, ids)]
         try:
             rows, by_number = _ask(store, an8, number, str(coding.invoice_number or "").strip(), big)
         except jde_ais.AisError as exc:
             if not isinstance(exc, jde_ais.TooManyPages):  # too wide a question is this invoice's, not JDE down
                 with _LOCK:
                     _DOWN[where] = (now, str(exc))
-            return [_not_reached(store, str(exc))]
+            return [_not_reached(store, str(exc)), *_in_register(store, coding, an8, ids)]
         with _LOCK:
             if an8 and by_number:
                 _BIG.add((where, an8))
@@ -443,6 +444,23 @@ def live_findings(store: Any, coding: Any, exclude_invoice_id: int | None = None
         if len(out) >= 2:
             break
     return out
+
+
+def _in_register(store: Any, coding: Any, an8: str, ids: dict[str, str]) -> list[tuple[str, str, str]]:
+    """JDE not reached: DUPLICATE_IN_ERP for the register's copies of the invoice, under its vendor name and every
+    vendor of its AN8 (the sync files a voucher under JDE's supplier name, which may not be the invoice's). Without an
+    AN8 nothing: the review screen's vendor checks look the register up by name."""
+    if not an8:
+        return []
+    keys = {vendor_key(coding.vendor_name or "")} | {k for k, v in ids.items() if v == an8 and ":" not in k}
+    out = []
+    for key in sorted(keys - {""}):
+        for posted in store.in_erp(key, coding.invoice_number, coding.grand_total):
+            out.append((ERROR, "DUPLICATE_IN_ERP",
+                        f"invoice {posted['invoice_number']} from this vendor is already in the ERP"
+                        f"{' (dated ' + posted['invoice_date'] + ')' if posted['invoice_date'] else ''}, total "
+                        f"{posted['total']:,.2f}: possible duplicate payment"))  # fmt: skip
+    return out[:2]
 
 
 def _not_reached(store: Any, why: str) -> tuple[str, str, str]:

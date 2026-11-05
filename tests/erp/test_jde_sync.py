@@ -165,6 +165,19 @@ def test_the_live_check_degrades_when_jde_is_down(store, ais):
     assert "DUPLICATE_IN_ERP" in codes and "JDE_NOT_REACHED" in codes  # the last sync's copy still catches it
 
 
+def test_jde_down_the_register_is_checked_by_the_suppliers_number_too(store, ais):
+    """B-1602: with JDE not reached the check fell back on the register by the invoice's vendor name only, while the
+    sync files the vouchers under JDE's supplier name: an invoice whose name differs (found by its GST/HST number, a
+    supplier renamed) passed as no duplicate. The register is also looked up under the names of its AN8."""
+    connect(store, ais)
+    jde_sync.sync(store)  # the register holds INV-7001 from the sync, under "Acme Office Supplies Ltd."
+    ais.stop()
+    coding = _coding(vendor_name="Acme Supplies Toronto", gst_hst_registration_number="123456789RT0001")
+    found = {c: m for _, c, m in vendor_findings(coding, store)}
+    assert "JDE_NOT_REACHED" in found
+    assert "invoice INV-7001 from this vendor is already in the ERP (dated 2026-09-02)" in found["DUPLICATE_IN_ERP"]
+
+
 def test_the_live_check_is_off_with_step_1(store, ais):
     connect(store, ais, step1=False)
     assert jde_sync.live_findings(store, _coding()) == []
