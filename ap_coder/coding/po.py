@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from functools import lru_cache
@@ -172,9 +173,15 @@ def similarity(a: str, b: str) -> float:
     return max(overlap * 0.9, ratio)
 
 
-def _same_price(a: float, b: float) -> bool:
+def _price_band(b: float) -> tuple[float, float]:
+    """(the size of the price ``b``, how far another may be from it and still be the same price)."""
     floor = min(PRICE_TOLERANCE_ABS, abs(b) * PRICE_FLOOR_SHARE)
-    return abs(abs(a) - abs(b)) <= max(floor, abs(b) * PRICE_TOLERANCE)
+    return abs(b), max(floor, abs(b) * PRICE_TOLERANCE)
+
+
+def _same_price(a: float, b: float) -> bool:
+    price, room = _price_band(b)
+    return abs(abs(a) - price) <= room
 
 
 def _amount_over(m: LineMatch) -> float | None:
@@ -192,17 +199,21 @@ def po_lines_billed(invoice_lines: list[dict[str, Any]], po_lines: list[dict[str
     the PO line it most resembles (a matching unit price counts in favour); several invoice lines may bill the
     same PO line. By position, so an invoice that repeats a line number (page 2 starting again at 1) still pairs
     every line."""
-    out: list[int | None] = []
-    for li in invoice_lines:
-        best, best_score = None, 0.0
-        for pl in po_lines:
-            score = similarity(li.get("description", ""), pl.get("description", ""))
-            if _same_price(float(li.get("unit_price") or 0), float(pl.get("unit_price") or 0)):
-                score += 0.2
-            if score > best_score:
-                best, best_score = pl, score
-        out.append(int(best["line_number"]) if best is not None and best_score >= MATCH_THRESHOLD else None)
-    return out
+    return [_po_line(li.get("description", ""), po_lines, lambda _, pl, li=li: _same_price(
+        float(li.get("unit_price") or 0), float(pl.get("unit_price") or 0))) for li in invoice_lines]  # fmt: skip
+
+
+def _po_line(description: Any, po_lines: list[dict[str, Any]], same_price: Callable[[int, dict], bool]) -> int | None:
+    """The line_number of the PO line a line of ``description`` most resembles, its price the same as the PO line's
+    (``same_price(n, po_line)``, n its position) counting in its favour; None: none resembles it enough."""
+    best, best_score = None, 0.0
+    for n, pl in enumerate(po_lines):
+        score = similarity(description, pl.get("description", ""))
+        if same_price(n, pl):
+            score += 0.2
+        if score > best_score:
+            best, best_score = pl, score
+    return int(best["line_number"]) if best is not None and best_score >= MATCH_THRESHOLD else None
 
 
 @dataclass
@@ -504,6 +515,38 @@ def billed_by_line(
             if po_line is not None:
                 value = float(li.get("amount") or 0) if amounts else billed_quantity(li)
                 billed[po_line] = billed.get(po_line, 0.0) + value
+    return billed
+
+
+def positive_lines(invoices: Iterable[dict[str, Any]]) -> list[tuple[Any, float, float]]:
+    """(description, unit price, quantity) of each line of ``invoices`` (``Store.po_invoices`` rows) that bills a
+    positive quantity, in order: what ``billed_by_line(po, invoices, positive_only=True)`` matches to a PO's lines,
+    read once for all the POs of a vendor (``billed_on``)."""
+    out = []
+    for inv in invoices:
+        for li in inv["coding"].get("line_items") or []:
+            quantity = billed_quantity(li)
+            if quantity > 0:
+                out.append((li.get("description", ""), float(li.get("unit_price") or 0), quantity))
+    return out
+
+
+def billed_on(po: dict[str, Any], lines: Iterable[tuple[Any, float, float]]) -> dict[int, float]:
+    """``billed_by_line(po, invoices, positive_only=True)`` from the ``positive_lines`` of ``invoices``: each
+    description and price matched to the PO's lines once, not once a line (month-end matches every invoice of a
+    vendor to each of its POs): what decides is the description and which PO lines have the same price."""
+    billed: dict[int, float] = {}
+    bands = [_price_band(float(pl.get("unit_price") or 0)) for pl in po["lines"]]
+    matched: dict[tuple[Any, tuple[int, ...]], int | None] = {}
+    for description, price, quantity in lines:
+        size = abs(price)
+        same = tuple(n for n, (at, room) in enumerate(bands) if abs(size - at) <= room)
+        key = (description, same)
+        if key not in matched:
+            matched[key] = _po_line(description, po["lines"], lambda n, _, same=same: n in same)
+        po_line = matched[key]
+        if po_line is not None:
+            billed[po_line] = billed.get(po_line, 0.0) + quantity
     return billed
 
 

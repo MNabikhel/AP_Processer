@@ -2,27 +2,34 @@
 centers), and every invoice's data as an Excel workbook for pivot tables or Power BI.
 
 The period and currency are in the address (``?start=2026-01-01&end=2026-06-30&currency=USD``); "All, in CAD"
-converts at the rates in Settings → Review. The workbook is a GET download.
+converts at the rates in Settings → Review. The workbook is a GET download, made as it is asked for on a laptop; on
+the company server it is made in the background (``POST /spend/data``, the job ``spend-data``: a year of invoices takes
+minutes) and the download is the one made last (D-156).
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import os
+from pathlib import Path
 from typing import Any
 
-from fastapi import Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi import HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
 from ap_coder.core import ui
 from ap_coder.erp import spend
+from ap_coder.web import identity, roles
 from ap_coder.web.charts import SERIES, Series, bar_chart, compact, legend_items
-from ap_coder.web.core import get_store, money, page_router, reference_or_none, render
+from ap_coder.web.core import get_store, jobs, message, money, page_router, reference_or_none, render, server_mode
 from ap_coder.web.files import XLSX, download
+from ap_coder.web.jobs import Job
 
 router = page_router()  # each plain handler: one connection a request
 
 TOP = 10
 ALL_IN_CAD = "All, in CAD"
+WORKBOOK_JOB = "spend-data"  # the data workbook made in the background on the company server (D-156)
 UNCATEGORISED = "Uncategorised"
 OTHER = "Other"
 
@@ -96,8 +103,7 @@ def spend_page(request: Request) -> HTMLResponse:
     default_start, default_end = spend.default_period()
     start, start_ok = _date(q.get("start"), default_start)
     end, end_ok = _date(q.get("end"), default_end)
-    rows = spend.parts(store, start, end) if start <= end else []
-    currencies = spend.currencies(rows) or ["CAD"]
+    currencies = (spend.spend_currencies(store, start, end) if start <= end else []) or ["CAD"]
     rates = store.fx_rates()
     if len(currencies) > 1 and all(c in rates for c in currencies):
         currencies = [ALL_IN_CAD, *currencies]
@@ -112,39 +118,39 @@ def spend_page(request: Request) -> HTMLResponse:
         "currency": currency,
         "backwards": start > end,
         "rates_note": "",
+        "workbook": workbook_state(request),
     }
     shown_currency = currency
     if currency == ALL_IN_CAD:
-        rows = spend.in_cad(rows, rates)
         shown_currency = "CAD"
         context["rates_note"] = (
             "All currencies in CAD at the rates in Settings → Review ("
             + ", ".join(f"{c} {r:g}" for c, r in sorted(rates.items()) if c != "CAD")
             + "): an estimate."
         )
-    else:
-        rows = [r for r in rows if r.currency == currency]
     context["shown_currency"] = shown_currency
-    if not rows:
+    accounts = spend.accounts_by_code(reference)
+    category = {code: row.get("category", "") for code, row in accounts.items()}
+    # Summed by SQLite, not every cost line of the period read (D-156).
+    found = spend.figures(store, start, end, shown_currency, category, rates if currency == ALL_IN_CAD else None) \
+        if start <= end else {"lines": False}  # fmt: skip
+    if not found["lines"]:
         return render(request, "spend.html", "spend", rows=False, **context)
 
-    total = round(sum(r.amount for r in rows), 2)
-    invoices = {r.invoice_id for r in rows}
-    vendors = spend.total_by(rows, "vendor", shown_currency)
-    months = sorted({r.month for r in rows})
+    total = found["total"]
+    vendors = found["by"]["vendor"]
+    months = found["months"]
     tiles = [
         ("Spend", f"{total:,.0f} {shown_currency}", "blue", "net of recoverable tax"),
-        ("Invoices", f"{len(invoices):,}", "violet", f"average {money(total / len(invoices))}"),
+        ("Invoices", f"{found['invoices']:,}", "violet", f"average {money(total / found['invoices'])}"),
         ("Vendors", f"{len(vendors):,}", "green", f"top one {vendors[0][1] / total:.0%} of spend" if total else ""),
         ("Per month", money(total / len(months)), "amber", f"over {ui.plural(len(months), 'month')} with invoices"),
     ]
-    accounts = spend.accounts_by_code(reference)
     names = {code: row.get("description", "") for code, row in accounts.items()}
-    category = {code: row.get("category", "") for code, row in accounts.items()}
     order = list(dict.fromkeys(c for c in category.values() if c))
-    data = spend.by_month_and_category(rows, shown_currency, category)
+    data = found["by_month"]
     chart, legend = month_chart(data, months, order, shown_currency)
-    centers = spend.total_by(rows, "cost_center", shown_currency)
+    centers = found["by"]["cost_center"]
     cc_names = {code: row.get("description", "") for code, row in spend.accounts_by_code(reference, True).items()}
     return render(
         request,
@@ -155,15 +161,71 @@ def spend_page(request: Request) -> HTMLResponse:
         chart=chart,
         legend=legend,
         month_rows=[{"month": d["month"], "category": d["category"], "amount": money(d["amount"])} for d in data],
-        gl_rows=ranked(spend.total_by(rows, "gl_code", shown_currency), names, total),
+        gl_rows=ranked(found["by"]["gl_code"], names, total),
         vendor_rows=ranked(vendors, {}, total),
         cc_rows=ranked(centers, cc_names, total) if any(key for key, _, _ in centers) else [],
         **context,
     )
 
 
+def workbook_path(store: Any) -> Path:
+    """Where the company server keeps the data workbook made last (in the data folder, not backed up)."""
+    return store.path.parent / ".cache" / "downloads" / "ap_coder_data.xlsx"
+
+
+def workbook_state(request: Request) -> dict[str, Any] | None:
+    """The data workbook on the company server: when the last one was made ("" for none yet), and how far the one
+    being made got ("" when none is); None on a laptop (made as it is asked for)."""
+    if not server_mode(request):
+        return None
+    path = workbook_path(get_store(request))
+    made = f"{dt.datetime.fromtimestamp(path.stat().st_mtime):%Y-%m-%d %H:%M}" if path.exists() else ""
+    job = jobs(request).get(WORKBOOK_JOB)
+    snap = job.snapshot() if job.running else {}
+    note = (snap.get("note") or "Starting…") if snap else ""
+    me = identity.person()  # Read-only changes nothing: a Clerk or above makes it (D-98)
+    may = me is None or roles.allowed(me.role, roles.RULES[("POST", "/spend/data")])
+    return {"made": made, "making": note, "status": f"/jobs/{WORKBOOK_JOB}", "may_make": may}
+
+
 @router.get("/spend/data.xlsx")
 def spend_workbook(request: Request) -> Response:
-    """Every invoice, its lines and its GL posting, as three Excel tables that join on AP Coder #."""
+    """Every invoice, its lines and its GL posting, as three Excel tables that join on AP Coder #: on a laptop made
+    now; on the company server the one made last (``make_workbook``)."""
     store = get_store(request)
-    return download(spend.workbook(store, reference_or_none(store)), f"ap_coder_data_{dt.date.today()}.xlsx", XLSX)
+    if not server_mode(request):
+        return download(spend.workbook(store, reference_or_none(store)), f"ap_coder_data_{dt.date.today()}.xlsx",
+                        XLSX)  # fmt: skip
+    path = workbook_path(store)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="No workbook has been made yet: on Spend, Make the workbook.")
+    made = dt.datetime.fromtimestamp(path.stat().st_mtime)
+    return FileResponse(path, media_type=XLSX, filename=f"ap_coder_data_{made:%Y-%m-%d_%H%M}.xlsx",
+                        headers={"Cache-Control": "no-store"})  # fmt: skip
+
+
+@router.post("/spend/data")
+def make_workbook(request: Request) -> JSONResponse:
+    """Make the data workbook in the background (the company server: one at a time, for everyone), a batch of
+    invoices at a time, written beside the last one and put in its place once whole."""
+    store = get_store(request)
+    reference = reference_or_none(store)
+    path = workbook_path(store)
+
+    def work(job: Job) -> dict[str, Any]:
+        def step(done: int, total: int) -> None:
+            job.step(done, total, f"{done:,} of {ui.plural(total, 'invoice')} written")
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        part = path.with_name(f"{path.stem}.{os.getpid()}.part")
+        try:
+            with store.session():
+                spend.write_workbook(store, reference, part, step)
+            os.replace(part, path)
+        finally:
+            part.unlink(missing_ok=True)
+        return {"made": f"{dt.datetime.now():%Y-%m-%d %H:%M}"}
+
+    if not jobs(request).get(WORKBOOK_JOB).start(work, note="Starting…"):
+        return message("The workbook is being made already: it is ready in a few minutes.", "info")
+    return JSONResponse({"ok": True, "job": WORKBOOK_JOB, "status": f"/jobs/{WORKBOOK_JOB}"})

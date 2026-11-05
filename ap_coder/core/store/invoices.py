@@ -239,16 +239,16 @@ class InvoicesMixin:
             ids = self.directory_ids(rows_sql, where, params, order, limit, offset)  # type: ignore[attr-defined]
             return self.directory_rows_of(rows_sql, fields, ids)  # type: ignore[attr-defined]
 
-    def erp_register(self) -> list[dict[str, Any]]:
-        """Every invoice in the imported ERP register."""
+    def erp_register(self, numbers: list[str] | None = None) -> list[dict[str, Any]]:
+        """Every invoice in the imported ERP register; with ``numbers``, those with one of these invoice numbers (as
+        compared: ``norm_invoice_number``), in the same order."""
+        sql = (
+            "SELECT vendor_key, vendor_name, invoice_number, number_key, invoice_date, total, copies FROM erp_invoices"
+        )
         with self._conn() as conn:
-            return [
-                dict(r)
-                for r in conn.execute(
-                    "SELECT vendor_key, vendor_name, invoice_number, number_key, invoice_date, total, copies "
-                    "FROM erp_invoices"
-                )
-            ]
+            if numbers is None:
+                return [dict(r) for r in conn.execute(sql)]
+            return fetch_rows(conn, f"{sql} WHERE {_in_list('number_key')} ORDER BY rowid", (json.dumps(numbers),))
 
     def erp_register_rows(self, where: str, params: tuple[Any, ...] | list[Any] = ()) -> list[dict[str, Any]]:
         """The ERP register's rows ``where`` keeps (the caller's SQL over its columns, with its vendor name and

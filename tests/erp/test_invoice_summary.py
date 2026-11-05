@@ -6,6 +6,7 @@ foreign currency, meals and a PST to self-assess."""
 
 import datetime as dt
 import json
+import re
 import sqlite3
 from dataclasses import asdict
 
@@ -162,6 +163,44 @@ def test_spend_gives_what_it_gave(year):
             assert round(sum(r.amount for r in b if r.currency == currency), 2) == round(
                 sum(r.amount for r in a if r.currency == currency), 2
             )
+
+
+def test_the_spend_page_shows_what_it_showed(year, tmp_path):
+    """D-156: the Spend page's figures summed by SQLite, not every cost line of the period made a Python object: the
+    page as it was (``tests/reports_reference.py``), word for word, in each currency and all in CAD, over each period,
+    with a rate that makes conversions land on half a cent, and with dates it can't read or backwards."""
+    from tests import reports_reference as old
+    from tests.webclient import client_for
+
+    def shown(address: str) -> str:  # each chart's id numbered as the first of the page
+        page = client.get(address).text.replace("/old-spend", "/spend")
+        return re.sub(r"(apc-chart-[a-z0-9-]+?)-\d+-", r"\1-0-", page)
+
+    client = client_for(year)
+    client.app.add_api_route("/old-spend", old.spend_page)
+    year.set_setting("fx_rates", "USD=1.25")  # a line of 0.75 USD is 0.9375 CAD
+    usd = next(d for d in _docs() if d["currency"] == "USD")  # one more in USD, approved: the year's may wait
+    invoice_id, output = _add(year, tmp_path, "usd", {**usd, "invoice_number": "USD-9", "invoice_date": "2026-02-10"})
+    year.approve_invoice(invoice_id, output, "Jordan Lee")
+    periods = [*PERIODS, (dt.date(2026, 9, 1), dt.date(2026, 1, 1)), (dt.date(2030, 1, 1), dt.date(2030, 2, 1))]
+    for start, end in periods:
+        for currency in ("", "All, in CAD", "CAD", "USD", "EUR"):
+            query = f"?start={start}&end={end}&currency={currency}"
+            assert shown(f"/spend{query}") == shown(f"/old-spend{query}"), query
+    assert shown("/spend?start=nope") == shown("/old-spend?start=nope")
+    assert "All currencies in CAD at the rates" in shown(f"/spend?start={YEAR[0]}&end={YEAR[1]}")
+
+
+def test_activity_counts_the_approvals_as_insights_does(year):
+    """D-156: Activity's tile counts the latest approvals in SQLite (``approval_counts``): the same as reading each one
+    (``approved_as_coded``, ``filled_in_count``), an approval the summary could not read read again as before."""
+    counts = (*insights.approved_as_coded(year), insights.filled_in_count(year))
+    assert insights.approval_counts(year) == counts and counts[1]
+    invoice_id = next(r["id"] for r in ref.old_list_invoices(year, APPROVED))
+    with sqlite3.connect(year.path) as conn:  # an approval the summary could not read: its facts read again
+        conn.execute("UPDATE invoice_summary SET broken = broken | ? WHERE id = ?",
+                     (summary_module.BIT["approval"], invoice_id))  # fmt: skip
+    assert insights.approval_counts(year) == (*insights.approved_as_coded(year), insights.filled_in_count(year))
 
 
 def test_spend_follows_a_change_of_the_tax_setup(year):

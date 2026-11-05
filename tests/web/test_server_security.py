@@ -367,8 +367,11 @@ def test_on_the_server_the_cookie_is_secure_and_hsts_sent_whatever_the_scheme(st
 def test_every_response_behind_the_login_is_not_stored_by_the_browser(store):
     account(store, "boss", "admin")
     invoice_id = add_clean(store)
-    client = client_of(app_for(store))
+    app = app_for(store)
+    client = client_of(app)
     log_in(client, "boss")
+    client.post("/spend/data", headers=PAGE)  # the data workbook: made in the background on the server (D-156)
+    assert app.state.jobs.get("spend-data").wait(60)
     for path in (f"/review/{invoice_id}/page/1.png", "/review", "/activity/events.csv", "/exports/duplicates.csv",
                  "/activity/controls-report", "/spend/data.xlsx", "/insights/business-case",
                  "/settings/jde/worksheet.xlsx", f"/review/{invoice_id}/words"):  # fmt: skip

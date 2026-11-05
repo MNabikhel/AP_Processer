@@ -13,13 +13,15 @@ from __future__ import annotations
 import datetime as dt
 import io
 import json
+import warnings
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 from ..coding.tax import PLACE_OF_SUPPLY
 from ..core.reference_data import ReferenceData
-from ..core.safe import neutralise_sheet, xlsx_row
+from ..core.safe import FORMULA_START, xlsx_row
 from ..core.store import APPROVED, FAILED, Store
 from ..core.store.summary import broken, whole
 from .exports import distribution
@@ -167,6 +169,106 @@ def by_month_and_category(rows: list[SpendLine], currency: str, category: dict[s
     return [{"month": m, "category": c, "amount": round(v, 2)} for (m, c), v in sorted(totals.items())]
 
 
+# --- The Spend page's figures, summed by SQLite --------------------------------------------------------------------
+# What the page shows of ``parts`` (``currencies``, then ``total_by``, ``by_month_and_category``...), summed by SQLite
+# by GL account, vendor, cost center and month rather than every cost line of the period made a Python object (308,000
+# at 100,000 invoices: +500 MB a view). The sums are SQLite's, the same to the cent (every posting line is rounded to
+# the cent when coded); what is rounded, ordered or converted is as before. Lines SQLite has no CAD amount for (an
+# invoice in another currency, "All, in CAD": converted line by line as ``in_cad`` does) and those of an invoice the
+# summary could not read are summed here as before.
+
+_PARTS = ("FROM invoice_summary s JOIN summary_spend p ON p.invoice_id = s.id WHERE s.f_date BETWEEN ? AND ? AND "
+          f"+s.status = '{APPROVED}' AND s.{whole('spend')}")  # fmt: skip
+_AT = 65536  # a cost line's place in the period's (``parts``' order): invoice * _AT + its part
+_LAST = 1 << 62  # the places after every line of the summary (the lines ``_broken_lines`` reads)
+BY = {"vendor": "s.p_vendor", "gl_code": "p.gl_code", "cost_center": "p.cost_center"}  # ``total_by``'s keys
+
+
+class _Sums:
+    """``total_by`` of one key from sums: by value, the amount, the invoices and the place it first came."""
+
+    def __init__(self) -> None:
+        self.amount: dict[Any, float] = {}
+        self.invoices: dict[Any, int] = {}
+        self.first: dict[Any, int] = {}
+
+    def add(self, value: Any, amount: float, invoices: int, first: int) -> None:
+        self.amount[value] = self.amount.get(value, 0.0) + amount
+        self.invoices[value] = self.invoices.get(value, 0) + invoices
+        self.first[value] = min(self.first.get(value, first), first)
+
+    def rows(self) -> list[tuple[Any, float, int]]:
+        found = sorted(self.amount, key=self.first.__getitem__)  # in the order they first came, as ``total_by``
+        return sorted(((k, round(self.amount[k], 2), self.invoices[k]) for k in found), key=lambda x: -x[1])
+
+
+def spend_currencies(store: Store, start: dt.date, end: dt.date) -> list[str]:
+    """``currencies(parts(store, start, end))``."""
+    first, last = start.isoformat(), end.isoformat()
+    totals = _Sums()
+    for r in store.summary_fetch(f"SELECT s.p_currency c, SUM(p.sizes) n, MIN(s.id) at {_PARTS} GROUP BY s.p_currency",
+                                 (first, last)):  # fmt: skip
+        totals.add(r["c"], r["n"], 0, r["at"])
+    for n, line in enumerate(_broken_lines(store, first, last)):
+        totals.add(line.currency, abs(line.amount), 0, _LAST + n)
+    return sorted(sorted(totals.amount, key=totals.first.__getitem__), key=lambda c: -totals.amount[c])
+
+
+def figures(store: Store, start: dt.date, end: dt.date, currency: str, category: dict[str, str],
+            rates: dict[str, float] | None = None) -> dict[str, Any]:  # fmt: skip
+    """What the Spend page shows of ``parts(store, start, end)`` in ``currency``, or with ``rates`` of every line of a
+    currency with a rate in CAD (``in_cad``; ``currency`` is then "CAD"): ``lines`` (whether there are any), ``total``
+    (rounded to the cent), ``invoices``, ``months``, ``by_month`` (``by_month_and_category`` with ``category``) and
+    ``by``: for each key of ``BY``, its ``total_by``."""
+    first, last = start.isoformat(), end.isoformat()
+    # SQLite sums the lines in ``currency``; converted, those in CAD (each line rounded to the cent: ``_in_cad``).
+    if rates is None:
+        value, where, args = "p.amount", "s.p_currency = ?", (currency,)
+    else:
+        value, where, args = "p.cents", "s.p_currency = 'CAD' AND p.amounts IS NULL", ()
+    sums = {key: _Sums() for key in BY}
+    for key, column in BY.items():
+        for r in store.summary_fetch(f"SELECT {column} k, SUM({value}) n, COUNT(DISTINCT s.id) i, "
+                                     f"MIN(s.id * {_AT} + p.part) at {_PARTS} AND {where} GROUP BY {column}",
+                                     (first, last, *args)):  # fmt: skip
+            sums[key].add(r["k"], r["n"], r["i"], r["at"])
+    by_vendor = sums["vendor"]  # an invoice has one vendor: its sums and invoices are the period's
+    total, invoices = sum(by_vendor.amount.values()), sum(by_vendor.invoices.values())
+    months: dict[tuple[str, str], float] = defaultdict(float)
+    for r in store.summary_fetch(f"SELECT substr(s.f_date, 1, 7) m, p.gl_code g, SUM({value}) n {_PARTS} AND {where} "
+                                 "GROUP BY m, g", (first, last, *args)):  # fmt: skip
+        months[(r["m"], category.get(r["g"]) or "Uncategorised")] += r["n"]
+    # The rest, line by line as before: (its place, its invoice, the line).
+    rest = [] if rates is None else [
+        (r["id"] * _AT + r["part"], r["id"], SpendLine(r["id"], r["month"], r["p_vendor"], r["gl_code"],
+         r["cost_center"], r["amount"], r["p_currency"], r["sizes"], r["cents"],
+         tuple(json.loads(r["amounts"])) if r["amounts"] else None))
+        for r in store.summary_fetch(
+            "SELECT s.id, p.part, substr(s.f_date, 1, 7) month, s.p_vendor, s.p_currency, p.gl_code, p.cost_center, "
+            f"p.amount, p.sizes, p.cents, p.amounts {_PARTS} AND NOT ({where}) AND s.p_currency IN "
+            "(SELECT value FROM json_each(?)) ORDER BY s.id, p.part", (first, last, json.dumps(sorted(rates))))
+    ]  # fmt: skip
+    rest += [(_LAST + n, r.invoice_id, r) for n, r in enumerate(_broken_lines(store, first, last))]
+    more: set[int] = set()
+    counted: set[tuple[str, Any, int]] = set()  # (key, value, invoice) already counted
+    for at, invoice, line in rest:
+        if rates is None and line.currency != currency or rates is not None and line.currency not in rates:
+            continue
+        amount = line.amount if rates is None else _in_cad(line, rates[line.currency])
+        total += amount
+        more.add(invoice)
+        for key, s in sums.items():
+            v = getattr(line, key)
+            s.add(v, amount, (key, v, invoice) not in counted, at)
+            counted.add((key, v, invoice))
+        months[(line.month, category.get(line.gl_code) or "Uncategorised")] += amount
+    return {
+        "lines": bool(invoices or more), "total": round(total, 2), "invoices": invoices + len(more),
+        "months": sorted({m for m, _ in months}), "by": {key: s.rows() for key, s in sums.items()},
+        "by_month": [{"month": m, "category": c, "amount": round(v, 2)} for (m, c), v in sorted(months.items())],
+    }  # fmt: skip
+
+
 def default_period(today: dt.date | None = None) -> tuple[dt.date, dt.date]:
     """The last 12 months, this one included."""
     today = today or dt.date.today()
@@ -193,11 +295,84 @@ INVOICE_COLUMNS = [
 ]  # fmt: skip
 
 
+WORKBOOK_BATCH = 500  # the invoices the data workbook reads at a time
+WIDTH_ROWS = 200  # the rows of a sheet (its header too) the widths of its columns are worked out from
+
+
 def workbook(store: Store, reference: ReferenceData | None) -> bytes:
     """Every invoice (not the unreadable ones), its lines and its posting, as an Excel workbook with three
-    tables that join on "AP Coder #"."""
+    tables that join on "AP Coder #" (``write_workbook``)."""
+    out = io.BytesIO()
+    write_workbook(store, reference, out)
+    return out.getvalue()
+
+
+class _Sheet:
+    """A sheet of the data workbook in openpyxl's write-only mode, its rows written as they come (a year of invoices'
+    cells are never held at once): its first ``WIDTH_ROWS`` held until its columns' widths are known (set before any
+    row is written); text a spreadsheet would run as a formula stored as text."""
+
+    def __init__(self, wb: Any, name: str, header: list[str]) -> None:
+        self.ws, self.name, self.header, self.columns, self.rows = wb.create_sheet(name), name, header, len(header), 0
+        self.held: list[list[Any]] | None = []
+        self.append(header)
+
+    def append(self, row: list[Any]) -> None:
+        self.rows += 1
+        if self.held is None:
+            self.ws.append(self._cells(row))
+            return
+        self.held.append(row)
+        if len(self.held) == WIDTH_ROWS:
+            self._start()
+
+    def _cells(self, row: list[Any]) -> list[Any]:
+        from openpyxl.cell import WriteOnlyCell
+
+        cells = []
+        for value in row:
+            if isinstance(value, str) and value.startswith(FORMULA_START):  # as ``neutralise_sheet`` stores it
+                value = WriteOnlyCell(self.ws, value=value)
+                value.data_type, value.quotePrefix = "s", True
+            cells.append(value)
+        return cells
+
+    def _start(self) -> None:
+        from openpyxl.utils import get_column_letter
+
+        held, self.held = self.held or [], None
+        for n in range(self.columns):
+            width = max(len(str((row[n] if n < len(row) else None) or "")) for row in held)
+            self.ws.column_dimensions[get_column_letter(n + 1)].width = min(max(width + 2, 9), 48)
+        self.ws.freeze_panes = "A2"
+        for row in held:
+            self.ws.append(self._cells(row))
+
+    def close(self) -> None:
+        from openpyxl.utils import get_column_letter
+        from openpyxl.worksheet.filters import AutoFilter
+        from openpyxl.worksheet.table import Table, TableColumn, TableStyleInfo
+
+        if self.held is not None:
+            self._start()
+        if self.rows > 1:  # an Excel table (filters, and a named source for Power BI)
+            ref = f"A1:{get_column_letter(self.columns)}{self.rows}"
+            # Its columns named by the header, as openpyxl names them from the cells of a sheet it holds.
+            columns = [TableColumn(id=n, name=str(h)) for n, h in enumerate(self.header, 1)]
+            table = Table(displayName=f"{self.name}Table", ref=ref, autoFilter=AutoFilter(ref=ref),
+                          tableColumns=columns)  # fmt: skip
+            table.tableStyleInfo = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True)
+            with warnings.catch_warnings():  # "you must add table columns manually": they are, above
+                warnings.simplefilter("ignore", UserWarning)
+                self.ws.add_table(table)
+
+
+def write_workbook(store: Store, reference: ReferenceData | None, out: Any,
+                   step: Callable[[int, int], None] | None = None) -> None:  # fmt: skip
+    """``workbook`` written to ``out`` (a path or a binary file), the invoices read ``WORKBOOK_BATCH`` at a time and
+    the sheets in openpyxl's write-only mode (at 100,000 invoices: tens of GB of cells otherwise, D-156); ``step(done,
+    total)``: after each batch of invoices."""
     from openpyxl import Workbook
-    from openpyxl.worksheet.table import Table, TableStyleInfo
 
     accounts = accounts_by_code(reference)
 
@@ -209,9 +384,9 @@ def workbook(store: Store, reference: ReferenceData | None) -> bytes:
 
     columns = ("id", "status", "reviewer", "reviewed_at", "second_reviewer", "second_reviewed_at", "export_batch",
                "created_at", "due_date", "ai_output", "final_output")  # fmt: skip
-    rows = [r for r in store.invoice_columns(columns) if r["status"] != FAILED]
+    ids = [r["id"] for r in store.summary_rows("status != ?", (FAILED,), "id")]
     treatments = store.tax_treatments()
-    wb = Workbook()
+    wb = Workbook(write_only=True)
     sheets = {
         "Invoices": [label for _, label in INVOICE_COLUMNS],
         "Lines": ["AP Coder #", "Vendor", "Invoice #", "Invoice date", "Line", "Description", "Quantity",
@@ -219,67 +394,56 @@ def workbook(store: Store, reference: ReferenceData | None) -> bytes:
         "Posting": ["AP Coder #", "Vendor", "Invoice #", "Invoice date", "Kind", "GL account", "GL name",
                     "Cost center", "Description", "Net", "Non-recoverable tax", "Amount", "Currency"],
     }  # fmt: skip
-    ws_by_name = {}
-    for n, (name, header) in enumerate(sheets.items()):
-        ws = wb.active if n == 0 else wb.create_sheet()
-        ws.title = name
-        ws.append(header)
-        ws_by_name[name] = ws
-    for r in rows:
-        doc = r["final_output"] or r["ai_output"] or {}
-        merged = {**doc, **{k: r[k] for k in r if k not in ("ai_output", "final_output")}}
-        # the ship-to printed, else the place of supply worked out when it was coded (pipeline)
-        merged["ship_to_province"] = doc.get("ship_to_province") or doc.get(PLACE_OF_SUPPLY) or ""
-        ws_by_name["Invoices"].append(xlsx_row([merged.get(k) for k, _ in INVOICE_COLUMNS]))
-        head = [r["id"], doc.get("vendor_name"), doc.get("invoice_number"), doc.get("invoice_date")]
-        for li in doc.get("line_items") or []:
-            gl = li.get("predicted_gl_code") or ""
-            ws_by_name["Lines"].append(
-                xlsx_row(
-                    [
-                        *head,
-                        li.get("line_number"),
-                        li.get("description"),
-                        li.get("quantity"),
-                        li.get("unit_price"),
-                        li.get("amount"),
-                        gl,
-                        gl_name(gl),
-                        category(gl),
-                        li.get("predicted_cost_center"),
-                        doc.get("currency"),
-                    ]
+    ws_by_name = {name: _Sheet(wb, name, header) for name, header in sheets.items()}
+    for start in range(0, len(ids), WORKBOOK_BATCH):
+        for r in store.invoice_columns(columns, ids=ids[start : start + WORKBOOK_BATCH]):
+            if r["status"] == FAILED:  # failed since the list was read
+                continue
+            doc = r["final_output"] or r["ai_output"] or {}
+            merged = {**doc, **{k: r[k] for k in r if k not in ("ai_output", "final_output")}}
+            # the ship-to printed, else the place of supply worked out when it was coded (pipeline)
+            merged["ship_to_province"] = doc.get("ship_to_province") or doc.get(PLACE_OF_SUPPLY) or ""
+            ws_by_name["Invoices"].append(xlsx_row([merged.get(k) for k, _ in INVOICE_COLUMNS]))
+            head = [r["id"], doc.get("vendor_name"), doc.get("invoice_number"), doc.get("invoice_date")]
+            for li in doc.get("line_items") or []:
+                gl = li.get("predicted_gl_code") or ""
+                ws_by_name["Lines"].append(
+                    xlsx_row(
+                        [
+                            *head,
+                            li.get("line_number"),
+                            li.get("description"),
+                            li.get("quantity"),
+                            li.get("unit_price"),
+                            li.get("amount"),
+                            gl,
+                            gl_name(gl),
+                            category(gl),
+                            li.get("predicted_cost_center"),
+                            doc.get("currency"),
+                        ]
+                    )
                 )
-            )
-        for e in distribution(doc, treatments):
-            gl = e.get("gl_code") or ""
-            ws_by_name["Posting"].append(
-                xlsx_row(
-                    [
-                        *head,
-                        e.get("kind"),
-                        gl,
-                        gl_name(gl),
-                        e.get("cost_center"),
-                        e.get("description"),
-                        e.get("net_amount"),
-                        e.get("non_recoverable_tax"),
-                        e.get("amount"),
-                        doc.get("currency"),
-                    ]
+            for e in distribution(doc, treatments):
+                gl = e.get("gl_code") or ""
+                ws_by_name["Posting"].append(
+                    xlsx_row(
+                        [
+                            *head,
+                            e.get("kind"),
+                            gl,
+                            gl_name(gl),
+                            e.get("cost_center"),
+                            e.get("description"),
+                            e.get("net_amount"),
+                            e.get("non_recoverable_tax"),
+                            e.get("amount"),
+                            doc.get("currency"),
+                        ]
+                    )
                 )
-            )
-    for name, ws in ws_by_name.items():
-        neutralise_sheet(ws)
-        last = ws.cell(row=1, column=ws.max_column).column_letter
-        if ws.max_row > 1:  # an Excel table (filters, and a named source for Power BI)
-            table = Table(displayName=f"{name}Table", ref=f"A1:{last}{ws.max_row}")
-            table.tableStyleInfo = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True)
-            ws.add_table(table)
-        for col in ws.columns:
-            width = max(len(str(c.value or "")) for c in list(col)[:200])
-            ws.column_dimensions[col[0].column_letter].width = min(max(width + 2, 9), 48)
-        ws.freeze_panes = "A2"
-    out = io.BytesIO()
+        if step is not None:
+            step(min(start + WORKBOOK_BATCH, len(ids)), len(ids))
+    for sheet in ws_by_name.values():
+        sheet.close()
     wb.save(out)
-    return out.getvalue()

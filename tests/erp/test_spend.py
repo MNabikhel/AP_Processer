@@ -71,6 +71,34 @@ def test_workbook_text_cannot_run_as_a_formula(tmp_path, demo_template):
     assert cell.data_type == "s" and cell.quotePrefix
 
 
+def test_the_workbook_written_as_it_goes_holds_what_it_held(tmp_path, demo_template, monkeypatch):
+    """D-156: the invoices read a few at a time and the sheets written in openpyxl's write-only mode, not every
+    invoice and cell held at once: the same cells (text that looks like a formula stored as text), widths of columns
+    (from the first 200 rows), frozen header and tables as the workbook built in memory (``reports_reference``), with
+    sheets past 200 rows and batches of a few invoices."""
+    from tests import reports_reference as ref
+
+    store = copy_database(demo_template, tmp_path / "s.db")
+    doc = store.get_invoice(store.list_invoices()[0]["id"])["ai_output"]
+    long_line = {**doc["line_items"][0], "description": "x" * 70}
+    for n in range(40):
+        lines = [{**li, "description": f"=SUM(A{n})" if k == 0 and n % 9 == 0 else li["description"]}
+                 for k, li in enumerate(doc["line_items"] * 3)] + ([long_line] if n == 35 else [])  # fmt: skip
+        changed = {**doc, "invoice_number": f"W-{n}", "vendor_name": "@vendor" if n == 3 else doc["vendor_name"],
+                   "line_items": lines}  # fmt: skip
+        invoice = store.add_invoice(tmp_path / f"{n}.pdf", changed, {})
+        if n % 2:
+            store.approve_invoice(invoice, changed, "Jane")
+    store.add_invoice(tmp_path / "bad.pdf", None, None, error="could not be read")
+    monkeypatch.setattr(spend, "WORKBOOK_BATCH", 7)
+    for reference in (store.reference_data(), None):
+        new = ref.workbook_contents(spend.workbook(store, reference))
+        assert new == ref.workbook_contents(ref.spend_workbook(store, reference))
+    assert len(new[1]["cells"]) > 200 and new[1]["widths"]["F"] == 48  # the long line, past the first 200 rows
+    empty = Store(tmp_path / "empty.db")
+    assert ref.workbook_contents(spend.workbook(empty, None)) == ref.workbook_contents(ref.spend_workbook(empty, None))
+
+
 def test_non_recoverable_tax_on_its_own_account_is_spend(tmp_path):
     import json
 

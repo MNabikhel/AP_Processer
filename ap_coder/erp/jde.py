@@ -1136,12 +1136,22 @@ def _plain(value: Any, places: int = 2) -> str:
 # --- Checks over a batch -----------------------------------------------------------------------------------------
 
 
-def prior_records(store: Any, exclude_ids: Iterable[int] = ()) -> dict[str, list[dict[str, Any]]]:
+def prior_records(store: Any, exclude_ids: Iterable[int] = (),
+                  invoices: list[dict[str, Any]] | None = None) -> dict[str, list[dict[str, Any]]]:  # fmt: skip
     """What is already out (read-only): invoices in live export batches (not ``exclude_ids``) and the
-    imported ERP invoice register."""
+    imported ERP invoice register. With ``invoices``: only what has one of their invoice numbers (as compared), all
+    ``duplicate_problems`` reads of it for them, picked by SQLite (D-156): not the year's exports and the whole
+    register read for a day's batch."""
     exclude = set(exclude_ids)
-    exported = [r for r in store.search_rows(exported=True) if r["id"] not in exclude]
-    return {"exported": exported, "register": store.erp_register()}
+    if invoices is None:
+        exported = [r for r in store.search_rows(exported=True) if r["id"] not in exclude]
+        return {"exported": exported, "register": store.erp_register()}
+    numbers = sorted({norm_invoice_number((inv.get("final_output") or {}).get("invoice_number")) for inv in invoices}
+                     - {""})  # fmt: skip
+    ids = [r["id"] for r in store.summary_rows("export_batch IS NOT NULL AND number_key IN (SELECT value FROM "
+                                               "json_each(?))", (json.dumps(numbers),), "id")]  # fmt: skip
+    exported = [r for r in store.search_rows(ids=ids, exported=True) if r["id"] not in exclude] if ids else []
+    return {"exported": exported, "register": store.erp_register(numbers)}
 
 
 def _negative(value: Any) -> bool:

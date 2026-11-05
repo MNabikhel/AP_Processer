@@ -98,6 +98,7 @@ RULES: dict[tuple[str, str], str] = {
         CLERK,
         # Bringing invoices in.
         "GET /process", "POST /process/upload", "POST /process/folder", "GET /process/status",
+        "POST /spend/data",  # the Spend data workbook made in the background, for everyone (D-156)
         "GET /process/inbox/{entry_id}/file/{n}", "POST /process/inbox/{entry_id}/to-queue/{n}",
         "POST /process/inbox/{entry_id}/done", "POST /review/{invoice_id}/retry",
         # The review screen: edits, checks, the first approval, park, reject, reopen, undo (their own approval).
@@ -177,8 +178,10 @@ RULES: dict[tuple[str, str], str] = {
     ),
 }  # fmt: skip
 
-# What seeing a job's progress needs (GET /jobs/{name}): the role that may start it (D-109). Any other job: an Admin.
-JOB_NEEDS = {"process": READ, "jde-api": CLERK, "jde-sync": ADMIN, "settings-doctor": ADMIN, "azure-test": ADMIN}
+# What seeing a job's progress needs (GET /jobs/{name}): the role that may start it (D-109), or use what it makes (the
+# Spend workbook, D-156). Any other job: an Admin.
+JOB_NEEDS = {"process": READ, "jde-api": CLERK, "jde-sync": ADMIN, "settings-doctor": ADMIN, "azure-test": ADMIN,
+             "spend-data": READ}  # fmt: skip
 
 
 def allowed(role: str | None, need: str) -> bool:

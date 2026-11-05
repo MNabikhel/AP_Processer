@@ -34,8 +34,9 @@ from .fx import _FX_RATE, APPROVAL_CONTROLS, parse_fx_rates, tiny_fx_rates, unre
 # 18: users, sessions, login_attempts (by _SCHEMA: server mode's accounts, D-97), later vendors.erp_bank (D-104) and
 # vendor_aliases (by _SCHEMA: a vendor name read wrong, as AP corrected it, D-119), line_texts (by _SCHEMA: a
 # supplier's line descriptions as AP approved them, D-120)
-SCHEMA_VERSION = 22  # 19: the invoices' summary and its triggers (summary.py, ``_summary_migrate``, D-110), 20: indexes
-# (below), 22: the ERP register's vendor names and invoice numbers as the quick search compares them (D-157)
+SCHEMA_VERSION = 24  # 19: the invoices' summary and its triggers (summary.py, ``_summary_migrate``, D-110), 20: indexes
+# (B-1581), 22: the ERP register's vendor names and invoice numbers as the quick search compares them (D-157), 24: the
+# events' indexes by day and by person, the register's by number (D-156)
 # Schema 20's indexes (B-1581), for: an export batch's invoices (undo, an empty batch, who may post it), an invoice's
 # coding memory (withdrawn at a reopen, rejection or delete), the events of a kind since a day (touchless figures,
 # the approval controls, who vouched for an account), an account's sessions, the expired one-off values, and a
@@ -47,6 +48,15 @@ _INDEXES_20 = (
     "CREATE INDEX IF NOT EXISTS sessions_user ON sessions (user_id)",
     "CREATE INDEX IF NOT EXISTS ephemeral_expires ON ephemeral (expires_at)",
     "CREATE INDEX IF NOT EXISTS vendors_erp_id ON vendors (erp_id)",
+)
+# Schema 24's indexes (D-156): the events of a period counted (Activity's last 7 days, the controls report) and the
+# people the events are by (Activity's Person filter, an event by one person), each read off the index alone, not the
+# events table (400,000 events at 100,000 invoices); the ERP register's invoices of some numbers (the JD Edwards
+# duplicate check of a batch), not the whole register (200,000 rows).
+_INDEXES_24 = (
+    "CREATE INDEX IF NOT EXISTS events_created ON events (created_at, action)",
+    "CREATE INDEX IF NOT EXISTS events_actor ON events (actor)",
+    "CREATE INDEX IF NOT EXISTS erp_invoices_number ON erp_invoices (number_key)",
 )
 # The one-off clean-ups of the learning memory ``_migrate`` has run on a database (settings.feedback_cleanup): a new
 # clean-up added there changes it, so it runs once on every database.
@@ -365,35 +375,6 @@ def suggestion_kept(s_gl: str | None, s_cc: str | None, f_gl: str, f_cc: str | N
     return (gl_blank or s_gl == f_gl) and (cc_blank or s_cc == (f_cc or ""))
 
 
-def _rescored(output: dict[str, Any], stored: str | None, reading: float) -> dict[str, Any] | None:
-    """The stored checks ``stored`` (JSON) of an invoice coded ``output``, scored again with ``reading`` as its
-    Reading (``Store._reading_as_d89``): its findings as they were, the Coding from its lines without the accounts'
-    lists (a line to an unknown account has its finding, which keeps it for a person anyway), and no checks stamp, so
-    the queue checks it again. None when there are none, or they can't be read."""
-    from ...coding.validation import line_coding_confidence, score
-    from ...core.schema import InvoiceCoding
-
-    try:
-        validation = json.loads(stored) if stored else None
-        if not isinstance(validation, dict):
-            return None
-        coding = InvoiceCoding.model_validate({k: v for k, v in output.items() if k != "gl_distribution"})
-        findings = [(str(i.get("severity") or ""), str(i.get("code") or "")) for i in validation.get("issues") or []]
-        threshold = float(validation.get("review_threshold") or 0.85)
-    except (ValueError, TypeError, AttributeError):
-        return None
-    taxed = any(t.tax_amount for t in coding.tax_lines)
-    sure = [line_coding_confidence(li, False, taxed) for li in coding.line_items]
-    coded = round(sum(sure) / len(sure), 4) if sure else 0.0
-    read, coded, adjusted, review = score(reading, coded, findings, threshold)
-    # The AI reviewer's or the Azure check's disagreement keeps it for a person whatever the scores (B-956).
-    review = review or any(code.startswith(("VERIFIER_", "AZURE_DI_")) for _, code in findings)
-    validation.pop(CHECKS_STAMP_KEY, None)
-    validation.pop("recheck", None)
-    return {**validation, "model_confidence": reading, "reading_confidence": read, "coding_confidence": coded,
-            "adjusted_confidence": adjusted, "requires_review": review}  # fmt: skip
-
-
 def line_guessed(suggestion: dict[str, Any] | None, rule: dict[str, Any] | None = None) -> bool:
     """Whether the AI only guessed this line's account (``offline_coder.guessed``: the chat model's own pick, an
     older version's weak match), also under a fixed coding rule that replaced the guess (``rule``: its entry in the
@@ -570,6 +551,9 @@ class StoreCore:
         if version < 20:  # the lookups that read a whole table, a year of invoices on the server (B-1581)
             for sql in _INDEXES_20:
                 conn.execute(sql)
+        if version < 24:  # the events of a period and of a person, off an index (D-156)
+            for sql in _INDEXES_24:
+                conn.execute(sql)
         # The page reader's queue remembers who is reading an invoice and how many reads were cut off (added within
         # schema 15: looked for whatever the version).
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(page_reads)")}
@@ -697,7 +681,9 @@ class StoreCore:
             conn.execute(f"ALTER TABLE feedback ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
         if missing:
             self._fill_tax_codes(conn)
-        self._reading_as_d89(conn)
+        from .old_readings import reading_as_d89  # (it imports this part: here, not at the top)
+
+        reading_as_d89(conn)  # once per database
         fill_seen_files(conn)  # what the pick-up read of the folder: each invoice's own file to start with (D-155)
         if version < SCHEMA_VERSION:
             conn.execute(
@@ -705,49 +691,6 @@ class StoreCore:
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (str(SCHEMA_VERSION),),
             )
-
-    @staticmethod
-    def _reading_as_d89(conn: sqlite3.Connection) -> None:
-        """Once per database (``settings.reading_d89``): the invoices still to approve that the local readers read
-        before D-89 had a confidence multiplied by the share of lines coded; their ``confidence_score`` becomes the
-        Reading of their stored capture. The queue's confidence and review flag follow, from their stored findings and a
-        Coding worked out from their lines (``validation.score``; the accounts' lists are checked again in the queue:
-        their checks stamp is cleared for ``bulk.issues_today``, D-88), so the queue is sorted and flagged by the new
-        figures (B-895). One read by a chat model (or without a stored capture) keeps its own confidence as its Reading,
-        its queue figure worked out again the same way (it showed the old one beside a lower Coding, B-956)."""
-        if conn.execute("SELECT 1 FROM settings WHERE key = 'reading_d89'").fetchone():
-            return
-        from ...ai.offline_coder import MODEL_NAME
-        from ...capture.confidence import reading_confidence
-        from ...capture.types import FieldResult
-        from .capture import capture_value
-
-        rows = conn.execute(
-            """SELECT i.id, i.ai_output, i.meta, i.validation, c.capture_json FROM invoices i LEFT JOIN
-               invoice_capture c ON c.invoice_id = i.id WHERE i.status IN (?, ?) AND i.ai_output IS NOT NULL""",
-            (REVIEW, PARKED),
-        ).fetchall()
-        for r in rows:
-            try:
-                output = json.loads(r["ai_output"])
-                local = (json.loads(r["meta"] or "{}").get("inference") or {}).get("model") == MODEL_NAME
-                if local and r["capture_json"]:
-                    fields = (capture_value(r["capture_json"]) or {}).get("fields") or {}
-                    reading = reading_confidence({k: FieldResult.from_dict(v) for k, v in fields.items()})
-                else:  # read by a chat model or the demo: its own confidence
-                    reading, local = float(output.get("confidence_score") or 0.0), False
-            except (ValueError, TypeError, KeyError, AttributeError):
-                continue
-            if local:
-                output["confidence_score"] = reading
-                conn.execute("UPDATE invoices SET ai_output = ?, model_confidence = ? WHERE id = ?",
-                             (json.dumps(output), reading, r["id"]))  # fmt: skip
-            validation = _rescored(output, r["validation"], reading)
-            if validation is not None:
-                conn.execute("UPDATE invoices SET validation = ?, adjusted_confidence = ?, requires_review = ? "
-                             "WHERE id = ?", (json.dumps(validation, default=str), validation["adjusted_confidence"],
-                                              int(validation["requires_review"]), r["id"]))  # fmt: skip
-        conn.execute("INSERT INTO settings (key, value) VALUES ('reading_d89', '1') ON CONFLICT(key) DO NOTHING")
 
     @staticmethod
     def _fill_tax_codes(conn: sqlite3.Connection) -> None:
