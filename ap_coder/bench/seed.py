@@ -19,9 +19,9 @@ How it stays faithful to the app:
   (``InvoicePipeline.process``) and approved as the review screen does (``approve_invoice``, ``learn_from_approval``),
   so every table an arrival and an approval write has its real rows.
 * Every other invoice is a template's rows cloned with ``executemany``: its own id, vendor (with the vendor master's
-  GST/HST number), invoice number, dates, amounts (the template's times a whole number, so every sum stays exact to
-  the cent) and status. A clone in the queue keeps its template's checks, stamped with today's ``checks_stamp``, as
-  if checked after the last change to the reference data.
+  GST/HST number), invoice number, dates, amounts of its own (its template's scaled and added up again, so every check
+  that adds up still does: ``_scaled``) and status. A clone in the queue keeps its template's checks, stamped with
+  today's ``checks_stamp``, as if checked after the last change to the reference data.
 * The triggers mark every clone in ``summary_dirty`` as any change does; the store then works the summary, its search
   index and its generations out itself (``_refresh_summary``).
 * Each clone's file is a hard link to its template's PDF in ``invoices/``, so 100,000 invoices take a few MB of files;
@@ -33,7 +33,8 @@ the app), sessions and login tries, drafts, manager requests. The clones' page t
 
 The bulk writes run with the rollback journal off and the database back in WAL mode at the end: a build cut short is
 made again, not repaired. It refuses a folder that already has a database (``--replace`` deletes it first) and a build
-the disk can't hold."""
+the disk can't hold. It ends with a stand-in for the day's backup (``mark_backed_up``), so the app serving the folder
+doesn't copy it whole at its start; ``--mark-backed-up`` writes it again (it lasts 20 hours)."""
 
 from __future__ import annotations
 
@@ -64,8 +65,10 @@ BYTES_PER_HISTORY = 9_500  # the learning rows of an approved invoice (``--histo
 BYTES_PER_REGISTER = 200
 DISK_MARGIN = 300 * 1024 * 1024  # left free after the build
 ROLE_SHARES = (("clerk", 0.70), ("approver", 0.20), ("admin", 0.05), ("readonly", 0.05))
-APPROVAL_LIMIT = 50_000  # CAD: over it, a second approval (Settings → Review); about 8% of the invoices
-MULTIPLES = ((1, 0.60), (2, 0.20), (3, 0.10), (4, 0.05), (5, 0.03), (6, 0.02))  # a clone's amounts: its template's x
+APPROVAL_LIMIT = 25_000  # CAD: over it, a second approval (Settings → Review); about 4% of the invoices
+# A clone's amounts: its template's ($1,800 to $21,600) times a factor drawn evenly on a log scale, so each invoice has
+# amounts of its own (a vendor's invoices of one amount are as rare as on real ones: the duplicate checks pair them)
+FACTORS = (0.05, 2.0)
 FX_RATES = "USD=1.37"
 CREDIT_NOTE = "northwind_ON_HST_CN-2026-0047"  # the template a share of the clones of every vendor use
 SHARES = {"parked": 0.05, "rejected": 0.01, "failed": 0.003, "credit": 0.02, "po": 0.15}
@@ -117,7 +120,7 @@ class Clone(NamedTuple):
     number: str
     created: str
     invoice_date: str
-    k: int  # the template's amounts times this
+    factor: float  # its amounts: about its template's times this (``_scaled``)
     status: str
     reviewed: str | None
     reviewer: int | None  # index in the users
@@ -161,11 +164,20 @@ def add_parser(sub: Any) -> argparse.ArgumentParser:
     p.add_argument("--seed", type=int, default=1, help="random seed: the same seed gives the same data")
     p.add_argument("--workers", type=int, default=min(4, os.cpu_count() or 1), help="processes making the clones")
     p.add_argument("--replace", action="store_true", help="delete the folder's database and files first")
+    p.add_argument("--mark-backed-up", action="store_true",
+                   help="only write a stand-in for today's backup in a folder made already (the app then makes none "
+                        "for 20 hours): run it before serving a big folder")  # fmt: skip
     p.set_defaults(run=main)
     return p
 
 
 def main(a: argparse.Namespace) -> int:
+    if a.mark_backed_up:
+        if not (Path(a.out) / DB_NAME).is_file():
+            print(f"seed: {a.out} has no {DB_NAME}", file=sys.stderr)
+            return 1
+        print(f"the day's backup stood in for (for 20 hours): {mark_backed_up(Path(a.out))}")
+        return 0
     try:
         report = build(Path(a.out), invoices=a.invoices, vendors=a.vendors, master=a.master, gl=a.gl,
                        cost_centers=a.cost_centers, pos=a.pos, users=a.users, queue=a.queue, months=a.months,
@@ -241,11 +253,11 @@ def build(out: Path, *, invoices: int = 12_000, vendors: int = 3_000, master: in
         plan = _plan(store, rng, invoices - len(templates), the_vendors[:vendors], templates, people, po_numbers,
                      queue, max(1, months), history)  # fmt: skip
         lap("plan")
-        counts = _write(store, out, plan, templates, the_vendors, people, files, workers)
+        counts, totals = _write(store, out, plan, templates, the_vendors, people, files, workers)
         lap("clones")
         _summary(store)
         lap("summary")
-        counts["register"] = _register(store, plan, templates, the_vendors, rng, register)
+        counts["register"] = _register(store, plan, totals, the_vendors, rng, register)
         lap("register")
     finally:
         if old_env is None:
@@ -253,6 +265,7 @@ def build(out: Path, *, invoices: int = 12_000, vendors: int = 3_000, master: in
         else:
             os.environ["AP_PRIVATE_DIR"] = old_env
     sizes = _sizes(db, out, invoices)
+    mark_backed_up(out)
     seconds["total"] = round(time.perf_counter() - started, 2)
     report = {
         "config": {"invoices": invoices, "vendors": vendors, "master": master, "gl": gl, "cost_centers": cost_centers,
@@ -558,7 +571,7 @@ def _plan(store: Any, rng: random.Random, n: int, vendors: list[Vendor], templat
         vendor = vendors[v]
         created = dt.datetime.combine(days[d], dt.time(8)) + dt.timedelta(seconds=seconds)
         t = credit if credit is not None and rng.random() < SHARES["credit"] else vendor.template
-        k = rng.choices([m for m, _ in MULTIPLES], weights=[w for _, w in MULTIPLES])[0]
+        factor = round(math.exp(rng.uniform(*(math.log(f) for f in FACTORS))), 4)
         number_n = sequence[v] = sequence.get(v, rng.randrange(1000, 90_000)) + rng.randint(1, 3)
         number = vendor.prefix.format(n=number_n, y=created.year)
         inv_date = (created.date() - dt.timedelta(days=rng.randint(0, 10))).isoformat()
@@ -567,7 +580,7 @@ def _plan(store: Any, rng: random.Random, n: int, vendors: list[Vendor], templat
             listed = po_numbers[v]
             po = listed[po_used.get(v, 0) % len(listed)]
             po_used[v] = po_used.get(v, 0) + 1
-        over = totals[t] * k > APPROVAL_LIMIT
+        over = totals[t] * factor > APPROVAL_LIMIT
         in_queue = i >= n - queue
         ready = i >= n - queue - ready_count  # approved, waiting for the next export
         reviewer = rng.choice(clerks)
@@ -607,7 +620,7 @@ def _plan(store: Any, rng: random.Random, n: int, vendors: list[Vendor], templat
                 batch_at = _at(export_day, 8 * 3600)
                 exporter = approvers[export_day.toordinal() % len(approvers)]
         plan.append(Clone(
-            first_id + i, t, v, number, created.isoformat(timespec="seconds"), inv_date, k, status,
+            first_id + i, t, v, number, created.isoformat(timespec="seconds"), inv_date, factor, status,
             reviewed_at.isoformat(timespec="seconds") if reviewed_at else None,
             reviewer if status != "failed" else None, second, second_at.isoformat(timespec="seconds")
             if second_at else None, batch, batch_at, exporter, parked,
@@ -634,38 +647,88 @@ def logging_off() -> None:
     logging.disable(logging.INFO)
 
 
-def _scaled(doc: dict[str, Any], k: int) -> None:
-    """The coding's amounts times ``k`` (a whole number: each sum stays exact to the cent)."""
+def _number(value: Any) -> float | None:
+    return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
 
-    def times(row: dict[str, Any], *fields: str) -> None:
-        for f in fields:
-            if isinstance(row.get(f), int | float):
-                row[f] = round(row[f] * k, 2)
 
-    times(doc, "subtotal", "tax_total", "grand_total")
-    for li in doc.get("line_items") or []:
-        times(li, "quantity", "amount")
+def _scaled(doc: dict[str, Any], factor: float) -> dict[str, float]:
+    """The coding's amounts about ``factor`` times its template's, worked out again as an invoice adds up, so every
+    check that adds up still does: each unit price times ``factor`` to the cent and each line its quantity times its
+    price, the subtotal their sum (with what the template has beside its lines), each tax its rate times its base,
+    the total their sum, the posting lines in proportion with the odd cents on the largest. Returns the stored checks'
+    sums (``validation.checks``)."""
+    old_sub = _number(doc.get("subtotal")) or 0.0
+    lines = doc.get("line_items") or []
+    old_lines = sum(_number(li.get("amount")) or 0.0 for li in lines)
+    for li in lines:
+        quantity, price, amount = (_number(li.get(f)) for f in ("quantity", "unit_price", "amount"))
+        if quantity and price is not None and amount is not None and round(quantity * price, 2) == round(amount, 2):
+            li["unit_price"] = round(price * factor, 2)
+            li["amount"] = round(quantity * li["unit_price"], 2)
+        elif amount is not None:
+            li["amount"] = round(amount * factor, 2)
+    new_lines = round(sum(_number(li.get("amount")) or 0.0 for li in lines), 2)
+    new_sub = round(new_lines + (old_sub - old_lines) * factor, 2)
+    share = new_sub / old_sub if old_sub else factor
+    taxes: dict[float, float] = {}  # a tax's amount before -> after (a posting line of recoverable tax is one)
     for tl in doc.get("tax_lines") or []:
-        times(tl, "taxable_amount", "tax_amount")
-    for row in doc.get("gl_distribution") or []:
-        times(row, "net_amount", "non_recoverable_tax", "amount")
+        base, rate, tax = (_number(tl.get(f)) for f in ("taxable_amount", "rate", "tax_amount"))
+        new_base = round(base * share, 2) if base is not None else None
+        if rate and new_base is not None and tax is not None and abs(rate * base - tax) <= 0.011:
+            new_tax = round(rate * new_base, 2)
+        else:
+            new_tax = round((tax or 0.0) * factor, 2)
+        if new_base is not None:
+            tl["taxable_amount"] = new_base
+        if tax is not None:
+            taxes.setdefault(tax, new_tax)
+            tl["tax_amount"] = new_tax
+    old_total = _number(doc.get("grand_total")) or 0.0
+    old_tax = _number(doc.get("tax_total")) or 0.0
+    tax_total = round(sum(_number(tl.get("tax_amount")) or 0.0 for tl in doc.get("tax_lines") or []), 2)
+    if not doc.get("tax_lines"):
+        tax_total = round(old_tax * factor, 2)
+    total = round(new_sub + tax_total + (old_total - old_sub - old_tax) * factor, 2)
+    doc.update(subtotal=new_sub, tax_total=tax_total, grand_total=total)
+    by_line = {li.get("line_number"): _number(li.get("amount")) for li in lines}
+    rows = [r for r in doc.get("gl_distribution") or [] if isinstance(r, dict)]
+    for r in rows:
+        net, extra, amount = (_number(r.get(f)) or 0.0 for f in ("net_amount", "non_recoverable_tax", "amount"))
+        if r.get("kind") == "tax":
+            r["amount"] = taxes.get(amount, round(amount * factor, 2))
+            continue
+        new_net = by_line.get(r.get("line_number"))
+        new_net = round(net * factor, 2) if new_net is None else new_net
+        r["net_amount"] = new_net
+        r["non_recoverable_tax"] = round(extra * (new_net / net if net else factor), 2)
+        r["amount"] = round(new_net + r["non_recoverable_tax"], 2)
+    posted = round(sum(_number(r.get("amount")) or 0.0 for r in rows), 2)
+    expenses = [r for r in rows if r.get("kind") != "tax"]
+    if expenses and posted != total:  # the odd cents, as the app's split puts them: on one line
+        largest = max(expenses, key=lambda r: abs(r["amount"]))
+        largest["non_recoverable_tax"] = round(largest["non_recoverable_tax"] + total - posted, 2)
+        largest["amount"] = round(largest["net_amount"] + largest["non_recoverable_tax"], 2)
+        posted = total
+    return {"line_sum": new_lines, "subtotal": new_sub, "subtotal_plus_tax": round(new_sub + tax_total, 2),
+            "grand_total": total, "posting_total": posted if rows else total}  # fmt: skip
 
 
-def _coding(text: str | None, c: Clone, v: Vendor, terms_days: int) -> tuple[dict[str, Any] | None, str | None]:
-    """A template's coding (JSON text) as the clone ``c`` of vendor ``v``: (the coding, its due date)."""
+def _coding(text: str | None, c: Clone, v: Vendor,
+            terms_days: int) -> tuple[dict[str, Any] | None, str | None, dict[str, float]]:  # fmt: skip
+    """A template's coding (JSON text) as the clone ``c`` of vendor ``v``: (the coding, its due date, its checks'
+    sums)."""
     from ap_coder.core.store._base import _due
 
     if not text:
-        return None, None
+        return None, None, {}
     doc = json.loads(text)
     doc.update(vendor_name=v.name, invoice_number=c.number, invoice_date=c.invoice_date, po_number=c.po)
     if doc.get("gst_hst_registration_number"):
         doc["gst_hst_registration_number"] = v.gst
     if doc.get("due_date"):
         doc["due_date"] = ""
-    if c.k != 1:
-        _scaled(doc, c.k)
-    return doc, _due(doc, terms_days, v.terms)
+    sums = _scaled(doc, c.factor)
+    return doc, _due(doc, terms_days, v.terms), sums
 
 
 def _file(c: Clone, template: dict[str, Any]) -> tuple[Path, str]:
@@ -706,15 +769,17 @@ def _clone_rows(clones: list[Clone]) -> dict[str, list[tuple[Any, ...]]]:
         base = t["approved"] if signed else t["review"]
         path, sha = _file(c, t)
         row = dict(base["invoice"])
-        ai, due = _coding(t["review"]["invoice"]["ai_output"], c, v, 30)
-        final, final_due = _coding(base["invoice"]["final_output"], c, v, 30) if signed else (None, None)
+        ai, due, sums = _coding(t["review"]["invoice"]["ai_output"], c, v, 30)
+        final, final_due, final_sums = (
+            _coding(base["invoice"]["final_output"], c, v, 30) if signed else (None, None, {})
+        )
         doc = final or ai or {}
         validation = json.loads(base["invoice"]["validation"] or "{}")
         validation.update(checks_stamp=ctx["stamp"], source=str(path))
         checks = validation.get("checks") or {}
-        for f in ("line_sum", "subtotal", "subtotal_plus_tax", "grand_total", "posting_total"):
+        for f, value in (final_sums or sums).items():
             if isinstance(checks.get(f), int | float):
-                checks[f] = round(checks[f] * c.k, 2)
+                checks[f] = value
         meta = json.loads(base["invoice"]["meta"] or "{}")
         meta["source"] = str(path)
         reviewer = people[c.reviewer] if c.reviewer is not None else None
@@ -771,8 +836,9 @@ def _clone_rows(clones: list[Clone]) -> dict[str, list[tuple[Any, ...]]]:
             events.append((c.id, "exported", people[c.exporter].name, json.dumps({
                 "batch": c.batch, "format": "csv", "total": doc.get("grand_total"),
                 "currency": (doc.get("currency") or "CAD").upper()}), c.batch_at))  # fmt: skip
+        amounts = {li.get("line_number"): li.get("amount") for li in doc.get("line_items") or []}
         for f in t["approved"]["feedback"]:
-            amount = round(f["amount"] * c.k, 2) if isinstance(f["amount"], int | float) else f["amount"]
+            amount = amounts.get(f["line_number"], f["amount"])  # the line's, as approved
             out["feedback"].append((c.id, f["line_number"], v.key, v.name, f["description"], amount, f["suggested_gl"],
                                     f["final_gl"], f["suggested_cc"], f["final_cc"], f["outcome"], reviewer.name,
                                     c.reviewed, f["final_tax_code"], f["tax_source"], f["tax_province"],
@@ -839,10 +905,10 @@ def _bulk(db: Path) -> sqlite3.Connection:
 
 
 def _write(store: Any, out: Path, plan: list[Clone], templates: list[dict[str, Any]], vendors: list[Vendor],
-           people: list[User], files: str, workers: int) -> dict[str, int]:  # fmt: skip
+           people: list[User], files: str, workers: int) -> tuple[dict[str, int], dict[int, float]]:  # fmt: skip
     """Every clone's rows (made by ``workers`` processes, ``_clone_rows``), its export batches, its vendors' lessons
     and supplier profiles, and the people's logins; the events and lessons written in the order of their time, as the
-    app writes them."""
+    app writes them. (what was written by table, each clone's grand total)"""
     stamp = store.checks_stamp()
     with store._conn() as conn:
         columns = [r[1] for r in conn.execute("PRAGMA table_info(invoices)")]
@@ -853,6 +919,8 @@ def _write(store: Any, out: Path, plan: list[Clone], templates: list[dict[str, A
     insert_invoices = f"INSERT INTO invoices ({', '.join(columns)}) VALUES ({marks})"
     counts = {"clones": len(plan), **dict.fromkeys((*TABLES[1:], "events"), 0)}
     events: list[tuple[Any, ...]] = []
+    totals: dict[int, float] = {}
+    at_id, at_total = columns.index("id"), columns.index("grand_total")
     conn = _bulk(store.path)
     try:
         if workers > 1:
@@ -865,7 +933,9 @@ def _write(store: Any, out: Path, plan: list[Clone], templates: list[dict[str, A
         try:
             for rows in results:
                 conn.execute("BEGIN")
-                conn.executemany(insert_invoices, rows.pop("invoices"))
+                invoices = rows.pop("invoices")
+                conn.executemany(insert_invoices, invoices)
+                totals.update((r[at_id], r[at_total]) for r in invoices if r[at_total] is not None)
                 for table, found in rows.items():
                     counts[table] += len(found)
                     if table == "events":
@@ -882,12 +952,12 @@ def _write(store: Any, out: Path, plan: list[Clone], templates: list[dict[str, A
         events.sort(key=lambda e: e[4])
         conn.execute("BEGIN")
         conn.executemany(_INSERTS["events"], events)
-        _batches(conn, plan, templates, people)
+        _batches(conn, plan, totals, templates, people)
         counts["lessons"], counts["supplier_profiles"] = _lessons(conn, plan, templates, vendors, people)
         conn.execute("COMMIT")
     finally:
         conn.close()
-    return counts
+    return counts, totals
 
 
 def _logins(plan: list[Clone], people: list[User]) -> list[tuple[Any, ...]]:
@@ -904,7 +974,8 @@ def _logins(plan: list[Clone], people: list[User]) -> list[tuple[Any, ...]]:
     return out
 
 
-def _batches(conn: sqlite3.Connection, plan: list[Clone], templates: list[dict[str, Any]], people: list[User]) -> None:
+def _batches(conn: sqlite3.Connection, plan: list[Clone], totals: dict[int, float], templates: list[dict[str, Any]],
+             people: list[User]) -> None:  # fmt: skip
     """One export batch per business day (CSV), with its invoices' count and total."""
     found: dict[int, list[Clone]] = {}
     for c in plan:
@@ -912,7 +983,7 @@ def _batches(conn: sqlite3.Connection, plan: list[Clone], templates: list[dict[s
             found.setdefault(c.batch, []).append(c)
     rows = []
     for batch, clones in sorted(found.items()):
-        total = sum(_total(c, templates) for c in clones)
+        total = sum(totals.get(c.id, 0.0) for c in clones)
         mixed = len({templates[c.template]["review"]["coding"].get("currency") or "CAD" for c in clones}) > 1
         rows.append((batch, clones[0].batch_at, people[clones[0].exporter].name, "csv", len(clones),
                      None if mixed else round(total, 2)))  # fmt: skip
@@ -971,16 +1042,11 @@ def _lessons(conn: sqlite3.Connection, plan: list[Clone], templates: list[dict[s
     return len(lessons), len(profiles)
 
 
-def _total(c: Clone, templates: list[dict[str, Any]]) -> float:
-    """The clone's grand total (its template's times ``k``, as ``_scaled`` makes it)."""
-    return round(float(templates[c.template]["review"]["coding"].get("grand_total") or 0) * c.k, 2)
-
-
 # --- The register, the summary, the sizes ----------------------------------------------------------------------------
 
 
-def _register(store: Any, plan: list[Clone], templates: list[dict[str, Any]], vendors: list[Vendor],
-              rng: random.Random, n: int) -> int:  # fmt: skip
+def _register(store: Any, plan: list[Clone], totals: dict[int, float], vendors: list[Vendor], rng: random.Random,
+              n: int) -> int:  # fmt: skip
     """The JD Edwards register (``import_erp_register``, as the nightly sync writes it): every exported invoice, then
     older vouchers of the vendor master's vendors (the two years before AP Coder, the biggest suppliers first) up to
     ``n`` rows."""
@@ -990,7 +1056,7 @@ def _register(store: Any, plan: list[Clone], templates: list[dict[str, Any]], ve
     for c in plan:
         if c.batch is not None and len(rows) < n:
             rows.append({"vendor_name": vendors[c.vendor].name, "invoice_number": c.number,
-                         "total": _total(c, templates), "invoice_date": c.invoice_date})  # fmt: skip
+                         "total": totals[c.id], "invoice_date": c.invoice_date})  # fmt: skip
     weights = [1 / (r + 1) ** 0.9 for r in range(len(vendors))]
     start = dt.date.today() - dt.timedelta(days=3 * 365)
     for i, v in enumerate(rng.choices(range(len(vendors)), weights=weights, k=max(0, n - len(rows)))):
@@ -1012,6 +1078,34 @@ def _summary(store: Any) -> None:
     finally:
         conn.close()
     store.status_counts()  # a store connection: nothing left to work out
+
+
+MARKER_NOTE = "a stand-in for the day's backup, made by ap_coder.bench seed: not a backup, never restore it"
+
+
+def mark_backed_up(out: Path) -> Path:
+    """A stand-in for the day's backup in ``out/backups``: ``ap_coder-<now>.db`` (a database of one setting saying
+    what it is) and its list of no files. The app's daily backup (``Store.auto_backup``: when the dashboard or the
+    server's background process starts, and every hour) makes none while a daily backup under 20 hours old is there,
+    so serving a big seeded folder never copies its database whole (2.2 GB at 100,000 invoices) and fills the disk.
+    It lasts 20 hours: write it again before each run (``seed --out DIR --mark-backed-up``). Its name and list are
+    the app's own (``backups.DAILY``, ``backup_files.list_path``)."""
+    from ap_coder.core.store import backup_files
+
+    folder = out / "backups"
+    folder.mkdir(exist_ok=True)
+    path = folder / f"ap_coder-{dt.datetime.now().strftime('%Y%m%d-%H%M%S')}.db"
+    path.unlink(missing_ok=True)
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        conn.execute("INSERT INTO settings (key, value) VALUES ('bench_marker', ?)", (MARKER_NOTE,))
+        conn.commit()
+    finally:
+        conn.close()
+    listed = {"files": [], "note": MARKER_NOTE}
+    backup_files.list_path(path).write_text(json.dumps(listed) + "\n", encoding="utf-8")
+    return path
 
 
 def _counts(db: Path) -> dict[str, int]:

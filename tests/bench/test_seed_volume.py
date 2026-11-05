@@ -88,6 +88,36 @@ def test_what_the_seed_writes_reads_as_the_app_would_have_it(seeded, tmp_path):
         assert queue and {stamps[i][0] for i in queue} == {store.checks_stamp()}
 
 
+def test_each_clone_has_amounts_of_its_own_that_add_up(seeded):
+    conn = sqlite3.connect(seeded / "ap_coder.db")
+    try:
+        rows = conn.execute("SELECT vendor_key, grand_total, COALESCE(final_output, ai_output), validation "
+                            "FROM invoices WHERE id > 10 AND status != 'failed'").fetchall()  # fmt: skip
+    finally:
+        conn.close()
+    assert len({(vendor, total) for vendor, total, _, _ in rows}) > 0.95 * len(rows)  # same vendor and amount: rare
+    for _, total, text, validation in rows:
+        doc, checks = json.loads(text), json.loads(validation)["checks"]
+        lines = round(sum(li["amount"] for li in doc["line_items"]), 2)
+        assert all(round(li["quantity"] * li["unit_price"], 2) == li["amount"] for li in doc["line_items"])
+        assert all(
+            abs(t["rate"] * t["taxable_amount"] - t["tax_amount"]) <= 0.011 for t in doc["tax_lines"] if t["rate"]
+        )
+        assert round(doc["subtotal"] + doc["tax_total"], 2) == doc["grand_total"] == total == checks["grand_total"]
+        assert lines == checks["line_sum"] and round(sum(r["amount"] for r in doc["gl_distribution"]), 2) == total
+
+
+def test_the_seed_stands_in_for_the_day_s_backup_so_serving_it_copies_nothing(seeded, tmp_path):
+    with isolated(tmp_path):
+        store = Store(seeded / "ap_coder.db")
+        (marker,) = store.list_backups()
+        assert store.auto_backup() is None and store.list_backups() == [marker]  # no copy of the database made
+        made = marker.stat().st_mtime
+        assert main(["seed", "--out", str(seeded), "--mark-backed-up"]) == 0  # made again before another run
+        assert store.list_backups()[0].stat().st_mtime >= made and store.auto_backup() is None
+        assert not (seeded / "backups" / "files").exists()  # no invoice file copied either
+
+
 def test_the_volume_bench_times_each_address_and_lists_the_full_scans(seeded, tmp_path):
     out = tmp_path / "volume"
     report = volume.run(seeded, out, roles=("admin", "clerk"), repeat=1, big=100,
