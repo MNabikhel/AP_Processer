@@ -28,6 +28,8 @@ from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
 
+import anyio
+import anyio.to_thread
 from dotenv import dotenv_values
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
@@ -142,6 +144,22 @@ class BackupCheck:
         await self.app(scope, receive, send)
 
 
+# How many requests a web worker of the company server runs at once (D-153): each one under way holds what it read
+# (about 110 MB on average), and one Python process works on one at a time anyway (the GIL), so anyio's 40 threads
+# multiplied the memory, not the pages answered (16 people at once: 1.9-2.15 GB a worker with 40, 1.33 GB with 4, the
+# same work done). The others wait their turn. A laptop keeps anyio's default.
+THREADS_ENV = "AP_WORKER_THREADS"
+WORKER_THREADS = 4
+
+
+def worker_threads() -> int:
+    """AP_WORKER_THREADS (server.json's ``worker_threads``), else WORKER_THREADS; from 1 to 40."""
+    try:
+        return min(40, max(1, int((os.environ.get(THREADS_ENV) or "").strip() or WORKER_THREADS)))
+    except ValueError:
+        return WORKER_THREADS  # a typo never stops the server
+
+
 def default_store() -> Store:
     """The database the dashboard uses: AP_DB_PATH, else the data folder's ap_coder.db."""
     return Store(paths.env_path("AP_DB_PATH") or default_db_path())
@@ -233,6 +251,8 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        if server:  # this event loop's thread pool: the plain handlers, sessions looked up, files sent
+            anyio.to_thread.current_default_thread_limiter().total_tokens = worker_threads()
         if background:  # once a day, when the dashboard starts, on its own thread: it never holds up the start
             app.state.daily_backup.start()
         if start_reader and background:
@@ -355,9 +375,10 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
         wants_page = request.method == "GET" and "text/html" in request.headers.get("accept", "")
         if not wants_page:
             return JSONResponse({"ok": False, "error": str(exc.detail)}, status_code=exc.status_code)
+        title = "Busy" if exc.status_code == 503 else "Not found"  # (503: the long routes' lane, core.run_heavy)
         # the page frame reads the database: on a threadpool thread, never holding up the other requests
         return await run_in_threadpool(core.render, request, "error.html", "", status_code=exc.status_code,
-                                       title="Not found", code=exc.status_code, detail=str(exc.detail))  # fmt: skip
+                                       title=title, code=exc.status_code, detail=str(exc.detail))  # fmt: skip
 
     @app.exception_handler(RequestValidationError)
     async def unreadable(request: Request, exc: RequestValidationError) -> Any:

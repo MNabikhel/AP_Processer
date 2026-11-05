@@ -36,11 +36,15 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
+import anyio
+import anyio.to_thread
 import jinja2
-from fastapi import Request
+from anyio.lowlevel import RunVar
+from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
+from starlette.concurrency import run_in_threadpool
 
 from ap_coder.core import paths, ui
 from ap_coder.core.config import Settings
@@ -155,6 +159,77 @@ def one_connection(handler: Callable[..., Any]) -> Callable[..., Any]:
     return wrapped
 
 
+# --- The long routes' own lane in each web worker of the company server (D-153) ---------------------------------
+# A worker runs a few requests at once (``app.worker_threads``). These routes can take seconds and read a lot (the
+# reports, exports, the audit trail, Report a problem), or wait on something else (a backup's thread, LM Studio,
+# JD Edwards): there they run on threads of their own, HEAVY_AT_ONCE at a time in each worker, so a few people's
+# reports never hold every thread while the others' pages wait. One that waits HEAVY_WAIT seconds for its turn is
+# told AP Coder is busy. On a laptop they run as any page does.
+HEAVY_ROUTES = frozenset({
+    ("GET", "/activity"), ("GET", "/activity/controls-report"),
+    ("GET", "/spend"), ("GET", "/spend/data.xlsx"),
+    ("GET", "/month-end"), ("GET", "/month-end/accruals.csv"),
+    ("GET", "/sales-tax"), ("GET", "/sales-tax/claims.csv"), ("GET", "/sales-tax/self-assessment.csv"),
+    ("GET", "/insights"),
+    ("GET", "/search/export.csv"), ("GET", "/search/export.xlsx"),
+    ("GET", "/exports"), ("GET", "/exports/duplicates.csv"), ("GET", "/exports/jde/dry-run.txt"),
+    ("GET", "/exports/batches/{batch:int}/download"), ("POST", "/exports/batches/{batch:int}/download"),
+    ("GET", "/exports/batches/{batch:int}/approved-pdfs.zip"),
+    ("GET", "/settings/jde/worksheet.xlsx"), ("GET", "/learning/training.zip"),
+    ("GET", "/help/report"), ("GET", "/help/report/setup"),
+    ("POST", "/settings/data/backup"), ("POST", "/settings/data/backup-copy"), ("POST", "/settings/data/restore"),
+    ("POST", "/settings/reading/check"), ("POST", "/settings/reading/load-model"), ("POST", "/settings/jde/api/test"),
+})  # fmt: skip
+HEAVY_AT_ONCE = 2
+HEAVY_WAIT = 30.0  # seconds
+BUSY = ("AP Coder is busy with other people's reports and exports just now. Try again in a minute: nothing was "
+        "lost.")  # fmt: skip
+_HEAVY_LANE: RunVar[anyio.CapacityLimiter] = RunVar("ap_coder_heavy_lane")  # one for each event loop (a worker's)
+
+
+def heavy(handler: Callable[..., Any]) -> Callable[..., Any]:
+    """A plain handler of HEAVY_ROUTES, run by ``run_heavy`` (``OneConnectionRoute`` applies it)."""
+
+    @functools.wraps(handler)
+    async def wrapped(*args: Any, **kwargs: Any) -> Any:
+        request = kwargs.get("request")
+        if request is None:
+            request = next(a for a in args if isinstance(a, Request))
+        return await run_heavy(request, functools.partial(handler, *args, **kwargs))
+
+    wrapped.heavy = True  # type: ignore[attr-defined]
+    return wrapped
+
+
+async def run_heavy(request: Request, call: Callable[..., Any], *args: Any) -> Any:
+    """``call(*args)`` on a thread, as FastAPI runs a plain handler; on the company server, in the long routes' lane
+    (HEAVY_AT_ONCE at a time, never on the worker's own threads). An ``async`` handler of a long route calls this
+    itself; a 503 saying BUSY after HEAVY_WAIT seconds in line."""
+    if not server_mode(request):
+        return await run_in_threadpool(call, *args)
+    lane = heavy_lane()
+    turn = False
+    with anyio.move_on_after(HEAVY_WAIT):
+        await lane.acquire()
+        turn = True
+    if not turn:
+        raise HTTPException(status_code=503, detail=BUSY)
+    try:  # a limiter of its own: the pool's tokens are the other requests'
+        return await anyio.to_thread.run_sync(functools.partial(call, *args), limiter=anyio.CapacityLimiter(1))
+    finally:
+        lane.release()
+
+
+def heavy_lane() -> anyio.CapacityLimiter:
+    """The long routes' lane of this event loop (made on first use)."""
+    try:
+        return _HEAVY_LANE.get()
+    except LookupError:
+        lane = anyio.CapacityLimiter(HEAVY_AT_ONCE)
+        _HEAVY_LANE.set(lane)
+        return lane
+
+
 def page_router() -> Any:
     """The ``router`` of a page module (``ap_coder/web/pages/<page>.py``): each plain ``def`` handler declared on it
     that takes the request is made ``one_connection`` (``OneConnectionRoute``), so no page opens a connection per
@@ -173,12 +248,15 @@ def _one_connection_route() -> type:
     class OneConnectionRoute(APIRoute):
         """A route whose plain handler shares one database connection for the request. An ``async`` handler is left
         as it is: other requests run on its thread while it awaits, so a connection held across that would be
-        theirs too."""
+        theirs too. A plain handler of HEAVY_ROUTES runs in the long routes' lane (``heavy``)."""
 
         def __init__(self, path: str, endpoint: Callable[..., Any], **kwargs: Any) -> None:
             if (not inspect.iscoroutinefunction(endpoint) and not getattr(endpoint, "one_connection", False)
                     and "request" in inspect.signature(endpoint).parameters):  # fmt: skip
                 endpoint = one_connection(endpoint)
+            if (not inspect.iscoroutinefunction(endpoint)
+                    and any((str(m).upper(), path) in HEAVY_ROUTES for m in kwargs.get("methods") or ())):  # fmt: skip
+                endpoint = heavy(endpoint)
             super().__init__(path, endpoint, **kwargs)
 
     return OneConnectionRoute
