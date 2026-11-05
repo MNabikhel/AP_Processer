@@ -482,3 +482,20 @@ def test_the_queues_lists_follow_a_change_made_elsewhere_and_are_the_callers_own
     assert store.list_invoices(REVIEW)[1]["invoice_number"] == "L-9" and ids(REVIEW) == [a, c, b]
     other.park_invoice(a, "Jordan Lee", "waiting for the buyer")
     assert ids(REVIEW) == [c, b] and ids(PARKED) == [a] and ids(REVIEW, PARKED, PENDING) == [a, c, b]
+
+
+def test_previous_and_next_step_through_the_kept_queue_as_another_store_or_plain_sql_changes_it(tmp_path, ground_truth):
+    """The invoice page's Previous and Next (``navigation``) read the queue's kept list: an invoice parked through
+    another Store, a confidence changed by plain SQL, move them at once."""
+    from ap_coder.web.pages.invoice import navigation
+
+    store = Store(tmp_path / "ap.db")
+    other = Store(store.path)
+    a, b, c = (_invoice(store, tmp_path, ground_truth, name) for name in ("N-1", "N-2", "N-3"))
+    assert navigation(store, a, {})["ids"] == [a, b, c] and navigation(store, a, {})["next"] == f"/review/{b}"
+    other.park_invoice(b, "Jordan Lee", "waiting for the buyer")
+    assert navigation(store, a, {})["next"] == f"/review/{c}"
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE invoices SET adjusted_confidence = 0.5 WHERE id = ?", (a,))
+        conn.execute("UPDATE invoices SET adjusted_confidence = 0.05 WHERE id = ?", (c,))
+    assert navigation(store, a, {})["ids"] == [c, a] and navigation(store, a, {})["prev"] == f"/review/{c}"
