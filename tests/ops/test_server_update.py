@@ -300,6 +300,41 @@ def test_the_task_server_update_stops_and_starts_is_never_server_jsons(server, m
     assert ran == [["schtasks", "/query", "/tn", "AP Coder test"]]
 
 
+class NotInstalled(FakeServer):
+    """No scheduled task of the name server-update was given; whether a dashboard answers asked as the real one."""
+
+    def __init__(self, data: Path) -> None:
+        super().__init__()
+        self.data, self.settings = data, server_update.server_settings(data)
+
+    def installed(self) -> bool:
+        return False
+
+
+@pytest.mark.parametrize("sign", ["server.json names it", "the dashboard answers"])
+def test_a_service_installed_under_another_name_is_not_updated_without_that_name(server, monkeypatch, capsys, sign):
+    """B-1672: since B-1586 server-update names the task "AP Coder" unless --task-name names another. A service
+    installed under another name was taken for none: the live server's database was updated and its folder switched
+    under it, the service never stopped. With no task of that name installed while server.json names another or the
+    dashboard answers, it refuses, says to pass --task-name, and changes nothing; --back too."""
+    assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=FakeServer()) == 0  # one to go back
+    if sign == "server.json names it":
+        service.write_config(server["data"], task_name="AP Coder Prod")  # as service install --task-name wrote it
+        monkeypatch.setattr(service, "dashboard_health", lambda *a, **k: None)
+    else:
+        monkeypatch.setattr(service, "dashboard_health", lambda *a, **k: {"app": "ap-coder", "folder": "x"})
+    saved, marker = service.read_config(server["data"]), _marker(server["db"])
+    capsys.readouterr()
+    newer, fake = _bundle(server["tmp"], "0.5.0"), NotInstalled(server["data"])
+    assert _install(newer, server["data"], server["db"], server=fake, dry_run=True) == 1
+    assert _install(newer, server["data"], server["db"], server=fake) == 1
+    assert server_update.go_back(server["data"], server["db"], server=fake, yes=True) == 1
+    assert server_update.go_back(server["data"], server["db"], server=fake, dry_run=True) == 1
+    assert fake.calls == [] and service.read_config(server["data"]) == saved and _marker(server["db"]) == marker
+    assert not (server["current"].parent / "APProcessor-0.5.0").exists()
+    assert capsys.readouterr().err.count("pass --task-name <name>") == 4
+
+
 # --- The security review (D-101) --------------------------------------------------------------------------------------
 
 
