@@ -229,13 +229,21 @@ def safety_copy(db: Path, label: str) -> Path:
 # --- The server: the service, the new folder's setup and checks (stood in for by the tests) ---------------------------
 
 
+def server_settings(data: Path, task_name: str | None = None) -> service.ServerSettings:
+    """The service's settings, with the task named on the command line, else "AP Coder", as ``service install|start|
+    stop`` name it: never server.json's, which the service's account can write (B-1500). Otherwise the
+    administrator's schtasks would end and run whatever task it named (B-1586). Its folder must be the one this
+    runs from (``wrong_folder``)."""
+    return service.settings(data, task_name=task_name or service.TASK_NAME)
+
+
 class Server:
     """The Windows service and the steps run in the new folder, for real."""
 
     def __init__(self, data: Path | None = None, settings: service.ServerSettings | None = None,
                  say: Say = print) -> None:  # fmt: skip
         self.data = data or private_dir()
-        self.settings = settings or service.settings(self.data)
+        self.settings = settings or server_settings(self.data)
         self.say = say
 
     def installed(self) -> bool:
@@ -382,7 +390,7 @@ def _version(folder: Path) -> str:
 
 
 def update(bundle: Path, data: Path, db: Path, *, server: Server | None = None, dry_run: bool = False,
-           force: bool = False, sha256: str | None = None, hash_check: bool = True,
+           force: bool = False, sha256: str | None = None, hash_check: bool = True, task_name: str | None = None,
            say: Say = print) -> int:  # fmt: skip
     """Install ``bundle``: checked (its SHA-256 against ``sha256``, given apart) and unzipped from a copy in a private
     temporary folder, removed at the end."""
@@ -401,18 +409,18 @@ def update(bundle: Path, data: Path, db: Path, *, server: Server | None = None, 
         if refused:
             print(refused, file=sys.stderr)
             return 1
-        return _update(copy, data, db, server=server, dry_run=dry_run, force=force, say=say,
+        return _update(copy, data, db, server=server, dry_run=dry_run, force=force, say=say, task_name=task_name,
                        checked="sha256" if hash_check else "not checked (--no-hash-check)")  # fmt: skip
 
 
 def _update(bundle: Path, data: Path, db: Path, *, server: Server | None, dry_run: bool, force: bool,
-            say: Say, checked: str = "sha256") -> int:  # fmt: skip
+            say: Say, checked: str = "sha256", task_name: str | None = None) -> int:  # fmt: skip
     def refuse(message: str) -> int:
         print(message, file=sys.stderr)
         return 1
 
     try:
-        s = service.settings(data)
+        s = server_settings(data, task_name)
         info = check_bundle(Path(bundle))
     except (service.SettingsError, BundleError) as exc:
         return refuse(str(exc))
@@ -550,9 +558,9 @@ def _update(bundle: Path, data: Path, db: Path, *, server: Server | None, dry_ru
 
 
 def go_back(data: Path, db: Path, *, server: Server | None = None, dry_run: bool = False, yes: bool = False,
-            say: Say = print) -> int:  # fmt: skip
+            task_name: str | None = None, say: Say = print) -> int:  # fmt: skip
     try:
-        saved, s = service.read_config(data), service.settings(data)
+        saved, s = service.read_config(data), server_settings(data, task_name)
     except service.SettingsError as exc:
         print(exc, file=sys.stderr)
         return 1
@@ -666,12 +674,14 @@ def add_parser(sub: Any) -> None:
     p.add_argument("--force", action="store_true", help="Install even when the bundle is not certainly newer")
     p.add_argument("--sha256", default=None, help="The bundle's SHA-256, from its builder by another way than the ZIP")
     p.add_argument("--no-hash-check", action="store_true", help="Don't check the SHA-256 (unsafe; warned and recorded)")
+    p.add_argument("--task-name", default=None, help=f'The service\'s scheduled task, as service install was given '
+                   f'it (default "{service.TASK_NAME}"; never server.json\'s)')  # fmt: skip
 
 
 def main(args: argparse.Namespace) -> int:
     data, db = private_dir(), Path(args.db)
     if args.back:
-        return go_back(data, db, dry_run=args.dry_run, yes=args.yes)
+        return go_back(data, db, dry_run=args.dry_run, yes=args.yes, task_name=args.task_name)
     if not args.bundle:
         print("Give the offline bundle (server-update APProcessor-offline-<version>.zip), or --back.", file=sys.stderr)
         return 2
@@ -683,4 +693,5 @@ def main(args: argparse.Namespace) -> int:
         force=args.force,
         sha256=args.sha256,
         hash_check=not args.no_hash_check,
+        task_name=args.task_name,
     )
