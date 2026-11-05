@@ -72,14 +72,15 @@ from ap_coder.web.core import (
 from ap_coder.web.files import download
 from ap_coder.web.identity import shown_path
 from ap_coder.web.pages.activity import timeline_items
-from ap_coder.web.pages.review import attention, filter_queue, sort_queue
+from ap_coder.web.pages.review import attention, draft_reasons, filter_queue, sort_queue
 
 MAX_VENDOR_NAME = 120  # a vendor name typed in Add new vendor (B-1531)
 router = page_router()  # each plain handler: one connection a request
 
 VIEWER_HEIGHT = 760  # px; the page scrolls inside, never taller than the window
 PAGE_READER_POLL_SECONDS = 20  # while OvisOCR2 has the open invoice in its queue
-NAV_PARAMS = ("show", "q", "sort")  # the queue's view, carried along so Previous / Next follow it
+NAV_PARAMS = ("show", "q", "sort", "limit")  # the queue's view (its rows: Show more), carried along so Previous / Next
+# and the Queue button follow it
 
 
 # --- Drafts: edits not approved yet --------------------------------------------------------------------------------
@@ -271,12 +272,15 @@ def _with_query(path: str, query: dict[str, str]) -> str:
     return path + (f"?{urlencode(query)}" if query else "")
 
 
-def navigation(store: Store, invoice_id: int, query: dict[str, str]) -> dict[str, Any]:
+def navigation(store: Store, invoice_id: int, query: dict[str, str], request: Request | None = None) -> dict[str, Any]:
     """The invoices Previous / Next step through: the queue as shown (filter, search, sort in ``query``), or the
-    whole queue if this invoice isn't part of that view."""
+    whole queue if this invoice isn't part of that view. ``request``: the person asking, whose invoices with edits
+    kept the queue shows under Needs attention (B-1620)."""
     pending = store.list_invoices(REVIEW)
     show = query.get("show", "all")
     reasons = attention(store, reference_or_none(store), pending) if show in ("attention", "ready") else {}
+    if show in ("attention", "ready") and request is not None:
+        reasons.update(draft_reasons(request, pending))
     shown = {"attention": [i for i in pending if i["id"] in reasons],
              "ready": [i for i in pending if i["id"] not in reasons]}.get(show, pending)  # fmt: skip
     shown = sort_queue(filter_queue(shown, query.get("q", "")), query.get("sort", "priority"))
@@ -301,12 +305,13 @@ def navigation(store: Store, invoice_id: int, query: dict[str, str]) -> dict[str
     }
 
 
-def next_url(store: Store, invoice_id: int, query: dict[str, str], seen_next: Any = None) -> str:
+def next_url(store: Store, invoice_id: int, query: dict[str, str], seen_next: Any = None,
+             request: Request | None = None) -> str:  # fmt: skip
     """After an action on this invoice: the next one in the queue as shown (or the queue when none is left).
     ``seen_next``: the invoice that followed it when its screen was drawn (the form's ``next_id``), opened when it is
     still waiting: the edits refresh the invoice's confidence, which moves it in the queue's order while it is open,
-    and the one after its new place would skip those in between (B-426)."""
-    nav = navigation(store, invoice_id, query)
+    and the one after its new place would skip those in between (B-426). ``request``: as ``navigation``'s."""
+    nav = navigation(store, invoice_id, query, request)
     ids, position = nav["ids"], nav["position"]
     remaining = [i for i in ids if i != invoice_id]
     if not remaining:
@@ -527,7 +532,7 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         "inv": inv,
         "query": query,
         "queue_url": _with_query("/review", query),
-        "nav": navigation(store, invoice_id, query),
+        "nav": navigation(store, invoice_id, query, request),
         "history": history(events),
         "notes": history([e for e in events if e["action"] in NOTE_ACTIONS]),
         "title": inv.get("vendor_name") or inv.get("file_name") or "Invoice",
@@ -861,7 +866,7 @@ def _approve(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     asked = lessons.due_for_why(store, ai, as_read(analysis.output, ai))  # a vendor-list number: no "why" (B-681)
     if asked and not form.get("why_done"):
         return JSONResponse({"ok": False, "ask_why": {"fields": asked, "threshold": lessons.why_after(store)}})
-    after = next_url(store, invoice_id, query, form.get("next_id"))
+    after = next_url(store, invoice_id, query, form.get("next_id"), request)
     why = draft.override_reason.strip()  # "Approve anyway": why, kept with each error approved over (D-75)
     open_issues = [{"code": i.code, "severity": i.severity, "line": i.line_number,
                     **({"override_reason": why} if why and i.severity == "error" else {})}
@@ -971,7 +976,7 @@ def undo_approve(request: Request, invoice_id: int) -> JSONResponse:
 
 @router.post("/review/{invoice_id:int}/park")
 def park(request: Request, invoice_id: int, reason: str = Form(""), follow_up: str = Form(""),
-         show: str = Form(""), q: str = Form(""), sort: str = Form(""),
+         show: str = Form(""), q: str = Form(""), sort: str = Form(""), limit: str = Form(""),
          next_id: str = Form("")) -> JSONResponse:  # fmt: skip
     """Set it aside while waiting for information (out of the queue until brought back)."""
     store = get_store(request)
@@ -986,8 +991,8 @@ def park(request: Request, invoice_id: int, reason: str = Form(""), follow_up: s
             return refuse("The follow-up date must be a date (YYYY-MM-DD).")
         if follow < dt.date.today():
             return refuse("Pick a follow-up date from today on.")
-    query = _nav_query({"show": show, "q": q, "sort": sort})
-    after = next_url(store, invoice_id, query, next_id)
+    query = _nav_query({"show": show, "q": q, "sort": sort, "limit": limit})
+    after = next_url(store, invoice_id, query, next_id, request)
     try:
         store.park_invoice(invoice_id, reviewer(), reason.strip(), follow.isoformat() if follow else None)
     except ValueError:
@@ -1046,7 +1051,7 @@ def _send_to_manager(request: Request, invoice_id: int, form: Any) -> JSONRespon
     if form.get("remember_manager") and centers and user_id is None:
         store.set_cost_center_manager(centers, name, email, reviewer())
     if user_id is not None:
-        after = next_url(store, invoice_id, _nav_query(form), form.get("next_id"))
+        after = next_url(store, invoice_id, _nav_query(form), form.get("next_id"), request)
         said = f"Sent to {name}: it waits in their Manager confirmations and comes back to the queue when they answer."
         return done(request, after, flash_message(said, "ok", icon="forward_to_inbox"))
     return done(request, f"/manager/{rid}", flash_message(
@@ -1056,11 +1061,12 @@ def _send_to_manager(request: Request, invoice_id: int, form: Any) -> JSONRespon
 
 @router.post("/review/{invoice_id:int}/reject")
 def reject(request: Request, invoice_id: int, reason: str = Form(""), show: str = Form(""), q: str = Form(""),
-           sort: str = Form(""), next_id: str = Form("")) -> JSONResponse:  # fmt: skip
+           sort: str = Form(""), limit: str = Form(""), next_id: str = Form("")) -> JSONResponse:  # fmt: skip
     """Not ours, or not to be paid. It can be reopened later."""
     store = get_store(request)
     _invoice(store, invoice_id)
-    after = next_url(store, invoice_id, _nav_query({"show": show, "q": q, "sort": sort}), next_id)
+    after = next_url(store, invoice_id, _nav_query({"show": show, "q": q, "sort": sort, "limit": limit}), next_id,
+                     request)  # fmt: skip
     try:
         store.reject_invoice(invoice_id, reviewer(), reason.strip())
     except ValueError:
