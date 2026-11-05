@@ -190,8 +190,12 @@ def _quietly(fn, *args, **kwargs):
 def test_a_request_queued_during_a_hang_drill_is_answered_once_the_drill_is_over():
     # Whether a request hangs is decided as it takes its slot, from the rate then, not when it arrived.
     with FakeModel(hang_rate=1.0, slots=1) as fake:
-        results = []
-        people = [threading.Thread(target=lambda: results.append(_quietly(chat, fake, timeout=10))) for _ in "ab"]
+        results = {}  # by person: the two finish in either order (CI)
+
+        def person(name):
+            results[name] = _quietly(chat, fake, timeout=10)
+
+        people = [threading.Thread(target=person, args=(name,)) for name in "ab"]
         people[0].start()
         _wait_for(fake, lambda s: s["hanging"] >= 1)
         people[1].start()
@@ -200,7 +204,7 @@ def test_a_request_queued_during_a_hang_drill_is_answered_once_the_drill_is_over
         assert fake.release_hung() == 1  # the drill over: LM Studio restarted
         for person in people:
             person.join(5)
-        assert results == ["dropped", 200] and fake.stats()["hanging"] == 0
+        assert results == {"a": "dropped", "b": 200} and fake.stats()["hanging"] == 0
 
 
 def test_a_failure_rate_answers_errors():
