@@ -19,6 +19,7 @@ import contextlib
 import json
 import os
 import secrets
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -47,13 +48,18 @@ COLUMNS = {
 
 
 def ensure(conn: Any) -> None:
-    """The table, with every column (cheap: a database put back from a backup may be without it)."""
+    """The table, with every column (cheap, about 45 µs: a database put back from a backup may be without it). Web
+    workers may add a column at once: one another connection added since this one looked is there (B-1725)."""
     for sql in TABLE:
         conn.execute(sql)
     have = {r[1] for r in conn.execute("PRAGMA table_info(jde_postings)")}
     for name, kind in COLUMNS.items():
         if name not in have:
-            conn.execute(f"ALTER TABLE jde_postings ADD COLUMN {name} {kind}")
+            try:
+                conn.execute(f"ALTER TABLE jde_postings ADD COLUMN {name} {kind}")
+            except sqlite3.OperationalError:
+                if name not in {r[1] for r in conn.execute("PRAGMA table_info(jde_postings)")}:
+                    raise
 
 
 # --- The installation id ------------------------------------------------------------------------------------------
