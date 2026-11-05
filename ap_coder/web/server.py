@@ -491,6 +491,8 @@ class BackgroundWork:
 
 
 BACKGROUND_LOG = "background.log"
+STACK_DUMP_LOG = "background-stacks.log"
+STACK_DUMP_ENV = "AP_STACK_DUMP_SECONDS"  # a bench's look inside a background process that seems stuck
 
 
 def background_log(folder: Path) -> logging.Handler:
@@ -509,6 +511,24 @@ def background_log(folder: Path) -> logging.Handler:
     return handler
 
 
+def stack_dumps(folder: Path) -> Any:
+    """Every thread's stack written to ``logs/background-stacks.log`` every AP_STACK_DUMP_SECONDS (unset: never), to
+    see where a background process that seems stuck waits: Python's faulthandler, which works on Windows too,
+    where no signal can ask a process. The open file, which must stay open while the dumps go on; None when off."""
+    try:
+        seconds = float(os.environ.get(STACK_DUMP_ENV) or 0)
+    except ValueError:
+        return None
+    if seconds <= 0:
+        return None
+    import faulthandler
+
+    folder.mkdir(parents=True, exist_ok=True)
+    handle = open(folder / STACK_DUMP_LOG, "w", encoding="utf-8")  # noqa: SIM115 - open while the dumps go on
+    faulthandler.dump_traceback_later(seconds, repeat=True, file=handle)
+    return handle
+
+
 def run_background(store: Store) -> int:
     """The server's background process (D-111): the page reader and the AI reviewer, the Azure check, JD Edwards,
     the daily backup and the finance hub's schedule (looked at every 30 seconds, not at each page), until its input
@@ -524,6 +544,7 @@ def run_background(store: Store) -> int:
 
     threading.Thread(target=until_input_closes, name="ap-coder-background-input", daemon=True).start()
     background_log(store.path.parent / "logs")
+    stacks = stack_dumps(store.path.parent / "logs")  # noqa: F841 - kept open for the process's life
     log = logging.getLogger("ap_coder.background")
     log.info("background process %s started for %s", os.getpid(), store.path)
     lock, waited = None, False

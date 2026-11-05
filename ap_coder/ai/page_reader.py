@@ -1289,6 +1289,14 @@ def _verdict(rows: list[dict[str, Any]]) -> tuple[bool, str]:
     return False, f"Only {right} of {total} fields right ({names} read wrong or not found)."
 
 
+def _log_slow_step(step: str, started: float, slow: float = 5.0) -> None:
+    """A step of the self-test that took more than ``slow`` seconds, in the log (the background process's own log on
+    the company server): the reading itself is timed apart, so a wait anywhere else would otherwise go unseen."""
+    seconds = time.monotonic() - started
+    if seconds > slow:
+        log.info("Page reader test: %s in %.0f s", step, seconds)
+
+
 def test_reader(settings: Settings, *, model: str | None = None,
                 on_page: Callable[[int, int], None] | None = None) -> ReaderTest:  # fmt: skip
     """Read the test invoice (``test_pages``) with the page reader, read its transcription for fields
@@ -1304,12 +1312,16 @@ def test_reader(settings: Settings, *, model: str | None = None,
         if not status.usable:
             return ReaderTest("", False, 0.0, [], 0, 0, when, status.note or "No model can read pages now.")
         model = status.model
+    prepared = time.monotonic()
     try:
         truth = json.loads(TEST_TRUTH.read_text(encoding="utf-8"))
         pngs = test_pages(reader_for(model))
     except (OSError, ValueError) as exc:
         return ReaderTest(model, False, 0.0, [], 0, 0, when, f"The test invoice isn't in this AP Coder ({exc}).")
+    _log_slow_step("the test invoice's pages made", prepared)
+    asked = time.monotonic()
     problem = load_reader(settings, model)
+    _log_slow_step(f"LM Studio asked about {model}", asked)
     if problem and not _loaded(settings, model):
         return ReaderTest(model, False, 0.0, [], 0, 0, when, problem)
     texts: list[str] = []
