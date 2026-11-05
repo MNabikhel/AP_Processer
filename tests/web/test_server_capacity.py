@@ -363,6 +363,71 @@ def test_a_worker_ending_waits_for_its_own_work_started_after_it_looked(store, m
     assert not ending(processes=1)  # the laptop stops as before
 
 
+def test_the_ending_workers_note_goes_once_it_ended_at_the_start_and_after_ten_minutes(tmp_path, monkeypatch):
+    """``.ap_coder_worker_restart.pid`` names the worker being started afresh, which the supervisor doesn't ask
+    "alive?". Left behind, it spared a later worker given the same process number (Windows gives them again) for
+    good: it goes once that worker has ended, at the server's start, and is believed for ten minutes at most."""
+    note = tmp_path / server.RECYCLE_PID
+
+    class Worker:
+        def __init__(self, pid):
+            self.pid, self.alive, self.exitcode = pid, True, 0
+            self.process = SimpleNamespace(is_alive=lambda: self.alive)
+
+        def is_alive(self, timeout=None):
+            return self.alive
+
+        def kill(self):
+            pass
+
+        def join(self, timeout=None):
+            pass
+
+    import uvicorn.supervisors.multiprocess as multiprocess
+
+    monkeypatch.setattr(multiprocess, "Process", lambda config, sockets: SimpleNamespace(pid=13, start=lambda: None))
+    monkeypatch.setenv(server.WORKER_ENV, json.dumps({"data": str(tmp_path), "token": "secret"}))
+    supervisor = server._supervisor_class().__new__(server._supervisor_class())
+    supervisor.should_exit, supervisor.sockets = threading.Event(), []
+    supervisor.config = SimpleNamespace(timeout_worker_healthcheck=30)
+    ending, other = Worker(11), Worker(12)
+    supervisor.processes = [ending, other]
+    note.write_text("11", encoding="ascii")
+    supervisor.keep_subprocess_alive()
+    assert note.exists()  # still ending
+    ending.alive = False  # it has ended (and is replaced)
+    supervisor.keep_subprocess_alive()
+    assert not note.exists() and sorted(p.pid for p in supervisor.processes) == [12, 13]
+    note.write_text("12", encoding="ascii")
+    assert server._leaving(tmp_path) == 12
+    old = time.time() - 11 * 60
+    os.utime(note, (old, old))
+    assert server._leaving(tmp_path) is None  # asked "alive?" again (it answers while it waits for its own work)
+
+    data = tmp_path / "data"
+    store = Store(data / "ap_coder.db")
+    (data / server.RECYCLE_PID).write_text(str(os.getpid()), encoding="ascii")  # left by the server's last run
+    seen = []
+
+    class Supervisor:
+        failed = False
+
+        def __init__(self, config, sockets):
+            self.should_exit = threading.Event()
+
+        def run(self):
+            seen.append((data / server.RECYCLE_PID).exists())
+            self.should_exit.set()
+
+    monkeypatch.setenv("AP_PRIVATE_DIR", str(data))
+    monkeypatch.setattr(server, "server_config", lambda *a, **k: SimpleNamespace(bind_socket=lambda: None))
+    monkeypatch.setattr(server, "Supervisor", Supervisor)
+    monkeypatch.setattr(server, "BackgroundWork", lambda db: SimpleNamespace(start=lambda: None, stop=lambda: None))
+    monkeypatch.setattr(server, "_announce_when_up", lambda *a: None)
+    assert server._serve_workers("127.0.0.1", 8599, store, None, None, None, True, 2) == 0
+    assert seen == [False]
+
+
 def test_each_worker_ends_after_a_number_of_requests_of_its_own(tmp_path):
     import random
 

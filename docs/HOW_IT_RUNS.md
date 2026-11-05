@@ -380,11 +380,12 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   `web/core.py:HEAVY_ROUTES` (reports, exports, Report a problem, backups, LM Studio and JD Edwards buttons) run in a
   lane of their own (`core.run_heavy`: 2 at a time a worker, on threads beside the pool's, a 503 "busy" after 30 s in
   line). `server.Recycle` starts a worker afresh past its memory (`recycle_limits`) or requests: it stops taking
-  connections, then uvicorn stops it gracefully (the requests under way given up to an hour,
-  `RECYCLE_GRACE_SECONDS`) and its supervisor starts another (`_Supervisor` does not ask the
-  ending one "alive?", `.ap_coder_worker_restart.pid`); one at a time (`.ap_coder_worker_restart.lock`), never while
-  a job, a backup, waiting imports or the lane are busy. One that a request started after that look is waited for as
-  the worker ends (its lifespan, `app.own_work_running`); a stop of the service still ends it at its deadline.
+  connections, then uvicorn stops it gracefully (the requests under way given up to an hour, `RECYCLE_GRACE_SECONDS`)
+  and its supervisor starts another (`_Supervisor` does not ask the ending one "alive?",
+  `.ap_coder_worker_restart.pid`, for ten minutes at most, dropped once it has ended); one at a time
+  (`.ap_coder_worker_restart.lock`), never while a job, a backup, waiting imports or the lane are busy. One that a
+  request started after that look is waited for as the worker ends (its lifespan, `app.own_work_running`); a stop of
+  the service still ends it at its deadline.
 
 ## 9. The data folder and everything AP Coder writes
 
