@@ -514,6 +514,7 @@ RECYCLE_LOCK = ".ap_coder_worker_restart.lock"
 RECYCLE_PID = ".ap_coder_worker_restart.pid"  # the worker being started afresh, for the supervisor
 MEMORY_EVERY = 10  # requests between two looks at the memory
 DRAIN_SECONDS = 1.0
+RECYCLE_GRACE_SECONDS = 3600  # what an ending worker gives the requests under way (a service stop: GRACEFUL_SECONDS)
 
 
 def recycle_limits(workers: int, total_mb: float | None = None) -> dict[str, float]:
@@ -593,6 +594,10 @@ class Recycle:
         for listening in getattr(found, "servers", None) or []:
             for sock in listening.sockets:
                 loop.remove_reader(sock.fileno())
+        # Those under way get the time they need: an import run whole in its request was cut with a 500 at the grace
+        # while its work went on. An hour at most (an upload whose computer went to sleep never ends); a stop of the
+        # service still ends this worker at its deadline (join_all).
+        found.config.timeout_graceful_shutdown = RECYCLE_GRACE_SECONDS
         loop.call_later(DRAIN_SECONDS, setattr, found, "should_exit", True)  # then uvicorn finishes what is under way
 
 

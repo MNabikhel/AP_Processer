@@ -207,6 +207,9 @@ def test_an_export_batch_is_made_on_a_thread_never_on_the_workers_event_loop(sto
 class _Server:
     should_exit = False
 
+    def __init__(self) -> None:
+        self.config = SimpleNamespace(timeout_graceful_shutdown=server.GRACEFUL_SECONDS)
+
 
 def _recycle(tmp_path, monkeypatch, **limits):
     state = SimpleNamespace(jobs=Jobs(), daily_backup=SimpleNamespace(thread=None), import_queue=None)
@@ -246,6 +249,15 @@ def test_a_worker_ends_after_its_requests_once_nothing_of_its_own_would_end_with
     found.should_exit = False
     _serve(worker)
     assert not found.should_exit  # asked once
+
+
+def test_a_worker_ending_lets_its_requests_under_way_finish_however_long_they_take(tmp_path, monkeypatch):
+    """An import run whole in its request (the ERP register, the vendor master, the ERP history...) was cut with a 500
+    after uvicorn's grace (25 s) while its work went on, and a retry did it twice. A worker started afresh gives them
+    the time they need (an hour at most); a stop of the service still ends it at its deadline (``join_all``)."""
+    worker, _, found = _recycle(tmp_path, monkeypatch, max_requests=1)
+    _serve(worker)
+    assert found.should_exit and found.config.timeout_graceful_shutdown == server.RECYCLE_GRACE_SECONDS >= 3600
 
 
 def test_a_worker_ending_takes_no_new_connection_and_stops_a_moment_later(tmp_path, monkeypatch):
