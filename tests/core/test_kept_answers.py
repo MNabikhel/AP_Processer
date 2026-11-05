@@ -397,3 +397,88 @@ def test_a_lines_suggestions_follow_the_lessons_and_the_gl_accounts_changed_else
     with sqlite3.connect(store.path) as conn:
         conn.execute("UPDATE gl_accounts SET description = 'Cleaning supplies, disinfectant' WHERE code = '6230'")
     assert asked("Disinfectant 4 L") == [("6230", "account description mentions “disinfectant”")]
+
+
+def test_the_queues_checks_follow_a_change_made_elsewhere_the_checks_stamp_and_what_is_asked(
+    tmp_path, ground_truth, monkeypatch
+):
+    """``bulk.queue_checks``, kept on the summary's ``queue`` topic, the checks stamp, laptop or server and the
+    invoices asked: a finding stored by plain SQL, an invoice parked through another Store, a change of settings
+    (their checks then made against others: counted) are in the next answer; fewer than ``KEEP_FROM`` invoices are
+    worked out each time; each caller gets copies."""
+    from ap_coder.coding import bulk
+
+    store = Store(tmp_path / "ap.db")
+    other = Store(store.path)
+    checked = {"requires_review": True, "checks_stamp": store.checks_stamp(), "issues": []}
+    ids = []
+    for name in ("Q-1", "Q-2", "Q-3"):
+        (tmp_path / f"{name}.pdf").write_bytes(name.encode())
+        ids.append(store.add_invoice(tmp_path / f"{name}.pdf", {**ground_truth, "invoice_number": name}, checked))
+    worked = []
+    real = bulk._queue_checks
+    monkeypatch.setattr(bulk, "_queue_checks", lambda *a: worked.append(1) or real(*a))
+    monkeypatch.setattr(bulk, "KEEP_FROM", 3)
+
+    def asked(which=tuple(ids), recheck=False):
+        return bulk.queue_checks(store, list(which), recheck=recheck)
+
+    first = asked()
+    assert sorted(first[0]) == ids and first[1] == 0 and all(c["found"] == [] for c in first[0].values())
+    assert asked() == first and len(worked) == 1  # kept
+    first[0][ids[0]]["found"].append({"severity": "error", "code": "CHANGED_BY_THE_CALLER"})
+    first[0][ids[0]]["q_pick"] = "changed by the caller"
+    assert asked()[0][ids[0]] == {**first[0][ids[0]], "found": [], "q_pick": ""} and len(worked) == 1  # copies
+    found = '[{"severity": "error", "code": "TOTAL_MISMATCH", "message": "Totals differ"}]'
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE invoices SET validation = json_set(validation, '$.issues', json(?)) WHERE id = ?",
+                     (found, ids[0]))  # fmt: skip
+    assert asked()[0][ids[0]]["found"] == [{"severity": "error", "code": "TOTAL_MISMATCH"}]
+    other.park_invoice(ids[1], "Jordan Lee", "waiting for the buyer")
+    assert sorted(asked()[0]) == [ids[0], ids[2]] and len(worked) == 3
+    with sqlite3.connect(store.path) as conn:  # a change of settings: their checks were made against others
+        conn.execute("INSERT INTO settings (key, value) VALUES ('default_terms_days', '45')")
+    assert asked()[1] == 2 and len(worked) == 4
+    assert asked(recheck=True)[1] == 2 and len(worked) == 5  # the laptop's (no GL accounts: nothing checked again)
+    assert asked(recheck=True)[1] == 2 and asked()[1] == 2 and len(worked) == 6
+    assert sorted(asked([ids[2], ids[0], ids[1]])[0]) == [ids[0], ids[2]] and len(worked) == 7  # asked otherwise
+    asked(ids[:2])
+    asked(ids[:2])
+    assert len(worked) == 9  # fewer than KEEP_FROM: worked out each time
+    key = summary_module.TOPICS["queue"]  # one the summary could not work out: each change to it counts
+    row = {"status": "review", "broken": summary_module.BIT["queue"], **dict.fromkeys(summary_module.QUEUE_READ[1:])}
+    assert key(row) != key(row) and key({**row, "broken": 0}) == key({**row, "broken": 0})
+
+
+def test_the_queues_lists_follow_a_change_made_elsewhere_and_are_the_callers_own(tmp_path, ground_truth):
+    """``list_invoices`` of the queue's lists (review, parked, pending), kept on the summary's ``listed`` topic: a
+    confidence worked out through another Store, an invoice number changed by plain SQL, a park, are in the next
+    lists, as reading them afresh gives them; each caller gets rows of its own."""
+    from ap_coder.core.store import PARKED, PENDING, REVIEW
+
+    store = Store(tmp_path / "ap.db")
+    other = Store(store.path)
+    a, b, c = (_invoice(store, tmp_path, ground_truth, name) for name in ("L-1", "L-2", "L-3"))
+
+    def fresh(*statuses):
+        listed, marks = ", ".join(summary_module.LISTED_COLUMNS), ", ".join("?" * len(statuses))
+        return store.summary_fetch(f"SELECT {listed} FROM invoice_summary WHERE status IN ({marks}) ORDER BY "
+                                   "requires_review DESC, adjusted_confidence ASC, id ASC", statuses)  # fmt: skip
+
+    def ids(*statuses):
+        listed = store.list_invoices(statuses=statuses)
+        assert listed == fresh(*statuses), statuses
+        return [r["id"] for r in listed]
+
+    first = store.list_invoices(REVIEW)
+    assert [r["id"] for r in first] == [a, b, c] and first == fresh(REVIEW)
+    first[0]["invoice_number"] = "changed by the caller"
+    first.pop()
+    assert store.list_invoices(REVIEW) == fresh(REVIEW)
+    other.refresh_confidence(b, 0.12, True)
+    assert ids(REVIEW) == [a, c, b]
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE invoices SET invoice_number = 'L-9' WHERE id = ?", (c,))
+    assert store.list_invoices(REVIEW)[1]["invoice_number"] == "L-9" and ids(REVIEW) == [a, c, b]
+    other.park_invoice(a, "Jordan Lee", "waiting for the buyer")
+    assert ids(REVIEW) == [c, b] and ids(PARKED) == [a] and ids(REVIEW, PARKED, PENDING) == [a, c, b]

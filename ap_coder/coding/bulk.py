@@ -34,7 +34,7 @@ from ..core.reference_data import ReferenceData
 from ..core.schema import InvoiceCoding
 from ..core.store import REVIEW, Store
 from ..core.store._base import CHECKS_STAMP_KEY, _in_list
-from ..core.store.summary import computed
+from ..core.store.summary import QUEUE_READ, computed
 from .review import codes_to_pick
 from .vendors import moved_off_hold
 
@@ -181,7 +181,8 @@ LEASE_SECONDS = 120.0  # a lease not renewed for this long was left by a process
 RECHECK_BATCH = 50  # invoices checked again, then kept in one short write
 RECHECK_WAIT = 300.0  # how long a laptop's queue waits for the re-check under way (its own background thread's)
 RECHECK_STOP_SECONDS = 5.0  # how long a stop waits for the background's re-check to end between two batches
-QUEUE_COLUMNS = "id, broken, q_audit, q_stamp, q_found, r_stamp, r_found, q_pick, q_pick_cc, q_pay"
+QUEUE_COLUMNS = ", ".join(("id", *QUEUE_READ))  # what the summary's ``queue`` topic follows
+KEEP_FROM = 50  # invoices asked from which the queue's checks are kept (fewer are worked out each time)
 
 
 def _pairs(issues: list[dict[str, Any]]) -> str:
@@ -225,15 +226,28 @@ def queue_checks(
     earlier checks). The checks are today's (B-815): with ``recheck`` (the laptop: by default unless AP Coder runs as
     the company server), an invoice whose checks were made against other settings is checked again first, waiting
     for a re-check under way; without it (the server's background process does it, ``QueueRecheck``), it shows its
-    earlier checks meanwhile."""
+    earlier checks meanwhile. From ``KEEP_FROM`` invoices asked, kept in each process while the queue's facts in the
+    summary (``queue``), the checks stamp, laptop or server, and the invoices asked are the same (D-159): the queue
+    and each of its tabs ask them. Each caller gets copies."""
     if not ids:
         return {}, 0
-    rows = _queue_rows(store, ids)
-    stamp = store.checks_stamp()
     if recheck is None:
         from ..ops.offline import server_mode
 
         recheck = not server_mode()
+    if len(ids) < KEEP_FROM:
+        return _queue_checks(store, ids, settings, recheck)
+    asked = (store.checks_stamp(), recheck, tuple(int(i) for i in ids))
+    checks, stale = store.summary_memo("queue_checks", lambda: _queue_checks(store, list(asked[2]), settings, recheck),
+                                       "queue", asked=asked)  # fmt: skip
+    return {i: {**r, "found": [dict(f) for f in r["found"]]} for i, r in checks.items()}, stale
+
+
+def _queue_checks(
+    store: Store, ids: list[int], settings: Settings | None, recheck: bool
+) -> tuple[dict[int, dict[str, Any]], int]:
+    rows = _queue_rows(store, ids)
+    stamp = store.checks_stamp()
     if recheck and any(_stale(r, stamp) for r in rows.values()):
         recheck_queue(store, settings, ids=[i for i, r in rows.items() if _stale(r, stamp)], wait=RECHECK_WAIT)
         rows, stamp = _queue_rows(store, ids), store.checks_stamp()
