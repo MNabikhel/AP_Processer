@@ -707,8 +707,9 @@ def folder_files(store: Store) -> list[dict[str, Any]]:
     pick-up last read them: a page view reads none, it looks at their size and time (``Store.unseen_files``, D-155).
     The invoices folder keeps the processed files: reading every one on each view took 7 s at 100,000 invoices, and
     listing them still takes 2 to 4 s, so the list is worked out again only once the folder (a file added, removed or
-    renamed), what a pick-up read or the invoices changed, or a minute on (a scan written over another of its name)."""
-    folder = invoice_dir(store)
+    renamed), what a pick-up read or the invoices changed, or a minute on (a scan written over another of its name).
+    Listed at the folder's resolved place, as the pick-up notes them (``read_file``)."""
+    folder = invoice_dir(store).resolve()
     try:
         stamp = (folder.stat().st_mtime_ns, store.files_stamp())
     except OSError:  # no invoices folder yet

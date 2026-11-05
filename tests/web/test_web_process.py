@@ -369,6 +369,34 @@ def test_the_import_page_reads_no_file_of_the_invoices_folder(app, client, store
     assert "No new files" in client.get("/process").text  # each as the pick-up read it
 
 
+def test_a_data_folder_reached_through_a_link_lists_none_of_an_older_databases_files_as_new(tmp_path):
+    """An older database's files count as read by the pick-up from their invoices' places, which are resolved (the
+    link, the mapped drive followed), while the page listed the folder as named: through a link every old file showed
+    as new. Files are listed and noted at the folder's resolved place."""
+    real = tmp_path / "real"
+    (real / "private").mkdir(parents=True)
+    try:
+        os.symlink(real, tmp_path / "link", target_is_directory=True)
+    except OSError:  # (Windows without the right to make links)
+        pytest.skip("no symbolic links here")
+    store = Store(tmp_path / "link" / "private" / "ap_coder.db")  # the data folder as the dashboard is given it
+    load_sample_setup(store)
+    s = Settings()
+    app = create_app(replace(s, llm=replace(s.llm, provider="off")), store, start_reader=False)
+    client = TestClient(app, base_url="http://localhost")
+    folder = invoice_dir(store)
+    folder.mkdir(parents=True, exist_ok=True)
+    shutil.copy(SAMPLES / f"{OTHER}.pdf", folder / f"{OTHER}.pdf")
+    client.post("/process/folder", headers=PAGE)
+    assert finished(app, client)["result"]["ok"] == 1
+    assert "No new files" in client.get("/process").text
+    with store._conn() as conn:  # as an older AP Coder left it
+        conn.execute("DELETE FROM seen_files")
+        conn.execute("DELETE FROM settings WHERE key = 'seen_files'")
+    Store(store.path)  # opened by this version
+    assert "No new files" in client.get("/process").text
+
+
 def test_a_scan_written_over_another_of_its_name_is_listed_as_new_within_a_minute(app, client, store, monkeypatch):
     """The list was kept until the folder, a pick-up's notes or the invoices changed: a scanner writing a new scan
     over an old one's name changes none of them (the folder's time is that of a name added, removed or renamed), and
