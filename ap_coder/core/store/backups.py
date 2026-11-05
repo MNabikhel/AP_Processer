@@ -34,6 +34,8 @@ from .users import carry_accounts, saved_accounts
 # A daily backup, the ones pruned: ap_coder-YYYYMMDD-HHMMSS, and -2, -3 when another was made in the same second.
 # A labelled one (-manual, -before-restore, -before-update-...) is kept.
 DAILY = re.compile(r"ap_coder-\d{8}-\d{6}(-\d+)?")
+# Left free on the backups' disk once a backup is made: a full disk stops every write to the database, for everyone.
+BACKUP_RESERVE = 512 * 1024 * 1024
 BACKUP_STATUS = "backup_status"  # the last backup that failed: "failed <when>: <why>" ("" once one works again)
 
 
@@ -43,6 +45,28 @@ class Restored:
 
     safety: Path
     files: backup_files.FilesRestored
+
+
+def _size(n: float) -> str:
+    return f"{n / 1e9:.1f} GB" if n >= 1e9 else f"{n / 1e6:.0f} MB"
+
+
+def _room_refusal(database: Path, folder: Path) -> str:
+    """Why a backup of ``database`` into ``folder`` must not start, "" when it may: the copy (the database with its
+    write-ahead log) and ``BACKUP_RESERVE`` more must fit in that disk's free space (a year's database on the company
+    server is 7-9 GB). "" when the space can't be read: the backup is tried, as before, and one cut short by a full
+    disk leaves nothing behind (``backup_to``)."""
+    try:
+        size = sum(p.stat().st_size for p in (database, database.with_name(database.name + "-wal")) if p.exists())
+        folder.mkdir(parents=True, exist_ok=True)
+        free = shutil.disk_usage(folder).free
+    except OSError:
+        return ""
+    need = size + BACKUP_RESERVE
+    if free >= need:
+        return ""
+    return (f"not enough free space for a backup ({_size(free)} free, {_size(need)} needed: the copy and "
+            f"{_size(BACKUP_RESERVE)} to spare); free space on the disk of the data folder")  # fmt: skip
 
 
 def _daily(path: Path) -> bool:
@@ -140,6 +164,9 @@ class BackupsMixin:
             except OSError:
                 pass
         try:
+            short = _room_refusal(self.path, self.backup_dir())
+            if short:
+                raise OSError(short)
             made = self.backup_to(dest)
             try:
                 backup_files.snapshot(made, self.path.parent)
