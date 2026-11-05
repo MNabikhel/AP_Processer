@@ -479,3 +479,157 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   together with the username. Back on that invoice as the same person, it becomes their draft; anyone else who opens
   that invoice in the tab drops it without seeing it. Nothing is kept on the server for a session that has ended.
   (`web/static/js/invoice.js`, `web/static/js/app.js`, `web/pages/login.py`; `tests/web/test_server_browser.py`)
+- **D-153** · **What one web worker of the company server runs at once, and when it is started afresh** (B-1610;
+  changes D-111's default of one worker per core, at most 8, and settles D-148's "a default measured in the load
+  test").
+  - **Threads:** in server mode the lifespan caps anyio's thread pool at 4 (`app.WORKER_THREADS`;
+    `AP_WORKER_THREADS`, server.json `worker_threads`, 1-40).
+    - **Why:** a request under way holds what it read (about 110 MB), and one process works on one at a time (the
+      GIL).
+    - **Measured** on a 3k seed, 30 people, 3 workers: worker peak RSS 1.48-1.63 GB → 0.53-0.60 GB, and 2,332 →
+      7,451 requests in 5 minutes. With 8 threads: 0.68-0.76 GB and 3,188.
+    - **A laptop** keeps anyio's 40.
+  - **The long routes' lane:** `web/core.py HEAVY_ROUTES` run 2 at a time a worker, on threads beside the pool's
+    (`core.run_heavy`, a limiter per event loop).
+    - **Which:** reports, exports, Report a problem, backups and restore, and the buttons that wait on LM Studio or
+      JD Edwards.
+    - **A long wait:** one waiting 30 s gets a 503 "busy, try again in a minute".
+    - **An async handler** of a long route calls `run_heavy` itself (`POST /exports/create`, which ran on the event
+      loop: B-1610).
+  - **No `limit_concurrency`:**
+    - it counts idle keep-alive connections: with a limit of 20 and 25 idle, every request got a 503 with no load
+      (measured);
+    - it refuses instead of queueing;
+    - it doesn't bound the sockets a worker accepts.
+  - **A worker started afresh** (`server.Recycle`):
+    - **When:** past its share of the memory (at least 2 GB; `AP_WORKER_MAX_MB`), or after 50,000 requests plus up to
+      a quarter (`AP_WORKER_MAX_REQUESTS`), once no job, backup, waiting import or long route of its own runs.
+    - **How:** it stops accepting, uvicorn stops it gracefully 1 s later, and its supervisor starts another. One at a
+      time (`.ap_coder_worker_restart.lock`).
+    - **Not uvicorn's `limit_max_requests`:** its supervisor asks every worker "alive?" over a pipe whose both ends it
+      holds, so it waited 30 s on a worker whose process was closing and replaced none meanwhile. `_Supervisor`
+      leaves the ending worker alone (`.ap_coder_worker_restart.pid`).
+    - **Logins are in the database:** nobody is signed out.
+  - **Default workers** (`server.default_workers`): one per core but an eighth, and no more than fit at 1.5 GB each
+    in the memory left once a quarter (at least 4 GB) is kept for the system, the background process and the
+    database.
+    - 32 vCPU / 64 GB: 28. 4 cores / 16 GB: 4.
+    - `--workers` and server.json still decide when set.
+  - (`web/app.py`, `web/core.py`, `web/server.py`, `web/jobs.py`, `web/pages/exports.py`, `web/templates/error.html`,
+    `ops/service.py`; `tests/web/test_server_capacity.py`, `tests/web/test_server_scale.py`)
+- **D-154** · **The learning memory read once and refreshed, a vendor's lessons worked out once, an invoice opened in
+  one request** (B-1620 to B-1622).
+  - **The whole memory** (`Store.feedback_rows()`): one page reads it at a time in each process; the others asking
+    meanwhile wait and share the list.
+    - When lessons were only added since, only those (`id >` the newest kept) are read and merged in the memory's
+      order.
+    - It is read whole again when a lesson was removed, the newest kept is gone or changed (a restore), or more were
+      added than the memory holds.
+    - The stamp and the rows are read in one read transaction.
+  - **One vendor's lessons** (`Store.vendor_lessons`): the history check's patterns, the GL accounts its lines went
+    to, and its cost centers.
+    - Worked out once from 8 columns, and kept for the latest 32 vendors until one of that vendor's lessons is added
+      or removed.
+    - Patterns are kept, not rows: the biggest vendor's rows were 120 MB.
+  - **Past the memory's cap** (`learning_rows`): only the vendor's lessons ranked after the memory's last are read,
+    kept for the latest two vendors.
+  - **One request to open an invoice:**
+    - the GET does what the screen's opening check did (the queue's confidence, the draft and its blocker), for a
+      person who may edit;
+    - invoice.js no longer checks on opening;
+    - a check writes after all its reads.
+  - **Fewer statements:** the held vendors' check reads their approved numbers in one query; the page reads the
+    manager context, the events and the readers' state once each.
+  - **Measured** on a 3,000-invoice seed with one vendor at 50,622 lessons: the big vendor's open went from 3.1 s, 442
+    statements and 167 MB to 0.19 s, 91 and 9 MB.
+  - (`core/store/learning.py`, `core/memory.py`, `ai/pipeline.py`, `web/invoice_view.py`, `web/pages/invoice.py`,
+    `web/pages/review.py`, `web/core.py`, `web/static/js/invoice.js`, `coding/vendors.py`, `core/store/vendors.py`,
+    `bench/load.py`)
+- **D-155** · **The review queue from the invoices' summary, checked again in the background; the import page reads no
+  file** (B-1630 to B-1634; changes D-88 where it says the queue re-checks in the page).
+  - **What the queue reads** of an invoice in review is kept in its summary row (`bulk.queue_facts`, summary rules 2):
+    - the stamps of its stored checks and of its queue re-check;
+    - their findings, as (severity, code);
+    - what its lines still need, without and with cost centers;
+    - what its opening Pay from account is chosen from.
+  - **Keeping it current:** the summary's triggers recompute that row on every write of an invoice, from any
+    connection. GET /review reads only these columns, plus the coding of the rows it draws.
+  - **The re-check** after a change of the checks stamp is done by `bulk.QueueRecheck` (`start_background_work`),
+    looking every 5 s.
+    - It takes the stale invoices 50 at a time, each batch in one write.
+    - One process at a time: the `ephemeral` lease 'queue-recheck', taken over after 120 s without renewal.
+    - A coding that can't be checked again is kept with `recheck.issues` null.
+  - **On the company server** the queue never re-checks in the page, and says how many invoices still show their
+    earlier checks. Bulk approval re-checks each invoice at approval. **On the laptop** the page still re-checks
+    before drawing.
+  - **The checks stamp** says whether a JD Edwards batch exists, not how many. A note on a vendor that is neither on
+    hold nor added from the review screen is not a vendor master change.
+  - **The import page:**
+    - each pick-up keeps what it read of each file in `seen_files` (place, size, mtime_ns, SHA-256;
+      `core/store/folder.py`);
+    - a view lists the files whose size and time the pick-up hasn't read, or whose content no invoice has, in one
+      query, reading none;
+    - it is kept per process until the folder, a pick-up's notes or the invoices change.
+  - (`coding/bulk.py`, `web/pages/review.py`, `core/store/summary.py`, `core/store/ephemeral.py`,
+    `core/store/accounts.py`, `core/store/vendors.py`, `core/store/folder.py`, `web/pages/process.py`,
+    `ai/pipeline.py`, `ops/cli.py`, `web/app.py`)
+- **D-156** · **The big reports summed and picked by SQLite; the Spend workbook made in the background on the server;
+  schema 24.**
+  - **What SQLite now picks or sums:**
+    - the controls report's one-person check: the period's approved invoices that may be over the limit;
+    - the report's events: their details only where SQLite can't tell they left nothing open;
+    - month-end's received-not-invoiced: POs, lines and invoices in three reads;
+    - the Spend page's sums;
+    - the JD Edwards duplicate checks: only the exported invoices and register rows with the batch's numbers;
+    - Activity: counts and people off indexes.
+  - **What stays in Python:** what is rounded, ordered, converted or decided. The old code is kept in
+    `tests/reports_reference.py` and compared on seeded stores.
+  - **The Spend data workbook** is written in openpyxl's write-only mode. On the company server a Clerk or above makes
+    it in the background (`POST /spend/data`, job `spend-data`, one at a time), and the download is the last one
+    made. On a laptop it is made on download.
+  - **Schema 24** adds `events_created (created_at, action)`, `events_actor (actor)` and `erp_invoices_number
+    (number_key)`.
+  - **Not done:**
+    - month-end at 100k is about 3-5 s;
+    - an Activity search for a rare word decodes every event.
+- **D-157** · **Search and the smaller pages read in SQL what they show; schema 22.**
+  - **Quick search:**
+    - `search.condition` is the quick search as one SQL condition over the summary's columns: exactly what `_score`
+      finds.
+    - The directory counts, sorts and pages it with its filters.
+    - Over 50,000 matches: all are counted, and the directory's sort picks the export's 50,000.
+  - **ERP register:** `erp_invoices.plain_name` and `raw_number` are filled at import, and for an older register by a
+    migration that checks for the columns.
+    - A search reads only the rows it may match.
+    - Its "is it ours?" check is one query.
+    - The ERP hits are shown 50 at a time ("Show more").
+  - **Exports:** CSV and Excel read 1,000 rows at a time, and the workbook is write-only (`exports.streamed_sheet`).
+  - **Duplicate audit:** only pairs that can be one, in the order every pair was compared before. SQLite 3.38+ reads
+    the five fields with `->`.
+  - **Supplier learning and Automation:** every vendor's `SupplierStats` from one query (`Store.all_supplier_stats`,
+    `core/store/suppliers.py`). Supplier learning draws 50 vendors at a time.
+  - **Report a problem:** the latest 500 invoices (`help.REPORT_INVOICES`), and it says so; `share-report` still
+    covers every invoice.
+  - **Import invoices:** checks the folder's files in one query.
+  - (`erp/search.py`, `erp/directory.py`, `erp/exports.py`, `erp/dupaudit.py`,
+    `core/store/{_base,invoices,summary,suppliers}.py`, `capture/supplier.py`, `ops/share_report.py`,
+    `web/pages/{search,learning,settings_automation,help,process}.py`)
+- **D-158** · **An async handler only awaits; its work runs on a threadpool thread** (B-1660).
+  - **Why:** a uvicorn worker runs every `async def` on its one event loop, so database or file work there holds up
+    every other request of that worker.
+  - **The rule:** an async handler in `ap_coder/web` (pages and middlewares) only awaits the form (`posted_form`) or
+    an upload's body. Then `return await run_in_threadpool(_work, request, form)`, where `_work` is a plain function
+    marked `@one_connection`, as the review screen's Check does.
+  - **No await needed:** the handler is a plain `def`. FastAPI runs it on the threadpool, and `page_router` gives it
+    one connection (`manager.record`).
+  - **Also on a thread:** `files.receive_sheet` reads and keeps an uploaded sheet, and the error pages are drawn
+    there too.
+  - **Long imports** (ERP register, vendor master, ERP history) still run whole inside their request, now on a thread.
+  - **A code rule** (`tests/meta/test_code_rules.py`) walks every `async def` with `ast`. Outside an `await` it
+    forbids `get_store`/`current_store`, store methods, functions given the store, `render`, `open`, and path reads
+    or writes. What `run_in_threadpool` is given is exempt, and the lifespan is left out.
+  - **Still listed for now:** the review screen's grid actions (`invoice.py`) and the upload check (`process.py`),
+    until they are converted at the phase 2 integration.
+  - (`web/pages/accounts.py`, `exports.py`, `insights.py`, `learning.py`, `manager.py`, `purchase_orders.py`,
+    `vendors.py`, `settings.py`, `settings_hub.py`, `settings_jde.py`, `web/files.py`, `web/app.py`, `web/errors.py`;
+    `tests/meta/test_code_rules.py`, `tests/web/test_server_scale.py`)
