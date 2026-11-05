@@ -54,7 +54,7 @@ def month_end_page(request: Request, end: str = "") -> HTMLResponse:
     period_end = address_day(end, accruals.default_period_end())
     no_date: list[accruals.Accrual] = []  # the invoices with no date: read with the accruals, not again
     left_out: list[accruals.Accrual] = []  # expected recurring invoices whose received PO lines are accrued instead
-    items = accruals.build(store, period_end, no_date, left_out)
+    items = accruals.build(store, period_end, no_date, left_out, settle=accruals.SETTLE_SECONDS)  # (D-166)
     rates = store.fx_rates()
     tiles = []
     for source, (n, by_currency) in accruals.summary(items).items():
@@ -132,5 +132,5 @@ def month_end_page(request: Request, end: str = "") -> HTMLResponse:
 @router.get("/month-end/accruals.csv")
 def accruals_csv(request: Request, end: str = "") -> Response:
     period_end = address_day(end, accruals.default_period_end())
-    items = accruals.build(get_store(request), period_end)
+    items = accruals.build(get_store(request), period_end)  # (never settled: booked from)
     return download(accruals.to_csv(items, period_end), f"accruals_{period_end}.csv", "text/csv")

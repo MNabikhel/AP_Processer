@@ -20,7 +20,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from ap_coder.core import ui
 from ap_coder.core.store import APPROVED
-from ap_coder.erp.insights import AS_CODED, Assumptions, as_coded_note, compute, operations, report_html
+from ap_coder.erp.insights import AS_CODED, Assumptions, as_coded_note, compute, report_html, shown, shown_operations
 from ap_coder.ops.offline import internet_allowed
 from ap_coder.web.charts import OK_GREEN, SERIES, WARN_AMBER, Series, bar_chart
 from ap_coder.web.core import done, get_store, one_connection, page_router, posted_form, refuse, render, reviewer
@@ -138,14 +138,14 @@ def assumption_fields(a: Assumptions) -> list[dict[str, Any]]:
 @router.get("/insights", response_class=HTMLResponse)
 def insights_page(request: Request) -> HTMLResponse:
     store = get_store(request)
-    s = compute(store)
+    s = shown(store)  # (kept, and settled under a stream of changes: D-166)
     a: Assumptions = s["assumptions"]
     fully = store.status_counts().get(APPROVED, 0)  # fully approved (a second approval waiting doesn't count yet)
     if fully < MIN_APPROVALS:
         return render(request, "insights.html", "insights", s=s, fields=assumption_fields(a), early=True,
                       min_approvals=MIN_APPROVALS, fully=fully, pilot=pilot_card(store))  # fmt: skip
     cloud = internet_allowed()
-    ops = operations(store)
+    ops = shown_operations(store)
     biggest_age = max(ops["ageing"].values()) or 1
     ageing = [
         {"label": label, "n": n, "share": n / biggest_age, "late": label.startswith(("8", "15"))}

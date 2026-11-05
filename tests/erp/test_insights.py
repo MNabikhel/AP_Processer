@@ -68,3 +68,49 @@ def test_filling_in_a_blank_is_not_a_correction():
                                      {"what": "line 2 cost center", "before": "", "after": "200"}]}}  # fmt: skip
     fixed = {"detail": {"changes": [{"what": "line 1 GL account", "before": "6010", "after": "1510"}]}}
     assert not corrected(filled) and corrected(fixed) and not corrected({"detail": {}})
+
+
+def test_the_insights_pages_figures_follow_their_data_and_settle_for_a_minute_under_changes(
+    tmp_path, ground_truth, monkeypatch
+):
+    """The Insights page's figures (``shown``, ``shown_operations``) are kept until the invoices, the vendors' payment
+    terms, the default terms or the assumptions change, whoever changed them (another Store, plain SQL); once the
+    invoices or the vendors changed they are worked out again at most every ``insights.SETTLE_SECONDS`` (D-166); a
+    change of the assumptions or of the default terms is another question, worked out at once."""
+    from ap_coder.core.store import summary
+    from ap_coder.erp import insights
+    from tests.core.test_kept_answers import NOW, _invoice, _plain
+
+    clock = [1000.0]
+    monkeypatch.setattr(summary, "monotonic", lambda: clock[0])
+    worked = {"compute": 0, "operations": 0}
+    for name, real in (("compute", insights.compute), ("operations", insights.operations)):
+        monkeypatch.setattr(insights, name, lambda *a, real=real, name=name: worked.update({name: worked[name] + 1})
+                            or real(*a))  # fmt: skip
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    first = _invoice(other, tmp_path, ground_truth, "I-1")
+
+    def seen() -> tuple:
+        return insights.shown(store)["processed"], insights.shown_operations(store)["waiting"], dict(worked)
+
+    assert seen() == (1, 1, {"compute": 1, "operations": 1}) == seen()
+    _invoice(other, tmp_path, ground_truth, "I-2")
+    clock[0] += insights.SETTLE_SECONDS - 1
+    assert seen() == (1, 1, {"compute": 1, "operations": 1})  # changed, worked out under a minute ago: settled
+    clock[0] += 1
+    assert seen() == (2, 2, {"compute": 2, "operations": 2})
+    _plain(store, "DELETE FROM invoices WHERE id = ?", first)
+    clock[0] += insights.SETTLE_SECONDS
+    assert seen()[:2] == (1, 1)  # (the page that brings the summary up to date works it out, the next keeps it)
+    counts = seen()[2]
+    assert seen()[2] == counts
+    _plain(store, "INSERT INTO vendors (vendor_key, display_name, updated_at, terms) VALUES ('x', 'X', ?, 'Net 10')",
+           NOW)  # fmt: skip
+    assert seen()[2] == counts
+    clock[0] += insights.SETTLE_SECONDS
+    assert seen()[2] == {**counts, "operations": counts["operations"] + 1}  # (its terms: the operations only)
+    other.set_setting("default_terms_days", "45")  # (each invoice's due date worked out again: the summary too)
+    assert seen()[2]["operations"] == counts["operations"] + 2
+    before = worked["compute"]
+    insights.Assumptions(monthly_volume=1200).save(other)
+    assert insights.shown(store)["assumptions"].monthly_volume == 1200 and worked["compute"] == before + 1

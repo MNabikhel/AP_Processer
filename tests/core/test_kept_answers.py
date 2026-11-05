@@ -954,11 +954,16 @@ def test_the_duplicate_audits_pairs_follow_the_invoices_and_the_erp_register(tmp
     assert pairs() == []
 
 
-def test_spends_figures_and_currencies_follow_the_approved_invoices_and_what_is_asked(tmp_path, ground_truth):
+def test_spends_figures_and_currencies_follow_the_approved_invoices_and_what_is_asked(
+    tmp_path, ground_truth, monkeypatch
+):
     """The Spend page's figures and currencies, kept on the summary's generation, per period, currency, GL categories
-    and rates (copies: the caller's own changed after is another question)."""
+    and rates (copies: the caller's own changed after is another question); once the invoices changed, worked out
+    again at most every ``spend.SETTLE_SECONDS`` (D-166)."""
     from ap_coder.erp import spend
 
+    clock = [1000.0]
+    monkeypatch.setattr(summary_module, "monotonic", lambda: clock[0])
     store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
     start, end = dt.date(2000, 1, 1), dt.date(2099, 12, 31)
     cad, usd = (_invoice(other, tmp_path, ground_truth, name) for name in ("S-1", "S-2"))
@@ -976,6 +981,10 @@ def test_spends_figures_and_currencies_follow_the_approved_invoices_and_what_is_
     assert invoices == 1 and total > 0 and categories == ["Uncategorised"] and shown == ["CAD"]
     assert seen("USD")[:2] == (0, 0.0)
     other.approve_invoice(usd, {**ground_truth, "invoice_number": "S-2", "currency": "USD"}, "Jordan Lee")
+    clock[0] += spend.SETTLE_SECONDS - 1
+    assert spend.figures(store, start, end, "USD", {})["invoices"] == 0  # worked out under 30 s ago: settled
+    assert spend.spend_currencies(store, start, end) == ["CAD"]
+    clock[0] += 1
     assert seen("USD") == (1, total, ["Uncategorised"], ["CAD", "USD"])
     assert seen(first=end) == (0, 0.0, [], [])
     rates = {"CAD": 1.0, "USD": 1.5}
@@ -983,6 +992,7 @@ def test_spends_figures_and_currencies_follow_the_approved_invoices_and_what_is_
     rates["USD"] = 2.0
     assert seen(rates=rates)[:2] == (2, round(total * 3, 2))
     _plain(store, "UPDATE invoices SET status = 'review' WHERE id = ?", usd)
+    clock[0] += spend.SETTLE_SECONDS
     assert seen(rates=rates) == (1, total, ["Uncategorised"], ["CAD"])
     category = {gl: "Office" for gl, _, _ in spend.read_figures(store, start, end, "CAD", {})["by"]["gl_code"]}
     assert seen(category=category)[2] == ["Office"]

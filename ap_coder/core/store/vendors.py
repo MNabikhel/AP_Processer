@@ -416,6 +416,12 @@ class VendorsMixin:
         with self._conn() as conn:
             return [dict(r) for r in conn.execute("SELECT * FROM vendors WHERE in_master = 1")]
 
+    def master_vendor_ids(self) -> list[tuple[str, str]]:
+        """(vendor key, ERP ID) of each vendor of the vendor master: what Import invoices' setup step counts, at every
+        view (``master_vendors``' every column of 20,000 vendors took 0.23 s, D-166)."""
+        with self._conn() as conn:
+            return [tuple(r) for r in conn.execute("SELECT vendor_key, erp_id FROM vendors WHERE in_master = 1")]
+
     def vendor_ids(self) -> dict[str, str]:
         """{vendor_key: ERP vendor ID} from the vendor master, plus {"gst:<number>": ERP vendor ID} so an
         invoice whose vendor name differs but whose GST/HST number matches still gets its ID. Kept in each process

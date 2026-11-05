@@ -18,7 +18,7 @@ import re
 import threading
 import time
 from collections.abc import Callable
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 from typing import Any
 
 from fastapi import File, Form, Request, UploadFile
@@ -27,7 +27,14 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from ap_coder.ai import page_reader
 from ap_coder.ai.extraction import SUPPORTED_EXTENSIONS, TEXT_EXTENSIONS
 from ap_coder.ai.local_llm import provider_status
-from ap_coder.ai.pipeline import InvoicePipeline, PipelineResult, invoice_files, other_files
+from ap_coder.ai.pipeline import (
+    NOT_A_FILE_TO_MENTION,
+    STILL_ARRIVING,
+    InvoicePipeline,
+    PipelineResult,
+    invoice_files,
+    other_files,
+)
 from ap_coder.capture.layout import ocr_available
 from ap_coder.coding.tax import PROVINCE_NAMES, TAX_TYPES
 from ap_coder.core import paths, ui
@@ -40,7 +47,6 @@ from ap_coder.intake.mailbox import (
     EMAIL_EXTENSIONS,
     MAX_EMAIL_BYTES,
     Unpacked,
-    emails_in,
     safe_name,
     unpack,
     unpack_folder,
@@ -334,25 +340,30 @@ def pilot_steps(store: Store) -> list[tuple[str, str, str]]:
     from ap_coder.web.core import jde_shown
 
     shown = jde_shown(store)
-    vendors = store.master_vendors()
+    # its ERP ID, else the number set in Settings → JD Edwards → Supplier address numbers (B-1002)
+    overrides = dict(jde.load(store).an8_overrides) if shown else {}
+
+    def counted() -> tuple[int, int]:  # (the vendor master's vendors, those with an address number)
+        vendors = store.master_vendor_ids()
+        return len(vendors), sum(1 for key, erp_id in vendors if str(erp_id or "").strip().isdigit()
+                                 or str(overrides.get(key or "") or "").strip().isdigit())  # fmt: skip
+
+    # Kept until the vendor list or the numbers set change: 20,000 vendors read at every view took 0.23 s (D-166).
+    vendors, an8 = store.summary_memo("master_vendors_counted", counted, topic="", changes="vendors", asked=overrides)
     if not vendors:
         what = "the ERP's vendor list" + (", with each supplier's address number (AN8)" if shown else "")
         vendor = ("todo", VENDOR_STEP, f"on Vendors: import {what}")
     elif shown:
-        # its ERP ID, else the number set in Settings → JD Edwards → Supplier address numbers (B-1002)
-        overrides = jde.load(store).an8_overrides
-        an8 = sum(1 for v in vendors if str(v.get("erp_id") or "").strip().isdigit()
-                  or str(overrides.get(v.get("vendor_key") or "") or "").strip().isdigit())  # fmt: skip
         vendor = (
             ("ok" if an8 else "todo"),
             VENDOR_STEP,
-            f"{ui.plural(len(vendors), 'vendor')}, {an8} with an address number (AN8)"
+            f"{ui.plural(vendors, 'vendor')}, {an8} with an address number (AN8)"
             if an8
-            else f"{ui.plural(len(vendors), 'vendor')}, but no address number (AN8): import it as the ERP ID, or set "
+            else f"{ui.plural(vendors, 'vendor')}, but no address number (AN8): import it as the ERP ID, or set "
             "it in Settings → JD Edwards → Supplier address numbers",
         )
     else:
-        vendor = ("ok", VENDOR_STEP, ui.plural(len(vendors), "vendor"))
+        vendor = ("ok", VENDOR_STEP, ui.plural(vendors, "vendor"))
     steps = [vendor]
     if shown:
         saved = bool(store.get_setting(jde.SETTING_KEY))
@@ -695,49 +706,77 @@ def still_being_saved(path: Path, now: float | None = None) -> bool:
         return True
 
 
-# ``folder_files`` by folder: (stamp, rows, when worked out); kept LISTED_SECONDS at most (a file written over in
-# place changes no stamp)
-_LISTED: dict[str, tuple[tuple[Any, ...], list[dict[str, Any]], float]] = {}
+_UNLISTED = ("readme", ".", "~$")  # README files, hidden files, Office lock files: not invoices, not mentioned
+
+
+def folder_names(folder: Path) -> tuple[list[str], list[str], list[str]]:
+    """The names of ``folder``'s invoice files, saved emails and files of a kind not read, in the order
+    ``invoice_files``, ``emails_in`` and ``other_files(folder, EMAIL_EXTENSIONS)`` list them, from one listing by
+    name: those three made a Path of each of 100,000 files, 2 s (D-166). Raises OSError."""
+    known = SUPPORTED_EXTENSIONS | EMAIL_EXTENSIONS | STILL_ARRIVING
+    names, emails, others = [], [], []
+    with os.scandir(folder) as entries:
+        for entry in entries:
+            name, lower = entry.name, entry.name.lower()
+            suffix = os.path.splitext(lower)[1]  # (``Path.suffix`` of a name that doesn't start with a dot)
+            shown = not lower.startswith(_UNLISTED)
+            if suffix in SUPPORTED_EXTENSIONS and shown and entry.is_file():
+                names.append(name)
+            if lower.endswith(tuple(EMAIL_EXTENSIONS)) and PurePath(name).suffix.lower() in EMAIL_EXTENSIONS and (
+                    entry.is_file()):  # fmt: skip
+                emails.append(name)
+            if suffix not in known and shown and lower not in NOT_A_FILE_TO_MENTION and entry.is_file():
+                others.append(name)
+    names.sort(key=os.path.normcase)
+    # A .md/.txt file beside a PDF or a picture of its name is a text copy of it (``invoice_files``).
+    parts = [os.path.splitext(name) for name in names]
+    documents = {stem.lower() for stem, suffix in parts if suffix.lower() not in TEXT_EXTENSIONS}
+    names = [name for name, (stem, suffix) in zip(names, parts, strict=True)
+             if suffix.lower() not in TEXT_EXTENSIONS or stem.lower() not in documents]  # fmt: skip
+    return names, sorted(emails, key=os.path.normcase), sorted(others, key=os.path.normcase)
+
+
+# ``folder_files`` by folder: (stamp, what it gives, when worked out); kept LISTED_SECONDS at most (a file written over
+# in place changes no stamp)
+_LISTED: dict[str, tuple[tuple[Any, ...], tuple[list[dict[str, Any]], list[str]], float]] = {}
 LISTED_SECONDS = 60.0
 
 
-def folder_files(store: Store) -> list[dict[str, Any]]:
-    """The files in the invoices folder not processed yet (saved emails too: their attachments are read), as the
-    pick-up last read them: a page view reads none, it looks at their size and time (``Store.unseen_files``, D-155).
-    The invoices folder keeps the processed files: reading every one on each view took 7 s at 100,000 invoices, and
-    listing them still takes 2 to 4 s, so the list is worked out again only once the folder (a file added, removed or
-    renamed), what a pick-up read or the invoices changed, or a minute on (a scan written over another of its name).
-    Listed at the folder's resolved place, as the pick-up notes them (``read_file``)."""
+def folder_files(store: Store) -> tuple[list[dict[str, Any]], list[str]]:
+    """(the files in the invoices folder not processed yet, saved emails too: their attachments are read; the names
+    of its files of a kind not read, ``not_read_here``), as the pick-up last read them: a page view reads none, it
+    looks at their size and time (``Store.unseen_files``, D-155). The invoices folder keeps the processed files:
+    reading every one on each view took 7 s at 100,000 invoices, and looking at each one's size and time still takes
+    1.5 s, so the list is worked out again only once the folder (a file added, removed or renamed), what a pick-up
+    read or the invoices changed, or a minute on (a scan written over another of its name). Listed at the folder's
+    resolved place, as the pick-up notes them (``read_file``)."""
     folder = invoice_dir(store).resolve()
     try:
         stamp = (folder.stat().st_mtime_ns, store.files_stamp())
     except OSError:  # no invoices folder yet
-        return []
+        return [], []
     known = _LISTED.get(str(folder))
     if known is not None and known[0] == stamp and time.monotonic() - known[2] < LISTED_SECONDS:
         return known[1]
-    sizes: dict[Path, int] = {}
+    names, emails, others = folder_names(folder)
     listed = []
-    for p in invoice_files(folder):
+    for place in [os.path.join(folder, name) for name in names]:
         with contextlib.suppress(OSError):  # gone meanwhile
-            seen = p.stat()
-            sizes[p] = seen.st_size
-            listed.append((str(p), seen.st_size, seen.st_mtime_ns))
+            seen = os.stat(place)
+            listed.append((place, seen.st_size, seen.st_mtime_ns))
     new = store.unseen_files(listed)
-    rows = []
-    for p in [*(p for p in sizes if str(p) in new), *emails_in(folder)]:
-        try:
-            size = sizes[p] if p in sizes else p.stat().st_size
-        except OSError:
-            continue
-        email = p.suffix.lower() in EMAIL_EXTENSIONS
-        icon = "mail" if email else "picture_as_pdf" if p.suffix.lower() == ".pdf" else "image"
-        rows.append({"name": p.name, "kb": f"{size / 1024:,.0f} KB", "icon": icon, "email": email})
+    found = [(os.path.basename(place), size, False) for place, size, _ in listed if place in new]
+    for name in emails:
+        with contextlib.suppress(OSError):
+            found.append((name, os.stat(os.path.join(folder, name)).st_size, True))
+    rows = [{"name": name, "kb": f"{size / 1024:,.0f} KB", "email": email,
+             "icon": "mail" if email else "picture_as_pdf" if name.lower().endswith(".pdf") else "image"}
+            for name, size, email in found]  # fmt: skip
     if len(_LISTED) > 8:  # (a test's many data folders)
         _LISTED.clear()
     if time.time_ns() - stamp[0] > 2e9:  # a folder changed just now may change again within its time's precision
-        _LISTED[str(folder)] = (stamp, rows, time.monotonic())
-    return rows
+        _LISTED[str(folder)] = (stamp, (rows, others), time.monotonic())
+    return rows, others
 
 
 RECENT = 6  # the newest invoices the page lists
@@ -767,6 +806,7 @@ def process_page(request: Request) -> HTMLResponse:
     recent = [{**i, "needs_attention": i["id"] in reasons} for i in recent]  # its pill says what the queue says
     steps, coming, links = shown_setup(request, steps, next_step(steps))
     demo_count = store.demo_count()
+    files, not_read = folder_files(store)
     return render(
         request, "process.html", "process",
         # The demo still loaded and none of your own invoices yet: asked to remove it first, so its reviewer, lessons
@@ -781,8 +821,8 @@ def process_page(request: Request) -> HTMLResponse:
         ready=ready_to_read(steps),
         recent=recent,
         recent_waiting=any(i["status"] == REVIEW for i in recent),
-        files=folder_files(store),
-        not_read=not_read_here(invoice_dir(store)),
+        files=files,
+        not_read=not_read,
         set_aside=inbox.needs_person(store, invoice_dir(store)),
         folder=short_path(invoice_dir(store)) if is_admin(request) else "",
         accept=",".join(ACCEPT),
