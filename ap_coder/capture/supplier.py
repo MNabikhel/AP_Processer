@@ -135,9 +135,14 @@ def parse_amount(text: Any) -> float | None:
     if any(w not in _CURRENCY_WORDS for w in re.findall(r"[a-z]+", _fold(s))):
         return None  # letters other than a currency code or CR: an id, not an amount
     found = normalize.find_amounts(s)
-    if len(found) != 1 or re.search(r"\d", s[: found[0][1]] + s[found[0][2] :]):
+    # "1 234 $", "CAD 1 234": one amount, which find_amounts splits (a quantity and a price)
+    spaced = _SPACED_THOUSANDS.fullmatch(" ".join(re.sub(r"^[a-z]+\.?|[a-z]+\.?$", "", _fold(s)).split()))
+    if not spaced and (len(found) != 1 or re.search(r"\d", s[: found[0][1]] + s[found[0][2] :])):
         return None  # two numbers ("1,23,4.00", a date) or digits beside the amount
-    return normalize.parse_amount(s)
+    value = normalize.parse_amount(s)
+    if value and value > 0 and re.match(r"\s*(?:cr(?![a-z])|[-−–])", _fold(s)):
+        return -value  # a credit written first ("CR 12.00", "- 12.00"), which normalize's parser leaves positive
+    return value
 
 
 _MONTHS = {

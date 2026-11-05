@@ -222,7 +222,8 @@ and `--llm-parallel` (below), `--no-start`.
 `--account`, `--task-name` and `--folder` are never taken from `server.json`: the service's account can change that
 file, and these three say what the task runs, as whom, and which task your `schtasks` commands change. Each
 `service install|start|stop|status|remove` uses the ones given on its own command line, else the defaults (the
-folder: the one you run it from); `server-update` takes `--task-name` the same way. So when you chose another
+folder: the one you run it from); `server-update` takes `--task-name` the same way, and changes nothing when no task
+of that name is installed while `server.json` names another or the dashboard answers. So when you chose another
 account, task name or folder, give them again each time;
 `SYSTEM` and the other built-in accounts are used only when `--account` names them. `service stop` ends only the
 service's own `python.exe` (its `.venv`'s, or the Python that `.venv` was made with) when it will not stop by itself,
@@ -355,7 +356,8 @@ window, started at boot like AP Coder.
    On another computer of the company network instead (a Mac Studio), give its address in the .env
    (`AP_LLM_BASE_URL`, `AP_PAGE_READER_BASE_URL`). A name in the company's DNS (`macstudio.corp.example.com`) also
    needs that DNS domain named, `AP_COMPANY_DOMAINS=corp.example.com` (several: comma-separated): such a name is used
-   while every address it has is private, and no other name is looked up.
+   while every address it has is private, AP Coder connects to the very addresses it checked (never to a second
+   lookup's), and no other name is looked up.
 6. **Several requests at once** (for 5,000 invoices a month and more). One request at a time leaves most of a
    graphics card idle; a server that answers several together (continuous batching) reads 2 to 4 pages in about
    the time of one and a half (estimated, from llama.cpp's published batching figures; not measured here). Two

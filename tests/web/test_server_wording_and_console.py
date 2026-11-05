@@ -310,6 +310,9 @@ class NoService(server_update.Server):
     def installed(self) -> bool:
         return False
 
+    def answers(self) -> bool:
+        return False  # no dashboard runs either
+
 
 def test_a_dry_run_without_the_service_says_there_is_nothing_to_stop(tmp_path, monkeypatch, capsys):
     """B-1119: ``server-update --dry-run`` said "Stop the service" on a server where none is installed."""

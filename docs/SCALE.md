@@ -43,7 +43,7 @@ Every number here was measured, with the machine, the command and the date. Esti
 | 4 | JD Edwards (stand-in): sync of 30k suppliers and 600k vouchers, then only the changes; 500 vouchers in one run; the duplicate check right beside a 20k-voucher supplier; fiscal periods | **Not met** (no volume harness yet: phase 4 builds it). By reading and small reproductions: every nightly read stops at 100,000 rows (200 pages × 500), so 600k vouchers fail every night. Each night re-reads 730 days. Posting stops at the first late voucher (about 40 h for 500 at worst). One 20k-voucher supplier switched the live check off for everyone (B-1601, fixed in phase 1). No fiscal periods | |
 | 5 | macOS service proven in CI; readiness check; updates under 5 minutes of downtime; backups pruned, with a free-space check | — | |
 | 6 | No SQL outside `core/store`; nested transactions; a PostgreSQL seam; meta tests | — | |
-| 7 | Every reproduced bug fixed test-first | 0 of about 20 | |
+| 7 | Every reproduced bug fixed test-first | 0 of about 20 | **On track.** Phases 0-1: 40 fixed, each with its failing test first and its BUGS.md line: the digest's 20 (B-1578 to B-1607), the phase 1 review's 9 (B-1608, B-1609, B-1672 to B-1678), the backups' room and hours (B-1670, B-1671), the Windows background process (B-1680) and the bench (B-1681) |
 | 8 | Laptop mode unchanged; accuracy benches the same or better; `same_behaviour.py` identical | — | |
 | 9 | Docs current | — | |
 
@@ -65,7 +65,21 @@ Every number here was measured, with the machine, the command and the date. Esti
       doesn't change what is over target).
   - **The throughput baseline:** [archive/scale-2026-11/baseline-day-100.md](archive/scale-2026-11/baseline-day-100.md), in
     the target 3 row above.
+  - **Merged** 5 Nov 2026 (a565e9c).
   - **The first target for phase 2:** a web worker's memory on a big database. What makes a worker grow to 3-7 GB:
     [archive/scale-2026-11/memory.md](archive/scale-2026-11/memory.md). No leak: about 110 MB for each request in
     flight (anyio's 40 threads a worker, no limit), kept afterwards by the allocator. Capping the pool at 4 threads
     took 16 people at once from 1.9-2.15 GB to 1.33 GB with the same work done.
+- **Phase 1, the verified bugs** (5 Nov 2026):
+  - **What it fixes:** the digest's 20 bugs, test-first, then the 9 a fresh review found in that work. Among them:
+    - a manager's double answer;
+    - a page waiting 30 s behind a writer to note that someone is still there;
+    - polls that kept idle sessions alive;
+    - one supplier with many vouchers turning the JD Edwards check off for everyone;
+    - two pick-ups storing a file twice;
+    - work typed after a session ended, now kept;
+    - a model server named in the company's DNS, now connected to at the address it was checked at.
+  - **Schema 20** adds six indexes.
+  - **The decisions:** D-149 (amended) to D-152.
+  - **Also:** backups refused when they would fill the disk, and kept to set hours (B-1670, B-1671).
+

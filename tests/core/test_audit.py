@@ -92,3 +92,14 @@ def test_every_logged_action_has_a_label_and_a_description():
     }  # fmt: skip
     for action, detail in details.items():
         assert describe({"action": action, "detail": detail}), action
+
+
+def test_no_events_asked_for_gives_none(tmp_path):
+    """B-1676: ``find_events(limit=0)`` asked SQLite for a batch of none and then read the last of no rows
+    (IndexError); with a search (``matches``) it gave one event. None asked for is none given."""
+    store = Store(tmp_path / "ap.db")
+    for n in range(3):
+        store.log_event("settings_changed", actor=f"ann{n}")
+    assert list(store.find_events(limit=0)) == []
+    assert list(store.find_events(limit=0, matches=lambda e: True)) == []
+    assert [e["actor"] for e in store.find_events(limit=2)] == ["ann2", "ann1"]

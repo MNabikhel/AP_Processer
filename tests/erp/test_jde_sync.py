@@ -208,6 +208,28 @@ def test_the_live_check_signs_in_once_for_many_checks_and_out_at_the_end(store, 
     assert (calls.count(token), calls.count(logout)) == (2, 1) and not any(ais.tokens.values())
 
 
+@pytest.mark.parametrize("kind", [jde_ais.UNREACHABLE, jde_ais.TIMEOUT, jde_ais.CERTIFICATE])
+def test_jde_not_reached_the_live_check_looks_its_address_up_again(store, monkeypatch, kind):
+    """B-1609: the live check's shared AIS client kept the address its name resolved to when it was made, for the life
+    of the process: once JDE moved to another server (a failover, a new address in DNS) every check went on failing
+    at the old one. A client that can't reach JDE is dropped: the next check looks the name up again."""
+    answers = iter([["10.0.0.1"], ["10.0.0.2"]])  # the AIS name moved to another server after the first lookup
+    monkeypatch.setattr(jde_ais, "_resolve", lambda host: next(answers))
+    used = []
+
+    def once(self, method, path, body, headers, timeout):
+        used.append(self.address)
+        raise jde_ais.AisError(kind, f"{self.address} can't be reached")
+
+    monkeypatch.setattr(jde_ais.AisClient, "_once", once)
+    cfg = jde_ais.AisSettings(base_url="https://ais.corp.example:9443", environment="JDV920", username="u", step1=True)
+    store.set_setting(jde_ais.SETTING_KEY, cfg.to_json())
+    for _ in range(2):
+        assert [c for _, c, _ in jde_sync.live_findings(store, _coding())] == ["JDE_NOT_REACHED"]
+        jde_sync._DOWN.clear()  # DOWN_SECONDS later: JDE is asked again
+    assert used == ["10.0.0.1", "10.0.0.2"]
+
+
 def test_the_live_check_is_off_with_step_1(store, ais):
     connect(store, ais, step1=False)
     assert jde_sync.live_findings(store, _coding()) == []
