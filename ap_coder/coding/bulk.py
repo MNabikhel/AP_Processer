@@ -328,7 +328,11 @@ class QueueRecheck:
         while not self.stopping.wait(self.every):
             try:
                 store = self.store_factory()
-                if not store.restoring() and store.stale_checks(store.checks_stamp()):
+                if (
+                    not store.restoring()
+                    and store.stale_checks(store.checks_stamp())
+                    and store.list_accounts("gl_accounts")
+                ):  # (no GL accounts: nothing is checked, the stored checks stand)
                     recheck_queue(store, self.settings_factory())
             except Exception:  # noqa: BLE001 - never stop the dashboard
                 log.warning("the queue's re-check failed", exc_info=True)
@@ -372,10 +376,10 @@ def sort_for_bulk(
 def queue_facts(row: Any) -> dict[str, Any]:
     """What the queue reads of an invoice (its columns, the JSON ones decoded), kept in the invoices' summary (D-110,
     D-155): picked for the audit sample; of one in review, also the stamps of its stored checks ("", None without
-    stored checks) and of its queue re-check, their findings (``_pairs``; None for a re-check whose coding could not
-    be read), what its lines still need (``codes_to_pick``, without and with cost centers) and what its opening Pay
-    from account is chosen from (``banks.opening_choice``: the account, approved before or not, the currency, and the
-    vendor whose last account it is)."""
+    stored checks to check again) and of its queue re-check, their findings (``_pairs``; None for a re-check whose
+    coding could not be read), what its lines still need (``codes_to_pick``, without and with cost centers) and what
+    its opening Pay from account is chosen from (``banks.opening_choice``: the account, approved before or not, the
+    currency, and the vendor whose last account it is)."""
     validation = row["validation"] or {}
     issues = validation.get("issues") or []
     facts: dict[str, Any] = {"q_audit": int(_audit_pick(row["meta"]))}
@@ -386,7 +390,8 @@ def queue_facts(row: Any) -> dict[str, Any]:
     lines = doc.get("line_items")
     pay = [str(doc.get("pay_from_account") or ""), bool(row["final_output"]), str(doc.get("currency") or "CAD"),
            vendor_key(doc.get("vendor_name") or row["vendor_name"] or "")]  # fmt: skip
-    return {**facts, "q_stamp": None if row["validation"] is None else str(validation.get(CHECKS_STAMP_KEY) or ""),
+    stamp = str(validation.get(CHECKS_STAMP_KEY) or "") if isinstance(row["validation"], dict) else None
+    return {**facts, "q_stamp": stamp,
             "q_found": _pairs(issues), "r_stamp": str(recheck.get("stamp") or ""),
             "r_found": None if recheck.get("issues") is None else _pairs(recheck["issues"]),
             "q_pick": codes_to_pick(lines, False, hint=False).removesuffix(" to approve"),

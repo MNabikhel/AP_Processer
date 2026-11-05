@@ -164,3 +164,17 @@ def test_a_vendor_note_or_one_more_jde_batch_changes_no_check(store):
     one = store.checks_stamp()  # JD Edwards in use now: its checks apply
     store.create_export_batch(approved[1:2], "jde")
     assert one != noted and store.checks_stamp() == one
+
+
+def test_without_gl_accounts_the_background_writes_nothing(store, monkeypatch):
+    """Nothing is checked without GL accounts (the stored checks stand): the background's look takes no lease, a write
+    every few seconds for nothing."""
+    _held(store)
+    leases = []
+    monkeypatch.setattr(store, "list_accounts", lambda table: [])
+    monkeypatch.setattr(store, "take_lease", lambda *a: leases.append(a) or True)
+    work = bulk.QueueRecheck(lambda: Settings(), lambda: store, every=0.02).start()
+    time.sleep(0.3)
+    work.stop()
+    work.thread.join(30)
+    assert leases == [] and store.stale_checks(store.checks_stamp())
