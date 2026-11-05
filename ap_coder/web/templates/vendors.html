@@ -55,7 +55,7 @@
       <thead><tr><th>Vendor</th><th class="r">Approved / all</th><th class="r">Spend</th><th>Last invoice</th><th class="r">AI accuracy</th><th></th></tr></thead>
       <tbody>
         {% for v in shown %}
-        <tr>
+        <tr{% if loop.index > 1 and loop.index == rows - step + 1 %} id="more-vendors"{% endif %}>
           <td class="w"><a class="vendor-link" href="/vendors?{{ list_query }}&open={{ v.vendor_key | urlencode }}#vendor">{{ ui.avatar(v.vendor_name or "", "sm") }}<b>{{ v.vendor_name }}</b></a>
             {%- if not v.approved and not v.has_record %} {{ ui.pill("Not approved yet", "gray") }}{% endif %}</td>
           <td class="r">{{ v.approved }} / {{ v.invoices }}</td>
@@ -68,6 +68,10 @@
       </tbody>
     </table>
   </div>
+  {%- if shown_total > shown | length %}
+  <p class="row pad"><span class="muted">{{ shown | length | num }} of {{ shown_total | num }} vendors shown; search finds any of them.</span>
+    <a class="btn sm" href="/vendors?{{ more_query }}#more-vendors">Show more</a></p>
+  {%- endif %}
   {% endif %}
 </section>
 

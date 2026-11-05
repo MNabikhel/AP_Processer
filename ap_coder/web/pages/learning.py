@@ -52,6 +52,7 @@ from ap_coder.web.core import (
     refuse,
     render,
     reviewer,
+    shown_count,
 )
 from ap_coder.web.files import TOO_BIG, SheetError, read_capped, read_csv, read_excel
 from ap_coder.web.invoice_view import gl_name
@@ -361,15 +362,6 @@ def coding_context(store: Store, mem_q: str, settings: Any = None) -> dict[str, 
 SUPPLIERS_SHOWN = 50  # the vendors Supplier learning lists at first, and how many more each time ("Show more")
 
 
-def _shown(value: Any) -> int:
-    """How many vendors to list (``shown`` in the address): SUPPLIERS_SHOWN, or more in steps of it."""
-    try:
-        wanted = int(value or SUPPLIERS_SHOWN)
-    except ValueError:
-        return SUPPLIERS_SHOWN
-    return min(max(SUPPLIERS_SHOWN, -(-wanted // SUPPLIERS_SHOWN) * SUPPLIERS_SHOWN), 1_000_000)
-
-
 def suppliers_context(store: Store, shown: int = SUPPLIERS_SHOWN) -> dict[str, Any]:
     """Every vendor's state, in the order the page lists them (to act on first, then the most invoices), every
     vendor's record worked out in a few queries; the first ``shown`` drawn (D-157)."""
@@ -543,7 +535,7 @@ def learning_page(request: Request) -> HTMLResponse:
         context.update(_history_context(store, q.get("history"), q.get("sheet")))
         context.update(coding_context(store, q.get("mem_q") or "", get_settings(request)))
     elif tab == "suppliers":
-        context.update(suppliers_context(store, _shown(q.get("shown"))))
+        context.update(suppliers_context(store, shown_count(q.get("shown"), SUPPLIERS_SHOWN)))
     elif tab == "lessons":
         context.update(lessons_context(store))
     elif developer:
@@ -589,7 +581,7 @@ def lesson_retire(request: Request, lesson_id: int = Form(...), retired: str = F
 
 def _suppliers_url(shown: str) -> str:
     """Supplier learning with as many vendors listed as when a vendor was acted on: one past the first stays in view."""
-    listed = _shown(shown)
+    listed = shown_count(shown, SUPPLIERS_SHOWN)
     return "/learning?tab=suppliers" + (f"&shown={listed}" if listed > SUPPLIERS_SHOWN else "")
 
 

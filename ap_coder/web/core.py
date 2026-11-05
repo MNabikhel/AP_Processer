@@ -532,6 +532,16 @@ def address_day(value: Any, default: dt.date) -> dt.date:
         return default
 
 
+def shown_count(value: Any, step: int) -> int:
+    """How many rows of a long list to show ("Show more": ``shown`` in the address): ``step``, or more in whole steps
+    of it, a million at most; ``step`` when it is missing, not a number or fewer (D-162)."""
+    try:
+        wanted = int(value or step)
+    except ValueError:
+        return step
+    return min(max(step, -(-wanted // step) * step), 1_000_000)
+
+
 # A form that saves a whole list or page posts a stamp of what it showed (``page_version``, in a hidden "version"
 # field): changed since in another tab or by a colleague, the save is refused rather than overwriting it (B-655).
 STALE_PAGE = (

@@ -61,7 +61,7 @@
       <thead><tr><th>PO</th><th>Vendor</th><th class="r">Lines</th><th class="r">Total</th><th class="r">Invoiced</th><th></th><th class="r">Remaining</th><th></th></tr></thead>
       <tbody>
         {% for p in shown %}
-        <tr>
+        <tr{% if loop.index > 1 and loop.index == rows - step + 1 %} id="more-pos"{% endif %}>
           <td><a href="/purchase-orders?{{ list_query }}&po={{ p.po_key | urlencode }}#po"><b>{{ p.po_number }}</b></a></td>
           <td class="w">{{ p.vendor_name }}</td>
           <td class="r">{{ p.lines }}</td>
@@ -75,6 +75,10 @@
       </tbody>
     </table>
   </div>
+  {%- if shown_total > shown | length %}
+  <p class="row pad"><span class="muted">{{ shown | length | num }} of {{ shown_total | num }} purchase orders shown; search finds any of them.</span>
+    <a class="btn sm" href="/purchase-orders?{{ more_query }}#more-pos">Show more</a></p>
+  {%- endif %}
   {% if in_review %}<p class="muted small pad">Invoiced amounts include invoices still in the review queue.</p>{% endif %}
   {% endif %}
 </section>

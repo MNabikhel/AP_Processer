@@ -412,6 +412,42 @@ def test_sales_tax_claims_and_self_assessment_downloads(client, busy):
     assert client.get(f"/sales-tax/claims.csv?start={end}&end={start}").status_code == 400
 
 
+def test_the_sales_tax_lists_show_a_part_at_a_time_and_the_csvs_and_tiles_every_row(client, busy, monkeypatch):
+    """The claims and the self-assessments, ``ROWS_SHOWN`` at a time each ("Show more", D-162), each keeping the
+    other's length; the CSVs, tiles and counts have every row; under the step, the page is as it was."""
+    from ap_coder.web.pages import sales_tax as page
+
+    start, end = dt.date(2020, 1, 1), dt.date.today()
+    period = f"start={start}&end={end}"
+    report = taxreturn.build(busy, start, end)
+    items = [taxreturn.SelfAssessment(n, f"Vendor {n}", f"SA-{n}", "2026-01-05", "BC", "PST", 100.0, 0.07, 7.0, "CAD",
+                                      taxreturn.JDE_ACCRUES if n == 3 else "") for n in range(1, 4)]  # fmt: skip
+    monkeypatch.setattr(taxreturn, "self_assessment", lambda store, first, last: items)
+    whole = client.get(f"/sales-tax?{period}&show=all").text
+    assert len(report.claims) == 2 and "Show more" not in whole and 'id="more-' not in whole
+    monkeypatch.setattr(page, "ROWS_SHOWN", 1)
+
+    def rows(text: str) -> tuple[int, int]:
+        claims, rest = text.split('id="claims"')[1].split('id="self"')
+        return claims.count("<tr") - 1, rest.count("<tr") - 1  # (less each table's head)
+
+    first = client.get(f"/sales-tax?{period}&show=all").text
+    assert rows(first) == (1, 1) and first.count("of 2 shown; the CSV has every one.") == 1
+    assert "1 of 3 shown; the CSV has every one." in first and "2 invoices, estimate" in first  # (tiles: every item)
+    assert "JD Edwards accrues 1 of them itself" in first
+    assert f'href="/sales-tax?{period}&show=all&rows=2#more-claims"' in first
+    assert f'href="/sales-tax?{period}&show=all&self_rows=2#more-self"' in first
+    both = client.get(f"/sales-tax?{period}&show=all&rows=2&self_rows=2").text
+    assert rows(both) == (2, 2) and both.count('id="more-claims"') == both.count('id="more-self"') == 1
+    assert f'href="/sales-tax?{period}&show=all&rows=2&self_rows=3#more-self"' in both and "of 2 shown" not in both
+    everything = client.get(f"/sales-tax?{period}&show=all&rows=9&self_rows=9").text
+    assert rows(everything) == (2, 3) and "Show more" not in everything
+    claims = attachment(client.get(f"/sales-tax/claims.csv?{period}"), "sales_tax_", "text/csv")
+    assert claims == taxreturn.to_csv(report)
+    sa = attachment(client.get(f"/sales-tax/self-assessment.csv?{period}"), "self_assessment_", "text/csv")
+    assert sa == taxreturn.self_assessment_csv(items, start, end)
+
+
 # --- Vendor statements -----------------------------------------------------------------------------------------
 
 
