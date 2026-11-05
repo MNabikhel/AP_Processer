@@ -17,6 +17,22 @@ Every number here was measured, with the machine, the command and the date. Esti
 - **The models:** played by the bench's stand-in model server, `python -m ap_coder.bench fake-model`, with set
   delays, slots and failures.
 
+## Why 100,000 invoices and not 300,000 on this machine
+- **The size:** a seeded database (`python -m ap_coder.bench seed`) takes 22–32 KB an invoice:
+  - the invoice row itself about 12 KB (the coding as read 3.6, as approved 3.5, the checks 2.0);
+  - its capture 2.1;
+  - events 1.75;
+  - feedback 1.4;
+  - the summary and search 2.6;
+  - the JD Edwards register 1.2;
+  - the full learning history about 9 KB more for each approved invoice.
+- **The two seeds:** 100,000 invoices (600,000 register rows) came to 2.2 GB with learning rows for 5% of approvals, and 3.25 GB in the current seed. A year, 300,000, would be about 7–9 GB. This machine's whole disk allowance leaves about 3 GB for data.
+- **So the numbers here are at 100,000 invoices,** about four months at 25,000 a month, with a scaling check against 12,000:
+  - each page's time at 12k and at 100k;
+  - no full scan of a big table on a hot path, guarded by tests.
+  - A page that only seeks indexes adds about one B-tree level from 100k to 300k. A page that scans grows threefold, and the scaling check is what catches it.
+- **Stage 2's real server measures a year's database itself** (docs/SERVER.md).
+
 ## Targets (the goal's "Done means")
 
 | # | Target | Baseline | Now |
