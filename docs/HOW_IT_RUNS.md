@@ -393,7 +393,18 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   database before the work (the database's `summary_id`, a summary topic's generation, an event count, a count of
   changes the triggers keep in `settings` as `changes/<kind>`, and what was asked). A change by any process, or by
   plain SQL, moves the stamp, and the next request works the answer out again; nothing is kept from inside a write
-  under way. The latest answer of each name is kept, 64 at most.
+  under way. The latest answer of each name is kept, 64 at most. Kept so (sizes at 100,000 invoices):
+  * the vendor master's ERP IDs and its GST/HST numbers (`vendor_ids`, `master_by_tax_number`; `changes/vendors`,
+    about 7 MB each) and the held vendors' approved numbers (`approved_numbers`; `changes/approved`);
+  * the review queue's checks (`bulk.queue_checks`, from 50 invoices; the summary's `queue` topic, the checks stamp,
+    laptop or server, the invoices asked; 15 MB) and its lists (`list_invoices` of review, parked, pending, which the
+    invoice page's Previous and Next read; the `listed` topic; about 3 MB each).
+
+  Beside them, the GL suggestions (`ai/suggest.py`): the whole learning memory's index, built once per change of the
+  lessons; for a vendor whose lessons go past the memory's cap, that index extended by them (`_with_past`), with the
+  lessons themselves (`Store.learning_rows`), for 32 vendors and 60,000 of their lessons a process (about 80 MB,
+  `memory.PAST_KEPT`, `PAST_ROWS_KEPT`); and each memory's answers for 1,024 lines (`_Memory.said`, with the reference
+  data they came from).
 
 ## 9. The data folder and everything AP Coder writes
 

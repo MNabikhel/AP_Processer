@@ -702,6 +702,53 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     - **Going back:** a version before this one refuses the backups made by this one (they hold triggers it doesn't
       know), and keeps those triggers in its database. `server-update --back` restores the pre-update backup, made by
       the older version (`docs/SERVER.md` §11, `docs/UPGRADING.md`).
-  - **The uses** (what is kept, its stamp, its memory, measured) come in the next commits of phase 2 part 2.
-  - (`core/store/summary.py`, `core/store/backups.py`; `tests/core/test_kept_answers.py`, `tests/core/test_backups.py`,
-    `tests/erp/test_invoice_summary.py`)
+  - **Two summary topics** (`summary.TOPICS`; no column changes, so no summary is built again):
+    - `queue`: what the queue reads of an invoice in review (`QUEUE_READ`, the columns `bulk.queue_checks` reads). One
+      the summary could not work out (`broken`) is read again from the invoice, so each change to it counts.
+    - `listed`: the queue's invoices (review, parked, pending) as `list_invoices` lists them (`LISTED_COLUMNS`, its
+      sort columns and the confidence included).
+  - **What is kept** (its stamp; what it holds at 100k, by tracemalloc):
+    - **The vendor master's ERP IDs** (`vendor_ids`): `changes/vendors`; 6.4 MB. Shared: no caller changes it.
+    - **The master's GST/HST numbers** (`master_by_tax_number`, for an invoice not found by name): `changes/vendors`;
+      6.8 MB. Only the vendors found are read, and `same_tax_number` decides on them.
+    - **The held vendors' approved numbers** (`approved_numbers`): `changes/approved` and the vendors asked; 0.07 MB
+      for 193 held vendors. When read, it seeks the vendors' index (`+status`). Each caller gets lists of its own.
+    - **The queue's checks** (`bulk.queue_checks`): `queue`, the checks stamp, laptop or server, the invoices asked;
+      15 MB for 2,740 invoices. Fewer than `KEEP_FROM` (50) invoices are worked out each time. Each caller gets rows
+      and lists of its own; the findings in them are read-only (`MappingProxyType`, made so in `_today`): a copy of
+      each of the 34,000 findings took 18 ms a call, the rows and lists 2.5 ms.
+    - **The queue's lists** (`list_invoices` of review, parked, pending): `listed`; 2.8-3.1 MB each. Each caller gets
+      copies. The invoice page's Previous and Next read the review one (`navigation`).
+    - **The GL suggestions' index:**
+      - the shared memory's index is built once per change of the lessons (`suggest._MEMORY`: the same list while
+        D-154's stamps hold);
+      - a vendor's older lessons past the cap (`learning_rows` returns `memory.WithPast`: the shared rows, then those)
+        extend it (`suggest._with_past`, `_extended`, `Index.extended`): exactly what a whole build gives
+        (`tests/ai/test_coding_no_ai.py`, many vendors in turn), in 12-150 ms (1,400 to 43,000 older lessons) instead
+        of 0.2-0.37 s; 0.33-0.46 MB each, 11.7 MB for 32 (the bench's 9,830 patterns of 167 words);
+      - kept for 32 vendors and 60,000 of their lessons per process (`PAST_KEPT`, `PAST_ROWS_KEPT`), the latest used
+        always; the store keeps those lessons the same way (`_PAST_MEMORY`, 2 vendors before): 1.3 KB a lesson, 78 MB
+        at 60,000. Once the shared rows are others, the memories extended from the older ones are let go.
+    - **A line's suggestions** (`_Memory.said`): with the memory and the reference data they came from; 1,024 per
+      memory, the latest used last, about 2.4 KB each. Callers get copies.
+  - **Measured** (the 100k seed read-only, an `immutable=1` URI; one process, CPU, medians of 20, the checks and the
+    pages of four vendors in turn; JD Edwards in use, as in cpu.md, which asks `vendor_ids` twice a check):
+    - the check 1,000 → 55 ms (743 → 56 without JD Edwards);
+    - the invoice page 1,717 → 762 ms; its vendor list (D-160) is most of what is left;
+    - `/review` 325 → 131 ms (105 alone): the 50 rows drawn 31 ms, `all_vendor_terms` 23 of them, `attention` 19, the
+      template 14, `queue_checks` 10 (the checks stamp 4);
+    - the page's Previous and Next 48 → 7 ms (3 alone).
+    - (The first build, lost, measured the check 1,244 → 96 ms, the page 1,811 → 544, `/review` 247 → 61 and Previous
+      and Next 26 → 1, on another seed.)
+  - **Not done:**
+    - a vendor's invoices (`vendor_invoices`) and the vendor list in the page: D-160's;
+    - the memory's whole index once per worker after each approval (0.27 s), then each vendor's extension again;
+    - the queue's answers refreshed row by row after a park: a park moves `queue` and `listed`, and the next `/review`
+      works them out whole (98 ms and 35-44 ms);
+    - the rest of `/review`: `all_vendor_terms` (the terms of 20,000 vendors read on each page), `attention`;
+    - the extended index's size in its cap: 0.33-0.46 MB a vendor here, but a big vocabulary could make it 2.6-4.4 MB
+      (review 2b's probe); past 1 MB a vendor, count each entry's size in the cap.
+  - (`core/store/summary.py`, `core/store/backups.py`, `vendors.py`, `learning.py`, `invoices.py`, `core/memory.py`,
+    `coding/bulk.py`, `coding/vendors.py`, `ai/suggest.py`, `ai/line_match.py`, `docs/HOW_IT_RUNS.md`;
+    `tests/core/test_kept_answers.py`, `tests/core/test_backups.py`, `tests/erp/test_invoice_summary.py`,
+    `tests/ai/test_coding_no_ai.py`, `tests/ops/test_real_world_findings.py`)
