@@ -4,7 +4,8 @@
 
    Only a click from the queue to an invoice leaves a mark (the view and where it was scrolled), and the next time the
    queue opens the mark is used up, whatever happens (B-626): a view looked at long before is never put back. The
-   queue's address with a query of its own (a message: ?flash=, a search, a filter) is never replaced. */
+   queue's address with a query of its own (a message: ?flash=, a search, a filter) is never replaced; the invoice's
+   Queue button carries the view itself (B-1592). */
 
 const KEY = "apc-queue";
 
@@ -45,12 +46,29 @@ function openedWith() {
   }
 }
 
+const VIEW = ["show", "q", "sort", "limit"]; // what an address says of the queue's view
+
+/** An address's view, to compare two: "?show=all&q=&sort=amount" (the toolbar's form) and "?show=all&sort=amount"
+    (the invoice's Queue button) are one view; ``rows``: how many it shows (Show more). */
+function view(search) {
+  const p = new URLSearchParams(search);
+  const key = [p.get("show") || "all", p.get("q") || "", p.get("sort") || "priority"].join("\n");
+  return { key, rows: Number(p.get("limit")) || 0 };
+}
+
 const mark = read();
 const back = mark && (fromInvoice() || mark.coming);
-if (back && !openedWith() && mark.search) {
+const was = back && view(mark.search);
+const here = view(location.search);
+const same = was && was.key === here.key;
+// The Queue button carries the view (B-1592), so the queue opens once (B-1593): it goes on to the view left only from
+// a bare address, or when more rows were shown than the address says; a message (?flash=) is never replaced.
+const opened = openedWith();
+const onlyView = [...new URLSearchParams(opened).keys()].every((k) => VIEW.includes(k));
+if (back && mark.search && (!opened || (same && onlyView && was.rows > here.rows))) {
   write({ ...mark, coming: true }); // the page it goes to scrolls back too
   location.replace(`/review${mark.search}`); // the view the invoice was opened from
-} else if (back && mark.search === location.search && mark.y > 0) {
+} else if (same && was.rows === here.rows && mark.y > 0) {
   // once the rows are drawn (the module runs after the page is parsed)
   requestAnimationFrame(() => window.scrollTo(0, Math.min(mark.y, document.documentElement.scrollHeight)));
 }
