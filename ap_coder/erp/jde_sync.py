@@ -357,6 +357,9 @@ _CACHE: dict[tuple[str, str, str], tuple[float, list[dict[str, Any]]]] = {}
 _DOWN: dict[str, tuple[float, str]] = {}
 _BIG: set[tuple[str, str]] = set()  # (database, AN8): more vouchers in the window than LIVE_PAGES, asked by number
 _CLIENTS: dict[str, jde_ais.AisClient] = {}  # database -> this process's client for the live check, signed in once
+# JDE not reached at the address the client resolved when it was made: the next check makes another, its name looked up
+# again (JDE moved to another server) and jde_orchestrations.json read again (B-1609).
+_NEW_CLIENT = frozenset({jde_ais.UNREACHABLE, jde_ais.TIMEOUT, jde_ais.CERTIFICATE})
 _LOCK = threading.Lock()
 PAID = {"P": "paid", "A": "approved for payment, not paid yet", "H": "on hold in JDE"}
 
@@ -437,9 +440,14 @@ def live_findings(store: Any, coding: Any, exclude_invoice_id: int | None = None
         try:
             rows, by_number = _ask(store, an8, str(coding.invoice_number or "").strip(), big)
         except jde_ais.AisError as exc:
+            dropped = None
             if not isinstance(exc, jde_ais.TooManyPages):  # too wide a question is this invoice's, not JDE down
                 with _LOCK:
                     _DOWN[where] = (now, str(exc))
+                    if exc.kind in _NEW_CLIENT:
+                        dropped = _CLIENTS.pop(where, None)
+            if dropped is not None:  # logged out aside: the person's check doesn't wait on a JDE that didn't answer
+                threading.Thread(target=dropped.close, daemon=True).start()
             return [_not_reached(store, str(exc)), *_in_register(store, coding, an8, ids)]
         with _LOCK:
             if an8 and by_number:

@@ -96,8 +96,8 @@ def test_the_guard_reaches_a_python_subprocess(tmp_path):
 TOUCHPOINTS = {
     "ap_coder/web/server.py": "urllib to its own /healthz on 127.0.0.1 (no proxy); webbrowser opens that address",
     "ap_coder/web/security.py": "socket.gethostname/getfqdn: only when AP_DASHBOARD_ADDRESS=0.0.0.0 (office network)",
-    "ap_coder/ai/local_llm.py": "LM Studio on this computer or network (no proxy); a server on the internet only with "
-    "AP_ALLOW_INTERNET=1",
+    "ap_coder/ai/local_llm.py": "LM Studio on this computer or network (no proxy; a name connected to the addresses "
+    "its check judged, B-1608); a server on the internet only with AP_ALLOW_INTERNET=1",
     "ap_coder/ai/page_reader.py": "OvisOCR2 in LM Studio: same gate as local_llm",
     "ap_coder/ai/inference.py": "Azure OpenAI only with AP_ALLOW_INTERNET=1 (local_llm.resolve_provider); else LM "
     "Studio",

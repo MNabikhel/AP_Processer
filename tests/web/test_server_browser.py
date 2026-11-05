@@ -3,6 +3,7 @@ log out."""
 
 from __future__ import annotations
 
+import json
 import time
 
 import pytest
@@ -201,6 +202,9 @@ def test_in_a_browser_edits_kept_when_the_session_ended_are_never_shown_to_someo
     number = page.locator('[form="inv"][name="invoice_number"]').input_value()
     _session_ends(store, "clara")
     page.locator('[form="inv"][name="invoice_number"]').fill("CLARAS-EDIT")
+    page.wait_for_url("**/login?next=*")
+    kept = json.loads(page.evaluate(f"sessionStorage.getItem('apc-unsaved-{invoice}')") or "null")
+    assert kept and kept["account"] == "clara" and ["invoice_number", "CLARAS-EDIT"] in kept["fields"]  # kept: B-1678
     _again(page, store, "april")
     page.wait_for_url(f"**{path}")
     page.wait_for_load_state("networkidle")

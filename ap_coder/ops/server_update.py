@@ -252,6 +252,10 @@ class Server:
         done = service.run_command(["schtasks", "/query", "/tn", self.settings.task_name], capture_output=True)
         return done.returncode == 0
 
+    def answers(self) -> bool:
+        """A dashboard answers on this computer (its /healthz), whatever runs it."""
+        return service.dashboard_health(self.data, self.settings) is not None
+
     def stop(self) -> bool:
         return service.stop(self.data, self.settings, self.say) == 0
 
@@ -340,6 +344,22 @@ def outside_install(folder: Path) -> str:
             "check it. Nothing was changed.")  # fmt: skip
 
 
+def another_task(server: Server, s: service.ServerSettings, saved: dict) -> str:
+    """Why the service may run under another task than ``s.task_name`` ("" = no sign of it), once no task of that name
+    is installed: server.json names another (read only to refuse, never run: B-1586), or a dashboard answers.
+    Going on would update a live server's database and switch its folder under it, the service never stopped."""
+    named = str(saved.get("task_name") or "").strip()
+    given = "pass --task-name <name>, the name service install was given"
+    if named and named != s.task_name:
+        why = f'server.json says the service was installed as "{named}": {given}'
+    elif server.answers():
+        why = (f"AP Coder's dashboard answers on this computer: if the service was installed under another name, "
+               f"{given}; else stop the dashboard first")  # fmt: skip
+    else:
+        return ""
+    return f'No scheduled task "{s.task_name}" is installed, but {why}. Nothing was changed.'
+
+
 def hash_refusal(copy: Path, given: str | None, check: bool, say: Say) -> str:
     """Why the bundle can't be installed ("" = it can): the SHA-256 IT was given with it, by another way than the
     ZIP (the builder's ``.sha256`` file, sent apart), must be the copy's. Without one, only ``--no-hash-check``."""
@@ -420,7 +440,7 @@ def _update(bundle: Path, data: Path, db: Path, *, server: Server | None, dry_ru
         return 1
 
     try:
-        s = server_settings(data, task_name)
+        s, saved = server_settings(data, task_name), service.read_config(data)
         info = check_bundle(Path(bundle))
     except (service.SettingsError, BundleError) as exc:
         return refuse(str(exc))
@@ -441,6 +461,9 @@ def _update(bundle: Path, data: Path, db: Path, *, server: Server | None, dry_ru
     label = f"before-update-{new_version}"
     server = server or Server(data, s, say)
     installed = server.installed()
+    elsewhere = "" if installed else another_task(server, s, saved)
+    if elsewhere:
+        return refuse(elsewhere)
     if dry_run:
         say(f"Updating AP Coder on this server from {paths.describe(mine)} to {paths.describe(theirs)}:")
         steps = [
@@ -579,6 +602,12 @@ def go_back(data: Path, db: Path, *, server: Server | None = None, dry_run: bool
         print(f"The backup made before the update, {backup}, is gone: AP Coder can't go back without it (the older "
               "version can't open the updated database).", file=sys.stderr)  # fmt: skip
         return 1
+    server = server or Server(data, s, say)
+    installed = server.installed()
+    elsewhere = "" if installed else another_task(server, s, saved)
+    if elsewhere:
+        print(elsewhere, file=sys.stderr)
+        return 1
     current = s.code_folder
     # The update the backup was made for: the last one that went through, not a later attempt rolled back.
     updates = [h for h in saved.get("history") or [] if isinstance(h, dict) and h.get("result") == "updated"]
@@ -589,8 +618,6 @@ def go_back(data: Path, db: Path, *, server: Server | None = None, dry_run: bool
         "The invoice files go back as they were then; the ones added since are moved aside. The user accounts, "
         "their passwords and roles, and paused logins stay as they are now; everyone is logged out and logs in "
         "again.")  # fmt: skip
-    server = server or Server(data, s, say)
-    installed = server.installed()
     if dry_run:
         say(f'  1. Stop the service "{s.task_name}"' if installed
             else "  1. The service is not installed on this computer: nothing to stop")  # fmt: skip

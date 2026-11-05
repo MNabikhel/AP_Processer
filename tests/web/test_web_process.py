@@ -181,6 +181,37 @@ def test_a_scheduled_watch_and_the_process_button_store_a_new_file_once(app, cli
     assert any(m["text"].startswith("Skipped") and m["details"] == [new.name] for m in snap["result"]["messages"])
 
 
+def test_a_file_another_pick_up_failed_to_read_meanwhile_is_not_read_again(app, client, store, monkeypatch):
+    """B-1673: the folder pick-up lists the files never processed, a failed read counting as processed (it is read
+    again only by Retry), but its check once it holds the pick-up lock left failed reads out: a file a scheduled watch
+    had just failed to read was read again at once. A retry still reads a failed file again."""
+    from ap_coder.ai.pipeline import InvoicePipeline
+    from ap_coder.web.pages import process
+
+    folder = invoice_dir(store)
+    folder.mkdir(parents=True, exist_ok=True)
+    new = folder / f"{OTHER}.pdf"
+    shutil.copy(SAMPLES / f"{OTHER}.pdf", new)
+    real_wait, real_process, read = process.wait_for_pickup, InvoicePipeline.process, []
+
+    def watch_first(*args, **kwargs):  # a watch held the lock: it read the file, and failed
+        store.add_invoice(new, None, None, error="The file could not be read")
+        return real_wait(*args, **kwargs)
+
+    def reading(self, path, *args, **kwargs):
+        read.append(os.path.basename(path))
+        return real_process(self, path, *args, **kwargs)
+
+    monkeypatch.setattr(process, "wait_for_pickup", watch_first)
+    monkeypatch.setattr(InvoicePipeline, "process", reading)
+    assert client.post("/process/folder", headers=PAGE).json()["job"] == "process"
+    assert finished(app, client)["result"]["processed"] == 0 and read == []
+    monkeypatch.setattr(process, "wait_for_pickup", real_wait)
+    failed = store.find_by_hash(new, include_failed=True)["id"]
+    assert client.post(f"/review/{failed}/retry", headers=PAGE).status_code == 200
+    assert finished(app, client)["result"]["processed"] == 1 and read == [new.name]
+
+
 def test_safe_upload_names(tmp_path):
     assert safe_file_name("../../etc/passwd") == "passwd"
     assert safe_file_name("C:\\Users\\me\\inv.pdf") == "inv.pdf"

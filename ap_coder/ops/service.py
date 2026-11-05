@@ -715,10 +715,11 @@ def stop(data: Path, s: ServerSettings, say: Say = print) -> int:
     )
     stopped = dashboard_stopped(data, s)
     run_command(["schtasks", "/end", "/tn", s.task_name], capture_output=True)
-    # Only the running host: it holds the host lock and wrote host.json as soon as it held it. A record left by a host
-    # that was killed may name a number another process has since, an AP Coder watch among them (B-1590).
-    host = int(_read_json(host_record(data)).get("pid") or 0)
-    if host and host != os.getpid() and host_running(data) and runs_python_of(host, s.code_folder):
+    # Only the running host: it holds the host lock and wrote host.json as soon as it held it, so the record is read
+    # once the lock says a host runs. A record left by a host that was killed may name a number another process has
+    # since, an AP Coder watch among them (B-1590, B-1677).
+    host = int(_read_json(host_record(data)).get("pid") or 0) if host_running(data) else 0
+    if host and host != os.getpid() and runs_python_of(host, s.code_folder):
         terminate(host)
     if not stopped:
         say("The dashboard did not stop: end python.exe in Task Manager (Details), then run this again.")

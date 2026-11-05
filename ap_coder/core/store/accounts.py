@@ -174,6 +174,8 @@ class AccountsMixin:
         where, args = _event_filter(actions, hidden, actor, since, until)
         sql = f"{_EVENTS} WHERE {where} AND e.id < ? ORDER BY e.id DESC LIMIT ?"
         below, found = before if before is not None else 2**63 - 1, 0
+        if limit is not None and limit <= 0:
+            return  # none asked for (a batch of none would end the loop on no rows: B-1676)
         while True:
             batch = EVENTS_BATCH if matches is not None or limit is None else min(EVENTS_BATCH, limit - found)
             with self._conn() as conn:
