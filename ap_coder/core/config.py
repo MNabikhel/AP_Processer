@@ -10,6 +10,8 @@ import logging
 import os
 import re
 import socket
+import threading
+import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -88,6 +90,12 @@ def _env_int(name: str, default: int | None) -> int | None:
 
 
 _NAT64 = ipaddress.ip_network("64:ff9b::/96")  # an IPv4 address on the internet, reached through a NAT64 gateway
+# The company network's DNS domains ("corp.example.com", comma separated): a server named under one (the Mac Studio of
+# a company server) is judged by the addresses its name resolves to, as a bare name is. No other name is looked up.
+COMPANY_DOMAINS_ENV = "AP_COMPANY_DOMAINS"
+RESOLVED_SECONDS = 30.0  # how long a name's addresses are kept (each request to the model server asks)
+_RESOLVED: dict[str, tuple[float, list[ipaddress.IPv4Address | ipaddress.IPv6Address]]] = {}
+_RESOLVED_LOCK = threading.Lock()
 
 
 def _address(name: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
@@ -115,15 +123,22 @@ def _address(name: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
     return ipaddress.IPv4Address(value)
 
 
+def _company_domain(name: str) -> bool:
+    domains = (d.strip().strip(".").lower() for d in (_env(COMPANY_DOMAINS_ENV) or "").split(","))
+    return any(name == d or name.endswith("." + d) for d in domains if d)
+
+
 def _on_this_network(host: str) -> bool:
-    """localhost, a bare machine name, a .local/.lan name, or a private or loopback address (however it is written:
-    an address in another form is judged as the address it is)."""
+    """localhost, a bare machine name, a .local/.lan name, a name in the company's DNS domains (``AP_COMPANY_DOMAINS``)
+    or a private or loopback address (however it is written: an address in another form is judged as the address it
+    is)."""
     name = host.rsplit("@", 1)[-1]
     name = name[1:].split("]", 1)[0] if name.startswith("[") else name.rsplit(":", 1)[0]
     name = name.lower()
     address = _address(name)
     if address is None:
-        if not (name == "localhost" or name.endswith((".local", ".lan", ".home")) or "." not in name):
+        local = name == "localhost" or name.endswith((".local", ".lan", ".home")) or "." not in name
+        if not local and not _company_domain(name):
             return False
         # A name is judged by the addresses it resolves to: "gpu-box" or "x.local" may be an internet address
         # (a DNS search domain, a spoofed name) (B-974). One that doesn't resolve reaches nothing: judged by name.
@@ -134,7 +149,18 @@ def _on_this_network(host: str) -> bool:
     return _private(address)
 
 
+def forget_resolved() -> None:
+    with _RESOLVED_LOCK:
+        _RESOLVED.clear()
+
+
 def _resolved(name: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+    """The addresses ``name`` resolves to, kept RESOLVED_SECONDS (a name that doesn't resolve is asked again)."""
+    now = time.monotonic()
+    with _RESOLVED_LOCK:
+        kept = _RESOLVED.get(name)
+    if kept and now - kept[0] < RESOLVED_SECONDS:
+        return kept[1]
     try:
         infos = socket.getaddrinfo(name, None, proto=socket.IPPROTO_TCP)
     except (OSError, UnicodeError):
@@ -145,6 +171,9 @@ def _resolved(name: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
             found.append(ipaddress.ip_address(str(info[4][0]).split("%", 1)[0]))
         except ValueError:
             continue
+    if found:
+        with _RESOLVED_LOCK:
+            _RESOLVED[name] = (now, found)
     return found
 
 
