@@ -111,6 +111,12 @@ connects to the internet (ONNX Runtime's own usage reports to Microsoft included
   credit)* tick on GL accounts (D-90) does not know it: its *Replace the list* import or a save of its GL accounts
   grid clears every tick in the database. Back on this version, tick the meals accounts again (GL accounts & tax →
   GL accounts) before approving meals invoices, or their full tax credit is claimed.
+- **Going back to a version from before November 2026 refuses the newer backups.** This version keeps counts of
+  changes with triggers in the database (D-159). An older version refuses a backup that holds them (*contains
+  triggers, which AP Coder never makes*). Without a *before-update* backup to put back (none is made when the
+  update doesn't change the database's version), the older version opens the database as it is and keeps the
+  triggers: then it refuses even the backups it makes itself afterwards. To restore one of them, update again and
+  restore it from this version.
 
 ## Going back to the previous version
 

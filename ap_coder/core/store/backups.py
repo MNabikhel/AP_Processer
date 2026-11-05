@@ -28,7 +28,7 @@ from ._base import (
     _store_class,
 )
 from .postings import carry_postings, saved_postings
-from .summary import SUMMARY_TRIGGERS
+from .summary import SUMMARY_TRIGGERS, make_triggers
 from .users import carry_accounts, saved_accounts
 
 # A daily backup, the ones pruned: ap_coder-YYYYMMDD-HHMMSS, and -2, -3 when another was made in the same second.
@@ -314,7 +314,9 @@ class BackupsMixin:
     def check_backup(backup: str | Path) -> None:
         """Raise ValueError (in plain words) unless ``backup`` is an AP Coder database this version can open:
         a ``schema_version`` setting no newer than this version's, and no views or triggers but the summary's own
-        (``summary.SUMMARY_TRIGGERS``, D-110; another one in a planted file would run on every later change)."""
+        (``summary.SUMMARY_TRIGGERS``, D-110, D-159; another one in a planted file would run on every later change).
+        Those are known by their names, whatever SQL the version that made them gave them: a restore makes them again
+        as this version does (``_own_triggers``)."""
         with _store_class()._local_copy(backup) as copy:
             _store_class()._check_backup_file(copy, Path(backup).name)
 
@@ -325,11 +327,11 @@ class BackupsMixin:
         except sqlite3.Error as exc:
             raise ValueError(f"{name} could not be opened ({exc})") from None
         try:
-            # The summary's own triggers (D-110), exactly as this version makes them, are AP Coder's; any other is not.
+            # The summary's own triggers (D-110, D-159), by their names, are AP Coder's; any other is not.
             kinds = {
                 r[0]
-                for r in conn.execute("SELECT type, name, sql FROM sqlite_master WHERE type IN ('trigger', 'view')")
-                if r[0] == "view" or SUMMARY_TRIGGERS.get(r[1]) != r[2]
+                for r in conn.execute("SELECT type, name FROM sqlite_master WHERE type IN ('trigger', 'view')")
+                if r[0] == "view" or r[1] not in SUMMARY_TRIGGERS
             }
             tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
             row = (
@@ -356,6 +358,20 @@ class BackupsMixin:
             raise ValueError(f"{name} is not an AP Coder database") from None
         if version > SCHEMA_VERSION:
             raise ValueError(f"{name} was made by a newer version of AP Coder: update AP Coder first")
+
+    @staticmethod
+    def _own_triggers(path: Path, name: str) -> None:
+        """The summary's triggers in the restore's own copy of a backup (``_local_copy``, checked) made again as this
+        version makes them (``summary.make_triggers``), before the copy goes into the database: the SQL the backup
+        gave them never runs here. Raises ValueError when one of them cannot be made (its table is not there)."""
+        conn = sqlite3.connect(path)
+        try:
+            make_triggers(conn, missing=False)
+            conn.commit()
+        except sqlite3.Error as exc:
+            raise ValueError(f"{name} is not an AP Coder database ({exc})") from None
+        finally:
+            conn.close()
 
     def row_identity(self, invoice_id: int) -> tuple[Any, ...] | None:
         """What tells this invoice from another one under the same number (its file's SHA-256 and when it came in), or
@@ -426,6 +442,7 @@ class BackupsMixin:
         present = set(backup_files.data_files(self.path.parent))
         with self._local_copy(backup) as copy:  # read from this computer, never written next to the backup
             self._check_backup_file(copy, backup.name)
+            self._own_triggers(copy, backup.name)  # (only the copy is written to)
             copy_dir = self.get_setting("backup_copy_dir").strip()
             safety = self.backup_now("before-restore")
             with self._conn() as conn:

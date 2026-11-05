@@ -90,6 +90,55 @@ def test_restore_refuses_a_file_that_is_not_an_ap_coder_backup(tmp_path, ground_
         store.restore_from(other)
 
 
+def test_a_backup_with_the_summarys_triggers_as_another_version_made_them_restores_and_their_sql_never_runs(
+    tmp_path, ground_truth, monkeypatch
+):
+    """The check let through the summary's triggers only exactly as this version makes them: a backup of a version
+    whose trigger SQL differs was refused as planted. They are known by their names now, and the restore makes them
+    again in its own copy first (D-159), so the SQL a backup gave them never runs, not even on another worker's change
+    while the restore goes on. Another trigger's name is still refused, and so is a backup where one of ours can't be
+    made."""
+    from ap_coder.core.store import backup_files
+    from ap_coder.core.store.summary import SUMMARY_TRIGGERS
+
+    store = Store(tmp_path / "ap.db")
+    store.add_invoice(tmp_path / "a.pdf", ground_truth, {})
+    ran = "INSERT OR REPLACE INTO settings (key, value) VALUES ('planted', 'ran')"
+    planted = _planted(
+        tmp_path,
+        f"""DROP TRIGGER changes_vendors_added;
+        CREATE TRIGGER changes_vendors_added AFTER INSERT ON vendors BEGIN {ran}; END;
+        DROP TRIGGER summary_invoice_added;
+        CREATE TRIGGER summary_invoice_added AFTER INSERT ON invoices BEGIN {ran}; END;""",
+    )
+    Store.check_backup(planted)
+    seen, files = [], backup_files.restore_files
+
+    def meanwhile(*args, **kwargs):  # the database copied, not migrated yet: another worker's change
+        with sqlite3.connect(store.path) as conn:
+            seen.append(dict(conn.execute("SELECT name, sql FROM sqlite_master WHERE type = 'trigger'").fetchall()))
+            conn.execute("INSERT INTO vendors (vendor_key, display_name, updated_at) VALUES ('w', 'W', '2026')")
+            conn.execute("INSERT INTO invoices (source_path, file_name, status, created_at) VALUES ('x', 'x', "
+                         "'review', '2026')")  # fmt: skip
+        return files(*args, **kwargs)
+
+    monkeypatch.setattr(backup_files, "restore_files", meanwhile)
+    store.restore_from(planted)
+    assert seen == [SUMMARY_TRIGGERS]
+    store.save_vendor("acme", "Acme")
+    store.add_invoice(tmp_path / "b.pdf", ground_truth, {})
+    assert store.get_setting("planted") == "" and len(store.list_invoices()) == 2  # (the backup had none)
+    with sqlite3.connect(store.path) as conn:
+        assert dict(conn.execute("SELECT name, sql FROM sqlite_master WHERE type = 'trigger'")) == SUMMARY_TRIGGERS
+    monkeypatch.undo()
+    for sql in ("CREATE TRIGGER changes_vendors_added_too AFTER INSERT ON vendors BEGIN SELECT 1; END;",
+                "DROP TABLE po_lines; CREATE TRIGGER changes_po_lines_added AFTER INSERT ON vendors BEGIN SELECT 1; "
+                "END;"):  # fmt: skip
+        with pytest.raises(ValueError, match="triggers|not an AP Coder database"):
+            store.restore_from(_planted(tmp_path, sql, f"ap_coder-20260101-09000{len(sql) % 10}.db"))
+    assert len(store.list_invoices()) == 2 and len(list(store.backup_dir().glob("*before-restore.db"))) == 1
+
+
 def test_restore_clears_the_second_backup_folder(tmp_path):
     """A backup must not decide where later backups are copied (e.g. a planted network share)."""
     store = Store(tmp_path / "ap.db")
