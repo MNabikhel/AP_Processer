@@ -712,7 +712,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     - **The master's GST/HST numbers** (`master_by_tax_number`, for an invoice not found by name): `changes/vendors`;
       6.8 MB. Only the vendors found are read, and `same_tax_number` decides on them.
     - **The held vendors' approved numbers** (`approved_numbers`): `changes/approved` and the vendors asked; 0.07 MB
-      for 193 held vendors. When read, it seeks the vendors' index (`+status`). Each caller gets lists of its own.
+      for 193 held vendors. When read, it seeks the vendors' index (`+status`): 218 → 19 ms. Each caller gets lists
+      of its own.
     - **The queue's checks** (`bulk.queue_checks`): `queue`, the checks stamp, laptop or server, the invoices asked;
       15 MB for 2,740 invoices. Fewer than `KEEP_FROM` (50) invoices are worked out each time. Each caller gets rows
       and lists of its own; the findings in them are read-only (`MappingProxyType`, made so in `_today`): a copy of
