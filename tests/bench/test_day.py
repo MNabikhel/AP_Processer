@@ -58,8 +58,9 @@ def test_a_tiny_server_day_reads_every_invoice_and_reports_it(tmp_path, capsys):
     r = report["results"]
     assert code == 0 and not report["timed_out"] and not report["problem"], report["problem"]
     assert r["arrived"] == 4 and r["reads_open_at_end"] == 0 and r["reviews_open_at_end"] == 0
-    assert r["reads_done"] + r["reads_skipped"] == r["reads_queued"] == 4 and r["reads_failed"] == 0
-    assert r["reviews_done"] >= 1 and r["failures"] == 0 and r["probes"] >= 1
+    # On a failure, say what went wrong (the failed imports, reads and reviews, with their errors), not only counts.
+    assert r["reads_done"] + r["reads_skipped"] == r["reads_queued"] == 4 and r["reads_failed"] == 0, report["failures"]
+    assert r["reviews_done"] >= 1 and r["failures"] == 0 and r["probes"] >= 1, report["failures"]
     assert report["self_test"]["ok"] and report["model_server"]["served"] >= 4
     assert not (out / "data").exists()  # the data folder is removed afterwards
     assert "| invoices in the review queue | 4 of 4 |" in (out / "report.md").read_text(encoding="utf-8")
