@@ -167,6 +167,106 @@ def by_month_and_category(rows: list[SpendLine], currency: str, category: dict[s
     return [{"month": m, "category": c, "amount": round(v, 2)} for (m, c), v in sorted(totals.items())]
 
 
+# --- The Spend page's figures, summed by SQLite --------------------------------------------------------------------
+# What the page shows of ``parts`` (``currencies``, then ``total_by``, ``by_month_and_category``...), summed by SQLite
+# by GL account, vendor, cost center and month rather than every cost line of the period made a Python object (308,000
+# at 100,000 invoices: +500 MB a view). The sums are SQLite's, the same to the cent (every posting line is rounded to
+# the cent when coded); what is rounded, ordered or converted is as before. Lines SQLite has no CAD amount for (an
+# invoice in another currency, "All, in CAD": converted line by line as ``in_cad`` does) and those of an invoice the
+# summary could not read are summed here as before.
+
+_PARTS = ("FROM invoice_summary s JOIN summary_spend p ON p.invoice_id = s.id WHERE s.f_date BETWEEN ? AND ? AND "
+          f"+s.status = '{APPROVED}' AND s.{whole('spend')}")  # fmt: skip
+_AT = 65536  # a cost line's place in the period's (``parts``' order): invoice * _AT + its part
+_LAST = 1 << 62  # the places after every line of the summary (the lines ``_broken_lines`` reads)
+BY = {"vendor": "s.p_vendor", "gl_code": "p.gl_code", "cost_center": "p.cost_center"}  # ``total_by``'s keys
+
+
+class _Sums:
+    """``total_by`` of one key from sums: by value, the amount, the invoices and the place it first came."""
+
+    def __init__(self) -> None:
+        self.amount: dict[Any, float] = {}
+        self.invoices: dict[Any, int] = {}
+        self.first: dict[Any, int] = {}
+
+    def add(self, value: Any, amount: float, invoices: int, first: int) -> None:
+        self.amount[value] = self.amount.get(value, 0.0) + amount
+        self.invoices[value] = self.invoices.get(value, 0) + invoices
+        self.first[value] = min(self.first.get(value, first), first)
+
+    def rows(self) -> list[tuple[Any, float, int]]:
+        found = sorted(self.amount, key=self.first.__getitem__)  # in the order they first came, as ``total_by``
+        return sorted(((k, round(self.amount[k], 2), self.invoices[k]) for k in found), key=lambda x: -x[1])
+
+
+def spend_currencies(store: Store, start: dt.date, end: dt.date) -> list[str]:
+    """``currencies(parts(store, start, end))``."""
+    first, last = start.isoformat(), end.isoformat()
+    totals = _Sums()
+    for r in store.summary_fetch(f"SELECT s.p_currency c, SUM(p.sizes) n, MIN(s.id) at {_PARTS} GROUP BY s.p_currency",
+                                 (first, last)):  # fmt: skip
+        totals.add(r["c"], r["n"], 0, r["at"])
+    for n, line in enumerate(_broken_lines(store, first, last)):
+        totals.add(line.currency, abs(line.amount), 0, _LAST + n)
+    return sorted(sorted(totals.amount, key=totals.first.__getitem__), key=lambda c: -totals.amount[c])
+
+
+def figures(store: Store, start: dt.date, end: dt.date, currency: str, category: dict[str, str],
+            rates: dict[str, float] | None = None) -> dict[str, Any]:  # fmt: skip
+    """What the Spend page shows of ``parts(store, start, end)`` in ``currency``, or with ``rates`` of every line of a
+    currency with a rate in CAD (``in_cad``; ``currency`` is then "CAD"): ``lines`` (whether there are any), ``total``
+    (rounded to the cent), ``invoices``, ``months``, ``by_month`` (``by_month_and_category`` with ``category``) and
+    ``by``: for each key of ``BY``, its ``total_by``."""
+    first, last = start.isoformat(), end.isoformat()
+    # SQLite sums the lines in ``currency``; converted, those in CAD (each line rounded to the cent: ``_in_cad``).
+    if rates is None:
+        value, where, args = "p.amount", "s.p_currency = ?", (currency,)
+    else:
+        value, where, args = "p.cents", "s.p_currency = 'CAD' AND p.amounts IS NULL", ()
+    sums = {key: _Sums() for key in BY}
+    for key, column in BY.items():
+        for r in store.summary_fetch(f"SELECT {column} k, SUM({value}) n, COUNT(DISTINCT s.id) i, "
+                                     f"MIN(s.id * {_AT} + p.part) at {_PARTS} AND {where} GROUP BY {column}",
+                                     (first, last, *args)):  # fmt: skip
+            sums[key].add(r["k"], r["n"], r["i"], r["at"])
+    by_vendor = sums["vendor"]  # an invoice has one vendor: its sums and invoices are the period's
+    total, invoices = sum(by_vendor.amount.values()), sum(by_vendor.invoices.values())
+    months: dict[tuple[str, str], float] = defaultdict(float)
+    for r in store.summary_fetch(f"SELECT substr(s.f_date, 1, 7) m, p.gl_code g, SUM({value}) n {_PARTS} AND {where} "
+                                 "GROUP BY m, g", (first, last, *args)):  # fmt: skip
+        months[(r["m"], category.get(r["g"]) or "Uncategorised")] += r["n"]
+    # The rest, line by line as before: (its place, its invoice, the line).
+    rest = [] if rates is None else [
+        (r["id"] * _AT + r["part"], r["id"], SpendLine(r["id"], r["month"], r["p_vendor"], r["gl_code"],
+         r["cost_center"], r["amount"], r["p_currency"], r["sizes"], r["cents"],
+         tuple(json.loads(r["amounts"])) if r["amounts"] else None))
+        for r in store.summary_fetch(
+            "SELECT s.id, p.part, substr(s.f_date, 1, 7) month, s.p_vendor, s.p_currency, p.gl_code, p.cost_center, "
+            f"p.amount, p.sizes, p.cents, p.amounts {_PARTS} AND NOT ({where}) AND s.p_currency IN "
+            "(SELECT value FROM json_each(?)) ORDER BY s.id, p.part", (first, last, json.dumps(sorted(rates))))
+    ]  # fmt: skip
+    rest += [(_LAST + n, r.invoice_id, r) for n, r in enumerate(_broken_lines(store, first, last))]
+    more: set[int] = set()
+    counted: set[tuple[str, Any, int]] = set()  # (key, value, invoice) already counted
+    for at, invoice, line in rest:
+        if rates is None and line.currency != currency or rates is not None and line.currency not in rates:
+            continue
+        amount = line.amount if rates is None else _in_cad(line, rates[line.currency])
+        total += amount
+        more.add(invoice)
+        for key, s in sums.items():
+            v = getattr(line, key)
+            s.add(v, amount, (key, v, invoice) not in counted, at)
+            counted.add((key, v, invoice))
+        months[(line.month, category.get(line.gl_code) or "Uncategorised")] += amount
+    return {
+        "lines": bool(invoices or more), "total": round(total, 2), "invoices": invoices + len(more),
+        "months": sorted({m for m, _ in months}), "by": {key: s.rows() for key, s in sums.items()},
+        "by_month": [{"month": m, "category": c, "amount": round(v, 2)} for (m, c), v in sorted(months.items())],
+    }  # fmt: skip
+
+
 def default_period(today: dt.date | None = None) -> tuple[dt.date, dt.date]:
     """The last 12 months, this one included."""
     today = today or dt.date.today()

@@ -7,9 +7,90 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
+from fastapi import Request
+from fastapi.responses import HTMLResponse
+
 from ap_coder.coding.po import CLOSED, billed_by_line, po_label
+from ap_coder.core import ui
 from ap_coder.core.store import APPROVED, Store
+from ap_coder.erp import spend
 from ap_coder.erp.accruals import RECEIVED, Accrual
+from ap_coder.web.core import get_store, money, reference_or_none, render
+from ap_coder.web.pages.spend import ALL_IN_CAD, _date, month_chart, ranked
+
+
+def spend_page(request: Request) -> HTMLResponse:
+    """``GET /spend``: every cost line of the period a Python object (``spend.parts``), totalled in Python."""
+    store = get_store(request)
+    reference = reference_or_none(store)
+    q = request.query_params
+    default_start, default_end = spend.default_period()
+    start, start_ok = _date(q.get("start"), default_start)
+    end, end_ok = _date(q.get("end"), default_end)
+    rows = spend.parts(store, start, end) if start <= end else []
+    currencies = spend.currencies(rows) or ["CAD"]
+    rates = store.fx_rates()
+    if len(currencies) > 1 and all(c in rates for c in currencies):
+        currencies = [ALL_IN_CAD, *currencies]
+    currency = q.get("currency") or currencies[0]
+    if currency not in currencies:
+        currency = currencies[0]
+    context: dict[str, Any] = {
+        "start": start,
+        "end": end,
+        "bad_date": not (start_ok and end_ok),
+        "currencies": currencies,
+        "currency": currency,
+        "backwards": start > end,
+        "rates_note": "",
+    }
+    shown_currency = currency
+    if currency == ALL_IN_CAD:
+        rows = spend.in_cad(rows, rates)
+        shown_currency = "CAD"
+        context["rates_note"] = (
+            "All currencies in CAD at the rates in Settings → Review ("
+            + ", ".join(f"{c} {r:g}" for c, r in sorted(rates.items()) if c != "CAD")
+            + "): an estimate."
+        )
+    else:
+        rows = [r for r in rows if r.currency == currency]
+    context["shown_currency"] = shown_currency
+    if not rows:
+        return render(request, "spend.html", "spend", rows=False, **context)
+
+    total = round(sum(r.amount for r in rows), 2)
+    invoices = {r.invoice_id for r in rows}
+    vendors = spend.total_by(rows, "vendor", shown_currency)
+    months = sorted({r.month for r in rows})
+    tiles = [
+        ("Spend", f"{total:,.0f} {shown_currency}", "blue", "net of recoverable tax"),
+        ("Invoices", f"{len(invoices):,}", "violet", f"average {money(total / len(invoices))}"),
+        ("Vendors", f"{len(vendors):,}", "green", f"top one {vendors[0][1] / total:.0%} of spend" if total else ""),
+        ("Per month", money(total / len(months)), "amber", f"over {ui.plural(len(months), 'month')} with invoices"),
+    ]
+    accounts = spend.accounts_by_code(reference)
+    names = {code: row.get("description", "") for code, row in accounts.items()}
+    category = {code: row.get("category", "") for code, row in accounts.items()}
+    order = list(dict.fromkeys(c for c in category.values() if c))
+    data = spend.by_month_and_category(rows, shown_currency, category)
+    chart, legend = month_chart(data, months, order, shown_currency)
+    centers = spend.total_by(rows, "cost_center", shown_currency)
+    cc_names = {code: row.get("description", "") for code, row in spend.accounts_by_code(reference, True).items()}
+    return render(
+        request,
+        "spend.html",
+        "spend",
+        rows=True,
+        tiles=tiles,
+        chart=chart,
+        legend=legend,
+        month_rows=[{"month": d["month"], "category": d["category"], "amount": money(d["amount"])} for d in data],
+        gl_rows=ranked(spend.total_by(rows, "gl_code", shown_currency), names, total),
+        vendor_rows=ranked(vendors, {}, total),
+        cc_rows=ranked(centers, cc_names, total) if any(key for key, _, _ in centers) else [],
+        **context,
+    )
 
 
 def one_person(store: Store, first: str, last: str, limit: float, rates: dict[str, float]) -> list[dict[str, Any]]:

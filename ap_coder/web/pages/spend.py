@@ -96,8 +96,7 @@ def spend_page(request: Request) -> HTMLResponse:
     default_start, default_end = spend.default_period()
     start, start_ok = _date(q.get("start"), default_start)
     end, end_ok = _date(q.get("end"), default_end)
-    rows = spend.parts(store, start, end) if start <= end else []
-    currencies = spend.currencies(rows) or ["CAD"]
+    currencies = (spend.spend_currencies(store, start, end) if start <= end else []) or ["CAD"]
     rates = store.fx_rates()
     if len(currencies) > 1 and all(c in rates for c in currencies):
         currencies = [ALL_IN_CAD, *currencies]
@@ -115,36 +114,35 @@ def spend_page(request: Request) -> HTMLResponse:
     }
     shown_currency = currency
     if currency == ALL_IN_CAD:
-        rows = spend.in_cad(rows, rates)
         shown_currency = "CAD"
         context["rates_note"] = (
             "All currencies in CAD at the rates in Settings → Review ("
             + ", ".join(f"{c} {r:g}" for c, r in sorted(rates.items()) if c != "CAD")
             + "): an estimate."
         )
-    else:
-        rows = [r for r in rows if r.currency == currency]
     context["shown_currency"] = shown_currency
-    if not rows:
+    accounts = spend.accounts_by_code(reference)
+    category = {code: row.get("category", "") for code, row in accounts.items()}
+    # Summed by SQLite, not every cost line of the period read (D-156).
+    found = spend.figures(store, start, end, shown_currency, category, rates if currency == ALL_IN_CAD else None) \
+        if start <= end else {"lines": False}  # fmt: skip
+    if not found["lines"]:
         return render(request, "spend.html", "spend", rows=False, **context)
 
-    total = round(sum(r.amount for r in rows), 2)
-    invoices = {r.invoice_id for r in rows}
-    vendors = spend.total_by(rows, "vendor", shown_currency)
-    months = sorted({r.month for r in rows})
+    total = found["total"]
+    vendors = found["by"]["vendor"]
+    months = found["months"]
     tiles = [
         ("Spend", f"{total:,.0f} {shown_currency}", "blue", "net of recoverable tax"),
-        ("Invoices", f"{len(invoices):,}", "violet", f"average {money(total / len(invoices))}"),
+        ("Invoices", f"{found['invoices']:,}", "violet", f"average {money(total / found['invoices'])}"),
         ("Vendors", f"{len(vendors):,}", "green", f"top one {vendors[0][1] / total:.0%} of spend" if total else ""),
         ("Per month", money(total / len(months)), "amber", f"over {ui.plural(len(months), 'month')} with invoices"),
     ]
-    accounts = spend.accounts_by_code(reference)
     names = {code: row.get("description", "") for code, row in accounts.items()}
-    category = {code: row.get("category", "") for code, row in accounts.items()}
     order = list(dict.fromkeys(c for c in category.values() if c))
-    data = spend.by_month_and_category(rows, shown_currency, category)
+    data = found["by_month"]
     chart, legend = month_chart(data, months, order, shown_currency)
-    centers = spend.total_by(rows, "cost_center", shown_currency)
+    centers = found["by"]["cost_center"]
     cc_names = {code: row.get("description", "") for code, row in spend.accounts_by_code(reference, True).items()}
     return render(
         request,
@@ -155,7 +153,7 @@ def spend_page(request: Request) -> HTMLResponse:
         chart=chart,
         legend=legend,
         month_rows=[{"month": d["month"], "category": d["category"], "amount": money(d["amount"])} for d in data],
-        gl_rows=ranked(spend.total_by(rows, "gl_code", shown_currency), names, total),
+        gl_rows=ranked(found["by"]["gl_code"], names, total),
         vendor_rows=ranked(vendors, {}, total),
         cc_rows=ranked(centers, cc_names, total) if any(key for key, _, _ in centers) else [],
         **context,
