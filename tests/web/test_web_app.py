@@ -149,7 +149,7 @@ def test_static_files_are_answered_from_memory_as_staticfiles_answered_them(stor
     made = {"settings": web_settings(), "store": store, "start_reader": False, "server": server_mode}
     memory = TestClient(create_app(**made), base_url="http://localhost")
     before = TestClient(_without_memory(create_app(**made)), base_url="http://localhost")
-    files = core.read_static()
+    files = core.read_static().plain
     assert len(files) > 20 and {"/static/app.css", "/static/js/app.js", "/fonts/InterVariable.woff2",
                                 "/assets/logo.svg"} <= set(files)  # fmt: skip
 
@@ -191,7 +191,8 @@ def test_a_static_file_is_answered_while_every_thread_of_the_worker_is_taken(sto
             client.portal.call(limiter.acquire_on_behalf_of_nowait, holder)
         try:
             response = client.get("/static/js/app.js")
-            assert response.status_code == 200 and response.content == core.read_static()["/static/js/app.js"].body
+            assert response.status_code == 200
+            assert response.content == core.read_static().plain["/static/js/app.js"].body
         finally:
             for holder in holders:
                 client.portal.call(limiter.release_on_behalf_of, holder)
@@ -209,9 +210,65 @@ def test_a_static_file_that_links_out_of_its_folder_is_not_answered(tmp_path):
         (folder / "again.js").symlink_to(folder / "js" / "app.js")
     except OSError:
         pytest.skip("this computer can't make symbolic links")
-    files = core.read_static((("/static/", folder),))
+    files = core.read_static((("/static/", folder),)).plain
     assert sorted(files) == ["/static/again.js", "/static/js/app.js"]
     assert files["/static/again.js"].body == b"export {};"
+
+
+def test_the_pages_link_each_static_file_at_a_kept_address_the_browser_keeps_a_year(client):
+    """``static_url`` puts the build in the address: the browser keeps the file a year without asking again, and an
+    update that changes a file links them all at new addresses. The kept stylesheet names the fonts at theirs."""
+    build = core.read_static().build
+    assert core.static_url("/static/js/app.js") == f"/static/{build}/js/app.js"
+    assert core.static_url("/fonts/InterVariable.woff2") == f"/fonts/{build}/InterVariable.woff2"
+    for plain in ("/static/js/app.js", "/static/app.css", "/fonts/InterVariable.woff2", "/assets/logo.svg"):
+        response = client.get(core.static_url(plain))
+        assert response.status_code == 200 and response.headers["cache-control"] == core.KEPT, plain
+        again = client.get(core.static_url(plain), headers={"if-none-match": response.headers["etag"]})
+        assert again.status_code == 304 and again.headers["cache-control"] == core.KEPT
+        assert client.head(core.static_url(plain)).headers["content-length"] == response.headers["content-length"]
+    css = client.get(core.static_url("/static/app.css")).text
+    assert f'url("/fonts/{build}/InterVariable.woff2")' in css and 'url("/fonts/InterVariable' not in css
+    assert f'url("/fonts/{build}/MaterialSymbolsRounded.woff2")' in css
+    assert 'url("/fonts/InterVariable.woff2")' in client.get("/static/app.css").text  # the plain one as it is
+    assert client.get(core.static_url("/static/js/app.js")).content == client.get("/static/js/app.js").content
+    part = client.get(core.static_url("/static/js/app.js"), headers={"range": "bytes=0-9"})
+    assert part.status_code == 206 and part.content == client.get("/static/js/app.js").content[:10]
+    assert client.get(core.static_url("/static/nothing-here.js")).status_code == 404
+    with pytest.raises(ValueError):
+        core.static_url("/review")
+
+
+@pytest.mark.parametrize("plain", ["/static/js/app.js", "/static/app.css", "/fonts/InterVariable.woff2",
+                                   "/assets/logo.svg"])  # fmt: skip
+def test_another_builds_address_answers_the_file_as_it_is_now_checked_again_on_every_use(client, plain):
+    """A page drawn before an update links the files at the old build's addresses: they answer the files as they are
+    now, never to be kept a year under an address that isn't theirs, with the fonts and the logo too."""
+    other = core.static_url(plain).replace(core.read_static().build, "0123456789")
+    response = client.get(other)
+    assert response.status_code == 200 and response.headers["cache-control"] == core.CHECKED == "no-cache"
+    assert response.content == client.get(core.static_url(plain)).content
+    again = client.get(other, headers={"if-none-match": response.headers["etag"]})
+    assert again.status_code == 304 and again.headers["cache-control"] == "no-cache"
+    assert client.get(other.replace("0123456789", "0123456ABC")).status_code == 404  # not a build
+    as_before = "no-cache" if plain.startswith("/static/") else None  # the plain address: as before
+    assert client.get(plain).headers.get("cache-control") == as_before
+
+
+def test_the_build_is_a_hash_of_the_files_contents(tmp_path):
+    """Not the commit: a checkout's commit doesn't change with an edit not yet committed (the edited script would be
+    kept a year), and an update that changes no file keeps everyone's copies."""
+    folder = tmp_path / "static"
+    folder.mkdir()
+    script = folder / "app.js"
+    script.write_text("export const a = 1;", encoding="utf-8")
+    first = core.read_static.__wrapped__((("/static/", folder),)).build
+    os.utime(script, (1_000_000_000, 1_000_000_000))  # touched, the same
+    assert core.read_static.__wrapped__((("/static/", folder),)).build == first
+    script.write_text("export const a = 2;", encoding="utf-8")
+    assert core.read_static.__wrapped__((("/static/", folder),)).build != first
+    script.rename(folder / "b.js")  # the same content under another name
+    assert core.read_static.__wrapped__((("/static/", folder),)).build != first
 
 
 # --- Only this computer, only AP Coder's own pages ---------------------------------------------------------------

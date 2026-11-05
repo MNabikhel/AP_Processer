@@ -32,6 +32,7 @@ import hashlib
 import json
 import mimetypes
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Callable, Iterator
@@ -90,9 +91,13 @@ def accuracy_note(settings: Settings, lines_reviewed: int) -> tuple[str, bool]:
 # --- Static files (D-161) ----------------------------------------------------------------------------------------
 # The styles, scripts, fonts and logo, read once when AP Coder starts: ``app.StaticFromMemory`` answers them from
 # memory on the event loop, with the headers Starlette's StaticFiles gives them (a file edited while AP Coder runs is
-# answered as it was at the start).
+# answered as it was at the start). The pages link each at its kept address (``static_url``): /static/<build>/app.css,
+# the build a hash of the files' contents, kept by the browser a year; an update that changes a file changes them all.
 STATIC_FOLDERS = (("/static/", STATIC_DIR), ("/fonts/", FONTS_DIR), ("/assets/", ASSETS_DIR))
-CHECKED = "no-cache"  # /static: the browser checks its copy again on every use (an unchanged file answers 304)
+CHECKED = "no-cache"  # the browser checks its copy again on every use (an unchanged file answers 304)
+KEPT = "public, max-age=31536000, immutable"  # a kept address: what it answers never changes
+BUILT_IN = re.compile(r"(/static/|/fonts/|/assets/)([0-9a-f]{10})/(.+)")  # a kept address, this build's or another's
+_LINKED = re.compile(rb"""url\((["']?)(/static/|/fonts/|/assets/)""")  # a stylesheet's link to a font or a picture
 
 
 @dataclasses.dataclass(frozen=True)
@@ -106,12 +111,33 @@ class StaticFile:
     modified: str  # Last-Modified
 
 
-def static_file(body: bytes, path: Path, mtime: float, cache: str = "") -> StaticFile:
+@dataclasses.dataclass(frozen=True)
+class Static:
+    """The static files as AP Coder read them at its start (``read_static``)."""
+
+    build: str  # a hash of the files' contents
+    plain: dict[str, StaticFile]  # by address (/static/app.css): as StaticFiles answered it
+    kept: dict[str, StaticFile]  # by plain address: its answer at /static/<build>/app.css (a stylesheet names the
+    # fonts at theirs)
+    other: dict[str, StaticFile]  # by plain address: at another build's (a page drawn before an update), as it is now
+
+    def find(self, path: str) -> tuple[str, StaticFile] | None:
+        """(the plain address, the answer) of the file at ``path``; None when it is none of them."""
+        if (found := self.plain.get(path)) is not None:
+            return path, found
+        if (built := BUILT_IN.fullmatch(path)) is None:
+            return None
+        plain = built[1] + built[3]
+        found = (self.kept if built[2] == self.build else self.other).get(plain)
+        return None if found is None else (plain, found)
+
+
+def static_file(body: bytes, path: Path, mtime: float, cache: str = "", tag: str = "") -> StaticFile:
     """The answer StaticFiles gives the file at ``path``: its type (text with ``charset=utf-8``), ``accept-ranges``,
-    length, Last-Modified and ETag (an MD5 of its time and size); ``cache``, its Cache-Control, if any."""
+    length, Last-Modified and ETag (an MD5 of its time and size, then ``tag``); ``cache``, its Cache-Control."""
     kind = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
     kind += "; charset=utf-8" if kind.startswith("text/") else ""
-    etag = f'"{hashlib.md5(f"{mtime}-{len(body)}".encode(), usedforsecurity=False).hexdigest()}"'
+    etag = f'"{hashlib.md5(f"{mtime}-{len(body)}{tag}".encode(), usedforsecurity=False).hexdigest()}"'
     modified = email.utils.formatdate(mtime, usegmt=True)
     cached = ((b"cache-control", cache.encode()),) if cache else ()
     headers = ((b"content-type", kind.encode()), (b"accept-ranges", b"bytes"),
@@ -121,19 +147,37 @@ def static_file(body: bytes, path: Path, mtime: float, cache: str = "") -> Stati
 
 
 @functools.cache
-def read_static(folders: tuple[tuple[str, Path], ...] = STATIC_FOLDERS) -> dict[str, StaticFile]:
-    """Every file of the static folders by its address (``/static/js/app.js``), read once. A file whose real path is
-    outside its folder (a link out of it) is left out: StaticFiles refuses it too."""
-    files: dict[str, StaticFile] = {}
+def read_static(folders: tuple[tuple[str, Path], ...] = STATIC_FOLDERS) -> Static:
+    """Every file of the static folders, read once. A file whose real path is outside its folder (a link out of it)
+    is left out: StaticFiles refuses it too."""
+    found: list[tuple[str, Path, bytes, float]] = []
     for prefix, folder in folders:
         inside = folder.resolve()
         for path in sorted(folder.rglob("*")):
-            if not path.is_file() or not path.resolve().is_relative_to(inside):
-                continue
-            address = prefix + path.relative_to(folder).as_posix()
-            files[address] = static_file(path.read_bytes(), path, path.stat().st_mtime,
-                                         CHECKED if prefix == "/static/" else "")  # fmt: skip
-    return files
+            if path.is_file() and path.resolve().is_relative_to(inside):
+                found.append((prefix + path.relative_to(folder).as_posix(), path, path.read_bytes(),
+                              path.stat().st_mtime))  # fmt: skip
+    digest = hashlib.sha256()
+    for address, _, body, _ in found:
+        digest.update(f"{address}\0{len(body)}\0".encode() + body)
+    build = digest.hexdigest()[:10]
+    static = Static(build, {}, {}, {})
+    for address, path, body, mtime in found:
+        static.plain[address] = static_file(body, path, mtime, CHECKED if address.startswith("/static/") else "")
+        # A stylesheet names the fonts at their kept addresses: its body changes with the build, and its ETag too.
+        kept = _LINKED.sub(rb"url(\g<1>\g<2>" + build.encode() + b"/", body) if path.suffix == ".css" else body
+        tag = f"-{build}" if kept != body else ""
+        static.kept[address] = static_file(kept, path, mtime, KEPT, tag)
+        static.other[address] = static_file(kept, path, mtime, CHECKED, tag)
+    return static
+
+
+def static_url(address: str) -> str:
+    """A static file's kept address, for a page: ``/static/app.css`` → ``/static/<build>/app.css``."""
+    for prefix, _ in STATIC_FOLDERS:
+        if address.startswith(prefix):
+            return f"{prefix}{read_static().build}/{address.removeprefix(prefix)}"
+    raise ValueError(f"Not a static file's address: {address}")
 
 
 # --- Templates ---------------------------------------------------------------------------------------------------
@@ -174,7 +218,7 @@ def money(value: Any, currency: str = "") -> str:
 # Autoescape on for every template: text from invoices and files is always escaped.
 templates = Jinja2Templates(env=jinja2.Environment(loader=jinja2.FileSystemLoader(TEMPLATES_DIR), autoescape=True))
 templates.env.globals.update(
-    ui=_UiHelpers(), static_version=_static_version(), unassigned=UNASSIGNED
+    ui=_UiHelpers(), static_version=_static_version(), static_url=static_url, unassigned=UNASSIGNED
 )  # (a line without a GL account, as the pages say it)
 templates.env.filters.update(
     money=money,

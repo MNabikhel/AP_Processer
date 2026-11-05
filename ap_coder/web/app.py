@@ -80,22 +80,25 @@ class StaticFromMemory:
     """ASGI middleware: a GET or HEAD of a static file answered from memory (``core.read_static``), on the event loop:
     no thread, no session (D-161). StaticFiles read each on one of a web worker's few threads, behind the pages. It
     sits after the Host check, with the security headers and the access log, before the session, the errors page and
-    the backup check. The same status, headers and 304s as StaticFiles; what memory doesn't answer (a Range, a POST,
-    a file that isn't there) goes on to the StaticFiles mounts."""
+    the backup check. At its plain address, the same status, headers and 304s as StaticFiles; at its kept address
+    (``core.static_url``), kept a year; at another build's, as it is now, checked again on every use. What memory
+    doesn't answer (a POST, a file that isn't there, a Range: the file at its plain address) goes on to the StaticFiles
+    mounts."""
 
-    def __init__(self, app: Any, files: dict[str, core.StaticFile] | None = None) -> None:
-        self.app, self.files = app, core.read_static() if files is None else files
+    def __init__(self, app: Any, static: core.Static | None = None) -> None:
+        self.app, self.static = app, core.read_static() if static is None else static
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
-        found = self.files.get(scope["path"]) if scope["type"] == "http" else None
+        found = self.static.find(scope["path"]) if scope["type"] == "http" else None
         if found is None or scope["method"] not in ("GET", "HEAD"):
             await self.app(scope, receive, send)
             return
+        plain, found = found
         asked: dict[bytes, bytes] = {}
         for name, value in scope["headers"]:
             asked.setdefault(name.lower(), value)  # (the first of a header given twice, as Starlette reads it)
         if b"range" in asked:
-            await self.app(scope, receive, send)
+            await self.app({**scope, "path": plain}, receive, send)
             return
         if _not_modified(found, asked):
             await send({"type": "http.response.start", "status": 304, "headers": list(found.same)})
