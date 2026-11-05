@@ -12,7 +12,8 @@ so the checks and the learning work the same; and the live "already in JD Edward
   synced before and no longer open in JDE is closed); vouchers ``Store.import_erp_register`` (F0411, for the
   duplicate checks). Nothing is deleted, and what AP typed that JDE doesn't hold (account categories, meals ticks,
   vendors' notes) is kept. The report lists what was added and what changed, field by field.
-* ``live_findings``: the review screen's checks ask JDE (by supplier number) whether the invoice is already a voucher,
+* ``live_findings``: the review screen's checks ask JDE (by supplier number, the vouchers of the sync's window; a
+  supplier with too many even then by its number and the invoice number) whether the invoice is already a voucher,
   with a five-minute cache; JDE down or slow (5 seconds at most), it says so in an INFO line and the check stands on
   the last sync's copy, and JDE is not asked again for a minute.
 """
@@ -353,6 +354,7 @@ LIVE_TIMEOUT = 5.0
 LIVE_PAGES = 40  # at most this many pages (of 500) of one supplier's vouchers
 _CACHE: dict[tuple[str, str, str], tuple[float, list[dict[str, Any]]]] = {}
 _DOWN: dict[str, tuple[float, str]] = {}
+_BIG: set[tuple[str, str]] = set()  # (database, AN8): more vouchers in the window than LIVE_PAGES, asked by number
 _LOCK = threading.Lock()
 PAID = {"P": "paid", "A": "approved for payment, not paid yet", "H": "on hold in JDE"}
 
@@ -361,16 +363,27 @@ def forget_cache() -> None:
     with _LOCK:
         _CACHE.clear()
         _DOWN.clear()
+        _BIG.clear()
 
 
-def _ask(store: Any, an8: str, number: str) -> list[dict[str, Any]]:
+def _ask(store: Any, an8: str, number: str, printed: str, big: bool) -> tuple[list[dict[str, Any]], bool]:
+    """The vouchers in JDE that may be this invoice, and whether they were asked by its number."""
     cfg = jde_ais.load(store)
     cfg.timeout = min(cfg.timeout, LIVE_TIMEOUT)
     with jde_ais.AisClient(cfg) as c:
         c.retries = 0
-        # Every page of the supplier's vouchers (the invoice numbers are compared here, written any way): a supplier
-        # with more vouchers than a page is checked to the last one.
-        return c.rows("vouchers", {"supplier": an8} if an8 else {"invoice": number}, max_pages=LIVE_PAGES)
+        since = (_now().date() - dt.timedelta(days=cfg.voucher_days)).strftime(c.ais.get("date_format") or "%Y-%m-%d")
+        if not an8:
+            return c.rows("vouchers", {"invoice": number, "since": since}, max_pages=LIVE_PAGES), True
+        if not big:
+            # Every page of the supplier's vouchers of the sync's window (the invoice numbers are compared here,
+            # written any way): a supplier with more vouchers than a page is checked to the last one.
+            try:
+                return c.rows("vouchers", {"supplier": an8, "since": since}, max_pages=LIVE_PAGES), False
+            except jde_ais.TooManyPages:
+                pass
+        # More than LIVE_PAGES even so: by the supplier and the invoice number as printed (JDE matches it exactly)
+        return c.rows("vouchers", {"supplier": an8, "invoice": printed}, max_pages=LIVE_PAGES), True
 
 
 def live_findings(store: Any, coding: Any, exclude_invoice_id: int | None = None) -> list[tuple[str, str, str]]:
@@ -383,23 +396,27 @@ def live_findings(store: Any, coding: Any, exclude_invoice_id: int | None = None
         return []
     final = {"vendor_name": coding.vendor_name, "gst_hst_registration_number": coding.gst_hst_registration_number}
     an8 = jde.resolve_an8(final, store.vendor_ids(), jde.load(store))
-    where, key = str(store.path), (str(store.path), an8, number if not an8 else "")
+    where = str(store.path)
     now = time.monotonic()
     with _LOCK:
-        cached = _CACHE.get(key)
+        big = (where, an8) in _BIG
+        cached = _CACHE.get((where, an8, number if not an8 or big else ""))
         down = _DOWN.get(where)
     rows: list[dict[str, Any]] | None = cached[1] if cached and now - cached[0] < CACHE_SECONDS else None
     if rows is None:
         if down and now - down[0] < DOWN_SECONDS:
             return [_not_reached(store, down[1])]
         try:
-            rows = _ask(store, an8, number)
+            rows, by_number = _ask(store, an8, number, str(coding.invoice_number or "").strip(), big)
         except jde_ais.AisError as exc:
-            with _LOCK:
-                _DOWN[where] = (now, str(exc))
+            if not isinstance(exc, jde_ais.TooManyPages):  # too wide a question is this invoice's, not JDE down
+                with _LOCK:
+                    _DOWN[where] = (now, str(exc))
             return [_not_reached(store, str(exc))]
         with _LOCK:
-            _CACHE[key] = (now, rows)
+            if an8 and by_number:
+                _BIG.add((where, an8))
+            _CACHE[(where, an8, number if by_number else "")] = (now, rows)
             _DOWN.pop(where, None)
     from . import jde_post
 

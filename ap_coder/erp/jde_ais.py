@@ -86,6 +86,10 @@ class AisError(Exception):
         self.kind, self.status, self.messages, self.sent = kind, status, list(messages or []), sent
 
 
+class TooManyPages(AisError):
+    """A read whose answer has more pages than the caller reads: this question is too wide, JDE is not down."""
+
+
 class AisOff(AisError):
     def __init__(self, message: str = "") -> None:
         super().__init__(OFF, message or "The JD Edwards API connection is off (Settings → JD Edwards E1 → API "
@@ -732,7 +736,8 @@ class AisClient:
             after = str(last.get("key") or last.get(next(iter(spec.get("fields") or {"key": ""}))) or "")
             if not after:
                 return out
-        raise AisError(ANSWER, f"{spec['name']} gave more than {max_pages} pages: narrow it, or raise the page size.")
+        raise TooManyPages(ANSWER, f"{spec['name']} gave more than {max_pages} pages: narrow it, or raise the page "
+                           "size.")  # fmt: skip
 
     def test(self) -> dict[str, Any]:
         """Test connection: AIS's version (``defaultconfig``, when it answers), a sign-in and logout. Never raises."""

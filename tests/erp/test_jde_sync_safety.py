@@ -4,6 +4,8 @@ answer, and the bank account's transit compared too."""
 
 from __future__ import annotations
 
+import datetime as dt
+
 import pytest
 
 from ap_coder.coding.vendors import vendor_findings
@@ -66,6 +68,27 @@ def test_the_live_check_reads_every_page_of_a_big_supplier(store, ais):
     ais.data["vouchers"].append({**base, "key": "00001-PV-99999-001"})  # the duplicate, on the second page
     found = jde_sync.live_findings(store, _coding())
     assert [c for _, c, _ in found] == ["DUPLICATE_IN_ERP"]
+
+
+def test_a_small_suppliers_duplicate_is_found_right_after_a_20k_voucher_supplier_was_checked(store, ais):
+    """B-1601: a supplier with more vouchers than the live check reads (40 pages of 500) made it answer "JDE not
+    reached" for every supplier for a minute, and a real duplicate was missed. JDE is asked for the vouchers of the
+    sync's window (``voucher_days``), and a supplier with too many even then by its number and the invoice number."""
+    connect(store, ais)
+    jde_sync.sync(store, parts=("suppliers",))
+    base = {**ais.data["vouchers"][0], "an8": "4002", "supplier_name": "Northern Courier Inc.", "pay_status": "A"}
+    ais.data["vouchers"] += [{**base, "key": f"00001-PV-{i:06d}-001", "document": str(100000 + i),
+                              "invoice_number": f"NC-{i}"} for i in range(20_001)]  # fmt: skip
+    courier = _coding(vendor_name="Northern Courier Inc.", invoice_number="NC-20000")
+    assert [c for _, c, _ in jde_sync.live_findings(store, courier)] == ["DUPLICATE_IN_ERP"]
+    assert [c for _, c, _ in jde_sync.live_findings(store, _coding())] == ["DUPLICATE_IN_ERP"]  # Acme's INV-7001
+    asked = ais.orchestration_calls("vouchers")
+    since = (dt.date.today() - dt.timedelta(days=730)).isoformat()
+    assert asked[0]["SupplierNumber"] == "4002" and asked[0]["FromInvoiceDate"] == since
+    assert {"SupplierNumber": "4002", "InvoiceNumber": "NC-20000"}.items() <= asked[-2].items()
+    pages = len(asked)
+    jde_sync.live_findings(store, courier.model_copy(update={"invoice_number": "NC-7"}))
+    assert len(ais.orchestration_calls("vouchers")) == pages + 1  # the big supplier: asked by number at once
 
 
 def _synced_pos(store, ais, count):
