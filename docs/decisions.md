@@ -1081,7 +1081,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     - the recurring vendors (the queue's pill, Vendors, Month-end), 60 s: 0.83 s → 2 ms after a change;
     - Spend's figures and currencies, 30 s: 2.2 s → 3 ms;
     - Insights (`insights.shown`, `shown_operations`), kept per change, 60 s: 1.76 s at every visit → 6 ms;
-    - the Month-end page's schedule, 30 s: 8.9 s → 0.1 s after a change (the CSV, booked from: 10.1 → 1.8 s).
+    - the Month-end page's schedule, 30 s: 8.9 s → 0.1 s after a change (the CSV, booked from, settles nothing:
+      10.1 → 2.7 s).
     - **The lengths:** a settled request costs nothing, and a worker works an answer out at most once a `settle`.
       The pill is asked at each view of the queue, the busiest page: 0.8 s every 60 s is 1.3% of a core a worker
       (8% at 10 s), and a regular invoice is late by days. A change of one's own may show on a report up to that
