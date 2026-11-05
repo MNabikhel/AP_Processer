@@ -75,8 +75,9 @@ def test_the_queue_never_calls_ready_an_invoice_whose_review_screen_blocks_appro
     row = queue[queue.rindex("<li", 0, at) : queue.index("</li>", at)]
     assert 'class="rq-row attn"' in row and "Ready" not in row
     assert "Pick a cost center for" in row
-    assert f'href="/review/{invoice_id}"' not in client.get("/review?show=ready").text
-    assert f'href="/review/{invoice_id}"' in client.get("/review?show=attention").text
+    # each row's link carries the view it is in (B-1592)
+    assert f'href="/review/{invoice_id}?show=ready"' not in client.get("/review?show=ready").text
+    assert f'href="/review/{invoice_id}?show=attention"' in client.get("/review?show=attention").text
     assert check(client, invoice_id)["allow"] is False  # the review screen: Approve disabled
 
 
@@ -84,7 +85,7 @@ def test_every_invoice_the_queue_calls_ready_can_be_approved_on_its_screen(clien
     without_cost_centers(store)
     ready = client.get("/review?show=ready").text
     for inv in store.list_invoices(REVIEW):
-        if f'href="/review/{inv["id"]}"' in ready:
+        if f'href="/review/{inv["id"]}?show=ready"' in ready:  # the row's link carries the view (B-1592)
             assert check(client, inv["id"])["allow"], inv["vendor_name"]
 
 

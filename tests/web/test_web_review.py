@@ -4,6 +4,7 @@ lists' actions."""
 from __future__ import annotations
 
 from dataclasses import replace
+from urllib.parse import urlencode
 
 import pytest
 from fastapi.testclient import TestClient
@@ -67,11 +68,13 @@ def test_filters_search_and_sort_are_in_the_address(client, demo):
     assert ready.count('class="rq-row ready"') == len(pending) - len(flagged)
     one = pending[0]
     found = client.get("/review", params={"q": one["invoice_number"]}).text
-    assert found.count("rq-row ") - 1 == 1 and f'href="/review/{one["id"]}"' in found  # minus the column heads
+    carried = urlencode({"q": one["invoice_number"]})  # the row's link carries the search (B-1592)
+    assert found.count("rq-row ") - 1 == 1 and f'href="/review/{one["id"]}?{carried}"' in found  # minus the heads
     assert "No invoices match" in client.get("/review?q=zzzz-nothing").text
     by_amount = client.get("/review?sort=amount").text
     amounts = sorted(pending, key=lambda r: -(r["grand_total"] or 0))
-    assert by_amount.index(f'/review/{amounts[0]["id"]}"') < by_amount.index(f'/review/{amounts[-1]["id"]}"')
+    first, last = (by_amount.index(f'/review/{a["id"]}?sort=amount"') for a in (amounts[0], amounts[-1]))
+    assert first < last
     assert client.get("/review?show=bogus&sort=bogus&tab=bogus").status_code == 200
 
 
@@ -379,3 +382,20 @@ def test_the_heavy_pages_ask_the_database_on_one_connection(tmp_path, monkeypatc
     two, ten = connections(bulk(ids[:2])), connections(bulk(ids[2:12]))
     assert [db.get_invoice(i)["status"] for i in ids] == [APPROVED] * 12
     assert ten == two
+
+
+def test_an_invoice_opened_from_a_filtered_sorted_queue_steps_through_that_view(client, demo):
+    """B-1592: the queue's rows linked to a bare /review/{id}, so an invoice opened from a filtered, searched or sorted
+    queue said "Reviewing 1 of" the whole queue and its Previous / Next followed the priority order, not the view."""
+    import html
+    import re
+
+    pending = demo.list_invoices(REVIEW)
+    queue = client.get("/review?show=attention&q=&sort=amount").text
+    rows = [html.unescape(h) for h in re.findall(r'class="rq-row attn" href="([^"]+)"', queue)]
+    assert 2 <= len(rows) < len(pending)
+    assert all(r.endswith("?show=attention&sort=amount") for r in rows), rows
+    page = client.get(rows[0]).text
+    assert f'Reviewing <b class="n">1</b> of {len(rows)}' in page
+    assert f'href="{html.escape(rows[1])}" data-nav="next"' in page
+    assert 'href="/review?show=attention&amp;sort=amount" data-nav="queue"' in page
