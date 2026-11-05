@@ -65,10 +65,10 @@ def os_user() -> str:
 
 
 class CheckedStaticFiles(StaticFiles):
-    """The dashboard's scripts and styles, which the browser checks again on every use (``Cache-Control: no-cache``).
-    js/app.js and js/invoice_viewer.js are imported without ``?v=`` (one URL, one module): left to guess, a browser
-    keeps running its old copy for weeks after an update. An unchanged file answers 304 to its ETag, so the check
-    costs nothing."""
+    """The dashboard's scripts and styles at their plain addresses (a page an older AP Coder drew, a bookmark), which
+    the browser checks again on every use (``Cache-Control: no-cache``): left to guess, a browser keeps running its
+    old copy for weeks after an update. An unchanged file answers 304 to its ETag, so the check costs nothing. The
+    pages link them at their kept addresses (``core.static_url``), answered from memory (``StaticFromMemory``)."""
 
     async def get_response(self, path: str, scope: Any) -> Any:
         response = await super().get_response(path, scope)

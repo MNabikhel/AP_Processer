@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% from "_sheet.html" import preview, columns %}
 {% from "_tiles.html" import tile_row %}
-{% block head %}<link rel="stylesheet" href="/static/data.css?v={{ static_version }}">{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url('/static/data.css') }}">{% endblock %}
 {% block content %}
 {% if emailed %}
 <section class="card" id="emailed">

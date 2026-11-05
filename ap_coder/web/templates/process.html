@@ -170,4 +170,4 @@
   </div>
 </div>
 {% endblock %}
-{% block scripts %}<script type="module" src="/static/js/process.js?v={{ static_version }}"></script>{% endblock %}
+{% block scripts %}<script type="module" src="{{ static_url('/static/js/process.js') }}"></script>{% endblock %}

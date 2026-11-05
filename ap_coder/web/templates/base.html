@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="same-origin">
   <title>{% block title %}{{ title }} · AP Coder{% endblock %}</title>
-  <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/app.css?v={{ static_version }}">
-  <link rel="stylesheet" href="/static/picker.css?v={{ static_version }}">
+  <link rel="icon" href="{{ static_url('/assets/icon.svg') }}" type="image/svg+xml">
+  <link rel="stylesheet" href="{{ static_url('/static/app.css') }}">
+  <link rel="stylesheet" href="{{ static_url('/static/picker.css') }}">
   {% block head %}{% endblock %}
 </head>
 <body data-page="{{ page }}"{% if server_mode %} data-server{% endif %}>
@@ -15,7 +15,7 @@
   <div class="shell">
     <aside class="rail" aria-label="AP Coder">
       <a class="brand" href="/" aria-label="AP Coder: review queue">
-        <img src="/assets/logo.svg" alt="AP Coder" height="24">
+        <img src="{{ static_url('/assets/logo.svg') }}" alt="AP Coder" height="24">
       </a>
       {% macro nav_link(item) %}
         <a href="{{ item.page.path }}" class="nav-link{% if item.page.key == page %} on{% endif %}"
@@ -35,7 +35,7 @@
           <summary class="nav-link"><span class="ms" aria-hidden="true">more_horiz</span><span class="label">More</span><span class="ms chev" aria-hidden="true">expand_more</span></summary>
           {% for item in rail.more %}{{ nav_link(item) }}{% endfor %}
         </details>
-        <script src="/static/js/nav_more.js?v={{ static_version }}"></script>{# not inline: the server's Content-Security-Policy runs AP Coder's own files only #}
+        <script src="{{ static_url('/static/js/nav_more.js') }}"></script>{# not inline: the server's Content-Security-Policy runs AP Coder's own files only #}
       </nav>
       <nav class="nav nav-pinned" aria-label="Settings and help">
         {% for item in rail.pinned %}{{ nav_link(item) }}{% endfor %}
@@ -106,8 +106,8 @@
   <div id="toasts" class="toasts" aria-live="polite"></div>
   {# No ?v= here: page scripts import "./app.js" and "./picker.js", which must be the very same URL to be the same
      module. picker.js: the searchable lists of select[data-picker] and input[data-picker="free"] (D-56). #}
-  <script type="module" src="/static/js/app.js"></script>
-  <script type="module" src="/static/js/picker.js"></script>
+  <script type="module" src="{{ static_url('/static/js/app.js') }}"></script>
+  <script type="module" src="{{ static_url('/static/js/picker.js') }}"></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

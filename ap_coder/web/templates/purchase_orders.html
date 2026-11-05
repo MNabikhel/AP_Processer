@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% from "_sheet.html" import upload_form, preview, columns %}
 {% from "_tiles.html" import tile_row %}
-{% block head %}<link rel="stylesheet" href="/static/data.css?v={{ static_version }}">{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url('/static/data.css') }}">{% endblock %}
 {% block content %}
 <details class="card expander" id="import"{% if not pos or imp or imp_error %} open{% endif %}>
   <summary><span class="ms" aria-hidden="true">upload</span>Import purchase orders from CSV or Excel</summary>
