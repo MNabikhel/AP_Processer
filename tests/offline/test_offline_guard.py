@@ -113,6 +113,9 @@ TOUCHPOINTS = {
     "ap_coder/core/paths.py": "git log -1 on this checkout, for its build (no network)",
     "ap_coder/ops/service.py": "the company server's service: urllib to its own dashboard on 127.0.0.1 (/healthz, "
     "/shutdown; no proxy)",
+    "ap_coder/bench/load.py": "the load test (a developer's bench, never run by the launcher): httpx and urllib to the "
+    "server and stand-in model server it started on this computer's own addresses (no proxy); a UDP socket only to "
+    "learn this computer's address (nothing sent)",
     "ap_coder/core/config.py": "socket.getaddrinfo of a model server's name, to judge the address it has (no "
     "connection)",
     "ap_coder/erp/hub/onelake.py": "the finance hub's push to OneLake: only with AP_ALLOW_INTERNET=1 and an Admin's "
