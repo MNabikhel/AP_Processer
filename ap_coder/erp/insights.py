@@ -135,6 +135,24 @@ def filled_in_count(store: Store) -> int:
     return sum(1 for e in latest_approvals(store) if e["filled"])
 
 
+def approval_counts(store: Store) -> tuple[int, int, int]:
+    """(``approved_as_coded``'s two counts, then ``filled_in_count``), counted by SQLite in the invoices' summary, not
+    every approval read (Activity's tile, D-156); the approvals the summary could not read are read as before."""
+    (r,) = store.summary_rows(
+        f"+status IN (?, ?) AND {summary_whole('approval')} AND a_at IS NOT NULL", (APPROVED, PENDING),
+        "COUNT(*) n, TOTAL(COALESCE(a_corrected, 0) = 0 AND COALESCE(a_filled, 0) = 0) clean, "
+        "TOTAL(COALESCE(a_filled, 0) != 0) filled", "1")  # fmt: skip
+    clean, filled, total = int(r["clean"]), int(r["filled"]), int(r["n"])
+    for row in store.summary_rows(f"+status IN (?, ?) AND {summary_broken('approval')}", (APPROVED, PENDING),
+                                  "id, broken, a_at, a_corrected, a_filled"):  # fmt: skip
+        a = computed(store, row, "approval")
+        if a["a_at"] is not None:
+            total += 1
+            clean += not a["a_corrected"] and not a["a_filled"]
+            filled += bool(a["a_filled"])
+    return clean, total, filled
+
+
 def _issues(validation: Any) -> list[dict[str, Any]]:
     """The stored checks of an invoice, leaving out anything that isn't one (a damaged or hand-edited database)."""
     issues = (validation or {}).get("issues") if isinstance(validation, dict) else None

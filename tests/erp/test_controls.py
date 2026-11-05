@@ -5,6 +5,8 @@ from __future__ import annotations
 import datetime as dt
 import json
 
+import pytest
+
 from ap_coder.core.store import Store
 from ap_coder.core.store.fx import parse_fx_rates
 from ap_coder.erp import controls
@@ -85,3 +87,49 @@ def test_one_person_finds_what_checking_every_approved_coding_found(tmp_path):
                 found = controls.one_person(store, first, last, limit, rates)
                 assert found == ref.one_person(store, first, last, limit, rates), (text, limit, first)
     assert len(controls.one_person(store, "2026-01-01", "2027-01-01", 1000.0, parse_fx_rates("USD=1.37"))) > 50
+
+
+def test_the_report_reads_only_the_details_it_lists_and_gives_what_it_gave(tmp_path, monkeypatch):
+    """D-156: of the period's approvals SQLite reads out the detail of those that may have left an error or a fraud or
+    duplicate signal open or were bulk (any detail it can't tell of too), and of the exports and postings none: the
+    same report as decoding every event (``reports_reference``), whatever an approval's detail holds."""
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    store.set_setting("approval_limit", "1000")
+    issue = {"code": "TOTAL_MISMATCH", "severity": "error"}
+    details = [
+        None, "", "{}", "[]", "0", '{"bulk": true}', '{"bulk": false}', '{"bulk": ""}', '{"bulk": 0}', '{"bulk": "x"}',
+        '{"bulk": null}', '{"total": NaN}', '{"open_issues": []}', '{"open_issues": null}', '{"open_issues": false}',
+        '{"open_issues": 0}', '{"open_issues": {}}', json.dumps({"open_issues": [issue]}),
+        json.dumps({"open_issues": [{"code": "TAX_RATE_NONSTANDARD", "severity": "warning"}]}),
+        json.dumps({"open_issues": [{"code": "VENDOR_BANK_CHANGED", "severity": "warning"}], "bulk": True}),
+        json.dumps({"open_issues": [{"code": "PO_UNKNOWN"}, {"code": "X", "severity": "info"}]}),
+        json.dumps({"open_issues": [{"code": "X", "severity": "Error"}], "changes": [{"what": "x"}]}),
+    ]  # fmt: skip
+    with store._conn() as conn:
+        for n, detail in enumerate(details * 3):
+            day = f"2026-03-{1 + n % 28:02d}T10:00:00"
+            actor = ["Jane", "Sam", "jane ", None, ""][n % 5]
+            for action in ("approved", "exported", "jde_voucher_posted", "final_approved", "sent_back", "note"):
+                if action == "approved" or n % 3 == 0:
+                    conn.execute("INSERT INTO events (invoice_id, action, actor, detail, created_at) VALUES "
+                                 "(?, ?, ?, ?, ?)", (n % 17 or None, action, actor, detail, day))  # fmt: skip
+        conn.execute("INSERT INTO events (action, actor, detail, created_at) VALUES ('tax_setup_changed', 'Ann', "
+                     "'{\"tax_type\": \"GST\"}', '2026-03-05')")  # fmt: skip
+    read: list[int] = []
+    loads = json.loads
+    monkeypatch.setattr(json, "loads", lambda text, *a, **k: read.append(1) or loads(text, *a, **k))
+    for start, end in ((dt.date(2026, 3, 1), dt.date(2026, 3, 31)), (dt.date(2026, 3, 10), dt.date(2026, 3, 12))):
+        for duties in (False, True):
+            read.clear()
+            new = controls.build(store, start, end, duties=duties)
+            decoded = len(read)
+            assert new == ref.controls_build(store, start, end, duties=duties)
+            assert decoded < len(read) / 2  # most details are left as they are
+    month = controls.build(store, dt.date(2026, 3, 1), dt.date(2026, 3, 31), duties=True)
+    assert month["overrides"] and month["signals"] and month["same_person"] and any(b for _, _, b in month["by_person"])
+    with store._conn() as conn:  # an issue without its code: the report fails as it did
+        conn.execute("INSERT INTO events (invoice_id, action, actor, detail, created_at) VALUES (1, 'approved', "
+                     "'Jane', '{\"open_issues\": [{\"severity\": \"warning\"}]}', '2026-03-03')")  # fmt: skip
+    for build in (controls.build, ref.controls_build):
+        with pytest.raises(KeyError):
+            build(store, dt.date(2026, 3, 1), dt.date(2026, 3, 31))

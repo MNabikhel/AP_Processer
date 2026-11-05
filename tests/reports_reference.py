@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import datetime as dt
 import io
+from collections import Counter
 from typing import Any
 
 from fastapi import Request
@@ -16,9 +17,10 @@ from ap_coder.coding.tax import PLACE_OF_SUPPLY
 from ap_coder.core import ui
 from ap_coder.core.reference_data import ReferenceData
 from ap_coder.core.safe import neutralise_sheet, xlsx_row
-from ap_coder.core.store import APPROVED, FAILED, Store
+from ap_coder.core.store import APPROVED, FAILED, PENDING, Store
 from ap_coder.erp import spend
 from ap_coder.erp.accruals import RECEIVED, Accrual
+from ap_coder.erp.controls import REPORTED, SETUP_ACTIONS, SIGNALS, _codes, same_person_steps
 from ap_coder.erp.exports import distribution
 from ap_coder.erp.spend import INVOICE_COLUMNS, accounts_by_code
 from ap_coder.web.core import get_store, money, reference_or_none, render
@@ -97,6 +99,45 @@ def spend_page(request: Request) -> HTMLResponse:
         cc_rows=ranked(centers, cc_names, total) if any(key for key, _, _ in centers) else [],
         **context,
     )
+
+
+def controls_build(store: Store, start: dt.date, end: dt.date, *, duties: bool = False) -> dict[str, Any]:
+    """``controls.build``: every event of the period decoded, every approved invoice's coding too."""
+    first, last = start.isoformat(), (end + dt.timedelta(days=1)).isoformat()
+    # The period's events, picked by SQLite by their day, not the newest million filtered here: an older period kept
+    # none (B-1598, the kind of B-1251).
+    events = list(store.find_events(actions=REPORTED, since=first, until=last))
+    approvals = [e for e in events if e["action"] == "approved"]
+    overrides = [e for e in approvals if _codes(e, "error")]
+    signals = [e for e in approvals if set(_codes(e)) & SIGNALS]
+    finals = [e for e in events if e["action"] == "final_approved"]
+    sent_back = [e for e in events if e["action"] in ("sent_back", "reopened")]
+    waiting = store.list_invoices(PENDING)
+    limit = store.approval_limit()
+    rates = store.fx_rates() if limit else {}  # read once, not once an approved invoice (B-1598)
+    one_person = (
+        [
+            i
+            for i in store.invoice_columns(("id", "reviewed_at", "second_reviewer", "final_output"), APPROVED)
+            if not i["second_reviewer"]
+            and first <= (i["reviewed_at"] or "") < last
+            and store.second_approval_reason(i["final_output"] or {}, limit, rates=rates)
+        ]
+        if limit
+        else []
+    )
+    setup = [e for e in events if e["action"] in SETUP_ACTIONS]
+    # Invoices each person approved: approving one invoice again (after a reopen or send-back) counts once.
+    by_person = Counter(person for person, _ in {(e["actor"] or "?", e["invoice_id"]) for e in approvals})
+    bulk = Counter(person for person, _ in {(e["actor"] or "?", e["invoice_id"]) for e in approvals
+                                              if (e["detail"] or {}).get("bulk")})  # fmt: skip
+    return {
+        "start": start, "end": end, "events": store.count_events(since=first, until=last), "approvals": len(approvals),
+        "overrides": overrides, "signals": signals, "finals": finals, "sent_back": sent_back,
+        "waiting": waiting, "setup": setup, "one_person": one_person,
+        "by_person": [(p, n, bulk.get(p, 0)) for p, n in by_person.most_common()],
+        "limit": store.approval_limit(), "same_person": same_person_steps(events) if duties else None,
+    }  # fmt: skip
 
 
 def one_person(store: Store, first: str, last: str, limit: float, rates: dict[str, float]) -> list[dict[str, Any]]:

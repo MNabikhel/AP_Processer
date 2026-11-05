@@ -42,6 +42,22 @@ DUTY_STEPS = {"approved": "approved", "final_approved": "gave the second approva
               "jde_voucher_posted": "posted to JD Edwards"}  # fmt: skip
 # The events the report lists or counts (``build``), the only ones of its period it reads.
 REPORTED = ("sent_back", "reopened", *SETUP_ACTIONS, *DUTY_STEPS)
+# Of those, the ones whose detail the report reads (``find_events``' ``detail_if``, D-156): all but the exports and
+# postings (who did them, to which invoice, is all it needs) and the approvals SQLite can tell left no error or fraud
+# or duplicate signal open and were not bulk (most of them): every approval of a month or a year decoded otherwise.
+# Any other detail (not an object of valid JSON, issues not a list of them with a code) is read, failing as before.
+_SIGNALS = ", ".join(f"'{code}'" for code in sorted(SIGNALS))
+_READ = f"""e.action NOT IN ('approved', 'exported', 'jde_voucher_posted') OR (e.action = 'approved' AND CASE
+    WHEN e.detail IS NULL OR e.detail = '' THEN 0
+    WHEN NOT json_valid(e.detail) THEN 1
+    WHEN json_type(e.detail) != 'object' THEN 1
+    WHEN COALESCE(json_type(e.detail, '$.bulk'), 'null') NOT IN ('null', 'false') THEN 1
+    WHEN COALESCE(json_type(e.detail, '$.open_issues'), 'null') IN ('null', 'false') THEN 0
+    WHEN json_type(e.detail, '$.open_issues') != 'array' THEN 1
+    ELSE EXISTS (SELECT 1 FROM json_each(e.detail, '$.open_issues') AS i WHERE i.type != 'object'
+                 OR COALESCE(json_type(i.value, '$.code'), '') != 'text'
+                 OR json_extract(i.value, '$.severity') = 'error' OR json_extract(i.value, '$.code') IN ({_SIGNALS}))
+    END)"""
 
 
 def same_person_steps(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -113,7 +129,7 @@ def build(store: Store, start: dt.date, end: dt.date, *, duties: bool = False) -
     first, last = start.isoformat(), (end + dt.timedelta(days=1)).isoformat()
     # The period's events, picked by SQLite by their day, not the newest million filtered here: an older period kept
     # none (B-1598, the kind of B-1251).
-    events = list(store.find_events(actions=REPORTED, since=first, until=last))
+    events = list(store.find_events(actions=REPORTED, since=first, until=last, detail_if=_READ))
     approvals = [e for e in events if e["action"] == "approved"]
     overrides = [e for e in approvals if _codes(e, "error")]
     signals = [e for e in approvals if set(_codes(e)) & SIGNALS]

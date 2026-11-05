@@ -191,6 +191,18 @@ def test_the_spend_page_shows_what_it_showed(year, tmp_path):
     assert "All currencies in CAD at the rates" in shown(f"/spend?start={YEAR[0]}&end={YEAR[1]}")
 
 
+def test_activity_counts_the_approvals_as_insights_does(year):
+    """D-156: Activity's tile counts the latest approvals in SQLite (``approval_counts``): the same as reading each one
+    (``approved_as_coded``, ``filled_in_count``), an approval the summary could not read read again as before."""
+    counts = (*insights.approved_as_coded(year), insights.filled_in_count(year))
+    assert insights.approval_counts(year) == counts and counts[1]
+    invoice_id = next(r["id"] for r in ref.old_list_invoices(year, APPROVED))
+    with sqlite3.connect(year.path) as conn:  # an approval the summary could not read: its facts read again
+        conn.execute("UPDATE invoice_summary SET broken = broken | ? WHERE id = ?",
+                     (summary_module.BIT["approval"], invoice_id))  # fmt: skip
+    assert insights.approval_counts(year) == (*insights.approved_as_coded(year), insights.filled_in_count(year))
+
+
 def test_spend_follows_a_change_of_the_tax_setup(year):
     """An invoice approved by an older version has its posting lines built with the tax setup: changed, it is
     worked out again (the trigger on ``tax_treatments``)."""
