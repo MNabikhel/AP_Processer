@@ -293,8 +293,36 @@ def test_a_worker_ending_takes_no_new_connection_and_stops_a_moment_later(tmp_pa
         listening.close()
         return early, found.should_exit
 
-    assert asyncio.run(main()) == (False, True) and taken == []
+    # (the event loop uvicorn gives each worker of several, on Windows too: Windows' default has no remove_reader)
+    loop = asyncio.SelectorEventLoop()
+    try:
+        assert loop.run_until_complete(main()) == (False, True) and taken == []
+    finally:
+        loop.close()
     assert server._leaving(tmp_path) == os.getpid()
+
+
+def test_a_worker_whose_event_loop_cant_stop_reading_a_socket_closes_it_and_still_stops(tmp_path, monkeypatch):
+    """An event loop without remove_reader (Windows' Proactor loop: NotImplementedError) made the ending worker fail
+    after its request, holding the restart lock: it now stops serving its listening sockets instead (the other
+    workers keep their own) and stops as before (B-1710)."""
+    worker, _, found = _recycle(tmp_path, monkeypatch, max_requests=1)
+
+    async def main() -> tuple[bool, bool]:
+        listening = await asyncio.start_server(lambda r, w: None, "127.0.0.1", 0)
+        found.servers = [listening]
+
+        def unsupported(fd):
+            raise NotImplementedError
+
+        monkeypatch.setattr(asyncio.get_running_loop(), "remove_reader", unsupported)
+        await worker({"type": "http"}, None, None)
+        await asyncio.sleep(0.05)
+        serving = listening.is_serving()
+        listening.close()
+        return serving, found.should_exit
+
+    assert asyncio.run(main()) == (False, True)
 
 
 def test_the_supervisor_does_not_ask_the_ending_worker_alive_and_replaces_it_once_it_has_ended(tmp_path, monkeypatch):

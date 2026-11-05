@@ -185,6 +185,7 @@ def test_the_invoices_folder_is_listed_by_name_in_the_order_it_always_had(tmp_pa
     """B-1634: listing the invoices folder looked at each file (and sorted the paths, slowly): 2.9 s for 100,000
     files, on every view of the import page. The listing's own kinds and the names give the same files, in the same
     order."""
+    import os
     from pathlib import Path
 
     from ap_coder.ai.extraction import SUPPORTED_EXTENSIONS, TEXT_EXTENSIONS
@@ -203,8 +204,11 @@ def test_the_invoices_folder_is_listed_by_name_in_the_order_it_always_had(tmp_pa
         return [c for c in files if c.suffix.lower() not in TEXT_EXTENSIONS or c.stem.lower() not in documents]
 
     expected = as_before(tmp_path)
-    assert [p.name for p in expected] == ["A.PDF", "Z.jpeg", "b.pdf", "c.pdf", "d.txt", "inv.2026.pdf", "z.jpeg",
-                                          "été.png"]  # fmt: skip
+    if os.name == "nt":  # one file for "Z.jpeg" and "z.jpeg", named as made first; paths sorted without case
+        names = ["A.PDF", "b.pdf", "c.pdf", "d.txt", "inv.2026.pdf", "Z.jpeg", "été.png"]
+    else:
+        names = ["A.PDF", "Z.jpeg", "b.pdf", "c.pdf", "d.txt", "inv.2026.pdf", "z.jpeg", "été.png"]
+    assert [p.name for p in expected] == names
     with monkeypatch.context() as m:
         m.setattr(Path, "is_file", lambda self: (_ for _ in ()).throw(AssertionError("looked at a file")))
         assert invoice_files(tmp_path) == expected

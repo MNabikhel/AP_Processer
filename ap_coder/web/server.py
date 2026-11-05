@@ -602,8 +602,11 @@ class Recycle:
         # ask: uvicorn's own stop, alone, left one taken as it began unanswered until the end of its grace (25 s).
         loop = asyncio.get_running_loop()
         for listening in getattr(found, "servers", None) or []:
-            for sock in listening.sockets:
-                loop.remove_reader(sock.fileno())
+            try:
+                for sock in listening.sockets:
+                    loop.remove_reader(sock.fileno())
+            except NotImplementedError:  # a loop without readers (Windows' Proactor): its own copy closed (B-1710)
+                listening.close()
         # Those under way get the time they need: an import run whole in its request was cut with a 500 at the grace
         # while its work went on. An hour at most (an upload whose computer went to sleep never ends); a stop of the
         # service still ends this worker at its deadline (join_all).
