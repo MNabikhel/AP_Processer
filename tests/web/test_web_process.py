@@ -148,7 +148,9 @@ def test_the_saved_emails_are_found_by_their_names_first(tmp_path):
         (folder / name).write_bytes(name.encode())
     (folder / "folder.eml").mkdir()
     old = sorted(p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in EMAIL_EXTENSIONS)
-    assert emails_in(folder) == old and [p.name for p in old] == [".hidden.eml", "MAIL2.MSG", "mail.eml"]
+    # Windows drops the trailing dot of "dot.eml." (so it is an email there) and sorts its paths without case.
+    expected = {".hidden.eml", "MAIL2.MSG", "mail.eml"} | ({"dot.eml"} if os.name == "nt" else set())
+    assert emails_in(folder) == old and {p.name for p in old} == expected
 
 
 def test_the_files_not_processed_are_found_in_one_query(store, tmp_path):
