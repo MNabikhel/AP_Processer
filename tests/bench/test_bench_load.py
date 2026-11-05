@@ -127,3 +127,13 @@ def test_a_request_still_under_way_when_the_run_stops_its_people_is_recorded_as_
     assert r["cut_off"] == 1 and r["no_answer"] == 0 and report["routes"]["GET /review"]["no_answer"] == {"cut off": 1}
     assert report["pages"]["n"] == 1 and report["pages"]["p95"] >= 0.24
     assert load.gate(report, None, 1.5)[0].startswith("errors: 0 5xx, 0 without an answer, 1 cut off at the end")
+
+
+def test_the_requests_a_second_of_each_minute_are_over_the_seconds_it_covers():
+    # A 90 s run: minute 0 has 30 requests in two of its six 10 s spans (0.5 a second, not 1.5); minute 1 is 30 s
+    # long, with 15 requests in one span (0.5 a second again).
+    samples = [_sample("GET /review", 1.0, end=t) for t in [5.0] * 15 + [15.0] * 15 + [75.0] * 15]
+    cfg = {"users": 3, "duration": 90.0, "workers": 1, "ramp": 0.0, "think": 1.0, "invoices": 10, "data": "a folder",
+           "model": "a stand-in", "host": "127.0.0.1"}  # fmt: skip
+    text = load.markdown(load.build_report(_run(samples, duration=90.0), cfg, {"started": "2026-11-05T09:00:00"}))
+    assert "| 0 min | 0.5 | 0 | 1.00 s |" in text and "| 1 min | 0.5 | 0 | 1.00 s |" in text

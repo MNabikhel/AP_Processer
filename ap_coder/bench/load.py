@@ -1576,6 +1576,7 @@ def build_report(run: Run, cfg: dict[str, Any], extra: dict[str, Any]) -> dict[s
         "computer": {"cores": os.cpu_count(), "python": platform.python_version(), "system": platform.platform()},
         "requests": {
             "total": len(samples),
+            "seconds": round(max([measured, *(s[5] for s in samples)]), 2),  # from the start to the last answer
             "per_second": round(len(samples) / measured, 2),
             "errors_5xx": fives,
             "no_answer": no_answer,
@@ -1692,7 +1693,8 @@ def markdown(report: dict[str, Any]) -> str:
     for bucket in report["timeline"]:
         minutes[int(bucket["t"] // 60)].append(bucket)
     for minute, buckets in sorted(minutes.items()):
-        rate = sum(b["requests"] for b in buckets) / (10.0 * len(buckets))
+        covered = min(60.0, r["seconds"] - 60 * minute)  # the seconds the minute covers: 60, or the last one's part
+        rate = sum(b["requests"] for b in buckets) / max(1.0, covered)
         worst = max((b["p95"] for b in buckets if b["p95"] is not None), default=None)
         out.append(f"| {minute} min | {rate:.1f} | {sum(b['errors'] for b in buckets)} | {_s(worst)} |")
     out += ["", "## Correctness after the run", ""]
