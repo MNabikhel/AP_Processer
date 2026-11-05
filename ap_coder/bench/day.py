@@ -372,8 +372,11 @@ class Run:
 
         stretch = (1 / scale - 1) if 0 < scale < 1 else 0.0
         parallel = self.a.llm_parallel or self.a.slots
-        arrival_model = model_seconds(("suggest",), arrival_end)
-        background_model = model_seconds(("page", "header", "review")) / max(1, parallel)
+        arrival_model = model_seconds(("suggest",), arrival_end)  # the import asks one at a time: its waits are its own
+        # The background readers' answering, as many at once as both the model's slots and the readers allow (a wait
+        # in line is another request's answering, counted already).
+        at_once = max(1, min(self.a.slots, parallel))
+        background_model = model_seconds(("page", "header", "review"), service=True) / at_once
         page_model = model_seconds(("page", "header", "suggest", "review"), service=True)
         per_invoice = page_model / max(1, len(invoices)) / scale if scale else None
         capacity = (WORKING_DAY_HOURS * 3600 * self.a.slots / per_invoice) if per_invoice else None

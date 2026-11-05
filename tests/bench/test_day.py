@@ -2,7 +2,9 @@
 (ap_coder/bench/day.py), and its drills on the model machine."""
 
 import argparse
+import datetime as dt
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -15,6 +17,41 @@ from ap_coder.capture import layout
 def _drill(kind, **kw):
     return argparse.Namespace(drill=kind, drill_at=kw.get("at", 2), drill_for=kw.get("length", 10.0),
                               slow_factor=kw.get("factor", 4.0))  # fmt: skip
+
+
+def _full_latency(pages, slots, parallel):
+    """The at-full-latency figures of a drop of 4 invoices, at time x0.5, whose page reads ended 10, 20, 30 and 40 s
+    after it; ``pages``: the stand-in's (wait, seconds) of each read."""
+    wall0 = 1_800_000_000.0
+
+    def stamp(t):
+        return dt.datetime.fromtimestamp(wall0 + t).isoformat()
+
+    invoices = [{"created_at": stamp(0.0), "file_name": f"{n}.pdf", "error": ""} for n in range(1, 5)]
+    reads = [{"invoice_id": n, "status": "done", "updated_at": stamp(10.0 * n), "seconds": 10.0, "pages": 1,
+              "error": ""} for n in range(1, 5)]  # fmt: skip
+    history = [{"t": 1.0, "kind": "page", "model": day.READER, "image": "", "wait": wait, "seconds": seconds,
+                "outcome": "served"} for wait, seconds in pages]  # fmt: skip
+    a = argparse.Namespace(n=4, seed=1, scanned=0, workers=1, deliver="folder", batch=10, slots=slots, time_scale=0.5,
+                           fail_rate=0.0, reviewer="all", drill="none", drill_at=0, drill_for=0, slow_factor=1,
+                           probe_every=1, llm_parallel=parallel)  # fmt: skip
+    run = SimpleNamespace(
+        a=a, wall0=wall0, fake_t0=0.0, cases=[], probes=[], samples=[], deliveries=[], timed_out=False, problem="",
+        cpu_before={}, since=lambda: 45.0, cpu=SimpleNamespace(sample=lambda: None, report=lambda before, wall: {}),
+        db=SimpleNamespace(invoices=lambda: invoices, page_reads=lambda: reads, reviews=list, self_test=lambda: None),
+        fake=SimpleNamespace(history=lambda: history, stats=dict, page_answers=dict),
+        server=SimpleNamespace(log_counts=lambda: {"database is locked": 0, "Traceback": 0}, settings={}),
+    )  # fmt: skip
+    return day.Run.report(run, [])["at_full_latency"]
+
+
+def test_the_drain_at_full_latency_stretches_the_model_s_answering_not_its_line():
+    # Each page answered in 10 s at x0.5 (20 s at full latency), one at a time: the 40 s drain is 80 s at full
+    # latency. On one slot, the 4 readers' waits in line are the other pages' answering, counted once already...
+    assert _full_latency([(0.0, 10.0), (10.0, 20.0), (20.0, 30.0), (30.0, 40.0)], 1, 4)["drain_seconds"] == 80.0
+    # ...and with one reader, the 4 slots don't read its pages any faster.
+    full = _full_latency([(0.0, 10.0)] * 4, 4, 1)
+    assert full["drain_seconds"] == 80.0 and full["model_seconds_per_invoice"] == 20.0
 
 
 def test_each_drill_makes_the_model_machine_misbehave_then_puts_it_back():
