@@ -139,6 +139,86 @@ def test_a_backup_with_the_summarys_triggers_as_another_version_made_them_restor
     assert len(store.list_invoices()) == 2 and len(list(store.backup_dir().glob("*before-restore.db"))) == 1
 
 
+def _while_restoring(store: Store, backup: Path, monkeypatch, meanwhile) -> None:
+    """``store.restore_from(backup)``, with ``meanwhile()`` run as the data folder's files are copied: the database is
+    the backup's then, not migrated yet (minutes on a big data folder), and the web workers answer."""
+    from ap_coder.core.store import backup_files
+
+    files = backup_files.restore_files
+
+    def copying(*args, **kwargs):
+        meanwhile()
+        return files(*args, **kwargs)
+
+    monkeypatch.setattr(backup_files, "restore_files", copying)
+    store.restore_from(backup)
+
+
+def _add_vendor(store: Store, key: str, erp_id: str) -> None:
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("INSERT INTO vendors (vendor_key, display_name, erp_id, updated_at) VALUES (?, ?, ?, '2026')",
+                     (key, key.title(), erp_id))  # fmt: skip
+
+
+def _erp_ids(store: Store) -> dict[str, str]:
+    with sqlite3.connect(store.path) as conn:
+        return dict(conn.execute("SELECT vendor_key, erp_id FROM vendors WHERE erp_id != ''").fetchall())
+
+
+def test_while_a_backup_made_before_the_counts_is_restored_another_workers_change_is_counted(tmp_path, monkeypatch):
+    """A backup of a version before D-159 (the same schema version, no ``changes_*`` triggers) was put in as it was:
+    its triggers came only with the migration, after the data folder's files were copied. Meanwhile a vendor added
+    by someone else was not counted, and a worker kept answering with the vendor list it had kept. The restore's copy
+    gets every count's trigger whose table it has before it goes in."""
+    from ap_coder.core.store.summary import SUMMARY_TRIGGERS
+
+    store = Store(tmp_path / "ap.db")
+    _add_vendor(store, "acme", "100")
+    backup = store.backup_now("manual")
+    with sqlite3.connect(backup) as conn:
+        for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'changes_%'"):
+            conn.execute(f"DROP TRIGGER {name}")
+    worker = Store(store.path)  # another web worker
+    seen = {}
+
+    def meanwhile():
+        with sqlite3.connect(store.path) as conn:
+            seen["triggers"] = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'trigger'")}
+        seen["first"] = worker.vendor_ids()
+        _add_vendor(store, "globex", "200")
+        seen["again"], seen["fresh"] = worker.vendor_ids(), _erp_ids(store)
+
+    _while_restoring(store, backup, monkeypatch, meanwhile)
+    assert seen["triggers"] == set(SUMMARY_TRIGGERS) and seen["first"] == {"acme": "100"}
+    assert seen["again"] == seen["fresh"] == {"acme": "100", "globex": "200"}
+
+
+def test_while_a_backup_is_restored_no_answer_kept_before_is_taken_when_a_count_comes_back_to_its_number(
+    tmp_path, monkeypatch
+):
+    """Until the restore's last step the database had the backup's ``summary_id``, the one before, and the backup's
+    counts: one change meanwhile brought ``changes/vendors`` back to the number a worker had kept an answer at before
+    the restore (of other rows), and that answer was taken. The restore's copy gets a new ``summary_id`` before it
+    goes in, and another after the migration."""
+    store = Store(tmp_path / "ap.db")
+    _add_vendor(store, "acme", "100")
+    backup = store.backup_now("manual")
+    with sqlite3.connect(store.path) as conn:  # after the backup: Acme's ID changed
+        conn.execute("UPDATE vendors SET erp_id = '999' WHERE vendor_key = 'acme'")
+    worker = Store(store.path)  # another web worker
+    assert worker.vendor_ids() == {"acme": "999"}
+    before, seen = store.get_setting("summary_id"), {}
+
+    def meanwhile():
+        seen["id"] = store.get_setting("summary_id")
+        _add_vendor(store, "globex", "200")  # the count back to the one the worker kept its answer at
+        seen["worker"], seen["fresh"] = worker.vendor_ids(), _erp_ids(store)
+
+    _while_restoring(store, backup, monkeypatch, meanwhile)
+    assert seen["worker"] == seen["fresh"] == {"acme": "100", "globex": "200"}
+    assert len({before, seen["id"], store.get_setting("summary_id")}) == 3
+
+
 def test_restore_clears_the_second_backup_folder(tmp_path):
     """A backup must not decide where later backups are copied (e.g. a planted network share)."""
     store = Store(tmp_path / "ap.db")

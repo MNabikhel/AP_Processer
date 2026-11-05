@@ -266,17 +266,22 @@ SUMMARY_TRIGGERS = {
                                       f"{_VENDOR_COUNT.format('OLD', '')}; END",
 }  # fmt: skip
 
+_ON = re.compile(r" ON (\w+) (?:WHEN|BEGIN) ")  # a trigger's table, in its SQL
 
-def make_triggers(conn: sqlite3.Connection, missing: bool = True) -> None:
+
+def make_triggers(conn: sqlite3.Connection, missing: bool = True, counts: bool = False) -> None:
     """``SUMMARY_TRIGGERS`` as this version makes them: one there with other SQL (made by another version, or planted
     under its name) is dropped and made again; with ``missing``, one not there is made too (at every start,
     ``_summary_schema``). Without it (a backup's copy being restored, ``backups._own_triggers``), only those there are
-    made again: an older backup may lack their tables, which its migration makes first."""
+    made again: an older backup may lack their tables, which its migration makes first. With ``counts``, also the
+    counts' triggers (``changes_*``) whose table is there, with ``settings`` they count in (B-1720)."""
     made = {r[0]: r[1] for r in conn.execute("SELECT name, sql FROM sqlite_master WHERE type = 'trigger'")}
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")} if counts else set()
     for name, sql in SUMMARY_TRIGGERS.items():
         if made.get(name, sql) != sql:
             conn.execute(f"DROP TRIGGER {name}")
-        if made.get(name) != sql and (missing or name in made):
+        counted = counts and name.startswith("changes_") and {"settings", _ON.search(sql)[1]} <= tables
+        if made.get(name) != sql and (missing or name in made or counted):
             conn.execute(sql)
 
 

@@ -363,10 +363,17 @@ class BackupsMixin:
     def _own_triggers(path: Path, name: str) -> None:
         """The summary's triggers in the restore's own copy of a backup (``_local_copy``, checked) made again as this
         version makes them (``summary.make_triggers``), before the copy goes into the database: the SQL the backup
-        gave them never runs here. Raises ValueError when one of them cannot be made (its table is not there)."""
+        gave them never runs here. Raises ValueError when one of them cannot be made (its table is not there).
+        The copy is in the database minutes before its migration (the data folder's files are copied first), and the
+        web workers answer meanwhile: it gets the counts' triggers its tables allow (an older backup may have none),
+        so another worker's change is counted, and a new ``summary_id``, so nothing kept on the database as it was is
+        taken, though a count comes back to a number kept then (B-1720). The migration gives it another."""
         conn = sqlite3.connect(path)
         try:
-            make_triggers(conn, missing=False)
+            make_triggers(conn, missing=False, counts=True)
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'settings'").fetchone():
+                conn.execute("INSERT INTO settings (key, value) VALUES ('summary_id', ?) ON CONFLICT(key) DO UPDATE "
+                             "SET value = excluded.value", (uuid.uuid4().hex,))  # fmt: skip
             conn.commit()
         except sqlite3.Error as exc:
             raise ValueError(f"{name} is not an AP Coder database ({exc})") from None
