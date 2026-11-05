@@ -72,6 +72,7 @@ SHOWS = {"all": "All", "attention": "Needs attention", "ready": "Ready"}
 SORTS = {"priority": "Priority", "due": "Due date: soonest", "amount": "Amount: high to low",
          "newest": "Newest invoice date", "vendor": "Vendor A–Z"}  # fmt: skip
 TABS = ("review", "second", "parked", "approved", "other")
+LATE_SETTLE = 60.0  # seconds the regular invoices said late may be behind a change (D-164, D-165)
 
 
 # --- The queue's rows -----------------------------------------------------------------------------------------------
@@ -237,7 +238,9 @@ def queue_rows(store: Store, shown: list[dict[str, Any]], threshold: float,
     sources = store.layout_sources(ids)
     vendor_checks = store.vendor_name_checks(ids)
     default_days = store.default_terms_days()
-    terms = store.all_vendor_terms()  # read once, not once per row
+    # every vendor's terms (20,000 at 100,000 invoices), read once a change of the vendor list, not on each visit
+    # (B-1733); shared, read-only
+    terms = store.summary_memo("vendor_terms", store.all_vendor_terms, topic="", changes="vendors")
     rows = []
     for inv in shown:
         ai = outputs.get(inv["id"], {})
@@ -281,7 +284,11 @@ def today_pills(store: Store, invoices: list[dict[str, Any]]) -> list[tuple[str,
     follow_ups = sum(1 for i in store.parked() if i.get("follow_up") and i["follow_up"] <= today)
     second = sum(1 for i in invoices if i["status"] == PENDING and (i["reviewer"] or "").strip().lower() != me)
     to_export = store.ready_to_export_count()  # counted, not read: a year of approvals not exported yet
-    late = [r for r in recurring.detected(store) if r.status == recurring.LATE]
+    # every vendor's invoice dates (0.95 s at 100,000 invoices): only shown, so worked out again at most every
+    # LATE_SETTLE seconds under a stream of uploads and rejections (B-1732)
+    late = store.summary_memo(f"late_recurring/{today}", lambda: [r.vendor_name for r in recurring.detected(store)
+                                                                   if r.status == recurring.LATE],
+                              "dates", settle=LATE_SETTLE)  # fmt: skip
     pills = [
         (f"{overdue} past due, not approved yet", "err") if overdue else None,
         (f"{due_soon} due within {DUE_SOON_DAYS} days", "warn") if due_soon else None,
@@ -289,7 +296,7 @@ def today_pills(store: Store, invoices: list[dict[str, Any]]) -> list[tuple[str,
         (f"{second} waiting for your second approval", "info") if second else None,
         (f"{to_export} approved, ready to export", "gray") if to_export else None,
         (f"{ui.plural(len(late), 'regular invoice')} late (Vendors page): "
-         + ", ".join(r.vendor_name for r in late[:2]) + ("…" if len(late) > 2 else ""), "gray") if late else None,
+         + ", ".join(late[:2]) + ("…" if len(late) > 2 else ""), "gray") if late else None,
     ]  # fmt: skip
     return [p for p in pills if p]
 

@@ -422,3 +422,51 @@ def test_a_vendors_lessons_count_their_corrections_off_an_index_and_an_older_dat
     store = Store(store.path)
     assert indexes() == {"lesson_approvals_counted"}
     assert [(r["corrected"], r["agreeing"]) for r in store.lessons_for("acme")] == [(3, 2)]
+
+
+def test_the_page_readers_latest_reads_are_read_off_an_index_and_an_older_database_gets_it(tmp_path, monkeypatch):
+    """B-1734: the reading status on every page (how long the page reader's queue still takes) sorted every finished
+    read to average the pages of the latest 50 (99,692 at 100,000 invoices: 44 ms a page). They are read off an index
+    by status and time (0.02 ms), which a database made before gets at its next start."""
+    store = Store(tmp_path / "ap.db")
+    for invoice_id, pages in ((1, 1), (2, 3), (3, 2)):
+        store.queue_page_read(invoice_id, "new")
+        store.finish_page_read(invoice_id, "done", "ovis", pages=pages)
+    plan = _plan(store, monkeypatch, store.page_read_pages_average, "page_reads")
+    assert "INDEX page_reads_done" in plan and "TEMP B-TREE" not in plan, plan
+    assert store.page_read_pages_average() == 2.0
+    with sqlite3.connect(store.path) as conn:  # as a database made before it
+        conn.execute("DROP INDEX page_reads_done")
+    store = Store(store.path)
+    assert "INDEX page_reads_done" in _plan(store, monkeypatch, store.page_read_pages_average, "page_reads")
+    assert store.page_read_pages_average() == 2.0
+
+
+def test_the_reading_status_counts_the_templates_and_the_open_queue_without_reading_them(tmp_path, monkeypatch):
+    """B-1736: the reading status on every page counted the suppliers' learned templates by reading each one (3,008
+    templates, 14.7 MB at 100,000 invoices: 6 to 13 ms a page), and the page reader's queue still open by listing
+    every invoice in review first. The templates are counted off a partial index (a database made before gets it at
+    its next start), the queue by looking up its own invoices."""
+    from tests.webclient import add_clean
+
+    store = Store(tmp_path / "ap.db")
+    with sqlite3.connect(store.path) as conn:
+        conn.executemany(
+            "INSERT INTO supplier_profiles (key, template_json, updated_at) VALUES (?, ?, '2026-01-05')",
+            [(f"s{n}", t) for n, t in enumerate(('{"fields": {}}', None, "", "null", "{}", "[1]"))],
+        )
+    plan = _plan(store, monkeypatch, store.supplier_templates_count, "supplier_profiles")
+    assert "INDEX supplier_profiles_template" in plan, plan
+    assert store.supplier_templates_count() == 2
+    with sqlite3.connect(store.path) as conn:  # as a database made before it
+        conn.execute("DROP INDEX supplier_profiles_template")
+    store = Store(store.path)
+    assert "INDEX supplier_profiles_template" in _plan(store, monkeypatch, store.supplier_templates_count,
+                                                       "supplier_profiles")  # fmt: skip
+    ids = [add_clean(store, invoice_number=f"P-{n}") for n in range(3)]
+    for invoice_id in ids:
+        store.queue_page_read(invoice_id, "new")
+    store.reject_invoice(ids[0], "Ann", "a copy")
+    plan = _plan(store, monkeypatch, lambda: store.page_reads_waiting(still_open=True), "page_reads")
+    assert "LIST SUBQUERY" not in plan and "USING INTEGER PRIMARY KEY" in plan, plan
+    assert store.page_reads_waiting(still_open=True) == 2 and store.page_reads_waiting() == 3

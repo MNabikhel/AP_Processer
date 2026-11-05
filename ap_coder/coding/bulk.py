@@ -184,6 +184,11 @@ RECHECK_WAIT = 300.0  # how long a laptop's queue waits for the re-check under w
 RECHECK_STOP_SECONDS = 5.0  # how long a stop waits for the background's re-check to end between two batches
 QUEUE_COLUMNS = ", ".join(("id", *QUEUE_READ))  # what the summary's ``queue`` topic follows
 KEEP_FROM = 50  # invoices asked from which the queue's checks are kept (fewer are worked out each time)
+# Each invoice's findings as the queue reads them (``_found``), by the texts the summary keeps: the queue's invoices
+# share a few of them (211 for 2,654 invoices at 100,000), so each is decoded once, not again after each approval or
+# park (B-1730). Shared: read-only. Past FOUND_KEPT texts they are all let go.
+_FOUND: dict[tuple[str | None, str | None], tuple[MappingProxyType, ...]] = {}
+FOUND_KEPT = 4096
 
 
 def _pairs(issues: list[dict[str, Any]]) -> str:
@@ -198,20 +203,29 @@ def _stale(row: dict[str, Any], stamp: str) -> bool:
 
 def _today(rows: list[dict[str, Any]], stamp: str) -> list[list[dict[str, Any]]]:
     """Each invoice's findings by today's checks (severity and code) from its queue facts, as ``issues_today`` gives
-    them: the stored ones, or the queue's re-check with the stored findings made after processing (``_kept``). One
-    not checked again yet (``_stale``): its latest. The findings of all are decoded in one go, each read-only (the
-    answers kept share them, ``queue_checks``)."""
-    stored = json.loads("[" + ",".join(r["q_found"] or "[]" for r in rows) + "]")
-    rechecked = json.loads("[" + ",".join(r["r_found"] or "null" for r in rows) + "]")
-    out = []
-    for row, kept, again in zip(rows, stored, rechecked, strict=True):
-        found = [MappingProxyType({"severity": severity, "code": code}) for severity, code in kept]
-        if row["q_stamp"] is not None and row["q_stamp"] != stamp and again is not None:
+    them: the stored ones, or, once its stored checks were made against other settings, the queue's re-check with the
+    stored findings made after processing (``_kept``). One not checked again yet (``_stale``): its latest. Each in a
+    list of its own, the findings in it read-only (shared by the invoices with the same, ``_found``)."""
+    return [list(_found(r["q_found"], r["r_found"] if r["q_stamp"] is not None and r["q_stamp"] != stamp else None))
+            for r in rows]  # fmt: skip
+
+
+def _found(stored: str | None, rechecked: str | None) -> tuple[MappingProxyType, ...]:
+    """The findings of the summary's texts of an invoice's stored checks and of its queue re-check (None: none to
+    take), decoded once (``_FOUND``)."""
+    found = _FOUND.get((stored, rechecked))
+    if found is None:
+        kept = [MappingProxyType({"severity": severity, "code": code}) for severity, code in json.loads(stored or "[]")]
+        again = json.loads(rechecked or "null")
+        if again is not None:
             today = [MappingProxyType({"severity": severity, "code": code}) for severity, code in again]
             codes = {t["code"] for t in today}
-            found = today + [i for i in _kept(found) if i["code"] not in codes]
-        out.append(found)  # (else no re-check, or its coding can't be read: the stored checks stand)
-    return out
+            kept = today + [i for i in _kept(kept) if i["code"] not in codes]
+        # (else no re-check, or its coding can't be read: the stored checks stand)
+        if len(_FOUND) >= FOUND_KEPT:
+            _FOUND.clear()
+        found = _FOUND[(stored, rechecked)] = tuple(kept)
+    return found
 
 
 def _queue_rows(store: Store, ids: list[int]) -> dict[int, dict[str, Any]]:
@@ -229,8 +243,9 @@ def queue_checks(
     the company server), an invoice whose checks were made against other settings is checked again first, waiting
     for a re-check under way; without it (the server's background process does it, ``QueueRecheck``), it shows its
     earlier checks meanwhile. From ``KEEP_FROM`` invoices asked, kept in each process while the queue's facts in the
-    summary (``queue``), the checks stamp, laptop or server, and the invoices asked are the same (D-159): the queue
-    and each of its tabs ask them. Each caller gets rows and lists of its own (the findings in them are read-only)."""
+    summary (``queue``), the checks stamp, laptop or server, and the invoices asked (in any order: a check moves its
+    invoice in the queue's order, B-1731) are the same (D-159): the queue and each of its tabs ask them. Each caller
+    gets rows and lists of its own (the findings in them are read-only)."""
     if not ids:
         return {}, 0
     if recheck is None:
@@ -239,7 +254,7 @@ def queue_checks(
         recheck = not server_mode()
     if len(ids) < KEEP_FROM:
         return _queue_checks(store, ids, settings, recheck)
-    asked = (store.checks_stamp(), recheck, tuple(int(i) for i in ids))
+    asked = (store.checks_stamp(), recheck, tuple(sorted({int(i) for i in ids})))
     checks, stale = store.summary_memo("queue_checks", lambda: _queue_checks(store, list(asked[2]), settings, recheck),
                                        "queue", asked=asked)  # fmt: skip
     return {i: {**r, "found": list(r["found"])} for i, r in checks.items()}, stale

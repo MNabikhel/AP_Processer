@@ -206,6 +206,9 @@ CREATE TABLE IF NOT EXISTS supplier_profiles (
     key TEXT PRIMARY KEY, display_name TEXT NOT NULL DEFAULT '', vendor_id TEXT NOT NULL DEFAULT '',
     state TEXT NOT NULL DEFAULT 'supervised', autonomous_since TEXT, audit_rate REAL, template_json TEXT,
     updated_at TEXT NOT NULL, updated_by TEXT, suspended_at TEXT);
+-- the suppliers with a learned template, counted without reading them (``supplier_templates_count``, B-1736)
+CREATE INDEX IF NOT EXISTS supplier_profiles_template ON supplier_profiles (key)
+    WHERE template_json IS NOT NULL AND template_json NOT IN ('', 'null', '{}');
 CREATE TABLE IF NOT EXISTS supplier_outcomes (
     id INTEGER PRIMARY KEY AUTOINCREMENT, supplier_key TEXT NOT NULL, invoice_id INTEGER, field TEXT NOT NULL,
     ai_value TEXT, final_value TEXT, correct INTEGER NOT NULL, source TEXT NOT NULL DEFAULT 'review',
@@ -244,6 +247,8 @@ CREATE TABLE IF NOT EXISTS page_reads (
     error TEXT NOT NULL DEFAULT '', requested_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL, reader TEXT NOT NULL DEFAULT '', tries INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS page_reads_status ON page_reads (status, created_at);
+-- the latest finished reads (``page_read_pages_average``, the reading status of every page), not all sorted (B-1734)
+CREATE INDEX IF NOT EXISTS page_reads_done ON page_reads (status, updated_at);
 CREATE TABLE IF NOT EXISTS azure_checks (
     invoice_id INTEGER PRIMARY KEY, reason TEXT NOT NULL, status TEXT NOT NULL, pages INTEGER NOT NULL DEFAULT 0,
     compared INTEGER NOT NULL DEFAULT 0, agreed INTEGER NOT NULL DEFAULT 0, result_json TEXT,
