@@ -147,11 +147,12 @@ def test_slots_answer_that_many_at_once_and_the_rest_wait_in_line():
         assert 0.27 <= took < 3.0 and s["queue_wait"]["max"] >= 0.12 and s["queue_wait"]["n"] == 4
 
 
-def _wait_for(fake, key, at_least, seconds=10.0):
+def _wait_for(fake, done, seconds=10.0):
+    """The fake's stats once ``done(stats)`` holds (or after ``seconds``): a request's bookkeeping takes a moment."""
     deadline = time.monotonic() + seconds
-    while fake.stats()[key] < at_least and time.monotonic() < deadline:
+    while not done(stats := fake.stats()) and time.monotonic() < deadline:
         time.sleep(0.02)
-    return fake.stats()
+    return stats
 
 
 def test_a_hung_request_is_never_answered_and_keeps_its_slot_until_released():
@@ -161,9 +162,10 @@ def test_a_hung_request_is_never_answered_and_keeps_its_slot_until_released():
         client = socket.create_connection(("127.0.0.1", fake.port), timeout=10)
         client.sendall(b"POST /v1/chat/completions HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
                        + f"Content-Length: {len(body)}\r\n\r\n".encode() + body)  # fmt: skip
-        assert _wait_for(fake, "hanging", 1)["hanging"] == 1
+        assert _wait_for(fake, lambda s: s["hanging"] >= 1)["hanging"] == 1
         client.close()
-        s = _wait_for(fake, "hung_gave_up", 1)
+        # Wait until the hang is wholly over: counted as given up, and as hung once no longer hanging.
+        s = _wait_for(fake, lambda s: s["hung_gave_up"] >= 1 and s["hanging"] == 0 and s["hung"] >= 1)
         assert s["hung"] == 1 and s["hung_gave_up"] == 1 and s["served"] == 0 and s["hanging"] == 0
         fake.set(hang_rate=0.0)
         results = []
