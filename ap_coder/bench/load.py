@@ -20,11 +20,11 @@ What it runs:
   ``If-None-Match``/``If-Modified-Since``, ``no-store`` never kept). Each logs in (the password, then a code worked out
   now by the app's own ``authenticator.code``), then works in weighted scenarios: the queue (tabs, filters, sorts,
   search, "show more"), an invoice opened as a browser opens it (the page, its styles, scripts and fonts, one to three
-  page images, the reader's poll while it is open), 3 to 6 edits each checked, then approve (with
-  "approve anyway" when only errors keep it closed), park or reject; second approvals; the directory, its CSV and
-  Excel exports; Insights, Spend, Month-end and the other reports; an upload with its job polled; a bulk approval
-  (at most 50); an export batch (JD Edwards when it is set up). POSTs carry what the page's fetch sends (the
-  ``X-AP-Coder`` header, the Origin, ``Sec-Fetch-Site``) as multipart form data.
+  page images, the vendor list through the cache, the reader's poll while it is open), 3 to 6 edits each checked,
+  then approve (with "approve anyway" when only errors keep it closed), park or reject; second approvals; the
+  directory, its CSV and Excel exports; Insights, Spend, Month-end and the other reports; an upload with its job
+  polled; a bulk approval (at most 50); an export batch (JD Edwards when it is set up). POSTs carry what the page's
+  fetch sends (the ``X-AP-Coder`` header, the Origin, ``Sec-Fetch-Site``) as multipart form data.
 - **Think time**: lognormal around ``--think`` seconds between scenarios, a third of it between the steps of one.
   Each person keeps a schedule (scheduled start, against coordinated omission): a step is due a think time after the
   previous one was due, and its time is counted from when it was due, so a slow server's waits are in the figures,
@@ -712,6 +712,8 @@ class Screen:
         self.poll = int(poll.group(1)) if poll else 0
         viewer = json_script(page, "viewer-data") or {}
         self.pages = [p["src"] for p in viewer.get("pages", []) if isinstance(p, dict) and p.get("src")]
+        seed = json_script(page, "vendor-seed") or {}  # the vendor list's address (none to fetch: an empty list)
+        self.vendors = str(seed.get("url") or "") if isinstance(seed, dict) and seed.get("count") else ""
         options = json_script(page, "gl-options") or []
         self.accounts = [str(o[0] if isinstance(o, list) else o.get("value", o.get("code", ""))) for o in options
                          if isinstance(o, list | dict)]  # fmt: skip
@@ -1078,17 +1080,23 @@ class Person:
 
     async def open_invoice(self, invoice_id: int, due: float | None = None, url: str = "") -> Screen | None:
         """The review screen as the browser opens it: the page and its files, the first page image (sometimes more
-        pages, sometimes zoomed in) and the reader's poll (no check on opening: the page is drawn with its checks)."""
+        pages, sometimes zoomed in), the vendor list (an editable screen's) and the reader's poll (no check on
+        opening: the page is drawn with its checks)."""
         page = await self.page(url or f"/review/{invoice_id}", due, route="GET /review/{id}")
         if page is None:
             return None
         screen = Screen(invoice_id, page)
+        fetched = []
         if screen.pages:
             want = [screen.pages[0]] + [p for p in screen.pages[1:3] if self.rng.random() < 0.5]
             if self.rng.random() < 0.2:
                 first = screen.pages[0]
                 want.append(f"{first}{'&' if '?' in first else '?'}scale=2")
-            found = await asyncio.gather(*(self.static(p, "image") for p in want), return_exceptions=True)
+            fetched += [self.static(p, "image") for p in want]
+        if screen.editable and screen.vendors:  # the vendor list, as invoice.js fetches it (D-160): through the cache
+            fetched.append(self.static(screen.vendors, "vendors"))
+        if fetched:
+            found = await asyncio.gather(*fetched, return_exceptions=True)
             failed = next((f for f in found if isinstance(f, BaseException)), None)
             if failed is not None:
                 raise failed

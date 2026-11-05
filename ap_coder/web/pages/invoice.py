@@ -17,20 +17,23 @@ the pages, to teach a field), ``reader`` (OvisOCR2's progress on it), ``approved
 ``apply-rules``, ``po-coding``,
 ``suggestion``, ``fill-lines`` (Apply to all lines), ``vendor`` (add the printed vendor), ``read-pages``,
 ``review-again`` (the AI reviewer), ``start-over``, ``resume`` (a parked invoice), ``restore`` (a rejected one),
-``correct`` (an approved one).
+``correct`` (an approved one). ``GET /review/vendors.json``: the vendor list the screen picks from (D-160).
 Delete, final approval and send back are the queue's own POSTs (``pages/review.py``).
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import gzip
+import hashlib
 import json
+import re
 import sqlite3
 import threading
 from copy import copy
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 from urllib.parse import urlencode
 
 from fastapi import Form, HTTPException, Request
@@ -561,9 +564,10 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         computed = None
     if lm_studio_off(status):  # one short note in the top row: the queue's banner says the rest (B-467)
         context["lm_off"], context["banner"] = LM_STUDIO_OFF, ""
+    header = {**draft.header, **analysis.filled}  # as its check puts it: a date as YYYY-MM-DD
     page = render(
         request, "invoice.html", "review", mode="review", reading_status=status, **context,
-        draft=replace(draft, header={**draft.header, **analysis.filled}),  # as its check puts it: a date as YYYY-MM-DD
+        draft=replace(draft, header=header),
         kept=kept, live=_shown_live(request, analysis.live, may_edit), sure=sure,
         grid={**view.grid(reference, draft, inv.get("ai_output") or {},
                           view.vendor_accounts(store, draft.header.get("vendor_name") or "")),
@@ -572,7 +576,7 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         due_placeholder=f"{computed.isoformat()} (from terms)" if computed else
         "None: a credit is not paid" if float(start.get("grand_total") or 0) < 0 else "YYYY-MM-DD",
         sent_back=_sent_back(events), poll_seconds=PAGE_READER_POLL_SECONDS,
-        today=dt.date.today().isoformat(), taught_json=draft.taught, vendors=vendor_options(store),
+        today=dt.date.today().isoformat(), taught_json=draft.taught, vendor_seed=vendor_seed(store, header),
         absent_ok=list(view.ABSENT_FIELDS), from_vendor_note=view.FROM_VENDOR_NOTE,
         tax_fields=list(view.TAX_NUMBER_FIELDS), pay_from=view.pay_from_choices(store, draft.header),
         unread_numbers=sorted(view.unread_numbers(inv.get("ai_output") or {}) or []),
@@ -621,6 +625,83 @@ def vendor_options(store: Store) -> dict[str, Any]:
                   "pst": v.get("pst_number") or "", "added": v.get("in_master") == 2}
                  for v in choices if v.get("display_name")],
     }  # fmt: skip
+
+
+class VendorList(NamedTuple):
+    """The vendor list as the review screen fetches it (``GET /review/vendors.json``), kept by ``vendor_list``."""
+
+    body: bytes  # the JSON of ``vendor_options``
+    gzipped: bytes
+    version: str  # the JSON's hash: the address's ?v=
+    count: int
+    enforced: bool
+    by_key: dict[str, dict[str, Any]]  # the first vendor of each vendor key, and of each GST/HST business number,
+    by_number: dict[str, dict[str, Any]]  # as invoice.js finds them in the list
+
+
+def vendor_list(store: Store) -> VendorList:
+    """The vendor list (``vendor_options``) as JSON, gzipped, with its version, its count and an index of it: worked
+    out once per change of it in each process (``summary_memo``: ``changes/vendors``; without a vendor master the
+    vendors approved before are in it too, the ``approved_vendors`` topic). 20,000 vendors: 3 MB of JSON, 0.4 MB
+    gzipped, ~0.6 s to build. Shared: read it, don't change it."""
+    master = store.has_vendor_master()
+    return store.summary_memo("vendor_list", lambda: _vendor_list(store), "" if master else "approved_vendors",
+                              changes="vendors", asked=master)  # fmt: skip
+
+
+def _vendor_list(store: Store) -> VendorList:
+    options = vendor_options(store)
+    body = json.dumps(options, ensure_ascii=False, separators=(",", ":")).encode()
+    by_key: dict[str, dict[str, Any]] = {}
+    by_number: dict[str, dict[str, Any]] = {}
+    for v in options["list"]:
+        by_key.setdefault(v["key"], v)
+        if number := business_number(v["gst"]):
+            by_number.setdefault(number, v)
+    return VendorList(body, gzip.compress(body, mtime=0), hashlib.sha256(body).hexdigest()[:16], len(options["list"]),
+                      options["enforced"], by_key, by_number)  # fmt: skip
+
+
+def business_number(value: Any) -> str:
+    """A GST/HST number's business number as invoice.js ``businessNumber`` compares them: its first 9 digits, "" with
+    fewer."""
+    digits = re.sub(r"[^0-9]", "", str(value or ""))
+    return digits[:9] if len(digits) >= 9 else ""
+
+
+def vendor_seed(store: Store, header: dict[str, Any]) -> dict[str, Any]:
+    """What the page holds of the vendor list (``#vendor-seed``; invoice.js fetches the rest): its address, whether a
+    vendor master enforces it, its count, and the vendors the screen names as it opens (the invoice's vendor, the one
+    whose GST/HST number it shows) and what it was asked about (so that none named is known too: "Not in the vendor
+    list" is right at once, and a read-only screen fetches nothing)."""
+    kept = vendor_list(store)
+    key = vendor_key(header.get("vendor_name") or "")
+    number = business_number(header.get("gst_hst_registration_number"))
+    named = [kept.by_key.get(key) if key else None, kept.by_number.get(number) if number else None]
+    return {"url": f"/review/vendors.json?v={kept.version}", "enforced": kept.enforced, "count": kept.count,
+            "list": [v for i, v in enumerate(named) if v and v not in named[:i]],
+            "asked": {"vendor": key, "number": number}}  # fmt: skip
+
+
+@router.get("/review/vendors.json")
+def vendors_json(request: Request, v: str = "") -> Response:
+    """The vendor list the review screen picks from (``vendor_list``), fetched as an editable screen opens. On a laptop
+    the browser keeps it for good while ``v`` is its version (the page says the version it was drawn with), and asks
+    again otherwise (its ETag: 304 while it did not change). On the company server every answer behind the login is
+    ``no-store`` (B-1070, ``identity._no_store``): nothing of the company's stays in a shared computer's browser."""
+    kept = vendor_list(get_store(request))
+    tag = f'"{kept.version}"'
+    headers = {
+        "ETag": f"W/{tag}",
+        "Vary": "Accept-Encoding",
+        "Cache-Control": "private, max-age=31536000, immutable" if v == kept.version else "private, no-cache",
+    }
+    asked = request.headers.get("if-none-match", "")
+    if any(t.strip().removeprefix("W/") in (tag, "*") for t in asked.split(",")):
+        return Response(status_code=304, headers=headers)
+    if "gzip" in request.headers.get("accept-encoding", "").lower():
+        return Response(kept.gzipped, media_type="application/json", headers={**headers, "Content-Encoding": "gzip"})
+    return Response(kept.body, media_type="application/json", headers=headers)
 
 
 @router.post("/review/{invoice_id:int}/vendor")

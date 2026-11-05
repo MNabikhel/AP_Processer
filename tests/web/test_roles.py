@@ -138,6 +138,7 @@ def test_what_each_role_may_do(setup):
         "GET /review",
         "GET /review/1",
         "GET /review/1/page/1.png",
+        "GET /review/vendors.json",  # as the screen it is fetched for (D-160)
         "GET /exports",
         "GET /help",
         "GET /insights",

@@ -13,6 +13,7 @@
        data-picker-line           its label says the line: "Line 3 GL account" (the row's line_number)
    * input[data-picker="free"]: the text typed is the value; the list only offers what to type.
        data-choices="CAD|Canadian dollar,USD|US dollar"   the choices, else setSource(input, () => items)
+                                                          (refresh(input): an open list drawn again with them)
        setAction(input, (typed) => ({label, run}) or null)  a last row that does something (Add as a new vendor)
    * Keys: ↑/↓, PageUp/PageDown, Home/End move; Enter picks (the row under the mouse too); Esc closes (a select's
      choice as it was); Tab picks the choice highlighted from the keyboard when something was typed (in a free box: a
@@ -651,6 +652,15 @@ export function setValue(select, value) {
 /** A free box's choices: ``make()`` gives [{value, name?, extra?}], asked again each time the list opens. */
 export function setSource(input, make) {
   sources.set(input, make);
+}
+
+/** A list open on ``input`` drawn again with its choices as they are now (its source's came after it opened: the
+    review screen's vendor list, fetched, D-160); only the keyboard's highlight is lost. */
+export function refresh(input) {
+  const p = pickers.get(input);
+  if (!p?.isOpen()) return;
+  p.all = p.items();
+  p.render();
 }
 
 /** A free box's last row while its list shows: ``make(typed)`` gives {label, run} (run(typed) when it is chosen), or

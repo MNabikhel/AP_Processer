@@ -553,15 +553,28 @@ def test_the_review_screen_says_where_the_file_as_it_came_in_is_kept(client, sto
 # --- The vendor, from the vendor list ------------------------------------------------------------------------------
 
 
+def _seed(page: str) -> dict:
+    """The page's ``#vendor-seed`` (D-160)."""
+    import json
+
+    return json.loads(re.search(r'<script type="application/json" id="vendor-seed">(.*?)</script>', page, re.S)[1])
+
+
+def _vendor_list(client, page: str) -> dict:
+    """The vendor list the page fetches, from its seed's address."""
+    answer = client.get(_seed(page)["url"])
+    assert answer.status_code == 200
+    return answer.json()
+
+
 def test_the_vendor_is_picked_from_the_vendor_list_or_added_as_a_new_vendor(client, store):
     import json
 
     cascade = next(i for i in store.list_invoices(REVIEW) if "Cascade" in (i["vendor_name"] or ""))
     page = client.get(f"/review/{cascade['id']}").text
-    # picked from the vendor list (#vendor-data) with the picker, typed freely (D-56)
+    # picked from the vendor list (fetched from #vendor-seed's address) with the picker, typed freely (D-56)
     assert re.search(r'id="vendor-name"[^>]*data-picker="free"', page) and "Add new vendor" in page
-    data = json.loads(re.search(r'<script type="application/json" id="vendor-data">(.*?)</script>', page, re.S)
-                      .group(1))  # fmt: skip
+    data = _vendor_list(client, page)
     assert data["enforced"] and any(v["id"] == "10023" for v in data["list"])
     assert not any("Cascade" in v["name"] for v in data["list"])  # the demo vendor not in the vendor master
     answer = check(client, cascade["id"])
@@ -580,12 +593,114 @@ def test_the_vendor_is_picked_from_the_vendor_list_or_added_as_a_new_vendor(clie
     assert again.status_code == 400 and "already in the vendor list" in again.json()["error"]
     sections = json.dumps(check(client, cascade["id"])["sections"])
     assert "VENDOR_ADDED_HERE" in sections and "VENDOR_NOT_IN_MASTER" not in sections
-    assert any(
-        v["added"]
-        for v in json.loads(
-            re.search(r'id="vendor-data">(.*?)</script>', client.get(f"/review/{cascade['id']}").text, re.S).group(1)
-        )["list"]
-    )
+    again = client.get(f"/review/{cascade['id']}").text
+    assert _seed(again)["url"] != _seed(page)["url"]  # a new version of the list: no browser keeps the old one for it
+    assert any(v["added"] for v in _vendor_list(client, again)["list"])
+    assert [v["name"] for v in _seed(again)["list"]] == [cascade["vendor_name"]]  # the screen's vendor, as it opens
+
+
+def test_the_vendor_list_comes_gzipped_from_an_address_of_its_version_which_a_laptops_browser_keeps(client, store):
+    """D-160: the whole vendor list was in every page (on the 100k database 3.3 MB of its 3.6 MB, rebuilt for each
+    invoice opened). It is fetched from its own address, which names its version: a laptop's browser keeps it for
+    good, and asks again (with its ETag) for another version's address."""
+    import gzip
+    import json
+
+    from ap_coder.web.pages.invoice import vendor_list, vendor_options
+
+    invoice_id = store.list_invoices(REVIEW)[0]["id"]
+    page = client.get(f"/review/{invoice_id}").text
+    seed, options = _seed(page), vendor_options(store)
+    assert 'id="vendor-data"' not in page and seed["count"] == len(options["list"]) > 2 and seed["enforced"]
+    answer = client.get(seed["url"])  # (the test client asks for gzip, and unzips it)
+    assert answer.json() == options and seed["url"].endswith(f"?v={vendor_list(store).version}")
+    assert answer.headers["content-encoding"] == "gzip" and answer.headers["vary"] == "Accept-Encoding"
+    assert answer.headers["cache-control"] == "private, max-age=31536000, immutable"
+    plain = client.get(seed["url"], headers={"Accept-Encoding": "identity"})
+    assert "content-encoding" not in plain.headers and json.loads(plain.content) == options
+    assert gzip.decompress(vendor_list(store).gzipped) == plain.content
+    tag = answer.headers["etag"]
+    assert tag.startswith('W/"')
+    other = client.get("/review/vendors.json?v=0123", headers={"If-None-Match": 'W/"0123"'})
+    assert other.status_code == 200 and other.json() == options
+    assert other.headers["cache-control"] == "private, no-cache"  # another version's address: checked each time
+    unchanged = client.get("/review/vendors.json?v=0123", headers={"If-None-Match": tag})
+    assert unchanged.status_code == 304 and not unchanged.content
+    assert unchanged.headers["etag"] == tag and unchanged.headers["cache-control"] == "private, no-cache"
+    store.add_vendor_here("Brand New Vendor Ltd", actor="Ann")  # the list changes: another version
+    changed = client.get("/review/vendors.json", headers={"If-None-Match": tag})
+    assert changed.status_code == 200 and changed.headers["etag"] != tag
+    assert any(v["name"] == "Brand New Vendor Ltd" for v in changed.json()["list"])
+    assert _seed(client.get(f"/review/{invoice_id}").text)["url"] != seed["url"]
+
+
+def test_the_page_names_the_vendors_it_shows_as_it_opens_and_what_it_looked_up(client, store):
+    """``#vendor-seed``: the line under the vendor field is right as the page opens, before the list comes: the
+    invoice's vendor from the list, the vendor whose GST/HST number it shows, and the vendor key and business number
+    it looked up (one not named is not in the list)."""
+    import sqlite3
+
+    from ap_coder.core.memory import vendor_key
+    from ap_coder.web.pages.invoice import business_number
+
+    cascade = next(i for i in store.list_invoices(REVIEW) if "Cascade" in (i["vendor_name"] or ""))
+    page = client.get(f"/review/{cascade['id']}").text
+    seed, full = _seed(page), _vendor_list(client, page)["list"]
+    assert seed["asked"]["vendor"] == vendor_key(cascade["vendor_name"])
+    assert not [v for v in full if v["key"] == seed["asked"]["vendor"]]  # not in the vendor master: none named
+    first, other = _two_with_numbers(full)
+    number = business_number(other["gst"])
+    with sqlite3.connect(store.path) as conn:  # the vendor one of the list, its GST/HST number another's
+        conn.execute("UPDATE invoices SET ai_output = json_set(ai_output, '$.vendor_name', ?, "
+                     "'$.gst_hst_registration_number', ?) WHERE id = ?",
+                     (first["name"], f"{number[:5]} {number[5:]} RT 0001", cascade["id"]))  # fmt: skip
+    seed = _seed(client.get(f"/review/{cascade['id']}").text)
+    by_number = next(v for v in full if business_number(v["gst"]) == number)  # (the first with it, as invoice.js finds)
+    assert seed["list"] == [first, by_number] and seed["asked"] == {"vendor": first["key"], "number": number}
+    assert sorted(seed) == ["asked", "count", "enforced", "list", "url"] and seed["count"] == len(full)
+
+
+def _two_with_numbers(listed: list[dict]) -> tuple[dict, dict]:
+    """Two vendors of the list, the first of their key, with GST/HST business numbers of their own."""
+    from ap_coder.web.pages.invoice import business_number
+
+    firsts = [v for i, v in enumerate(listed) if not any(o["key"] == v["key"] for o in listed[:i])]
+    found = [v for v in firsts if business_number(v["gst"])]
+    other = next(v for v in found[1:] if business_number(v["gst"]) != business_number(found[0]["gst"]))
+    return found[0], other
+
+
+def test_the_vendor_list_is_built_once_per_change_of_it_whichever_worker_changed_it(tmp_path, monkeypatch):
+    """Each web worker builds it once per change of the vendor list (``changes/vendors``), however it was made: another
+    worker, plain SQL. Without a vendor master the vendors approved before are the list: an approval changes it too;
+    with one, an approval leaves it."""
+    import sqlite3
+
+    from ap_coder.core.memory import vendor_key
+    from ap_coder.web.pages import invoice as invoice_page
+    from tests.webclient import add_clean, gt
+
+    built: list[int] = []
+    real = invoice_page.vendor_options
+    monkeypatch.setattr(invoice_page, "vendor_options", lambda s: built.append(1) or real(s))
+    one, two = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")  # two workers' stores on one database
+    invoice_id = add_clean(one)
+    empty = invoice_page.vendor_list(one)
+    assert empty.count == 0 and invoice_page.vendor_list(one) is empty and len(built) == 1
+    one.approve_invoice(invoice_id, gt(), "Ann")  # no vendor master: the vendors approved before
+    approved = invoice_page.vendor_list(one)
+    assert approved.count == 1 and not approved.enforced and len(built) == 2
+    assert approved.by_key[vendor_key(gt()["vendor_name"])]["name"] == gt()["vendor_name"]
+    two.import_vendor_master([{"vendor_name": "Acme Supply Ltd", "erp_id": "V1", "gst": "123456789RT0001"}])
+    master = invoice_page.vendor_list(one)
+    assert master.enforced and [v["name"] for v in master.by_key.values()] == ["Acme Supply Ltd"]
+    assert master.by_number["123456789"]["id"] == "V1" and master.version != approved.version
+    assert invoice_page.vendor_list(two) is master and len(built) == 3  # (one process: one answer for both)
+    one.approve_invoice(add_clean(one, invoice_number="N-2"), {**gt(), "invoice_number": "N-2"}, "Ann")
+    assert invoice_page.vendor_list(one) is master and len(built) == 3  # with a vendor master: not the list
+    with sqlite3.connect(one.path) as conn:
+        conn.execute("UPDATE vendors SET expected_gst = '987654321RT0001'")
+    assert "987654321" in invoice_page.vendor_list(one).by_number and len(built) == 4
 
 
 # --- Words picked on the page by dragging a box --------------------------------------------------------------------
@@ -1139,13 +1254,11 @@ VENDOR_SPELLINGS = [
 def test_in_a_browser_the_vendor_key_is_the_servers(browser, client, store):
     """The page gets each listed vendor's key from the server (memory.vendor_key), and keys the name typed with
     invoice.js's copy of it, which gives the same keys: the line under the vendor agrees with the server's match."""
-    import json
-
     from ap_coder.core.memory import vendor_key
 
     invoice_id = next(i["id"] for i in store.list_invoices(REVIEW) if "Agence" in (i["vendor_name"] or ""))
     text = client.get(f"/review/{invoice_id}").text
-    data = json.loads(re.search(r'id="vendor-data">(.*?)</script>', text, re.S).group(1))
+    data = _vendor_list(client, text)
     assert data["list"] and all(v["key"] == vendor_key(v["name"]) for v in data["list"])
     page = _open(browser, invoice_id)
     keys = page.evaluate(

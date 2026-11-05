@@ -137,7 +137,8 @@
         <div class="field wide inv-vendor{% if 'vendor_name' in flags %} is-flagged{% endif %}{% if 'vendor_name' in (live.flag_errors or []) %} is-error{% endif %}" data-field="vendor_name">
           <label for="vendor-name"><span class="lbl">{{ labels["vendor_name"] }}{% if s %} <span class="inv-sure {{ s.tone }}" title="{{ s.help }}"{% if "vendor_name" in flags %} hidden{% endif %}><span class="ms" aria-hidden="true">{{ s.icon }}</span>{{ s.text }}</span>{% endif %}
             <span class="rvw-hint" title="Pick the vendor from the vendor list: start typing its name. A vendor that is not in it can be added as a new vendor."><span class="ms" aria-hidden="true">info</span></span>{{ menu_hint(labels["vendor_name"]) }}</span></label>
-          {# The vendor list to pick from: the picker (static/js/picker.js), with the vendors of #vendor-data (D-56). #}
+          {# The vendor list to pick from: the picker (static/js/picker.js), with the vendors invoice.js fetches from the
+             address in #vendor-seed (D-56, D-160). #}
           <input id="vendor-name" type="text" name="vendor_name" value="{{ draft.header["vendor_name"] }}" form="inv" data-picker="free" data-picker-noun="vendor" autocomplete="off"
                  placeholder="Start typing to pick from the vendor list" aria-describedby="vendor-match" title="{{ draft.header["vendor_name"] }}">
           <div class="inv-vendor-match small" id="vendor-match" data-vendor-match aria-live="polite"{% if live.an8 is not none %} data-an8="{{ live.an8 }}"{% endif %}></div>
@@ -166,7 +167,7 @@
             </div>
           </details>
           {% endif %}
-          <script type="application/json" id="vendor-data">{{ vendors | tojson }}</script>
+          <script type="application/json" id="vendor-seed">{{ vendor_seed | tojson }}</script>
         </div>
         {{ field("gst_hst_registration_number", hint="The supplier's GST/HST registration number") }}
         {{ field("qst_registration_number", hint="The supplier's QST registration number (Québec)") }}
