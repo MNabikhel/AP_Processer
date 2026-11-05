@@ -222,6 +222,34 @@ def test_in_a_browser_a_code_or_a_name_typed_then_clicking_away_picks_its_accoun
     assert errors == []
 
 
+def test_in_a_browser_a_code_typed_then_the_page_scrolled_away_picks_its_account(browser, store):
+    """A GL code typed in full, then the page scrolled so the box goes out of view (to reach the approve bar) before
+    any click: the list closed and what was typed was lost, the box back to the account it had, as no click elsewhere
+    would leave it (B-1445). Out of view now picks as leaving the box does: the account typed when it names one,
+    else the account as it was (B-1713)."""
+    invoice_id = store.list_invoices(REVIEW)[-1]["id"]
+    options = invoice_view.gl_options(store.reference_data(), [])
+    accounts = {code: label for code, label in options if code != UNASSIGNED}
+    page, errors = _review(browser, invoice_id)
+    field = page.locator(GL).first
+    value = lambda: page.eval_on_selector("[data-grid=lines] select[name=line_gl]", "s => s.value")  # noqa: E731
+    first = next(code for code in accounts if code != value())
+
+    def typed_then_scrolled(text):
+        field.click()
+        page.keyboard.press("ControlOrMeta+a")
+        page.keyboard.type(text)
+        assert page.locator(".pk-layer:not([hidden])").count() == 1  # its list open, what was typed in the box
+        page.evaluate("() => window.scrollBy(0, -innerHeight)")  # the box out of view: the list closes
+        page.wait_for_selector(".pk-layer", state="hidden")
+
+    typed_then_scrolled(first)
+    assert value() == first and field.input_value() == accounts[first]
+    typed_then_scrolled("zzzz qqq")  # no account: the one it had, code and name
+    assert value() == first and field.input_value() == accounts[first]
+    assert errors == []
+
+
 def test_in_a_browser_escape_closes_the_list_and_keeps_the_account(browser, store):
     invoice_id = store.list_invoices(REVIEW)[0]["id"]
     page, errors = _review(browser, invoice_id)

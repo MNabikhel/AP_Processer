@@ -587,10 +587,11 @@ class Picker {
   }
 
   /** The page scrolled or the window changed size: the list follows its box, or closes once the box is out of
-      sight (a click on it would change a line no one can see, B-593). */
+      sight (a click on it would change a line no one can see, B-593), as leaving the box does: what was typed is
+      picked when it names one choice, else the choice stays as it was (B-1713). */
   follow() {
     if (this.visible()) this.place();
-    else this.close();
+    else this.leave();
   }
 
   place() {
