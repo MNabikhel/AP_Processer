@@ -432,6 +432,31 @@ def test_the_data_tab_counts_everything_in_the_invoices_folder(client, store):
     assert f"{count} files in invoices/" in client.get("/settings/data").text
 
 
+def test_the_data_tab_counts_no_files_in_an_invoices_folder_it_cannot_list(client, store, monkeypatch):
+    """``os.scandir`` raises for a folder that can't be listed (a Windows permission, a share gone) and for a file where
+    the folder should be, where ``glob("*")`` found none: Settings → Data was a 500 error."""
+    folder = settings_page.invoice_dir(store)
+    folder.parent.mkdir(parents=True, exist_ok=True)
+    if folder.is_dir():
+        folder.rmdir()
+    folder.write_bytes(b"a file, not the folder")
+    response = client.get("/settings/data")
+    assert response.status_code == 200 and "0 files in invoices/" in response.text
+    folder.unlink()
+    folder.mkdir()
+    (folder / "a.pdf").write_bytes(b"x")
+    scandir = os.scandir
+
+    def denied(path="."):
+        if not isinstance(path, int) and os.fspath(path) == os.fspath(folder):  # (rmtree lists by file descriptor)
+            raise PermissionError(13, "Access is denied", os.fspath(path))
+        return scandir(path)
+
+    monkeypatch.setattr(os, "scandir", denied)
+    response = client.get("/settings/data")
+    assert response.status_code == 200 and "0 files in invoices/" in response.text
+
+
 def test_restore_needs_restore_typed(client, store):
     backup = store.backup_now("manual")
     store.set_setting("fx_rates", "USD=9.99")  # done after the backup: undone by the restore

@@ -459,9 +459,13 @@ def backup_failure(store: Store) -> str:
 
 def file_count(folder: Path) -> int:
     """What the invoices folder holds, hidden files and folders too, counted without a ``Path`` for each of 100,000
-    files (D-162)."""
-    with os.scandir(folder) as entries:
-        return sum(1 for _ in entries)
+    files (D-162). 0 for a folder that can't be listed (a Windows permission, a share gone) or a file there, as
+    ``Path.glob`` gave (B-1723)."""
+    try:
+        with os.scandir(folder) as entries:
+            return sum(1 for _ in entries)
+    except OSError:
+        return 0
 
 
 def data_context(store: Store, chosen: str = "") -> dict[str, Any]:
