@@ -76,6 +76,11 @@ class ScriptedLMStudio(FakeModel):
     def answer_page(self, body: dict, images: list[str]) -> str:
         return self.pages.pop(0) if self.pages else ""
 
+    def _answer_chat(self, kind: str, body: dict, images: list[str]) -> tuple[int, object]:
+        if body.get("model") == OVIS:  # it only writes out pages: a question for the chat model sent to it gets one
+            kind = "page"
+        return super()._answer_chat(kind, body, images)
+
     def answer_suggest(self, body: dict) -> dict:
         messages = body.get("messages") or []
         user = messages[-1].get("content") if messages else ""
