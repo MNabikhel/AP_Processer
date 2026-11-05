@@ -705,3 +705,50 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **The uses** (what is kept, its stamp, its memory, measured) come in the next commits of phase 2 part 2.
   - (`core/store/summary.py`, `core/store/backups.py`; `tests/core/test_kept_answers.py`, `tests/core/test_backups.py`,
     `tests/erp/test_invoice_summary.py`)
+- **D-162** · **The reports and pages still slow at 100,000 invoices: kept per change, listed a part at a time, or read
+  without waste** (phase 2 part 2).
+  - **Kept in each process** (`Store.summary_memo`, D-159's rule: a stamp read from the database before the work), on
+    the counts D-159's triggers keep (`SUMMARY_TRIGGERS`, `changes/<kind>`: any insert, update or delete of the
+    table, on any connection):
+    - "suppliers" (`supplier_outcomes`): every vendor's supplier learning record (`all_supplier_stats` without its
+      fields, asked the vendors) and the drawn vendors' field figures (`supplier_fields`): Learning → Supplier
+      learning, Settings → Automation;
+    - "readers" (`reader_outcomes`): the readers' scorecard: Settings → Reading, Learning → Readers;
+    - "purchase_orders" (`purchase_orders`, `po_lines`), with the summary's generation: month-end's received, not
+      invoiced PO lines, per period end (`accruals._received_not_invoiced`);
+    - "register" (`erp_invoices`), with the summary's generation: the duplicate payment audit's pairs
+      (`dupaudit.find`: its page and its CSV);
+    - "lessons" (`feedback`): each vendor's lesson counts (`vendor_summaries`: Vendors, Statements, the JDE
+      worksheet);
+    - "situations" (`lessons`, `lesson_approvals`): the Lessons tab's rows (`learning.lesson_rows`);
+    - the summary's generation alone: the Spend page's figures and currencies, per period, currency, GL categories
+      and rates (copies; `spend.figures`, `spend_currencies`; `read_figures` reads them now).
+    - **What a trigger costs:** about 37% more time on a 200,000-row import (A1's measurement in D-159: 4.7 → 6.5 s
+      through `import_erp_register`, a rare import, on a thread); most writes change one row.
+  - **Listed a part at a time, with Show more** (how many in the address, `web.core.shown_count`, which Supplier
+    learning's count uses too; the CSVs, tiles and search keep every row; with every row asked, each page is the one
+    it was): Sales tax's claims and self-assessments (500 each: `rows`, `self_rows`), Vendors (200: `shown`, kept
+    when one is opened), Purchase orders (200: `shown`). On the laptop too: a list under these sizes shows as before.
+  - **Read without waste:**
+    - `jde.resolve_an8` reads the vendor IDs without copying them for each invoice or vendor;
+    - Learning → Coding accuracy counts the approvals with SQLite (`insights.approval_counts`, as Activity);
+    - Settings → Data counts the invoices folder with `os.scandir`;
+    - `vendor_summaries` reads only the listed vendors' rows of the vendor list;
+    - `clean_fields_needed` (a pure search, asked twice a vendor) is cached.
+  - **What stays true:** a kept answer is what reading again gives (a two-Store test each,
+    `tests/core/test_kept_answers.py`, each failing without its count). Memory kept a worker at 100,000 invoices
+    (`tracemalloc`): the supplier records 28 MB (47 MB at the peak of working them out, which each request took
+    before); the rest under 2 MB each (the audit's pairs 1.7, the Lessons tab 1.1, the lesson counts 0.9, Spend 0.6,
+    month-end 0.2, the field figures 0.1; the scorecard and the currencies a few KB).
+  - **Under load:** the summary's generation changes with every invoice written, so month-end, the audit and Spend are
+    worked out again after each write. They help one person and pages asked again between writes, not 100 people.
+  - **Not done:**
+    - `/search/export.xlsx` (9-10 s at 50,000 rows): 70% of it is openpyxl writing 450,000 cells. A job per person,
+      as the Spend workbook, or a lighter writer.
+    - `/activity/events.csv` (11 s, 416,000 events): streamed as it is read (B-1597), so the download starts at once.
+    - Month-end worked out afresh: 8-9 s (69,000 codings read and decoded). A summary table of each invoice's
+      PO-billing lines (summary rules 3) would make it about 1.5 s.
+    - Insights (1.8-2 s, within a report's 3 s); `/process` (a seed artefact: no `seen_files`).
+  - (`core/store/{suppliers,capture,vendors}.py`, `erp/{accruals,dupaudit,spend,jde}.py`, `capture/supplier.py`,
+    `web/core.py`, `web/pages/{learning,settings,sales_tax,vendors,purchase_orders}.py` and their templates;
+    `tests/core/test_kept_answers.py`)
