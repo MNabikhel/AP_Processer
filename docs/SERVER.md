@@ -225,7 +225,8 @@ file, and these three say what the task runs, as whom, and which task your `scht
 folder: the one you run it from); `server-update` takes `--task-name` the same way. So when you chose another
 account, task name or folder, give them again each time;
 `SYSTEM` and the other built-in accounts are used only when `--account` names them. `service stop` ends only the
-service's own `python.exe` (its `.venv`'s, or the Python that `.venv` was made with) when it will not stop by itself.
+service's own `python.exe` (its `.venv`'s, or the Python that `.venv` was made with) when it will not stop by itself,
+and the service host only while it runs (it holds `service\host.lock`).
 
 **Workers** (`--workers N`, kept in `server.json` as `"workers"`; default one per processor core, at most 8): one
 Python process answers about 1.6 pages a second however many cores the server has, so the service runs N *web

@@ -642,11 +642,11 @@ def run_host(
     lock = try_lock(host_lock(data))
     if lock is None:
         return 0
-    record = host_record(data)
-    log = host_logger(data)
+    record = host_record(data)  # at once: while the lock is held, host.json is this host's (``stop`` relies on it)
     record.parent.mkdir(parents=True, exist_ok=True)
     record.write_text(json.dumps({"pid": os.getpid(), "started": dt.datetime.now().isoformat(timespec="seconds"),
                                   "folder": str(PROJECT_DIR), "version": __version__}), encoding="utf-8")  # fmt: skip
+    log = host_logger(data)
     log.info("Service host started (AP Coder %s, %s, process %s)", __version__, PROJECT_DIR, os.getpid())
     delay = RESTART_FIRST
     try:
@@ -715,8 +715,10 @@ def stop(data: Path, s: ServerSettings, say: Say = print) -> int:
     )
     stopped = dashboard_stopped(data, s)
     run_command(["schtasks", "/end", "/tn", s.task_name], capture_output=True)
+    # Only the running host: it holds the host lock and wrote host.json as soon as it held it. A record left by a host
+    # that was killed may name a number another process has since, an AP Coder watch among them (B-1590).
     host = int(_read_json(host_record(data)).get("pid") or 0)
-    if host and host != os.getpid() and runs_python_of(host, s.code_folder):
+    if host and host != os.getpid() and host_running(data) and runs_python_of(host, s.code_folder):
         terminate(host)
     if not stopped:
         say("The dashboard did not stop: end python.exe in Task Manager (Details), then run this again.")

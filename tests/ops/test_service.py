@@ -218,9 +218,14 @@ def test_the_data_folder_never_picks_the_task_its_account_its_folder_or_a_proces
     main("remove")
     assert ["schtasks", "/delete", "/tn", "AP Coder", "/f"] in commands
     assert not [cmd for cmd in commands if cmd[0] == "taskkill" or "Defrag" in " ".join(cmd)]
-    # The service's own Python (its .venv's, or the Python that .venv was made with) is ended when it won't stop.
+    # The service's own Python (its .venv's, or the Python that .venv was made with) is ended when it won't stop; the
+    # host only while it runs, holding the host lock (B-1590).
     monkeypatch.setattr(service, "process_image", lambda pid: str(service.folder_python(service.PROJECT_DIR)))
-    main("stop")
+    held = paths.try_lock(service.host_lock(data))
+    try:
+        main("stop")
+    finally:
+        held.close()
     assert {"4242", "4343"} <= {cmd[2] for cmd in commands if cmd[0] == "taskkill"}
     base = data / "Python312"
     (elsewhere / ".venv").mkdir(parents=True)
@@ -327,6 +332,26 @@ def test_status_and_install_tell_a_running_host_by_its_lock_not_host_json(data, 
         assert service.stop_flag(data).exists() and ["schtasks", "/end", "/tn", "AP Coder"] in commands
     finally:
         held.close()
+
+
+def test_stop_ends_only_the_running_host_never_a_process_a_stale_record_names(data, commands, monkeypatch):
+    """B-1590: stop ended the process host.json named whenever it ran the AP Coder folder's Python. A record left by
+    a host that was killed may name a number an AP Coder watch has since: stop ended that watch mid-invoice. The host
+    is ended only while it holds the host lock (it writes host.json as soon as it holds it)."""
+    (data / "server.json").write_text(json.dumps({"insecure_http": True}))
+    service.host_record(data).parent.mkdir(parents=True)
+    service.host_record(data).write_text(json.dumps({"pid": 4242}))
+    monkeypatch.setattr(service, "process_alive", lambda pid: pid == 4242)
+    monkeypatch.setattr(service, "process_image", lambda pid: str(service.folder_python(service.PROJECT_DIR)))
+    assert main("stop") == 0  # no host runs: 4242 is the watch's now
+    assert not [cmd for cmd in commands if cmd[0] == "taskkill"]
+    assert service.stop_flag(data).exists() and ["schtasks", "/end", "/tn", "AP Coder"] in commands
+    held = paths.try_lock(service.host_lock(data))  # the host runs, and won't stop by itself
+    try:
+        assert main("stop") == 0
+    finally:
+        held.close()
+    assert ["taskkill", "/PID", "4242", "/T", "/F"] in commands
 
 
 # --- On Windows (GitHub's runner: an administrator), the task really installed and removed --------------------------
