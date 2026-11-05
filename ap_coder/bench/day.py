@@ -136,6 +136,7 @@ def run_day(a: argparse.Namespace) -> dict[str, Any]:
     test_pages = _teach_self_test(fake)
     server = Server(data, out / "server.log", a.workers, _server_env(fake, parallel, a))
     report: dict[str, Any] = {}
+    run: Run | None = None
     try:
         server.start()
         client = Client(server.base)
@@ -154,6 +155,8 @@ def run_day(a: argparse.Namespace) -> dict[str, Any]:
     finally:
         server.stop()
         fake.stop()
+        if run is not None:
+            run.db.close()  # Windows deletes no file still open: the data folder stayed behind (B-1681)
         if (data / "logs").is_dir():  # the server's own logs outlive the data folder: they say what went wrong
             shutil.copytree(data / "logs", out / "server-logs", dirs_exist_ok=True)
         if not a.keep:
@@ -757,6 +760,11 @@ class Reader:
     def __init__(self, db: Path) -> None:
         self.db = db
         self._conn: sqlite3.Connection | None = None
+
+    def close(self) -> None:
+        if self._conn is not None:
+            self._conn.close()
+            self._conn = None
 
     def _rows(self, sql: str, args: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
         if self._conn is None:

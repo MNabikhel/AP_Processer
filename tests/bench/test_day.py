@@ -110,3 +110,21 @@ def test_a_tiny_server_day_reads_every_invoice_and_reports_it(tmp_path, capsys):
     assert not (out / "data").exists()  # the data folder is removed afterwards
     assert "| invoices in the review queue | 4 of 4 |" in (out / "report.md").read_text(encoding="utf-8")
     assert "invoices in the review queue in" in capsys.readouterr().out
+
+
+def test_the_reader_of_the_server_s_database_lets_go_of_it(tmp_path):
+    """Windows CI: the data folder stayed behind after a server day, as the bench's own read-only connection to the
+    server's database was still open (Windows deletes no open file; ``ignore_errors`` said nothing)."""
+    import sqlite3
+
+    db = tmp_path / "ap_coder.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE invoices (id INTEGER)")
+    conn.close()
+    reader = day.Reader(db)
+    assert reader.counts()["invoices"] == 0 and reader._conn is not None
+    reader.close()
+    assert reader._conn is None
+    reader.close()  # twice: nothing to do
+    assert reader.counts()["invoices"] == 0  # reads again when asked
+    reader.close()
