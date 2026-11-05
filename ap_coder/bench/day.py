@@ -208,7 +208,8 @@ def _server_env(fake: FakeModel, parallel: int, a: argparse.Namespace) -> dict[s
     env = {k: v for k, v in os.environ.items() if not k.startswith("AP_")}  # nothing of this computer's AP Coder
     env.update({"BROWSER": "none", "AP_ALLOWED_HOSTS": "127.0.0.1", "AP_LLM_BASE_URL": fake.base_url,
                 "AP_LLM_PARALLEL": str(parallel), "PYTHONUNBUFFERED": "1",
-                "NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost"})  # fmt: skip
+                "NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost",
+                "AP_STACK_DUMP_SECONDS": "60"})  # fmt: skip  # where the background process waits, if it seems stuck
     if not a.no_scale_timeouts and a.time_scale < 1:
         env["AP_LLM_TIMEOUT_SECONDS"] = str(round(max(30.0, 600 * a.time_scale)))
         env["AP_PAGE_READER_TIMEOUT_SECONDS"] = str(round(max(30.0, 1200 * a.time_scale)))

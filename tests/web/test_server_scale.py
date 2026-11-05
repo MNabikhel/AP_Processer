@@ -703,3 +703,27 @@ def test_the_background_process_writes_what_it_does_to_its_own_log_beside_the_da
     finally:
         logging.getLogger("ap_coder").removeHandler(handler)
         handler.close()
+
+
+def test_a_background_process_that_seems_stuck_can_be_asked_to_write_every_thread_s_stack(tmp_path, monkeypatch):
+    """Windows CI: the page reader's self-test waited 11 minutes on something no log line names, and no signal can
+    ask a Windows process where it is. With AP_STACK_DUMP_SECONDS set (a bench, or IT on a developer's word), the
+    background process writes every thread's stack to logs/background-stacks.log that often; unset, never."""
+    import faulthandler
+    import time
+
+    from ap_coder.web import server
+
+    monkeypatch.delenv(server.STACK_DUMP_ENV, raising=False)
+    assert server.stack_dumps(tmp_path / "logs") is None and not (tmp_path / "logs").exists()
+    monkeypatch.setenv(server.STACK_DUMP_ENV, "0.2")
+    handle = server.stack_dumps(tmp_path / "logs")
+    try:
+        path = tmp_path / "logs" / server.STACK_DUMP_LOG
+        deadline = time.monotonic() + 10
+        while "test_server_scale.py" not in path.read_text(encoding="utf-8") and time.monotonic() < deadline:
+            time.sleep(0.1)
+        assert "test_server_scale.py" in path.read_text(encoding="utf-8")  # this test's own frame, as it waits
+    finally:
+        faulthandler.cancel_dump_traceback_later()
+        handle.close()
