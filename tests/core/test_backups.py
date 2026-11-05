@@ -735,21 +735,23 @@ def test_a_backup_that_would_fill_the_disk_is_not_started(tmp_path, monkeypatch)
     from ap_coder.core.store import backups
 
     store = Store(tmp_path / "ap.db")
-    real = shutil.disk_usage
+    with pytest.MonkeyPatch.context() as rule:  # the real rule (conftest sets no spare room)
+        rule.setattr(backups, "BACKUP_RESERVE", 512 * 1024 * 1024)
+        real = shutil.disk_usage
 
-    def short(path):
-        usage = real(path)
-        return usage._replace(free=store.path.stat().st_size + 1024)  # the copy fits, the room to keep doesn't
+        def short(path):
+            usage = real(path)
+            return usage._replace(free=store.path.stat().st_size + 1024)  # the copy fits, the room to keep doesn't
 
-    monkeypatch.setattr(backups.shutil, "disk_usage", short)
-    with pytest.raises(OSError, match="not enough free space"):
-        store.backup_now("manual")
-    assert not list(store.backup_dir().glob("ap_coder-*"))
-    assert store.get_setting(backups.BACKUP_STATUS).startswith("failed ")
-    assert "not enough free space" in store.get_setting(backups.BACKUP_STATUS)
-    with pytest.raises(OSError, match="not enough free space"):  # the daily one too (its thread logs it)
-        store.auto_backup()
-    monkeypatch.setattr(backups.shutil, "disk_usage", real)
+        monkeypatch.setattr(backups.shutil, "disk_usage", short)
+        with pytest.raises(OSError, match="not enough free space"):
+            store.backup_now("manual")
+        assert not list(store.backup_dir().glob("ap_coder-*"))
+        assert store.get_setting(backups.BACKUP_STATUS).startswith("failed ")
+        assert "not enough free space" in store.get_setting(backups.BACKUP_STATUS)
+        with pytest.raises(OSError, match="not enough free space"):  # the daily one too (its thread logs it)
+            store.auto_backup()
+    monkeypatch.setattr(backups.shutil, "disk_usage", real)  # room again: the next one is made, the status cleared
     assert store.backup_now("manual").exists() and store.get_setting(backups.BACKUP_STATUS) == ""
 
 
