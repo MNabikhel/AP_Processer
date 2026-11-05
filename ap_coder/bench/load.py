@@ -380,7 +380,7 @@ class Server:
         self.proc: subprocess.Popen | None = None
         self.started_in = self.stopped_in = None
         self.stop_how = ""
-        self.logs_before = {p.name: p.stat().st_size for p in (data / "logs").glob("access*.log")}
+        self.logs_before = log_sizes(data / "logs")
 
     def start(self) -> None:
         from ap_coder.core.paths import PROJECT_DIR
@@ -547,6 +547,7 @@ INVOICE_LINK = re.compile(r'href="/review/(\d+)"')
 VENDOR_LABEL = re.compile(r'aria-label="Review invoice from ([^"]+)"')
 READER_POLL = re.compile(r'<div data-reader[^>]*\bdata-poll="(\d+)"')
 INVOICE_URL = re.compile(r"^/review/(\d+)(?:[?#]|$)")
+ACCESS_LOG = re.compile(r"access(?:-\d+)?\.log(?:\.\d+)?")  # a web worker's access log, or one rotated from it
 
 
 def json_script(page: str, element_id: str) -> Any:
@@ -1476,14 +1477,28 @@ def timeline(samples: list[tuple], timeout: float, every: float = 10.0) -> list[
             for k, rows in sorted(buckets.items())]  # fmt: skip
 
 
-def read_logs(data: Path, out: Path, before: dict[str, int]) -> dict[str, Any]:
+def access_logs(folder: Path) -> list[Path]:
+    """The web workers' access logs in ``folder`` (``access.log``, ``access-1.log``...) and those rotated from them
+    (``access-1.log.1``...)."""
+    return sorted(p for p in folder.glob("access*.log*") if ACCESS_LOG.fullmatch(p.name))
+
+
+def log_sizes(folder: Path) -> dict[int, int]:
+    """Each access log's size, by file (its inode): a log rotated in the run is the same file under a new name."""
+    return {(info := p.stat()).st_ino: info.st_size for p in access_logs(folder)}
+
+
+def read_logs(data: Path, out: Path, before: dict[int, int]) -> dict[str, Any]:
     """What the server wrote during the run: its access logs (this run's part: status codes, its own milliseconds
-    per route), its output and its error log ("database is locked", tracebacks)."""
+    per route), its output and its error log ("database is locked", tracebacks). ``before``: ``log_sizes`` at the
+    start; each file is read from there (rotated meanwhile, under its new name), one made in the run from its start."""
     server_ms: dict[str, list[float]] = collections.defaultdict(list)
     lines = fives = 0
-    for path in sorted((data / "logs").glob("access*.log")):
+    for path in access_logs(data / "logs"):
+        info = path.stat()
+        start = before.get(info.st_ino, 0)
         with path.open("rb") as f:
-            f.seek(before.get(path.name, 0))
+            f.seek(start if start <= info.st_size else 0)  # smaller than it was: not that file (its inode reused)
             for raw in f:
                 parts = raw.decode("utf-8", "replace").split()
                 if len(parts) < 5 or not parts[-1].isdigit() or not parts[-3].isdigit():

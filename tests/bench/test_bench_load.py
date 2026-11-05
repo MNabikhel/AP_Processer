@@ -158,6 +158,25 @@ def test_a_request_still_under_way_when_the_run_stops_its_people_is_recorded_as_
     assert load.gate(report, None, 1.5)[0].startswith("errors: 0 5xx, 0 without an answer, 1 cut off at the end")
 
 
+def test_the_access_logs_read_after_a_run_keep_the_lines_of_a_log_rotated_meanwhile(tmp_path):
+    data, out = tmp_path / "data", tmp_path / "out"
+    logs = data / "logs"
+    logs.mkdir(parents=True)
+    out.mkdir()
+    old, new = (f"2026-11-05 09:00:00,000 10.0.0.1 pat GET /review 200 900 {ms}\n" for ms in (5, 40))
+    (logs / "access-1.log").write_text(old * 3, encoding="utf-8")  # before the run
+    (logs / "access-1.log.1").write_text(old * 4, encoding="utf-8")  # rotated before it
+    before = load.Server(data, out, 2, "http://127.0.0.1:1/v1", "127.0.0.1", 1).logs_before
+    with (logs / "access-1.log").open("a", encoding="utf-8") as f:
+        f.write(new * 2)  # the run's first lines, then the log rotates (RotatingFileHandler)...
+    (logs / "access-1.log.1").rename(logs / "access-1.log.2")
+    (logs / "access-1.log").rename(logs / "access-1.log.1")
+    (logs / "access-1.log").write_text(new * 4, encoding="utf-8")  # ...and goes on, past where the old one was
+    (logs / "access-2.log").write_text(new * 2, encoding="utf-8")  # the second worker's, made in the run
+    found = load.read_logs(data, out, before)
+    assert found["access_lines"] == 8 and found["server_seconds"]["GET /review"]["p50"] == 0.04
+
+
 def test_the_requests_a_second_of_each_minute_are_over_the_seconds_it_covers():
     # A 90 s run: minute 0 has 30 requests in two of its six 10 s spans (0.5 a second, not 1.5); minute 1 is 30 s
     # long, with 15 requests in one span (0.5 a second again).
