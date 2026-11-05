@@ -298,8 +298,9 @@ def test_an_answer_shown_only_settles_for_a_few_seconds_after_a_change_but_never
 
     def add(n: int) -> None:
         with sqlite3.connect(store.path) as conn:
-            conn.execute("INSERT INTO vendors (vendor_key, display_name, updated_at) VALUES (?, 'V', ?)",
-                         (f"v{n}", NOW))
+            conn.execute(
+                "INSERT INTO vendors (vendor_key, display_name, updated_at) VALUES (?, 'V', ?)", (f"v{n}", NOW)
+            )
 
     assert kept() == [] and kept.worked == 1
     add(1)
@@ -315,6 +316,7 @@ def test_an_answer_shown_only_settles_for_a_few_seconds_after_a_change_but_never
     assert len(plain()) == 2
     add(3)
     assert len(plain()) == 3  # without ``settle``: every change, as before
+
     def keys():
         with store._conn() as conn:  # (the session's connection, inside a write)
             return [r[0] for r in conn.execute("SELECT vendor_key FROM vendors ORDER BY rowid")]
