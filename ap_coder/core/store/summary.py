@@ -31,6 +31,7 @@ import threading
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from time import monotonic
 from typing import Any
 
 from ._base import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, _in_list
@@ -323,7 +324,8 @@ LISTED_COLUMNS = ("id", "file_name", "status", "vendor_name", "invoice_number", 
 _TOPIC_COLUMNS = tuple(dict.fromkeys(("id", "status", "vendor_key", "vendor_name", "invoice_date", "grand_total",
                                       "currency", "export_batch", "w_key", "w_name", "w_codes", "w_corrected",
                                       *QUEUE_READ, *LISTED_COLUMNS)))  # fmt: skip
-_MEMO: dict[tuple[str, str], tuple[Any, Any]] = {}  # ``summary_memo``: (database, name) -> (stamp, value)
+# ``summary_memo``: (database, name) -> (stamp, value, when it began to be worked out: ``monotonic``)
+_MEMO: dict[tuple[str, str], tuple[Any, Any, float]] = {}
 _MEMO_LOCK = threading.Lock()
 # One ``summary_memo`` worked out at a time, by name and what is asked (its ``repr``'s hash: two asks hashed alike only
 # wait for each other); past COMPUTING_KEPT, the locks no page holds are let go.
@@ -444,6 +446,16 @@ def _code_rows(invoice_id: int, codes: str | None) -> list[tuple[Any, ...]]:
 def _decoded(text: Any) -> Any:
     """A JSON column as ``Store.invoice_columns`` decodes it."""
     return json.loads(text) if text else None
+
+
+def _holds(hit: tuple[Any, Any, float], stamp: tuple[Any, ...], settle: float) -> bool:
+    """Whether a kept answer (``_MEMO``) answers a question of ``stamp``: nothing it depends on changed, or, with
+    ``settle``, it was worked out less than ``settle`` seconds ago for the same question (``asked``, the stamp's last)
+    on the same database (``summary_id``, its first: a restore gives another)."""
+    kept = hit[0]
+    if kept == stamp:
+        return True
+    return settle > 0 and kept[0] == stamp[0] and kept[-1] == stamp[-1] and monotonic() - hit[2] < settle
 
 
 class SummaryMixin:
@@ -598,7 +610,7 @@ class SummaryMixin:
         return out
 
     def summary_memo(self, name: str, compute: Callable[[], Any], topic: str = "all", events: str = "",
-                     changes: str = "", asked: Any = None) -> Any:  # fmt: skip
+                     changes: str = "", asked: Any = None, settle: float = 0.0) -> Any:  # fmt: skip
         """``compute()``, kept in this process and worked out again only once what it depends on changed (D-159),
         whoever changed it (another process, plain SQL), as a stamp read from the database before the work says: the
         database's ``summary_id`` (new after a restore, or a summary built again); with ``topic``, the generation of
@@ -606,6 +618,10 @@ class SummaryMixin:
         of the events of that action; with ``changes``, the count the triggers keep of that kind of change
         (``changes/<kind>``, ``SUMMARY_TRIGGERS``); and ``asked``, what the answer is for (compared with ==: give a
         copy, and don't change it after). The latest of each ``name`` is kept, 64 at most.
+        ``settle`` (seconds; for an answer a page only shows: a count, a report): once what it depends on changed, the
+        answer kept is taken still while it was worked out less than ``settle`` seconds ago, for the same question and
+        the same ``summary_id`` (never past a restore): under a stream of changes it is worked out again at most every
+        ``settle`` seconds, not at each change, and is at most that old (D-164).
         Inside a write under way (or a read transaction: ``conn.in_transaction``) it is worked out afresh, neither
         kept nor taken from what is kept, nor waiting for another page working it out: that write may yet be undone,
         and another page's work may need its lock. So is one that brought the summary up to date (the next keeps it).
@@ -635,7 +651,7 @@ class SummaryMixin:
             if len(_COMPUTING) > COMPUTING_KEPT:
                 for idle in [k for k, lock in _COMPUTING.items() if k != working and not lock.locked()]:
                     del _COMPUTING[idle]
-        if hit is not None and hit[0] == stamp:
+        if hit is not None and _holds(hit, stamp, settle):
             return hit[1]
         # One page works it out; the others asking the same meanwhile wait for it (not all at once, after each change:
         # under load, many working out the same 100,000 rows at once each take many times longer). Another ask of the
@@ -644,12 +660,13 @@ class SummaryMixin:
         try:
             with _MEMO_LOCK:
                 hit = _MEMO.get(key)
-            if hit is not None and hit[0] == stamp:
+            if hit is not None and _holds(hit, stamp, settle):
                 return hit[1]
+            at = monotonic()
             value = compute()
             with _MEMO_LOCK:
                 _MEMO.pop(key, None)  # (the oldest kept goes first)
-                _MEMO[key] = (stamp, value)
+                _MEMO[key] = (stamp, value, at)
                 while len(_MEMO) > 64:
                     _MEMO.pop(next(iter(_MEMO)))
             return value

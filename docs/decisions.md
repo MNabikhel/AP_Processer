@@ -985,3 +985,19 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - (`core/store/{suppliers,capture,vendors}.py`, `erp/{accruals,dupaudit,spend,jde}.py`, `capture/supplier.py`,
     `web/core.py`, `web/pages/{learning,settings,sales_tax,vendors,purchase_orders}.py` and their templates;
     `tests/core/test_kept_answers.py`)
+- **D-164** · **An answer a page only shows may settle for a few seconds after a change** (phase 2 part 2, measured
+  under load).
+  - **Why:** the first load run of part 2 (100 people on 100,000 invoices, part 1's settings) did twice part 1's work
+    (5,200 pages and actions against 2,600) on the same saturated 4 cores. Its profile (py-spy, two minutes of the
+    four workers): a third of their CPU was `summary_memo` working answers out again. Every approval, park or
+    check moves the summary's generations and counts, so the queue's checks, the day's figures, month-end and the
+    reports were worked out again at nearly every request; D-162 said so ("they help one person, not 100 people").
+  - **What:** `summary_memo(..., settle=seconds)`. Once what an answer depends on changed, the answer kept is still
+    taken while it was worked out less than `settle` seconds ago, for the same question (`asked`) on the same
+    database (`summary_id`: never past a restore). Inside a write under way it is worked out afresh, as before.
+    Under a stream of changes it is worked out at most every `settle` seconds in each process, and is at most that
+    old.
+  - **Where it may be used:** only for what a page shows and nobody acts on unchecked: counts, figures, reports, the
+    reading status. Never for what a check, an approval, an export or a posting decides with (the vendor IDs, the
+    approved numbers, a vendor's invoices, the checks an approval runs): those follow every change, as before.
+  - (`core/store/summary.py`; `tests/core/test_kept_answers.py`)

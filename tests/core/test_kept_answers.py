@@ -285,6 +285,53 @@ def test_what_an_answer_is_for_is_in_its_stamp_and_only_the_latest_is_kept(tmp_p
     assert kept() is kept()  # (no topic, no count: only the database's id)
 
 
+def test_an_answer_shown_only_settles_for_a_few_seconds_after_a_change_but_never_past_a_restore_or_another_ask(
+    tmp_path, monkeypatch
+):
+    """``settle`` (D-164): under a steady stream of changes (100 people approving) an answer kept for a page that
+    only shows it (a count, a report) is worked out again at most every ``settle`` seconds, not at each change: it is
+    at most that old. Another question, a restore (a new ``summary_id``) or a write under way is never settled."""
+    clock = [1000.0]
+    monkeypatch.setattr(summary_module, "monotonic", lambda: clock[0])
+    store = Store(tmp_path / "ap.db")
+    kept = Kept(store, "vendors", lambda: _rows(store, "vendors"), topic="", changes="vendors", settle=5)
+
+    def add(n: int) -> None:
+        with sqlite3.connect(store.path) as conn:
+            conn.execute("INSERT INTO vendors (vendor_key, display_name, updated_at) VALUES (?, 'V', ?)",
+                         (f"v{n}", NOW))
+
+    assert kept() == [] and kept.worked == 1
+    add(1)
+    clock[0] += 4.9
+    assert kept() == [] and kept.worked == 1  # changed, but worked out under 5 s ago: settled
+    clock[0] += 0.2
+    assert len(kept()) == 1 and kept.worked == 2  # 5 s on: worked out again
+    add(2)
+    assert len(kept()) == 1 and kept.worked == 2
+    assert len(store.summary_memo("vendors", lambda: _rows(store, "vendors"), topic="", changes="vendors",
+                                  settle=5, asked="other")) == 2  # another question: afresh  # fmt: skip
+    plain = Kept(store, "plain", lambda: _rows(store, "vendors"), topic="", changes="vendors")
+    assert len(plain()) == 2
+    add(3)
+    assert len(plain()) == 3  # without ``settle``: every change, as before
+    def keys():
+        with store._conn() as conn:  # (the session's connection, inside a write)
+            return [r[0] for r in conn.execute("SELECT vendor_key FROM vendors ORDER BY rowid")]
+
+    settled = Kept(store, "restored", keys, topic="", changes="vendors", settle=60)
+    assert len(settled()) == 3
+    backup = store.backup_now("manual")
+    add(4)
+    store.restore_from(backup)
+    assert len(settled()) == 3 and settled.worked == 2  # the restore's new summary_id: never settled
+    with pytest.raises(RuntimeError), store.session(), store._conn() as conn:  # a write under way: afresh
+        conn.execute("INSERT INTO vendors (vendor_key, display_name, updated_at) VALUES ('v9', 'V', ?)", (NOW,))
+        assert len(settled()) == 4
+        raise RuntimeError("undone")
+    assert len(settled()) == 3 and settled.worked == 3
+
+
 def test_a_restore_gives_the_database_a_new_summary_id_so_nothing_kept_from_before_is_taken(tmp_path):
     """After a restore the counts are the backup's: a later change brings one back to a number kept before the
     restore, of other rows. The new ``summary_id`` tells them apart."""
