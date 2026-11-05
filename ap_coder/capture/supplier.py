@@ -37,6 +37,7 @@ from functools import lru_cache
 from typing import Any
 
 from ..core.memory import vendor_key
+from . import normalize
 from .confidence import wilson_lower  # one Wilson lower bound for the bar and the calibration
 from .normalize import normalize_value as shared_value
 from .normalize import terms_kind
@@ -124,27 +125,19 @@ def _compact(text: Any) -> str:
 
 
 def parse_amount(text: Any) -> float | None:
-    """ "1,234.56", "1 234,56 $", "(12.00)", "-12.00", "12.00 CR", "$1,234.56" -> float; None if not an amount."""
+    """ "1,234.56", "1 234,56 $", "(12.00)", "$-113.00", "12.00 CR", "0.125" -> float, read as the reader reads it
+    (``normalize.parse_amount``); None if the text is not one amount (an id, a date, a word)."""
     if isinstance(text, (int, float)) and not isinstance(text, bool):
         return float(text)
     s = str(text or "").strip()
     if not s or not re.search(r"\d", s):
         return None
-    low = _fold(s)
-    words = re.findall(r"[a-z]+", low)
-    if any(w not in _CURRENCY_WORDS for w in words):
+    if any(w not in _CURRENCY_WORDS for w in re.findall(r"[a-z]+", _fold(s))):
         return None  # letters other than a currency code or CR: an id, not an amount
-    negative = "cr" in words or ("(" in s and ")" in s) or bool(re.match(r"^\s*[-−–]", s)) or s.rstrip().endswith("-")
-    s = re.sub(r"[^\d.,\s'  ]", "", s).strip()
-    s = re.sub(r"(?<=\d)['\s  ]+(?=\d{3}(?:\D|$))", "", s)  # "1 234,56" / "1'234.56"
-    if not re.fullmatch(r"\d[\d.,]*", s):
-        return None
-    m = re.search(r"[.,](\d{1,2})$", s)
-    int_part, dec = (s[: m.start()], m.group(1)) if m else (s, "")
-    if re.search(r"[.,]", int_part) and not re.fullmatch(r"\d{1,3}(?:[.,]\d{3})+", int_part):
-        return None
-    value = float(f"{re.sub(r'[.,]', '', int_part) or '0'}.{dec or '0'}")
-    return -value if negative else value
+    found = normalize.find_amounts(s)
+    if len(found) != 1 or re.search(r"\d", s[: found[0][1]] + s[found[0][2] :]):
+        return None  # two numbers ("1,23,4.00", a date) or digits beside the amount
+    return normalize.parse_amount(s)
 
 
 _MONTHS = {

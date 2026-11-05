@@ -71,13 +71,16 @@ def build_share_report(
     """Summarise the dashboard database when it has invoices, otherwise the ``process`` output folder."""
     output_dir = Path(output_dir)
     store = Store(db_path) if db_path and Path(db_path).exists() else None
-    metas = _metas_from_store(store) if store is not None else []
+    found = _metas_from_store(store) if store is not None else []
+    # From the database an invoice is doc-<its number in AP Coder> (doc-07 is #7): the same at every view, so the
+    # page needs no file to say which is which (B-1606).
+    labels, metas = [f"doc-{invoice_id:02d}" for invoice_id, _ in found], [meta for _, meta in found]
     if not metas:
         metas = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(output_dir.glob("*.validation.json"))]
+        labels = [f"doc-{i:02d}" for i in range(1, len(metas) + 1)]  # one per invoice, even for repeated files
     if not metas:
         raise FileNotFoundError(f"No processed invoices found in {output_dir} or the dashboard database")
 
-    labels = [f"doc-{i:02d}" for i in range(1, len(metas) + 1)]  # one per invoice, even for repeated files
     aliases: dict[str, str] = {}
     for label, m in zip(labels, metas, strict=True):
         aliases.setdefault(Path(m.get("source") or "").stem, label)
@@ -223,18 +226,20 @@ def _accuracy_section(
     return out
 
 
-def _metas_from_store(store: Store) -> list[dict[str, Any]]:
-    metas = []
-    for row in store.list_invoices():
-        inv = store.get_invoice(row["id"])
-        meta = dict(inv.get("meta") or {})
-        meta["source"] = inv["source_path"]
-        meta["status"] = "failed" if inv["status"] == FAILED else "ok"
-        meta["error"] = inv.get("error")
-        if inv.get("validation"):
-            meta["validation"] = inv["validation"]
-        metas.append(meta)
-    return metas
+def _metas_from_store(store: Store) -> list[tuple[int, dict[str, Any]]]:
+    """(invoice id, what the report reads of it) of every invoice, oldest first, in one query."""
+    with store._conn() as conn:
+        rows = conn.execute("SELECT id, source_path, status, error, meta, validation FROM invoices ORDER BY id")
+        found = []
+        for row in rows:
+            meta = json.loads(row["meta"]) if row["meta"] else {}
+            meta["source"] = row["source_path"]
+            meta["status"] = "failed" if row["status"] == FAILED else "ok"
+            meta["error"] = row["error"]
+            if row["validation"]:
+                meta["validation"] = json.loads(row["validation"])
+            found.append((row["id"], meta))
+    return found
 
 
 def _learning_section(store: Store, include_codes: bool) -> list[str]:

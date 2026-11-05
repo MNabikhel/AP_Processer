@@ -163,13 +163,11 @@ def _make_setup_report(store: Any) -> str:
 
 def activity_report(store: Any, include_codes: bool) -> str:
     """The share report (``python -m ap_coder share-report``): counts and accuracy, no vendor names, amounts or
-    file names. Invoices are doc-01, doc-02...; which file each one is stays in the data folder's key file."""
+    file names. An invoice is doc-<its number in AP Coder> (doc-07 is #7): a page view writes no key file (B-1606)."""
     from ap_coder.ops.share_report import build_share_report
 
-    data = data_dir(store)
     try:
-        return build_share_report(data / "output", None, include_codes, key_file=data / "share_report_key.csv",
-                                  db_path=store.path)  # fmt: skip
+        return build_share_report(data_dir(store) / "output", None, include_codes, db_path=store.path)
     except FileNotFoundError:
         return ""
     except Exception as exc:  # noqa: BLE001
