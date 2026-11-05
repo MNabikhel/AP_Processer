@@ -242,7 +242,7 @@ def test_the_audit_finds_what_comparing_every_pair_found(monkeypatch, seed):
     """Only the pairs of a group that can be one are looked at (D-157): the same pairs, reasons and order."""
     made_up = _made_up_bills(seed)
     monkeypatch.setattr(dupaudit, "bills", lambda store: made_up)
-    found = dupaudit.find(None)
+    found = dupaudit._find(None)
     assert found == _old_find(made_up) and len(found) > 100
     assert {p.reason for p in found} == set(dupaudit.REASONS)
 

@@ -1,7 +1,7 @@
 """Purchase orders: import open POs from the ERP; invoices quoting a PO are matched against it.
 
-* ``GET /purchase-orders?q=&status=open|closed|all&po=<key>``: the list, and one PO's lines with what was ordered,
-  received and billed, and the invoices on it.
+* ``GET /purchase-orders?q=&status=open|closed|all&po=<key>&shown=``: the list, ``POS_SHOWN`` at a time ("Show more",
+  D-162), and one PO's lines with what was ordered, received and billed, and the invoices on it.
 * Import: upload (``POST /purchase-orders/upload``), check the columns (``?file=``), import; the template
   (``GET /purchase-orders/template.csv``) and the sample POs that go with the sample invoices.
 * A PO is closed / reopened or deleted (with a confirmation) by POST.
@@ -14,7 +14,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 from fastapi import File as FileParam
-from fastapi import Form, Request, UploadFile
+from fastapi import Form, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
@@ -32,6 +32,7 @@ from ap_coder.web.core import (
     refuse,
     render,
     reviewer,
+    shown_count,
 )
 from ap_coder.web.files import (
     NO_ROWS,
@@ -61,6 +62,7 @@ FIELD_LABELS = {
     "status": "Status (open / closed)",
 }
 STATUS_FILTERS = {"open": "Open", "closed": "Closed", "all": "All"}
+POS_SHOWN = 200  # the POs listed at first, and how many more each time ("Show more")
 
 
 def over_billed(p: dict[str, Any]) -> bool:
@@ -171,10 +173,12 @@ def po_detail(store: Store, p: dict[str, Any]) -> dict[str, Any] | None:
 
 @router.get("/purchase-orders", response_class=HTMLResponse)
 def purchase_orders_page(
-    request: Request, q: str = "", status: str = "open", po: str = "", file: str = "", sheet: str = ""
-) -> HTMLResponse:
+    request: Request, q: str = "", status: str = "open", po: str = "", file: str = "", sheet: str = "",
+    rows: str = Query("", alias="shown"),
+) -> HTMLResponse:  # fmt: skip
     store = get_store(request)
     status = status if status in STATUS_FILTERS else "open"
+    count = shown_count(rows, POS_SHOWN)
     pos = store.purchase_orders()
     shown = [
         p
@@ -210,7 +214,7 @@ def purchase_orders_page(
 
     chosen_po = next((p for p in shown if p["po_key"] == po), None) or next((p for p in pos if p["po_key"] == po), None)
     chosen_po = chosen_po or (shown[0] if shown else None)
-    keep = {"q": q, "status": status}
+    keep = {"q": q, "status": status, **({"shown": count} if count > POS_SHOWN else {})}
     return render(
         request,
         "purchase_orders.html",
@@ -223,14 +227,18 @@ def purchase_orders_page(
                 "fraction": (p["billed"] / p["total"]) if p["total"] else None,
                 "bar": round(100 * max(0.0, min(p["billed"] / p["total"], 1.0))) if p["total"] else 0,
             }
-            for p in shown
+            for p in shown[:count]
         ],
+        shown_total=len(shown),
+        rows=count,
+        step=POS_SHOWN,
+        more_query=urlencode({**keep, "shown": count + POS_SHOWN}),
         tiles=tiles,
         q=q,
         status=status,
         statuses=STATUS_FILTERS,
         list_query=urlencode(keep),
-        in_review=any(p["in_review"] for p in shown),
+        in_review=any(p["in_review"] for p in shown[:count]),
         detail=po_detail(store, chosen_po) if chosen_po else None,
         imp=imp,
         imp_error=imp_error,

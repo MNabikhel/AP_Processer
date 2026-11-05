@@ -203,7 +203,12 @@ class _Sums:
 
 
 def spend_currencies(store: Store, start: dt.date, end: dt.date) -> list[str]:
-    """``currencies(parts(store, start, end))``."""
+    """``currencies(parts(store, start, end))``, kept until the invoices' summary changes (D-162)."""
+    return list(store.summary_memo("spend_currencies", lambda: _spend_currencies(store, start, end),
+                                   asked=(start, end)))  # fmt: skip
+
+
+def _spend_currencies(store: Store, start: dt.date, end: dt.date) -> list[str]:
     first, last = start.isoformat(), end.isoformat()
     totals = _Sums()
     for r in store.summary_fetch(f"SELECT s.p_currency c, SUM(p.sizes) n, MIN(s.id) at {_PARTS} GROUP BY s.p_currency",
@@ -219,8 +224,16 @@ def figures(store: Store, start: dt.date, end: dt.date, currency: str, category:
     """What the Spend page shows of ``parts(store, start, end)`` in ``currency``, or with ``rates`` of every line of a
     currency with a rate in CAD (``in_cad``; ``currency`` is then "CAD"): ``lines`` (whether there are any), ``total``
     (rounded to the cent), ``invoices``, ``months``, ``by_month`` (``by_month_and_category`` with ``category``) and
-    ``by``: for each key of ``BY``, its ``total_by``. Read in one read transaction: an approval meanwhile is in every
-    figure or none."""
+    ``by``: for each key of ``BY``, its ``total_by``. Kept until the invoices' summary changes (D-162), for these
+    dates, currency, categories and rates: read it, don't change it."""
+    asked = (start, end, currency, dict(category), None if rates is None else dict(rates))  # (copies)
+    return store.summary_memo("spend_figures", lambda: read_figures(store, start, end, currency, category, rates),
+                              asked=asked)  # fmt: skip
+
+
+def read_figures(store: Store, start: dt.date, end: dt.date, currency: str, category: dict[str, str],
+                 rates: dict[str, float] | None = None) -> dict[str, Any]:  # fmt: skip
+    """``figures`` read now, in one read transaction: an approval meanwhile is in every figure or none."""
     with store.summary_snapshot():
         return _figures(store, start, end, currency, category, rates)
 

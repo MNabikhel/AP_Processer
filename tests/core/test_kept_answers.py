@@ -1,10 +1,11 @@
 """What a process keeps between requests (D-159, ``Store.summary_memo``): a kept answer holds only while a stamp read
 from the database before the work says nothing it depends on changed, whichever connection changed it (another
 Store, plain SQL); the counts of changes the triggers keep (``changes/<kind>``); an answer worked out inside a write
-that is undone; a restore."""
+that is undone; a restore; the answers kept on them (D-162)."""
 
 from __future__ import annotations
 
+import datetime as dt
 import sqlite3
 import threading
 import time
@@ -502,3 +503,219 @@ def test_previous_and_next_step_through_the_kept_queue_as_another_store_or_plain
         conn.execute("UPDATE invoices SET adjusted_confidence = 0.5 WHERE id = ?", (a,))
         conn.execute("UPDATE invoices SET adjusted_confidence = 0.05 WHERE id = ?", (c,))
     assert navigation(store, a, {})["ids"] == [c, a] and navigation(store, a, {})["prev"] == f"/review/{c}"
+
+
+# --- The answers kept on these counts (D-162): each filled, its data changed through another Store or plain SQL, then
+# the new answer ------------------------------------------------------------------------------------------------------
+
+
+def _plain(store: Store, sql: str, *args) -> None:
+    with sqlite3.connect(store.path) as conn:
+        conn.execute(sql, args)
+
+
+def test_every_vendors_supplier_record_and_the_drawn_vendors_field_figures_follow_their_outcomes(tmp_path):
+    """Supplier learning and Settings → Automation: every vendor's record (``all_supplier_stats`` without fields) and
+    the drawn vendors' field figures (``supplier_fields``), kept on ``changes/suppliers``, per window and vendors."""
+    from dataclasses import replace
+
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    rows = [
+        {"field": "invoice_number", "ai_value": "1", "final_value": "1", "correct": True},
+        {"field": "invoice_date", "ai_value": "2026-01-01", "final_value": "2026-01-02", "correct": False},
+    ]
+    other.record_outcomes("name:acme", 1, rows, display_name="Acme", at=NOW)
+    keys = ["name:acme", "name:beta"]
+
+    def kept(window: int = 200):
+        return store.all_supplier_stats(keys, window, fields=False), store.supplier_fields(keys, window)
+
+    def fresh(window: int = 200):
+        each = {key: store.supplier_stats(key, window) for key in keys}
+        return {key: replace(s, fields={}) for key, s in each.items()}, {key: s.fields for key, s in each.items()}
+
+    assert kept() == fresh() and kept()[0]["name:beta"].invoices == 0
+    assert kept()[0] is kept()[0] and kept()[1] is kept()[1]  # reused while nothing changed
+    other.record_outcomes("name:beta", 2, rows, display_name="Beta", at=NOW)
+    assert kept() == fresh() and kept()[0]["name:beta"].invoices == 1
+    _plain(store, "UPDATE supplier_outcomes SET correct = 1 WHERE supplier_key = 'name:beta'")
+    assert kept() == fresh() and kept()[1]["name:beta"]["invoice_date"].correct == 1
+    _plain(store, "DELETE FROM supplier_outcomes WHERE supplier_key = 'name:acme'")
+    assert kept() == fresh() and kept()[0]["name:acme"].invoices == 0
+    assert kept(1) == fresh(1) and store.supplier_fields(keys[:1]) == {"name:acme": {}}
+
+
+def test_the_readers_scorecard_follows_their_outcomes(tmp_path):
+    """Settings → Reading and Learning → Readers: the readers' scorecard, kept on ``changes/readers``."""
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+
+    def read(correct: bool) -> list[dict]:
+        return [{"reader": "rules", "field": "invoice_number", "read_value": "1", "final_value": "1",
+                 "correct": correct}]  # fmt: skip
+
+    def fields() -> list[tuple]:
+        card = store.reader_scorecard()
+        assert card == store._reader_scorecard()
+        return [(r["reader"], r["fields"], r["agreed"]) for r in card]
+
+    other.record_reader_outcomes(1, read(True), at=NOW)
+    assert fields() == [("rules", 1, 1)]
+    other.record_reader_outcomes(2, read(False), at=NOW)
+    assert fields() == [("rules", 2, 1)]
+    _plain(store, "UPDATE reader_outcomes SET correct = 1")
+    assert fields() == [("rules", 2, 2)]
+    _plain(store, "DELETE FROM reader_outcomes WHERE invoice_id = 1")
+    assert fields() == [("rules", 1, 1)]
+    store.reader_scorecard()[0]["fields"] = 99  # (each caller has its own copy)
+    assert fields() == [("rules", 1, 1)]
+
+
+def _po_line(n: int, received: float) -> dict:
+    return {"po_number": "PO-1", "vendor_name": "Acme Supply", "line_number": n, "description": f"Bolts size {n}",
+            "quantity": 10.0, "unit_price": 2.0, "amount": 20.0, "received_quantity": received, "gl_code": "6010",
+            "cost_center": "", "status": "open", "amount_only": False, "open_amount": None}  # fmt: skip
+
+
+def test_month_ends_received_not_invoiced_lines_follow_the_pos_and_the_invoices_billing_them(tmp_path):
+    """Month-end's received, not invoiced PO lines, kept per period end on ``changes/purchase_orders`` and the
+    summary's generation (an invoice billing them)."""
+    from ap_coder.erp import accruals
+
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    other.import_purchase_orders([_po_line(1, 4.0), _po_line(2, 1.0)])
+    september, october = dt.date(2026, 9, 30), dt.date(2026, 10, 31)
+
+    def received(end: dt.date = october) -> list[tuple]:
+        found = [a for a in accruals.build(store, end) if a.source == accruals.RECEIVED]
+        assert found == accruals._received_not_invoiced(store, end)
+        return [(a.reference, a.amount) for a in found]
+
+    assert received() == [("PO-1 line 1", 8.0), ("PO-1 line 2", 2.0)]
+    _plain(store, "UPDATE po_lines SET received_quantity = 3 WHERE line_number = 2")
+    assert received() == [("PO-1 line 1", 8.0), ("PO-1 line 2", 6.0)]
+    line = {"line_number": 1, "description": "Bolts size 1", "quantity": 4, "unit_price": 2.0, "amount": 8.0}
+    bill = {"vendor_name": "Acme Supply", "invoice_number": "B-1", "po_number": "PO-1", "invoice_date": "2026-10-03",
+            "currency": "CAD", "line_items": [line], "subtotal": 8.0, "grand_total": 8.4}  # fmt: skip
+    other.add_invoice(tmp_path / "b.pdf", bill, {})  # (the summary's generation)
+    assert received() == [("PO-1 line 2", 6.0)]
+    assert received(september) == [("PO-1 line 1", 8.0), ("PO-1 line 2", 6.0)]  # (billed after it)
+    _plain(store, "DELETE FROM po_lines WHERE line_number = 2")
+    assert received() == []
+
+
+def test_the_duplicate_audits_pairs_follow_the_invoices_and_the_erp_register(tmp_path, ground_truth):
+    """The duplicate payment audit's pairs (its page and its CSV), kept on the summary's generation (the approved
+    invoices) and ``changes/register`` (the ERP's invoice register)."""
+    from ap_coder.erp import dupaudit
+
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    first, second = (_invoice(other, tmp_path, ground_truth, name) for name in ("A-100", "B-100"))
+    other.approve_invoice(first, {**ground_truth, "invoice_number": "A-100"}, "Jordan Lee")
+
+    def pairs() -> list[tuple]:
+        found = dupaudit.find(store)
+        assert found == dupaudit._find(store)
+        return [(p.reason, p.first.source, p.second.source) for p in found]
+
+    assert pairs() == []
+    other.approve_invoice(second, {**ground_truth, "invoice_number": "A-100"}, "Jordan Lee")  # approved twice
+    assert pairs() == [(dupaudit.EXACT, "AP Coder", "AP Coder")]
+    _plain(store, "UPDATE invoices SET status = 'review' WHERE id = ?", second)
+    assert pairs() == []
+    row = {"vendor_name": ground_truth["vendor_name"], "invoice_number": "A-100",
+           "invoice_date": ground_truth["invoice_date"], "total": ground_truth["grand_total"]}  # fmt: skip
+    other.import_erp_register([row])
+    assert [p[0] for p in pairs()] == [dupaudit.EXACT]  # (not exported: the ERP's row is another)
+    _plain(store, "UPDATE erp_invoices SET copies = 2")
+    assert [p[0] for p in pairs()] == [dupaudit.EXACT, dupaudit.EXACT]  # (and the ERP's twice)
+    _plain(store, "DELETE FROM erp_invoices")
+    assert pairs() == []
+
+
+def test_spends_figures_and_currencies_follow_the_approved_invoices_and_what_is_asked(tmp_path, ground_truth):
+    """The Spend page's figures and currencies, kept on the summary's generation, per period, currency, GL categories
+    and rates (copies: the caller's own changed after is another question)."""
+    from ap_coder.erp import spend
+
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    start, end = dt.date(2000, 1, 1), dt.date(2099, 12, 31)
+    cad, usd = (_invoice(other, tmp_path, ground_truth, name) for name in ("S-1", "S-2"))
+    other.approve_invoice(cad, {**ground_truth, "invoice_number": "S-1", "currency": "CAD"}, "Jordan Lee")
+
+    def seen(currency: str = "CAD", category: dict | None = None, rates: dict | None = None, first=start) -> tuple:
+        category = {} if category is None else category
+        found = spend.figures(store, first, end, currency, category, rates)
+        assert found == spend.read_figures(store, first, end, currency, category, rates)
+        shown = spend.spend_currencies(store, first, end)
+        assert shown == spend._spend_currencies(store, first, end)
+        return found["invoices"], found["total"], sorted({m["category"] for m in found["by_month"]}), shown
+
+    invoices, total, categories, shown = seen()
+    assert invoices == 1 and total > 0 and categories == ["Uncategorised"] and shown == ["CAD"]
+    assert seen("USD")[:2] == (0, 0.0)
+    other.approve_invoice(usd, {**ground_truth, "invoice_number": "S-2", "currency": "USD"}, "Jordan Lee")
+    assert seen("USD") == (1, total, ["Uncategorised"], ["CAD", "USD"])
+    assert seen(first=end) == (0, 0.0, [], [])
+    rates = {"CAD": 1.0, "USD": 1.5}
+    assert seen(rates=rates)[:2] == (2, round(total * 2.5, 2))
+    rates["USD"] = 2.0
+    assert seen(rates=rates)[:2] == (2, round(total * 3, 2))
+    _plain(store, "UPDATE invoices SET status = 'review' WHERE id = ?", usd)
+    assert seen(rates=rates) == (1, total, ["Uncategorised"], ["CAD"])
+    category = {gl: "Office" for gl, _, _ in spend.read_figures(store, start, end, "CAD", {})["by"]["gl_code"]}
+    assert seen(category=category)[2] == ["Office"]
+    category.update((gl, "Travel") for gl in list(category))
+    assert seen(category=category)[2] == ["Travel"]
+
+
+def test_each_vendors_lesson_counts_follow_the_coding_memory_and_its_vendor_list_row_is_read_afresh(
+    tmp_path, ground_truth
+):
+    """Vendors, Statements and the JD Edwards worksheet (``vendor_summaries``): each vendor's lesson counts, kept on
+    ``changes/lessons``; its row of the vendor list, read by its key each time."""
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    invoice = _invoice(other, tmp_path, ground_truth, "L-1")
+    key = store.get_invoice(invoice)["vendor_key"]
+
+    def row() -> tuple:
+        (found,) = [r for r in store.vendor_summaries() if r["vendor_key"] == key]
+        return found["lessons"], found["accuracy"], found["status"], found["notes"]
+
+    assert row() == (0, None, "active", "")
+    other.approve_invoice(invoice, {**ground_truth, "invoice_number": "L-1"}, "Jordan Lee")
+    lines = len(ground_truth["line_items"])
+    assert row() == (lines, 1.0, "active", "")
+    _plain(store, "UPDATE feedback SET outcome = 'corrected' WHERE rowid = (SELECT MIN(rowid) FROM feedback)")
+    assert row() == (lines, (lines - 1) / lines, "active", "")
+    _plain(store, "DELETE FROM feedback")
+    assert row() == (0, None, "active", "")
+    other.save_vendor(key, ground_truth["vendor_name"], "on_hold", notes="Call first", actor="Jordan Lee")
+    assert row() == (0, None, "on_hold", "Call first")
+
+
+def test_the_lessons_tabs_rows_follow_the_lessons_and_each_approvals_word_on_them(tmp_path, ground_truth):
+    """Learning → Lessons: its rows (each lesson, whether it reaches the AI, how it did since), kept on
+    ``changes/situations`` (``lessons``, ``lesson_approvals``)."""
+    from ap_coder.ai import lessons
+    from ap_coder.web.pages import learning
+
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    proposed = {**ground_truth, "invoice_number": "ACCT 1"}
+    key = lessons.situation(ground_truth["vendor_name"], lessons.INVOICE, "invoice_number")
+
+    def rows() -> list[tuple]:
+        found = learning.lessons_context(store)["lessons"]
+        assert found == learning.lesson_rows(store)
+        return [(r["situation"], r["corrected"], r["reaches"], r["effect"]["before"]["corrected"]) for r in found]
+
+    assert rows() == []
+    lessons.record(other, 1, proposed, {**ground_truth, "invoice_number": "1-2026"})
+    assert rows() == [(key, 1, False, 1)]  # (once: it waits)
+    lessons.record(other, 2, proposed, {**ground_truth, "invoice_number": "1-2026"})
+    assert rows() == [(key, 2, True, 2)]  # (twice to the same value)
+    _plain(store, "UPDATE lesson_approvals SET corrected = 0 WHERE invoice_id = 2")
+    assert rows() == [(key, 2, True, 1)]
+    _plain(store, "UPDATE lessons SET retired = 1")
+    assert rows() == [(key, 2, False, 1)]
+    _plain(store, "DELETE FROM lessons")
+    assert rows() == []

@@ -52,6 +52,7 @@ from ap_coder.web.core import (
     refuse,
     render,
     reviewer,
+    shown_count,
 )
 from ap_coder.web.files import TOO_BIG, SheetError, read_capped, read_csv, read_excel
 from ap_coder.web.invoice_view import gl_name
@@ -267,7 +268,7 @@ def coding_context(store: Store, mem_q: str, settings: Any = None) -> dict[str, 
         return {"metrics": None}
     measured = m["line_accuracy"] is not None  # none: AP coded every line, the AI proposed none (no model, B-1298)
     accuracy = m["line_accuracy"] or 0.0
-    clean, total = insights.approved_as_coded(store)  # as Insights counts them (D-39)
+    clean, total, filled = insights.approval_counts(store)  # as Insights counts them (D-39), by SQLite (D-156)
     weekly = []
     for w in m["weekly"]:
         lines = w["accepted"] + w["corrected"]
@@ -286,7 +287,7 @@ def coding_context(store: Store, mem_q: str, settings: Any = None) -> dict[str, 
         ui.tile("Lines reviewed", f"{m['lines_reviewed']:,}", "", "blue", f"{m['lines_accepted']:,} confirmed"),
         ui.tile("Corrections taught", f"{m['lines_corrected']:,}", "", "amber", "used on the next invoice"),
         ui.tile(insights.AS_CODED, "—" if not total else f"{clean / total:.0%}", "", "green",
-                insights.as_coded_note(clean, insights.filled_in_count(store), total)),
+                insights.as_coded_note(clean, filled, total)),
     ]  # fmt: skip
     tiles = [built(tile) for tile in tiles]
     weeks = [w["week"] for w in weekly]
@@ -359,15 +360,6 @@ def coding_context(store: Store, mem_q: str, settings: Any = None) -> dict[str, 
 
 
 SUPPLIERS_SHOWN = 50  # the vendors Supplier learning lists at first, and how many more each time ("Show more")
-
-
-def _shown(value: Any) -> int:
-    """How many vendors to list (``shown`` in the address): SUPPLIERS_SHOWN, or more in steps of it."""
-    try:
-        wanted = int(value or SUPPLIERS_SHOWN)
-    except ValueError:
-        return SUPPLIERS_SHOWN
-    return min(max(SUPPLIERS_SHOWN, -(-wanted // SUPPLIERS_SHOWN) * SUPPLIERS_SHOWN), 1_000_000)
 
 
 def suppliers_context(store: Store, shown: int = SUPPLIERS_SHOWN) -> dict[str, Any]:
@@ -543,7 +535,7 @@ def learning_page(request: Request) -> HTMLResponse:
         context.update(_history_context(store, q.get("history"), q.get("sheet")))
         context.update(coding_context(store, q.get("mem_q") or "", get_settings(request)))
     elif tab == "suppliers":
-        context.update(suppliers_context(store, _shown(q.get("shown"))))
+        context.update(suppliers_context(store, shown_count(q.get("shown"), SUPPLIERS_SHOWN)))
     elif tab == "lessons":
         context.update(lessons_context(store))
     elif developer:
@@ -552,6 +544,16 @@ def learning_page(request: Request) -> HTMLResponse:
 
 
 def lessons_context(store: Store) -> dict[str, Any]:
+    from ap_coder.ai import lessons
+
+    # Kept until a lesson or an approval's word on one changes (``changes/situations``, D-162): read, not changed.
+    rows = store.summary_memo("lessons_tab", lambda: lesson_rows(store), topic="", changes="situations")
+    return {"lessons": rows, "why_after": lessons.why_after(store)}
+
+
+def lesson_rows(store: Store) -> list[dict[str, Any]]:
+    """The Lessons tab's rows (``Store.list_lessons``: 500 at most, the most corrected since its reason first): what
+    each is about, whether it reaches the AI and how it did since (``lessons.effect``)."""
     from ap_coder.ai import lessons
 
     rows = []
@@ -564,7 +566,7 @@ def lessons_context(store: Store) -> dict[str, Any]:
             what = f"{noun} of lines like “{lesson['pattern']}”"
         rows.append({**lesson, "what": what[:1].upper() + what[1:], "reaches": lessons.reaches_ai(lesson),
                      "effect": lessons.effect(history.get(lesson["situation"]) or [], lesson)})  # fmt: skip
-    return {"lessons": rows, "why_after": lessons.why_after(store)}
+    return rows
 
 
 @router.post("/learning/lessons/explain")
@@ -589,7 +591,7 @@ def lesson_retire(request: Request, lesson_id: int = Form(...), retired: str = F
 
 def _suppliers_url(shown: str) -> str:
     """Supplier learning with as many vendors listed as when a vendor was acted on: one past the first stays in view."""
-    listed = _shown(shown)
+    listed = shown_count(shown, SUPPLIERS_SHOWN)
     return "/learning?tab=suppliers" + (f"&shown={listed}" if listed > SUPPLIERS_SHOWN else "")
 
 

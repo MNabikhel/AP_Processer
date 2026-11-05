@@ -565,15 +565,11 @@ class VendorsMixin:
         """One row per vendor seen on an invoice: counts, spend, dates, AI accuracy and AP's settings."""
         totals, spend = self.summary_memo("vendor_totals", self._vendor_totals)  # read again once an invoice changed
         rows = [dict(r) for r in totals]
-        with self._conn() as conn:
-            lessons = {
-                r["vendor_key"]: dict(r)
-                for r in conn.execute(
-                    """SELECT vendor_key, COUNT(*) lessons, SUM(outcome NOT IN ('history', 'coded', 'bulk')) lines,
-                              SUM(outcome = 'accepted') accepted FROM feedback GROUP BY vendor_key"""
-                )
-            }
-            masters = {r["vendor_key"]: dict(r) for r in conn.execute("SELECT * FROM vendors")}
+        lessons = self.summary_memo("vendor_lessons", self._vendor_lessons, topic="", changes="lessons")  # (D-162)
+        with self._conn() as conn:  # of the vendor list, only these vendors' rows (not all the vendor master's)
+            listed = (json.dumps([r["vendor_key"] for r in rows]),)
+            masters = {r["vendor_key"]: dict(r) for r in conn.execute(
+                f"SELECT * FROM vendors WHERE {_in_list('vendor_key')}", listed)}  # fmt: skip
         rates = self.fx_rates()
         for r in rows:
             # Per currency: dollars and euros do not add up, and a USD-only vendor did not spend 0.00 CAD.
@@ -595,6 +591,18 @@ class VendorsMixin:
             r["added_here"] = master.get("in_master") == 2
             r["has_record"] = bool(master)  # in the vendor list, added here or set up by AP (on hold, notes)
         return sorted(rows, key=lambda r: -r["spend_in_cad"])
+
+    def _vendor_lessons(self) -> dict[str, dict[str, Any]]:
+        """{vendor: its lessons, the lines AP reviewed and those it confirmed}: ``vendor_summaries``' part of the
+        coding memory, kept until a lesson changes (``changes/lessons``)."""
+        with self._conn() as conn:
+            return {
+                r["vendor_key"]: dict(r)
+                for r in conn.execute(
+                    """SELECT vendor_key, COUNT(*) lessons, SUM(outcome NOT IN ('history', 'coded', 'bulk')) lines,
+                              SUM(outcome = 'accepted') accepted FROM feedback GROUP BY vendor_key"""
+                )
+            }
 
     def vendor_name_checks(self, ids: list[int]) -> dict[int, str]:
         """{invoice id: how sure the capture is of its vendor name} ("verified", "likely", "check", "missing"), in

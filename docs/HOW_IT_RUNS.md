@@ -406,6 +406,16 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   `memory.PAST_KEPT`, `PAST_ROWS_KEPT`); and each memory's answers for 1,024 lines (`_Memory.said`, with the reference
   data they came from).
 
+  Kept for the reports and long pages (D-162), with what each held at 100,000 invoices: every vendor's supplier
+  learning record (Supplier learning, Settings → Automation; `changes/suppliers`), about 28 MB a worker, and the
+  drawn vendors' field figures (0.1 MB); the readers' scorecard (`changes/readers`, a few KB); month-end's received,
+  not invoiced PO lines for the period asked (`changes/purchase_orders` and the summary's generation, 0.2 MB); the
+  duplicate audit's pairs, which its page and CSV share (`changes/register` and the generation, 1.7 MB); Spend's
+  figures and currencies for the period, currency, categories and rates asked (the generation, 0.6 MB); each
+  vendor's lesson counts (`changes/lessons`, 0.9 MB); the Lessons tab's rows (`changes/situations`, 1.1 MB). Any
+  invoice written moves the summary's generation, so month-end, the audit and Spend are worked out again after each
+  write.
+
 ## 9. The data folder and everything AP Coder writes
 
 Default data folder `~/APCoder` (`C:\Users\<you>\APCoder`); `AP_PRIVATE_DIR` overrides it, the record
