@@ -43,7 +43,7 @@ Every number here was measured, with the machine, the command and the date. Esti
 | 4 | JD Edwards (stand-in): sync of 30k suppliers and 600k vouchers, then only the changes; 500 vouchers in one run; the duplicate check right beside a 20k-voucher supplier; fiscal periods | **Not met** (no volume harness yet: phase 4 builds it). By reading and small reproductions: every nightly read stops at 100,000 rows (200 pages × 500), so 600k vouchers fail every night. Each night re-reads 730 days. Posting stops at the first late voucher (about 40 h for 500 at worst). One 20k-voucher supplier switched the live check off for everyone (B-1601, fixed in phase 1). No fiscal periods | |
 | 5 | macOS service proven in CI; readiness check; updates under 5 minutes of downtime; backups pruned, with a free-space check | — | |
 | 6 | No SQL outside `core/store`; nested transactions; a PostgreSQL seam; meta tests | — | |
-| 7 | Every reproduced bug fixed test-first | 0 of about 20 | **On track.** Phases 0-1: 40 fixed, each with its failing test first and its BUGS.md line: the digest's 20 (B-1578 to B-1607), the phase 1 review's 9 (B-1608, B-1609, B-1672 to B-1678), the backups' room and hours (B-1670, B-1671), the Windows background process (B-1680) and the bench (B-1681) |
+| 7 | Every reproduced bug fixed test-first | 0 of about 20 | **On track.** Phases 0-1: 40 fixed, each with its failing test first and its BUGS.md line: the digest's 20 (B-1578 to B-1607), the phase 1 review's 9 (B-1608, B-1609, B-1672 to B-1678), the backups' room and hours (B-1670, B-1671), the Windows background process (B-1680) and the bench (B-1681). Phase 2 part 1: 27 more, 67 in all: its own 10 (B-1610, B-1620 to B-1622, B-1630 to B-1634, B-1660) and the 17 its three reviews found (B-1682 to B-1698) |
 | 8 | Laptop mode unchanged; accuracy benches the same or better; `same_behaviour.py` identical | — | |
 | 9 | Docs current | — | |
 
@@ -97,6 +97,9 @@ Every number here was measured, with the machine, the command and the date. Esti
       (D-157);
     - no async handler does database or file work on the event loop (D-158).
   - **Schema 21 to 24:** the register's search keys and the indexes of events and the register.
+  - **Reviewed** by three fresh reviewers (the workers, the pages, the data): 17 findings reproduced and fixed
+    test-first (B-1682 to B-1698), among them a worker restart that could cut a job short, an invoice that
+    waited behind another writer to open, and a re-check lease left behind by a stopped process.
   - **Measured:** the target 1 and 2 rows above. Stable under 100 people now (no errors, memory flat), but the 4 cores
     are saturated: part 2 takes the work out of each request (static files cached for good, page images rendered once,
     the invoice page's lists out of its HTML, the slow reports as jobs).

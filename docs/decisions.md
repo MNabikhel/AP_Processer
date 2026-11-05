@@ -517,6 +517,13 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     - `--workers` and server.json still decide when set.
   - (`web/app.py`, `web/core.py`, `web/server.py`, `web/jobs.py`, `web/pages/exports.py`, `web/templates/error.html`,
     `ops/service.py`; `tests/web/test_server_capacity.py`, `tests/web/test_server_scale.py`)
+  - **Amended (B-1682 to B-1686):** a worker started afresh gives its requests under way up to an hour
+    (`server.RECYCLE_GRACE_SECONDS`), not uvicorn's 25 s. What a request started after Recycle looked (a job, a backup,
+    imports waiting: `app.own_work_running`) is waited for in its lifespan once its connections are closed. A stop of
+    the service still ends it at `join_all`'s deadline (GRACEFUL_SECONDS + 5). `.ap_coder_worker_restart.pid` is
+    believed ten minutes at most (`LEAVING_SECONDS`), and is dropped by the supervisor once that worker has ended and at
+    the server's start. uvicorn 0.52 on (pyproject, requirements.txt). A worker due whose uvicorn server isn't found
+    says so once.
 - **D-154** · **The learning memory read once and refreshed, a vendor's lessons worked out once, an invoice opened in
   one request** (B-1620 to B-1622).
   - **The whole memory** (`Store.feedback_rows()`): one page reads it at a time in each process; the others asking
@@ -545,6 +552,10 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - (`core/store/learning.py`, `core/memory.py`, `ai/pipeline.py`, `web/invoice_view.py`, `web/pages/invoice.py`,
     `web/pages/review.py`, `web/core.py`, `web/static/js/invoice.js`, `coding/vendors.py`, `core/store/vendors.py`,
     `bench/load.py`)
+  - **Amended (B-1687, B-1694):** the open's bookkeeping (confidence, the draft's blocker) runs in `Store.briefly`: 200
+    ms at most behind another writer, else it is left to the next open or check. A draft is written before it is noted
+    as kept. The page draws the draft with what its check fills in (a date as YYYY-MM-DD); the draft keeps what was
+    typed.
 - **D-155** · **The review queue from the invoices' summary, checked again in the background; the import page reads no
   file** (B-1630 to B-1634; changes D-88 where it says the queue re-checks in the page).
   - **What the queue reads** of an invoice in review is kept in its summary row (`bulk.queue_facts`, summary rules 2):
@@ -573,6 +584,11 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - (`coding/bulk.py`, `web/pages/review.py`, `core/store/summary.py`, `core/store/ephemeral.py`,
     `core/store/accounts.py`, `core/store/vendors.py`, `core/store/folder.py`, `web/pages/process.py`,
     `ai/pipeline.py`, `ops/cli.py`, `web/app.py`)
+  - **Amended (B-1692, B-1693, B-1695):** the re-check ends between two batches when AP Coder stops
+    (`recheck_queue(stopping=)`) and lets go of its lease; the stop waits up to 5 s for it (`RECHECK_STOP_SECONDS`), and
+    a laptop's start drops a `queue-recheck` lease left behind. The import page's list is also worked out again after a
+    minute (`process.LISTED_SECONDS`: a file written over in place changes no stamp). Files are listed and noted at the
+    invoices folder's resolved place.
 - **D-156** · **The big reports summed and picked by SQLite; the Spend workbook made in the background on the server;
   schema 24.**
   - **What SQLite now picks or sums:**
@@ -592,6 +608,10 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Not done:**
     - month-end at 100k is about 3-5 s;
     - an Activity search for a rare word decodes every event.
+  - **Amended (B-1688 to B-1691, B-1697):** on the server each data workbook is made under a name of its own
+    (`ap_coder_data.<time>.xlsx`); the newest is downloaded and older ones are removed once they can be (Windows
+    replaces no file being downloaded). A job that fails says why on Spend. A restore removes `<data>/.cache/downloads`.
+    The Spend figures are read in one read transaction (`Store.summary_snapshot`).
 - **D-157** · **Search and the smaller pages read in SQL what they show; schema 22.**
   - **Quick search:**
     - `search.condition` is the quick search as one SQL condition over the summary's columns: exactly what `_score`
@@ -633,3 +653,6 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - (`web/pages/accounts.py`, `exports.py`, `insights.py`, `learning.py`, `manager.py`, `purchase_orders.py`,
     `vendors.py`, `settings.py`, `settings_hub.py`, `settings_jde.py`, `web/files.py`, `web/app.py`, `web/errors.py`;
     `tests/meta/test_code_rules.py`, `tests/web/test_server_scale.py`)
+  - **Amended (B-1698):** nothing is still listed. The review screen's grid actions read the form on the event loop and
+    run `@one_connection` functions on the threadpool, and `process_upload` is a plain `def`. The code rule also counts
+    a message kept for the next page (`done(request, url, "…")`, `keep_flash`, `with_flash`) as a write.
