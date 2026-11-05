@@ -37,7 +37,7 @@ Every number here was measured, with the machine, the command and the date. Esti
 
 | # | Target | Baseline | Now |
 |---|---|---|---|
-| 1 | 100 simulated people on 4 cores, 300k invoices (here 100k): pages p50 ≤ 300 ms, p95 ≤ 1.5 s, p99 ≤ 3 s; actions p95 ≤ 1 s; 0 errors, 0 "database is locked"; memory flat for an hour (stretch: 200 people) | **Not met.** Pages p50 5.1 s, p95 67 s, p99 105 s; actions p95 116 s; 345 requests with no answer; 10 "database is locked"; web workers grew to 3.2–5.5 GB each and were killed for memory (9 workers started to keep 4) | |
+| 1 | 100 simulated people on 4 cores, 300k invoices (here 100k): pages p50 ≤ 300 ms, p95 ≤ 1.5 s, p99 ≤ 3 s; actions p95 ≤ 1 s; 0 errors, 0 "database is locked"; memory flat for an hour (stretch: 200 people) | **Not met.** Pages p50 27 s, p95 140 s, p99 167 s; actions p95 120 s (the timeout); 577 requests with no answer, 6 5xx at the client and 80 in the server's log, 2 "database is locked", 7 logins refused; web workers grew to 3.4–6.9 GB each and were killed for memory (12 started to keep 4) | |
 | 2 | One person, 300k invoices (here 100k): every page ≤ 300 ms; reports and exports ≤ 3 s or a job; no full scans on hot paths | **Not met.** 165 addresses as Admin and Clerk: 43 over target, 45 full scans of big tables, 0 errors. Pages: median 60 ms, but 24 of 108 over 300 ms (Activity 12–20 s, Learning → Suppliers 8 s, Import invoices 6–8 s, Settings → Automation 4.7 s, an invoice 0.7 s with 689 statements). Reports and exports: Spend workbook 251 s, Month-end 202 s and its accruals CSV 195 s, Report a problem 22 s, the controls report 17 s, the duplicates CSV 14 s, search to Excel 8.6 s | |
 | 3 | 1,250 invoices (half scans) dropped at once: read the same day, web p95 unchanged; the model machine killed, hung or swapped: nothing lost or doubled, failover in under a minute | phase 0 | |
 | 4 | JD Edwards (stand-in): sync of 30k suppliers and 600k vouchers, then only the changes; 500 vouchers in one run; the duplicate check right beside a 20k-voucher supplier; fiscal periods | phase 0 | |
@@ -50,25 +50,14 @@ Every number here was measured, with the machine, the command and the date. Esti
 ## Progress by phase
 - **Phase 0, measure first** (5 Nov 2026; PR #92):
   - **The tools:** `bench seed`, `volume`, `load`, `fake-model` and `day`, plus the research (D-148).
-  - **The load baseline on 100k invoices,** 100 people, 4 web workers, 10 minutes after a 1-minute ramp:
-    - **It collapses:** requests a second fall from 38 in the first minute to 2 by the fifth, as workers grow past
-      3 GB and are killed.
-    - **The slowest, at the server (p95):**
-
-      | Page | p95 | Why |
-      |---|---:|---|
-      | `GET /process` | 847 s | it reads every invoice file |
-      | `GET /review` | 419 s | it re-checks the queue |
-      | `GET /exports` | 373 s | |
-      | `GET /month-end` | 360 s | |
-      | `GET /search` | 212 s | |
-      | `POST /review/{id}/check` | 120 s | |
-
-    - **Login and its code step** took up to 33–45 s at p95, and 4 logins were refused (500s).
+  - **The load baseline on 100k invoices,** 100 people, 4 web workers, 10 minutes after a 1-minute ramp, measured with
+    the corrected harness (timeouts and cut-off requests counted at their elapsed time):
+    - **It collapses:** requests a second fall from 44 in the first minute (the logins) to 12 in the third and 1–3
+      from the fifth, as workers grow past 3 GB and are killed.
+    - **The slowest, at the server (p95):** `GET /process` (it reads every invoice file), `GET /review` (it re-checks
+      the queue), `GET /exports`, `GET /month-end`, `GET /search` and `POST /review/{id}/check`. The figures are in the
+      report.
     - **The full report:** [archive/scale-2026-11/baseline-load-100-people.md](archive/scale-2026-11/baseline-load-100-people.md).
-    - **Caution:** the phase 0 review found the load harness left timeouts and the requests cut off at the end out of
-      its percentiles, and overstated the per-minute rate. This baseline is re-measured with the corrected harness,
-      and these figures will be replaced.
   - **The volume baseline at 100k, one person:**
     - [archive/scale-2026-11/baseline-volume-100k.md](archive/scale-2026-11/baseline-volume-100k.md), in the target 2 row
       above;
