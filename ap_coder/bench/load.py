@@ -20,7 +20,7 @@ What it runs:
   ``If-None-Match``/``If-Modified-Since``, ``no-store`` never kept). Each logs in (the password, then a code worked out
   now by the app's own ``authenticator.code``), then works in weighted scenarios: the queue (tabs, filters, sorts,
   search, "show more"), an invoice opened as a browser opens it (the page, its styles, scripts and fonts, one to three
-  page images, the opening check, the reader's poll while it is open), 3 to 6 edits each checked, then approve (with
+  page images, the reader's poll while it is open), 3 to 6 edits each checked, then approve (with
   "approve anyway" when only errors keep it closed), park or reject; second approvals; the directory, its CSV and
   Excel exports; Insights, Spend, Month-end and the other reports; an upload with its job polled; a bulk approval
   (at most 50); an export batch (JD Edwards when it is set up). POSTs carry what the page's fetch sends (the
@@ -1078,7 +1078,7 @@ class Person:
 
     async def open_invoice(self, invoice_id: int, due: float | None = None, url: str = "") -> Screen | None:
         """The review screen as the browser opens it: the page and its files, the first page image (sometimes more
-        pages, sometimes zoomed in), the opening check (not on a read-only screen), and the reader's poll."""
+        pages, sometimes zoomed in) and the reader's poll (no check on opening: the page is drawn with its checks)."""
         page = await self.page(url or f"/review/{invoice_id}", due, route="GET /review/{id}")
         if page is None:
             return None
@@ -1092,8 +1092,6 @@ class Person:
             failed = next((f for f in found if isinstance(f, BaseException)), None)
             if failed is not None:
                 raise failed
-        if screen.editable:  # the opening check
-            screen.editable = await self.check(screen)
         if screen.poll:
             self.poller = asyncio.create_task(self.watch_reader(screen))
         return screen

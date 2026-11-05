@@ -162,5 +162,7 @@ def test_read_only_opens_an_invoice_read_only_and_posts_nothing(servers):
     assert all(seen.values()), seen  # each is on a clerk's screen of one of these invoices
     script = (Path(__file__).resolve().parents[2] / "ap_coder/web/static/js/invoice.js").read_text(encoding="utf-8")
     assert "if (!form || readOnly || form.dataset.sending) return;" in script
-    # a read-only screen locks its fields and never checks; work kept from an ended session is put back first
-    assert "if (readOnly) lockFields();\nelse if (form && kept) putBack(kept);\nelse if (form) check()" in script
+    # a read-only screen locks its fields and never checks; work kept from an ended session is put back first; no
+    # screen checks on opening (the page is drawn with its checks, D-154)
+    start = "if (readOnly) lockFields();\nelse if (form && kept) putBack(kept);\nelse if (form) focusFirstToCheck();"
+    assert start in script

@@ -936,6 +936,91 @@ def test_in_a_browser_ctrl_enter_in_the_why_dialog_keeps_the_reason(browser, cli
     assert store.get_invoice(invoice_id)["status"] != REVIEW
 
 
+_SCREEN_STATE = """() => {
+  const norm = (t) => (t || "").replace(/\\s+/g, " ").trim();
+  const canon = (v) => (v && typeof v === "object" && !Array.isArray(v)
+    ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])])) : v);
+  const value = (el) => {
+    if (el.type === "checkbox" || el.type === "radio") return el.checked;
+    if (el.name === "from_vendor") return JSON.stringify(canon(JSON.parse(el.value || "{}")));  // however written
+    return el.value;
+  };
+  const out = {};
+  document.querySelectorAll("[data-live]").forEach((el) => (out["live " + el.dataset.live] = norm(el.innerHTML)));
+  out.fields = [...document.querySelectorAll('[form="inv"], #inv [name]')]
+    .map((el) => [el.name, value(el), el.disabled]);
+  const notes = "[data-flag], [data-help], .inv-sure, [data-from-vendor-note]";
+  out.details = [...document.querySelectorAll(".inv-details [data-field]")].map((f) => [f.dataset.field, f.className,
+    [...f.querySelectorAll(notes)].map((x) => [x.hidden, norm(x.textContent)])]);
+  out.taxes = [...document.querySelectorAll('[data-grid="lines"] .c-tax')].map((c) => {
+    const s = c.querySelector("select");
+    const note = c.querySelector("[data-tax-note]");
+    return [c.className, c.title, s && s.innerHTML, s && s.value, s && s.title, note && note.hidden];
+  });
+  out.approve = document.querySelector("[data-approve]")?.disabled;
+  const match = document.getElementById("vendor-match");
+  out.match = [match?.dataset.an8, norm(match?.textContent)];
+  return out;
+}"""
+
+
+def test_in_a_browser_the_screen_opens_as_its_check_would_draw_it(browser, store):
+    """An invoice opened in two requests: the page, then a check of the screen as drawn, whose answer the page had
+    drawn already (today's checks), for the queue's confidence and the draft. The page does that bookkeeping itself
+    now: opened, the screen asks nothing, and a check of it as it opened changes nothing on it, edits kept from before
+    or not."""
+    chromium, base = browser
+    ids = [inv["id"] for inv in store.list_invoices(REVIEW)]
+    assert len(ids) >= 5
+    for n, invoice_id in enumerate(ids):
+        page = chromium.new_page(viewport={"width": 1400, "height": 1000})
+        errors: list[str] = []
+        page.on("pageerror", lambda e, errors=errors: errors.append(str(e)))
+        posts: list[str] = []
+        page.on("request", lambda r, posts=posts: r.method == "POST" and posts.append(r.url))
+        page.goto(f"{base}/review/{invoice_id}")
+        page.wait_for_selector(".iv-sheet:not(.loading)")
+        page.wait_for_load_state("networkidle")
+        if n == 0:  # edits kept from before: the screen opens with them
+            with page.expect_response(lambda r: r.url.endswith("/check")):
+                page.fill("[form=inv][name=po_number]", "PO-KEPT-1")
+            page.wait_for_load_state("networkidle")
+            page.reload()
+            page.wait_for_selector(".iv-sheet:not(.loading)")
+            page.wait_for_load_state("networkidle")
+            assert page.input_value("[form=inv][name=po_number]") == "PO-KEPT-1"
+            del posts[:]
+        assert posts == [] and page.text_content("[data-checking]") == "", posts  # no check on opening
+        opened = page.evaluate(_SCREEN_STATE)
+        with page.expect_response(lambda r: r.url.endswith("/check")):  # a check of the screen as it opened
+            page.dispatch_event("#inv [name=reader_at]", "input")  # (no field of the invoice marked edited)
+        page.wait_for_load_state("networkidle")
+        checked = page.evaluate(_SCREEN_STATE)
+        assert checked == opened, (invoice_id, [k for k in opened if opened[k] != checked.get(k)])
+        assert errors == []
+        page.close()
+
+
+def test_opening_an_invoice_does_what_its_screens_check_did(client, store):
+    """The screen's check on opening kept the confidence it worked out for the queue, and the draft's blocker for the
+    queue (B-996): the page does both itself now, as that check did."""
+    invoice_id = store.list_invoices(REVIEW)[0]["id"]
+    check(client, invoice_id)
+    worked_out = store.get_invoice(invoice_id)["adjusted_confidence"]
+    with store._conn() as conn:  # read with other checks, other settings: the queue showed another number
+        conn.execute("UPDATE invoices SET adjusted_confidence = 0.123 WHERE id = ?", (invoice_id,))
+    assert client.get(f"/review/{invoice_id}").status_code == 200
+    assert store.get_invoice(invoice_id)["adjusted_confidence"] == worked_out
+    check(client, invoice_id, form_of(store, invoice_id, payment_terms="Net 45 EOM"))  # an edit kept as a draft
+    kept = client.app.state.invoice_drafts[invoice_id]
+    said, at = kept["check"], kept["saved_at"]
+    kept["check"] = {"why": "what its screen said before the checks changed"}
+    assert client.get(f"/review/{invoice_id}").status_code == 200
+    again = client.app.state.invoice_drafts[invoice_id]
+    assert again["check"] == said and again["saved_at"] == at  # the same edits: their time kept (B-997)
+    assert [d for i, _, d in store.invoice_drafts() if i == invoice_id][0]["check"] == said
+
+
 def test_in_a_browser_enter_in_a_review_field_never_approves(browser, client, store):
     """Plain Enter in a text box of the review form is no approval (only the button and Ctrl+Enter approve)."""
     invoice_id = clean_invoice(client, store)

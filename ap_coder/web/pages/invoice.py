@@ -565,7 +565,7 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         computed = None
     if lm_studio_off(status):  # one short note in the top row: the queue's banner says the rest (B-467)
         context["lm_off"], context["banner"] = LM_STUDIO_OFF, ""
-    return render(
+    page = render(
         request, "invoice.html", "review", mode="review", reading_status=status, **context,
         draft=draft, kept=kept, live=_shown_live(request, analysis.live, may_edit), sure=sure,
         grid={**view.grid(reference, draft, inv.get("ai_output") or {},
@@ -584,6 +584,11 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         usual_cc=view.usual_cost_center(store, reference, draft.header.get("vendor_name") or ""),
         draft_from=_when(saved_at),
     )  # fmt: skip
+    # What the screen's check did once it opened, a second request (the screen's own checks again, whose answer the
+    # page drew already): written once the page is drawn, so nothing it reads comes after.
+    if may_edit:
+        _keep_checked(request, store, invoice_id, draft, analysis)
+    return page
 
 
 def _when(iso: str) -> str:
@@ -788,13 +793,10 @@ def _check(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     reference = _reference(store)
     draft = _from_form(request, inv, form)
     analysis = view.analyse(store, settings, reference, inv, draft, reviewer())
-    if analysis.report is not None:
-        store.refresh_confidence(invoice_id, analysis.report.adjusted_confidence, analysis.report.requires_review)
-    kept = analysis.coding is None or analysis.changed or bool(draft.taught)
-    _keep_draft(request, invoice_id, draft, kept, _draft_blocker(analysis) if kept else None)
     # the account lists' "Used for this vendor", for the vendor now in the vendor field (B-596)
     listed = {code for code, _ in view.gl_options(reference, draft.lines)}
     used = [c for c in view.vendor_accounts(store, draft.header.get("vendor_name") or "") if c in listed]
+    kept = _keep_checked(request, store, invoice_id, draft, analysis)  # written last: nothing is read after it
     # the lines' tax codes where the invoice is supplied now, and the lines the Tax check points at (D-64)
     codes = view.tax_choices(draft, reference.tax)
     # What the server filled in the invoice details (the vendor list's tax numbers, the default Pay from account) and
@@ -813,6 +815,16 @@ def _check(request: Request, invoice_id: int, form: Any) -> JSONResponse:
                          "taxes": [{"tax_type": t.get("tax_type") or "", "province": t.get("province") or ""}
                                    for t in draft.taxes],
                          "sections": _render_live(_shown_live(request, analysis.live), invoice_id)})  # fmt: skip
+
+
+def _keep_checked(request: Request, store: Store, invoice_id: int, draft: view.Draft, analysis: view.Analysis) -> bool:
+    """What a check of the screen keeps: the confidence it worked out (the queue shows the one the screen shows, edits
+    and today's checks included), and the edits as a draft, or none when there are none. Whether they are kept."""
+    if analysis.report is not None:
+        store.refresh_confidence(invoice_id, analysis.report.adjusted_confidence, analysis.report.requires_review)
+    kept = analysis.coding is None or analysis.changed or bool(draft.taught)
+    _keep_draft(request, invoice_id, draft, kept, _draft_blocker(analysis) if kept else None)
+    return kept
 
 
 def _draft_blocker(analysis: view.Analysis) -> str:
