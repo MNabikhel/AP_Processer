@@ -405,10 +405,13 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   * the review queue's checks (`bulk.queue_checks`, from 50 invoices; the summary's `queue` topic, the checks stamp,
     laptop or server, the invoices asked in any order; 6.8 MB, the findings in them decoded once for every invoice
     with the same, `bulk._FOUND`, D-165) and its lists (`list_invoices` of review, parked, pending, which the
-    invoice page's Previous and Next read; the `listed` topic; about 3 MB each);
+    invoice page's Previous and Next read; the `listed` topic, which a check's confidence doesn't move: the
+    confidences are read with the queue's order at each ask, off an index, D-167; about 3 MB each);
   * the vendors' payment terms the queue's rows are due by (`changes/vendors`, 2.7 MB), and the vendors whose
     regular invoice is late (the summary's `dates`, settled for 60 s after a change: the queue only shows them,
-    D-164, D-165).
+    D-164, D-165);
+  * the counts by status (the summary's `status`): every page's rail and the queue's tabs take them up to 5 s
+    behind a change (D-167); what decides with them (the queue is clear, the demo may load) counts exactly.
 
   Beside them, the GL suggestions (`ai/suggest.py`): the whole learning memory's index, built once per change of the
   lessons; for a vendor whose lessons go past the memory's cap, that index extended by them (`_with_past`), with the

@@ -43,7 +43,7 @@ from ._base import (
     parse_fx_rates,
     suggestion_kept,
 )
-from .summary import LISTED_COLUMNS, QUEUES, fetch_rows
+from .summary import CONFIDENCE, LISTED_COLUMNS, QUEUE_ORDER, QUEUES, fetch_rows
 from .users import VOUCH_DAYS, account_of, same_approver
 
 
@@ -297,8 +297,10 @@ class InvoicesMixin:
 
     def list_invoices(self, status: str | None = None, statuses: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
         """The invoices (only ``status``'s, or ``statuses``'), the ones to review first, from the invoices' summary
-        (D-110). The queue's lists (review, parked, pending) are kept until one changes what they list (``listed``,
-        D-159): the queue, Previous and Next and each park ask them. Each caller gets rows of its own."""
+        (D-110). The queue's lists (review, parked, pending) are kept until one changes what they list but their
+        confidence (``listed``, D-159): the queue, Previous and Next and each park ask them. A check writes the
+        confidence, so it is read apart at each ask with their order, off an index (B-1737). Each caller gets rows of
+        its own."""
         sql = f"SELECT {', '.join(LISTED_COLUMNS)} FROM invoice_summary"
         args: tuple[Any, ...] = ()
         if status:
@@ -306,10 +308,15 @@ class InvoicesMixin:
         if statuses:
             sql += f" WHERE {_in_list('status')}"
             args = (json.dumps(list(statuses)),)
-        sql += " ORDER BY requires_review DESC, adjusted_confidence ASC, id ASC"
+        sql += f" ORDER BY {QUEUE_ORDER}"
         if statuses and set(statuses) <= set(QUEUES):
             name = f"list_invoices/{','.join(sorted(set(statuses)))}"
-            return [dict(r) for r in self.summary_memo(name, lambda: self.summary_fetch(sql, args), "listed")]
+            kept = self.summary_memo(name, lambda: {r["id"]: r for r in self.summary_fetch(sql, args)}, "listed")
+            order = self.summary_fetch(f"SELECT id, {', '.join(CONFIDENCE)} FROM invoice_summary WHERE "
+                                       f"{_in_list('status')} ORDER BY {QUEUE_ORDER}", args)  # fmt: skip
+            if len(order) == len(kept) and all(o["id"] in kept for o in order):
+                return [{**kept[o["id"]], **o} for o in order]
+            # (an invoice listed or gone between the two reads, by another worker: read afresh)
         return self.summary_fetch(sql, args)
 
     def has_invoices(self) -> bool:

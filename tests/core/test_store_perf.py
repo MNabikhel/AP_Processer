@@ -470,3 +470,110 @@ def test_the_reading_status_counts_the_templates_and_the_open_queue_without_read
     plan = _plan(store, monkeypatch, lambda: store.page_reads_waiting(still_open=True), "page_reads")
     assert "LIST SUBQUERY" not in plan and "USING INTEGER PRIMARY KEY" in plan, plan
     assert store.page_reads_waiting(still_open=True) == 2 and store.page_reads_waiting() == 3
+
+
+def test_the_queues_pay_from_accounts_are_each_vendors_latest_read_off_an_index_and_an_older_database_gets_it(
+    tmp_path, monkeypatch
+):
+    """B-1739: the queue's Pay from (the account each waiting vendor's last approved invoice was paid from) ranked
+    every approved invoice of those vendors on each visit once a bank account is in use (197 ms at 100,000 invoices).
+    Each vendor's latest is sought on a partial index, which a database made before gets at its next start: the
+    latest approval by time, then by number; one waiting for a second approval counts, one without an account or not
+    approved doesn't. As ranking them all gives."""
+    import json
+
+    from ap_coder.core.memory import vendor_key
+
+    store = Store(tmp_path / "ap.db")
+    rows = [("Acme", "approved", "2026-01-02", "CAD-1"), ("Acme", "approved", "2026-01-03", "CAD-2"),
+            ("Acme", "pending_approval", "2026-01-03", "CAD-3"),  # as late, a later number: the latest
+            ("Acme", "approved", "2026-01-04", ""), ("Acme", "approved", "2026-01-05", None),  # no account
+            ("Acme", "review", "2026-01-06", "CAD-9"), ("Bolt", "approved", None, "USD-0"),
+            ("Bolt", "approved", "2026-01-01", "USD-1"), ("Bolt", "rejected", "2026-01-09", "USD-9"),
+            ("Core", "approved", "2026-01-01", 7)]  # fmt: skip
+    for n, (vendor, status, at, code) in enumerate(rows):
+        pdf = tmp_path / f"{n}.pdf"
+        pdf.write_bytes(f"%PDF-1.4 {n}".encode())
+        invoice_id = store.add_invoice(pdf, {"vendor_name": vendor, "invoice_number": f"P-{n}", "grand_total": n}, {})
+        with store._conn() as conn:
+            conn.execute(
+                "UPDATE invoices SET status = ?, reviewed_at = ?, final_output = ? WHERE id = ?",
+                (status, at, json.dumps({"vendor_name": vendor, "pay_from_account": code}), invoice_id),
+            )
+    keys = [vendor_key(v) for v in ("Acme", "Bolt", "Core", "Dune")] + ["", vendor_key("Acme")]
+    ranked = {r["vendor_key"]: str(r["code"]) for r in store.summary_fetch(
+        "SELECT vendor_key, code FROM (SELECT vendor_key, pay_from AS code, ROW_NUMBER() OVER (PARTITION BY "
+        "vendor_key ORDER BY reviewed_at DESC, id DESC) AS n FROM invoice_summary WHERE status IN ('approved', "
+        "'pending_approval') AND COALESCE(pay_from, '') != '' AND vendor_key IN (SELECT value FROM json_each(?))) "
+        "WHERE n = 1", (json.dumps(keys),))}  # fmt: skip
+    assert store.last_pay_froms(keys) == ranked == {vendor_key("Acme"): "CAD-3", vendor_key("Bolt"): "USD-1",
+                                                    vendor_key("Core"): "7"}  # fmt: skip
+    assert store.last_pay_from(vendor_key("Acme")) == "CAD-3" and store.last_pay_from("") == ""
+    plan = _plan(store, monkeypatch, lambda: store.last_pay_froms(keys), "invoice_summary")
+    assert "INDEX summary_pay_from" in plan and "TEMP B-TREE" not in plan and "SCAN invoice_summary" not in plan, plan
+    with sqlite3.connect(store.path) as conn:  # as a database made before it
+        conn.execute("DROP INDEX summary_pay_from")
+    store = Store(store.path)
+    assert "INDEX summary_pay_from" in _plan(store, monkeypatch, lambda: store.last_pay_froms(keys), "invoice_summary")
+    assert store.last_pay_froms(keys) == ranked
+
+
+def test_the_invoice_directorys_first_page_in_its_default_order_is_read_off_an_index(tmp_path, monkeypatch):
+    """B-1740: the Search page opens on every invoice, newest received first, and each view sorted all of them for
+    its first 50 (100,000 at 100,000 invoices: 81 ms). An index in that order reads the page's ids alone, which a
+    database made before gets at its next start; the rows are the ones sorting them all gives."""
+    from ap_coder.erp import directory
+
+    store = Store(tmp_path / "ap.db")
+    for n, created in enumerate(("2026-01-03T09:00", "2026-01-01T09:00", "2026-01-03T09:00", "", "2026-01-02T09:00")):
+        pdf = tmp_path / f"{n}.pdf"
+        pdf.write_bytes(f"%PDF-1.4 {n}".encode())
+        invoice_id = store.add_invoice(pdf, {"vendor_name": "Acme", "invoice_number": f"S-{n}", "grand_total": n}, {})
+        with store._conn() as conn:
+            conn.execute("UPDATE invoices SET created_at = ? WHERE id = ?", (created, invoice_id))
+    query = directory.Query()
+
+    def sorted_off_the_index() -> bool:
+        plans = _plans(store, monkeypatch, lambda: directory.run(store, query), "rows", "ORDER BY")
+        return all("INDEX summary_received" in p and "TEMP B-TREE" not in p for p in plans)
+
+    assert sorted_off_the_index()
+    assert [r["id"] for r in directory.run(store, query).rows] == [3, 1, 5, 2, 4]  # the latest first, none last
+    with sqlite3.connect(store.path) as conn:  # as a database made before it
+        conn.execute("DROP INDEX summary_received")
+    store = Store(store.path)
+    assert sorted_off_the_index() and [r["id"] for r in directory.run(store, query).rows] == [3, 1, 5, 2, 4]
+
+
+def test_the_queues_facts_carry_each_findings_text_once_for_all_the_invoices_that_have_it(tmp_path, monkeypatch):
+    """B-1741: after each approval or park the queue read its invoices' facts again, every invoice's findings texts
+    with them (2.1 MB in 190 texts for the 2,654 invoices waiting at 100,000: 36 of the 57 ms). Each text is read once
+    for the invoices that have it, in the same read as their other facts: what reading each row gives."""
+    import json
+
+    from ap_coder.coding import bulk
+    from ap_coder.core.store import REVIEW
+
+    store = Store(tmp_path / "ap.db")
+    total = [{"severity": "error", "code": "TOTAL_MISMATCH", "message": "The totals differ"}]
+    late = {"stamp": "s2", "issues": [{"severity": "warning", "code": "DUE_DATE_PAST", "message": "Due"}]}
+    found = [{"issues": total, "checks_stamp": "s1"}, {"issues": total, "checks_stamp": "s1", "recheck": late},
+             {"issues": total, "checks_stamp": "s1", "recheck": late}, {"issues": []}, None,
+             {"issues": total, "checks_stamp": "s1"}]  # fmt: skip
+    ids = []
+    for n, validation in enumerate(found):
+        pdf = tmp_path / f"{n}.pdf"
+        pdf.write_bytes(f"%PDF-1.4 {n}".encode())
+        ids.append(store.add_invoice(pdf, {"vendor_name": "Acme", "invoice_number": f"F-{n}", "grand_total": n},
+                                     validation))  # fmt: skip
+    store.park_invoice(ids[-1], "Jordan Lee", "waiting for the buyer")  # (not in review: none of the queue's)
+    asked = [*reversed(ids), 999]
+    each = store.summary_rows("status = ? AND id IN (SELECT value FROM json_each(?))", (REVIEW, json.dumps(asked)),
+                              bulk.QUEUE_COLUMNS)  # fmt: skip
+    sent = []
+    real = store_mod.summary._decode_rows
+    monkeypatch.setattr(store_mod.summary, "_decode_rows", lambda text: sent.append(text) or real(text))
+    rows = store.queue_rows(asked)
+    assert rows == each and [list(r) for r in rows] == [list(r) for r in each] and len(rows) == 5
+    assert "".join(sent).count("TOTAL_MISMATCH") == 1 and "".join(sent).count("DUE_DATE_PAST") == 1
+    assert bulk._queue_rows(store, asked) == {r["id"]: r for r in each}

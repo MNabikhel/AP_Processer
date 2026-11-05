@@ -34,7 +34,7 @@ from ..core.memory import vendor_key
 from ..core.reference_data import ReferenceData
 from ..core.schema import InvoiceCoding
 from ..core.store import REVIEW, Store
-from ..core.store._base import CHECKS_STAMP_KEY, _in_list
+from ..core.store._base import CHECKS_STAMP_KEY
 from ..core.store.summary import QUEUE_READ, computed
 from .review import codes_to_pick
 from .vendors import moved_off_hold
@@ -229,8 +229,7 @@ def _found(stored: str | None, rechecked: str | None) -> tuple[MappingProxyType,
 
 
 def _queue_rows(store: Store, ids: list[int]) -> dict[int, dict[str, Any]]:
-    rows = store.summary_rows(f"status = ? AND {_in_list('id')}", (REVIEW, json.dumps([int(i) for i in ids])),
-                              QUEUE_COLUMNS)  # fmt: skip
+    rows = store.queue_rows(ids)  # each findings text read once (B-1741)
     return {r["id"]: computed(store, r, "queue") for r in rows}  # one the summary could not read: read again
 
 

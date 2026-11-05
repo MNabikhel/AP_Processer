@@ -355,10 +355,11 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
     store, settings = get_store(request), get_settings(request)
     reference = reference_or_none(store)
     # The queue's invoices only (in review, parked, waiting for a second approval), and the others counted: a year of
-    # approved invoices is not read on every visit (D-110).
-    counts = store.status_counts()
-    if reference is None or not counts:
-        return _getting_started(request, store, counts)
+    # approved invoices is not read on every visit (D-110). The tabs only show their counts: a few seconds behind
+    # (B-1738); the first start's page offers the demo by them: exact.
+    if reference is None or not store.has_invoices():
+        return _getting_started(request, store, store.status_counts())
+    counts = store.status_counts(settled=True)
     invoices = store.list_invoices(statuses=(REVIEW, PARKED, PENDING))
     tab = tab if tab in TABS else "review"
     show = show if show in SHOWS else "all"

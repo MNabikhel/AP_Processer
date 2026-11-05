@@ -700,8 +700,8 @@ def developer_tools(store: Store) -> bool:
 
 def nav_counts(store: Store) -> dict[str, int]:
     """The count badges of the rail: invoices waiting for review (the one queue to work through) and approved
-    invoices not exported yet."""
-    return {"review": store.status_counts().get(REVIEW, 0), "exports": store.ready_to_export_count()}
+    invoices not exported yet (the first a few seconds behind a change: ``status_counts(settled=True)``)."""
+    return {"review": store.status_counts(settled=True).get(REVIEW, 0), "exports": store.ready_to_export_count()}
 
 
 def rail(store: Store) -> dict[str, list[dict[str, Any]]]:
