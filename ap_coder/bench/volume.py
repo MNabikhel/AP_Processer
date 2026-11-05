@@ -4,7 +4,7 @@ dashboard timed on a data folder ``seed`` made (docs/SCALE_GOAL.md, phase 0: "Do
 * **How**: the app itself in this process (``create_app`` in server mode, as each web worker runs it, without the
   background work), through a TestClient, signed in as an Admin and then as a Clerk by the real login (the password,
   then the authenticator's code from ``users.json``). Each address is asked once to warm it, then ``--repeat`` times
-  (the median is its time); one slower than ``--slow`` seconds is asked once more only.
+  (the median is its time); one slower than ``--slow`` seconds is not asked again (its warm request is its time).
 * **What**: every GET route the app has (listed from it), its path parameters filled with real ids (an invoice in
   the queue, one approved, one waiting for a second approval, an export batch, a GL account table...), and the tabs
   and searches of the main pages. A route that needs what the seed doesn't make (a manager's request, an email in the
@@ -34,6 +34,7 @@ import sys
 import threading
 import time
 import tracemalloc
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -67,13 +68,14 @@ def add_parser(sub: Any) -> argparse.ArgumentParser:
     p.add_argument("--out", default="bench_volume", help="where report.json and report.md go (default bench_volume)")
     p.add_argument("--roles", default="admin,clerk", help="who asks, in turn (default admin,clerk)")
     p.add_argument("--repeat", type=int, default=3, help="timed requests after the warm one (default 3: the median)")
-    p.add_argument("--slow", type=float, default=10.0, help="a warm request slower than this is timed once more only")
+    p.add_argument("--slow", type=float, default=10.0, help="a warm request slower than this is its time (not again)")
     p.add_argument("--only", action="append", default=[], metavar="ROUTE",
                    help="only this route (as the app names it, e.g. /review/{invoice_id:int}) or address; again for "
                         "more")  # fmt: skip
     p.add_argument("--big", type=int, default=BIG_TABLES_MIN, help="a table with this many rows or more is big")
-    p.add_argument("--memory-limit", type=float, default=20.0,
-                   help="no tracemalloc pass for a report or export slower than this (seconds)")  # fmt: skip
+    p.add_argument("--memory-limit", type=float, default=10.0,
+                   help="no tracemalloc pass (2-3 times slower) for a report or export slower than this "
+                        "(seconds)")  # fmt: skip
     p.set_defaults(run=main)
     return p
 
@@ -149,6 +151,9 @@ _WORDS = {"where", "join", "left", "right", "inner", "outer", "cross", "natural"
           "limit", "union", "select", "set", "values", "as", "with", "and", "or", "not", "full"}  # fmt: skip
 _NAMED = re.compile(r"\b(?:from|join|update|into)\s+\"?([a-z_][\w]*)\"?(?:\s+(?:as\s+)?\"?([a-z_]\w*)\"?)?", re.I)
 _EXPLAINED = ("select", "with", "insert", "update", "delete", "replace")
+_NO_ROWS = re.compile(r"\bLIMIT\s+0\s*$", re.I)
+_FIRST_ROW = re.compile(r"\s*SELECT\s+[^\s,]+\s+FROM\s+\w+\s+LIMIT\s+1\s*", re.I)
+REPEATED = 20  # a statement one request runs this many times or more (one per row: N+1) is listed with its count
 
 
 def _aliases(sql: str) -> dict[str, str]:
@@ -171,8 +176,9 @@ def shape(sql: str) -> str:
 def scans(conn: sqlite3.Connection, sql: str, big: dict[str, int]) -> list[dict[str, Any]]:
     """The full scans of big tables in ``sql``'s plan: [{table, rows, how}] (``how``: the table itself, or an index
     read whole). A statement that can't be explained (a temporary table gone, a syntax only the app's connection
-    knows) has none."""
-    if not sql.lstrip().lower().startswith(_EXPLAINED):
+    knows) has none, nor one that reads no row or stops at the first (``fetch_rows`` naming its columns with ``LIMIT
+    0``, ``SELECT 1 FROM t LIMIT 1``)."""
+    if not sql.lstrip().lower().startswith(_EXPLAINED) or _NO_ROWS.search(sql) or _FIRST_ROW.fullmatch(sql):
         return []
     try:
         plan = conn.execute("EXPLAIN QUERY PLAN " + sql).fetchall()
@@ -327,7 +333,7 @@ def run(
     slow: float = 10.0,
     only: tuple[str, ...] = (),
     big: int = BIG_TABLES_MIN,
-    memory_limit: float = 20.0,
+    memory_limit: float = 10.0,
 ) -> dict[str, Any]:
     """Time every address on ``data`` (see the module's docstring); writes and returns the report."""
     data = data.resolve()
@@ -404,6 +410,8 @@ def _run(data: Path, db: Path, out: Path, chosen: dict[str, dict[str, Any]], rep
                                 if address not in hit["routes"]:
                                     hit["routes"].append(address)
                         result["scans"] = sorted({s["table"] for sql in statements for s in plans[shape(sql)]})
+                        counted = Counter(shape(sql) for sql in statements).most_common(5)
+                        result["repeated"] = [[sql[:300], n] for sql, n in counted if n >= REPEATED]
                         results.append(result)
                         print(f"  volume: {role} {address} {result['median']:.3f} s ({result['status']})",
                               file=sys.stderr, flush=True)  # fmt: skip
@@ -421,8 +429,8 @@ def _measure(client: Any, tracer: Tracer, route: str, address: str, role: str, r
     tracer.start(collect=True)
     warm, status, size = _ask(client, address)
     statements, connections = tracer.stop()
-    times = []
-    for _ in range(1 if warm > slow else max(1, repeat)):
+    times = [warm] if warm > slow else []  # slow already: its warm request is its time (a minute at 100,000 invoices)
+    for _ in range(0 if warm > slow else max(1, repeat)):
         tracer.start(collect=False)
         took, status, size = _ask(client, address)
         tracer.stop()
@@ -502,6 +510,14 @@ def markdown(report: dict[str, Any]) -> str:
         routes = ", ".join(f"`{a}`" for a in scan["routes"][:6]) + (" ..." if len(scan["routes"]) > 6 else "")
         statement = scan["sql"][:220].replace("|", "\\|")
         lines.append(f"| {scan['table']} | {scan['rows']:,} | {scan['how']} | {routes} | `{statement}` |")
+    repeated = [r for r in report["results"] if r.get("repeated") and r["role"] == next(iter(c["people"]), "")]
+    if repeated:
+        lines += ["", "## Statements one request runs many times", "",
+                  f"The statements a warm request ran {REPEATED} times or more (one per row: an N+1), as "
+                  f"{next(iter(c['people']))}.", "", "| address | times | statement |", "|---|---:|---|"]  # fmt: skip
+        for r in sorted(repeated, key=lambda r: -r["statements"]):
+            for sql, n in r["repeated"]:
+                lines.append(f"| `{r['address']}` | {n:,} | `{sql[:200].replace('|', chr(92) + '|')}` |")
     if report["skipped"]:
         lines += ["", "## Not asked", ""] + [f"- `{route}`: {why}" for route, why in report["skipped"].items()]
     return "\n".join(lines) + "\n"

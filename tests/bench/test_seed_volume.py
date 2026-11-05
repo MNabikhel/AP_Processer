@@ -65,6 +65,7 @@ def test_what_the_seed_writes_reads_as_the_app_would_have_it(seeded, tmp_path):
         store = Store(seeded / "ap_coder.db")
         statuses = store.status_counts()
         assert statuses[REVIEW] and statuses[APPROVED] and statuses.get(PARKED, 0) + statuses.get(PENDING, 0)
+        assert 10 < store.ready_to_export_count() < statuses[APPROVED]  # the newest day's approvals: not exported yet
         # The summary, the quick search's rows and the reports as they were worked out before the summary (every
         # invoice read and decoded): tests/summary_reference.py.
         for status in (None, REVIEW, APPROVED, PARKED, PENDING, "rejected", "failed"):
@@ -116,6 +117,9 @@ def test_the_full_scans_are_read_from_the_plan_with_the_tables_aliases():
         assert volume.scans(conn, "SELECT id FROM invoices WHERE status = 'review'", big) == []
         assert volume.scans(conn, "SELECT * FROM invoices", {}) == []  # not a big table
         assert volume.scans(conn, "PRAGMA table_info(invoices)", big) == []
+        # fetch_rows naming its columns reads no row; the first row of a table stops there
+        assert volume.scans(conn, "SELECT * FROM (SELECT * FROM invoices ORDER BY id) LIMIT 0", big) == []
+        assert volume.scans(conn, "SELECT 1 FROM invoices LIMIT 1", big) == []
     finally:
         conn.close()
     assert volume.shape("SELECT * FROM t WHERE a = 'it''s' AND b = 12.5") == "SELECT * FROM t WHERE a = ? AND b = ?"

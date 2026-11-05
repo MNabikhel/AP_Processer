@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import bisect
 import datetime as dt
 import hashlib
 import json
@@ -528,8 +529,8 @@ def _plan(store: Any, rng: random.Random, n: int, vendors: list[Vendor], templat
     """The ``n`` clones, in the order they arrived (their ids): each business day of the last ``months`` months its
     share, between 8:00 and 17:00 (today only once the day is over); the newest ``queue`` in the review queue (parked,
     or waiting for a second approval when over the approval limit), the others approved within three days (a few
-    rejected or failed), exported in the next business day's batch. Vendors by a Zipf-like weight: a few big
-    suppliers, many small ones."""
+    rejected or failed), exported in the next business day's batch but for the newest day's worth, still to export.
+    Vendors by a Zipf-like weight: a few big suppliers, many small ones."""
     now = dt.datetime.now().replace(microsecond=0)
     today = now.date()
     last = today if now.hour >= 17 else today - dt.timedelta(days=1)
@@ -548,6 +549,7 @@ def _plan(store: Any, rng: random.Random, n: int, vendors: list[Vendor], templat
     po_used: dict[int, int] = {}
     batches: dict[dt.date, int] = {}
     per_day = [(d + 1) * n // len(days) - d * n // len(days) for d in range(len(days))]
+    ready_count = max(50, n // len(days))  # a business day's approvals
     times = []
     for d, count in enumerate(per_day):
         times += [(d, s) for s in sorted(rng.uniform(0, 9 * 3600) for _ in range(count))]
@@ -567,6 +569,7 @@ def _plan(store: Any, rng: random.Random, n: int, vendors: list[Vendor], templat
             po_used[v] = po_used.get(v, 0) + 1
         over = totals[t] * k > APPROVAL_LIMIT
         in_queue = i >= n - queue
+        ready = i >= n - queue - ready_count  # approved, waiting for the next export
         reviewer = rng.choice(clerks)
         reviewed = min(created + dt.timedelta(hours=rng.uniform(0.3, 72)), now - dt.timedelta(minutes=5))
         status, second, second_at, batch, batch_at, exporter, parked = "approved", None, None, None, None, None, ""
@@ -597,9 +600,9 @@ def _plan(store: Any, rng: random.Random, n: int, vendors: list[Vendor], templat
                 second = rng.choice([a for a in approvers if a != reviewer] or approvers)
                 second_at = reviewed + dt.timedelta(hours=rng.uniform(0.5, 24))
                 second_at = min(second_at, now - dt.timedelta(minutes=1))
-            done = (second_at or reviewed).date()
-            export_day = next((day for day in days if day > done), None)
-            if export_day is not None and export_day < today:
+            after = bisect.bisect_right(days, (second_at or reviewed).date())
+            export_day = days[after] if after < len(days) else None
+            if export_day is not None and export_day < today and not ready:
                 batch = batches.setdefault(export_day, first_batch + len(batches))
                 batch_at = _at(export_day, 8 * 3600)
                 exporter = approvers[export_day.toordinal() % len(approvers)]
