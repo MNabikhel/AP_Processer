@@ -63,7 +63,7 @@
 {# Read-only (server mode, D-98): the same screen with every field read-only and nothing to change or check again;
    the checks shown are the stored ones (invoice.js posts nothing, data-readonly). #}
 {% set edit = not live.read_only %}
-<form id="inv"{% if edit %} method="post" action="/review/{{ inv.id }}/approve" data-busy="Approving…"{% else %} data-readonly{% endif %} data-invoice="{{ inv.id }}">
+<form id="inv"{% if edit %} method="post" action="/review/{{ inv.id }}/approve" data-busy="Approving…"{% else %} data-readonly{% endif %} data-invoice="{{ inv.id }}"{% if account %} data-account="{{ account.username }}"{% endif %}>
   {# The form's default button, disabled: Enter in one of its text boxes sends nothing (only Approve and Ctrl+Enter
      approve), where the browser would otherwise press Approve with the value half typed. #}
   <button type="submit" disabled hidden aria-hidden="true" tabindex="-1"></button>

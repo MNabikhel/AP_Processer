@@ -87,11 +87,19 @@ export async function post(url, body) {
     setTimeout(() => URL.revokeObjectURL(link.href), 60000);
     return { ok: true };
   }
+  let answer;
   try {
-    return await response.json();
+    answer = await response.json();
   } catch {
     return { ok: false, error: response.ok ? "" : `That didn't work (${response.status}).` };
   }
+  if (response.status === 401 && answer.redirect) {
+    // The session ended (server mode): logging in again comes back to this page, and the page keeps what is on it
+    // first (the review screen's edits, B-1594).
+    answer.redirect += `?next=${encodeURIComponent(location.pathname + location.search)}`;
+    document.dispatchEvent(new CustomEvent("apc:session-ended"));
+  }
+  return answer;
 }
 
 /** Do what the server's answer says. Returns true when the page is being left. */
