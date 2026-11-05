@@ -9,8 +9,10 @@ minutes) and the download is the one made last (D-156).
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +25,7 @@ from ap_coder.web import identity, roles
 from ap_coder.web.charts import SERIES, Series, bar_chart, compact, legend_items
 from ap_coder.web.core import get_store, jobs, message, money, page_router, reference_or_none, render, server_mode
 from ap_coder.web.files import XLSX, download
-from ap_coder.web.jobs import Job
+from ap_coder.web.jobs import ERROR, RUNNING, Job
 
 router = page_router()  # each plain handler: one connection a request
 
@@ -168,24 +170,32 @@ def spend_page(request: Request) -> HTMLResponse:
     )
 
 
-def workbook_path(store: Any) -> Path:
-    """Where the company server keeps the data workbook made last (in the data folder, not backed up)."""
-    return store.path.parent / ".cache" / "downloads" / "ap_coder_data.xlsx"
+def _workbooks(store: Any) -> Path:
+    """Where the company server keeps the data workbooks (in the data folder, not backed up; a restore empties it)."""
+    return store.path.parent / ".cache" / "downloads"
+
+
+def workbook_path(store: Any) -> Path | None:
+    """The data workbook the company server made last; None before the first. Each is made under a name of its own:
+    on Windows a workbook being downloaded can be neither replaced nor deleted."""
+    found = sorted(_workbooks(store).glob("ap_coder_data.*.xlsx"))
+    return found[-1] if found else None
 
 
 def workbook_state(request: Request) -> dict[str, Any] | None:
-    """The data workbook on the company server: when the last one was made ("" for none yet), and how far the one
-    being made got ("" when none is); None on a laptop (made as it is asked for)."""
+    """The data workbook on the company server: when the last one was made ("" for none yet), how far the one being
+    made got ("" when none is), and why the last one could not be made ("" when it was); None on a laptop (made as it
+    is asked for)."""
     if not server_mode(request):
         return None
     path = workbook_path(get_store(request))
-    made = f"{dt.datetime.fromtimestamp(path.stat().st_mtime):%Y-%m-%d %H:%M}" if path.exists() else ""
-    job = jobs(request).get(WORKBOOK_JOB)
-    snap = job.snapshot() if job.running else {}
-    note = (snap.get("note") or "Starting…") if snap else ""
+    made = f"{dt.datetime.fromtimestamp(path.stat().st_mtime):%Y-%m-%d %H:%M}" if path is not None else ""
+    snap = jobs(request).get(WORKBOOK_JOB).snapshot()
+    note = (snap.get("note") or "Starting…") if snap["state"] == RUNNING else ""
+    failed = (snap.get("error") or "it stopped") if snap["state"] == ERROR else ""
     me = identity.person()  # Read-only changes nothing: a Clerk or above makes it (D-98)
     may = me is None or roles.allowed(me.role, roles.RULES[("POST", "/spend/data")])
-    return {"made": made, "making": note, "status": f"/jobs/{WORKBOOK_JOB}", "may_make": may}
+    return {"made": made, "making": note, "failed": failed, "status": f"/jobs/{WORKBOOK_JOB}", "may_make": may}
 
 
 @router.get("/spend/data.xlsx")
@@ -197,7 +207,7 @@ def spend_workbook(request: Request) -> Response:
         return download(spend.workbook(store, reference_or_none(store)), f"ap_coder_data_{dt.date.today()}.xlsx",
                         XLSX)  # fmt: skip
     path = workbook_path(store)
-    if not path.exists():
+    if path is None:
         raise HTTPException(status_code=404, detail="No workbook has been made yet: on Spend, Make the workbook.")
     made = dt.datetime.fromtimestamp(path.stat().st_mtime)
     return FileResponse(path, media_type=XLSX, filename=f"ap_coder_data_{made:%Y-%m-%d_%H%M}.xlsx",
@@ -207,23 +217,29 @@ def spend_workbook(request: Request) -> Response:
 @router.post("/spend/data")
 def make_workbook(request: Request) -> JSONResponse:
     """Make the data workbook in the background (the company server: one at a time, for everyone), a batch of
-    invoices at a time, written beside the last one and put in its place once whole."""
+    invoices at a time, written beside the last one and given a name of its own once whole; the older ones are then
+    removed (one being downloaded on Windows: the next time)."""
     store = get_store(request)
     reference = reference_or_none(store)
-    path = workbook_path(store)
+    folder = _workbooks(store)
 
     def work(job: Job) -> dict[str, Any]:
         def step(done: int, total: int) -> None:
             job.step(done, total, f"{done:,} of {ui.plural(total, 'invoice')} written")
 
-        path.parent.mkdir(parents=True, exist_ok=True)
-        part = path.with_name(f"{path.stem}.{os.getpid()}.part")
+        folder.mkdir(parents=True, exist_ok=True)
+        part = folder / f"ap_coder_data.{os.getpid()}.part"
         try:
             with store.session():
                 spend.write_workbook(store, reference, part, step)
-            os.replace(part, path)
+            made = folder / f"ap_coder_data.{time.time_ns()}.xlsx"  # (the newest sorts last)
+            os.replace(part, made)
         finally:
             part.unlink(missing_ok=True)
+        for older in folder.glob("ap_coder_data.*.xlsx"):
+            if older != made:
+                with contextlib.suppress(OSError):
+                    older.unlink()
         return {"made": f"{dt.datetime.now():%Y-%m-%d %H:%M}"}
 
     if not jobs(request).get(WORKBOOK_JOB).start(work, note="Starting…"):
