@@ -37,7 +37,7 @@ Every number here was measured, with the machine, the command and the date. Esti
 
 | # | Target | Baseline | Now |
 |---|---|---|---|
-| 1 | 100 simulated people on 4 cores, 300k invoices: pages p50 ≤ 300 ms, p95 ≤ 1.5 s, p99 ≤ 3 s; actions p95 ≤ 1 s; 0 errors, 0 "database is locked"; memory flat for an hour (stretch: 200 people) | phase 0 | |
+| 1 | 100 simulated people on 4 cores, 300k invoices (here 100k): pages p50 ≤ 300 ms, p95 ≤ 1.5 s, p99 ≤ 3 s; actions p95 ≤ 1 s; 0 errors, 0 "database is locked"; memory flat for an hour (stretch: 200 people) | **Not met.** Pages p50 5.1 s, p95 67 s, p99 105 s; actions p95 116 s; 345 requests with no answer; 10 "database is locked"; web workers grew to 3.2–5.5 GB each and were killed for memory (9 workers started to keep 4) | |
 | 2 | One person, 300k invoices: every page ≤ 300 ms; reports and exports ≤ 3 s or a job; no full scans on hot paths | phase 0 | |
 | 3 | 1,250 invoices (half scans) dropped at once: read the same day, web p95 unchanged; the model machine killed, hung or swapped: nothing lost or doubled, failover in under a minute | phase 0 | |
 | 4 | JD Edwards (stand-in): sync of 30k suppliers and 600k vouchers, then only the changes; 500 vouchers in one run; the duplicate check right beside a 20k-voucher supplier; fiscal periods | phase 0 | |
@@ -48,4 +48,22 @@ Every number here was measured, with the machine, the command and the date. Esti
 | 9 | Docs current | — | |
 
 ## Progress by phase
-- **Phase 0, measure first:** in progress.
+- **Phase 0, measure first** (5 Nov 2026; PR #92):
+  - **The tools:** `bench seed`, `volume`, `load`, `fake-model` and `day`, plus the research (D-148).
+  - **The load baseline on 100k invoices,** 100 people, 4 web workers, 10 minutes after a 1-minute ramp:
+    - **It collapses:** requests a second fall from 38 in the first minute to 2 by the fifth, as workers grow past
+      3 GB and are killed.
+    - **The slowest, at the server (p95):**
+
+      | Page | p95 | Why |
+      |---|---:|---|
+      | `GET /process` | 847 s | it reads every invoice file |
+      | `GET /review` | 419 s | it re-checks the queue |
+      | `GET /exports` | 373 s | |
+      | `GET /month-end` | 360 s | |
+      | `GET /search` | 212 s | |
+      | `POST /review/{id}/check` | 120 s | |
+
+    - **Login and its code step** took up to 33–45 s at p95, and 4 logins were refused (500s).
+    - **The full report:** [archive/scale-2026-11/baseline-load-100-people.md](archive/scale-2026-11/baseline-load-100-people.md).
+  - **The first target for phase 2:** a web worker's memory on a big database.
