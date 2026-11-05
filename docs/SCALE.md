@@ -65,4 +65,7 @@ Every number here was measured, with the machine, the command and the date. Esti
       doesn't change what is over target).
   - **The throughput baseline:** [archive/scale-2026-11/baseline-day-100.md](archive/scale-2026-11/baseline-day-100.md), in
     the target 3 row above.
-  - **The first target for phase 2:** a web worker's memory on a big database.
+  - **The first target for phase 2:** a web worker's memory on a big database. What makes a worker grow to 3-7 GB:
+    [archive/scale-2026-11/memory.md](archive/scale-2026-11/memory.md). No leak: about 110 MB for each request in
+    flight (anyio's 40 threads a worker, no limit), kept afterwards by the allocator. Capping the pool at 4 threads
+    took 16 people at once from 1.9-2.15 GB to 1.33 GB with the same work done.
