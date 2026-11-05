@@ -41,7 +41,7 @@ from ap_coder import __version__
 from ap_coder.core import paths
 from ap_coder.core.store import Store
 from ap_coder.ops.offline import ADDRESS_ENV, browser_wanted, dashboard_address, server_mode
-from ap_coder.web.app import CODE_FOLDER, create_app, os_user
+from ap_coder.web.app import CODE_FOLDER, create_app, os_user, own_work_running
 
 SERVER_FILE = ".ap_coder_server.json"
 
@@ -352,6 +352,7 @@ def _serve_workers(host: str, port: int, store: Store | None, certfile: str | No
     token = secrets.token_urlsafe(24)
     data = paths.private_dir()
     stop_file(data).unlink(missing_ok=True)
+    (data / RECYCLE_PID).unlink(missing_ok=True)  # a worker of the last run ending: its number may be given again
     from ap_coder.ai.local_llm import SLOTS_ENV
 
     os.environ[SLOTS_ENV] = str(data / "llm")  # llm_parallel holds for all the server's processes together
@@ -446,6 +447,8 @@ def _supervisor_class() -> Any:
                 return
             leaving = _leaving(Path(spec["data"])) if spec.get("data") else None
             ending = [p for p in self.processes if p.pid == leaving and p.process.is_alive()]
+            if leaving is not None and not ending:
+                _left(Path(spec["data"]), leaving)  # it has ended: its process number may be given to another
             self.processes = [p for p in self.processes if p not in ending]
             try:
                 super().keep_subprocess_alive()
@@ -512,8 +515,10 @@ MEMORY_ENV, REQUESTS_ENV = "AP_WORKER_MAX_MB", "AP_WORKER_MAX_REQUESTS"
 RECYCLE_REQUESTS = 50_000  # about a working day for each of 16 workers answering 20-40 requests a second
 RECYCLE_LOCK = ".ap_coder_worker_restart.lock"
 RECYCLE_PID = ".ap_coder_worker_restart.pid"  # the worker being started afresh, for the supervisor
+LEAVING_SECONDS = 600  # how long that note is believed (one still waiting for its own work answers "alive?")
 MEMORY_EVERY = 10  # requests between two looks at the memory
 DRAIN_SECONDS = 1.0
+RECYCLE_GRACE_SECONDS = 3600  # what an ending worker gives the requests under way (a service stop: GRACEFUL_SECONDS)
 
 
 def recycle_limits(workers: int, total_mb: float | None = None) -> dict[str, float]:
@@ -545,6 +550,7 @@ class Recycle:
         self.served = 0
         self.why = ""  # what made it due
         self.stopping: Any = None  # the restart lock, held until this process ends
+        self.unfound = False  # whether it said uvicorn's server was not found
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         try:
@@ -569,19 +575,21 @@ class Recycle:
         """Something of this worker's that would end with it: a job, a backup, imports waiting, a long route."""
         from ap_coder.web.core import heavy_lane
 
-        backup = getattr(self.state.daily_backup, "thread", None)
-        queue = getattr(self.state, "import_queue", None)
         lane = heavy_lane().statistics()
         if lane.borrowed_tokens or lane.tasks_waiting:
             return True
-        return (self.state.jobs.running_here() or (backup is not None and backup.is_alive())
-                or bool(queue is not None and queue.waiting))  # fmt: skip
+        return own_work_running(self.state)
 
     def _stop(self) -> None:
         from ap_coder.core.paths import try_lock
 
         found = uvicorn_server()
         if found is None:
+            if not self.unfound:  # (said once: it is asked again after each request)
+                self.unfound = True
+                logging.getLogger(__name__).warning(
+                    "A web worker (process %s) is not started afresh after %s: uvicorn's server was not found.",
+                    os.getpid(), self.why)  # fmt: skip
             return
         self.stopping = try_lock(self.data / RECYCLE_LOCK)
         if self.stopping is None:
@@ -596,15 +604,30 @@ class Recycle:
         for listening in getattr(found, "servers", None) or []:
             for sock in listening.sockets:
                 loop.remove_reader(sock.fileno())
+        # Those under way get the time they need: an import run whole in its request was cut with a 500 at the grace
+        # while its work went on. An hour at most (an upload whose computer went to sleep never ends); a stop of the
+        # service still ends this worker at its deadline (join_all).
+        found.config.timeout_graceful_shutdown = RECYCLE_GRACE_SECONDS
         loop.call_later(DRAIN_SECONDS, setattr, found, "should_exit", True)  # then uvicorn finishes what is under way
 
 
 def _leaving(data: Path) -> int | None:
-    """The process of the web worker being started afresh (``Recycle``), as it wrote."""
+    """The process of the web worker being started afresh (``Recycle``), as it wrote; None after LEAVING_SECONDS
+    (it then is asked "alive?" again, as any worker is)."""
+    note = data / RECYCLE_PID
     try:
-        return int((data / RECYCLE_PID).read_text(encoding="ascii").strip())
+        if time.time() - note.stat().st_mtime > LEAVING_SECONDS:
+            return None
+        return int(note.read_text(encoding="ascii").strip())
     except (OSError, ValueError):
         return None
+
+
+def _left(data: Path, pid: int) -> None:
+    """The note of the worker ``pid`` started afresh dropped once it has ended (if no other wrote its own since)."""
+    if _leaving(data) == pid:
+        with contextlib.suppress(OSError):
+            (data / RECYCLE_PID).unlink()
 
 
 def uvicorn_server() -> Any:

@@ -19,9 +19,12 @@ from typing import Any
 
 def read_file(path: Path) -> tuple[str, int, int, str]:
     """(place, size, time in nanoseconds, SHA-256) of a file the pick-up reads, as ``note_files`` keeps it: its size
-    and time looked at before it is read (one changed while it was read looks changed afterwards). Raises OSError."""
+    and time looked at before it is read (one changed while it was read looks changed afterwards), its place in its
+    folder's resolved place (a link, a mapped drive or a relative folder followed, as an invoice's ``source_path`` and
+    the import page's list have it). Raises OSError."""
     seen = path.stat()
-    return str(path), seen.st_size, seen.st_mtime_ns, hashlib.sha256(path.read_bytes()).hexdigest()
+    place = str(path.parent.resolve() / path.name)
+    return place, seen.st_size, seen.st_mtime_ns, hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 class FolderMixin:

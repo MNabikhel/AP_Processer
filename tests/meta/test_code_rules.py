@@ -90,13 +90,10 @@ q = ",".join("?" * len(chunk))  # at most 500 ids
 _STORE_CALLS = {"get_store", "current_store"}
 _FILE_CALLS = {"open", "read_bytes", "write_bytes", "read_text", "write_text"}
 _PAGE_CALL = "render"  # a page drawn (web/core.py): its frame reads the database
-# phase 2 integration: P2b/P2c own these files; converted after they merge. Each of these does its database work on
-# the loop, some through helpers the rule can't see (``_new_lines``, ``current_draft``).
-_STILL_ON_THE_LOOP = {
-    "ap_coder/web/pages/invoice.py": {"_posted", "_posted_in_review", "_coded", "split", "apply_rules",
-                                      "use_po_coding", "use_suggestion", "fill_lines"},
-    "ap_coder/web/pages/process.py": {"process_upload"},
-}  # fmt: skip
+_FLASH_CALLS = {"done", "keep_flash", "with_flash"}  # a message kept for the next page (web/core.py): written
+# Async functions whose waits are known and left so (none: the review screen's grid actions and the upload check were
+# the last, converted at phase 2's integration).
+_STILL_ON_THE_LOOP: dict[str, set[str]] = {}
 
 
 def _waits_on_the_loop(source: str) -> list[tuple[str, int]]:
@@ -114,6 +111,8 @@ def _waits_on_the_loop(source: str) -> list[tuple[str, int]]:
         name = getattr(call.func, "id", "") or getattr(call.func, "attr", "")
         if name == _PAGE_CALL or (isinstance(call.func, ast.Name) and name in {*_STORE_CALLS, "open"}):
             return True
+        if name in _FLASH_CALLS and (name != "done" or len(call.args) > 2 or call.keywords):
+            return True  # (``done(request, url)`` alone keeps no message)
         if isinstance(call.func, ast.Attribute) and (store(call.func.value) or name in _FILE_CALLS):
             return True
         return any(store(a) for a in [*call.args, *(k.value for k in call.keywords)])
@@ -180,6 +179,8 @@ async def f(self, folder):
     self.store.log_event("x")
 async def g(request):
     return core.render(request, "error.html", "")
+async def h(request):
+    return done(request, "/settings", "Saved.")
 """
     safe = """
 async def a(request):
@@ -192,7 +193,9 @@ async def b(store, token):
 async def c(store, request):
     await run_in_threadpool(core.render, request, "error.html", "")
     return await store.fetch()
+async def d(request):
+    return done(request, "/settings")
 """
     assert _waits_on_the_loop(bad) == [("a", 3), ("b", 6), ("c", 8), ("d", 10), ("e", 13), ("f", 15), ("f", 16),
-                                       ("g", 18)]  # fmt: skip
+                                       ("g", 18), ("h", 20)]  # fmt: skip
     assert _waits_on_the_loop(safe) == []

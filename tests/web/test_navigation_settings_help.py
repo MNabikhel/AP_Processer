@@ -426,7 +426,7 @@ def test_report_a_problem_summarises_the_latest_invoices(client, store, monkeypa
     import html
 
     page = html.unescape(client.get("/help/report").text)
-    assert "- invoices: the latest 2 of 3 (ok 2, failed 0)" in page and "over the latest\n        2:" in page
+    assert "- invoices: the latest 2 of 3 (ok 2, failed 0)" in page and "over the latest\n        2 at most:" in page
     assert f"| doc-{ids[0]:02d} |" not in page and all(f"| doc-{n:02d} |" in page for n in ids[1:])
 
 

@@ -43,6 +43,36 @@ def test_currencies_are_kept_apart():
     assert spend.total_by(rows, "vendor", "CAD") == [("A", 80.0, 2)]
 
 
+def test_the_spend_figures_are_read_from_one_state_of_the_database(tmp_path, demo_template, monkeypatch):
+    """The page's figures came from five queries, each seeing the database as it was then: an approval between them
+    was in some shares and not others (the GL accounts' added to more than the total). They are read in one read
+    transaction: an approval meanwhile is in all of them, or none."""
+    import threading
+
+    store = copy_database(demo_template, tmp_path / "s.db")
+    waiting = store.list_invoices("review")[0]["id"]
+    doc = store.get_invoice(waiting)["ai_output"]
+    reads, fetch = [], store.summary_fetch
+
+    def approved_meanwhile(sql, params=()):
+        rows = fetch(sql, params)
+        reads.append(sql)
+        if len(reads) == 1:  # another person approves an invoice between two reads (another connection)
+            other = threading.Thread(target=lambda: Store(store.path).approve_invoice(waiting, doc, "Jane"))
+            other.start()
+            other.join()
+        return rows
+
+    before = spend.figures(store, *YEAR, "CAD", {})
+    monkeypatch.setattr(store, "summary_fetch", approved_meanwhile)
+    found = spend.figures(store, *YEAR, "CAD", {})
+    assert len(reads) >= 4 and store.get_invoice(waiting)["status"] == "approved"
+    for key in ("gl_code", "cost_center"):
+        assert round(sum(n for _, n, _ in found["by"][key]), 2) == found["total"], key
+    assert round(sum(m["amount"] for m in found["by_month"]), 2) == found["total"]
+    assert found == before  # as the database was at the first read
+
+
 def test_default_period_is_the_last_twelve_months():
     assert spend.default_period(dt.date(2026, 10, 7)) == (dt.date(2025, 11, 1), dt.date(2026, 10, 7))
     assert spend.default_period(dt.date(2026, 12, 31)) == (dt.date(2026, 1, 1), dt.date(2026, 12, 31))

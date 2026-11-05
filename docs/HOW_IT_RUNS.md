@@ -364,7 +364,8 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   when it stops, 5 s doubling to a minute) does what the laptop's dashboard does in its own process: the page
   reader and the AI reviewer, the Azure check, JD Edwards, the review queue checked again after a change of settings
   (`bulk.QueueRecheck`, D-155: in batches of 50 kept in one short write each, one process at a time by the
-  `ephemeral` row `lease` "queue-recheck"; the queue page shows the earlier checks meanwhile and says so), the daily
+  `ephemeral` row `lease` "queue-recheck", let go of between two batches when AP Coder stops, and dropped at a
+  laptop's start; the queue page shows the earlier checks meanwhile and says so), the daily
   backup and the finance hub's schedule (each minute instead of at each page), holding
   `<data>/.ap_coder_background.lock` (one per data folder). It stops when
   its input closes (the server stopping or ending). The workers share what they know through the database: jobs
@@ -380,9 +381,12 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   `web/core.py:HEAVY_ROUTES` (reports, exports, Report a problem, backups, LM Studio and JD Edwards buttons) run in a
   lane of their own (`core.run_heavy`: 2 at a time a worker, on threads beside the pool's, a 503 "busy" after 30 s in
   line). `server.Recycle` starts a worker afresh past its memory (`recycle_limits`) or requests: it stops taking
-  connections, then uvicorn stops it gracefully and its supervisor starts another (`_Supervisor` does not ask the
-  ending one "alive?", `.ap_coder_worker_restart.pid`); one at a time (`.ap_coder_worker_restart.lock`), never while
-  a job, a backup, waiting imports or the lane are busy.
+  connections, then uvicorn stops it gracefully (the requests under way given up to an hour, `RECYCLE_GRACE_SECONDS`)
+  and its supervisor starts another (`_Supervisor` does not ask the ending one "alive?",
+  `.ap_coder_worker_restart.pid`, for ten minutes at most, dropped once it has ended); one at a time
+  (`.ap_coder_worker_restart.lock`), never while a job, a backup, waiting imports or the lane are busy. One that a
+  request started after that look is waited for as the worker ends (its lifespan, `app.own_work_running`); a stop of
+  the service still ends it at its deadline.
 
 ## 9. The data folder and everything AP Coder writes
 

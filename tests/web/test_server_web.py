@@ -223,7 +223,7 @@ def test_on_the_server_the_data_workbook_is_made_in_the_background_and_the_last_
     log_in(clerk, "ann")
     log_in(reader, "rita")
     missing = reader.get("/spend/data.xlsx", headers={"Accept": "text/html"})
-    assert missing.status_code == 404 and "No workbook has been made yet" in missing.text
+    assert missing.status_code == 404 and "a Clerk makes it on Spend with Make the Excel workbook" in missing.text
     assert "Make the Excel workbook" in clerk.get("/spend").text
     assert (
         "a Clerk makes it here" in reader.get("/spend").text and 'action="/spend/data"' not in reader.get("/spend").text
@@ -240,6 +240,90 @@ def test_on_the_server_the_data_workbook_is_made_in_the_background_and_the_last_
         "All invoice data (Excel), made " in reader.get("/spend").text and "Make it again" in clerk.get("/spend").text
     )
     assert not list((store.path.parent / ".cache" / "downloads").glob("*.part"))  # put in its place once whole
+
+
+def _clerk_making_workbooks(store: Store) -> tuple[TestClient, object]:
+    account(store, "ann", "clerk")
+    add_clean(store)
+    app = create_app(web_settings(), store, start_reader=False, server=True)
+    clerk = TestClient(app, base_url="https://localhost", client=("10.0.0.5", 50000), follow_redirects=False)
+    log_in(clerk, "ann")
+    return clerk, app
+
+
+def _make_workbook(clerk: TestClient, app) -> dict:
+    assert clerk.post("/spend/data", headers=PAGE).status_code == 200
+    assert app.state.jobs.get("spend-data").wait(60)
+    return clerk.get("/jobs/spend-data").json()
+
+
+def test_on_the_server_a_data_workbook_that_could_not_be_made_says_why_on_spend(store, monkeypatch):
+    """The job's error was never shown: the page offered "Make the Excel workbook" again as if nothing had happened."""
+    from ap_coder.erp import spend
+
+    clerk, app = _clerk_making_workbooks(store)
+
+    def full(*args, **kwargs):
+        raise OSError("No space left on the disk")
+
+    monkeypatch.setattr(spend, "write_workbook", full)
+    assert _make_workbook(clerk, app)["state"] == "error"
+    page = clerk.get("/spend").text
+    assert "The workbook could not be made: No space left on the disk" in page and "Make the Excel workbook" in page
+    monkeypatch.undo()
+    assert _make_workbook(clerk, app)["state"] == "done"
+    assert "could not be made" not in clerk.get("/spend").text
+
+
+def test_on_the_server_a_data_workbook_being_downloaded_does_not_stop_the_next_one(store, monkeypatch):
+    """On Windows a file open for a download can be neither replaced nor deleted: the next workbook failed while one
+    was being downloaded. Each is made under a name of its own, the newest downloaded, the older ones removed once
+    they can be."""
+    import os
+    from pathlib import Path
+
+    from ap_coder.web.pages import spend as spend_page
+
+    clerk, app = _clerk_making_workbooks(store)
+    assert _make_workbook(clerk, app)["state"] == "done"
+    first = spend_page.workbook_path(store)
+    first_bytes = first.read_bytes()
+    replace, unlink = os.replace, Path.unlink
+
+    def windows_replace(src, dst):
+        if Path(dst) == first:
+            raise PermissionError(13, "The process cannot access the file because it is being used", str(dst))
+        return replace(src, dst)
+
+    def windows_unlink(path, missing_ok=False):
+        if path == first:
+            raise PermissionError(13, "The process cannot access the file because it is being used", str(path))
+        return unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(os, "replace", windows_replace)
+    monkeypatch.setattr(Path, "unlink", windows_unlink)
+    add_clean(store, invoice_number="INV-NEXT-1")
+    assert _make_workbook(clerk, app)["state"] == "done"
+    newest = spend_page.workbook_path(store)
+    assert newest != first and first.exists()  # (still being downloaded: removed next time)
+    got = clerk.get("/spend/data.xlsx")
+    assert got.status_code == 200 and got.content == newest.read_bytes() != first_bytes
+    monkeypatch.undo()
+    assert _make_workbook(clerk, app)["state"] == "done"
+    assert list(first.parent.glob("*.xlsx")) == [spend_page.workbook_path(store)]
+
+
+def test_on_the_server_a_restore_removes_the_data_workbook_of_the_replaced_invoices(store):
+    from ap_coder.web.pages import spend as spend_page
+
+    clerk, app = _clerk_making_workbooks(store)
+    backup = store.backup_now("manual")
+    assert _make_workbook(clerk, app)["state"] == "done"
+    assert spend_page.workbook_path(store) is not None
+    store.restore_state(backup, keep_accounts=True)
+    assert spend_page.workbook_path(store) is None
+    log_in(clerk, "ann")  # (a restore logs everyone out)
+    assert clerk.get("/spend/data.xlsx", headers={"Accept": "text/html"}).status_code == 404
 
 
 def test_the_menu_shows_only_what_the_role_may_open(store):

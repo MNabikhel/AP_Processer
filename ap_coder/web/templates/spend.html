@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block head %}<link rel="stylesheet" href="/static/analytics.css?v={{ static_version }}">{% endblock %}
 {% block aside %}{% if workbook %}{# the company server: made in the background, one for everyone (D-156) #}
+{% if workbook.failed %}<span class="apc-status err" role="alert">The workbook could not be made: {{ workbook.failed }}</span>{% endif %}
 {% if workbook.making %}<span class="muted" data-job-status="{{ workbook.status }}" role="status">Making the workbook: {{ workbook.making }}</span>
 {% elif not workbook.may_make %}{% if not workbook.made %}<span class="muted">No Excel workbook of the data made yet: a Clerk makes it here.</span>{% endif %}
 {% else %}<form method="post" action="/spend/data" data-busy="Making the workbook…">

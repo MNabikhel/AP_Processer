@@ -215,14 +215,14 @@
     </details>
     {% if s.has_layout and can("/learning/suppliers/reset-layout") %}
     <form method="post" action="/learning/suppliers/reset-layout" data-confirm="Reset {{ s.name }}'s layout? AP Coder forgets where this vendor prints each field: its next invoices are read as a new vendor's, and approving them teaches it again. Recorded in the Activity log with your name.">
-      <input type="hidden" name="key" value="{{ s.key }}">
+      <input type="hidden" name="key" value="{{ s.key }}"><input type="hidden" name="shown" value="{{ shown }}">
       <button class="btn sm ghost" type="submit" title="When AP Coder keeps reading this vendor's fields in the wrong place"><span class="ms" aria-hidden="true">restart_alt</span>Reset layout</button>
     </form>
     {% endif %}
     {% if not can("/learning/suppliers/hold") %}{# server mode: holding a vendor is an Admin's (D-98) #}
     {% elif s.held %}
     <form method="post" action="/learning/suppliers/allow">
-      <input type="hidden" name="key" value="{{ s.key }}">
+      <input type="hidden" name="key" value="{{ s.key }}"><input type="hidden" name="shown" value="{{ shown }}">
       <button class="btn sm" type="submit"><span class="ms" aria-hidden="true">bolt</span>Allow again</button>
     </form>
     {% else %}
@@ -231,7 +231,7 @@
       <div class="pop-body">
         <p>Every <b>{{ s.name }}</b> invoice goes to a person, whatever its record, until you allow it again. Recorded in the Activity log with your name.</p>
         <form method="post" action="/learning/suppliers/hold" class="stack">
-          <input type="hidden" name="key" value="{{ s.key }}">
+          <input type="hidden" name="key" value="{{ s.key }}"><input type="hidden" name="shown" value="{{ shown }}">
           <label class="field an-full">Why (optional)<input type="text" name="reason" placeholder="e.g. new contract, prices changing" maxlength="300"></label>
           <button class="btn primary" type="submit">Keep supervised</button>
         </form>

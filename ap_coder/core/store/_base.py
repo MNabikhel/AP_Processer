@@ -87,6 +87,8 @@ _NOT_FOUND: dict[tuple[str, int, str], float] = {}
 # Invoice files found where they were recorded, and when: an invoice read is not checked again for this long.
 _FOUND: dict[str, float] = {}
 
+BRIEF_WAIT_MS = 200  # how long a page's bookkeeping (``Store.briefly``) may wait for another writer
+
 # Databases being restored in this process (``Store.restore_from``): the background workers (page reader, Azure
 # check) start nothing on them meanwhile (``Store.restoring``).
 _RESTORING: set[str] = set()
@@ -855,6 +857,19 @@ class StoreCore:
             if held.get(key) is not None and held[key].conn is conn:
                 del held[key]
             conn.close()
+
+    @contextmanager
+    def briefly(self) -> Iterator[None]:
+        """Every call on this database inside, in this thread, joins one transaction whose writes wait at most
+        BRIEF_WAIT_MS for another writer, else raise ``sqlite3.OperationalError`` and nothing of it is kept: the
+        bookkeeping of a page, which never holds it up (as a session's use, users.py ``_briefly``)."""
+        with self.session(), self._conn() as conn:
+            waits = conn.execute("PRAGMA busy_timeout").fetchone()[0]
+            conn.execute(f"PRAGMA busy_timeout = {BRIEF_WAIT_MS}")
+            try:
+                yield
+            finally:
+                conn.execute(f"PRAGMA busy_timeout = {int(waits)}")
 
     def _session_memo(
         self, key: tuple[Any, ...], compute: Callable[[], list[dict[str, Any]]], shared: bool = False

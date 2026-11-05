@@ -25,8 +25,10 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import sqlite3
 import threading
 from copy import copy
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
@@ -163,8 +165,8 @@ def unsaved_edits(request: Request) -> set[int]:
 
 def forget_draft(request: Request, invoice_id: int) -> None:
     """Drop the edits of the person asking (Start over)."""
+    get_store(request).drop_invoice_drafts(invoice_id, _person(person_key()))  # first: it may be left undone
     _drafts(request).pop(invoice_id, None)
-    get_store(request).drop_invoice_drafts(invoice_id, _person(person_key()))
 
 
 def forget_everyones_draft(request: Request, invoice_id: int) -> None:
@@ -225,8 +227,8 @@ def _keep_draft(request: Request, invoice_id: int, draft: view.Draft, keep: bool
             return  # nothing new to keep
         at = before["saved_at"] if same and before.get("saved_at") else dt.datetime.now().isoformat(timespec="minutes")
         kept = {**edits, "saved_at": at, **({"check": check} if check is not None else {})}
+        get_store(request).save_invoice_draft(invoice_id, _person(person_key()), kept)  # first: it may be left undone
         _drafts(request)[invoice_id] = kept
-        get_store(request).save_invoice_draft(invoice_id, _person(person_key()), kept)
     elif invoice_id in _drafts(request):
         forget_draft(request, invoice_id)
 
@@ -488,12 +490,6 @@ def _render_lines(reference: ReferenceData, draft: view.Draft, ai: dict[str, Any
     return str(mod.line_rows(view.grid(reference, draft, ai)))
 
 
-async def _posted(request: Request, inv: dict[str, Any]) -> tuple[Any, view.Draft]:
-    form = await posted_form(request)  # a long invoice posts thousands of fields (B-455)
-    base, _ = current_draft(request, inv)
-    return form, view.Draft.from_form(form, base)
-
-
 def _reference(store: Store) -> ReferenceData:
     reference = reference_or_none(store)
     if reference is None:
@@ -567,7 +563,8 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         context["lm_off"], context["banner"] = LM_STUDIO_OFF, ""
     page = render(
         request, "invoice.html", "review", mode="review", reading_status=status, **context,
-        draft=draft, kept=kept, live=_shown_live(request, analysis.live, may_edit), sure=sure,
+        draft=replace(draft, header={**draft.header, **analysis.filled}),  # as its check puts it: a date as YYYY-MM-DD
+        kept=kept, live=_shown_live(request, analysis.live, may_edit), sure=sure,
         grid={**view.grid(reference, draft, inv.get("ai_output") or {},
                           view.vendor_accounts(store, draft.header.get("vendor_name") or "")),
               "tax_marks": analysis.live.get("tax_marks") or {}},
@@ -585,9 +582,14 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         draft_from=_when(saved_at),
     )  # fmt: skip
     # What the screen's check did once it opened, a second request (the screen's own checks again, whose answer the
-    # page drew already): written once the page is drawn, so nothing it reads comes after.
+    # page drew already): written once the page is drawn, so nothing it reads comes after. Behind another writer it
+    # is left to the next open or check: the page never waits for it.
     if may_edit:
-        _keep_checked(request, store, invoice_id, draft, analysis)
+        try:
+            with store.briefly():
+                _keep_checked(request, store, invoice_id, draft, analysis)
+        except sqlite3.OperationalError:
+            pass
     return page
 
 
@@ -1131,24 +1133,25 @@ def teach(request: Request, invoice_id: int, field: str = Form(""), text: str = 
 
 
 # --- Changing the line grid -----------------------------------------------------------------------------------------
+# Each action's form is read on the event loop (a long invoice posts thousands of fields, B-455); the rest runs on a
+# threadpool thread (D-158), as the screen's Check does.
 
 
-async def _posted_in_review(request: Request, invoice_id: int) -> tuple[Store, dict[str, Any], ReferenceData, Any,
-                                                                       view.Draft]:  # fmt: skip
-    """A grid action's invoice (still in the review queue), the GL accounts, the form posted and its draft."""
+def _posted_in_review(request: Request, invoice_id: int,
+                      form: Any) -> tuple[Store, dict[str, Any], ReferenceData, view.Draft]:  # fmt: skip
+    """A grid action's invoice (still in the review queue), the GL accounts and the draft the form posted."""
     store = get_store(request)
     inv = _in_review(store, invoice_id)
     reference = _reference(store)
-    form, draft = await _posted(request, inv)
-    return store, inv, reference, form, draft
+    return store, inv, reference, _from_form(request, inv, form)
 
 
-async def _coded(request: Request, invoice_id: int) -> tuple[Store, dict[str, Any], ReferenceData, Any, view.Draft,
-                                                            InvoiceCoding]:  # fmt: skip
+def _coded(request: Request, invoice_id: int,
+           form: Any) -> tuple[Store, dict[str, Any], ReferenceData, view.Draft, InvoiceCoding]:  # fmt: skip
     """As ``_posted_in_review``, with the coding on screen (refused while a field keeps it from being built)."""
-    store, inv, reference, form, draft = await _posted_in_review(request, invoice_id)
+    store, inv, reference, draft = _posted_in_review(request, invoice_id, form)
     coding = _fix_first(view.analyse(store, get_settings(request), reference, inv, draft))
-    return store, inv, reference, form, draft, coding
+    return store, inv, reference, draft, coding
 
 
 def _new_lines(request: Request, invoice_id: int, reference: ReferenceData, draft: view.Draft,
@@ -1164,7 +1167,13 @@ def _new_lines(request: Request, invoice_id: int, reference: ReferenceData, draf
 async def split(request: Request, invoice_id: int) -> JSONResponse:
     """Split one line across several GL accounts / cost centers (shared costs), by percentage or, with
     ``split_by=amount``, by dollar amount (D-126)."""
-    _, _, reference, form, draft = await _posted_in_review(request, invoice_id)  # (approved meanwhile: B-1402)
+    form = await posted_form(request)
+    return await run_in_threadpool(_split, request, invoice_id, form)
+
+
+@one_connection
+def _split(request: Request, invoice_id: int, form: Any) -> JSONResponse:
+    _, _, reference, draft = _posted_in_review(request, invoice_id, form)  # (approved meanwhile: B-1402)
     number = view._line_number(form.get("split_line"))
     if number is None:
         return refuse("Pick the line to split.")
@@ -1188,7 +1197,13 @@ async def split(request: Request, invoice_id: int) -> JSONResponse:
 @router.post("/review/{invoice_id:int}/apply-rules")
 async def apply_rules(request: Request, invoice_id: int) -> JSONResponse:
     """Code the lines as the fixed coding rules say (e.g. a rule added after the invoice was processed)."""
-    store, inv, reference, _, draft, coding = await _coded(request, invoice_id)
+    form = await posted_form(request)
+    return await run_in_threadpool(_apply_rules, request, invoice_id, form)
+
+
+@one_connection
+def _apply_rules(request: Request, invoice_id: int, form: Any) -> JSONResponse:
+    store, inv, reference, draft, coding = _coded(request, invoice_id, form)
     lines, n = view.apply_rules(store, coding, draft, invoice_id, inv["ai_output"] or {})
     return _new_lines(request, invoice_id, reference, draft, lines,
                       f"Coding rules applied to {ui.plural(n, 'line')}.", "rule_settings")  # fmt: skip
@@ -1197,7 +1212,13 @@ async def apply_rules(request: Request, invoice_id: int) -> JSONResponse:
 @router.post("/review/{invoice_id:int}/po-coding")
 async def use_po_coding(request: Request, invoice_id: int) -> JSONResponse:
     """Set the GL account and cost center of the lines that differ from the purchase order to the PO's."""
-    store, _, reference, _, draft, coding = await _coded(request, invoice_id)
+    form = await posted_form(request)
+    return await run_in_threadpool(_use_po_coding, request, invoice_id, form)
+
+
+@one_connection
+def _use_po_coding(request: Request, invoice_id: int, form: Any) -> JSONResponse:
+    store, _, reference, draft, coding = _coded(request, invoice_id, form)
     lines, n = view.po_coding(store, coding, draft, invoice_id)
     return _new_lines(request, invoice_id, reference, draft, lines,
                       f"Applied the PO's coding to {ui.plural(n, 'line')}.", "auto_fix_high")  # fmt: skip
@@ -1206,7 +1227,13 @@ async def use_po_coding(request: Request, invoice_id: int) -> JSONResponse:
 @router.post("/review/{invoice_id:int}/suggestion")
 async def use_suggestion(request: Request, invoice_id: int) -> JSONResponse:
     """Code a line with a suggested GL account (one click, from past decisions and the account list)."""
-    _, _, reference, form, draft, coding = await _coded(request, invoice_id)
+    form = await posted_form(request)
+    return await run_in_threadpool(_use_suggestion, request, invoice_id, form)
+
+
+@one_connection
+def _use_suggestion(request: Request, invoice_id: int, form: Any) -> JSONResponse:
+    _, _, reference, draft, coding = _coded(request, invoice_id, form)
     gl = str(form.get("gl") or "")
     if reference.chart_of_accounts.get(gl) is None:
         return refuse("That GL account is not in your chart of accounts.")
@@ -1223,7 +1250,13 @@ async def use_suggestion(request: Request, invoice_id: int) -> JSONResponse:
 async def fill_lines(request: Request, invoice_id: int) -> JSONResponse:
     """Apply to all lines: one GL account and / or cost center for every line that has none yet (lines already
     coded keep theirs)."""
-    _, _, reference, form, draft = await _posted_in_review(request, invoice_id)
+    form = await posted_form(request)
+    return await run_in_threadpool(_fill_lines, request, invoice_id, form)
+
+
+@one_connection
+def _fill_lines(request: Request, invoice_id: int, form: Any) -> JSONResponse:
+    _, _, reference, draft = _posted_in_review(request, invoice_id, form)
     gl, cc = str(form.get("fill_gl") or "").strip(), str(form.get("fill_cc") or "").strip()
     if not gl and not cc:
         return refuse("Pick a GL account or a cost center to apply to the lines without one.")

@@ -23,7 +23,6 @@ from typing import Any
 
 from fastapi import File, Form, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
-from starlette.concurrency import run_in_threadpool
 
 from ap_coder.ai import page_reader
 from ap_coder.ai.extraction import SUPPORTED_EXTENSIONS, TEXT_EXTENSIONS
@@ -696,7 +695,10 @@ def still_being_saved(path: Path, now: float | None = None) -> bool:
         return True
 
 
-_LISTED: dict[str, tuple[tuple[Any, ...], list[dict[str, Any]]]] = {}  # ``folder_files`` by folder: (stamp, rows)
+# ``folder_files`` by folder: (stamp, rows, when worked out); kept LISTED_SECONDS at most (a file written over in
+# place changes no stamp)
+_LISTED: dict[str, tuple[tuple[Any, ...], list[dict[str, Any]], float]] = {}
+LISTED_SECONDS = 60.0
 
 
 def folder_files(store: Store) -> list[dict[str, Any]]:
@@ -704,14 +706,15 @@ def folder_files(store: Store) -> list[dict[str, Any]]:
     pick-up last read them: a page view reads none, it looks at their size and time (``Store.unseen_files``, D-155).
     The invoices folder keeps the processed files: reading every one on each view took 7 s at 100,000 invoices, and
     listing them still takes 2 to 4 s, so the list is worked out again only once the folder (a file added, removed or
-    renamed), what a pick-up read or the invoices changed."""
-    folder = invoice_dir(store)
+    renamed), what a pick-up read or the invoices changed, or a minute on (a scan written over another of its name).
+    Listed at the folder's resolved place, as the pick-up notes them (``read_file``)."""
+    folder = invoice_dir(store).resolve()
     try:
         stamp = (folder.stat().st_mtime_ns, store.files_stamp())
     except OSError:  # no invoices folder yet
         return []
     known = _LISTED.get(str(folder))
-    if known is not None and known[0] == stamp:
+    if known is not None and known[0] == stamp and time.monotonic() - known[2] < LISTED_SECONDS:
         return known[1]
     sizes: dict[Path, int] = {}
     listed = []
@@ -733,7 +736,7 @@ def folder_files(store: Store) -> list[dict[str, Any]]:
     if len(_LISTED) > 8:  # (a test's many data folders)
         _LISTED.clear()
     if time.time_ns() - stamp[0] > 2e9:  # a folder changed just now may change again within its time's precision
-        _LISTED[str(folder)] = (stamp, rows)
+        _LISTED[str(folder)] = (stamp, rows, time.monotonic())
     return rows
 
 
@@ -924,16 +927,17 @@ def _start_or_queue(request: Request, build: Callable[[], tuple[Any, int]], file
 
 
 @router.post("/process/upload")
-async def process_upload(request: Request, files: list[UploadFile] = File(...)) -> JSONResponse:  # noqa: B008
+def process_upload(request: Request, files: list[UploadFile] = File(...)) -> JSONResponse:  # noqa: B008
     """Save the uploaded files to the invoices folder, then read and code the new ones in the background. Each file
-    is read from its spool file (on disk past 1 MB) only when it is saved, one at a time: never all in memory."""
+    is read from its spool file (on disk past 1 MB) only when it is saved, one at a time: never all in memory. (A
+    plain function: FastAPI takes the upload in, then runs it on a threadpool thread, D-158.)"""
     if server_mode(request):
         who = person()
         refused, status = upload_refusal(who.user_id if who else None, len(files), sum(u.size or 0 for u in files),
                                          store=get_store(request))  # fmt: skip
         if refused:
             return refuse(refused, status=status)
-    return await run_in_threadpool(_save_and_start, request, files)
+    return _save_and_start(request, files)
 
 
 def _read_upload(upload: UploadFile) -> tuple[str, bytes | None]:

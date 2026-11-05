@@ -207,6 +207,9 @@ def test_an_export_batch_is_made_on_a_thread_never_on_the_workers_event_loop(sto
 class _Server:
     should_exit = False
 
+    def __init__(self) -> None:
+        self.config = SimpleNamespace(timeout_graceful_shutdown=server.GRACEFUL_SECONDS)
+
 
 def _recycle(tmp_path, monkeypatch, **limits):
     state = SimpleNamespace(jobs=Jobs(), daily_backup=SimpleNamespace(thread=None), import_queue=None)
@@ -246,6 +249,28 @@ def test_a_worker_ends_after_its_requests_once_nothing_of_its_own_would_end_with
     found.should_exit = False
     _serve(worker)
     assert not found.should_exit  # asked once
+
+
+def test_a_worker_ending_lets_its_requests_under_way_finish_however_long_they_take(tmp_path, monkeypatch):
+    """An import run whole in its request (the ERP register, the vendor master, the ERP history...) was cut with a 500
+    after uvicorn's grace (25 s) while its work went on, and a retry did it twice. A worker started afresh gives them
+    the time they need (an hour at most); a stop of the service still ends it at its deadline (``join_all``)."""
+    worker, _, found = _recycle(tmp_path, monkeypatch, max_requests=1)
+    _serve(worker)
+    assert found.should_exit and found.config.timeout_graceful_shutdown == server.RECYCLE_GRACE_SECONDS >= 3600
+
+
+def test_a_worker_due_whose_uvicorn_server_is_not_found_says_so_once(tmp_path, monkeypatch, caplog):
+    """Found through uvicorn's SIGTERM handler: a uvicorn that changes it, or a worker run another way, would never be
+    started afresh and said nothing. It is said in the server's log, once."""
+    import logging
+
+    worker, _, _ = _recycle(tmp_path, monkeypatch, max_requests=1)
+    monkeypatch.setattr(server, "uvicorn_server", lambda: None)
+    caplog.set_level(logging.WARNING)
+    _serve(worker, 3)
+    said = [r.getMessage() for r in caplog.records if "not found" in r.getMessage()]
+    assert len(said) == 1 and "is not started afresh" in said[0], caplog.text
 
 
 def test_a_worker_ending_takes_no_new_connection_and_stops_a_moment_later(tmp_path, monkeypatch):
@@ -314,6 +339,126 @@ def test_the_supervisor_does_not_ask_the_ending_worker_alive_and_replaces_it_onc
     ending.alive = False  # it has ended
     supervisor.keep_subprocess_alive()
     assert started == [99] and sorted(p.pid for p in supervisor.processes) == [12, 99]
+
+
+@pytest.mark.parametrize("what", ["job", "backup", "imports"])
+def test_a_worker_ending_waits_for_its_own_work_started_after_it_looked(store, monkeypatch, what):
+    """A request answered after ``Recycle`` looked (one on another thread, or in its DRAIN_SECONDS) may start a job, a
+    backup or queue an import: threads that end with the worker's process. Its lifespan waits for them once its
+    connections are closed (a service stop still ends it at the stop's deadline, ``join_all``); a laptop's doesn't."""
+    from ap_coder.web.pages.process import ImportQueue
+
+    def ending(processes: int) -> bool:
+        app = create_app(web_settings(), store, start_reader=False, background=processes == 1, processes=processes)
+        monkeypatch.setattr(app.state.daily_backup, "start", lambda: None)  # (a laptop's own backup at the start)
+        gate = threading.Event()
+        threading.Timer(0.6, gate.set).start()
+        if what == "job":
+            assert app.state.jobs.get("process").start(lambda job: gate.wait(10) and {})
+        elif what == "backup":
+            app.state.daily_backup.thread = threading.Thread(target=gate.wait, args=(10,), daemon=True)
+            app.state.daily_backup.thread.start()
+        else:
+            app.state.import_queue = ImportQueue()
+            app.state.import_queue.waiting.append((None, None, 1))
+            threading.Timer(0.6, app.state.import_queue.waiting.clear).start()
+
+        async def lifespan() -> None:
+            async with app.router.lifespan_context(app):
+                pass
+
+        asyncio.run(lifespan())
+        done = gate.is_set()
+        gate.set()
+        return done
+
+    assert ending(processes=2)  # one of the server's web workers: it waited for them
+    assert not ending(processes=1)  # the laptop stops as before
+
+
+def test_the_ending_workers_note_goes_once_it_ended_at_the_start_and_after_ten_minutes(tmp_path, monkeypatch):
+    """``.ap_coder_worker_restart.pid`` names the worker being started afresh, which the supervisor doesn't ask
+    "alive?". Left behind, it spared a later worker given the same process number (Windows gives them again) for
+    good: it goes once that worker has ended, at the server's start, and is believed for ten minutes at most."""
+    note = tmp_path / server.RECYCLE_PID
+
+    class Worker:
+        def __init__(self, pid):
+            self.pid, self.alive, self.exitcode = pid, True, 0
+            self.process = SimpleNamespace(is_alive=lambda: self.alive)
+
+        def is_alive(self, timeout=None):
+            return self.alive
+
+        def kill(self):
+            pass
+
+        def join(self, timeout=None):
+            pass
+
+    import uvicorn.supervisors.multiprocess as multiprocess
+
+    monkeypatch.setattr(multiprocess, "Process", lambda config, sockets: SimpleNamespace(pid=13, start=lambda: None))
+    monkeypatch.setenv(server.WORKER_ENV, json.dumps({"data": str(tmp_path), "token": "secret"}))
+    supervisor = server._supervisor_class().__new__(server._supervisor_class())
+    supervisor.should_exit, supervisor.sockets = threading.Event(), []
+    supervisor.config = SimpleNamespace(timeout_worker_healthcheck=30)
+    ending, other = Worker(11), Worker(12)
+    supervisor.processes = [ending, other]
+    note.write_text("11", encoding="ascii")
+    supervisor.keep_subprocess_alive()
+    assert note.exists()  # still ending
+    ending.alive = False  # it has ended (and is replaced)
+    supervisor.keep_subprocess_alive()
+    assert not note.exists() and sorted(p.pid for p in supervisor.processes) == [12, 13]
+    note.write_text("12", encoding="ascii")
+    assert server._leaving(tmp_path) == 12
+    old = time.time() - 11 * 60
+    os.utime(note, (old, old))
+    assert server._leaving(tmp_path) is None  # asked "alive?" again (it answers while it waits for its own work)
+
+    data = tmp_path / "data"
+    store = Store(data / "ap_coder.db")
+    (data / server.RECYCLE_PID).write_text(str(os.getpid()), encoding="ascii")  # left by the server's last run
+    seen = []
+
+    class Supervisor:
+        failed = False
+
+        def __init__(self, config, sockets):
+            self.should_exit = threading.Event()
+
+        def run(self):
+            seen.append((data / server.RECYCLE_PID).exists())
+            self.should_exit.set()
+
+    monkeypatch.setenv("AP_PRIVATE_DIR", str(data))
+    monkeypatch.setattr(server, "server_config", lambda *a, **k: SimpleNamespace(bind_socket=lambda: None))
+    monkeypatch.setattr(server, "Supervisor", Supervisor)
+    monkeypatch.setattr(server, "BackgroundWork", lambda db: SimpleNamespace(start=lambda: None, stop=lambda: None))
+    monkeypatch.setattr(server, "_announce_when_up", lambda *a: None)
+    assert server._serve_workers("127.0.0.1", 8599, store, None, None, None, True, 2) == 0
+    assert seen == [False]
+
+
+def test_the_uvicorn_asked_for_is_one_whose_supervisor_the_server_starts():
+    """The server builds uvicorn's supervisor without a target, as uvicorn 0.52 on does; pyproject and requirements.txt
+    asked for 0.30 on, so an older one already installed passed the setup and the server with several workers failed
+    as it started."""
+    import inspect
+    import re
+    import tomllib
+
+    from uvicorn.supervisors.multiprocess import Multiprocess
+
+    assert "target" not in inspect.signature(Multiprocess.__init__).parameters
+    root = Path(__file__).resolve().parents[2]
+    project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]["dependencies"]
+    (asked,) = [d for d in project if d.startswith("uvicorn")]
+    listed = [line.split("#")[0].strip() for line in (root / "requirements.txt").read_text("utf-8").splitlines()]
+    assert asked in listed
+    lowest = re.search(r">=(\d+)\.(\d+)", asked)
+    assert lowest and (int(lowest[1]), int(lowest[2])) >= (0, 52), asked
 
 
 def test_each_worker_ends_after_a_number_of_requests_of_its_own(tmp_path):

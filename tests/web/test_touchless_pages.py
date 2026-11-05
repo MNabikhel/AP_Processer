@@ -10,7 +10,7 @@ import pytest
 from ap_coder.core.store import Store, load_sample_setup
 from tests.capture.test_touchless import _ready
 from tests.web.test_web_invoice import form_of
-from tests.webclient import add_clean, follow, post
+from tests.webclient import PAGE, add_clean, follow, post
 
 
 @pytest.fixture
@@ -212,6 +212,24 @@ def test_every_vendors_record_at_once_is_each_ones_own(store, touchless):
     for r in old:
         old_counts[settings_automation.STATE_WORDS.get(r["state"], "Learning")] += 1
     assert settings_automation.supplier_counts(store) == old_counts
+
+
+def test_a_vendor_acted_on_past_the_first_ones_listed_stays_in_view(client, store, monkeypatch):
+    """Keep supervised, Allow again and Reset layout went back to Supplier learning's first vendors: one acted on after
+    "Show more" went out of view. They come back with as many vendors listed."""
+    from ap_coder.web.pages import learning
+
+    _vendors(store)
+    monkeypatch.setattr(learning, "SUPPLIERS_SHOWN", 4)
+    page = html.unescape(client.get("/learning?tab=suppliers&shown=8").text)
+    for action in ("hold", "allow", "reset-layout"):
+        form = re.findall(rf'<form method="post" action="/learning/suppliers/{action}".*?</form>', page, re.S)[-1]
+        key = re.search(r'name="key" value="([^"]+)"', form).group(1)
+        assert re.search(r'name="shown" value="8"', form), (action, form)
+        answer = client.post(f"/learning/suppliers/{action}", data={"key": key, "shown": "8"}, headers=PAGE)
+        assert answer.json()["redirect"].startswith("/learning?tab=suppliers&shown=8"), action
+    first = client.post("/learning/suppliers/allow", data={"key": "id:V2"}, headers=PAGE).json()["redirect"]
+    assert first.startswith("/learning?tab=suppliers") and "shown" not in first
 
 
 def test_supplier_learning_lists_the_first_vendors_and_shows_more(client, store, monkeypatch):

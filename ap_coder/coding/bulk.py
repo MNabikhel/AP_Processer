@@ -22,6 +22,7 @@ import os
 import sqlite3
 import threading
 import time
+from collections.abc import Callable
 from typing import Any
 
 from ..ai.pipeline import finalise_coding
@@ -179,6 +180,7 @@ RECHECK_LEASE = "queue-recheck"  # the lease (``Store.take_lease``) of the one p
 LEASE_SECONDS = 120.0  # a lease not renewed for this long was left by a process that stopped
 RECHECK_BATCH = 50  # invoices checked again, then kept in one short write
 RECHECK_WAIT = 300.0  # how long a laptop's queue waits for the re-check under way (its own background thread's)
+RECHECK_STOP_SECONDS = 5.0  # how long a stop waits for the background's re-check to end between two batches
 QUEUE_COLUMNS = "id, broken, q_audit, q_stamp, q_found, r_stamp, r_found, q_pick, q_pick_cc, q_pay"
 
 
@@ -241,11 +243,12 @@ def queue_checks(
 
 
 def recheck_queue(store: Store, settings: Settings | None = None, *, ids: list[int] | None = None,
-                  wait: float = 0.0) -> int | None:  # fmt: skip
+                  wait: float = 0.0, stopping: Callable[[], bool] | None = None) -> int | None:  # fmt: skip
     """Check again each invoice in review (only ``ids``' when given) whose checks were made against other settings
     than today's, as ``issues_today`` does, keeping each batch of ``RECHECK_BATCH`` in one short write. One process at
     a time: a lease in the database, waited for up to ``wait`` seconds. How many were checked; None when another
-    process held the lease all that time."""
+    process held the lease all that time. ``stopping``: True once AP Coder stops, which ends it between two batches
+    (the rest: the next start)."""
     owner = f"{os.getpid()}:{threading.get_ident()}"
     deadline = time.monotonic() + wait
     while not store.take_lease(RECHECK_LEASE, owner, LEASE_SECONDS):
@@ -254,12 +257,13 @@ def recheck_queue(store: Store, settings: Settings | None = None, *, ids: list[i
         time.sleep(0.2)
     try:
         with store.session():  # one connection for every invoice checked again
-            return _recheck_queue(store, settings or Settings(), ids, owner)
+            return _recheck_queue(store, settings or Settings(), ids, owner, stopping or (lambda: False))
     finally:
         store.drop_lease(RECHECK_LEASE, owner)
 
 
-def _recheck_queue(store: Store, settings: Settings, ids: list[int] | None, owner: str) -> int:
+def _recheck_queue(store: Store, settings: Settings, ids: list[int] | None, owner: str,
+                   stopping: Callable[[], bool]) -> int:  # fmt: skip
     done, stamp, tried = 0, "", set()
     while True:
         now = store.checks_stamp()
@@ -273,6 +277,8 @@ def _recheck_queue(store: Store, settings: Settings, ids: list[int] | None, owne
         except ValueError:  # no GL accounts any more: the stored checks stand
             return done
         for start in range(0, len(todo), RECHECK_BATCH):
+            if stopping():
+                return done
             if start and store.checks_stamp() != stamp:
                 break
             batch = todo[start : start + RECHECK_BATCH]
@@ -333,7 +339,7 @@ class QueueRecheck:
                     and store.stale_checks(store.checks_stamp())
                     and store.list_accounts("gl_accounts")
                 ):  # (no GL accounts: nothing is checked, the stored checks stand)
-                    recheck_queue(store, self.settings_factory())
+                    recheck_queue(store, self.settings_factory(), stopping=self.stopping.is_set)
             except Exception:  # noqa: BLE001 - never stop the dashboard
                 log.warning("the queue's re-check failed", exc_info=True)
 

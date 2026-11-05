@@ -251,10 +251,10 @@ the requests under way 25 seconds, then ends them: the service is stopped within
   waits more than 30 seconds for its turn says AP Coder is busy, to try again in a minute.
 - **A worker is started afresh** past its share of the memory (that 1.5 GB share, at least 2 GB; the variable
   `AP_WORKER_MAX_MB`, 0 for never) or after about 50,000 requests (a number of its own, so they don't all go
-  together; `AP_WORKER_MAX_REQUESTS`). It takes no new requests, finishes those under way, and a new one takes its
-  place within seconds; one worker at a time, and never while an import, a backup or a report of its own runs.
-  Nobody is signed out (logins are in the database). The service log says "A web worker (process N) is started
-  afresh after ...".
+  together; `AP_WORKER_MAX_REQUESTS`). It takes no new requests, finishes those under way and what they started (an
+  import, a backup), and a new one takes its place as it ends; one worker at a time, and never while an import, a
+  backup or a report of its own runs. Nobody is signed out (logins are in the database). The service log says "A web
+  worker (process N) is started afresh after ...".
 
 **Requests to LM Studio at once** (`--llm-parallel N`, `server.json` `"llm_parallel"`, or `AP_LLM_PARALLEL`;
 default 1): how many pages OvisOCR2 reads, and how many questions the chat model answers, at the same time, for all
