@@ -22,6 +22,10 @@ from ._base import (
 from .capture import capture_lookup
 from .summary import fetch_rows
 
+# An invoice's coding as approved, else as read (a blank one counts as none), for json_extract: no invoice's whole AI
+# output is parsed for a few fields.
+_DOC = "COALESCE(NULLIF(NULLIF(final_output, 'null'), '{}'), NULLIF(ai_output, 'null'), '{}')"
+
 
 def _distinct(first: dict[str, Any], row: dict[str, Any]) -> bool:
     """Whether two vendor master rows whose names read the same are two suppliers: each has its own ERP ID and its own
@@ -413,10 +417,22 @@ class VendorsMixin:
         per page while nothing changes (``_session_memo``): the vendor checks and the tax-number notes both ask."""
         return self._session_memo(("vendor_invoices", key), lambda: self._vendor_invoices(key))
 
+    def approved_numbers(self, keys: list[str]) -> dict[str, list[tuple[Any, Any]]]:
+        """{vendor key: [(the GST/HST number, the bank account) each approved invoice of it carried]}, for the vendors
+        ``keys`` (the vendors on hold: ``coding.vendors.held_vendor``), in one read; "" for one not carried."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                f"SELECT vendor_key, json_extract({_DOC}, '$.gst_hst_registration_number'), json_extract({_DOC}, "
+                "'$.remit_bank_account') FROM invoices WHERE vendor_key IN (SELECT value FROM json_each(?)) AND "
+                "status = 'approved' ORDER BY id DESC", (json.dumps(keys),)
+            ).fetchall()  # fmt: skip
+        out: dict[str, list[tuple[Any, Any]]] = {}
+        for key, gst, bank in rows:
+            out.setdefault(key, []).append((gst or "", bank or ""))
+        return out
+
     def _vendor_invoices(self, key: str) -> list[dict[str, Any]]:
-        # The coding as approved, else as read (a blank one counts as none), by json_extract: no invoice's whole AI
-        # output is parsed for five fields.
-        doc = "COALESCE(NULLIF(NULLIF(final_output, 'null'), '{}'), NULLIF(ai_output, 'null'), '{}')"
+        doc = _DOC
         fields = ", ".join(
             f"json_extract({doc}, '$.{field}') AS {name}"
             for field, name in (

@@ -452,8 +452,9 @@ def _document(store: Store, settings: Any, inv: dict[str, Any], status: Any, edi
 UNDONE = "undone right after approving"  # the reason an approval undone from its banner is reopened with
 
 
-def _sent_back(store: Store, invoice_id: int) -> dict[str, str] | None:
-    events = [e for e in store.events(invoice_id) if e["action"] in ("sent_back", "reopened", "approved", "rejected")]
+def _sent_back(events: list[dict[str, Any]]) -> dict[str, str] | None:
+    """Who sent the invoice back or reopened it, and why, from its events (``Store.events``, newest first)."""
+    events = [e for e in events if e["action"] in ("sent_back", "reopened", "approved", "rejected")]
     back = events[0] if events else None
     if not back or back["action"] not in ("sent_back", "reopened"):
         return None
@@ -539,15 +540,14 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
     }
     editable = inv["status"] == REVIEW and reference is not None
     may_edit = can(request, f"/review/{invoice_id}/check")  # server mode: Read-only looks and changes nothing (D-98)
-    context["manager"] = _manager_context(request, store, inv)
     capture = view.capture_of(store, invoice_id)  # read once: the document card and the checks use it
     context["doc"] = _document(store, settings, inv, status, editable and may_edit, capture)
     if not editable:
         mode = _mode(inv)
         if mode in ("approved", "pending", "rejected", "parked"):  # nothing left to read: no reading tools' warning
             context["banner"] = ""
-        return render(request, "invoice.html", "review", mode=mode, **context,
-                      **_closed(store, reference, inv))  # fmt: skip
+        return render(request, "invoice.html", "review", mode=mode, reading_status=status, **context,
+                      manager=_manager_context(request, store, inv), **_closed(store, reference, inv))  # fmt: skip
     saved_at = str((_drafts(request).get(invoice_id) or {}).get("saved_at") or "")  # edits kept from before
     draft, kept = current_draft(request, inv)
     analysis = view.analyse(store, settings, reference, inv, draft, reviewer(), capture=capture)
@@ -566,7 +566,7 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
     if lm_studio_off(status):  # one short note in the top row: the queue's banner says the rest (B-467)
         context["lm_off"], context["banner"] = LM_STUDIO_OFF, ""
     return render(
-        request, "invoice.html", "review", mode="review", **context,
+        request, "invoice.html", "review", mode="review", reading_status=status, **context,
         draft=draft, kept=kept, live=_shown_live(request, analysis.live, may_edit), sure=sure,
         grid={**view.grid(reference, draft, inv.get("ai_output") or {},
                           view.vendor_accounts(store, draft.header.get("vendor_name") or "")),
@@ -574,7 +574,7 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         labels=view.FIELD_LABELS, provinces=view.province_options(),
         due_placeholder=f"{computed.isoformat()} (from terms)" if computed else
         "None: a credit is not paid" if float(start.get("grand_total") or 0) < 0 else "YYYY-MM-DD",
-        sent_back=_sent_back(store, invoice_id), poll_seconds=PAGE_READER_POLL_SECONDS,
+        sent_back=_sent_back(events), poll_seconds=PAGE_READER_POLL_SECONDS,
         today=dt.date.today().isoformat(), taught_json=draft.taught, vendors=vendor_options(store),
         absent_ok=list(view.ABSENT_FIELDS), from_vendor_note=view.FROM_VENDOR_NOTE,
         tax_fields=list(view.TAX_NUMBER_FIELDS), pay_from=view.pay_from_choices(store, draft.header),

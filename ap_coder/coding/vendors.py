@@ -488,11 +488,13 @@ _HOLD_WORDS = {"hold", "on hold", "on_hold", "blocked", "inactive", "suspended",
                "bloqué", "bloque", "inactif", "suspendu"}  # fmt: skip
 
 
-def held_vendor(store: Store, name: Any, gst: Any = None, bank: Any = None) -> tuple[dict[str, Any], str] | None:
+def held_vendor(store: Store, name: Any, gst: Any = None, bank: Any = None,
+                held: list[dict[str, Any]] | None = None) -> tuple[dict[str, Any], str] | None:  # fmt: skip
     """The vendor on hold behind an invoice's details, and what ties it: its name ("name"), its GST/HST number given
     the vendor or printed on its approved invoices ("gst"), or the bank account its approved invoices were paid to or
-    JD Edwards pays it on ("bank", ``erp_bank``: B-1555). None when no vendor on hold is behind them (B-1549)."""
-    held = store.held_vendors()
+    JD Edwards pays it on ("bank", ``erp_bank``: B-1555). None when no vendor on hold is behind them (B-1549).
+    ``held``: the vendors on hold (``Store.held_vendors``), when the caller has them."""
+    held = store.held_vendors() if held is None else held
     if not held:
         return None
     key = store.vendor_key_for(name, gst) if name else ""
@@ -500,14 +502,17 @@ def held_vendor(store: Store, name: Any, gst: Any = None, bank: Any = None) -> t
     if found:
         return found, "name"
     real = sum(c.isdigit() for c in norm_tax_number(gst)) >= 9  # a Business Number, not "N/A" or "pending"
+    if not real and not bank_digits(bank)[0]:
+        return None
+    # what each held vendor's approved invoices carried, read in one go (not one read per vendor on hold)
+    numbers = store.approved_numbers([v["vendor_key"] for v in held])
     for v in held:
-        approved = [h for h in store.vendor_invoices(v["vendor_key"]) if h["status"] == "approved"]
-        if real and any(same_tax_number(n, gst) for n in [v.get("expected_gst"), *(h["gst_hst_number"] for h in
-                                                                                  approved)]):  # fmt: skip
+        approved = numbers.get(v["vendor_key"]) or []
+        if real and any(same_tax_number(n, gst) for n in [v.get("expected_gst"), *(n for n, _ in approved)]):
             return v, "gst"
         if bank_digits(bank)[0] and (
             _jde_pays_on(v.get("erp_bank"), bank)
-            or any(same_bank_account(bank, h["bank_account"]) for h in approved if bank_digits(h["bank_account"])[0])
+            or any(same_bank_account(bank, b) for _, b in approved if bank_digits(b)[0])
         ):
             return v, "bank"
     return None
@@ -517,10 +522,13 @@ def moved_off_hold(store: Store, read: dict[str, Any], coding: InvoiceCoding) ->
     """VENDOR_CHANGED_FROM_HELD (error, approved only by an Approver or an Admin, D-142): the invoice is a held vendor's
     by its vendor as read, or by the GST/HST number or bank account read or on screen, but is coded to another vendor.
     A Clerk could otherwise move a held vendor's invoice onto a vendor not on hold and approve it (B-1549)."""
+    held = store.held_vendors()  # read once for both ways of tying it
+    if not held:
+        return []
     key = store.vendor_key_for(coding.vendor_name, coding.gst_hst_registration_number)
     for details in ((read.get("vendor_name"), read.get("gst_hst_registration_number"), read.get("remit_bank_account")),
                     (None, coding.gst_hst_registration_number, coding.remit_bank_account)):  # fmt: skip
-        found = held_vendor(store, *details)
+        found = held_vendor(store, *details, held=held)
         if found and found[0]["vendor_key"] != key:
             vendor, tie = found
             name = vendor.get("display_name") or vendor["vendor_key"]
