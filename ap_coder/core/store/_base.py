@@ -49,10 +49,12 @@ _INDEXES_20 = (
 )
 # Schema 24's indexes (D-156): the events of a period counted (Activity's last 7 days, the controls report) and the
 # people the events are by (Activity's Person filter, an event by one person), each read off the index alone, not the
-# events table (400,000 events at 100,000 invoices).
+# events table (400,000 events at 100,000 invoices); the ERP register's invoices of some numbers (the JD Edwards
+# duplicate check of a batch), not the whole register (200,000 rows).
 _INDEXES_24 = (
     "CREATE INDEX IF NOT EXISTS events_created ON events (created_at, action)",
     "CREATE INDEX IF NOT EXISTS events_actor ON events (actor)",
+    "CREATE INDEX IF NOT EXISTS erp_invoices_number ON erp_invoices (number_key)",
 )
 # The one-off clean-ups of the learning memory ``_migrate`` has run on a database (settings.feedback_cleanup): a new
 # clean-up added there changes it, so it runs once on every database.
