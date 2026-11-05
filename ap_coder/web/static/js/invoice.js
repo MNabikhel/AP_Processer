@@ -161,9 +161,11 @@ let lastCheckOk = false; // the last check answered (its edits are kept as a dra
 let lastDraft = false; // the last check kept the edits as a draft
 let edited = false; // an edit made on this page (the opening check keeps nothing new)
 
+/** The time now as the server says a draft's (invoice.py ``_when``): "12:37 a.m.", never "0:37" (B-1596). */
 function clock() {
   const d = new Date();
-  return `${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`;
+  const h = d.getHours();
+  return `${h % 12 || 12}:${String(d.getMinutes()).padStart(2, "0")} ${h < 12 ? "a.m." : "p.m."}`;
 }
 
 function soon(ms = 450) {
