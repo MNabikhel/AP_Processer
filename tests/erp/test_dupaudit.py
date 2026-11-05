@@ -159,3 +159,109 @@ def test_a_register_listing_a_bill_once_per_gl_line_is_not_a_bill_entered_three_
     assert store.erp_register_repeats() == 0 and dupaudit.find(store) == []
     store.import_erp_register([line, dict(line), dict(line, invoice_date="2026-02-05")])  # keyed again a month later
     assert store.erp_register_repeats() == 1 and "entered 2 times" in dupaudit.find(store)[0].first.label
+
+
+# --- The audit as it was (D-157): every pair of a group compared ------------------------------------------------------
+
+
+def _old_find(all_bills):
+    """``dupaudit.find`` as it was, on these bills: every pair of bills of a vendor and amount compared."""
+    from collections import defaultdict
+    from itertools import combinations
+
+    from ap_coder.erp import dupaudit as d
+
+    EXACT, NUMBER_TYPO, OTHER_VENDOR, SAME_AMOUNT = d.EXACT, d.NUMBER_TYPO, d.OTHER_VENDOR, d.SAME_AMOUNT
+    SAME_AMOUNT_DAYS, TYPO_DAYS, Pair = d.SAME_AMOUNT_DAYS, d.TYPO_DAYS, d.Pair
+    _days, _same_bill, one_keystroke = d._days, d._same_bill, d.one_keystroke
+    pairs = {}
+
+    def add(reason, a, b):
+        if _same_bill(a, b):
+            return
+        first, second = sorted((a, b), key=lambda x: (x.date, x.source, x.invoice_id or 0, x.number))
+        if (first, second) not in pairs:
+            pairs[(first, second)] = Pair(reason, first, second)
+
+    by_vendor_amount, by_number_amount = defaultdict(list), defaultdict(list)
+    for bill in all_bills:
+        if bill.vendor_key:
+            by_vendor_amount[(bill.vendor_key, bill.total)].append(bill)
+        if bill.number_key:
+            by_number_amount[(bill.number_key, bill.total)].append(bill)
+    for bill in all_bills:
+        if bill.copies > 1:
+            add(EXACT, bill, bill)
+    for group in by_vendor_amount.values():
+        for a, b in combinations(group, 2):
+            if a.number_key and a.number_key == b.number_key:
+                add(EXACT, a, b)
+            elif one_keystroke(a.number_key, b.number_key):
+                days = _days(a.date, b.date)
+                if days is None or days <= TYPO_DAYS:
+                    add(NUMBER_TYPO, a, b)
+    for group in by_number_amount.values():
+        for a, b in combinations(group, 2):
+            if a.vendor_key != b.vendor_key:
+                add(OTHER_VENDOR, a, b)
+    for group in by_vendor_amount.values():
+        for a, b in combinations(group, 2):
+            days = _days(a.date, b.date)
+            if days is not None and days <= SAME_AMOUNT_DAYS and a.number_key != b.number_key:
+                add(SAME_AMOUNT, a, b)
+    order = {EXACT: 0, OTHER_VENDOR: 1, NUMBER_TYPO: 2, SAME_AMOUNT: 3}
+    return sorted(pairs.values(), key=lambda p: (order[p.reason], -p.amount))
+
+
+def _made_up_bills(seed: int) -> list:
+    """Bills of a few vendors and amounts with numbers alike (in a row, one keystroke apart, the same, short, none),
+    dates close together, far apart, missing or unreadable, from AP Coder (some exported) and the ERP (some twice)."""
+    import random
+
+    from ap_coder.coding.vendors import norm_invoice_number
+
+    rng = random.Random(seed)
+    numbers = [f"{10000 + n}" for n in range(40)] + ["10482", "10428", "1048", "inv5531", "inv5531a", "12", "13", ""]
+    numbers += [n[:2] + n[3] + n[2] + n[4:] for n in numbers[:10]] + ["A-1001", "A-1010", "A1001", "#10003"]
+    dates = [f"2026-0{m}-{d:02d}" for m in (1, 2) for d in range(1, 29, 3)]
+    dates += ["", "2026/1/5 0:00", "31/31/2026", "05/06/2026", "2026-02-30"]
+    out = []
+    for n in range(420):
+        vendor = rng.choice(["acme", "acme supplies", "maple leasing", "bell", ""])
+        number = rng.choice(numbers)
+        erp = rng.random() < 0.4
+        out.append(dupaudit.Bill("ERP" if erp else "AP Coder", None if erp else n + 1, vendor, vendor.title(), number,
+                                 norm_invoice_number(number), rng.choice(dates), rng.choice([100.0, 250.5, 99.99]),
+                                 exported=not erp and rng.random() < 0.3,
+                                 copies=rng.choice([1, 1, 1, 2, 3]) if erp else 1))  # fmt: skip
+    return out
+
+
+@pytest.mark.parametrize("seed", [1, 2, 3])
+def test_the_audit_finds_what_comparing_every_pair_found(monkeypatch, seed):
+    """Only the pairs of a group that can be one are looked at (D-157): the same pairs, reasons and order."""
+    made_up = _made_up_bills(seed)
+    monkeypatch.setattr(dupaudit, "bills", lambda store: made_up)
+    found = dupaudit.find(None)
+    assert found == _old_find(made_up) and len(found) > 100
+    assert {p.reason for p in found} == set(dupaudit.REASONS)
+
+
+def test_the_bills_read_out_by_sqlite_are_the_codings_own(tmp_path, monkeypatch):
+    """The fields SQLite reads out of each approved coding (``->``) are what reading the whole coding gave: amounts
+    to the last digit, numbers written as numbers, missing or empty fields; credit notes and the queue left out."""
+    import sqlite3
+
+    store = Store(tmp_path / "d.db")
+    _approve(store, tmp_path)
+    _approve(store, tmp_path, invoice_number=104182, grand_total=0.1 + 0.2, currency=None)
+    _approve(store, tmp_path, invoice_number="X-1", grand_total="12.50", invoice_date=None)
+    _approve(store, tmp_path, invoice_number="X-2", grand_total=1e-7, vendor_name="Énergir S.E.C.")
+    _approve(store, tmp_path, invoice_number="X-3", grand_total=123456789.12345679)
+    _approve(store, tmp_path, invoice_number="CR-1", grand_total=-5.0)
+    store.add_invoice(tmp_path / "queue.pdf", {"vendor_name": "Queue", "invoice_number": "Q", "grand_total": 9.0}, {})
+    store.import_erp_register([{"vendor_name": "Acme", "invoice_number": "E-1", "total": 7.25},
+                               {"vendor_name": "Acme", "invoice_number": "E-2", "total": -7.25}])  # fmt: skip
+    read_out = dupaudit.bills(store)
+    monkeypatch.setattr(sqlite3, "sqlite_version_info", (3, 37, 2))  # an older SQLite: each coding read whole
+    assert dupaudit.bills(store) == read_out and len(read_out) == 6

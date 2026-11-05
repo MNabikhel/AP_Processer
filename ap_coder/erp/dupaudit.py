@@ -21,9 +21,13 @@ from __future__ import annotations
 import csv
 import datetime as dt
 import io
+import json
+import sqlite3
 from collections import defaultdict
+from collections.abc import Iterator
 from dataclasses import dataclass
 from itertools import combinations
+from typing import Any
 
 from ..coding.vendors import norm_invoice_number
 from ..core.csvio import parse_date
@@ -104,23 +108,38 @@ def _days(a: str, b: str) -> int | None:
     return abs((first - second).days) if first and second else None
 
 
+_FIELDS = ("vendor_name", "invoice_number", "invoice_date", "currency", "grand_total")
+
+
+def _approved(store: Store) -> Iterator[tuple[int, Any, dict[str, Any]]]:
+    """(id, export batch, the coding's fields the audit reads) of each invoice approved or waiting for a second
+    approval, oldest first. With SQLite 3.38 or later, SQLite reads out those fields (their JSON as stored, so an
+    amount reads back exactly as from the whole coding) instead of every coding being read and decoded (D-157)."""
+    if sqlite3.sqlite_version_info < (3, 38):  # no ``->``
+        for r in store.invoice_columns(("id", "status", "export_batch", "final_output")):
+            if r["status"] in (APPROVED, PENDING) and r["final_output"]:
+                yield r["id"], r["export_batch"], r["final_output"]
+        return
+    fields = ", ".join(f"final_output -> '$.{name}'" for name in _FIELDS)
+    for r in store.summary_fetch(  # (any query, its rows read in one go)
+        f"SELECT id, export_batch, json_array({fields}) AS doc FROM invoices WHERE status IN (?, ?) "
+        "AND COALESCE(final_output, '') != '' ORDER BY id", (APPROVED, PENDING)
+    ):  # fmt: skip
+        yield r["id"], r["export_batch"], dict(zip(_FIELDS, json.loads(r["doc"]), strict=True))
+
+
 def bills(store: Store) -> list[Bill]:
     out = []
-    for r in store.invoice_columns(("id", "status", "export_batch", "final_output")):
-        if r["status"] not in (APPROVED, PENDING) or not r["final_output"]:
-            continue
-        doc = r["final_output"]
+    for invoice_id, batch, doc in _approved(store):
         total = float(doc.get("grand_total") or 0)
         if total <= 0:
             continue
         name = str(doc.get("vendor_name") or "")
         number = str(doc.get("invoice_number") or "")
         date, currency = str(doc.get("invoice_date") or ""), str(doc.get("currency") or "")
-        out.append(Bill("AP Coder", r["id"], vendor_key(name), name, number, norm_invoice_number(number), date,
-                        round(total, 2), currency, bool(r["export_batch"])))  # fmt: skip
-    for r in store.erp_register():
-        if (r["total"] or 0) <= 0:
-            continue
+        out.append(Bill("AP Coder", invoice_id, vendor_key(name), name, number, norm_invoice_number(number), date,
+                        round(total, 2), currency, bool(batch)))  # fmt: skip
+    for r in store.erp_register_rows("total > 0"):
         out.append(Bill("ERP", None, r["vendor_key"], r["vendor_name"], r["invoice_number"], r["number_key"],
                         r["invoice_date"] or "", round(r["total"], 2), copies=int(r.get("copies") or 1)))  # fmt: skip
     return out
@@ -134,6 +153,49 @@ def _same_bill(a: Bill, b: Bill) -> bool:
         return False
     ours = a if a.source == "AP Coder" else b
     return ours.exported and (a.vendor_key == b.vendor_key or a.total == b.total)
+
+
+def _number_pairs(group: list[Bill]) -> list[tuple[int, int]]:
+    """The pairs (i, j), i < j, in order, of ``group``'s bills with the same invoice number or with numbers one
+    keystroke apart. Two numbers one keystroke apart share one of the numbers left once a character is taken out
+    (a character changed: the same one out of both; swapped: one of the two; added: the longer one less it), so
+    only the numbers that share one are compared."""
+    at: dict[str, list[int]] = defaultdict(list)
+    for i, bill in enumerate(group):
+        if bill.number_key:
+            at[bill.number_key].append(i)
+    found = {pair for places in at.values() for pair in combinations(places, 2)}
+    sharing: dict[str, list[str]] = defaultdict(list)
+    for key in at:
+        if len(key) >= MIN_TYPO_LENGTH:
+            for less in {key, *(key[:n] + key[n + 1 :] for n in range(len(key)))}:
+                sharing[less].append(key)
+    near = {tuple(sorted(keys)) for same in sharing.values() for keys in combinations(same, 2)}
+    for a, b in near:
+        if one_keystroke(a, b):
+            found |= {(min(i, j), max(i, j)) for i in at[a] for j in at[b]}
+    return sorted(found)
+
+
+def _other_vendor_pairs(group: list[Bill]) -> list[tuple[int, int]]:
+    """The pairs (i, j), i < j, in order, of ``group``'s bills under two vendors."""
+    by_vendor: dict[str, list[int]] = defaultdict(list)
+    for i, bill in enumerate(group):
+        by_vendor[bill.vendor_key].append(i)
+    return sorted((min(i, j), max(i, j)) for one, other in combinations(by_vendor.values(), 2) for i in one
+                  for j in other)  # fmt: skip
+
+
+def _close_pairs(group: list[Bill], dated: dict[str, dt.date | None], most: int) -> list[tuple[int, int]]:
+    """The pairs (i, j), i < j, in order, of ``group``'s dated bills at most ``most`` days apart (by date, each
+    with the ones just before it)."""
+    known = sorted((day, i) for i, bill in enumerate(group) if (day := dated[bill.date]))
+    found, start = [], 0
+    for n, (day, i) in enumerate(known):
+        while (day - known[start][0]).days > most:
+            start += 1
+        found += [(min(i, j), max(i, j)) for _, j in known[start:n]]
+    return sorted(found)
 
 
 def find(store: Store) -> list[Pair]:
@@ -155,27 +217,32 @@ def find(store: Store) -> list[Pair]:
             by_vendor_amount[(bill.vendor_key, bill.total)].append(bill)
         if bill.number_key:
             by_number_amount[(bill.number_key, bill.total)].append(bill)
+    dated = {text: _date(text) for text in {bill.date for bill in all_bills}}  # each date read once
 
+    def days(a: Bill, b: Bill) -> int | None:
+        first, second = dated[a.date], dated[b.date]
+        return abs((first - second).days) if first and second else None
+
+    # Each group's pairs that can be one, in the order ``combinations`` gives every pair (a pair keeps the first
+    # reason found, and the list keeps that order among equals): a vendor's many bills of one amount are not
+    # compared each with each (D-157).
     for bill in all_bills:
         if bill.copies > 1:  # the same bill entered more than once in the ERP: one register row, paired with itself
             add(EXACT, bill, bill)
     for group in by_vendor_amount.values():
-        for a, b in combinations(group, 2):
-            if a.number_key and a.number_key == b.number_key:
+        for i, j in _number_pairs(group):
+            a, b = group[i], group[j]
+            if a.number_key == b.number_key:
                 add(EXACT, a, b)
-            elif one_keystroke(a.number_key, b.number_key):
-                days = _days(a.date, b.date)
-                if days is None or days <= TYPO_DAYS:  # monthly bills numbered 1001, 1002... are not typos
-                    add(NUMBER_TYPO, a, b)
+            elif (apart := days(a, b)) is None or apart <= TYPO_DAYS:  # monthly bills 1001, 1002... are not typos
+                add(NUMBER_TYPO, a, b)
     for group in by_number_amount.values():
-        for a, b in combinations(group, 2):
-            if a.vendor_key != b.vendor_key:
-                add(OTHER_VENDOR, a, b)
+        for i, j in _other_vendor_pairs(group):
+            add(OTHER_VENDOR, group[i], group[j])
     for group in by_vendor_amount.values():
-        for a, b in combinations(group, 2):
-            days = _days(a.date, b.date)
-            if days is not None and days <= SAME_AMOUNT_DAYS and a.number_key != b.number_key:
-                add(SAME_AMOUNT, a, b)
+        for i, j in _close_pairs(group, dated, SAME_AMOUNT_DAYS):
+            if group[i].number_key != group[j].number_key:
+                add(SAME_AMOUNT, group[i], group[j])
     order = {EXACT: 0, OTHER_VENDOR: 1, NUMBER_TYPO: 2, SAME_AMOUNT: 3}
     return sorted(pairs.values(), key=lambda p: (order[p.reason], -p.amount))
 
