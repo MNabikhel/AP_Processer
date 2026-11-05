@@ -189,6 +189,24 @@ def test_finding_an_invoices_vendor_seeks_its_name_in_the_vendor_list_and_picks_
     assert plans and all("SCAN" not in plan and "USING INDEX" in plan for plan in plans), plans
 
 
+def test_a_vendors_invoices_without_a_po_are_read_from_the_vendors_invoices_not_from_every_one_without_a_po(
+    tmp_path, monkeypatch
+):
+    """B-1583: the month end's accruals read, for each vendor with an open PO received, its invoices that quote no PO
+    through the PO's index, where "no PO" is nearly every invoice (89%): the whole table, vendor after vendor."""
+    from tests.webclient import add_clean
+
+    store = Store(tmp_path / "ap.db")
+    kept = [add_clean(store, invoice_number="N-1", po_number=""), add_clean(store, invoice_number="N-2", po_number="")]
+    add_clean(store, invoice_number="N-3")  # quotes a PO (the sample's)
+    store.reject_invoice(add_clean(store, invoice_number="N-4", po_number=""), "Ann", "not ours")  # no longer active
+    add_clean(store, invoice_number="N-5", po_number="", vendor_name="Another Vendor Inc")
+    key = store.get_invoice(kept[0])["vendor_key"]
+    assert [i["id"] for i in store.vendor_invoices_without_po(key)] == kept
+    (plan,) = _plans(store, monkeypatch, lambda: store.vendor_invoices_without_po(key), "invoices", "po_key")
+    assert "invoices_vendor" in plan and "SCAN" not in plan and "invoices_po" not in plan, plan
+
+
 def test_one_vendors_history_is_read_once_per_page(tmp_path, monkeypatch):
     """vendor_findings and expected_tax_numbers each read every invoice of the vendor, with its whole AI output and
     final coding parsed for five fields: now read once while nothing changes (inside a session), by json_extract."""
