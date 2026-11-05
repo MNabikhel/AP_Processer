@@ -787,13 +787,16 @@ def _closed(store: Store, reference: ReferenceData | None, inv: dict[str, Any]) 
 @router.get("/review/{invoice_id:int}/page/{number:int}.png")
 def page_picture(request: Request, invoice_id: int, number: int, scale: str = "1") -> Response:
     """The page as a picture; ``?scale=2`` or ``3`` draws it at 2 or 3 times the dpi for a page zoomed in (anything else
-    is 1). The scale is in the address, so the browser keeps each one apart."""
-    inv = _invoice(get_store(request), invoice_id)
+    is 1). The scale is in the address, so the browser keeps each one apart. On the company server the pictures are
+    drawn once for all its web workers, in the data folder's ``.cache/pages`` (D-160)."""
+    store = get_store(request)
+    inv = _invoice(store, invoice_id)
     if not Path(inv.get("source_path") or "").is_file():
         gone = shown_path(inv.get("source_path"))  # its name alone to a colleague on another computer (B-979)
         raise HTTPException(status_code=404, detail=f"This invoice's file is no longer at {gone}.")
+    kept_in = store.path.parent / ".cache" / "pages" if server_mode(request) else None
     try:
-        png = document.page_png(inv["source_path"], number, document.clean_scale(scale))
+        png = document.page_png(inv["source_path"], number, document.clean_scale(scale), kept_in)
     except (IndexError, OSError) as exc:
         raise HTTPException(status_code=404, detail="That page is not in the invoice's file.") from exc
     except Exception as exc:  # noqa: BLE001 - a damaged file: said plainly
