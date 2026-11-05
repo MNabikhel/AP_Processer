@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
-from ..core.config import _on_this_network
+from ..core.config import COMPANY_DOMAINS_ENV, _address, _company_domain, _on_this_network
 
 if TYPE_CHECKING:
     from ..core.config import LocalLLMSettings, Settings
@@ -110,6 +110,11 @@ def refused_address(url: str) -> str:
     if _on_this_network(host) or internet_allowed():
         return ""
     name = host.rsplit("@", 1)[-1]
+    hostname = (urlparse(url).hostname or "").lower()
+    if _address(hostname) is None and not _company_domain(hostname):  # a name, outside the company's DNS domains
+        return (f"{name} is on another network: this offline build does not contact it. To use a model server named "
+                f"in the company's network, add its domain to {COMPANY_DOMAINS_ENV} in the .env file "
+                f"({INTERNET_ENV}=1, for developers, allows any server)")  # fmt: skip
     return (f"{name} is not on this computer or the office network: this offline build does not contact it "
             f"({INTERNET_ENV}=1 allows it)")  # fmt: skip
 
@@ -337,6 +342,8 @@ def check_server(llm: LocalLLMSettings, *, timeout: float = DETECT_TIMEOUT, use_
             status.loaded, seeing = listing
         status.model = pick_model(llm.model, ids, status.loaded, lm_studio=status.lm_studio)
         status.vision = status.model in seeing if status.lm_studio else looks_like_vision(status.model)
+    except PermissionError as exc:  # the offline build's refusal (refused_address): whole, it says what to set
+        status.error = str(exc)
     except (OSError, ValueError, AttributeError, TypeError) as exc:
         status.error = _short_error(exc)
     with _lock:
