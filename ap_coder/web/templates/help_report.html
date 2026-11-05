@@ -38,8 +38,8 @@
   <section class="card">
     <div class="card-head"><div>
       <h4><span class="ms" aria-hidden="true">summarize</span> 3. The activity summary</h4>
-      <p class="muted">How many invoices were read and how often the AI was right: no vendor names, amounts or file
-        names.</p></div>
+      <p class="muted">How many invoices were read and how often the AI was right, over the latest
+        {{ report_invoices }} at most: no vendor names, amounts or file names.</p></div>
       {% if activity %}<button type="button" class="btn" data-copy-from="activity-report"><span class="ms" aria-hidden="true">content_copy</span>Copy</button>{% endif %}
     </div>
     {% if activity %}

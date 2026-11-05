@@ -504,7 +504,8 @@ def triage_log(folder: Path, limit: int = 500, keep: Callable[[dict], bool] | No
 def emails_in(folder: Path) -> list[Path]:
     if not folder.is_dir():
         return []
-    return sorted(p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in EMAIL_EXTENSIONS)
+    # the name first: whether it is a file is asked of the saved emails only, not of a year of invoices (D-157)
+    return sorted(p for p in folder.iterdir() if p.suffix.lower() in EMAIL_EXTENSIONS and p.is_file())
 
 
 def unpack_folder(folder: Path, now: float | None = None) -> list[Unpacked]:

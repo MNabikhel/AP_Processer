@@ -6,6 +6,7 @@ foreign currency, meals and a PST to self-assess."""
 
 import datetime as dt
 import json
+import re
 import sqlite3
 from dataclasses import asdict
 
@@ -164,6 +165,44 @@ def test_spend_gives_what_it_gave(year):
             )
 
 
+def test_the_spend_page_shows_what_it_showed(year, tmp_path):
+    """D-156: the Spend page's figures summed by SQLite, not every cost line of the period made a Python object: the
+    page as it was (``tests/reports_reference.py``), word for word, in each currency and all in CAD, over each period,
+    with a rate that makes conversions land on half a cent, and with dates it can't read or backwards."""
+    from tests import reports_reference as old
+    from tests.webclient import client_for
+
+    def shown(address: str) -> str:  # each chart's id numbered as the first of the page
+        page = client.get(address).text.replace("/old-spend", "/spend")
+        return re.sub(r"(apc-chart-[a-z0-9-]+?)-\d+-", r"\1-0-", page)
+
+    client = client_for(year)
+    client.app.add_api_route("/old-spend", old.spend_page)
+    year.set_setting("fx_rates", "USD=1.25")  # a line of 0.75 USD is 0.9375 CAD
+    usd = next(d for d in _docs() if d["currency"] == "USD")  # one more in USD, approved: the year's may wait
+    invoice_id, output = _add(year, tmp_path, "usd", {**usd, "invoice_number": "USD-9", "invoice_date": "2026-02-10"})
+    year.approve_invoice(invoice_id, output, "Jordan Lee")
+    periods = [*PERIODS, (dt.date(2026, 9, 1), dt.date(2026, 1, 1)), (dt.date(2030, 1, 1), dt.date(2030, 2, 1))]
+    for start, end in periods:
+        for currency in ("", "All, in CAD", "CAD", "USD", "EUR"):
+            query = f"?start={start}&end={end}&currency={currency}"
+            assert shown(f"/spend{query}") == shown(f"/old-spend{query}"), query
+    assert shown("/spend?start=nope") == shown("/old-spend?start=nope")
+    assert "All currencies in CAD at the rates" in shown(f"/spend?start={YEAR[0]}&end={YEAR[1]}")
+
+
+def test_activity_counts_the_approvals_as_insights_does(year):
+    """D-156: Activity's tile counts the latest approvals in SQLite (``approval_counts``): the same as reading each one
+    (``approved_as_coded``, ``filled_in_count``), an approval the summary could not read read again as before."""
+    counts = (*insights.approved_as_coded(year), insights.filled_in_count(year))
+    assert insights.approval_counts(year) == counts and counts[1]
+    invoice_id = next(r["id"] for r in ref.old_list_invoices(year, APPROVED))
+    with sqlite3.connect(year.path) as conn:  # an approval the summary could not read: its facts read again
+        conn.execute("UPDATE invoice_summary SET broken = broken | ? WHERE id = ?",
+                     (summary_module.BIT["approval"], invoice_id))  # fmt: skip
+    assert insights.approval_counts(year) == (*insights.approved_as_coded(year), insights.filled_in_count(year))
+
+
 def test_spend_follows_a_change_of_the_tax_setup(year):
     """An invoice approved by an older version has its posting lines built with the tax setup: changed, it is
     worked out again (the trigger on ``tax_treatments``)."""
@@ -235,6 +274,90 @@ def test_the_quick_search_finds_what_it_found(year, monkeypatch, fts):
         new = [(h.score, h.source, h.row.get("id"), h.row.get("invoice_number")) for h in search.find(year, q, 500)]
         old = [(h.score, h.source, h.row.get("id"), h.row.get("invoice_number")) for h in ref.search_find(year, q, 500)]
         assert new == old, q
+
+
+MORE_QUERIES = [*QUERIES, "2026", "1", "0", "#0912", "n°0912", "inv 0912", "18017,85", "-18017.85", "(18017.85)",
+                "northwind 18017.85", "solutions it", "pdf", "12.5", "x-1", "erp", "vendor 3", "straße",
+                '"north"']  # fmt: skip
+
+
+def _erp_register(store: Store) -> None:
+    """An ERP register with more hits than the directory shows at first, three exported invoices' own rows (not shown
+    again) and another vendor's bill with one of their numbers and amounts (shown)."""
+    exported = [r for r in store.search_rows(exported=True)][:3]
+    rows = [{"vendor_name": r["vendor_name"], "invoice_number": r["invoice_number"], "total": r["grand_total"],
+             "invoice_date": r["invoice_date"]} for r in exported]  # fmt: skip
+    rows.append({"vendor_name": "Other Vendor 3", "invoice_number": exported[0]["invoice_number"],
+                 "total": exported[0]["grand_total"]})  # fmt: skip
+    rows += [{"vendor_name": "Northwind IT Solutions", "invoice_number": f"NW-ERP-{n:04d}", "total": 10.5 * n,
+              "invoice_date": f"2026-0{1 + n % 9}-1{n % 10}"} for n in range(1, 131)]  # fmt: skip
+    rows += [{"vendor_name": "Old Vendor", "invoice_number": "X-1", "total": 12.5},
+             {"vendor_name": "Straße Erp Supplies", "invoice_number": "N°0912", "total": -18017.85}]  # fmt: skip
+    store.import_erp_register(rows)
+
+
+def _old_run(store: Store, query, page_size: int, everything: bool = False):
+    """``directory.run`` as it was: every quick-search hit found first (``ref.search_find``: what ``search.find``
+    gave, ``test_the_quick_search_finds_what_it_found``), their ids handed to SQLite as one JSON list."""
+    hits = ref.search_find(store, query.q, directory.EXPORT_LIMIT)
+    ids = [h.row["id"] for h in hits if h.source != "ERP"]
+    sql_where, params, problems = directory.where(directory.Query(**{**query.__dict__, "q": ""}))
+    sql_where = f"({sql_where}) AND " + ("id IN (SELECT value FROM json_each(?))" if ids else "0")
+    params += [json.dumps(ids)] if ids else []
+    total = store.directory_count(directory.ROWS_SQL, sql_where, params)
+    if everything:
+        limit, offset, page, pages = directory.EXPORT_LIMIT, 0, 1, 1
+    else:
+        pages = max(1, -(-total // page_size))
+        page = min(query.page, pages)
+        limit, offset = page_size, (page - 1) * page_size
+    rows = store.directory_rows(directory.ROWS_SQL, directory.ROW_FIELDS, sql_where, params,
+                                directory.order_by(query), limit, offset)  # fmt: skip
+    return rows, total, page, pages, problems, [h for h in hits if h.source == "ERP"]
+
+
+@pytest.mark.parametrize("fts", [True, False])
+def test_the_directory_pages_the_quick_search_as_it_did(year, monkeypatch, fts):
+    """The quick search as one more condition of the directory's SQL (D-157): the invoices it finds are those
+    ``search._score`` finds, every one and no other, and the directory's count, pages, sort and export are what they
+    were when every hit was found first in Python. Only the ERP register's hits are shown ERP_SHOWN at a time ("Show
+    more"), best first as before."""
+    _erp_register(year)
+    if not fts:
+        monkeypatch.setitem(summary_module._FTS, "ok", False)
+    monkeypatch.setattr(directory, "EXPORT_CHUNK", 7)  # an export read a few rows at a time
+    every = year.search_rows()
+    for q in MORE_QUERIES:
+        words, numbers = search.parts(q)
+        sql, params = search.condition(words, numbers, fts)
+        assert [r["id"] for r in year.search_rows(sql, params)] == [
+            r["id"] for r in every if search._score(r, words, numbers)], q  # fmt: skip
+        for n, extra in enumerate(({"sort": "vendor", "f_total": ">100"}, {"sort": "total", "dir": "asc", "page": "2"},
+                                   {"f_status": "approved", "page": "3", "erp": "100"})):  # fmt: skip
+            query = directory.Query.from_params({**extra, "q": q})
+            new = directory.run(year, query, page_size=4)
+            *old, old_erp = _old_run(year, query, 4)
+            assert [new.rows, new.total, new.page, new.pages, new.problems] == old, (q, extra)
+            assert [(h.score, h.row) for h in new.erp] == [(h.score, h.row) for h in old_erp][: query.erp_shown]
+            assert new.erp_total == len(old_erp), (q, extra)
+            if n == 0:
+                everything = _old_run(year, query, 4, everything=True)[0]
+                assert list(directory.export_rows(year, query)) == everything
+                assert directory.run(year, query, everything=True).rows == everything
+    assert directory.run(year, directory.Query(q="northwind")).erp_total > directory.ERP_SHOWN  # (shown in parts)
+
+
+def test_the_erp_registers_search_keys_are_made_for_an_older_database(year):
+    """A register imported before schema 22 gets its vendor names and numbers as the quick search compares them."""
+    _erp_register(year)
+    before = search.find(year, "northwind", 500)
+    with sqlite3.connect(year.path) as conn:
+        conn.execute("ALTER TABLE erp_invoices DROP COLUMN plain_name")
+        conn.execute("ALTER TABLE erp_invoices DROP COLUMN raw_number")
+        conn.execute("UPDATE settings SET value = '20' WHERE key = 'schema_version'")
+    store = Store(year.path)
+    assert [(h.score, h.row) for h in search.find(store, "northwind", 500)] == [(h.score, h.row) for h in before]
+    assert any(h.source == "ERP" for h in before)
 
 
 def test_the_directory_filters_and_sorts_as_it_did(year):

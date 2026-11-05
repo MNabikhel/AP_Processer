@@ -401,7 +401,11 @@ class BackupsMixin:
         try:
             with contextlib.suppress(OSError):
                 marker.write_text(str(os.getpid()), encoding="utf-8")
-            return self._restore_from(backup, keep_accounts=keep_accounts)
+            restored = self._restore_from(backup, keep_accounts=keep_accounts)
+            # What was made from the replaced invoices goes with them: the company server's Spend workbook
+            # (web/pages/spend.py, workbook_path).
+            shutil.rmtree(self.path.parent / ".cache" / "downloads", ignore_errors=True)
+            return restored
         finally:
             with contextlib.suppress(OSError):
                 marker.unlink()

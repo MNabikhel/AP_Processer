@@ -8,9 +8,10 @@ too; the review queue's welcome card uses the same routes.
 from __future__ import annotations
 
 import collections
+import contextlib
 import contextvars
 import datetime as dt
-import hashlib
+import json
 import logging
 import os
 import re
@@ -22,7 +23,6 @@ from typing import Any
 
 from fastapi import File, Form, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
-from starlette.concurrency import run_in_threadpool
 
 from ap_coder.ai import page_reader
 from ap_coder.ai.extraction import SUPPORTED_EXTENSIONS, TEXT_EXTENSIONS
@@ -34,6 +34,7 @@ from ap_coder.core import paths, ui
 from ap_coder.core.config import Settings
 from ap_coder.core.reference_data import ReferenceData
 from ap_coder.core.store import REVIEW, Store
+from ap_coder.core.store.folder import read_file
 from ap_coder.intake import inbox
 from ap_coder.intake.mailbox import (
     EMAIL_EXTENSIONS,
@@ -172,14 +173,16 @@ def save_upload(folder: Path, name: str, content: bytes) -> Path:
 
 def split_new(store: Store, files: list[Path]) -> tuple[list[Path], list[Path]]:
     """(new files, files already in AP Coder): a file seen before, or a repeat within ``files``, is not read again."""
-    todo, already, seen = [], [], set()
+    todo, already, seen, read = [], [], set(), []
     for path in files:
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
-        if digest in seen or store.find_by_hash(path) is not None:
+        read.append(read_file(path))
+        digest = read[-1][3]
+        if digest in seen or store.find_by_hash(path, sha=digest) is not None:
             already.append(path)
         else:
             todo.append(path)
         seen.add(digest)
+    store.note_files(read)  # what the import page lists (``folder_files``)
     return todo, already
 
 
@@ -656,14 +659,21 @@ def process_files(store: Store, settings: Settings, paths: list[Path], *, alread
 def not_processed(store: Store, files: list[Path]) -> tuple[list[Path], list[Path]]:
     """(the files never processed, the files that can't be read now): a file still being written by a scanner, open
     in another program or a cloud placeholder not downloaded is left for the next pick-up, never a broken page."""
-    new, unreadable = [], []
+    digests, unreadable, read = {}, [], []
     for path in files:
         try:
-            if store.find_by_hash(path, include_failed=True) is None:
-                new.append(path)
+            read.append(read_file(path))  # each file read once (D-155)
         except OSError:
             unreadable.append(path)
-    return new, unreadable
+            continue
+        digests[path] = read[-1][3]
+    # The invoices made from them (``find_by_hash``, failed ones too), asked in one query, not one a file (D-157).
+    known = {r["value"] for r in store.summary_fetch(
+        "SELECT value FROM json_each(?) WHERE EXISTS (SELECT 1 FROM invoices WHERE file_sha256 = value) OR "
+        "EXISTS (SELECT 1 FROM invoices WHERE original_sha256 = value)", (json.dumps(sorted(set(digests.values()))),),
+    )} if digests else set()  # fmt: skip
+    store.note_files(read)  # what the import page lists (``folder_files``)
+    return [p for p, digest in digests.items() if digest not in known], unreadable
 
 
 def not_read_here(folder: Path) -> list[str]:
@@ -685,21 +695,48 @@ def still_being_saved(path: Path, now: float | None = None) -> bool:
         return True
 
 
+# ``folder_files`` by folder: (stamp, rows, when worked out); kept LISTED_SECONDS at most (a file written over in
+# place changes no stamp)
+_LISTED: dict[str, tuple[tuple[Any, ...], list[dict[str, Any]], float]] = {}
+LISTED_SECONDS = 60.0
+
+
 def folder_files(store: Store) -> list[dict[str, Any]]:
-    """The files in the invoices folder not processed yet (saved emails too: their attachments are read)."""
-    folder = invoice_dir(store)
-    if not folder.exists():
+    """The files in the invoices folder not processed yet (saved emails too: their attachments are read), as the
+    pick-up last read them: a page view reads none, it looks at their size and time (``Store.unseen_files``, D-155).
+    The invoices folder keeps the processed files: reading every one on each view took 7 s at 100,000 invoices, and
+    listing them still takes 2 to 4 s, so the list is worked out again only once the folder (a file added, removed or
+    renamed), what a pick-up read or the invoices changed, or a minute on (a scan written over another of its name).
+    Listed at the folder's resolved place, as the pick-up notes them (``read_file``)."""
+    folder = invoice_dir(store).resolve()
+    try:
+        stamp = (folder.stat().st_mtime_ns, store.files_stamp())
+    except OSError:  # no invoices folder yet
         return []
-    files, _ = not_processed(store, invoice_files(folder))
+    known = _LISTED.get(str(folder))
+    if known is not None and known[0] == stamp and time.monotonic() - known[2] < LISTED_SECONDS:
+        return known[1]
+    sizes: dict[Path, int] = {}
+    listed = []
+    for p in invoice_files(folder):
+        with contextlib.suppress(OSError):  # gone meanwhile
+            seen = p.stat()
+            sizes[p] = seen.st_size
+            listed.append((str(p), seen.st_size, seen.st_mtime_ns))
+    new = store.unseen_files(listed)
     rows = []
-    for p in [*files, *emails_in(folder)]:
+    for p in [*(p for p in sizes if str(p) in new), *emails_in(folder)]:
         try:
-            size = p.stat().st_size
+            size = sizes[p] if p in sizes else p.stat().st_size
         except OSError:
             continue
         email = p.suffix.lower() in EMAIL_EXTENSIONS
         icon = "mail" if email else "picture_as_pdf" if p.suffix.lower() == ".pdf" else "image"
         rows.append({"name": p.name, "kb": f"{size / 1024:,.0f} KB", "icon": icon, "email": email})
+    if len(_LISTED) > 8:  # (a test's many data folders)
+        _LISTED.clear()
+    if time.time_ns() - stamp[0] > 2e9:  # a folder changed just now may change again within its time's precision
+        _LISTED[str(folder)] = (stamp, rows, time.monotonic())
     return rows
 
 
@@ -890,16 +927,17 @@ def _start_or_queue(request: Request, build: Callable[[], tuple[Any, int]], file
 
 
 @router.post("/process/upload")
-async def process_upload(request: Request, files: list[UploadFile] = File(...)) -> JSONResponse:  # noqa: B008
+def process_upload(request: Request, files: list[UploadFile] = File(...)) -> JSONResponse:  # noqa: B008
     """Save the uploaded files to the invoices folder, then read and code the new ones in the background. Each file
-    is read from its spool file (on disk past 1 MB) only when it is saved, one at a time: never all in memory."""
+    is read from its spool file (on disk past 1 MB) only when it is saved, one at a time: never all in memory. (A
+    plain function: FastAPI takes the upload in, then runs it on a threadpool thread, D-158.)"""
     if server_mode(request):
         who = person()
         refused, status = upload_refusal(who.user_id if who else None, len(files), sum(u.size or 0 for u in files),
                                          store=get_store(request))  # fmt: skip
         if refused:
             return refuse(refused, status=status)
-    return await run_in_threadpool(_save_and_start, request, files)
+    return _save_and_start(request, files)
 
 
 def _read_upload(upload: UploadFile) -> tuple[str, bytes | None]:

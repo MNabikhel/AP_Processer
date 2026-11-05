@@ -159,7 +159,7 @@ function keepFocusInView() {
 
 let lastCheckOk = false; // the last check answered (its edits are kept as a draft)
 let lastDraft = false; // the last check kept the edits as a draft
-let edited = false; // an edit made on this page (the opening check keeps nothing new)
+let edited = false; // an edit made on this page (a check without one keeps nothing new)
 
 /** The time now as the server says a draft's (invoice.py ``_when``): "12:37 a.m.", never "0:37" (B-1596). */
 function clock() {
@@ -1936,7 +1936,12 @@ try {
 } catch {
   taxLabels = {};
 }
-let taxMarks = {}; // {line number: why}: the lines the Tax check points at, drawn yellow
+let taxMarks = {}; // {line number: why}: the lines the Tax check points at, drawn yellow (as the page drew them)
+try {
+  taxMarks = JSON.parse(document.getElementById("tax-marks")?.textContent || "{}") || {};
+} catch {
+  taxMarks = {};
+}
 
 /** Put ``code`` in a line's tax-code dropdown, adding it when the place of supply doesn't list it (kept as it is). */
 function setTaxCode(select, code) {
@@ -2660,9 +2665,9 @@ for (const name of absentList()) viewer?.setEdited(name, "", true); // marked be
 lastSums = tickedSums(); // what the tax lines follow from now on (B-610)
 showBarState();
 document.querySelectorAll('[data-grid="lines"] textarea[name="line_description"]').forEach((t) => showRemark(t, false));
-// The queue shows what this screen shows: check once on opening (today's checks, and any draft kept); then the
-// focus goes to the first thing to check, unless the clerk is somewhere already.
+// The page is drawn with today's checks, and the server has done what a check does (the queue's confidence, any
+// draft kept): no check on opening. The focus goes to the first thing to check, unless the clerk is somewhere already.
 const kept = unsaved();
 if (readOnly) lockFields();
 else if (form && kept) putBack(kept);
-else if (form) check().then(() => focusFirstToCheck());
+else if (form) focusFirstToCheck();

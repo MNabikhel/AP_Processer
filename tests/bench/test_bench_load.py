@@ -102,6 +102,21 @@ Paper</textarea><select form="inv" name="tax"><option value="GST">GST<option val
     assert screen.allow is False and screen.data("inv")[-1] == ("override", "k2")
 
 
+def test_a_screen_leaves_out_the_rows_of_its_templates_as_the_page_does():
+    """B-1622: the review screen's new-row templates (``<template id="line-template">``, a new tax row) were taken for
+    rows of the form: every check the load test sent had an empty line and a GST row more than the browser's, so each
+    kept a draft and each approval added a GST line of 0.00."""
+    page = """<form id="inv" method="post" action="/review/7/approve"></form>
+      <input form="inv" name="line_description" value="Paper">
+      <template id="line-template"><tr><td><input form="inv" name="line_description" value="">
+        <select form="inv" name="tax_type"><option value="GST" selected>GST</option></select><br/>
+        <textarea form="inv" name="line_reason"></textarea></td></tr></template>
+      <div data-live="bar"><input form="inv" name="override" value="k1"></div>"""
+    screen = load.Screen(7, page)
+    assert screen.data("inv") == [("line_description", "Paper"), ("override", "k1")]
+    assert screen.field("override").section == "bar"
+
+
 def _run(samples=(), timeout=120.0, ramp=0.0, duration=60.0):
     run = load.Run("http://127.0.0.1:1", "127.0.0.1", 3, duration, ramp, 1.0, timeout, 1)
     run.samples = list(samples)

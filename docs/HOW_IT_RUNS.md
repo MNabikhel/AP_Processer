@@ -267,7 +267,7 @@ file is copied into `data/invoices/`, in one transaction after a backup (`_backe
 the older folder is kept.
 
 **The database** (`ap_coder/core/store/_base.py:StoreCore._before_migrating`, `_migrate`): `settings.schema_version`
-(now `SCHEMA_VERSION = 20`). Older: backed up first (`backups/ap_coder-<date>-before-update-from-schema-<n>.db`), then
+(now `SCHEMA_VERSION = 24`). Older: backed up first (`backups/ap_coder-<date>-before-update-from-schema-<n>.db`), then
 migrated step by step. Newer: refused (`DatabaseTooNew`) and never opened. The launcher checks this before starting
 the server (`scripts/launch.py:database_too_new`) and stops with "start the newer AP Coder".
 
@@ -356,13 +356,18 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
 `python -m ap_coder server-update <bundle>` (`--back` to go back), not the launcher.
 
   **Several processes on the server** (D-111; `serve --server --workers N`, which the service host passes from
-  `server.json`'s `workers`, default one per core, at most 8): `ap_coder/web/server.py:_serve_workers` opens the port
+  `server.json`'s `workers`, default `server.default_workers`: for the cores and the memory, D-153):
+  `ap_coder/web/server.py:_serve_workers` opens the port
   and runs uvicorn's own supervisor, which starts N web workers with "spawn" (Windows and Linux alike: each is a fresh
   Python, `worker_app` builds the app from `AP_SERVE_WORKER`, the port handed over), and starts again a worker that
   stops. Beside them one **background process** (`serve --background-work`, `server.run_background`, started again
   when it stops, 5 s doubling to a minute) does what the laptop's dashboard does in its own process: the page
-  reader and the AI reviewer, the Azure check, JD Edwards, the daily backup and the finance hub's schedule (each
-  minute instead of at each page), holding `<data>/.ap_coder_background.lock` (one per data folder). It stops when
+  reader and the AI reviewer, the Azure check, JD Edwards, the review queue checked again after a change of settings
+  (`bulk.QueueRecheck`, D-155: in batches of 50 kept in one short write each, one process at a time by the
+  `ephemeral` row `lease` "queue-recheck", let go of between two batches when AP Coder stops, and dropped at a
+  laptop's start; the queue page shows the earlier checks meanwhile and says so), the daily
+  backup and the finance hub's schedule (each minute instead of at each page), holding
+  `<data>/.ap_coder_background.lock` (one per data folder). It stops when
   its input closes (the server stopping or ending). The workers share what they know through the database: jobs
   and their progress (`ephemeral` rows `job-running:<process>`, renewed each second), the queued imports' count, the
   hourly upload allowance, a temporary password on its way to its page (sealed with the key the workers hold in
@@ -370,6 +375,18 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   worker writes `logs/access-<n>.log`. `POST /shutdown` to any worker writes `<data>/.ap_coder_server.stop`: the
   server and every worker stop (25 s grace for requests under way, then ended). With `--workers 1` (and on a laptop
   always) everything runs in the one process, as before.
+
+  **What one worker runs at once** (D-153, server mode only): the app's lifespan caps anyio's thread pool at
+  `app.worker_threads()` (4; `AP_WORKER_THREADS`, `server.json`'s `worker_threads`); the long routes of
+  `web/core.py:HEAVY_ROUTES` (reports, exports, Report a problem, backups, LM Studio and JD Edwards buttons) run in a
+  lane of their own (`core.run_heavy`: 2 at a time a worker, on threads beside the pool's, a 503 "busy" after 30 s in
+  line). `server.Recycle` starts a worker afresh past its memory (`recycle_limits`) or requests: it stops taking
+  connections, then uvicorn stops it gracefully (the requests under way given up to an hour, `RECYCLE_GRACE_SECONDS`)
+  and its supervisor starts another (`_Supervisor` does not ask the ending one "alive?",
+  `.ap_coder_worker_restart.pid`, for ten minutes at most, dropped once it has ended); one at a time
+  (`.ap_coder_worker_restart.lock`), never while a job, a backup, waiting imports or the lane are busy. One that a
+  request started after that look is waited for as the worker ends (its lifespan, `app.own_work_running`); a stop of
+  the service still ends it at its deadline.
 
 ## 9. The data folder and everything AP Coder writes
 

@@ -28,8 +28,11 @@ from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
 
+import anyio
+import anyio.to_thread
 from dotenv import dotenv_values
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -141,6 +144,22 @@ class BackupCheck:
         await self.app(scope, receive, send)
 
 
+# How many requests a web worker of the company server runs at once (D-153): each one under way holds what it read
+# (about 110 MB on average), and one Python process works on one at a time anyway (the GIL), so anyio's 40 threads
+# multiplied the memory, not the pages answered (16 people at once: 1.9-2.15 GB a worker with 40, 1.33 GB with 4, the
+# same work done). The others wait their turn. A laptop keeps anyio's default.
+THREADS_ENV = "AP_WORKER_THREADS"
+WORKER_THREADS = 4
+
+
+def worker_threads() -> int:
+    """AP_WORKER_THREADS (server.json's ``worker_threads``), else WORKER_THREADS; from 1 to 40."""
+    try:
+        return min(40, max(1, int((os.environ.get(THREADS_ENV) or "").strip() or WORKER_THREADS)))
+    except ValueError:
+        return WORKER_THREADS  # a typo never stops the server
+
+
 def default_store() -> Store:
     """The database the dashboard uses: AP_DB_PATH, else the data folder's ap_coder.db."""
     return Store(paths.env_path("AP_DB_PATH") or default_db_path())
@@ -194,11 +213,22 @@ class EnvSettings:
             return read
 
 
-def start_background_work(settings_factory: Callable[[], Settings], store: Store) -> tuple[Any, Any, Any]:
+def own_work_running(state: Any) -> bool:
+    """Whether something this process runs on a thread of its own would end with it: a job, a backup, imports
+    waiting their turn (a web worker of the server waits for them before it ends: ``server.Recycle``)."""
+    backup = getattr(state.daily_backup, "thread", None)
+    queue = getattr(state, "import_queue", None)
+    return (state.jobs.running_here() or (backup is not None and backup.is_alive())
+            or bool(queue is not None and queue.waiting))  # fmt: skip
+
+
+def start_background_work(settings_factory: Callable[[], Settings], store: Store) -> tuple[Any, Any, Any, Any]:
     """The work the dashboard does on its own: the page reader and the AI reviewer (``page_worker``), the optional
-    Azure check and the JD Edwards API's nightly sync and voucher queue. In the dashboard's own process (the laptop),
-    or, with several web workers, in the server's background process only (``server.run_background``, D-111)."""
+    Azure check, the JD Edwards API's nightly sync and voucher queue, and the review queue checked again after a
+    change of settings. In the dashboard's own process (the laptop), or, with several web workers, in the server's
+    background process only (``server.run_background``, D-111)."""
     from ap_coder.ai import azure_check, page_worker
+    from ap_coder.coding.bulk import RECHECK_LEASE, QueueRecheck
     from ap_coder.erp import jde_sync
 
     reader = page_worker.start_background(settings_factory, lambda: store, cache_dir=core.cache_dir(store))
@@ -206,7 +236,12 @@ def start_background_work(settings_factory: Callable[[], Settings], store: Store
     azure = azure_check.start_background(settings_factory, lambda: store)
     # The JD Edwards API's nightly sync and voucher queue (D-104): nothing while both its steps are off.
     jde = jde_sync.Background(lambda: store).start()
-    return reader, azure, jde
+    # The queue's checks against today's settings (D-155): a few small queries every few seconds while none changed.
+    # A laptop's own re-check lease left is its last start's, stopped as it checked: the queue would wait for it.
+    if not offline.server_mode():
+        store.drop_lease(RECHECK_LEASE, None)
+    recheck = QueueRecheck(settings_factory, lambda: store).start()
+    return reader, azure, jde, recheck
 
 
 def create_app(settings: Settings | None = None, store: Store | None = None, *, address: str = "127.0.0.1",
@@ -232,17 +267,29 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        if server:  # this event loop's thread pool: the plain handlers, sessions looked up, files sent
+            anyio.to_thread.current_default_thread_limiter().total_tokens = worker_threads()
         if background:  # once a day, when the dashboard starts, on its own thread: it never holds up the start
             app.state.daily_backup.start()
         if start_reader and background:
-            app.state.reader, app.state.azure_checker, app.state.jde_worker = start_background_work(
-                settings_factory, store
-            )
+            (app.state.reader, app.state.azure_checker, app.state.jde_worker,
+             app.state.queue_recheck) = start_background_work(settings_factory, store)  # fmt: skip
         yield
-        for name in ("reader", "azure_checker", "jde_worker"):
+        for name in ("reader", "azure_checker", "jde_worker", "queue_recheck"):
             worker = getattr(app.state, name, None)
             if worker is not None:
                 worker.stop()
+        if app.state.queue_recheck is not None:  # it ends between two batches, letting go of its lease
+            from ap_coder.coding.bulk import RECHECK_STOP_SECONDS
+
+            ends = time.monotonic() + RECHECK_STOP_SECONDS
+            while app.state.queue_recheck.thread.is_alive() and time.monotonic() < ends:
+                await anyio.sleep(0.05)
+        # One of the server's web workers: its connections are closed now, so no request starts more. What one
+        # started after Recycle looked (a JD Edwards send, a backup, imports) ends with the process: it is waited for.
+        # A stop of the service still ends the worker at its deadline (server.py, join_all).
+        while app.state.processes > 1 and own_work_running(app.state):
+            await anyio.sleep(0.2)
 
     app = FastAPI(title="AP Coder", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.store = store
@@ -252,6 +299,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     app.state.reader = None
     app.state.azure_checker = None  # the Azure check's thread (ap_coder/ai/azure_check.py), started with the reader
     app.state.jde_worker = None  # the JD Edwards API's nightly sync and queue (ap_coder/erp/jde_sync.py), likewise
+    app.state.queue_recheck = None  # the review queue checked again after a change of settings (coding/bulk.py)
     app.state.port = None  # set by server.serve
     app.state.shutdown_token = None  # set by server.serve; without it /shutdown refuses
     app.state.server = None  # the uvicorn.Server, set by server.serve
@@ -354,8 +402,10 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
         wants_page = request.method == "GET" and "text/html" in request.headers.get("accept", "")
         if not wants_page:
             return JSONResponse({"ok": False, "error": str(exc.detail)}, status_code=exc.status_code)
-        return core.render(request, "error.html", "", status_code=exc.status_code, title="Not found",
-                           code=exc.status_code, detail=str(exc.detail))  # fmt: skip
+        title = "Busy" if exc.status_code == 503 else "Not found"  # (503: the long routes' lane, core.run_heavy)
+        # the page frame reads the database: on a threadpool thread, never holding up the other requests
+        return await run_in_threadpool(core.render, request, "error.html", "", status_code=exc.status_code,
+                                       title=title, code=exc.status_code, detail=str(exc.detail))  # fmt: skip
 
     @app.exception_handler(RequestValidationError)
     async def unreadable(request: Request, exc: RequestValidationError) -> Any:
@@ -365,8 +415,8 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
         wants_page = request.method == "GET" and "text/html" in request.headers.get("accept", "")
         if not wants_page:
             return JSONResponse({"ok": False, "error": detail}, status_code=422)
-        return core.render(request, "error.html", "", status_code=422, title="Not understood", code=422,
-                           detail=detail)  # fmt: skip
+        return await run_in_threadpool(core.render, request, "error.html", "", status_code=422, title="Not understood",
+                                       code=422, detail=detail)  # fmt: skip
 
     @app.exception_handler(OverflowError)
     async def too_large(request: Request, exc: OverflowError) -> Any:

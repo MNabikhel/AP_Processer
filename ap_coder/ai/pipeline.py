@@ -17,6 +17,7 @@ import contextvars
 import datetime as dt
 import json
 import logging
+import os
 import re
 import time
 from collections.abc import Callable, Collection
@@ -36,7 +37,7 @@ from ..coding.terms import payment_findings
 from ..coding.validation import WARNING, Issue, ValidationReport, validate_coding
 from ..coding.vendors import vendor_findings
 from ..core.config import Settings
-from ..core.memory import compare_with_history, format_examples, select_examples, vendor_key
+from ..core.memory import compare_patterns, compare_with_history, format_examples, select_examples, vendor_key
 from ..core.reference_data import ReferenceData
 from ..core.schema import InvoiceCoding
 from . import azure_check, verifier
@@ -100,15 +101,16 @@ def invoice_files(folder: Path) -> list[Path]:
     README files are documentation, never invoices; nor are hidden files (a Mac's "._inv.pdf" beside "inv.pdf" on a
     shared or USB drive) or an Office lock file ("~$...").
     """
-    files = sorted(
-        c
-        for c in folder.iterdir()
-        if c.is_file()
-        and c.suffix.lower() in SUPPORTED_EXTENSIONS
-        and not c.name.lower().startswith(("readme", ".", "~$"))
-    )
-    documents = {c.stem.lower() for c in files if c.suffix.lower() not in TEXT_EXTENSIONS}
-    return [c for c in files if c.suffix.lower() not in TEXT_EXTENSIONS or c.stem.lower() not in documents]
+    # By name, each one's kind as the listing says it (no look at each file), sorted as their paths sort: the import
+    # page lists a folder of 100,000 invoices (B-1634).
+    with os.scandir(folder) as entries:
+        names = sorted((e.name for e in entries if os.path.splitext(e.name)[1].lower() in SUPPORTED_EXTENSIONS
+                        and not e.name.lower().startswith(("readme", ".", "~$")) and e.is_file()),
+                       key=os.path.normcase)  # fmt: skip
+    parts = [os.path.splitext(name) for name in names]
+    documents = {stem.lower() for stem, suffix in parts if suffix.lower() not in TEXT_EXTENSIONS}
+    return [folder / name for name, (stem, suffix) in zip(names, parts, strict=True)
+            if suffix.lower() not in TEXT_EXTENSIONS or stem.lower() not in documents]  # fmt: skip
 
 
 NOT_A_FILE_TO_MENTION = {"desktop.ini", "thumbs.db"}  # Windows' own, in any folder
@@ -119,13 +121,14 @@ def other_files(folder: Path, also: Collection[str] = ()) -> list[Path]:
     """The files in ``folder`` (not its subfolders) that are not a kind AP Coder reads, nor one of the extensions
     ``also`` (saved emails): said to the person, never passed over in silence. Hidden files, README files, Office
     lock files, Windows' own files and downloads still arriving are not mentioned."""
+    known = SUPPORTED_EXTENSIONS | set(also) | STILL_ARRIVING
     return sorted(
         c
         for c in folder.iterdir()
-        if c.is_file()
-        and c.suffix.lower() not in SUPPORTED_EXTENSIONS | set(also) | STILL_ARRIVING
+        if c.suffix.lower() not in known  # (by name first: each file looked at only then, B-1634)
         and c.name.lower() not in NOT_A_FILE_TO_MENTION
         and not c.name.lower().startswith(("readme", ".", "~$"))
+        and c.is_file()
     )
 
 
@@ -160,9 +163,11 @@ def finalise_coding(
     """
     # the vendor's key: of two vendors whose names read alike, the one with this GST/HST number (B-1021)
     key = store.vendor_key_for(coding.vendor_name, coding.gst_hst_registration_number) if store is not None else None
-    if feedback is None and store is not None:
-        feedback = store.feedback_rows(vendor_name=coding.vendor_name, key=key)  # history check: this vendor only
-    history = compare_with_history(coding, feedback, key) if feedback else None
+    if feedback is None and store is not None:  # the history check: this vendor's lessons only
+        patterns = store.vendor_lessons(coding.vendor_name, key).patterns
+        history = compare_patterns(coding, patterns) if patterns else None
+    else:
+        history = compare_with_history(coding, feedback, key) if feedback else None
     duplicates = (
         store.find_duplicates(
             coding.vendor_name,

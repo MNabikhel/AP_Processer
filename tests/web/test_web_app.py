@@ -374,6 +374,44 @@ def test_browser_url():
 # --- Background jobs ---------------------------------------------------------------------------------------------
 
 
+def test_a_laptop_lets_go_of_a_re_check_left_and_of_its_own_as_it_stops(demo_template, tmp_path, monkeypatch):
+    """A dashboard stopped as it checked the queue again left the re-check's lease (its thread ended with the process):
+    the next start's queue (and each invoice opened, Import invoices' list, the command line) waited for it up to two
+    minutes. A laptop's start lets go of one left so, and its stop waits a few seconds for its own to end between two
+    batches, letting go of it."""
+    import threading
+    import time
+
+    from ap_coder.ai import azure_check, page_worker
+    from ap_coder.coding import bulk
+    from ap_coder.core.memory import vendor_key
+    from ap_coder.core.store import REVIEW
+    from tests.conftest import copy_database
+
+    store = copy_database(demo_template, tmp_path / "private" / "ap_coder.db")
+    monkeypatch.setattr(page_worker, "start_background", lambda *a, **k: None)
+    monkeypatch.setattr(azure_check, "start_background", lambda *a, **k: None)
+    monkeypatch.setattr(bulk.QueueRecheck.__init__, "__defaults__", (0.05,))  # (a look every 50 ms, not 5 s)
+    monkeypatch.setattr(bulk, "RECHECK_BATCH", 1)
+    checking, batch = threading.Event(), bulk._recheck_batch
+
+    def slow(*args):
+        checking.set()
+        time.sleep(0.3)
+        return batch(*args)
+
+    monkeypatch.setattr(bulk, "_recheck_batch", slow)
+    for inv in [i for i in store.list_invoices(REVIEW) if i["vendor_name"]]:  # vendors put on hold: checked again
+        store.save_vendor(vendor_key(inv["vendor_name"]), inv["vendor_name"], "on_hold")
+    assert len(store.stale_checks(store.checks_stamp())) > 2
+    assert store.take_lease(bulk.RECHECK_LEASE, "4242:1", 120)  # left by the last start, stopped as it checked
+    app = create_app(web_settings(), store, start_reader=True)
+    with TestClient(app, base_url="http://localhost"):
+        assert checking.wait(10)  # its own re-check began at once
+    assert not app.state.queue_recheck.thread.is_alive()
+    assert store.take_lease(bulk.RECHECK_LEASE, "another:1", 60) and store.stale_checks(store.checks_stamp())
+
+
 def test_a_job_runs_in_the_background_one_at_a_time(client):
     import threading
 

@@ -270,6 +270,42 @@ def test_the_activity_csv_and_pages_cover_every_event_not_only_the_newest_5000(c
     assert seen == many + 1 and "the very first note" in text
 
 
+def test_the_activity_filters_give_every_event_whichever_way_sqlite_reads_them(store):
+    """D-156: a page of a common group's events comes off the events newest first, a rare group's off their index by
+    action and put in order, a person's off their index by person; the Person list and the last 7 days off theirs.
+    Whichever way, the events (and their order, and each page of them) are those the filters ask for."""
+    import datetime as dt
+    import json
+
+    from ap_coder.web.pages.activity import GROUPS
+
+    week = (dt.datetime.now() - dt.timedelta(days=3)).isoformat(timespec="seconds")
+    with store._conn() as conn:
+        for n in range(900):
+            action = "lesson_retired" if n % 40 == 0 else "backup_made" if n % 50 == 1 else \
+                ["approved", "exported", "processed", "login", "note"][n % 5]  # fmt: skip
+            when = week if n % 7 == 0 else f"2026-0{1 + n % 9}-1{n % 10}T09:00:00"
+            conn.execute("INSERT INTO events (invoice_id, action, actor, detail, created_at) VALUES (?, ?, ?, ?, ?)",
+                         (n % 13 or None, action, ["Ann", "Bob", "", None, "Cy"][n % 5] if n % 3 else "Olga",
+                          json.dumps({"n": n}), when))  # fmt: skip
+    every = store.events(limit=10_000)
+    hidden = tuple(GROUPS["Logins"])
+    for group in ("All", "Invoices", "Learning", "Backups"):
+        for person in ("Everyone", "Ann", "Olga", "Nobody"):
+            wanted = [e for e in every if (group == "All" or e["action"] in GROUPS[group]) and e["action"] not in hidden
+                      and (person == "Everyone" or e["actor"] == person)]  # fmt: skip
+            assert list(filter_events(store, group, person, "", hidden=hidden)) == wanted, (group, person)
+            page = list(filter_events(store, group, person, "", hidden=hidden, limit=7))
+            assert page == wanted[:7] and list(filter_events(store, group, person, "", hidden=hidden, limit=7,
+                                                             before=wanted[6]["id"] if len(wanted) > 6 else None)) \
+                == (wanted[7:14] if len(wanted) > 6 else wanted[:7])  # fmt: skip
+    assert store._few_events(GROUPS["Backups"]) and not store._few_events(GROUPS["Invoices"])  # both ways are walked
+    assert store.event_actors() == sorted({e["actor"] for e in every if e["actor"]})
+    assert store.event_actors(hidden) == sorted({e["actor"] for e in every if e["actor"] and e["action"] not in hidden})
+    assert store.count_events(hidden=hidden, since=week[:10]) == sum(
+        1 for e in every if e["created_at"] >= week[:10] and e["action"] not in hidden)  # fmt: skip
+
+
 def test_filter_events_and_controls_period_helpers(store):
     store.log_event("backup_made", actor="Ann")
     events = store.events()  # the store's events, read by SQLite (B-1597)

@@ -45,14 +45,14 @@ _REFERENCE_STAMP = """SELECT
      FROM (SELECT * FROM settings WHERE key IN ('our_province', 'site_provinces', 'policy_notes') ORDER BY key))"""
 
 # What the checks read besides the reference data, as the queue's re-check compares them (``Store.checks_stamp``,
-# B-815): JD Edwards' settings, whether it is in use (its switch, or a batch made), the days to pay, and the count of
-# changes to the vendor master and the POs (``masters_version``, B-842), and our bank accounts (the account an invoice
-# is paid from, D-66, B-958).
+# B-815): JD Edwards' settings, whether it is in use (its switch, or a batch made: whether there is one, not how many,
+# so an export changes no check, D-155), the days to pay, and the count of changes to the vendor master and the POs
+# (``masters_version``, B-842), and our bank accounts (the account an invoice is paid from, D-66, B-958).
 _CHECKS_STAMP = """SELECT
     (SELECT group_concat(key || '=' || value, char(10))
      FROM (SELECT * FROM settings WHERE key IN ('jde_e1', 'show_jde_settings', 'default_terms_days', 'masters_version')
            ORDER BY key)),
-    (SELECT COUNT(*) FROM export_batches WHERE format = 'jde'),
+    (SELECT EXISTS (SELECT 1 FROM export_batches WHERE format = 'jde')),
     (SELECT group_concat(code || '|' || currency || '|' || gl_account || '|' || is_default || '|' || active, char(10))
      FROM (SELECT * FROM bank_accounts ORDER BY code))"""
 
@@ -88,12 +88,20 @@ _EVENTS = (
 EVENTS_BATCH = 2000  # the events ``find_events`` reads at a time: memory stays flat however many there are
 
 
+# Of a page of events of some actions, newest first (``find_events``), a twentieth of the events or fewer are read off
+# their index by action and put in order; of more, the events are walked newest first, a page of them found sooner
+# than sorting them all (the Invoices group of Activity: 9 events in 10, re-sorted for each batch of the download).
+FEW_EVENTS = 20
+
+
 def _event_filter(actions: Iterable[str] | None = None, hidden: Iterable[str] = (), actor: str | None = None,
-                  since: str | None = None, until: str | None = None) -> tuple[str, list[Any]]:  # fmt: skip
-    """The SQL condition on ``events e`` (and its arguments) of ``find_events`` and ``count_events``."""
+                  since: str | None = None, until: str | None = None, *,
+                  by_action: bool = True) -> tuple[str, list[Any]]:  # fmt: skip
+    """The SQL condition on ``events e`` (and its arguments) of ``find_events`` and ``count_events``; ``by_action``
+    False: ``actions`` not looked up by their index (``FEW_EVENTS``)."""
     where, args = ["1 = 1"], []
     if actions is not None:
-        where.append(_in_list("e.action"))
+        where.append(_in_list("e.action" if by_action else "+e.action"))
         args.append(json.dumps(list(actions)))
     if hidden:
         where.append(f"NOT {_in_list('e.action')}")
@@ -123,8 +131,10 @@ class AccountsMixin:
     @staticmethod
     def _log(
         conn: sqlite3.Connection, action: str, invoice_id: int | None = None, actor: str | None = None,
-        detail: dict[str, Any] | None = None,
+        detail: dict[str, Any] | None = None, *, checked: bool = True,
     ) -> None:  # fmt: skip
+        """Record an event. ``checked``: False for a change to the vendor master that no check reads (a note,
+        ``save_vendor``): it leaves the checks stamp as it is (D-155)."""
         origin = EVENT_ORIGIN.get()
         actor = actor if actor else EVENT_ACTOR.get()  # the person signed in on the server (B-1106)
         if origin:
@@ -133,7 +143,7 @@ class AccountsMixin:
             "INSERT INTO events (invoice_id, action, actor, detail, created_at) VALUES (?, ?, ?, ?, ?)",
             (invoice_id, action, actor, json.dumps(detail or {}, default=str), _now()),
         )
-        if action in MASTERS_CHANGES:
+        if action in MASTERS_CHANGES and checked:
             count_masters_change(conn)
 
     def log_event(
@@ -165,14 +175,23 @@ class AccountsMixin:
         self, *, actions: Iterable[str] | None = None, hidden: Iterable[str] = (), actor: str | None = None,
         since: str | None = None, until: str | None = None, before: int | None = None,
         matches: Callable[[dict[str, Any]], bool] | None = None, limit: int | None = None,
+        detail_if: str | None = None,
     ) -> Iterator[dict[str, Any]]:  # fmt: skip
         """Every audit event that matches, newest first and as ``events`` gives them, read a batch at a time (a year of
         them is never held at once, nor a read kept open while the caller works): of ``actions`` (None: any) and none
         of ``hidden``, by ``actor``, made from ``since`` up to, not including, ``until`` (ISO days or times), older than
         event ``before``, and for which ``matches(event)`` holds (what SQL can't ask: the words an event is shown
-        with); ``limit``: that many at most."""
-        where, args = _event_filter(actions, hidden, actor, since, until)
-        sql = f"{_EVENTS} WHERE {where} AND e.id < ? ORDER BY e.id DESC LIMIT ?"
+        with); ``limit``: that many at most. ``detail_if``: an SQL condition on ``events e``; an event for which it
+        doesn't hold comes with a detail of None, not read nor decoded (a year's report needs few of them, D-156)."""
+        actions = None if actions is None else list(actions)
+        # Without a period, a page of a person's events comes off their index in order (D-156), and those of common
+        # actions off the events newest first (``FEW_EVENTS``), not every one of them read and sorted for each batch.
+        by_action = since or until or actions is None or (actor is None and self._few_events(actions))
+        where, args = _event_filter(actions, hidden, actor, since, until, by_action=bool(by_action))
+        select = _EVENTS if detail_if is None else _EVENTS.replace("e.*", "e.id, e.invoice_id, e.action, e.actor, CASE "
+                                                                 f"WHEN {detail_if} THEN COALESCE(e.detail, '') END "
+                                                                 "AS detail, e.created_at")  # fmt: skip
+        sql = f"{select} WHERE {where} AND e.id < ? ORDER BY e.id DESC LIMIT ?"
         below, found = before if before is not None else 2**63 - 1, 0
         if limit is not None and limit <= 0:
             return  # none asked for (a batch of none would end the loop on no rows: B-1676)
@@ -181,7 +200,8 @@ class AccountsMixin:
             with self._conn() as conn:
                 rows = [dict(r) for r in conn.execute(sql, (*args, below, batch))]
             for r in rows:
-                r["detail"] = json.loads(r["detail"]) if r["detail"] else {}
+                if r["detail"] is not None or detail_if is None:
+                    r["detail"] = json.loads(r["detail"]) if r["detail"] else {}
                 if matches is None or matches(r):
                     yield r
                     found += 1
@@ -190,6 +210,15 @@ class AccountsMixin:
             if len(rows) < batch:
                 return
             below = rows[-1]["id"]
+
+    def _few_events(self, actions: list[str]) -> bool:
+        """Whether a twentieth of the events or fewer are of ``actions`` (``FEW_EVENTS``), counted off their index up to
+        that many at most."""
+        with self._conn() as conn:
+            most = int(conn.execute("SELECT COALESCE(MAX(id), 0) FROM events").fetchone()[0]) // FEW_EVENTS + 1
+            found = conn.execute(f"SELECT COUNT(*) FROM (SELECT 1 FROM events e WHERE {_in_list('e.action')} LIMIT ?)",
+                                 (json.dumps(actions), most)).fetchone()[0]  # fmt: skip
+        return int(found) < most
 
     def count_events(
         self, *, actions: Iterable[str] | None = None, hidden: Iterable[str] = (), actor: str | None = None,
@@ -203,8 +232,11 @@ class AccountsMixin:
     def event_actors(self, hidden: Iterable[str] = ()) -> list[str]:
         """Everyone the audit events are by (but those of ``hidden`` actions only), by name, each once."""
         where, args = _event_filter(hidden=hidden)
+        # Each name off the index of the events by person (D-156), kept when one of its events is not of ``hidden``.
         with self._conn() as conn:
-            rows = conn.execute(f"SELECT DISTINCT e.actor FROM events e WHERE {where} AND e.actor != ''", args)
+            rows = conn.execute(
+                "SELECT a.actor FROM (SELECT DISTINCT actor FROM events WHERE actor != '') a WHERE EXISTS "
+                f"(SELECT 1 FROM events e WHERE e.actor = a.actor AND {where})", args)  # fmt: skip
             return sorted(str(r[0]) for r in rows)
 
     def event_values(self, action: str, field: str) -> set[str]:
@@ -393,17 +425,21 @@ class AccountsMixin:
 
     def last_pay_from(self, key: str) -> str:
         """The bank account this vendor's last approved invoice was paid from ("" when none recorded)."""
-        if not key:
-            return ""
+        return self.last_pay_froms([key]).get(key, "") if key else ""
+
+    def last_pay_froms(self, keys: list[str]) -> dict[str, str]:
+        """``last_pay_from`` of each vendor key of ``keys`` that has one, in one query of the invoices' summary (its
+        approved coding's ``pay_from``): the review queue asks it of every vendor waiting (D-155)."""
         with self._conn() as conn:
-            row = conn.execute(
-                "SELECT json_extract(final_output, '$.pay_from_account') AS code FROM invoices WHERE vendor_key = ? "
-                "AND status IN ('approved', 'pending_approval') AND json_valid(final_output) "
-                "AND COALESCE(json_extract(final_output, '$.pay_from_account'), '') != '' "
-                "ORDER BY reviewed_at DESC, id DESC LIMIT 1",
-                (key,),
-            ).fetchone()
-        return str(row["code"]) if row else ""
+            self._summary_fresh(conn)
+            rows = conn.execute(
+                "SELECT vendor_key, code FROM (SELECT vendor_key, pay_from AS code, ROW_NUMBER() OVER (PARTITION BY "
+                "vendor_key ORDER BY reviewed_at DESC, id DESC) AS n FROM invoice_summary WHERE status IN ('approved', "
+                "'pending_approval') AND COALESCE(pay_from, '') != '' AND vendor_key IN (SELECT value FROM "
+                "json_each(?))) WHERE n = 1",
+                (json.dumps([k for k in keys if k]),),
+            ).fetchall()
+        return {r["vendor_key"]: str(r["code"]) for r in rows}
 
     # --- Tax setup and policy ---------------------------------------------------------------------
 

@@ -45,6 +45,13 @@ def start_probe(name: str, tree: Path, n: int, work: Path) -> subprocess.Popen:
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)  # fmt: skip
 
 
+def share_models(root: Path, before: Path) -> None:
+    """The optional models this checkout holds (``models/``, git-ignored: the table finder) copied into the checkout
+    of the ref, which has none: what is read depends on them, so both trees must see the same ones (B-1699)."""
+    if (root / "models").is_dir() and not (before / "models").exists():
+        shutil.copytree(root / "models", before / "models")
+
+
 def finish(process: subprocess.Popen) -> tuple[bytes, str]:
     """(its output, its error text when it failed)."""
     out, err = process.communicate()
@@ -102,6 +109,7 @@ def main(argv: list[str] | None = None) -> int:
     if added.returncode:
         print(f"Could not check out {args.ref}: {added.stderr.strip()}")
         return 2
+    share_models(ROOT, before)
     worst = 0
     try:
         for name in args.probes:

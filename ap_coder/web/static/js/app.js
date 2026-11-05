@@ -15,6 +15,7 @@
      select[data-autosubmit]          submit its (GET) form on change
      input[type=checkbox][data-enables]  enables the submit button of its form while ticked
      [data-dismiss]                   removes its message
+     [data-job-status="/jobs/name"]   background work under way: says how far it got, reloads the page when done
 */
 
 export const HEADERS = { "X-AP-Coder": "1" };
@@ -254,6 +255,15 @@ function resetSlowLink(a) {
 
 // Back to a page whose slow link was clicked (the browser keeps it): the link reads as it did.
 window.addEventListener("pageshow", () => document.querySelectorAll("a[data-busy][aria-busy]").forEach(resetSlowLink));
+
+// Work going on in the background when the page was drawn (the Spend workbook on the company server): its line says how
+// far it got, and the page is drawn again once it is done.
+document.querySelectorAll("[data-job-status]").forEach((el) => {
+  const said = el.textContent.split(":")[0];
+  watchJob(el.dataset.jobStatus, (snap) => {
+    if (snap.state === "running" && snap.note) el.textContent = `${said}: ${snap.note}`;
+  });
+});
 
 // Esc closes the open popovers; the keyboard focus inside one goes back to its button (Split a line…, Apply to all).
 // (A picker's list open in it closes first: picker.js stops that Esc.)

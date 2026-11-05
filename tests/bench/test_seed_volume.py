@@ -88,6 +88,58 @@ def test_what_the_seed_writes_reads_as_the_app_would_have_it(seeded, tmp_path):
         assert queue and {stamps[i][0] for i in queue} == {store.checks_stamp()}
 
 
+def test_the_big_reports_give_what_they_gave_on_the_seed(seeded, tmp_path, monkeypatch):
+    """D-156: the reports made light for a year of invoices (summed and picked by SQLite, read a batch at a time) give
+    what they gave reading every invoice, PO or event (``tests/reports_reference.py``), on the seed's realistic data:
+    the Spend page and its workbook, month-end's received-not-invoiced lines, the controls report's one-person check
+    and the JD Edwards duplicate checks of the ready invoices (with copies of exported bills and of the register's)."""
+    import re
+
+    from ap_coder.erp import accruals, controls, jde, spend
+    from ap_coder.web.pages import exports as exports_page
+    from tests import reports_reference as old
+    from tests.conftest import copy_database
+    from tests.webclient import client_for
+
+    with isolated(tmp_path):
+        store = copy_database(seeded / "ap_coder.db", tmp_path / "private" / "ap_coder.db")
+        ready = store.unexported_approved()
+        exported = [r for r in store.search_rows(exported=True)][:3]
+        register = store.erp_register()[:3]
+        for n, source in enumerate(exported + register):  # copies, approved: duplicates of a bill already out
+            doc = store.get_invoice(ready[n]["id"])["final_output"]
+            copy = {**doc, "vendor_name": source["vendor_name"], "invoice_number": source["invoice_number"]}
+            store.approve_invoice(store.add_invoice(tmp_path / f"copy-{n}.pdf", copy, {}), copy, "Jordan Lee")
+        invoices = store.get_invoices([r["id"] for r in store.unexported_approved()])
+        settings, lookup = jde.load(store), store.vendor_ids()
+        found = jde.validate(invoices, settings, lookup, jde.prior_records(store, invoices=invoices))
+        assert found == jde.validate(invoices, settings, lookup, jde.prior_records(store))
+        assert sum("already exported" in m or "already in the ERP" in m for ms in found.values() for m in ms) >= 6
+        assert exports_page.jde_check(store, [i["id"] for i in invoices])[1] == found
+        batch = next(b["id"] for b in store.export_batches() if not b["undone_at"])
+        ids = store.batch_invoice_ids(batch)
+        batch_invoices = store.get_invoices(ids)
+        assert jde.validate(batch_invoices, settings, lookup, jde.prior_records(store, ids, batch_invoices)) == \
+            jde.validate(batch_invoices, settings, lookup, jde.prior_records(store, ids))  # fmt: skip
+
+        client = client_for(store)
+        client.app.add_api_route("/old-spend", old.spend_page)
+        today = dt.date.today()
+        for query in ("", "?currency=CAD", "?currency=USD", f"?start={today - dt.timedelta(days=60)}&end={today}"):
+            new, was = (re.sub(r"(apc-chart-[a-z0-9-]+?)-\d+-", r"\1-0-", client.get(f"{path}{query}").text)
+                        for path in ("/spend", "/old-spend"))  # fmt: skip
+            assert new == was.replace("/old-spend", "/spend"), query
+        monkeypatch.setattr(spend, "WORKBOOK_BATCH", 37)
+        assert old.workbook_contents(spend.workbook(store, store.reference_data())) == old.workbook_contents(
+            old.spend_workbook(store, store.reference_data()))  # fmt: skip
+        for end in (today, today - dt.timedelta(days=90)):
+            assert accruals._received_not_invoiced(store, end) == old.received_not_invoiced(store, end)
+        rates, limit = store.fx_rates(), store.approval_limit()
+        for first, last in ((YEAR[0].isoformat(), YEAR[1].isoformat()), (today.replace(day=1).isoformat(), "9999")):
+            assert controls.one_person(store, first, last, limit, rates) == old.one_person(store, first, last, limit,
+                                                                                            rates)  # fmt: skip
+
+
 def test_each_clone_has_amounts_of_its_own_that_add_up(seeded):
     conn = sqlite3.connect(seeded / "ap_coder.db")
     try:

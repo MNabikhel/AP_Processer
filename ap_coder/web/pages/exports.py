@@ -20,6 +20,7 @@ import datetime as dt
 from typing import Any
 
 from fastapi import File, Form, HTTPException, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from ap_coder.core import ui
@@ -40,6 +41,7 @@ from ap_coder.web.core import (
     reference_or_none,
     refuse,
     render,
+    run_heavy,
 )
 from ap_coder.web.core import reviewer as current_reviewer
 from ap_coder.web.files import (
@@ -113,7 +115,8 @@ def jde_left_out(store: Store, batch: int) -> tuple[list[dict[str, Any]], dict[i
     known = store.export_batch(batch)
     if known and known["format"] == jde.FORMAT:
         return invoices, {}
-    left_out = jde.validate(invoices, jde.load(store), store.vendor_ids(), jde.prior_records(store, exclude_ids=ids))
+    prior = jde.prior_records(store, exclude_ids=ids, invoices=invoices)  # only what has their numbers (D-156)
+    left_out = jde.validate(invoices, jde.load(store), store.vendor_ids(), prior)
     return invoices, left_out
 
 
@@ -147,7 +150,7 @@ def jde_check(store: Store, invoice_ids: list[int]) -> tuple[list[int], dict[int
     settings = jde.load(store)
     blocking = jde.settings_problems(settings)
     invoices = store.get_invoices(invoice_ids)
-    problems = jde.validate(invoices, settings, store.vendor_ids(), jde.prior_records(store))
+    problems = jde.validate(invoices, settings, store.vendor_ids(), jde.prior_records(store, invoices=invoices))
     ok = [] if blocking else [i["id"] for i in invoices if i["id"] not in problems]
     return ok, problems, blocking
 
@@ -366,10 +369,10 @@ def api_context(store: Store, chosen: dict[str, Any] | None) -> dict[str, Any]:
 async def create_batch(request: Request) -> JSONResponse:
     """A new batch of the ticked invoices, in the chosen format (JD Edwards: only those that pass its checks)."""
     form = await posted_form(request)  # one field per invoice ticked
-    with get_store(request).session():  # nothing awaited inside: no other request runs on this thread meanwhile
-        return _create_batch(request, form)
+    return await run_heavy(request, _create_batch, request, form)  # on a thread: never the worker's loop (D-153)
 
 
+@one_connection
 def _create_batch(request: Request, form: Any) -> JSONResponse:
     store = get_store(request)
     fmt = str(form.get("fmt") or "")
@@ -415,7 +418,8 @@ def jde_dry_run(request: Request) -> Response:
     back. Nothing is exported and no batch is made."""
     store = get_store(request)
     invoices = store.get_invoices([r["id"] for r in store.unexported_approved()])
-    report = jde.dry_run(invoices, jde.load(store), store.vendor_ids(), prior=jde.prior_records(store),
+    prior = jde.prior_records(store, invoices=invoices)  # only what has their numbers (D-156)
+    report = jde.dry_run(invoices, jde.load(store), store.vendor_ids(), prior=prior,
                          batch="(next)", fx_rates=store.fx_rates())  # fmt: skip
     return download(jde.dry_run_text(report).encode("utf-8"), "ap_coder_jde_dry_run.txt", "text/plain; charset=utf-8")
 
@@ -491,8 +495,14 @@ def undo_batch(request: Request, batch: int) -> JSONResponse:
 
 @router.post("/exports/layout")
 async def save_layout(request: Request) -> JSONResponse:
+    form = await posted_form(request)
+    return await run_in_threadpool(_save_layout, request, form)
+
+
+@one_connection
+def _save_layout(request: Request, form: Any) -> JSONResponse:
     store = get_store(request)
-    new, _incomplete, warnings = layout_from_form(await posted_form(request))
+    new, _incomplete, warnings = layout_from_form(form)
     if not new.columns:
         return refuse("Give the layout at least one column (a header and a value).")
     store.set_setting(LAYOUT_SETTING, new.to_json(), actor=current_reviewer())
@@ -505,8 +515,14 @@ async def save_layout(request: Request) -> JSONResponse:
 @router.post("/exports/layout/preview")
 async def preview_layout(request: Request) -> JSONResponse:
     """The first lines of the custom CSV as the form stands (nothing is saved)."""
+    form = await posted_form(request)
+    return await run_in_threadpool(_preview_layout, request, form)
+
+
+@one_connection
+def _preview_layout(request: Request, form: Any) -> JSONResponse:
     store = get_store(request)
-    new, _incomplete, warnings = layout_from_form(await posted_form(request))
+    new, _incomplete, warnings = layout_from_form(form)
     return JSONResponse({"ok": True, "preview": layout_preview(store, new), "warnings": warnings})
 
 
@@ -524,6 +540,11 @@ async def register_upload(request: Request, file: UploadFile = File(...)) -> JSO
 @router.post("/exports/register/import")
 async def register_import(request: Request) -> JSONResponse:
     form = await posted_form(request)
+    return await run_in_threadpool(_register_import, request, form)  # a large company's list: 600,000 rows
+
+
+@one_connection
+def _register_import(request: Request, form: Any) -> JSONResponse:
     store = get_store(request)
     token, sheet = str(form.get("file") or ""), str(form.get("sheet") or "")
     try:

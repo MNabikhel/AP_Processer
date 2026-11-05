@@ -157,6 +157,70 @@ def test_an_expected_recurring_invoice_is_not_accrued_beside_its_vendors_receive
     assert "Not accrued as expected recurring invoices" in text and "Chinook Courier" in text.split("Not accrued as")[1]
 
 
+def test_received_not_invoiced_gives_what_matching_each_po_in_turn_gave(tmp_path):
+    """Each invoice's lines are read once (only its date and lines of its coding, by SQLite) and each description and
+    price matched to a PO's lines once: the same accruals as reading each PO and its vendor's invoices in turn and
+    matching every line again (``reports_reference``), with several POs a vendor, lines alike at other prices, credits,
+    lines without a description or price, invoices dated after the period end or only in their coding, on no PO,
+    rejected, coded in review only, or with a coding Python reads and SQLite doesn't (NaN)."""
+    from tests import reports_reference as ref
+
+    store = Store(tmp_path / "a.db")
+    load_sample_setup(store)
+    load_sample_purchase_orders(store)
+    items = [("Toner cartridge", 80.0), ("Toner cartridge", 95.0), ("Paper A4 case", 42.5),
+             ("Delivery", 25.0), ("Printer service visit", 150.0)]  # fmt: skip
+    rows = []
+    for p in range(6):
+        for n, (what, price) in enumerate(items[p % 3 : p % 3 + 3], 1):
+            rows.append({"po_number": f"PO-7{p}", "vendor_name": "Ridge Office Supply" if p < 4 else "Lakeview Print",
+                         "line_number": n, "description": what, "quantity": 10.0 + p, "unit_price": price + p % 2,
+                         "amount": round((10.0 + p) * (price + p % 2), 2), "received_quantity": None if p == 5 else
+                         4.0 + n, "gl_code": "6010", "cost_center": "", "status": "closed" if p == 3 else "open",
+                         "amount_only": False, "open_amount": None})  # fmt: skip
+    store.import_purchase_orders(rows)
+    line_sets = [
+        [{"description": "Toner cartridge", "quantity": 2, "unit_price": 80.0, "amount": 160.0},
+         {"description": "Toner cartridge", "quantity": 1, "unit_price": 95.0, "amount": 95.0}],
+        [{"description": "toner cartridge", "quantity": 1, "unit_price": 96.0, "amount": 96.0},
+         {"description": "Paper A4 case", "quantity": 3, "unit_price": 42.5, "amount": 127.5}],
+        [{"description": "Toner cartridge", "quantity": 1, "unit_price": 95.0, "amount": -95.0}],  # a credit
+        [{"quantity": 2, "unit_price": None, "amount": 50.0}, {"description": None, "quantity": 1, "amount": 25.0}],
+        [{"description": "Delivery", "quantity": "1", "unit_price": "25.00", "amount": 25.0}],
+        [{"description": "Printer service visit", "quantity": 0.5, "unit_price": 150.0, "amount": 75.0}],
+    ]  # fmt: skip
+    for n in range(40):
+        po = ["PO-70", "PO-71", "PO-72", "PO-74", "", ""][n % 6]
+        vendor = "Lakeview Print" if po == "PO-74" or n % 5 == 0 else "Ridge Office Supply"
+        doc = {"vendor_name": vendor, "invoice_number": f"R-{n}", "po_number": po, "currency": "CAD",
+               "invoice_date": ["2026-09-12", "2026-10-03", ""][n % 3], "line_items": line_sets[n % len(line_sets)],
+               "subtotal": 100.0, "grand_total": 105.0}  # fmt: skip
+        lines = [{**li, "line_number": k, "predicted_gl_code": "6010"} for k, li in enumerate(doc["line_items"], 1)]
+        invoice = store.add_invoice(tmp_path / f"{n}.pdf", {**doc, "line_items": lines}, {})
+        if n % 4 == 1:  # approved as AP Coder read it, then its lines as they are (odd ones too) and maybe its date
+            approved = {**doc, "line_items": [{**li, "description": li.get("description") or ""} for li in lines]}
+            store.approve_invoice(invoice, approved, "Jane")
+            with store._conn() as conn:
+                conn.execute("UPDATE invoices SET final_output = ? WHERE id = ?",
+                             (json.dumps({**approved, "line_items": lines,
+                                          "invoice_date": "2026-09-30" if n % 8 == 1 else doc["invoice_date"]}),
+                              invoice))  # fmt: skip
+        elif n % 9 == 2:
+            store.reject_invoice(invoice, "Jane", "not ours")
+        if n == 7:  # a total Python reads (NaN) and SQLite does not
+            with store._conn() as conn:
+                conn.execute("UPDATE invoices SET ai_output = replace(ai_output, '105.0', 'NaN') WHERE id = ?",
+                             (invoice,))  # fmt: skip
+        if n == 9:  # no date in the invoice's own column: its coding's
+            with store._conn() as conn:
+                conn.execute("UPDATE invoices SET invoice_date = NULL WHERE id = ?", (invoice,))
+    for end in (dt.date(2026, 9, 30), dt.date(2026, 10, 31), dt.date(2026, 8, 31)):
+        assert accruals._received_not_invoiced(store, end) == ref.received_not_invoiced(store, end), end
+    found = accruals._received_not_invoiced(store, dt.date(2026, 10, 31))
+    assert {a.reference.split(" line")[0] for a in found} >= {"PO-70", "PO-71", "PO-72", "PO-74"}
+    assert not any(a.reference.startswith(("PO-73 ", "PO-75 ")) for a in found)  # closed, nothing received
+
+
 def test_default_period_end():
     assert accruals.default_period_end(dt.date(2026, 10, 3)) == dt.date(2026, 9, 30)
     assert accruals.default_period_end(dt.date(2026, 10, 20)) == dt.date(2026, 10, 31)

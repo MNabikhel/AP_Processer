@@ -24,6 +24,7 @@ from typing import Any
 
 import fastapi
 from fastapi import Form, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from ap_coder import __version__
@@ -46,6 +47,7 @@ from ap_coder.web.core import (
     get_store,
     invoice_dir,
     jde_shown,
+    one_connection,
     open_folder_here,
     page_router,
     page_version,
@@ -189,6 +191,11 @@ async def save_review(request: Request) -> JSONResponse:
     is left as it is (read from the raw form: a field posted blank, a name cleared, is not one left out); the message
     says what was saved."""
     form = await posted_form(request)
+    return await run_in_threadpool(_save_review, request, form)
+
+
+@one_connection
+def _save_review(request: Request, form: Any) -> JSONResponse:
     if form.get("version") is not None and str(form.get("version")) != review_version(request):
         return refuse(STALE_PAGE, 409)  # an old tab would save its old values over newer ones (B-655)
 

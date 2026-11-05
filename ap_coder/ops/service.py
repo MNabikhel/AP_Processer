@@ -57,7 +57,8 @@ SERVER_FILE = ".ap_coder_server.json"  # written by the running dashboard (web/s
 # The environment variables that override server.json (the TLS and host names are those `serve --server` reads too).
 ENV_SETTINGS = {"port": "AP_SERVER_PORT", "host": "AP_DASHBOARD_ADDRESS", "certfile": "AP_TLS_CERT",
                 "keyfile": "AP_TLS_KEY", "allowed_hosts": "AP_ALLOWED_HOSTS", "proxy": "AP_SERVER_PROXY",
-                "workers": "AP_SERVER_WORKERS", "llm_parallel": "AP_LLM_PARALLEL"}  # fmt: skip
+                "workers": "AP_SERVER_WORKERS", "llm_parallel": "AP_LLM_PARALLEL",
+                "worker_threads": "AP_WORKER_THREADS"}  # fmt: skip
 # Windows' own accounts: no password; the task names them by their SID.
 BUILT_IN = {"system": "S-1-5-18", "localsystem": "S-1-5-18", "nt authority\\system": "S-1-5-18",
             "local service": "S-1-5-19", "localservice": "S-1-5-19", "nt authority\\local service": "S-1-5-19",
@@ -85,8 +86,9 @@ class ServerSettings:
     task_name: str = TASK_NAME
     folder: str = ""  # the AP Coder folder the service runs ("" = this one); server-update changes it
     allowed_folders: tuple[str, ...] = ()  # the folders an Admin may name on the Settings pages (D-109)
-    workers: int = 0  # web worker processes (D-111); 0: one per core, at most 8 (``server.default_workers``)
+    workers: int = 0  # web worker processes (D-111); 0: for the cores and the memory (``server.default_workers``)
     llm_parallel: int = 1  # requests sent to LM Studio (or another model server) at once (D-111)
+    worker_threads: int = 0  # requests each web worker runs at once (D-153); 0: ``app.WORKER_THREADS``
 
     @property
     def code_folder(self) -> Path:
@@ -205,7 +207,7 @@ def settings(data: Path, env: dict | None = None, **overrides: Any) -> ServerSet
     except (TypeError, ValueError):
         raise SettingsError(f"The port {values.get('port')!r} is not a number.") from None
     values["insecure_http"] = values.get("insecure_http") in (True, "1", "true", "yes", "on")
-    for name, low, high in (("workers", 0, 64), ("llm_parallel", 1, 32)):
+    for name, low, high in (("workers", 0, 64), ("llm_parallel", 1, 32), ("worker_threads", 0, 40)):
         try:
             values[name] = min(high, max(low, int(values.get(name, getattr(ServerSettings, name)))))
         except (TypeError, ValueError):
@@ -269,6 +271,8 @@ def serve_env(s: ServerSettings, data: Path) -> dict[str, str]:
     if s.allowed_hosts:
         env["AP_ALLOWED_HOSTS"] = ",".join(s.allowed_hosts)
     env["AP_LLM_PARALLEL"] = str(s.llm_parallel)
+    if s.worker_threads:
+        env["AP_WORKER_THREADS"] = str(s.worker_threads)
     return env
 
 
@@ -900,7 +904,7 @@ def add_parser(sub: Any) -> None:
     p.add_argument("--allowed-folders", default=None,
                    help="The folders Admins may name for backup copies and the finance hub, ;-separated")  # fmt: skip
     p.add_argument("--workers", type=int, default=None,
-                   help="Web worker processes (default: one per core, at most 8; 1: all in one process)")  # fmt: skip
+                   help="Web worker processes (default: for the cores and memory; 1: all in one process)")  # fmt: skip
     p.add_argument("--llm-parallel", type=int, default=None,
                    help="Requests sent to LM Studio at once (default 1; docs/SERVER.md, step 8)")  # fmt: skip
     p.add_argument("--no-start", action="store_true", help="install: don't start it yet")

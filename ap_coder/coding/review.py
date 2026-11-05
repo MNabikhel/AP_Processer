@@ -8,13 +8,15 @@ Entry points: ``coding_from_inputs``, ``codes_to_pick`` (what approval still nee
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import pandas as pd
 from pydantic import ValidationError
 
 from ..core.reference_data import UNASSIGNED, ReferenceData
 from ..core.schema import InvoiceCoding
+
+if TYPE_CHECKING:  # imported where a grid is split: the queue's summary reads ``codes_to_pick`` without pandas
+    import pandas as pd
 
 
 def is_blank(value: Any) -> bool:
@@ -158,6 +160,8 @@ def split_line(
     part takes the rounding, and each part keeps the line's description and taxes. The first part keeps
     the line number and its place; the others go right under it, numbered after the last line (B-1188).
     """
+    import pandas as pd
+
     numbers = pd.to_numeric(lines["line_number"], errors="coerce")
     matches = lines.index[numbers == line_number].tolist()
     if by == "amount":

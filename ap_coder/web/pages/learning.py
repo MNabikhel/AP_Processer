@@ -21,11 +21,13 @@ import json
 import re
 import tempfile
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
 from fastapi import File, Form, HTTPException, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from markupsafe import Markup
 
@@ -43,6 +45,7 @@ from ap_coder.web.core import (
     done,
     get_settings,
     get_store,
+    one_connection,
     page_router,
     posted_form,
     reference_or_none,
@@ -355,7 +358,21 @@ def coding_context(store: Store, mem_q: str, settings: Any = None) -> dict[str, 
 # --- Supplier learning ------------------------------------------------------------------------------------------
 
 
-def suppliers_context(store: Store) -> dict[str, Any]:
+SUPPLIERS_SHOWN = 50  # the vendors Supplier learning lists at first, and how many more each time ("Show more")
+
+
+def _shown(value: Any) -> int:
+    """How many vendors to list (``shown`` in the address): SUPPLIERS_SHOWN, or more in steps of it."""
+    try:
+        wanted = int(value or SUPPLIERS_SHOWN)
+    except ValueError:
+        return SUPPLIERS_SHOWN
+    return min(max(SUPPLIERS_SHOWN, -(-wanted // SUPPLIERS_SHOWN) * SUPPLIERS_SHOWN), 1_000_000)
+
+
+def suppliers_context(store: Store, shown: int = SUPPLIERS_SHOWN) -> dict[str, Any]:
+    """Every vendor's state, in the order the page lists them (to act on first, then the most invoices), every
+    vendor's record worked out in a few queries; the first ``shown`` drawn (D-157)."""
     from ap_coder.capture.supplier import (
         HELD,
         SUPERVISED,
@@ -365,16 +382,23 @@ def suppliers_context(store: Store) -> dict[str, Any]:
         to_go_text,
     )
 
-    profiles = store.list_supplier_profiles()
+    profiles = store.supplier_profiles_brief()
     policy = store.autonomy_policy()
     on = store.touchless_enabled()
-    out = []
+    every = store.all_supplier_stats([p["key"] for p in profiles], policy.window, fields=False)
+    listed = []
     for p in profiles:
-        stats = store.supplier_stats(p["key"], policy.window)
+        stats = every[p["key"]]
+        state, progress, why = autonomy_status(stats, policy, p["state"] or SUPERVISED, p["autonomous_since"],
+                                               touchless_on=on, suspended_at=p.get("suspended_at"))  # fmt: skip
+        listed.append((p, stats, state, progress, why, p["display_name"] or p["key"]))
+    listed.sort(key=lambda s: (_STATE_ORDER.get(s[2], 9), -s[1].invoices, s[5].lower()))
+    each = store.supplier_fields([s[0]["key"] for s in listed[:shown]], policy.window)  # the vendors drawn's
+    corrections = store.latest_corrections([key for key, fields in each.items() if fields])
+    out = []
+    for p, stats, state, progress, why, name in listed[:shown]:
+        stats = replace(stats, fields=each[p["key"]])
         stored = p["state"] or SUPERVISED
-        state, progress, why = autonomy_status(stats, policy, stored, p["autonomous_since"], touchless_on=on,
-                                               suspended_at=p.get("suspended_at"))  # fmt: skip
-        name = p["display_name"] or p["key"]
         recent = stats.history[:RECENT]
         corrected = sum(1 for h in recent if h["corrections"])
         judged = judged_stats(stats, stored, p.get("suspended_at"))
@@ -392,24 +416,22 @@ def suppliers_context(store: Store) -> dict[str, Any]:
              "accuracy": f"{fs.accuracy:.0%}", "tone": "ok" if fs.correct == fs.n else "warn"}
             for f, fs in sorted(stats.fields.items(), key=lambda kv: (kv[1].accuracy or 0, kv[0]))
         ]  # fmt: skip
-        latest = []
-        if stats.fields:
-            latest = [
-                {"label": FIELD_LABELS.get(r["field"], r["field"]),
-                 "read": r["ai_value"] if r["ai_value"] is not None else "(blank)",
-                 "final": r["final_value"] if r["final_value"] is not None else "(blank)", "at": str(r["at"])[:10]}
-                for r in [r for r in store.supplier_outcomes(p["key"], limit=500) if not r["correct"]][:5]
-            ]  # fmt: skip
+        latest = [
+            {"label": FIELD_LABELS.get(r["field"], r["field"]),
+             "read": r["ai_value"] if r["ai_value"] is not None else "(blank)",
+             "final": r["final_value"] if r["final_value"] is not None else "(blank)", "at": str(r["at"])[:10]}
+            for r in corrections.get(p["key"], [])
+        ]  # fmt: skip
         out.append({
             "key": p["key"], "name": name, "state": state, "held": p["state"] == HELD, "invoices": stats.invoices,
             "row": built(ui.supplier_row(name, " · ".join(parts), state, progress, why)), "fields": fields,
             "window": ui.plural(stats.window_invoices, "reviewed invoice"), "latest": latest,
-            "has_layout": bool(p.get("template")),
+            "has_layout": bool(p["has_layout"]),
         })  # fmt: skip
-    out.sort(key=lambda r: (_STATE_ORDER.get(r["state"], 9), -r["invoices"], r["name"].lower()))
     from ap_coder.web.pages.settings_automation import typical_to_go
 
-    return {"suppliers": out, "touchless_on": on, "policy": policy, "typical": typical_to_go(store)}
+    return {"suppliers": out, "suppliers_total": len(listed), "suppliers_step": SUPPLIERS_SHOWN, "shown": shown,
+            "touchless_on": on, "policy": policy, "typical": typical_to_go(store)}  # fmt: skip
 
 
 # --- Readers ------------------------------------------------------------------------------------------------------
@@ -521,7 +543,7 @@ def learning_page(request: Request) -> HTMLResponse:
         context.update(_history_context(store, q.get("history"), q.get("sheet")))
         context.update(coding_context(store, q.get("mem_q") or "", get_settings(request)))
     elif tab == "suppliers":
-        context.update(suppliers_context(store))
+        context.update(suppliers_context(store, _shown(q.get("shown"))))
     elif tab == "lessons":
         context.update(lessons_context(store))
     elif developer:
@@ -565,8 +587,15 @@ def lesson_retire(request: Request, lesson_id: int = Form(...), retired: str = F
                 else "Restored: the AI reads it again.")  # fmt: skip
 
 
+def _suppliers_url(shown: str) -> str:
+    """Supplier learning with as many vendors listed as when a vendor was acted on: one past the first stays in view."""
+    listed = _shown(shown)
+    return "/learning?tab=suppliers" + (f"&shown={listed}" if listed > SUPPLIERS_SHOWN else "")
+
+
 @router.post("/learning/suppliers/hold")
-def supplier_hold(request: Request, key: str = Form(...), reason: str = Form("")) -> JSONResponse:
+def supplier_hold(request: Request, key: str = Form(...), reason: str = Form(""),
+                  shown: str = Form("")) -> JSONResponse:  # fmt: skip
     """Keep a vendor supervised: every invoice goes to a person, whatever its record, until allowed again."""
     from ap_coder.capture.supplier import HELD
 
@@ -576,11 +605,11 @@ def supplier_hold(request: Request, key: str = Form(...), reason: str = Form("")
         return refuse("That vendor is no longer in AP Coder's supplier learning.", 404)
     name = profile["display_name"] or key
     store.set_supplier_state(key, HELD, reviewer(), reason=reason.strip() or "kept supervised on the Learning page")
-    return done(request, "/learning?tab=suppliers", f"{name} is kept supervised: every invoice is reviewed.")
+    return done(request, _suppliers_url(shown), f"{name} is kept supervised: every invoice is reviewed.")
 
 
 @router.post("/learning/suppliers/allow")
-def supplier_allow(request: Request, key: str = Form(...)) -> JSONResponse:
+def supplier_allow(request: Request, key: str = Form(...), shown: str = Form("")) -> JSONResponse:
     from ap_coder.capture.supplier import SUPERVISED
 
     store = get_store(request)
@@ -589,18 +618,18 @@ def supplier_allow(request: Request, key: str = Form(...)) -> JSONResponse:
         return refuse("That vendor is no longer in AP Coder's supplier learning.", 404)
     name = profile["display_name"] or key
     store.set_supplier_state(key, SUPERVISED, reviewer(), reason="allowed again on the Learning page")
-    return done(request, "/learning?tab=suppliers", f"{name} can skip review again once it meets the bar.")
+    return done(request, _suppliers_url(shown), f"{name} can skip review again once it meets the bar.")
 
 
 @router.post("/learning/suppliers/reset-layout")
-def supplier_reset_layout(request: Request, key: str = Form(...)) -> JSONResponse:
+def supplier_reset_layout(request: Request, key: str = Form(...), shown: str = Form("")) -> JSONResponse:
     """Forget a vendor's layout (what its template learned): its next invoices are read as a new vendor's (D-71)."""
     store = get_store(request)
     profile = store.get_supplier_profile(key)
     if profile is None or not store.reset_supplier_layout(key, reviewer()):
         return refuse("That vendor is no longer in AP Coder's supplier learning.", 404)
     name = profile["display_name"] or key
-    return done(request, "/learning?tab=suppliers",
+    return done(request, _suppliers_url(shown),
                 f"{name}'s layout is reset: its next invoices are read as a new vendor's, and approving them teaches "
                 "it again.")  # fmt: skip
 
@@ -613,6 +642,11 @@ async def memory_forget(request: Request) -> JSONResponse:
         ids = []
     if not ids:
         return refuse("Tick the lines to forget first.")
+    return await run_in_threadpool(_memory_forget, request, ids)
+
+
+@one_connection
+def _memory_forget(request: Request, ids: list[int]) -> JSONResponse:
     n = get_store(request).delete_feedback([int(i) for i in ids], actor=reviewer())
     return done(request, "/learning#memory", f"Forgot {ui.plural(n or len(ids), 'line')} from the coding memory.")
 
@@ -625,6 +659,11 @@ async def history_upload(request: Request, file: UploadFile = File(...)) -> JSON
     content = await read_capped(file)  # never read whole, however large (B-1401)
     if content is None:
         return refuse(TOO_BIG)
+    return await run_in_threadpool(_history_upload, request, name, content)
+
+
+@one_connection
+def _history_upload(request: Request, name: str, content: bytes) -> JSONResponse:
     try:
         sheets = read_sheets(name, content)
     except ValueError as exc:
@@ -641,6 +680,11 @@ def flash_message_for_columns(name: str, sheets: dict[str, tuple[list[str], list
 @router.post("/learning/history/teach")
 async def history_teach(request: Request) -> JSONResponse:
     form = await posted_form(request)
+    return await run_in_threadpool(_history_teach, request, form)  # years of ERP lines at once
+
+
+@one_connection
+def _history_teach(request: Request, form: Any) -> JSONResponse:
     token = str(form.get("token") or "")
     upload = get_upload(token)
     if upload is None:

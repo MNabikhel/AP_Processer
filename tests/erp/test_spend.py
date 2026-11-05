@@ -43,6 +43,36 @@ def test_currencies_are_kept_apart():
     assert spend.total_by(rows, "vendor", "CAD") == [("A", 80.0, 2)]
 
 
+def test_the_spend_figures_are_read_from_one_state_of_the_database(tmp_path, demo_template, monkeypatch):
+    """The page's figures came from five queries, each seeing the database as it was then: an approval between them
+    was in some shares and not others (the GL accounts' added to more than the total). They are read in one read
+    transaction: an approval meanwhile is in all of them, or none."""
+    import threading
+
+    store = copy_database(demo_template, tmp_path / "s.db")
+    waiting = store.list_invoices("review")[0]["id"]
+    doc = store.get_invoice(waiting)["ai_output"]
+    reads, fetch = [], store.summary_fetch
+
+    def approved_meanwhile(sql, params=()):
+        rows = fetch(sql, params)
+        reads.append(sql)
+        if len(reads) == 1:  # another person approves an invoice between two reads (another connection)
+            other = threading.Thread(target=lambda: Store(store.path).approve_invoice(waiting, doc, "Jane"))
+            other.start()
+            other.join()
+        return rows
+
+    before = spend.figures(store, *YEAR, "CAD", {})
+    monkeypatch.setattr(store, "summary_fetch", approved_meanwhile)
+    found = spend.figures(store, *YEAR, "CAD", {})
+    assert len(reads) >= 4 and store.get_invoice(waiting)["status"] == "approved"
+    for key in ("gl_code", "cost_center"):
+        assert round(sum(n for _, n, _ in found["by"][key]), 2) == found["total"], key
+    assert round(sum(m["amount"] for m in found["by_month"]), 2) == found["total"]
+    assert found == before  # as the database was at the first read
+
+
 def test_default_period_is_the_last_twelve_months():
     assert spend.default_period(dt.date(2026, 10, 7)) == (dt.date(2025, 11, 1), dt.date(2026, 10, 7))
     assert spend.default_period(dt.date(2026, 12, 31)) == (dt.date(2026, 1, 1), dt.date(2026, 12, 31))
@@ -69,6 +99,34 @@ def test_workbook_text_cannot_run_as_a_formula(tmp_path, demo_template):
     wb = load_workbook(io.BytesIO(spend.workbook(store, None)))
     cell = next(c for row in wb["Invoices"].iter_rows() for c in row if str(c.value).startswith("=HYPER"))
     assert cell.data_type == "s" and cell.quotePrefix
+
+
+def test_the_workbook_written_as_it_goes_holds_what_it_held(tmp_path, demo_template, monkeypatch):
+    """D-156: the invoices read a few at a time and the sheets written in openpyxl's write-only mode, not every
+    invoice and cell held at once: the same cells (text that looks like a formula stored as text), widths of columns
+    (from the first 200 rows), frozen header and tables as the workbook built in memory (``reports_reference``), with
+    sheets past 200 rows and batches of a few invoices."""
+    from tests import reports_reference as ref
+
+    store = copy_database(demo_template, tmp_path / "s.db")
+    doc = store.get_invoice(store.list_invoices()[0]["id"])["ai_output"]
+    long_line = {**doc["line_items"][0], "description": "x" * 70}
+    for n in range(40):
+        lines = [{**li, "description": f"=SUM(A{n})" if k == 0 and n % 9 == 0 else li["description"]}
+                 for k, li in enumerate(doc["line_items"] * 3)] + ([long_line] if n == 35 else [])  # fmt: skip
+        changed = {**doc, "invoice_number": f"W-{n}", "vendor_name": "@vendor" if n == 3 else doc["vendor_name"],
+                   "line_items": lines}  # fmt: skip
+        invoice = store.add_invoice(tmp_path / f"{n}.pdf", changed, {})
+        if n % 2:
+            store.approve_invoice(invoice, changed, "Jane")
+    store.add_invoice(tmp_path / "bad.pdf", None, None, error="could not be read")
+    monkeypatch.setattr(spend, "WORKBOOK_BATCH", 7)
+    for reference in (store.reference_data(), None):
+        new = ref.workbook_contents(spend.workbook(store, reference))
+        assert new == ref.workbook_contents(ref.spend_workbook(store, reference))
+    assert len(new[1]["cells"]) > 200 and new[1]["widths"]["F"] == 48  # the long line, past the first 200 rows
+    empty = Store(tmp_path / "empty.db")
+    assert ref.workbook_contents(spend.workbook(empty, None)) == ref.workbook_contents(ref.spend_workbook(empty, None))
 
 
 def test_non_recoverable_tax_on_its_own_account_is_spend(tmp_path):

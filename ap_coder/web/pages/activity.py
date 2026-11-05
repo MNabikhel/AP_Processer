@@ -211,13 +211,12 @@ def activity_page(request: Request) -> HTMLResponse:
     week = store.count_events(hidden=hidden, since=(today - dt.timedelta(days=7)).isoformat())
     # Each invoice's standing approval once, as on Insights and Learning (D-39): one taken back and given again is
     # one, one taken back and not given again is none.
-    clean, approved = insights.approved_as_coded(store)
+    clean, approved, filled = insights.approval_counts(store)  # counted by SQLite (D-156)
     people = store.event_actors(hidden)  # the Person filter: every name events carry
     persons = distinct_people(people, store.find_events(actions=["settings_changed"], hidden=hidden))
     tiles = [
         ("Events", total, "blue", f"{week} in the last 7 days"),
-        ("Invoices approved", approved, "green", insights.approvals_note(clean, insights.filled_in_count(store),
-                                                                         approved)),  # (D-112)
+        ("Invoices approved", approved, "green", insights.approvals_note(clean, filled, approved)),  # (D-112)
         ("People", len(persons), "violet", (", ".join(persons[:3]) + (
             f" and {len(persons) - 3} more" if len(persons) > 3 else "")) or "none recorded yet"),  # (B-1009, B-1305)
         ("Deletions", store.count_events(actions=DELETIONS, hidden=hidden), "amber", "invoices, accounts, lessons"),

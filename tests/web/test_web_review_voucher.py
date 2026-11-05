@@ -232,6 +232,40 @@ def test_a_clerk_cannot_approve_a_held_vendors_invoice_moved_to_another_vendor(h
     assert store.get_invoice(invoice_id)["status"] == REVIEW
 
 
+def test_the_review_screen_asks_the_database_as_often_with_many_vendors_on_hold(held, store, monkeypatch):
+    """The held vendors' check (``held_vendor``, D-142) read each vendor on hold's invoices one by one, twice a check:
+    689 statements for one invoice at 100,000 invoices. Their numbers are read in one go now."""
+    import sqlite3
+
+    from ap_coder.core import store as store_mod
+
+    clients, invoice_id = held
+    real = sqlite3.connect
+    seen: list[str] = []
+
+    def tracing(*args, **kwargs):
+        conn = real(*args, **kwargs)
+        conn.set_trace_callback(seen.append)
+        return conn
+
+    def statements() -> int:
+        monkeypatch.setattr(store_mod.sqlite3, "connect", tracing)
+        seen.clear()
+        try:
+            assert clients["clerk"].get(f"/review/{invoice_id}").status_code == 200
+            check(clients["clerk"], invoice_id, form_of(store, invoice_id))
+        finally:
+            monkeypatch.setattr(store_mod.sqlite3, "connect", real)
+        return len(seen)
+
+    statements()  # warm
+    few = statements()
+    for i in range(30):
+        store.save_vendor(f"held supplier {i}", f"Held Supplier {i}", "on_hold")
+    statements()
+    assert statements() == few
+
+
 def _read_as(store, name: str, **fields) -> int:
     """A new invoice like Pacific's, read under ``name`` (a name that matches no vendor on hold)."""
     inv = store.get_invoice(_id(store, "Pacific"))

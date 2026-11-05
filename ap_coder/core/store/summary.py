@@ -33,11 +33,11 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
 
-from ._base import APPROVED, FAILED, PENDING, REJECTED, _in_list
+from ._base import APPROVED, FAILED, PENDING, REJECTED, REVIEW, _in_list
 
 # What the summary works out, by version: a change to it (a new column, a report's facts read differently, the
 # vendor-matching or invoice-number rules) changes this, and every database builds its summary again once.
-SUMMARY_RULES = "1"
+SUMMARY_RULES = "2"  # 2: the review queue's facts (D-155)
 
 # The columns of ``invoices`` the summary keeps as they are, with their declared types (so they compare and sort as
 # the columns of ``invoices`` do).
@@ -70,6 +70,8 @@ DERIVED = (
     ("demo", "INTEGER NOT NULL DEFAULT 0", "COALESCE(meta LIKE '%\"demo\": true%', 0)"),
     ("gst_number", "", "CASE WHEN json_valid(final_output) THEN json_extract(final_output, "
                        "'$.gst_hst_registration_number') END"),
+    # the bank account it was paid from, as approved (``Store.last_pay_from``)
+    ("pay_from", "", "CASE WHEN json_valid(final_output) THEN json_extract(final_output, '$.pay_from_account') END"),
     ("po_number", "TEXT", "NULLIF(TRIM(CAST(json_extract(doc, '$.po_number') AS TEXT)), '')"),
     ("subtotal", "REAL", "CAST(json_extract(doc, '$.subtotal') AS REAL)"),
     ("tax_total", "REAL", "CAST(json_extract(doc, '$.tax_total') AS REAL)"),
@@ -105,9 +107,17 @@ COMPUTED = (
     ("w_key", "TEXT"),
     ("w_codes", "TEXT NOT NULL DEFAULT '[]'"),
     ("w_corrected", "INTEGER"),
-    # The review queue's bulk approval (``bulk.queue_facts``)
+    # The review queue (``bulk.queue_facts``): picked for the audit sample; of an invoice in review, the stamps of its
+    # stored checks and of its queue re-check and their findings (severity and code, JSON), what its lines still need
+    # (without and with cost centers) and what its Pay from account is chosen from (JSON)
     ("q_audit", "INTEGER"),
-    ("q_person", "INTEGER"),
+    ("q_stamp", "TEXT"),
+    ("q_found", "TEXT"),
+    ("r_stamp", "TEXT"),
+    ("r_found", "TEXT"),
+    ("q_pick", "TEXT"),
+    ("q_pick_cc", "TEXT"),
+    ("q_pay", "TEXT"),
     # Sales tax (``taxreturn.tax_facts``, ``self_assessment_facts``), JSON
     ("t_facts", "TEXT"),
     ("s_facts", "TEXT"),
@@ -549,14 +559,14 @@ class SummaryMixin:
             return fetch_rows(conn, f"SELECT {columns} FROM {_tables(columns)} WHERE {where} ORDER BY {order}",
                               tuple(params))  # fmt: skip
 
-    def search_rows(self, ids: list[int] | None = None, exported: bool = False) -> list[dict[str, Any]]:
+    def search_rows(self, where: str = "1", params: tuple[Any, ...] | list[Any] = (), exported: bool = False
+                    ) -> list[dict[str, Any]]:  # fmt: skip
         """Every invoice's identifying fields and where it stands (for the invoice directory's quick search), with
         the date of its export batch and its GST/HST number (the JD Edwards duplicate check finds a supplier by
-        it); only ``ids``' when given, only those in an export batch with ``exported``. From the invoices' summary
-        (D-110)."""
-        where, params = ("1", ()) if ids is None else (_in_list("id"), (json.dumps([int(i) for i in ids]),))
+        it); only those ``where`` keeps (the caller's SQL over the summary's columns: ``search.condition``), only
+        those in an export batch with ``exported``. From the invoices' summary (D-110)."""
         if exported:
-            where += " AND export_batch IS NOT NULL"
+            where = f"({where}) AND export_batch IS NOT NULL"
         with self._conn() as conn:
             self._summary_fresh(conn)
             batches = {r["id"]: r["created_at"] for r in conn.execute("SELECT id, created_at FROM export_batches")}
@@ -567,8 +577,33 @@ class SummaryMixin:
                           second_reviewed_at, export_batch, parked_reason, follow_up, error,
                           gst_number AS gst_hst_registration_number
                    FROM invoice_summary WHERE {where} ORDER BY id DESC""",
-                params,
+                tuple(params),
             )
+        for r in rows:
+            r["exported_at"] = batches.get(r["export_batch"]) if r["export_batch"] else None
+        return rows
+
+    def directory_ids(
+        self, rows_sql: str, where: str, params: list[Any], order: str, limit: int, offset: int = 0
+    ) -> list[int]:
+        """The ids of the invoice directory's rows (``directory_rows``), in their order: an export then reads their
+        rows a part at a time (``directory_rows_of``)."""
+        with self._conn() as conn:
+            self._summary_fresh(conn)
+            sql = f"{rows_sql} SELECT id FROM rows WHERE {where} ORDER BY {order} LIMIT ? OFFSET ?"
+            return [r[0] for r in conn.execute(sql, [*params, limit, offset])]
+
+    def directory_rows_of(self, rows_sql: str, fields: str, ids: list[int]) -> list[dict[str, Any]]:
+        """The invoice directory's rows of these invoices in this order (one gone meanwhile left out), with the date
+        each one's export batch was made."""
+        with self._conn() as conn:
+            self._summary_fresh(conn)
+            page = conn.execute(f"{rows_sql} SELECT {fields} FROM rows WHERE {_in_list('id')}", (json.dumps(ids),))
+            found = {r["id"]: dict(r) for r in page}
+            rows = [found[i] for i in ids if i in found]
+            wanted = sorted({r["export_batch"] for r in rows if r["export_batch"]})
+            made = f"SELECT id, created_at FROM export_batches WHERE {_in_list('id')}"
+            batches = {b["id"]: b["created_at"] for b in conn.execute(made, (json.dumps(wanted),))}
         for r in rows:
             r["exported_at"] = batches.get(r["export_batch"]) if r["export_batch"] else None
         return rows
@@ -609,11 +644,39 @@ class SummaryMixin:
                 rows = conn.execute(f"SELECT id FROM invoice_summary WHERE instr({column}, ?) > 0", (text,))
             return {r[0] for r in rows}
 
+    def stale_checks(self, stamp: str, ids: list[int] | None = None) -> list[int]:
+        """The invoices in review (only ``ids``' when given) whose stored checks and queue re-check were both made
+        against other settings than ``stamp`` (``Store.checks_stamp``), in the queue's order: what
+        ``coding.bulk.recheck_queue`` checks again. From the invoices' summary."""
+        where, params = "status = ? AND q_stamp != ? AND r_stamp != ?", [REVIEW, stamp, stamp]
+        if ids is not None:
+            where += f" AND {_in_list('id')}"
+            params.append(json.dumps([int(i) for i in ids]))
+        rows = self.summary_rows(where, params, "id", "requires_review DESC, adjusted_confidence ASC, id ASC")
+        return [r["id"] for r in rows]
+
     def summary_fetch(self, sql: str, params: tuple[Any, ...] | list[Any] = ()) -> list[dict[str, Any]]:
         """Any query of the summary's tables (fresh), its rows as dicts read in one go (``fetch_rows``)."""
         with self._conn() as conn:
             self._summary_fresh(conn)
             return fetch_rows(conn, sql, tuple(params))
+
+    @contextmanager
+    def summary_snapshot(self) -> Iterator[None]:
+        """Every read of this database inside, in this thread, sees it as it was at the first of them (one read
+        transaction, on one connection): figures read in several queries agree, an approval meanwhile in all of them
+        or none. The summary is brought up to date first, in a transaction of its own."""
+        with self.session(), self._conn() as conn:
+            if conn.in_transaction:  # inside the caller's own transaction: its reads agree already
+                yield
+                return
+            self._summary_fresh(conn)
+            conn.commit()
+            conn.execute("BEGIN")
+            try:
+                yield
+            finally:
+                conn.commit()  # nothing written: it ends the read
 
     def summary_query(self, sql: str, params: tuple[Any, ...] | list[Any] = ()) -> list[sqlite3.Row]:
         """Any query of the summary's tables (fresh)."""

@@ -28,7 +28,7 @@ import json
 from collections import defaultdict
 from dataclasses import dataclass
 
-from ..coding.po import CLOSED, billed_by_line, po_label
+from ..coding.po import CLOSED, billed_on, po_label, positive_lines
 from ..coding.vendors import norm_invoice_number
 from ..core.memory import vendor_key
 from ..core.safe import csv_row
@@ -69,24 +69,28 @@ def _received_not_invoiced(store: Store, period_end: dt.date) -> list[Accrual]:
     out = []
     end = period_end.isoformat()
 
-    def by_end(invoices: list[dict]) -> list[dict]:
-        return [i for i in invoices if str(i.get("invoice_date") or i["coding"].get("invoice_date") or "") <= end]
-
-    without_po: dict[str, list[dict]] = {}  # by vendor: read once, not once for each of its POs
-    for po in store.purchase_orders():
-        if po["status"] == CLOSED or not po["received_lines"]:
+    received = [po for po in store.purchase_orders() if po["status"] != CLOSED and po["received_lines"]]
+    orders = store.purchase_orders_by_key([po["po_key"] for po in received])
+    # Returns are assumed to be reflected in the ERP's received quantity, so credits do not count here; the vendor's
+    # invoices that quote no PO may still bill these lines ("PO-90155" in a description). Invoices dated after the
+    # period end do not count: the goods were received, not yet invoiced, by then. Each invoice's lines are read once
+    # (``billing_invoices``, not once for each PO of its vendor), only those billing a quantity kept.
+    vendors = {full["vendor_key"] for full in orders.values()}
+    on_po: dict[str, list] = {}
+    without_po: dict[str, list] = {}  # by vendor
+    for inv in store.billing_invoices(list(orders), list(vendors)):
+        if str(inv.get("invoice_date") or inv["coding"].get("invoice_date") or "") > end:
             continue
-        full = store.purchase_order(po["po_key"])
+        lines = positive_lines([inv])
+        if inv["po_key"] in orders:
+            on_po.setdefault(inv["po_key"], []).extend(lines)
+        if inv["po_key"] == "" and inv["vendor_key"] in vendors:
+            without_po.setdefault(inv["vendor_key"], []).extend(lines)
+    for po in received:
+        full = orders.get(po["po_key"])
         if full is None:
             continue
-        # Returns are assumed to be reflected in the ERP's received quantity, so credits do not count here;
-        # the vendor's invoices that quote no PO may still bill these lines ("PO-90155" in a description).
-        # Invoices dated after the period end do not count: the goods were received, not yet invoiced, by then.
-        vendor = full["vendor_key"]
-        if vendor not in without_po:
-            without_po[vendor] = by_end(store.vendor_invoices_without_po(vendor))
-        invoices = by_end(store.po_invoices(po["po_key"])) + without_po[vendor]
-        billed = billed_by_line(full, invoices, positive_only=True)
+        billed = billed_on(full, on_po.get(po["po_key"], []) + without_po.get(full["vendor_key"], []))
         for li in full["lines"]:
             if li["received_quantity"] is None or li.get("amount_only"):
                 continue

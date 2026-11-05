@@ -410,6 +410,26 @@ def test_report_a_problem_writes_nothing_and_names_each_invoice_by_its_number(cl
     assert files() == before
 
 
+def test_report_a_problem_summarises_the_latest_invoices(client, store, monkeypatch):
+    """A year of invoices made a report of every one (27 MB, 22 s at 100,000): the page summarises the latest
+    REPORT_INVOICES and says so (D-157); the command line's share-report still has them all."""
+    from ap_coder.ops.share_report import build_share_report
+    from ap_coder.web.pages import help as help_page
+    from tests.webclient import add_clean
+
+    ids = [add_clean(store) for _ in range(3)]
+    whole = build_share_report(store.path.parent / "output", db_path=store.path)
+    assert "- invoices: 3 (ok 3, failed 0)" in whole and all(f"| doc-{n:02d} |" in whole for n in ids)
+    monkeypatch.setattr(help_page, "REPORT_INVOICES", 3)
+    assert help_page.activity_report(store, False) == whole  # no more than that: the same report
+    monkeypatch.setattr(help_page, "REPORT_INVOICES", 2)
+    import html
+
+    page = html.unescape(client.get("/help/report").text)
+    assert "- invoices: the latest 2 of 3 (ok 2, failed 0)" in page and "over the latest\n        2 at most:" in page
+    assert f"| doc-{ids[0]:02d} |" not in page and all(f"| doc-{n:02d} |" in page for n in ids[1:])
+
+
 def test_the_offline_doctor_report_has_no_cloud_lines(monkeypatch):
     from ap_coder.ops.doctor import FAIL, PASS, SKIP, Check, format_checks
 

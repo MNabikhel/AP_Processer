@@ -67,11 +67,13 @@ def build_share_report(
     include_codes: bool = False,
     key_file: str | Path | None = None,
     db_path: str | Path | None = None,
+    latest: int | None = None,
 ) -> str:
-    """Summarise the dashboard database when it has invoices, otherwise the ``process`` output folder."""
+    """Summarise the dashboard database when it has invoices, otherwise the ``process`` output folder; with
+    ``latest``, only the database's latest invoices (the counts, figures and table: Report a problem, D-157)."""
     output_dir = Path(output_dir)
     store = Store(db_path) if db_path and Path(db_path).exists() else None
-    found = _metas_from_store(store) if store is not None else []
+    found = _metas_from_store(store, latest) if store is not None else []
     # From the database an invoice is doc-<its number in AP Coder> (doc-07 is #7): the same at every view, so the
     # page needs no file to say which is which (B-1606).
     labels, metas = [f"doc-{invoice_id:02d}" for invoice_id, _ in found], [meta for _, meta in found]
@@ -88,7 +90,12 @@ def build_share_report(
     ok = [m for m in metas if m.get("status") == "ok"]
     failed = [m for m in metas if m.get("status") != "ok"]
     lines = ["## AP Coder run summary (redacted)", ""]
-    lines.append(f"- invoices: {len(metas)} (ok {len(ok)}, failed {len(failed)})")
+    every = len(metas)
+    if found and latest is not None and len(found) == latest:  # perhaps more in the database: say how many
+        with store._conn() as conn:  # type: ignore[union-attr]
+            every = int(conn.execute("SELECT COUNT(*) FROM invoices").fetchone()[0])
+    shown = f"the latest {len(metas)} of {every}" if every > len(metas) else f"{len(metas)}"
+    lines.append(f"- invoices: {shown} (ok {len(ok)}, failed {len(failed)})")
     if failed:
         cats = Counter(_failure_category(m.get("error")) for m in failed)
         lines.append("- failures: " + ", ".join(f"{k} x{v}" for k, v in cats.most_common()))
@@ -226,10 +233,13 @@ def _accuracy_section(
     return out
 
 
-def _metas_from_store(store: Store) -> list[tuple[int, dict[str, Any]]]:
-    """(invoice id, what the report reads of it) of every invoice, oldest first, in one query."""
+def _metas_from_store(store: Store, latest: int | None = None) -> list[tuple[int, dict[str, Any]]]:
+    """(invoice id, what the report reads of it) of every invoice, or of the ``latest`` ones, oldest first, in one
+    query."""
     with store._conn() as conn:
-        rows = conn.execute("SELECT id, source_path, status, error, meta, validation FROM invoices ORDER BY id")
+        newest = "" if latest is None else "WHERE id IN (SELECT id FROM invoices ORDER BY id DESC LIMIT ?) "
+        sql = f"SELECT id, source_path, status, error, meta, validation FROM invoices {newest}ORDER BY id"
+        rows = conn.execute(sql, () if latest is None else (latest,))
         found = []
         for row in rows:
             meta = json.loads(row["meta"]) if row["meta"] else {}

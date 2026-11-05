@@ -399,3 +399,44 @@ def test_an_invoice_opened_from_a_filtered_sorted_queue_steps_through_that_view(
     assert f'Reviewing <b class="n">1</b> of {len(rows)}' in page
     assert f'href="{html.escape(rows[1])}" data-nav="next"' in page
     assert 'href="/review?show=attention&amp;sort=amount" data-nav="queue"' in page
+
+
+def _rows(page, kind):
+    import html
+    import re
+
+    return [html.unescape(h) for h in re.findall(rf'class="rq-row {kind}" href="([^"]+)"', page)]
+
+
+def test_an_invoice_opened_from_the_ready_view_steps_through_the_ready_invoices_the_queue_shows(client, demo):
+    """B-1620: an invoice with edits kept as a draft is never Ready in the queue (B-996), but the review screen's
+    Previous / Next built the view without the drafts: opened from Ready, it counted and stepped through the invoice
+    with the draft too."""
+    ready = _rows(client.get("/review?show=ready").text, "ready")
+    assert len(ready) >= 3, ready
+    edited = int(ready[0].split("?")[0].rsplit("/", 1)[1])
+    answer = client.post(f"/review/{edited}/check", data={"invoice_number": "EDITED-1"}, headers=PAGE).json()
+    assert answer["ok"] and answer["draft"]
+    shown = _rows(client.get("/review?show=ready").text, "ready")
+    assert shown == ready[1:]  # the queue: under Needs attention now
+    page = client.get(shown[0]).text
+    assert f'Reviewing <b class="n">1</b> of {len(shown)}' in page
+    assert f'href="/review/{edited}?' not in page  # neither Previous nor Next goes to it
+
+
+def test_back_from_an_invoice_opened_after_show_more_the_queue_shows_as_many_rows(client, demo, monkeypatch):
+    """B-1621: after Show more, the queue's rows and the review screen's Queue button left the number of rows out
+    (``limit``), so coming back loaded the queue twice: its first rows, then the address with them all put back by
+    queue.js."""
+    import html
+
+    from ap_coder.web.pages import review
+
+    monkeypatch.setattr(review, "QUEUE_PAGE", 2)
+    first = client.get("/review?limit=2").text
+    assert 'class="rq-more" href="/review?limit=4"' in first
+    rows = _rows(client.get("/review?limit=4").text, "(?:attn|ready)")
+    assert len(rows) == 4 and all(r.endswith("?limit=4") for r in rows), rows
+    screen = client.get(rows[0]).text
+    assert 'href="/review?limit=4" data-nav="queue"' in screen
+    assert f'href="{html.escape(rows[1])}" data-nav="next"' in screen

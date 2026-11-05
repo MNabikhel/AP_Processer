@@ -122,10 +122,11 @@ def answer(request: Request, request_id: int, decision: str = Form(""), note: st
 
 
 @router.post("/manager/{request_id:int}/record")
-async def record(request: Request, request_id: int, decision: str = Form(""), by: str = Form(""),
-                 answered_on: str = Form(""), note: str = Form(""),
-                 reply: UploadFile | None = File(None)) -> Any:  # noqa: B008  # fmt: skip
-    """AP records an answer the manager gave by email (or by phone), the reply email kept."""
+def record(request: Request, request_id: int, decision: str = Form(""), by: str = Form(""),
+           answered_on: str = Form(""), note: str = Form(""),
+           reply: UploadFile | None = File(None)) -> Any:  # noqa: B008  # fmt: skip
+    """AP records an answer the manager gave by email (or by phone), the reply email kept. A plain handler (on a
+    threadpool thread, one connection): the reply, spooled already, is read here, never on the event loop."""
     _ap_only()
     store = get_store(request)
     req = _request(request, request_id)
@@ -146,7 +147,7 @@ async def record(request: Request, request_id: int, decision: str = Form(""), by
         suffix = Path(reply.filename).suffix.lower()
         if suffix not in REPLY_KINDS:
             return refuse("Keep the reply as an email (.eml or .msg), a PDF, a picture or a text file.")
-        data = await reply.read(MAX_REPLY + 1)
+        data = reply.file.read(MAX_REPLY + 1)
         if len(data) > MAX_REPLY:
             return refuse("The reply is too large to keep (25 MB at most).")
         folder = _reply_dir(request)

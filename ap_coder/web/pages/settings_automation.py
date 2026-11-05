@@ -32,8 +32,10 @@ def supplier_counts(store: Store) -> dict[str, int]:
 
     policy, on = store.autonomy_policy(), store.touchless_enabled()
     counts = {word: 0 for word in dict.fromkeys(STATE_WORDS.values())}
-    for p in store.list_supplier_profiles():
-        stats = store.supplier_stats(p["key"], policy.window)
+    profiles = store.supplier_profiles_brief()
+    every = store.all_supplier_stats([p["key"] for p in profiles], policy.window, fields=False)  # one query (D-157)
+    for p in profiles:
+        stats = every[p["key"]]
         state, _, _ = autonomy_status(stats, policy, p["state"] or SUPERVISED, p["autonomous_since"],
                                       touchless_on=on, suspended_at=p.get("suspended_at"))  # fmt: skip
         counts[STATE_WORDS.get(state, "Learning")] += 1

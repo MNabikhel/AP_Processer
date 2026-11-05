@@ -581,6 +581,31 @@ def test_in_a_browser_back_from_an_invoice_opened_from_a_sorted_queue_loads_the_
     assert errors == []
 
 
+def test_in_a_browser_back_from_an_invoice_opened_after_show_more_loads_the_queue_once(browser, store, monkeypatch):
+    """B-1621: after Show more, coming back from an invoice loaded the queue twice (its first rows, then all of them
+    put back by queue.js): the rows' links and the Queue button carry how many rows it showed now."""
+    from ap_coder.web.pages import review
+
+    monkeypatch.setattr(review, "QUEUE_PAGE", 2)
+    chromium, base = browser
+    page = chromium.new_page(viewport={"width": 1366, "height": 420})
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(base + "/review?limit=2")
+    with page.expect_navigation():
+        page.click(".rq-more")
+    page.wait_for_load_state("networkidle")
+    assert page.locator(".rq-list a.rq-row").count() == 4
+    page.eval_on_selector(".rq-list li:last-child a.rq-row", "a => a.click()")
+    page.wait_for_selector(".iv-sheet:not(.loading)")
+    loads: list[str] = []
+    page.on("request", lambda r: loads.append(r.url) if r.resource_type == "document" else None)
+    page.locator("[data-nav=queue]").click()
+    page.wait_for_load_state("networkidle")
+    assert len(loads) == 1 and "limit=4" in page.url, loads
+    assert page.locator(".rq-list a.rq-row").count() == 4 and errors == []
+
+
 def _taxable(page, kind):
     return page.eval_on_selector_all(
         "[data-grid=taxes] > tr",

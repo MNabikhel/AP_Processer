@@ -398,14 +398,15 @@ def test_a_worker_stuck_waiting_for_a_connection_is_woken_to_stop(monkeypatch):
     assert len(woken) == 2  # while it ran, and no more once it ended
 
 
-def test_the_service_starts_one_worker_per_core_at_most_8_unless_server_json_says(tmp_path, monkeypatch):
+def test_the_service_starts_workers_for_the_cores_and_memory_unless_server_json_says(tmp_path, monkeypatch):
     from ap_coder.ops import service
 
     for var in ("AP_SERVER_WORKERS", "AP_LLM_PARALLEL"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr(server.os, "cpu_count", lambda: 32)
+    monkeypatch.setattr(server, "memory_total_mb", lambda: 64_000.0)  # the stage 2 server (D-153: no cap of 8)
     cmd = service.serve_command(service.settings(tmp_path), "python")
-    assert cmd[cmd.index("--workers") + 1] == "8"
+    assert cmd[cmd.index("--workers") + 1] == "28"
     assert service.serve_env(service.settings(tmp_path), tmp_path)["AP_LLM_PARALLEL"] == "1"
     service.write_config(tmp_path, workers=3, llm_parallel=4)
     s = service.settings(tmp_path)
@@ -766,3 +767,69 @@ def test_the_background_process_loads_a_library_while_it_waits_for_its_input_to_
         assert proc.wait(15) == 0
     finally:
         proc.kill()
+
+
+# --- B-1660: a long import holds up no other request of its web worker -------------------------------------------
+
+
+def test_a_long_import_does_not_hold_up_the_other_requests_of_its_web_worker(store, monkeypatch):
+    """A web worker answers every ``async`` handler on its one event loop: the ERP register's import (600,000 rows at
+    a large company) made its store calls there, so every other request to that worker (pages, polls, logins) waited
+    until it was done. Its work now runs on a threadpool thread, as the review screen's Check does: a page asked for
+    while the import is in its store call is answered before that call ends."""
+    import httpx
+
+    from ap_coder.core.store import Store
+    from ap_coder.web.app import create_app
+    from tests.webclient import PAGE, web_settings
+
+    inside, ended = threading.Event(), threading.Event()
+    real = Store.import_erp_register
+
+    def import_slowly(self, *args, **kwargs):
+        inside.set()
+        time.sleep(1.5)  # the store call of a long import
+        ended.set()
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(Store, "import_erp_register", import_slowly)
+    app = create_app(web_settings(), store, start_reader=False, background=False)
+    sheet = b"Supplier,Doc No,Amount\nAcme Ltd,A-1,100.00\n"
+    columns = {"col_vendor_name": "Supplier", "col_invoice_number": "Doc No", "col_total": "Amount"}
+
+    async def both() -> tuple[bool, httpx.Response, httpx.Response]:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
+            upload = await client.post("/exports/register/upload", files={"file": ("erp.csv", sheet, "text/csv")},
+                                       headers=PAGE)  # fmt: skip
+            token = httpx.URL(upload.json()["redirect"]).params["register"]
+            importing = asyncio.create_task(
+                client.post("/exports/register/import", data={"file": token, **columns}, headers=PAGE)
+            )
+            for _ in range(500):  # until the import is in its store call
+                if inside.is_set():
+                    break
+                await asyncio.sleep(0.01)
+            page = await client.get("/healthz")
+            answered_meanwhile = not ended.is_set()
+            return answered_meanwhile, page, await importing
+
+    answered_meanwhile, page, imported = asyncio.run(both())
+    assert page.status_code == 200 and imported.status_code == 200, imported.text
+    assert store.erp_register_count() == 1
+    assert answered_meanwhile, "the page waited for the import's store call to end"
+
+
+def test_the_servers_socket_listens_before_any_worker_starts():
+    """B-1711: each web worker listened on its own copy of the server's socket, the first one changing it from bound
+    to listening while the others did the same; on Windows a worker's start once failed there with WinError 10022
+    (an invalid argument), and the stop then waited for the worker started in its place. The server's socket now
+    listens before any worker starts (a connection waits in its queue for the first one): a worker's listen changes
+    nothing."""
+    config = server.server_config("ap_coder.web.server:worker_app", "127.0.0.1", 0, None, None, None, factory=True,
+                                  workers=2)  # fmt: skip
+    sock = server.listening_socket(config)
+    try:
+        socket.create_connection(sock.getsockname()[:2], timeout=2).close()  # a socket only bound refuses it
+    finally:
+        sock.close()

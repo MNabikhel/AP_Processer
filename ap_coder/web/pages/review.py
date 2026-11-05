@@ -18,8 +18,8 @@ from fastapi import Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
-from ap_coder.coding.bulk import bulk_approve, issues_today, sort_for_bulk
-from ap_coder.coding.review import codes_to_pick, uses_cost_centers
+from ap_coder.coding.bulk import bulk_approve, needs_a_person, queue_checks, sort_for_bulk
+from ap_coder.coding.review import uses_cost_centers
 from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCE_NAMES, province_label, stored_supply
 from ap_coder.coding.terms import DUE_SOON_DAYS, LONG_OVERDUE_DAYS, overdue_since, payment
 from ap_coder.core import audit, ui
@@ -125,91 +125,49 @@ def due_note(ai: dict[str, Any], default_days: int, vendor_terms: str = "") -> t
 
 TO_PICK_CODES = frozenset({"GL_UNASSIGNED", "CC_UNASSIGNED"})  # a line to code: "Pick a GL account…" says it
 FLAGGED_BEFORE = "Flagged when it was last checked: open it to check it again"  # (B-1522)
-_TO_FIX: dict[int, tuple[int, tuple[str, int]]] = {}  # ``_to_fix`` by invoice id: (what it was asked, the answer)
-_PAY_FROM: dict[int, tuple[int, str]] = {}  # the Pay from part of ``attention`` by invoice id: (asked, why)
 
 
-def _to_fix(invoice_id: int, final: str | None, ai: str | None, validation: str | None,
-            cost_centers: bool) -> tuple[str, int, int]:  # fmt: skip
+def _to_fix(facts: dict[str, Any], cost_centers: bool) -> tuple[str, int, int]:
     """(what the lines still need to be approved, how many errors the checks found, how many other findings bulk
     approval leaves for a person: a warning, or one that always goes to a person, ``bulk.needs_a_person``, B-1027)
-    of one invoice, from its stored
-    coding and checks (their JSON text). Remembered with the hash of that text: the queue asks it of every waiting
-    invoice on each load (also to count them on the other tabs), and decoding them all again took most of the
-    page's time (0.34 s at 5,000 waiting); a changed invoice is asked again."""
-    asked = hash((cost_centers, final, ai, validation))
-    known = _TO_FIX.get(invoice_id)
-    if known and known[0] == asked:
-        return known[1]
-    coded = (json.loads(final) if final else None) or (json.loads(ai) if ai else None) or {}
-    issues = ((json.loads(validation) if validation else None) or {}).get("issues") or []
-    from ap_coder.coding.bulk import needs_a_person
-
-    errors = sum(1 for i in issues if i.get("severity") == "error")
-    answer = (
-        codes_to_pick(coded.get("line_items"), cost_centers, hint=False).removesuffix(" to approve"),
-        errors,
-        # the lines to code are said in "Pick a GL account…", never counted again as warnings (B-1530)
-        sum(
-            1
-            for i in issues
-            if needs_a_person(i.get("severity"), i.get("code"))
-            and not (i.get("severity") == "warning" and i.get("code") in TO_PICK_CODES)
-        )
-        - errors,
-    )
-    _TO_FIX[invoice_id] = (asked, answer)
-    return answer
+    of one invoice, from what the queue reads of it (``bulk.queue_checks``: its findings by today's checks, and what
+    its lines need, worked out in the invoices' summary, D-155)."""
+    found = facts.get("found") or []
+    errors = sum(1 for i in found if i["severity"] == "error")
+    # the lines to code are said in "Pick a GL account…", never counted again as warnings (B-1530)
+    others = sum(1 for i in found if needs_a_person(i["severity"], i["code"])
+                 and not (i["severity"] == "warning" and i["code"] in TO_PICK_CODES))  # fmt: skip
+    return facts.get("q_pick_cc" if cost_centers else "q_pick") or "", errors, others - errors
 
 
 def attention(store: Store, reference: ReferenceData | None, pending: list[dict[str, Any]],
-              threshold: float | None = None,
-              today: dict[int, list[dict[str, Any]]] | None = None) -> dict[int, str]:  # fmt: skip
+              threshold: float | None = None, checks: dict[int, dict[str, Any]] | None = None,
+              recheck: bool | None = None) -> dict[int, str]:  # fmt: skip
     """Why each invoice of ``pending`` (the queue) needs attention, by id; one not listed is Ready: its review
     screen's Approve is open as it stands, and nothing in its checks keeps bulk approval from taking it (B-1027).
     The lines' codes are asked as the review screen asks (``codes_to_pick``), then the checks' flag (an error, or
     confidence under ``threshold``; None: the flag alone, without its words).
-    The checks are today's (``bulk.issues_today``, or ``today`` when the caller has it): an invoice whose stored
-    checks were made against other settings is checked again (B-815)."""
+    The checks are today's (``bulk.queue_checks``, or ``checks`` when the caller has it; ``recheck`` as there): an
+    invoice whose stored checks were made against other settings is checked again (B-815)."""
     from ap_coder.coding import banks
-    from ap_coder.coding.bulk import issues_today
 
-    if today is None:
-        today = issues_today(store, [i["id"] for i in pending], reference)
-
+    if checks is None:
+        checks = queue_checks(store, [i["id"] for i in pending], recheck=recheck)[0]
     cost_centers = reference is not None and uses_cost_centers(reference)
     accounts = store.bank_accounts()
-    last: dict[str, str] = {}  # this vendor's last Pay from account, asked once per vendor
-    # what the Pay from answer depends on besides the invoice: the bank accounts, and the approvals (a vendor's last
-    # Pay from account)
-    bank_stamp = (json.dumps(accounts, sort_keys=True, default=str), store.approvals_stamp()) if accounts else None
-    stored = {  # one query, not one per invoice; the text is decoded only for an invoice not asked before
-        r["id"]: r
-        for r in store.invoice_columns(
-            ("id", "validation", "ai_output", "final_output"), ids=[i["id"] for i in pending], decode=False
-        )
-    }
+    paying = any(a["active"] for a in accounts)  # the review screen's Pay from rule (B-685): its Approve, its Ready
+    pay = {i["id"]: _pay(checks.get(i["id"]) or {}, i) for i in pending} if paying else {}
+    last = store.last_pay_froms(sorted({p[3] for p in pay.values()})) if paying else {}  # each vendor's last one
     out = {}
     for inv in pending:
-        r = stored.get(inv["id"]) or {}
-        checked = json.dumps({"issues": today[inv["id"]]}) if inv["id"] in today else r.get("validation")
-        to_pick, errors, warned = _to_fix(inv["id"], r.get("final_output"), r.get("ai_output"), checked,
-                                          cost_centers)  # fmt: skip
+        to_pick, errors, warned = _to_fix(checks.get(inv["id"]) or {}, cost_centers)
         low = threshold is not None and (inv.get("adjusted_confidence") or 0.0) < threshold
         bank = ""
-        if any(a["active"] for a in accounts):  # the review screen's Pay from rule (B-685): its Approve, its Ready
-            asked = hash((bank_stamp, r.get("final_output"), r.get("ai_output")))
-            known = _PAY_FROM.get(inv["id"])
-            if known and known[0] == asked:  # remembered while nothing it depends on changed (B-690)
-                bank = known[1]
-            else:
-                final = json.loads(r["final_output"]) if r.get("final_output") else None
-                doc = final or (json.loads(r["ai_output"]) if r.get("ai_output") else {}) or {}
-                key = vendor_key(doc.get("vendor_name") or inv.get("vendor_name") or "")
-                if key not in last:
-                    last[key] = store.last_pay_from(key)
-                bank = banks.blocking(banks.opening_choice(doc, bool(final), accounts, last[key]), accounts)
-                _PAY_FROM[inv["id"]] = (asked, bank)
+        if paying:
+            code, approved, currency, key = pay[inv["id"]]
+            choice = banks.opening_choice({"pay_from_account": code, "currency": currency}, approved, accounts,
+                                          last.get(key, ""))  # fmt: skip
+            bank = banks.blocking(choice, accounts)
         why = [
             to_pick,
             bank,
@@ -223,6 +181,15 @@ def attention(store: Store, reference: ReferenceData | None, pending: list[dict[
             # flagged when its review screen last checked it, nothing standing today: opening it checks it again
             out[inv["id"]] = (why[0][0].upper() + "; ".join(why)[1:]) if why else FLAGGED_BEFORE
     return out
+
+
+def _pay(facts: dict[str, Any], inv: dict[str, Any]) -> tuple[str, bool, str, str]:
+    """(its Pay from account, approved before or not, its currency, its vendor's key) of a queue invoice, as its
+    review screen opens with them (``bulk.queue_facts``)."""
+    if facts.get("q_pay"):
+        code, approved, currency, key = json.loads(facts["q_pay"])
+        return code, approved, currency, key
+    return "", False, "CAD", vendor_key(inv.get("vendor_name") or "")
 
 
 def draft_reasons(request: Request, pending: list[dict[str, Any]]) -> dict[int, str]:
@@ -394,9 +361,10 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
     threshold = settings.engine.review_threshold
     pending = [i for i in invoices if i["status"] == REVIEW]
     # The checks as they are now: a flagged invoice is never Ready nor offered in bulk, but its reasons are today's
-    # too, never only "flagged" (B-1522).
-    today = issues_today(store, [i["id"] for i in pending], reference, settings)
-    reasons = attention(store, reference, pending, threshold, today)  # Ready means its Approve is open
+    # too, never only "flagged" (B-1522). On the company server, the ones still checked again after a change of
+    # settings show their earlier checks meanwhile, and the page says so (its background process does it, D-155).
+    checks, updating = queue_checks(store, [i["id"] for i in pending], settings, recheck=not server_mode(request))
+    reasons = attention(store, reference, pending, threshold, checks)  # Ready means its Approve is open
     reasons.update(draft_reasons(request, pending))  # an invoice with edits kept: what its screen says (B-996)
     flagged = [i for i in pending if i["id"] in reasons]
     approved = counts.get(APPROVED, 0)
@@ -428,15 +396,17 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
     if tab == "review":
         shown = {"attention": flagged, "ready": [i for i in pending if i["id"] not in reasons]}.get(show, pending)
         shown = sort_queue(filter_queue(shown, q), sort)
-        candidates, left = sort_for_bulk(store, pending, today) if show != "attention" else ([], {})
+        candidates, left = sort_for_bulk(store, pending, checks) if show != "attention" else ([], {})
         context.update(
             pending=pending,
+            updating=updating,
             counts={"all": len(pending), "attention": len(flagged), "ready": len(pending) - len(flagged)},
             rows=queue_rows(store, shown[:limit], threshold, reasons),
             # the view, as this address has it, carried by each row's link: the invoice's count, Previous / Next and
-            # Queue button follow it (B-1592)
-            row_query="?" + view if (view := urlencode({k: request.query_params[k] for k in ("show", "q", "sort")
-                                                         if request.query_params.get(k)})) else "",
+            # Queue button follow it (B-1592), its rows too (Show more: the queue opens once coming back, B-1621)
+            row_query="?" + view if (view := urlencode({
+                k: request.query_params[k] for k in ("show", "q", "sort", "limit") if request.query_params.get(k)
+            })) else "",
             more=max(0, len(shown) - limit),
             next_limit=limit + QUEUE_PAGE,
             threshold=threshold,

@@ -179,3 +179,36 @@ def test_the_chat_models_accounts_are_a_guess_in_the_coding(settings, reference,
     lines = result.coding.coding.line_items
     assert lines and all(li.reasoning_justification.startswith("Suggested by the chat model") for li in lines)
     assert result.report.coding_confidence <= GUESS_SURE and result.report.requires_review is True
+
+
+def test_the_invoices_folder_is_listed_by_name_in_the_order_it_always_had(tmp_path, monkeypatch):
+    """B-1634: listing the invoices folder looked at each file (and sorted the paths, slowly): 2.9 s for 100,000
+    files, on every view of the import page. The listing's own kinds and the names give the same files, in the same
+    order."""
+    import os
+    from pathlib import Path
+
+    from ap_coder.ai.extraction import SUPPORTED_EXTENSIONS, TEXT_EXTENSIONS
+    from ap_coder.ai.pipeline import invoice_files
+
+    names = ["b.pdf", "A.PDF", "a.md", "C.md", "c.pdf", "d.txt", "README.pdf", "readme.md", "._b.pdf", "~$x.pdf",
+             "inv.2026.pdf", "été.png", "Z.jpeg", "z.jpeg", "notes.docx", "noext"]  # fmt: skip
+    for name in names:
+        (tmp_path / name).write_bytes(b"x")
+    (tmp_path / "folder.pdf").mkdir()
+
+    def as_before(folder):  # the code as it was
+        files = sorted(c for c in folder.iterdir() if c.is_file() and c.suffix.lower() in SUPPORTED_EXTENSIONS
+                       and not c.name.lower().startswith(("readme", ".", "~$")))  # fmt: skip
+        documents = {c.stem.lower() for c in files if c.suffix.lower() not in TEXT_EXTENSIONS}
+        return [c for c in files if c.suffix.lower() not in TEXT_EXTENSIONS or c.stem.lower() not in documents]
+
+    expected = as_before(tmp_path)
+    if os.name == "nt":  # one file for "Z.jpeg" and "z.jpeg", named as made first; paths sorted without case
+        names = ["A.PDF", "b.pdf", "c.pdf", "d.txt", "inv.2026.pdf", "Z.jpeg", "été.png"]
+    else:
+        names = ["A.PDF", "Z.jpeg", "b.pdf", "c.pdf", "d.txt", "inv.2026.pdf", "z.jpeg", "été.png"]
+    assert [p.name for p in expected] == names
+    with monkeypatch.context() as m:
+        m.setattr(Path, "is_file", lambda self: (_ for _ in ()).throw(AssertionError("looked at a file")))
+        assert invoice_files(tmp_path) == expected

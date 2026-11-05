@@ -91,19 +91,21 @@ def test_every_invoice_the_queue_calls_ready_can_be_approved_on_its_screen(clien
 
 def test_the_queue_decodes_each_invoices_coding_once_not_on_every_load(store, monkeypatch):
     """B-210: /review decoded the coding and checks of every waiting invoice on each load (0.23 s became 0.57 s at
-    5,000 waiting). What the lines need is remembered by the stored text, so a changed invoice is asked again."""
+    5,000 waiting). What the lines need is worked out in the invoices' summary when an invoice changes (D-155): a load
+    reads no invoice's coding or checks, and a changed invoice is asked again."""
     from ap_coder.web.core import reference_or_none
     from ap_coder.web.pages.review import attention
 
     reference, pending = reference_or_none(store), store.list_invoices(REVIEW)
     first = attention(store, reference, pending, 0.85)
 
-    def no_decoding(*_a, **_k):
-        raise AssertionError("decoded again")
+    def no_reading(*_a, **_k):
+        raise AssertionError("read the invoice again")
 
     with monkeypatch.context() as m:
-        m.setattr(json, "loads", no_decoding)
-        assert attention(store, reference, pending, 0.85) == first  # nothing changed: nothing decoded
+        for name in ("invoice_columns", "get_invoice", "get_invoices"):
+            m.setattr(store, name, no_reading)
+        assert attention(store, reference, pending, 0.85) == first  # nothing changed: no invoice read
     invoice_id = without_cost_centers(store)  # its stored coding changed: asked again
     assert (
         invoice_id not in first and "Pick a cost center for" in attention(store, reference, pending, 0.85)[invoice_id]
@@ -427,11 +429,13 @@ def test_a_dry_run_with_nothing_to_load_has_no_stray_dash():
 def test_the_queue_counts_a_line_to_code_once_not_also_as_a_warning():
     """B-1530: "Pick a GL account for 4 lines; 5 warnings to look at" for an invoice whose screen shows one warning:
     each line without an account (GL_UNASSIGNED, CC_UNASSIGNED) was counted again among the warnings."""
+    from ap_coder.coding.bulk import queue_facts
     from ap_coder.web.pages.review import _to_fix
 
     lines = [{"line_number": n, "predicted_gl_code": UNASSIGNED, "predicted_cost_center": ""} for n in (1, 2, 3, 4)]
     issues = [{"severity": "warning", "code": "GL_UNASSIGNED", "line_number": n} for n in (1, 2, 3, 4)]
     issues.append({"severity": "warning", "code": "TAX_NON_CANADIAN"})
-    to_pick, errors, warned = _to_fix(-1, None, json.dumps({"line_items": lines}), json.dumps({"issues": issues}),
-                                      False)  # fmt: skip
+    facts = queue_facts({"status": REVIEW, "validation": {"issues": issues}, "meta": None, "final_output": None,
+                         "ai_output": {"line_items": lines}, "vendor_name": ""})  # fmt: skip
+    to_pick, errors, warned = _to_fix({**facts, "found": issues}, False)
     assert "Pick a GL account for" in to_pick and errors == 0 and warned == 1

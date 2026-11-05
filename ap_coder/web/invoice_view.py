@@ -34,7 +34,6 @@ import pandas as pd
 
 from ap_coder.ai import verifier
 from ap_coder.ai.extraction import TEXT_EXTENSIONS, ExtractionResult
-from ap_coder.ai.history import HISTORY
 from ap_coder.ai.offline_coder import renamed_from
 from ap_coder.ai.pipeline import finalise_coding
 from ap_coder.ai.suggest import suggest_gl
@@ -87,7 +86,7 @@ from ap_coder.coding.terms import payment
 from ap_coder.coding.validation import COUNTED_IN_CODING, ERROR, INFO, Issue, off_text
 from ap_coder.coding.vendors import MOVED_OFF_HOLD, expected_tax_numbers, moved_off_hold
 from ap_coder.core.config import Settings
-from ap_coder.core.memory import ACCEPTED, BULK, CODED, CORRECTED, pair_lines, vendor_key
+from ap_coder.core.memory import pair_lines, vendor_key
 from ap_coder.core.reference_data import UNASSIGNED, ReferenceData, short_name
 from ap_coder.core.schema import FROM_VENDOR_LIST, PROVINCE_VALUES, InvoiceCoding
 from ap_coder.core.store import Store, line_guessed, nothing_proposed, suggestion_kept
@@ -704,13 +703,7 @@ def vendor_accounts(store: Store, vendor_name: str, limit: int = 6) -> list[str]
     never what the AI proposed; lines left without an account are not counted."""
     if not (vendor_name or "").strip():
         return []
-    decided = {ACCEPTED, CORRECTED, CODED, BULK, HISTORY}
-    counts: dict[str, int] = {}
-    for row in store.feedback_rows(vendor_name=vendor_name):  # newest first: a tie keeps the newest first
-        code = _text(row.get("final_gl"))
-        if row.get("outcome") in decided and code and code != UNASSIGNED:
-            counts[code] = counts.get(code, 0) + 1
-    return sorted(counts, key=lambda c: -counts[c])[:limit]  # sorted() is stable
+    return store.vendor_lessons(vendor_name).accounts[:limit]
 
 
 def grid(reference: ReferenceData, draft: Draft, ai: dict[str, Any] | None = None,
@@ -2279,7 +2272,7 @@ def usual_cost_center(store: Store, reference: ReferenceData, vendor_name: str) 
     for its lines without one. Two cost centers, or a line without one, and there is no usual one."""
     if not uses_cost_centers(reference) or not (vendor_name or "").strip():
         return ""
-    used = {r.get("final_cc") or "" for r in store.feedback_rows(vendor_name=vendor_name)}
+    used = store.vendor_lessons(vendor_name).cost_centers
     only = next(iter(used)) if len(used) == 1 else ""
     return only if only != UNASSIGNED and reference.cost_centers.get(only) is not None else ""
 
