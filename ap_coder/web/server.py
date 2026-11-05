@@ -11,7 +11,7 @@ While it runs, ``<data folder>/.ap_coder_server.json`` says which server this is
 
 On the company server with ``workers`` > 1 (D-111): uvicorn's supervisor runs that many web workers
 (``worker_app``), and ``BackgroundWork`` keeps one ``serve --background-work`` process (``run_background``) beside
-them; a stop file asks them all to stop.
+them; a stop file asks them all to stop. A busy worker hands its connections back to the others (``HandBack``).
 """
 
 from __future__ import annotations
@@ -36,6 +36,8 @@ import webbrowser
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+import anyio.to_thread
 
 from ap_coder import __version__
 from ap_coder.core import paths
@@ -206,7 +208,7 @@ STOP_FILE = ".ap_coder_server.stop"  # with several web workers: /shutdown write
 
 
 # Above browsers' and IIS ARR's idle limits: uvicorn's 5 s, the same as many clients', closed a connection just as it
-# was used again, a dropped request under load (B-1295).
+# was used again, a dropped request under load (B-1295). A busy web worker hands its connections back (HandBack).
 KEEP_ALIVE_SECONDS = 75
 
 
@@ -510,6 +512,7 @@ def worker_app() -> Any:
     app.state.stop_file = stop_file(Path(spec["data"]))
     threading.Thread(target=_stop_worker_when_asked, args=(Path(spec["data"]), spec["token"], int(spec["parent"])),
                      name="ap-coder-worker-stop", daemon=True).start()  # fmt: skip
+    app.add_middleware(HandBack)  # a busy worker's connections go to the others (D-161)
     app.add_middleware(Recycle, state=app.state, data=Path(spec["data"]), **recycle_limits(int(spec["workers"])))
     return app
 
@@ -641,6 +644,44 @@ def _left(data: Path, pid: int) -> None:
     if _leaving(data) == pid:
         with contextlib.suppress(OSError):
             (data / RECYCLE_PID).unlink()
+
+
+# --- A busy web worker hands its connections back (D-161) --------------------------------------------------------
+# The workers listen on one socket, and the first event loop to accept a new connection takes it, on Linux (epoll)
+# and on Windows (each worker's copy of the socket, B-1711, and its selector loop): a free worker's usually wins it.
+# What kept people on a busy worker is the browser keeping its connections open (minutes) and the server
+# KEEP_ALIVE_SECONDS: with browser-like people, one worker of four did 54% of the work.
+
+
+def worker_busy() -> bool:
+    """Whether requests wait for one of this worker's threads, or for the long routes' lane (``core.run_heavy``)."""
+    from ap_coder.web.core import heavy_lane
+
+    pool = anyio.to_thread.current_default_thread_limiter().statistics()
+    return bool(pool.tasks_waiting or heavy_lane().statistics().tasks_waiting)
+
+
+class HandBack:
+    """ASGI middleware of one web worker of the company server: while it is busy (``worker_busy``), each answer says
+    ``Connection: close``, so the browser's next request opens a new connection, which a free worker takes. Nothing is
+    lost: the close comes in the answer, and the browser (or IIS ARR in front) opens another for what it sends next."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def answer(message: dict[str, Any]) -> None:
+            if message["type"] == "http.response.start" and worker_busy():
+                headers = list(message.get("headers") or [])
+                if not any(name.lower() == b"connection" for name, _ in headers):
+                    message = {**message, "headers": [*headers, (b"connection", b"close")]}
+            await send(message)
+
+        await self.app(scope, receive, answer)
 
 
 def uvicorn_server() -> Any:
