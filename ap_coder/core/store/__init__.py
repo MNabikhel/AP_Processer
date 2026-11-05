@@ -22,7 +22,7 @@ and uploads kept for a short while), ``samples``, ``users`` (server mode's accou
 D-97), ``hub`` (what the finance hub feed reads, D-103), ``postings`` (the JD Edwards postings ledger kept across a
 restore, D-105), ``summary`` (the invoices' summary the lists, the search and the reports read, D-110), ``managers``
 (a manager confirming an invoice's cost allocation, D-138), ``suppliers`` (every supplier's record at once, for the
-pages that list them, D-157). A test
+pages that list them, D-157), ``folder`` (what the pick-up read of the invoices folder's files, D-155). A test
 that patches a module-level name (``_now``, ``json``...) patches it in the part that uses it.
 """
 
@@ -104,6 +104,7 @@ from .accounts import EVENT_ACTOR, AccountsMixin  # noqa: F401  (EVENT_ACTOR: fo
 from .backups import BackupsMixin
 from .capture import CaptureMixin
 from .ephemeral import EphemeralMixin
+from .folder import FolderMixin
 from .hub import HubMixin
 from .invoices import InvoicesMixin
 from .learning import LearningMixin
@@ -132,6 +133,7 @@ class Store(
     UsersMixin,
     HubMixin,
     ManagersMixin,
+    FolderMixin,
 ):
     """The local SQLite database: one class, its parts in this folder by subject (see the module list above)."""
 

@@ -260,6 +260,7 @@ CREATE INDEX IF NOT EXISTS login_attempts_user ON login_attempts (username, at);
 CREATE INDEX IF NOT EXISTS login_attempts_ip ON login_attempts (ip, at);
 CREATE TABLE IF NOT EXISTS ephemeral (kind TEXT NOT NULL, token TEXT NOT NULL, value BLOB NOT NULL,
     created_at REAL NOT NULL, expires_at REAL NOT NULL, PRIMARY KEY (kind, token));
+CREATE TABLE IF NOT EXISTS seen_files (path TEXT PRIMARY KEY, size INTEGER, mtime_ns INTEGER, sha256 TEXT NOT NULL);
 """
 
 # The page reader's queue (``page_reads.status``). A read still "reading" after STALE_READING_HOURS was
@@ -705,6 +706,12 @@ class StoreCore:
         if missing:
             self._fill_tax_codes(conn)
         self._reading_as_d89(conn)
+        # What the pick-up read of the invoices folder's files (folder.py, D-155): to start with, each invoice's own
+        # file as it was processed (looked for whatever the version: once).
+        if not conn.execute("SELECT 1 FROM settings WHERE key = 'seen_files'").fetchone():
+            conn.execute("INSERT OR IGNORE INTO seen_files (path, sha256) SELECT source_path, file_sha256 FROM "
+                         "invoices WHERE COALESCE(source_path, '') != '' AND file_sha256 IS NOT NULL")  # fmt: skip
+            conn.execute("INSERT INTO settings (key, value) VALUES ('seen_files', '1')")
         if version < SCHEMA_VERSION:
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "

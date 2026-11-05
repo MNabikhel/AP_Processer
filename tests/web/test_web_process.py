@@ -341,3 +341,45 @@ def test_a_stale_page_cannot_load_the_demo_beside_your_own_invoices(client, stor
     answer = client.post("/demo/load", headers=PAGE)
     assert not answer.json().get("ok", True) and "your own invoices" in answer.text
     assert store.demo_count() == 0 and sum(store.status_counts().values()) == 1
+
+
+def test_the_import_page_reads_no_file_of_the_invoices_folder(app, client, store, monkeypatch):
+    """B-1633: each view of Import invoices read and hashed every file in the invoices folder to list the new ones,
+    and the folder keeps the processed files (100,000 of them at 100,000 invoices: 7 s a view, 847 s at p95 under
+    load). A view reads none: it lists the files the pick-up has not read since they changed, or read and found in no
+    invoice; the pick-up still reads every one."""
+    from pathlib import Path
+
+    folder = invoice_dir(store)
+    folder.mkdir(parents=True, exist_ok=True)
+    shutil.copy(SAMPLES / f"{OTHER}.pdf", folder / f"{OTHER}.pdf")
+    client.post("/process/folder", headers=PAGE)
+    assert finished(app, client)["result"]["ok"] == 1  # processed: it stays in the folder
+    shutil.copy(SAMPLES / f"{STEM}.pdf", folder / "new.pdf")
+    shutil.copy(folder / f"{OTHER}.pdf", folder / "again.pdf")  # the same invoice again, under another name
+    read = []
+    real = Path.read_bytes
+    with monkeypatch.context() as m:
+        m.setattr(Path, "read_bytes", lambda self: read.append(self) or real(self))
+        text = client.get("/process").text
+    assert not [p for p in read if folder in p.parents] and "Process 2 files" in text, read
+    assert "new.pdf" in text and "again.pdf" in text  # (not read yet: new for now)
+    client.post("/process/folder", headers=PAGE)
+    assert finished(app, client)["result"]["ok"] == 1  # new.pdf read and coded; again.pdf found in AP Coder
+    assert "No new files" in client.get("/process").text  # each as the pick-up read it
+
+
+def test_an_older_database_lists_none_of_its_invoices_files_as_new(app, client, store):
+    """B-1633: a database from before has no record of what the pick-up read: its invoices' own files count as read
+    (once, when this version opens it), so none is listed as new."""
+    folder = invoice_dir(store)
+    folder.mkdir(parents=True, exist_ok=True)
+    shutil.copy(SAMPLES / f"{OTHER}.pdf", folder / f"{OTHER}.pdf")
+    client.post("/process/folder", headers=PAGE)
+    assert finished(app, client)["result"]["ok"] == 1
+    with store._conn() as conn:  # as an older AP Coder left it
+        conn.execute("DELETE FROM seen_files")
+        conn.execute("DELETE FROM settings WHERE key = 'seen_files'")
+    assert "Process 1 file" in client.get("/process").text
+    Store(store.path)  # opened by this version
+    assert "No new files" in client.get("/process").text

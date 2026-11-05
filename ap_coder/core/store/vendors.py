@@ -213,7 +213,13 @@ class VendorsMixin:
             )  # fmt: skip
             changed = {k: v for k, v in values.items() if before.get(k, "active" if k == "status" else "") != v}
             if changed:
-                self._log(conn, "vendor_updated", actor=actor, detail={"vendor": display_name, **changed})
+                from ...coding.vendors import ADDED_HERE
+
+                # A vendor's note is in a check's words only while it is on hold, or added from the review screen
+                # (VENDOR_ON_HOLD, VENDOR_ADDED_HERE): another one's changes no check (D-155).
+                said = status == "on_hold" or before.get("erp_hold") or before.get("in_master") == ADDED_HERE
+                self._log(conn, "vendor_updated", actor=actor, detail={"vendor": display_name, **changed},
+                          checked=not before or set(changed) != {"notes"} or bool(said))  # fmt: skip
 
     def import_vendor_master(
         self, rows: list[dict[str, Any]], actor: str | None = None, only_new: bool = False

@@ -232,7 +232,8 @@ and the service host only while it runs (it holds `service\host.lock`).
 **Workers** (`--workers N`, kept in `server.json` as `"workers"`): one Python process answers about 1.6 pages a
 second however many cores the server has, so the service runs N *web workers*, all answering on the same port, and
 one *background process* beside them for the work nobody waits on (OvisOCR2's reading, the AI reviewer, the Azure
-check, JD Edwards, the daily backup, the finance hub's schedule). A worker or the background process that stops is
+check, JD Edwards, the review queue checked again after a change of settings, the daily backup, the finance hub's
+schedule). A worker or the background process that stops is
 started again on its own. `--workers 1` runs everything in one process, as before. Stopping (`service stop`) gives
 the requests under way 25 seconds, then ends them: the service is stopped within 30 seconds.
 
