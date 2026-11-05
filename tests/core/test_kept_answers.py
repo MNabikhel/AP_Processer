@@ -663,13 +663,117 @@ def test_the_queues_checks_follow_a_change_made_elsewhere_the_checks_stamp_and_w
     assert asked()[1] == 2 and len(worked) == 4
     assert asked(recheck=True)[1] == 2 and len(worked) == 5  # the laptop's (no GL accounts: nothing checked again)
     assert asked(recheck=True)[1] == 2 and asked()[1] == 2 and len(worked) == 6
-    assert sorted(asked([ids[2], ids[0], ids[1]])[0]) == [ids[0], ids[2]] and len(worked) == 7  # asked otherwise
+    assert sorted(asked([ids[2], ids[0], ids[1]])[0]) == [ids[0], ids[2]] and len(worked) == 6  # in another order
+    assert sorted(asked([*ids, 999])[0]) == [ids[0], ids[2]] and len(worked) == 7  # asked otherwise (B-1731)
     asked(ids[:2])
     asked(ids[:2])
     assert len(worked) == 9  # fewer than KEEP_FROM: worked out each time
     key = summary_module.TOPICS["queue"]  # one the summary could not work out: each change to it counts
     row = {"status": "review", "broken": summary_module.BIT["queue"], **dict.fromkeys(summary_module.QUEUE_READ[1:])}
     assert key(row) != key(row) and key({**row, "broken": 0}) == key({**row, "broken": 0})
+
+
+def test_the_queues_checks_are_kept_when_a_check_only_moves_an_invoice_in_the_queues_order(
+    tmp_path, ground_truth, monkeypatch
+):
+    """B-1731: each check of a review screen writes the confidence it worked out, which moves the invoice in the
+    queue's order, and the queue asked its checks of the invoices in that order: kept for the invoices asked in their
+    order, they were worked out again after nearly every check (93 ms at 100,000 invoices), though they are the same
+    for the same invoices in any order. Asked in another order they are kept; another invoice asked, or a finding
+    changed, works them out again."""
+    from ap_coder.coding import bulk
+    from ap_coder.core.store import REVIEW
+
+    store = Store(tmp_path / "ap.db")
+    other = Store(store.path)
+    checked = {"requires_review": False, "checks_stamp": store.checks_stamp(), "issues": []}
+    for name in ("O-1", "O-2", "O-3"):
+        (tmp_path / f"{name}.pdf").write_bytes(name.encode())
+        added = store.add_invoice(tmp_path / f"{name}.pdf", {**ground_truth, "invoice_number": name}, checked)
+        store.refresh_confidence(added, 0.9, False)
+    worked = []
+    real = bulk._queue_checks
+    monkeypatch.setattr(bulk, "_queue_checks", lambda *a: worked.append(1) or real(*a))
+    monkeypatch.setattr(bulk, "KEEP_FROM", 3)
+
+    def asked(ids=None):
+        return bulk.queue_checks(store, ids or [i["id"] for i in store.list_invoices(REVIEW)], recheck=False)
+
+    first = asked()
+    order = [i["id"] for i in store.list_invoices(REVIEW)]
+    other.refresh_confidence(order[-1], 0.12, False)  # a check on its screen: first in the queue now
+    assert [i["id"] for i in store.list_invoices(REVIEW)] == [order[-1], *order[:-1]]
+    assert asked() == first and asked(order[::-1]) == first and len(worked) == 1
+    found = '[{"severity": "error", "code": "TOTAL_MISMATCH", "message": "Totals differ"}]'
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE invoices SET validation = json_set(validation, '$.issues', json(?)) WHERE id = ?",
+                     (found, order[0]))  # fmt: skip
+    assert asked()[0][order[0]]["found"] == [{"severity": "error", "code": "TOTAL_MISMATCH"}] and len(worked) == 2
+    assert sorted(asked([*order, 999])[0]) == sorted(order) and len(worked) == 3  # another invoice asked
+
+
+def test_the_queues_late_regular_invoices_follow_a_new_invoice_once_they_settled(tmp_path, ground_truth, monkeypatch):
+    """B-1732: the queue's "regular invoices late" pill worked out every vendor's invoice dates again (98,720 rows,
+    0.95 s at 100,000 invoices) after each upload or rejection, on each web worker. The page only shows it: it
+    settles (D-164) for ``LATE_SETTLE`` seconds after a change, then follows it; never past a restore."""
+    from ap_coder.web.pages import review
+
+    clock = [1000.0]
+    monkeypatch.setattr(summary_module, "monotonic", lambda: clock[0])
+    store = Store(tmp_path / "ap.db")
+    other = Store(store.path)
+    today = dt.date.today()
+
+    def bill(name: str, days_ago: int) -> int:
+        (tmp_path / f"{name}.pdf").write_bytes(name.encode())
+        doc = {**ground_truth, "vendor_name": "Acme Supply", "invoice_number": name, "grand_total": 100.0,
+               "invoice_date": (today - dt.timedelta(days=days_ago)).isoformat()}  # fmt: skip
+        return other.add_invoice(tmp_path / f"{name}.pdf", doc, {"requires_review": True})
+
+    def late() -> list[str]:
+        return [text for text, _ in review.today_pills(store, store.list_invoices()) if "late" in text]
+
+    for n, days_ago in enumerate((120, 90, 60)):  # monthly: the next one was due a month ago
+        bill(f"R-{n}", days_ago)
+    assert late() == ["1 regular invoice late (Vendors page): Acme Supply"]
+    backup = store.backup_now("manual")
+    bill("R-3", 30)  # this month's
+    clock[0] += review.LATE_SETTLE - 0.1
+    assert late() == ["1 regular invoice late (Vendors page): Acme Supply"]  # settled
+    clock[0] += 0.2
+    assert late() == []  # followed
+    store.restore_from(backup)  # (without this month's)
+    assert late() == ["1 regular invoice late (Vendors page): Acme Supply"]  # at once
+
+
+def test_the_queues_due_dates_follow_the_vendor_masters_terms_changed_elsewhere(tmp_path, ground_truth, monkeypatch):
+    """B-1733: each visit of the queue read the vendor master's terms of every vendor (20,000 at 100,000 invoices: 27
+    ms) to say when its 50 rows are due. They are kept until the vendor list changes (``changes/vendors``), through
+    another Store or plain SQL."""
+    from ap_coder.web.pages import review
+
+    store = Store(tmp_path / "ap.db")
+    other = Store(store.path)
+    doc = {**ground_truth, "vendor_name": "Acme Supply", "invoice_date": dt.date.today().isoformat(),
+           "due_date": None, "payment_terms": "", "grand_total": 100.0}  # fmt: skip
+    (tmp_path / "T-1.pdf").write_bytes(b"T-1")
+    inv = store.get_invoice(store.add_invoice(tmp_path / "T-1.pdf", doc, {"requires_review": True}))
+    read = []
+    real = Store.all_vendor_terms
+    monkeypatch.setattr(Store, "all_vendor_terms", lambda self: read.append(1) or real(self))
+
+    def due() -> str:
+        return review.queue_rows(store, store.list_invoices(), 0.8)[0]["due"]
+
+    with other._conn() as conn:  # as the vendor master's import writes them
+        conn.execute("INSERT INTO vendors (vendor_key, display_name, terms, updated_at) VALUES (?, 'Acme Supply', "
+                     "'Net 15', ?)", (inv["vendor_key"], NOW))  # fmt: skip
+    first = due()
+    assert due() == first and len(read) == 1  # kept
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE vendors SET terms = 'Net 60'")
+    assert due() != first and len(read) == 2
+    assert due() == review.due_note(inv["ai_output"], store.default_terms_days(), "Net 60")[0]
 
 
 def test_the_queues_lists_follow_a_change_made_elsewhere_and_are_the_callers_own(tmp_path, ground_truth):

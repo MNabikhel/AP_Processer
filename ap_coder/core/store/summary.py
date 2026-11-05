@@ -711,19 +711,19 @@ class SummaryMixin:
         self, rows_sql: str, where: str, params: list[Any], order: str, limit: int, offset: int = 0
     ) -> list[int]:
         """The ids of the invoice directory's rows (``directory_rows``), in their order: an export then reads their
-        rows a part at a time (``directory_rows_of``)."""
+        rows a part at a time (``directory_rows_of``). Both are read in one step (``fetch_rows``, B-1735)."""
         with self._conn() as conn:
             self._summary_fresh(conn)
             sql = f"{rows_sql} SELECT id FROM rows WHERE {where} ORDER BY {order} LIMIT ? OFFSET ?"
-            return [r[0] for r in conn.execute(sql, [*params, limit, offset])]
+            return [r["id"] for r in fetch_rows(conn, sql, [*params, limit, offset])]
 
     def directory_rows_of(self, rows_sql: str, fields: str, ids: list[int]) -> list[dict[str, Any]]:
         """The invoice directory's rows of these invoices in this order (one gone meanwhile left out), with the date
         each one's export batch was made."""
         with self._conn() as conn:
             self._summary_fresh(conn)
-            page = conn.execute(f"{rows_sql} SELECT {fields} FROM rows WHERE {_in_list('id')}", (json.dumps(ids),))
-            found = {r["id"]: dict(r) for r in page}
+            sql = f"{rows_sql} SELECT {fields} FROM rows WHERE {_in_list('id')}"
+            found = {r["id"]: r for r in fetch_rows(conn, sql, (json.dumps(ids),))}
             rows = [found[i] for i in ids if i in found]
             wanted = sorted({r["export_batch"] for r in rows if r["export_batch"]})
             made = f"SELECT id, created_at FROM export_batches WHERE {_in_list('id')}"

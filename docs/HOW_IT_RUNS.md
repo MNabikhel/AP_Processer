@@ -403,8 +403,12 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   * the vendor master's ERP IDs and its GST/HST numbers (`vendor_ids`, `master_by_tax_number`; `changes/vendors`,
     about 7 MB each) and the held vendors' approved numbers (`approved_numbers`; `changes/approved`);
   * the review queue's checks (`bulk.queue_checks`, from 50 invoices; the summary's `queue` topic, the checks stamp,
-    laptop or server, the invoices asked; 15 MB) and its lists (`list_invoices` of review, parked, pending, which the
-    invoice page's Previous and Next read; the `listed` topic; about 3 MB each).
+    laptop or server, the invoices asked in any order; 6.8 MB, the findings in them decoded once for every invoice
+    with the same, `bulk._FOUND`, D-165) and its lists (`list_invoices` of review, parked, pending, which the
+    invoice page's Previous and Next read; the `listed` topic; about 3 MB each);
+  * the vendors' payment terms the queue's rows are due by (`changes/vendors`, 2.7 MB), and the vendors whose
+    regular invoice is late (the summary's `dates`, settled for 60 s after a change: the queue only shows them,
+    D-164, D-165).
 
   Beside them, the GL suggestions (`ai/suggest.py`): the whole learning memory's index, built once per change of the
   lessons; for a vendor whose lessons go past the memory's cap, that index extended by them (`_with_past`), with the

@@ -1048,3 +1048,67 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     reading status. Never for what a check, an approval, an export or a posting decides with (the vendor IDs, the
     approved numbers, a vendor's invoices, the checks an approval runs): those follow every change, as before.
   - (`core/store/summary.py`; `tests/core/test_kept_answers.py`)
+- **D-165** · **The review queue, the invoice page and every page's reading status made cheap under a stream of
+  writes** (phase 2 part 2, B-1730 to B-1736).
+  - **Why:** in the first load run's profile (100 people on 100,000 invoices, 4 workers, D-164), `GET /review` took
+    27% of the workers' CPU, the invoice page 9% and the check 5.4%. Of `/review`: the queue's checks 8.8% (worked
+    out again after nearly every write), today's pills 6.9% (the late regular invoices), the reading status 6% (on
+    every page: the page reader's wait 4.3%), every vendor's terms 1.7%.
+  - **Each cause, and what now** (each exact, but the one pill):
+    - **The queue's findings** (B-1730): each time the queue's checks were worked out again, every finding of 2,654
+      invoices was decoded and made read-only one by one (133 ms), though they share 211 texts. `bulk._found` decodes
+      each text once, kept for every process (`_FOUND`, 1.5 MB here; past `FOUND_KEPT`, 4,096 texts, all let go):
+      shared, read-only, each invoice's list its own. The answer kept is 6.8 MB instead of 19.8.
+    - **The queue's order** (B-1731): a check writes the confidence it worked out, which moves its invoice in the
+      queue, and the queue's checks were kept for the invoices asked in their order. They are kept for the invoices
+      asked in any order (their answer is by invoice), so a check no longer works them out again; an approval, a
+      park or a rejection still does (the `queue` topic and the invoices asked move).
+    - **The late regular invoices** (B-1732): every vendor's invoice dates (98,720 rows, 0.95 s) after each upload or
+      rejection (the summary's `dates`). The queue only shows this pill, so it settles (`summary_memo(...,
+      settle=LATE_SETTLE)`, 60 s, `web/pages/review.py`). Sixty seconds and not a few: a vendor is late by days (its
+      cadence of a week to a quarter, plus at least five days' grace), so a minute behind changes nothing anyone
+      does, and 0.95 s every few seconds in each worker would still be most of the pill's cost. The Vendors page and
+      Month-end ask `recurring.detected` itself, exact as before.
+    - **The vendors' terms** (B-1733): the queue's 50 rows read the terms of every vendor (19,008: 27 ms) on each
+      visit; kept on `changes/vendors` (2.7 MB).
+    - **The reading status** (B-1734, B-1736): the page reader's wait sorted all 99,692 finished reads for the latest
+      50 (44 ms a page), the templates' count read all 3,008 templates (14.7 MB: 6 to 13 ms), the open queue listed
+      every invoice in review. Two indexes (`page_reads_done` by status and time, the partial
+      `supplier_profiles_template`) and an `EXISTS` make them 0.02, 0.1 and 0.02 ms. The indexes are in `_SCHEMA`,
+      made at every start where missing (about 0.1 s at 100,000 invoices), with no new schema version: an index
+      changes no data, and an older AP Coder opens such a database as before.
+    - **The directory's exports** (B-1735): their ids and rows were read one row at a time, the worker's lock on
+      Python handed back and forth at each row (50,000 ids: 0.2 s alone, 132 s beside three busy requests). Read in
+      one step (`fetch_rows`): 0.65 s so (0.24 s alone, 15% more than row by row).
+  - **Never settled:** the queue's checks and lists (bulk approval offers its invoices from them, and an invoice just
+    approved leaves the queue at once), the check, a vendor's invoices and the vendor IDs: they follow every change.
+    Bulk approval checks each invoice again anyway (`bulk_approve`).
+  - **Measured** (`p2c_queue/probe.py` in the session's scratchpad: the app on a copy of the 100,000-invoice database,
+    the queue as on the server, the bench's stand-in model as page reader with a page time measured; CPU of one
+    request, medians of 16; "after a check": a confidence written first, "after a park": an invoice parked or put
+    back first):
+
+    | request | alone | after a check | after a park |
+    |---|---:|---:|---:|
+    | `GET /review` | 159 → 83 ms | 545 → 137 ms | 597 → 236 ms |
+    | `GET /review/{id}` | 136 → 73 ms | 184 → 120 ms | 193 → 134 ms |
+
+    The check (46 to 68 ms, before and after alike, within the shared machine's noise) draws no reading status and
+    asks none of these.
+  - **Not done** (other files' owners):
+    - `list_invoices` of the queue's lists (`listed`, 48 ms) after every check's confidence: `/review` and the invoice
+      page's Previous and Next. A topic without the confidence, the confidences read apart and sorted, would keep the
+      rows (`core/store/summary.py`, `invoices.py`).
+    - The queue's facts read again after a park or an approval (`bulk._queue_rows`, 57 ms; the findings texts are 36
+      of them, JSON within JSON): the summary could keep each findings text once (`summary.py`). Read with each text
+      once by a window over them was slower (65 ms: SQLite sorts the texts).
+    - `status_counts` after each change of status (16 ms, every page's rail): a count, it may settle (`summary.py`).
+    - The queue's Pay from (`last_pay_froms`): 197 ms at each `/review` once any bank account is in use (none in the
+      load bench's seed): an index by vendor and approval time, or kept on a stamp (`accounts.py`, `summary.py`).
+    - The search page's first page sorts all 100,000 rows (`directory_ids`, 81 ms): an index for its default sort
+      (`summary.py`'s schema).
+    - The invoice page and the check: a vendor's invoices (`vendors.py`), its lessons (`learning.py`), the lines'
+      similarity search. `_to_fix` (15 ms) and the queue's template (14 ms) each `/review`.
+  - (`coding/bulk.py`, `web/pages/review.py`, `core/store/{_base,capture,summary}.py`, `docs/HOW_IT_RUNS.md`;
+    `tests/coding/test_bulk.py`, `tests/core/test_kept_answers.py`, `tests/core/test_store_perf.py`,
+    `tests/erp/test_directory.py`)

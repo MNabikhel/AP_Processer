@@ -296,3 +296,29 @@ def test_a_status_filter_with_more_statuses_than_sqlite_takes_variables(store, f
     assert ids(store, status=",".join(["review"] * 1200)) == ids(store, status="review")
     with pytest.raises(d.FilterError):
         d.condition("status", "reveiw")
+
+
+def test_the_directorys_ids_and_rows_are_read_in_one_step_as_row_by_row(store, monkeypatch):
+    """B-1735: an export read its invoices' ids (up to 50,000) and then their rows (1,000 at a time) one row at a time.
+    Each row handed the worker's lock on Python back to SQLite and took it again: with three other requests busy in
+    the worker, 50,000 ids took 132 s instead of 0.2 s, a part of 1,000 rows 27.5 s instead of 15 ms. Both are read
+    in one step, each in its order, the rows as reading them one by one gives them."""
+    from ap_coder.core.store import summary
+
+    query = d.Query(sort="total", descending=False)
+    where, params, _ = d.where(query)
+    order = d.order_by(query)
+    with store._conn() as conn:
+        listed = [r[0] for r in conn.execute(f"{d.ROWS_SQL} SELECT id FROM rows WHERE {where} ORDER BY {order} LIMIT ? "
+                                             "OFFSET ?", [*params, 50_000, 0])]  # fmt: skip
+        shown = {r["id"]: dict(r) for r in conn.execute(f"{d.ROWS_SQL} SELECT {d.ROW_FIELDS} FROM rows")}
+    stepped = []
+    real = summary.fetch_rows
+    monkeypatch.setattr(summary, "fetch_rows", lambda conn, sql, args=(): stepped.append(sql) or real(conn, sql, args))
+    assert store.directory_ids(d.ROWS_SQL, where, params, order, 50_000) == listed and len(listed) > 3
+    assert store.directory_ids(d.ROWS_SQL, where, params, order, 2, 1) == listed[1:3]
+    picked = [listed[2], listed[0], 10**9, listed[1]]  # (one gone meanwhile: left out)
+    rows = store.directory_rows_of(d.ROWS_SQL, d.ROW_FIELDS, picked)
+    assert [{k: v for k, v in r.items() if k != "exported_at"} for r in rows] == [shown[i] for i in picked[:2]] + [
+        shown[listed[1]]]  # fmt: skip
+    assert len(stepped) == 3 and all("FROM rows" in sql for sql in stepped)
