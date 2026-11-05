@@ -8,16 +8,14 @@ changes (the store split, the lessons guard, tax-code learning, the JD Edwards f
   reading the header from the page images;
 - the verifier (the AI reviewer): the invoice checked against its pages, every item agreed.
 
-The fake answers like LM Studio 0.4 with two models loaded: OvisOCR2 (it reads pages, streamed) and a chat model that
-can see pages. Each answer is built from the request (the lines it is asked about, the fields in the schema), so the
-code under test is the real one, HTTP and all. A real model's accuracy is measured on the pilot laptop (D-92)."""
+The fake (the benches' stand-in model server, ap_coder/bench/fake_model.py) answers like LM Studio 0.4 with two models
+loaded: OvisOCR2 (it reads pages, streamed) and a chat model that can see pages. Each answer is built from the request
+(the lines it is asked about, the fields in the schema), so the code under test is the real one, HTTP and all. A real
+model's accuracy is measured on the pilot laptop (D-92)."""
 
 from __future__ import annotations
 
-import json
 import re
-import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -26,6 +24,7 @@ from ap_coder.ai import local_llm, page_reader, page_worker, verifier
 from ap_coder.ai.inference import MODEL_SUGGESTED
 from ap_coder.ai.pipeline import InvoicePipeline
 from ap_coder.bench.coding import ITEM_GL
+from ap_coder.bench.fake_model import FakeModel
 from ap_coder.bench.generator import make_stream_case
 from ap_coder.core.config import LocalLLMSettings, Settings
 from ap_coder.core.store import REVIEW, Store, load_sample_setup
@@ -54,102 +53,54 @@ def _pdf_pages(path: Path) -> list[str]:
         return [page.get_text() for page in doc]
 
 
-class ScriptedLMStudio:
-    """LM Studio with OvisOCR2 and a chat model that can see, loaded. ``pages``: what OvisOCR2 writes for the next
-    pages it is shown, in order; ``header``: the header the chat model reads off the page images. ``asked`` counts
-    the requests by kind (suggest, header, review, page)."""
+class ScriptedLMStudio(FakeModel):
+    """LM Studio with OvisOCR2 and a chat model that can see, loaded (the benches' stand-in model server,
+    ap_coder/bench/fake_model.py). ``pages``: what OvisOCR2 writes for the next pages it is shown, in order;
+    ``header``: the header the chat model reads off the page images. ``asked`` counts the requests by kind (suggest,
+    header, review, page)."""
 
     def __init__(self) -> None:
         self.pages: list[str] = []
-        self.header: dict[str, object] = {}
-        self.asked: dict[str, int] = {}
         self.suggested: list[str] = []  # the line descriptions the chat model was asked to code
-        fake = self
+        super().__init__(api="v1", slots=8, models=[
+            {"id": OVIS, "type": "llm", "vision": True, "reasoning": False, "ctx": 20480},
+            {"id": CHAT, "type": "llm", "vision": True, "reasoning": False, "ctx": 32768, "max_context": 131072},
+        ])  # fmt: skip
+        self.header: dict[str, object] = {}
+        self.start()
 
-        class Handler(BaseHTTPRequestHandler):
-            def log_message(self, *args):
-                pass
+    @property
+    def asked(self) -> dict[str, int]:
+        return self.stats()["served_by_kind"]
 
-            def _send(self, status, payload, content_type="application/json"):
-                body = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
-                self.send_response(status)
-                self.send_header("Content-Type", content_type)
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+    def answer_page(self, body: dict, images: list[str]) -> str:
+        return self.pages.pop(0) if self.pages else ""
 
-            def do_GET(self):  # noqa: N802
-                if self.path == "/v1/models":
-                    self._send(200, {"object": "list", "data": [{"id": m, "object": "model"} for m in (OVIS, CHAT)]})
-                elif self.path == "/api/v1/models":
-                    self._send(200, {"models": [
-                        {"type": "llm", "key": OVIS, "max_context_length": 262144,
-                         "loaded_instances": [{"id": OVIS, "config": {"context_length": 20480}}],
-                         "capabilities": {"vision": True}},
-                        {"type": "llm", "key": CHAT, "max_context_length": 131072,
-                         "loaded_instances": [{"id": CHAT, "config": {"context_length": 32768}}],
-                         "capabilities": {"vision": True}},
-                    ]})  # fmt: skip
-                else:
-                    self._send(404, {"error": "not found"})
-
-            def do_POST(self):  # noqa: N802
-                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])) or b"{}")
-                if not self.path.endswith("/chat/completions"):
-                    self._send(200, {"status": "loaded"})
-                    return
-                if body.get("model") == OVIS:
-                    fake.asked["page"] = fake.asked.get("page", 0) + 1
-                    text = fake.pages.pop(0) if fake.pages else ""
-                    self._stream(text)
-                    return
-                self._send(200, fake.chat_reply(body))
-
-            def _stream(self, text):
-                chunks = [{"choices": [{"index": 0, "delta": {"role": "assistant", "content": line + "\n"},
-                                        "finish_reason": None}]} for line in text.split("\n")]  # fmt: skip
-                chunks.append({"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]})
-                head = {"id": "p", "object": "chat.completion.chunk", "created": 0, "model": OVIS}
-                payload = "".join(f"data: {json.dumps({**head, **c})}\n\n" for c in chunks) + "data: [DONE]\n\n"
-                self._send(200, payload.encode(), "text/event-stream")
-
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        self.base_url = f"http://127.0.0.1:{self.server.server_address[1]}/v1"
-        threading.Thread(target=self.server.serve_forever, daemon=True).start()
-
-    def chat_reply(self, body: dict) -> dict:
+    def answer_suggest(self, body: dict) -> dict:
         messages = body.get("messages") or []
-        system = str(messages[0].get("content") if messages else "")
         user = messages[-1].get("content") if messages else ""
         text = user if isinstance(user, str) else " ".join(p.get("text", "") for p in user if isinstance(p, dict))
-        if system.startswith("You code accounts-payable invoice lines"):
-            kind, answer = "suggest", {"lines": []}
-            for n, description in re.findall(r"(?m)^(\d+)\. (.+?) \| [-\d,.]+$", text):
-                self.suggested.append(description)
-                gl = gl_for(description)
-                answer["lines"].append({"line_number": int(n), "gl_code": gl, "cost_center": "",
-                                        "reason": "the kind of thing bought"})  # fmt: skip
-        elif "accounts-payable reviewer" in system:
-            kind = "review"
-            asked = json.loads(text.split("What was entered, to check:\n", 1)[1].split("\nFor reference", 1)[0])
-            answer = {"fields": [{"field": f, "agree": True, "on_page": None, "reason": "as printed"}
-                                 for f in asked["fields"]],
-                      "lines": [{"line_number": li["line_number"], "agree": True, "reason": "on the page"}
-                                for li in asked["lines"]],
-                      "confident": True, "summary": "Everything entered is on the pages."}  # fmt: skip
-        else:
-            kind = "header"
-            schema = ((body.get("response_format") or {}).get("json_schema") or {}).get("schema") or {}
-            answer = {k: self.header.get(k) for k in (schema.get("properties") or self.header)}
-        self.asked[kind] = self.asked.get(kind, 0) + 1
-        return {"id": "c1", "object": "chat.completion", "created": 0, "model": CHAT,
-                "choices": [{"index": 0, "finish_reason": "stop",
-                             "message": {"role": "assistant", "content": json.dumps(answer)}}],
-                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}}  # fmt: skip
+        answer: dict[str, list] = {"lines": []}
+        for n, description in re.findall(r"(?m)^(\d+)\. (.+?) \| [-\d,.]+$", text):
+            self.suggested.append(description)
+            answer["lines"].append({"line_number": int(n), "gl_code": gl_for(description), "cost_center": "",
+                                    "reason": "the kind of thing bought"})  # fmt: skip
+        return answer
+
+    def answer_header(self, body: dict) -> dict:
+        schema = ((body.get("response_format") or {}).get("json_schema") or {}).get("schema") or {}
+        return {k: self.header.get(k) for k in (schema.get("properties") or self.header)}
+
+    def answer_review(self, body: dict) -> dict:
+        answer = super().answer_review(body)
+        for f in answer["fields"]:
+            f["reason"] = "as printed"
+        for li in answer["lines"]:
+            li["reason"] = "on the page"
+        return {**answer, "summary": "Everything entered is on the pages."}
 
     def close(self) -> None:
-        self.server.shutdown()
-        self.server.server_close()
+        self.stop()
 
 
 @pytest.fixture

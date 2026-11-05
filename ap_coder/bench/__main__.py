@@ -5,6 +5,8 @@ python -m ap_coder.bench learn --suppliers 30 --invoices 40 [--scanned 0.0]
 python -m ap_coder.bench speed --n 20 --scanned 0.5 [--history 30000]
 python -m ap_coder.bench coding --vendors 30 --invoices 30 --seed 1 [--out bench_coding] [--realistic] [--ai]
 python -m ap_coder.bench triage --n 300 --seed 1 [--msg-share 0.4] [--out bench_triage]
+python -m ap_coder.bench fake-model --port 1234 [--latency 8-20] [--slots 2] [--hang-rate 0.1] [--down-after 50]
+python -m ap_coder.bench day --n 1250 --scanned 0.5 [--latency 8-20] [--slots 2] [--time-scale 0.05] [--drill kill]
 
 --quick on run, learn, lines, speed, coding and triage: a small run to check a change (sizes in ``QUICK``)."""
 
@@ -136,6 +138,10 @@ def main(argv: list[str] | None = None) -> int:
     tp.add_argument("--seed", type=int, default=1, help="random seed; the same seed gives the same emails")
     tp.add_argument("--msg-share", type=float, default=0.4, help="share saved as Outlook .msg (default 0.4)")
     tp.add_argument("--out", default="bench_triage", help="output folder (default bench_triage)")
+    from ap_coder.bench import day, fake_model  # the server-day bench and its stand-in model server
+
+    fake_model.add_arguments(sub.add_parser("fake-model", help="a stand-in LM Studio with delays, slots and failures"))
+    day.add_arguments(sub.add_parser("day", help="a morning's drop of invoices through a real server, timed"))
     parsers = {"run": r, "learn": lp, "lines": lnp, "speed": sp, "coding": cp, "triage": tp}
     for name, sizes in QUICK.items():
         took = sizes["took"]
@@ -145,6 +151,10 @@ def main(argv: list[str] | None = None) -> int:
         for key, value in QUICK[a.cmd].items():
             if key != "took" and getattr(a, key) == parsers[a.cmd].get_default(key):
                 setattr(a, key, value)
+    if a.cmd == "fake-model":
+        return fake_model.run_command(a)
+    if a.cmd == "day":
+        return day.run_command(a)
 
     if a.cmd == "triage":
         from ap_coder.bench.emails import run_triage

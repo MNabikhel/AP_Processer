@@ -117,6 +117,10 @@ TOUCHPOINTS = {
     "connection)",
     "ap_coder/erp/hub/onelake.py": "the finance hub's push to OneLake: only with AP_ALLOW_INTERNET=1 and an Admin's "
     "opt-in (push_allowed), to the sign-in host and the OneLake host given, no redirects",
+    "ap_coder/bench/fake_model.py": "the benches' stand-in model server: listens on the address given (127.0.0.1 by "
+    "default) and answers; it connects nowhere, and the app never starts it",
+    "ap_coder/bench/day.py": "the server-day bench: urllib to the AP Coder server it started on 127.0.0.1 (no proxy, "
+    "no redirect followed); never run by the app",
     "scripts/launch.py": "pip --no-index from the wheelhouse (PyPI only with AP_ALLOW_INTERNET=1); socket binds "
     "127.0.0.1; webbrowser opens http://localhost",
     "scripts/running.py": "the dashboard on 127.0.0.1 (no proxy)",

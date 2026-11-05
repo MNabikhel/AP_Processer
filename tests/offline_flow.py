@@ -7,7 +7,8 @@ network at all (``python -m tests.offline_flow --netns``, run under ``unshare -r
 It also collects every address a page refers to (links, scripts, styles, images, fonts, form actions, CSS ``url()``):
 anything that is not this server is reported, as a page that loads or links to the internet would be.
 
-Standard library only (and PyMuPDF, which AP Coder needs anyway, to make the scan and the photo).
+Standard library only (and PyMuPDF, which AP Coder needs anyway, to make the scan and the photo; the stand-in LM Studio
+is the benches' own, ap_coder/bench/fake_model.py, standard library only too).
 """
 
 from __future__ import annotations
@@ -29,9 +30,10 @@ import urllib.request
 import uuid
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+
+from ap_coder.bench.fake_model import FakeModel
 
 ROOT = Path(__file__).resolve().parent.parent
 SAMPLES = ROOT / "samples"
@@ -412,81 +414,33 @@ def walk(base: str, work: Path, *, invoices_folder: Path | None = None) -> Repor
 # --- A fake LM Studio on this computer --------------------------------------------------------------------------
 
 
-class FakeLMStudio:
-    """An OpenAI-compatible server on 127.0.0.1 with one chat model, as LM Studio is with a model loaded. Every
-    request path is kept in ``seen``."""
+class FakeLMStudio(FakeModel):
+    """An OpenAI-compatible server on 127.0.0.1 with one chat model, as LM Studio is with a model loaded (the benches'
+    stand-in model server, ap_coder/bench/fake_model.py). Every request path is kept in ``seen``."""
+
+    MODEL = "qwen2.5-7b-instruct"
 
     def __init__(self) -> None:
-        self.seen: list[str] = []
-        fake = self
+        v0 = {"object": "list", "data": [{"id": self.MODEL, "type": "llm", "state": "loaded",
+                                          "max_context_length": 32768}]}  # fmt: skip
+        super().__init__(models=[self.MODEL], api="none", routes={"/api/v0/models": v0}, on_request=self._answer,
+                         record=True, slots=8)  # fmt: skip
+        self.start()
 
-        class Handler(BaseHTTPRequestHandler):
-            def log_message(self, *args: Any) -> None:
-                pass
+    def _answer(self, method: str, path: str, body: dict[str, Any]) -> tuple[int, Any] | None:
+        if method != "POST" or not path.endswith("/chat/completions"):
+            return None
+        message = {"role": "assistant", "content": json.dumps({"lines": []})}
+        return 200, {"id": "c1", "object": "chat.completion", "created": 0, "model": self.MODEL,
+                     "choices": [{"index": 0, "finish_reason": "stop", "message": message}],
+                     "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}}  # fmt: skip
 
-            def _send(self, status: int, payload: Any) -> None:
-                body = json.dumps(payload).encode()
-                self.send_response(status)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-
-            def do_GET(self) -> None:  # noqa: N802
-                fake.seen.append(f"GET {self.path}")
-                if self.path == "/v1/models":
-                    self._send(200, {"object": "list", "data": [{"id": "qwen2.5-7b-instruct", "object": "model"}]})
-                elif self.path == "/api/v0/models":
-                    self._send(
-                        200,
-                        {
-                            "object": "list",
-                            "data": [
-                                {
-                                    "id": "qwen2.5-7b-instruct",
-                                    "type": "llm",
-                                    "state": "loaded",
-                                    "max_context_length": 32768,
-                                }
-                            ],
-                        },
-                    )
-                else:
-                    self._send(404, {"error": "not found"})
-
-            def do_POST(self) -> None:  # noqa: N802
-                fake.seen.append(f"POST {self.path}")
-                length = int(self.headers.get("Content-Length") or 0)
-                self.rfile.read(length)
-                if self.path.endswith("/chat/completions"):
-                    content = json.dumps({"lines": []})
-                    self._send(
-                        200,
-                        {
-                            "id": "c1",
-                            "object": "chat.completion",
-                            "created": 0,
-                            "model": "qwen2.5-7b-instruct",
-                            "choices": [
-                                {
-                                    "index": 0,
-                                    "finish_reason": "stop",
-                                    "message": {"role": "assistant", "content": content},
-                                }
-                            ],
-                            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
-                        },
-                    )
-                else:
-                    self._send(404, {"error": "not found"})
-
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        self.base_url = f"http://127.0.0.1:{self.server.server_address[1]}/v1"
-        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+    @property
+    def seen(self) -> list[str]:
+        return [f"{r['method']} {r['path']}" for r in self.requests]
 
     def close(self) -> None:
-        self.server.shutdown()
-        self.server.server_close()
+        self.stop()
 
 
 # --- A real server ------------------------------------------------------------------------------------------------
