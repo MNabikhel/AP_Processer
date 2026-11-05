@@ -296,6 +296,16 @@ def test_a_session_lookup_never_waits_behind_another_writer_to_note_its_use(stor
     assert store.session_user(token) and _last_seen(store, token) == clock.now  # ...but by the next request
 
 
+def test_a_poll_reads_the_session_without_renewing_it(store, clock):
+    uid = with_app(store)
+    token = store.start_session(uid)
+    for _ in range(3):  # a page's automatic polls: still logged in, but no one using it
+        clock.now += 10 * 60 - 1
+        assert store.session_user(token, renew=False)["id"] == uid
+    clock.now += 4
+    assert store.session_user(token, renew=False) is None and store.session_user(token) is None
+
+
 # --- The second step: a code from an authenticator app (D-146) -------------------------------------------------------
 
 

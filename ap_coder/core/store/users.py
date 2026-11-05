@@ -886,10 +886,10 @@ class UsersMixin:
             )
         return token
 
-    def session_user(self, token: str | None) -> dict[str, Any] | None:
+    def session_user(self, token: str | None, *, renew: bool = True) -> dict[str, Any] | None:
         """The active account a session token stands for, or None (no such session, unused for ``session_idle``
         seconds, older than ``session_absolute``, or its account turned off). Its last use is recorded (at most once
-        a minute)."""
+        a minute), unless ``renew`` is False: a page's automatic poll, which is no one using it (B-1580)."""
         if not token:
             return None
         digest, now = token_hash(token), _clock()
@@ -910,7 +910,7 @@ class UsersMixin:
             ):
                 conn.execute("DELETE FROM sessions WHERE token_hash = ?", (digest,))
                 return None
-            if now - row["last_seen"] >= SEEN_EVERY:
+            if renew and now - row["last_seen"] >= SEEN_EVERY:
                 # Best effort, and never long: a busy database fails no page over it (B-1293) nor holds one up behind
                 # another writer (B-1579); the next request records it.
                 waits = conn.execute("PRAGMA busy_timeout").fetchone()[0]

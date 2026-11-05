@@ -159,6 +159,26 @@ def test_a_restart_keeps_everyone_logged_in(store):
     assert again.get("/review").status_code == 200
 
 
+def test_a_tab_left_open_logs_out_after_30_idle_minutes_however_often_it_polls(store, monkeypatch):
+    from ap_coder.core.store import users
+
+    clock = [users._clock()]
+    monkeypatch.setattr(users, "_clock", lambda: clock[0])
+    account(store, "boss", "admin")
+    iid = add_clean(store)
+    client = server_client(store)
+    log_in(client, "boss")
+    clock[0] += 20 * 60
+    assert client.get(f"/review/{iid}").status_code == 200  # a page looked at: the idle time starts again
+    polls = (f"/review/{iid}/reader", "/process/status", "/jobs/process", "/settings/reading/self-test")
+    for _ in range(3):  # then nothing but the tab's automatic polls (OvisOCR2 reading, a job, the self-test)
+        clock[0] += 10 * 60 - 1
+        for poll in polls:
+            assert client.get(poll).status_code != 303, poll  # still logged in: they are answered
+    clock[0] += 4
+    assert client.get(f"/review/{iid}").status_code == 303  # 30 minutes without a click: logged out
+
+
 def test_the_events_name_the_account_and_its_address(store):
     uid = account(store, "ann", "clerk", "Ann Lee")
     client = server_client(store)
