@@ -415,7 +415,7 @@ def resolve_an8(final: dict[str, Any], vendor_lookup: VendorLookup, settings: Jd
         return str(override).strip()
     if callable(vendor_lookup):
         return str(vendor_lookup(final) or "").strip()
-    return _vendor_id(final, dict(vendor_lookup or {})).strip()
+    return _vendor_id(final, vendor_lookup or {}).strip()  # (read, not copied: once per invoice or vendor)
 
 
 def account_for(gl_code: str, cost_center: str, settings: JdeSettings) -> GlMap | None:
