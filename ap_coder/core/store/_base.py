@@ -33,7 +33,19 @@ from .fx import _FX_RATE, APPROVAL_CONTROLS, parse_fx_rates, tiny_fx_rates, unre
 # 18: users, sessions, login_attempts (by _SCHEMA: server mode's accounts, D-97), later vendors.erp_bank (D-104) and
 # vendor_aliases (by _SCHEMA: a vendor name read wrong, as AP corrected it, D-119), line_texts (by _SCHEMA: a
 # supplier's line descriptions as AP approved them, D-120)
-SCHEMA_VERSION = 19  # 19: the invoices' summary and its triggers (summary.py, ``_summary_migrate``, D-110)
+SCHEMA_VERSION = 20  # 19: the invoices' summary and its triggers (summary.py, ``_summary_migrate``, D-110), 20: indexes
+# Schema 20's indexes (B-1581), for: an export batch's invoices (undo, an empty batch, who may post it), an invoice's
+# coding memory (withdrawn at a reopen, rejection or delete), the events of a kind since a day (touchless figures,
+# the approval controls, who vouched for an account), an account's sessions, the expired one-off values, and a
+# vendor by its ERP number (the JD Edwards supplier sync).
+_INDEXES_20 = (
+    "CREATE INDEX IF NOT EXISTS invoices_export_batch ON invoices (export_batch)",
+    "CREATE INDEX IF NOT EXISTS feedback_invoice ON feedback (invoice_id)",
+    "CREATE INDEX IF NOT EXISTS events_action_at ON events (action, created_at)",
+    "CREATE INDEX IF NOT EXISTS sessions_user ON sessions (user_id)",
+    "CREATE INDEX IF NOT EXISTS ephemeral_expires ON ephemeral (expires_at)",
+    "CREATE INDEX IF NOT EXISTS vendors_erp_id ON vendors (erp_id)",
+)
 # The one-off clean-ups of the learning memory ``_migrate`` has run on a database (settings.feedback_cleanup): a new
 # clean-up added there changes it, so it runs once on every database.
 FEEDBACK_CLEANUP = "1"
@@ -551,6 +563,9 @@ class StoreCore:
                     conn.execute("UPDATE invoices SET currency = ? WHERE id = ?", (currency, r["id"]))
         if version < 13:  # credit notes were given a due date like invoices
             conn.execute("UPDATE invoices SET due_date = NULL WHERE grand_total <= 0")
+        if version < 20:  # the lookups that read a whole table, a year of invoices on the server (B-1581)
+            for sql in _INDEXES_20:
+                conn.execute(sql)
         # The page reader's queue remembers who is reading an invoice and how many reads were cut off (added within
         # schema 15: looked for whatever the version).
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(page_reads)")}
