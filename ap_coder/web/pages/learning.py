@@ -267,7 +267,7 @@ def coding_context(store: Store, mem_q: str, settings: Any = None) -> dict[str, 
         return {"metrics": None}
     measured = m["line_accuracy"] is not None  # none: AP coded every line, the AI proposed none (no model, B-1298)
     accuracy = m["line_accuracy"] or 0.0
-    clean, total = insights.approved_as_coded(store)  # as Insights counts them (D-39)
+    clean, total, filled = insights.approval_counts(store)  # as Insights counts them (D-39), by SQLite (D-156)
     weekly = []
     for w in m["weekly"]:
         lines = w["accepted"] + w["corrected"]
@@ -286,7 +286,7 @@ def coding_context(store: Store, mem_q: str, settings: Any = None) -> dict[str, 
         ui.tile("Lines reviewed", f"{m['lines_reviewed']:,}", "", "blue", f"{m['lines_accepted']:,} confirmed"),
         ui.tile("Corrections taught", f"{m['lines_corrected']:,}", "", "amber", "used on the next invoice"),
         ui.tile(insights.AS_CODED, "—" if not total else f"{clean / total:.0%}", "", "green",
-                insights.as_coded_note(clean, insights.filled_in_count(store), total)),
+                insights.as_coded_note(clean, filled, total)),
     ]  # fmt: skip
     tiles = [built(tile) for tile in tiles]
     weeks = [w["week"] for w in weekly]
