@@ -297,6 +297,6 @@ def test_in_a_browser_the_review_screen_stops_following_the_reading_once_the_ses
     for _ in range(6):  # six minutes
         page.clock.run_for(60_000)
         page.wait_for_timeout(50)
-    assert len([u for u in looks if u.endswith("/reader")]) == 2, looks
+    assert len([u for u in looks if u.split("?", 1)[0].endswith("/reader")]) == 2, looks  # (?seen=: D-160)
     assert "/review/" in page.url  # the screen stays as it is, with the edits
     assert errors == []
