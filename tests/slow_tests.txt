@@ -1,5 +1,7 @@
 # Tests over half a second (python -m pytest --durations=0): left out of the default run, which CI
 # and python -m pytest -m "" still run. Tests that open a browser (in_a_browser in the name) are slow too.
+tests/ai/test_ai_paths.py::test_the_ai_coder_codes_a_new_vendor_then_learns_from_the_approval
+tests/ai/test_ai_paths.py::test_the_page_reader_passes_its_self_test_then_reads_an_invoice_and_the_reviewer_agrees
 tests/ai/test_azure_check.py::test_a_check_under_way_when_ap_restores_is_dropped_and_none_starts_meanwhile
 tests/ai/test_azure_check.py::test_settings_reading_shows_the_azure_card_and_its_own_page_is_not_taken_for_a_tab
 tests/ai/test_azure_check.py::test_test_connection_reads_the_sample_and_shows_the_comparison
