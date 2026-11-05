@@ -55,6 +55,35 @@ def test_a_browser_keeps_static_files_as_their_headers_say():
         "/fonts/Inter.woff2"]  # fmt: skip
 
 
+def test_a_304_keeps_what_the_browser_stored_so_a_font_stays_fresh_after_it_is_checked_again():
+    # Starlette's StaticFiles (the fonts, the logo): no Cache-Control, so a tenth of the file's age; its 304 carries
+    # the ETag and the Date but no Last-Modified. The stored headers are updated with the 304's, the rest kept.
+    seen = []
+
+    def server(request):
+        seen.append(request.headers.get("if-none-match"))
+        date = {"date": "Thu, 11 Jan 2024 00:00:00 GMT", "etag": '"abc"'}
+        if request.headers.get("if-none-match") == '"abc"':
+            return httpx.Response(304, headers=date)
+        return httpx.Response(200, headers={**date, "last-modified": "Mon, 01 Jan 2024 00:00:00 GMT"}, content=b"f")
+
+    async def browse():
+        me = load.Person(_run(), load.Account("pat", "pw", "secret", "clerk"), 0, 0.0)
+        await me.client.aclose()
+        me.client = httpx.AsyncClient(base_url=me.run.base, transport=httpx.MockTransport(server))
+        try:
+            await me.static("/fonts/Inter.woff2")
+            me.cache["/fonts/Inter.woff2"].fresh_until = 0.0  # a day later: stale, asked again
+            await me.static("/fonts/Inter.woff2")
+            await me.static("/fonts/Inter.woff2")  # fresh again for a day: from the cache
+        finally:
+            await me.close()
+        return me
+
+    me = asyncio.run(browse())
+    assert seen == [None, '"abc"'] and me.run.counts["static from the cache"] == 1
+
+
 def test_a_screen_sends_its_form_as_the_page_does_and_takes_the_sections_a_check_draws_again():
     page = """<form id="inv" method="post" action="/review/7/approve"><input type="hidden" name="grids" value="1">
       </form><input form="inv" name="vendor_name" value="Acme &amp; Co">

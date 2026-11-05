@@ -789,13 +789,19 @@ def multipart(fields: list[tuple[str, str]], files: list[tuple[str, str, bytes, 
 # --- A browser's cache for static files ----------------------------------------------------------------------------
 
 
+STORED_HEADERS = ("cache-control", "date", "etag", "last-modified")  # what its freshness and its next check read
+
+
 @dataclass
 class Cached:
-    etag: str
-    modified: str
+    headers: dict[str, str]  # its STORED_HEADERS, each 304's laid over them (RFC 9111 4.3.4: the others kept)
     fresh_until: float  # time.monotonic()
     no_cache: bool
     children: list[str]  # what it brings in (a stylesheet's fonts, a module's imports)
+
+
+def stored(headers: Any) -> dict[str, str]:
+    return {name: headers[name] for name in STORED_HEADERS if name in headers}
 
 
 def freshness(headers: Any) -> tuple[bool, bool, float]:
@@ -963,22 +969,23 @@ class Person:
             return entry.children
         asked = {}
         if entry is not None:
-            if entry.etag:
-                asked["If-None-Match"] = entry.etag
-            if entry.modified:
-                asked["If-Modified-Since"] = entry.modified
+            if entry.headers.get("etag"):
+                asked["If-None-Match"] = entry.headers["etag"]
+            if entry.headers.get("last-modified"):
+                asked["If-Modified-Since"] = entry.headers["last-modified"]
         accept = "image/avif,image/webp,image/png,*/*;q=0.8" if kind == "image" else ""
         answer = await self.send("GET", url, kind, headers=asked, accept=accept)
-        kept, no_cache, life = freshness(answer.headers)
-        if answer.status_code == 304 and entry is not None:
-            entry.no_cache, entry.fresh_until = no_cache, time.monotonic() + life
+        if answer.status_code == 304 and entry is not None:  # Starlette's says no Last-Modified: the stored one kept
+            entry.headers.update(stored(answer.headers))
+            _, entry.no_cache, life = freshness(entry.headers)
+            entry.fresh_until = time.monotonic() + life
             return entry.children
         if answer.status_code != 200:
             return []
+        kept, no_cache, life = freshness(answer.headers)
         kids = children_of(url, answer.text) if urlsplit(url).path.endswith((".css", ".js")) else []
         if kept:
-            self.cache[url] = Cached(answer.headers.get("etag", ""), answer.headers.get("last-modified", ""),
-                                     time.monotonic() + life, no_cache, kids)  # fmt: skip
+            self.cache[url] = Cached(stored(answer.headers), time.monotonic() + life, no_cache, kids)
         else:
             self.cache.pop(url, None)
         return kids
