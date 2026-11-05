@@ -100,3 +100,7 @@ Every number here was measured, with the machine, the command and the date. Esti
   - **Measured:** the target 1 and 2 rows above. Stable under 100 people now (no errors, memory flat), but the 4 cores
     are saturated: part 2 takes the work out of each request (static files cached for good, page images rendered once,
     the invoice page's lists out of its HTML, the slow reports as jobs).
+  - **Where the CPU goes under load** ([archive/scale-2026-11/cpu.md](archive/scale-2026-11/cpu.md)): 100 people
+    ask for about 18 cores' worth of work, 4.5 times what the 4 cores give. The Check and the invoice page are 82% of
+    it, and most of their work gives the same answer every time (the held vendors' approved numbers, the vendor IDs,
+    the suggestions' index kept for only 2 vendors, the 3.3 MB vendor list). Part 2 starts there.
