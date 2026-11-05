@@ -21,6 +21,7 @@ from urllib.parse import quote
 
 import pandas as pd
 from fastapi import UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 
 from ap_coder.core.csvio import sniff_delimiter
@@ -106,13 +107,18 @@ async def read_capped(file: UploadFile) -> bytes | None:
 
 
 async def receive_sheet(file: UploadFile) -> tuple[str, str]:
-    """(token, "") for an uploaded spreadsheet that can be read, else ("", the problem in plain words)."""
+    """(token, "") for an uploaded spreadsheet that can be read, else ("", the problem in plain words). The sheet is
+    read and kept on a threadpool thread: a 50 MB workbook never holds up the dashboard's other requests."""
     name = file.filename or "upload.csv"
     if not name.lower().endswith(SHEET_TYPES):
         return "", NOT_A_SHEET
     content = await read_capped(file)
     if content is None:
         return "", TOO_BIG
+    return await run_in_threadpool(_keep_sheet, name, content)
+
+
+def _keep_sheet(name: str, content: bytes) -> tuple[str, str]:
     try:
         read_sheet(name, content)
     except SheetError as exc:

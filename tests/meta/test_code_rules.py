@@ -81,3 +81,118 @@ q = ",".join("?" * len(chunk))  # at most 500 ids
 """
     assert _placeholders_for_a_list_of_any_length(bad) == [2, 3, 4]
     assert _placeholders_for_a_list_of_any_length(safe) == []
+
+
+# A web worker runs every ``async def`` on its one event loop: while one waits on the database or a file, every other
+# request to that worker waits too (B-1660). Only the awaits (the form, an upload's body) stay in an async handler; the
+# rest runs on a threadpool thread: ``return await run_in_threadpool(_work, request, form)``, ``_work`` a plain
+# function marked ``@one_connection`` (web/core.py), as the review screen's Check does.
+_STORE_CALLS = {"get_store", "current_store"}
+_FILE_CALLS = {"open", "read_bytes", "write_bytes", "read_text", "write_text"}
+_PAGE_CALL = "render"  # a page drawn (web/core.py): its frame reads the database
+# phase 2 integration: P2b/P2c own these files; converted after they merge. Each of these does its database work on
+# the loop, some through helpers the rule can't see (``_new_lines``, ``current_draft``).
+_STILL_ON_THE_LOOP = {
+    "ap_coder/web/pages/invoice.py": {"_posted", "_posted_in_review", "_coded", "split", "apply_rules",
+                                      "use_po_coding", "use_suggestion", "fill_lines"},
+    "ap_coder/web/pages/process.py": {"process_upload"},
+}  # fmt: skip
+
+
+def _waits_on_the_loop(source: str) -> list[tuple[str, int]]:
+    """(the async function, the line) of each call in an ``async def`` that waits on the database or a file there:
+    get_store(), a store method, a function given the store, a page drawn, open() or a path read or written. A call
+    awaited is not (an awaitable does not hold the loop), nor what ``run_in_threadpool`` is given to run."""
+    found: set[tuple[str, int]] = set()
+
+    def store(node: ast.AST) -> bool:
+        if isinstance(node, ast.Call):
+            return getattr(node.func, "id", "") in _STORE_CALLS
+        return getattr(node, "id", getattr(node, "attr", "")) == "store"  # store, self.store, app.state.store
+
+    def waits(call: ast.Call) -> bool:
+        name = getattr(call.func, "id", "") or getattr(call.func, "attr", "")
+        if name == _PAGE_CALL or (isinstance(call.func, ast.Name) and name in {*_STORE_CALLS, "open"}):
+            return True
+        if isinstance(call.func, ast.Attribute) and (store(call.func.value) or name in _FILE_CALLS):
+            return True
+        return any(store(a) for a in [*call.args, *(k.value for k in call.keywords)])
+
+    def visit(node: ast.AST, function: ast.AsyncFunctionDef, awaited: bool = False) -> None:
+        if isinstance(node, ast.AsyncFunctionDef) and node is not function:
+            return  # checked on its own
+        children = list(ast.iter_child_nodes(node))
+        if isinstance(node, ast.Call):
+            if (getattr(node.func, "id", "") or getattr(node.func, "attr", "")) == "run_in_threadpool":
+                children = [c for c in children if c is node.func or not isinstance(c, ast.Lambda)]
+            elif not awaited and waits(node):
+                found.add((function.name, node.lineno))
+        for child in children:
+            visit(child, function, awaited=isinstance(node, ast.Await) and child is node.value)
+
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.AsyncFunctionDef) and node.name != "lifespan":  # the start and stop: no request waits
+            for statement in node.body:
+                visit(statement, node)
+    return sorted(found, key=lambda f: f[1])
+
+
+def test_no_async_handler_waits_on_the_database_or_a_file_on_the_event_loop():
+    """B-1660: the ERP register's import, the vendor master's, teaching from the ERP history and every save of a
+    setup page made their store calls on the event loop, holding up every page, poll and login of their web worker
+    meanwhile; the pages' handlers and the middlewares are checked (ap_coder/web)."""
+    found = []
+    for path in sorted((ROOT / "ap_coder" / "web").rglob("*.py")):
+        name = path.relative_to(ROOT).as_posix()
+        still = _STILL_ON_THE_LOOP.get(name, set())
+        for function, line in _waits_on_the_loop(path.read_text(encoding="utf-8")):
+            if function not in still:
+                found.append(f"{name}:{line} ({function})")
+    assert not found, "run it with run_in_threadpool on a @one_connection function (web/core.py): " + ", ".join(found)
+
+
+def test_the_handlers_left_on_the_loop_are_still_async_functions_of_their_files():
+    """The list above names functions that exist: one converted to a plain function, or renamed, comes off it."""
+    for name, functions in _STILL_ON_THE_LOOP.items():
+        tree = ast.parse((ROOT / name).read_text(encoding="utf-8"))
+        defined = {n.name for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef)}
+        gone = ", ".join(sorted(functions - defined))
+        assert not gone, f"{name} has no async {gone} any more: take it off the list"
+
+
+def test_the_event_loop_rule_finds_what_it_should():
+    """The rule above, on the calls that hold the loop and on the forms that don't."""
+    bad = """
+async def a(request):
+    store = get_store(request)
+async def b(request, store):
+    form = await posted_form(request)
+    store.save(form)
+async def c(request, store):
+    return done(request, jde.load(store))
+async def d(path):
+    with open(path, encoding="utf-8") as handle:
+        return handle.read()
+async def e(store):
+    await run_in_threadpool(work, store.everything())
+async def f(self, folder):
+    (folder / "x").write_bytes(b"")
+    self.store.log_event("x")
+async def g(request):
+    return core.render(request, "error.html", "")
+"""
+    safe = """
+async def a(request):
+    form = await posted_form(request)
+    return await run_in_threadpool(_save, request, form)
+async def b(store, token):
+    user = await run_in_threadpool(store.session_user, token)
+    await run_in_threadpool(lambda: store.log_event("x"))
+    await run_in_threadpool(export, store, full=True)
+async def c(store, request):
+    await run_in_threadpool(core.render, request, "error.html", "")
+    return await store.fetch()
+"""
+    assert _waits_on_the_loop(bad) == [("a", 3), ("b", 6), ("c", 8), ("d", 10), ("e", 13), ("f", 15), ("f", 16),
+                                       ("g", 18)]  # fmt: skip
+    assert _waits_on_the_loop(safe) == []

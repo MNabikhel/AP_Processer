@@ -14,6 +14,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 from fastapi import File, Form, Query, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from ap_coder.coding import vendor_mail
@@ -39,6 +40,7 @@ from ap_coder.web.core import (
     done,
     flash_message,
     get_store,
+    one_connection,
     page_router,
     posted_form,
     reference_or_none,
@@ -347,6 +349,11 @@ async def master_upload(request: Request, file: UploadFile = File(...)) -> JSONR
 async def master_import(request: Request) -> JSONResponse:
     """Import the ERP's vendor list: matched by name; ERP ID, GST/HST number, terms, status and default GL."""
     form = await posted_form(request)
+    return await run_in_threadpool(_master_import, request, form)  # a large company's list: 20,000 vendors
+
+
+@one_connection
+def _master_import(request: Request, form: Any) -> JSONResponse:
     store = get_store(request)
     token, sheet = str(form.get("file") or ""), str(form.get("sheet") or "")
     try:

@@ -13,6 +13,7 @@ from typing import Any
 
 import pandas as pd
 from fastapi import File, Form, HTTPException, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from ap_coder.coding import banks
@@ -28,6 +29,7 @@ from ap_coder.web.core import (
     done,
     flash_message,
     get_store,
+    one_connection,
     page_router,
     page_version,
     posted_form,
@@ -301,6 +303,11 @@ async def bank_upload(request: Request, file: UploadFile = File(...)) -> JSONRes
 @router.post("/accounts/bank/import")
 async def bank_import(request: Request) -> JSONResponse:
     form = await posted_form(request)
+    return await run_in_threadpool(_bank_import, request, form)
+
+
+@one_connection
+def _bank_import(request: Request, form: Any) -> JSONResponse:
     store = get_store(request)
     token, sheet = str(form.get("file") or ""), str(form.get("sheet") or "")
     try:
@@ -338,6 +345,11 @@ async def bank_save(request: Request) -> JSONResponse:
     """The edited grid: each row by its code (a new row's code typed in), the account number kept when its box is
     left blank, the default (one per currency) and whether it is in use."""
     form = await posted_form(request)
+    return await run_in_threadpool(_bank_save, request, form)
+
+
+@one_connection
+def _bank_save(request: Request, form: Any) -> JSONResponse:
     store = get_store(request)
     posted = form.get("version")  # an account imported meanwhile would be overwritten (B-655)
     if posted is not None and str(posted) != bank_version(store, bank_shown(store)):
@@ -385,8 +397,13 @@ async def accounts_upload(request: Request, table: str, file: UploadFile = File(
 
 @router.post("/accounts/{table}/import")
 async def accounts_import(request: Request, table: str) -> JSONResponse:
-    tab, noun = table_for(table)
     form = await posted_form(request)
+    return await run_in_threadpool(_accounts_import, request, table, form)
+
+
+@one_connection
+def _accounts_import(request: Request, table: str, form: Any) -> JSONResponse:
+    tab, noun = table_for(table)
     store = get_store(request)
     token, sheet = str(form.get("file") or ""), str(form.get("sheet") or "")
     try:
@@ -425,8 +442,13 @@ async def accounts_import(request: Request, table: str) -> JSONResponse:
 @router.post("/accounts/{table}/save")
 async def accounts_save(request: Request, table: str) -> JSONResponse:
     """The edited list replaces the stored one: ticked rows are deleted, blank codes left out."""
-    tab, noun = table_for(table)
     form = await posted_form(request)
+    return await run_in_threadpool(_accounts_save, request, table, form)
+
+
+@one_connection
+def _accounts_save(request: Request, table: str, form: Any) -> JSONResponse:
+    tab, noun = table_for(table)
     store = get_store(request)
     stale = stale_page(form, store.list_accounts(table))  # an account imported meanwhile would be deleted (B-655)
     if stale is not None:
@@ -472,6 +494,11 @@ def accounts_csv(request: Request, table: str) -> Response:
 async def save_tax(request: Request) -> JSONResponse:
     """How each sales tax posts: its treatment, and its GL account unless it is added to the expense lines."""
     form = await posted_form(request)
+    return await run_in_threadpool(_save_tax, request, form)
+
+
+@one_connection
+def _save_tax(request: Request, form: Any) -> JSONResponse:
     store = get_store(request)
     codes = {a["code"] for a in store.list_accounts("gl_accounts")}
     chosen = {}
@@ -513,10 +540,15 @@ def rules_from_form(form: Any) -> tuple[list[Rule], list[int]]:
 @router.post("/accounts/rules")
 async def save_rules(request: Request) -> JSONResponse:
     """Fixed coding rules: always this GL account (and cost center) for a vendor and/or words in a line."""
+    form = await posted_form(request)
+    return await run_in_threadpool(_save_rules, request, form)
+
+
+@one_connection
+def _save_rules(request: Request, form: Any) -> JSONResponse:
     store = get_store(request)
     if not store.list_accounts("gl_accounts"):
         return refuse("Import your GL accounts first.")
-    form = await posted_form(request)
     stale = stale_page(form, rules_shown(store))  # a rule added meanwhile would be dropped (B-655)
     if stale is not None:
         return stale

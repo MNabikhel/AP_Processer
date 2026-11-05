@@ -766,3 +766,54 @@ def test_the_background_process_loads_a_library_while_it_waits_for_its_input_to_
         assert proc.wait(15) == 0
     finally:
         proc.kill()
+
+
+# --- B-1660: a long import holds up no other request of its web worker -------------------------------------------
+
+
+def test_a_long_import_does_not_hold_up_the_other_requests_of_its_web_worker(store, monkeypatch):
+    """A web worker answers every ``async`` handler on its one event loop: the ERP register's import (600,000 rows at
+    a large company) made its store calls there, so every other request to that worker (pages, polls, logins) waited
+    until it was done. Its work now runs on a threadpool thread, as the review screen's Check does: a page asked for
+    while the import is in its store call is answered before that call ends."""
+    import httpx
+
+    from ap_coder.core.store import Store
+    from ap_coder.web.app import create_app
+    from tests.webclient import PAGE, web_settings
+
+    inside, ended = threading.Event(), threading.Event()
+    real = Store.import_erp_register
+
+    def import_slowly(self, *args, **kwargs):
+        inside.set()
+        time.sleep(1.5)  # the store call of a long import
+        ended.set()
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(Store, "import_erp_register", import_slowly)
+    app = create_app(web_settings(), store, start_reader=False, background=False)
+    sheet = b"Supplier,Doc No,Amount\nAcme Ltd,A-1,100.00\n"
+    columns = {"col_vendor_name": "Supplier", "col_invoice_number": "Doc No", "col_total": "Amount"}
+
+    async def both() -> tuple[bool, httpx.Response, httpx.Response]:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
+            upload = await client.post("/exports/register/upload", files={"file": ("erp.csv", sheet, "text/csv")},
+                                       headers=PAGE)  # fmt: skip
+            token = httpx.URL(upload.json()["redirect"]).params["register"]
+            importing = asyncio.create_task(
+                client.post("/exports/register/import", data={"file": token, **columns}, headers=PAGE)
+            )
+            for _ in range(500):  # until the import is in its store call
+                if inside.is_set():
+                    break
+                await asyncio.sleep(0.01)
+            page = await client.get("/healthz")
+            answered_meanwhile = not ended.is_set()
+            return answered_meanwhile, page, await importing
+
+    answered_meanwhile, page, imported = asyncio.run(both())
+    assert page.status_code == 200 and imported.status_code == 200, imported.text
+    assert store.erp_register_count() == 1
+    assert answered_meanwhile, "the page waited for the import's store call to end"
