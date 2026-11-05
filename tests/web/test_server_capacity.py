@@ -201,6 +201,243 @@ def test_an_export_batch_is_made_on_a_thread_never_on_the_workers_event_loop(sto
     assert seen and seen[0].startswith("AnyIO worker thread")
 
 
+# --- A worker started afresh -------------------------------------------------------------------------------------
+
+
+class _Server:
+    should_exit = False
+
+
+def _recycle(tmp_path, monkeypatch, **limits):
+    state = SimpleNamespace(jobs=Jobs(), daily_backup=SimpleNamespace(thread=None), import_queue=None)
+
+    async def page(scope, receive, send):
+        pass
+
+    worker = server.Recycle(page, state=state, data=tmp_path, jitter=SimpleNamespace(randint=lambda a, b: 0),
+                            **{"max_mb": 0, "max_requests": 0, **limits})  # fmt: skip
+    found = _Server()
+    monkeypatch.setattr(server, "uvicorn_server", lambda: found)
+    monkeypatch.setattr(server, "DRAIN_SECONDS", 0.0)
+    return worker, state, found
+
+
+def _serve(worker, n: int = 1) -> None:
+    async def main() -> None:
+        for _ in range(n):
+            await worker({"type": "http"}, None, None)
+        await asyncio.sleep(0.01)  # (its stop comes DRAIN_SECONDS later)
+
+    asyncio.run(main())
+
+
+def test_a_worker_ends_after_its_requests_once_nothing_of_its_own_would_end_with_it(tmp_path, monkeypatch):
+    from ap_coder.web.jobs import RUNNING
+
+    worker, state, found = _recycle(tmp_path, monkeypatch, max_requests=4)
+    _serve(worker, 3)
+    assert not found.should_exit
+    state.jobs.get("process").state = RUNNING  # an import running in this worker: it would end with it
+    _serve(worker, 3)
+    assert not found.should_exit and worker.why == "4 requests"
+    state.jobs.get("process").state = "done"
+    _serve(worker)
+    assert found.should_exit  # uvicorn finishes the requests under way, then the process ends; another replaces it
+    found.should_exit = False
+    _serve(worker)
+    assert not found.should_exit  # asked once
+
+
+def test_a_worker_ending_takes_no_new_connection_and_stops_a_moment_later(tmp_path, monkeypatch):
+    """The other workers take the new connections; those it took already have DRAIN_SECONDS to ask before uvicorn
+    stops it. The supervisor is told which worker is ending (``RECYCLE_PID``): it doesn't ask that one "alive?"."""
+    worker, _, found = _recycle(tmp_path, monkeypatch, max_requests=1)
+    monkeypatch.setattr(server, "DRAIN_SECONDS", 0.5)
+    taken = []
+
+    async def main() -> tuple[bool, bool]:
+        listening = await asyncio.start_server(lambda r, w: taken.append(w), "127.0.0.1", 0)
+        found.servers = [listening]
+        port = listening.sockets[0].getsockname()[1]
+        await worker({"type": "http"}, None, None)
+        _, writer = await asyncio.open_connection("127.0.0.1", port)  # (the kernel's queue holds it for the others)
+        await asyncio.sleep(0.2)
+        early = found.should_exit
+        await asyncio.sleep(0.5)
+        writer.close()
+        listening.close()
+        return early, found.should_exit
+
+    assert asyncio.run(main()) == (False, True) and taken == []
+    assert server._leaving(tmp_path) == os.getpid()
+
+
+def test_the_supervisor_does_not_ask_the_ending_worker_alive_and_replaces_it_once_it_has_ended(tmp_path, monkeypatch):
+    """An ending worker can't answer "alive?" while its process closes, and uvicorn's supervisor holds the other end
+    of the pipe too, so it waited its whole timeout_worker_healthcheck (30 s), replacing no worker meanwhile."""
+    asked, started = [], []
+
+    class Worker:
+        def __init__(self, pid, alive=True):
+            self.pid, self.alive, self.exitcode = pid, alive, 0
+            self.process = SimpleNamespace(is_alive=lambda: self.alive)
+
+        def is_alive(self, timeout=None):
+            asked.append(self.pid)
+            return self.alive
+
+        def kill(self):
+            pass
+
+        def join(self, timeout=None):
+            pass
+
+    class Started:
+        def __init__(self, config, sockets):
+            self.pid = 99
+
+        def start(self):
+            started.append(self.pid)
+
+    import uvicorn.supervisors.multiprocess as multiprocess
+
+    monkeypatch.setattr(multiprocess, "Process", Started)
+    monkeypatch.setenv(server.WORKER_ENV, json.dumps({"data": str(tmp_path), "token": "secret"}))
+    supervisor = server._supervisor_class().__new__(server._supervisor_class())
+    supervisor.should_exit, supervisor.sockets = threading.Event(), []
+    supervisor.config = SimpleNamespace(timeout_worker_healthcheck=30)
+    ending, other = Worker(11), Worker(12)
+    supervisor.processes = [ending, other]
+    (tmp_path / server.RECYCLE_PID).write_text("11", encoding="ascii")
+    supervisor.keep_subprocess_alive()
+    assert asked == [12] and started == [] and len(supervisor.processes) == 2  # the ending one left alone
+    ending.alive = False  # it has ended
+    supervisor.keep_subprocess_alive()
+    assert started == [99] and sorted(p.pid for p in supervisor.processes) == [12, 99]
+
+
+def test_each_worker_ends_after_a_number_of_requests_of_its_own(tmp_path):
+    import random
+
+    limits = {server.Recycle(None, state=None, data=tmp_path, max_mb=0, max_requests=1000,
+                             jitter=random.Random(seed)).limit for seed in range(20)}  # fmt: skip
+    assert len(limits) > 10 and min(limits) >= 1000 and max(limits) <= 1250
+
+
+def test_a_worker_past_its_memory_ends_and_one_worker_at_a_time(tmp_path, monkeypatch):
+    from ap_coder.core.paths import try_lock
+
+    worker, _, found = _recycle(tmp_path, monkeypatch, max_mb=2000)
+    monkeypatch.setattr(server, "memory_mb", lambda: 1500.0)
+    _serve(worker, server.MEMORY_EVERY)
+    assert not found.should_exit
+    monkeypatch.setattr(server, "memory_mb", lambda: 2500.0)
+    other = try_lock(tmp_path / server.RECYCLE_LOCK)  # another worker is being started afresh
+    _serve(worker, server.MEMORY_EVERY)
+    assert not found.should_exit and "2,500 MB" in worker.why
+    other.close()
+    _serve(worker)
+    assert found.should_exit
+
+
+def test_the_limits_come_from_the_memory_and_the_settings(monkeypatch):
+    monkeypatch.delenv(server.MEMORY_ENV, raising=False)
+    monkeypatch.delenv(server.REQUESTS_ENV, raising=False)
+    assert server.recycle_limits(28, 64_000) == {"max_mb": 2000.0, "max_requests": 50_000}
+    assert server.recycle_limits(4, 16_000)["max_mb"] == 3000.0  # its share of the 12 GB the workers may use
+    monkeypatch.setenv(server.MEMORY_ENV, "0")  # never
+    monkeypatch.setenv(server.REQUESTS_ENV, "300")
+    assert server.recycle_limits(4, 16_000) == {"max_mb": 0.0, "max_requests": 300.0}
+
+
+def test_this_processs_memory_and_the_computers_are_known():
+    used, total = server.memory_mb(), server.memory_total_mb()
+    assert used is not None and total is not None and 10 < used < total
+
+
+def _free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def test_a_worker_of_the_server_is_started_afresh_and_no_request_or_login_is_lost(tmp_path):
+    """The real server, two workers, each ended after a few requests: the supervisor starts others in their place,
+    every request is answered, and the login made before still works after."""
+    from ap_coder.core import authenticator
+
+    data, port = tmp_path / "data", _free_port()
+    store = Store(data / "ap_coder.db")
+    uid = store.add_user("boss", GOOD, role="admin", display_name="Boss")
+    with store._conn() as conn:
+        conn.execute("UPDATE users SET must_change = 0 WHERE id = ?", (uid,))
+    secret = enrol(store, uid)
+    (tmp_path / "empty.env").write_text("", encoding="utf-8")
+    env = {**os.environ, "AP_PRIVATE_DIR": str(data), "BROWSER": "none", "AP_ALLOWED_HOSTS": "127.0.0.1",
+           server.REQUESTS_ENV: "6"}  # fmt: skip
+    command = [sys.executable, "-m", "ap_coder", "--env-file", str(tmp_path / "empty.env"), "--db",
+               str(data / "ap_coder.db"), "serve", "--server", "--insecure-http", "--host", "127.0.0.1", "--port",
+               str(port), "--workers", "2"]  # fmt: skip
+    root = Path(__file__).resolve().parents[2]
+    log = tmp_path / "server.log"  # a file, not a pipe: a worker left running can't hold the test up
+    out = log.open("w")
+    proc = subprocess.Popen(command, cwd=root, env=env, stdout=out, stderr=subprocess.STDOUT)
+    base = f"http://127.0.0.1:{port}"
+    direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    cookies: dict[str, str] = {}
+
+    def ask(path: str, form: dict | None = None) -> tuple[int, str]:
+        """One request on a connection of its own, with the cookies kept so far."""
+        body = urllib.parse.urlencode(form).encode() if form is not None else None
+        headers = {"Cookie": "; ".join(f"{k}={v}" for k, v in cookies.items()), "Origin": base, **PAGE}
+        try:
+            with direct.open(urllib.request.Request(base + path, data=body, headers=headers), timeout=30) as answer:
+                status, text, sent = answer.status, answer.read().decode(), answer.headers.get_all("Set-Cookie")
+        except urllib.error.HTTPError as exc:
+            status, text, sent = exc.code, exc.read().decode(), exc.headers.get_all("Set-Cookie")
+        for line in sent or []:
+            name, _, value = line.split(";", 1)[0].partition("=")
+            cookies[name.strip()] = value.strip()
+        return status, text
+
+    try:
+        deadline = time.monotonic() + 120
+        while True:
+            try:
+                with direct.open(base + "/healthz", timeout=2):
+                    break
+            except OSError:
+                assert time.monotonic() < deadline and proc.poll() is None
+                time.sleep(0.3)
+        assert ask("/login", {"username": "boss", "password": GOOD, "next": "/settings"})[0] == 200
+        assert ask("/login/code", {"code": authenticator.code(secret, time.time()), "next": "/settings"})[0] == 200
+        workers, answers, slowest = set(), [], 0.0
+        while len(workers) < 5 and time.monotonic() < deadline:  # the first two, and three started in their place
+            t0 = time.monotonic()
+            status, text = ask("/healthz")
+            answers.append(status)
+            workers.add(json.loads(text)["pid"])
+            answers.append(ask("/settings")[0])  # still logged in, whichever worker answers
+            slowest = max(slowest, time.monotonic() - t0)
+        assert len(workers) >= 5 and set(answers) == {200}, answers
+        # Never the 30 s the supervisor waited for an "alive?" the ending worker could no longer answer; at most the
+        # few seconds both workers of two take to start afresh one after the other.
+        assert slowest < 15
+        assert proc.poll() is None  # the server runs on
+        token = json.loads((data / ".ap_coder_server.json").read_text(encoding="utf-8"))["token"]
+        stop = urllib.request.Request(base + "/shutdown", data=b"", method="POST", headers={"X-AP-Coder-Token": token})
+        direct.open(stop, timeout=10).close()
+        proc.wait(40)
+        assert proc.returncode == 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(10)
+        out.close()
+    output = log.read_text(encoding="utf-8")
+    assert output.count("started afresh after") >= 3, output
+
+
 # --- How many workers --------------------------------------------------------------------------------------------
 
 

@@ -16,6 +16,7 @@ them; a stop file asks them all to stop.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import datetime as dt
 import errno
@@ -261,6 +262,32 @@ def memory_total_mb() -> float | None:
         return None
 
 
+def memory_mb() -> float | None:
+    """This process's resident memory in MB (its working set on Windows; None where it can't be told)."""
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        class Counters(ctypes.Structure):  # PROCESS_MEMORY_COUNTERS
+            _fields_ = [("cb", wintypes.DWORD), ("faults", wintypes.DWORD), *(
+                (name, ctypes.c_size_t) for name in ("peak", "working_set", "peak_paged", "paged", "peak_nonpaged",
+                                                     "nonpaged", "pagefile", "peak_pagefile"))]  # fmt: skip
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        kernel32.K32GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(Counters), wintypes.DWORD]
+        counters = Counters()
+        counters.cb = ctypes.sizeof(Counters)
+        if not kernel32.K32GetProcessMemoryInfo(kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb):
+            return None
+        return counters.working_set / 1e6
+    try:
+        with open("/proc/self/statm", "rb") as statm:
+            return int(statm.read().split()[1]) * os.sysconf("SC_PAGE_SIZE") / 1e6
+    except (OSError, ValueError, IndexError):
+        return None
+
+
 def serve(host: str = "127.0.0.1", port: int = 8501, open_browser: bool = True, store: Store | None = None, *,
           certfile: str | None = None, keyfile: str | None = None, proxy: str | None = None,
           insecure_http: bool = False, workers: int = 1) -> int:  # fmt: skip
@@ -407,13 +434,22 @@ def _supervisor_class() -> Any:
 
         def keep_subprocess_alive(self) -> None:
             """The stop file first: workers that read it may have ended (on Windows with STARTUP_FAILURE's exit
-            code) before ``_stop_when_asked`` saw it, and are no workers that failed to start (B-1493)."""
+            code) before ``_stop_when_asked`` saw it, and are no workers that failed to start (B-1493). A worker
+            being started afresh (``Recycle``) is not asked "alive?" while it ends: it can't answer as its process
+            closes, and uvicorn then waited timeout_worker_healthcheck (30 s), replacing no worker meanwhile. It is
+            replaced once it has ended."""
             spec = json.loads(os.environ.get(WORKER_ENV) or "{}")
             if spec.get("data") and _asked_to_stop(Path(spec["data"]), str(spec.get("token") or "")):
                 self.asked_to_stop = True
                 self.should_exit.set()
                 return
-            super().keep_subprocess_alive()
+            leaving = _leaving(Path(spec["data"])) if spec.get("data") else None
+            ending = [p for p in self.processes if p.pid == leaving and p.process.is_alive()]
+            self.processes = [p for p in self.processes if p not in ending]
+            try:
+                super().keep_subprocess_alive()
+            finally:
+                self.processes += ending
 
         def terminate_all(self) -> None:
             spec = json.loads(os.environ.get(WORKER_ENV) or "{}")
@@ -460,7 +496,124 @@ def worker_app() -> Any:
     app.state.stop_file = stop_file(Path(spec["data"]))
     threading.Thread(target=_stop_worker_when_asked, args=(Path(spec["data"]), spec["token"], int(spec["parent"])),
                      name="ap-coder-worker-stop", daemon=True).start()  # fmt: skip
+    app.add_middleware(Recycle, state=app.state, data=Path(spec["data"]), **recycle_limits(int(spec["workers"])))
     return app
+
+
+# --- A web worker started afresh now and then (D-153) ------------------------------------------------------------
+# What a worker frees is mostly kept by Python's allocator: its memory stays near its highest. Past its share of the
+# memory, or past RECYCLE_REQUESTS requests (each worker a number of its own, up to a quarter more, so they don't all
+# go together), a worker takes no new requests, finishes those under way and ends; uvicorn's supervisor starts
+# another in its place (on Windows too: it ends as any process does, not by a signal). One worker at a time (a lock
+# in the data folder), and never while something of its own runs that would end with it: a job, a backup, imports
+# waiting their turn, the long routes' lane (core.run_heavy). Logins are kept in the database: nobody is signed out.
+MEMORY_ENV, REQUESTS_ENV = "AP_WORKER_MAX_MB", "AP_WORKER_MAX_REQUESTS"
+RECYCLE_REQUESTS = 50_000  # about a working day for each of 16 workers answering 20-40 requests a second
+RECYCLE_LOCK = ".ap_coder_worker_restart.lock"
+RECYCLE_PID = ".ap_coder_worker_restart.pid"  # the worker being started afresh, for the supervisor
+MEMORY_EVERY = 10  # requests between two looks at the memory
+DRAIN_SECONDS = 1.0
+
+
+def recycle_limits(workers: int, total_mb: float | None = None) -> dict[str, float]:
+    """A worker's memory ceiling (AP_WORKER_MAX_MB, else its share of ``spare_mb``, at least 2 GB) and requests
+    (AP_WORKER_MAX_REQUESTS, else RECYCLE_REQUESTS); 0: no limit."""
+    total = total_mb if total_mb is not None else memory_total_mb()
+    share = max(2000.0, spare_mb(total) / max(1, workers)) if total else 0.0
+
+    def env(name: str, default: float) -> float:
+        try:
+            return max(0.0, float((os.environ.get(name) or "").strip() or default))
+        except ValueError:
+            return default  # a typo never stops the server
+
+    return {"max_mb": env(MEMORY_ENV, share), "max_requests": env(REQUESTS_ENV, RECYCLE_REQUESTS)}
+
+
+class Recycle:
+    """ASGI middleware of one web worker of the company server: after each request, whether it is time for the
+    worker to be started afresh (above), and if so, as soon as nothing of its own would end with it, its stop."""
+
+    def __init__(self, app: Any, state: Any, data: Path, max_mb: float, max_requests: float,
+                 jitter: Any = None) -> None:  # fmt: skip
+        import random
+
+        self.app, self.state, self.data, self.max_mb = app, state, data, max_mb
+        rng = jitter or random.Random()
+        self.limit = int(max_requests) + rng.randint(0, int(max_requests) // 4) if max_requests else 0
+        self.served = 0
+        self.why = ""  # what made it due
+        self.stopping: Any = None  # the restart lock, held until this process ends
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            if scope["type"] == "http" and self.stopping is None:
+                self.served += 1
+                self.why = self.why or self._due()
+                if self.why and not self._busy():
+                    self._stop()
+
+    def _due(self) -> str:
+        if self.limit and self.served >= self.limit:
+            return f"{self.served} requests"
+        if self.max_mb and self.served % MEMORY_EVERY == 0:
+            used = memory_mb()
+            if used is not None and used > self.max_mb:
+                return f"{used:,.0f} MB of memory (its ceiling: {self.max_mb:,.0f} MB)"
+        return ""
+
+    def _busy(self) -> bool:
+        """Something of this worker's that would end with it: a job, a backup, imports waiting, a long route."""
+        from ap_coder.web.core import heavy_lane
+
+        backup = getattr(self.state.daily_backup, "thread", None)
+        queue = getattr(self.state, "import_queue", None)
+        lane = heavy_lane().statistics()
+        if lane.borrowed_tokens or lane.tasks_waiting:
+            return True
+        return (self.state.jobs.running_here() or (backup is not None and backup.is_alive())
+                or bool(queue is not None and queue.waiting))  # fmt: skip
+
+    def _stop(self) -> None:
+        from ap_coder.core.paths import try_lock
+
+        found = uvicorn_server()
+        if found is None:
+            return
+        self.stopping = try_lock(self.data / RECYCLE_LOCK)
+        if self.stopping is None:
+            return  # another worker is being started afresh: this one's turn comes after
+        with contextlib.suppress(OSError):
+            (self.data / RECYCLE_PID).write_text(str(os.getpid()), encoding="ascii")
+        logging.getLogger(__name__).warning("A web worker (process %s) is started afresh after %s.", os.getpid(),
+                                            self.why)  # fmt: skip
+        # It takes no new connection first (the other workers do), and those it took already have DRAIN_SECONDS to
+        # ask: uvicorn's own stop, alone, left one taken as it began unanswered until the end of its grace (25 s).
+        loop = asyncio.get_running_loop()
+        for listening in getattr(found, "servers", None) or []:
+            for sock in listening.sockets:
+                loop.remove_reader(sock.fileno())
+        loop.call_later(DRAIN_SECONDS, setattr, found, "should_exit", True)  # then uvicorn finishes what is under way
+
+
+def _leaving(data: Path) -> int | None:
+    """The process of the web worker being started afresh (``Recycle``), as it wrote."""
+    try:
+        return int((data / RECYCLE_PID).read_text(encoding="ascii").strip())
+    except (OSError, ValueError):
+        return None
+
+
+def uvicorn_server() -> Any:
+    """The uvicorn server running this process (it took SIGTERM to stop gracefully); None when there is none."""
+    import signal
+
+    import uvicorn
+
+    found = getattr(signal.getsignal(signal.SIGTERM), "__self__", None)
+    return found if isinstance(found, uvicorn.Server) else None
 
 
 def _stop_worker_when_asked(data: Path, token: str, parent: int) -> None:

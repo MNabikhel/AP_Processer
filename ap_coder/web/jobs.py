@@ -202,6 +202,11 @@ class Jobs:
         except Exception:  # noqa: BLE001 - a busy database
             return False
 
+    def running_here(self) -> bool:
+        """Whether a job runs in this process (it would end with the process: a web worker started afresh waits)."""
+        with self._lock:
+            return any(job.state == RUNNING for job in self._jobs.values())
+
 
 def _now() -> str:
     return dt.datetime.now().isoformat(timespec="seconds")
