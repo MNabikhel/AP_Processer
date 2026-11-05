@@ -421,6 +421,31 @@ def test_a_scan_written_over_another_of_its_name_is_listed_as_new_within_a_minut
     assert "scan.pdf" in client.get("/process").text
 
 
+def test_the_import_page_lists_the_folder_once_by_name_as_the_pick_up_and_its_warning_do(tmp_path):
+    """D-166: the import page lists the invoices folder once, by name (``folder_names``): the invoices, the saved
+    emails and the files of a kind not read are what ``invoice_files``, ``emails_in`` and ``other_files`` give, in
+    their order, each of which made a Path of each of 100,000 files (2 s together)."""
+    from ap_coder.ai.pipeline import invoice_files, other_files
+    from ap_coder.intake.mailbox import EMAIL_EXTENSIONS, emails_in
+    from ap_coder.web.pages import process
+
+    names = ["b.pdf", "A.PDF", "a.txt", "b.md", "c.markdown", "alone.txt", "scan.JPG", "photo.heic", "Two.dots.png",
+             "README.pdf", "readme.txt", ".hidden.pdf", "._b.pdf", "~$lock.docx", "mail.eml", "Note.MSG", ".x.eml",
+             "..eml", ".eml", "letter.docx", "sheet.xlsx", "desktop.ini", "Thumbs.db", "big.pdf.part",
+             "file.crdownload", "trailing.", "no_suffix", "z.TMP", "zz.Eml"]  # fmt: skip
+    for name in names:
+        (tmp_path / name).write_bytes(b"x")
+    for name in ("folder.pdf", "box.eml", "dir.docx"):  # folders named like files: never listed
+        (tmp_path / name).mkdir()
+    assert process.folder_names(tmp_path) == (
+        [p.name for p in invoice_files(tmp_path)],
+        [p.name for p in emails_in(tmp_path)],
+        [p.name for p in other_files(tmp_path, EMAIL_EXTENSIONS)],
+    )
+    documents, emails, others = process.folder_names(tmp_path)
+    assert "a.txt" not in documents and "alone.txt" in documents and "..eml" in emails and "letter.docx" in others
+
+
 def test_an_older_database_lists_none_of_its_invoices_files_as_new(app, client, store):
     """B-1633: a database from before has no record of what the pick-up read: its invoices' own files count as read
     (once, when this version opens it), so none is listed as new."""
