@@ -187,6 +187,22 @@ def _quietly(fn, *args, **kwargs):
         return "dropped"
 
 
+def test_a_request_queued_during_a_hang_drill_is_answered_once_the_drill_is_over():
+    # Whether a request hangs is decided as it takes its slot, from the rate then, not when it arrived.
+    with FakeModel(hang_rate=1.0, slots=1) as fake:
+        results = []
+        people = [threading.Thread(target=lambda: results.append(_quietly(chat, fake, timeout=10))) for _ in "ab"]
+        people[0].start()
+        _wait_for(fake, lambda s: s["hanging"] >= 1)
+        people[1].start()
+        _wait_for(fake, lambda s: s["waiting"] >= 1)  # in line behind the hung one, during the drill
+        fake.set(hang_rate=0.0)
+        assert fake.release_hung() == 1  # the drill over: LM Studio restarted
+        for person in people:
+            person.join(5)
+        assert results == ["dropped", 200] and fake.stats()["hanging"] == 0
+
+
 def test_a_failure_rate_answers_errors():
     with FakeModel(fail_rate=1.0) as fake:
         status, answer = chat(fake)
@@ -205,10 +221,13 @@ def test_down_after_drops_every_request_until_it_is_up_again():
 
 def test_the_control_endpoint_slows_swaps_and_kills_it_while_it_runs():
     with FakeModel() as fake:
-        status, answer = ask(fake.url + "/__fake/set", {"latency": "0.2-0.2", "models": ["gemma-4-12b-it", READER]})
+        status, answer = ask(fake.url + "/__fake/set", {"latency": "0.15-0.15", "models": ["gemma-4-12b-it", READER]})
         assert status == 200 and answer["settings"]["models"] == ["gemma-4-12b-it", READER]
         assert [m["id"] for m in ask(fake.base_url + "/models")[1]["data"]] == ["gemma-4-12b-it", READER]
+        started = time.monotonic()
         assert chat(fake)[0] == 404 and chat(fake, model="gemma-4-12b-it")[0] == 200  # the old model is gone
+        assert time.monotonic() - started >= 0.28  # slowed: latency sets the pages' and the chat's
+        assert answer["settings"]["page_latency"] == answer["settings"]["chat_latency"] == [0.15, 0.15]
         assert ask(fake.url + "/__fake/set", {"down": True})[0] == 200
         assert _quietly(chat, fake, model="gemma-4-12b-it") == "dropped"
         stats = ask(fake.url + "/__fake/stats")[1]

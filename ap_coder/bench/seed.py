@@ -176,6 +176,9 @@ def main(a: argparse.Namespace) -> int:
         if not (Path(a.out) / DB_NAME).is_file():
             print(f"seed: {a.out} has no {DB_NAME}", file=sys.stderr)
             return 1
+        if not (Path(a.out) / REPORT_FILE).is_file():  # a real data folder's daily backups would stop for 20 hours
+            print(f"seed: {a.out} has no {REPORT_FILE}: only a folder the seed made is marked", file=sys.stderr)
+            return 1
         print(f"the day's backup stood in for (for 20 hours): {mark_backed_up(Path(a.out))}")
         return 0
     try:

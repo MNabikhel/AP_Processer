@@ -118,6 +118,14 @@ def test_the_seed_stands_in_for_the_day_s_backup_so_serving_it_copies_nothing(se
         assert not (seeded / "backups" / "files").exists()  # no invoice file copied either
 
 
+def test_the_stand_in_for_the_backup_is_refused_in_a_folder_the_seed_did_not_make(tmp_path, capsys):
+    real = tmp_path / "APCoder"  # an installation's data folder: its database, but no seed.json
+    real.mkdir()
+    sqlite3.connect(real / "ap_coder.db").close()
+    assert main(["seed", "--out", str(real), "--mark-backed-up"]) == 1  # its daily backups would stop for 20 hours
+    assert not (real / "backups").exists() and "seed.json" in capsys.readouterr().err
+
+
 def test_the_volume_bench_times_each_address_and_lists_the_full_scans(seeded, tmp_path):
     out = tmp_path / "volume"
     report = volume.run(seeded, out, roles=("admin", "clerk"), repeat=1, big=100,
