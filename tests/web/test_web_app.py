@@ -584,6 +584,156 @@ def test_job_status_url(client):
     assert client.get("/jobs/process").json()["state"] == "idle"
 
 
+def test_a_page_following_a_job_is_sent_its_state_done_and_note_only(client):
+    """``watchJob`` asks ``?only=done,note``: what it shows, not the job's 500 lines (up to 57 KB) every look."""
+    import threading
+
+    job, written, release = client.app.state.jobs.get("spend-data"), threading.Event(), threading.Event()
+
+    def work(j):
+        j.step(2, 5, "Writing the sheets")
+        for n in range(500):
+            j.log(f"line {n}")
+        written.set()
+        release.wait(5)
+
+    assert job.start(work) and written.wait(5)
+    try:
+        assert len(client.get("/jobs/spend-data").json()["lines"]) == 500  # everything, asked without only=
+        answer = client.get("/jobs/spend-data?only=done,note")
+        assert answer.json() == {"state": "running", "done": 2, "note": "Writing the sheets"}
+        assert answer.headers["cache-control"] == "no-store"
+    finally:
+        release.set()
+        assert job.wait(5)
+    assert client.get("/jobs/spend-data?only=done,note").json()["state"] == "done"
+    app_js = (core.STATIC_DIR / "js" / "app.js").read_text(encoding="utf-8")
+    assert 'searchParams.set("only", "done,note")' in app_js
+
+
+# --- Polls (app.js poll, D-161) ----------------------------------------------------------------------------------
+
+POLL = """async (every) => {
+  const app = await import(document.querySelector('script[src*="/js/app.js"]').src);  // the page's own module
+  window.polled = app.poll("/polled", () => false, { everyMs: every });
+}"""
+HIDDEN = """(hidden) => {
+  Object.defineProperty(document, "hidden", { configurable: true, get: () => hidden });
+  document.dispatchEvent(new Event("visibilitychange"));
+}"""
+
+
+def _looks(page, answer: dict) -> list[float]:
+    """When the page asked /polled (each answered ``answer`` as it is then)."""
+    import time
+
+    looks: list[float] = []
+
+    def answered(route):
+        looks.append(time.monotonic())
+        route.fulfill(status=200, content_type="application/json", body=json.dumps(answer))
+
+    page.route("**/polled", answered)
+    return looks
+
+
+def test_in_a_browser_a_poll_asks_less_while_nothing_changes_and_nothing_while_the_tab_is_hidden(chromium, store):
+    """Every open job page and review screen asked at its fixed pace, hidden or not, the same answer or not. While the
+    answer stays the same the wait grows by half, up to three times the pace, and a change starts again at the pace;
+    a hidden tab asks nothing, and looks at once when it is shown again."""
+    import time
+
+    from tests.browser import browser_on, wait_until
+
+    with browser_on(chromium, create_app(web_settings(), store, start_reader=False)) as (browser, base):
+        page = browser.new_page()
+        answer = {"state": "running", "done": 0}
+        looks = _looks(page, answer)
+        page.goto(base + "/help")
+        page.evaluate(POLL, 200)
+        wait_until(page, lambda: len(looks) >= 7, timeout=10)
+        gaps = [b - a for a, b in zip(looks, looks[1:], strict=False)]
+        assert gaps[0] < 0.4 and gaps[1] > gaps[0] and gaps[2] > gaps[1], gaps  # 0.2, 0.3, 0.45...
+        assert all(0.5 < g < 1.0 for g in gaps[4:6]), gaps  # ... up to 0.6 s
+        answer["done"] = 1  # a change: back to the pace
+        seen = len(looks)
+        wait_until(page, lambda: len(looks) >= seen + 2, timeout=5)
+        assert looks[seen + 1] - looks[seen] < 0.4, looks
+
+        page.evaluate(HIDDEN, True)
+        hidden_at = time.monotonic()
+        page.wait_for_timeout(2000)
+        assert [t for t in looks if t > hidden_at + 0.1] == []  # (one already under way may end)
+        page.evaluate(HIDDEN, False)
+        shown_at = time.monotonic()
+        wait_until(page, lambda: looks[-1] > shown_at, timeout=2)
+        assert looks[-1] - shown_at < 0.4  # at once, not after the wait
+
+
+def test_in_a_browser_a_poll_stops_once_the_laptop_asks_who_they_are_again(chromium, store):
+    """A colleague on a laptop shared on the office network says who they are once; after AP Coder started again (a
+    new key) their cookie is no longer good, and a look is sent on to "Who are you?": it kept asking every 0.8 s,
+    answered by that page. It stops, and the job page goes there, to come back after it."""
+    import threading
+    import time
+
+    from tests.browser import browser_on, wait_until
+
+    app = create_app(web_settings(), store, start_reader=False, address="0.0.0.0")
+
+    async def colleague(scope, receive, send):  # the browser is on another computer of the office
+        await app({**scope, "client": ("10.0.0.5", 50000)} if scope["type"] == "http" else scope, receive, send)
+
+    release = threading.Event()
+    assert app.state.jobs.get("process").start(lambda job: release.wait(60) and None, total=3)
+    try:
+        with browser_on(chromium, colleague) as (browser, base):
+            page = browser.new_page()
+            looks: list[float] = []
+            page.on("request", lambda r: looks.append(time.monotonic()) if "/process/status" in r.url else None)
+            page.goto(base + "/process")
+            page.wait_for_url("**/who?next=*")
+            page.fill("input[name=name]", "Robin")
+            page.click("button[type=submit]")
+            page.wait_for_url("**/process")
+            wait_until(page, lambda: looks)
+            page.context.clear_cookies()  # (as a new start's key makes of them)
+            gone = time.monotonic()
+            wait_until(page, lambda: "/who" in page.url, timeout=6)
+            assert "/who?next=%2Fprocess" in page.url
+            page.wait_for_timeout(2000)
+            assert len([t for t in looks if t > gone]) <= 1, looks
+    finally:
+        release.set()
+
+
+# The actions the server runs whole in their request, however long they take: a restore (a safety backup first, of a
+# database of gigabytes), years of past coding taught, the imports of large lists, a finance hub run, the bulk
+# approval of a long queue. Their forms are marked data-long: app.js waits for them (any other action gives up after
+# five minutes, with "didn't answer").
+LONG_ACTIONS = {
+    "settings_data.html": ["/settings/data/restore"],
+    "learning.html": ["/learning/history/teach"],
+    "accounts.html": ["/accounts/{{ a.table }}/import", "/accounts/bank/import"],
+    "vendors.html": ["/vendors/master/import"],
+    "exports.html": ["/exports/register/import"],
+    "purchase_orders.html": ["/purchase-orders/import"],
+    "settings_jde.html": ["/settings/jde/gl-map/import", "/settings/jde/worksheet"],
+    "settings_hub.html": ["/settings/hub/run"],
+    "review.html": ["/review/bulk-approve"],
+}
+
+
+def test_the_actions_the_server_runs_whole_are_waited_for_however_long_they_take():
+    for name, actions in LONG_ACTIONS.items():
+        text = (core.TEMPLATES_DIR / name).read_text(encoding="utf-8")
+        for action in actions:
+            forms = re.findall(r'<form[^>]*action="' + re.escape(action) + '"[^>]*>', text)
+            assert forms and all(" data-long" in f for f in forms), (name, action, forms)
+    app_js = (core.STATIC_DIR / "js" / "app.js").read_text(encoding="utf-8")
+    assert 'post(action, body, { ms: form.hasAttribute("data-long") ? 0 : ACTION_MS })' in app_js
+
+
 def test_templates_escape_and_ui_helpers_are_safe():
     env = core.templates.env
     assert env.autoescape is True

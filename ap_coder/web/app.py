@@ -432,14 +432,17 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
         return JSONResponse({"ok": True, "stopping": True})
 
     @app.get("/jobs/{name}")
-    def job_status(name: str, request: Request) -> JSONResponse:
+    def job_status(name: str, request: Request, only: str = "") -> JSONResponse:
         registry = core.jobs(request)
         me = identity.person()
         if server and me is not None and not roles.allowed(me.role, roles.JOB_NEEDS.get(name, roles.ADMIN)):
             raise HTTPException(status_code=404, detail="No such job.")  # (as if there were none: D-109)
         if not registry.known(name):
             raise HTTPException(status_code=404, detail="No such job.")
-        return JSONResponse(registry.get(name).snapshot(), headers={"Cache-Control": "no-store"})
+        snapshot = registry.get(name).snapshot()
+        if only:  # a page following the job asks for what it shows (app.js watchJob): its state and these
+            snapshot = {key: value for key, value in snapshot.items() if key == "state" or key in only.split(",")}
+        return JSONResponse(snapshot, headers={"Cache-Control": "no-store"})
 
     @app.exception_handler(StarletteHTTPException)
     async def http_error(request: Request, exc: StarletteHTTPException) -> Any:

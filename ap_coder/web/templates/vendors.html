@@ -14,7 +14,7 @@
   {% if master_error %}<div class="flash err"><span class="ms" aria-hidden="true">error</span><div>{{ master_error }}</div></div>{% endif %}
   {% if master %}
   {{ preview(master, "/vendors", {"file": master.token}) }}
-  <form method="post" action="/vendors/master/import" class="stack" data-busy="Importing…">
+  <form method="post" action="/vendors/master/import" class="stack" data-busy="Importing…" data-long>
     {{ columns(master) }}
     <div class="row">
       <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">upload</span>Import vendors</button>

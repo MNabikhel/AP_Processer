@@ -144,7 +144,7 @@
   {% if reg_error %}<div class="flash err"><span class="ms" aria-hidden="true">error</span><div>{{ reg_error }}</div></div>{% endif %}
   {% if reg %}
   {{ preview(reg, "/exports", {"register": reg.token}) }}
-  <form method="post" action="/exports/register/import" class="stack" data-busy="Importing…">
+  <form method="post" action="/exports/register/import" class="stack" data-busy="Importing…" data-long>
     {{ columns(reg) }}
     <label class="check"><input type="checkbox" name="replace" value="1"> Replace the invoices already imported</label>
     <div class="row">

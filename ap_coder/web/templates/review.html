@@ -69,7 +69,7 @@
             <thead><tr><th>Vendor</th><th>Invoice</th><th class="r">Total</th></tr></thead>
             <tbody>{% for i in candidates %}<tr><td>{{ i.vendor_name }}</td><td>{{ i.invoice_number }}</td><td class="r">{{ i.grand_total | money }}</td></tr>{% endfor %}</tbody>
           </table></div>
-          <form method="post" action="/review/bulk-approve" data-busy="Approving…">
+          <form method="post" action="/review/bulk-approve" data-busy="Approving…" data-long>
             {% for i in candidates %}<input type="hidden" name="ids" value="{{ i.id }}">{% endfor %}
             <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">done_all</span>Approve them</button>
           </form>

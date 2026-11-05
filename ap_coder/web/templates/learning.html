@@ -46,7 +46,7 @@
     </select></label>
   </form>
   {% endif %}
-  <form method="post" action="/learning/history/teach" data-busy="Teaching…">
+  <form method="post" action="/learning/history/teach" data-busy="Teaching…" data-long>
     <input type="hidden" name="token" value="{{ upload.token }}">
     <input type="hidden" name="sheet" value="{{ upload.sheet }}">
     <div class="an-form-grid three">

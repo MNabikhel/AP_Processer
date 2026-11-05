@@ -12,7 +12,7 @@
   {% if imp_error %}<div class="flash err"><span class="ms" aria-hidden="true">error</span><div>{{ imp_error }}</div></div>{% endif %}
   {% if imp %}
   {{ preview(imp, "/purchase-orders", {"file": imp.token}) }}
-  <form method="post" action="/purchase-orders/import" class="stack" data-busy="Importing…">
+  <form method="post" action="/purchase-orders/import" class="stack" data-busy="Importing…" data-long>
     {{ columns(imp) }}
     <label class="check"><input type="checkbox" name="replace" value="1"> Replace all my purchase orders with this file</label>
     {% if missing %}<div class="flash warn"><span class="ms" aria-hidden="true">warning</span><div>Pick the column for: {{ missing | join(", ") }}</div></div>{% endif %}
