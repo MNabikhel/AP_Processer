@@ -11,7 +11,8 @@ question agreement, disagreement or doubt (``reviewer``).
 How the model machine behaves, given when it starts or changed while it runs (``set``, or ``POST /__fake/set`` with
 the same names in JSON):
 
-- ``latency``: the seconds an answer takes, (lo, hi), uniform; ``page_latency`` and ``chat_latency`` for each kind;
+- ``latency``: the seconds an answer takes, (lo, hi), uniform (it sets both of these); ``page_latency`` and
+  ``chat_latency`` for each kind;
 - ``slots``: the requests answered at once (LM Studio's concurrent predictions, one GPU for every model); the rest
   wait in line, first come first served;
 - ``fail_rate``: the share answered 500; ``hang_rate``: the share that never answer (they keep their slot until
@@ -377,6 +378,9 @@ class FakeModel:
                 clean[name] = bool(value)
             else:
                 clean[name] = value
+        if "latency" in clean:  # both kinds' answers, unless named apart in the same change
+            clean.setdefault("page_latency", clean["latency"])
+            clean.setdefault("chat_latency", clean["latency"])
         with self._cond:
             if "models" in clean:
                 self._specs = clean.pop("models")

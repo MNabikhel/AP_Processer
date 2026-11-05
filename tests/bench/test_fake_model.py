@@ -221,10 +221,13 @@ def test_down_after_drops_every_request_until_it_is_up_again():
 
 def test_the_control_endpoint_slows_swaps_and_kills_it_while_it_runs():
     with FakeModel() as fake:
-        status, answer = ask(fake.url + "/__fake/set", {"latency": "0.2-0.2", "models": ["gemma-4-12b-it", READER]})
+        status, answer = ask(fake.url + "/__fake/set", {"latency": "0.15-0.15", "models": ["gemma-4-12b-it", READER]})
         assert status == 200 and answer["settings"]["models"] == ["gemma-4-12b-it", READER]
         assert [m["id"] for m in ask(fake.base_url + "/models")[1]["data"]] == ["gemma-4-12b-it", READER]
+        started = time.monotonic()
         assert chat(fake)[0] == 404 and chat(fake, model="gemma-4-12b-it")[0] == 200  # the old model is gone
+        assert time.monotonic() - started >= 0.28  # slowed: latency sets the pages' and the chat's
+        assert answer["settings"]["page_latency"] == answer["settings"]["chat_latency"] == [0.15, 0.15]
         assert ask(fake.url + "/__fake/set", {"down": True})[0] == 200
         assert _quietly(chat, fake, model="gemma-4-12b-it") == "dropped"
         stats = ask(fake.url + "/__fake/stats")[1]
