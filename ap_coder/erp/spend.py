@@ -182,6 +182,9 @@ _PARTS = ("FROM invoice_summary s JOIN summary_spend p ON p.invoice_id = s.id WH
 _AT = 65536  # a cost line's place in the period's (``parts``' order): invoice * _AT + its part
 _LAST = 1 << 62  # the places after every line of the summary (the lines ``_broken_lines`` reads)
 BY = {"vendor": "s.p_vendor", "gl_code": "p.gl_code", "cost_center": "p.cost_center"}  # ``total_by``'s keys
+# Under a stream of approvals the Spend page's figures and currencies (1.9 s and 0.4 s at 100,000 invoices) are worked
+# out again at most this often in each process: a page that only shows them (D-164, D-166).
+SETTLE_SECONDS = 30.0
 
 
 class _Sums:
@@ -203,9 +206,10 @@ class _Sums:
 
 
 def spend_currencies(store: Store, start: dt.date, end: dt.date) -> list[str]:
-    """``currencies(parts(store, start, end))``, kept until the invoices' summary changes (D-162)."""
+    """``currencies(parts(store, start, end))``, kept until the invoices' summary changes (D-162), and under a stream
+    of changes worked out again at most every ``SETTLE_SECONDS`` (D-166)."""
     return list(store.summary_memo("spend_currencies", lambda: _spend_currencies(store, start, end),
-                                   asked=(start, end)))  # fmt: skip
+                                   asked=(start, end), settle=SETTLE_SECONDS))  # fmt: skip
 
 
 def _spend_currencies(store: Store, start: dt.date, end: dt.date) -> list[str]:
@@ -224,11 +228,12 @@ def figures(store: Store, start: dt.date, end: dt.date, currency: str, category:
     """What the Spend page shows of ``parts(store, start, end)`` in ``currency``, or with ``rates`` of every line of a
     currency with a rate in CAD (``in_cad``; ``currency`` is then "CAD"): ``lines`` (whether there are any), ``total``
     (rounded to the cent), ``invoices``, ``months``, ``by_month`` (``by_month_and_category`` with ``category``) and
-    ``by``: for each key of ``BY``, its ``total_by``. Kept until the invoices' summary changes (D-162), for these
-    dates, currency, categories and rates: read it, don't change it."""
+    ``by``: for each key of ``BY``, its ``total_by``. Kept until the invoices' summary changes (D-162), and under a
+    stream of changes worked out again at most every ``SETTLE_SECONDS`` (D-166), for these dates, currency,
+    categories and rates: read it, don't change it."""
     asked = (start, end, currency, dict(category), None if rates is None else dict(rates))  # (copies)
     return store.summary_memo("spend_figures", lambda: read_figures(store, start, end, currency, category, rates),
-                              asked=asked)  # fmt: skip
+                              asked=asked, settle=SETTLE_SECONDS)  # fmt: skip
 
 
 def read_figures(store: Store, start: dt.date, end: dt.date, currency: str, category: dict[str, str],

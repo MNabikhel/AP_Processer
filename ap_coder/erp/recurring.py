@@ -18,6 +18,9 @@ MIN_INVOICES = 3
 MIN_DAYS, MAX_DAYS = 5, 120
 STEADY_SHARE = 0.75  # at least 3 in 4 gaps close to the usual one
 DUE_SOON_DAYS = 5
+# Under a stream of changes (100 people approving) ``detected`` is worked out again at most this often in each process
+# (0.8 s at 100,000 invoices, for the review queue's pill at each visit): a vendor is late by days (D-166).
+SETTLE_SECONDS = 60.0
 
 ON_TRACK, DUE_SOON, LATE = "on_track", "due_soon", "late"
 
@@ -100,8 +103,10 @@ def detect(rows: list[dict[str, Any]], today: dt.date | None = None) -> list[Rec
 
 
 def detected(store: Any, today: dt.date | None = None) -> list[Recurring]:
-    """``detect`` of the store's invoices (``vendor_invoice_dates``), worked out again only once an invoice changed
-    (``Store.summary_memo``, D-110): the queue, Vendors and Month-end ask it on every visit. Shared: don't change it."""
+    """``detect`` of the store's invoices (``vendor_invoice_dates``), worked out again only once an invoice's vendor,
+    date or total changed (``Store.summary_memo``, D-110), and under a stream of changes at most every
+    ``SETTLE_SECONDS`` (D-166): the queue, Vendors and Month-end show it on every visit, nothing decides with it.
+    Shared: don't change it."""
     today = today or dt.date.today()
     return store.summary_memo(f"recurring/{today.isoformat()}", lambda: detect(store.vendor_invoice_dates(), today),
-                              "dates")  # fmt: skip
+                              "dates", settle=SETTLE_SECONDS)  # fmt: skip
