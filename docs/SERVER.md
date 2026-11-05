@@ -602,6 +602,11 @@ It asks first (`--yes` doesn't); `--dry-run` shows what it would do. If the copy
 disk, Ctrl+C), it starts the version that was running again, on the database as it was, and says so; once the backup
 is back, it starts the previous version.
 
+Going back from a version of November 2026 or later (D-159) to an older one: the older version refuses the backups
+the newer one made, the `before-going-back` copy included (*contains triggers, which AP Coder never makes*: the newer
+version's own, not planted ones). `server-update --back` is the way back, since the backup it puts back was made
+before the update. To restore one of the newer backups, update again and restore it from the newer version.
+
 Two folders are kept: the current one and the previous one. After the next update, the message names the folder two
 versions back, which you can delete. What was done, when, is in `D:\APCoderData\server.json` (`history`), and the
 installs in the administrator's `%USERPROFILE%\.ap_coder\settings.json`, as on a laptop.

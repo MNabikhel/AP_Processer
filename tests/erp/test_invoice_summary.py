@@ -434,6 +434,27 @@ def test_a_backup_with_the_summary_restores_and_one_with_another_trigger_is_refu
         Store.check_backup(copy)
 
 
+def test_a_summary_trigger_another_version_made_is_made_again_at_the_start_as_this_one_makes_it(year):
+    """A trigger was made only when its name was missing: one another version made with other SQL (a column it
+    did not count) stayed so, its change uncounted, and every backup of the database refused (D-159). At the start
+    it is dropped and made again as this version makes it."""
+    older = ("CREATE TRIGGER changes_vendor_invoice_changed AFTER UPDATE OF status, vendor_key ON invoices BEGIN "
+             "SELECT 1; END")  # fmt: skip
+    with sqlite3.connect(year.path) as conn:
+        conn.execute("DROP TRIGGER changes_vendor_invoice_changed")
+        conn.execute(older)
+    store = Store(year.path)
+    triggers = "SELECT name, sql FROM sqlite_master WHERE type = 'trigger'"
+    assert dict(store.summary_query(triggers)) == summary_module.SUMMARY_TRIGGERS
+    invoice = store.get_invoice(store.list_invoices(APPROVED)[0]["id"])
+    count = f"SELECT value FROM settings WHERE key = 'changes/vendor/{invoice['vendor_key']}'"
+    before = int(store.summary_query(count)[0][0])
+    with sqlite3.connect(store.path) as conn:  # a coding change: a column the older trigger did not count
+        conn.execute("UPDATE invoices SET final_output = ai_output WHERE id = ?", (invoice["id"],))
+    assert int(store.summary_query(count)[0][0]) == before + 1
+    Store.check_backup(store.backup_now("manual"))
+
+
 def test_a_capture_is_kept_compressed_and_read_either_way(year):
     invoice_id = year.list_invoices(REVIEW)[0]["id"]
     capture = {"fields": {"vendor_name": {"value": "X", "status": "check"}}, "credit_note": True, "text": "a" * 5000}

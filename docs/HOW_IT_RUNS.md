@@ -388,6 +388,13 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   request started after that look is waited for as the worker ends (its lifespan, `app.own_work_running`); a stop of
   the service still ends it at its deadline.
 
+  **What a worker keeps between requests** (D-159; on a laptop the one process the same way): answers whose work
+  reads many rows and changes a few times a day, each kept by `Store.summary_memo` with a stamp read from the
+  database before the work (the database's `summary_id`, a summary topic's generation, an event count, a count of
+  changes the triggers keep in `settings` as `changes/<kind>`, and what was asked). A change by any process, or by
+  plain SQL, moves the stamp, and the next request works the answer out again; nothing is kept from inside a write
+  under way. The latest answer of each name is kept, 64 at most.
+
 ## 9. The data folder and everything AP Coder writes
 
 Default data folder `~/APCoder` (`C:\Users\<you>\APCoder`); `AP_PRIVATE_DIR` overrides it, the record

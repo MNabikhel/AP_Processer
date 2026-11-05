@@ -656,3 +656,52 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Amended (B-1698):** nothing is still listed. The review screen's grid actions read the form on the event loop and
     run `@one_connection` functions on the threadpool, and `process_upload` is a plain `def`. The code rule also counts
     a message kept for the next page (`done(request, url, "…")`, `keep_flash`, `with_flash`) as a write.
+- **D-159** · **What a web worker keeps between requests, and how it knows it still holds** (phase 2 part 2's CPU:
+  `docs/archive/scale-2026-11/cpu.md` items 1-3, 5, 7 and 10).
+  - **Why:** the check and the invoice page redid, on every request, work whose answer changes a few times a day (the
+    vendor master as a dict of 20,000 vendors, twice; the held vendors' approved numbers, twice; the GL suggestions'
+    index of 50,000 lessons, again for each vendor in turn; the queue's checks and list): 82% of the CPU asked at 100
+    people.
+  - **The rule:** a kept answer holds only while a stamp, read from the database in the same request and before the
+    work, says nothing it depends on changed. It does not matter which process changed it (another worker, the
+    background process, plain SQL). Never a timer, never "this process wrote it".
+    - `Store.summary_memo(name, compute, topic="all", events="", changes="", asked=None)` (`core/store/summary.py`)
+      reads the stamp: the database's id (`summary_id`, new after a restore or a summary built again); with `topic`,
+      that summary topic's generation (`summary_generation/<topic>`; "" reads none, and leaves the summary as it is);
+      with `events`, the count of the events of that action; with `changes`, a count the triggers keep
+      (`changes/<kind>`); and `asked`, what the answer is for (a list's invoices, the vendors asked), compared with ==.
+    - The latest answer of each name is kept, 64 at most a process. One page works an answer out; the others asking
+      meanwhile wait for it (`MEMO_WAIT`, then work it out themselves). The answer is shared: read it, don't change it.
+    - **Only what is committed is kept.** `conn.in_transaction` is read with the stamp. Inside a write under way the
+      stamp counts that write's own changes and the answer reads them, and the write may yet be undone: a later
+      change, by anyone, would bring the count back to the same number. There the answer is worked out afresh, neither
+      taken from what is kept nor kept, and without waiting for the compute lock (the page holding it may need the
+      write's lock). So is one asked in a read transaction (`summary_snapshot`), or by a call that brought the
+      summary up to date (the next call keeps it).
+  - **Counts kept by triggers** (in `summary.SUMMARY_TRIGGERS`): `_COUNT` adds one to `settings('changes/<kind>')`
+    AFTER each INSERT, UPDATE and DELETE, in the same transaction as the change, however it is made:
+    - `vendors` (`vendors`): the vendor master's ERP IDs, its GST/HST numbers, the vendor list;
+    - `approved` (`invoices`): an invoice approved or no longer approved, or its `vendor_key`, `final_output` or
+      `ai_output` changed while approved; one added or deleted approved. An export changes nothing, nor a confidence;
+    - `suppliers` (`supplier_outcomes`), `readers` (`reader_outcomes`), `purchase_orders` (`purchase_orders`,
+      `po_lines`), `register` (`erp_invoices`), `lessons` (`feedback`), `situations` (`lessons`, `lesson_approvals`);
+    - each vendor's `changes/vendor/<key>`: an invoice of its added or deleted, or a column `vendor_invoices` lists
+      changed (`status, export_batch, vendor_key, vendor_name, invoice_number, invoice_date, currency, grand_total,
+      created_at, reviewed_at, final_output, ai_output`; not a check's confidence). An update counts OLD and NEW, so
+      a move between vendors counts for both.
+    - **Cost:** about 5-9 µs a row changed, whatever the trigger's body. 200,000 register rows: 1.2 → 2.8 s inserted
+      alone, 4.7 → 6.5 s through `import_erp_register` (a rare import, on a thread). Most writes change one row.
+  - **Triggers whose SQL changes:** at every start `make_triggers(conn, missing=True)` (from `_summary_schema`, in the
+    same transaction) makes those missing and drops and makes again any whose stored SQL differs from
+    `SUMMARY_TRIGGERS`: a later version may change a column list without building the summary again.
+    - A backup's check (`backups._check_backup_file`) accepts a trigger whose name is in `SUMMARY_TRIGGERS`, whatever
+      its SQL, and still refuses any other trigger and every view.
+    - The restore makes ours again in its private copy (`_own_triggers`, after the read-only check, before
+      `source.backup(target)`), so the SQL a backup gave them never runs, not even on another worker's change while
+      the restore goes on. A backup where one of ours can't be made (its table missing) is refused.
+    - **Going back:** a version before this one refuses the backups made by this one (they hold triggers it doesn't
+      know), and keeps those triggers in its database. `server-update --back` restores the pre-update backup, made by
+      the older version (`docs/SERVER.md` §11, `docs/UPGRADING.md`).
+  - **The uses** (what is kept, its stamp, its memory, measured) come in the next commits of phase 2 part 2.
+  - (`core/store/summary.py`, `core/store/backups.py`; `tests/core/test_kept_answers.py`, `tests/core/test_backups.py`,
+    `tests/erp/test_invoice_summary.py`)
