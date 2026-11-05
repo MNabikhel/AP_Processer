@@ -13,7 +13,7 @@
     {% if hub.enabled %}
     <details class="pop">
       <summary class="btn primary"><span class="ms" aria-hidden="true">sync</span>Run now…</summary>
-      <form class="pop-body stack" method="post" action="/settings/hub/run" data-busy="Sending…">
+      <form class="pop-body stack" method="post" action="/settings/hub/run" data-busy="Sending…" data-long>
         <p>Sends what changed since the last run{{ " to " ~ (hub.folder if hub.mode == "folder" else "OneLake") }}.</p>
         <label class="check"><input type="checkbox" name="full" value="1"> Full rebuild: every row again</label>
         <button class="btn primary" type="submit">Run now</button>

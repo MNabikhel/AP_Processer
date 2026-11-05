@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block head %}<link rel="stylesheet" href="/static/analytics.css?v={{ static_version }}">{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url('/static/analytics.css') }}">{% endblock %}
 {% block content %}
 {% if not total %}
 <section class="card">{{ ui.empty_state("No activity yet", "Everything that changes data is recorded here.") }}</section>

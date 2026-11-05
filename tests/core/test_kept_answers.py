@@ -1,10 +1,11 @@
 """What a process keeps between requests (D-159, ``Store.summary_memo``): a kept answer holds only while a stamp read
 from the database before the work says nothing it depends on changed, whichever connection changed it (another
 Store, plain SQL); the counts of changes the triggers keep (``changes/<kind>``); an answer worked out inside a write
-that is undone; a restore."""
+that is undone; a restore; the answers kept on them (D-162)."""
 
 from __future__ import annotations
 
+import datetime as dt
 import sqlite3
 import threading
 import time
@@ -358,3 +359,450 @@ def test_vendors_asked_with_no_invoices_are_not_kept_for_ever(tmp_path, ground_t
     assert sum(len(rows) for _, rows in kept.values()) == vendors_module._VENDOR_ROWS_HELD and len(kept) <= 50
     _invoice(store, tmp_path, ground_truth, "A-4", "Acme Supply")
     assert len(store.vendor_invoices(acme)) == 4 and (str(store.path), acme) not in kept  # more than the cap alone
+
+
+# --- The uses (D-159's "What is kept"): each filled, changed through another Store or plain SQL, asked again -------
+
+
+def _master(conn, key: str, erp_id: str, gst: str, in_master: int = 1) -> None:
+    conn.execute("INSERT INTO vendors (vendor_key, display_name, erp_id, expected_gst, in_master, updated_at) VALUES "
+                 "(?, ?, ?, ?, ?, ?)", (key, key.title(), erp_id, gst, in_master, NOW))  # fmt: skip
+
+
+def test_the_vendor_masters_ids_follow_a_change_made_through_another_store_or_plain_sql(tmp_path):
+    """``vendor_ids``, kept on ``changes/vendors``: an ERP ID changed, a vendor added or deleted by another Store or
+    plain SQL is in the next answer; while nothing changed it is not worked out again."""
+    store = Store(tmp_path / "ap.db")
+    other = Store(store.path)
+    with sqlite3.connect(store.path) as conn:
+        _master(conn, "acme", "S1", "123456789 RT0001")
+    first = store.vendor_ids()
+    assert first == {"acme": "S1", "gst:123456789rt0001": "S1", "bnx:123456789": "S1"}
+    assert store.vendor_ids() is first  # kept
+    with other._conn() as conn:
+        conn.execute("UPDATE vendors SET erp_id = 'S2' WHERE vendor_key = 'acme'")
+    assert store.vendor_ids()["acme"] == "S2"
+    with sqlite3.connect(store.path) as conn:
+        _master(conn, "beta", "B1", "987654321")
+    assert store.vendor_ids() == store._vendor_ids() and store.vendor_ids()["bn:987654321"] == "B1"
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("DELETE FROM vendors WHERE vendor_key = 'acme'")
+    assert store.vendor_ids() == {"beta": "B1", "gst:987654321": "B1", "bn:987654321": "B1"}
+
+
+def test_the_masters_vendors_found_by_a_tax_number_are_the_whole_lists_and_follow_a_change(tmp_path):
+    """``master_by_tax_number``: the master's vendors ``same_tax_number`` matches, in the list's order, as reading
+    the whole master gives them (a Business Number for a full account and back; two full accounts only the same). Its
+    numbers are kept on ``changes/vendors``: a number changed through another Store, a vendor put in the master by
+    plain SQL, are found by what they are now."""
+    from ap_coder.coding.vendors import norm_tax_number, same_tax_number
+
+    store = Store(tmp_path / "ap.db")
+    other = Store(store.path)
+    with sqlite3.connect(store.path) as conn:
+        for key, gst, in_master in (
+            ("acme", "123456789 RT0001", 1),
+            ("acme #2", "123456789", 1),
+            ("beta", "123456789RT0002", 1),
+            ("gamma", "987654321RT0001", 0),
+            ("delta", "N/A", 1),
+            ("epsilon", "", 1),
+            ("zeta", "1234567890TQ0001", 1),
+        ):
+            _master(conn, key, key[:2].upper(), gst, in_master)
+
+    def whole(number):
+        return [v for v in store.master_vendors() if same_tax_number(v["expected_gst"], norm_tax_number(number))]
+
+    asked = ("123456789RT0001", "123 456 789", "123456789 rt 0002", "123456789RT0003", "987654321RT0001", "n/a",
+             "1234567890TQ0001", "555555555", "")  # fmt: skip
+    for number in asked:
+        assert store.master_by_tax_number(number) == whole(number), number
+    assert [v["vendor_key"] for v in store.master_by_tax_number("123456789")] == ["acme", "acme #2", "beta"]
+    with other._conn() as conn:
+        conn.execute("UPDATE vendors SET expected_gst = '555555555 RT0001' WHERE vendor_key = 'beta'")
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE vendors SET in_master = 1 WHERE vendor_key = 'gamma'")
+    for number in asked:
+        assert store.master_by_tax_number(number) == whole(number), number
+    assert [v["vendor_key"] for v in store.master_by_tax_number("555555555")] == ["beta"]
+    assert [v["vendor_key"] for v in store.master_by_tax_number("987654321RT0001")] == ["gamma"]
+
+
+def test_the_held_vendors_approved_numbers_follow_an_approval_made_elsewhere_and_what_is_asked(tmp_path, ground_truth):
+    """``approved_numbers``, kept on ``changes/approved`` and the vendors asked: an approval through another Store,
+    an approved coding changed by plain SQL, are in the next answer; other vendors asked get their own; each caller
+    gets lists of its own."""
+    store = Store(tmp_path / "ap.db")
+    other = Store(store.path)
+    invoice = _invoice(store, tmp_path, ground_truth, "H-1", "Acme Supply")
+    key = store.get_invoice(invoice)["vendor_key"]
+    assert store.approved_numbers([key]) == {}
+    coding = {**ground_truth, "vendor_name": "Acme Supply", "gst_hst_registration_number": "123456789RT0001",
+              "remit_bank_account": "004-12345-1234567"}  # fmt: skip
+    other.approve_invoice(invoice, coding, "Jordan Lee")
+    assert store.approved_numbers([key]) == {key: [("123456789RT0001", "004-12345-1234567")]}
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE invoices SET final_output = json_set(final_output, '$.remit_bank_account', '999') "
+                     "WHERE id = ?", (invoice,))  # fmt: skip
+    assert store.approved_numbers([key]) == {key: [("123456789RT0001", "999")]}
+    assert store.approved_numbers(["beta"]) == {} and store.approved_numbers(["beta", key])[key]
+    mine = store.approved_numbers([key])
+    mine[key].append(("changed", "by the caller"))
+    assert store.approved_numbers([key]) == {key: [("123456789RT0001", "999")]}
+
+
+def test_a_lines_suggestions_follow_the_lessons_and_the_gl_accounts_changed_elsewhere_and_are_the_callers_own(
+    tmp_path,
+):
+    """``suggest_gl``'s answers, kept with the memory and the reference data they came from (``_Memory.said``): a
+    lesson added through another Store is a new memory, a GL account's description changed by plain SQL new
+    reference data (the accounts named the same: the same memory); each caller gets copies."""
+    from ap_coder.ai.suggest import suggest_gl
+
+    store = Store(tmp_path / "ap.db")
+    other = Store(store.path)
+    accounts = [{"code": "6000", "description": "Office supplies", "category": "Opex"},
+                {"code": "6230", "description": "Cleaning supplies", "category": "Opex"}]  # fmt: skip
+    store.save_accounts("gl_accounts", accounts)
+    lesson = {"vendor_name": "Acme", "description": "Nitrile gloves", "gl_code": "6000", "amount": 1.0,
+              "date": "2025-01-01"}  # fmt: skip
+    store.import_history([lesson])
+
+    def asked(line: str) -> list[tuple[str, str]]:
+        found = suggest_gl(line, "Acme", store.learning_rows("Acme"), store.reference_data())
+        return [(s.gl_code, s.reasons[0]) for s in found]
+
+    gloves = asked("Nitrile gloves")
+    assert gloves == [("6000", "coded this way 1 time for similar lines from this vendor")]
+    mine = suggest_gl("Nitrile gloves", "Acme", store.learning_rows("Acme"), store.reference_data())
+    mine[0].reasons.insert(0, "changed by the caller")
+    mine[0].gl_code = "9999"
+    assert asked("Nitrile gloves") == gloves and asked("Disinfectant 4 L") == []
+    other.import_history([{**lesson, "gl_code": "6230", "date": "2025-02-01"}])  # AP coded it otherwise since
+    assert asked("Nitrile gloves")[0] == ("6230", "coded this way 1 time for similar lines from this vendor")
+    assert asked("Disinfectant 4 L") == []  # (asked of this memory, before the account's description changes)
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE gl_accounts SET description = 'Cleaning supplies, disinfectant' WHERE code = '6230'")
+    assert asked("Disinfectant 4 L") == [("6230", "account description mentions “disinfectant”")]
+
+
+def test_the_queues_checks_follow_a_change_made_elsewhere_the_checks_stamp_and_what_is_asked(
+    tmp_path, ground_truth, monkeypatch
+):
+    """``bulk.queue_checks``, kept on the summary's ``queue`` topic, the checks stamp, laptop or server and the
+    invoices asked: a finding stored by plain SQL, an invoice parked through another Store, a change of settings
+    (their checks then made against others: counted) are in the next answer; fewer than ``KEEP_FROM`` invoices are
+    worked out each time; each caller gets rows and lists of its own, the findings in them read-only."""
+    from ap_coder.coding import bulk
+
+    store = Store(tmp_path / "ap.db")
+    other = Store(store.path)
+    checked = {"requires_review": True, "checks_stamp": store.checks_stamp(), "issues": []}
+    ids = []
+    for name in ("Q-1", "Q-2", "Q-3"):
+        (tmp_path / f"{name}.pdf").write_bytes(name.encode())
+        ids.append(store.add_invoice(tmp_path / f"{name}.pdf", {**ground_truth, "invoice_number": name}, checked))
+    worked = []
+    real = bulk._queue_checks
+    monkeypatch.setattr(bulk, "_queue_checks", lambda *a: worked.append(1) or real(*a))
+    monkeypatch.setattr(bulk, "KEEP_FROM", 3)
+
+    def asked(which=tuple(ids), recheck=False):
+        return bulk.queue_checks(store, list(which), recheck=recheck)
+
+    first = asked()
+    assert sorted(first[0]) == ids and first[1] == 0 and all(c["found"] == [] for c in first[0].values())
+    assert asked() == first and len(worked) == 1  # kept
+    first[0][ids[0]]["found"].append({"severity": "error", "code": "CHANGED_BY_THE_CALLER"})
+    first[0][ids[0]]["q_pick"] = "changed by the caller"
+    assert asked()[0][ids[0]] == {**first[0][ids[0]], "found": [], "q_pick": ""} and len(worked) == 1  # copies
+    found = '[{"severity": "error", "code": "TOTAL_MISMATCH", "message": "Totals differ"}]'
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE invoices SET validation = json_set(validation, '$.issues', json(?)) WHERE id = ?",
+                     (found, ids[0]))  # fmt: skip
+    mismatch = asked()[0][ids[0]]["found"]
+    assert mismatch == [{"severity": "error", "code": "TOTAL_MISMATCH"}]
+    with pytest.raises(TypeError):
+        mismatch[0]["code"] = "CHANGED_BY_THE_CALLER"
+    other.park_invoice(ids[1], "Jordan Lee", "waiting for the buyer")
+    assert sorted(asked()[0]) == [ids[0], ids[2]] and len(worked) == 3
+    with sqlite3.connect(store.path) as conn:  # a change of settings: their checks were made against others
+        conn.execute("INSERT INTO settings (key, value) VALUES ('default_terms_days', '45')")
+    assert asked()[1] == 2 and len(worked) == 4
+    assert asked(recheck=True)[1] == 2 and len(worked) == 5  # the laptop's (no GL accounts: nothing checked again)
+    assert asked(recheck=True)[1] == 2 and asked()[1] == 2 and len(worked) == 6
+    assert sorted(asked([ids[2], ids[0], ids[1]])[0]) == [ids[0], ids[2]] and len(worked) == 7  # asked otherwise
+    asked(ids[:2])
+    asked(ids[:2])
+    assert len(worked) == 9  # fewer than KEEP_FROM: worked out each time
+    key = summary_module.TOPICS["queue"]  # one the summary could not work out: each change to it counts
+    row = {"status": "review", "broken": summary_module.BIT["queue"], **dict.fromkeys(summary_module.QUEUE_READ[1:])}
+    assert key(row) != key(row) and key({**row, "broken": 0}) == key({**row, "broken": 0})
+
+
+def test_the_queues_lists_follow_a_change_made_elsewhere_and_are_the_callers_own(tmp_path, ground_truth):
+    """``list_invoices`` of the queue's lists (review, parked, pending), kept on the summary's ``listed`` topic: a
+    confidence worked out through another Store, an invoice number changed by plain SQL, a park, are in the next
+    lists, as reading them afresh gives them; each caller gets rows of its own."""
+    from ap_coder.core.store import PARKED, PENDING, REVIEW
+
+    store = Store(tmp_path / "ap.db")
+    other = Store(store.path)
+    a, b, c = (_invoice(store, tmp_path, ground_truth, name) for name in ("L-1", "L-2", "L-3"))
+
+    def fresh(*statuses):
+        listed, marks = ", ".join(summary_module.LISTED_COLUMNS), ", ".join("?" * len(statuses))
+        return store.summary_fetch(f"SELECT {listed} FROM invoice_summary WHERE status IN ({marks}) ORDER BY "
+                                   "requires_review DESC, adjusted_confidence ASC, id ASC", statuses)  # fmt: skip
+
+    def ids(*statuses):
+        listed = store.list_invoices(statuses=statuses)
+        assert listed == fresh(*statuses), statuses
+        return [r["id"] for r in listed]
+
+    first = store.list_invoices(REVIEW)
+    assert [r["id"] for r in first] == [a, b, c] and first == fresh(REVIEW)
+    first[0]["invoice_number"] = "changed by the caller"
+    first.pop()
+    assert store.list_invoices(REVIEW) == fresh(REVIEW)
+    other.refresh_confidence(b, 0.12, True)
+    assert ids(REVIEW) == [a, c, b]
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE invoices SET invoice_number = 'L-9' WHERE id = ?", (c,))
+    assert store.list_invoices(REVIEW)[1]["invoice_number"] == "L-9" and ids(REVIEW) == [a, c, b]
+    other.park_invoice(a, "Jordan Lee", "waiting for the buyer")
+    assert ids(REVIEW) == [c, b] and ids(PARKED) == [a] and ids(REVIEW, PARKED, PENDING) == [a, c, b]
+
+
+def test_previous_and_next_step_through_the_kept_queue_as_another_store_or_plain_sql_changes_it(tmp_path, ground_truth):
+    """The invoice page's Previous and Next (``navigation``) read the queue's kept list: an invoice parked through
+    another Store, a confidence changed by plain SQL, move them at once."""
+    from ap_coder.web.pages.invoice import navigation
+
+    store = Store(tmp_path / "ap.db")
+    other = Store(store.path)
+    a, b, c = (_invoice(store, tmp_path, ground_truth, name) for name in ("N-1", "N-2", "N-3"))
+    assert navigation(store, a, {})["ids"] == [a, b, c] and navigation(store, a, {})["next"] == f"/review/{b}"
+    other.park_invoice(b, "Jordan Lee", "waiting for the buyer")
+    assert navigation(store, a, {})["next"] == f"/review/{c}"
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE invoices SET adjusted_confidence = 0.5 WHERE id = ?", (a,))
+        conn.execute("UPDATE invoices SET adjusted_confidence = 0.05 WHERE id = ?", (c,))
+    assert navigation(store, a, {})["ids"] == [c, a] and navigation(store, a, {})["prev"] == f"/review/{c}"
+
+
+# --- The answers kept on these counts (D-162): each filled, its data changed through another Store or plain SQL, then
+# the new answer ------------------------------------------------------------------------------------------------------
+
+
+def _plain(store: Store, sql: str, *args) -> None:
+    with sqlite3.connect(store.path) as conn:
+        conn.execute(sql, args)
+
+
+def test_every_vendors_supplier_record_and_the_drawn_vendors_field_figures_follow_their_outcomes(tmp_path):
+    """Supplier learning and Settings → Automation: every vendor's record (``all_supplier_stats`` without fields) and
+    the drawn vendors' field figures (``supplier_fields``), kept on ``changes/suppliers``, per window and vendors."""
+    from dataclasses import replace
+
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    rows = [
+        {"field": "invoice_number", "ai_value": "1", "final_value": "1", "correct": True},
+        {"field": "invoice_date", "ai_value": "2026-01-01", "final_value": "2026-01-02", "correct": False},
+    ]
+    other.record_outcomes("name:acme", 1, rows, display_name="Acme", at=NOW)
+    keys = ["name:acme", "name:beta"]
+
+    def kept(window: int = 200):
+        return store.all_supplier_stats(keys, window, fields=False), store.supplier_fields(keys, window)
+
+    def fresh(window: int = 200):
+        each = {key: store.supplier_stats(key, window) for key in keys}
+        return {key: replace(s, fields={}) for key, s in each.items()}, {key: s.fields for key, s in each.items()}
+
+    assert kept() == fresh() and kept()[0]["name:beta"].invoices == 0
+    assert kept()[0] is kept()[0] and kept()[1] is kept()[1]  # reused while nothing changed
+    other.record_outcomes("name:beta", 2, rows, display_name="Beta", at=NOW)
+    assert kept() == fresh() and kept()[0]["name:beta"].invoices == 1
+    _plain(store, "UPDATE supplier_outcomes SET correct = 1 WHERE supplier_key = 'name:beta'")
+    assert kept() == fresh() and kept()[1]["name:beta"]["invoice_date"].correct == 1
+    _plain(store, "DELETE FROM supplier_outcomes WHERE supplier_key = 'name:acme'")
+    assert kept() == fresh() and kept()[0]["name:acme"].invoices == 0
+    assert kept(1) == fresh(1) and store.supplier_fields(keys[:1]) == {"name:acme": {}}
+
+
+def test_the_readers_scorecard_follows_their_outcomes(tmp_path):
+    """Settings → Reading and Learning → Readers: the readers' scorecard, kept on ``changes/readers``."""
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+
+    def read(correct: bool) -> list[dict]:
+        return [{"reader": "rules", "field": "invoice_number", "read_value": "1", "final_value": "1",
+                 "correct": correct}]  # fmt: skip
+
+    def fields() -> list[tuple]:
+        card = store.reader_scorecard()
+        assert card == store._reader_scorecard()
+        return [(r["reader"], r["fields"], r["agreed"]) for r in card]
+
+    other.record_reader_outcomes(1, read(True), at=NOW)
+    assert fields() == [("rules", 1, 1)]
+    other.record_reader_outcomes(2, read(False), at=NOW)
+    assert fields() == [("rules", 2, 1)]
+    _plain(store, "UPDATE reader_outcomes SET correct = 1")
+    assert fields() == [("rules", 2, 2)]
+    _plain(store, "DELETE FROM reader_outcomes WHERE invoice_id = 1")
+    assert fields() == [("rules", 1, 1)]
+    store.reader_scorecard()[0]["fields"] = 99  # (each caller has its own copy)
+    assert fields() == [("rules", 1, 1)]
+
+
+def _po_line(n: int, received: float) -> dict:
+    return {"po_number": "PO-1", "vendor_name": "Acme Supply", "line_number": n, "description": f"Bolts size {n}",
+            "quantity": 10.0, "unit_price": 2.0, "amount": 20.0, "received_quantity": received, "gl_code": "6010",
+            "cost_center": "", "status": "open", "amount_only": False, "open_amount": None}  # fmt: skip
+
+
+def test_month_ends_received_not_invoiced_lines_follow_the_pos_and_the_invoices_billing_them(tmp_path):
+    """Month-end's received, not invoiced PO lines, kept per period end on ``changes/purchase_orders`` and the
+    summary's generation (an invoice billing them)."""
+    from ap_coder.erp import accruals
+
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    other.import_purchase_orders([_po_line(1, 4.0), _po_line(2, 1.0)])
+    september, october = dt.date(2026, 9, 30), dt.date(2026, 10, 31)
+
+    def received(end: dt.date = october) -> list[tuple]:
+        found = [a for a in accruals.build(store, end) if a.source == accruals.RECEIVED]
+        assert found == accruals._received_not_invoiced(store, end)
+        return [(a.reference, a.amount) for a in found]
+
+    assert received() == [("PO-1 line 1", 8.0), ("PO-1 line 2", 2.0)]
+    _plain(store, "UPDATE po_lines SET received_quantity = 3 WHERE line_number = 2")
+    assert received() == [("PO-1 line 1", 8.0), ("PO-1 line 2", 6.0)]
+    line = {"line_number": 1, "description": "Bolts size 1", "quantity": 4, "unit_price": 2.0, "amount": 8.0}
+    bill = {"vendor_name": "Acme Supply", "invoice_number": "B-1", "po_number": "PO-1", "invoice_date": "2026-10-03",
+            "currency": "CAD", "line_items": [line], "subtotal": 8.0, "grand_total": 8.4}  # fmt: skip
+    other.add_invoice(tmp_path / "b.pdf", bill, {})  # (the summary's generation)
+    assert received() == [("PO-1 line 2", 6.0)]
+    assert received(september) == [("PO-1 line 1", 8.0), ("PO-1 line 2", 6.0)]  # (billed after it)
+    _plain(store, "DELETE FROM po_lines WHERE line_number = 2")
+    assert received() == []
+
+
+def test_the_duplicate_audits_pairs_follow_the_invoices_and_the_erp_register(tmp_path, ground_truth):
+    """The duplicate payment audit's pairs (its page and its CSV), kept on the summary's generation (the approved
+    invoices) and ``changes/register`` (the ERP's invoice register)."""
+    from ap_coder.erp import dupaudit
+
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    first, second = (_invoice(other, tmp_path, ground_truth, name) for name in ("A-100", "B-100"))
+    other.approve_invoice(first, {**ground_truth, "invoice_number": "A-100"}, "Jordan Lee")
+
+    def pairs() -> list[tuple]:
+        found = dupaudit.find(store)
+        assert found == dupaudit._find(store)
+        return [(p.reason, p.first.source, p.second.source) for p in found]
+
+    assert pairs() == []
+    other.approve_invoice(second, {**ground_truth, "invoice_number": "A-100"}, "Jordan Lee")  # approved twice
+    assert pairs() == [(dupaudit.EXACT, "AP Coder", "AP Coder")]
+    _plain(store, "UPDATE invoices SET status = 'review' WHERE id = ?", second)
+    assert pairs() == []
+    row = {"vendor_name": ground_truth["vendor_name"], "invoice_number": "A-100",
+           "invoice_date": ground_truth["invoice_date"], "total": ground_truth["grand_total"]}  # fmt: skip
+    other.import_erp_register([row])
+    assert [p[0] for p in pairs()] == [dupaudit.EXACT]  # (not exported: the ERP's row is another)
+    _plain(store, "UPDATE erp_invoices SET copies = 2")
+    assert [p[0] for p in pairs()] == [dupaudit.EXACT, dupaudit.EXACT]  # (and the ERP's twice)
+    _plain(store, "DELETE FROM erp_invoices")
+    assert pairs() == []
+
+
+def test_spends_figures_and_currencies_follow_the_approved_invoices_and_what_is_asked(tmp_path, ground_truth):
+    """The Spend page's figures and currencies, kept on the summary's generation, per period, currency, GL categories
+    and rates (copies: the caller's own changed after is another question)."""
+    from ap_coder.erp import spend
+
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    start, end = dt.date(2000, 1, 1), dt.date(2099, 12, 31)
+    cad, usd = (_invoice(other, tmp_path, ground_truth, name) for name in ("S-1", "S-2"))
+    other.approve_invoice(cad, {**ground_truth, "invoice_number": "S-1", "currency": "CAD"}, "Jordan Lee")
+
+    def seen(currency: str = "CAD", category: dict | None = None, rates: dict | None = None, first=start) -> tuple:
+        category = {} if category is None else category
+        found = spend.figures(store, first, end, currency, category, rates)
+        assert found == spend.read_figures(store, first, end, currency, category, rates)
+        shown = spend.spend_currencies(store, first, end)
+        assert shown == spend._spend_currencies(store, first, end)
+        return found["invoices"], found["total"], sorted({m["category"] for m in found["by_month"]}), shown
+
+    invoices, total, categories, shown = seen()
+    assert invoices == 1 and total > 0 and categories == ["Uncategorised"] and shown == ["CAD"]
+    assert seen("USD")[:2] == (0, 0.0)
+    other.approve_invoice(usd, {**ground_truth, "invoice_number": "S-2", "currency": "USD"}, "Jordan Lee")
+    assert seen("USD") == (1, total, ["Uncategorised"], ["CAD", "USD"])
+    assert seen(first=end) == (0, 0.0, [], [])
+    rates = {"CAD": 1.0, "USD": 1.5}
+    assert seen(rates=rates)[:2] == (2, round(total * 2.5, 2))
+    rates["USD"] = 2.0
+    assert seen(rates=rates)[:2] == (2, round(total * 3, 2))
+    _plain(store, "UPDATE invoices SET status = 'review' WHERE id = ?", usd)
+    assert seen(rates=rates) == (1, total, ["Uncategorised"], ["CAD"])
+    category = {gl: "Office" for gl, _, _ in spend.read_figures(store, start, end, "CAD", {})["by"]["gl_code"]}
+    assert seen(category=category)[2] == ["Office"]
+    category.update((gl, "Travel") for gl in list(category))
+    assert seen(category=category)[2] == ["Travel"]
+
+
+def test_each_vendors_lesson_counts_follow_the_coding_memory_and_its_vendor_list_row_is_read_afresh(
+    tmp_path, ground_truth
+):
+    """Vendors, Statements and the JD Edwards worksheet (``vendor_summaries``): each vendor's lesson counts, kept on
+    ``changes/lessons``; its row of the vendor list, read by its key each time."""
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    invoice = _invoice(other, tmp_path, ground_truth, "L-1")
+    key = store.get_invoice(invoice)["vendor_key"]
+
+    def row() -> tuple:
+        (found,) = [r for r in store.vendor_summaries() if r["vendor_key"] == key]
+        return found["lessons"], found["accuracy"], found["status"], found["notes"]
+
+    assert row() == (0, None, "active", "")
+    other.approve_invoice(invoice, {**ground_truth, "invoice_number": "L-1"}, "Jordan Lee")
+    lines = len(ground_truth["line_items"])
+    assert row() == (lines, 1.0, "active", "")
+    _plain(store, "UPDATE feedback SET outcome = 'corrected' WHERE rowid = (SELECT MIN(rowid) FROM feedback)")
+    assert row() == (lines, (lines - 1) / lines, "active", "")
+    _plain(store, "DELETE FROM feedback")
+    assert row() == (0, None, "active", "")
+    other.save_vendor(key, ground_truth["vendor_name"], "on_hold", notes="Call first", actor="Jordan Lee")
+    assert row() == (0, None, "on_hold", "Call first")
+
+
+def test_the_lessons_tabs_rows_follow_the_lessons_and_each_approvals_word_on_them(tmp_path, ground_truth):
+    """Learning → Lessons: its rows (each lesson, whether it reaches the AI, how it did since), kept on
+    ``changes/situations`` (``lessons``, ``lesson_approvals``)."""
+    from ap_coder.ai import lessons
+    from ap_coder.web.pages import learning
+
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    proposed = {**ground_truth, "invoice_number": "ACCT 1"}
+    key = lessons.situation(ground_truth["vendor_name"], lessons.INVOICE, "invoice_number")
+
+    def rows() -> list[tuple]:
+        found = learning.lessons_context(store)["lessons"]
+        assert found == learning.lesson_rows(store)
+        return [(r["situation"], r["corrected"], r["reaches"], r["effect"]["before"]["corrected"]) for r in found]
+
+    assert rows() == []
+    lessons.record(other, 1, proposed, {**ground_truth, "invoice_number": "1-2026"})
+    assert rows() == [(key, 1, False, 1)]  # (once: it waits)
+    lessons.record(other, 2, proposed, {**ground_truth, "invoice_number": "1-2026"})
+    assert rows() == [(key, 2, True, 2)]  # (twice to the same value)
+    _plain(store, "UPDATE lesson_approvals SET corrected = 0 WHERE invoice_id = 2")
+    assert rows() == [(key, 2, True, 1)]
+    _plain(store, "UPDATE lessons SET retired = 1")
+    assert rows() == [(key, 2, False, 1)]
+    _plain(store, "DELETE FROM lessons")
+    assert rows() == []

@@ -418,6 +418,20 @@ def test_data_tab_backup_now_and_download(client, store):
     assert client.get("/settings/data/backups/nothing.db").status_code == 404
 
 
+def test_the_data_tab_counts_everything_in_the_invoices_folder(client, store):
+    """The Invoices tile's files: every entry of the folder, hidden files and folders too, as ``glob("*")`` counted
+    them before ``os.scandir`` (D-162)."""
+    folder = settings_page.invoice_dir(store)
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in ("a.pdf", ".hidden"):
+        (folder / name).write_bytes(b"x")
+    for name in ("sub", ".kept"):
+        (folder / name).mkdir()
+    count = len(list(folder.glob("*")))
+    assert count >= 4 and settings_page.file_count(folder) == count
+    assert f"{count} files in invoices/" in client.get("/settings/data").text
+
+
 def test_restore_needs_restore_typed(client, store):
     backup = store.backup_now("manual")
     store.set_setting("fx_rates", "USD=9.99")  # done after the backup: undone by the restore
@@ -495,6 +509,38 @@ def test_in_a_browser_restore_this_state_restores_that_backup_once_restore_is_ty
         page.get_by_text(f"Restored {older.name}.").wait_for()
         page.close()
     assert errors == [] and store.get_setting("fx_rates") == ""
+
+
+def test_in_a_browser_a_restore_is_waited_for_however_long_it_takes(chromium, store):
+    """Every action gives up after five minutes ("didn't answer", D-161), but a restore runs whole in its request (a
+    safety backup first, of a database that may be gigabytes): its form (data-long) is waited for however long it
+    takes, and says what was restored. Back up now still gives up."""
+    from tests.browser import browser_on, wait_until
+
+    backup = store.backup_now("manual")
+    s = Settings()
+    app = create_app(replace(s, llm=replace(s.llm, provider="off")), store, start_reader=False)
+    held: list = []
+    with browser_on(chromium, app) as (browser, base):
+        page = browser.new_page()
+        page.clock.install()
+        page.route("**/settings/data/backup", lambda route: held.append(route))
+        page.route("**/settings/data/restore", lambda route: held.append(route))
+        page.goto(base + f"/settings/data?restore={backup.name}")
+        page.click("button:has-text('Back up now')")
+        wait_until(page, lambda: len(held) == 1)
+        page.clock.run_for(5 * 60_000 + 1000)
+        page.get_by_text("AP Coder didn't answer").wait_for()
+        held.pop().abort()
+        page.fill("input[name=confirm]", "RESTORE")
+        page.click('form[data-restore] button[type="submit"]')
+        wait_until(page, lambda: len(held) == 1)
+        page.clock.run_for(5 * 60_000 + 1000)
+        assert page.get_by_text("didn't answer").count() == 0
+        page.clock.run_for(25 * 60_000)  # half an hour in all
+        assert page.locator('form[data-restore] button[type="submit"]').inner_text() == "Restoring…"
+        held.pop().continue_()
+        page.get_by_text(f"Restored {backup.name}.").wait_for()
 
 
 def _slow_files(monkeypatch):

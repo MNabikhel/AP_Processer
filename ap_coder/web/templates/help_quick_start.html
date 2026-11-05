@@ -2,7 +2,7 @@
 {# Help → Quick start (pages/help.py quick_start_page): docs/QUICK_START.md, one page to read or print. The print
    stylesheet in app.css leaves the menu and the buttons off the paper. #}
 {% block title %}Quick start · AP Coder{% endblock %}
-{% block head %}<link rel="stylesheet" href="/static/settings.css?v={{ static_version }}">{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url('/static/settings.css') }}">{% endblock %}
 {% block heading %}Quick start{% endblock %}
 {% block subtitle %}Install, start, the first seven steps (0 to 6), where things are and what to do when stuck: one page to print.{% endblock %}
 {% block aside %}<button type="button" class="btn primary" data-print><span class="ms" aria-hidden="true">print</span>Print</button>
@@ -12,4 +12,4 @@
   {% if doc %}{{ doc }}{% else %}<p class="muted">The Quick start (docs/QUICK_START.md) is not in this copy of AP Coder.</p>{% endif %}
 </article></div>
 {% endblock %}
-{% block scripts %}<script type="module" src="/static/js/help.js?v={{ static_version }}"></script>{% endblock %}
+{% block scripts %}<script type="module" src="{{ static_url('/static/js/help.js') }}"></script>{% endblock %}

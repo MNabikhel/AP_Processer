@@ -1,7 +1,7 @@
 """The company server under load, as many people use it at once: ``python -m ap_coder.bench load``.
 
     python -m ap_coder.bench load --users 10 --duration 60 --workers 2 [--ramp 10] [--think 10] [--out bench_load]
-        [--data DIR [--users-file FILE]] [--seed-invoices 2000] [--model-url URL] [--host ADDRESS]
+        [--data DIR [--users-file FILE]] [--seed-invoices 2000] [--model-url URL] [--host ADDRESS] [--keep-alive 5]
         [--baseline FILE [--max-regression 1.5]] [--quick]
 
 What it runs:
@@ -15,9 +15,10 @@ What it runs:
   invoices, ``--seed-invoices`` of them, each a file of its own, in every state; accounts in every role with their
   authenticator set up) and removed after the run (``--keep-data`` keeps it).
 - **The people**: ``--users N`` of them, 70% Clerks, 20% Approvers, 5% Admins and 5% Read-only, started over
-  ``--ramp`` seconds. Each is one browser (an httpx client with its own cookies, six connections, and a cache that
-  keeps the static files as the headers say: ``max-age``/``immutable`` kept, ``no-cache`` revalidated with
-  ``If-None-Match``/``If-Modified-Since``, ``no-store`` never kept). Each logs in (the password, then a code worked out
+  ``--ramp`` seconds. Each is one browser (an httpx client with its own cookies, six connections, each closed after
+  ``--keep-alive`` seconds unused, and a cache that keeps the static files as the headers say: ``max-age``/
+  ``immutable`` kept, ``no-cache`` revalidated with ``If-None-Match``/``If-Modified-Since``, ``no-store`` never
+  kept). Each logs in (the password, then a code worked out
   now by the app's own ``authenticator.code``), then works in weighted scenarios: the queue (tabs, filters, sorts,
   search, "show more"), an invoice opened as a browser opens it (the page, its styles, scripts and fonts, one to three
   page images, the vendor list through the cache, the reader's poll while it is open), 3 to 6 edits each checked,
@@ -100,6 +101,9 @@ STEP_THINK = 1 / 3  # the think time between the steps of one scenario: this sha
 THINK_SIGMA = 0.6  # the lognormal's spread: its p95 is about 2.7 times its median
 MAX_LAG = 60.0  # a person this far behind their schedule starts again from now
 JOB_POLL = 0.8  # app.js pollJob's interval
+# How long a person keeps a connection unused (--keep-alive): httpx's 5 s by default, so earlier runs compare. A browser
+# keeps its own for minutes (Chrome up to 5, Firefox about 2), which keeps people on the worker that took them (D-161).
+KEEP_ALIVE = 5.0
 JOB_MOST = 180.0  # an upload's job polled for at most this long
 BULK_MOST = 50  # invoices in one bulk approval (the page would post every candidate)
 EXPORT_MOST = 50  # invoices in one export batch
@@ -868,7 +872,7 @@ class Person:
         self.client = httpx.AsyncClient(
             base_url=run.base, trust_env=False, follow_redirects=False,
             timeout=httpx.Timeout(run.timeout, connect=10.0),
-            limits=httpx.Limits(max_connections=6, max_keepalive_connections=6),
+            limits=httpx.Limits(max_connections=6, max_keepalive_connections=6, keepalive_expiry=run.keep_alive),
             headers={"User-Agent": "Mozilla/5.0 (AP Coder load test)", "Accept-Language": "en-CA,en;q=0.9",
                      "Accept-Encoding": "gzip, deflate"},
         )  # fmt: skip
@@ -1420,6 +1424,7 @@ class Run:
     problems: list[str] = field(default_factory=list)
     jde: bool | None = None
     stopping: bool = False  # the people still under way are being stopped: their requests are recorded as cut off
+    keep_alive: float = KEEP_ALIVE  # seconds a person's connection is kept unused (--keep-alive)
 
     @property
     def post_headers(self) -> dict[str, str]:
@@ -1690,9 +1695,9 @@ def markdown(report: dict[str, Any]) -> str:
     out = [
         f"# Load test: {c['users']} people for {c['duration']:.0f} s on {c['workers']} worker(s)",
         "",
-        f"{report['started']}; ramp {c['ramp']:.0f} s, think {c['think']:.1f} s (median); {c['invoices']} invoices in "
-        f"{c['data']}; models: {c['model']}; people reach the server at {c['host']}. {pc['cores']} cores, Python "
-        f"{pc['python']}, {pc['system']}.",
+        f"{report['started']}; ramp {c['ramp']:.0f} s, think {c['think']:.1f} s (median), connections kept "
+        f"{c['keep_alive']:.0f} s unused; {c['invoices']} invoices in {c['data']}; models: {c['model']}; people reach "
+        f"the server at {c['host']}. {pc['cores']} cores, Python {pc['python']}, {pc['system']}.",
         "",
         "## Summary",
         f"- Requests: {r['total']} ({r['per_second']}/s); 5xx {r['errors_5xx']}, without an answer {r['no_answer']}, "
@@ -1783,6 +1788,8 @@ def add_parser(sub: Any) -> argparse.ArgumentParser:
     p.add_argument("--model-slots", type=int, default=2, help="answers the stand-in works on at once (default 2)")
     p.add_argument("--host", default=None, help="the address people reach the server at (default: its network one)")
     p.add_argument("--timeout", type=float, default=120.0, help="seconds a request may take at most (default 120)")
+    p.add_argument("--keep-alive", type=float, default=KEEP_ALIVE,
+                   help="seconds a person keeps a connection unused (default 5; 300 as a browser does)")  # fmt: skip
     p.add_argument("--seed", type=int, default=1, help="random seed for the people's choices")
     p.add_argument("--out", default="bench_load", help="output folder (default bench_load)")
     p.add_argument("--baseline", default=None, help="an earlier report.json: fail on a route's p95 over it")
@@ -1848,7 +1855,7 @@ def run_load(a: argparse.Namespace) -> dict[str, Any]:
         server.start()
         roots = {"server": server.proc.pid, **({"model": model.pid} if model is not None else {})}
         run = Run(f"http://{host}:{port}", host, a.users, a.duration, min(a.ramp, a.duration), a.think, a.timeout,
-                  a.seed)  # fmt: skip
+                  a.seed, keep_alive=a.keep_alive)  # fmt: skip
         started = dt.datetime.now().isoformat(timespec="seconds")
         sampler = Sampler(roots, time.monotonic())
         sampler.start()
@@ -1864,7 +1871,7 @@ def run_load(a: argparse.Namespace) -> dict[str, Any]:
                "data": str(data) if not seeded_here else "a folder seeded for the run", "invoices": invoices,
                "seed_invoices": a.seed_invoices if seeded_here else None, "model": which, "host": host,
                "timeout": a.timeout, "seed": a.seed, "started_in": server.started_in, "stopped_in": server.stopped_in,
-               "stop_how": server.stop_how, "jde": run.jde}  # fmt: skip
+               "stop_how": server.stop_how, "jde": run.jde, "keep_alive": a.keep_alive}  # fmt: skip
         report = build_report(run, cfg, {"started": started, "harness": harness, "logs": logs, "audit": checked,
                                          "processes": sampler.summary()})  # fmt: skip
         baseline = json.loads(Path(a.baseline).read_text(encoding="utf-8")) if a.baseline else None

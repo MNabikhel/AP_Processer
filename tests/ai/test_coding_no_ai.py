@@ -4,6 +4,7 @@ history read once per invoice, and the benchmark (``python -m ap_coder.bench cod
 from __future__ import annotations
 
 import json
+import sqlite3
 
 from ap_coder.ai import suggest
 from ap_coder.ai.line_match import PREFIX, Index, keys, similarity, word_match
@@ -257,6 +258,87 @@ def test_a_store_learns_from_each_approval_with_the_index_kept_in_between(tmp_pa
     assert suggest_gl("Disinfectant 4 L", "Acme", store.feedback_rows(), reference) == []
     store.import_history([{**rows[0], "description": "Disinfectant 4 L", "gl_code": "6230"}])  # one more lesson
     assert suggest_gl("Disinfectant", "Acme", store.feedback_rows(), reference)[0].gl_code == "6230"
+
+
+def _held(memory) -> tuple:
+    """All a memory holds, in its order: its patterns, its index's lists and dicts, each vendor's usual accounts."""
+    index = memory.index
+    return (
+        [(p.vendor_key, p.description, p.keys, p.gl_code, p.cost_center, p.rank, p.latest) for p in memory.patterns],
+        index.entries, index.accounts, list(index.by_word.items()), list(index.weight.items()),
+        list(index._by_letter.items()), {v: list(c.items()) for v, c in memory.usual.items()}, memory.newest,
+    )  # fmt: skip
+
+
+def test_a_vendors_older_lessons_extend_the_shared_index_to_what_building_it_whole_gives(
+    tmp_path, reference, monkeypatch
+):
+    """D-159: past the memory's cap, a vendor's ``learning_rows`` are the shared memory's rows then its older lessons
+    (``WithPast``). The shared rows' index is built once; each vendor's older lessons extend it (``_with_past``,
+    ``Index.extended``) to exactly what building it of all the rows gives: its lines with more decisions (a recode
+    that reverses them is unconfirmed then), its lines only there, new words, its usual account. Many vendors in turn,
+    fewer kept than asked: each extended again as it comes back, the same each time."""
+    import random
+
+    from ap_coder.core import memory as memory_module
+    from ap_coder.core.store import _base as store_base
+    from ap_coder.core.store import learning
+
+    monkeypatch.setattr(learning, "FEEDBACK_READ", 80)
+    monkeypatch.setattr(suggest, "_MEMORY", suggest.RowsCache())
+    monkeypatch.setattr(suggest, "_PAST", {})
+    monkeypatch.setattr(learning, "PAST_KEPT", 4)
+    monkeypatch.setattr(suggest, "PAST_KEPT", 4)
+    store = Store(tmp_path / "ap.db")
+    rng = random.Random(159)
+    items = ["Nitrile gloves", "Copy paper", "Toner cartridge", "Freight charge", "Dell Latitude laptop",
+             "Hydraulic hose", "Brg assy", "Monthly cloud hosting", "Safety boots", "Cable cat6",
+             "Hydraulique raccord", "Diesel exhaust fluid"]  # fmt: skip
+    accounts = ["5000", "5100", "6000", "6010", "6030", "6230"]
+    vendors = [f"Vendor {n} Inc." for n in range(14)]
+    history = [{"vendor_name": rng.choice(vendors), "description": f"{rng.choice(items)} {rng.choice(['', 'XL'])}",
+                "gl_code": rng.choice(accounts), "amount": 1.0, "date": f"2025-{n % 12 + 1:02d}-{n % 27 + 1:02d}"}
+               for n in range(420)]  # fmt: skip
+    # older, past the cap: reversed below
+    history += [{"vendor_name": "Vendor 0 Inc.", "description": "Hydraulic hose", "gl_code": "5000", "amount": 1.0,
+                 "date": f"2024-01-{n + 1:02d}"} for n in range(6)]  # fmt: skip
+    store.import_history(history)
+    with sqlite3.connect(store.path) as conn:  # the reviewers' decisions, ranked before the history
+        for n in range(70):
+            v = rng.choice(vendors)
+            conn.execute("INSERT INTO feedback (vendor_key, vendor_name, description, final_gl, suggested_gl, outcome, "
+                         "created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                         (vendor_key(v), v, rng.choice(items), rng.choice(accounts), rng.choice(accounts),
+                          rng.choice(["accepted", "corrected", "coded"]), f"2026-01-{n % 28 + 1:02d}"))  # fmt: skip
+        conn.execute("INSERT INTO feedback (vendor_key, vendor_name, description, final_gl, suggested_gl, outcome, "
+                     "created_at) VALUES (?, 'Vendor 0 Inc.', 'Hydraulic hose', '6230', '5000', 'corrected', "
+                     "'2026-02-01')", (vendor_key("Vendor 0 Inc."),))  # fmt: skip
+    tax_gls = reference.tax.tax_gl_codes()
+    valid = frozenset(c for c in reference.chart_of_accounts.codes if c not in tax_gls and c != UNASSIGNED)
+    whole, extend = suggest._build_memory, suggest._extended
+    built, extended = [], []
+    monkeypatch.setattr(suggest, "_build_memory", lambda rows, ok: built.append(len(rows)) or whole(rows, ok))
+    monkeypatch.setattr(suggest, "_extended", lambda *a: extended.append(1) or extend(*a))
+    for vendor in vendors * 2:
+        rows = store.learning_rows(vendor)
+        assert isinstance(rows, memory_module.WithPast) and rows.past, vendor
+        memory = suggest._memory(rows, valid)
+        assert _held(memory) == _held(whole(list(rows), valid)), vendor
+        assert suggest._memory(store.learning_rows(vendor), valid) is memory  # kept
+        for item in items:
+            asked = (f"{item} XL", vendor, rows, reference)
+            assert suggest_gl(*asked) == suggest_gl(f"{item} XL", vendor, list(rows), reference), (vendor, item)
+    assert built.count(80) == 1  # the shared rows' index, once
+    assert len(extended) == 28 and len(suggest._PAST) == 4  # each vendor's, again as it comes back
+    assert [key[1] for key in store_base._PAST_MEMORY] == [vendor_key(v) for v in vendors[-4:]]  # the store's too
+    monkeypatch.setattr(learning, "PAST_ROWS_KEPT", 1)
+    monkeypatch.setattr(suggest, "PAST_ROWS_KEPT", 1)
+    rows = store.learning_rows(vendors[3])
+    suggest._memory(rows, valid)
+    assert list(suggest._PAST) == [rows.key] and list(store_base._PAST_MEMORY) == [rows.key]  # the latest always
+    hose = next(p for p in suggest._memory(store.learning_rows("Vendor 0 Inc."), valid).patterns
+                if p.description == "Hydraulic hose")  # fmt: skip
+    assert hose.gl_code == "6230" and hose.unconfirmed  # the reversal of the decisions only the past lessons hold
 
 
 def test_aggregate_and_tokens_cache_without_sharing_mutable_results():

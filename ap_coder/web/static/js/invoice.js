@@ -18,7 +18,7 @@
    Everything from the server is either HTML it escaped (the sections, the rows) or set as text here.
 */
 
-import { HEADERS, follow, post, toast } from "./app.js";
+import { HEADERS, fetchWithin, follow, poll, post, toast } from "./app.js";
 import { openFor, register } from "./ctxmenu.js";
 import { InvoiceViewer } from "./invoice_viewer.js";
 import { enhance, fold, refresh, registerGroups, setAction, setSource, setValue } from "./picker.js";
@@ -565,7 +565,6 @@ let vendors = { enforced: Boolean(seed.enforced), list: [...seed.list] };
 const addedHere = []; // the vendors added on this screen: kept when the list comes
 const VENDORS_TRIES = 5; // a fetch that failed (dropped, a 500, a 502/503, its deadline) is asked for again: 5 in all,
 const VENDORS_RETRY_MS = 5000; // at least this long after the last failure (window.AP_VENDORS_RETRY_MS: the tests')
-const VENDORS_DEADLINE_MS = 30000;
 const vendorList = { whole: !seed.url || !seed.count, loading: null, tries: 0, failedAt: 0 };
 
 /** The vendor list fetched, once (again after a failure, at a need): the fetch under way, or null for none. */
@@ -575,10 +574,8 @@ function loadVendors() {
   if (vendorList.tries >= VENDORS_TRIES || (vendorList.failedAt && Date.now() - vendorList.failedAt < wait)) return null;
   vendorList.tries += 1;
   vendorList.loading = (async () => {
-    const stop = new AbortController();
-    const deadline = setTimeout(() => stop.abort(), VENDORS_DEADLINE_MS);
     try {
-      const response = await fetch(seed.url, { headers: { Accept: "application/json" }, signal: stop.signal });
+      const response = await fetchWithin(seed.url, { headers: { Accept: "application/json" } }); // (30 s: LOOK_MS)
       if (!response.ok) throw new Error(`${response.status}`);
       const got = await response.json();
       const added = new Set(addedHere.map((v) => v.key));
@@ -586,8 +583,6 @@ function loadVendors() {
       vendorList.whole = true;
     } catch {
       vendorList.failedAt = Date.now(); // (the session ended: the login page, no JSON)
-    } finally {
-      clearTimeout(deadline);
     }
     vendorList.loading = null;
     showVendorMatch();
@@ -996,7 +991,7 @@ let words = null;
 
 async function loadWords() {
   if (words) return words;
-  const response = await fetch(`${base}/words`, { headers: { Accept: "application/json" } });
+  const response = await fetchWithin(`${base}/words`, { headers: { Accept: "application/json" } });
   const answer = await response.json().catch(() => ({ ok: false, error: "The words on the page can't be read." }));
   if (!answer.ok) throw new Error(answer.error);
   words = answer.words;
@@ -1356,27 +1351,20 @@ document.addEventListener("apc:ask-why", (event) => {
 const reader = document.querySelector("[data-reader][data-poll]");
 if (reader) {
   const every = Math.max(5, Number(reader.dataset.poll) || 20) * 1000;
-  const look = async () => {
-    try {
-      // seen: what the panel shows; while it still is, the answer is only "same" (D-160)
-      const seen = encodeURIComponent(reader.dataset.tag || "");
-      const response = await fetch(`${base}/reader?seen=${seen}`, { headers: { Accept: "application/json" }, cache: "no-store" });
-      const answer = await response.json();
-      if (!answer.poll) {
-        await flush(); // the edits are kept: the page then shows the reading, or offers to start over from it
-        location.reload();
-        return;
-      }
+  // Looked at less often while nothing changes, never while the tab is hidden, and no more once the session ended.
+  // seen: what the panel shows; while it still is, the answer is only "same", without the panel (D-160)
+  poll(() => `${base}/reader?seen=${encodeURIComponent(reader.dataset.tag || "")}`, async (answer) => {
+    if (answer.poll) {
       if (!answer.same) {
         reader.innerHTML = answer.html; // drawn by the server, every text escaped
         reader.dataset.tag = answer.tag || "";
       }
-    } catch {
-      /* not answering now: look again later */
+      return false;
     }
-    setTimeout(look, every);
-  };
-  setTimeout(look, every);
+    await flush(); // the edits are kept: the page then shows the reading, or offers to start over from it
+    location.reload();
+    return true;
+  }, { everyMs: every, firstMs: every });
 }
 
 /* ---------- Keys ---------- */

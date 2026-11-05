@@ -380,16 +380,22 @@ def test_a_worker_ending_waits_for_its_own_work_started_after_it_looked(store, m
         app = create_app(web_settings(), store, start_reader=False, background=processes == 1, processes=processes)
         monkeypatch.setattr(app.state.daily_backup, "start", lambda: None)  # (a laptop's own backup at the start)
         gate = threading.Event()
-        threading.Timer(0.6, gate.set).start()
         if what == "job":
+            threading.Timer(0.6, gate.set).start()
             assert app.state.jobs.get("process").start(lambda job: gate.wait(10) and {})
         elif what == "backup":
+            threading.Timer(0.6, gate.set).start()
             app.state.daily_backup.thread = threading.Thread(target=gate.wait, args=(10,), daemon=True)
             app.state.daily_backup.thread.start()
         else:
             app.state.import_queue = ImportQueue()
             app.state.import_queue.waiting.append((None, None, 1))
-            threading.Timer(0.6, app.state.import_queue.waiting.clear).start()
+
+            def imported() -> None:  # one timer, the gate first: with two, the queue could empty before the gate was
+                gate.set()  # set (both 0.6 s; under load either fires first), and the lifespan ended rightly with
+                app.state.import_queue.waiting.clear()  # ``done`` still False
+
+            threading.Timer(0.6, imported).start()
 
         async def lifespan() -> None:
             async with app.router.lifespan_context(app):
@@ -613,6 +619,140 @@ def test_a_worker_of_the_server_is_started_afresh_and_no_request_or_login_is_los
         out.close()
     output = log.read_text(encoding="utf-8")
     assert output.count("started afresh after") >= 3, output
+
+
+# --- A busy worker hands its connections back (D-161) -------------------------------------------------------------
+
+
+async def _answered(app) -> bytes | None:
+    """The Connection header of ``app``'s answer to a GET (None: none)."""
+    said = []
+
+    async def send(message):
+        if message["type"] == "http.response.start":
+            said.append(dict(message["headers"]).get(b"connection"))
+
+    await app({"type": "http", "method": "GET", "path": "/review", "headers": []}, None, send)
+    return said[0]
+
+
+async def _ok(scope, receive, send):
+    await send({"type": "http.response.start", "status": 200, "headers": [(b"content-length", b"2")]})
+    await send({"type": "http.response.body", "body": b"ok"})
+
+
+def test_a_worker_whose_requests_wait_for_its_threads_closes_the_connection_of_each_answer():
+    """The workers share one socket, and the first free one takes a new connection; but a browser keeps its own open
+    for minutes (the server 75 s), so people stayed on a busy worker while another sat idle (one of four did 54% of
+    the work). While requests wait for one of its threads, its answers say Connection: close; every thread taken with
+    nobody waiting is not busy yet."""
+    worker = server.HandBack(_ok)
+
+    async def main() -> list[bytes | None]:
+        pool = anyio.to_thread.current_default_thread_limiter()
+        pool.total_tokens = 2
+        said = [await _answered(worker)]
+        holders = [object(), object()]
+        for holder in holders:
+            await pool.acquire_on_behalf_of(holder)
+        said.append(await _answered(worker))  # every thread taken, nobody waiting
+        waiting = asyncio.ensure_future(anyio.to_thread.run_sync(lambda: None))
+        await asyncio.sleep(0.05)
+        said.append(await _answered(worker))
+        for holder in holders:
+            pool.release_on_behalf_of(holder)
+        await waiting
+        said.append(await _answered(worker))
+        return said
+
+    assert anyio.run(main) == [None, None, b"close", None]
+
+
+def test_a_worker_whose_long_routes_lane_is_waited_for_closes_the_connection_of_each_answer():
+    """Its reports run in a lane of their own (``core.run_heavy``), never on the pool's threads: a worker whose CPU
+    two reports take, more waiting their turn, is busy too. A full lane with nobody waiting is not."""
+    worker = server.HandBack(_ok)
+
+    async def main() -> list[bytes | None]:
+        lane = core.heavy_lane()
+        holders = [object() for _ in range(core.HEAVY_AT_ONCE)]
+        for holder in holders:
+            await lane.acquire_on_behalf_of(holder)
+        said = [await _answered(worker)]  # full, nobody waiting
+        waiting = asyncio.ensure_future(lane.acquire_on_behalf_of("next"))
+        await asyncio.sleep(0.05)
+        said.append(await _answered(worker))
+        lane.release_on_behalf_of(holders[0])
+        await waiting
+        said.append(await _answered(worker))
+        return said
+
+    assert anyio.run(main) == [None, b"close", None]
+
+
+def _read_answer(sock: socket.socket) -> tuple[bytes, bytes]:
+    """(head, body) of one HTTP/1.1 answer read off ``sock`` (its Content-Length)."""
+    data = b""
+    while b"\r\n\r\n" not in data:
+        chunk = sock.recv(65536)
+        assert chunk, "the connection closed before the answer"
+        data += chunk
+    head, _, body = data.partition(b"\r\n\r\n")
+    lengths = [line.split(b":", 1)[1] for line in head.lower().split(b"\r\n") if line.startswith(b"content-length:")]
+    while len(body) < int(lengths[0] if lengths else 0):
+        body += sock.recv(65536)
+    return head.lower(), body
+
+
+def test_through_uvicorn_a_busy_workers_answer_closes_its_connection_and_a_free_ones_keeps_it(monkeypatch):
+    """Over a raw socket to real uvicorn (h11, KEEP_ALIVE_SECONDS): a free worker answers on the same connection again;
+    a busy one's answer arrives whole, says Connection: close once (once too when the browser asked to close), and
+    the connection is closed after it, so the browser's next request opens a new one."""
+    import uvicorn
+
+    busy = {"now": False}
+    monkeypatch.setattr(server, "worker_busy", lambda: busy["now"])
+    port = _free_port()
+    config = uvicorn.Config(server.HandBack(_ok), host="127.0.0.1", port=port, lifespan="off", log_level="warning",
+                            timeout_keep_alive=server.KEEP_ALIVE_SECONDS)  # fmt: skip
+    running = uvicorn.Server(config)
+    thread = threading.Thread(target=running.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 10
+    while not running.started and time.monotonic() < deadline:
+        time.sleep(0.02)
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+            for _ in range(2):  # free: kept
+                sock.sendall(b"GET /review HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+                head, body = _read_answer(sock)
+                assert body == b"ok" and b"connection:" not in head
+            busy["now"] = True
+            sock.sendall(b"GET /review HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+            head, body = _read_answer(sock)
+            assert body == b"ok" and head.count(b"connection: close") == 1
+            assert sock.recv(1) == b""  # closed after the answer
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+            sock.sendall(b"GET /review HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+            head, body = _read_answer(sock)
+            assert body == b"ok" and head.count(b"connection:") == 1
+    finally:
+        running.should_exit = True
+        thread.join(5)
+
+
+def test_each_web_worker_of_the_server_hands_its_connections_back_and_keeps_them_75_seconds(tmp_path, monkeypatch):
+    """HandBack is one of a web worker's middlewares, and the keep-alive stays above browsers' and IIS ARR's idle
+    limits: at 5 s, 12 requests got no answer in a saturated run (B-1295's race)."""
+    store = Store(tmp_path / "ap_coder.db")
+    spec = {"db": str(store.path), "address": "127.0.0.1", "insecure_http": True, "workers": 2, "secret": "00" * 32,
+            "proxy": "", "port": 8501, "token": "t", "data": str(tmp_path), "parent": os.getpid()}  # fmt: skip
+    monkeypatch.setenv(server.WORKER_ENV, json.dumps(spec))
+    monkeypatch.setattr(server, "_stop_worker_when_asked", lambda *a: None)
+    app = server.worker_app()
+    assert server.HandBack in [m.cls for m in app.user_middleware]
+    assert server.KEEP_ALIVE_SECONDS == 75
+    assert server.server_config(app, "127.0.0.1", 8501, None, None, None).timeout_keep_alive == 75
 
 
 # --- How many workers --------------------------------------------------------------------------------------------

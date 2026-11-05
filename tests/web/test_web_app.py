@@ -9,6 +9,8 @@ import re
 from dataclasses import replace
 from pathlib import Path
 
+import anyio
+import anyio.to_thread
 import jinja2
 import pytest
 from fastapi.testclient import TestClient
@@ -121,14 +123,166 @@ def test_static_files_fonts_and_logo_are_served_locally(client):
         assert url.startswith(("/", "#")), url  # nothing from another host
 
 
+def test_every_template_links_the_static_files_at_their_kept_addresses(client):
+    """A file linked at its plain address would be fetched again (checked) on every page; a page script loaded there
+    would be a second app.js module beside the page's own (its imports are relative), with state of its own."""
+    plain = re.compile(r'(?:src|href)="/(?:static|fonts|assets)/')
+    for path in sorted(core.TEMPLATES_DIR.glob("*.html")):
+        text = path.read_text(encoding="utf-8")
+        assert not plain.search(text) and "static_version" not in text, path.name
+    page = client.get("/help").text
+    linked = re.findall(r'(?:src|href)="(/(?:static|fonts|assets)/[^"]+)"', page)
+    build = core.read_static().build
+    assert linked and all(url.split("/")[2] == build for url in linked), linked
+    assert f'src="/static/{build}/js/app.js"' in page
+
+
 def test_static_files_are_checked_again_on_every_use(client):
-    """app.js and invoice_viewer.js are imported without ?v= (one URL, one module): after an update a browser must ask
-    again instead of running the copy it kept. An unchanged file answers 304, so asking costs nothing."""
+    """At their plain addresses (a page an older AP Coder drew, a bookmark), after an update a browser must ask again
+    instead of running the copy it kept. An unchanged file answers 304, so asking costs nothing."""
     for path in ("/static/js/app.js", "/static/js/invoice_viewer.js", "/static/app.css"):
         response = client.get(path)
         assert response.status_code == 200 and response.headers.get("cache-control") == "no-cache", path
         again = client.get(path, headers={"if-none-match": response.headers["etag"]})
         assert again.status_code == 304 and again.headers.get("cache-control") == "no-cache", path
+
+
+def _without_memory(app):
+    """``app`` with its static files answered by the StaticFiles mounts alone, as before D-161."""
+    from ap_coder.web.app import StaticFromMemory
+
+    app.user_middleware = [m for m in app.user_middleware if m.cls is not StaticFromMemory]
+    return app
+
+
+@pytest.mark.parametrize("server_mode", [False, True])
+def test_static_files_are_answered_from_memory_as_staticfiles_answered_them(store, tmp_path, server_mode):
+    """The styles, scripts, fonts and logo come from memory on the event loop (D-161): every file, laptop and server,
+    gets the status, headers and body StaticFiles gave it, a 304 to its ETag or time the same; a Range, a POST and a
+    file that isn't there are still StaticFiles' own."""
+    made = {"settings": web_settings(), "store": store, "start_reader": False, "server": server_mode}
+    memory = TestClient(create_app(**made), base_url="http://localhost")
+    before = TestClient(_without_memory(create_app(**made)), base_url="http://localhost")
+    files = core.read_static().plain
+    assert len(files) > 20 and {"/static/app.css", "/static/js/app.js", "/fonts/InterVariable.woff2",
+                                "/assets/logo.svg"} <= set(files)  # fmt: skip
+
+    def same(method: str, path: str, headers: dict[str, str] | None = None) -> int:
+        new, old = (c.request(method, path, headers={**PAGE, **(headers or {})}) for c in (memory, before))
+        assert new.status_code == old.status_code, (method, path, headers)
+        assert [h for h in new.headers.items() if h[0] != "date"] == [h for h in old.headers.items() if h[0] != "date"]
+        assert new.content == old.content, (method, path, headers)
+        return new.status_code
+
+    for path, file in files.items():
+        etag, modified = file.etag, file.modified
+        assert same("GET", path) == 200 and same("HEAD", path) == 200
+        assert same("GET", path, {"range": "bytes=0-9"}) == 206
+        assert same("GET", path, {"if-none-match": etag}) == 304
+        assert same("GET", path, {"if-none-match": f'"other", W/{etag}'}) == 304  # weak, in a list
+        assert same("HEAD", path, {"if-none-match": "*"}) == 304
+        assert same("GET", path, {"if-none-match": '"other"', "if-modified-since": modified}) == 200
+        assert same("GET", path, {"if-modified-since": modified}) == 304
+        assert same("GET", path, {"if-modified-since": "Mon, 01 Jan 2001 00:00:00 GMT"}) == 200
+        assert same("GET", path, {"if-modified-since": "not a date"}) == 200
+        assert same("POST", path) == 405
+    assert same("GET", "/static/nothing-here.js") == 404 and same("GET", "/fonts/js/app.js") == 404
+    assert memory.get("/static/app.css", headers={"host": "evil.example"}).status_code == 400  # the Host check first
+    assert memory.get("/static/app.css").headers["x-content-type-options"] == "nosniff"
+    if server_mode:  # in the access log too
+        log = (store.path.parent / "logs" / "access.log").read_text(encoding="utf-8")
+        assert "GET /static/app.css 200" in log and "GET /static/app.css 304" in log
+
+
+def test_a_static_file_is_answered_while_every_thread_of_the_worker_is_taken(store):
+    """A static file needs no thread and no session: StaticFiles read each on one of a web worker's 4 threads, behind
+    pages of 1-2 s (the phase 2 load run's 16-57 s waits for a stylesheet)."""
+    app = create_app(web_settings(), store, start_reader=False, server=True)
+    with TestClient(app, base_url="http://localhost") as client:
+        limiter = client.portal.call(anyio.to_thread.current_default_thread_limiter)
+        holders = [object() for _ in range(int(limiter.total_tokens))]
+        for holder in holders:
+            client.portal.call(limiter.acquire_on_behalf_of_nowait, holder)
+        try:
+            response = client.get("/static/js/app.js")
+            assert response.status_code == 200
+            assert response.content == core.read_static().plain["/static/js/app.js"].body
+        finally:
+            for holder in holders:
+                client.portal.call(limiter.release_on_behalf_of, holder)
+
+
+def test_a_static_file_that_links_out_of_its_folder_is_not_answered(tmp_path):
+    """As StaticFiles (``follow_symlink=False``): a link to a file outside its folder is left out; one inside is
+    kept."""
+    folder, outside = tmp_path / "static", tmp_path / "secret.txt"
+    (folder / "js").mkdir(parents=True)
+    outside.write_text("not for the web", encoding="utf-8")
+    (folder / "js" / "app.js").write_text("export {};", encoding="utf-8")
+    try:
+        (folder / "out.txt").symlink_to(outside)
+        (folder / "again.js").symlink_to(folder / "js" / "app.js")
+    except OSError:
+        pytest.skip("this computer can't make symbolic links")
+    files = core.read_static((("/static/", folder),)).plain
+    assert sorted(files) == ["/static/again.js", "/static/js/app.js"]
+    assert files["/static/again.js"].body == b"export {};"
+
+
+def test_the_pages_link_each_static_file_at_a_kept_address_the_browser_keeps_a_year(client):
+    """``static_url`` puts the build in the address: the browser keeps the file a year without asking again, and an
+    update that changes a file links them all at new addresses. The kept stylesheet names the fonts at theirs."""
+    build = core.read_static().build
+    assert core.static_url("/static/js/app.js") == f"/static/{build}/js/app.js"
+    assert core.static_url("/fonts/InterVariable.woff2") == f"/fonts/{build}/InterVariable.woff2"
+    for plain in ("/static/js/app.js", "/static/app.css", "/fonts/InterVariable.woff2", "/assets/logo.svg"):
+        response = client.get(core.static_url(plain))
+        assert response.status_code == 200 and response.headers["cache-control"] == core.KEPT, plain
+        again = client.get(core.static_url(plain), headers={"if-none-match": response.headers["etag"]})
+        assert again.status_code == 304 and again.headers["cache-control"] == core.KEPT
+        assert client.head(core.static_url(plain)).headers["content-length"] == response.headers["content-length"]
+    css = client.get(core.static_url("/static/app.css")).text
+    assert f'url("/fonts/{build}/InterVariable.woff2")' in css and 'url("/fonts/InterVariable' not in css
+    assert f'url("/fonts/{build}/MaterialSymbolsRounded.woff2")' in css
+    assert 'url("/fonts/InterVariable.woff2")' in client.get("/static/app.css").text  # the plain one as it is
+    assert client.get(core.static_url("/static/js/app.js")).content == client.get("/static/js/app.js").content
+    part = client.get(core.static_url("/static/js/app.js"), headers={"range": "bytes=0-9"})
+    assert part.status_code == 206 and part.content == client.get("/static/js/app.js").content[:10]
+    assert client.get(core.static_url("/static/nothing-here.js")).status_code == 404
+    with pytest.raises(ValueError):
+        core.static_url("/review")
+
+
+@pytest.mark.parametrize("plain", ["/static/js/app.js", "/static/app.css", "/fonts/InterVariable.woff2",
+                                   "/assets/logo.svg"])  # fmt: skip
+def test_another_builds_address_answers_the_file_as_it_is_now_checked_again_on_every_use(client, plain):
+    """A page drawn before an update links the files at the old build's addresses: they answer the files as they are
+    now, never to be kept a year under an address that isn't theirs, with the fonts and the logo too."""
+    other = core.static_url(plain).replace(core.read_static().build, "0123456789")
+    response = client.get(other)
+    assert response.status_code == 200 and response.headers["cache-control"] == core.CHECKED == "no-cache"
+    assert response.content == client.get(core.static_url(plain)).content
+    again = client.get(other, headers={"if-none-match": response.headers["etag"]})
+    assert again.status_code == 304 and again.headers["cache-control"] == "no-cache"
+    assert client.get(other.replace("0123456789", "0123456ABC")).status_code == 404  # not a build
+    as_before = "no-cache" if plain.startswith("/static/") else None  # the plain address: as before
+    assert client.get(plain).headers.get("cache-control") == as_before
+
+
+def test_the_build_is_a_hash_of_the_files_contents(tmp_path):
+    """Not the commit: a checkout's commit doesn't change with an edit not yet committed (the edited script would be
+    kept a year), and an update that changes no file keeps everyone's copies."""
+    folder = tmp_path / "static"
+    folder.mkdir()
+    script = folder / "app.js"
+    script.write_text("export const a = 1;", encoding="utf-8")
+    first = core.read_static.__wrapped__((("/static/", folder),)).build
+    os.utime(script, (1_000_000_000, 1_000_000_000))  # touched, the same
+    assert core.read_static.__wrapped__((("/static/", folder),)).build == first
+    script.write_text("export const a = 2;", encoding="utf-8")
+    assert core.read_static.__wrapped__((("/static/", folder),)).build != first
+    script.rename(folder / "b.js")  # the same content under another name
+    assert core.read_static.__wrapped__((("/static/", folder),)).build != first
 
 
 # --- Only this computer, only AP Coder's own pages ---------------------------------------------------------------
@@ -442,6 +596,156 @@ def test_job_status_url(client):
     assert client.get("/jobs/nothing").status_code == 404
     assert client.get("/process/status").json()["state"] == "idle"
     assert client.get("/jobs/process").json()["state"] == "idle"
+
+
+def test_a_page_following_a_job_is_sent_its_state_done_and_note_only(client):
+    """``watchJob`` asks ``?only=done,note``: what it shows, not the job's 500 lines (up to 57 KB) every look."""
+    import threading
+
+    job, written, release = client.app.state.jobs.get("spend-data"), threading.Event(), threading.Event()
+
+    def work(j):
+        j.step(2, 5, "Writing the sheets")
+        for n in range(500):
+            j.log(f"line {n}")
+        written.set()
+        release.wait(5)
+
+    assert job.start(work) and written.wait(5)
+    try:
+        assert len(client.get("/jobs/spend-data").json()["lines"]) == 500  # everything, asked without only=
+        answer = client.get("/jobs/spend-data?only=done,note")
+        assert answer.json() == {"state": "running", "done": 2, "note": "Writing the sheets"}
+        assert answer.headers["cache-control"] == "no-store"
+    finally:
+        release.set()
+        assert job.wait(5)
+    assert client.get("/jobs/spend-data?only=done,note").json()["state"] == "done"
+    app_js = (core.STATIC_DIR / "js" / "app.js").read_text(encoding="utf-8")
+    assert 'searchParams.set("only", "done,note")' in app_js
+
+
+# --- Polls (app.js poll, D-161) ----------------------------------------------------------------------------------
+
+POLL = """async (every) => {
+  const app = await import(document.querySelector('script[src*="/js/app.js"]').src);  // the page's own module
+  window.polled = app.poll("/polled", () => false, { everyMs: every });
+}"""
+HIDDEN = """(hidden) => {
+  Object.defineProperty(document, "hidden", { configurable: true, get: () => hidden });
+  document.dispatchEvent(new Event("visibilitychange"));
+}"""
+
+
+def _looks(page, answer: dict) -> list[float]:
+    """When the page asked /polled (each answered ``answer`` as it is then)."""
+    import time
+
+    looks: list[float] = []
+
+    def answered(route):
+        looks.append(time.monotonic())
+        route.fulfill(status=200, content_type="application/json", body=json.dumps(answer))
+
+    page.route("**/polled", answered)
+    return looks
+
+
+def test_in_a_browser_a_poll_asks_less_while_nothing_changes_and_nothing_while_the_tab_is_hidden(chromium, store):
+    """Every open job page and review screen asked at its fixed pace, hidden or not, the same answer or not. While the
+    answer stays the same the wait grows by half, up to three times the pace, and a change starts again at the pace;
+    a hidden tab asks nothing, and looks at once when it is shown again."""
+    import time
+
+    from tests.browser import browser_on, wait_until
+
+    with browser_on(chromium, create_app(web_settings(), store, start_reader=False)) as (browser, base):
+        page = browser.new_page()
+        answer = {"state": "running", "done": 0}
+        looks = _looks(page, answer)
+        page.goto(base + "/help")
+        page.evaluate(POLL, 200)
+        wait_until(page, lambda: len(looks) >= 7, timeout=10)
+        gaps = [b - a for a, b in zip(looks, looks[1:], strict=False)]
+        assert gaps[0] < 0.4 and gaps[1] > gaps[0] and gaps[2] > gaps[1], gaps  # 0.2, 0.3, 0.45...
+        assert all(0.5 < g < 1.0 for g in gaps[4:6]), gaps  # ... up to 0.6 s
+        answer["done"] = 1  # a change: back to the pace
+        seen = len(looks)
+        wait_until(page, lambda: len(looks) >= seen + 2, timeout=5)
+        assert looks[seen + 1] - looks[seen] < 0.4, looks
+
+        page.evaluate(HIDDEN, True)
+        hidden_at = time.monotonic()
+        page.wait_for_timeout(2000)
+        assert [t for t in looks if t > hidden_at + 0.1] == []  # (one already under way may end)
+        page.evaluate(HIDDEN, False)
+        shown_at = time.monotonic()
+        wait_until(page, lambda: looks[-1] > shown_at, timeout=2)
+        assert looks[-1] - shown_at < 0.4  # at once, not after the wait
+
+
+def test_in_a_browser_a_poll_stops_once_the_laptop_asks_who_they_are_again(chromium, store):
+    """A colleague on a laptop shared on the office network says who they are once; after AP Coder started again (a
+    new key) their cookie is no longer good, and a look is sent on to "Who are you?": it kept asking every 0.8 s,
+    answered by that page. It stops, and the job page goes there, to come back after it."""
+    import threading
+    import time
+
+    from tests.browser import browser_on, wait_until
+
+    app = create_app(web_settings(), store, start_reader=False, address="0.0.0.0")
+
+    async def colleague(scope, receive, send):  # the browser is on another computer of the office
+        await app({**scope, "client": ("10.0.0.5", 50000)} if scope["type"] == "http" else scope, receive, send)
+
+    release = threading.Event()
+    assert app.state.jobs.get("process").start(lambda job: release.wait(60) and None, total=3)
+    try:
+        with browser_on(chromium, colleague) as (browser, base):
+            page = browser.new_page()
+            looks: list[float] = []
+            page.on("request", lambda r: looks.append(time.monotonic()) if "/process/status" in r.url else None)
+            page.goto(base + "/process")
+            page.wait_for_url("**/who?next=*")
+            page.fill("input[name=name]", "Robin")
+            page.click("button[type=submit]")
+            page.wait_for_url("**/process")
+            wait_until(page, lambda: looks)
+            page.context.clear_cookies()  # (as a new start's key makes of them)
+            gone = time.monotonic()
+            wait_until(page, lambda: "/who" in page.url, timeout=6)
+            assert "/who?next=%2Fprocess" in page.url
+            page.wait_for_timeout(2000)
+            assert len([t for t in looks if t > gone]) <= 1, looks
+    finally:
+        release.set()
+
+
+# The actions the server runs whole in their request, however long they take: a restore (a safety backup first, of a
+# database of gigabytes), years of past coding taught, the imports of large lists, a finance hub run, the bulk
+# approval of a long queue. Their forms are marked data-long: app.js waits for them (any other action gives up after
+# five minutes, with "didn't answer").
+LONG_ACTIONS = {
+    "settings_data.html": ["/settings/data/restore"],
+    "learning.html": ["/learning/history/teach"],
+    "accounts.html": ["/accounts/{{ a.table }}/import", "/accounts/bank/import"],
+    "vendors.html": ["/vendors/master/import"],
+    "exports.html": ["/exports/register/import"],
+    "purchase_orders.html": ["/purchase-orders/import"],
+    "settings_jde.html": ["/settings/jde/gl-map/import", "/settings/jde/worksheet"],
+    "settings_hub.html": ["/settings/hub/run"],
+    "review.html": ["/review/bulk-approve"],
+}
+
+
+def test_the_actions_the_server_runs_whole_are_waited_for_however_long_they_take():
+    for name, actions in LONG_ACTIONS.items():
+        text = (core.TEMPLATES_DIR / name).read_text(encoding="utf-8")
+        for action in actions:
+            forms = re.findall(r'<form[^>]*action="' + re.escape(action) + '"[^>]*>', text)
+            assert forms and all(" data-long" in f for f in forms), (name, action, forms)
+    app_js = (core.STATIC_DIR / "js" / "app.js").read_text(encoding="utf-8")
+    assert 'post(action, body, { ms: form.hasAttribute("data-long") ? 0 : ACTION_MS })' in app_js
 
 
 def test_templates_escape_and_ui_helpers_are_safe():

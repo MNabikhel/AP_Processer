@@ -702,9 +702,57 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     - **Going back:** a version before this one refuses the backups made by this one (they hold triggers it doesn't
       know), and keeps those triggers in its database. `server-update --back` restores the pre-update backup, made by
       the older version (`docs/SERVER.md` §11, `docs/UPGRADING.md`).
-  - **The uses** (what is kept, its stamp, its memory, measured) come in the next commits of phase 2 part 2.
-  - (`core/store/summary.py`, `core/store/backups.py`; `tests/core/test_kept_answers.py`, `tests/core/test_backups.py`,
-    `tests/erp/test_invoice_summary.py`)
+  - **Two summary topics** (`summary.TOPICS`; no column changes, so no summary is built again):
+    - `queue`: what the queue reads of an invoice in review (`QUEUE_READ`, the columns `bulk.queue_checks` reads). One
+      the summary could not work out (`broken`) is read again from the invoice, so each change to it counts.
+    - `listed`: the queue's invoices (review, parked, pending) as `list_invoices` lists them (`LISTED_COLUMNS`, its
+      sort columns and the confidence included).
+  - **What is kept** (its stamp; what it holds at 100k, by tracemalloc):
+    - **The vendor master's ERP IDs** (`vendor_ids`): `changes/vendors`; 6.4 MB. Shared: no caller changes it.
+    - **The master's GST/HST numbers** (`master_by_tax_number`, for an invoice not found by name): `changes/vendors`;
+      6.8 MB. Only the vendors found are read, and `same_tax_number` decides on them.
+    - **The held vendors' approved numbers** (`approved_numbers`): `changes/approved` and the vendors asked; 0.07 MB
+      for 193 held vendors. When read, it seeks the vendors' index (`+status`): 218 → 19 ms. Each caller gets lists
+      of its own.
+    - **The queue's checks** (`bulk.queue_checks`): `queue`, the checks stamp, laptop or server, the invoices asked;
+      15 MB for 2,740 invoices. Fewer than `KEEP_FROM` (50) invoices are worked out each time. Each caller gets rows
+      and lists of its own; the findings in them are read-only (`MappingProxyType`, made so in `_today`): a copy of
+      each of the 34,000 findings took 18 ms a call, the rows and lists 2.5 ms.
+    - **The queue's lists** (`list_invoices` of review, parked, pending): `listed`; 2.8-3.1 MB each. Each caller gets
+      copies. The invoice page's Previous and Next read the review one (`navigation`).
+    - **The GL suggestions' index:**
+      - the shared memory's index is built once per change of the lessons (`suggest._MEMORY`: the same list while
+        D-154's stamps hold);
+      - a vendor's older lessons past the cap (`learning_rows` returns `memory.WithPast`: the shared rows, then those)
+        extend it (`suggest._with_past`, `_extended`, `Index.extended`): exactly what a whole build gives
+        (`tests/ai/test_coding_no_ai.py`, many vendors in turn), in 12-150 ms (1,400 to 43,000 older lessons) instead
+        of 0.2-0.37 s; 0.33-0.46 MB each, 11.7 MB for 32 (the bench's 9,830 patterns of 167 words);
+      - kept for 32 vendors and 60,000 of their lessons per process (`PAST_KEPT`, `PAST_ROWS_KEPT`), the latest used
+        always; the store keeps those lessons the same way (`_PAST_MEMORY`, 2 vendors before): 1.3 KB a lesson, 78 MB
+        at 60,000. Once the shared rows are others, the memories extended from the older ones are let go.
+    - **A line's suggestions** (`_Memory.said`): with the memory and the reference data they came from; 1,024 per
+      memory, the latest used last, about 2.4 KB each. Callers get copies.
+  - **Measured** (the 100k seed read-only, an `immutable=1` URI; one process, CPU, medians of 20, the checks and the
+    pages of four vendors in turn; JD Edwards in use, as in cpu.md, which asks `vendor_ids` twice a check):
+    - the check 1,000 → 55 ms (743 → 56 without JD Edwards);
+    - the invoice page 1,717 → 762 ms; its vendor list (D-160) is most of what is left;
+    - `/review` 325 → 131 ms (105 alone): the 50 rows drawn 31 ms, `all_vendor_terms` 23 of them, `attention` 19, the
+      template 14, `queue_checks` 10 (the checks stamp 4);
+    - the page's Previous and Next 48 → 7 ms (3 alone).
+    - (The first build, lost, measured the check 1,244 → 96 ms, the page 1,811 → 544, `/review` 247 → 61 and Previous
+      and Next 26 → 1, on another seed.)
+  - **Not done:**
+    - a vendor's invoices (`vendor_invoices`) and the vendor list in the page: D-160's;
+    - the memory's whole index once per worker after each approval (0.27 s), then each vendor's extension again;
+    - the queue's answers refreshed row by row after a park: a park moves `queue` and `listed`, and the next `/review`
+      works them out whole (98 ms and 35-44 ms);
+    - the rest of `/review`: `all_vendor_terms` (the terms of 20,000 vendors read on each page), `attention`;
+    - the extended index's size in its cap: 0.33-0.46 MB a vendor here, but a big vocabulary could make it 2.6-4.4 MB
+      (review 2b's probe); past 1 MB a vendor, count each entry's size in the cap.
+  - (`core/store/summary.py`, `core/store/backups.py`, `vendors.py`, `learning.py`, `invoices.py`, `core/memory.py`,
+    `coding/bulk.py`, `coding/vendors.py`, `ai/suggest.py`, `ai/line_match.py`, `docs/HOW_IT_RUNS.md`;
+    `tests/core/test_kept_answers.py`, `tests/core/test_backups.py`, `tests/erp/test_invoice_summary.py`,
+    `tests/ai/test_coding_no_ai.py`, `tests/ops/test_real_world_findings.py`)
 - **D-160** · **The review screen made light: the vendor list fetched and kept, page pictures drawn once for all
   workers, a reader poll of a few bytes, each vendor's invoices kept** (scale goal, phase 2 part 2; rebuilt from
   `docs/archive/scale-2026-11/part2/`, its reviews' findings designed in).
@@ -773,3 +821,149 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `tests/web/test_web_invoice.py`, `test_web_picker.py`, `test_web_document.py`, `test_server_web.py`,
     `test_server_security.py`, `test_roles.py`, `tests/core/test_kept_answers.py`, `test_store_perf.py`,
     `tests/bench/test_bench_load.py`)
+- **D-161** · **Static files from memory at kept addresses, no compression, polls that wait, and a busy web worker
+  that hands its connections back** (B-1712; the phase 2 load run's 16-57 s static waits and its workers at 0.34 to
+  1.0 cores).
+  - **Static files from memory:** `core.read_static` reads the styles, scripts, fonts and logo once when AP Coder
+    starts. `app.StaticFromMemory` answers a GET or HEAD of one on the event loop: after the Host check, with the
+    security headers and the access log, before the session, the errors page and the backup check.
+    - At its plain address, the same status, headers and 304s as Starlette's `StaticFiles` (its ETag and
+      Last-Modified, so a browser's copy stays good across the change), laptop and server; a test compares every
+      file, both modes, for GET, HEAD, Range, If-None-Match, If-Modified-Since, POST and a file that isn't there.
+    - `StaticFiles` still answers what memory doesn't: a POST, a file that isn't there, a Range (at the file's plain
+      address). A file whose real path is outside its folder (a link out of it) is left out, as `StaticFiles` refuses
+      it (`follow_symlink=False`).
+    - Why: a static file costs about a millisecond, but `StaticFiles` read it on one of the worker's 4 threads
+      (D-153), behind pages of 1-2 s. Server CPU a request through uvicorn (server mode, four runs of 3,000 each):
+      a 304 0.85-1.03 → 0.41-0.47 ms, app.css 1.49-2.52 → 0.49-0.50 ms, app.js 1.46-2.52 → 0.45-0.46 ms, the 373 KB
+      icon font 3.26-4.38 → 0.50-0.56 ms; and no thread.
+    - A file edited while AP Coder runs is answered as it was at the start (a developer restarts `serve`).
+  - **Kept addresses:** the pages link each file at `/static/<build>/...` (`/fonts/<build>/...`,
+    `/assets/<build>/...`) through `core.static_url`, with `Cache-Control: public, max-age=31536000, immutable`; the
+    kept stylesheet names the fonts at theirs (its own ETag).
+    - The build is a hash of the files' contents, not the commit: a checkout's commit doesn't change with an edit not
+      yet committed (the edited script would be kept a year), and an update that changes no file keeps everyone's
+      copies.
+    - Another build's address (a page drawn before an update) answers the file as it is now with `no-cache`, for
+      `/static`, `/fonts` and `/assets` alike: never kept a year under an address that isn't its own. The plain
+      addresses answer as before (`/static` `no-cache`, `/fonts` and `/assets` without Cache-Control). Pages stay
+      `no-store`.
+    - Every template uses `static_url` (a test fails on a plain address: a page script loaded at its plain address
+      would be a second app.js module beside the page's own).
+  - **Measured** (bench load, a 3,000-invoice seed, 60 people, think 4 s, 2 web workers, 180 s; the 4 cores shared
+    with other agents).
+    - The first build (lost before it was pushed, rebuilt as written here), before → from memory → kept addresses
+      too: requests 22,834 → 26,344 → 6,045 (27,506 more from the browsers' caches); `/static` p95 1.82 s → 130 ms →
+      67 ms; `/fonts` and `/assets` p95 1.79 and 1.96 s → 25 and 52 ms; pages p50 3.25 s → 466 ms → 269 ms, p95
+      49.4 s → 6.10 s → 1.67 s; actions p95 50.8 s → 12.3 s → 2.05 s; requests over 30 s 745 → 0 → 0.
+    - The rebuild, all of D-161 against main, on a machine busier than the first build's (other agents' tests on its
+      cores), saturated both times: the people's work done +63% (requests other than static files 1,319 → 2,147;
+      invoices opened 140 → 252, checks 170 → 356), the workers at 1.11 and 0.33 → 1.07 and 1.02 cores; `/static` p95
+      7.51 s → 212 ms, `/fonts` 13.8 s → 59 ms; the pages stayed past what the people asked (p95 64 → 62 s).
+    - The rebuild, lighter (30 people, think 10 s): the same work in 5,193 → 1,681 requests (5,696 more from the
+      caches); `/static` p95 493 → 70 ms; pages p50 792 → 709 ms, p95 3.34 → 3.19 s; actions p95 1.95 → 1.56 s.
+  - **No compression** (laptop and server).
+    - gzip's CPU a MB of AP Coder's HTML and JSON (the first build, on the 100k database): level 1 4.4-6.6 ms, level
+      4 7.3-11.7, level 6 14-18, level 9 (Starlette's `GZipMiddleware` default) 60-75.
+    - The review screen (3.6 MB there, 565-630 ms of CPU): level 1 16-24 ms for 0.53 MB, level 9 241-271 ms. The
+      queue (85 KB): level 1 0.5 ms for 9 KB.
+    - On the office's gigabit network 3.6 MB take about 29 ms, which cost the server nothing; level 1 would cost 4-5
+      core-s a minute at 100 people (3% of the 4-core budget) and save no time anyone sees.
+    - Where it matters (a VPN at 20 Mb/s: 1.4 s against 0.2 s), IIS in front compresses `text/html` and
+      `application/json` only, at its lowest level (SERVER.md); never a download (CSV, xlsx, PDF, PNG, ZIP). Static
+      files are not compressed either: each browser fetches them once a build. Revisit if the review screen's
+      vendor list leaves the page.
+  - **Polls** (`app.js` `poll`, used by `pollJob` and the review screen's reading):
+    - Nothing while the tab is hidden; a look at once when it is shown again.
+    - After an answer the same as the last (or none), the wait is half as long again, up to three times the pace (a
+      job's at least 5 s); a change starts again at the pace.
+    - A look answered by the login stops it (B-1712): a 401, or a GET sent on to `/login`, or to `/who` (a laptop
+      shared on the office network asks a colleague's name again once AP Coder started again: a new key makes the
+      cookie no good). The job pages then go there and come back after it; the review screen stays as it is, and
+      its next check goes to the login with the edits kept (B-1594).
+    - `watchJob` asks `/jobs/<name>?only=done,note`: the state, done and note, not the job's 500 lines.
+  - **Deadlines** (`fetchWithin`, AbortController): a look 30 s, an action (`post`) and the setup report 5 minutes;
+    past it, the existing "didn't answer" wording. `post(url, body, {ms})` takes 0 for none.
+    - A form marked `data-long` is sent with none: the actions the server runs whole in the request, however long
+      they take. Restore (a safety backup first, of a database of gigabytes), Past coding → Teach, the imports (GL
+      accounts and cost centers, bank accounts, vendor master, payment register, purchase orders, the JD Edwards GL
+      map and worksheet), a Finance Hub run and the bulk approval of clean invoices (its list grows with the
+      queue). The JD Edwards posting and sync run as jobs already; an export batch keeps its 5 minutes.
+  - **The workers' balance:** a busy worker hands its connections back (`server.HandBack`): while requests wait for
+    one of its threads, or for its long routes' lane (`core.run_heavy`: two reports taking its CPU, more waiting),
+    its answers say `Connection: close`. A pool or a lane full with nobody waiting is not busy. `KEEP_ALIVE_SECONDS`
+    stays 75.
+    - How a connection finds a worker: the workers listen on one socket, and the first to `accept()` takes it, on
+      Linux (epoll; uvicorn sets no `SO_REUSEPORT`) and on Windows (uvicorn's supervisor shares the listening socket,
+      B-1711, and each worker runs the selector loop, so every worker's `select()` wakes: B-1441 saw two woken for
+      one). A free worker's loop usually wins it: a busy one waits for the GIL behind its threads.
+    - What kept people on a busy worker is the browser keeping its connections (minutes: Chrome up to 5, Firefox
+      about 2) and the server 75 s. The harness's people closed theirs after 5 s unused (httpx's default), which hid
+      it: `bench load --keep-alive 300` keeps them as a browser does (the default stays 5, so earlier runs compare).
+    - Measured in the first build with people keeping connections 300 s: 50 people, think 10 s, 4 workers: one
+      worker did 54% of the work. Saturated (60 people, think 4 s, 2 workers), three pairs back to back: pages p95
+      5.2 / 24.0 / 33.3 s with 75 s alone, 4.1 / 19.6 / 16.6 s with HandBack; requests over 30 s 0 / 147 / 343
+      against 0 / 74 / 9. With the default people (5 s) no difference beyond the noise.
+    - The rebuild, people keeping connections 300 s (30 people, think 10 s, 2 workers), two pairs, the second in the
+      other order: the workers at 0.40 / 0.90 and 0.48 / 0.81 cores without HandBack, 0.67 / 0.65 and 0.64 / 0.64
+      with it; pages p95 4.68 and 19.7 s without, 6.41 and 5.44 s with (the machine's load average 4-6 from other
+      agents' tests: the balance is the steady result, the latencies are noise).
+    - The rebuild's saturated pair (above) at the default 5 s: 1.11 / 0.33 cores before, 1.07 / 1.02 after.
+    - A shorter keep-alive was refused: at 5 s, 12 requests got no answer in the saturated run (B-1295's race: an
+      idle connection closed as the browser sent on it).
+    - `Connection: close` comes in the answer: it arrives whole, the browser opens a new connection for its next
+      request, nothing is lost, and IIS ARR in front does the same. A new HTTPS connection costs the worker that
+      takes it 1.2 ms (0.4 ms resumed).
+  - **Not done:** the import's poll still sends its lines (up to 500, 57 KB; process.js shows them all); an upload
+    (XHR) has no deadline (it may take minutes); a poll without a session still draws the login page once before
+    it stops (`identity.py`); the access log writes on the event loop (`security.py`).
+  - (`web/core.py`, `web/app.py`, `web/server.py`, `web/templates/*`, `web/static/js/{app,invoice,help}.js`,
+    `bench/load.py`; `tests/web/test_web_app.py`, `test_server_browser.py`, `test_server_capacity.py`,
+    `test_web_settings.py`)
+- **D-162** · **The reports and pages still slow at 100,000 invoices: kept per change, listed a part at a time, or read
+  without waste** (phase 2 part 2).
+  - **Kept in each process** (`Store.summary_memo`, D-159's rule: a stamp read from the database before the work), on
+    the counts D-159's triggers keep (`SUMMARY_TRIGGERS`, `changes/<kind>`: any insert, update or delete of the
+    table, on any connection):
+    - "suppliers" (`supplier_outcomes`): every vendor's supplier learning record (`all_supplier_stats` without its
+      fields, asked the vendors) and the drawn vendors' field figures (`supplier_fields`): Learning → Supplier
+      learning, Settings → Automation;
+    - "readers" (`reader_outcomes`): the readers' scorecard: Settings → Reading, Learning → Readers;
+    - "purchase_orders" (`purchase_orders`, `po_lines`), with the summary's generation: month-end's received, not
+      invoiced PO lines, per period end (`accruals._received_not_invoiced`);
+    - "register" (`erp_invoices`), with the summary's generation: the duplicate payment audit's pairs
+      (`dupaudit.find`: its page and its CSV);
+    - "lessons" (`feedback`): each vendor's lesson counts (`vendor_summaries`: Vendors, Statements, the JDE
+      worksheet);
+    - "situations" (`lessons`, `lesson_approvals`): the Lessons tab's rows (`learning.lesson_rows`);
+    - the summary's generation alone: the Spend page's figures and currencies, per period, currency, GL categories
+      and rates (copies; `spend.figures`, `spend_currencies`; `read_figures` reads them now).
+    - **What a trigger costs:** about 37% more time on a 200,000-row import (A1's measurement in D-159: 4.7 → 6.5 s
+      through `import_erp_register`, a rare import, on a thread); most writes change one row.
+  - **Listed a part at a time, with Show more** (how many in the address, `web.core.shown_count`, which Supplier
+    learning's count uses too; the CSVs, tiles and search keep every row; with every row asked, each page is the one
+    it was): Sales tax's claims and self-assessments (500 each: `rows`, `self_rows`), Vendors (200: `shown`, kept
+    when one is opened), Purchase orders (200: `shown`). On the laptop too: a list under these sizes shows as before.
+  - **Read without waste:**
+    - `jde.resolve_an8` reads the vendor IDs without copying them for each invoice or vendor;
+    - Learning → Coding accuracy counts the approvals with SQLite (`insights.approval_counts`, as Activity);
+    - Settings → Data counts the invoices folder with `os.scandir`;
+    - `vendor_summaries` reads only the listed vendors' rows of the vendor list;
+    - `clean_fields_needed` (a pure search, asked twice a vendor) is cached.
+  - **What stays true:** a kept answer is what reading again gives (a two-Store test each,
+    `tests/core/test_kept_answers.py`, each failing without its count). Memory kept a worker at 100,000 invoices
+    (`tracemalloc`): the supplier records 28 MB (47 MB at the peak of working them out, which each request took
+    before); the rest under 2 MB each (the audit's pairs 1.7, the Lessons tab 1.1, the lesson counts 0.9, Spend 0.6,
+    month-end 0.2, the field figures 0.1; the scorecard and the currencies a few KB).
+  - **Under load:** the summary's generation changes with every invoice written, so month-end, the audit and Spend are
+    worked out again after each write. They help one person and pages asked again between writes, not 100 people.
+  - **Not done:**
+    - `/search/export.xlsx` (9-10 s at 50,000 rows): 70% of it is openpyxl writing 450,000 cells. A job per person,
+      as the Spend workbook, or a lighter writer.
+    - `/activity/events.csv` (11 s, 416,000 events): streamed as it is read (B-1597), so the download starts at once.
+    - Month-end worked out afresh: 8-9 s (69,000 codings read and decoded). A summary table of each invoice's
+      PO-billing lines (summary rules 3) would make it about 1.5 s.
+    - Insights (1.8-2 s, within a report's 3 s); `/process` (a seed artefact: no `seen_files`).
+  - (`core/store/{suppliers,capture,vendors}.py`, `erp/{accruals,dupaudit,spend,jde}.py`, `capture/supplier.py`,
+    `web/core.py`, `web/pages/{learning,settings,sales_tax,vendors,purchase_orders}.py` and their templates;
+    `tests/core/test_kept_answers.py`)

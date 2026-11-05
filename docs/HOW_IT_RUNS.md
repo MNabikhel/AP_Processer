@@ -333,6 +333,11 @@ or data) is not found again on later starts (`upgrade.left_to_clean`), so it is 
   hourly; nothing while both are off). The finance hub feed runs on its schedule (`ap_coder/erp/hub/run.py:HubSchedule`:
   every 1, 4, 12 or 24 hours, or only by hand) from the pages served, like the daily backup: a dashboard nobody
   opens runs nothing, so a scheduled `python -m ap_coder hub export` covers that.
+* **Static files** (D-161): the styles, scripts, fonts and logo are read once when `serve` starts
+  (`ap_coder/web/core.py:read_static`) and answered from memory (`app.StaticFromMemory`). The pages link them at
+  kept addresses (`core.static_url`: `/static/<build>/app.css`, the build a hash of the files' contents), which the
+  browser keeps a year; an edit to any of them changes every address. A static file edited while `serve` runs is
+  still answered as it was at the start: restart `serve` to see the edit.
 * **Up?** The server checks its own `/healthz` directly, never through a proxy, and prints `AP Coder is running at
   http://127.0.0.1:N`. The launcher opens `http://127.0.0.1:N` (`scripts/launch.py:dashboard_url`, never
   `localhost`) when it sees that line or `/healthz` answers (`running.health`), once.
@@ -386,21 +391,45 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   `.ap_coder_worker_restart.pid`, for ten minutes at most, dropped once it has ended); one at a time
   (`.ap_coder_worker_restart.lock`), never while a job, a backup, waiting imports or the lane are busy. One that a
   request started after that look is waited for as the worker ends (its lifespan, `app.own_work_running`); a stop of
-  the service still ends it at its deadline.
+  the service still ends it at its deadline. The workers share one socket, and the first free one takes each new
+  connection; a busy one (requests waiting for its threads or its lane) hands its connections back
+  (`server.HandBack`, D-161): its answers say `Connection: close`, so the browser's next request goes to a free one.
 
   **What a worker keeps between requests** (D-159; on a laptop the one process the same way): answers whose work
   reads many rows and changes a few times a day, each kept by `Store.summary_memo` with a stamp read from the
   database before the work (the database's `summary_id`, a summary topic's generation, an event count, a count of
   changes the triggers keep in `settings` as `changes/<kind>`, and what was asked). A change by any process, or by
   plain SQL, moves the stamp, and the next request works the answer out again; nothing is kept from inside a write
-  under way. The latest answer of each name is kept, 64 at most. Among them (D-160): the review screen's vendor list
-  (`ap_coder/web/pages/invoice.py:vendor_list`, per `changes/vendors`: its JSON, gzipped, version and index, about
-  21 MB for 19,000 vendors), which the screen fetches from `GET /review/vendors.json?v=<version>` (a laptop's browser
-  keeps it; the server's answers behind the login are `no-store`, B-1070). Besides `summary_memo`, each vendor's
-  invoices (`ap_coder/core/store/vendors.py:_keep_vendor_rows`: the vendors asked most recently, at most 20,000 rows
-  and 4,096 vendors, about 20 MB; stamped by `summary_id` and `changes/vendor/<key>`). The page pictures are not
-  kept in a server worker's memory: they are drawn once into the data folder's `.cache/pages/`
-  (`ap_coder/web/document.py:_kept_png`), shared by all the workers.
+  under way. The latest answer of each name is kept, 64 at most. Kept so (sizes at 100,000 invoices):
+  * the vendor master's ERP IDs and its GST/HST numbers (`vendor_ids`, `master_by_tax_number`; `changes/vendors`,
+    about 7 MB each) and the held vendors' approved numbers (`approved_numbers`; `changes/approved`);
+  * the review queue's checks (`bulk.queue_checks`, from 50 invoices; the summary's `queue` topic, the checks stamp,
+    laptop or server, the invoices asked; 15 MB) and its lists (`list_invoices` of review, parked, pending, which the
+    invoice page's Previous and Next read; the `listed` topic; about 3 MB each).
+
+  Beside them, the GL suggestions (`ai/suggest.py`): the whole learning memory's index, built once per change of the
+  lessons; for a vendor whose lessons go past the memory's cap, that index extended by them (`_with_past`), with the
+  lessons themselves (`Store.learning_rows`), for 32 vendors and 60,000 of their lessons a process (about 80 MB,
+  `memory.PAST_KEPT`, `PAST_ROWS_KEPT`); and each memory's answers for 1,024 lines (`_Memory.said`, with the reference
+  data they came from).
+
+  Kept for the reports and long pages (D-162), with what each held at 100,000 invoices: every vendor's supplier
+  learning record (Supplier learning, Settings → Automation; `changes/suppliers`), about 28 MB a worker, and the
+  drawn vendors' field figures (0.1 MB); the readers' scorecard (`changes/readers`, a few KB); month-end's received,
+  not invoiced PO lines for the period asked (`changes/purchase_orders` and the summary's generation, 0.2 MB); the
+  duplicate audit's pairs, which its page and CSV share (`changes/register` and the generation, 1.7 MB); Spend's
+  figures and currencies for the period, currency, categories and rates asked (the generation, 0.6 MB); each
+  vendor's lesson counts (`changes/lessons`, 0.9 MB); the Lessons tab's rows (`changes/situations`, 1.1 MB). Any
+  invoice written moves the summary's generation, so month-end, the audit and Spend are worked out again after each
+  write.
+
+  The review screen's (D-160): its vendor list (`ap_coder/web/pages/invoice.py:vendor_list`, `summary_memo` on
+  `changes/vendors`: its JSON, gzipped, version and index, about 21 MB for 19,000 vendors), which the screen fetches
+  from `GET /review/vendors.json?v=<version>` (a laptop's browser keeps it; the server's answers behind the login are
+  `no-store`, B-1070); and each vendor's invoices (`ap_coder/core/store/vendors.py:_keep_vendor_rows`, a cache of its
+  own: the vendors asked most recently, at most 20,000 rows and 4,096 vendors, about 20 MB; stamped by `summary_id` and
+  `changes/vendor/<key>`). The page pictures are not kept in a server worker's memory: they are drawn once into the
+  data folder's `.cache/pages/` (`ap_coder/web/document.py:_kept_png`), shared by all the workers.
 
 ## 9. The data folder and everything AP Coder writes
 

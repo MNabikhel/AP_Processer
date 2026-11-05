@@ -1,6 +1,7 @@
 """Vendors: every supplier seen on an invoice, its spend and AI accuracy, and AP's controls.
 
-* ``GET /vendors?view=all|hold|new&q=&sort=``: the list; ``&open=<vendor key>`` opens one vendor under it: GL accounts
+* ``GET /vendors?view=all|hold|new&q=&sort=&shown=``: the list, ``VENDORS_SHOWN`` at a time ("Show more", D-162);
+  ``&open=<vendor key>`` opens one vendor under it (any vendor, the list keeping its length): GL accounts
   used, GST/HST numbers and bank accounts its invoices carried (the history, masked), recent invoices, the terms and
   ERP ID from the vendor master, the controls (hold, expected GST/HST number, notes) and the emails asking the vendor
   for what its invoices in the queue are missing (``&lang=``).
@@ -47,6 +48,7 @@ from ap_coder.web.core import (
     refuse,
     render,
     reviewer,
+    shown_count,
 )
 from ap_coder.web.files import (
     NO_ROWS,
@@ -71,6 +73,7 @@ SORTS = {
     "name": "Name A–Z",
 }
 VIEWS = {"all": "All", "hold": "On hold", "new": "New"}
+VENDORS_SHOWN = 200  # the vendors listed at first, and how many more each time ("Show more")
 MASTER_LABELS = {
     "vendor_name": "Vendor name",
     "erp_id": "Vendor ID",
@@ -213,9 +216,11 @@ def vendors_page(
     sheet: str = "",
     lang: str = "",
     setup: str = "",
+    rows: str = Query("", alias="shown"),
 ) -> HTMLResponse:
     store = get_store(request)
     view = view if view in VIEWS else "all"
+    count = shown_count(rows, VENDORS_SHOWN)
     sort = sort if sort in SORTS else "spend"
     vendors = store.vendor_summaries()
     month_ago = (dt.datetime.now() - dt.timedelta(days=30)).isoformat()
@@ -259,14 +264,18 @@ def vendors_page(
 
     chosen_vendor = next((v for v in vendors if v["vendor_key"] == opened), None) if opened else None
     found, late = recurring_rows(store) if vendors else ([], [])
-    keep = {"view": view, "q": q, "sort": sort}
+    keep = {"view": view, "q": q, "sort": sort, **({"shown": count} if count > VENDORS_SHOWN else {})}
     return render(
         request,
         "vendors.html",
         "vendors",
         vendors=vendors,
         tiles=tiles,
-        shown=shown,
+        shown=shown[:count],
+        shown_total=len(shown),
+        rows=count,
+        step=VENDORS_SHOWN,
+        more_query=urlencode({**keep, "shown": count + VENDORS_SHOWN}),
         view=view,
         views=VIEWS,
         q=q,

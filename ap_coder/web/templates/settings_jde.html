@@ -19,7 +19,7 @@
   </div>
   <div class="row">
     <a class="btn" href="/settings/jde/worksheet.xlsx"><span class="ms" aria-hidden="true">download</span>Download the worksheet</a>
-    <form method="post" action="/settings/jde/worksheet" enctype="multipart/form-data" class="row" data-busy="Importing…">
+    <form method="post" action="/settings/jde/worksheet" enctype="multipart/form-data" class="row" data-busy="Importing…" data-long>
       <input type="file" name="file" accept=".xlsx" required aria-label="The JDE team's worksheet">
       <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">upload_file</span>Import the JDE team's answers</button>
     </form>
@@ -201,7 +201,7 @@
       <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save the mapping</button>
     </div>
   </form>
-  <form method="post" action="/settings/jde/gl-map/import" enctype="multipart/form-data" class="row st-end st-sep" data-busy="Importing…">
+  <form method="post" action="/settings/jde/gl-map/import" enctype="multipart/form-data" class="row st-end st-sep" data-busy="Importing…" data-long>
     <label class="field st-grow">Import a mapping (CSV or Excel: GL code, Cost center, BU, Object, Subsidiary)
       <input type="file" name="file" accept=".csv,.xlsx,.xls" required></label>
     <label class="check"><input type="checkbox" name="replace" value="1"> Replace the current mapping</label>

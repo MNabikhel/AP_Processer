@@ -33,7 +33,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
 
-from ._base import APPROVED, FAILED, PENDING, REJECTED, REVIEW, _in_list
+from ._base import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, _in_list
 
 # What the summary works out, by version: a change to it (a new column, a report's facts read differently, the
 # vendor-matching or invoice-number rules) changes this, and every database builds its summary again once.
@@ -300,9 +300,24 @@ TOPICS: dict[str, Callable[[dict[str, Any] | None], Any]] = {
         if r and r["status"] not in (FAILED, REJECTED)
         else None
     ),
+    # What the review queue reads of an invoice in review (``bulk.queue_checks``, D-159); one the summary could not
+    # work out is read again from the invoice, so each change to it counts (a key equal to none).
+    "queue": lambda r: (
+        (object() if r["broken"] & BIT["queue"] else tuple(r[c] for c in QUEUE_READ))
+        if r and r["status"] == REVIEW
+        else None
+    ),
+    # The queue's lists as ``Store.list_invoices`` lists them, their confidence included (D-159).
+    "listed": lambda r: tuple(r[c] for c in LISTED_COLUMNS) if r and r["status"] in QUEUES else None,
 }
-_TOPIC_COLUMNS = ("id", "status", "vendor_key", "vendor_name", "invoice_date", "grand_total", "currency",
-                  "export_batch", "w_key", "w_name", "w_codes", "w_corrected")  # fmt: skip
+QUEUE_READ = ("broken", "q_audit", "q_stamp", "q_found", "r_stamp", "r_found", "q_pick", "q_pick_cc", "q_pay")
+QUEUES = (REVIEW, PARKED, PENDING)  # the lists the ``listed`` topic covers
+LISTED_COLUMNS = ("id", "file_name", "status", "vendor_name", "invoice_number", "invoice_date", "due_date", "currency",
+                  "grand_total", "model_confidence", "adjusted_confidence", "requires_review", "error", "created_at",
+                  "reviewed_at", "reviewer", "second_reviewer")  # fmt: skip
+_TOPIC_COLUMNS = tuple(dict.fromkeys(("id", "status", "vendor_key", "vendor_name", "invoice_date", "grand_total",
+                                      "currency", "export_batch", "w_key", "w_name", "w_codes", "w_corrected",
+                                      *QUEUE_READ, *LISTED_COLUMNS)))  # fmt: skip
 _MEMO: dict[tuple[str, str], tuple[Any, Any]] = {}  # ``summary_memo``: (database, name) -> (stamp, value)
 _MEMO_LOCK = threading.Lock()
 _COMPUTING: dict[tuple[str, str], threading.Lock] = {}  # one ``summary_memo`` worked out at a time, by name

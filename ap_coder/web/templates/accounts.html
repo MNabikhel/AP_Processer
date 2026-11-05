@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% from "_sheet.html" import upload_form, preview, columns %}
 {% from "_tiles.html" import tile_row %}
-{% block head %}<link rel="stylesheet" href="/static/data.css?v={{ static_version }}">{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url('/static/data.css') }}">{% endblock %}
 {% block content %}
 {# server mode: the account lists and the tax setup are changed by an Admin; others see them read-only (D-98) #}
 {% set edit = can("/accounts/gl_accounts/save") %}
@@ -43,7 +43,7 @@
     {% if a.imp_error %}<div class="flash err"><span class="ms" aria-hidden="true">error</span><div>{{ a.imp_error }}</div></div>{% endif %}
     {% if a.imp %}
     {{ preview(a.imp, "/accounts", {"tab": tab, "file": a.imp.token}) }}
-    <form method="post" action="/accounts/{{ a.table }}/import" class="stack" data-busy="Importing…">
+    <form method="post" action="/accounts/{{ a.table }}/import" class="stack" data-busy="Importing…" data-long>
       {{ columns(a.imp) }}
       <label class="check"><input type="checkbox" name="replace" value="1"> Replace my current list (otherwise new codes are added and existing ones updated)</label>
       <div class="row">
@@ -211,7 +211,7 @@
     {% if b.imp_error %}<div class="flash err"><span class="ms" aria-hidden="true">error</span><div>{{ b.imp_error }}</div></div>{% endif %}
     {% if b.imp %}
     {{ preview(b.imp, "/accounts", {"tab": "bank", "file": b.imp.token}) }}
-    <form method="post" action="/accounts/bank/import" class="stack" data-busy="Importing…">
+    <form method="post" action="/accounts/bank/import" class="stack" data-busy="Importing…" data-long>
       {{ columns(b.imp) }}
       <p class="muted small">Accounts are matched by their code: a code already here is updated, a new one is added. A
         column left at (none) keeps what each account has.</p>
@@ -296,4 +296,4 @@
   </select>{% else %}<input type="hidden" name="cost_center" value="{{ r.cost_center if r else '' }}"><span class="muted">—</span>{% endif %}</td>
 </tr>
 {% endmacro %}
-{% block scripts %}<script type="module" src="/static/js/accounts.js?v={{ static_version }}"></script>{% endblock %}
+{% block scripts %}<script type="module" src="{{ static_url('/static/js/accounts.js') }}"></script>{% endblock %}
