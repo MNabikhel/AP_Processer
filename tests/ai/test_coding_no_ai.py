@@ -341,6 +341,42 @@ def test_a_vendors_older_lessons_extend_the_shared_index_to_what_building_it_who
     assert hose.gl_code == "6230" and hose.unconfirmed  # the reversal of the decisions only the past lessons hold
 
 
+def test_once_the_lessons_change_the_vendors_memories_extended_from_the_older_ones_are_let_go(tmp_path, monkeypatch):
+    """Each memory extended from the shared rows keeps all of their memory (its patterns, its index): 61.6 MB at
+    50,000 lessons. A vendor asked after each approval (new shared rows) kept one whole memory of each generation of
+    the lessons, up to ``PAST_KEPT`` (681 MB for 32), until that same vendor was asked again. A memory extended from
+    the current shared rows lets go of those extended from others."""
+    from ap_coder.core.memory import WithPast
+    from ap_coder.core.store import learning
+
+    monkeypatch.setattr(learning, "FEEDBACK_READ", 20)
+    monkeypatch.setattr(suggest, "_MEMORY", suggest.RowsCache())
+    monkeypatch.setattr(suggest, "_PAST", {})
+    store = Store(tmp_path / "ap.db")
+    vendors = ["Acme Supply", "Beta Ltd", "Gamma Inc."]
+    store.import_history([{"vendor_name": vendors[n % 3], "description": f"Part {n}", "gl_code": "6000", "amount": 1.0,
+                           "date": f"2025-01-{n % 28 + 1:02d}"} for n in range(60)])  # fmt: skip
+    valid = frozenset({"6000", "6100"})
+
+    def asked(vendor: str) -> None:
+        rows = store.learning_rows(vendor)
+        assert isinstance(rows, WithPast) and rows.past and rows.shared is store.feedback_rows(), vendor
+        suggest._memory(rows, valid)
+
+    asked(vendors[0])
+    asked(vendors[1])
+    assert len(suggest._PAST) == 2
+    with sqlite3.connect(store.path) as conn:  # an approval: new shared rows
+        conn.execute("INSERT INTO feedback (vendor_key, vendor_name, description, final_gl, outcome, created_at) "
+                     "VALUES (?, 'Gamma Inc.', 'Freight', '6100', 'accepted', '2026-01-05')",
+                     (vendor_key(vendors[2]),))  # fmt: skip
+    asked(vendors[2])
+    shared = store.feedback_rows()
+    assert [key[1] for key in suggest._PAST] == [vendor_key(vendors[2])]
+    asked(vendors[0])  # extended again from the new ones
+    assert len(suggest._PAST) == 2 and all(kept[0] is shared for kept in suggest._PAST.values())
+
+
 def test_aggregate_and_tokens_cache_without_sharing_mutable_results():
     rows = _history(("Acme", "5000", "Nitrile gloves"), ("Acme", "5000", "nitrile gloves"))
     assert aggregate(rows) is aggregate(rows) and aggregate(rows)[0].decisions == 2

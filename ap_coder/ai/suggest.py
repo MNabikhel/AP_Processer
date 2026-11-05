@@ -157,19 +157,18 @@ def _with_past(feedback: WithPast, valid: frozenset[str]) -> _Memory:
     older lessons (``_extended``): what building it of all the rows gives, in milliseconds. Kept for ``PAST_KEPT``
     vendors and ``PAST_ROWS_KEPT`` of their lessons, the latest used always (D-159), while the same lists come (the
     store's, kept while its stamps hold). Once the shared rows are others (the lessons changed), the vendors' memories
-    extended from the older ones are let go."""
+    extended from the older ones are let go: each holds all of its shared rows' memory (B-1719)."""
     shared, past = feedback.shared, feedback.past
     with _PAST_LOCK:
         hit = _PAST.pop(feedback.key, None)
         if hit is not None and hit[0] is shared and hit[2] is past and hit[1] == valid:
             _PAST[feedback.key] = hit
             return hit[3]
-        if hit is not None and hit[0] is not shared:
-            for key in [k for k, kept in _PAST.items() if kept[0] is hit[0]]:
-                del _PAST[key]
     base = _MEMORY.get(shared, valid, lambda: _build_memory(shared, valid))
     memory = _extended(base, shared, past, valid)
     with _PAST_LOCK:
+        for key in [k for k, kept in _PAST.items() if kept[0] is not shared]:
+            del _PAST[key]
         _PAST.pop(feedback.key, None)
         _PAST[feedback.key] = (shared, valid, past, memory)
         while len(_PAST) > 1 and (len(_PAST) > PAST_KEPT
