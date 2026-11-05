@@ -399,3 +399,39 @@ def test_the_duplicate_audits_pairs_follow_the_invoices_and_the_erp_register(tmp
     assert [p[0] for p in pairs()] == [dupaudit.EXACT, dupaudit.EXACT]  # (and the ERP's twice)
     _plain(store, "DELETE FROM erp_invoices")
     assert pairs() == []
+
+
+def test_spends_figures_and_currencies_follow_the_approved_invoices_and_what_is_asked(tmp_path, ground_truth):
+    """The Spend page's figures and currencies, kept on the summary's generation, per period, currency, GL categories
+    and rates (copies: the caller's own changed after is another question)."""
+    from ap_coder.erp import spend
+
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    start, end = dt.date(2000, 1, 1), dt.date(2099, 12, 31)
+    cad, usd = (_invoice(other, tmp_path, ground_truth, name) for name in ("S-1", "S-2"))
+    other.approve_invoice(cad, {**ground_truth, "invoice_number": "S-1", "currency": "CAD"}, "Jordan Lee")
+
+    def seen(currency: str = "CAD", category: dict | None = None, rates: dict | None = None, first=start) -> tuple:
+        category = {} if category is None else category
+        found = spend.figures(store, first, end, currency, category, rates)
+        assert found == spend.read_figures(store, first, end, currency, category, rates)
+        shown = spend.spend_currencies(store, first, end)
+        assert shown == spend._spend_currencies(store, first, end)
+        return found["invoices"], found["total"], sorted({m["category"] for m in found["by_month"]}), shown
+
+    invoices, total, categories, shown = seen()
+    assert invoices == 1 and total > 0 and categories == ["Uncategorised"] and shown == ["CAD"]
+    assert seen("USD")[:2] == (0, 0.0)
+    other.approve_invoice(usd, {**ground_truth, "invoice_number": "S-2", "currency": "USD"}, "Jordan Lee")
+    assert seen("USD") == (1, total, ["Uncategorised"], ["CAD", "USD"])
+    assert seen(first=end) == (0, 0.0, [], [])
+    rates = {"CAD": 1.0, "USD": 1.5}
+    assert seen(rates=rates)[:2] == (2, round(total * 2.5, 2))
+    rates["USD"] = 2.0
+    assert seen(rates=rates)[:2] == (2, round(total * 3, 2))
+    _plain(store, "UPDATE invoices SET status = 'review' WHERE id = ?", usd)
+    assert seen(rates=rates) == (1, total, ["Uncategorised"], ["CAD"])
+    category = {gl: "Office" for gl, _, _ in spend.read_figures(store, start, end, "CAD", {})["by"]["gl_code"]}
+    assert seen(category=category)[2] == ["Office"]
+    category.update((gl, "Travel") for gl in list(category))
+    assert seen(category=category)[2] == ["Travel"]

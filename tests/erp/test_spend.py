@@ -63,9 +63,9 @@ def test_the_spend_figures_are_read_from_one_state_of_the_database(tmp_path, dem
             other.join()
         return rows
 
-    before = spend.figures(store, *YEAR, "CAD", {})
+    before = spend.read_figures(store, *YEAR, "CAD", {})
     monkeypatch.setattr(store, "summary_fetch", approved_meanwhile)
-    found = spend.figures(store, *YEAR, "CAD", {})
+    found = spend.read_figures(store, *YEAR, "CAD", {})
     assert len(reads) >= 4 and store.get_invoice(waiting)["status"] == "approved"
     for key in ("gl_code", "cost_center"):
         assert round(sum(n for _, n, _ in found["by"][key]), 2) == found["total"], key
