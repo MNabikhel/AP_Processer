@@ -40,6 +40,7 @@ from ap_coder.web.core import (
     reference_or_none,
     refuse,
     render,
+    run_heavy,
 )
 from ap_coder.web.core import reviewer as current_reviewer
 from ap_coder.web.files import (
@@ -366,10 +367,10 @@ def api_context(store: Store, chosen: dict[str, Any] | None) -> dict[str, Any]:
 async def create_batch(request: Request) -> JSONResponse:
     """A new batch of the ticked invoices, in the chosen format (JD Edwards: only those that pass its checks)."""
     form = await posted_form(request)  # one field per invoice ticked
-    with get_store(request).session():  # nothing awaited inside: no other request runs on this thread meanwhile
-        return _create_batch(request, form)
+    return await run_heavy(request, _create_batch, request, form)  # on a thread: never the worker's loop (D-153)
 
 
+@one_connection
 def _create_batch(request: Request, form: Any) -> JSONResponse:
     store = get_store(request)
     fmt = str(form.get("fmt") or "")

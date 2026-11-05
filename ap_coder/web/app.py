@@ -372,7 +372,8 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
         wants_page = request.method == "GET" and "text/html" in request.headers.get("accept", "")
         if not wants_page:
             return JSONResponse({"ok": False, "error": str(exc.detail)}, status_code=exc.status_code)
-        return core.render(request, "error.html", "", status_code=exc.status_code, title="Not found",
+        title = "Busy" if exc.status_code == 503 else "Not found"  # (503: the long routes' lane, core.run_heavy)
+        return core.render(request, "error.html", "", status_code=exc.status_code, title=title,
                            code=exc.status_code, detail=str(exc.detail))  # fmt: skip
 
     @app.exception_handler(RequestValidationError)
