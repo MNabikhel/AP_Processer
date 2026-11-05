@@ -444,3 +444,26 @@ def test_quick_runs_the_small_sizes_and_a_size_given_still_wins(tmp_path):
     assert (config["vendors"], config["invoices"]) == (QUICK["coding"]["vendors"], QUICK["coding"]["invoices"])
     assert main(["coding", "--quick", "--vendors", "3", "--out", str(tmp_path / "b")]) == 0
     assert json.loads((tmp_path / "b" / "report.json").read_text(encoding="utf-8"))["config"]["vendors"] == 3
+
+
+def test_a_size_given_as_its_default_still_wins_over_quick(tmp_path, monkeypatch):
+    """B-1740: ``lines --quick --scanned 1`` read half its invoices as digital PDFs: 1 is the default share of scans,
+    so the quick size (0.5) replaced it as if it had not been given."""
+    from ap_coder.bench import lines
+    from ap_coder.bench.__main__ import QUICK, main
+
+    asked = []
+
+    def run_lines(suppliers, invoices, seed, scanned, out, workers, no_memory):
+        asked.append((suppliers, invoices, scanned))
+        return {"summary": {"lines": 0, "descriptions_right": 1, "corrected_before_right": 1, "corrected_before": 0,
+                            "known_items_gl_right": 1}}  # fmt: skip
+
+    monkeypatch.setattr(lines, "run_lines", run_lines)
+    quick = QUICK["lines"]
+    assert main(["lines", "--quick", "--scanned", "1", "--out", str(tmp_path)]) == 0
+    assert main(["lines", "--quick", "--scanned=1.0", "--out", str(tmp_path)]) == 0
+    assert main(["lines", "--quick", "--out", str(tmp_path)]) == 0
+    assert asked == [(quick["suppliers"], quick["invoices"], 1.0)] * 2 + [
+        (quick["suppliers"], quick["invoices"], quick["scanned"])
+    ]
