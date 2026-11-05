@@ -45,14 +45,14 @@ _REFERENCE_STAMP = """SELECT
      FROM (SELECT * FROM settings WHERE key IN ('our_province', 'site_provinces', 'policy_notes') ORDER BY key))"""
 
 # What the checks read besides the reference data, as the queue's re-check compares them (``Store.checks_stamp``,
-# B-815): JD Edwards' settings, whether it is in use (its switch, or a batch made), the days to pay, and the count of
-# changes to the vendor master and the POs (``masters_version``, B-842), and our bank accounts (the account an invoice
-# is paid from, D-66, B-958).
+# B-815): JD Edwards' settings, whether it is in use (its switch, or a batch made: whether there is one, not how many,
+# so an export changes no check, D-155), the days to pay, and the count of changes to the vendor master and the POs
+# (``masters_version``, B-842), and our bank accounts (the account an invoice is paid from, D-66, B-958).
 _CHECKS_STAMP = """SELECT
     (SELECT group_concat(key || '=' || value, char(10))
      FROM (SELECT * FROM settings WHERE key IN ('jde_e1', 'show_jde_settings', 'default_terms_days', 'masters_version')
            ORDER BY key)),
-    (SELECT COUNT(*) FROM export_batches WHERE format = 'jde'),
+    (SELECT EXISTS (SELECT 1 FROM export_batches WHERE format = 'jde')),
     (SELECT group_concat(code || '|' || currency || '|' || gl_account || '|' || is_default || '|' || active, char(10))
      FROM (SELECT * FROM bank_accounts ORDER BY code))"""
 
@@ -123,8 +123,10 @@ class AccountsMixin:
     @staticmethod
     def _log(
         conn: sqlite3.Connection, action: str, invoice_id: int | None = None, actor: str | None = None,
-        detail: dict[str, Any] | None = None,
+        detail: dict[str, Any] | None = None, *, checked: bool = True,
     ) -> None:  # fmt: skip
+        """Record an event. ``checked``: False for a change to the vendor master that no check reads (a note,
+        ``save_vendor``): it leaves the checks stamp as it is (D-155)."""
         origin = EVENT_ORIGIN.get()
         actor = actor if actor else EVENT_ACTOR.get()  # the person signed in on the server (B-1106)
         if origin:
@@ -133,7 +135,7 @@ class AccountsMixin:
             "INSERT INTO events (invoice_id, action, actor, detail, created_at) VALUES (?, ?, ?, ?, ?)",
             (invoice_id, action, actor, json.dumps(detail or {}, default=str), _now()),
         )
-        if action in MASTERS_CHANGES:
+        if action in MASTERS_CHANGES and checked:
             count_masters_change(conn)
 
     def log_event(
@@ -391,17 +393,21 @@ class AccountsMixin:
 
     def last_pay_from(self, key: str) -> str:
         """The bank account this vendor's last approved invoice was paid from ("" when none recorded)."""
-        if not key:
-            return ""
+        return self.last_pay_froms([key]).get(key, "") if key else ""
+
+    def last_pay_froms(self, keys: list[str]) -> dict[str, str]:
+        """``last_pay_from`` of each vendor key of ``keys`` that has one, in one query of the invoices' summary (its
+        approved coding's ``pay_from``): the review queue asks it of every vendor waiting (D-155)."""
         with self._conn() as conn:
-            row = conn.execute(
-                "SELECT json_extract(final_output, '$.pay_from_account') AS code FROM invoices WHERE vendor_key = ? "
-                "AND status IN ('approved', 'pending_approval') AND json_valid(final_output) "
-                "AND COALESCE(json_extract(final_output, '$.pay_from_account'), '') != '' "
-                "ORDER BY reviewed_at DESC, id DESC LIMIT 1",
-                (key,),
-            ).fetchone()
-        return str(row["code"]) if row else ""
+            self._summary_fresh(conn)
+            rows = conn.execute(
+                "SELECT vendor_key, code FROM (SELECT vendor_key, pay_from AS code, ROW_NUMBER() OVER (PARTITION BY "
+                "vendor_key ORDER BY reviewed_at DESC, id DESC) AS n FROM invoice_summary WHERE status IN ('approved', "
+                "'pending_approval') AND COALESCE(pay_from, '') != '' AND vendor_key IN (SELECT value FROM "
+                "json_each(?))) WHERE n = 1",
+                (json.dumps([k for k in keys if k]),),
+            ).fetchall()
+        return {r["vendor_key"]: str(r["code"]) for r in rows}
 
     # --- Tax setup and policy ---------------------------------------------------------------------
 

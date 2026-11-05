@@ -33,11 +33,11 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
 
-from ._base import APPROVED, FAILED, PENDING, REJECTED, _in_list
+from ._base import APPROVED, FAILED, PENDING, REJECTED, REVIEW, _in_list
 
 # What the summary works out, by version: a change to it (a new column, a report's facts read differently, the
 # vendor-matching or invoice-number rules) changes this, and every database builds its summary again once.
-SUMMARY_RULES = "1"
+SUMMARY_RULES = "2"  # 2: the review queue's facts (D-155)
 
 # The columns of ``invoices`` the summary keeps as they are, with their declared types (so they compare and sort as
 # the columns of ``invoices`` do).
@@ -70,6 +70,8 @@ DERIVED = (
     ("demo", "INTEGER NOT NULL DEFAULT 0", "COALESCE(meta LIKE '%\"demo\": true%', 0)"),
     ("gst_number", "", "CASE WHEN json_valid(final_output) THEN json_extract(final_output, "
                        "'$.gst_hst_registration_number') END"),
+    # the bank account it was paid from, as approved (``Store.last_pay_from``)
+    ("pay_from", "", "CASE WHEN json_valid(final_output) THEN json_extract(final_output, '$.pay_from_account') END"),
     ("po_number", "TEXT", "NULLIF(TRIM(CAST(json_extract(doc, '$.po_number') AS TEXT)), '')"),
     ("subtotal", "REAL", "CAST(json_extract(doc, '$.subtotal') AS REAL)"),
     ("tax_total", "REAL", "CAST(json_extract(doc, '$.tax_total') AS REAL)"),
@@ -105,9 +107,17 @@ COMPUTED = (
     ("w_key", "TEXT"),
     ("w_codes", "TEXT NOT NULL DEFAULT '[]'"),
     ("w_corrected", "INTEGER"),
-    # The review queue's bulk approval (``bulk.queue_facts``)
+    # The review queue (``bulk.queue_facts``): picked for the audit sample; of an invoice in review, the stamps of its
+    # stored checks and of its queue re-check and their findings (severity and code, JSON), what its lines still need
+    # (without and with cost centers) and what its Pay from account is chosen from (JSON)
     ("q_audit", "INTEGER"),
-    ("q_person", "INTEGER"),
+    ("q_stamp", "TEXT"),
+    ("q_found", "TEXT"),
+    ("r_stamp", "TEXT"),
+    ("r_found", "TEXT"),
+    ("q_pick", "TEXT"),
+    ("q_pick_cc", "TEXT"),
+    ("q_pay", "TEXT"),
     # Sales tax (``taxreturn.tax_facts``, ``self_assessment_facts``), JSON
     ("t_facts", "TEXT"),
     ("s_facts", "TEXT"),
@@ -608,6 +618,17 @@ class SummaryMixin:
             else:
                 rows = conn.execute(f"SELECT id FROM invoice_summary WHERE instr({column}, ?) > 0", (text,))
             return {r[0] for r in rows}
+
+    def stale_checks(self, stamp: str, ids: list[int] | None = None) -> list[int]:
+        """The invoices in review (only ``ids``' when given) whose stored checks and queue re-check were both made
+        against other settings than ``stamp`` (``Store.checks_stamp``), in the queue's order: what
+        ``coding.bulk.recheck_queue`` checks again. From the invoices' summary."""
+        where, params = "status = ? AND q_stamp != ? AND r_stamp != ?", [REVIEW, stamp, stamp]
+        if ids is not None:
+            where += f" AND {_in_list('id')}"
+            params.append(json.dumps([int(i) for i in ids]))
+        rows = self.summary_rows(where, params, "id", "requires_review DESC, adjusted_confidence ASC, id ASC")
+        return [r["id"] for r in rows]
 
     def summary_fetch(self, sql: str, params: tuple[Any, ...] | list[Any] = ()) -> list[dict[str, Any]]:
         """Any query of the summary's tables (fresh), its rows as dicts read in one go (``fetch_rows``)."""

@@ -105,6 +105,33 @@ class EphemeralMixin:
                                 "expires_at >= ?", (name, time.time())).fetchall()  # fmt: skip
         return sum(int(bytes(r["value"]) or b"0") for r in rows)
 
+    # --- A lease: one process at a time does a piece of work, across the server's processes (D-155) -----------------
+    # One row "lease" under the work's name, its owner as value, gone after ``seconds`` without renewal (that process
+    # stopped).
+
+    def take_lease(self, name: str, owner: str, seconds: float) -> bool:
+        """Hold lease ``name`` for ``owner`` (again, if it is already its own) for ``seconds``; False while another
+        owner holds it."""
+        now = time.time()
+        with self._conn() as conn:
+            conn.execute("DELETE FROM ephemeral WHERE kind = 'lease' AND token = ? AND (expires_at < ? OR value = ?)",
+                         (name, now, owner.encode()))  # fmt: skip
+            done = conn.execute("INSERT OR IGNORE INTO ephemeral (kind, token, value, created_at, expires_at) VALUES "
+                                "('lease', ?, ?, ?, ?)", (name, owner.encode(), now, now + seconds))  # fmt: skip
+            return done.rowcount == 1
+
+    def renew_lease(self, name: str, owner: str, seconds: float) -> bool:
+        """``seconds`` more of lease ``name``; False when ``owner`` no longer holds it."""
+        with self._conn() as conn:
+            done = conn.execute("UPDATE ephemeral SET expires_at = ? WHERE kind = 'lease' AND token = ? AND value = ?",
+                                (time.time() + seconds, name, owner.encode()))  # fmt: skip
+            return done.rowcount == 1
+
+    def drop_lease(self, name: str, owner: str) -> None:
+        with self._conn() as conn:
+            conn.execute("DELETE FROM ephemeral WHERE kind = 'lease' AND token = ? AND value = ?",
+                         (name, owner.encode()))  # fmt: skip
+
     # --- What each account uploaded in the last hour, on the server (D-109, kept here since D-111) -------------------
 
     def take_upload_allowance(self, account: str, size: int, window: float, most: int, most_bytes: int) -> bool:

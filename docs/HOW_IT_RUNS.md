@@ -361,8 +361,11 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   Python, `worker_app` builds the app from `AP_SERVE_WORKER`, the port handed over), and starts again a worker that
   stops. Beside them one **background process** (`serve --background-work`, `server.run_background`, started again
   when it stops, 5 s doubling to a minute) does what the laptop's dashboard does in its own process: the page
-  reader and the AI reviewer, the Azure check, JD Edwards, the daily backup and the finance hub's schedule (each
-  minute instead of at each page), holding `<data>/.ap_coder_background.lock` (one per data folder). It stops when
+  reader and the AI reviewer, the Azure check, JD Edwards, the review queue checked again after a change of settings
+  (`bulk.QueueRecheck`, D-155: in batches of 50 kept in one short write each, one process at a time by the
+  `ephemeral` row `lease` "queue-recheck"; the queue page shows the earlier checks meanwhile and says so), the daily
+  backup and the finance hub's schedule (each minute instead of at each page), holding
+  `<data>/.ap_coder_background.lock` (one per data folder). It stops when
   its input closes (the server stopping or ending). The workers share what they know through the database: jobs
   and their progress (`ephemeral` rows `job-running:<process>`, renewed each second), the queued imports' count, the
   hourly upload allowance, a temporary password on its way to its page (sealed with the key the workers hold in

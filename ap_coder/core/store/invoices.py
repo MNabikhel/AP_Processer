@@ -592,18 +592,14 @@ class InvoicesMixin:
             )
         return {int(r["id"]): (str(r["a"] or ""), str(r["b"] or "")) for r in rows}
 
-    def save_recheck(self, invoice_id: int, stamp: str, issues: list[dict[str, Any]], seen: str | None) -> bool:
-        """Keep the queue's re-check of an invoice in review (``coding.bulk.issues_today``) with its stored checks,
-        beside them (``recheck``: the stamp and the findings): they stay as they were found. Only while the stored
-        checks are still ``seen`` (their text as read): True when kept."""
-        recheck = json.dumps({"stamp": stamp, "issues": issues}, default=str)
+    def save_rechecks(self, found: list[tuple[int, str, list[dict[str, Any]] | None, str | None]]) -> int:
+        """Keep the queue's re-checks (``coding.bulk.recheck_queue``), each (invoice id, stamp, findings: None when its
+        coding can't be read, its stored checks as read), beside the stored checks (``recheck``): they stay as they
+        were found. In one write; each only while its invoice is in review with its stored checks as read. How many."""
+        rows = [(json.dumps({"stamp": s, "issues": f}, default=str), int(i), REVIEW, seen) for i, s, f, seen in found]
         with self._conn() as conn:
-            cur = conn.execute(
-                "UPDATE invoices SET validation = json_set(validation, '$.recheck', json(?)) "
-                "WHERE id = ? AND status = ? AND validation = ?",
-                (recheck, int(invoice_id), REVIEW, seen),
-            )
-        return cur.rowcount > 0
+            return conn.executemany("UPDATE invoices SET validation = json_set(validation, '$.recheck', json(?)) "
+                                    "WHERE id = ? AND status = ? AND validation = ?", rows).rowcount  # fmt: skip
 
     def invoice_columns(
         self, columns: tuple[str, ...], status: str | None = None, ids: list[int] | None = None, decode: bool = True

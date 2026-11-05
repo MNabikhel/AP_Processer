@@ -547,21 +547,24 @@ def test_in_a_browser_a_number_read_and_cleared_is_not_filled_from_the_vendor_li
 
 def test_the_queue_does_not_decode_every_invoice_again_for_pay_from(store, monkeypatch):
     """B-690: since B-685 the queue decoded every waiting invoice's coding on each load once bank accounts existed
-    (0.17 s instead of 0.05 s at 5,000 invoices). The answer is remembered until the invoice, the bank accounts or the
-    approvals change."""
+    (0.17 s instead of 0.05 s at 5,000 invoices). What the answer needs of each invoice is worked out in the invoices'
+    summary when it changes (D-155): a load reads no invoice's coding, and follows the bank accounts."""
     from ap_coder.web.pages import review
 
     rows, _ = banks.clean_rows([{"code": "USD-OP", "name": "US", "currency": "USD", "is_default": "yes"}])
     store.save_bank_accounts(rows)
     pending = store.list_invoices(REVIEW)
     # The queue's checks, given: the bank accounts are in the checks stamp (B-958), so they are done again apart.
-    today = review.issues_today(store, [i["id"] for i in pending])
-    first = review.attention(store, None, pending, today=today)
-    calls = []
-    real = review.json.loads
-    monkeypatch.setattr(review.json, "loads", lambda *a, **k: calls.append(1) or real(*a, **k))
-    assert review.attention(store, None, pending, today=today) == first and calls == []
-    rows, _ = banks.clean_rows([{"code": "CAD-OP", "name": "Operating", "currency": "CAD", "is_default": "yes"}])
-    store.save_bank_accounts(rows)  # the bank accounts changed: asked again
-    again = review.attention(store, None, pending, today=today)
-    assert calls and again != first
+    checks = review.queue_checks(store, [i["id"] for i in pending])[0]
+    first = review.attention(store, None, pending, checks=checks)
+
+    def no_reading(*_a, **_k):
+        raise AssertionError("read the invoice again")
+
+    with monkeypatch.context() as m:
+        for name in ("invoice_columns", "get_invoice", "get_invoices"):
+            m.setattr(store, name, no_reading)
+        assert review.attention(store, None, pending, checks=checks) == first
+        rows, _ = banks.clean_rows([{"code": "CAD-OP", "name": "Operating", "currency": "CAD", "is_default": "yes"}])
+        store.save_bank_accounts(rows)  # the bank accounts changed: asked again
+        assert review.attention(store, None, pending, checks=checks) != first
