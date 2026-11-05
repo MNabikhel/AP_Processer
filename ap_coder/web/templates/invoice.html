@@ -284,6 +284,7 @@
          rate, against what the invoice charges; then the subtotal and the total. Drawn again after each edit. #}
       <div class="inv-taxcheck-wrap" data-live="taxcheck" aria-live="polite">{{ live_ui.taxcheck(live, inv.id) }}</div>
       <script type="application/json" id="tax-code-labels">{{ grid.tax_code_labels | tojson }}</script>
+      <script type="application/json" id="tax-marks">{{ grid.tax_marks | tojson }}</script>
       <div data-live="reasons">{{ live_ui.reasons(live, inv.id) }}</div>
     </section>
 

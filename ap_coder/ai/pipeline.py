@@ -37,7 +37,7 @@ from ..coding.terms import payment_findings
 from ..coding.validation import WARNING, Issue, ValidationReport, validate_coding
 from ..coding.vendors import vendor_findings
 from ..core.config import Settings
-from ..core.memory import compare_with_history, format_examples, select_examples, vendor_key
+from ..core.memory import compare_patterns, compare_with_history, format_examples, select_examples, vendor_key
 from ..core.reference_data import ReferenceData
 from ..core.schema import InvoiceCoding
 from . import azure_check, verifier
@@ -163,9 +163,11 @@ def finalise_coding(
     """
     # the vendor's key: of two vendors whose names read alike, the one with this GST/HST number (B-1021)
     key = store.vendor_key_for(coding.vendor_name, coding.gst_hst_registration_number) if store is not None else None
-    if feedback is None and store is not None:
-        feedback = store.feedback_rows(vendor_name=coding.vendor_name, key=key)  # history check: this vendor only
-    history = compare_with_history(coding, feedback, key) if feedback else None
+    if feedback is None and store is not None:  # the history check: this vendor's lessons only
+        patterns = store.vendor_lessons(coding.vendor_name, key).patterns
+        history = compare_patterns(coding, patterns) if patterns else None
+    else:
+        history = compare_with_history(coding, feedback, key) if feedback else None
     duplicates = (
         store.find_duplicates(
             coding.vendor_name,

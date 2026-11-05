@@ -2,30 +2,118 @@
 
 from __future__ import annotations
 
+import bisect
 import json
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Any
 
-from ..memory import ACCEPTED, BULK, CODED, CORRECTED, vendor_key
+from ..memory import ACCEPTED, BULK, CODED, CORRECTED, Pattern, _aggregate, vendor_key
+from ..reference_data import UNASSIGNED
 from ._base import (
     _FEEDBACK,
     _FEEDBACK_LOCK,
     _METRICS,
+    _PAST_MEMORY,
+    _VENDOR_LESSONS,
     APPROVED,
     FEEDBACK_READ,
     _clean_code,
     _iso_week,
 )
-from .summary import fetch_rows
+from .summary import MEMO_WAIT, fetch_rows
+
+# A lesson as the stamp names it (``_feedback_stamp``): the newest one's, and the one kept as the newest before.
+_LESSON_TEXT = ("created_at || '|' || COALESCE(vendor_key, '') || '|' || COALESCE(description, '') || '|' || "
+                "COALESCE(final_gl, '')")  # fmt: skip
+# The learning memory's order: reviewer decisions first, then imported history, each newest first (a big history import
+# never pushes the decisions out).
+_ORDER = " ORDER BY outcome = 'history', id DESC"
+_READING: dict[tuple[Any, ...], threading.Lock] = {}  # one read of a database's whole memory at a time
+_VENDOR_READING = [threading.Lock() for _ in range(64)]  # one read of a vendor's lessons at a time (by its key's hash)
+VENDOR_LESSONS_KEPT = 32  # vendors whose lessons are kept worked out in each process (``vendor_lessons``)
+# What ``vendor_lessons`` reads of each lesson: what ``memory.aggregate``, the accounts and the cost centers need.
+_VENDOR_COLUMNS = "vendor_key, vendor_name, description, final_gl, final_cc, outcome, suggested_gl, created_at"
+_DECIDED = (ACCEPTED, CORRECTED, CODED, BULK, "history")  # what a person decided (or the ERP's history)
+
+
+@dataclass(frozen=True)
+class VendorLessons:
+    """What one vendor's lessons say (``Store.vendor_lessons``), worked out once from them. Shared: read it, don't
+    change it."""
+
+    patterns: list[Pattern]  # ``memory.aggregate`` of them: what the history check reads (``compare_patterns``)
+    accounts: list[str]  # the GL accounts its lines were approved to, most used first (the newest first among equals)
+    cost_centers: frozenset[str]  # the cost centers its lines were approved with ("" for none)
+
+    @classmethod
+    def of(cls, rows: list[dict[str, Any]]) -> VendorLessons:
+        """From the vendor's lessons, newest first (``feedback_rows``' order). Only what a person decided (or the ERP's
+        history) counts for the accounts, never what the AI proposed; lines left without an account don't."""
+        counts: dict[str, int] = {}
+        for r in rows:
+            code = "" if r["final_gl"] is None else str(r["final_gl"])
+            if r["outcome"] in _DECIDED and code and code != UNASSIGNED:
+                counts[code] = counts.get(code, 0) + 1
+        return cls(patterns=_aggregate(rows), accounts=sorted(counts, key=lambda c: -counts[c]),  # sorted() is stable
+                   cost_centers=frozenset(r["final_cc"] or "" for r in rows))  # fmt: skip
+
+
+def _vendor_stamp(conn: Any, key: str) -> tuple[Any, ...]:
+    """``_feedback_stamp`` of one vendor's lessons (their count read from the vendor's index)."""
+    return tuple(conn.execute(
+        f"SELECT COUNT(*), MAX(id), (SELECT {_LESSON_TEXT} FROM feedback WHERE vendor_key = ?1 ORDER BY id DESC "
+        "LIMIT 1) FROM feedback WHERE vendor_key = ?1", (key,)
+    ).fetchone())  # fmt: skip
 
 
 def _feedback_stamp(conn: Any) -> tuple[Any, ...]:
-    """What tells whether the lessons kept are still the ones in the database (``feedback_rows``, ``metrics``): their
-    count as the summary keeps it (``feedback_counts``, D-110), not counted again each time."""
+    """What tells whether the lessons kept are still the ones in the database (``feedback_rows``, ``metrics``): the
+    highest id, their count as the summary keeps it (``feedback_counts``, D-110: not counted again each time) and the
+    newest lesson itself."""
     return tuple(conn.execute(
-        "SELECT (SELECT MAX(id) FROM feedback), (SELECT TOTAL(n) FROM feedback_counts), (SELECT created_at || '|' || "
-        "COALESCE(vendor_key, '') || '|' || COALESCE(description, '') || '|' || COALESCE(final_gl, '') FROM feedback "
-        "ORDER BY id DESC LIMIT 1)"
+        f"SELECT (SELECT MAX(id) FROM feedback), (SELECT TOTAL(n) FROM feedback_counts), (SELECT {_LESSON_TEXT} FROM "
+        "feedback ORDER BY id DESC LIMIT 1)"
     ).fetchone())  # fmt: skip
+
+
+@contextmanager
+def _one_snapshot(conn: Any) -> Iterator[None]:
+    """The reads inside see the database as it was at the first of them (one read transaction), so that a stamp and
+    the rows read with it agree; inside the caller's own transaction, they do already."""
+    if conn.in_transaction:
+        yield
+        return
+    conn.execute("BEGIN")
+    try:
+        yield
+    finally:
+        conn.commit()  # nothing written: it ends the read
+
+
+def _with_added(conn: Any, kept: tuple[tuple[Any, ...], list[dict[str, Any]]], stamp: tuple[Any, ...],
+                limit: int) -> list[dict[str, Any]] | None:  # fmt: skip
+    """The whole memory ``kept`` (its stamp, its rows) with the lessons added since put in their place: what reading
+    it all again gives, reading only those (``id >`` the newest kept). None when anything but adding happened since
+    (a lesson forgotten, a database restored), or when more were added than the memory holds: then it is read again.
+    Lessons are changed in place only by an upgrade, which drops what is kept (``_forget_learning``)."""
+    (last, count, newest), rows = kept
+    added_n = stamp[1] - count  # the count kept by the summary: lower than the rows added when any was removed
+    if last is None or stamp[0] is None or not 0 < added_n <= limit:
+        return None
+    still = conn.execute(f"SELECT {_LESSON_TEXT} FROM feedback WHERE id = ?", (last,)).fetchone()
+    if still is None or still[0] != newest:  # the newest kept is gone, or is another one (a database restored)
+        return None
+    added = fetch_rows(conn, "SELECT * FROM feedback WHERE id > ?" + _ORDER, (last,))
+    if len(added) != added_n:
+        return None
+    # Each new lesson has a higher id than every one kept: the new decisions go before the decisions kept, the new
+    # history before the history kept.
+    history = lambda r: r["outcome"] == "history"  # noqa: E731
+    new, old = bisect.bisect_left(added, True, key=history), bisect.bisect_left(rows, True, key=history)
+    return (added[:new] + rows[:old] + added[new:] + rows[old:])[:limit]
 
 
 class LearningMixin:
@@ -35,16 +123,15 @@ class LearningMixin:
         self, limit: int | None = None, vendor_name: str | None = None, key: str | None = None
     ) -> list[dict[str, Any]]:
         """Recorded reviewer decisions, newest first (only one vendor's when ``vendor_name`` is given), at most
-        ``limit`` (``FEEDBACK_READ``). Read once and kept until a lesson is added or removed: every invoice read asks
-        for them, and years of imported ERP history take a third of a second to load on a laptop. The list is
-        shared: read it, don't change it."""
+        ``limit`` (``FEEDBACK_READ``). Read once and kept: every invoice read asks for them, and years of imported ERP
+        history take a third of a second to load on a laptop. Once lessons were added only those are read, once one
+        was removed all again. The list is shared: read it, don't change it."""
         limit = FEEDBACK_READ if limit is None else limit
-        # Reviewer decisions first, then imported history: a big history import never pushes them out.
-        order = " ORDER BY outcome = 'history', id DESC LIMIT ?"
+        order = _ORDER + " LIMIT ?"
         if vendor_name is not None:
-            # One vendor's lessons are quick to read: read once a page (``_session_memo``: its checks, the review
-            # screen's accounts and cost centers all ask), not kept past it. ``key``: the vendor's own, of two whose
-            # names read alike (``vendor_key_for``, B-1021).
+            # One vendor's lessons: read once a page (``_session_memo``), not kept past it (what the review screen
+            # and the checks read of them is: ``vendor_lessons``). ``key``: the vendor's own, of two whose names read
+            # alike (``vendor_key_for``, B-1021).
             args = (key or vendor_key(vendor_name), limit)
 
             def read() -> list[dict[str, Any]]:
@@ -52,23 +139,78 @@ class LearningMixin:
                     return fetch_rows(conn, "SELECT * FROM feedback WHERE vendor_key = ?" + order, args)
 
             return self._session_memo(("feedback_rows", *args), read, shared=True)
+        # Lessons are only ever added or deleted, never changed (but by an upgrade, ``_forget_learning``): the highest
+        # id, the count and the newest lesson itself tell whether the ones kept are still the ones in the database.
+        # (The id alone is not enough: a database restored from a backup, or made again where one was deleted, gives
+        # its next lesson an id a lesson it no longer has once had.)
+        kept_key = (str(self.path.resolve()), limit, None, ())
         with self._conn() as conn:
-            # Lessons are only ever added or deleted, never changed: the highest id, the count and the newest lesson
-            # itself tell whether the ones kept are still the ones in the database. (The id alone is not enough: a
-            # database restored from a backup, or made again where one was deleted, gives its next lesson an id a
-            # lesson it no longer has once had.)
             stamp = _feedback_stamp(conn)
-            kept_key = (str(self.path.resolve()), limit, None, ())
-            with _FEEDBACK_LOCK:
-                kept = _FEEDBACK.get(kept_key)
+        with _FEEDBACK_LOCK:
+            kept = _FEEDBACK.get(kept_key)
+            reading = _READING.setdefault(kept_key, threading.Lock())
+        if kept is not None and kept[0] == stamp:
+            return kept[1]
+        # One page reads them, the others asking meanwhile wait for it (the whole memory is 50,000 lessons, 130 MB
+        # while read: not one copy per page at once after each approval); when lessons were only added since, only
+        # those are read.
+        got = reading.acquire(timeout=MEMO_WAIT)
+        try:
+            with self._conn() as conn, _one_snapshot(conn):
+                stamp = _feedback_stamp(conn)
+                with _FEEDBACK_LOCK:
+                    kept = _FEEDBACK.get(kept_key)
                 if kept is not None and kept[0] == stamp:
                     return kept[1]
-            rows = fetch_rows(conn, "SELECT * FROM feedback" + order, (limit,))
+                rows = _with_added(conn, kept, stamp, limit) if kept is not None else None
+                if rows is None:
+                    rows = fetch_rows(conn, "SELECT * FROM feedback" + order, (limit,))
+            with _FEEDBACK_LOCK:
+                _FEEDBACK[kept_key] = (stamp, rows)
+                while len(_FEEDBACK) > 8:
+                    _FEEDBACK.pop(next(iter(_FEEDBACK)))
+            return rows
+        finally:
+            if got:
+                reading.release()
+
+    def vendor_lessons(self, vendor_name: str, key: str | None = None) -> VendorLessons:
+        """What this vendor's lessons say (the ones ``feedback_rows(vendor_name=...)`` reads), kept in each process
+        until one of them is added or removed: the history check, the account picker's "Used for this vendor" and the
+        usual cost center ask on every review screen and every check of its edits, and the biggest vendor can have
+        50,000 (half a second and 120 MB to read). The latest ``VENDOR_LESSONS_KEPT`` vendors are kept; one page
+        works a vendor's out at a time. ``key``: the vendor's own, of two whose names read alike (B-1021)."""
+        key = key or vendor_key(vendor_name)
+        kept_key = (str(self.path.resolve()), key, FEEDBACK_READ)
+        with self._conn() as conn:
+            stamp = _vendor_stamp(conn, key)
         with _FEEDBACK_LOCK:
-            _FEEDBACK[kept_key] = (stamp, rows)
-            while len(_FEEDBACK) > 8:
-                _FEEDBACK.pop(next(iter(_FEEDBACK)))
-        return rows
+            kept = _VENDOR_LESSONS.pop(kept_key, None)
+            if kept is not None:
+                _VENDOR_LESSONS[kept_key] = kept  # the latest used, kept the longest
+        if kept is not None and kept[0] == stamp:
+            return kept[1]
+        reading = _VENDOR_READING[hash(kept_key) % len(_VENDOR_READING)]
+        got = reading.acquire(timeout=MEMO_WAIT)
+        try:
+            with self._conn() as conn, _one_snapshot(conn):
+                stamp = _vendor_stamp(conn, key)
+                with _FEEDBACK_LOCK:
+                    kept = _VENDOR_LESSONS.get(kept_key)
+                if kept is not None and kept[0] == stamp:
+                    return kept[1]
+                rows = fetch_rows(conn, f"SELECT {_VENDOR_COLUMNS} FROM feedback WHERE vendor_key = ?" + _ORDER +
+                                  " LIMIT ?", (key, FEEDBACK_READ)) if stamp[0] else []  # fmt: skip
+            found = VendorLessons.of(rows)
+            with _FEEDBACK_LOCK:
+                _VENDOR_LESSONS.pop(kept_key, None)
+                _VENDOR_LESSONS[kept_key] = (stamp, found)
+                while len(_VENDOR_LESSONS) > VENDOR_LESSONS_KEPT:
+                    _VENDOR_LESSONS.pop(next(iter(_VENDOR_LESSONS)))
+            return found
+        finally:
+            if got:
+                reading.release()
 
     def learning_rows(self, vendor_name: str | None, key: str | None = None) -> list[dict[str, Any]]:
         """``feedback_rows()`` with every lesson of this vendor in it: what an invoice from it is coded and checked
@@ -78,10 +220,34 @@ class LearningMixin:
         rows = self.feedback_rows()
         if not vendor_name or len(rows) < FEEDBACK_READ:
             return rows
-        key = key or vendor_key(vendor_name)
-        have = {r["id"] for r in rows if r["vendor_key"] == key}
-        missing = [r for r in self.feedback_rows(vendor_name=vendor_name, key=key) if r["id"] not in have]
+        missing = self._past_memory(key or vendor_key(vendor_name), rows[-1])
         return rows + missing if missing else rows
+
+    def _past_memory(self, key: str, last: dict[str, Any]) -> list[dict[str, Any]]:
+        """This vendor's lessons that the whole memory, whose last lesson is ``last``, does not hold (the ones after
+        it in its order, of the vendor's newest ``FEEDBACK_READ``), in that order. Read again only once one of the
+        vendor's lessons or the memory's last changed: the GL suggestions' index (``suggest._MEMORY``) knows the same
+        rows at once, where rows read again are told apart by what they say. The latest two vendors are kept, as that
+        index keeps two lists of rows."""
+        kept_key = (str(self.path.resolve()), key, FEEDBACK_READ)
+        history = last["outcome"] == "history"
+        with self._conn() as conn, _one_snapshot(conn):
+            stamp = (*_vendor_stamp(conn, key), last["id"], history)
+            with _FEEDBACK_LOCK:
+                kept = _PAST_MEMORY.get(kept_key)
+            if kept is not None and kept[0] == stamp:
+                return kept[1]
+            missing = fetch_rows(
+                conn, "SELECT * FROM (SELECT * FROM feedback WHERE vendor_key = ?" + _ORDER + " LIMIT ?) WHERE "
+                "(outcome = 'history') > ? OR ((outcome = 'history') = ? AND id < ?)" + _ORDER,
+                (key, FEEDBACK_READ, history, history, last["id"]),
+            )  # fmt: skip
+        with _FEEDBACK_LOCK:
+            _PAST_MEMORY.pop(kept_key, None)
+            _PAST_MEMORY[kept_key] = (stamp, missing)
+            while len(_PAST_MEMORY) > 2:
+                _PAST_MEMORY.pop(next(iter(_PAST_MEMORY)))
+        return missing
 
     def import_history(self, rows: list[dict[str, Any]], actor: str | None = None) -> dict[str, int]:
         """Past AP coding from the ERP (``history.rows_from_records``) into the learning memory, as history.

@@ -378,7 +378,11 @@ def compare_with_history(coding: Any, rows: list[dict[str, Any]], key: str | Non
     """Per line: does the prediction agree with an established pattern for this vendor? ``key``: the vendor's key
     (``Store.vendor_key_for``: the second of two vendors by one name has its own, B-1021), else the name's."""
     key = key or vendor_key(coding.vendor_name)
-    patterns = [p for p in aggregate(rows) if p.vendor_key == key]
+    return compare_patterns(coding, [p for p in aggregate(rows) if p.vendor_key == key])
+
+
+def compare_patterns(coding: Any, patterns: list[Pattern]) -> list[dict[str, Any]]:
+    """``compare_with_history`` on one vendor's patterns (``aggregate`` of its lessons: ``Store.vendor_lessons``)."""
     results = []
     for li in coding.line_items:
         line_tokens = tokens(li.description)

@@ -404,6 +404,9 @@ def open_folder_here(request: Request, folder: Path, what: str) -> JSONResponse:
     return message(f"Open this folder yourself: {folder}", "info")
 
 
+_UNASKED: Any = object()  # ``render`` without the readers' state: it asks for it
+
+
 def reading_status_or_none(settings: Settings, store: Store, *, use_cache: bool = True) -> Any:
     """``ap_coder.ai.reading.reading_status``, or None when it can't be worked out (never raises)."""
     try:
@@ -655,14 +658,16 @@ def account(request: Request) -> dict[str, Any] | None:
             "role_label": ROLE_LABELS.get(found.role, found.role)}  # fmt: skip
 
 
-def render(request: Request, template: str, page: str, status_code: int = 200, **context: Any) -> HTMLResponse:
+def render(request: Request, template: str, page: str, status_code: int = 200, *, reading_status: Any = _UNASKED,
+           **context: Any) -> HTMLResponse:  # fmt: skip
     """Draw ``template`` (which extends base.html) as page ``page`` (a key of ``pages.PAGES``): the rail, the
-    reviewer, the messages left by the last action and, on Process and Review, OvisOCR2's warning."""
+    reviewer, the messages left by the last action and, on Process and Review, OvisOCR2's warning
+    (``reading_status``: the readers' state when the page has it already, ``reading_status_or_none``)."""
     store, settings = get_store(request), get_settings(request)
     meta = BY_KEY.get(page)
     banner, banner_tone = "", "warn"
     if page in BANNER_PAGES:
-        status = reading_status_or_none(settings, store)
+        status = reading_status_or_none(settings, store) if reading_status is _UNASKED else reading_status
         banner = str(getattr(status, "banner", "") or "").strip()
         if getattr(status, "self_test", "") in ("pending", "running"):  # the first start's self-test: nothing wrong
             banner_tone = "info"

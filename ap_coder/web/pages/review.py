@@ -403,9 +403,10 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
             counts={"all": len(pending), "attention": len(flagged), "ready": len(pending) - len(flagged)},
             rows=queue_rows(store, shown[:limit], threshold, reasons),
             # the view, as this address has it, carried by each row's link: the invoice's count, Previous / Next and
-            # Queue button follow it (B-1592)
-            row_query="?" + view if (view := urlencode({k: request.query_params[k] for k in ("show", "q", "sort")
-                                                         if request.query_params.get(k)})) else "",
+            # Queue button follow it (B-1592), its rows too (Show more: the queue opens once coming back, B-1621)
+            row_query="?" + view if (view := urlencode({
+                k: request.query_params[k] for k in ("show", "q", "sort", "limit") if request.query_params.get(k)
+            })) else "",
             more=max(0, len(shown) - limit),
             next_limit=limit + QUEUE_PAGE,
             threshold=threshold,

@@ -72,14 +72,15 @@ from ap_coder.web.core import (
 from ap_coder.web.files import download
 from ap_coder.web.identity import shown_path
 from ap_coder.web.pages.activity import timeline_items
-from ap_coder.web.pages.review import attention, filter_queue, sort_queue
+from ap_coder.web.pages.review import attention, draft_reasons, filter_queue, sort_queue
 
 MAX_VENDOR_NAME = 120  # a vendor name typed in Add new vendor (B-1531)
 router = page_router()  # each plain handler: one connection a request
 
 VIEWER_HEIGHT = 760  # px; the page scrolls inside, never taller than the window
 PAGE_READER_POLL_SECONDS = 20  # while OvisOCR2 has the open invoice in its queue
-NAV_PARAMS = ("show", "q", "sort")  # the queue's view, carried along so Previous / Next follow it
+NAV_PARAMS = ("show", "q", "sort", "limit")  # the queue's view (its rows: Show more), carried along so Previous / Next
+# and the Queue button follow it
 
 
 # --- Drafts: edits not approved yet --------------------------------------------------------------------------------
@@ -271,12 +272,15 @@ def _with_query(path: str, query: dict[str, str]) -> str:
     return path + (f"?{urlencode(query)}" if query else "")
 
 
-def navigation(store: Store, invoice_id: int, query: dict[str, str]) -> dict[str, Any]:
+def navigation(store: Store, invoice_id: int, query: dict[str, str], request: Request | None = None) -> dict[str, Any]:
     """The invoices Previous / Next step through: the queue as shown (filter, search, sort in ``query``), or the
-    whole queue if this invoice isn't part of that view."""
+    whole queue if this invoice isn't part of that view. ``request``: the person asking, whose invoices with edits
+    kept the queue shows under Needs attention (B-1620)."""
     pending = store.list_invoices(REVIEW)
     show = query.get("show", "all")
     reasons = attention(store, reference_or_none(store), pending) if show in ("attention", "ready") else {}
+    if show in ("attention", "ready") and request is not None:
+        reasons.update(draft_reasons(request, pending))
     shown = {"attention": [i for i in pending if i["id"] in reasons],
              "ready": [i for i in pending if i["id"] not in reasons]}.get(show, pending)  # fmt: skip
     shown = sort_queue(filter_queue(shown, query.get("q", "")), query.get("sort", "priority"))
@@ -301,12 +305,13 @@ def navigation(store: Store, invoice_id: int, query: dict[str, str]) -> dict[str
     }
 
 
-def next_url(store: Store, invoice_id: int, query: dict[str, str], seen_next: Any = None) -> str:
+def next_url(store: Store, invoice_id: int, query: dict[str, str], seen_next: Any = None,
+             request: Request | None = None) -> str:  # fmt: skip
     """After an action on this invoice: the next one in the queue as shown (or the queue when none is left).
     ``seen_next``: the invoice that followed it when its screen was drawn (the form's ``next_id``), opened when it is
     still waiting: the edits refresh the invoice's confidence, which moves it in the queue's order while it is open,
-    and the one after its new place would skip those in between (B-426)."""
-    nav = navigation(store, invoice_id, query)
+    and the one after its new place would skip those in between (B-426). ``request``: as ``navigation``'s."""
+    nav = navigation(store, invoice_id, query, request)
     ids, position = nav["ids"], nav["position"]
     remaining = [i for i in ids if i != invoice_id]
     if not remaining:
@@ -447,8 +452,9 @@ def _document(store: Store, settings: Any, inv: dict[str, Any], status: Any, edi
 UNDONE = "undone right after approving"  # the reason an approval undone from its banner is reopened with
 
 
-def _sent_back(store: Store, invoice_id: int) -> dict[str, str] | None:
-    events = [e for e in store.events(invoice_id) if e["action"] in ("sent_back", "reopened", "approved", "rejected")]
+def _sent_back(events: list[dict[str, Any]]) -> dict[str, str] | None:
+    """Who sent the invoice back or reopened it, and why, from its events (``Store.events``, newest first)."""
+    events = [e for e in events if e["action"] in ("sent_back", "reopened", "approved", "rejected")]
     back = events[0] if events else None
     if not back or back["action"] not in ("sent_back", "reopened"):
         return None
@@ -527,22 +533,21 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         "inv": inv,
         "query": query,
         "queue_url": _with_query("/review", query),
-        "nav": navigation(store, invoice_id, query),
+        "nav": navigation(store, invoice_id, query, request),
         "history": history(events),
         "notes": history([e for e in events if e["action"] in NOTE_ACTIONS]),
         "title": inv.get("vendor_name") or inv.get("file_name") or "Invoice",
     }
     editable = inv["status"] == REVIEW and reference is not None
     may_edit = can(request, f"/review/{invoice_id}/check")  # server mode: Read-only looks and changes nothing (D-98)
-    context["manager"] = _manager_context(request, store, inv)
     capture = view.capture_of(store, invoice_id)  # read once: the document card and the checks use it
     context["doc"] = _document(store, settings, inv, status, editable and may_edit, capture)
     if not editable:
         mode = _mode(inv)
         if mode in ("approved", "pending", "rejected", "parked"):  # nothing left to read: no reading tools' warning
             context["banner"] = ""
-        return render(request, "invoice.html", "review", mode=mode, **context,
-                      **_closed(store, reference, inv))  # fmt: skip
+        return render(request, "invoice.html", "review", mode=mode, reading_status=status, **context,
+                      manager=_manager_context(request, store, inv), **_closed(store, reference, inv))  # fmt: skip
     saved_at = str((_drafts(request).get(invoice_id) or {}).get("saved_at") or "")  # edits kept from before
     draft, kept = current_draft(request, inv)
     analysis = view.analyse(store, settings, reference, inv, draft, reviewer(), capture=capture)
@@ -560,8 +565,8 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         computed = None
     if lm_studio_off(status):  # one short note in the top row: the queue's banner says the rest (B-467)
         context["lm_off"], context["banner"] = LM_STUDIO_OFF, ""
-    return render(
-        request, "invoice.html", "review", mode="review", **context,
+    page = render(
+        request, "invoice.html", "review", mode="review", reading_status=status, **context,
         draft=draft, kept=kept, live=_shown_live(request, analysis.live, may_edit), sure=sure,
         grid={**view.grid(reference, draft, inv.get("ai_output") or {},
                           view.vendor_accounts(store, draft.header.get("vendor_name") or "")),
@@ -569,7 +574,7 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         labels=view.FIELD_LABELS, provinces=view.province_options(),
         due_placeholder=f"{computed.isoformat()} (from terms)" if computed else
         "None: a credit is not paid" if float(start.get("grand_total") or 0) < 0 else "YYYY-MM-DD",
-        sent_back=_sent_back(store, invoice_id), poll_seconds=PAGE_READER_POLL_SECONDS,
+        sent_back=_sent_back(events), poll_seconds=PAGE_READER_POLL_SECONDS,
         today=dt.date.today().isoformat(), taught_json=draft.taught, vendors=vendor_options(store),
         absent_ok=list(view.ABSENT_FIELDS), from_vendor_note=view.FROM_VENDOR_NOTE,
         tax_fields=list(view.TAX_NUMBER_FIELDS), pay_from=view.pay_from_choices(store, draft.header),
@@ -579,6 +584,11 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         usual_cc=view.usual_cost_center(store, reference, draft.header.get("vendor_name") or ""),
         draft_from=_when(saved_at),
     )  # fmt: skip
+    # What the screen's check did once it opened, a second request (the screen's own checks again, whose answer the
+    # page drew already): written once the page is drawn, so nothing it reads comes after.
+    if may_edit:
+        _keep_checked(request, store, invoice_id, draft, analysis)
+    return page
 
 
 def _when(iso: str) -> str:
@@ -783,13 +793,10 @@ def _check(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     reference = _reference(store)
     draft = _from_form(request, inv, form)
     analysis = view.analyse(store, settings, reference, inv, draft, reviewer())
-    if analysis.report is not None:
-        store.refresh_confidence(invoice_id, analysis.report.adjusted_confidence, analysis.report.requires_review)
-    kept = analysis.coding is None or analysis.changed or bool(draft.taught)
-    _keep_draft(request, invoice_id, draft, kept, _draft_blocker(analysis) if kept else None)
     # the account lists' "Used for this vendor", for the vendor now in the vendor field (B-596)
     listed = {code for code, _ in view.gl_options(reference, draft.lines)}
     used = [c for c in view.vendor_accounts(store, draft.header.get("vendor_name") or "") if c in listed]
+    kept = _keep_checked(request, store, invoice_id, draft, analysis)  # written last: nothing is read after it
     # the lines' tax codes where the invoice is supplied now, and the lines the Tax check points at (D-64)
     codes = view.tax_choices(draft, reference.tax)
     # What the server filled in the invoice details (the vendor list's tax numbers, the default Pay from account) and
@@ -808,6 +815,16 @@ def _check(request: Request, invoice_id: int, form: Any) -> JSONResponse:
                          "taxes": [{"tax_type": t.get("tax_type") or "", "province": t.get("province") or ""}
                                    for t in draft.taxes],
                          "sections": _render_live(_shown_live(request, analysis.live), invoice_id)})  # fmt: skip
+
+
+def _keep_checked(request: Request, store: Store, invoice_id: int, draft: view.Draft, analysis: view.Analysis) -> bool:
+    """What a check of the screen keeps: the confidence it worked out (the queue shows the one the screen shows, edits
+    and today's checks included), and the edits as a draft, or none when there are none. Whether they are kept."""
+    if analysis.report is not None:
+        store.refresh_confidence(invoice_id, analysis.report.adjusted_confidence, analysis.report.requires_review)
+    kept = analysis.coding is None or analysis.changed or bool(draft.taught)
+    _keep_draft(request, invoice_id, draft, kept, _draft_blocker(analysis) if kept else None)
+    return kept
 
 
 def _draft_blocker(analysis: view.Analysis) -> str:
@@ -861,7 +878,7 @@ def _approve(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     asked = lessons.due_for_why(store, ai, as_read(analysis.output, ai))  # a vendor-list number: no "why" (B-681)
     if asked and not form.get("why_done"):
         return JSONResponse({"ok": False, "ask_why": {"fields": asked, "threshold": lessons.why_after(store)}})
-    after = next_url(store, invoice_id, query, form.get("next_id"))
+    after = next_url(store, invoice_id, query, form.get("next_id"), request)
     why = draft.override_reason.strip()  # "Approve anyway": why, kept with each error approved over (D-75)
     open_issues = [{"code": i.code, "severity": i.severity, "line": i.line_number,
                     **({"override_reason": why} if why and i.severity == "error" else {})}
@@ -971,7 +988,7 @@ def undo_approve(request: Request, invoice_id: int) -> JSONResponse:
 
 @router.post("/review/{invoice_id:int}/park")
 def park(request: Request, invoice_id: int, reason: str = Form(""), follow_up: str = Form(""),
-         show: str = Form(""), q: str = Form(""), sort: str = Form(""),
+         show: str = Form(""), q: str = Form(""), sort: str = Form(""), limit: str = Form(""),
          next_id: str = Form("")) -> JSONResponse:  # fmt: skip
     """Set it aside while waiting for information (out of the queue until brought back)."""
     store = get_store(request)
@@ -986,8 +1003,8 @@ def park(request: Request, invoice_id: int, reason: str = Form(""), follow_up: s
             return refuse("The follow-up date must be a date (YYYY-MM-DD).")
         if follow < dt.date.today():
             return refuse("Pick a follow-up date from today on.")
-    query = _nav_query({"show": show, "q": q, "sort": sort})
-    after = next_url(store, invoice_id, query, next_id)
+    query = _nav_query({"show": show, "q": q, "sort": sort, "limit": limit})
+    after = next_url(store, invoice_id, query, next_id, request)
     try:
         store.park_invoice(invoice_id, reviewer(), reason.strip(), follow.isoformat() if follow else None)
     except ValueError:
@@ -1046,7 +1063,7 @@ def _send_to_manager(request: Request, invoice_id: int, form: Any) -> JSONRespon
     if form.get("remember_manager") and centers and user_id is None:
         store.set_cost_center_manager(centers, name, email, reviewer())
     if user_id is not None:
-        after = next_url(store, invoice_id, _nav_query(form), form.get("next_id"))
+        after = next_url(store, invoice_id, _nav_query(form), form.get("next_id"), request)
         said = f"Sent to {name}: it waits in their Manager confirmations and comes back to the queue when they answer."
         return done(request, after, flash_message(said, "ok", icon="forward_to_inbox"))
     return done(request, f"/manager/{rid}", flash_message(
@@ -1056,11 +1073,12 @@ def _send_to_manager(request: Request, invoice_id: int, form: Any) -> JSONRespon
 
 @router.post("/review/{invoice_id:int}/reject")
 def reject(request: Request, invoice_id: int, reason: str = Form(""), show: str = Form(""), q: str = Form(""),
-           sort: str = Form(""), next_id: str = Form("")) -> JSONResponse:  # fmt: skip
+           sort: str = Form(""), limit: str = Form(""), next_id: str = Form("")) -> JSONResponse:  # fmt: skip
     """Not ours, or not to be paid. It can be reopened later."""
     store = get_store(request)
     _invoice(store, invoice_id)
-    after = next_url(store, invoice_id, _nav_query({"show": show, "q": q, "sort": sort}), next_id)
+    after = next_url(store, invoice_id, _nav_query({"show": show, "q": q, "sort": sort, "limit": limit}), next_id,
+                     request)  # fmt: skip
     try:
         store.reject_invoice(invoice_id, reviewer(), reason.strip())
     except ValueError:

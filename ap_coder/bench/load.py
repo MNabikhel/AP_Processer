@@ -20,7 +20,7 @@ What it runs:
   ``If-None-Match``/``If-Modified-Since``, ``no-store`` never kept). Each logs in (the password, then a code worked out
   now by the app's own ``authenticator.code``), then works in weighted scenarios: the queue (tabs, filters, sorts,
   search, "show more"), an invoice opened as a browser opens it (the page, its styles, scripts and fonts, one to three
-  page images, the opening check, the reader's poll while it is open), 3 to 6 edits each checked, then approve (with
+  page images, the reader's poll while it is open), 3 to 6 edits each checked, then approve (with
   "approve anyway" when only errors keep it closed), park or reject; second approvals; the directory, its CSV and
   Excel exports; Insights, Spend, Month-end and the other reports; an upload with its job polled; a bulk approval
   (at most 50); an export batch (JD Edwards when it is set up). POSTs carry what the page's fetch sends (the
@@ -576,7 +576,8 @@ class Field:
 class Forms(HTMLParser):
     """A page's forms as a browser has them: each form's action, method and attributes; every field in document
     order with its form (a field's ``form=`` attribute, else the form around it) and its [data-live] section; each
-    form's submit buttons (disabled or not)."""
+    form's submit buttons (disabled or not). What a ``<template>`` holds (a new row drawn by the page) is no part of
+    the page (B-1622)."""
 
     def __init__(self, form: str | None = None, section: str | None = None) -> None:
         super().__init__(convert_charrefs=True)
@@ -590,11 +591,15 @@ class Forms(HTMLParser):
         self._options: list[tuple[str | None, str, bool]] = []
         self._text: list[str] | None = None
         self._textarea: Field | None = None
+        self._template = 0  # inside a <template>, this deep
 
     def _section(self) -> str | None:
         return next((s for _, s in reversed(self._stack) if s), None)
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self._template += tag == "template"
+        if self._template:
+            return
         a = {k: v if v is not None else "" for k, v in attrs}
         if tag not in VOID:
             self._stack.append((tag, a.get("data-live")))
@@ -631,6 +636,8 @@ class Forms(HTMLParser):
             self._text = []
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if self._template:
+            return
         self.handle_starttag(tag, attrs)
         if tag not in VOID and self._stack:
             self._stack.pop()
@@ -646,6 +653,9 @@ class Forms(HTMLParser):
         self._text = None
 
     def handle_endtag(self, tag: str) -> None:
+        if self._template:
+            self._template -= tag == "template"
+            return
         if tag == "option":
             self._end_option()
         elif tag == "select" and self._select is not None:
@@ -1068,7 +1078,7 @@ class Person:
 
     async def open_invoice(self, invoice_id: int, due: float | None = None, url: str = "") -> Screen | None:
         """The review screen as the browser opens it: the page and its files, the first page image (sometimes more
-        pages, sometimes zoomed in), the opening check (not on a read-only screen), and the reader's poll."""
+        pages, sometimes zoomed in) and the reader's poll (no check on opening: the page is drawn with its checks)."""
         page = await self.page(url or f"/review/{invoice_id}", due, route="GET /review/{id}")
         if page is None:
             return None
@@ -1082,8 +1092,6 @@ class Person:
             failed = next((f for f in found if isinstance(f, BaseException)), None)
             if failed is not None:
                 raise failed
-        if screen.editable:  # the opening check
-            screen.editable = await self.check(screen)
         if screen.poll:
             self.poller = asyncio.create_task(self.watch_reader(screen))
         return screen
