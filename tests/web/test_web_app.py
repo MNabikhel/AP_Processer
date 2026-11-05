@@ -9,6 +9,8 @@ import re
 from dataclasses import replace
 from pathlib import Path
 
+import anyio
+import anyio.to_thread
 import jinja2
 import pytest
 from fastapi.testclient import TestClient
@@ -129,6 +131,87 @@ def test_static_files_are_checked_again_on_every_use(client):
         assert response.status_code == 200 and response.headers.get("cache-control") == "no-cache", path
         again = client.get(path, headers={"if-none-match": response.headers["etag"]})
         assert again.status_code == 304 and again.headers.get("cache-control") == "no-cache", path
+
+
+def _without_memory(app):
+    """``app`` with its static files answered by the StaticFiles mounts alone, as before D-161."""
+    from ap_coder.web.app import StaticFromMemory
+
+    app.user_middleware = [m for m in app.user_middleware if m.cls is not StaticFromMemory]
+    return app
+
+
+@pytest.mark.parametrize("server_mode", [False, True])
+def test_static_files_are_answered_from_memory_as_staticfiles_answered_them(store, tmp_path, server_mode):
+    """The styles, scripts, fonts and logo come from memory on the event loop (D-161): every file, laptop and server,
+    gets the status, headers and body StaticFiles gave it, a 304 to its ETag or time the same; a Range, a POST and a
+    file that isn't there are still StaticFiles' own."""
+    made = {"settings": web_settings(), "store": store, "start_reader": False, "server": server_mode}
+    memory = TestClient(create_app(**made), base_url="http://localhost")
+    before = TestClient(_without_memory(create_app(**made)), base_url="http://localhost")
+    files = core.read_static()
+    assert len(files) > 20 and {"/static/app.css", "/static/js/app.js", "/fonts/InterVariable.woff2",
+                                "/assets/logo.svg"} <= set(files)  # fmt: skip
+
+    def same(method: str, path: str, headers: dict[str, str] | None = None) -> int:
+        new, old = (c.request(method, path, headers={**PAGE, **(headers or {})}) for c in (memory, before))
+        assert new.status_code == old.status_code, (method, path, headers)
+        assert [h for h in new.headers.items() if h[0] != "date"] == [h for h in old.headers.items() if h[0] != "date"]
+        assert new.content == old.content, (method, path, headers)
+        return new.status_code
+
+    for path, file in files.items():
+        etag, modified = file.etag, file.modified
+        assert same("GET", path) == 200 and same("HEAD", path) == 200
+        assert same("GET", path, {"range": "bytes=0-9"}) == 206
+        assert same("GET", path, {"if-none-match": etag}) == 304
+        assert same("GET", path, {"if-none-match": f'"other", W/{etag}'}) == 304  # weak, in a list
+        assert same("HEAD", path, {"if-none-match": "*"}) == 304
+        assert same("GET", path, {"if-none-match": '"other"', "if-modified-since": modified}) == 200
+        assert same("GET", path, {"if-modified-since": modified}) == 304
+        assert same("GET", path, {"if-modified-since": "Mon, 01 Jan 2001 00:00:00 GMT"}) == 200
+        assert same("GET", path, {"if-modified-since": "not a date"}) == 200
+        assert same("POST", path) == 405
+    assert same("GET", "/static/nothing-here.js") == 404 and same("GET", "/fonts/js/app.js") == 404
+    assert memory.get("/static/app.css", headers={"host": "evil.example"}).status_code == 400  # the Host check first
+    assert memory.get("/static/app.css").headers["x-content-type-options"] == "nosniff"
+    if server_mode:  # in the access log too
+        log = (store.path.parent / "logs" / "access.log").read_text(encoding="utf-8")
+        assert "GET /static/app.css 200" in log and "GET /static/app.css 304" in log
+
+
+def test_a_static_file_is_answered_while_every_thread_of_the_worker_is_taken(store):
+    """A static file needs no thread and no session: StaticFiles read each on one of a web worker's 4 threads, behind
+    pages of 1-2 s (the phase 2 load run's 16-57 s waits for a stylesheet)."""
+    app = create_app(web_settings(), store, start_reader=False, server=True)
+    with TestClient(app, base_url="http://localhost") as client:
+        limiter = client.portal.call(anyio.to_thread.current_default_thread_limiter)
+        holders = [object() for _ in range(int(limiter.total_tokens))]
+        for holder in holders:
+            client.portal.call(limiter.acquire_on_behalf_of_nowait, holder)
+        try:
+            response = client.get("/static/js/app.js")
+            assert response.status_code == 200 and response.content == core.read_static()["/static/js/app.js"].body
+        finally:
+            for holder in holders:
+                client.portal.call(limiter.release_on_behalf_of, holder)
+
+
+def test_a_static_file_that_links_out_of_its_folder_is_not_answered(tmp_path):
+    """As StaticFiles (``follow_symlink=False``): a link to a file outside its folder is left out; one inside is
+    kept."""
+    folder, outside = tmp_path / "static", tmp_path / "secret.txt"
+    (folder / "js").mkdir(parents=True)
+    outside.write_text("not for the web", encoding="utf-8")
+    (folder / "js" / "app.js").write_text("export {};", encoding="utf-8")
+    try:
+        (folder / "out.txt").symlink_to(outside)
+        (folder / "again.js").symlink_to(folder / "js" / "app.js")
+    except OSError:
+        pytest.skip("this computer can't make symbolic links")
+    files = core.read_static((("/static/", folder),))
+    assert sorted(files) == ["/static/again.js", "/static/js/app.js"]
+    assert files["/static/again.js"].body == b"export {};"
 
 
 # --- Only this computer, only AP Coder's own pages ---------------------------------------------------------------

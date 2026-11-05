@@ -23,11 +23,14 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import dataclasses
 import datetime as dt
+import email.utils
 import functools
 import getpass
 import hashlib
 import json
+import mimetypes
 import os
 import subprocess
 import sys
@@ -82,6 +85,55 @@ def accuracy_note(settings: Settings, lines_reviewed: int) -> tuple[str, bool]:
     return "GL suggestions improve as you approve" + (
         "" if ready else "; with the AI model on they start sooner"
     ), False
+
+
+# --- Static files (D-161) ----------------------------------------------------------------------------------------
+# The styles, scripts, fonts and logo, read once when AP Coder starts: ``app.StaticFromMemory`` answers them from
+# memory on the event loop, with the headers Starlette's StaticFiles gives them (a file edited while AP Coder runs is
+# answered as it was at the start).
+STATIC_FOLDERS = (("/static/", STATIC_DIR), ("/fonts/", FONTS_DIR), ("/assets/", ASSETS_DIR))
+CHECKED = "no-cache"  # /static: the browser checks its copy again on every use (an unchanged file answers 304)
+
+
+@dataclasses.dataclass(frozen=True)
+class StaticFile:
+    """One file's answer: its body, its headers (a 200 or a HEAD) and those of a 304, as StaticFiles has them."""
+
+    body: bytes
+    headers: tuple[tuple[bytes, bytes], ...]
+    same: tuple[tuple[bytes, bytes], ...]  # a 304's: its ETag and Cache-Control
+    etag: str
+    modified: str  # Last-Modified
+
+
+def static_file(body: bytes, path: Path, mtime: float, cache: str = "") -> StaticFile:
+    """The answer StaticFiles gives the file at ``path``: its type (text with ``charset=utf-8``), ``accept-ranges``,
+    length, Last-Modified and ETag (an MD5 of its time and size); ``cache``, its Cache-Control, if any."""
+    kind = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
+    kind += "; charset=utf-8" if kind.startswith("text/") else ""
+    etag = f'"{hashlib.md5(f"{mtime}-{len(body)}".encode(), usedforsecurity=False).hexdigest()}"'
+    modified = email.utils.formatdate(mtime, usegmt=True)
+    cached = ((b"cache-control", cache.encode()),) if cache else ()
+    headers = ((b"content-type", kind.encode()), (b"accept-ranges", b"bytes"),
+               (b"content-length", str(len(body)).encode()), (b"last-modified", modified.encode()),
+               (b"etag", etag.encode()), *cached)  # fmt: skip
+    return StaticFile(body, headers, ((b"etag", etag.encode()), *cached), etag, modified)
+
+
+@functools.cache
+def read_static(folders: tuple[tuple[str, Path], ...] = STATIC_FOLDERS) -> dict[str, StaticFile]:
+    """Every file of the static folders by its address (``/static/js/app.js``), read once. A file whose real path is
+    outside its folder (a link out of it) is left out: StaticFiles refuses it too."""
+    files: dict[str, StaticFile] = {}
+    for prefix, folder in folders:
+        inside = folder.resolve()
+        for path in sorted(folder.rglob("*")):
+            if not path.is_file() or not path.resolve().is_relative_to(inside):
+                continue
+            address = prefix + path.relative_to(folder).as_posix()
+            files[address] = static_file(path.read_bytes(), path, path.stat().st_mtime,
+                                         CHECKED if prefix == "/static/" else "")  # fmt: skip
+    return files
 
 
 # --- Templates ---------------------------------------------------------------------------------------------------

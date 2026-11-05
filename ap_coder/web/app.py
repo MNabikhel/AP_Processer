@@ -9,12 +9,14 @@ pages:
 * ``POST /shutdown``: stops the server cleanly; only from this computer, with the token ``serve`` wrote to the
   data folder's ``.ap_coder_server.json`` (header ``X-AP-Coder-Token``).
 * ``GET /jobs/<name>``: how far a background job got (``ap_coder/web/jobs.py``).
-* ``/static`` (this package's CSS and scripts), ``/fonts`` (Inter, the icons), ``/assets`` (logo).
+* ``/static`` (this package's CSS and scripts), ``/fonts`` (Inter, the icons), ``/assets`` (logo): from memory
+  (``StaticFromMemory``, D-161).
 """
 
 from __future__ import annotations
 
 import contextlib
+import email.utils
 import getpass
 import hmac
 import importlib
@@ -70,8 +72,46 @@ class CheckedStaticFiles(StaticFiles):
 
     async def get_response(self, path: str, scope: Any) -> Any:
         response = await super().get_response(path, scope)
-        response.headers["Cache-Control"] = "no-cache"
+        response.headers["Cache-Control"] = core.CHECKED
         return response
+
+
+class StaticFromMemory:
+    """ASGI middleware: a GET or HEAD of a static file answered from memory (``core.read_static``), on the event loop:
+    no thread, no session (D-161). StaticFiles read each on one of a web worker's few threads, behind the pages. It
+    sits after the Host check, with the security headers and the access log, before the session, the errors page and
+    the backup check. The same status, headers and 304s as StaticFiles; what memory doesn't answer (a Range, a POST,
+    a file that isn't there) goes on to the StaticFiles mounts."""
+
+    def __init__(self, app: Any, files: dict[str, core.StaticFile] | None = None) -> None:
+        self.app, self.files = app, core.read_static() if files is None else files
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        found = self.files.get(scope["path"]) if scope["type"] == "http" else None
+        if found is None or scope["method"] not in ("GET", "HEAD"):
+            await self.app(scope, receive, send)
+            return
+        asked: dict[bytes, bytes] = {}
+        for name, value in scope["headers"]:
+            asked.setdefault(name.lower(), value)  # (the first of a header given twice, as Starlette reads it)
+        if b"range" in asked:
+            await self.app(scope, receive, send)
+            return
+        if _not_modified(found, asked):
+            await send({"type": "http.response.start", "status": 304, "headers": list(found.same)})
+            await send({"type": "http.response.body", "body": b""})
+            return
+        await send({"type": "http.response.start", "status": 200, "headers": list(found.headers)})
+        await send({"type": "http.response.body", "body": b"" if scope["method"] == "HEAD" else found.body})
+
+
+def _not_modified(found: core.StaticFile, asked: dict[bytes, bytes]) -> bool:
+    """As StaticFiles: If-None-Match names the ETag (or is *); without it, If-Modified-Since is not before the file's
+    time."""
+    if match := asked.get(b"if-none-match", b"").decode("latin-1"):
+        return match.strip() == "*" or found.etag in [tag.strip().removeprefix("W/") for tag in match.split(",")]
+    since = email.utils.parsedate(asked.get(b"if-modified-since", b"").decode("latin-1"))
+    return since is not None and since >= email.utils.parsedate(found.modified)
 
 
 class DailyBackup:
@@ -319,6 +359,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     app.state.server_mode = server  # accounts and roles (web/identity.py, web/roles.py)
     app.add_middleware(Identity, secret=app.state.identity_secret, address=address, server=server)
     app.add_middleware(core.StoreContext, store=store)  # messages and uploads kept in this database (D-99)
+    app.add_middleware(StaticFromMemory)  # after the Host check, before the session (D-161)
     app.add_middleware(
         LocalOnly, address=address, extra=allowed_hosts(), server=server
     )  # + the server's names (AP_ALLOWED_HOSTS)
