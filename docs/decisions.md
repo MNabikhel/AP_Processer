@@ -411,3 +411,21 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   break-even of its base case, named without a figure so the two copies can't drift; approved in JD Edwards).
   Docs only: nothing in the code changes. (`docs/HANDOFF.md` sections 7
   and 8, `docs/MAILBOX_SETUP.md`, `docs/PILOT_PLAN.md`)
+- **D-148** · **How AP Coder scales to 300–400 people on one server** (the scale goal, docs/SCALE_GOAL.md; the research
+  with its sources: docs/archive/scale-2026-11/research.md, 5 November 2026). (1) **More processes, cheaper pages,
+  not another web server**: one process serves about 1.6 pages a second (Python, the GIL), so 20–40 requests a second
+  needs 13–25 web workers (300–600 MB each, which fits 64 GB) *and* pages that cost less; no ASGI server (granian,
+  hypercorn, waitress) removes the Python per page. The cap of 8 workers goes, for a default measured in the load
+  test. (2) **Windows**: with several workers uvicorn runs the selector loop (`uvicorn/loops/asyncio.py`:
+  `ProactorEventLoop` only without subprocesses, read in 0.54.0), whose `select()` holds at most 512 sockets a worker:
+  TLS ends in IIS (ARR) in front, which forwards to `http://127.0.0.1`, and the workers stay well under 512
+  connections each. (3) **SQLite stays** for one server: WAL, `synchronous=FULL` (an approval or a JD Edwards post must
+  survive a power cut), writes begun with `BEGIN IMMEDIATE` and kept short, a small connection pool per process,
+  `journal_size_limit`, `PRAGMA optimize`, no `mmap_size` on Windows, the database on the server's own disk. A
+  PostgreSQL seam is built (docs/SCALE_GOAL.md phase 7); the port waits until failover, a second app server or
+  point-in-time recovery is needed. (4) **The work nobody waits on leaves the web workers**: OCR and page rendering in
+  a spawned process pool (ONNX Runtime 1–2 threads each, PyMuPDF from one thread per process); no free-threaded Python
+  (PyMuPDF and onnxruntime have no wheels for it on Windows). (5) **The model machine** (LM Studio): models preloaded
+  with `lms load`, a vision-batching engine, `llm_parallel` matched to its concurrent predictions, the API token on, a
+  firewall that admits the AP Coder server only. (6) **Measured, not guessed**: `python -m ap_coder.bench load` and
+  `bench volume` / `bench day`; the numbers in docs/SCALE.md. Docs only so far: the code changes follow, phase by phase.
