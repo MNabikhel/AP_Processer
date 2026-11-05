@@ -827,6 +827,91 @@ def test_previous_and_next_step_through_the_kept_queue_as_another_store_or_plain
     assert navigation(store, a, {})["ids"] == [c, a] and navigation(store, a, {})["prev"] == f"/review/{c}"
 
 
+def test_the_queues_lists_keep_their_rows_when_a_check_only_writes_a_confidence_in_the_same_order(
+    tmp_path, ground_truth, monkeypatch
+):
+    """B-1737: each check writes the confidence it worked out, and the queue's lists were read again in full after
+    every one (48 ms at 100,000 invoices, on ``/review`` and each invoice page's Previous and Next). The rows are kept
+    without their confidence, which is read apart with the queue's order at each ask: a check reads no row again, and
+    the lists, their order and confidences are what reading them afresh gives. An invoice listed or gone between the
+    two reads (another worker's change) has them read afresh."""
+    from ap_coder.core.store import PARKED, PENDING, REVIEW
+
+    store = Store(tmp_path / "ap.db")
+    other = Store(store.path)
+    a, b, c, d = (_invoice(store, tmp_path, ground_truth, name) for name in ("K-1", "K-2", "K-3", "K-4"))
+    other.park_invoice(d, "Jordan Lee", "waiting for the buyer")
+    rows_read = []
+    real = Store.summary_fetch
+    monkeypatch.setattr(Store, "summary_fetch", lambda self, sql, *a: (rows_read.append(1) if "file_name" in sql
+                                                                        else None) or real(self, sql, *a))  # fmt: skip
+
+    def fresh(*statuses):
+        listed, marks = ", ".join(summary_module.LISTED_COLUMNS), ", ".join("?" * len(statuses))
+        return real(store, f"SELECT {listed} FROM invoice_summary WHERE status IN ({marks}) ORDER BY "
+                           "requires_review DESC, adjusted_confidence ASC, id ASC", statuses)  # fmt: skip
+
+    def same(*statuses):
+        listed = store.list_invoices(statuses=statuses)
+        assert listed == fresh(*statuses) and [list(r) for r in listed] == [list(r) for r in fresh(*statuses)]
+        return [r["id"] for r in listed]
+
+    assert same(REVIEW, PARKED, PENDING) == [a, b, c, d] and same(REVIEW) == [a, b, c] and len(rows_read) == 2
+    other.refresh_confidence(c, 0.12, False)  # a check on its screen
+    with other._conn() as conn:
+        conn.execute("UPDATE invoices SET adjusted_confidence = 0.5, requires_review = 0 WHERE id = ?", (a,))
+    assert same(REVIEW, PARKED, PENDING) == [b, d, c, a] and same(REVIEW) == [b, c, a] and len(rows_read) == 2
+    with sqlite3.connect(store.path) as conn:  # by plain SQL: worked into the summary by the next read
+        conn.execute("UPDATE invoices SET adjusted_confidence = 0.3, requires_review = 0 WHERE id = ?", (b,))
+    assert same(REVIEW) == [c, b, a] and same(REVIEW, PARKED, PENDING) == [d, c, b, a]
+    with other._conn() as conn:  # anything else listed changed: read again
+        conn.execute("UPDATE invoices SET invoice_number = 'K-9' WHERE id = ?", (b,))
+    rows_read.clear()
+    assert same(REVIEW) == [c, b, a] and store.list_invoices(REVIEW)[1]["invoice_number"] == "K-9"
+    assert len(rows_read) == 1
+    kept = store.summary_memo
+
+    def parked_meanwhile(*args, **kw):  # another worker parks one between the two reads
+        answer = kept(*args, **kw)
+        other.park_invoice(a, "Jordan Lee", "")
+        return answer
+
+    monkeypatch.setattr(store, "summary_memo", parked_meanwhile)
+    assert [r["id"] for r in store.list_invoices(REVIEW)] == [c, b]
+    monkeypatch.undo()
+    assert same(REVIEW) == [c, b] and same(PARKED) == [d, a]
+
+
+def test_the_rails_counts_settle_after_a_change_of_status_and_what_decides_with_them_counts_exactly(
+    tmp_path, ground_truth, monkeypatch
+):
+    """B-1738: every page's rail counted the invoices by status again after each approval, park or rejection (16 ms
+    at 100,000 invoices, in each web worker). The rail and the queue's tabs only show them: they settle (D-164) for
+    ``COUNTS_SETTLE`` seconds after a change, then follow it; never past a restore. What decides with them (the queue
+    is clear after an approval, the demo may be loaded) counts exactly, and the settled count is then that one."""
+    from ap_coder.web.core import nav_counts
+
+    clock = [1000.0]
+    monkeypatch.setattr(summary_module, "monotonic", lambda: clock[0])
+    store = Store(tmp_path / "ap.db")
+    other = Store(store.path)
+    a, b, c = (_invoice(store, tmp_path, ground_truth, name) for name in ("C-1", "C-2", "C-3"))
+    assert nav_counts(store)["review"] == 3 and store.status_counts(settled=True) == {"review": 3}
+    backup = store.backup_now("manual")
+    other.park_invoice(a, "Jordan Lee", "waiting for the buyer")
+    clock[0] += summary_module.COUNTS_SETTLE - 0.1
+    assert nav_counts(store)["review"] == 3  # settled
+    assert store.status_counts() == {"review": 2, "parked": 1}  # exact
+    assert nav_counts(store)["review"] == 2  # (that one, kept)
+    other.reject_invoice(b, "Jordan Lee", "a copy")
+    clock[0] += summary_module.COUNTS_SETTLE - 0.1
+    assert store.status_counts(settled=True) == {"review": 2, "parked": 1}  # settled
+    clock[0] += 0.2
+    assert store.status_counts(settled=True) == {"review": 1, "parked": 1, "rejected": 1}  # followed
+    store.restore_from(backup)
+    assert nav_counts(store)["review"] == 3 and store.status_counts(settled=True) == {"review": 3}  # at once
+
+
 # --- The answers kept on these counts (D-162): each filled, its data changed through another Store or plain SQL, then
 # the new answer ------------------------------------------------------------------------------------------------------
 

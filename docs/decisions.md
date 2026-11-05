@@ -1170,3 +1170,59 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `core/store/{purchasing,postings,vendors}.py`, `web/pages/{month_end,exports,insights}.py`;
     `tests/web/test_web_process.py`, `tests/erp/test_accruals.py`, `tests/erp/test_insights.py`,
     `tests/erp/test_suggest_recurring.py`, `tests/core/test_kept_answers.py`, `tests/core/test_store_races.py`)
+- **D-167** · **The review queue's last store costs under a stream of writes** (phase 2 part 2, B-1737 to B-1741:
+  D-165's "Not done" of the store).
+  - **Why:** after D-165, with 100 people checking, approving and parking, `/review` and the invoice page still read
+    again what a write moved even when they only show it, and once a bank account is in use (every real
+    installation; the load bench's seed had none) each `/review` ranked a year of approvals for the Pay from.
+  - **Each, and what now** (all exact, but the counts shown):
+    - **The queue's lists** (B-1737): the `listed` topic no longer covers the confidence (`CONFIDENCE`: what a check
+      writes). The rows are kept by id; each ask reads the confidences with the queue's order (`QUEUE_ORDER`, the
+      same `ORDER BY`) off a covering index (`summary_queue_order`) and gives each row its own. An invoice listed or
+      gone between the two reads (another worker's write) has the list read afresh. Not kept apart on a topic of
+      their own: under 100 people a check comes between nearly every two asks, so it would rarely hold, and it saves
+      about 8 ms only when nothing changed (a list asked with nothing changed costs 10 ms instead of 1.3).
+    - **The counts by status** (B-1738): `status_counts(settled=True)` settles for `COUNTS_SETTLE` (5 s): every
+      page's rail (`web/core.py:nav_counts`) and the queue's tabs. Five seconds: a count a person reads, at most one
+      approval behind. Exact still: the approval's "your queue is clear" (it then refreshes what the rail takes), the
+      first start's page (shown while `has_invoices` finds none; it offers the demo by them) and the demo's load.
+    - **The Pay from** (B-1739): each waiting vendor's latest is sought on a partial index (`summary_pay_from`:
+      vendor, approval time, id and account, of the approved or pending invoices with an account, `PAID_FROM`), one
+      seek a vendor, read in one step. Not kept on a stamp: each approval would move it. The seed sets up a CAD and
+      a USD account (`seed.BANK_ACCOUNTS`) before its templates are read, so each clone is paid from its currency's,
+      as approved.
+    - **The search page's first page** (B-1740): an index in the directory's default order (`summary_received`:
+      `directory.order_by` of "received", newest first, its expressions as they are). Another sort, direction or
+      filter sorts as before; the test reads the plan, so a change to `order_by` is seen.
+    - **The queue's facts** (B-1741): `Store.queue_rows` reads the facts without the findings texts, then each text
+      once with the ids that have it (grouped), in one read transaction (`summary_snapshot`). Not kept once in the
+      summary (a table of texts): that is a summary column changed, so `SUMMARY_RULES` moves and every database's
+      summary is built again at its next start (86 s at 100,000 invoices), for about 13 ms more.
+  - **The indexes** are in `SUMMARY_SCHEMA`, made at every start where missing (0.1 to 0.15 s each at 100,000
+    invoices), with no new schema version (as D-165): an index changes no data, and an older AP Coder opens the
+    database as before. Each write of a summary row keeps them up (the partial one only for an approved invoice
+    with an account).
+  - **Measured** (`p2c_store/probe.py` in the session's scratchpad, D-165's probe on a copy of the 100,000-invoice
+    database with three bank accounts in use; CPU of one request, medians of 16; "after a check": a confidence
+    written first, "after a park": an invoice parked or put back first):
+
+    | request | alone | after a check | after a park |
+    |---|---:|---:|---:|
+    | `GET /review` | 390 → 129 ms | 462 → 121 ms | 560 → 233 ms |
+    | `GET /review/{id}` | 90 → 88 ms | 124 → 91 ms | 134 → 130 ms |
+    | `POST /review/{id}/check` | 54 → 47 ms | 51 → 46 ms | 50 → 48 ms |
+
+    Each read on a request's one connection (`p2c_store/store_parts.py`): the queue's lists after a check 52 → 10
+    ms, Previous and Next's 50 → 9; the counts after a park 7.4 → 0.2 (settled); the Pay from of 1,028 vendors 281
+    → 6; the queue's facts 59 → 39; the search page's first page 83 → 5. The check (within noise) asks none of these.
+  - **Not done** (other files'):
+    - `/review` after a park: the queue's checks worked out again (72 ms, the facts 39 of them), the lists' rows
+      read again (48 ms); after a check and a park alike, `attention` (54 ms: with an account in use the Pay from
+      choice of each of 2,654 invoices, `banks.opening_choice` and `blocking`, about 25 ms, and `_to_fix`, 15 ms;
+      `web/pages/review.py`), the 50 rows and the template.
+    - The invoice page after a park: the review list's rows read again for Previous and Next (48 ms). The page and
+      the check: `analyse` (`finalise_coding`), `find_duplicates` (each of the vendor's invoice numbers normalized
+      in Python, about 1,270 a call, while the summary's `number_key` holds them normalized), `vendor_findings`.
+  - (`core/store/{summary,invoices,accounts}.py`, `coding/bulk.py`, `web/core.py`, `web/pages/review.py`,
+    `bench/seed.py`, `docs/HOW_IT_RUNS.md`; `tests/core/test_kept_answers.py`, `tests/core/test_store_perf.py`,
+    `tests/bench/test_seed_volume.py`)

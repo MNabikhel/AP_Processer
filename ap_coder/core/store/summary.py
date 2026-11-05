@@ -132,6 +132,10 @@ SIDE_TABLES = {"summary_facts": ("i_cost", "pay", "t_facts", "s_facts")}
 # An invoice's checks' codes (``i_codes``) are kept one row per code (``summary_codes``): Insights counts them.
 SIDE = (*(c for columns in SIDE_TABLES.values() for c in columns), "i_codes")
 
+# An invoice approved, or waiting for its second approval, with the bank account it was paid from: a vendor's latest
+# is the default of its next (``Store.last_pay_froms``); the partial index ``summary_pay_from`` holds these alone.
+PAID_FROM = "status IN ('approved', 'pending_approval') AND COALESCE(pay_from, '') != ''"
+
 SUMMARY_SCHEMA = (
     "CREATE TABLE IF NOT EXISTS invoice_summary (id INTEGER PRIMARY KEY, "
     + ", ".join(f"{name} {kind}" for name, kind in MIRRORED)
@@ -174,6 +178,16 @@ SUMMARY_SCHEMA = (
     "cents REAL NOT NULL, amounts TEXT, PRIMARY KEY (invoice_id, part))",
     "CREATE TABLE IF NOT EXISTS summary_dirty (id INTEGER PRIMARY KEY)",
     "CREATE INDEX IF NOT EXISTS summary_vendors ON invoice_summary (status, vendor_key, vendor_name)",
+    # The queue's confidences in its order (``list_invoices``, B-1737), read without the rows.
+    "CREATE INDEX IF NOT EXISTS summary_queue_order ON invoice_summary (status, requires_review DESC, "
+    "adjusted_confidence, id)",
+    # The invoice directory's default order, newest received first (``directory.order_by`` of its "received", B-1740):
+    # its first page is read off it, not sorted out of every invoice.
+    "CREATE INDEX IF NOT EXISTS summary_received ON invoice_summary (COALESCE(created_at, '') = '', created_at DESC, "
+    "id DESC)",
+    # Each vendor's latest approved Pay from account (``Store.last_pay_froms``, B-1739), sought vendor by vendor.
+    f"CREATE INDEX IF NOT EXISTS summary_pay_from ON invoice_summary (vendor_key, reviewed_at, id, pay_from) WHERE "
+    f"{PAID_FROM}",
     # The learning memory's lessons by outcome, counted as they are added and removed (``feedback_counts``): the
     # review queue's accuracy and the memory's stamp read it instead of counting the lessons.
     "CREATE TABLE IF NOT EXISTS feedback_counts (outcome TEXT PRIMARY KEY, n INTEGER NOT NULL)",
@@ -313,14 +327,19 @@ TOPICS: dict[str, Callable[[dict[str, Any] | None], Any]] = {
         if r and r["status"] == REVIEW
         else None
     ),
-    # The queue's lists as ``Store.list_invoices`` lists them, their confidence included (D-159).
-    "listed": lambda r: tuple(r[c] for c in LISTED_COLUMNS) if r and r["status"] in QUEUES else None,
+    # The queue's lists as ``Store.list_invoices`` lists them (D-159), but their confidence: each check writes it, and
+    # it is read apart with their order at each ask (B-1737).
+    "listed": lambda r: tuple(r[c] for c in _LISTED_KEPT) if r and r["status"] in QUEUES else None,
 }
 QUEUE_READ = ("broken", "q_audit", "q_stamp", "q_found", "r_stamp", "r_found", "q_pick", "q_pick_cc", "q_pay")
+_FOUND_TEXTS = ("q_found", "r_found")  # of them, the findings texts: each read once (``queue_rows``)
 QUEUES = (REVIEW, PARKED, PENDING)  # the lists the ``listed`` topic covers
 LISTED_COLUMNS = ("id", "file_name", "status", "vendor_name", "invoice_number", "invoice_date", "due_date", "currency",
                   "grand_total", "model_confidence", "adjusted_confidence", "requires_review", "error", "created_at",
                   "reviewed_at", "reviewer", "second_reviewer")  # fmt: skip
+CONFIDENCE = ("adjusted_confidence", "requires_review")  # what a check writes (``Store.refresh_confidence``)
+_LISTED_KEPT = tuple(c for c in LISTED_COLUMNS if c not in CONFIDENCE)
+QUEUE_ORDER = "requires_review DESC, adjusted_confidence ASC, id ASC"  # the ones to review first (an index's order)
 _TOPIC_COLUMNS = tuple(dict.fromkeys(("id", "status", "vendor_key", "vendor_name", "invoice_date", "grand_total",
                                       "currency", "export_batch", "w_key", "w_name", "w_codes", "w_corrected",
                                       *QUEUE_READ, *LISTED_COLUMNS)))  # fmt: skip
@@ -332,6 +351,7 @@ _MEMO_LOCK = threading.Lock()
 _COMPUTING: dict[tuple[str, str, int], threading.Lock] = {}
 COMPUTING_KEPT = 256
 MEMO_WAIT = 600.0  # seconds a page waits for another one working the same value out (then works it out itself)
+COUNTS_SETTLE = 5.0  # seconds the counts by status a page only shows may be behind a change (``status_counts``)
 _FTS: dict[str, bool] = {}  # whether this process's SQLite has FTS5 with the trigram tokenizer
 _FTS_LOCK = threading.Lock()
 
@@ -742,10 +762,12 @@ class SummaryMixin:
                 "reviewer, second_reviewer FROM invoice_summary WHERE status = ? ORDER BY COALESCE(reviewed_at, '') "
                 "DESC, requires_review DESC, adjusted_confidence ASC, id ASC LIMIT ?", (APPROVED, limit))  # fmt: skip
 
-    def status_counts(self) -> dict[str, int]:
-        """{status: how many invoices}, from the invoices' summary (counted again once one changed its status: every
-        page's rail shows two of them)."""
-        return dict(self.summary_memo("status_counts", self._status_counts, "status"))
+    def status_counts(self, settled: bool = False) -> dict[str, int]:
+        """{status: how many invoices}, from the invoices' summary (counted again once one changed its status).
+        ``settled``: for counts only shown (every page's rail, the queue's tabs), up to ``COUNTS_SETTLE`` seconds
+        behind a change (D-164, B-1738); what decides with them counts exactly."""
+        settle = COUNTS_SETTLE if settled else 0.0
+        return dict(self.summary_memo("status_counts", self._status_counts, "status", settle=settle))
 
     def _status_counts(self) -> dict[str, int]:
         with self._conn() as conn:
@@ -778,6 +800,24 @@ class SummaryMixin:
             params.append(json.dumps([int(i) for i in ids]))
         rows = self.summary_rows(where, params, "id", "requires_review DESC, adjusted_confidence ASC, id ASC")
         return [r["id"] for r in rows]
+
+    def queue_rows(self, ids: list[int]) -> list[dict[str, Any]]:
+        """The queue's facts (``id`` and ``QUEUE_READ``) of the invoices of ``ids`` in review, by id: the rows
+        ``summary_rows`` gives, but each findings text (``q_found``, ``r_found``) read once for all the invoices that
+        have it (the queue's share a few: 190 texts, 2.1 MB in its rows at 100,000 invoices, B-1741), in the same read
+        transaction as the rest."""
+        where, params = f"status = ? AND {_in_list('id')}", (REVIEW, json.dumps([int(i) for i in ids]))
+        columns = ", ".join(f"NULL AS {c}" if c in _FOUND_TEXTS else c for c in ("id", *QUEUE_READ))
+        texts = " UNION ALL ".join(f"SELECT '{c}' AS c, {c} AS text, json_group_array(id) AS ids FROM invoice_summary "
+                                   f"WHERE {where} AND {c} IS NOT NULL GROUP BY {c}" for c in _FOUND_TEXTS)  # fmt: skip
+        with self.summary_snapshot(), self._conn() as conn:
+            rows = fetch_rows(conn, f"SELECT {columns} FROM invoice_summary WHERE {where} ORDER BY id", params)
+            found = fetch_rows(conn, texts, params * len(_FOUND_TEXTS))
+        by_id = {r["id"]: r for r in rows}
+        for t in found:
+            for invoice_id in json.loads(t["ids"]):
+                by_id[invoice_id][t["c"]] = t["text"]
+        return rows
 
     def summary_fetch(self, sql: str, params: tuple[Any, ...] | list[Any] = ()) -> list[dict[str, Any]]:
         """Any query of the summary's tables (fresh), its rows as dicts read in one go (``fetch_rows``)."""

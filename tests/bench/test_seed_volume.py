@@ -159,6 +159,23 @@ def test_each_clone_has_amounts_of_its_own_that_add_up(seeded):
         assert lines == checks["line_sum"] and round(sum(r["amount"] for r in doc["gl_distribution"]), 2) == total
 
 
+def test_the_seed_has_its_bank_accounts_in_use_as_a_real_installation_has_them(seeded, tmp_path):
+    """B-1739: the seed set up no bank account, so the load runs never asked the queue's Pay from (each waiting
+    vendor's last account, 197 ms a visit at 100,000 invoices). Each invoice is paid from its currency's account: as
+    approved, and as the queue offers it."""
+    with isolated(tmp_path):
+        store = Store(seeded / "ap_coder.db")
+        accounts = [(a["code"], a["currency"]) for a in store.bank_accounts(active_only=True)]
+        assert accounts == [("CAD-OP", "CAD"), ("USD-OP", "USD")]
+        signed = store.summary_fetch("SELECT currency, pay_from, vendor_key FROM invoice_summary WHERE status IN "
+                                     "('approved', 'pending_approval')")  # fmt: skip
+        assert {r["currency"] for r in signed} == {"CAD", "USD"}
+        assert all(r["pay_from"] == f"{r['currency']}-OP" for r in signed)
+        waiting = store.summary_fetch("SELECT DISTINCT vendor_key FROM invoice_summary WHERE status = ?", (REVIEW,))
+        last = store.last_pay_froms([r["vendor_key"] for r in waiting])
+        assert last and set(last.values()) <= {"CAD-OP", "USD-OP"}
+
+
 def test_the_seed_stands_in_for_the_day_s_backup_so_serving_it_copies_nothing(seeded, tmp_path):
     with isolated(tmp_path):
         store = Store(seeded / "ap_coder.db")
