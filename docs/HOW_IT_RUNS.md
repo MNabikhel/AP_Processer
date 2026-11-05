@@ -333,6 +333,11 @@ or data) is not found again on later starts (`upgrade.left_to_clean`), so it is 
   hourly; nothing while both are off). The finance hub feed runs on its schedule (`ap_coder/erp/hub/run.py:HubSchedule`:
   every 1, 4, 12 or 24 hours, or only by hand) from the pages served, like the daily backup: a dashboard nobody
   opens runs nothing, so a scheduled `python -m ap_coder hub export` covers that.
+* **Static files** (D-161): the styles, scripts, fonts and logo are read once when `serve` starts
+  (`ap_coder/web/core.py:read_static`) and answered from memory (`app.StaticFromMemory`). The pages link them at
+  kept addresses (`core.static_url`: `/static/<build>/app.css`, the build a hash of the files' contents), which the
+  browser keeps a year; an edit to any of them changes every address. A static file edited while `serve` runs is
+  still answered as it was at the start: restart `serve` to see the edit.
 * **Up?** The server checks its own `/healthz` directly, never through a proxy, and prints `AP Coder is running at
   http://127.0.0.1:N`. The launcher opens `http://127.0.0.1:N` (`scripts/launch.py:dashboard_url`, never
   `localhost`) when it sees that line or `/healthz` answers (`running.health`), once.
@@ -386,7 +391,9 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   `.ap_coder_worker_restart.pid`, for ten minutes at most, dropped once it has ended); one at a time
   (`.ap_coder_worker_restart.lock`), never while a job, a backup, waiting imports or the lane are busy. One that a
   request started after that look is waited for as the worker ends (its lifespan, `app.own_work_running`); a stop of
-  the service still ends it at its deadline.
+  the service still ends it at its deadline. The workers share one socket, and the first free one takes each new
+  connection; a busy one (requests waiting for its threads or its lane) hands its connections back
+  (`server.HandBack`, D-161): its answers say `Connection: close`, so the browser's next request goes to a free one.
 
 ## 9. The data folder and everything AP Coder writes
 

@@ -189,7 +189,16 @@ the service with `--port 443` when nothing else on the server uses that port (II
 is on this server), so AP Coder believes the forwarded client address from that one address only. IIS must then
 *replace* `X-Forwarded-For` with the client's address (not append to one the browser sent): the logins' pauses
 (step 10) and the access log go by that address. Without `--proxy`, everyone behind IIS has IIS's address: they
-share its pauses, and the server refuses such requests anyway.
+share its pauses, and the server refuses such requests anyway. While a web worker is busy its answers say
+`Connection: close`, so the next request goes to another worker (D-161): IIS opens a new connection for it, as a
+browser does; that is expected, not an error.
+
+**Compression**: AP Coder sends its pages and answers uncompressed, laptop and server (D-161). On a gigabit office
+network even the largest page (a review screen of 3.6 MB on a 100,000-invoice database) takes about 30 milliseconds
+on the wire, while compressing every answer would cost the server CPU at each request, for no time anyone sees. The styles, scripts and fonts are fetched once per browser after each update,
+so they need none either. For people on a slow link (a VPN), IIS in front may compress **only** `text/html` and
+`application/json`, with dynamic compression at its lowest level (1); never the downloads (CSV, Excel, PDF, PNG,
+ZIP). Without IIS, nothing needs setting up.
 
 ## 5. The firewall
 
